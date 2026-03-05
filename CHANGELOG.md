@@ -12,6 +12,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Initial release
 - Bootstrap plugin for ClosedLoop agent creation and validation
 
+### code v1.0.1
+
+#### Added
+- New `prd-creator` skill for drafting lightweight PRDs through conversational workflow
+
 ### code v1.0.0
 
 #### Added
@@ -26,6 +31,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Added
 - Initial release
+
+### platform v1.0.1
+
+#### Added
+- New `claude-creator` skill for scaffolding and creating new skills from scratch
 
 ### platform v1.0.0
 
