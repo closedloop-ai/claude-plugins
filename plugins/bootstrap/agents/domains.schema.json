@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "domains.json schema",
+  "type": "object",
+  "required": ["domains"],
+  "properties": {
+    "timestamp": { "type": "string", "format": "date-time" },
+    "focus": { "type": ["string", "null"] },
+    "domains": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-z0-9-]+$": {
+          "type": "object",
+          "required": ["present", "technologies", "complexity"],
+          "properties": {
+            "present": { "type": "boolean" },
+            "confidence": { "type": "string", "enum": ["low", "medium", "high"] },
+            "technologies": { "type": "array", "items": { "type": "string" } },
+            "complexity": { "type": "string", "enum": ["low", "medium", "high"] },
+            "complexity_reasons": { "type": "array", "items": { "type": "string" } },
+            "signals_found": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "total_domains": { "type": "integer" },
+        "high_complexity": { "type": "integer" },
+        "medium_complexity": { "type": "integer" },
+        "low_complexity": { "type": "integer" },
+        "primary_domains": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}

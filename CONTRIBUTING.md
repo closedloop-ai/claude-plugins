@@ -14,16 +14,16 @@ We welcome contributions! This guide covers everything you need to get started.
 
 ```bash
 # Fork on GitHub, then clone your fork
-git clone git@github.com:YOUR_USERNAME/claude_code.git
-cd claude_code
-git remote add upstream git@github.com:closedloop-ai/claude_code.git
+git clone git@github.com:YOUR_USERNAME/claude-plugins.git
+cd claude-plugins
+git remote add upstream git@github.com:closedloop-ai/claude-plugins.git
 
 # Create virtual environment
 python3.13 -m venv .venv
 source .venv/bin/activate
 
 # Install dev dependencies
-pip install -e ".[dev]"
+pip install ruff pyright pytest
 
 # Set up git hooks (required)
 git config core.hooksPath .githooks
@@ -35,7 +35,7 @@ git config core.hooksPath .githooks
 source .venv/bin/activate
 
 # Run tests
-./run-python-tests.sh
+pytest plugins/
 
 # Run linting
 ruff check .
@@ -50,12 +50,12 @@ All contributions come through forks. External contributors do not have push acc
 
 ### Fork & Branch
 
-1. [Fork](https://github.com/closedloop-ai/claude_code/fork) the repository on GitHub
+1. [Fork](https://github.com/closedloop-ai/claude-plugins/fork) the repository on GitHub
 2. Clone your fork and add the upstream remote:
    ```bash
-   git clone git@github.com:YOUR_USERNAME/claude_code.git
-   cd claude_code
-   git remote add upstream git@github.com:closedloop-ai/claude_code.git
+   git clone git@github.com:YOUR_USERNAME/claude-plugins.git
+   cd claude-plugins
+   git remote add upstream git@github.com:closedloop-ai/claude-plugins.git
    ```
 3. Create a feature branch from `main`:
    ```bash
@@ -80,9 +80,9 @@ git rebase upstream/main
 ### Pull Request Process
 
 1. Push your branch to **your fork** (not the upstream repo)
-2. Open a PR from your fork's branch to `closedloop-ai/claude_code:main`
+2. Open a PR from your fork's branch to `closedloop-ai/claude-plugins:main`
 3. Include a description of what changed and why
-4. Update `CHANGELOG.md` in the affected plugin directory (enforced by pre-push hook when modifying `closedloop/` files)
+4. Update `CHANGELOG.md` in the affected plugin directory (enforced by pre-push hook when modifying `plugins/` files)
 5. Address review feedback with additional commits (don't force-push during review)
 6. A maintainer will squash merge to `main` after approval
 
@@ -140,13 +140,13 @@ git rebase upstream/main
 Use conventional commits:
 
 ```
-feat(closedloop): add visual-qa-subagent for screenshot review
-fix(symphony-be): correct fastapi-router-specialist tool list
-docs(closedloop): update AGENTS.md with new judge
-refactor(symphony-core): simplify plan-writer merge mode
+feat(code): add visual-qa-subagent for screenshot review
+fix(platform): correct fastapi-router-specialist tool list
+docs(judges): update AGENTS.md with new judge
+refactor(code): simplify plan-writer merge mode
 ```
 
-Scopes: `code`, `code-review`, `judges`, `self-learning`, `platform`
+Scopes: `bootstrap`, `code`, `code-review`, `judges`, `platform`, `self-learning`
 
 ## Plugin Version Management
 

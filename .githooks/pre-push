@@ -1,0 +1,76 @@
+#!/bin/bash
+# Pre-push hook: Require CHANGELOG.md updates when modifying plugins in plugins/
+#
+# This script checks if any files in plugins/ are being pushed and ensures
+# that at least one CHANGELOG.md within plugins/ is also being modified.
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Read the push information from stdin
+# Format: <local ref> <local sha> <remote ref> <remote sha>
+# Use timeout to prevent hanging if stdin is empty/blocked
+while read -r -t 5 local_ref local_sha remote_ref remote_sha; do
+    # Handle new branch (remote_sha is all zeros)
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        # New branch - compare against the merge base with main/master
+        base_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+        range="origin/${base_branch}...${local_sha}"
+    # Handle branch deletion (local_sha is all zeros)
+    elif [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+        # Branch deletion - nothing to check
+        continue
+    else
+        # Normal push - compare local commits against remote
+        range="${remote_sha}..${local_sha}"
+    fi
+
+    # Get all files changed in the commits being pushed
+    changed_files=$(git diff --name-only "$range" 2>/dev/null || echo "")
+
+    if [ -z "$changed_files" ]; then
+        continue
+    fi
+
+    # Check for changes in plugins/ (excluding CHANGELOG.md files)
+    plugin_changes=$(echo "$changed_files" | grep -E '^plugins/' | grep -v 'CHANGELOG.md' || true)
+
+    # Check for CHANGELOG.md changes in plugins/
+    changelog_changes=$(echo "$changed_files" | grep -E '^plugins/.*CHANGELOG\.md$' || true)
+
+    if [ -n "$plugin_changes" ] && [ -z "$changelog_changes" ]; then
+        echo -e "${RED}ERROR: Plugin changes detected without CHANGELOG.md update${NC}"
+        echo ""
+        echo -e "${YELLOW}Files changed in plugins/:${NC}"
+        echo "$plugin_changes" | head -20
+        if [ "$(echo "$plugin_changes" | wc -l)" -gt 20 ]; then
+            echo "... and more"
+        fi
+        echo ""
+        echo -e "${YELLOW}Please update the appropriate CHANGELOG.md file:${NC}"
+        # List available changelogs based on which plugins were modified
+        modified_plugins=$(echo "$plugin_changes" | cut -d'/' -f2 | sort -u)
+        for plugin in $modified_plugins; do
+            changelog_path="plugins/${plugin}/CHANGELOG.md"
+            if [ -f "$changelog_path" ]; then
+                echo "  - $changelog_path"
+            fi
+        done
+        echo ""
+        echo -e "${YELLOW}Please update the CHANGELOG before pushing.${NC}"
+        exit 1
+    fi
+
+    if [ -n "$plugin_changes" ] && [ -n "$changelog_changes" ]; then
+        echo -e "${GREEN}✓ Plugin changes include CHANGELOG.md update${NC}"
+    elif [ -z "$plugin_changes" ] && [ -n "$changelog_changes" ]; then
+        echo -e "${GREEN}✓ Changelog-only changes (no validation needed)${NC}"
+    fi
+done
+
+exit 0

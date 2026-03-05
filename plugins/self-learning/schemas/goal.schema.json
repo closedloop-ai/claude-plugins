@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://closedloop.ai/schemas/goal.schema.json",
+  "title": "ClosedLoop Goal Configuration Schema",
+  "description": "Schema for goal.yaml in ClosedLoop Self-Learning System",
+  "type": "object",
+  "required": ["active_goal", "goals"],
+  "properties": {
+    "active_goal": {
+      "type": "string",
+      "description": "Name of the currently active goal"
+    },
+    "goals": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/goal"
+      },
+      "description": "Map of goal names to goal configurations"
+    }
+  },
+  "definitions": {
+    "goal": {
+      "type": "object",
+      "required": ["description"],
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 10,
+          "description": "Human-readable description of the goal"
+        },
+        "pattern_priority": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["mistake", "pattern", "convention", "insight"]
+          },
+          "description": "Priority order for pattern categories (first = highest priority)"
+        },
+        "success_criteria": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/threshold_criteria"
+            },
+            {
+              "$ref": "#/definitions/binary_criteria"
+            }
+          ],
+          "description": "How success is measured for this goal"
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Metrics to track for this goal"
+        }
+      }
+    },
+    "threshold_criteria": {
+      "type": "object",
+      "required": ["type", "metric", "target", "direction"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "threshold"
+        },
+        "metric": {
+          "type": "string",
+          "description": "Metric to measure against threshold"
+        },
+        "target": {
+          "type": "number",
+          "description": "Target value for the metric"
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["above", "below"],
+          "description": "Whether success is above or below target"
+        }
+      }
+    },
+    "binary_criteria": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "binary"
+        },
+        "test_command": {
+          "type": "string",
+          "description": "Command to run for pass/fail determination"
+        }
+      }
+    }
+  }
+}

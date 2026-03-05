@@ -1,0 +1,13 @@
+# ClosedLoop Self-Learning System Dependencies
+# Python 3.11+ required
+
+# Core dependencies
+pyyaml>=6.0
+
+# Tree-sitter for AST parsing (optional but recommended)
+tree-sitter>=0.20.0
+
+# Language grammars for tree-sitter (install as needed)
+# tree-sitter-python>=0.20.0
+# tree-sitter-javascript>=0.20.0
+# tree-sitter-typescript>=0.20.0

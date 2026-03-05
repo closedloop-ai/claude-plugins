@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://claude.ai/schemas/sub-agents-config.schema.json",
+  "title": "Claude Code Agent Frontmatter Schema",
+  "description": "JSON Schema for validating YAML frontmatter configuration in Claude Code agent and sub-agent definition files (.claude/agents/*.md). This schema validates the parsed YAML structure.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Agent identifier in kebab-case format (lowercase letters, numbers, and hyphens only). Must match the filename (e.g., 'my-agent' for 'my-agent.md')."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "description": "Concise description of the agent's purpose and trigger conditions. Should explain what the agent does and when it should be invoked."
+    },
+    "tools": {
+      "type": "string",
+      "pattern": "^[A-Za-z]+(,\\s*[A-Za-z]+)*$",
+      "description": "Comma-separated string of tool names (e.g., 'Read, Grep, Glob'). MUST be inline string, NOT array. If omitted, inherits all tools from parent."
+    },
+    "skills": {
+      "type": "string",
+      "pattern": "^[a-z0-9:-]+(,\\s*[a-z0-9:-]+)*$",
+      "description": "Comma-separated string of skill names to preload (e.g., 'skill1, plugin:skill-name'). MUST be inline string, NOT array. Agents do NOT inherit skills from parent. NOTE: The 'Skill' tool is only needed if the agent must invoke skills NOT listed here."
+    },
+    "model": {
+      "type": "string",
+      "enum": ["sonnet", "opus", "haiku", "inherit"],
+      "description": "Claude model: 'sonnet' (balanced), 'opus' (most capable), 'haiku' (fast), 'inherit' (use parent's model)."
+    },
+    "permissionMode": {
+      "type": "string",
+      "enum": ["default", "acceptEdits", "dontAsk", "bypassPermissions", "plan", "ignore"],
+      "description": "Permission handling: 'default' (standard prompts), 'acceptEdits' (auto-accept edits), 'dontAsk' (skip prompts), 'bypassPermissions' (override checks), 'plan' (planning mode), 'ignore' (ignore errors)."
+    },
+    "color": {
+      "type": "string",
+      "enum": ["red", "orange", "yellow", "green", "blue", "cyan", "purple", "pink"],
+      "description": "Visual identifier color for the agent in Claude Code UI. Must be one of the 8 approved colors (lowercase)."
+    }
+  },
+  "required": ["name", "description"],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "name": "code-reviewer",
+      "description": "Reviews code changes for quality, security, and best practices.",
+      "tools": "Read, Grep, Glob",
+      "model": "sonnet",
+      "color": "cyan"
+    },
+    {
+      "name": "python-pro",
+      "description": "Python specialist for type safety, async patterns, and PEP-8 compliance.",
+      "tools": "Read, Edit, Write, Bash, Skill",
+      "skills": "python-patterns",
+      "model": "sonnet",
+      "color": "green"
+    }
+  ]
+}

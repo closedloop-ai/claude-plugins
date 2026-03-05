@@ -1,0 +1,190 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://closedloop.ai/schemas/review-delta.schema.json",
+  "title": "Critic Review Delta",
+  "description": "Structured feedback emitted by critic agents during the impl-plan hybrid workflow.",
+  "type": "object",
+  "anyOf": [{ "required": ["items"] }, { "required": ["review_items"] }],
+  "properties": {
+    "agent": {
+      "type": "string",
+      "description": "Agent identifier emitting the review (optional)."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO8601 timestamp when the review was produced."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["critic"],
+      "description": "Execution mode for bookkeeping (always 'critic' in this workflow, optional)."
+    },
+    "items": {
+      "type": "array",
+      "description": "Ordered list of review findings.",
+      "items": {
+        "type": "object",
+        "required": ["anchor_id", "severity", "rationale"],
+        "properties": {
+          "anchor_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Stable anchor identifier referencing implementation-plan.draft.md."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["blocking", "major", "minor"],
+            "description": "Impact level for the finding."
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Evidence-backed explanation of the issue."
+          },
+          "proposed_change": {
+            "type": "object",
+            "required": ["op", "target", "path"],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["insert", "replace", "append", "delete", "comment"],
+                "description": "Patch-style instruction for merge stage."
+              },
+              "target": {
+                "type": "string",
+                "enum": ["section", "task", "field", "note"],
+                "description": "Plan element affected by the change."
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Anchor-relative path (e.g., task.summary, section.notes)."
+              },
+              "value": {
+                "type": "string",
+                "description": "Replacement or appended markdown snippet (omitted for delete)."
+              }
+            },
+            "additionalProperties": false
+          },
+          "ac_refs": {
+            "type": "array",
+            "description": "Acceptance criteria impacted by the finding.",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "files": {
+            "type": "array",
+            "description": "Key files implicated by the issue.",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "tags": {
+            "type": "array",
+            "description": "Optional tags to help prioritise (e.g. 'compliance', 'build').",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "review_items": {
+      "type": "array",
+      "description": "Ordered list of review findings.",
+      "items": {
+        "type": "object",
+        "required": ["anchor_id", "severity", "rationale"],
+        "properties": {
+          "anchor_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Stable anchor identifier referencing implementation-plan.draft.md."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["blocking", "major", "minor"],
+            "description": "Impact level for the finding."
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Evidence-backed explanation of the issue."
+          },
+          "proposed_change": {
+            "type": "object",
+            "required": ["op", "target", "path"],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["insert", "replace", "append", "delete", "comment"],
+                "description": "Patch-style instruction for merge stage."
+              },
+              "target": {
+                "type": "string",
+                "enum": ["section", "task", "field", "note"],
+                "description": "Plan element affected by the change."
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Anchor-relative path (e.g., task.summary, section.notes)."
+              },
+              "value": {
+                "type": "string",
+                "description": "Replacement or appended markdown snippet (omitted for delete)."
+              }
+            },
+            "additionalProperties": false
+          },
+          "ac_refs": {
+            "type": "array",
+            "description": "Acceptance criteria impacted by the finding.",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "files": {
+            "type": "array",
+            "description": "Key files implicated by the issue.",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "tags": {
+            "type": "array",
+            "description": "Optional tags to help prioritise (e.g. 'compliance', 'build').",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "summary": {
+      "type": "object",
+      "description": "Optional aggregate data for faster triage.",
+      "properties": {
+        "blocking": { "type": "integer", "minimum": 0 },
+        "major": { "type": "integer", "minimum": 0 },
+        "minor": { "type": "integer", "minimum": 0 },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,38 @@
+{
+  "name": "closedloop-ai",
+  "owner": {
+    "name": "ClosedLoop"
+  },
+  "plugins": [
+    {
+      "name": "bootstrap",
+      "source": "./plugins/bootstrap",
+      "description": "Bootstrap plugin for ClosedLoop"
+    },
+    {
+      "name": "code",
+      "source": "./plugins/code",
+      "description": "Code and planning framework plugin"
+    },
+    {
+      "name": "code-review",
+      "source": "./plugins/code-review",
+      "description": "Code review plugin"
+    },
+    {
+      "name": "judges",
+      "source": "./plugins/judges",
+      "description": "LLM Judges plugin"
+    },
+    {
+      "name": "platform",
+      "source": "./plugins/platform",
+      "description": "ClosedLoop Platform plugin"
+    },
+    {
+      "name": "self-learning",
+      "source": "./plugins/self-learning",
+      "description": "Self-learning plugin"
+    }
+  ]
+}
