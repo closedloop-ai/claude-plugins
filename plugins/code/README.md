@@ -215,6 +215,10 @@ Syncs `plan.md` with `plan.json` after any edit. Runs the `extract.py` script wh
 
 Provides ClosedLoop environment paths to agents by reading `.claude/.closedloop/env`. Returns `CLOSEDLOOP_WORKDIR`, `CLAUDE_PLUGIN_ROOT`, `CLOSEDLOOP_PRD_FILE`, and `CLOSEDLOOP_MAX_ITERATIONS`. Used by agents that need to construct file paths dynamically.
 
+### `prd-creator`
+
+Conversational PRD drafting skill for PMs. Supports four workflow modes: **Discovery** (guided problem/persona/metrics exploration), **Draft** (generates PRD from `assets/prd-template.md`), **Story Expansion** (adds Given/When/Then acceptance criteria to user stories), and **Epic Generation** (groups stories into sprint-sized epics). Uses consistent ID conventions (US-###, AC-###.#, Q-###) for traceability through the Symphony pipeline. Includes healthcare-specific story patterns and event instrumentation references. Invoked automatically when users mention PRDs, feature ideas, sprint planning, or story breakdowns.
+
 ### `find-plugin-file`
 
 Dynamically locates files within the Claude Code plugins cache directory (`~/.claude/plugins/cache/closedloop-ai/`). Resolves the latest plugin version automatically. Used by commands that need to reference plugin tool scripts without hardcoding version-specific paths.

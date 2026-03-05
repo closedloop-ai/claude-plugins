@@ -1,6 +1,6 @@
 # Platform Plugin
 
-The Platform plugin provides foundational skills for working with the ClosedLoop/Claude Code ecosystem. It bundles four skills covering Claude Code extensibility knowledge, prompt engineering best practices, diagram visualization, and artifact upload workflows.
+The Platform plugin provides foundational skills for working with the ClosedLoop/Claude Code ecosystem. It bundles five skills covering Claude Code extensibility knowledge, prompt engineering best practices, diagram visualization, artifact upload workflows, and skill creation scaffolding.
 
 ## Key Features
 
@@ -8,6 +8,7 @@ The Platform plugin provides foundational skills for working with the ClosedLoop
 - **Context engineering**: Distilled Anthropic prompt engineering documentation covering nine techniques—from basic clarity to extended thinking—with prioritized guidance on when to apply each.
 - **Mermaid visualization**: Generates clear, effective Mermaid diagrams for system architectures, control flows, data flows, state machines, sequence diagrams, and entity relationships directly in markdown.
 - **Artifact upload**: Automates uploading files to the ClosedLoop platform as typed artifacts (PRD, implementation plan, or template) using either a direct-API script or MCP fallback.
+- **Skill creation**: Scaffolds new skill directories with proper structure, generates SKILL.md templates with frontmatter, and guides through a five-step creation process from understanding use cases through iteration.
 
 ## Architecture Overview
 
@@ -36,13 +37,19 @@ plugins/platform/
     │   ├── SKILL.md                   # Main skill definition
     │   └── references/
     │       └── mermaid-syntax.md      # Complete Mermaid syntax reference
-    └── upload-artifact/
+    ├── upload-artifact/
+    │   ├── SKILL.md                   # Main skill definition
+    │   └── scripts/
+    │       └── upload_artifact.py     # Python MCP client for direct API uploads
+    └── claude-creator/
         ├── SKILL.md                   # Main skill definition
         └── scripts/
-            └── upload_artifact.py     # Python MCP client for direct API uploads
+            ├── init_skill.py          # Skill directory scaffolding script
+            ├── package_skill.py       # Skill packaging script
+            └── quick_validate.py      # Skill validation script
 ```
 
-All four are **skills** (not agents or commands), meaning Claude invokes them automatically based on conversation context without any explicit user invocation.
+All five are **skills** (not agents or commands), meaning Claude invokes them automatically based on conversation context without any explicit user invocation.
 
 ## Skills
 
@@ -161,6 +168,34 @@ Both modes follow the same five-step workflow: resolve credentials and choose mo
 | `--workstream-id` | No | Workstream association |
 | `--artifact-id` | Version | Existing artifact ID for new version |
 | `--verify` | No | Fetch artifact back after upload and compare content lengths |
+
+### claude-creator
+
+**Trigger conditions**: When a user wants to create a new skill from scratch — triggered by "create a skill", "new skill", or "scaffold skill". Not for updating existing skills (use claude-code-expert instead).
+
+**What it provides**:
+
+A five-step skill creation process:
+
+| Step | Purpose |
+|------|---------|
+| 1. Understanding | Gather concrete usage examples and trigger patterns |
+| 2. Planning | Identify reusable scripts, references, and assets |
+| 3. Initializing | Scaffold directory via `scripts/init_skill.py` |
+| 4. Editing | Write SKILL.md and bundled resources |
+| 5. Iterating | Test and refine based on real usage |
+
+Covers skill anatomy (SKILL.md frontmatter, scripts/, references/, assets/), the progressive disclosure design principle (metadata → SKILL.md → bundled resources), writing effective descriptions with trigger terms, and the 500-line SKILL.md guideline.
+
+**Scripts**:
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/init_skill.py` | Scaffolds a new skill directory with SKILL.md template and example resource directories |
+| `scripts/package_skill.py` | Packages a skill for distribution |
+| `scripts/quick_validate.py` | Validates skill structure and frontmatter |
+
+---
 
 ## Usage
 
