@@ -1,0 +1,2 @@
+# Self-learning tools dependencies
+pyyaml>=6.0

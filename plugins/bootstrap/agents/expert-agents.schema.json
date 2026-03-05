@@ -1,0 +1,120 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "expert-agents.json schema",
+  "description": "Schema for the expert-agents.json file produced by expertise-mapper and consumed by agent-decomposer",
+  "type": "object",
+  "required": ["timestamp", "mode", "universalAgents", "candidateExperts", "summary"],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO timestamp of when the file was generated"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["full", "minimal"],
+      "description": "Generation mode - 'full' includes all experts, 'minimal' includes only required agents"
+    },
+    "universalAgents": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of universal agents that are part of the core impl-plan system and must NOT be generated"
+    },
+    "candidateExperts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/candidateExpert"
+      },
+      "description": "List of candidate expert agents to be generated"
+    },
+    "summary": {
+      "$ref": "#/definitions/summary"
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Any warnings encountered during generation"
+    }
+  },
+  "definitions": {
+    "candidateExpert": {
+      "type": "object",
+      "required": ["agent", "role", "reason", "decomposable"],
+      "properties": {
+        "agent": {
+          "type": "string",
+          "description": "Agent identifier (e.g., 'typescript-expert', 'database-architect')"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["required-project-specific", "language-expert", "domain-expert"],
+          "description": "The role category of this agent"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Explanation for why this agent was included"
+        },
+        "decomposable": {
+          "type": "boolean",
+          "description": "Whether this agent can be split into specialists by agent-decomposer"
+        },
+        "domain": {
+          "type": ["string", "null"],
+          "description": "Domain identifier for domain experts (e.g., 'data-persistence', 'api-backend')"
+        },
+        "language": {
+          "type": ["string", "null"],
+          "description": "Language identifier for language experts (e.g., 'typescript', 'python')"
+        },
+        "technologies": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Technologies associated with this domain expert"
+        },
+        "complexity": {
+          "type": "string",
+          "enum": ["low", "medium", "high"],
+          "description": "Complexity level for domain experts"
+        },
+        "supportsCriticMode": {
+          "type": "boolean",
+          "description": "Whether this agent supports critic mode for generating review deltas"
+        }
+      },
+      "additionalProperties": true
+    },
+    "summary": {
+      "type": "object",
+      "required": ["total_candidates", "required_agents", "language_experts", "domain_experts", "decomposable_agents"],
+      "properties": {
+        "total_candidates": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of candidate agents"
+        },
+        "required_agents": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of required project-specific agents"
+        },
+        "language_experts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of language expert agents"
+        },
+        "domain_experts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of domain expert agents"
+        },
+        "decomposable_agents": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of agents marked as decomposable"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

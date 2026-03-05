@@ -1,0 +1,119 @@
+{
+  "max_parallel": 5,
+  "run_base_var": "$RUN",
+  "run_base_description": "$RUN resolves to the run-scoped working directory (e.g., .claude/bootstrap/<timestamp>)",
+  "steps": [
+    {
+      "name": "Document Ingestion",
+      "description": "Read CLAUDE.md, README, architecture docs to understand project",
+      "agent": "project-doc-ingestor",
+      "produces": ["$RUN/discovery/project-context.md"],
+      "parallelizable": false
+    },
+    {
+      "name": "Language Detection",
+      "description": "Count files by extension to detect languages",
+      "agent": "language-detector",
+      "produces": ["$RUN/discovery/languages.json"],
+      "parallelizable": true,
+      "group": "discovery",
+      "priority": 0
+    },
+    {
+      "name": "Domain Identification",
+      "description": "Identify domains of work (API, DB, frontend, mobile, etc.)",
+      "agent": "domain-identifier",
+      "requires": ["$RUN/discovery/project-context.md"],
+      "produces": ["$RUN/discovery/domains.json"],
+      "parallelizable": true,
+      "group": "discovery",
+      "priority": 0
+    },
+    {
+      "name": "Expertise Mapping",
+      "description": "Map languages + domains to base expert agent roles",
+      "agent": "expertise-mapper",
+      "requires": [
+        "$RUN/discovery/languages.json",
+        "$RUN/discovery/domains.json",
+        "$RUN/discovery/project-context.md"
+      ],
+      "produces": ["$RUN/synthesis/expert-agents.json"],
+      "parallelizable": false
+    },
+    {
+      "name": "Agent Decomposition",
+      "description": "Decide which agents should be split into specialists and generate critic gates config",
+      "agent": "agent-decomposer",
+      "requires": [
+        "$RUN/synthesis/expert-agents.json",
+        "$RUN/discovery/project-context.md",
+        "$RUN/discovery/domains.json"
+      ],
+      "produces": ["$RUN/synthesis/decomposed-agents.json", ".claude/settings/critic-gates.json"],
+      "parallelizable": false
+    },
+    {
+      "name": "Pre-Generation Validation",
+      "description": "Validate agent specifications before generation",
+      "agent": "generation-validator",
+      "requires": ["$RUN/synthesis/decomposed-agents.json"],
+      "produces": ["$RUN/synthesis/generation-validation.json"],
+      "parallelizable": false
+    },
+    {
+      "name": "Agent Prompt Generation",
+      "description": "Generate agent prompts using LLM expertise (fan-out to N parallel tasks)",
+      "kind": "fan-out",
+      "agent": "agent-prompt-generator",
+      "requires": [
+        "agents/AGENT_FORMAT.md",
+        "$RUN/synthesis/decomposed-agents.json",
+        "$RUN/discovery/project-context.md"
+      ],
+      "produces": [
+        ".claude/agents/prd2plan/*.md",
+        ".claude/agents/prd2plan/.bootstrap-metadata.json"
+      ],
+      "fan_out_on": "$RUN/synthesis/decomposed-agents.json.finalAgents",
+      "max_parallel": 5,
+      "retry": {
+        "per_item_attempts": 2,
+        "backoff_ms": 1000,
+        "max_backoff_ms": 8000,
+        "jitter": true
+      },
+      "min_success_ratio": 0.8,
+      "allow_partial": true,
+      "comment": "Spawns one task per agent; runs 5 at a time; per-item retry with backoff; allows partial success if >=80% complete"
+    },
+    {
+      "name": "Agent Prompt Validation",
+      "description": "Validate generated agent prompts are well-formed",
+      "agent": "agent-prompt-validator",
+      "requires": [
+        ".claude/agents/prd2plan/.bootstrap-metadata.json",
+        "$RUN/synthesis/decomposed-agents.json"
+      ],
+      "produces": ["$RUN/synthesis/agent-validation.json"],
+      "parallelizable": false
+    },
+    {
+      "name": "Final Validation",
+      "description": "Validate agent suite and DAG integrity",
+      "agent": "bootstrap-validator",
+      "requires": [
+        ".claude/commands/prd2plan/impl-plan.json",
+        "$RUN/synthesis/agent-validation.json"
+      ],
+      "produces": ["$RUN/validation-report.json", "$RUN/bootstrap-report.md"],
+      "parallelizable": false
+    }
+  ],
+  "defaults": {
+    "depth": "medium",
+    "target_command": "impl-plan",
+    "output_dir": ".claude/agents/prd2plan/",
+    "strategy": "backup"
+  }
+}

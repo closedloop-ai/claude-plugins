@@ -1,0 +1,34 @@
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.env.local
+.env.*.local
+
+# Tests
+**/route-knowledge.json
+
+# Token tracking session data
+.claude/.token-stats/
+
+# ClosedLoop session-level artifacts (cleaned up by SessionEnd hook)
+.claude/.closedloop/
+.claude/closedloop-loop.local.md
+.closedloop/
+.agent-types/
+.claude/closedloop-progress.log
+
+# Runs directory (implementation plans, staged plans, etc.)
+.claude/runs/*
+.claude/work/*
+**/.claude/cache/
+
+# ClosedLoop plugin workspace (code review ephemeral data, etc.)
+.closedloop-ai/
+
+# Generated route knowledge files
+.claude/docs/routes/*

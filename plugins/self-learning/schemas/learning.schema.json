@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://closedloop.ai/schemas/learning.schema.json",
+  "title": "ClosedLoop Learning Schema",
+  "description": "Schema for captured learnings in ClosedLoop Self-Learning System",
+  "type": "object",
+  "required": ["schema_version", "run_id", "iteration", "captured_at", "learnings"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version for forward compatibility"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[0-9]{8}-[0-9]{6}$",
+      "description": "Run identifier (YYYYMMDD-HHMMSS format)"
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Iteration number within the run"
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when learnings were captured"
+    },
+    "learnings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/learning"
+      },
+      "description": "Array of captured learnings"
+    }
+  },
+  "definitions": {
+    "learning": {
+      "type": "object",
+      "required": ["id", "scope", "category", "trigger", "summary", "confidence"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^L-[0-9]{3,}$",
+          "description": "Unique learning identifier within session"
+        },
+        "scope": {
+          "type": "string",
+          "enum": ["closedloop", "organization"],
+          "description": "Whether this learning applies to ClosedLoop tooling or organization codebase"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["mistake", "pattern", "convention", "insight"],
+          "description": "Type of learning captured"
+        },
+        "trigger": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 50,
+          "description": "Short phrase that triggers this pattern (used for matching)"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 200,
+          "description": "Brief actionable description of the learning"
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Full context and explanation if needed"
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "description": "Confidence level in this learning"
+        },
+        "applies_to": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": ["*"],
+          "description": "Agent names this applies to, or ['*'] for all agents"
+        },
+        "context": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string",
+              "description": "Relative path to source file"
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Line number in source file"
+            },
+            "function": {
+              "type": "string",
+              "description": "Function or method name"
+            }
+          },
+          "description": "Source code context where learning was captured"
+        },
+        "source_file": {
+          "type": "string",
+          "description": "Relative path to file that triggered this learning"
+        },
+        "source_line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Line number that triggered this learning"
+        }
+      }
+    }
+  }
+}

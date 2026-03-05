@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "decomposed-agents.json schema",
+  "type": "object",
+  "required": ["finalAgents"],
+  "properties": {
+    "finalAgents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["agent", "requires", "produces"],
+        "properties": {
+          "agent": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+          "focus": { "type": "string" },
+          "requires": { "type": "array", "items": { "type": "string" } },
+          "produces": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "parallelizable": { "type": "boolean" },
+          "group": { "type": ["string", "null"] },
+          "priority": { "type": ["integer", "null"], "minimum": 0, "maximum": 5 },
+          "domain": { "type": "string" },
+          "language": { "type": "string" },
+          "technologies": { "type": "array", "items": { "type": "string" } },
+          "complexity": { "type": "string", "enum": ["low", "medium", "high"] }
+        },
+        "additionalProperties": true
+      }
+    },
+    "requiredAgents": { "type": "array" },
+    "decompositions": { "type": "array" },
+    "languageExperts": { "type": "array" }
+  },
+  "additionalProperties": true
+}

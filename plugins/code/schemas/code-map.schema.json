@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "code-map",
+  "type": "object",
+  "required": [
+    "feature",
+    "scope",
+    "files",
+    "modules",
+    "platforms",
+    "parity_risk",
+    "parity_reasons"
+  ],
+  "properties": {
+    "feature": { "type": "string" },
+    "scope": { "type": "string" },
+    "platforms": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["ios", "android", "web"] }
+    },
+    "modules": { "type": "array", "items": { "type": "string" } },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "role", "confidence"],
+        "properties": {
+          "path": { "type": "string" },
+          "role": {
+            "type": "string",
+            "enum": ["route", "screen", "component", "hook", "service", "util", "test", "config"]
+          },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "neighbors": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "parity_risk": { "type": "boolean" },
+    "parity_reasons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["signal", "evidence"],
+        "properties": {
+          "signal": { "type": "string" },
+          "evidence": { "type": "string" }
+        }
+      }
+    }
+  }
+}

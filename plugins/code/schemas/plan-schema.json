@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "plan-schema.json",
+  "title": "Implementation Plan",
+  "description": "Schema for ClosedLoop implementation plan files",
+  "type": "object",
+  "required": ["content", "acceptanceCriteria", "pendingTasks", "completedTasks", "openQuestions", "answeredQuestions", "gaps"],
+  "properties": {
+    "content": {
+      "type": "string",
+      "description": "Full markdown content of the implementation plan"
+    },
+    "acceptanceCriteria": {
+      "type": "array",
+      "description": "Acceptance criteria extracted from PRD",
+      "items": {
+        "type": "object",
+        "required": ["id", "criterion", "source"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^AC-\\d{3}$",
+            "description": "Acceptance criterion ID (e.g., AC-001)"
+          },
+          "criterion": {
+            "type": "string",
+            "description": "The acceptance criterion text"
+          },
+          "source": {
+            "type": "string",
+            "description": "PRD section reference (e.g., PRD §2.1)"
+          }
+        }
+      }
+    },
+    "pendingTasks": {
+      "type": "array",
+      "description": "Tasks not yet completed",
+      "items": {
+        "$ref": "#/$defs/task"
+      }
+    },
+    "completedTasks": {
+      "type": "array",
+      "description": "Tasks marked as complete",
+      "items": {
+        "$ref": "#/$defs/task"
+      }
+    },
+    "manualTasks": {
+      "type": "array",
+      "description": "Tasks requiring manual human action (testing, verification, deployment steps). These do not block automated completion.",
+      "items": {
+        "$ref": "#/$defs/task"
+      }
+    },
+    "openQuestions": {
+      "type": "array",
+      "description": "Questions awaiting answers",
+      "items": {
+        "type": "object",
+        "required": ["id", "question"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^Q-\\d{3}$",
+            "description": "Question ID (e.g., Q-001)"
+          },
+          "question": {
+            "type": "string",
+            "description": "The question text"
+          },
+          "recommendedAnswer": {
+            "type": ["string", "null"],
+            "description": "Recommended answer if provided"
+          },
+          "blockingTask": {
+            "type": ["string", "null"],
+            "pattern": "^T-\\d+\\.\\d+$",
+            "description": "Task ID this question blocks (e.g., T-1.2)"
+          }
+        }
+      }
+    },
+    "answeredQuestions": {
+      "type": "array",
+      "description": "Questions that have been answered",
+      "items": {
+        "type": "object",
+        "required": ["id", "question", "answer"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^Q-\\d{3}$",
+            "description": "Question ID (e.g., Q-001)"
+          },
+          "question": {
+            "type": "string",
+            "description": "The question text"
+          },
+          "answer": {
+            "type": "string",
+            "description": "The answer provided"
+          }
+        }
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "description": "PRD gaps identified during planning",
+      "items": {
+        "type": "object",
+        "required": ["id", "description", "addressed"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^GAP-\\d{3}$",
+            "description": "Gap ID (e.g., GAP-001)"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the PRD gap"
+          },
+          "addressed": {
+            "type": "boolean",
+            "description": "Whether the gap has been resolved"
+          },
+          "resolution": {
+            "type": ["string", "null"],
+            "description": "Resolution text if addressed"
+          }
+        }
+      }
+    },
+    "amendments": {
+      "type": "array",
+      "description": "History of plan amendments applied via amend-plan command",
+      "items": {
+        "$ref": "#/$defs/amendment"
+      }
+    }
+  },
+  "$defs": {
+    "task": {
+      "type": "object",
+      "required": ["id", "description", "acceptanceCriteria"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^T-\\d+\\.\\d+$",
+          "description": "Task ID (e.g., T-1.1)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Task description"
+        },
+        "acceptanceCriteria": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^AC-\\d{3}$"
+          },
+          "description": "List of AC IDs this task addresses"
+        }
+      }
+    },
+    "amendment": {
+      "type": "object",
+      "required": ["timestamp", "changes"],
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the amendment was applied"
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of change descriptions"
+        },
+        "conversation": {
+          "type": "array",
+          "description": "Conversation history from the amend session",
+          "items": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": ["user", "assistant"]
+              },
+              "content": {
+                "type": "string"
+              },
+              "timestamp": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

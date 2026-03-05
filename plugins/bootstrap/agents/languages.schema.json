@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "languages.json schema",
+  "type": "object",
+  "required": ["languages", "primary_language", "distribution_summary", "total_files"],
+  "properties": {
+    "timestamp": { "type": "string", "format": "date-time" },
+    "total_files": { "type": "integer", "minimum": 0 },
+    "languages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["language", "extensions", "file_count", "percentage", "classification"],
+        "properties": {
+          "language": { "type": "string" },
+          "extensions": { "type": "array", "items": { "type": "string" } },
+          "file_count": { "type": "integer", "minimum": 0 },
+          "percentage": { "type": "number", "minimum": 0, "maximum": 100 },
+          "classification": { "type": "string", "enum": ["primary", "secondary", "minor"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "primary_language": { "type": "string" },
+    "secondary_languages": { "type": "array", "items": { "type": "string" } },
+    "distribution_summary": {
+      "type": "object",
+      "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 }
+    },
+    "excluded_paths": { "type": "array", "items": { "type": "string" } },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}

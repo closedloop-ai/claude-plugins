@@ -1,0 +1,48 @@
+{
+  "loop_agents": {
+    "code:plan-draft-writer": {
+      "validation_script": "validate-plan.sh",
+      "max_iterations": 10,
+      "promise": "PLAN_VALIDATED",
+      "state_file_suffix": "plan-draft-writer-loop.local.md",
+      "verification_criteria": "PRD coverage complete, no scope creep (every task traces to a PRD section), all required sections present (AC, Tasks, Open Questions, Gaps), JSON/markdown sync valid, no code snippets in task descriptions, no TODO/TBD placeholders"
+    },
+    "code:plan-writer": {
+      "validation_script": "validate-plan.sh",
+      "max_iterations": 5,
+      "promise": "PLAN_WRITER_COMPLETE",
+      "state_file_suffix": "plan-writer-loop.local.md",
+      "verification_criteria": "JSON/markdown sync valid, task IDs preserved (no renumbering or removal), no scope expansion beyond requested changes, all tasks enriched with code patterns and integration points (finalize mode) or all blocking findings addressed (merge mode), valid JSON with all required fields"
+    },
+    "code:code-reviewer": {
+      "max_iterations": 5,
+      "promise": "CODE_REVIEW_PASSED",
+      "state_file_suffix": "code-reviewer-loop.local.md",
+      "verification_criteria": "No Critical or High findings remain after re-analysis, multi-tenant authorization verified on all new data-access endpoints, no unbounded parallel external API calls, no shared-package code referencing app-specific constructs, all DRY violations across changed files identified"
+    },
+    "code:plan-validator": {
+      "max_iterations": 5,
+      "promise": "PLAN_VALIDATION_COMPLETE",
+      "state_file_suffix": "plan-validator-loop.local.md"
+    },
+    "code:implementation-subagent": {
+      "max_iterations": 4,
+      "promise": "IMPLEMENTATION_VERIFIED",
+      "state_file_suffix": "implementation-subagent-loop.local.md",
+      "verification_criteria": "All referenced types and interfaces verified from source before use, no new utilities or constants that duplicate existing codebase implementations, all integration points connected, static analysis passes on modified files"
+    }
+  },
+  "learning_agents": {
+    "description": "Agents that must acknowledge AND capture learnings before stopping",
+    "max_retries": 2,
+    "agents": [
+      "code:plan-draft-writer",
+      "code:plan-writer",
+      "code:implementation-subagent",
+      "code:cross-repo-coordinator",
+      "code:generic-discovery",
+      "code:code-reviewer",
+      "code:plan-validator"
+    ]
+  }
+}
