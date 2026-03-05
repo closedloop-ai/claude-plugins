@@ -40,10 +40,32 @@ fi
 write_status "processing" "Running process-learnings"
 
 # Run the process-learnings command via Claude
+CLAUDE_OK=false
 if claude -p "Run /self-learning:process-learnings $WORKDIR" \
     --allowed-tools=Bash,Grep,Glob,Read,Write \
     --max-turns 100 2>/dev/null; then
+  CLAUDE_OK=true
+fi
+
+# Write merge-result.json → org-patterns.toon (deterministic)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+MERGE_SCRIPT="$SCRIPT_DIR/../tools/python/write_merged_patterns.py"
+MERGE_RESULT="$WORKDIR/.learnings/merge-result.json"
+TOON_OK=true
+if [[ -f "$MERGE_RESULT" ]] && [[ -f "$MERGE_SCRIPT" ]]; then
+  if python3 "$MERGE_SCRIPT" --merge-result "$MERGE_RESULT" 2>&1; then
+    # Cleanup session files after successful write
+    rm -rf "$WORKDIR/.learnings/sessions/run-"* 2>/dev/null || true
+  else
+    TOON_OK=false
+  fi
+fi
+
+# Set status based on both steps
+if $CLAUDE_OK && $TOON_OK; then
   write_status "completed" "Learnings processed successfully"
+elif $CLAUDE_OK; then
+  write_status "error" "Classification succeeded but TOON write failed"
 else
   write_status "error" "Learning processing encountered errors"
 fi

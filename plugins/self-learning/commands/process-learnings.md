@@ -189,9 +189,9 @@ Reworded learnings:
 
 Mark all validation tasks as completed before proceeding.
 
-### Step 4: Aggregate Patterns into org-patterns.toon
+### Step 4: Aggregate Patterns into merge-result.json
 
-After classification, merge **all validated** patterns into `~/.claude/.learnings/org-patterns.toon`:
+After classification, merge **all validated** patterns into a JSON file that a deterministic Python script will convert to TOON format:
 
 1. **Load existing** - Read `~/.claude/.learnings/org-patterns.toon` (if exists)
 2. **Read session files** - Scan `sessions/run-*/iter-*.json` from the run
@@ -213,8 +213,26 @@ After classification, merge **all validated** patterns into `~/.claude/.learning
    - High confidence patterns over low confidence
    - Patterns with success_rate > 0.5 over lower
    - Patterns with `[UNTESTED]` flag (give them a chance) over `[PRUNE]`
-10. **Write output** - Save to `~/.claude/.learnings/org-patterns.toon`
-11. **Cleanup** - Remove processed session files
+10. **Write output** - Save to `$CLOSEDLOOP_WORKDIR/.learnings/merge-result.json` with the following schema:
+
+```json
+{
+  "schema_version": "1.0",
+  "generated_at": "ISO8601 timestamp",
+  "stats": { "added": N, "merged": N, "pruned": N, "rejected": N, "closedloop_extracted": N },
+  "patterns": [
+    { "id": "P-NNN", "category": "pattern", "summary": "plain text (no CSV quoting)",
+      "confidence": "high", "seen_count": "5", "success_rate": "0.85", "flags": "",
+      "applies_to": "*", "context": "auth|API", "repo": "*" }
+  ]
+}
+```
+
+All 10 fields are required per pattern. `summary` is plain text — the Python script handles CSV quoting. `success_rate` is `""` for new patterns; preserve existing values for updated patterns.
+
+**Do NOT write TOON directly** — the shell caller runs `write_merged_patterns.py` to convert this JSON to valid TOON atomically.
+
+**Do NOT clean up session files** — cleanup is owned by the shell callers, gated on Python script success.
 
 ### Step 5: Report Results
 
