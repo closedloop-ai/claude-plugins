@@ -4,7 +4,7 @@ description: Exports pending ClosedLoop learnings to global location with dedupl
 
 # Export ClosedLoop Learnings Command
 
-Merges ClosedLoop-specific learnings from the current project into a global learnings store at `~/.claude/.learnings/closedloop-learnings.json` with automatic deduplication.
+Merges ClosedLoop-specific learnings from the current project into a global learnings store at `~/.closedloop-ai/learnings/closedloop-learnings.json` with automatic deduplication.
 
 ## Purpose
 
@@ -13,7 +13,7 @@ When learnings are captured that improve ClosedLoop itself (agents, workflows, h
 ## Process
 
 1. **Read pending closedloop learnings**: Load `$CLOSEDLOOP_WORKDIR/.learnings/pending-closedloop.json`
-2. **Read existing global learnings**: Load `~/.claude/.learnings/closedloop-learnings.json` (create if missing)
+2. **Read existing global learnings**: Load `~/.closedloop-ai/learnings/closedloop-learnings.json` (create if missing)
 3. **Deduplicate**: For each pending learning:
    - If exact `trigger` match exists → skip (already exists)
    - If 80%+ word overlap on `summary` → skip (duplicate)
@@ -43,7 +43,7 @@ When learnings are captured that improve ClosedLoop itself (agents, workflows, h
 
 ## Output Format
 
-Global file at `~/.claude/.learnings/closedloop-learnings.json`:
+Global file at `~/.closedloop-ai/learnings/closedloop-learnings.json`:
 ```json
 {
   "schema_version": "1.0",
@@ -88,7 +88,7 @@ When invoked:
 1. Determine the workdir from the first argument or use current directory
 2. Check if `$workdir/.learnings/pending-closedloop.json` exists - if not, output "No pending closedloop learnings" and exit
 3. Read the pending file
-4. Read or create `~/.claude/.learnings/closedloop-learnings.json` with empty learnings array
+4. Read or create `~/.closedloop-ai/learnings/closedloop-learnings.json` with empty learnings array
 5. For each pending learning, apply deduplication logic
 6. If any new learnings were added, write the updated global file with `last_updated` timestamp
 7. Delete `$workdir/.learnings/pending-closedloop.json`

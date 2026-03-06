@@ -9,7 +9,7 @@ skills: self-learning:toon-format
 <context>
 This command processes learnings captured during ClosedLoop runs and merges them into the global organization knowledge base. Learnings accumulate across all runs and projects, enabling continuous improvement of agent behavior.
 
-**Purpose:** Transform raw pending learnings into validated, deduplicated patterns stored in `~/.claude/.learnings/org-patterns.toon`.
+**Purpose:** Transform raw pending learnings into validated, deduplicated patterns stored in `~/.closedloop-ai/learnings/org-patterns.toon`.
 
 **Success criteria:**
 - All pending learnings are classified and processed
@@ -193,7 +193,7 @@ Mark all validation tasks as completed before proceeding.
 
 After classification, merge **all validated** patterns into a JSON file that a deterministic Python script will convert to TOON format:
 
-1. **Load existing** - Read `~/.claude/.learnings/org-patterns.toon` (if exists)
+1. **Load existing** - Read `~/.closedloop-ai/learnings/org-patterns.toon` (if exists)
 2. **Read session files** - Scan `sessions/run-*/iter-*.json` from the run
 3. **Filter** - Only include learnings with `validation.status != "rejected"`
 4. **Deduplicate** - See [Deduplication Rules](#deduplication-rules)
@@ -255,7 +255,7 @@ Pruning (existing patterns):
 
 Current org-patterns.toon: N patterns (cap: 50)
 
-Updated: ~/.claude/.learnings/org-patterns.toon
+Updated: ~/.closedloop-ai/learnings/org-patterns.toon
 ```
 
 ## Examples
@@ -281,7 +281,7 @@ Updated: ~/.claude/.learnings/org-patterns.toon
 - `pending-closedloop.json` - ClosedLoop-specific learnings for export
 
 **Global:**
-- `~/.claude/.learnings/org-patterns.toon` - Merged organization knowledge base (accumulates across all runs)
+- `~/.closedloop-ai/learnings/org-patterns.toon` - Merged organization knowledge base (accumulates across all runs)
 </output_files>
 
 ### TOON Output Format

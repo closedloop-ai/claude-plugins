@@ -247,7 +247,7 @@ Runs when any subagent starts. Performs three tasks:
 
 1. **Loop agent state creation**: If the agent type appears in `loop-agents.json`, creates the initial state file in `{WORKDIR}/.closedloop/` if it does not already exist.
 2. **Agent type tracking**: Writes the agent type, short name, and start timestamp to `.agent-types/{agent_id}` so the stop hook can track timing and type.
-3. **Learning injection**: Reads `~/.claude/.learnings/org-patterns.toon`, filters patterns matching the agent's name, sorts by category priority (mistake > convention > pattern > insight) and confidence, and injects up to 15 patterns into the agent's context via `additionalContext`. Also injects environment variables (`CLOSEDLOOP_WORKDIR`, `CLAUDE_PLUGIN_ROOT`, etc.) into every agent's context.
+3. **Learning injection**: Reads `~/.closedloop-ai/learnings/org-patterns.toon`, filters patterns matching the agent's name, sorts by category priority (mistake > convention > pattern > insight) and confidence, and injects up to 15 patterns into the agent's context via `additionalContext`. Also injects environment variables (`CLOSEDLOOP_WORKDIR`, `CLAUDE_PLUGIN_ROOT`, etc.) into every agent's context.
 
 ### `subagent-stop-hook.sh` (SubagentStop)
 

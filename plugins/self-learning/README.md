@@ -25,10 +25,10 @@ The plugin also provides goal-oriented evaluation: each run is measured against 
 graph TD
     Run[Run Completes] --> Pending[".learnings/pending/*.json"]
     Pending --> Process["/process-learnings"]
-    Process --> OrgPatterns["~/.claude/.learnings/org-patterns.toon"]
+    Process --> OrgPatterns["~/.closedloop-ai/learnings/org-patterns.toon"]
     Process --> PendingCL["pending-closedloop.json"]
     PendingCL --> Export["/export-closedloop-learnings"]
-    Export --> GlobalCL["~/.claude/.learnings/closedloop-learnings.json"]
+    Export --> GlobalCL["~/.closedloop-ai/learnings/closedloop-learnings.json"]
 
     Outcomes["outcomes.log"] --> Compute["compute_success_rates.py"]
     Compute --> OrgPatterns
@@ -57,7 +57,7 @@ The primary command. Processes pending learnings from a ClosedLoop run into the 
 2. Rescues stray learnings written to the project root instead of the workdir
 3. Classifies each learning by scope (`closedloop` or `organization`) and category (`mistake`, `pattern`, `convention`, `insight`), and assigns `repo_scope` (`*` for generalizable, or a specific repo name)
 4. Validates learnings for factual accuracy, correct scope, clarity, and generalizability — rewording or rejecting problematic entries
-5. Merges approved learnings into `~/.claude/.learnings/org-patterns.toon` with deduplication
+5. Merges approved learnings into `~/.closedloop-ai/learnings/org-patterns.toon` with deduplication
 6. Prunes low-performing patterns (flags patterns with <20% success over 5+ applications, removes patterns with 0% success over 10+ applications)
 7. Extracts ClosedLoop-specific learnings to `pending-closedloop.json`
 8. Reports a summary of processed, rejected, scoped, and pruned patterns
@@ -70,7 +70,7 @@ The primary command. Processes pending learnings from a ClosedLoop run into the 
 
 ### `/export-closedloop-learnings [workdir]`
 
-Merges ClosedLoop-specific pending learnings into the global `~/.claude/.learnings/closedloop-learnings.json` with deduplication. Typically invoked automatically after each loop iteration.
+Merges ClosedLoop-specific pending learnings into the global `~/.closedloop-ai/learnings/closedloop-learnings.json` with deduplication. Typically invoked automatically after each loop iteration.
 
 **Deduplication:**
 - Exact `trigger` match: skip
@@ -342,7 +342,7 @@ $CLOSEDLOOP_WORKDIR/.learnings/
   goal-outcome.json      # Latest goal evaluation result (local only)
   pending-closedloop.json # ClosedLoop-specific learnings pending export
 
-~/.claude/.learnings/
+~/.closedloop-ai/learnings/
   org-patterns.toon      # Global cross-project pattern store
   closedloop-learnings.json  # ClosedLoop framework learnings
 ```

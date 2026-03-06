@@ -162,8 +162,11 @@ SUFFIX_PARTS="$ENV_INFO"
 # but not agentName. Use the short name already derived above.
 AGENT_NAME="$AGENT_NAME_ONLY"
 
-# Path to org-patterns.toon - centralized in ~/.claude/.learnings/
-PATTERNS_FILE="$HOME/.claude/.learnings/org-patterns.toon"
+# Path to org-patterns.toon (fall back to legacy location during migration)
+PATTERNS_FILE="$HOME/.closedloop-ai/learnings/org-patterns.toon"
+if [[ ! -f "$PATTERNS_FILE" ]]; then
+    PATTERNS_FILE="$HOME/.claude/.learnings/org-patterns.toon"
+fi
 
 # Only process learnings if we have agent name and patterns file
 if [[ -z "$AGENT_NAME" ]] || [[ ! -f "$PATTERNS_FILE" ]]; then

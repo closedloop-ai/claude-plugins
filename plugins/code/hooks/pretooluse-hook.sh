@@ -60,11 +60,14 @@ mkdir -p "$CLOSEDLOOP_WORKDIR/.learnings"
 DEBUG_LOG="$CLOSEDLOOP_WORKDIR/.learnings/pretooluse-hook-debug.log"
 echo "$(date): PreToolUse hook started, tool=$TOOL_NAME" >> "$DEBUG_LOG"
 
-# Path to org-patterns.toon
-PATTERNS_FILE="$HOME/.claude/.learnings/org-patterns.toon"
+# Path to org-patterns.toon (fall back to legacy location during migration)
+PATTERNS_FILE="$HOME/.closedloop-ai/learnings/org-patterns.toon"
+if [[ ! -f "$PATTERNS_FILE" ]]; then
+    PATTERNS_FILE="$HOME/.claude/.learnings/org-patterns.toon"
+fi
 
 if [[ ! -f "$PATTERNS_FILE" ]]; then
-    echo "$(date): No patterns file at $PATTERNS_FILE, exiting" >> "$DEBUG_LOG"
+    echo "$(date): No patterns file found, exiting" >> "$DEBUG_LOG"
     exit 0
 fi
 

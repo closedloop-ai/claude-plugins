@@ -110,7 +110,7 @@ Hook that fires before a `Bash`, `Write`, or `Edit` tool call. Provides just-in-
 
 **`/process-learnings`** — Runs the full learning pipeline: find pending learnings, classify via `learning-capture` agent, validate and reword, aggregate into `org-patterns.toon`, write project patterns to `CLAUDE.md`.
 
-**`/export-closedloop-learnings`** — Exports pending closedloop learnings to `~/.claude/.learnings/closedloop-learnings.json`. Deduplicates by trigger match or 80%+ word overlap.
+**`/export-closedloop-learnings`** — Exports pending closedloop learnings to `~/.closedloop-ai/learnings/closedloop-learnings.json`. Deduplicates by trigger match or 80%+ word overlap.
 
 **`/pull-learnings`** — Imports organization patterns from a shared repository (requires `CLAUDE_ORG_ID`). Converts JSON to TOON. Prevents echo patterns from the current project.
 

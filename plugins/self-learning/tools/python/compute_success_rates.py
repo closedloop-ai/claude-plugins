@@ -351,7 +351,7 @@ def main() -> int:
     parser.add_argument(
         "--toon-file",
         default=None,
-        help="Path to org-patterns.toon (default: ~/.claude/.learnings/org-patterns.toon)",
+        help="Path to org-patterns.toon (default: ~/.closedloop-ai/learnings/org-patterns.toon)",
     )
     parser.add_argument(
         "--dry-run",
@@ -363,7 +363,12 @@ def main() -> int:
 
     workdir = Path(args.workdir).resolve()
     outcomes_path = workdir / ".learnings" / "outcomes.log"
-    toon_path = Path(args.toon_file) if args.toon_file else Path.home() / ".claude" / ".learnings" / "org-patterns.toon"
+    toon_path = Path(args.toon_file) if args.toon_file else Path.home() / ".closedloop-ai" / "learnings" / "org-patterns.toon"
+    # Fall back to legacy location during migration
+    if not args.toon_file and not toon_path.exists():
+        legacy = Path.home() / ".claude" / ".learnings" / "org-patterns.toon"
+        if legacy.exists():
+            toon_path = legacy
 
     # Exit cleanly if files don't exist
     if not toon_path.exists():

@@ -122,7 +122,7 @@ class TestParseToonPatterns:
         assert patterns[1]["repo"] == "my-repo"
 
     def test_parses_real_toon_format(self, tmp_path: Path) -> None:
-        """Test against the actual format from ~/.claude/.learnings/org-patterns.toon."""
+        """Test against the actual format from ~/.closedloop-ai/learnings/org-patterns.toon."""
         toon = tmp_path / "org-patterns.toon"
         toon.write_text(
             '# Organization Patterns (TOON format)\n'

@@ -138,7 +138,7 @@ Templates should have type matching templateForType, not type: TEMPLATE
 Before writing:
 1. Check `$CLOSEDLOOP_WORKDIR/.learnings/pending/` for learnings in this run
 2. Check project CLAUDE.md "Learned Patterns" section
-3. Check `~/.claude/.learnings/org-patterns.toon`
+3. Check `~/.closedloop-ai/learnings/org-patterns.toon`
 
 **If contradiction exists** (existing says "do X", new says "don't do X"):
 - Verify which is correct based on evidence
