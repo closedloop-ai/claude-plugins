@@ -3,7 +3,7 @@
 
 Open-source Claude Code plugins by ClosedLoop — extending Claude Code with planning, code review, quality judges, and self-learning capabilities.
 
-Why ClosedLoop?
+## Why ClosedLoop?
 ClosedLoop is an AI platform that brings the speed of individual AI-driven development to the full software development team. We're offering our agents as open sourced Claude Code plugins because we just couldn't keep this a secret for ourselves. Check out our agents for planning, code reviews, judging quality and more that outperform Opus 4.6 and Sonnet 4.5 out of the box.
 
 # ClosedLoop.AI Claude Plugins
