@@ -187,7 +187,7 @@ If `--focus` provided (e.g., `--focus backend`):
 
 ## Output Format
 
-Write to `.claude/bootstrap/<timestamp>/discovery/domains.json`.
+Write to `.closedloop-ai/bootstrap/<timestamp>/discovery/domains.json`.
 
 **Schema**: Validate output against `plugins/bootstrap/agents/domains.schema.json`.
 

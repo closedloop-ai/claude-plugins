@@ -48,7 +48,7 @@ Run through before finalizing PRD. Takes 2 minutes. Any "yes" = note in PRD and 
 
 ## What Happens Next (Symphony Integration)
 
-When you run your PRD through Symphony (`/plan` or `/impl-plan`):
+When you run your PRD through Symphony (`/code`):
 
 1. **prd-analyst** extracts your compliance flags into `constraints[]`
 2. **security-privacy** critic automatically reviews the implementation plan for:

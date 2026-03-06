@@ -126,7 +126,7 @@ If `--focus` provided:
 
 ## Output Format
 
-Write to `.claude/bootstrap/<timestamp>/discovery/languages.json`.
+Write to `.closedloop-ai/bootstrap/<timestamp>/discovery/languages.json`.
 
 **Schema**: Validate output against `plugins/bootstrap/agents/languages.schema.json`.
 

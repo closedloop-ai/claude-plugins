@@ -1,6 +1,6 @@
 # Agent Definition Format
 
-This document defines the canonical structure for critic/architecture agents in `.claude/agents/prd2plan/`.
+This document defines the canonical structure for critic/architecture agents in `.claude/agents/`.
 
 ## File Structure
 
@@ -11,7 +11,8 @@ All agent definition files must follow this structure:
 name: agent-name
 description: One-line description of agent's purpose
 model: sonnet
-color: blue|green|yellow|orange|purple|red
+color: blue|green|yellow|orange|purple|red|cyan|pink
+tools: Read, Glob, Grep, Skill
 skills: code:find-plugin-file
 ---
 
@@ -159,11 +160,18 @@ Brief statement about project-specific context understanding.
 
 ### 1. Front Matter (YAML)
 
+YAML frontmatter MUST begin on line 1 (the `---` delimiter). No additional YAML fields beyond those listed — schema uses `additionalProperties: false`.
+
 **Required fields:**
-- `name`: Kebab-case, matches filename
-- `description`: One-line summary of agent's purpose
-- `model`: Always `sonnet`
-- `color`: Visual identifier (blue, green, yellow, orange, purple, red)
+- `name`: Kebab-case `[a-z0-9-]+`, matches filename, max 64 chars
+- `description`: One-line summary of agent's purpose, max 1024 chars (warn if >200)
+- `model`: One of `sonnet`, `opus`, `haiku`, or `inherit`
+- `color`: Visual identifier — one of: `red`, `orange`, `yellow`, `green`, `blue`, `cyan`, `purple`, `pink`
+
+**Optional fields:**
+- `tools`: Comma-separated inline string of tool names (e.g., `Read, Glob, Grep`). NOT a YAML block array.
+- `skills`: Comma-separated inline string of skill identifiers (e.g., `code:find-plugin-file`). NOT a YAML block array. If `skills` is present, `Skill` MUST appear in `tools`.
+- `permissionMode`: One of `default`, `acceptEdits`, `dontAsk`, `bypassPermissions`, `plan`, `ignore`
 
 ### 2. Execution Modes
 
@@ -255,6 +263,9 @@ Before finalizing an agent definition, verify:
 - [ ] Reference Guidance includes Role and Project Context
 - [ ] No legacy "Task", "Output Format", "Success Criteria", "Error Handling" sections
 - [ ] File is under 350 lines (well-organized, no bloat)
+- [ ] If `skills` field present, `Skill` is listed in `tools`
+- [ ] `tools` and `skills` use comma-separated inline format (not YAML block arrays)
+- [ ] Name is kebab-case, max 64 chars; description max 1024 chars
 
 ---
 

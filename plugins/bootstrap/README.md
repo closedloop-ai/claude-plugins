@@ -17,7 +17,7 @@ The key design principle is **domain identification over framework detection**. 
 - Generates complete agent prompt files using LLM intelligence (no static templates)
 - Validates all generated prompts before writing them out
 - Supports incremental updates via `--update` mode to regenerate only outdated agents
-- Generates `critic-gates.json` configuration for use with the `impl-plan` workflow
+- Generates `critic-gates.json` configuration for use with the `code` workflow
 
 ## Architecture Overview
 
@@ -80,7 +80,7 @@ Produces: `discovery/domains.json` (validated against `domains.schema.json`)
 
 Maps detected languages and domains to candidate expert agent roles. Always includes two required agents (`test-strategist`, `security-privacy`). Adds language experts for any language at >=10% of the codebase, and domain experts for any domain with at least medium confidence.
 
-Does **not** include universal agents (prd-analyst, feature-locator, plan-writer, plan-stager, plan-verifier, agent-trainer) since those already exist in the core impl-plan system.
+Does **not** include universal agents (prd-analyst, feature-locator, plan-writer, plan-stager, plan-verifier, agent-trainer) since those already exist in the core code workflow.
 
 Produces: `synthesis/expert-agents.json` (validated against `expert-agents.schema.json`)
 
@@ -90,7 +90,7 @@ Analyzes candidate agents and decides whether each should be kept as a single ag
 
 Decomposition is driven by domain complexity (high complexity favors decomposition), technology breadth (multiple databases, REST + GraphQL), and whether splitting would meaningfully improve output quality.
 
-Also generates `critic-gates.json`, which defines which agents act as critics in the `impl-plan` workflow. Required agents (`test-strategist`, `security-privacy`) and language experts are always base critics. Domain agents are mapped to module patterns so they are only invoked when relevant.
+Also generates `critic-gates.json`, which defines which agents act as critics in the `code` workflow. Required agents (`test-strategist`, `security-privacy`) and language experts are always base critics. Domain agents are mapped to module patterns so they are only invoked when relevant.
 
 Produces: `synthesis/decomposed-agents.json`, `.claude/settings/critic-gates.json`
 
@@ -118,11 +118,11 @@ For non-architecture agents (test-strategist, security-privacy, etc.), standard 
 
 Colors are assigned by domain: database agents get blue, API agents get green, frontend/state gets purple, mobile gets cyan, security gets red, testing gets yellow, performance gets orange, analytics/monitoring gets pink.
 
-Produces: `.claude/agents/prd2plan/<agent-name>.md`, `.claude/agents/prd2plan/.bootstrap-metadata.json`
+Produces: `.claude/agents/<agent-name>.md`, `.closedloop-ai/bootstrap-metadata.json`
 
 ### agent-prompt-validator
 
-Validates all generated agent prompt files listed in `.bootstrap-metadata.json`. Performs these checks in order:
+Validates all generated agent prompt files listed in `.closedloop-ai/bootstrap-metadata.json`. Performs these checks in order:
 
 1. **YAML header** (blocking) - File must start with `---`, include all required fields (name, description, model, color), and use only approved colors
 2. **Structure** (blocking) - Required sections must be present and non-empty
@@ -135,7 +135,7 @@ Produces: `synthesis/agent-validation.json`
 
 ### bootstrap-validator
 
-Performs final validation of the complete bootstrap output: validates each artifact against its JSON schema, checks the `impl-plan.json` hybrid DAG for correct phase ordering and structure, confirms all generated agents exist with valid prompts, and verifies critic-mode wiring is correct for agents that participate as critics.
+Performs final validation of the complete bootstrap output: validates each artifact against its JSON schema, confirms all generated agents exist with valid prompts, and verifies critic-mode wiring is correct for agents that participate as critics.
 
 Produces: `validation-report.json`, `bootstrap-report.md`
 
@@ -151,10 +151,10 @@ Produces: `validation-report.json`, `bootstrap-report.md`
 
 | Option | Description | Default |
 |---|---|---|
-| `--target-command <name>` | Target command to generate agents for | `impl-plan` |
+| `--target-command <name>` | Target command to generate agents for | `code` |
 | `--depth quick\|medium\|deep` | Discovery thoroughness | `medium` |
 | `--focus <area>` | Constrain to: frontend, backend, infra, mobile, web | (all) |
-| `--output-dir <path>` | Where to write generated agents | `.claude/agents/prd2plan/` |
+| `--output-dir <path>` | Where to write generated agents | `.claude/agents/` |
 
 **Execution modes:**
 
@@ -184,13 +184,12 @@ Produces: `validation-report.json`, `bootstrap-report.md`
 | `domains.schema.json` | domain-identifier | `discovery/domains.json` output |
 | `expert-agents.schema.json` | expertise-mapper, agent-decomposer | `synthesis/expert-agents.json` |
 | `decomposed-agents.schema.json` | agent-decomposer, generation-validator, agent-prompt-validator | `synthesis/decomposed-agents.json` |
-| `bootstrap-metadata.schema.json` | agent-prompt-generator, agent-prompt-validator | `.bootstrap-metadata.json` |
+| `bootstrap-metadata.schema.json` | agent-prompt-generator, agent-prompt-validator | `.closedloop-ai/bootstrap-metadata.json` |
 | `agent-validation.schema.json` | bootstrap-validator | `synthesis/agent-validation.json` |
-| `impl-plan-dag.schema.json` | bootstrap-validator | `.claude/commands/prd2plan/impl-plan.json` |
 
 ## Output Files
 
-All working files are written to `.claude/bootstrap/<timestamp>/` (referred to as `$RUN` in agent prompts):
+All working files are written to `.closedloop-ai/bootstrap/<timestamp>/` (referred to as `$RUN` in agent prompts):
 
 ```
 $RUN/
@@ -211,11 +210,12 @@ $RUN/
 Durable outputs written outside the run directory:
 
 ```
-.claude/agents/prd2plan/
+.claude/agents/
   <agent-name>.md            (one file per generated agent)
-  .bootstrap-metadata.json   (tracks all generated agents for --update mode)
+.closedloop-ai/
+  bootstrap-metadata.json    (tracks all generated agents for --update mode)
 .claude/settings/
-  critic-gates.json          (critic selection rules for impl-plan)
+  critic-gates.json          (critic selection rules for the code workflow)
 ```
 
 ## Usage
@@ -240,7 +240,7 @@ Analyzes the codebase at medium depth and generates all appropriate agents.
 /agent-bootstrap --update
 ```
 
-Uses SHA-256 hashes of `project-context.md` stored in `.bootstrap-metadata.json` to detect which agents need regeneration.
+Uses SHA-256 hashes of `project-context.md` stored in `.closedloop-ai/bootstrap-metadata.json` to detect which agents need regeneration.
 
 ### Minimal required agents only
 
@@ -272,10 +272,10 @@ Also detects language variants (e.g., TypeScript strict mode) and checks for lan
 
 ## After Bootstrap Completes
 
-1. Review generated agents in `.claude/agents/prd2plan/`
+1. Review generated agents in `.claude/agents/`
 2. Check `bootstrap-report.md` for a summary and any warnings
 3. Answer `open-questions.md` if present
-4. Use the generated agents with: `/impl-plan --prd <your-prd.md>`
+4. Use the generated agents with: `/code --prd <your-prd.md>`
 
 ## Universal Agents (Not Generated)
 

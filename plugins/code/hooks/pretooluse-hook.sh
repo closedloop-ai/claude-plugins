@@ -20,9 +20,79 @@ TOOL_INPUT=$(echo "$INPUT" | jq -r '.tool_input // empty')
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 
+# ── Security blocklist ──────────────────────────────────────────────────────
+# Deny credential theft patterns BEFORE any other processing (including workspace allow).
+# Fires for ALL sessions (not just ClosedLoop-managed ones).
+# Must run FIRST so that e.g. "cp ~/.ssh/id_rsa .closedloop-ai/loot" is denied
+# rather than auto-allowed by the workspace rule below.
+_SEC_DENY='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Blocked: credential access denied by security policy"}}'
+
+case "$TOOL_NAME" in
+    Bash)
+        _sec_cmd=$(echo "$TOOL_INPUT" | jq -r '.command // empty' 2>/dev/null || echo "")
+        case "$_sec_cmd" in
+            # macOS Keychain
+            *security\ find-generic-password*|*security\ find-internet-password*|*security\ dump-keychain*|\
+            *security\ delete-generic-password*|*security\ delete-internet-password*|\
+            *find-generic-password*|*find-internet-password*)
+                echo "$_SEC_DENY"
+                exit 0
+                ;;
+            # Browser profile directories
+            *"Library/Application Support/Google/Chrome"*|*"Library/Application Support/Chromium"*|\
+            *"Library/Application Support/BraveSoftware"*|*"Library/Application Support/Microsoft Edge"*|\
+            *"Library/Application Support/Firefox"*|*.mozilla/firefox*|*"Library/Safari/Cookies"*)
+                echo "$_SEC_DENY"
+                exit 0
+                ;;
+            # Browser DBs via sqlite3
+            *sqlite3*Cookies*|*sqlite3*"Login Data"*|*sqlite3*"Web Data"*)
+                echo "$_SEC_DENY"
+                exit 0
+                ;;
+            # SSH private keys
+            */.ssh/id_*)
+                echo "$_SEC_DENY"
+                exit 0
+                ;;
+            # Cloud credentials (commands and file paths)
+            */.aws/credentials*|*"gcloud auth print-access-token"*|*"gcloud auth application-default"*|\
+            */.config/gcloud/credentials.db*|*/.config/gcloud/application_default_credentials.json*|\
+            */.config/gcloud/legacy_credentials/*)
+                echo "$_SEC_DENY"
+                exit 0
+                ;;
+        esac
+        ;;
+    Read|Write|Edit)
+        _sec_file=$(echo "$TOOL_INPUT" | jq -r '.file_path // empty' 2>/dev/null || echo "")
+        case "$_sec_file" in
+            # Browser cookie/credential databases
+            */Google/Chrome/*/Cookies|*/Google/Chrome/*/Login\ Data|\
+            */Chromium/*/Cookies|*/Firefox/Profiles/*/cookies.sqlite|\
+            */Safari/Cookies/Cookies.binarycookies)
+                echo "$_SEC_DENY"
+                exit 0
+                ;;
+            # SSH private keys
+            */.ssh/id_*)
+                echo "$_SEC_DENY"
+                exit 0
+                ;;
+            # Cloud credentials
+            */.aws/credentials|*/.config/gcloud/credentials.db|\
+            */.config/gcloud/legacy_credentials/*|*/.config/gcloud/application_default_credentials.json)
+                echo "$_SEC_DENY"
+                exit 0
+                ;;
+        esac
+        ;;
+esac
+
 # Auto-allow all tools targeting .closedloop-ai/ — the plugin's general-purpose workspace.
 # Fixes background agent permission denials (they can't prompt for approval).
 # hookEventName is REQUIRED for permissionDecision to take effect — see claude-code #13890.
+# NOTE: This runs AFTER the security blocklist so credential theft via workspace paths is denied.
 _CLOSEDLOOP_ALLOW='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"Auto-allow access to .closedloop-ai/ plugin workspace"}}'
 case "$TOOL_NAME" in
     Read|Write|Edit)

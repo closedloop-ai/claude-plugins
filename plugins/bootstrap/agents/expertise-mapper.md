@@ -23,7 +23,7 @@ Create the initial expert agent mapping following these rules:
 
 ### Universal Agents (DO NOT Generate - Already Exist)
 
-These agents are part of the core impl-plan system and must NOT be included in the generation list:
+These agents are part of the core code workflow and must NOT be included in the generation list:
 
 - `prd-analyst`
 - `feature-locator`
@@ -106,13 +106,13 @@ If `--minimal` flag is set:
      {
        "agent": "test-strategist",
        "role": "required-project-specific",
-       "reason": "Always required for impl-plan",
+       "reason": "Always required for the code workflow",
        "decomposable": false
      },
      {
        "agent": "security-privacy",
        "role": "required-project-specific",
-       "reason": "Always required for impl-plan",
+       "reason": "Always required for the code workflow",
        "decomposable": false
      }
    ]
@@ -138,7 +138,7 @@ If `--minimal` flag is set:
 
 ## Output Format
 
-Write to `.claude/bootstrap/<timestamp>/synthesis/expert-agents.json`:
+Write to `.closedloop-ai/bootstrap/<timestamp>/synthesis/expert-agents.json`:
 
 ```json
 {
@@ -156,7 +156,7 @@ Write to `.claude/bootstrap/<timestamp>/synthesis/expert-agents.json`:
     {
       "agent": "test-strategist",
       "role": "required-project-specific",
-      "reason": "Always required for impl-plan",
+      "reason": "Always required for the code workflow",
       "decomposable": false,
       "domain": null,
       "language": null
@@ -164,7 +164,7 @@ Write to `.claude/bootstrap/<timestamp>/synthesis/expert-agents.json`:
     {
       "agent": "security-privacy",
       "role": "required-project-specific",
-      "reason": "Always required for impl-plan",
+      "reason": "Always required for the code workflow",
       "decomposable": false,
       "domain": null,
       "language": null

@@ -13,9 +13,9 @@ You validate that generated agent prompt files are well-formed, complete, and fo
 
 ## Inputs
 
-- `<target-dir>/.bootstrap-metadata.json` - List of generated agents (validation scope)
+- `.closedloop-ai/bootstrap-metadata.json` - List of generated agents (validation scope)
 - `$RUN/synthesis/decomposed-agents.json` - Expected agent contracts
-- CLI `--target-dir` - Target directory for agents (default: `.claude/agents/prd2plan/`)
+- CLI `--target-dir` - Target directory for agents (default: `.claude/agents/`)
 - [Optional `--legacy`] `<target-dir>/*.md` - Legacy sweep mode to validate all agents
 
 ## Task
@@ -52,10 +52,16 @@ color: ValidColor
 
 **Required fields:**
 
-- `name` - Must match filename (without .md extension)
-- `description` - Non-empty string, max 120 characters
-- `model` - Typically "sonnet" (can be "opus" or "haiku")
-- `color` - Must be EXACTLY one of (lowercase): red, blue, green, yellow, purple, orange, pink, cyan
+- `name` - Must match filename (without .md extension), kebab-case `^[a-z0-9-]+$`, max 64 chars
+- `description` - Non-empty string, max 1024 characters (warn if >200)
+- `model` - One of: `sonnet`, `opus`, `haiku`, `inherit`
+- `color` - Optional. If present, must be EXACTLY one of (lowercase): red, orange, yellow, green, blue, cyan, purple, pink
+
+**Optional fields (schema-aligned):**
+
+- `tools` - If present: must be comma-separated inline string matching `^[A-Za-z]+(,\s*[A-Za-z]+)*$`. BLOCKING if block array syntax detected.
+- `skills` - If present: must be comma-separated inline string matching `^[a-z0-9:-]+(,\s*[a-z0-9:-]+)*$`. BLOCKING if block array syntax detected.
+- `permissionMode` - If present: must be one of `default`, `acceptEdits`, `dontAsk`, `bypassPermissions`, `plan`, `ignore`
 
 **Implementation steps for YAML validation:**
 
@@ -65,35 +71,51 @@ color: ValidColor
 4. **Extract YAML block**: Lines between opening and closing `---`
 5. **Parse YAML**: Use YAML parser to validate syntax
 6. **Validate required fields**:
-   - `name`: Non-empty string, matches filename (without .md)
-   - `description`: Non-empty string, max 120 chars
-   - `model`: Typically "sonnet" (accept "opus", "haiku")
-   - `color`: MUST be one of: red, blue, green, yellow, purple, orange, pink, cyan
-7. **Validate field values**:
+   - `name`: Non-empty string, matches filename (without .md), kebab-case `^[a-z0-9-]+$`, max 64 chars
+   - `description`: Non-empty string, max 1024 chars (warn if >200)
+   - `model`: One of `sonnet`, `opus`, `haiku`, `inherit`
+   - `color`: Optional. If present, must be one of: red, orange, yellow, green, blue, cyan, purple, pink
+7. **Validate optional fields (if present)**:
+   - `tools`: Comma-separated inline string. BLOCKING if block array syntax (lines starting with `- `)
+   - `skills`: Comma-separated inline string. BLOCKING if block array syntax
+   - If `skills` is present and agent body invokes skills NOT in the `skills` list but `Skill` is not in `tools`: WARNING (the `Skill` tool is only needed to invoke skills not preloaded via frontmatter)
+   - `permissionMode`: Must be valid enum value
+8. **Validate no unknown fields**:
+   - Only allowed fields: `name`, `description`, `model`, `color`, `tools`, `skills`, `permissionMode`
+   - Flag unknown YAML fields as BLOCKING `additionalProperties` violation
+9. **Validate field values**:
    - Name matches filename exactly (case-sensitive)
-   - Color uses exact capitalization from approved list
-   - Description doesn't exceed 120 characters
+   - Color uses exact lowercase from approved list
+   - Description doesn't exceed 1024 characters
 
 **Validation rules:**
 
 - File MUST start with `---` on line 1 (no whitespace before)
 - YAML block MUST be closed with `---` (typically by line 10)
 - YAML syntax must be valid and parseable
-- All 4 required fields must be present: name, description, model, color
+- Required fields must be present: name, description
 - `name` matches filename exactly (e.g., file: `test-strategist.md` → name: `test-strategist`)
-- `color` must be lowercase: "red" not "Red", "blue" not "BLUE"
-- Description must be non-empty and ≤120 characters
+- `name` must be kebab-case `^[a-z0-9-]+$`, max 64 chars
+- `color` if present must be lowercase: "red" not "Red", "blue" not "BLUE"
+- Description must be non-empty and ≤1024 characters (warn if >200)
+- `tools` and `skills` must use comma-separated inline format, not YAML block arrays
+- If `skills` is present, `Skill` must appear in `tools`
+- No unknown YAML fields (schema uses `additionalProperties: false`)
 
 **Errors to detect (BLOCKING - fail validation):**
 
 - Line 1 is not `---`
 - Missing YAML header entirely (file starts with `#` or other content)
 - Invalid YAML syntax (parse error)
-- Missing required field (name, description, model, or color)
+- Missing required field (name or description)
 - Name mismatch: file is `api-architect.md` but header says `name: api_architect`
+- Name not kebab-case or exceeds 64 chars
 - Invalid color: "lime", "Red" (capitalized), "BLUE" (uppercase), "teal" (not in approved list)
-- Description empty or >120 characters
+- Description empty or >1024 characters
 - No closing `---` found in first 20 lines
+- `tools` or `skills` uses block array syntax instead of inline comma-separated string
+- `skills` uses block array syntax instead of inline comma-separated string
+- Unknown YAML field not in schema (additionalProperties violation)
 
 #### 2. Structure Validation
 
@@ -217,6 +239,12 @@ Check for common issues:
 - Vague task description
 - Missing project-specific context
 - Very long Task section
+
+**Missing context-engineering signals (WARNING):**
+
+- Role section lacks specific domain expertise statement (too generic)
+- Decision-Making/Validation agents have fewer than 2 output examples
+- Critic Responsibilities lack structured evaluation guidance
 
 #### 6. File Quality Checks
 
@@ -353,7 +381,7 @@ Write to `$RUN/synthesis/agent-validation.json`:
 Before running semantic checks, validate input artifacts against schemas in `.claude/schemas/`:
 
 - `$RUN/synthesis/decomposed-agents.json` → `decomposed-agents.schema.json`
-- `.claude/agents/.bootstrap-metadata.json` → `bootstrap-metadata.schema.json`
+- `.closedloop-ai/bootstrap-metadata.json` → `bootstrap-metadata.schema.json`
 
 Emit schema errors with clear paths and reasons; abort on schema failure.
 

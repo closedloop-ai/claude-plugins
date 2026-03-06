@@ -1,7 +1,7 @@
 {
   "max_parallel": 5,
   "run_base_var": "$RUN",
-  "run_base_description": "$RUN resolves to the run-scoped working directory (e.g., .claude/bootstrap/<timestamp>)",
+  "run_base_description": "$RUN resolves to the run-scoped working directory (e.g., .closedloop-ai/bootstrap/<timestamp>)",
   "steps": [
     {
       "name": "Document Ingestion",
@@ -72,8 +72,8 @@
         "$RUN/discovery/project-context.md"
       ],
       "produces": [
-        ".claude/agents/prd2plan/*.md",
-        ".claude/agents/prd2plan/.bootstrap-metadata.json"
+        ".claude/agents/*.md",
+        ".closedloop-ai/bootstrap-metadata.json"
       ],
       "fan_out_on": "$RUN/synthesis/decomposed-agents.json.finalAgents",
       "max_parallel": 5,
@@ -92,7 +92,7 @@
       "description": "Validate generated agent prompts are well-formed",
       "agent": "agent-prompt-validator",
       "requires": [
-        ".claude/agents/prd2plan/.bootstrap-metadata.json",
+        ".closedloop-ai/bootstrap-metadata.json",
         "$RUN/synthesis/decomposed-agents.json"
       ],
       "produces": ["$RUN/synthesis/agent-validation.json"],
@@ -103,7 +103,6 @@
       "description": "Validate agent suite and DAG integrity",
       "agent": "bootstrap-validator",
       "requires": [
-        ".claude/commands/prd2plan/impl-plan.json",
         "$RUN/synthesis/agent-validation.json"
       ],
       "produces": ["$RUN/validation-report.json", "$RUN/bootstrap-report.md"],
@@ -112,8 +111,8 @@
   ],
   "defaults": {
     "depth": "medium",
-    "target_command": "impl-plan",
-    "output_dir": ".claude/agents/prd2plan/",
+    "target_command": "code",
+    "output_dir": ".claude/agents/",
     "strategy": "backup"
   }
 }

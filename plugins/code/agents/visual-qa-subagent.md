@@ -2,7 +2,7 @@
 name: visual-qa-subagent
 description: Performs visual QA inspection using Playwright browser automation.
 model: sonnet
-tools: Read, Write, Edit, Bash, mcp__playwright__browser_navigate, mcp__playwright__browser_snapshot, mcp__playwright__browser_take_screenshot, mcp__playwright__browser_click, mcp__playwright__browser_type, mcp__playwright__browser_evaluate
+tools: Read, Write, Edit, mcp__playwright__browser_navigate, mcp__playwright__browser_snapshot, mcp__playwright__browser_take_screenshot, mcp__playwright__browser_click, mcp__playwright__browser_type, mcp__playwright__browser_evaluate
 ---
 
 # Visual QA Subagent

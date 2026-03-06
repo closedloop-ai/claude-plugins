@@ -18,7 +18,7 @@
     "universalAgents": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "List of universal agents that are part of the core impl-plan system and must NOT be generated"
+      "description": "List of universal agents that are part of the core code workflow and must NOT be generated"
     },
     "candidateExperts": {
       "type": "array",

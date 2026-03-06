@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code v1.0.5
+
+#### Changed
+- Updated `review-delta.schema.json` description to reference "code hybrid workflow" instead of "impl-plan hybrid workflow"
+- Updated `compliance-checkpoint.md` to reference `/code` instead of `/impl-plan`
+- Removed `Bash` from `visual-qa-subagent` tool list to prevent shell access during visual QA
+
+#### Security
+- Added credential theft blocklist to `pretooluse-hook.sh`: denies Bash commands and file access targeting macOS Keychain, browser cookie databases, SSH private keys, and cloud credentials
+- Blocklist applies to all Claude sessions, not just ClosedLoop-managed sessions
+
+### bootstrap v1.1.0
+
+#### Added
+- Schema-aligned constraints in AGENT_FORMAT.md: `tools`, `skills`, `permissionMode` fields, `name` kebab-case/64-char limit, `description` 1024-char limit, expanded 8-color enum with `cyan`/`pink`
+- Context-engineering activation in agent-prompt-generator via `platform:context-engineering` skill
+- Tools/skills inline format validation in agent-prompt-validator (BLOCKING on block array syntax)
+- `additionalProperties` violation detection and `skills`→`Skill` tool cross-check
+- Critic Review Schema Alignment (Check 8) and critic-gates.json Structure Validation (Check 9) in generation-validator
+- critic-gates.json schema validation in bootstrap-validator
+- Context-engineering compliance warnings in anti-pattern detection
+
+#### Changed
+- `description` max raised from 120 → 1024 chars (warn >200)
+- `model` enum now accepts `inherit`
+- `color` field changed from required to optional; enum expanded to 8 values
+- Removed legacy `prd2plan/` directory namespace — agent output now writes to `.claude/agents/` (flat)
+- Moved `.bootstrap-metadata.json` from `.claude/agents/prd2plan/` to `.closedloop-ai/bootstrap-metadata.json`
+- Replaced all `/impl-plan` command references with `/code`
+- Removed DAG validation infrastructure (deleted `impl-plan-dag.schema.json`, removed Check 2 from bootstrap-validator)
+- Updated default `--target-command` from `impl-plan` to `code`
+- Updated default `--output-dir` from `.claude/agents/prd2plan/` to `.claude/agents/`
+
+### code v1.0.3
+
+#### Changed
+- Migrated learnings path from `~/.claude/.learnings/` to `~/.closedloop-ai/learnings/` in `pretooluse-hook.sh` and `subagent-start-hook.sh` with legacy fallback
+
+### self-learning v1.0.2
+
+#### Changed
+- Migrated learnings path from `~/.claude/.learnings/` to `~/.closedloop-ai/learnings/` across commands, tools, and skills with legacy fallback
+
 ### bootstrap v1.0.0
 
 #### Added

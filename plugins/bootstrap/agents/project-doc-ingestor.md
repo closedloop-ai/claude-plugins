@@ -111,7 +111,7 @@ If `--focus` flag provided (e.g., `--focus backend`):
 
 ## Output Format
 
-Write to `.claude/bootstrap/<timestamp>/discovery/project-context.md`:
+Write to `.closedloop-ai/bootstrap/<timestamp>/discovery/project-context.md`:
 
 ```markdown
 # Project Context (Ingested Documentation)

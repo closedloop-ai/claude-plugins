@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://closedloop.ai/schemas/review-delta.schema.json",
   "title": "Critic Review Delta",
-  "description": "Structured feedback emitted by critic agents during the impl-plan hybrid workflow.",
+  "description": "Structured feedback emitted by critic agents during the code hybrid workflow.",
   "type": "object",
   "anyOf": [{ "required": ["items"] }, { "required": ["review_items"] }],
   "properties": {

@@ -324,6 +324,15 @@ Reads `perf.jsonl` and prints timing tables for iterations, pipeline steps, sub-
 python3 perf_summary.py --workdir /path/to/workdir [--run-id 20240115-103000] [--format text|json]
 ```
 
+### `write_merged_patterns.py`
+
+Reads `merge-result.json` (produced by `/process-learnings`) and writes it to `org-patterns.toon` using deterministic TOON serialization. Separates LLM reasoning (dedup, validation, merge) from the mechanical serialization step. Validates all patterns before writing, sorts by confidence and flags priority, and enforces a 50-pattern cap. Creates a `.bak` backup before overwriting and uses atomic write (`.tmp` then rename).
+
+**Usage:**
+```bash
+python3 write_merged_patterns.py --merge-result /path/to/merge-result.json [--toon-path /path/to/org-patterns.toon] [--dry-run]
+```
+
 ## Directory Structure
 
 ```
