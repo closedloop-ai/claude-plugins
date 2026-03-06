@@ -28,6 +28,7 @@ You will receive:
 |----------|------|-------------|
 | `plan.json` | `$CLOSEDLOOP_WORKDIR/plan.json` | Implementation plan JSON |
 | `prd.md` | `$CLOSEDLOOP_WORKDIR/prd.md` | Product requirements document |
+| `investigation-log.md` | `$CLOSEDLOOP_WORKDIR/investigation-log.md` | Prior discovery findings and codebase evidence |
 
 ### Code Type Artifacts
 
@@ -36,6 +37,7 @@ You will receive:
 | `git_diff` | Computed via `git diff $(cat $CLOSEDLOOP_WORKDIR/.start-sha) HEAD` | Git diff from start SHA to HEAD |
 | `changed-files.json` | `$CLOSEDLOOP_WORKDIR/.learnings/changed-files.json` | List of modified files with metadata |
 | `plan.json` | `$CLOSEDLOOP_WORKDIR/plan.json` | Implementation plan for context |
+| `investigation-log.md` | `$CLOSEDLOOP_WORKDIR/investigation-log.md` | Prior exploration evidence for architecture and reuse patterns |
 | `build-result.json` | `$CLOSEDLOOP_WORKDIR/.learnings/build-result.json` | Build/validation results |
 | `outcomes.log` | `$CLOSEDLOOP_WORKDIR/.learnings/outcomes.log` | Task execution outcomes |
 
@@ -47,16 +49,18 @@ You will receive:
 
 | Artifact | Percentage | Tokens |
 |----------|------------|--------|
-| `plan.json` | 60% | 18,000 |
-| `prd.md` | 40% | 12,000 |
+| `plan.json` | 50% | 15,000 |
+| `prd.md` | 35% | 10,500 |
+| `investigation-log.md` | 15% | 4,500 |
 
 ### Code Type Budgets
 
 | Artifact | Percentage | Tokens |
 |----------|------------|--------|
-| `git_diff` | 50% | 15,000 |
+| `git_diff` | 40% | 12,000 |
 | `changed-files.json` | 10% | 3,000 |
 | `plan.json` | 20% | 6,000 |
+| `investigation-log.md` | 10% | 3,000 |
 | `build-result.json` | 10% | 3,000 |
 | `outcomes.log` | 10% | 3,000 |
 
@@ -225,6 +229,7 @@ Construct the final context bundle:
 - **Behavior:** Skip artifact, add to `metadata.skipped_artifacts`, continue processing
 - **Warning:** Add to `metadata.warnings`: `"Artifact {name} not found at {path}"`
 - **Don't fail:** Continue with remaining artifacts
+- **Special case (`investigation-log.md`):** Treat as optional context enhancer for both plan and code modes. Never fail context preparation if it is missing.
 
 ### Git Diff Computation Failure (code type)
 
@@ -299,8 +304,9 @@ Then emit:
 
 1. **Always use absolute paths** when reading/writing files: `$CLOSEDLOOP_WORKDIR/<relative_path>`
 2. **Handle missing files gracefully** - don't fail the entire process
-3. **Enforce 30K token ceiling strictly** - judges cannot process more
-4. **Multi-repo concatenation** - ensure each repo's artifacts are clearly prefixed
-5. **Validate output JSON** before writing - catch schema errors early
-6. **Git diff is computed**, not read - use Bash tool with proper SHA handling
-7. **count_tokens.py requires ANTHROPIC_API_KEY** - ensure environment variable is set
+3. **Use `investigation-log.md` as prior-discovery context** when present, but keep implementation evidence (`git_diff`, build/test artifacts) primary in code mode
+4. **Enforce 30K token ceiling strictly** - judges cannot process more
+5. **Multi-repo concatenation** - ensure each repo's artifacts are clearly prefixed
+6. **Validate output JSON** before writing - catch schema errors early
+7. **Git diff is computed**, not read - use Bash tool with proper SHA handling
+8. **count_tokens.py requires ANTHROPIC_API_KEY** - ensure environment variable is set

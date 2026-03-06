@@ -259,9 +259,21 @@ After validating `prd.md` and `plan.json`, resolve supporting context for plan j
 
 **For code artifacts (--artifact-type code):**
 ```bash
+# Resolve investigation context for code judges (best effort)
+if [ ! -f "$CLOSEDLOOP_WORKDIR/investigation-log.md" ]; then
+  echo "INFO: investigation-log.md missing. Attempting best-effort generation via @code:pre-explorer..."
+  # Launch @code:pre-explorer with WORKDIR=$CLOSEDLOOP_WORKDIR
+  # If unavailable/fails, continue with warning (non-blocking for code judges)
+fi
+
 # Launch context-manager-for-judges agent to prepare compressed context
 # This agent reads code artifacts (git diff, changed-files.json, etc.)
 # and produces code-context.json with token-budgeted compression
+
+# investigation-log.md is optional secondary context for code judging
+if [ ! -f "$CLOSEDLOOP_WORKDIR/investigation-log.md" ]; then
+  echo "WARNING: investigation-log.md unavailable. Continuing code judges with code-context.json only."
+fi
 
 # Verify code-context.json exists after context manager completes
 if [ ! -f "$CLOSEDLOOP_WORKDIR/code-context.json" ]; then
@@ -392,7 +404,10 @@ Use $CLOSEDLOOP_WORKDIR/investigation-log.md as supporting context when it exist
 
 **For code artifacts:**
 ```
-WORKDIR=$CLOSEDLOOP_WORKDIR. Evaluate the implemented code using the compressed context at $CLOSEDLOOP_WORKDIR/code-context.json. Apply your {judge_name} criteria to assess code quality.
+WORKDIR=$CLOSEDLOOP_WORKDIR. Evaluate the implemented code using the compressed context at $CLOSEDLOOP_WORKDIR/code-context.json.
+Also use $CLOSEDLOOP_WORKDIR/investigation-log.md as supporting prior-discovery context when it exists (or was generated during preflight).
+Treat code-context.json as primary implementation evidence and investigation-log.md as secondary context.
+Apply your {judge_name} criteria to assess code quality.
 ```
 
 </prompt_template>
@@ -715,6 +730,7 @@ Before marking this task complete, verify:
 **For code artifacts (--artifact-type code):**
 - [ ] **Context preparation** - context-manager-for-judges agent launched successfully
 - [ ] **Context validation** - code-context.json exists at `$CLOSEDLOOP_WORKDIR`
+- [ ] **Investigation context resolution** - `investigation-log.md` reused or generated best-effort; missing file does not block code judging
 - [ ] **Preamble injection** - code_preamble.md prepended to all judge prompts
 - [ ] **Parallel execution** - All 11 judges launched in 3 batches (max 4 per batch)
 - [ ] **Result aggregation** - Valid EvaluationReport with 11 CaseScore entries
@@ -743,6 +759,7 @@ Before marking this task complete, verify:
 | "Preamble file not found" | Missing preamble .md file | Verify skills/artifact-type-tailored-context/preambles/{artifact_type}_preamble.md exists |
 | "pre-explorer unavailable" | `@code:pre-explorer` not installed/resolvable | Log warning and use internal fallback investigation to create `investigation-log.md` |
 | "investigation-log.md missing after fallback" | Both pre-explorer and internal fallback failed | Log warning and continue with `plan.json` + `prd.md` only |
+| "investigation-log.md missing in code mode" | pre-explorer unavailable or generation failed during code preflight | Log warning and continue with `code-context.json` only (non-blocking) |
 | "Invalid --artifact-type value" | Unsupported artifact type | Use only 'plan' or 'code' |
 
 </troubleshooting>

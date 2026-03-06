@@ -13,6 +13,7 @@ The artifact you are reviewing is a **git diff** showing changes made to impleme
 Along with the git diff, you may receive supporting context including:
 
 - **Implementation plan**: The requirements and tasks that guided the implementation
+- **Investigation log**: Prior codebase discovery findings and architecture/reuse clues
 - **Changed files list**: Summary of which files were added, modified, or deleted
 - **Build results**: Compilation, linting, and type-checking outcomes
 - **Test outcomes**: Results from automated test execution
@@ -55,6 +56,8 @@ When assessing implemented code, focus on these key dimensions:
 ## Evaluation Context
 
 **Implementation plan reference**: The code you're evaluating was written to satisfy specific acceptance criteria from an implementation plan. Compare the implemented code against those requirements to assess completeness and correctness.
+
+**Investigation log reference**: If `investigation-log.md` is present, use it as secondary prior-discovery context (for architecture patterns, reuse opportunities, and historical findings). Do not let it override direct implementation evidence from `code-context.json`/diff artifacts.
 
 **Build validation**: If build results are provided, consider compilation errors, linting warnings, or type errors as signals of code quality issues.
 

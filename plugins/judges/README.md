@@ -9,8 +9,8 @@ A collection of specialized LLM judge agents that evaluate implementation plans 
 - **Parallel execution** via batched Task calls (up to 4 concurrent judges per batch)
 - **Structured output** using a validated `CaseScore` JSON schema with Pydantic enforcement
 - **Artifact compression** to keep large artifacts within token budgets before judge invocation
-- **Investigation context reuse** in plan mode via `$CLOSEDLOOP_WORKDIR/investigation-log.md` when available
-- **Resilient plan preflight fallback**: probe `@code:pre-explorer`, then run internal best-effort investigation if unavailable
+- **Investigation context reuse** in both plan and code modes via `$CLOSEDLOOP_WORKDIR/investigation-log.md` when available
+- **Resilient preflight fallback**: in plan mode, probe `@code:pre-explorer`, then run internal best-effort investigation if unavailable; in code mode, attempt best-effort pre-explorer generation and continue non-blocking if unavailable
 - **Evaluation caching** to skip redundant plan evaluations when the plan has not changed
 - **Configurable thresholds** via JSON override files at run-level or repo-level
 - **Performance telemetry** written to `perf.jsonl` for each pipeline phase
@@ -329,6 +329,7 @@ Orchestrates parallel judge agent execution, aggregates `CaseScore` results, and
 
 **Code mode** (`--artifact-type code`):
 - Launches `context-manager-for-judges` agent to produce `code-context.json`
+- Reuses `$CLOSEDLOOP_WORKDIR/investigation-log.md` as secondary context when available (best-effort generation if missing)
 - Prepends `code_preamble.md` to each judge prompt
 - Runs 11 judges in 3 sequential batches
 - Writes `$CLOSEDLOOP_WORKDIR/code-judges.json`
@@ -390,8 +391,9 @@ Checks for a cached plan evaluation result before launching the plan-evaluator a
 @judges:run-judges --artifact-type code
 ```
 
-3. The skill runs `context-manager-for-judges` first to produce `code-context.json`, then launches 11 judges.
-4. Results are written to `$CLOSEDLOOP_WORKDIR/code-judges.json`.
+3. The skill resolves `investigation-log.md` as best-effort supporting context (reuse if present; attempt generation when missing; continue if unavailable).
+4. The skill runs `context-manager-for-judges` first to produce `code-context.json`, then launches 11 judges.
+5. Results are written to `$CLOSEDLOOP_WORKDIR/code-judges.json`.
 
 ### Configuring Threshold Overrides
 
