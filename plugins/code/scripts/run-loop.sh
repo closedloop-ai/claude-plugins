@@ -316,7 +316,7 @@ run_judges_if_needed() {
     (endswith("plan.json") | not) and
     (endswith("plan.md") | not) and
     (endswith("prd.md") | not) and
-    endswith("judges.json") | not) and
+    (endswith("judges.json") | not) and
     ((startswith(".learnings/") or contains("/.learnings/")) | not)
   )] | length' "$workdir/.learnings/changed-files.json" 2>/dev/null || echo "0")
   if [[ "${changed_count:-0}" -eq 0 ]]; then
