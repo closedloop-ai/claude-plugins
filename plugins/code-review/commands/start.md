@@ -13,16 +13,16 @@ Run a multi-agent code review with partitioned deep review, deterministic hygien
 ## Usage
 
 ```
-/review                              # Review all changes on current branch vs main (default)
-/review staged                       # Review only staged changes
-/review file1 file2                  # Review specific files
-/review 123                          # Review PR #123 diff locally (no posting)
-/review --github                     # GitHub CI: auto-detect PR from branch, post inline comments
-/review --github 123                 # GitHub CI: review PR #123, post inline comments
-/review --hygiene-only               # Fast hygiene-only check (zero LLM tokens)
-/review --base develop               # Diff against a specific base branch
-/review --since-last-review          # Review only changes since last successful review
-/review --full-review                # Force full diff (disable auto-incremental)
+/start                              # Review all changes on current branch vs main (default)
+/start staged                       # Review only staged changes
+/start file1 file2                  # Review specific files
+/start 123                          # Review PR #123 diff locally (no posting)
+/start --github                     # GitHub CI: auto-detect PR from branch, post inline comments
+/start --github 123                 # GitHub CI: review PR #123, post inline comments
+/start --hygiene-only               # Fast hygiene-only check (zero LLM tokens)
+/start --base develop               # Diff against a specific base branch
+/start --since-last-review          # Review only changes since last successful review
+/start --full-review                # Force full diff (disable auto-incremental)
 ```
 
 ## GitHub Mode Constraints
