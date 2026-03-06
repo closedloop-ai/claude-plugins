@@ -45,6 +45,20 @@ The `eval-cache` skill short-circuits plan evaluation when `plan-evaluation.json
 
 The `artifact-type-tailored-context` skill compresses individual artifact files within a token budget using tiered summarization (full content, intelligent compression, or hard truncation) before passing them to judges.
 
+## Support Agents
+
+### context-manager-for-judges
+
+**Purpose:** Prepares compressed context bundles for code judge evaluation before judge batches run.
+
+**Model:** sonnet
+
+**Responsibilities:**
+- Collect plan/code evaluation artifacts from `$CLOSEDLOOP_WORKDIR`
+- Allocate and enforce a 30,000-token budget across artifacts
+- Invoke `judges:artifact-type-tailored-context` per artifact
+- Write `plan-context.json` or `code-context.json` with compaction metadata
+
 ## Judge Agents
 
 All judges output a `CaseScore` JSON object with:

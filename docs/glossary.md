@@ -28,7 +28,7 @@ An agent invoked by the orchestrator (or another agent) via Claude Code's Task t
 A read-only evaluation agent that scores implementation plans or code against quality principles (DRY, KISS, SOLID, readability, goal alignment, etc.). Judges produce structured `CaseScore` JSON reports with `final_status` (1=PASS, 2=FAIL, 3=ERROR) consumed by `plan-writer` to refine the plan. The closedloop plugin includes 13 judge agents.
 
 **Context Manager for Judges**
-The coordinator agent (`context-manager-for-judges`) that prepares compressed context within a 30K token budget and dispatches parallel judge runs. Handles both plan-type and code-type evaluations with different budget allocations.
+The support agent (`context-manager-for-judges`) in the `judges` plugin that prepares compressed context within a 30K token budget. Handles both plan-type and code-type evaluations with different budget allocations.
 
 ## Planning
 
