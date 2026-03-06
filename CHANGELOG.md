@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### self-learning v1.0.3
+
+#### Fixed
+- Fixed pattern cap trimming to sort by staleness flags only instead of confidence — low-confidence patterns were always dropped before being observed, preventing them from ever earning higher confidence
+- Fixed extraneous f-string prefix lint warning in `write_merged_patterns.py` default header
+
+#### Changed
+- Updated `process-learnings` cap strategy to trim `[PRUNE]` then `[STALE]` then `[REVIEW]`, with `seen_count` as tiebreaker
+
 ### code-review v1.1.0
 
 #### Breaking
