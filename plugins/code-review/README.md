@@ -19,6 +19,7 @@ plugins/code-review/
   .claude-plugin/plugin.json         Plugin manifest
   commands/
     review.md                        Main /code-review command (orchestrator)
+  prompts/
     github-review.md                 GitHub-mode constraints and output steps (loaded conditionally)
   tools/
     prompts/shared_prompt.txt        Shared reviewer constraints injected into every agent prompt

@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code-review v1.1.0
+
+#### Breaking
+- Removed `github-review` slash command — `/code-review:github-review` is no longer a valid entry point. Use `/code-review:review --github` instead.
+- Moved `github-review.md` from `commands/` to `prompts/` — callers using `${CLAUDE_PLUGIN_ROOT}/commands/github-review.md` must update to `${CLAUDE_PLUGIN_ROOT}/prompts/github-review.md`
+
+#### Changed
+- Unified session directory path for all modes — removed `$RUNNER_TEMP` override in GitHub CI, now uses `.closedloop-ai/code-review/cr-<RANDOM>` everywhere
+- Replaced Bash heredoc/cat usage with Write and Read tools for PR metadata file operations in `github-review.md`
+- Updated temp file path references from `$RUNNER_TEMP/cr-review/` to `<CR_DIR>/*` in GitHub mode constraints
+- Fixed usage examples from `/code-review` to `/review` to match the command filename
+- Fixed internal references from `code-review-github.md` to `github-review.md`
+
+#### Added
+- Compound Bash command prohibition in GitHub mode — no `&&`, `||`, `;`, or `|` pipes allowed
+
 ### code v1.0.5
 
 #### Changed

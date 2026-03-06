@@ -1,7 +1,3 @@
----
-description: "GitHub-specific steps for /code-review — loaded conditionally by the main command"
----
-
 # GitHub Mode: Constraints and Output Steps
 
 ## Allowed Actions (read-only review + file-based handoff)
@@ -12,7 +8,8 @@ These constraints apply ONLY when `MODE=github`. Local mode has no restrictions.
 - ✅ Write validated findings to `.claude/code-review-findings.json` (workflow posts inline comments)
 - ✅ Write outdated thread IDs to `.claude/code-review-threads.json` (workflow resolves threads)
 - ✅ Write review summary to `.claude/code-review-summary.md` (workflow handles posting)
-- ✅ Write temp files to `$RUNNER_TEMP/cr-review/`
+- ✅ Write temp files to `<CR_DIR>/*` (session directory created during setup)
+- ❌ Do NOT use compound Bash commands — no `&&`, `||`, `;`, or `|` pipes. Each Bash call must be a single simple command. CI permissions deny compound commands by design.
 - ❌ Do NOT checkout, switch branches, or modify any code
 - ❌ Do NOT create, edit, or modify any files in the repository (except `.claude/code-review-summary.md`, `.claude/code-review-findings.json`, `.claude/code-review-threads.json`, and `$CR_DIR/*`)
 - ❌ Do NOT call `resolveReviewThread` mutations directly
@@ -85,16 +82,14 @@ DIFF_TIP="origin/${HEAD_REF}"
 Always use the PR head ref (`origin/<headRefName>`) so detached HEAD checkouts and
 cross-branch reviews diff the correct commits.
 
-Write PR metadata to disk for Steps 6-8:
-```bash
-cat > $CR_DIR/github_pr.json <<EOF
+Write PR metadata to disk for Steps 6-8 using the Write tool (NOT Bash) — write to `<CR_DIR>/github_pr.json`:
+```json
 {
-  "pr_number": $PR_NUMBER,
-  "head_sha": "$HEAD_SHA",
-  "owner": "$OWNER",
-  "repo_name": "$REPO_NAME"
+  "pr_number": <PR_NUMBER>,
+  "head_sha": "<HEAD_SHA>",
+  "owner": "<OWNER>",
+  "repo_name": "<REPO_NAME>"
 }
-EOF
 ```
 
 ---
@@ -103,11 +98,7 @@ EOF
 
 Mark todo "Write findings and thread data to files" as `in_progress`.
 
-Read PR metadata from disk:
-```bash
-cat $CR_DIR/github_pr.json
-```
-
+Read PR metadata from disk using the Read tool on `<CR_DIR>/github_pr.json`.
 Extract `PR_NUMBER`, `HEAD_SHA`, `OWNER`, `REPO_NAME`.
 
 ### 6a: Identify Outdated Threads
