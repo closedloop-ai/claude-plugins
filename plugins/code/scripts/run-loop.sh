@@ -145,11 +145,13 @@ ensure_agents_snapshot() {
   store_agents_snapshot "$workdir"
 }
 
-# Snapshot all .md agent files into workdir/$AGENTS_SNAPSHOT_DIR with manifest.json
+# Snapshot all .md judge agent files into workdir/$AGENTS_SNAPSHOT_DIR with manifest.json
 store_agents_snapshot() {
   local workdir="$1"
   local snapshot_dir="$workdir/$AGENTS_SNAPSHOT_DIR"
-  local agents_src="$SCRIPTS_DIR/../agents"
+  local plugin_name="judges"
+  local plugin_dir="$SCRIPTS_DIR/../../$plugin_name"
+  local agents_src="$plugin_dir/agents"
 
   # Resolve agents source to absolute path
   agents_src="$(cd "$agents_src" 2>/dev/null && pwd || echo "$agents_src")"
@@ -191,7 +193,7 @@ store_agents_snapshot() {
   file_count=$(echo "$file_list" | grep -c . || echo "0")
 
   local plugin_version
-  plugin_version=$(jq -r '.version // "unknown"' "$SCRIPTS_DIR/../.claude-plugin/plugin.json" 2>/dev/null || echo "unknown")
+  plugin_version=$(jq -r '.version // "unknown"' "$plugin_dir/.claude-plugin/plugin.json" 2>/dev/null || echo "unknown")
 
   local run_id
   run_id="${RUN_ID:-$(basename "$workdir")}"
@@ -200,7 +202,7 @@ store_agents_snapshot() {
   created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
   jq -n \
-    --arg plugin "code" \
+    --arg plugin "$plugin_name" \
     --arg plugin_version "$plugin_version" \
     --arg run_id "$run_id" \
     --arg created_at "$created_at" \
