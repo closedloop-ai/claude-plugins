@@ -1,6 +1,9 @@
 # claude-plugins
+<img width="832" height="365" alt="image" src="https://github.com/user-attachments/assets/6d5ccbb9-f85d-48a8-ba3f-d42a7a12ead7" />
 
-Open-source Claude Code plugins by [ClosedLoop](https://closedloop.ai) — extending Claude Code with planning, code review, quality judges, and self-learning capabilities.
+Open-source Claude Code plugins by ClosedLoop — extending Claude Code with planning, code review, quality judges, and self-learning capabilities.
+Why ClosedLoop?
+ClosedLoop is an AI platform that brings the speed of individual AI-driven development to the full software development team. We're offering our agents as open sourced Claude Code plugins because we just couldn't keep this a secret for ourselves. Check out our agents for planning, code reviews, judging quality and more that outperform Opus 4.6 and Sonnet 4.5 out of the box.
 
 ## Plugins
 
@@ -31,9 +34,16 @@ cd claude-plugins
 git config core.hooksPath .githooks
 ```
 
+## Benchmarks
+<img width="1421" height="862" alt="image" src="https://github.com/user-attachments/assets/82e42af7-9386-4a36-9bc0-2fd5d3564eba" />
+
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, workflow, and code style guidelines.
+
+## Disclaimer
+Our claude code plugins are a low-key engineering preview of the agents that run the larger ClosedLoop platform. These agents should be used for testing in trusted environments.
 
 ## License
 
