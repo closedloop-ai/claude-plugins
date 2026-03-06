@@ -25,12 +25,9 @@ Each task should specify:
 
 ## Your Role as a Judge
 
-Your evaluation focuses on **quality attributes specific to your judge type** (e.g., DRY principles, readability, test coverage, SOLID principles).
+Your evaluation focuses on **quality attributes specific to your judge type**.
 
-**Evaluate the plan, not the PRD.** Your job is to assess whether the implementation plan itself exhibits the quality you're judging. For example:
-- **DRY Judge**: Does the plan propose duplicated logic or repeated implementations?
-- **Readability Judge**: Is the plan document clear, well-structured, and easy for developers to follow?
-- **Test Judge**: Does the plan include adequate test coverage specifications?
+**Evaluate the plan, not the PRD.** Your job is to assess whether the implementation plan itself exhibits the quality you're judging.
 
 ## PRD Context (When Available)
 
@@ -40,6 +37,14 @@ If a PRD was provided in your context, use it to:
 - Assess alignment between requirements and proposed implementation
 
 **Do not penalize the plan for PRD quality issues.** If the PRD is vague or incomplete, focus on whether the plan is well-structured and implementable given those constraints.
+
+## Investigation Context (When Available)
+
+If `investigation-log.md` is present in your prompt context, use it as **supporting evidence** about existing code patterns, integration points, and known uncertainties.
+
+- Treat `plan.json` and `prd.md` as the primary sources of truth.
+- Use investigation details to refine judgment quality (for example, feasibility, reuse opportunities, or hidden coupling risks).
+- Do not treat investigation-log content as a hard requirement unless it is also reflected in plan tasks or PRD requirements.
 
 ## Scoring Principles
 

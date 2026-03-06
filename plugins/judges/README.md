@@ -9,6 +9,8 @@ A collection of specialized LLM judge agents that evaluate implementation plans 
 - **Parallel execution** via batched Task calls (up to 4 concurrent judges per batch)
 - **Structured output** using a validated `CaseScore` JSON schema with Pydantic enforcement
 - **Artifact compression** to keep large artifacts within token budgets before judge invocation
+- **Investigation context reuse** in plan mode via `$CLOSEDLOOP_WORKDIR/investigation-log.md` when available
+- **Resilient plan preflight fallback**: probe `@code:pre-explorer`, then run internal best-effort investigation if unavailable
 - **Evaluation caching** to skip redundant plan evaluations when the plan has not changed
 - **Configurable thresholds** via JSON override files at run-level or repo-level
 - **Performance telemetry** written to `perf.jsonl` for each pipeline phase
@@ -320,6 +322,8 @@ Orchestrates parallel judge agent execution, aggregates `CaseScore` results, and
 
 **Plan mode** (default):
 - Reads `prd.md` and `plan.json` from `$CLOSEDLOOP_WORKDIR`
+- Reuses `$CLOSEDLOOP_WORKDIR/investigation-log.md` as supporting context when present
+- If `investigation-log.md` is missing: probes `@code:pre-explorer`; if unavailable/failing, generates a lightweight internal investigation log
 - Runs 13 judges in 4 sequential batches (max 4 concurrent per batch)
 - Writes `$CLOSEDLOOP_WORKDIR/judges.json`
 
@@ -368,13 +372,14 @@ Checks for a cached plan evaluation result before launching the plan-evaluator a
 ### Evaluating an Implementation Plan
 
 1. Ensure `$CLOSEDLOOP_WORKDIR/prd.md` and `$CLOSEDLOOP_WORKDIR/plan.json` exist.
-2. Invoke the `run-judges` skill (default artifact type is `plan`):
+2. Optional but preferred: include `$CLOSEDLOOP_WORKDIR/investigation-log.md` (the skill can generate it via fallback if missing).
+3. Invoke the `run-judges` skill (default artifact type is `plan`):
 
 ```
 @judges:run-judges
 ```
 
-3. Results are written to `$CLOSEDLOOP_WORKDIR/judges.json`.
+4. Results are written to `$CLOSEDLOOP_WORKDIR/judges.json`.
 
 ### Evaluating Implemented Code
 

@@ -438,7 +438,7 @@ After a full run, the work directory will contain:
   plan.json                  # Structured implementation plan
   plan.md                    # Human-readable plan (synced from plan.json)
   plan-evaluation.json       # Simple mode evaluation results
-  investigation-log.md       # Codebase exploration findings
+  investigation-log.md       # Codebase exploration findings (also consumed by plan judges when available)
   requirements-extract.json  # PRD extraction (from pre-explorer)
   code-map.json              # Codebase file map (from pre-explorer)
   state.json                 # Current phase/status for monitoring

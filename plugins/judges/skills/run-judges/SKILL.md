@@ -221,6 +221,42 @@ if [ ! -f "$CLOSEDLOOP_WORKDIR/plan.json" ]; then
 fi
 ```
 
+**Investigation log resolution (plan mode only):**
+
+After validating `prd.md` and `plan.json`, resolve supporting context for plan judges:
+
+1. **Use existing file first**
+   - If `$CLOSEDLOOP_WORKDIR/investigation-log.md` exists, use it as-is.
+
+2. **Check `@code:pre-explorer` availability before invoking**
+   - Perform an explicit capability probe for `@code:pre-explorer` in the active Claude/plugin environment.
+   - Treat "unknown agent", "agent not found", or plugin resolution errors as **pre-explorer unavailable**.
+   - Recommended probe pattern:
+     - Attempt a minimal `Task()` call targeting `@code:pre-explorer`.
+     - If the platform rejects the agent type before execution, classify as unavailable and continue to internal fallback.
+
+3. **If available, invoke pre-explorer**
+   - Launch `@code:pre-explorer` with `WORKDIR=$CLOSEDLOOP_WORKDIR` to generate missing pre-exploration artifacts.
+   - Re-check for `$CLOSEDLOOP_WORKDIR/investigation-log.md` after completion.
+
+4. **If unavailable or invocation failed, run internal fallback**
+   - Generate `investigation-log.md` with a lightweight local-only investigation.
+   - Keep it fast and deterministic (no external web research).
+   - Internal fallback should:
+     - Read `prd.md` and extract top entities/actions as search seeds.
+     - Run targeted `Glob`/`Grep` against the local repository for likely implementation files.
+     - Record top relevant files and short rationale under `Files Discovered` / `Key Findings`.
+     - Add requirement-to-code evidence links under `Requirements Mapping`.
+   - Use the canonical sections:
+     - `## Search Strategy`
+     - `## Files Discovered`
+     - `## Key Findings`
+     - `## Requirements Mapping`
+     - `## Uncertainties`
+
+5. **Never block plan judges on investigation context**
+   - If log generation still fails, emit a warning and continue with `plan.json` + `prd.md` only.
+
 **For code artifacts (--artifact-type code):**
 ```bash
 # Launch context-manager-for-judges agent to prepare compressed context
@@ -350,7 +386,8 @@ The run-judges skill supports two artifact types with different judge configurat
 
 **For plan artifacts:**
 ```
-WORKDIR=$CLOSEDLOOP_WORKDIR. Evaluate the plan at $CLOSEDLOOP_WORKDIR/plan.json against the PRD at $CLOSEDLOOP_WORKDIR/prd.md
+WORKDIR=$CLOSEDLOOP_WORKDIR. Evaluate the plan at $CLOSEDLOOP_WORKDIR/plan.json against the PRD at $CLOSEDLOOP_WORKDIR/prd.md.
+Use $CLOSEDLOOP_WORKDIR/investigation-log.md as supporting context when it exists (or was generated during preflight). Treat plan.json and prd.md as the primary sources of truth.
 ```
 
 **For code artifacts:**
@@ -669,6 +706,7 @@ Before marking this task complete, verify:
 
 **For plan artifacts (default):**
 - [ ] **Input validation** - prd.md and plan.json exist (or graceful skip)
+- [ ] **Investigation context resolution** - `investigation-log.md` reused, generated via pre-explorer, or best-effort generated internally
 - [ ] **Parallel execution** - All 13 judges launched in 4 batches (max 4 per batch)
 - [ ] **Result aggregation** - Valid EvaluationReport with 13 CaseScore entries
 - [ ] **File output** - `judges.json` written to `$CLOSEDLOOP_WORKDIR`
@@ -703,6 +741,8 @@ Before marking this task complete, verify:
 | "Judge {name} has no metrics" | Empty metrics array | Each CaseScore must have ≥1 MetricStatistics entry |
 | "Context preparation failed" | context-manager-for-judges failed | Check context-manager agent output; verify artifact files exist |
 | "Preamble file not found" | Missing preamble .md file | Verify skills/artifact-type-tailored-context/preambles/{artifact_type}_preamble.md exists |
+| "pre-explorer unavailable" | `@code:pre-explorer` not installed/resolvable | Log warning and use internal fallback investigation to create `investigation-log.md` |
+| "investigation-log.md missing after fallback" | Both pre-explorer and internal fallback failed | Log warning and continue with `plan.json` + `prd.md` only |
 | "Invalid --artifact-type value" | Unsupported artifact type | Use only 'plan' or 'code' |
 
 </troubleshooting>
