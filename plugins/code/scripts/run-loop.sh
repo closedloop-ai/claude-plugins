@@ -498,6 +498,25 @@ post_iteration_processing() {
     emit_skipped_step 8 "process_learnings"
   fi
 
+  # Step 8.5: Write merge-result.json → org-patterns.toon (deterministic)
+  local merge_script="$sl_tools_dir/write_merged_patterns.py"
+  local merge_result="$workdir/.learnings/merge-result.json"
+  if [[ -f "$merge_result" ]] && [[ -f "$merge_script" ]]; then
+    echo -e "${BLUE}[8.5/10] Writing merged patterns to TOON...${NC}"
+    log_progress "Step 8.5: Running write_merged_patterns.py"
+    if run_timed_step 8.5 "write_merged_patterns" bash -c "
+      python3 '$merge_script' --merge-result '$merge_result' 2>&1 | tee -a '$PROGRESS_LOG'
+    "; then
+      log_progress "Step 8.5: TOON write completed"
+      # Cleanup session files only after successful TOON write
+      rm -rf "$workdir/.learnings/sessions/run-"* 2>/dev/null || true
+    else
+      log_progress "Step 8.5: TOON write failed — session files preserved for retry"
+    fi
+  else
+    emit_skipped_step 8.5 "write_merged_patterns"
+  fi
+
   # Step 9: compute_success_rates.py (deterministic rates -> update org-patterns.toon)
   local rates_script="$sl_tools_dir/compute_success_rates.py"
   if [[ -f "$rates_script" ]]; then

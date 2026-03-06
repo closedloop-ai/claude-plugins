@@ -12,6 +12,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Initial release
 - Bootstrap plugin for ClosedLoop agent creation and validation
 
+### code v1.0.2
+
+#### Added
+- Step 8.5 in `run-loop.sh` for deterministic TOON writing via `write_merged_patterns.py`
+
 ### code v1.0.1
 
 #### Added
@@ -41,6 +46,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Added
 - Initial release
+
+### self-learning v1.0.1
+
+#### Added
+- New `write_merged_patterns.py` tool for deterministic JSON-to-TOON conversion
+
+#### Changed
+- Refactored `process-learnings` command to output `merge-result.json` instead of writing TOON directly
+- Updated `process-chat-learnings.sh` to run deterministic TOON write step after classification
 
 ### self-learning v1.0.0
 
