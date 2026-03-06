@@ -1,155 +1,118 @@
-# [Feature Name]
+# Product Requirements Document
 
-**Owner:** [PM] | **Status:** Draft / Review / Approved | **Target:** [Sprint/Quarter]
+## Overview
 
----
+*Provide a high-level summary of what this feature or product does and why it matters. Include the problem being solved and the value it delivers to users.*
 
-## Summary
+## Background
 
-[2-3 sentence executive summary: What we're building, for whom, and the expected outcome. Written for someone skimming in Confluence.]
+*Describe the context that led to this work. Include relevant user research, business metrics, or strategic initiatives that inform this decision.*
 
----
+## Goals & Success Metrics
 
-## Context
+*What does success look like? Define measurable outcomes.*
 
-### Problem
-
-[1-3 sentences: What's broken or missing? For whom? Include evidence if available.]
-
-### Hypothesis
-
-We believe [solution] will [outcome] for [persona], measured by [metric].
-
-### Personas
-
-- **Primary:** [Name] — [Role/description, key need]
-- **Secondary:** [Name] — [Role/description, key need] *(optional)*
-
----
-
-## Scope
-
-### In (MVP)
-
-- [Capability 1]
-- [Capability 2]
-
-### Out (Deferred)
-
-- [Explicitly excluded item with brief rationale]
-
-### Success Metrics
-
-| Metric | Baseline | Target | How Measured |
-|--------|----------|--------|--------------|
-| [Primary metric] | [Current] | [Goal] | [Method] |
-| [Secondary metric] | [Current] | [Goal] | [Method] |
-
-### Kill Criteria
-
-If [primary metric] doesn't reach [minimum threshold] by [timeframe], we will [action: deprioritize / remove / pivot].
-
----
-
-## Compliance & Risk
-
-### PHI Assessment
-
-- [ ] Displays patient health information
-- [ ] Stores new patient data
-- [ ] Transmits data to/from external systems
-- [ ] Enables export/download of patient data
-
-**If checked:** [What PHI, why needed, access model]
-
-### Access Requirements
-
-- [ ] New role/permission needed
-- [ ] Changes to data visibility
-- [ ] Patient-facing feature
-
-**If checked:** [Access model notes]
-
-### Dependencies & Risks
-
-| Risk/Dependency | Mitigation | Owner |
-|-----------------|------------|-------|
-| [Item] | [Plan] | [Who] |
-
----
-
-## Analytics
-
-*See [references/event-instrumentation.md](../references/event-instrumentation.md) for formatting rules and platform guidelines.*
-
-### Key Events
-
-| Event | Properties | Description | Platform |
-|-------|------------|-------------|----------|
-| Page Viewed | `page_name`: "[PageName]" | [When/why this page view matters] | FE |
-| Button Clicked | `button_name`: "[Context:Action]", `page_name`: "[PageName]" | [What this action represents] | FE |
-| [Backend Event] | [relevant_id]: "[value]" | [Source-of-truth action] | BE |
-
-### Event Details
-
-For each event above, document:
-- **Trigger:** [Precise trigger condition]
-- **Decisions Supported:** [What we learn / how it's used]
-- **Compliance:** [Yes/No — contains PHI or sensitive data?]
-
-### User Properties
-
-| Property | Updated When | New Value |
-|----------|--------------|-----------|
-| [property_name] | [Event that triggers update] | [New value] |
-
-### Instrumentation Notes
-
-- [Platform tags: MOBILE ONLY, DESKTOP ONLY, BACKEND ONLY]
-- [Funnel analysis, A/B test integration, deduplication notes]
-- [Any conditional logic for when events fire]
-
----
-
-## Open Questions
-
-- **Q-001:** [Question needing resolution before/during implementation]
-- **Q-002:** [Question]
-
----
+- **Goal 1:** [Description]
+  - **Metric:** [How we'll measure it]
+  - **Target:** [Specific target value]
+- **Goal 2:** [Description]
+  - **Metric:** [How we'll measure it]
+  - **Target:** [Specific target value]
 
 ## User Stories
 
-### US-001: [Short title]
+*Describe the key user journeys this feature enables.*
 
-**As a** [persona], **I want** [capability] **so that** [benefit].
+### Story 1: [Title]
 
-**Priority:** P0 | **Notes:** [Optional context]
+**As a** [type of user]
+**I want to** [perform some action]
+**So that** [I can achieve some goal]
 
-*(Acceptance criteria generated during refinement)*
+### Story 2: [Title]
 
----
+**As a** [type of user]
+**I want to** [perform some action]
+**So that** [I can achieve some goal]
 
-### US-002: [Short title]
+## Requirements
 
-**As a** [persona], **I want** [capability] **so that** [benefit].
+### Functional Requirements
 
-**Priority:** P1 | **Notes:** [Optional context]
+*What the system must do.*
 
-*(Acceptance criteria generated during refinement)*
+1. **[Requirement 1]:** [Description]
+2. **[Requirement 2]:** [Description]
+3. **[Requirement 3]:** [Description]
 
----
+### Non-Functional Requirements
 
-## Appendix *(optional)*
+*Performance, security, scalability, accessibility, etc.*
 
-### Design References
+- **Performance:** [e.g., page load time, API response time]
+- **Security:** [e.g., authentication, authorization, data protection]
+- **Accessibility:** [e.g., WCAG compliance level]
+- **Scalability:** [e.g., expected load, concurrent users]
 
-- [Figma link]
+## User Experience
 
-### Technical Notes
+*Describe the key interactions and design considerations.*
 
-- [Architecture considerations flagged for eng]
+### Key Workflows
 
----
+1. **[Workflow 1]:** [Step-by-step description]
+2. **[Workflow 2]:** [Step-by-step description]
 
-*Stories expanded during refinement. Implementation details determined by engineering.*
+### Edge Cases & Error States
+
+- **[Edge Case 1]:** [How to handle it]
+- **[Edge Case 2]:** [How to handle it]
+
+## Technical Considerations
+
+*Highlight any technical constraints, dependencies, or architecture decisions.*
+
+- **Dependencies:** [External services, APIs, libraries]
+- **Constraints:** [Technical limitations, browser support, etc.]
+- **Architecture:** [High-level technical approach]
+
+## Acceptance Criteria
+
+*Specific, testable conditions that must be met for this work to be considered complete.*
+
+- [ ] [Criterion 1]
+- [ ] [Criterion 2]
+- [ ] [Criterion 3]
+- [ ] [Criterion 4]
+
+## Open Questions
+
+*List any unresolved questions or decisions that need to be made.*
+
+1. **[Question 1]:** [Description]
+2. **[Question 2]:** [Description]
+
+## Out of Scope
+
+*Explicitly call out what is NOT included in this work.*
+
+- [Item 1]
+- [Item 2]
+
+## Timeline & Milestones
+
+*Key dates and phases.*
+
+- **Design Review:** [Date]
+- **Development Start:** [Date]
+- **Internal Testing:** [Date]
+- **Launch:** [Date]
+
+## Risks & Mitigations
+
+*What could go wrong and how we'll address it.*
+
+| Risk | Impact | Likelihood | Mitigation |
+|------|--------|------------|------------|
+| [Risk 1] | [High/Med/Low] | [High/Med/Low] | [Strategy] |
+| [Risk 2] | [High/Med/Low] | [High/Med/Low] | [Strategy] |

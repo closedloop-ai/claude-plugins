@@ -39,6 +39,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Updated default `--target-command` from `impl-plan` to `code`
 - Updated default `--output-dir` from `.claude/agents/prd2plan/` to `.claude/agents/`
 
+### code v1.0.4
+
+#### Changed
+- Generalized `prd-creator` skill description and replaced analytics discovery step with risks assessment
+- Updated PRD template to add compliance checkpoint and remove event instrumentation section
+- Revised story patterns and examples references to align with compliance-focused workflow
+
+#### Removed
+- Deleted `event-instrumentation.md` reference
+
 ### code v1.0.3
 
 #### Changed

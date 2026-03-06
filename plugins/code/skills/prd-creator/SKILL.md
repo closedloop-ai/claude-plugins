@@ -1,6 +1,6 @@
 ---
 name: prd-creator
-description: This skill helps PMs draft lightweight PRDs for a pre-PMF healthcare startup. It should be used when a PM wants to define a new feature, brainstorm requirements, or prep for sprint planning. Triggers include "I have a feature idea", "help me write a PRD", "let's break this into stories", or "what do I need for sprint planning". Optimized for speed — generates minimal viable documentation through conversation, not heavy templates.
+description: This skill helps PMs draft lightweight PRDs. It should be used when a PM wants to define a new feature, brainstorm requirements, or prep for sprint planning. Triggers include "I have a feature idea", "help me write a PRD", "let's break this into stories", or "what do I need for sprint planning". Optimized for speed — generates minimal viable documentation through conversation, not heavy templates.
 ---
 
 # PRD Creator
@@ -27,7 +27,7 @@ When PM has a rough idea, guide them through conversationally:
 4. **Persona** — "Who specifically has this problem?"
 5. **Success** — "If this works, what changes? How will we measure it?"
 6. **First slice** — "What's the smallest version that tests the hypothesis?"
-7. **Analytics** — "What user actions do we need to track to validate the hypothesis?" Use `references/event-instrumentation.md` to guide event naming and structure.
+7. **Risks** — "Any compliance, security, or regulatory concerns? Any technical blockers?"
 
 Don't ask all at once. Have a conversation. Fill gaps with reasonable assumptions and flag them as open questions.
 
@@ -37,13 +37,18 @@ See [references/examples.md](references/examples.md) for a sample Discovery conv
 
 When ready to write, use `assets/prd-template.md`. The template includes:
 
-- **Summary** — Executive overview for Confluence skimmers
-- **Context** — Problem, hypothesis, personas
-- **Scope** — MVP in/out, success metrics, kill criteria
-- **Compliance & Risk** — PHI assessment, access requirements, dependencies
-- **Analytics** — Key events following `references/event-instrumentation.md` format (Title Case events, snake_case properties, PascalCase values)
+- **Overview** — What the feature does and why it matters
+- **Background** — Context, research, and strategic rationale
+- **Goals & Success Metrics** — Measurable outcomes and targets
+- **User Stories** — Stories with US-### IDs in As a / I want / So that format
+- **Requirements** — Functional and non-functional requirements
+- **User Experience** — Key workflows, edge cases, and error states
+- **Technical Considerations** — Dependencies, constraints, architecture
+- **Acceptance Criteria** — Testable conditions for completion
 - **Open Questions** — Unresolved items with Q-### IDs
-- **User Stories** — Stories with US-### IDs and acceptance criteria
+- **Out of Scope** — What's explicitly excluded
+- **Timeline & Milestones** — Key dates and phases
+- **Risks & Mitigations** — What could go wrong and how to address it
 
 ### Story Expansion Mode
 
@@ -58,7 +63,7 @@ Use this mode to add acceptance criteria to stories before exporting to Jira. Th
 1. Take an existing user story (e.g., US-001)
 2. Generate acceptance criteria in Given/When/Then format
 3. Use AC-###.# IDs (e.g., AC-001.1, AC-001.2)
-4. Reference `references/story-patterns.md` for healthcare-specific patterns
+4. Reference `references/story-patterns.md` for common patterns
 
 See [references/examples.md](references/examples.md) for story expansion examples.
 
@@ -111,9 +116,8 @@ The `prd-analyst` agent extracts:
 - User stories → `user_stories[]`
 - Acceptance criteria → `acceptance_criteria[]`
 - Success metrics → `success_metrics[]`
-- Analytics events → `analytics[]`
 - Open questions → `open_questions[]`
-- Compliance notes → `constraints[]`
+- Risks and constraints → `constraints[]`
 
 ## Task Tracking
 
@@ -128,7 +132,7 @@ TodoWrite([
   {"content": "Identify target persona(s)", "status": "pending", "activeForm": "Identifying personas"},
   {"content": "Define success metrics", "status": "pending", "activeForm": "Defining success metrics"},
   {"content": "Scope the first slice / MVP", "status": "pending", "activeForm": "Scoping MVP"},
-  {"content": "Identify analytics events needed", "status": "pending", "activeForm": "Identifying analytics events"}
+  {"content": "Identify risks and compliance concerns", "status": "pending", "activeForm": "Identifying risks"}
 ])
 ```
 
@@ -136,13 +140,17 @@ TodoWrite([
 
 ```json
 TodoWrite([
-  {"content": "Write Summary section", "status": "pending", "activeForm": "Writing Summary"},
-  {"content": "Write Context (Problem, Hypothesis, Personas)", "status": "pending", "activeForm": "Writing Context"},
-  {"content": "Write Scope (In/Out, Success Metrics)", "status": "pending", "activeForm": "Writing Scope"},
-  {"content": "Write Compliance & Risk section", "status": "pending", "activeForm": "Writing Compliance"},
-  {"content": "Write Analytics section (events, properties, platform)", "status": "pending", "activeForm": "Writing Analytics"},
+  {"content": "Write Overview section", "status": "pending", "activeForm": "Writing Overview"},
+  {"content": "Write Background section", "status": "pending", "activeForm": "Writing Background"},
+  {"content": "Write Goals & Success Metrics", "status": "pending", "activeForm": "Writing Goals & Success Metrics"},
+  {"content": "Write User Stories with US-### IDs", "status": "pending", "activeForm": "Writing User Stories"},
+  {"content": "Write Requirements (Functional + Non-Functional)", "status": "pending", "activeForm": "Writing Requirements"},
+  {"content": "Write User Experience (Workflows, Edge Cases)", "status": "pending", "activeForm": "Writing User Experience"},
+  {"content": "Write Technical Considerations", "status": "pending", "activeForm": "Writing Technical Considerations"},
+  {"content": "Write Acceptance Criteria", "status": "pending", "activeForm": "Writing Acceptance Criteria"},
   {"content": "Document Open Questions with Q-### IDs", "status": "pending", "activeForm": "Documenting questions"},
-  {"content": "Write User Stories with US-### IDs", "status": "pending", "activeForm": "Writing user stories"}
+  {"content": "Define Out of Scope", "status": "pending", "activeForm": "Defining Out of Scope"},
+  {"content": "Write Risks & Mitigations", "status": "pending", "activeForm": "Writing Risks & Mitigations"}
 ])
 ```
 

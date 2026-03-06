@@ -3,113 +3,91 @@
 ## Discovery Conversation Example
 
 ```
-PM: "I have an idea for letting patients message their care team"
+PM: "I have an idea for letting users collaborate on documents in real time"
 
-→ "What's the user pain — what happens today when they need to reach their team?"
+→ "What's the user pain — what happens today when they need to collaborate?"
 
-PM: "They have to call during business hours and wait on hold"
+PM: "They email docs back and forth and end up with version conflicts"
 
 → "Got it. How do you know this is a real problem? Any data or feedback?"
 
-PM: "We've had multiple support tickets about it, and our NPS comments mention it"
+PM: "Support tickets about lost changes, and our churn survey mentions it as a top frustration"
 
 → "That's solid evidence. Why tackle this now — what makes it more important than other things on the roadmap?"
 
-PM: "Our NPS is dragging and this is a top complaint. If we don't address it, churn risk goes up."
+PM: "We're losing deals to competitors who have it. Sales flagged it as a top blocker."
 
-→ "Makes sense. Who specifically has this problem — all patients or a subset?"
+→ "Makes sense. Who specifically has this problem — all users or a subset?"
 
-PM: "Mostly patients managing chronic conditions who need frequent check-ins"
+PM: "Mostly teams with 3+ members working on the same project"
 
-→ "Makes sense. If we ship messaging, what would success look like?"
+→ "Got it. If we ship real-time collaboration, what would success look like?"
 
-PM: "Fewer phone calls, faster response times, higher satisfaction"
+PM: "Fewer support tickets about version conflicts, higher team retention, faster document turnaround"
 
 → "For MVP, what's the smallest version that tests whether this helps?"
 
-PM: "Just text messaging to their assigned care manager, no attachments or group chats"
+PM: "Just cursor presence and live text sync — no comments, no suggestions mode yet"
 
-→ "Last check — messages will contain health info, so we'll need audit logging and
-   access controls. Any new roles needed, or existing care team permissions work?"
+→ "Any compliance or security concerns? Data residency, access controls?"
 
-PM: "Existing permissions should work"
+PM: "Standard stuff — users should only see docs they have access to. No new regulatory concerns."
 
 → "Great. I'll draft a PRD with what we've covered. I'll flag open questions like
-   response time SLAs and notification preferences as Q-001, Q-002."
+   conflict resolution strategy and max concurrent editors as Q-001, Q-002."
 ```
 
 ## Story Expansion Example
 
 ```markdown
-### US-001: View medication list
+### US-001: View shared document
 
-**As a** patient, **I want** to view my current medications **so that** I can manage my prescriptions.
+**As a** team member, **I want** to open a shared document and see who else is viewing it **so that** I know who's working on it.
 
 **Priority:** P0
 
 **Acceptance Criteria:**
-- **AC-001.1:** Given I am logged in, when I navigate to medications, then I see my active prescriptions
-- **AC-001.2:** Given I have no medications, when I view the list, then I see an empty state with guidance
-- **AC-001.3:** Given a medication has refill info, when I view it, then I see the refill date and pharmacy
-
-**Compliance:**
-- [ ] Access logged
-- [ ] Minimum necessary data displayed
+- **AC-001.1:** Given I have access to a document, when I open it, then I see the document content and a list of active viewers
+- **AC-001.2:** Given another user opens the same document, when they join, then their avatar appears in the viewer list within 2 seconds
+- **AC-001.3:** Given a user closes the document, when they leave, then their avatar is removed from the viewer list
 ```
 
 ## Epic Generation Example
 
 ```markdown
-## Epic: Medication Management
+## Epic: Real-Time Document Collaboration
 
-**Objective:** Enable patients to view and manage their medication information.
+**Objective:** Enable team members to edit documents simultaneously without version conflicts.
 
 **Stories:**
-- US-001: View medication list
-- US-002: View medication details
-- US-003: Request refill
+- US-001: View shared document with active viewer presence
+- US-002: See other users' cursors in real time
+- US-003: Live text sync across all connected clients
 
-**Success Criteria:** 80% of patients can find their medications within 2 taps.
+**Success Criteria:** 90% reduction in support tickets about version conflicts within 30 days of launch.
 ```
 
-## Analytics Section Example
+## Goals & Success Metrics Example
 
 ```markdown
-## Analytics
+## Goals & Success Metrics
 
-*See [references/event-instrumentation.md](../references/event-instrumentation.md) for formatting rules and platform guidelines.*
-
-### Key Events
-
-| Event | Properties | Description | Platform |
-|-------|------------|-------------|----------|
-| Page Viewed | `page_name`: "Medications" | Track medication list access for engagement | FE |
-| Button Clicked | `button_name`: "Medications:RequestRefill", `page_name`: "MedicationDetail", `medication_id`: "[id]" | Track refill intent | FE |
-| Button Clicked | `button_name`: "Medications:ViewDetails", `page_name`: "Medications", `medication_id`: "[id]" | Track detail exploration | FE |
-| Refill Requested | `medication_id`: "[id]", `pharmacy_id`: "[id]" | Source-of-truth for refill submissions | BE |
-
-### Event Details
-
-**Page Viewed (Medications)**
-- **Trigger:** User navigates to Medications tab
-- **Decisions Supported:** Feature adoption, engagement funnel entry point
-- **Compliance:** No — no PHI in event itself
-
-**Refill Requested**
-- **Trigger:** BE successfully submits refill request to pharmacy
-- **Decisions Supported:** Conversion rate, pharmacy integration health
-- **Compliance:** Yes — medication_id links to PHI, use BE for audit trail
-
-### User Properties
-
-| Property | Updated When | New Value |
-|----------|--------------|-----------|
-| `has_viewed_medications` | Page Viewed (Medications) | `true` |
-| `last_refill_request_date` | Refill Requested | [timestamp] |
-
-### Instrumentation Notes
-
-- MOBILE ONLY: All events above (web medication view not in scope for MVP)
-- Dedupe note: "Request Refill" button click (FE) vs "Refill Requested" (BE) — use BE as source of truth for conversion metrics
+- **Goal 1:** Reduce version conflicts in collaborative documents
+  - **Metric:** Support tickets tagged "version conflict"
+  - **Target:** 90% reduction within 30 days of launch
+- **Goal 2:** Increase team engagement with shared documents
+  - **Metric:** % of documents with 2+ concurrent editors per week
+  - **Target:** 40% of active documents within 60 days
 ```
 
+## Risks & Mitigations Example
+
+```markdown
+## Risks & Mitigations
+
+| Risk | Impact | Likelihood | Mitigation |
+|------|--------|------------|------------|
+| Conflict resolution fails under high concurrency | High | Med | Use OT/CRDT algorithm; load test with 20+ concurrent editors |
+| Latency spikes degrade real-time experience | Med | Med | WebSocket connection with fallback to polling; regional edge servers |
+| Users confused by presence indicators | Low | Low | Onboarding tooltip; user research during beta |
+```

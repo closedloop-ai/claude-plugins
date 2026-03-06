@@ -1,6 +1,6 @@
 # Story Patterns
 
-Quick-start patterns for common healthcare features. Copy, customize, generate more with AI.
+Quick-start patterns for common software features. Copy, customize, generate more with AI.
 
 ## Story Format
 ```
@@ -25,26 +25,35 @@ AC:
 - Given [N] failed attempts, then account is locked
 ```
 
-**Proxy Access** (common in healthcare)
+**Role-Based Access**
 ```
-As a caregiver, I want to access my family member's info so that I can help manage their care.
+As an admin, I want to manage team member permissions so that users only see what they need.
 AC:
-- Patient must authorize access
-- Proxy actions logged separately
-- Patient can revoke anytime
+- Admin can assign roles to team members
+- Permission changes take effect immediately
+- Audit log records permission changes
+```
+
+**Delegated Access**
+```
+As a team lead, I want to grant temporary access to a contractor so that they can contribute to a project.
+AC:
+- Access has an expiration date
+- Delegated actions are logged separately
+- Access can be revoked anytime
 ```
 
 ---
 
-## Patient Data
+## Data & Content
 
 **View Data**
 ```
-As a [clinician/patient], I want to view [data type] so that [reason].
+As a [user], I want to view [data type] so that [reason].
 AC:
 - Loads in <[N]s>
-- Access logged
 - Only authorized users see it
+- Pagination/filtering available for large datasets
 ```
 
 **Search**
@@ -52,47 +61,72 @@ AC:
 As a [user], I want to search for [thing] so that I can find it quickly.
 AC:
 - Supports [search fields]
-- Results scoped to user's access
-- Search logged if PHI involved
+- Results scoped to user's access level
+- Returns results within [N]ms
+```
+
+**Export**
+```
+As a [user], I want to export [data] so that I can use it externally.
+AC:
+- Supports [CSV/PDF/JSON] format
+- Export respects current filters
+- Large exports are processed asynchronously with notification on completion
 ```
 
 ---
 
-## Messaging
+## Messaging & Notifications
 
 **Send Message**
 ```
-As a [patient/provider], I want to send a message so that I can communicate asynchronously.
+As a [user], I want to send a message so that I can communicate with my team.
 AC:
 - Character limit: [N]
-- Recipient options based on relationships
+- Recipient options based on team membership
 - Delivery confirmation shown
-- No PHI in email/push previews
+```
+
+**Notifications**
+```
+As a [user], I want to receive notifications so that I stay informed about relevant activity.
+AC:
+- Configurable notification preferences (email, in-app, push)
+- Respects quiet hours if set
+- Notification links to relevant context
 ```
 
 ---
 
-## Clinical (if applicable)
+## CRUD Operations
 
-**Document**
+**Create**
 ```
-As a clinician, I want to document [note type] so that the record is updated.
+As a [user], I want to create a [resource] so that [reason].
 AC:
-- Associates with correct patient/encounter
-- Auto-saves
-- Locked after signing
-- Audit trail maintained
+- Required fields validated before save
+- Success confirmation shown
+- Created resource appears in list immediately
+```
+
+**Edit**
+```
+As a [user], I want to edit a [resource] so that I can keep information current.
+AC:
+- Changes saved and confirmation shown
+- Edit history maintained
+- Concurrent edits handled gracefully
 ```
 
 ---
 
 ## Compliance Add-Ons
 
-Add to any story touching PHI:
+Add to any story touching sensitive data:
 ```
 Compliance:
 - [ ] Access logged
-- [ ] Minimum necessary data
+- [ ] Minimum necessary data displayed
 - [ ] Encrypted in transit/at rest
 ```
 
