@@ -6,10 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### code v1.0.6
+### self-learning v1.0.3
+
+#### Fixed
+- Fixed pattern cap trimming to sort by staleness flags only instead of confidence — low-confidence patterns were always dropped before being observed, preventing them from ever earning higher confidence
+- Fixed extraneous f-string prefix lint warning in `write_merged_patterns.py` default header
 
 #### Changed
-- `has_code_changes` now outputs integer count of code files changed; code judges skip condition uses `changed_count -eq 0`
+- Updated `process-learnings` cap strategy to trim `[PRUNE]` then `[STALE]` then `[REVIEW]`, with `seen_count` as tiebreaker
+
+### code-review v1.1.0
+
+#### Breaking
+- Removed `github-review` slash command — `/code-review:github-review` is no longer a valid entry point. Use `/code-review:start --github` instead.
+- Renamed `review.md` → `start.md` — slash command is now `/code-review:start`
+- Moved `github-review.md` from `commands/` to `prompts/` — callers using `${CLAUDE_PLUGIN_ROOT}/commands/github-review.md` must update to `${CLAUDE_PLUGIN_ROOT}/prompts/github-review.md`
+
+#### Changed
+- Unified session directory path for all modes — removed `$RUNNER_TEMP` override in GitHub CI, now uses `.closedloop-ai/code-review/cr-<RANDOM>` everywhere
+- Replaced Bash heredoc/cat usage with Write and Read tools for PR metadata file operations in `github-review.md`
+- Updated temp file path references from `$RUNNER_TEMP/cr-review/` to `<CR_DIR>/*` in GitHub mode constraints
+- Fixed usage examples to use `/start` to match the command filename
+- Fixed internal references from `code-review-github.md` to `github-review.md`
+
+#### Added
+- Compound Bash command prohibition in GitHub mode — no `&&`, `||`, `;`, or `|` pipes allowed
 
 ### code v1.0.5
 
@@ -17,6 +38,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Updated `review-delta.schema.json` description to reference "code hybrid workflow" instead of "impl-plan hybrid workflow"
 - Updated `compliance-checkpoint.md` to reference `/code` instead of `/impl-plan`
 - Removed `Bash` from `visual-qa-subagent` tool list to prevent shell access during visual QA
+
+#### Fixed
+- Fixed judges agents path resolution in `run-loop.sh` to support monorepo, cache, and marketplace installation layouts via a four-level fallback strategy (`CLOSEDLOOP_JUDGES_AGENTS_DIR` env override → repo-relative path → non-versioned sibling → latest semver-versioned sibling)
+- Fixed agent snapshot to read judge agents from the judges plugin rather than the code plugin, and corrected `plugin` field in manifest to `"judges"`
 
 #### Security
 - Added credential theft blocklist to `pretooluse-hook.sh`: denies Bash commands and file access targeting macOS Keychain, browser cookie databases, SSH private keys, and cloud credentials

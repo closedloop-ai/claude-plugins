@@ -1,0 +1,26 @@
+# Git Commit Message Template
+#
+# Format:
+# <Short description (imperative mood, present tense)>
+#
+# <Long description (bullet points explaining what changed)>
+#
+# Testing: <Manual testing performed>
+# Risks: <Risk assessment of changes>
+#
+# Guidelines:
+# - Short description: description max 50 chars total, no period, imperative mood
+# - Long description: bullet points with dashes, wrap at 72 chars
+# - Testing: describe manual verification steps taken
+# - Risks: identify deployment/production risks or "None identified" if adequately mitigated
+#
+# Example:
+# Improve performance logging
+#
+# - Reduced performance logging to single logger.adebug call
+# - Consolidated metrics into single dictionary with elapsed_time
+# - Created perf_monitor.py to simplify performance monitoring
+#
+# Testing: Ran locally to verify no crashes and logs appear with debug enabled
+#
+# Risks: None identified

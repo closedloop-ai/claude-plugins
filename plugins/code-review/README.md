@@ -18,7 +18,8 @@ A multi-agent code review plugin for Claude Code that performs deep, partitioned
 plugins/code-review/
   .claude-plugin/plugin.json         Plugin manifest
   commands/
-    review.md                        Main /code-review command (orchestrator)
+    start.md                         Main /start command (orchestrator)
+  prompts/
     github-review.md                 GitHub-mode constraints and output steps (loaded conditionally)
   tools/
     prompts/shared_prompt.txt        Shared reviewer constraints injected into every agent prompt
@@ -31,21 +32,21 @@ plugins/code-review/
 
 | Component | Role |
 |---|---|
-| `review.md` | Orchestrator command. Parses flags, sets up the session, invokes the helper CLI subcommands in sequence, spawns reviewer sub-agents, collects results, and presents findings |
+| `start.md` | Orchestrator command. Parses flags, sets up the session, invokes the helper CLI subcommands in sequence, spawns reviewer sub-agents, collects results, and presents findings |
 | `github-review.md` | Loaded by the orchestrator only in GitHub mode. Contains PR metadata resolution, file-based handoff format for CI, and summary format |
 | `code_review_helpers.py` | Python CLI that handles all deterministic work: git diff parsing, hygiene pattern matching, file partitioning, risk scoring/model routing, finding validation, cache management, and GitHub comment posting |
 | `shared_prompt.txt` | Constraints injected into every reviewer agent prompt: file assignment rules, evidence standards, severity definitions, and output format |
 
 ## Commands
 
-### `/code-review`
+### `/start`
 
 Runs a comprehensive code review. Invokes the full pipeline: diff parsing, hygiene checks, agent spawning, finding validation, and result presentation.
 
 **Syntax:**
 
 ```
-/code-review [scope] [--github] [--hygiene-only] [--base <ref>] [--since-last-review] [--full-review]
+/start [scope] [--github] [--hygiene-only] [--base <ref>] [--since-last-review] [--full-review]
 ```
 
 **Scope arguments:**
@@ -71,16 +72,16 @@ Runs a comprehensive code review. Invokes the full pipeline: diff parsing, hygie
 **Examples:**
 
 ```bash
-/code-review                         # All changes on current branch vs main
-/code-review staged                  # Only staged changes
-/code-review src/auth.ts src/user.ts # Specific files
-/code-review 123                     # PR #123 diff locally
-/code-review --github                # CI: auto-detect PR, post comments
-/code-review --github 123            # CI: PR #123, post comments
-/code-review --hygiene-only          # Hygiene checks only
-/code-review --base develop          # Diff against develop instead of main
-/code-review --since-last-review     # Only new commits since last review
-/code-review --full-review           # Disable incremental narrowing
+/start                               # All changes on current branch vs main
+/start staged                        # Only staged changes
+/start src/auth.ts src/user.ts       # Specific files
+/start 123                           # PR #123 diff locally
+/start --github                      # CI: auto-detect PR, post comments
+/start --github 123                  # CI: PR #123, post comments
+/start --hygiene-only                # Hygiene checks only
+/start --base develop                # Diff against develop instead of main
+/start --since-last-review           # Only new commits since last review
+/start --full-review                 # Disable incremental narrowing
 ```
 
 **Flag incompatibilities:**

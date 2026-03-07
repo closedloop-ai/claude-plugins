@@ -209,10 +209,10 @@ After classification, merge **all validated** patterns into a JSON file that a d
    - `*` → pattern is generalizable across repos
    - repo-specific → use the classified repo name
 8. **Extract closedloop learnings** → append to `pending-closedloop.json`
-9. **Limit patterns** - Cap at 50 to prevent context bloat. When at cap, prefer keeping:
-   - High confidence patterns over low confidence
-   - Patterns with success_rate > 0.5 over lower
-   - Patterns with `[UNTESTED]` flag (give them a chance) over `[PRUNE]`
+9. **Limit patterns** - Cap at 50 to prevent context bloat. When at cap, trim by staleness only:
+   - Drop `[PRUNE]` flagged patterns first, then `[STALE]`, then `[REVIEW]`
+   - Never trim by confidence — low-confidence patterns need exposure to earn higher confidence
+   - Among patterns with the same flag tier, prefer keeping higher `seen_count` (more observed)
 10. **Write output** - Save to `$CLOSEDLOOP_WORKDIR/.learnings/merge-result.json` with the following schema:
 
 ```json

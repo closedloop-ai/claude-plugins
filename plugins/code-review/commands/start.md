@@ -13,23 +13,23 @@ Run a multi-agent code review with partitioned deep review, deterministic hygien
 ## Usage
 
 ```
-/code-review                         # Review all changes on current branch vs main (default)
-/code-review staged                  # Review only staged changes
-/code-review file1 file2             # Review specific files
-/code-review 123                     # Review PR #123 diff locally (no posting)
-/code-review --github                # GitHub CI: auto-detect PR from branch, post inline comments
-/code-review --github 123            # GitHub CI: review PR #123, post inline comments
-/code-review --hygiene-only          # Fast hygiene-only check (zero LLM tokens)
-/code-review --base develop          # Diff against a specific base branch
-/code-review --since-last-review     # Review only changes since last successful review
-/code-review --full-review           # Force full diff (disable auto-incremental)
+/start                              # Review all changes on current branch vs main (default)
+/start staged                       # Review only staged changes
+/start file1 file2                  # Review specific files
+/start 123                          # Review PR #123 diff locally (no posting)
+/start --github                     # GitHub CI: auto-detect PR from branch, post inline comments
+/start --github 123                 # GitHub CI: review PR #123, post inline comments
+/start --hygiene-only               # Fast hygiene-only check (zero LLM tokens)
+/start --base develop               # Diff against a specific base branch
+/start --since-last-review          # Review only changes since last successful review
+/start --full-review                # Force full diff (disable auto-incremental)
 ```
 
 ## GitHub Mode Constraints
 
 **If MODE=github**, read the GitHub-specific instructions:
 ```
-Read ${CLAUDE_PLUGIN_ROOT}/commands/code-review-github.md
+Read ${CLAUDE_PLUGIN_ROOT}/prompts/github-review.md
 ```
 This file contains posting constraints, PR metadata resolution (Step 5b), and output steps (Steps 6+8).
 Local mode does not need this file.
@@ -53,7 +53,7 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 
 ### Task 2: Create TodoWrite + session setup
 - Create the TodoWrite task list (depends on MODE and HYGIENE_ONLY)
-- If MODE=github: Read `${CLAUDE_PLUGIN_ROOT}/commands/code-review-github.md` for GitHub-specific constraints and steps
+- If MODE=github: Read `${CLAUDE_PLUGIN_ROOT}/prompts/github-review.md` for GitHub-specific constraints and steps
 - Resolve HELPERS path: `echo "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py"` — track the resolved path internally
 - Create CR_DIR: `mkdir -p .closedloop-ai/code-review/cr-<RANDOM>` — generate a unique suffix, track the resolved path internally
 - Run setup: `python <HELPERS> setup --mode <MODE> > <CR_DIR>/setup.json` — inline all resolved paths, NO shell variables
@@ -76,7 +76,7 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 - See: [Auto Incremental Mode](#auto-incremental-mode-phase-4--local-only)
 
 ### Task 5: Get diff data (GitHub: also get PR metadata)
-- GitHub mode: follow PR Metadata section from `code-review-github.md`
+- GitHub mode: follow PR Metadata section from `github-review.md`
 - Run Bash: `python <HELPERS> parse-diff --scope=<DIFF_SCOPE> > <CR_DIR>/diff_data.json`
 - Mark todo "Parse scope and get diff data" as `completed`
 - See: [Get Diff Data](#get-diff-data-both-modes), [GitHub Mode: Get PR Metadata](#github-mode-get-pr-metadata)
@@ -119,7 +119,7 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 - See: [Step 5](#step-5-collect-normalize-and-validate-findings), [Step 5.5](#step-55-bha-cache-update-when-caching-is-active)
 
 ### Task 11: Present results
-- **GitHub mode**: follow Steps 6 and 8 in `code-review-github.md` — write findings JSON, threads JSON, and summary.md to `.claude/`
+- **GitHub mode**: follow Steps 6 and 8 in `github-review.md` — write findings JSON, threads JSON, and summary.md to `.claude/`
 - **Local mode**: present findings by severity in terminal — see [Local Mode: Present Results](#local-mode-present-results)
 - Mark remaining todos as `completed`
 
@@ -233,9 +233,7 @@ Read the output. This is the resolved HELPERS path (e.g., `/Users/me/.claude/plu
 ```bash
 mkdir -p .closedloop-ai/code-review/cr-38291
 ```
-Track the CR_DIR value internally (e.g., `.closedloop-ai/code-review/cr-38291`). **All subsequent commands must inline this resolved path, NOT `$CR_DIR`**. Generate a unique suffix yourself (e.g., a 5-digit random number) — do NOT use `$$` (it changes per shell invocation).
-
-**GitHub mode override:** Use `RUNNER_TEMP` when available: `${RUNNER_TEMP}/cr-review`.
+Track the CR_DIR value internally (e.g., `.closedloop-ai/code-review/cr-38291`). **All subsequent commands must inline this resolved path, NOT `$CR_DIR`**. Generate a unique suffix yourself (e.g., a 5-digit random number) — do NOT use `$$` (it changes per shell invocation). Use this same `.closedloop-ai/code-review/cr-<RANDOM>` path in **all modes** including GitHub CI — do NOT use `$RUNNER_TEMP` or any shell variables.
 
 **Step 3 — Run setup subcommand:**
 ```bash
@@ -349,7 +347,7 @@ Print `<REVIEW_MODE_LINE>` (always, at the start of every run). Use the EXACT st
 
 **Skip this section entirely if MODE=local.**
 
-Follow the "PR Metadata Resolution" section in `code-review-github.md` (already loaded in Task 2 for GitHub mode). It sets: `PR_NUMBER`, `HEAD_SHA`, `BASE_REF`, `HEAD_REF`, `OWNER`, `REPO_NAME`, `DIFF_SCOPE`, `DIFF_TIP`, and writes `<CR_DIR>/github_pr.json`.
+Follow the "PR Metadata Resolution" section in `github-review.md` (already loaded in Task 2 for GitHub mode). It sets: `PR_NUMBER`, `HEAD_SHA`, `BASE_REF`, `HEAD_REF`, `OWNER`, `REPO_NAME`, `DIFF_SCOPE`, `DIFF_TIP`, and writes `<CR_DIR>/github_pr.json`.
 
 ### Get Diff Data (Both Modes)
 
@@ -961,7 +959,7 @@ This writes the updated manifest to `<CACHE_DIR>/manifest.json`. In GitHub mode,
 
 **If MODE=local, skip to "Local Mode: Present Results" below.**
 
-Follow Steps 6 and 8 in `code-review-github.md` (already loaded in Task 2 for GitHub mode).
+Follow Steps 6 and 8 in `github-review.md` (already loaded in Task 2 for GitHub mode).
 
 ---
 

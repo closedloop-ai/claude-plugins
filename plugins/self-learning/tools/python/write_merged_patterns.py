@@ -38,12 +38,12 @@ DEFAULT_HEADER = [
     "# Organization Patterns (TOON format)",
     f"# Last updated: {__import__('datetime').datetime.now(__import__('datetime').timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
     "",
-    f"patterns[0]{{id,category,summary,confidence,seen_count,success_rate,flags,applies_to,context,repo}}:",
+    "patterns[0]{id,category,summary,confidence,seen_count,success_rate,flags,applies_to,context,repo}:",
 ]
 
-# Priority sort: confidence then flags
-CONFIDENCE_ORDER = {"high": 0, "medium": 1, "low": 2}
-FLAGS_ORDER = {"[UNTESTED]": 0, "": 1, "[REVIEW]": 2, "[STALE]": 3, "[PRUNE]": 4}
+# Priority sort: trim by staleness/prune flags only — confidence is earned through
+# exposure, so we never deprioritize low-confidence patterns (they'd never get seen).
+FLAGS_ORDER = {"": 0, "[UNTESTED]": 0, "[REVIEW]": 1, "[STALE]": 2, "[PRUNE]": 3}
 
 
 def validate_pattern(pattern: dict, index: int) -> list[str]:
@@ -88,10 +88,17 @@ def validate_pattern(pattern: dict, index: int) -> list[str]:
 
 
 def priority_sort_key(pattern: dict) -> tuple:
-    """Sort key: high confidence first, then UNTESTED > empty > REVIEW > STALE > PRUNE."""
-    conf = CONFIDENCE_ORDER.get(pattern.get("confidence", "low"), 2)
-    flag = FLAGS_ORDER.get(pattern.get("flags", ""), 1)
-    return (conf, flag)
+    """Sort key: trim by staleness only. PRUNE/STALE sort last, everything else equal.
+
+    Within the same flag tier, sort by seen_count descending so more-observed
+    patterns are kept when trimming at the cap boundary.
+    """
+    flag = FLAGS_ORDER.get(pattern.get("flags", ""), 0)
+    try:
+        seen = -int(pattern.get("seen_count", "0"))
+    except (ValueError, TypeError):
+        seen = 0
+    return (flag, seen)
 
 
 def main() -> int:
