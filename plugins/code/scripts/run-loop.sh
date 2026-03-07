@@ -139,37 +139,37 @@ is_valid_judges_agents_dir() {
   find "$dir" -type f -name "*.md" -print -quit | grep -q .
 }
 
-# Resolve latest semver judges agents dir under a root (e.g., .../judges/<version>/agents).
-resolve_latest_versioned_judges_agents_dir() {
+# Resolve judges agents dir under a root (e.g., .../judges/<version>/agents).
+# Iterates candidates from newest to oldest semver and returns the first valid
+# one, so a corrupt or partially-installed latest version falls back gracefully
+# to an older usable release rather than failing outright.
+resolve_versioned_judges_agents_dir() {
   local judges_root="$1"
-  local latest_agents_dir=""
   local versioned_candidates=""
 
   if [[ ! -d "$judges_root" ]]; then
     return 1
   fi
 
+  # Semver: no leading zeros in core; optional prerelease (-id.id) and build (+id.id).
+  local semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+
   while IFS= read -r agents_dir; do
     local version_dir
     version_dir="$(basename "$(dirname "$agents_dir")")"
-    if [[ "$version_dir" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$ ]]; then
+    if [[ "$version_dir" =~ $semver_re ]]; then
       versioned_candidates+="${version_dir}|${agents_dir}"$'\n'
     fi
   done < <(find "$judges_root" -mindepth 2 -maxdepth 2 -type d -name "agents" 2>/dev/null)
 
-  if [[ -n "$versioned_candidates" ]]; then
-    latest_agents_dir="$(
-      printf "%s" "$versioned_candidates" \
-        | LC_ALL=C sort -t'|' -k1,1V \
-        | tail -1 \
-        | cut -d'|' -f2-
-    )"
-  fi
-
-  if [[ -n "$latest_agents_dir" ]] && is_valid_judges_agents_dir "$latest_agents_dir"; then
-    echo "$latest_agents_dir"
-    return 0
-  fi
+  # Walk candidates newest → oldest; return the first one that passes validation.
+  while IFS='|' read -r _version agents_dir; do
+    [[ -z "$agents_dir" ]] && continue
+    if is_valid_judges_agents_dir "$agents_dir"; then
+      echo "$agents_dir"
+      return 0
+    fi
+  done < <(printf "%s" "$versioned_candidates" | LC_ALL=C sort -t'|' -k1,1V -r)
 
   return 1
 }
@@ -229,12 +229,12 @@ resolve_judges_agents_dir() {
     return 0
   fi
 
-  # 4) Versioned sibling plugin layout (.../judges/<version>/agents), pick latest semver.
+  # 4) Versioned sibling plugin layout (.../judges/<version>/agents), newest valid semver wins.
   tried+=("$sibling_judges_root/<version>/agents")
   local versioned_agents_dir
-  versioned_agents_dir="$(resolve_latest_versioned_judges_agents_dir "$sibling_judges_root" || true)"
+  versioned_agents_dir="$(resolve_versioned_judges_agents_dir "$sibling_judges_root" || true)"
   if [[ -n "$versioned_agents_dir" ]]; then
-    log_progress "resolve_judges_agents_dir: using latest versioned path $versioned_agents_dir"
+    log_progress "resolve_judges_agents_dir: using versioned path $versioned_agents_dir"
     echo "$versioned_agents_dir"
     return 0
   fi
