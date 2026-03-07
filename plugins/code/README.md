@@ -213,7 +213,7 @@ Syncs `plan.md` with `plan.json` after any edit. Runs the `extract.py` script wh
 
 ### `closedloop-env`
 
-Provides ClosedLoop environment paths to agents by reading `.claude/.closedloop/env`. Returns `CLOSEDLOOP_WORKDIR`, `CLAUDE_PLUGIN_ROOT`, `CLOSEDLOOP_PRD_FILE`, and `CLOSEDLOOP_MAX_ITERATIONS`. Used by agents that need to construct file paths dynamically.
+Provides ClosedLoop environment paths to agents by reading `.closedloop-ai/env`. Returns `CLOSEDLOOP_WORKDIR`, `CLAUDE_PLUGIN_ROOT`, `CLOSEDLOOP_PRD_FILE`, and `CLOSEDLOOP_MAX_ITERATIONS`. Used by agents that need to construct file paths dynamically.
 
 ### `prd-creator`
 
@@ -235,7 +235,7 @@ Hooks are shell scripts that fire at Claude Code lifecycle events. Registered in
 
 ### `session-start-hook.sh` (SessionStart)
 
-Creates a PID-to-session-ID mapping file at `.claude/.closedloop/pid-{PPID}.session`. This mapping allows `setup-closedloop.sh` — which runs as a child process — to discover the session ID by walking up the process tree. Essential for associating a work directory with a session.
+Creates a PID-to-session-ID mapping file at `.closedloop-ai/pid-{PPID}.session`. This mapping allows `setup-closedloop.sh` — which runs as a child process — to discover the session ID by walking up the process tree. Essential for associating a work directory with a session.
 
 ### `session-end-hook.sh` (SessionEnd)
 

@@ -17,14 +17,18 @@ CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 
 # Early debug log (before WORKDIR discovery) to catch all SubagentStart events
-EARLY_DEBUG_LOG="${CWD:-.}/.claude/.closedloop/subagent-start-hook-debug.log"
+EARLY_DEBUG_LOG="${CWD:-.}/.closedloop-ai/subagent-start-hook-debug.log"
 mkdir -p "$(dirname "$EARLY_DEBUG_LOG")" 2>/dev/null
 echo "$(date): SubagentStart hook fired — agent_type=$AGENT_TYPE agent_id=$AGENT_ID session_id=$SESSION_ID" >> "$EARLY_DEBUG_LOG"
 
 # Discover WORKDIR via session_id mapping (created by setup-closedloop.sh)
 CLOSEDLOOP_WORKDIR=""
 if [[ -n "$SESSION_ID" ]]; then
-    WORKDIR_FILE="$CWD/.claude/.closedloop/session-$SESSION_ID.workdir"
+    WORKDIR_FILE="$CWD/.closedloop-ai/session-$SESSION_ID.workdir"
+    # Fallback: check legacy path for mid-upgrade sessions
+    if [[ ! -f "$WORKDIR_FILE" ]] && [[ -f "$CWD/.claude/.closedloop/session-$SESSION_ID.workdir" ]]; then
+        WORKDIR_FILE="$CWD/.claude/.closedloop/session-$SESSION_ID.workdir"
+    fi
     if [[ -f "$WORKDIR_FILE" ]]; then
         CLOSEDLOOP_WORKDIR=$(cat "$WORKDIR_FILE")
         echo "$(date): Found WORKDIR=$CLOSEDLOOP_WORKDIR from session mapping" >> "$DEBUG_LOG"
@@ -124,8 +128,14 @@ if [[ -z "$CLOSEDLOOP_WORKDIR" ]]; then
 fi
 
 # Write base environment (same for all agents, only write once)
-mkdir -p "$CWD/.claude/.closedloop"
-BASE_ENV_FILE="$CWD/.claude/.closedloop/env"
+mkdir -p "$CWD/.closedloop-ai"
+BASE_ENV_FILE="$CWD/.closedloop-ai/env"
+# If legacy env exists but new one doesn't, copy it forward
+LEGACY_ENV_FILE="$CWD/.claude/.closedloop/env"
+if [[ ! -f "$BASE_ENV_FILE" ]] && [[ -f "$LEGACY_ENV_FILE" ]]; then
+    cp "$LEGACY_ENV_FILE" "$BASE_ENV_FILE"
+    echo "$(date): Copied legacy env to $BASE_ENV_FILE" >> "$DEBUG_LOG"
+fi
 if [[ ! -f "$BASE_ENV_FILE" ]]; then
     cat > "$BASE_ENV_FILE" << EOF
 CLOSEDLOOP_WORKDIR=$CLOSEDLOOP_WORKDIR
@@ -394,7 +404,7 @@ if [[ -n "$LEARNINGS" ]]; then
 
 $LEARNINGS"
     # Write learnings to agent-specific file
-    LEARNINGS_FILE="$CWD/.claude/.closedloop/learnings-$AGENT_NAME_LOWER"
+    LEARNINGS_FILE="$CWD/.closedloop-ai/learnings-$AGENT_NAME_LOWER"
     echo "$LEARNINGS" > "$LEARNINGS_FILE"
     echo "$(date): Wrote learnings to $LEARNINGS_FILE" >> "$DEBUG_LOG"
 fi
