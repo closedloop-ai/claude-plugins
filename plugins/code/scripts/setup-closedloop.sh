@@ -77,12 +77,16 @@ if [[ -z "$PRD_FILE" ]]; then
 fi
 
 # Step 1: Find session_id by walking up process tree
-# SessionStart hook wrote to .claude/.closedloop/pid-<Claude Code PID>.session
+# SessionStart hook wrote to .closedloop-ai/pid-<Claude Code PID>.session
 # Claude Code's PID is an ancestor of this process
 SESSION_ID=""
 CURRENT_PID=$$
 while [[ $CURRENT_PID -gt 1 ]]; do
-    SESSION_FILE=".claude/.closedloop/pid-$CURRENT_PID.session"
+    SESSION_FILE=".closedloop-ai/pid-$CURRENT_PID.session"
+    # Fallback: check legacy path for mid-upgrade sessions
+    if [[ ! -f "$SESSION_FILE" ]] && [[ -f ".claude/.closedloop/pid-$CURRENT_PID.session" ]]; then
+        SESSION_FILE=".claude/.closedloop/pid-$CURRENT_PID.session"
+    fi
     echo "$(date): Checking $SESSION_FILE" >> "$DEBUG_LOG"
     if [[ -f "$SESSION_FILE" ]]; then
         SESSION_ID=$(cat "$SESSION_FILE")
@@ -98,8 +102,8 @@ done
 
 if [[ -n "$SESSION_ID" ]]; then
     # Step 2: Write workdir mapping so hooks can find it via session_id
-    echo "$WORKDIR" > ".claude/.closedloop/session-$SESSION_ID.workdir"
-    echo "$(date): Wrote workdir mapping: .claude/.closedloop/session-$SESSION_ID.workdir -> $WORKDIR" >> "$DEBUG_LOG"
+    echo "$WORKDIR" > ".closedloop-ai/session-$SESSION_ID.workdir"
+    echo "$(date): Wrote workdir mapping: .closedloop-ai/session-$SESSION_ID.workdir -> $WORKDIR" >> "$DEBUG_LOG"
 else
     echo "$(date): WARNING: Could not find session_id in process tree" >> "$DEBUG_LOG"
 fi

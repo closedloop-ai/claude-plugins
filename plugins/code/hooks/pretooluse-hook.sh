@@ -114,7 +114,11 @@ esac
 # Discover WORKDIR via session_id mapping (same pattern as subagent-start-hook.sh)
 CLOSEDLOOP_WORKDIR=""
 if [[ -n "$SESSION_ID" ]]; then
-    WORKDIR_FILE="$CWD/.claude/.closedloop/session-$SESSION_ID.workdir"
+    WORKDIR_FILE="$CWD/.closedloop-ai/session-$SESSION_ID.workdir"
+    # Fallback: check legacy path for mid-upgrade sessions
+    if [[ ! -f "$WORKDIR_FILE" ]] && [[ -f "$CWD/.claude/.closedloop/session-$SESSION_ID.workdir" ]]; then
+        WORKDIR_FILE="$CWD/.claude/.closedloop/session-$SESSION_ID.workdir"
+    fi
     if [[ -f "$WORKDIR_FILE" ]]; then
         CLOSEDLOOP_WORKDIR=$(cat "$WORKDIR_FILE")
     fi

@@ -90,7 +90,7 @@ A lifecycle script registered in `hooks.json` that fires on a Claude Code event.
 Hooks that fire when a Claude Code session opens or closes. `SessionStart` creates PID-to-session-ID mappings. `SessionEnd` cleans up stale mappings and orphaned state files.
 
 **SubagentStart**
-Hook that fires when a subagent begins. Performs three key functions: (1) writes base environment variables to `.claude/.closedloop/env`, (2) injects `<closedloop-environment>` block with paths and config, and (3) filters and injects relevant patterns from `org-patterns.toon` as `<organization-learnings>`.
+Hook that fires when a subagent begins. Performs three key functions: (1) writes base environment variables to `.closedloop-ai/env`, (2) injects `<closedloop-environment>` block with paths and config, and (3) filters and injects relevant patterns from `org-patterns.toon` as `<organization-learnings>`.
 
 **SubagentStop**
 Hook that fires when a subagent completes. Handles learning acknowledgment enforcement, outcome logging to `outcomes.log`, build result tracking, performance telemetry to `perf.jsonl`, and cleanup.

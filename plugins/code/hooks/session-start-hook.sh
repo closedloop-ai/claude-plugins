@@ -19,16 +19,16 @@ if [[ -z "$SESSION_ID" ]] || [[ -z "$CWD" ]]; then
     exit 0
 fi
 
-# Create .claude/.closedloop directory at project root
-mkdir -p "$CWD/.claude/.closedloop"
+# Create .closedloop-ai directory at project root
+mkdir -p "$CWD/.closedloop-ai"
 
 # Redirect debug logs into project dir (not shared /tmp)
-DEBUG_LOG="$CWD/.claude/.closedloop/session-start-hook-debug.log"
+DEBUG_LOG="$CWD/.closedloop-ai/session-start-hook-debug.log"
 echo "$(date): SessionStart hook started, PPID=$PPID" >> "$DEBUG_LOG"
 
 # Write PID -> session_id mapping using Claude Code's PID (our PPID)
 # ! commands will walk up their process tree to find this
-echo "$SESSION_ID" > "$CWD/.claude/.closedloop/pid-$PPID.session"
+echo "$SESSION_ID" > "$CWD/.closedloop-ai/pid-$PPID.session"
 echo "$(date): Wrote session mapping: pid-$PPID.session -> $SESSION_ID" >> "$DEBUG_LOG"
 
 exit 0
