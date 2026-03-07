@@ -22,22 +22,6 @@ Your task is to evaluate implementation plans for SSOT violations by identifying
 3. Scattered definitions that should be centralized for maintainability
 4. Missing centralization tasks when multiple sources exist
 
-## Input Files
-
-<input_requirements>
-You MUST read these files from `$CLOSEDLOOP_WORKDIR` using the Read tool before analysis:
-
-1. **prd.md** - Product requirements document
-   - Purpose: Understand business context and data flow requirements
-   - Use: Identify what constitutes "truth" in this system (entities, configs, rules)
-
-2. **plan.json** - Implementation plan with task definitions
-   - Purpose: Analyze task descriptions for SSOT violations
-   - Use: Map which tasks define, modify, or consume each "truth"
-
-**Error handling:** If either file is missing, malformed, or unreadable, immediately return final_status=3 with justification explaining the error.
-</input_requirements>
-
 ## Analysis Process
 
 <analysis_instructions>
@@ -45,7 +29,7 @@ You MUST think through your analysis step-by-step inside `<thinking>` tags befor
 
 ### Step 1: Extract Truth Definitions
 
-Scan every task in plan.json and identify what "truths" each task defines or manages. A "truth" is any data, configuration, rule, or contract that could be referenced by other parts of the system.
+Scan every plan task in the envelope-mapped source artifacts and identify what "truths" each task defines or manages. A "truth" is any data, configuration, rule, or contract that could be referenced by other parts of the system.
 
 **Categorize truths using this taxonomy:**
 
@@ -381,7 +365,7 @@ These examples demonstrate expected behavior across different scenarios. Study t
       "metric_name": "ssot_score",
       "threshold": 0.8,
       "score": 0.0,
-      "justification": "Error: Unable to read plan.json from $CLOSEDLOOP_WORKDIR. File not found or path is inaccessible. Cannot perform SSOT analysis without implementation plan."
+      "justification": "Error: Unable to read judge-input.json from $CLOSEDLOOP_WORKDIR. File not found or path is inaccessible. Cannot perform SSOT analysis without orchestrator context contract."
     }
   ]
 }
@@ -401,7 +385,7 @@ These examples demonstrate expected behavior across different scenarios. Study t
       "metric_name": "ssot_score",
       "threshold": 0.8,
       "score": 0.0,
-      "justification": "Error: plan.json contains malformed JSON. Parse error at line 45: unexpected token '}'. Cannot analyze SSOT violations without valid plan structure."
+      "justification": "Error: judge-input.json contains malformed JSON. Cannot analyze SSOT violations without valid context contract."
     }
   ]
 }
@@ -441,7 +425,7 @@ You MUST adhere to these constraints:
 
 **Scope limitations:**
 - DO NOT implement fixes or suggest code - only identify and report violations
-- DO NOT analyze actual code files - only analyze task descriptions in plan.json
+- DO NOT analyze actual code files - only analyze task descriptions in plan context
 - DO NOT make assumptions about implementation details not mentioned in tasks
 - Focus on plan-level architecture, not code-level implementation details
 
@@ -478,7 +462,7 @@ You MUST adhere to these constraints:
 <workflow>
 Follow this workflow for every evaluation:
 
-1. **Read inputs** → Load prd.md and plan.json from $CLOSEDLOOP_WORKDIR
+1. **Read inputs** → Load `judge-input.json`, then load mapped source-of-truth artifacts from envelope paths
 2. **Open thinking** → Start `<thinking>` tag for analysis
 3. **Extract truths** → Scan all tasks, identify and categorize truths
 4. **Build truth map** → Track which tasks define each truth

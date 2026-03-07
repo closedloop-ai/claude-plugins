@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code v1.0.6
+
+#### Changed
+- Moved `context-manager-for-judges` agent from `code` plugin to `judges` plugin
+- `has_code_changes` now outputs integer count of code files changed; code judges skip condition uses `changed_count -eq 0`
+- Documented judge context envelope integration where `run-judges` maps compressed artifacts into `judge-input.json`
+
+### judges v1.2.0
+
+#### Added
+- New `context-manager-for-judges` agent (moved from `code` plugin) to orchestrate context compression for judge evaluation
+
+#### Changed
+- Generalized judge input contract to use orchestrator-provided `judge-input.json` (task + context envelope) instead of hardcoded artifact assumptions
+- Updated `run-judges` skill documentation and judge prompts to use source-of-truth ordering from envelope mappings
+- Standardized all judge agents (solid-liskov-substitution, custom-best-practices, readability, code-organization, solid-isp-dip, technical-accuracy, solid-open-closed, verbosity, test-judge) to read `judge-input.json` from `$CLOSEDLOOP_WORKDIR` then load mapped artifacts
+- Centralized judge input-read requirements into shared preamble `common_input_preamble.md`; judge-specific files no longer duplicate input-contract boilerplate
+- Enforced strict SSOT by removing residual per-agent `Input Contract` stubs; `common_input_preamble.md` is now the single runtime source for input-loading guidance
+
 ### self-learning v1.0.3
 
 #### Fixed

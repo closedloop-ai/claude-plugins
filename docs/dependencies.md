@@ -23,7 +23,6 @@ code ────────► self-learning
 |---|---|---|
 | Skill invocation | `code/prompts/prompt.md` (lines 93, 239) | `judges:eval-cache` |
 | Skill invocation (shell) | `code/scripts/run-loop.sh` (lines 302, 337) | `judges:run-judges` |
-| Skill declaration (YAML) | `code/agents/context-manager-for-judges.md` (line 6) | `judges:artifact-type-tailored-context` |
 
 ### `code` → `self-learning`
 
@@ -40,7 +39,6 @@ code ────────► self-learning
 | Type | File | Reference |
 |---|---|---|
 | Agent reference | `judges/skills/eval-cache/SKILL.md` (lines 18, 41, 50) | `@code:plan-evaluator` |
-| Agent reference | `judges/skills/run-judges/SKILL.md` (lines 31, 226, 677, 703, 722, 742) | `context-manager-for-judges` (defined in `code`) |
 
 ### `code-review` → `code`
 
@@ -72,6 +70,6 @@ No outbound cross-plugin dependencies. Depended on by `code`.
 ## Key Observations
 
 1. **`code` is the hub** — depended on by `code-review`, `judges`, and `bootstrap`, while itself depending on `judges` and `self-learning`.
-2. **`code` ↔ `judges` is a circular dependency** — `code` invokes judge skills; judges reference agents defined in `code`.
+2. **`code` ↔ `judges` remains a circular dependency** — `code` invokes judge skills, while judges references `@code:plan-evaluator` and `@code:pre-explorer`.
 3. **`code` → `self-learning` is the deepest coupling** — `run-loop.sh` directly calls 7 Python scripts by hardcoded relative path, making `code`'s post-iteration pipeline inoperable without `self-learning`.
 4. **All dependencies are undeclared** — no `plugin.json` files specify a `dependencies` field.

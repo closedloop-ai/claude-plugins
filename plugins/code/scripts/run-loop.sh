@@ -388,6 +388,27 @@ write_runs_log_entry() {
   echo "$RUN_ID|$timestamp|${CLOSEDLOOP_ACTIVE_GOAL:-reduce-failures}|$iteration|$status" >> "$runs_log"
 }
 
+# Outputs the number of code files changed (integer) to stdout. Returns 0 when
+# changed-files.json exists, 1 otherwise. Excludes plan artifacts and .learnings/ paths.
+has_code_changes() {
+  local workdir="$1"
+  local changed_files="$workdir/.learnings/changed-files.json"
+  if [[ ! -f "$changed_files" ]]; then
+    echo "0"
+    return 1
+  fi
+  local count
+  count=$(jq '[.[] | select(
+    (endswith("plan.json") | not) and
+    (endswith("plan.md") | not) and
+    (endswith("prd.md") | not) and
+    (endswith("judges.json") | not) and
+    ((startswith(".learnings/") or contains("/.learnings/")) | not)
+  )] | length' "$changed_files" 2>/dev/null || echo "0")
+  echo "${count:-0}"
+  return 0
+}
+
 # Run plan or code judges as the last post-iteration step. Runs at most one: plan judges
 # when plan.json exists and judges.json does not; code judges when judges.json exists
 # and there are implementation changes. Reports skip reasons.
@@ -425,13 +446,7 @@ run_judges_if_needed() {
     return 0
   fi
   local changed_count
-  changed_count=$(jq '[.[] | select(
-    (endswith("plan.json") | not) and
-    (endswith("plan.md") | not) and
-    (endswith("prd.md") | not) and
-    (endswith("judges.json") | not) and
-    ((startswith(".learnings/") or contains("/.learnings/")) | not)
-  )] | length' "$workdir/.learnings/changed-files.json" 2>/dev/null || echo "0")
+  changed_count=$(has_code_changes "$workdir")
   if [[ "${changed_count:-0}" -eq 0 ]]; then
     echo -e "${BLUE}[Judges] Skipping: no implementation changes (only plan artifacts)${NC}"
     log_progress "Judges skipped: no code changes"

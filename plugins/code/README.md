@@ -168,9 +168,6 @@ Introspects workspace repositories to determine how to start development servers
 **`learning-capture`** (model: sonnet)
 Processes pending learning JSON files from `.learnings/pending/`. Classifies each as `closedloop` (tooling improvements) or `organization` (project-specific patterns), assigns categories (mistake, pattern, convention, insight), and writes structured session output.
 
-**`context-manager-for-judges`** (model: sonnet)
-Prepares compressed context bundles for judge evaluation. Allocates a 30,000-token budget across plan/code artifacts, invokes the `judges:artifact-type-tailored-context` skill for compression, and writes `plan-context.json` or `code-context.json`.
-
 **`amend-extractor`** (model: sonnet)
 Extracts actionable plan amendments from unstructured input (meeting notes, Slack threads, email). Returns structured JSON with `extracted_changes`, `unclear_items`, and `no_action_items`. Used by the `amend-plan` command when input cannot be classified as a directive, question, or confirmation.
 
@@ -352,7 +349,7 @@ CLI state manager for the `amend-plan` command. Persists conversation state acro
 
 ### `count_tokens.py`
 
-Counts tokens in a file or stdin using the Anthropic API's token counting endpoint. Outputs JSON: `{"input_tokens": N}`. Used by `context-manager-for-judges` to measure artifact sizes before compression. Requires `ANTHROPIC_API_KEY`.
+Counts tokens in a file or stdin using the Anthropic API's token counting endpoint. Outputs JSON: `{"input_tokens": N}`. Used by judge context-compression workflows to measure artifact sizes before compression. Requires `ANTHROPIC_API_KEY`.
 
 ### `stream_formatter.py`
 
@@ -438,7 +435,8 @@ After a full run, the work directory will contain:
   plan.json                  # Structured implementation plan
   plan.md                    # Human-readable plan (synced from plan.json)
   plan-evaluation.json       # Simple mode evaluation results
-  investigation-log.md       # Codebase exploration findings
+  investigation-log.md       # Codebase exploration findings (consumed by plan judges and as secondary context for code judges)
+  code-context.json          # Token-budgeted compressed code-judge context bundle
   requirements-extract.json  # PRD extraction (from pre-explorer)
   code-map.json              # Codebase file map (from pre-explorer)
   state.json                 # Current phase/status for monitoring

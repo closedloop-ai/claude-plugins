@@ -1,0 +1,121 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://closedloop.ai/schemas/judge-input.schema.json",
+  "title": "Judge Input Envelope",
+  "description": "Canonical orchestrator-to-judge context envelope. Defines evaluation task, artifact mappings, fallback semantics, and run metadata.",
+  "type": "object",
+  "required": [
+    "evaluation_type",
+    "task",
+    "primary_artifact",
+    "supporting_artifacts",
+    "fallback_mode",
+    "metadata"
+  ],
+  "properties": {
+    "evaluation_type": {
+      "type": "string",
+      "enum": ["plan", "code"],
+      "description": "Evaluation mode for this judge run."
+    },
+    "task": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Natural-language evaluation objective that judges must follow."
+    },
+    "primary_artifact": {
+      "$ref": "#/$defs/artifactDescriptor"
+    },
+    "supporting_artifacts": {
+      "type": "array",
+      "description": "Secondary artifacts available to judges in order of priority.",
+      "items": {
+        "$ref": "#/$defs/artifactDescriptor"
+      }
+    },
+    "source_of_truth": {
+      "type": "array",
+      "description": "Ordered list of artifact IDs defining evidence priority. Judges use this to prioritize evidence across artifacts.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "fallback_mode": {
+      "type": "object",
+      "required": ["active", "reason", "fallback_artifacts"],
+      "properties": {
+        "active": {
+          "type": "boolean",
+          "description": "Whether this run is in fallback mode."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason fallback mode is active; may be empty when inactive."
+        },
+        "fallback_artifacts": {
+          "type": "array",
+          "description": "Artifacts used when fallback mode is active. Entries may be IDs or full artifact descriptors.",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "$ref": "#/$defs/artifactDescriptor"
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["run_id"],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "artifactDescriptor": {
+      "type": "object",
+      "required": ["id", "path", "type", "required"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Absolute or workdir-relative path to the artifact."
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Artifact content type (for example: json, markdown, text, diff)."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether artifact is mandatory for this run."
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

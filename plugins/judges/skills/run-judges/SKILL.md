@@ -17,22 +17,33 @@ Execute specialized judge agents in parallel to evaluate implementation plan qua
 - **plan** (default): Evaluate implementation plan with 13 judges, 4 batches, output to judges.json
 - **code**: Evaluate implemented code with 11 judges, 3 batches, output to code-judges.json
 
+## Judge Input Contract (`judge-input.json`)
+
+The judge input contract is maintained in:
+
+`references/judge-input-contract.md`
+
+This keeps orchestration flow readable while preserving a single source of truth for contract fields and semantics.
+
 ## Task Context
 
 You are orchestrating quality evaluation for a ClosedLoop artifact (implementation plan or code). Your responsibilities:
 
 **For plan artifacts (default):**
-1. Launch all 13 judge agents in parallel batches
-2. Aggregate their CaseScore outputs into a valid EvaluationReport
-3. Write the report to `$CLOSEDLOOP_WORKDIR/judges.json`
-4. Validate output structure and completeness
+1. Launch context-manager-for-judges agent to prepare compressed plan context
+2. Build `judge-input.json` with plan task/context mapping
+3. Launch all 13 judge agents in parallel batches
+4. Aggregate their CaseScore outputs into a valid EvaluationReport
+5. Write the report to `$CLOSEDLOOP_WORKDIR/judges.json`
+6. Validate output structure and completeness
 
 **For code artifacts (--artifact-type code):**
 1. Launch context-manager-for-judges agent to prepare compressed context
-2. Launch 11 judge agents in parallel batches
-3. Aggregate their CaseScore outputs into a valid EvaluationReport
-4. Write the report to `$CLOSEDLOOP_WORKDIR/code-judges.json`
-5. Validate output structure and completeness
+2. Build `judge-input.json` with code task/context mapping
+3. Launch 11 judge agents in parallel batches
+4. Aggregate their CaseScore outputs into a valid EvaluationReport
+5. Write the report to `$CLOSEDLOOP_WORKDIR/code-judges.json`
+6. Validate output structure and completeness
 
 **Success criteria:**
 - All judges executed (or error CaseScores generated for failures)
@@ -144,7 +155,7 @@ Use `sub_step` as numeric phase order and optional `sub_step_name` to capture th
 
 | Artifact | sub_step | sub_step_name   |
 |----------|----------|-----------------|
-| plan     | 0        | prerequisites   |
+| plan     | 0        | context_manager |
 | plan     | 1–4      | batch_1 … batch_4 |
 | plan     | 5        | aggregate       |
 | plan     | 6        | validate        |
@@ -158,7 +169,7 @@ Use `sub_step` as numeric phase order and optional `sub_step_name` to capture th
 ```bash
 # Set these two values for the current phase:
 SUB_STEP_NUM=0
-SUB_STEP_LABEL="prerequisites"   # prerequisites | context_manager | batch_1 … | aggregate | validate
+SUB_STEP_LABEL="context_manager"   # context_manager | batch_1 … | aggregate | validate
 
 mkdir -p "$CLOSEDLOOP_WORKDIR/.closedloop"
 {
@@ -201,9 +212,17 @@ rm -f "$CLOSEDLOOP_WORKDIR/.closedloop/perf-substep-start.env"
 
 ## Execution Workflow
 
+### Step 0: Mandatory Contract Pre-Read
+
+Before any prerequisite checks or judge launches:
+
+1. Read `references/judge-input-contract.md` in full.
+2. Apply the contract requirements when constructing `$CLOSEDLOOP_WORKDIR/judge-input.json`.
+3. If the reference is missing/unreadable, fail fast with a clear error (do not proceed with judge execution).
+
 ### Prerequisites Check
 
-**Performance:** At the start of this phase run the "start of phase" Bash with `SUB_STEP_NUM=0` and `SUB_STEP_LABEL=prerequisites` (plan) or `SUB_STEP_LABEL=context_manager` (code). At the end of the phase run the "end of phase" Bash.
+**Performance:** At the start of this phase run the "start of phase" Bash with `SUB_STEP_NUM=0` and `SUB_STEP_LABEL=context_manager` for both plan and code modes. At the end of the phase run the "end of phase" Bash.
 
 **Before starting, verify required inputs exist:**
 
@@ -221,11 +240,78 @@ if [ ! -f "$CLOSEDLOOP_WORKDIR/plan.json" ]; then
 fi
 ```
 
+**Investigation log resolution (plan mode):**
+
+After validating `prd.md` and `plan.json`, resolve supporting context for plan judges:
+
+1. **Use existing file first**
+   - If `$CLOSEDLOOP_WORKDIR/investigation-log.md` exists, use it as-is.
+
+2. **Check `@code:pre-explorer` availability before invoking**
+   - Perform an explicit capability probe for `@code:pre-explorer` in the active Claude/plugin environment.
+   - Treat "unknown agent", "agent not found", or plugin resolution errors as **pre-explorer unavailable**.
+   - Recommended probe pattern:
+     - Attempt a minimal `Task()` call targeting `@code:pre-explorer`.
+     - If the platform rejects the agent type before execution, classify as unavailable and continue to internal fallback.
+
+3. **If available, invoke pre-explorer**
+   - Launch `@code:pre-explorer` with `WORKDIR=$CLOSEDLOOP_WORKDIR` to generate missing pre-exploration artifacts.
+   - Re-check for `$CLOSEDLOOP_WORKDIR/investigation-log.md` after completion.
+
+4. **If unavailable or invocation failed, run internal fallback**
+   - Generate `investigation-log.md` with a lightweight local-only investigation.
+   - Keep it fast and deterministic (no external web research).
+   - Internal fallback should:
+     - Read `prd.md` and extract top entities/actions as search seeds.
+     - Run targeted `Glob`/`Grep` against the local repository for likely implementation files.
+     - Record top relevant files and short rationale under `Files Discovered` / `Key Findings`.
+     - Add requirement-to-code evidence links under `Requirements Mapping`.
+   - Use the canonical sections:
+     - `## Search Strategy`
+     - `## Files Discovered`
+     - `## Key Findings`
+     - `## Requirements Mapping`
+     - `## Uncertainties`
+
+5. **Never block plan context preparation on investigation context**
+   - If log generation still fails, emit a warning and continue.
+
+6. **Prepare plan-context.json via context-manager-for-judges**
+   - Launch `@judges:context-manager-for-judges` with `artifact_type=plan`.
+   - Verify `$CLOSEDLOOP_WORKDIR/plan-context.json` exists.
+   - If missing after invocation, log warning and activate **compatibility mode** for this run:
+     - Compatibility mode allows one emergency fallback to raw `plan.json` + `prd.md`.
+     - Use compatibility mode only when context generation fails.
+
+7. **Plan-mode source-of-truth policy**
+   - Normal mode: `plan-context.json` is primary and required.
+   - Compatibility mode: `plan.json` + `prd.md` may be used for this run only.
+
+8. **Build plan-mode `judge-input.json`**
+   - Set `evaluation_type` = `plan`.
+   - Set `task` to plan quality evaluation objective (13-plan-judge workflow).
+   - Set `primary_artifact` to `plan-context.json` in normal mode.
+   - In compatibility mode, set primary to `plan.json` and include `prd.md` as supporting.
+   - Include `investigation-log.md` as supporting artifact when available.
+   - Set `source_of_truth` ordering from primary to secondary artifacts.
+
 **For code artifacts (--artifact-type code):**
 ```bash
+# Resolve investigation context for code judges (best effort)
+if [ ! -f "$CLOSEDLOOP_WORKDIR/investigation-log.md" ]; then
+  echo "INFO: investigation-log.md missing. Attempting best-effort generation via @code:pre-explorer..."
+  # Launch @code:pre-explorer with WORKDIR=$CLOSEDLOOP_WORKDIR
+  # If unavailable/fails, continue with warning (non-blocking for code judges)
+fi
+
 # Launch context-manager-for-judges agent to prepare compressed context
 # This agent reads code artifacts (git diff, changed-files.json, etc.)
 # and produces code-context.json with token-budgeted compression
+
+# investigation-log.md is optional secondary context for code judging
+if [ ! -f "$CLOSEDLOOP_WORKDIR/investigation-log.md" ]; then
+  echo "WARNING: investigation-log.md unavailable. Continuing code judges with code-context.json only."
+fi
 
 # Verify code-context.json exists after context manager completes
 if [ ! -f "$CLOSEDLOOP_WORKDIR/code-context.json" ]; then
@@ -234,6 +320,13 @@ if [ ! -f "$CLOSEDLOOP_WORKDIR/code-context.json" ]; then
   # Generate error report with final_status=3, justification="Context preparation failed"
   exit 1
 fi
+
+# Build code-mode judge-input.json
+# - evaluation_type: "code"
+# - task: code quality evaluation objective (11-code-judge workflow)
+# - primary_artifact: code-context.json
+# - supporting_artifacts: investigation-log.md (optional), plus any other run artifacts
+# - source_of_truth: ["code_context", ...]
 ```
 
 **If required files are missing:**
@@ -330,19 +423,26 @@ The run-judges skill supports two artifact types with different judge configurat
 
 ### Preamble Injection
 
-**Before invoking each judge, prepend the appropriate preamble:**
+**Before invoking each judge, prepend the common and artifact-specific preambles:**
 
-1. **Locate preamble file**: `skills/artifact-type-tailored-context/preambles/{artifact_type}_preamble.md`
+1. **Locate preamble files**:
+   - `skills/artifact-type-tailored-context/preambles/common_input_preamble.md`
+   - `skills/artifact-type-tailored-context/preambles/{artifact_type}_preamble.md`
    - Use Glob tool to find: `**/artifact-type-tailored-context/preambles/*.md`
-   - Validate file exists (fail with error CaseScore if missing)
+   - Validate both files exist (fail with error CaseScore if either is missing)
 
-2. **Read preamble content**: Use Read tool, validate size < 5000 characters
+2. **Read preamble content**:
+   - Read `common_input_preamble.md`
+   - Read `{artifact_type}_preamble.md`
+   - Validate combined preamble size is reasonable for judge context (target: < 8000 characters)
 
-3. **Concatenate**: `preamble + "\n\n---\n\n" + judge_prompt`
+3. **Concatenate**:
+   - `common_input_preamble + "\n\n---\n\n" + artifact_preamble + "\n\n---\n\n" + judge_prompt`
+   - `common_input_preamble.md` is the only runtime source of judge input-loading contract text; judge-specific agent files should not duplicate that contract.
 
 4. **Pass to judge**: Use concatenated prompt as judge's full prompt
 
-**If preamble file is missing:**
+**If either preamble file is missing:**
 - Generate error CaseScore with `final_status=3`, `justification="Preamble file not found: {path}"`
 - Continue with other judges
 
@@ -350,12 +450,18 @@ The run-judges skill supports two artifact types with different judge configurat
 
 **For plan artifacts:**
 ```
-WORKDIR=$CLOSEDLOOP_WORKDIR. Evaluate the plan at $CLOSEDLOOP_WORKDIR/plan.json against the PRD at $CLOSEDLOOP_WORKDIR/prd.md
+WORKDIR=$CLOSEDLOOP_WORKDIR. Read $CLOSEDLOOP_WORKDIR/judge-input.json first.
+Evaluate according to `task` and `source_of_truth` ordering.
+Treat the envelope's `primary_artifact` as authoritative.
+If `fallback_mode.active=true`, use fallback artifacts specified in the envelope.
 ```
 
 **For code artifacts:**
 ```
-WORKDIR=$CLOSEDLOOP_WORKDIR. Evaluate the implemented code using the compressed context at $CLOSEDLOOP_WORKDIR/code-context.json. Apply your {judge_name} criteria to assess code quality.
+WORKDIR=$CLOSEDLOOP_WORKDIR. Read $CLOSEDLOOP_WORKDIR/judge-input.json first.
+Evaluate according to `task` and `source_of_truth` ordering.
+Treat the envelope's `primary_artifact` as authoritative.
+Apply your {judge_name} criteria to assess code quality.
 ```
 
 </prompt_template>
@@ -558,7 +664,7 @@ The script validates using strict Pydantic models:
 |-------|-------------|
 | **JSON syntax** | Valid JSON format |
 | **Required fields** | report_id, timestamp, stats array |
-| **Judge coverage** | All expected judges present (15 for plan, 11 for code) |
+| **Judge coverage** | All expected judges present (13 for plan, 11 for code) |
 | **Status values** | final_status ∈ {1, 2, 3} |
 | **Metric completeness** | Each judge has ≥1 metric |
 | **Report ID format** | Ends with '-judges' (plan) or '-code-judges' (code) |
@@ -669,6 +775,10 @@ Before marking this task complete, verify:
 
 **For plan artifacts (default):**
 - [ ] **Input validation** - prd.md and plan.json exist (or graceful skip)
+- [ ] **Context preparation** - context-manager-for-judges launched with `artifact_type=plan`
+- [ ] **Plan context validation** - `plan-context.json` exists, or compatibility mode explicitly activated
+- [ ] **Judge input contract** - `judge-input.json` exists with required fields
+- [ ] **Investigation context resolution** - `investigation-log.md` reused, generated via pre-explorer, or best-effort generated internally
 - [ ] **Parallel execution** - All 13 judges launched in 4 batches (max 4 per batch)
 - [ ] **Result aggregation** - Valid EvaluationReport with 13 CaseScore entries
 - [ ] **File output** - `judges.json` written to `$CLOSEDLOOP_WORKDIR`
@@ -677,7 +787,9 @@ Before marking this task complete, verify:
 **For code artifacts (--artifact-type code):**
 - [ ] **Context preparation** - context-manager-for-judges agent launched successfully
 - [ ] **Context validation** - code-context.json exists at `$CLOSEDLOOP_WORKDIR`
-- [ ] **Preamble injection** - code_preamble.md prepended to all judge prompts
+- [ ] **Judge input contract** - `judge-input.json` exists with required fields
+- [ ] **Investigation context resolution** - `investigation-log.md` reused or generated best-effort; missing file does not block code judging
+- [ ] **Preamble injection** - common_input_preamble.md + code_preamble.md prepended to all judge prompts
 - [ ] **Parallel execution** - All 11 judges launched in 3 batches (max 4 per batch)
 - [ ] **Result aggregation** - Valid EvaluationReport with 11 CaseScore entries
 - [ ] **File output** - `code-judges.json` written to `$CLOSEDLOOP_WORKDIR`
@@ -702,7 +814,13 @@ Before marking this task complete, verify:
 | "report_id should end with '-code-judges'" | Incorrect ID format for code | Use pattern: `{RUN_ID}-code-judges` for code artifacts |
 | "Judge {name} has no metrics" | Empty metrics array | Each CaseScore must have ≥1 MetricStatistics entry |
 | "Context preparation failed" | context-manager-for-judges failed | Check context-manager agent output; verify artifact files exist |
-| "Preamble file not found" | Missing preamble .md file | Verify skills/artifact-type-tailored-context/preambles/{artifact_type}_preamble.md exists |
+| "judge-input.json missing" | Orchestrator did not generate envelope | Build `$CLOSEDLOOP_WORKDIR/judge-input.json` before launching judges |
+| "judge-input schema invalid" | Missing required envelope fields | Ensure required fields: `evaluation_type`, `task`, `primary_artifact`, `supporting_artifacts`, `source_of_truth`, `fallback_mode`, `metadata` |
+| "plan-context.json not found" | plan context manager did not produce output | Run `@judges:context-manager-for-judges` with `artifact_type=plan`; if still missing, activate one-run compatibility fallback to `plan.json` + `prd.md` |
+| "Preamble file not found" | Missing common or artifact preamble .md file | Verify both `skills/artifact-type-tailored-context/preambles/common_input_preamble.md` and `skills/artifact-type-tailored-context/preambles/{artifact_type}_preamble.md` exist |
+| "pre-explorer unavailable" | `@code:pre-explorer` not installed/resolvable | Log warning and use internal fallback investigation to create `investigation-log.md` |
+| "investigation-log.md missing after fallback" | Both pre-explorer and internal fallback failed | Log warning and continue; do not block context preparation |
+| "investigation-log.md missing in code mode" | pre-explorer unavailable or generation failed during code preflight | Log warning and continue with `code-context.json` only (non-blocking) |
 | "Invalid --artifact-type value" | Unsupported artifact type | Use only 'plan' or 'code' |
 
 </troubleshooting>
@@ -726,6 +844,12 @@ If context-manager-for-judges agent exceeds 5 minutes:
 - Each error CaseScore: `final_status=3`, `justification="Context preparation timeout"`
 - Write complete report with all error CaseScores
 
+### Context Manager Timeout (Plan Mode)
+
+If context-manager-for-judges agent exceeds 5 minutes in plan mode:
+- Attempt one emergency compatibility fallback to raw `plan.json` + `prd.md`
+- If fallback files are unavailable, abort plan judge execution and emit clear error
+
 ### Individual Judge Failures
 
 If a single judge Task call fails during execution:
@@ -734,14 +858,16 @@ If a single judge Task call fails during execution:
 - Continue with remaining judges in batch and subsequent batches
 - Include error CaseScore in final aggregated report
 
-### Backward Compatibility Preservation
+### Plan Mode Execution Flow
 
 When `--artifact-type` is not specified or equals 'plan':
-- Execute existing 15-judge logic exactly as before
+- Execute standard 13-judge plan logic
 - Launch 4 batches with existing judge assignments
 - Write to `judges.json` (not `code-judges.json`)
-- Do NOT launch context-manager-for-judges
-- Do NOT prepend preambles to judge prompts
+- Launch context-manager-for-judges for plan context preparation
+- Use `plan-context.json` as primary input; use one-run compatibility fallback only if context preparation fails
+- Build and pass `judge-input.json` envelope to judges
+- Prepend preambles to judge prompts
 - Use default validation with `--category plan`
 
 This ensures existing workflows and orchestrators continue to function without modification.
