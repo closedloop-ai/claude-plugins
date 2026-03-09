@@ -6,17 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### judges v1.2.0
+### judges v1.1.0
 
 #### Added
 - New `context-manager-for-judges` agent (moved from `code` plugin) to orchestrate context compression for judge evaluation
+- New `judge-input.schema.json` — formal JSON schema defining the standard judge input contract with `source_of_truth` field
+- Investigation log (`investigation-log.md`) reuse in plan judge context with pre-explorer fallback when no `CLOSEDLOOP_WORKDIR` is set
 
 #### Changed
 - Generalized judge input contract to use orchestrator-provided `judge-input.json` (task + context envelope) instead of hardcoded artifact assumptions
-- Updated `run-judges` skill documentation and judge prompts to use source-of-truth ordering from envelope mappings
-- Standardized all judge agents (solid-liskov-substitution, custom-best-practices, readability, code-organization, solid-isp-dip, technical-accuracy, solid-open-closed, verbosity, test-judge) to read `judge-input.json` from `$CLOSEDLOOP_WORKDIR` then load mapped artifacts
+- Standardized all judge agents to read `judge-input.json` from `$CLOSEDLOOP_WORKDIR` and load mapped artifacts via source-of-truth ordering
 - Centralized judge input-read requirements into shared preamble `common_input_preamble.md`; judge-specific files no longer duplicate input-contract boilerplate
 - Enforced strict SSOT by removing residual per-agent `Input Contract` stubs; `common_input_preamble.md` is now the single runtime source for input-loading guidance
+
+#### Fixed
+- Added `source_of_truth` to required array in `judge-input.schema.json` — schema now matches SKILL.md and judge agent expectations for evidence prioritization
 
 ### code v1.1.0
 
@@ -34,6 +38,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Updated `process-learnings` cap strategy to trim `[PRUNE]` then `[STALE]` then `[REVIEW]`, with `seen_count` as tiebreaker
 
 ### code v1.1.1
+
+#### Added
+- Integrated `investigation-log.md` into judge context assembly, sourced from `$CLOSEDLOOP_WORKDIR`
 
 #### Fixed
 - Fixed judges agents path resolution in `run-loop.sh` to support monorepo, cache, and marketplace installation layouts via a four-level fallback strategy (`CLOSEDLOOP_JUDGES_AGENTS_DIR` env override → repo-relative path → non-versioned sibling → latest semver-versioned sibling)
