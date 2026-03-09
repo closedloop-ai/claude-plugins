@@ -374,25 +374,26 @@ write_runs_log_entry() {
   echo "$RUN_ID|$timestamp|${CLOSEDLOOP_ACTIVE_GOAL:-reduce-failures}|$iteration|$status" >> "$runs_log"
 }
 
-# Outputs the number of code files changed (integer) to stdout. Returns 0 when
-# changed-files.json exists, 1 otherwise. Excludes plan artifacts and .learnings/ paths.
+# Returns 0 when implementation code changes exist, 1 otherwise.
+# Excludes plan artifacts and .learnings/ paths.
 has_code_changes() {
   local workdir="$1"
   local changed_files="$workdir/.learnings/changed-files.json"
   if [[ ! -f "$changed_files" ]]; then
-    echo "0"
     return 1
   fi
-  local count
-  count=$(jq '[.[] | select(
+
+  if jq -e '[.[] | select(
     (endswith("plan.json") | not) and
     (endswith("plan.md") | not) and
     (endswith("prd.md") | not) and
     (endswith("judges.json") | not) and
     ((startswith(".learnings/") or contains("/.learnings/")) | not)
-  )] | length' "$changed_files" 2>/dev/null || echo "0")
-  echo "${count:-0}"
-  return 0
+  )] | length > 0' "$changed_files" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  return 1
 }
 
 # Run plan or code judges as the last post-iteration step. Runs at most one: plan judges
@@ -431,9 +432,7 @@ run_judges_if_needed() {
     emit_skipped_step "$CLOSEDLOOP_JUDGES_STEP" "code_judges"
     return 0
   fi
-  local changed_count
-  changed_count=$(has_code_changes "$workdir")
-  if [[ "${changed_count:-0}" -eq 0 ]]; then
+  if ! has_code_changes "$workdir"; then
     echo -e "${BLUE}[Judges] Skipping: no implementation changes (only plan artifacts)${NC}"
     log_progress "Judges skipped: no code changes"
     emit_skipped_step "$CLOSEDLOOP_JUDGES_STEP" "code_judges"
@@ -442,8 +441,8 @@ run_judges_if_needed() {
   if [[ -n "${START_SHA:-}" ]] && [[ ! -f "$workdir/.start-sha" ]]; then
     echo "$START_SHA" > "$workdir/.start-sha"
   fi
-  echo -e "${BLUE}[Judges] Running code judges (judges.json exists, $changed_count code changes)...${NC}"
-  log_progress "Running code judges ($changed_count files changed)"
+  echo -e "${BLUE}[Judges] Running code judges (judges.json exists, implementation changes detected)...${NC}"
+  log_progress "Running code judges (implementation changes detected)"
   run_timed_step "$CLOSEDLOOP_JUDGES_STEP" "code_judges" bash -c "
     CLOSEDLOOP_WORKDIR='$workdir' \
     CLOSEDLOOP_PARENT_STEP='$CLOSEDLOOP_JUDGES_STEP' \
