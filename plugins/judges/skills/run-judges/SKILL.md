@@ -870,6 +870,6 @@ When `--artifact-type` is not specified or equals 'plan':
 - Prepend preambles to judge prompts
 - Use default validation with `--category plan`
 
-This ensures existing workflows and orchestrators continue to function without modification.
+This is the standard plan mode flow; orchestrators must support context-manager launch, judge-input.json construction, and preamble injection. The compatibility fallback (raw `plan.json` + `prd.md`) activates only when context preparation fails (e.g., context-manager timeout), not for orchestrators that have not been updated.
 
 ---
