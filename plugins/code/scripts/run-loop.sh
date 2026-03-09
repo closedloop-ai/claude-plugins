@@ -132,6 +132,103 @@ bootstrap_learnings() {
   fi
 }
 
+# Returns 0 if the directory exists and includes at least one markdown file.
+is_valid_judges_agents_dir() {
+  local dir="$1"
+  [[ -d "$dir" ]] || return 1
+  find "$dir" -type f -name "*.md" -print -quit | grep -q .
+}
+
+# Resolve judges agents dir under a root (e.g., .../judges/<version>/agents).
+# Iterates candidates from newest to oldest semver and returns the first valid
+# one, so a corrupt or partially-installed latest version falls back gracefully
+# to an older usable release rather than failing outright.
+resolve_versioned_judges_agents_dir() {
+  local judges_root="$1"
+  local versioned_candidates=""
+
+  if [[ ! -d "$judges_root" ]]; then
+    return 1
+  fi
+
+  # Semver: no leading zeros in core; optional prerelease (-id.id) and build (+id.id).
+  local semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+
+  while IFS= read -r agents_dir; do
+    local version_dir
+    version_dir="$(basename "$(dirname "$agents_dir")")"
+    if [[ "$version_dir" =~ $semver_re ]]; then
+      versioned_candidates+="${version_dir}|${agents_dir}"$'\n'
+    fi
+  done < <(find "$judges_root" -mindepth 2 -maxdepth 2 -type d -name "agents" 2>/dev/null)
+
+  # Walk candidates newest → oldest; return the first one that passes validation.
+  while IFS='|' read -r _version agents_dir; do
+    [[ -z "$agents_dir" ]] && continue
+    if is_valid_judges_agents_dir "$agents_dir"; then
+      echo "$agents_dir"
+      return 0
+    fi
+  done < <(printf "%s" "$versioned_candidates" | LC_ALL=C sort -t'|' -k1,1V -r)
+
+  return 1
+}
+
+# Resolve judges/agents path across monorepo, cache, and marketplace layouts.
+resolve_judges_agents_dir() {
+  local code_plugin_dir
+  code_plugin_dir="$(cd "$SCRIPTS_DIR/.." 2>/dev/null && pwd || echo "")"
+  local code_root_dir="$code_plugin_dir"
+
+  # For versioned cache layout (.../code/<version>/scripts), normalize to .../code.
+  if [[ "$(basename "$code_plugin_dir")" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$ ]]; then
+    code_root_dir="$(dirname "$code_plugin_dir")"
+  fi
+
+  local plugins_parent
+  plugins_parent="$(dirname "$code_root_dir")"
+
+  local sibling_judges_agents="$plugins_parent/judges/agents"
+  local sibling_judges_root="$plugins_parent/judges"
+  local tried=()
+
+  sibling_judges_agents="$(cd "$sibling_judges_agents" 2>/dev/null && pwd || echo "$sibling_judges_agents")"
+  sibling_judges_root="$(cd "$sibling_judges_root" 2>/dev/null && pwd || echo "$sibling_judges_root")"
+
+  # 1) Explicit env override (best for deterministic tests and custom installs)
+  if [[ -n "${CLOSEDLOOP_JUDGES_AGENTS_DIR:-}" ]]; then
+    local override_dir
+    override_dir="$(cd "$CLOSEDLOOP_JUDGES_AGENTS_DIR" 2>/dev/null && pwd || echo "$CLOSEDLOOP_JUDGES_AGENTS_DIR")"
+    tried+=("$override_dir")
+    if is_valid_judges_agents_dir "$override_dir"; then
+      log_progress "resolve_judges_agents_dir: using CLOSEDLOOP_JUDGES_AGENTS_DIR=$override_dir"
+      echo "$override_dir"
+      return 0
+    fi
+  fi
+
+  # 2) Non-versioned sibling plugin layout (.../judges/agents).
+  tried+=("$sibling_judges_agents")
+  if is_valid_judges_agents_dir "$sibling_judges_agents"; then
+    log_progress "resolve_judges_agents_dir: using sibling plugin path $sibling_judges_agents"
+    echo "$sibling_judges_agents"
+    return 0
+  fi
+
+  # 3) Versioned sibling plugin layout (.../judges/<version>/agents), newest valid semver wins.
+  tried+=("$sibling_judges_root/<version>/agents")
+  local versioned_agents_dir
+  versioned_agents_dir="$(resolve_versioned_judges_agents_dir "$sibling_judges_root" || true)"
+  if [[ -n "$versioned_agents_dir" ]]; then
+    log_progress "resolve_judges_agents_dir: using versioned path $versioned_agents_dir"
+    echo "$versioned_agents_dir"
+    return 0
+  fi
+
+  log_progress "resolve_judges_agents_dir: no valid judges agents dir found; tried: ${tried[*]}"
+  return 1
+}
+
 # Ensure agents snapshot exists in workdir; create if missing (runs on first launch or re-launch)
 ensure_agents_snapshot() {
   local workdir="$1"
@@ -145,20 +242,22 @@ ensure_agents_snapshot() {
   store_agents_snapshot "$workdir"
 }
 
-# Snapshot all .md agent files into workdir/$AGENTS_SNAPSHOT_DIR with manifest.json
+# Snapshot all .md judge agent files into workdir/$AGENTS_SNAPSHOT_DIR with manifest.json
 store_agents_snapshot() {
   local workdir="$1"
   local snapshot_dir="$workdir/$AGENTS_SNAPSHOT_DIR"
-  local agents_src="$SCRIPTS_DIR/../agents"
-
-  # Resolve agents source to absolute path
-  agents_src="$(cd "$agents_src" 2>/dev/null && pwd || echo "$agents_src")"
+  local plugin_name="judges"
+  local agents_src
+  agents_src="$(resolve_judges_agents_dir || true)"
+  local plugin_dir=""
 
   # AC-004: Check for agents directory existence
-  if [[ ! -d "$agents_src" ]]; then
-    log_progress "store_agents_snapshot: agents directory not found at $agents_src, skipping"
+  if [[ -z "$agents_src" ]] || [[ ! -d "$agents_src" ]]; then
+    log_progress "store_agents_snapshot: agents directory could not be resolved, skipping"
     return 0
   fi
+
+  plugin_dir="$(dirname "$agents_src")"
 
   mkdir -p "$snapshot_dir" || { log_progress "WARNING: store_agents_snapshot: failed to create snapshot dir $snapshot_dir"; return 0; }
 
@@ -191,7 +290,7 @@ store_agents_snapshot() {
   file_count=$(echo "$file_list" | grep -c . || echo "0")
 
   local plugin_version
-  plugin_version=$(jq -r '.version // "unknown"' "$SCRIPTS_DIR/../.claude-plugin/plugin.json" 2>/dev/null || echo "unknown")
+  plugin_version=$(jq -r '.version // "unknown"' "$plugin_dir/.claude-plugin/plugin.json" 2>/dev/null || echo "unknown")
 
   local run_id
   run_id="${RUN_ID:-$(basename "$workdir")}"
@@ -200,7 +299,7 @@ store_agents_snapshot() {
   created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
   jq -n \
-    --arg plugin "code" \
+    --arg plugin "$plugin_name" \
     --arg plugin_version "$plugin_version" \
     --arg run_id "$run_id" \
     --arg created_at "$created_at" \
