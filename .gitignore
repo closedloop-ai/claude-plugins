@@ -8,6 +8,7 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+.ruff_cache/
 
 # Tests
 **/route-knowledge.json
@@ -16,7 +17,6 @@ __pycache__/
 .claude/.token-stats/
 
 # ClosedLoop session-level artifacts (cleaned up by SessionEnd hook)
-.claude/.closedloop/
 .claude/closedloop-loop.local.md
 .closedloop/
 .agent-types/

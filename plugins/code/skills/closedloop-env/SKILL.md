@@ -11,7 +11,7 @@ This skill provides access to ClosedLoop environment variables needed for file o
 
 Read the base environment file:
 
-    .claude/.closedloop/env
+    .closedloop-ai/env
 
 The file contains KEY=VALUE pairs:
 - `CLOSEDLOOP_WORKDIR` - The run directory for this session
@@ -29,7 +29,7 @@ After reading the env file, construct paths like:
 
 Also read your agent-specific learnings file if it exists:
 
-    .claude/.closedloop/learnings-{your-agent-name}
+    .closedloop-ai/learnings-{your-agent-name}
 
 Where `{your-agent-name}` is your `name:` from your frontmatter in lowercase (e.g., `plan-validator`).
 

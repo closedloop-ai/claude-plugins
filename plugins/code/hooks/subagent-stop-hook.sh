@@ -25,7 +25,11 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 # Discover WORKDIR via session_id mapping (created by setup-closedloop.sh)
 CLOSEDLOOP_WORKDIR=""
 if [[ -n "$SESSION_ID" ]]; then
-    WORKDIR_FILE="$CWD/.claude/.closedloop/session-$SESSION_ID.workdir"
+    WORKDIR_FILE="$CWD/.closedloop-ai/session-$SESSION_ID.workdir"
+    # Fallback: check legacy path for mid-upgrade sessions
+    if [[ ! -f "$WORKDIR_FILE" ]] && [[ -f "$CWD/.claude/.closedloop/session-$SESSION_ID.workdir" ]]; then
+        WORKDIR_FILE="$CWD/.claude/.closedloop/session-$SESSION_ID.workdir"
+    fi
     if [[ -f "$WORKDIR_FILE" ]]; then
         CLOSEDLOOP_WORKDIR=$(cat "$WORKDIR_FILE")
         echo "$(date): Found WORKDIR=$CLOSEDLOOP_WORKDIR from session mapping" >> "$DEBUG_LOG"
@@ -171,14 +175,18 @@ fi
 
 # ============================================================================
 # ALWAYS write injected patterns to outcomes.log (regardless of acknowledgment)
-# The start hook writes injected learnings to .claude/.closedloop/learnings-{agent}
+# The start hook writes injected learnings to .closedloop-ai/learnings-{agent}
 # Read that file and log each injected pattern with its actual outcome status:
 #   - "applied" if agent explicitly cited it (already written above)
 #   - "injected" if patterns were sent but agent didn't cite them
 # This ensures compute_success_rates.py always has data to work with.
 # ============================================================================
 AGENT_NAME_LOWER=$(echo "$AGENT_NAME" | tr '[:upper:]' '[:lower:]')
-LEARNINGS_FILE="$CWD/.claude/.closedloop/learnings-$AGENT_NAME_LOWER"
+LEARNINGS_FILE="$CWD/.closedloop-ai/learnings-$AGENT_NAME_LOWER"
+# Fallback: check legacy path for mid-upgrade sessions
+if [[ ! -f "$LEARNINGS_FILE" ]] && [[ -f "$CWD/.claude/.closedloop/learnings-$AGENT_NAME_LOWER" ]]; then
+    LEARNINGS_FILE="$CWD/.claude/.closedloop/learnings-$AGENT_NAME_LOWER"
+fi
 
 if [[ -f "$LEARNINGS_FILE" ]]; then
     echo "$(date): Reading injected patterns from $LEARNINGS_FILE" >> "$DEBUG_LOG"
