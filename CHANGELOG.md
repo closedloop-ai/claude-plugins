@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code v1.2.0
+
+#### Added
+- Autonomous plugin system with gate-based execution (`scripts/plugin-dispatcher.py`)
+- TOML frontmatter parser for `plugin.md` definitions with `+++` delimiters
+- Gate evaluator supporting cooldown, cron, condition, event, and manual gate types
+- Plugin scanner with dual-path discovery (bundled + custom) and name-based deduplication
+- JSONL append-only run history at `.plugins/run-history.jsonl` with corruption recovery
+- Dispatch queue writer at `.plugins/dispatch-queue.json`
+- SessionStart hook integration to call dispatcher on session start
+- SubagentStop hook integration to record plugin run results in run history
+- Phase 0.8 (Plugin Dispatch) in orchestrator prompt for non-blocking background task dispatch
+- `session-cleanup` plugin: cleans stale PID mappings, orphaned agent-type files on 30m cooldown
+- `ci-monitor` plugin: polls GitHub for failed CI checks on open PRs on 5m cooldown
+- `plugin-dispatch` skill for manual plugin invocation via `/code:plugin-dispatch`
+- Comprehensive test suite for plugin-dispatcher.py (28 tests)
+
 ### code v1.1.2
 
 #### Fixed
