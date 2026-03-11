@@ -455,6 +455,29 @@ if [[ -n "$AGENT_ID" ]] && [[ -n "$CLOSEDLOOP_WORKDIR" ]] && [[ -f "$AGENT_TYPES
     fi
 fi
 
+# --- Plugin Run History ---
+if [[ "$AGENT_TYPE" == plugin:* ]]; then
+    PLUGIN_NAME="${AGENT_TYPE#plugin:}"
+    RESULT="success"
+    # Check if the subagent exited with error
+    EXIT_STATUS=$(echo "$INPUT" | jq -r '.exit_status // "0"')
+    if [[ -n "$EXIT_STATUS" ]] && [[ "$EXIT_STATUS" != "0" ]]; then
+        RESULT="failure"
+    fi
+    HISTORY_FILE="$CLOSEDLOOP_WORKDIR/.plugins/run-history.jsonl"
+    mkdir -p "$(dirname "$HISTORY_FILE")"
+    # Get started_at from agent-type tracking file
+    PLUGIN_STARTED_AT=""
+    if [[ -n "$AGENT_ID" ]] && [[ -f "$AGENT_TYPES_DIR/$AGENT_ID" ]]; then
+        PLUGIN_STARTED_AT=$(cut -d'|' -f3 "$AGENT_TYPES_DIR/$AGENT_ID")
+    fi
+    if [[ -z "$PLUGIN_STARTED_AT" ]]; then
+        PLUGIN_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    fi
+    echo "{\"format_version\":1,\"plugin\":\"$PLUGIN_NAME\",\"result\":\"$RESULT\",\"started_at\":\"$PLUGIN_STARTED_AT\",\"finished_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"trigger\":\"auto\"}" >> "$HISTORY_FILE"
+    echo "$(date): Recorded plugin run history: plugin=$PLUGIN_NAME result=$RESULT" >> "$DEBUG_LOG"
+fi
+
 # Clean up agent_type file
 if [[ -n "$AGENT_ID" ]] && [[ -f "$AGENT_TYPES_DIR/$AGENT_ID" ]]; then
     rm -f "$AGENT_TYPES_DIR/$AGENT_ID"

@@ -31,4 +31,19 @@ echo "$(date): SessionStart hook started, PPID=$PPID" >> "$DEBUG_LOG"
 echo "$SESSION_ID" > "$CWD/.closedloop-ai/pid-$PPID.session"
 echo "$(date): Wrote session mapping: pid-$PPID.session -> $SESSION_ID" >> "$DEBUG_LOG"
 
+# --- Plugin Dispatch ---
+PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DISPATCHER="$PLUGIN_ROOT/scripts/plugin-dispatcher.py"
+if [[ -f "$DISPATCHER" ]]; then
+    # Create plugin state directory
+    mkdir -p "$CWD/.plugins"
+    # Run dispatcher for session-start event + cooldown/cron/condition gates
+    python3 "$DISPATCHER" \
+        --trigger session-start \
+        --workdir "$CWD" \
+        --plugin-root "$PLUGIN_ROOT" \
+        2>>"$CWD/.closedloop-ai/plugin-dispatcher-debug.log" || true
+    echo "$(date): Plugin dispatcher completed" >> "$DEBUG_LOG"
+fi
+
 exit 0

@@ -115,6 +115,7 @@ See the skill documentation for the 4-phase protocol (Initial Dispatch → Suffi
 
 ```json
 TodoWrite([
+  {"content": "Phase 0.8: Plugin Dispatch", "status": "pending", "activeForm": "Dispatching plugins"},
   {"content": "Phase 1: Planning", "status": "pending", "activeForm": "Planning"},
   {"content": "Phase 1.1: Plan review checkpoint", "status": "pending", "activeForm": "Awaiting plan review decision"},
   {"content": "Phase 1.2: Process answered questions", "status": "pending", "activeForm": "Processing answered questions"},
@@ -163,6 +164,30 @@ Mark each todo as `in_progress` when starting, `completed` when done. NEVER skip
 **Self-check before ANY `<promise>` output:** "Did I write state.json with the correct status? If not, write it NOW before outputting the promise tag."
 
 Here are the key phases you must complete:
+
+**PHASE 0.8: PLUGIN DISPATCH** (non-blocking background tasks)
+
+- Check if `$CLOSEDLOOP_WORKDIR/.plugins/dispatch-queue.json` exists:
+  ```bash
+  ls $CLOSEDLOOP_WORKDIR/.plugins/dispatch-queue.json 2>/dev/null
+  ```
+
+- If file does NOT exist or is empty array `[]`: log "No plugins ready to dispatch." and skip to Phase 0.9
+- If file exists with entries, for EACH plugin in the queue:
+  1. Log: "Dispatching plugin '{name}' ({gate_type} gate open)"
+  2. Launch a Task() with prompt:
+    "You are executing plugin '{name}'. Follow the instructions below exactly.
+      After completion, output your result summary.
+      WORKDIR=$CLOSEDLOOP_WORKDIR
+      {instructions}"
+  3. Use agent_type `plugin:{name}` so SubagentStop can track the result
+  4. Do NOT wait for plugin subagents to complete -- dispatch all and continue
+- After dispatching all entries, log summary: "Dispatched {N} plugin(s): {comma-separated names}."
+- Clear the dispatch queue after dispatching:
+  ```bash
+  echo '[]' > $CLOSEDLOOP_WORKDIR/.plugins/dispatch-queue.json
+  ```
+- Proceed to Phase 0.9
 
 **PHASE 0.9: PRE-EXPLORATION** (only if plan.json does NOT exist)
 
