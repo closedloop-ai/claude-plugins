@@ -398,7 +398,11 @@ def aggregate_results(
         except (json.JSONDecodeError, OSError) as err:
             print(f"Warning: results file unreadable ({err}); all judges will be error CaseScores", file=sys.stderr)
             raw_payload = {}
-        raw_scores = _extract_case_scores(raw_payload)
+        try:
+            raw_scores = _extract_case_scores(raw_payload)
+        except (ValueError, TypeError) as err:
+            print(f"Warning: results payload unsupported ({err}); all judges will be error CaseScores", file=sys.stderr)
+            raw_scores = {}
 
     ordered_scores: list[CaseScore] = []
     for judge_id in category_cfg.judges:

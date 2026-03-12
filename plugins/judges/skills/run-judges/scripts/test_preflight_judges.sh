@@ -43,7 +43,7 @@ read_field_raw() {
 }
 
 run_preflight() {
-  bash "$PREFLIGHT" "$1" "$2" 2>/dev/null
+  bash "$PREFLIGHT" "$1" "$2" 2>/dev/null || true
 }
 
 # ---- scenarios ----
@@ -189,7 +189,7 @@ test_manifest_fields_populated() {
 # ---- resolve_investigation_log.sh scenarios ----
 
 run_resolve() {
-  bash "$RESOLVE_INV" "$@" 2>/dev/null
+  bash "$RESOLVE_INV" "$@" 2>/dev/null || true
 }
 
 test_resolve_already_exists() {

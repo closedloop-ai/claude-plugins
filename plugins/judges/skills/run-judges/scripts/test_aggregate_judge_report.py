@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+
+import pytest
 import subprocess
 import sys
 from pathlib import Path
@@ -10,13 +12,14 @@ from typing import Any
 
 from judge_report_contract import (
     aggregate_results,
+    get_default_manifest_path,
     load_manifest,
     main,
     validate_report,
 )
-from test_validate_judge_report import create_valid_casescore
+from conftest import create_valid_casescore
 
-MANIFEST_PATH = Path(__file__).resolve().parents[3] / "agents" / "judge-manifest.json"
+MANIFEST_PATH = get_default_manifest_path()
 SCRIPT_PATH = Path(__file__).resolve().parent / "judge_report_contract.py"
 
 
@@ -135,6 +138,33 @@ def test_aggregate_non_string_case_id_recovery_does_not_crash(tmp_path: Path) ->
     assert stats_by_id["design-principles-judge"]["final_status"] == 1
     # Manifest judges without valid results get error CaseScores
     assert stats_by_id["code-quality-judge"]["final_status"] == 3
+
+
+@pytest.mark.parametrize(
+    ("payload_json", "run_id"),
+    [
+        ("null", "run-null"),
+        ("42", "run-number"),
+        ('"string"', "run-string"),
+    ],
+    ids=["null", "number", "string"],
+)
+def test_aggregate_non_dict_list_payload_marks_all_error(
+    tmp_path: Path, payload_json: str, run_id: str
+) -> None:
+    """Valid JSON that is not dict/list degrades gracefully to error CaseScores."""
+    results_path = tmp_path / "judge-results-code.json"
+    results_path.write_text(payload_json)
+
+    output_path = aggregate_results(
+        workdir=tmp_path,
+        category="code",
+        results_path=results_path,
+        manifest_path=MANIFEST_PATH,
+        run_id=run_id,
+    )
+    report = _load_report(output_path)
+    assert all(entry["final_status"] == 3 for entry in report["stats"])
 
 
 def test_aggregate_missing_results_file_marks_all_missing(tmp_path: Path) -> None:

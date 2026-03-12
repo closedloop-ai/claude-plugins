@@ -14,6 +14,7 @@
 # Exit 0 always (best-effort, never blocks).
 
 set -euo pipefail
+trap 'exit 0' EXIT
 
 WORKDIR="${1:?Usage: resolve_investigation_log.sh <workdir> [--pre-explorer-failed]}"
 PRE_EXPLORER_FAILED=false
