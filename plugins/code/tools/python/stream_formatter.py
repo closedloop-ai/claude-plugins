@@ -270,7 +270,7 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     except BrokenPipeError:
-        pass
+        return 0
 
     _print_usage_summary(tokens_by_model)
 
