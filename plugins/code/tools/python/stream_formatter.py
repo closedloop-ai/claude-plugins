@@ -198,8 +198,58 @@ def format_event(event: dict[str, object]) -> str | None:
     return None
 
 
+def _accumulate_usage(
+    tokens_by_model: dict[str, dict[str, int]],
+    event: dict[str, object],
+) -> None:
+    """Accumulate token usage from an assistant event into tokens_by_model."""
+    msg = event.get("message")
+    if not isinstance(msg, dict):
+        return
+    usage = msg.get("usage")
+    if not isinstance(usage, dict):
+        return
+    model = str(msg.get("model", "unknown"))
+    if model not in tokens_by_model:
+        tokens_by_model[model] = {
+            "input": 0,
+            "output": 0,
+            "cache_creation": 0,
+            "cache_read": 0,
+        }
+    entry = tokens_by_model[model]
+    entry["input"] += int(usage.get("input_tokens", 0))
+    entry["output"] += int(usage.get("output_tokens", 0))
+    entry["cache_creation"] += int(usage.get("cache_creation_input_tokens", 0))
+    entry["cache_read"] += int(usage.get("cache_read_input_tokens", 0))
+
+
+def _print_usage_summary(tokens_by_model: dict[str, dict[str, int]]) -> None:
+    """Print a token usage summary in the format the harness expects."""
+    if not tokens_by_model:
+        return
+    total_input = 0
+    total_output = 0
+    for model, usage in sorted(tokens_by_model.items()):
+        parts = [
+            f"Model: {model}",
+            f"Input: {usage['input']}",
+            f"Output: {usage['output']}",
+        ]
+        if usage.get("cache_creation"):
+            parts.append(f"Cache creation: {usage['cache_creation']}")
+        if usage.get("cache_read"):
+            parts.append(f"Cache read: {usage['cache_read']}")
+        print("  ".join(parts), flush=True)
+        total_input += usage["input"]
+        total_output += usage["output"]
+    print(f"Total input tokens: {total_input}", flush=True)
+    print(f"Total output tokens: {total_output}", flush=True)
+
+
 def main() -> int:
     """Read JSONL from stdin, print formatted text to stdout."""
+    tokens_by_model: dict[str, dict[str, int]] = {}
     try:
         for line in sys.stdin:
             line = line.strip()
@@ -210,6 +260,9 @@ def main() -> int:
             except json.JSONDecodeError:
                 continue
 
+            if event.get("type") == "assistant":
+                _accumulate_usage(tokens_by_model, event)
+
             formatted = format_event(event)
             if formatted:
                 print(formatted, flush=True)
@@ -217,7 +270,9 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     except BrokenPipeError:
-        pass
+        return 0
+
+    _print_usage_summary(tokens_by_model)
 
     return 0
 

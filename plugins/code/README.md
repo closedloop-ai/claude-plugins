@@ -353,7 +353,7 @@ Counts tokens in a file or stdin using the Anthropic API's token counting endpoi
 
 ### `stream_formatter.py`
 
-Formats Claude stream-JSON output (from `claude --output-format stream-json`) into human-readable terminal output with ANSI colors. Used in pipeline with the external loop runner to display progress.
+Formats Claude stream-JSON output (from `claude --output-format stream-json`) into human-readable terminal output with ANSI colors. Accumulates per-model token usage from assistant events and prints a summary at exit in the format the harness expects. Used in pipeline with the external loop runner to display progress and report token consumption.
 
 ### `requirements.txt`
 
