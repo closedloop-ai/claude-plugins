@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code v1.2.0
+
+#### Fixed
+- `check_eval_cache.sh`: pass eval JSON path as CLI argument instead of interpolating into Python string literals — avoids syntax errors and spurious EVAL_CACHE_MISS when `CLOSEDLOOP_WORKDIR` contains single quotes
+- `check_eval_cache.sh`: output `selected_critics` as valid JSON via `json.dumps()` instead of Python repr — ensures machine-parseable output for strict JSON parsers
+
+#### Changed
+- Updated Phase 1.3 eval-cache check in `prompt.md` to invoke `plugins/code/scripts/check_eval_cache.sh` directly instead of using the `judges:eval-cache` skill
+- Moved `validate_plan.py` and `test_validate_plan.py` from `plugins/code/tools/python/` to `plugins/code/skills/plan-validate/scripts/` so the `plan-validate` skill can execute the script via a direct skill-relative path
+- Removed fallback execution strategies for plan validation from `plan-validate/SKILL.md` and `plugins/code/prompts/prompt.md`; the orchestrator now uses the skill directly
+- Updated `plugins/code/README.md` to reflect the new `validate_plan.py` script location and invocation path
+
+### judges v2.0.0
+
+#### Added
+- Four consolidated rubric-based judge agents replaced 13 single-metric judges: `code-quality-judge`, `design-principles-judge`, `plan-evaluation-judge`, and `solid-principles-judge`
+- Manifest-driven judge orchestration via `agents/judge-manifest.json`, plus new supporting tooling for preflight checks, judge input construction, and report aggregation
+
+#### Changed
+- Plan-mode evaluation now runs only `code-quality-judge` and `plan-evaluation-judge`; design and SOLID judges are code-mode only
+- Judge tooling was simplified and hardened: eval-cache checks were centralized, `judge_report_contract.py` moved off Pydantic to stdlib validation, and runbook/script invocation behavior was cleaned up
+- Removed the plan eval-cache speedup from `run-judges` preflight so `judges` no longer calls `plugins/code/scripts/check_eval_cache.sh`; preflight now derives `ready`/`needs_action` strictly from required artifact presence
+
 ### code v1.1.2
 
 #### Fixed
@@ -19,6 +42,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Investigation log (`investigation-log.md`) reuse in plan judge context with pre-explorer fallback when no `CLOSEDLOOP_WORKDIR` is set
 
 #### Changed
+- `run-judges` skill now loads judge sets from `judge-manifest.json` instead of hardcoded sequential batches — judge count, ordering, and output file are fully manifest-driven
 - Generalized judge input contract to use orchestrator-provided `judge-input.json` (task + context envelope) instead of hardcoded artifact assumptions
 - Standardized all judge agents to read `judge-input.json` from `$CLOSEDLOOP_WORKDIR` and load mapped artifacts via source-of-truth ordering
 - Centralized judge input-read requirements into shared preamble `common_input_preamble.md`; judge-specific files no longer duplicate input-contract boilerplate
@@ -26,6 +50,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Fixed
 - Added `source_of_truth` to required array in `judge-input.schema.json` — schema now matches SKILL.md and judge agent expectations for evidence prioritization
+
+#### Removed
+- 13 individual judge agents replaced by 4 consolidated rubric-based agents: `code-organization-judge`, `custom-best-practices-judge`, `dry-judge`, `goal-alignment-judge`, `kiss-judge`, `readability-judge`, `solid-isp-dip-judge`, `solid-liskov-substitution-judge`, `solid-open-closed-judge`, `ssot-judge`, `technical-accuracy-judge`, `test-judge`, `verbosity-judge`
 
 ### code v1.1.0
 
@@ -67,6 +94,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Added
 - Compound Bash command prohibition in GitHub mode — no `&&`, `||`, `;`, or `|` pipes allowed
+
+#### Removed
+- `test_validate_judge_report.py` from `tools/python/` — judge report validation tests consolidated into the `judges` plugin
 
 ### code v1.0.5
 

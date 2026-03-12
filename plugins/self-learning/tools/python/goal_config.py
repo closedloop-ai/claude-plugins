@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:
-    import yaml
+    import yaml  # type: ignore[import-not-found]
 except ImportError:
     yaml = None  # type: ignore[assignment]
 

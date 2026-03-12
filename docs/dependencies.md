@@ -21,7 +21,6 @@ code ────────► self-learning
 
 | Type | File | Reference |
 |---|---|---|
-| Skill invocation | `code/prompts/prompt.md` (lines 93, 239) | `judges:eval-cache` |
 | Skill invocation (shell) | `code/scripts/run-loop.sh` (lines 302, 337) | `judges:run-judges` |
 
 ### `code` → `self-learning`
@@ -38,7 +37,7 @@ code ────────► self-learning
 
 | Type | File | Reference |
 |---|---|---|
-| Agent reference | `judges/skills/eval-cache/SKILL.md` (lines 18, 41, 50) | `@code:plan-evaluator` |
+| Agent reference | `judges/skills/run-judges/SKILL.md` | `@code:plan-evaluator` (via eval cache check) |
 
 ### `code-review` → `code`
 
@@ -48,9 +47,7 @@ code ────────► self-learning
 
 ### `code-review` → `judges`
 
-| Type | File | Reference |
-|---|---|---|
-| Python sys.path import | `code-review/tools/python/test_validate_judge_report.py` (lines 11–16) | Imports `validate_judge_report` and `JUDGE_REGISTRY` from `judges/skills/run-judges/scripts/` |
+No direct runtime references currently.
 
 ### `bootstrap` → `code`
 

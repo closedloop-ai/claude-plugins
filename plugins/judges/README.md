@@ -4,14 +4,13 @@ A collection of specialized LLM judge agents that evaluate implementation plans 
 
 ## Features
 
-- **Plan and code evaluation modes** with mode-specific judge sets selected by `run-judges`
-- **Parallel judge execution** in controlled batches with deterministic aggregation
-- **Batched judge fan-out** via Task calls (up to 4 concurrent judges per batch)
-- **Structured output** using a validated `CaseScore` JSON schema with Pydantic enforcement
+- **Plan and code evaluation modes** with mode-specific judge sets defined in `agents/judge-manifest.json`
+- **Parallel judge execution** with deterministic aggregation
+- **Structured output** using a validated `CaseScore` JSON schema with strict dataclass-based validation
 - **Artifact compression** to keep large artifacts within token budgets before judge invocation
 - **Generic context contract** via `$CLOSEDLOOP_WORKDIR/judge-input.json` so judges evaluate task+context passed by orchestrator
 - **SSOT input-contract preamble injection** via shared `common_input_preamble.md` (applied to every judge) plus artifact-specific preambles (`plan_preamble.md` / `code_preamble.md`)
-- **Investigation context reuse** in both plan and code modes via `$CLOSEDLOOP_WORKDIR/investigation-log.md` when available
+- **Investigation context reuse** in both plan and code modes via `$CLOSEDLOOP_WORKDIR/investigation-log.md` when available (embedded in context bundles by default)
 - **Resilient preflight fallback**: in plan mode, probe `@code:pre-explorer`, then run internal best-effort investigation if unavailable; in code mode, attempt best-effort pre-explorer generation and continue non-blocking if unavailable
 - **Evaluation caching** to skip redundant plan evaluations when the plan has not changed
 - **Performance telemetry** written to `perf.jsonl` for each pipeline phase
@@ -26,25 +25,25 @@ graph TD
     PlanJSON --> PlanInput["judge-input.json (primary = plan-context.json)"]
     PlanInput --> CommonPlan["common_input_preamble.md (shared contract preamble)"]
     CommonPlan --> PlanPreamble["plan_preamble.md (artifact-specific preamble)"]
-    PlanPreamble --> PlanBatches[Plan judge batches]
+    PlanPreamble --> PlanBatches[Manifest-defined plan judges]
     CtxMgr -->|code mode| CodeJSON["code-context.json"]
     CodeJSON --> CodeInput["judge-input.json (primary = code-context.json)"]
     CodeInput --> CommonCode["common_input_preamble.md (shared contract preamble)"]
     CommonCode --> CodePreamble["code_preamble.md (artifact-specific preamble)"]
-    CodePreamble --> CodeBatches[Code judge batches]
+    CodePreamble --> CodeBatches[Manifest-defined code judges]
     CtxMgr -->|plan context failure| Compat[Compatibility fallback]
     Compat --> CompatInput["judge-input.json (primary = plan.json, supporting = prd.md)"]
     CompatInput --> CommonPlan
     PlanBatches --> Agg[Aggregation into EvaluationReport]
     CodeBatches --> Agg
     Agg --> Report["judges.json / code-judges.json"]
-    Report --> Validate["validate_judge_report.py"]
+    Report --> Validate["judge_report_contract.py validate-report"]
 
     style PlanBatches fill:#e1f5fe
     style CodeBatches fill:#e1f5fe
 ```
 
-The `eval-cache` skill short-circuits plan evaluation when `plan-evaluation.json` is newer than `plan.json`, avoiding redundant judge runs.
+The `run-judges` skill short-circuits plan evaluation when `plan-evaluation.json` is newer than `plan.json`, avoiding redundant judge runs.
 
 The `artifact-type-tailored-context` skill compresses individual artifact files within a token budget using tiered summarization (full content, intelligent compression, or hard truncation) before passing them to judges.
 
@@ -52,7 +51,7 @@ The `artifact-type-tailored-context` skill compresses individual artifact files 
 
 ### context-manager-for-judges
 
-**Purpose:** Prepares compressed context bundles for both plan and code judge evaluation before judge batches run.
+**Purpose:** Prepares compressed context bundles for both plan and code judge evaluation before judges run.
 
 **Model:** sonnet
 
@@ -61,6 +60,38 @@ The `artifact-type-tailored-context` skill compresses individual artifact files 
 - Allocate and enforce a 30,000-token budget across artifacts
 - Invoke `judges:artifact-type-tailored-context` per artifact
 - Write `plan-context.json` or `code-context.json` with compaction metadata
+
+### code-quality-judge
+
+**Purpose:** Evaluates overall code quality by combining goal alignment, technical accuracy, test quality, and code organization criteria into a single comprehensive assessment.
+
+**Model:** sonnet
+
+**Used in:** code and plan evaluation (see `agents/judge-manifest.json`)
+
+### design-principles-judge
+
+**Purpose:** Evaluates implementation plans for DRY, KISS, and SSOT design principle violations in a single pass.
+
+**Model:** sonnet
+
+**Used in:** code evaluation (see `agents/judge-manifest.json`)
+
+### plan-evaluation-judge
+
+**Purpose:** Evaluates implementation plans across readability and verbosity calibration.
+
+**Model:** sonnet
+
+**Used in:** plan evaluation (see `agents/judge-manifest.json`)
+
+### solid-principles-judge
+
+**Purpose:** Evaluates code implementation adherence to SOLID principles covering Interface Segregation, Dependency Inversion, Open/Closed, and Liskov Substitution in a single comprehensive pass.
+
+**Model:** sonnet
+
+**Used in:** code evaluation (see `agents/judge-manifest.json`)
 
 ## Judge Input and Output Contracts
 
@@ -105,7 +136,7 @@ At runtime, this contract guidance is injected from `common_input_preamble.md`, 
 
 ### Shared preamble behavior
 
-All judges receive the same shared preamble from `skills/artifact-type-tailored-context/preambles/common_input_preamble.md` before any artifact-specific preamble is appended.
+All judges receive the same shared preamble from `skills/run-judges/preambles/common_input_preamble.md` before any artifact-specific preamble is appended.
 
 That shared preamble standardizes:
 - required read order (`judge-input.json` first, then mapped artifacts)
@@ -127,7 +158,7 @@ Each judge returns one `CaseScore` JSON object:
 - `$CLOSEDLOOP_WORKDIR/judges.json` for plan evaluation
 - `$CLOSEDLOOP_WORKDIR/code-judges.json` for code evaluation
 
-The report is validated after generation using `scripts/validate_judge_report.py`.
+The report is validated after generation using `skills/run-judges/scripts/judge_report_contract.py` (`validate-report` subcommand).
 
 ## Skills
 
@@ -146,18 +177,18 @@ Orchestrates parallel judge agent execution, aggregates `CaseScore` results, and
 - If `investigation-log.md` is missing: probes `@code:pre-explorer`; if unavailable/failing, generates a lightweight internal investigation log
 - If plan context generation fails: uses one emergency compatibility fallback to `plan.json` + `prd.md` for that run
 - Prepends `common_input_preamble.md` + `plan_preamble.md` to each judge prompt
-- Runs 13 judges in 4 sequential batches (max 4 concurrent per batch)
-- Writes `$CLOSEDLOOP_WORKDIR/judges.json`
+- Loads plan judge routing from `agents/judge-manifest.json` (`categories.plan`)
+- Writes manifest-defined output file (default: `$CLOSEDLOOP_WORKDIR/judges.json`)
 
 **Code mode** (`--artifact-type code`):
 - Launches `context-manager-for-judges` agent to produce `code-context.json`
 - Builds `judge-input.json` with code evaluation task and artifact mapping
-- Reuses `$CLOSEDLOOP_WORKDIR/investigation-log.md` as secondary context when available (best-effort generation if missing)
+- Reuses `$CLOSEDLOOP_WORKDIR/investigation-log.md` during context preparation; investigation evidence is embedded in `code-context.json` by default to avoid duplicate standalone mapping
 - Prepends `common_input_preamble.md` + `code_preamble.md` to each judge prompt
-- Runs 11 judges in 3 sequential batches
-- Writes `$CLOSEDLOOP_WORKDIR/code-judges.json`
+- Loads code judge routing from `agents/judge-manifest.json` (`categories.code`)
+- Writes manifest-defined output file (default: `$CLOSEDLOOP_WORKDIR/code-judges.json`)
 
-**Output validation** is run after writing the report using `scripts/validate_judge_report.py`. The skill retries until validation passes.
+**Output validation** is run after writing the report using `skills/run-judges/scripts/judge_report_contract.py` (`validate-report` subcommand). The skill retries until validation passes.
 
 ---
 
@@ -173,16 +204,6 @@ Compresses individual artifact files within a token budget before judge invocati
 3. **Hard truncation** — artifact exceeds 1.5x the budget; truncated at paragraph boundary with a `[TRUNCATED]` marker
 
 **Returns:** JSON with `artifact_name`, `raw_tokens`, `compacted_tokens`, `truncated`, and `content`.
-
----
-
-### eval-cache
-
-Checks for a cached plan evaluation result before launching the plan-evaluator agent.
-
-**When to use:** At the start of Phase 1.3 (Simple Mode Evaluation), before launching `@code:plan-evaluator`.
-
-**Freshness check:** Compares modification timestamps of `plan-evaluation.json` and `plan.json`. If `plan.json` is newer, returns `EVAL_CACHE_MISS`; otherwise returns `EVAL_CACHE_HIT` with cached `simple_mode`, `selected_critics`, and `summary`.
 
 ---
 
@@ -211,9 +232,15 @@ Checks for a cached plan evaluation result before launching the plan-evaluator a
 @judges:run-judges --artifact-type code
 ```
 
-3. The skill resolves `investigation-log.md` as best-effort supporting context (reuse if present; attempt generation when missing; continue if unavailable).
-4. The skill runs `context-manager-for-judges` first to produce `code-context.json`, then builds `judge-input.json` and launches 11 judges.
-5. Results are written to `$CLOSEDLOOP_WORKDIR/code-judges.json`.
+3. The skill resolves `investigation-log.md` as best-effort context input (reuse if present; attempt generation when missing; continue if unavailable).
+4. The skill runs `context-manager-for-judges` first to produce `code-context.json`, then builds `judge-input.json` with `code-context.json` as primary evidence (avoid separate `investigation-log.md` mapping unless context manager explicitly skipped it) and launches manifest-configured code judges.
+5. Results are written to the manifest-defined output file (default: `$CLOSEDLOOP_WORKDIR/code-judges.json`).
+
+### Updating Judge Selection
+
+To add, remove, or reorder judges, edit `agents/judge-manifest.json`.
+
+`run-judges` and `judge_report_contract.py` both load this manifest at runtime. If the manifest is missing or invalid, execution fails fast.
 
 ### Output Format
 
@@ -222,7 +249,7 @@ Each judge produces a `CaseScore`:
 ```json
 {
   "type": "case_score",
-  "case_id": "dry-judge",
+  "case_id": "design-principles-judge",
   "final_status": 1,
   "metrics": [
     {

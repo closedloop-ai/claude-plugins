@@ -347,6 +347,10 @@ CLI state manager for the `amend-plan` command. Persists conversation state acro
 - `apply`: Record the amendment in `plan.json` (adds to the `amendments` array), clear old review files, and delete the session file
 - `context`: Print current session state for debugging
 
+### `validate_plan.py`
+
+Deterministic `plan.json` validation script used by the `plan-validate` skill. Performs JSON parsing, schema validation, task checkbox format, required section checks, and sync validation. Returns structured JSON for orchestrator consumption. Invoked as `python3 plugins/code/skills/plan-validate/scripts/validate_plan.py <WORKDIR>`.
+
 ### `count_tokens.py`
 
 Counts tokens in a file or stdin using the Anthropic API's token counting endpoint. Outputs JSON: `{"input_tokens": N}`. Used by judge context-compression workflows to measure artifact sizes before compression. Requires `ANTHROPIC_API_KEY`.

@@ -90,7 +90,11 @@ This orchestrator has access to the following skills:
 
 ### eval-cache (skip redundant plan evaluation)
 
-**To activate:** Use the Skill tool with `skill: "judges:eval-cache"` parameter
+**To activate:** Run the cache check script directly:
+
+```bash
+bash plugins/code/scripts/check_eval_cache.sh "$CLOSEDLOOP_WORKDIR"
+```
 
 **When to use:** At Phase 1.3 entry, before launching plan-evaluator. Returns `EVAL_CACHE_HIT` with cached `simple_mode` and `selected_critics` values, or `EVAL_CACHE_MISS` (run plan-evaluator).
 
@@ -236,7 +240,7 @@ Here are the key phases you must complete:
 **PHASE 1.3: SIMPLE MODE EVALUATION**
 
 - **Update state.json** with phase tracking (see State Tracking table above)
-- **Cache check first:** Activate the `judges:eval-cache` skill with `WORKDIR=$CLOSEDLOOP_WORKDIR`. Parse the output:
+- **Cache check first:** Run `bash plugins/code/scripts/check_eval_cache.sh "$CLOSEDLOOP_WORKDIR"`. Parse the output:
   - If `EVAL_CACHE_HIT`: Use the cached `simple_mode` and `selected_critics` values. Skip launching the evaluator.
   - If `EVAL_CACHE_MISS`: Launch @code:plan-evaluator with prompt:
     "WORKDIR=$CLOSEDLOOP_WORKDIR. Evaluate plan complexity and select critics.

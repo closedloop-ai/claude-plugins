@@ -2,7 +2,7 @@
 name: pre-explorer
 description: Pre-explores codebase before plan drafting. Produces requirements-extract.json, code-map.json, and investigation-log.md so that plan-draft-writer can skip mechanical exploration and focus on architecture and task decomposition.
 model: haiku
-tools: Glob, Grep, Read, Bash, WebFetch, WebSearch
+tools: Glob, Grep, Read, Write, Bash, WebFetch, WebSearch
 ---
 
 # Pre-Explorer Agent

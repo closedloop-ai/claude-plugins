@@ -20,10 +20,8 @@ Activate this skill **instead of** launching `@code:plan-validator` at every pla
 
 ## Usage
 
-Run the validation script. The `scripts/` directory is relative to this skill's base directory (shown above as "Base directory for this skill"):
-
 ```bash
-python3 <base_directory>/scripts/validate_plan.py <WORKDIR>
+python3 scripts/validate_plan.py <WORKDIR>
 ```
 
 ## Interpreting Output
@@ -83,3 +81,9 @@ The script prints JSON to stdout matching the exact plan-validator output format
 - Checking data flow consistency
 
 Only run the plan-validator agent with semantic-only focus after phases that modify the plan content (Phase 1 creation, Phase 2.6 critic merge, Phase 2.7 finalization).
+
+## Resources
+
+### scripts/
+
+- `validate_plan.py` - Deterministic plan.json validation script

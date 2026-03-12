@@ -1,6 +1,6 @@
 ---
 name: artifact-type-tailored-context
-description: Compresses artifacts for judge evaluation. Reads a single raw artifact, applies tiered summarization within a token budget, and returns compacted content with metadata. Isolation via forked context prevents pollution of agent context
+description: Compresses artifacts for judge evaluation. Reads a single raw artifact, applies tiered summarization within a token budget, and returns compacted content with metadata.
 context: fork
 model: haiku
 allowed-tools: Read, Bash

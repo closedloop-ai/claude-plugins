@@ -8,7 +8,7 @@
 #   selected_critics: [critic1, critic2, ...]
 #   summary: <cached evaluation summary>
 #
-#   — or —
+#   -- or --
 #
 #   EVAL_CACHE_MISS
 #   reason: <why the cache is stale or missing>
@@ -43,28 +43,28 @@ fi
 # --- read cached values ---
 simple_mode=$(python3 -c "
 import json, sys
-with open('$EVAL_JSON') as f:
+with open(sys.argv[1]) as f:
     d = json.load(f)
 print(str(d.get('simple_mode', False)).lower())
-" 2>/dev/null) || {
+" "$EVAL_JSON" 2>/dev/null) || {
   echo "EVAL_CACHE_MISS"
   echo "reason: plan-evaluation.json is malformed"
   exit 0
 }
 
 selected_critics=$(python3 -c "
-import json
-with open('$EVAL_JSON') as f:
+import json, sys
+with open(sys.argv[1]) as f:
     d = json.load(f)
-print(d.get('selected_critics', []))
-" 2>/dev/null) || selected_critics="[]"
+print(json.dumps(d.get('selected_critics', [])))
+" "$EVAL_JSON" 2>/dev/null) || selected_critics="[]"
 
 summary=$(python3 -c "
-import json
-with open('$EVAL_JSON') as f:
+import json, sys
+with open(sys.argv[1]) as f:
     d = json.load(f)
 print(d.get('evaluation_summary', 'Cached result'))
-" 2>/dev/null) || summary="Cached result"
+" "$EVAL_JSON" 2>/dev/null) || summary="Cached result"
 
 echo "EVAL_CACHE_HIT"
 echo "simple_mode: $simple_mode"

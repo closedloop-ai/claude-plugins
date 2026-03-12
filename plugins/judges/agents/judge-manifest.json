@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "categories": {
+    "plan": {
+      "output_file": "judges.json",
+      "report_id_suffix": "-judges",
+      "judges": [
+        "code-quality-judge",
+        "plan-evaluation-judge"
+      ]
+    },
+    "code": {
+      "output_file": "code-judges.json",
+      "report_id_suffix": "-code-judges",
+      "judges": [
+        "code-quality-judge",
+        "design-principles-judge",
+        "solid-principles-judge"
+      ]
+    }
+  }
+}

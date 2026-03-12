@@ -25,7 +25,6 @@ plugins/code-review/
     prompts/shared_prompt.txt        Shared reviewer constraints injected into every agent prompt
     python/code_review_helpers.py    Deterministic helper CLI (parse-diff, hygiene, partition, route, validate, cache, etc.)
     python/test_code_review_helpers.py   Unit tests for the helper CLI
-    python/test_validate_judge_report.py Tests for judge report validation
 ```
 
 ### Component Roles

@@ -46,8 +46,8 @@ import sys
 from pathlib import Path
 
 import httpx
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
+from mcp import ClientSession  # type: ignore[import-not-found]
+from mcp.client.streamable_http import streamable_http_client  # type: ignore[import-not-found]
 
 
 class _Args(argparse.Namespace):
@@ -102,7 +102,7 @@ async def list_projects(args: _Args) -> dict:
                 if not text:
                     return {"error": "Empty response from list-projects"}
                 return json.loads(text)
-    except (Exception, ExceptionGroup) as exc:
+    except Exception as exc:
         return _format_exception(exc)
 
 
@@ -194,7 +194,7 @@ async def upload(args: _Args) -> dict:
                     )
 
                 return output
-    except (Exception, ExceptionGroup) as exc:
+    except Exception as exc:
         return _format_exception(exc)
 
 
@@ -236,13 +236,21 @@ async def _verify_artifact(
     }
 
 
-def _format_exception(exc: Exception | ExceptionGroup) -> dict:  # type: ignore[type-arg]
-    """Format an exception (including ExceptionGroups) for JSON output."""
+def _format_exception(exc: Exception) -> dict:
+    """Format an exception for JSON output."""
     import traceback
 
-    if isinstance(exc, ExceptionGroup):
+    try:
+        # Python 3.11+ has ExceptionGroup
+        from builtins import ExceptionGroup  # type: ignore[import-not-found,attr-defined]
+        is_exception_group = isinstance(exc, ExceptionGroup)
+    except (ImportError, AttributeError):
+        is_exception_group = False
+
+    if is_exception_group:
         details = []
-        for sub in exc.exceptions:
+        exceptions = getattr(exc, "exceptions", [])
+        for sub in exceptions:
             details.append(
                 "".join(
                     traceback.format_exception(type(sub), sub, sub.__traceback__)

@@ -44,6 +44,7 @@ Each artifact entry (`primary_artifact` and items in `supporting_artifacts`) sho
 4. File-specific assumptions (for example `plan.json`, `prd.md`) are allowed only when:
    - `fallback_mode.active = true`, and
    - fallback artifacts are explicitly mapped in the envelope.
+5. Avoid duplicate evidence mapping: if a supporting artifact is already embedded inside the primary context bundle (for example `investigation-log.md` inside `code-context.json`), do not map it again as a standalone supporting artifact unless explicitly needed for this run.
 
 ## Fallback Semantics
 

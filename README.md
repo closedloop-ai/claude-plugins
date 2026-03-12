@@ -35,7 +35,7 @@ Multi-repository, adaptive self-learning, & artifact-bound phased workflow gates
 | [**bootstrap**](plugins/bootstrap/) | Project bootstrapping and initial setup |
 | [**code**](plugins/code/) | Code generation, implementation planning, and iterative development loop |
 | [**code-review**](plugins/code-review/) | Automated code review with inline GitHub PR comments |
-| [**judges**](plugins/judges/) | LLM-as-judge evaluators for plan and code quality |
+| [**judges**](plugins/judges/) | Manifest-driven plan and code evaluation with consolidated judge sets |
 | [**platform**](plugins/platform/) | Claude Code expert guidance, prompt engineering, and artifact management |
 | [**self-learning**](plugins/self-learning/) | Pattern capture and organizational knowledge sharing |
 

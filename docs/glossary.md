@@ -133,7 +133,7 @@ A reusable instruction set loaded into an agent's context via the `skills:` fron
 
 **cross-repo-cache** — Skips cross-repo coordinator when peer repo git hashes are unchanged.
 
-**eval-cache** — Skips plan-evaluator when `plan-evaluation.json` is newer than `plan.json`.
+**eval-cache** — Skips plan-evaluator when `plan-evaluation.json` is newer than `plan.json`. Logic is implemented in `code/scripts/check_eval_cache.sh`.
 
 **extract-plan-md** — Syncs `plan.md` with `plan.json` content field. Required after any edit to `plan.json`.
 
