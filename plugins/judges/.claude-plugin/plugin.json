@@ -1,7 +1,7 @@
 {
   "name": "judges",
   "description": "LLM Judges plugin",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": {
     "name": "ClosedLoop",
     "email": "support@closedloop.ai"
