@@ -62,6 +62,57 @@ The `artifact-type-tailored-context` skill compresses individual artifact files 
 - Invoke `judges:artifact-type-tailored-context` per artifact
 - Write `plan-context.json` or `code-context.json` with compaction metadata
 
+### brownfield-accuracy-judge
+
+**Purpose:** Evaluates how accurately an implementation plan accounts for existing code — correctly identifying what to modify vs create, avoiding reimplementation, and finding the right integration points.
+
+**Model:** opus
+
+**Artifact type:** plan
+
+**Metrics evaluated:**
+- `reuse_vs_reimplement` (threshold 0.8) — does the plan reuse confirmed-existing utilities/helpers/base classes rather than reimplementing them?
+- `integration_point_accuracy` (threshold 0.8) — are the proposed integration points (files, functions, hooks) confirmed correct by the investigation log?
+- `scope_accuracy` (threshold 0.8) — does the plan correctly scope required changes without missing critical integration points or touching unrelated code?
+
+**Fallback:** When `investigation-log.md` is absent, all metrics score 0.5 and `final_status = 2`.
+
+---
+
+### codebase-grounding-judge
+
+**Purpose:** Evaluates whether an implementation plan is grounded in codebase reality by comparing plan claims against the investigation log. Detects hallucinated file paths, nonexistent modules, and fabricated APIs.
+
+**Model:** opus
+
+**Artifact type:** plan
+
+**Metrics evaluated:**
+- `file_path_accuracy` (threshold 0.8) — are proposed file paths confirmed by or structurally consistent with the investigation log?
+- `module_reference_accuracy` (threshold 0.8) — are referenced modules, classes, functions, and APIs confirmed correct?
+- `existing_code_awareness` (threshold 0.8) — does the plan correctly distinguish existing vs new code and reuse existing utilities?
+
+**Fallback:** When `investigation-log.md` is absent, all metrics score 0.5 and `final_status = 2`.
+
+---
+
+### convention-adherence-judge
+
+**Purpose:** Evaluates whether an implementation plan follows the conventions, patterns, and style found in the actual codebase, as documented in the investigation log.
+
+**Model:** sonnet
+
+**Artifact type:** plan
+
+**Metrics evaluated:**
+- `naming_convention_compliance` (threshold 0.8) — do proposed names follow the project's established naming conventions (case style, test file naming)?
+- `structural_convention_compliance` (threshold 0.8) — do proposed file locations and module organization mirror the project's structure?
+- `pattern_and_tooling_compliance` (threshold 0.8) — do proposed code patterns and tools (test framework, async style, typing approach) match the project's conventions?
+
+**Fallback:** When `investigation-log.md` is absent, all metrics score 0.5 and `final_status = 2`.
+
+---
+
 ## Judge Input and Output Contracts
 
 All judge runs are contract-driven: orchestrators assemble `judge-input.json`, judges emit `CaseScore`, and `run-judges` aggregates those results into a validated report.
@@ -146,7 +197,7 @@ Orchestrates parallel judge agent execution, aggregates `CaseScore` results, and
 - If `investigation-log.md` is missing: probes `@code:pre-explorer`; if unavailable/failing, generates a lightweight internal investigation log
 - If plan context generation fails: uses one emergency compatibility fallback to `plan.json` + `prd.md` for that run
 - Prepends `common_input_preamble.md` + `plan_preamble.md` to each judge prompt
-- Runs 13 judges in 4 sequential batches (max 4 concurrent per batch)
+- Runs 16 judges in 4 sequential batches (max 4 concurrent per batch)
 - Writes `$CLOSEDLOOP_WORKDIR/judges.json`
 
 **Code mode** (`--artifact-type code`):

@@ -1,6 +1,6 @@
 ---
 name: run-judges
-description: Orchestrate parallel judge agent execution, aggregate CaseScore results, write judges.json or code-judges.json, and validate output. Supports evaluating both implementation plans (13 judges) and code artifacts (11 judges) via --artifact-type parameter.
+description: Orchestrate parallel judge agent execution, aggregate CaseScore results, write judges.json or code-judges.json, and validate output. Supports evaluating both implementation plans (16 judges) and code artifacts (11 judges) via --artifact-type parameter.
 context: fork
 ---
 
@@ -8,13 +8,13 @@ context: fork
 
 ## Purpose
 
-Execute specialized judge agents in parallel to evaluate implementation plan quality (13 judges) or code quality (11 judges). Aggregates results into `$CLOSEDLOOP_WORKDIR/judges.json` (plan) or `$CLOSEDLOOP_WORKDIR/code-judges.json` (code) with validated output format.
+Execute specialized judge agents in parallel to evaluate implementation plan quality (16 judges) or code quality (11 judges). Aggregates results into `$CLOSEDLOOP_WORKDIR/judges.json` (plan) or `$CLOSEDLOOP_WORKDIR/code-judges.json` (code) with validated output format.
 
 ## Parameters
 
 **--artifact-type**: Artifact category to evaluate (plan | code), default: plan
 
-- **plan** (default): Evaluate implementation plan with 13 judges, 4 batches, output to judges.json
+- **plan** (default): Evaluate implementation plan with 16 judges, 4 batches, output to judges.json
 - **code**: Evaluate implemented code with 11 judges, 3 batches, output to code-judges.json
 
 ## Judge Input Contract (`judge-input.json`)
@@ -32,7 +32,7 @@ You are orchestrating quality evaluation for a ClosedLoop artifact (implementati
 **For plan artifacts (default):**
 1. Launch context-manager-for-judges agent to prepare compressed plan context
 2. Build `judge-input.json` with plan task/context mapping
-3. Launch all 13 judge agents in parallel batches
+3. Launch all 16 judge agents in parallel batches
 4. Aggregate their CaseScore outputs into a valid EvaluationReport
 5. Write the report to `$CLOSEDLOOP_WORKDIR/judges.json`
 6. Validate output structure and completeness
@@ -291,7 +291,7 @@ After validating `prd.md` and `plan.json`, resolve supporting context for plan j
 
 8. **Build plan-mode `judge-input.json`**
    - Set `evaluation_type` = `plan`.
-   - Set `task` to plan quality evaluation objective (13-plan-judge workflow).
+   - Set `task` to plan quality evaluation objective (16-plan-judge workflow).
    - Set `primary_artifact` to `plan-context.json` in normal mode.
    - In compatibility mode, set primary to `plan.json` and include `prd.md` as supporting.
    - Include `investigation-log.md` as supporting artifact when available.
@@ -340,11 +340,11 @@ fi
 The run-judges skill supports two artifact types with different judge configurations:
 
 ### Plan Artifacts (Default)
-- **Judges**: 13 total
+- **Judges**: 16 total
 - **Batches**: 4 sequential batches (max 4 concurrent per batch)
 - **Output**: `judges.json`
 - **Report ID**: `{RUN_ID}-judges`
-- **Validation**: `--category plan` (13 judges expected)
+- **Validation**: `--category plan` (16 judges expected)
 
 ### Code Artifacts (--artifact-type code)
 - **Judges**: 11 total (excludes goal-alignment-judge, verbosity-judge)
@@ -384,7 +384,7 @@ The run-judges skill supports two artifact types with different judge configurat
 
 <judge_batches>
 
-### Plan Artifact Judge Batches (13 judges, 4 batches)
+### Plan Artifact Judge Batches (16 judges, 4 batches)
 
 **Batch 1: Core Principles (DRY/SSOT/KISS + Organization)**
 
@@ -413,11 +413,14 @@ The run-judges skill supports two artifact types with different judge configurat
 | `judges:solid-open-closed-judge` | Open/Closed Principle adherence |
 | `judges:technical-accuracy-judge` | Technical accuracy (API usage, algorithms) |
 
-**Batch 4: Testing**
+**Batch 4: Plan Grounding + Testing**
 
 | Agent Type | Evaluates |
 |------------|-----------|
 | `judges:test-judge` | Test coverage, assertions, structure, best practices |
+| `judges:brownfield-accuracy-judge` | Reuse vs reimplementation, integration-point accuracy, scope accuracy against investigation findings |
+| `judges:codebase-grounding-judge` | File-path/module-reference accuracy and existing-code awareness grounded in investigation findings |
+| `judges:convention-adherence-judge` | Alignment with established naming, structural, and tooling conventions in the codebase |
 
 </judge_batches>
 
@@ -527,8 +530,8 @@ Each judge returns a **CaseScore** JSON object:
 ```
 
 **Continue-on-failure semantics:**
-- Even if ALL 13 judges fail, you MUST aggregate error CaseScores
-- Always produce a complete report with 13 CaseScore entries (plan) or 11 CaseScore entries (code)
+- Even if ALL 16 judges fail, you MUST aggregate error CaseScores
+- Always produce a complete report with 16 CaseScore entries (plan) or 11 CaseScore entries (code)
 - Never abort the workflow due to judge failures
 
 </error_handling>
@@ -568,7 +571,10 @@ output_path = $CLOSEDLOOP_WORKDIR / report_filename
     { /* CaseScore from solid-liskov-substitution-judge */ },
     { /* CaseScore from solid-open-closed-judge */ },
     { /* CaseScore from technical-accuracy-judge */ },
-    { /* CaseScore from test-judge */ }
+    { /* CaseScore from test-judge */ },
+    { /* CaseScore from brownfield-accuracy-judge */ },
+    { /* CaseScore from codebase-grounding-judge */ },
+    { /* CaseScore from convention-adherence-judge */ }
   ]
 }
 ```
@@ -600,7 +606,7 @@ output_path = $CLOSEDLOOP_WORKDIR / report_filename
 |-------|--------|---------------|
 | `report_id` | `{RUN_ID}-judges` or `{RUN_ID}-code-judges` | Extract RUN_ID from `$CLOSEDLOOP_WORKDIR` directory name, append suffix based on artifact type |
 | `timestamp` | ISO 8601 | Generate with `date -u +%Y-%m-%dT%H:%M:%SZ` |
-| `stats` | Array[CaseScore] | 13 CaseScore objects for plan, 11 for code (one per judge) |
+| `stats` | Array[CaseScore] | 16 CaseScore objects for plan, 11 for code (one per judge) |
 
 </output_structure>
 
@@ -649,7 +655,7 @@ uv run "$SCRIPT_PATH" --workdir "$CLOSEDLOOP_WORKDIR" --category "$CATEGORY"
 
 **Argument requirements:**
 - `--workdir` must be the **absolute path** to `$CLOSEDLOOP_WORKDIR`
-- `--category` must be `plan` (13 judges) or `code` (11 judges)
+- `--category` must be `plan` (16 judges) or `code` (11 judges)
 - This is where `judges.json` or `code-judges.json` is located
 
 </validation_workflow>
@@ -666,14 +672,17 @@ The script validates using strict Pydantic models:
 |-------|-------------|
 | **JSON syntax** | Valid JSON format |
 | **Required fields** | report_id, timestamp, stats array |
-| **Judge coverage** | All expected judges present (13 for plan, 11 for code) |
+| **Judge coverage** | All expected judges present (16 for plan, 11 for code) |
 | **Status values** | final_status ∈ {1, 2, 3} |
 | **Metric completeness** | Each judge has ≥1 metric |
 | **Report ID format** | Ends with '-judges' (plan) or '-code-judges' (code) |
 
-**Expected judge case_ids for plan artifacts (13 total):**
+**Expected judge case_ids for plan artifacts (16 total):**
 ```
+brownfield-accuracy-judge
 code-organization-judge
+codebase-grounding-judge
+convention-adherence-judge
 custom-best-practices-judge
 dry-judge
 goal-alignment-judge
@@ -781,8 +790,8 @@ Before marking this task complete, verify:
 - [ ] **Plan context validation** - `plan-context.json` exists, or compatibility mode explicitly activated
 - [ ] **Judge input contract** - `judge-input.json` exists with required fields
 - [ ] **Investigation context resolution** - `investigation-log.md` reused, generated via pre-explorer, or best-effort generated internally
-- [ ] **Parallel execution** - All 13 judges launched in 4 batches (max 4 per batch)
-- [ ] **Result aggregation** - Valid EvaluationReport with 13 CaseScore entries
+- [ ] **Parallel execution** - All 16 judges launched in 4 batches (max 4 per batch)
+- [ ] **Result aggregation** - Valid EvaluationReport with 16 CaseScore entries
 - [ ] **File output** - `judges.json` written to `$CLOSEDLOOP_WORKDIR`
 - [ ] **Validation passed** - Script exits with code 0 using `--category plan`
 
@@ -810,7 +819,7 @@ Before marking this task complete, verify:
 |---------------|------------|----------|
 | "Report file does not exist" | File not written to correct location | Verify `$CLOSEDLOOP_WORKDIR` is set; check write path matches artifact type (judges.json or code-judges.json) |
 | "Invalid JSON" | Syntax error in output file | Run `python3 -m json.tool "$CLOSEDLOOP_WORKDIR/[code-]judges.json"` to identify syntax error |
-| "Missing expected judges" | Incomplete batch execution | Verify all batches launched (4 for plan, 3 for code); check error CaseScores for failures; plan expects 13 judges, code expects 11 |
+| "Missing expected judges" | Incomplete batch execution | Verify all batches launched (4 for plan, 3 for code); check error CaseScores for failures; plan expects 16 judges, code expects 11 |
 | "final_status must be 1, 2, or 3" | Invalid status code | Use only: 1 (pass), 2 (fail), 3 (error) |
 | "report_id should end with '-judges'" | Incorrect ID format for plan | Use pattern: `{RUN_ID}-judges` for plan artifacts |
 | "report_id should end with '-code-judges'" | Incorrect ID format for code | Use pattern: `{RUN_ID}-code-judges` for code artifacts |
@@ -863,7 +872,7 @@ If a single judge Task call fails during execution:
 ### Plan Mode Execution Flow
 
 When `--artifact-type` is not specified or equals 'plan':
-- Execute standard 13-judge plan logic
+- Execute standard 16-judge plan logic
 - Launch 4 batches with existing judge assignments
 - Write to `judges.json` (not `code-judges.json`)
 - Launch context-manager-for-judges for plan context preparation
