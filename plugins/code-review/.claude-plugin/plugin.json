@@ -1,7 +1,7 @@
 {
   "name": "code-review",
   "description": "Code review plugin",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": {
     "name": "ClosedLoop",
     "email": "support@closedloop.ai"

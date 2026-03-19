@@ -17,7 +17,9 @@ import contextlib
 import hashlib
 import json
 import os
+import random
 import re
+import shutil
 import subprocess
 import sys
 from collections.abc import Generator
@@ -85,6 +87,12 @@ DIFF_HEADER_PARTS = 2
 # Risk scoring
 HIGH_LOC_THRESHOLD = 50
 
+# Partition post-processing
+TRIVIAL_PARTITION_THRESHOLD = 20
+DEFAULT_MAX_BHA_AGENTS = 5
+REBALANCE_LOC_BUDGET = 1200
+MIXED_PARTITION_SPLIT_THRESHOLD = 50
+
 # Validation thresholds
 CONFIDENCE_DISCARD_THRESHOLD = 0.5
 LINE_TOLERANCE = 3
@@ -93,6 +101,12 @@ JACCARD_DEDUP_THRESHOLD = 0.6
 # Number formatting thresholds
 FORMAT_MILLION = 1_000_000
 FORMAT_THOUSAND = 1_000
+
+# Intent classification
+INTENT_FEATURE_WORDS = frozenset({"feat", "feature", "add", "implement", "new", "introduce", "create"})
+INTENT_FIX_WORDS = frozenset({"fix", "bug", "patch", "hotfix", "repair", "correct", "revert"})
+INTENT_REFACTOR_WORDS = frozenset({"refactor", "cleanup", "clean", "reorganize", "rename", "move", "restructure"})
+FEATURE_FILE_STATUS_THRESHOLD = 0.70
 
 
 # ---------------------------------------------------------------------------
@@ -701,6 +715,111 @@ def cmd_partition(args: argparse.Namespace) -> int:
 
     _flush_partition()
 
+    max_bha_agents: int = getattr(args, "max_bha_agents", DEFAULT_MAX_BHA_AGENTS) or DEFAULT_MAX_BHA_AGENTS
+
+    # Pass 1 -- Mixed-partition split
+    # For each partition with both test and non-test files where impl LOC >= threshold, split.
+    new_partitions: list[dict[str, Any]] = []
+    for part in partitions:
+        files = part["files"]
+        impl_files = [f for f in files if not f.get("is_test", False)]
+        test_files = [f for f in files if f.get("is_test", False)]
+        impl_loc = sum(f["loc"] for f in impl_files)
+        if impl_files and test_files and impl_loc >= MIXED_PARTITION_SPLIT_THRESHOLD:
+            # Split into impl-only and test-only sub-partitions
+            new_partitions.append({
+                "id": 0,  # renumbered later
+                "files": impl_files,
+                "total_loc": impl_loc,
+                "is_test_only": False,
+            })
+            test_loc = sum(f["loc"] for f in test_files)
+            new_partitions.append({
+                "id": 0,
+                "files": test_files,
+                "total_loc": test_loc,
+                "is_test_only": True,
+            })
+        else:
+            new_partitions.append(part)
+    partitions = new_partitions
+
+    # Pass 2 -- Agent cap enforcement
+    # If len(partitions) > max_bha_agents, merge the two smallest same-type partitions.
+    while len(partitions) > max_bha_agents:
+        # Try same-type merges first (test with test, impl with impl)
+        merged = False
+        for is_test in (True, False):
+            same_type = [
+                (i, p) for i, p in enumerate(partitions) if p["is_test_only"] == is_test
+            ]
+            if len(same_type) < 2:
+                continue
+            # Sort by total_loc ascending to find the two smallest
+            same_type.sort(key=lambda x: x[1]["total_loc"])
+            idx_a, part_a = same_type[0]
+            idx_b, part_b = same_type[1]
+            merged_loc = part_a["total_loc"] + part_b["total_loc"]
+            merged_file_count = len(part_a["files"]) + len(part_b["files"])
+            if merged_loc <= REBALANCE_LOC_BUDGET and merged_file_count <= max_files:
+                merged_files = part_a["files"] + part_b["files"]
+                new_part: dict[str, Any] = {
+                    "id": 0,
+                    "files": merged_files,
+                    "total_loc": merged_loc,
+                    "is_test_only": is_test,
+                }
+                # Remove the two originals (remove higher index first)
+                remove_indices = sorted([idx_a, idx_b], reverse=True)
+                for ri in remove_indices:
+                    partitions.pop(ri)
+                partitions.append(new_part)
+                merged = True
+                break
+        if not merged:
+            break  # No valid same-type merge possible, stop
+
+    # Pass 3 -- Trivial merge
+    # Merge partitions below TRIVIAL_PARTITION_THRESHOLD into same-type normal partitions.
+    trivial = [p for p in partitions if p["total_loc"] < TRIVIAL_PARTITION_THRESHOLD]
+    normal = [p for p in partitions if p["total_loc"] >= TRIVIAL_PARTITION_THRESHOLD]
+
+    for triv in trivial:
+        triv_is_test = triv["is_test_only"]
+        triv_files = triv["files"]
+        triv_loc = triv["total_loc"]
+
+        # Find best merge target: prefer same-type, fallback to any
+        same_type_targets = [
+            p for p in normal if p["is_test_only"] == triv_is_test and len(p["files"]) + len(triv_files) <= max_files
+        ]
+        any_type_targets = [
+            p for p in normal if len(p["files"]) + len(triv_files) <= max_files
+        ]
+
+        target = None
+        if same_type_targets:
+            # Merge into smallest same-type
+            target = min(same_type_targets, key=lambda p: p["total_loc"])
+        elif any_type_targets:
+            # Fallback: merge into smallest any-type
+            target = min(any_type_targets, key=lambda p: p["total_loc"])
+
+        if target is not None:
+            target["files"] = target["files"] + triv_files
+            target["total_loc"] += triv_loc
+            # Recompute is_test_only
+            target["is_test_only"] = all(f.get("is_test", False) for f in target["files"])
+        else:
+            # No valid merge target — keep trivial partition as-is
+            normal.append(triv)
+
+    partitions = normal
+
+    # Renumber IDs sequentially
+    for idx, part in enumerate(partitions):
+        part["id"] = idx
+
     json.dump(
         {"partitions": partitions, "test_file_paths": test_file_paths},
         sys.stdout,
@@ -757,12 +876,14 @@ def cmd_route(args: argparse.Namespace) -> int:
     else:
         size_category = "Large"
 
-    # Model routing — BHA is always Opus, other agents always Sonnet
-    models: dict[str, str] = {
-        "bug_hunter_a": "opus",
+    # Model routing — BHA impl uses Opus, test-only uses Sonnet; other agents always Sonnet
+    intent: str = getattr(args, "intent", "mixed") or "mixed"
+    premise_model = "opus" if intent in ("fix", "refactor", "mixed") else "sonnet"
+    models: dict[str, Any] = {
+        "bug_hunter_a": {"default": "opus", "test_only": "sonnet"},
         "bug_hunter_b": "sonnet",
         "unified_auditor": "sonnet",
-        "premise_reviewer": "opus",
+        "premise_reviewer": premise_model,
     }
 
     # Risk scoring for high-risk files (large diffs)
@@ -802,6 +923,8 @@ def cmd_route(args: argparse.Namespace) -> int:
 
     selected_domain_critics = sorted(set(selected_domain_critics))[:max_domain_critics]
 
+    max_bha_agents = 9 - 3 - len(selected_domain_critics)  # 3 = BHB + Auditor + Premise
+
     json.dump(
         {
             "size_category": size_category,
@@ -809,6 +932,7 @@ def cmd_route(args: argparse.Namespace) -> int:
             "models": models,
             "high_risk_files": high_risk_files,
             "domain_critics": selected_domain_critics,
+            "max_bha_agents": max_bha_agents,
         },
         sys.stdout,
         indent=2,
@@ -1434,6 +1558,62 @@ def cmd_cache_check(args: argparse.Namespace) -> int:
     )
 
 
+def _compute_cache_status(
+    stats: dict[str, Any],
+    manifest: dict[str, Any],
+    fallback_error: bool,
+    manifest_file_existed: bool = False,
+) -> tuple[str, str]:
+    """Compute status_kind and status_message for cache_result.json."""
+    if fallback_error:
+        status_kind = "fallback_error"
+        msg = "BHA Cache: unavailable (fallback to full review)"
+    elif stats["cached"] > 0:
+        status_kind = "hits"
+        msg = (
+            f"BHA Cache: {stats['cached']}/{stats['total_files']} files cached "
+            f"({stats['hit_rate_pct']}% hit rate) -- "
+            f"{stats['cached']} files skip BHA review"
+        )
+    elif not manifest and not manifest_file_existed:
+        # File genuinely absent (first run), not corrupt
+        status_kind = "first_run"
+        msg = "BHA Cache: first run -- building cache for next review"
+    elif not manifest and manifest_file_existed:
+        # File existed but was empty/corrupt -- treat as error, not first run
+        status_kind = "fallback_error"
+        msg = "BHA Cache: unavailable (corrupt manifest, fallback to full review)"
+    else:
+        status_kind = "all_changed"
+        msg = (
+            f"BHA Cache: 0/{stats['total_files']} files cached "
+            f"(all files changed since last review)"
+        )
+    return status_kind, msg
+
+
+def _append_cache_status(
+    output_dir: Path,
+    manifest: dict[str, Any],
+    fallback_error: bool,
+    manifest_file_existed: bool = False,
+) -> None:
+    """Add status_kind and status_message to the written cache_result.json."""
+    result_path = output_dir / "cache_result.json"
+    try:
+        with open(result_path) as f:
+            cache_result = json.load(f)
+        stats = cache_result.get("stats", {})
+        status_kind, msg = _compute_cache_status(stats, manifest, fallback_error, manifest_file_existed)
+        cache_result["status_kind"] = status_kind
+        cache_result["status_message"] = msg
+        with open(result_path, "w") as f:
+            json.dump(cache_result, f, indent=2)
+            f.write("\n")
+    except (OSError, json.JSONDecodeError):
+        pass
+
+
 def _cmd_cache_check_v1(  # noqa: PLR0913
     cache_dir: Path,
     output_dir: Path,
@@ -1445,6 +1625,7 @@ def _cmd_cache_check_v1(  # noqa: PLR0913
     prompt_hash: str,
 ) -> int:
     """Legacy V1 cache-check path."""
+    manifest_file_existed = (cache_dir / CACHE_MANIFEST_FILENAME).exists()
     manifest = _load_manifest(cache_dir)
 
     cached_files: list[str] = []
@@ -1469,6 +1650,7 @@ def _cmd_cache_check_v1(  # noqa: PLR0913
     _write_cache_output_files(
         output_dir, cached_files, uncached_files, cached_findings, diff_data, hit_rate,
     )
+    _append_cache_status(output_dir, manifest, fallback_error=False, manifest_file_existed=manifest_file_existed)
 
     summary = (
         f"Cache: {len(cached_files)}/{total} files hit ({hit_rate:.0f}%), "
@@ -1492,6 +1674,8 @@ def _cmd_cache_check_v2(  # noqa: PLR0913
     lock_path = cache_dir / CACHE_LOCK_FILENAME
     migration = False
     fallback: str | None = None
+    manifest: dict[str, Any] = {}
+    manifest_file_existed = (cache_dir / CACHE_MANIFEST_FILENAME).exists()
 
     try:
         with _manifest_lock(lock_path, exclusive=False):
@@ -1534,6 +1718,7 @@ def _cmd_cache_check_v2(  # noqa: PLR0913
     _write_cache_output_files(
         output_dir, cached_files, uncached_files, cached_findings, diff_data, hit_rate,
     )
+    _append_cache_status(output_dir, manifest, fallback_error=fallback is not None, manifest_file_existed=manifest_file_existed)
 
     # Observability: JSON line to stdout
     obs = {
@@ -1602,6 +1787,22 @@ def cmd_cache_update(args: argparse.Namespace) -> int:
             ]
         except (OSError, json.JSONDecodeError, KeyError) as exc:
             print(f"Warning: failed to read partitions file: {exc}", file=sys.stderr)
+
+    exclude_test = getattr(args, "exclude_test_partitions", False)
+    if exclude_test and partitions_file:
+        try:
+            with open(partitions_file) as pf:
+                pdata = json.load(pf)
+            test_files = {
+                entry["file"]
+                for part in pdata.get("partitions", [])
+                if part.get("is_test_only", False)
+                for entry in part.get("files", [])
+            }
+            reviewed_files = [f for f in reviewed_files if f not in test_files]
+        except (OSError, json.JSONDecodeError, KeyError):
+            pass  # Fall through to existing behavior
+
     if not reviewed_files:
         reviewed_files = list(findings_by_file.keys())
 
@@ -2144,6 +2345,166 @@ def cmd_session_tokens(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: resolve-scope
+# ---------------------------------------------------------------------------
+
+
+def cmd_resolve_scope(args: argparse.Namespace) -> int:
+    """Resolve diff scope from mode, pr-number, and scope-args."""
+    mode: str = args.mode
+    pr_number: int | None = args.pr_number
+    scope_args: str = args.scope_args or ""
+    base_ref_override: str | None = args.base_ref_override
+    setup_json_path: str = args.setup_json
+
+    # Read current_branch from setup.json
+    try:
+        with open(setup_json_path) as f:
+            setup_data = json.load(f)
+        current_branch: str = setup_data.get("current_branch", "HEAD")
+    except (OSError, json.JSONDecodeError):
+        current_branch = "HEAD"
+
+    diff_scope = ""
+    base_ref = "main"
+    head_ref = current_branch
+    review_branch = current_branch
+    diff_tip = "HEAD"
+    path_filter = ""
+    scope_kind = "branch"
+
+    if pr_number is not None:
+        # Fetch PR base/head from gh
+        try:
+            result = subprocess.run(
+                ["gh", "pr", "view", str(pr_number), "--json", "baseRefName,headRefName",
+                 "-q", ".baseRefName,.headRefName"],
+                capture_output=True, text=True, check=True,
+            )
+            lines = result.stdout.strip().splitlines()
+            base_ref = lines[0].strip() if len(lines) > 0 else "main"
+            head_ref = lines[1].strip() if len(lines) > 1 else current_branch
+        except subprocess.CalledProcessError:
+            base_ref = "main"
+            head_ref = current_branch
+
+        # Fetch origin head (allow failure)
+        subprocess.run(
+            ["git", "fetch", "origin", head_ref],
+            capture_output=True, text=True,
+        )
+
+        diff_scope = f"origin/{base_ref}...origin/{head_ref}"
+        diff_tip = f"origin/{head_ref}"
+        scope_kind = "pr"
+        review_branch = head_ref
+
+    elif mode == "local":
+        if not scope_args or scope_args.strip() in ("", "branch"):
+            diff_scope = "main...HEAD"
+            scope_kind = "branch"
+        elif scope_args.strip() == "staged":
+            diff_scope = "--cached"
+            scope_kind = "staged"
+        else:
+            # Treat scope_args as file paths
+            files = scope_args.strip()
+            diff_scope = f"main...HEAD -- {files}"
+            path_filter = f"-- {files}"
+            scope_kind = "file_paths"
+
+    elif mode == "github":
+        # GitHub mode, no PR number: leave unset
+        diff_scope = ""
+        scope_kind = "github_pending"
+
+    # Apply base-ref override if provided
+    if base_ref_override:
+        if scope_kind == "pr":
+            diff_scope = f"origin/{base_ref_override}...origin/{head_ref}"
+        elif path_filter:
+            diff_scope = f"origin/{base_ref_override}...HEAD {path_filter}"
+        else:
+            diff_scope = f"origin/{base_ref_override}...HEAD"
+        base_ref = base_ref_override
+
+    result_out = {
+        "diff_scope": diff_scope,
+        "base_ref": base_ref,
+        "head_ref": head_ref,
+        "review_branch": review_branch,
+        "diff_tip": diff_tip,
+        "pr_number": pr_number,
+        "path_filter": path_filter,
+        "scope_kind": scope_kind,
+    }
+    json.dump(result_out, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: fetch-intent
+# ---------------------------------------------------------------------------
+
+
+def cmd_fetch_intent(args: argparse.Namespace) -> int:
+    """Fetch intent context (PR description or commit messages) for premise review."""
+    pr_number: int | None = args.pr_number
+    base_ref: str = args.base_ref
+    diff_tip: str = args.diff_tip
+    scope_kind: str = args.scope_kind
+    cr_dir = Path(args.cr_dir)
+
+    intent_data: dict[str, str] = {"title": "", "body": "", "commits": ""}
+    source = "empty"
+
+    if pr_number is not None:
+        try:
+            result = subprocess.run(
+                ["gh", "pr", "view", str(pr_number), "--json", "title,body"],
+                capture_output=True, text=True, check=True,
+            )
+            pr_json = json.loads(result.stdout)
+            intent_data = {
+                "title": pr_json.get("title", ""),
+                "body": pr_json.get("body", ""),
+                "commits": "",
+            }
+            source = "pr"
+        except (subprocess.CalledProcessError, json.JSONDecodeError):
+            # Graceful fallback to empty context
+            intent_data = {"title": "", "body": "", "commits": ""}
+            source = "empty"
+
+    elif scope_kind == "branch":
+        try:
+            result = subprocess.run(
+                ["git", "log", f"{base_ref}..{diff_tip}",
+                 "--oneline", "--no-merges", "--format=%s"],
+                capture_output=True, text=True, check=True,
+            )
+            commits_text = result.stdout.strip()
+            intent_data = {"title": "", "body": "", "commits": commits_text}
+            source = "commits"
+        except subprocess.CalledProcessError:
+            intent_data = {"title": "", "body": "", "commits": ""}
+            source = "empty"
+
+    # Otherwise (staged, file_paths, github_pending, etc.): empty context
+
+    intent_path = cr_dir / "intent_context.json"
+    with open(intent_path, "w") as f:
+        json.dump(intent_data, f, indent=2)
+        f.write("\n")
+
+    result_out = {"path": str(intent_path), "source": source}
+    json.dump(result_out, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: setup
 # ---------------------------------------------------------------------------
 
@@ -2175,16 +2536,21 @@ def cmd_setup(args: argparse.Namespace) -> int:
     else:
         global_cache = "1"
 
-    json.dump(
-        {
-            "start_time": start_time,
-            "repo_name": repo_name,
-            "current_branch": current_branch,
-            "global_cache": global_cache,
-        },
-        sys.stdout,
-        indent=2,
-    )
+    output: dict[str, Any] = {
+        "start_time": start_time,
+        "repo_name": repo_name,
+        "current_branch": current_branch,
+        "global_cache": global_cache,
+    }
+
+    cr_dir_prefix: str | None = getattr(args, "cr_dir_prefix", None)
+    if cr_dir_prefix is not None:
+        suffix = random.randint(10000, 99999)
+        cr_dir = f"{cr_dir_prefix}{suffix}"
+        os.makedirs(cr_dir, exist_ok=True)
+        output["cr_dir"] = cr_dir
+
+    json.dump(output, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
 
@@ -2595,6 +2961,301 @@ def cmd_finalize_cache(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: classify-intent
+# ---------------------------------------------------------------------------
+
+
+def _classify_intent(
+    title: str,
+    body: str,
+    commits: str,
+    file_statuses: dict[str, str],
+) -> str:
+    """Classify the intent of a diff as feature, fix, refactor, or mixed.
+
+    Uses stem-prefix matching on tokenized text so inflected forms like
+    "fixes" (starts with "fix") and "adds" (starts with "add") are matched
+    without enumerating every variant.
+    """
+    # Use first line of body only -- full body is noisy
+    body_first_line = body.split("\n")[0] if body else ""
+    combined = " ".join(filter(None, [title, body_first_line, commits]))
+    tokens = re.split(r"[^a-z]+", combined.lower())
+
+    has_feature = any(
+        tok.startswith(w) for tok in tokens for w in INTENT_FEATURE_WORDS if tok
+    )
+    has_fix = any(
+        tok.startswith(w) for tok in tokens for w in INTENT_FIX_WORDS if tok
+    )
+    has_refactor = any(
+        tok.startswith(w) for tok in tokens for w in INTENT_REFACTOR_WORDS if tok
+    )
+
+    # Boost toward "feature" if majority of files are newly added
+    if file_statuses:
+        added_count = sum(1 for s in file_statuses.values() if s == "added")
+        if added_count / len(file_statuses) >= FEATURE_FILE_STATUS_THRESHOLD:
+            has_feature = True
+
+    matches = [c for c, flag in [("feature", has_feature), ("fix", has_fix), ("refactor", has_refactor)] if flag]
+    if len(matches) == 1:
+        return matches[0]
+    return "mixed"
+
+
+def cmd_classify_intent(args: argparse.Namespace) -> int:
+    """Classify diff intent for model routing."""
+    intent_context_path: str = args.intent_context
+    diff_data_path: str | None = getattr(args, "diff_data", None)
+
+    try:
+        with open(intent_context_path) as f:
+            ctx = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error reading intent context: {exc}", file=sys.stderr)
+        return 1
+
+    title = str(ctx.get("title", ""))
+    body = str(ctx.get("body", ""))
+    commits = str(ctx.get("commits", ""))
+
+    file_statuses: dict[str, str] = {}
+    if diff_data_path:
+        try:
+            with open(diff_data_path) as f:
+                diff_data = json.load(f)
+            file_statuses = diff_data.get("file_statuses", {})
+        except (OSError, json.JSONDecodeError):
+            pass  # Proceed without file statuses
+
+    intent = _classify_intent(title, body, commits, file_statuses)
+    json.dump({"intent": intent}, sys.stdout)
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: collect-findings
+# ---------------------------------------------------------------------------
+
+
+def cmd_collect_findings(args: argparse.Namespace) -> int:
+    """Merge agent findings and hygiene findings into a single JSON file."""
+    cr_dir = Path(args.cr_dir)
+    output_filename: str = args.output
+    hygiene_path: str | None = getattr(args, "hygiene", None)
+
+    findings: list[Any] = []
+    agent_files: list[str] = []
+
+    # Glob agent_*.json files in cr_dir
+    for agent_file in sorted(cr_dir.glob("agent_*.json")):
+        try:
+            with open(agent_file) as f:
+                data = json.load(f)
+            file_findings = data.get("findings", [])
+            if not isinstance(file_findings, list):
+                raise ValueError(f"findings is not a list in {agent_file}")
+            findings.extend(file_findings)
+            agent_files.append(str(agent_file))
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(f"Warning: skipping malformed agent file {agent_file}: {exc}", file=sys.stderr)
+
+    # Read hygiene.json if provided
+    hygiene_included = False
+    if hygiene_path:
+        try:
+            with open(hygiene_path) as f:
+                hygiene_data = json.load(f)
+            hygiene_findings = hygiene_data.get("findings", [])
+            if isinstance(hygiene_findings, list):
+                findings.extend(hygiene_findings)
+                hygiene_included = True
+        except (OSError, json.JSONDecodeError):
+            pass  # hygiene file missing or malformed -- skip silently
+
+    # Write combined findings
+    output_path = cr_dir / output_filename
+    with open(output_path, "w") as f:
+        json.dump(findings, f, indent=2)
+
+    json.dump(
+        {
+            "total_findings": len(findings),
+            "agent_files": agent_files,
+            "hygiene_included": hygiene_included,
+        },
+        sys.stdout,
+        indent=2,
+    )
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: verdict
+# ---------------------------------------------------------------------------
+
+_VERDICT_REASON_MAX = 80
+
+
+def cmd_verdict(args: argparse.Namespace) -> int:
+    """Compute PR verdict from validated findings."""
+    validate_output_path: str = args.validate_output
+
+    try:
+        with open(validate_output_path) as f:
+            validate_output = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error reading validate output: {exc}", file=sys.stderr)
+        return 1
+
+    validated: list[dict[str, Any]] = validate_output.get("validated", [])
+
+    verdict = "approve"
+    reason = ""
+
+    # Priority 1: BLOCKING findings or Premise P0 -> decline
+    for finding in validated:
+        severity = str(finding.get("severity", ""))
+        category = str(finding.get("category", ""))
+        priority = finding.get("priority", 2)
+        if severity == "BLOCKING" or (category == "Premise" and priority == 0):
+            verdict = "decline"
+            issue = str(finding.get("issue", ""))
+            reason = issue[:_VERDICT_REASON_MAX]
+            break
+
+    # Priority 2: HIGH findings -> needs_attention (only if not already decline)
+    if verdict != "decline":
+        for finding in validated:
+            severity = str(finding.get("severity", ""))
+            if severity == "HIGH":
+                verdict = "needs_attention"
+                issue = str(finding.get("issue", ""))
+                reason = issue[:_VERDICT_REASON_MAX]
+                break
+
+    tag_payload = json.dumps({"verdict": verdict, "reason": reason})
+    tag = f"<pr_verdict>{tag_payload}</pr_verdict>"
+
+    json.dump(
+        {"verdict": verdict, "reason": reason, "tag": tag},
+        sys.stdout,
+        indent=2,
+    )
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: prep-assets
+# ---------------------------------------------------------------------------
+
+
+def cmd_prep_assets(args: argparse.Namespace) -> int:
+    """Copy prompt assets from plugin to CR_DIR."""
+    plugin_root = Path(args.plugin_root)
+    cr_dir = Path(args.cr_dir)
+
+    shared_src = plugin_root / "tools" / "prompts" / "shared_prompt.txt"
+    bha_src = plugin_root / "tools" / "prompts" / "bha_suffix.txt"
+
+    shared_dst = cr_dir / "shared_prompt.txt"
+    bha_dst = cr_dir / "bha_suffix.txt"
+
+    shutil.copy2(shared_src, shared_dst)
+    shutil.copy2(bha_src, bha_dst)
+
+    json.dump(
+        {"shared_prompt": str(shared_dst), "bha_suffix": str(bha_dst)},
+        sys.stdout,
+        indent=2,
+    )
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: extract-patches
+# ---------------------------------------------------------------------------
+
+_EXTRACT_PATCHES_BATCH_SIZE = 50
+_EXTRACT_PATCHES_BATCH_THRESHOLD = 200
+
+
+def cmd_extract_patches(args: argparse.Namespace) -> int:
+    """Extract git diff patches to disk files for each partition and full diff."""
+    partitions_file = args.partitions_file
+    diff_scope: str = args.diff_scope
+    cr_dir = Path(args.cr_dir)
+    diff_data_path: str = args.diff_data
+    workdir: str | None = getattr(args, "workdir", None)
+    batch_size: int = getattr(args, "batch_size", _EXTRACT_PATCHES_BATCH_SIZE)
+
+    # Read partitions for per-partition patches
+    with open(partitions_file) as f:
+        pdata = json.load(f)
+    partitions: list[dict[str, Any]] = pdata.get("partitions", [])
+
+    # Read full diff_data for patches_all.txt (includes cached files too)
+    with open(diff_data_path) as f:
+        diff_data = json.load(f)
+    all_files: list[str] = diff_data.get("files_to_review", [])
+
+    run_kwargs: dict[str, Any] = {"capture_output": False, "text": True, "check": False}
+    if workdir:
+        run_kwargs["cwd"] = workdir
+
+    # Strip any embedded pathspec (-- file1 file2) from diff_scope since we add explicit file lists
+    range_scope = diff_scope.split(" -- ")[0] if " -- " in diff_scope else diff_scope
+    range_parts = range_scope.split()
+
+    # Per-partition patches
+    partition_patches: list[str] = []
+    for part in partitions:
+        part_id = part["id"]
+        files_in_part = [entry["file"] for entry in part.get("files", [])]
+        patch_name = f"patches_p{part_id}.txt"
+        patch_path = cr_dir / patch_name
+
+        cmd = ["git", "diff"] + range_parts + ["--"] + files_in_part
+        with open(patch_path, "w") as out:
+            subprocess.run(cmd, stdout=out, stderr=subprocess.DEVNULL, **run_kwargs)
+        partition_patches.append(patch_name)
+
+    # Full diff (for BHB, Auditor, Premise, Domain Critic)
+    full_patch_name = "patches_all.txt"
+    full_patch_path = cr_dir / full_patch_name
+
+    if len(all_files) > _EXTRACT_PATCHES_BATCH_THRESHOLD:
+        # Batch extraction
+        first_batch = True
+        for i in range(0, len(all_files), batch_size):
+            batch_files = all_files[i : i + batch_size]
+            cmd = ["git", "diff"] + range_parts + ["--"] + batch_files
+            mode = "w" if first_batch else "a"
+            with open(full_patch_path, mode) as out:
+                subprocess.run(cmd, stdout=out, stderr=subprocess.DEVNULL, **run_kwargs)
+            first_batch = False
+    else:
+        cmd = ["git", "diff"] + range_parts
+        if all_files:
+            cmd += ["--"] + all_files
+        with open(full_patch_path, "w") as out:
+            subprocess.run(cmd, stdout=out, stderr=subprocess.DEVNULL, **run_kwargs)
+
+    json.dump(
+        {"partition_patches": partition_patches, "full_patch": full_patch_name},
+        sys.stdout,
+        indent=2,
+    )
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -2618,12 +3279,15 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_part.add_argument("--diff-data", default=None, help="Path to diff_data.json (reads stdin if omitted)")
     p_part.add_argument("--loc-budget", type=int, default=400, help="LOC budget per partition")
     p_part.add_argument("--max-files", type=int, default=20, help="Max files per partition")
+    p_part.add_argument("--max-bha-agents", type=int, default=DEFAULT_MAX_BHA_AGENTS, help="Max BHA agent partitions (cap enforcement)")
     p_part.set_defaults(func=cmd_partition)
 
     # route
     p_route = subparsers.add_parser("route", help="Compute risk scores and model routing")
     p_route.add_argument("--diff-data", default=None, help="Path to diff_data.json (reads stdin if omitted)")
     p_route.add_argument("--critic-gates", default=None, help="Path to critic-gates.json")
+    p_route.add_argument("--intent", default="mixed", choices=["feature", "fix", "refactor", "mixed"],
+                         help="PR intent classification (from classify-intent)")
     p_route.set_defaults(func=cmd_route)
 
     # validate
@@ -2658,6 +3322,8 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_cu.add_argument("--context-key", default="", help="Context key (merge-base SHA)")
     p_cu.add_argument("--gc-ttl-days", type=int, default=CACHE_GC_TTL_DAYS_DEFAULT, help="GC TTL in days")
     p_cu.add_argument("--gc-max-per-file", type=int, default=CACHE_GC_MAX_PER_FILE_DEFAULT, help="Max cache entries per file")
+    p_cu.add_argument("--exclude-test-partitions", action="store_true",
+                      help="Skip caching files from is_test_only partitions")
     p_cu.set_defaults(func=cmd_cache_update)
 
     # post-comments
@@ -2696,7 +3362,27 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     # setup
     p_setup = subparsers.add_parser("setup", help="Session setup: start_time, repo_name, current_branch, global_cache")
     p_setup.add_argument("--mode", required=True, choices=["local", "github"], help="Review mode")
+    p_setup.add_argument("--cr-dir-prefix", default=None,
+                         help="CR dir prefix (e.g. .closedloop-ai/code-review/cr-); random suffix appended")
     p_setup.set_defaults(func=cmd_setup)
+
+    # resolve-scope
+    p_rs = subparsers.add_parser("resolve-scope", help="Resolve diff scope from arguments")
+    p_rs.add_argument("--mode", required=True, choices=["local", "github"])
+    p_rs.add_argument("--pr-number", type=int, default=None)
+    p_rs.add_argument("--scope-args", default="", help="Remaining scope arguments")
+    p_rs.add_argument("--base-ref-override", default=None)
+    p_rs.add_argument("--setup-json", required=True, help="Path to setup.json")
+    p_rs.set_defaults(func=cmd_resolve_scope)
+
+    # fetch-intent
+    p_fi = subparsers.add_parser("fetch-intent", help="Fetch intent context for premise review")
+    p_fi.add_argument("--pr-number", type=int, default=None)
+    p_fi.add_argument("--base-ref", default="main")
+    p_fi.add_argument("--diff-tip", default="HEAD")
+    p_fi.add_argument("--scope-kind", required=True, choices=["pr", "branch", "staged", "file_paths", "github_pending"])
+    p_fi.add_argument("--cr-dir", required=True)
+    p_fi.set_defaults(func=cmd_fetch_intent)
 
     # compute-hashes
     p_ch = subparsers.add_parser("compute-hashes", help="Compute prompt hash and context key")
@@ -2732,6 +3418,40 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_footer.add_argument("--review-mode-line", default=None, help="Review mode line (falls back to cr-dir/auto_incremental.json)")
     p_footer.add_argument("--cr-dir", default=None, help="CR session dir (fallback for --review-mode-line)")
     p_footer.set_defaults(func=cmd_footer, project_dir=None)
+
+    # classify-intent
+    p_ci = subparsers.add_parser("classify-intent", help="Classify diff intent for model routing")
+    p_ci.add_argument("--intent-context", required=True, help="Path to intent_context.json")
+    p_ci.add_argument("--diff-data", default=None, help="Path to diff_data.json for file statuses")
+    p_ci.set_defaults(func=cmd_classify_intent)
+
+    # collect-findings
+    p_cf = subparsers.add_parser("collect-findings", help="Merge agent + hygiene findings")
+    p_cf.add_argument("--cr-dir", required=True, help="Directory containing agent_*.json files")
+    p_cf.add_argument("--output", default="findings.json", help="Output filename (written to cr-dir)")
+    p_cf.add_argument("--hygiene", default=None, help="Path to hygiene.json")
+    p_cf.set_defaults(func=cmd_collect_findings)
+
+    # verdict
+    p_v = subparsers.add_parser("verdict", help="Compute PR verdict from validated findings")
+    p_v.add_argument("--validate-output", required=True, help="Path to validate_output.json")
+    p_v.set_defaults(func=cmd_verdict)
+
+    # prep-assets
+    p_pa = subparsers.add_parser("prep-assets", help="Copy prompt assets from plugin to CR_DIR")
+    p_pa.add_argument("--plugin-root", required=True, help="Resolved CLAUDE_PLUGIN_ROOT path")
+    p_pa.add_argument("--cr-dir", required=True, help="Session CR_DIR path")
+    p_pa.set_defaults(func=cmd_prep_assets)
+
+    # extract-patches
+    p_ep = subparsers.add_parser("extract-patches", help="Extract git diff patches to disk files")
+    p_ep.add_argument("--partitions-file", required=True, help="Path to partitions.json")
+    p_ep.add_argument("--diff-scope", required=True, help="Git diff scope string")
+    p_ep.add_argument("--diff-data", required=True, help="Path to full diff_data.json (for patches_all.txt)")
+    p_ep.add_argument("--cr-dir", required=True, help="Output directory for patch files")
+    p_ep.add_argument("--workdir", default=None, help="Git working directory")
+    p_ep.add_argument("--batch-size", type=int, default=_EXTRACT_PATCHES_BATCH_SIZE, help="Batch size for large diffs")
+    p_ep.set_defaults(func=cmd_extract_patches)
 
 
 def main() -> int:

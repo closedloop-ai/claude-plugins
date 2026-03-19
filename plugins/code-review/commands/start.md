@@ -55,17 +55,15 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 - Create the TodoWrite task list (depends on MODE and HYGIENE_ONLY)
 - If MODE=github: Read `${CLAUDE_PLUGIN_ROOT}/prompts/github-review.md` for GitHub-specific constraints and steps
 - Resolve HELPERS path: `echo "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py"` — track the resolved path internally
-- Create CR_DIR: `mkdir -p .closedloop-ai/code-review/cr-<RANDOM>` — generate a unique suffix, track the resolved path internally
-- Run setup: `python <HELPERS> setup --mode <MODE> > <CR_DIR>/setup.json` — inline all resolved paths, NO shell variables
-- Read `<CR_DIR>/setup.json` for `CR_START_TIME`, `REPO_NAME`, `GLOBAL_CACHE`, and default `REVIEW_BRANCH`; initialize `CACHE_DIR=""` (final cache path is resolved after scope parsing)
+- Run setup with CR_DIR creation: `python <HELPERS> setup --mode <MODE> --cr-dir-prefix .closedloop-ai/code-review/cr-` -- read stdout JSON for `cr_dir`, `start_time`, `repo_name`, `current_branch`, `global_cache`. Then write the JSON to `<CR_DIR>/setup.json` for downstream helpers.
+- Initialize `CACHE_DIR=""` (final cache path is resolved after scope parsing)
+- Run prep-assets: `python <HELPERS> prep-assets --plugin-root <PLUGIN_ROOT> --cr-dir <CR_DIR>`
 - See: [Session Setup](#session-setup)
 
 ### Task 3: Parse scope and resolve diff
 - Mark todo "Parse scope and get diff data" as `in_progress`
-- If PR number: resolve `BASE_REF`, `HEAD_REF` via `gh pr view`, fetch `origin/<HEAD_REF>`, set `DIFF_SCOPE="origin/<BASE_REF>...origin/<HEAD_REF>"`, `REVIEW_BRANCH=<HEAD_REF>`, `DIFF_TIP="origin/<HEAD_REF>"`
-- If no PR number + local mode: set `DIFF_SCOPE`, `REVIEW_BRANCH` from local branch, `DIFF_TIP="HEAD"`
-- If no PR number + GitHub mode: leave `DIFF_SCOPE` unset (resolved in GitHub metadata step)
-- Apply `--base <ref>` override if set
+- Run Bash: `python <HELPERS> resolve-scope --mode <MODE> --setup-json <CR_DIR>/setup.json [--pr-number <N>] [--scope-args "<REMAINING_ARGS>"] [--base-ref-override <REF>] > <CR_DIR>/scope.json`
+- Read `<CR_DIR>/scope.json` for `DIFF_SCOPE`, `BASE_REF`, `HEAD_REF`, `REVIEW_BRANCH`, `DIFF_TIP`, `PR_NUMBER`, `PATH_FILTER`, `SCOPE_KIND`
 - Finalize `CACHE_DIR` now that scope/PR context is known (must happen before auto-incremental)
 - See: [Step 2 — Parse Arguments](#parse-arguments-remaining-after-flag-removal)
 
@@ -75,17 +73,20 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 - Print `<REVIEW_MODE_LINE>`
 - See: [Auto Incremental Mode](#auto-incremental-mode-phase-4--local-only)
 
-### Task 5: Get diff data (GitHub: also get PR metadata)
+### Task 5: Get diff data + fetch intent (GitHub: also get PR metadata)
 - GitHub mode: follow PR Metadata section from `github-review.md`
 - Run Bash: `python <HELPERS> parse-diff --scope=<DIFF_SCOPE> > <CR_DIR>/diff_data.json`
+- Run Bash: `python <HELPERS> fetch-intent --scope-kind <SCOPE_KIND> --cr-dir <CR_DIR> [--pr-number <N>] [--base-ref <BASE_REF>] [--diff-tip <DIFF_TIP>]`
+- Run Bash: `python <HELPERS> classify-intent --intent-context <CR_DIR>/intent_context.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/intent.json`
+- Read `<CR_DIR>/intent.json` for `INTENT` value
 - Mark todo "Parse scope and get diff data" as `completed`
 - See: [Get Diff Data](#get-diff-data-both-modes), [GitHub Mode: Get PR Metadata](#github-mode-get-pr-metadata)
 
 ### Task 6: Compute prompt hash + cache check (if CACHE_DIR set)
-- Copy `shared_prompt.txt` from plugin to `<CR_DIR>`, write `bha_suffix.txt` to `<CR_DIR>`
+- Prompt assets already copied in Task 2 (prep-assets)
 - Compute `PROMPT_HASH` and `CONTEXT_KEY` using `<DIFF_TIP>`
 - Run cache-check via `python <HELPERS> cache-check ...`
-- Report cache status to user using the **exact** prescribed format
+- Print `cache_result.json -> status_message` to report cache status
 - Skip if `CACHE_DIR` is empty
 - See: [Step 2.1](#step-21-compute-prompt-hash--context-key-when-caching-is-active), [Step 2.2](#step-22-bha-cache-check-when-caching-is-active)
 
@@ -98,14 +99,16 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 
 ### Task 8: Route models + partition + extract patches
 - Mark todo "Assess scope and route models" as `in_progress`
-- Run route and partition subcommands
-- Pre-extract patches to `<CR_DIR>/patches_p{N}.txt` and `<CR_DIR>/patches_all.txt`
+- Run Bash: `python <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .claude/settings/critic-gates.json --intent <INTENT> > <CR_DIR>/route.json`
+- Read `<CR_DIR>/route.json` for `models`, `domain_critics`, `max_bha_agents`
+- Run Bash: `python <HELPERS> partition --diff-data <CR_DIR>/diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json` (use `uncached_diff_data.json` when caching is active)
+- Run Bash: `python <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope "<DIFF_SCOPE>" --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>`
 - Mark todo as `completed`
-- See: [Step 3](#step-3-assess-scope-and-route-models), [Step 4 — Partitioning](#file-partitioning-critical-for-large-diffs), [Pre-Extract Patches](#pre-extract-patches-to-disk-critical--eliminates-sub-agent-bash-dependency)
+- See: [Step 3](#step-3-assess-scope-and-route-models), [Step 4 — Partitioning](#file-partitioning-critical-for-large-diffs)
 
 ### Task 9: Spawn agents
 - Mark todo "Spawn reviewer agents in parallel" as `in_progress`
-- Copy `shared_prompt.txt` from plugin to `<CR_DIR>` if not already copied in Task 6
+- Prompt assets already in `<CR_DIR>` from Task 2 (prep-assets)
 - Spawn ALL agents using `subagent_type: "code:code-review-worker"` with `run_in_background: true`
 - Use the exact per-agent prompt template from the reference section
 - See: [Step 4 — Spawn Reviewer Agents](#step-4-spawn-reviewer-agents)
@@ -113,8 +116,9 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 ### Task 10: Collect + validate findings
 - Mark todo "Collect, normalize, and validate findings" as `in_progress`
 - Collect ALL agent outputs via `TaskOutput` (block=true for each)
-- Merge agent JSON files + hygiene findings, then run `python <HELPERS> validate ...`
-- Run cache-update if `CACHE_DIR` is set
+- Run Bash: `python <HELPERS> collect-findings --cr-dir <CR_DIR> --hygiene <CR_DIR>/hygiene.json`
+- Run Bash: `python <HELPERS> validate --findings <CR_DIR>/findings.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/validate_output.json`
+- Run cache-update if `CACHE_DIR` is set (add `--exclude-test-partitions` flag)
 - Mark todo as `completed`
 - See: [Step 5](#step-5-collect-normalize-and-validate-findings), [Step 5.5](#step-55-bha-cache-update-when-caching-is-active)
 
@@ -129,7 +133,8 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 - See: [Review Footer](#review-footer-final-output)
 
 ### Task 13: PR verdict tag
-- Compute the deterministic verdict from validated findings and emit the `<pr_verdict>` tag
+- Run Bash: `python <HELPERS> verdict --validate-output <CR_DIR>/validate_output.json > <CR_DIR>/verdict.json`
+- Read `<CR_DIR>/verdict.json` and print the `tag` value as the last line of output
 - See: [PR Verdict](#pr-verdict)
 
 ---
@@ -223,45 +228,36 @@ If SINCE_LAST_REVIEW AND FULL_REVIEW:
 
 Resolve the helpers path and create a session-scoped working directory.
 
-**Step 1 — Resolve HELPERS path.** Run this single Bash command to discover the plugin root:
+**Step 1 -- Resolve HELPERS path.** Run this single Bash command to discover the plugin root:
 ```bash
 echo "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py"
 ```
-Read the output. This is the resolved HELPERS path (e.g., `/Users/me/.claude/plugins/cache/closedloop-ai/code-review/1.24.0/tools/python/code_review_helpers.py`). Track it internally — **all subsequent Bash commands must inline this resolved path, NOT `$HELPERS`**.
+Read the output. This is the resolved HELPERS path. Track it internally -- **all subsequent Bash commands must inline this resolved path, NOT `$HELPERS`**. Also track `PLUGIN_ROOT` = resolved `${CLAUDE_PLUGIN_ROOT}`.
 
-**Step 2 — Create CR_DIR.** Generate a random 5-digit number as a suffix and create the directory:
+**Step 2 -- Run setup subcommand (creates CR_DIR):**
 ```bash
-mkdir -p .closedloop-ai/code-review/cr-38291
+python <HELPERS> setup --mode <MODE> --cr-dir-prefix .closedloop-ai/code-review/cr-
 ```
-Track the CR_DIR value internally (e.g., `.closedloop-ai/code-review/cr-38291`). **All subsequent commands must inline this resolved path, NOT `$CR_DIR`**. Generate a unique suffix yourself (e.g., a 5-digit random number) — do NOT use `$$` (it changes per shell invocation). Use this same `.closedloop-ai/code-review/cr-<RANDOM>` path in **all modes** including GitHub CI — do NOT use `$RUNNER_TEMP` or any shell variables.
-
-**Step 3 — Run setup subcommand:**
-```bash
-python <HELPERS> setup --mode <MODE> > <CR_DIR>/setup.json
-```
-Where `<HELPERS>`, `<MODE>`, and `<CR_DIR>` are the resolved literal values (no shell variables).
-
-Read `<CR_DIR>/setup.json` with the Read tool. It contains:
+Read stdout JSON. It contains:
 ```json
-{ "start_time": 1700000000, "repo_name": "my-repo", "current_branch": "feature-x", "global_cache": "1" }
+{ "start_time": 1700000000, "repo_name": "my-repo", "current_branch": "feature-x", "global_cache": "1", "cr_dir": ".closedloop-ai/code-review/cr-38291" }
 ```
 
 Assign from the JSON:
 - `CR_START_TIME` = `start_time`
 - `REPO_NAME` = `repo_name`
 - `GLOBAL_CACHE` = `global_cache`
+- `CR_DIR` = `cr_dir` (the setup helper creates this directory with a random suffix)
 
-The `current_branch` value is used as the default `REVIEW_BRANCH` in Step 2 (overridden when a PR number is provided).
+Write the JSON to `<CR_DIR>/setup.json` so downstream helpers can read it.
 
-Initialize cache path as empty in session setup. Final cache selection happens in Step 2
-after scope parsing (so PR-based legacy cache can use `PR_NUMBER` when available):
+**Step 3 -- Copy prompt assets to CR_DIR:**
 ```bash
-CACHE_DIR=""
+python <HELPERS> prep-assets --plugin-root <PLUGIN_ROOT> --cr-dir <CR_DIR>
 ```
+This copies `shared_prompt.txt` and `bha_suffix.txt` from the plugin to `<CR_DIR>`. Both cache and non-cache paths use these assets.
 
-`CACHE_DIR` stays empty until finalized in Step 2 after scope parsing (so `PR_NUMBER` is available for legacy cache paths).
-
-`CR_DIR` isolates temp files. All intermediate data (shared prompt, agent findings, PR metadata) goes here.
+Initialize `CACHE_DIR=""` -- final cache path is resolved after scope parsing.
 
 ---
 
@@ -269,34 +265,17 @@ CACHE_DIR=""
 
 Mark todo "Parse scope and get diff data" as `in_progress`.
 
-### Parse Arguments (remaining after flag removal)
+### Resolve Scope (via Python helper)
 
-**If a PR number is provided (either mode)** — remaining arg is a bare integer:
-- Store as `PR_NUMBER`
-- Resolve both branches: `gh pr view <PR_NUMBER> --json baseRefName,headRefName -q '.baseRefName,.headRefName'`
-  - `BASE_REF` = base branch (e.g. `main`)
-  - `HEAD_REF` = PR head branch (e.g. `feature-xyz`)
-- Fetch the PR head ref to ensure it's available locally: `git fetch origin <HEAD_REF> 2>/dev/null || true`
-- Set `DIFF_SCOPE="origin/${BASE_REF}...origin/${HEAD_REF}"`
-- Set `REVIEW_BRANCH=<HEAD_REF>` (used for auto-incremental state key — NOT the local checked-out branch)
+Run the `resolve-scope` subcommand to handle all scope resolution deterministically:
 
-**Important:** When a PR number is given, always diff `origin/BASE...origin/HEAD_REF`. Do NOT use bare `HEAD` — the user may be on a different local branch than the PR's head branch.
+```bash
+python <HELPERS> resolve-scope --mode <MODE> --setup-json <CR_DIR>/setup.json [--pr-number <N>] [--scope-args "<REMAINING_ARGS>"] [--base-ref-override <REF>] > <CR_DIR>/scope.json
+```
 
-**Otherwise:**
-- If MODE=local and empty or "branch": `DIFF_SCOPE="main...HEAD"`, `BASE_REF="main"`, `PATH_FILTER=""`
-- If "staged": `DIFF_SCOPE="--cached"`
-- If MODE=local and file paths: `PATH_FILTER="-- <files>"`, `DIFF_SCOPE="main...HEAD ${PATH_FILTER}"`, `BASE_REF="main"`
-- If MODE=github and no PR number: leave `DIFF_SCOPE` unset (GitHub metadata step resolves PR and sets it)
-- Set `REVIEW_BRANCH` from `current_branch` in `<CR_DIR>/setup.json` (already read in Task 2)
+Read `<CR_DIR>/scope.json` for: `DIFF_SCOPE`, `BASE_REF`, `HEAD_REF`, `REVIEW_BRANCH`, `DIFF_TIP`, `PR_NUMBER`, `PATH_FILTER`, `SCOPE_KIND`.
 
-**`--base <ref>` override** (Phase 3):
-If `BASE_REF_OVERRIDE` is set:
-- `BASE_REF = BASE_REF_OVERRIDE`
-- If PR number: `DIFF_SCOPE="origin/${BASE_REF_OVERRIDE}...origin/${HEAD_REF}"`
-- Otherwise (non-staged local scopes): `DIFF_SCOPE="origin/${BASE_REF_OVERRIDE}...HEAD ${PATH_FILTER}"`
-
-**Important:** Do NOT drop the file filter when `--base` is used with file-path scope.
-Preserve `PATH_FILTER` in the final `DIFF_SCOPE`.
+The helper handles PR branch lookup (`gh pr view`), `git fetch`, `origin/` prefixes, `--base` overrides, path filter preservation, and scope kind classification.
 
 ### Finalize Cache Path (must run here, after scope parsing)
 
@@ -375,26 +354,18 @@ Use these values for `total_loc` and file count reporting. The full diff data (i
 
 Mark todo as `completed`.
 
-### Fetch Intent Context (for Premise Reviewer)
+### Fetch Intent Context + Classify Intent (for Premise Reviewer)
 
-After `parse-diff` completes, fetch the stated motivation for the changes so the Premise Reviewer can evaluate whether they were necessary. Write the result to `<CR_DIR>/intent_context.json`.
+After `parse-diff` completes, fetch the stated motivation and classify intent:
 
-**If a PR number is set:**
 ```bash
-gh pr view <PR_NUMBER> --json title,body -q '{title: .title, body: .body, commits: ""}' > <CR_DIR>/intent_context.json 2>/dev/null || echo '{"title":"","body":"","commits":""}' > <CR_DIR>/intent_context.json
+python <HELPERS> fetch-intent --scope-kind <SCOPE_KIND> --cr-dir <CR_DIR> [--pr-number <PR_NUMBER>] [--base-ref <BASE_REF>] [--diff-tip <DIFF_TIP>]
+python <HELPERS> classify-intent --intent-context <CR_DIR>/intent_context.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/intent.json
 ```
 
-**If local branch (no PR number) and DIFF_SCOPE is not `--cached`:**
-```bash
-echo "{\"title\":\"\",\"body\":\"\",\"commits\":$(git log <BASE_REF>..<DIFF_TIP> --oneline --no-merges --format='%s' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')}" > <CR_DIR>/intent_context.json
-```
+Read `<CR_DIR>/intent.json` for the `INTENT` value (`feature`, `fix`, `refactor`, or `mixed`). This is passed to the `route` subcommand for Premise Reviewer model routing.
 
-**If staged or file scope (no branch range available):**
-```bash
-echo '{"title":"","body":"","commits":""}' > <CR_DIR>/intent_context.json
-```
-
-The Premise Reviewer reads this file to understand what the author claims the changes accomplish. If the file is empty or has blank fields, the agent degrades gracefully by inferring intent from the diff itself.
+The `fetch-intent` helper handles PR description retrieval (`gh pr view`), local branch commit messages (`git log`), and empty context for staged/file-path scopes. The Premise Reviewer reads `intent_context.json` directly.
 
 ---
 
@@ -402,32 +373,12 @@ The Premise Reviewer reads this file to understand what the author claims the ch
 
 **Skip this step if `CACHE_DIR` is empty.**
 
-The prompt hash is needed by cache-check, so copy the shared prompt **here** (before Step 2.5). The canonical copy ships at `${CLAUDE_PLUGIN_ROOT}/tools/prompts/shared_prompt.txt`.
-
-**SSOT design:** Write the canonical BHA suffix to `<CR_DIR>/bha_suffix.txt` here (the ONLY copy). Step 4 reads from this file instead of having a second inline copy.
+Prompt assets (`shared_prompt.txt` and `bha_suffix.txt`) were already copied to `<CR_DIR>` by `prep-assets` in Task 2. Compute the prompt hash:
 
 ```bash
-# Copy shared prompt from plugin (canonical copy — do NOT recreate via heredoc)
-cp "${CLAUDE_PLUGIN_ROOT}/tools/prompts/shared_prompt.txt" <CR_DIR>/shared_prompt.txt"
-
-# Write canonical BHA suffix (the ONLY copy)
-cat > <CR_DIR>/bha_suffix.txt <<'BHA_EOF'
-You are Bug Hunter A — a diff-only reviewer focused on correctness.
-
-Focus areas:
-- Syntax/type errors, null/undefined handling, logic bugs
-- Security: injection, auth bypass, path traversal, data exposure
-- State management: race conditions, stale closures, double-trigger patterns
-- Error handling: missing try-catch on async, unhandled promise rejections
-- Data transformations: off-by-one, incorrect parsing, wrong parameter types
-
-Use Read, Grep, and Glob for codebase context. Do NOT use Bash.
-BHA_EOF
-
-# Compute PROMPT_HASH and CONTEXT_KEY
 python <HELPERS> compute-hashes \
-  --shared-prompt <CR_DIR>/shared_prompt.txt" \
-  --bha-suffix <CR_DIR>/bha_suffix.txt" \
+  --shared-prompt <CR_DIR>/shared_prompt.txt \
+  --bha-suffix <CR_DIR>/bha_suffix.txt \
   --diff-tip <DIFF_TIP> \
   --base-ref "<BASE_REF>" \
   > <CR_DIR>/hashes.json
@@ -466,18 +417,7 @@ This produces three files:
 - `<CR_DIR>/agent_cached_bha.json` — cached BHA findings (glob-compatible with `agent_*`)
 - `<CR_DIR>/uncached_diff_data.json` — filtered diff_data with only uncached files
 
-Read `<CR_DIR>/cache_result.json` and report the cache status to the user:
-
-```
-If stats.cached > 0:
-  "BHA Cache: {cached}/{total_files} files cached ({hit_rate_pct}% hit rate) — {cached} files skip BHA review"
-Else if first run (empty cache):
-  "BHA Cache: first run — building cache for next review"
-Else:
-  "BHA Cache: 0/{total_files} files cached (all files changed since last review)"
-```
-
-On first run (empty cache), all files will be uncached — zero overhead vs today.
+Read `<CR_DIR>/cache_result.json` and print the `status_message` field to report cache status.
 
 ---
 
@@ -534,19 +474,20 @@ Mark todo as completed. EXIT — do not proceed to Step 3 or beyond.
 
 Mark todo "Assess scope and route models" as `in_progress`.
 
-Run the `route` subcommand to compute risk scores and model routing:
+Run the `route` subcommand to compute risk scores and model routing. Pass the `INTENT` value from `<CR_DIR>/intent.json` (classified in Task 5):
 
 ```bash
-python <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .claude/settings/critic-gates.json > <CR_DIR>/route.json
+python <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .claude/settings/critic-gates.json --intent <INTENT> > <CR_DIR>/route.json
 ```
 
 Read `<CR_DIR>/route.json` with the Read tool.
 
 The script outputs:
-- **size_category**: "Small" (≤500), "Medium" (501-2000), or "Large" (2001+)
-- **models**: Model assignments for each agent role (bug_hunter_a, bug_hunter_b, unified_auditor, premise_reviewer)
+- **size_category**: "Small" (<=500), "Medium" (501-2000), or "Large" (2001+)
+- **models**: Model assignments for each agent role. `bug_hunter_a` is `{"default": "opus", "test_only": "sonnet"}`. `premise_reviewer` is "opus" (fix/refactor/mixed) or "sonnet" (feature).
 - **high_risk_files**: Top 5 files by risk score
 - **domain_critics**: Selected domain critics from critic-gates.json (max 1)
+- **max_bha_agents**: Maximum BHA partitions (9 minus non-BHA agents). Pass this to `--max-bha-agents` on the partition call.
 
 Report to user: model routing decision, which agents will run (including Premise Reviewer), and domain critics (if any).
 
@@ -576,13 +517,13 @@ Mark todo "Spawn reviewer agents in parallel" as `in_progress`.
 
 | Agent | Instances | Model | Partitioned? | Focus |
 |-------|-----------|-------|-------------|-------|
-| **Bug Hunter A** | 1 per partition | Opus (all sizes) | Yes | Diff-only: correctness, security, logic bugs, error handling |
+| **Bug Hunter A** | 1 per partition | Opus (impl) / Sonnet (test-only) | Yes | Diff-only: correctness, security, logic bugs, error handling |
 | **Bug Hunter B** | 1 total | Sonnet | No (full file list) | Cross-file: DRY, API contracts, pattern consistency, imports |
 | **Unified Auditor** | 1 total | Sonnet | No (full file list) | CLAUDE.md rules + architectural conventions |
 | **Domain Critic** | 0-1 | Sonnet | No (full file list) | From critic-gates.json (capped at 1) |
-| **Premise Reviewer** | 1 total | Opus | No (full file list) | Questions whether changes were necessary at all |
+| **Premise Reviewer** | 1 total | Per route.json | No (full file list) | Questions whether changes were necessary at all |
 
-**Max agents = partitions + 4** (BHB + Auditor + Premise + 0-1 domain). Hard cap at 9.
+**Cap enforcement is handled by the `partition` subcommand via `--max-bha-agents`.** The orchestrator reads the partition count from `partitions.json` and spawns one BHA agent per partition -- no further merging needed.
 
 ### File Partitioning (Critical for Large Diffs)
 
@@ -594,10 +535,10 @@ When caching is active (`CACHE_DIR` is set), partition only uncached files. Othe
 
 ```bash
 # Caching active: use uncached_diff_data.json (from cache-check)
-python <HELPERS> partition --diff-data <CR_DIR>/uncached_diff_data.json --loc-budget 800 --max-files 25 > <CR_DIR>/partitions.json
+python <HELPERS> partition --diff-data <CR_DIR>/uncached_diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json
 
 # No caching: use full diff_data.json
-python <HELPERS> partition --diff-data <CR_DIR>/diff_data.json --loc-budget 800 --max-files 25 > <CR_DIR>/partitions.json
+python <HELPERS> partition --diff-data <CR_DIR>/diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json
 ```
 
 Read `<CR_DIR>/partitions.json` with the Read tool.
@@ -609,34 +550,17 @@ The script performs greedy bin-packing (sorted by LOC descending), splits oversi
 - Each `files[]` entry may include optional `line_range: [start, end]` when a large file is split by hunks
 - **test_file_paths**: Array of detected test file paths
 
-### Pre-Extract Patches to Disk (CRITICAL — eliminates sub-agent Bash dependency)
+### Pre-Extract Patches to Disk (CRITICAL -- eliminates sub-agent Bash dependency)
 
-After partitioning, extract patches to disk files so agents can Read them without needing Bash permissions. Run these BEFORE spawning any agents:
+After partitioning, extract patches to disk files so agents can Read them without needing Bash permissions. Run this BEFORE spawning any agents:
 
-**Per-partition patches** (for BHA instances):
 ```bash
-# For each partition, extract its files' patches to a dedicated file
-# Example for partition 0 with files file1.ts file2.ts:
-git diff <DIFF_SCOPE> -- file1.ts file2.ts > <CR_DIR>/patches_p0.txt
-
-# Repeat for each partition (use a loop or multiple commands)
+python <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope "<DIFF_SCOPE>" --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>
 ```
 
-If a partition file entry has `line_range`, include that range in `<files_assigned>`
-for the agent and treat it as a hard scope fence. This prevents duplicate reporting when
-multiple BHA partitions reference different hunks of the same file.
+This creates `patches_p{N}.txt` (one per partition) and `patches_all.txt` (full diff from all files in `diff_data.json`). When caching is active, partitions contain only uncached files, but `patches_all.txt` includes ALL files since BHB/Auditor/Premise review the full diff.
 
-**Full diff patches** (for BHB, Unified Auditor, Domain Critic — they review all files):
-```bash
-git diff <DIFF_SCOPE> > <CR_DIR>/patches_all.txt
-```
-
-If the full diff is very large (>200 files), batch the extraction:
-```bash
-# Extract in batches of 50 files, append to the same file
-git diff <DIFF_SCOPE> -- file1 file2 ... file50 > <CR_DIR>/patches_all.txt
-git diff <DIFF_SCOPE> -- file51 file52 ... file100 >> <CR_DIR>/patches_all.txt
-```
+If a partition file entry has `line_range`, include that range in `<files_assigned>` for the agent and treat it as a hard scope fence.
 
 ### Partition-to-Agent Mapping
 
@@ -650,7 +574,11 @@ Partitions are computed ONCE. Agents are mapped as follows:
 
 For BHB, Unified Auditor, Premise Reviewer, and Domain Critic, the `<files_assigned>` in their prompt lists ALL `files_to_review` (not a partition subset). They read the full diff from `<CR_DIR>/patches_all.txt`.
 
-**Total agents** = BHA instances (one per partition) + BHB (1) + Unified Auditor (1) + Premise Reviewer (1) + Domain Critic (0-1). **Cap at 9 total.** If over budget, merge smallest BHA partitions (allow up to 1200 LOC).
+**Total agents** = BHA instances (one per partition) + BHB (1) + Unified Auditor (1) + Premise Reviewer (1) + Domain Critic (0-1). Cap enforcement is handled by the `partition` subcommand.
+
+**BHA model selection per partition:**
+- If `partition.is_test_only` is true: use `route.json -> models.bug_hunter_a.test_only` (sonnet)
+- Otherwise: use `route.json -> models.bug_hunter_a.default` (opus)
 
 ### Shared Prompt — Write to File (CRITICAL for context budget)
 
@@ -660,12 +588,7 @@ The shared prompt is ~130 lines of static instructions (constraints, severity gu
 
 **CRITICAL**: Do NOT embed patch content in the agent prompt. Agents read pre-extracted patch files from disk. The orchestrator only passes the file list, statuses, and patch file path.
 
-**Step 4a: Copy shared prompt to `<CR_DIR>`.** Run this ONCE before spawning any agents. Skip if already copied in Step 2.1 (caching was active):
-
-```bash
-# Copy shared prompt from plugin (canonical copy — do NOT recreate via heredoc)
-[ -f <CR_DIR>/shared_prompt.txt" ] || cp "${CLAUDE_PLUGIN_ROOT}/tools/prompts/shared_prompt.txt" <CR_DIR>/shared_prompt.txt"
-```
+**Step 4a:** Prompt assets (`shared_prompt.txt`, `bha_suffix.txt`) are already in `<CR_DIR>` from Task 2 (`prep-assets`). No copy needed.
 
 ### Per-Agent Prompt Template (what the orchestrator embeds in each Task call)
 
@@ -778,7 +701,7 @@ Return findings in the standard JSON format.
 **Guard:** If critic-gates.json references a critic name that doesn't map to a known
 subagent type, use `subagent_type: "code:code-review-worker"` (the default for all domain critics).
 
-**Premise Reviewer** (always runs, model per routing table — `opus`, AGENT_ID `premise`):
+**Premise Reviewer** (always runs, model per routing table `route.json -> models.premise_reviewer`, AGENT_ID `premise`):
 ```
 You are the Premise Reviewer — you question whether the changes in this diff were necessary at all.
 
@@ -861,7 +784,7 @@ Call all `TaskOutput` calls in a **single message** (parallel) so they resolve t
 
 Mark todo "Collect, normalize, and validate findings" as `in_progress`.
 
-**All agent findings are on disk** in `<CR_DIR>/agent_*.json` files (each agent wrote its own file). The orchestrator does NOT need to parse or extract findings — just merge the files with Bash.
+**All agent findings are on disk** in `<CR_DIR>/agent_*.json` files (each agent wrote its own file). Use the `collect-findings` helper to merge them.
 
 ### Agent Failure Recovery
 
@@ -879,31 +802,14 @@ If any agent failed (context overflow, subscription limits, timeout) or its outp
 1. **Agent findings** — on disk in `<CR_DIR>/agent_*.json` files (one per agent)
 2. **Hygiene findings** — extract the `"findings"` array from `<CR_DIR>/hygiene.json` (written in Step 2.5)
 
-Merge and validate in one step:
+Merge and validate:
 
 ```bash
-python3 -c "
-import json, sys, glob
-all_f = []
-for path in sorted(glob.glob('<CR_DIR>/agent_*.json')):
-    try:
-        with open(path) as f:
-            data = json.load(f)
-        all_f.extend(data.get('findings', []) if isinstance(data, dict) else data)
-    except (json.JSONDecodeError, KeyError) as e:
-        print(f'Warning: skipping {path}: {e}', file=sys.stderr)
-try:
-    with open('<CR_DIR>/hygiene.json') as hf:
-        all_f.extend(json.load(hf).get('findings', []))
-except (OSError, json.JSONDecodeError) as e:
-    print(f'Warning: failed to read hygiene.json: {e}', file=sys.stderr)
-json.dump(all_f, sys.stdout)
-" > <CR_DIR>/findings.json
-
+python <HELPERS> collect-findings --cr-dir <CR_DIR> --hygiene <CR_DIR>/hygiene.json
 python <HELPERS> validate --findings <CR_DIR>/findings.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/validate_output.json
 ```
 
-**Important:** If hygiene findings are omitted from this merge, they will bypass the validate pipeline entirely (no dedup, no normalization). Always include them.
+The `collect-findings` helper merges all `agent_*.json` files + hygiene findings into `<CR_DIR>/findings.json`. Malformed agent files are skipped with a warning.
 
 The script performs all mechanical validation in one pass:
 1. **Severity normalization**: Critical→BLOCKING, High→HIGH, Low→discard, unknown→MEDIUM+warning
@@ -946,12 +852,13 @@ python <HELPERS> cache-update \
   --schema-version 1 \
   --global-cache <GLOBAL_CACHE> \
   --context-key <CONTEXT_KEY> \
-  --partitions-file <CR_DIR>/partitions.json"
+  --partitions-file <CR_DIR>/partitions.json" \
+  --exclude-test-partitions
 ```
 
-This writes the updated manifest to `<CACHE_DIR>/manifest.json`. In GitHub mode, the `actions/cache` post-action saves this directory for subsequent workflow runs. In local mode, the `.claude/cr-cache-*` directory persists on disk across CLI sessions.
+This writes the updated manifest to `<CACHE_DIR>/manifest.json`. The `--exclude-test-partitions` flag skips caching files from `is_test_only=True` partitions (which were reviewed by Sonnet, not Opus). In GitHub mode, the `actions/cache` post-action saves this directory for subsequent workflow runs. In local mode, the `.claude/cr-cache-*` directory persists on disk across CLI sessions.
 
-**Important:** Use `diff_data.json` (full diff), NOT `uncached_diff_data.json`, so the update has patch hashes for all files. The `--reviewed-files` flag ensures only files that were actually reviewed by BHA agents get cached.
+**Important:** Use `diff_data.json` (full diff), NOT `uncached_diff_data.json`, so the update has patch hashes for all files.
 
 ---
 
@@ -1124,26 +1031,13 @@ Print a markdown horizontal rule (`---`) followed by the `footer_line` value fro
 
 ## PR Verdict
 
-After the footer, emit a single `<pr_verdict>` tag as the absolute last line of output. The verdict is deterministic, computed from validated findings:
+Run the verdict helper to compute the deterministic verdict:
 
-1. If any finding has `BLOCKING: true` → verdict is `"decline"`, reason: `"N blocking issue(s): [first title, ≤80 chars]"`
-2. If any Premise finding has priority 0 → verdict is `"decline"`, reason: `"Premise: [first title, ≤80 chars]"`
-3. If any HIGH-priority findings exist → verdict is `"needs_attention"`, reason: `"N high-priority finding(s) require attention"`
-4. Otherwise → verdict is `"approve"`, reason: `"No blocking or high-priority issues found"`
-
-Output exactly one line:
-
-```
-<pr_verdict>{"verdict":"decline","reason":"2 blocking issue(s): Missing null check in auth handler"}</pr_verdict>
+```bash
+python <HELPERS> verdict --validate-output <CR_DIR>/validate_output.json > <CR_DIR>/verdict.json
 ```
 
-or:
-
-```
-<pr_verdict>{"verdict":"approve","reason":"No blocking or high-priority issues found"}</pr_verdict>
-```
-
-Keep the reason under 120 characters. This tag is parsed by the ClosedLoop UI to render a verdict banner.
+Read `<CR_DIR>/verdict.json` and print the `tag` value as the absolute last line of output. This tag is parsed by the ClosedLoop UI to render a verdict banner.
 
 ---
 

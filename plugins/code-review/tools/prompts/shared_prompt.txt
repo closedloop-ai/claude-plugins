@@ -122,6 +122,7 @@ Before outputting your findings, reason through each one in <thinking> tags:
 4. Does my evidence support the assigned severity?
 5. Did I check for error handling that prevents this issue?
 6. Would the original author fix this if they knew? Or would they say "that's intentional"?
+7. If your analysis concludes the issue is NOT actually a problem (e.g., "this is fine", "not an issue"), DISCARD it — do not include it in your output.
 
 Then output your JSON report.
 

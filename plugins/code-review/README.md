@@ -23,9 +23,9 @@ plugins/code-review/
     github-review.md                 GitHub-mode constraints and output steps (loaded conditionally)
   tools/
     prompts/shared_prompt.txt        Shared reviewer constraints injected into every agent prompt
+    prompts/bha_suffix.txt           Bug Hunter A reviewer persona and focus areas
     python/code_review_helpers.py    Deterministic helper CLI (parse-diff, hygiene, partition, route, validate, cache, etc.)
     python/test_code_review_helpers.py   Unit tests for the helper CLI
-    python/test_validate_judge_report.py Tests for judge report validation
 ```
 
 ### Component Roles
@@ -36,6 +36,7 @@ plugins/code-review/
 | `github-review.md` | Loaded by the orchestrator only in GitHub mode. Contains PR metadata resolution, file-based handoff format for CI, and summary format |
 | `code_review_helpers.py` | Python CLI that handles all deterministic work: git diff parsing, hygiene pattern matching, file partitioning, risk scoring/model routing, finding validation, cache management, and GitHub comment posting |
 | `shared_prompt.txt` | Constraints injected into every reviewer agent prompt: file assignment rules, evidence standards, severity definitions, and output format |
+| `bha_suffix.txt` | Bug Hunter A reviewer persona and focus areas (syntax errors, security, state management, error handling, data transformations) — appended to the Bug Hunter A agent prompt |
 
 ## Commands
 
@@ -133,6 +134,13 @@ The helper script is a multi-subcommand Python CLI. The orchestrator invokes it 
 | `resolve-threads` | Resolves outdated bot review threads on a PR (GitHub mode) |
 | `session-tokens` | Collects token usage stats from the session |
 | `footer` | Computes the formatted review footer string |
+| `resolve-scope` | Resolves diff scope (branch, PR number, base ref, path filter) from CLI arguments and git context |
+| `fetch-intent` | Fetches context (PR description, recent commits) used to classify the diff intent |
+| `classify-intent` | Classifies the diff intent (feature, bugfix, refactor, etc.) for model routing |
+| `collect-findings` | Merges agent findings with hygiene findings into a single list |
+| `verdict` | Computes the PR verdict (APPROVED / NEEDS_ATTENTION / CHANGES_REQUESTED) from validated findings |
+| `prep-assets` | Copies prompt assets from the plugin root into the session CR_DIR |
+| `extract-patches` | Extracts git diff patches to per-file disk files for reviewer agents to read |
 
 ## GitHub CI Mode
 

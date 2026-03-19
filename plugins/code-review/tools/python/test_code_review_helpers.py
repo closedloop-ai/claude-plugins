@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -14,6 +15,7 @@ from code_review_helpers import (
     _check_gitignore_drift,
     _check_path_leakage,
     _check_sensitive_files,
+    _classify_intent,
     _compute_composite_key,
     _compute_patch_hash,
     _entry_matches_v2,
@@ -44,10 +46,12 @@ from code_review_helpers import (
     CACHE_LOCK_FILENAME,
     CACHE_MANIFEST_FILENAME,
     CACHE_SCHEMA_VERSION_V2,
+    DEFAULT_MAX_BHA_AGENTS,
     REVIEW_STATE_FILENAME,
     cmd_auto_incremental,
     cmd_cache_check,
     cmd_cache_update,
+    cmd_collect_findings,
     cmd_compute_hashes,
     cmd_footer,
     cmd_hygiene,
@@ -60,6 +64,7 @@ from code_review_helpers import (
     cmd_session_tokens,
     cmd_setup,
     cmd_validate,
+    cmd_verdict,
 )
 
 
@@ -540,6 +545,7 @@ class TestRoute:
         self,
         diff_data: dict[str, Any],
         critic_gates_path: str | None = None,
+        intent: str = "mixed",
     ) -> dict[str, Any]:
         import io
         import sys as _sys
@@ -550,7 +556,7 @@ class TestRoute:
         _sys.stdout = io.StringIO()
         try:
             import argparse
-            ns = argparse.Namespace(critic_gates=critic_gates_path)
+            ns = argparse.Namespace(critic_gates=critic_gates_path, intent=intent)
             cmd_route(ns)
             _sys.stdout.seek(0)
             return json.load(_sys.stdout)
@@ -566,7 +572,7 @@ class TestRoute:
         data["total_loc"] = 150
         result = self._run_route(data)
         assert result["size_category"] == "Small"
-        assert result["models"]["bug_hunter_a"] == "opus"
+        assert result["models"]["bug_hunter_a"]["default"] == "opus"
         assert result["models"]["bug_hunter_b"] == "sonnet"
 
     def test_medium_diff_routing(self) -> None:
@@ -577,7 +583,7 @@ class TestRoute:
         data["total_loc"] = 1000
         result = self._run_route(data)
         assert result["size_category"] == "Medium"
-        assert result["models"]["bug_hunter_a"] == "opus"
+        assert result["models"]["bug_hunter_a"]["default"] == "opus"
         assert result["models"]["bug_hunter_b"] == "sonnet"
 
     def test_large_diff_routing(self) -> None:
@@ -588,7 +594,7 @@ class TestRoute:
         data["total_loc"] = 2500
         result = self._run_route(data)
         assert result["size_category"] == "Large"
-        assert result["models"]["bug_hunter_a"] == "opus"
+        assert result["models"]["bug_hunter_a"]["default"] == "opus"
 
     def test_high_risk_files(self, tmp_path: Path) -> None:
         gates = {
@@ -633,7 +639,7 @@ class TestRoute:
         result = self._run_route(data, str(gates_path))
         assert "python-script-reviewer" in result["domain_critics"]
 
-    def test_domain_critics_capped_at_2(self, tmp_path: Path) -> None:
+    def test_domain_critics_capped_at_1(self, tmp_path: Path) -> None:
         gates = {
             "defaults": {"reviewBudget": 10},
             "moduleCritics": [
@@ -654,7 +660,7 @@ class TestRoute:
         )
         data["total_loc"] = 20
         result = self._run_route(data, str(gates_path))
-        assert len(result["domain_critics"]) <= 2
+        assert len(result["domain_critics"]) <= 1
 
     def test_missing_critic_gates(self) -> None:
         data = _make_diff_data(files=["a.ts"])
@@ -662,6 +668,356 @@ class TestRoute:
         result = self._run_route(data, "/nonexistent/path.json")
         assert result["domain_critics"] == []
         assert result["size_category"] == "Small"
+
+    def test_bug_hunter_a_model_is_dict(self) -> None:
+        data = _make_diff_data(files=["a.ts"])
+        data["total_loc"] = 100
+        result = self._run_route(data)
+        bha = result["models"]["bug_hunter_a"]
+        assert isinstance(bha, dict)
+        assert "default" in bha
+        assert "test_only" in bha
+
+    def test_bug_hunter_a_test_only_is_sonnet(self) -> None:
+        data = _make_diff_data(files=["a.ts"])
+        data["total_loc"] = 100
+        result = self._run_route(data)
+        assert result["models"]["bug_hunter_a"]["test_only"] == "sonnet"
+
+    def test_max_bha_agents_no_domain_critic(self) -> None:
+        data = _make_diff_data(files=["a.ts"])
+        data["total_loc"] = 100
+        result = self._run_route(data)
+        assert result["max_bha_agents"] == 6  # 9 - BHB - Auditor - Premise
+
+    def test_max_bha_agents_with_domain_critic(self, tmp_path: Path) -> None:
+        gates = {
+            "defaults": {"reviewBudget": 2},
+            "moduleCritics": [
+                {"patterns": [".ts"], "critics": ["ts-reviewer"]},
+            ],
+        }
+        gates_path = tmp_path / "critic-gates.json"
+        gates_path.write_text(json.dumps(gates))
+        data = _make_diff_data(
+            files=["a.ts"],
+            loc={"a.ts": {"added": 10, "removed": 0}},
+        )
+        data["total_loc"] = 10
+        result = self._run_route(data, str(gates_path))
+        assert len(result["domain_critics"]) == 1
+        assert result["max_bha_agents"] == 5  # 9 - BHB - Auditor - Premise - 1 domain
+
+    def test_premise_opus_for_fix(self) -> None:
+        data = _make_diff_data(files=["a.ts"])
+        data["total_loc"] = 100
+        result = self._run_route(data, intent="fix")
+        assert result["models"]["premise_reviewer"] == "opus"
+
+    def test_premise_sonnet_for_feature(self) -> None:
+        data = _make_diff_data(files=["a.ts"])
+        data["total_loc"] = 100
+        result = self._run_route(data, intent="feature")
+        assert result["models"]["premise_reviewer"] == "sonnet"
+
+    def test_premise_opus_default(self) -> None:
+        data = _make_diff_data(files=["a.ts"])
+        data["total_loc"] = 100
+        result = self._run_route(data)
+        assert result["models"]["premise_reviewer"] == "opus"
+
+
+# ---------------------------------------------------------------------------
+# Partition post-processing
+# ---------------------------------------------------------------------------
+
+
+class TestPartitionPostProcessing:
+    def _run_partition(
+        self,
+        diff_data: dict[str, Any],
+        loc_budget: int = 400,
+        max_files: int = 20,
+        max_bha_agents: int = DEFAULT_MAX_BHA_AGENTS,
+    ) -> dict[str, Any]:
+        import io
+        import sys as _sys
+
+        old_stdin = _sys.stdin
+        old_stdout = _sys.stdout
+        _sys.stdin = io.StringIO(json.dumps(diff_data))
+        _sys.stdout = io.StringIO()
+        try:
+            import argparse
+            ns = argparse.Namespace(
+                loc_budget=loc_budget, max_files=max_files,
+                max_bha_agents=max_bha_agents, diff_data=None,
+            )
+            cmd_partition(ns)
+            _sys.stdout.seek(0)
+            return json.load(_sys.stdout)
+        finally:
+            _sys.stdin = old_stdin
+            _sys.stdout = old_stdout
+
+    def test_trivial_partition_merged(self) -> None:
+        data = _make_diff_data(
+            files=["a.ts", "b.ts", "c.ts"],
+            loc={"a.ts": {"added": 300, "removed": 0}, "b.ts": {"added": 250, "removed": 0}, "c.ts": {"added": 5, "removed": 0}},
+        )
+        result = self._run_partition(data, loc_budget=400)
+        assert len(result["partitions"]) == 2
+        # c.ts (5 LOC) should be merged into b.ts partition (smaller)
+        all_files = [f["file"] for p in result["partitions"] for f in p["files"]]
+        assert "c.ts" in all_files
+
+    def test_all_trivial_unchanged(self) -> None:
+        data = _make_diff_data(
+            files=["a.ts", "b.ts", "c.ts"],
+            loc={"a.ts": {"added": 5, "removed": 0}, "b.ts": {"added": 5, "removed": 0}, "c.ts": {"added": 5, "removed": 0}},
+        )
+        result = self._run_partition(data, max_files=1)
+        assert len(result["partitions"]) == 3  # All trivial, no normal target to merge into
+
+    def test_trivial_merge_updates_total_loc(self) -> None:
+        data = _make_diff_data(
+            files=["a.ts", "b.ts"],
+            loc={"a.ts": {"added": 200, "removed": 0}, "b.ts": {"added": 5, "removed": 0}},
+        )
+        result = self._run_partition(data, loc_budget=400)
+        assert len(result["partitions"]) == 1
+        assert result["partitions"][0]["total_loc"] == 205
+
+    def test_trivial_merge_recomputes_is_test_only(self) -> None:
+        data = _make_diff_data(
+            files=["tests/test_a.ts", "src/impl.ts"],
+            loc={"tests/test_a.ts": {"added": 200, "removed": 0}, "src/impl.ts": {"added": 5, "removed": 0}},
+        )
+        result = self._run_partition(data, loc_budget=400)
+        assert len(result["partitions"]) == 1
+        # Impl file merged into test partition flips is_test_only
+        assert result["partitions"][0]["is_test_only"] is False
+
+    def test_trivial_merge_respects_max_files(self) -> None:
+        files = [f"f{i}.ts" for i in range(3)]
+        loc = {"f0.ts": {"added": 200, "removed": 0}, "f1.ts": {"added": 200, "removed": 0}, "f2.ts": {"added": 5, "removed": 0}}
+        data = _make_diff_data(files=files, loc=loc)
+        # max_files=1 means each is its own partition, no merge target can accept
+        result = self._run_partition(data, loc_budget=300, max_files=1)
+        assert len(result["partitions"]) == 3
+
+    def test_mixed_partition_splits(self) -> None:
+        data = _make_diff_data(
+            files=["src/app.ts", "tests/app.test.ts"],
+            loc={"src/app.ts": {"added": 200, "removed": 0}, "tests/app.test.ts": {"added": 400, "removed": 0}},
+        )
+        result = self._run_partition(data, loc_budget=800)
+        assert len(result["partitions"]) == 2
+        test_partitions = [p for p in result["partitions"] if p["is_test_only"]]
+        impl_partitions = [p for p in result["partitions"] if not p["is_test_only"]]
+        assert len(test_partitions) == 1
+        assert len(impl_partitions) == 1
+
+    def test_mixed_partition_no_split_below_threshold(self) -> None:
+        data = _make_diff_data(
+            files=["src/app.ts", "tests/app.test.ts"],
+            loc={"src/app.ts": {"added": 10, "removed": 0}, "tests/app.test.ts": {"added": 200, "removed": 0}},
+        )
+        result = self._run_partition(data, loc_budget=800)
+        assert len(result["partitions"]) == 1  # Not split, impl LOC < 50
+
+    def test_cap_enforcement_merges_smallest_same_type(self) -> None:
+        # Create 7 files that each get their own partition (loc_budget forces 1 per partition)
+        files = [f"f{i}.ts" for i in range(7)]
+        loc = {f: {"added": 100, "removed": 0} for f in files}
+        data = _make_diff_data(files=files, loc=loc)
+        result = self._run_partition(data, loc_budget=150, max_files=20, max_bha_agents=5)
+        assert len(result["partitions"]) <= 5
+
+
+# ---------------------------------------------------------------------------
+# Classify intent
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyIntent:
+    def test_feature_from_title(self) -> None:
+        result = _classify_intent("feat: add dashboard", "", "", {})
+        assert result == "feature"
+
+    def test_fix_from_title(self) -> None:
+        result = _classify_intent("fix: null pointer", "", "", {})
+        assert result == "fix"
+
+    def test_fix_from_inflected_title(self) -> None:
+        result = _classify_intent("fixes null pointer in auth", "", "", {})
+        assert result == "fix"
+
+    def test_refactor_from_title(self) -> None:
+        result = _classify_intent("refactor: rename service", "", "", {})
+        assert result == "refactor"
+
+    def test_mixed_on_ambiguity(self) -> None:
+        result = _classify_intent("fix and refactor auth", "", "", {})
+        assert result == "mixed"
+
+    def test_feature_boosted_by_file_statuses(self) -> None:
+        statuses = {"a.ts": "added", "b.ts": "added", "c.ts": "added", "d.ts": "modified"}
+        result = _classify_intent("", "", "", statuses)
+        assert result == "feature"  # 75% added >= 70% threshold
+
+    def test_empty_context_returns_mixed(self) -> None:
+        result = _classify_intent("", "", "", {})
+        assert result == "mixed"
+
+    def test_feature_from_body_first_line(self) -> None:
+        result = _classify_intent("", "feat: add new dashboard\n\n- [ ] checkbox", "", {})
+        assert result == "feature"
+
+    def test_body_only_first_line_used(self) -> None:
+        result = _classify_intent("", "This adds a feature\nfix: something else", "", {})
+        assert result == "feature"
+
+
+# ---------------------------------------------------------------------------
+# Verdict
+# ---------------------------------------------------------------------------
+
+
+class TestVerdict:
+    def _run_verdict(self, validated: list[dict[str, Any]]) -> dict[str, Any]:
+        import io
+        import sys as _sys
+        import tempfile
+
+        validate_output = {"validated": validated, "discarded": [], "stats": {}}
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
+            json.dump(validate_output, tf)
+            tf_path = tf.name
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            import argparse
+            ns = argparse.Namespace(validate_output=tf_path)
+            cmd_verdict(ns)
+            _sys.stdout.seek(0)
+            return json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+            os.unlink(tf_path)
+
+    def test_verdict_approve_no_findings(self) -> None:
+        result = self._run_verdict([])
+        assert result["verdict"] == "approve"
+
+    def test_verdict_decline_blocking(self) -> None:
+        result = self._run_verdict([
+            {"severity": "BLOCKING", "issue": "[P0] Missing null check", "priority": 0, "category": "Correctness"},
+        ])
+        assert result["verdict"] == "decline"
+        assert "Missing null check" in result["reason"]
+
+    def test_verdict_decline_premise_p0(self) -> None:
+        result = self._run_verdict([
+            {"severity": "HIGH", "issue": "[P0] Unnecessary change", "priority": 0, "category": "Premise"},
+        ])
+        assert result["verdict"] == "decline"
+
+    def test_verdict_needs_attention_high(self) -> None:
+        result = self._run_verdict([
+            {"severity": "HIGH", "issue": "[P1] Race condition", "priority": 1, "category": "Correctness"},
+        ])
+        assert result["verdict"] == "needs_attention"
+
+    def test_verdict_priority_order(self) -> None:
+        result = self._run_verdict([
+            {"severity": "HIGH", "issue": "[P1] Race condition", "priority": 1, "category": "Correctness"},
+            {"severity": "BLOCKING", "issue": "[P0] Data loss", "priority": 0, "category": "Security"},
+        ])
+        assert result["verdict"] == "decline"
+
+    def test_verdict_reason_truncated(self) -> None:
+        long_issue = "A" * 200
+        result = self._run_verdict([
+            {"severity": "BLOCKING", "issue": long_issue, "priority": 0, "category": "Correctness"},
+        ])
+        assert len(result["reason"]) <= 80
+
+
+# ---------------------------------------------------------------------------
+# Collect findings
+# ---------------------------------------------------------------------------
+
+
+class TestCollectFindings:
+    def test_merges_agents_and_hygiene(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+
+        # Write agent files
+        (tmp_path / "agent_bha_p0.json").write_text(json.dumps({"findings": [{"file": "a.ts", "severity": "HIGH"}]}))
+        (tmp_path / "agent_bhb.json").write_text(json.dumps({"findings": [{"file": "b.ts", "severity": "MEDIUM"}]}))
+        # Write hygiene file
+        hygiene_path = tmp_path / "hygiene.json"
+        hygiene_path.write_text(json.dumps({"findings": [{"file": "c.ts", "severity": "MEDIUM"}]}))
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(cr_dir=str(tmp_path), output="findings.json", hygiene=str(hygiene_path))
+            cmd_collect_findings(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert result["total_findings"] == 3
+        assert result["hygiene_included"] is True
+        # Verify merged file on disk
+        merged = json.loads((tmp_path / "findings.json").read_text())
+        assert len(merged) == 3
+
+    def test_skips_malformed(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+
+        (tmp_path / "agent_good.json").write_text(json.dumps({"findings": [{"file": "a.ts"}]}))
+        (tmp_path / "agent_bad.json").write_text("not json{{{")
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(cr_dir=str(tmp_path), output="findings.json", hygiene=None)
+            cmd_collect_findings(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert result["total_findings"] == 1
+
+    def test_no_hygiene(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+
+        (tmp_path / "agent_bha_p0.json").write_text(json.dumps({"findings": [{"file": "a.ts"}]}))
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(cr_dir=str(tmp_path), output="findings.json", hygiene=str(tmp_path / "nonexistent.json"))
+            cmd_collect_findings(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert result["total_findings"] == 1
+        assert result["hygiene_included"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -3549,3 +3905,560 @@ class TestCacheUpdatePartitionsFile:
         manifest = _load_manifest(cache_dir)
         assert "a.ts" in manifest
         assert "b.ts" in manifest
+
+    def test_exclude_test_partitions_skips_test_only(self, tmp_path: Path) -> None:
+        import argparse
+
+        cache_dir = tmp_path / "cache"
+        bha_dir = tmp_path / "bha"
+        bha_dir.mkdir()
+
+        partitions_data = {
+            "partitions": [
+                {"files": [{"file": "src/app.ts"}], "is_test_only": False},
+                {"files": [{"file": "tests/app.test.ts"}], "is_test_only": True},
+            ]
+        }
+        partitions_file = tmp_path / "partitions.json"
+        partitions_file.write_text(json.dumps(partitions_data))
+
+        diff_data = _make_cache_diff_data(files=["src/app.ts", "tests/app.test.ts"])
+        diff_path = bha_dir / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+
+        ns = argparse.Namespace(
+            cache_dir=str(cache_dir),
+            diff_data=str(diff_path),
+            bha_dir=str(bha_dir),
+            prompt_hash="abc123",
+            model_id="opus",
+            schema_version=1,
+            reviewed_files=[],
+            partitions_file=str(partitions_file),
+            exclude_test_partitions=True,
+        )
+        cmd_cache_update(ns)
+        manifest = _load_manifest(cache_dir)
+        assert "src/app.ts" in manifest
+        assert "tests/app.test.ts" not in manifest
+
+    def test_exclude_test_partitions_false_by_default(self, tmp_path: Path) -> None:
+        import argparse
+
+        cache_dir = tmp_path / "cache"
+        bha_dir = tmp_path / "bha"
+        bha_dir.mkdir()
+
+        partitions_data = {
+            "partitions": [
+                {"files": [{"file": "src/app.ts"}], "is_test_only": False},
+                {"files": [{"file": "tests/app.test.ts"}], "is_test_only": True},
+            ]
+        }
+        partitions_file = tmp_path / "partitions.json"
+        partitions_file.write_text(json.dumps(partitions_data))
+
+        diff_data = _make_cache_diff_data(files=["src/app.ts", "tests/app.test.ts"])
+        diff_path = bha_dir / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+
+        ns = argparse.Namespace(
+            cache_dir=str(cache_dir),
+            diff_data=str(diff_path),
+            bha_dir=str(bha_dir),
+            prompt_hash="abc123",
+            model_id="opus",
+            schema_version=1,
+            reviewed_files=[],
+            partitions_file=str(partitions_file),
+            exclude_test_partitions=False,
+        )
+        cmd_cache_update(ns)
+        manifest = _load_manifest(cache_dir)
+        assert "src/app.ts" in manifest
+        assert "tests/app.test.ts" in manifest
+
+    def test_exclude_test_partitions_caches_mixed(self, tmp_path: Path) -> None:
+        import argparse
+
+        cache_dir = tmp_path / "cache"
+        bha_dir = tmp_path / "bha"
+        bha_dir.mkdir()
+
+        # Mixed partition (is_test_only=False) should still be cached
+        partitions_data = {
+            "partitions": [
+                {"files": [{"file": "src/app.ts"}, {"file": "src/app.test.ts"}], "is_test_only": False},
+            ]
+        }
+        partitions_file = tmp_path / "partitions.json"
+        partitions_file.write_text(json.dumps(partitions_data))
+
+        diff_data = _make_cache_diff_data(files=["src/app.ts", "src/app.test.ts"])
+        diff_path = bha_dir / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+
+        ns = argparse.Namespace(
+            cache_dir=str(cache_dir),
+            diff_data=str(diff_path),
+            bha_dir=str(bha_dir),
+            prompt_hash="abc123",
+            model_id="opus",
+            schema_version=1,
+            reviewed_files=[],
+            partitions_file=str(partitions_file),
+            exclude_test_partitions=True,
+        )
+        cmd_cache_update(ns)
+        manifest = _load_manifest(cache_dir)
+        # Both files cached because the partition is NOT test_only
+        assert "src/app.ts" in manifest
+        assert "src/app.test.ts" in manifest
+
+
+# ---------------------------------------------------------------------------
+# Cache status message
+# ---------------------------------------------------------------------------
+
+
+class TestCacheStatusMessage:
+    def test_hits(self) -> None:
+        from code_review_helpers import _compute_cache_status
+        stats = {"cached": 5, "total_files": 10, "hit_rate_pct": 50.0}
+        kind, msg = _compute_cache_status(stats, {"some": "data"}, fallback_error=False)
+        assert kind == "hits"
+        assert "5/10" in msg
+
+    def test_first_run(self) -> None:
+        from code_review_helpers import _compute_cache_status
+        stats = {"cached": 0, "total_files": 5, "hit_rate_pct": 0.0}
+        kind, msg = _compute_cache_status(stats, {}, fallback_error=False, manifest_file_existed=False)
+        assert kind == "first_run"
+
+    def test_all_changed(self) -> None:
+        from code_review_helpers import _compute_cache_status
+        stats = {"cached": 0, "total_files": 5, "hit_rate_pct": 0.0}
+        kind, msg = _compute_cache_status(stats, {"file": {}}, fallback_error=False)
+        assert kind == "all_changed"
+
+    def test_fallback_error(self) -> None:
+        from code_review_helpers import _compute_cache_status
+        stats = {"cached": 0, "total_files": 5, "hit_rate_pct": 0.0}
+        kind, msg = _compute_cache_status(stats, {}, fallback_error=True)
+        assert kind == "fallback_error"
+
+    def test_corrupt_manifest_not_first_run(self) -> None:
+        from code_review_helpers import _compute_cache_status
+        stats = {"cached": 0, "total_files": 5, "hit_rate_pct": 0.0}
+        # File existed but was corrupt (loaded as {})
+        kind, msg = _compute_cache_status(stats, {}, fallback_error=False, manifest_file_existed=True)
+        assert kind == "fallback_error"
+        assert "corrupt" in msg.lower()
+
+
+# ---------------------------------------------------------------------------
+# Resolve scope
+# ---------------------------------------------------------------------------
+
+
+class TestResolveScope:
+    def _run(self, mode: str, scope_args: str = "", pr_number: int | None = None,
+             base_ref_override: str | None = None, setup_json: str | None = None,
+             tmp_path: Path | None = None) -> dict[str, Any]:
+        import argparse
+        import io
+        import sys as _sys
+
+        if setup_json is None and tmp_path is not None:
+            setup_path = tmp_path / "setup.json"
+            setup_path.write_text(json.dumps({"current_branch": "feat-x"}))
+            setup_json = str(setup_path)
+
+        from code_review_helpers import cmd_resolve_scope
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(
+                mode=mode, pr_number=pr_number, scope_args=scope_args,
+                base_ref_override=base_ref_override, setup_json=setup_json or "",
+            )
+            cmd_resolve_scope(ns)
+            _sys.stdout.seek(0)
+            return json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+    def test_local_branch(self, tmp_path: Path) -> None:
+        result = self._run("local", tmp_path=tmp_path)
+        assert result["diff_scope"] == "main...HEAD"
+        assert result["scope_kind"] == "branch"
+
+    def test_staged(self, tmp_path: Path) -> None:
+        result = self._run("local", scope_args="staged", tmp_path=tmp_path)
+        assert result["diff_scope"] == "--cached"
+        assert result["scope_kind"] == "staged"
+
+    def test_file_paths(self, tmp_path: Path) -> None:
+        result = self._run("local", scope_args="file1.ts file2.ts", tmp_path=tmp_path)
+        assert "-- file1.ts file2.ts" in result["diff_scope"]
+        assert result["scope_kind"] == "file_paths"
+        assert result["path_filter"] == "-- file1.ts file2.ts"
+
+    def test_base_override(self, tmp_path: Path) -> None:
+        result = self._run("local", base_ref_override="develop", tmp_path=tmp_path)
+        assert "origin/develop" in result["diff_scope"]
+        assert result["base_ref"] == "develop"
+
+    def test_base_override_preserves_path_filter(self, tmp_path: Path) -> None:
+        result = self._run("local", scope_args="file1.ts", base_ref_override="develop", tmp_path=tmp_path)
+        assert "origin/develop" in result["diff_scope"]
+        assert "-- file1.ts" in result["path_filter"]
+
+
+# ---------------------------------------------------------------------------
+# Prep assets
+# ---------------------------------------------------------------------------
+
+
+class TestPrepAssets:
+    def test_copies_files(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_prep_assets
+
+        # Create mock plugin structure
+        plugin_root = tmp_path / "plugin"
+        prompts_dir = plugin_root / "tools" / "prompts"
+        prompts_dir.mkdir(parents=True)
+        (prompts_dir / "shared_prompt.txt").write_text("shared prompt content")
+        (prompts_dir / "bha_suffix.txt").write_text("bha suffix content")
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(plugin_root=str(plugin_root), cr_dir=str(cr_dir))
+            cmd_prep_assets(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert (cr_dir / "shared_prompt.txt").exists()
+        assert (cr_dir / "bha_suffix.txt").exists()
+        assert "shared_prompt" in result
+        assert "bha_suffix" in result
+        # Output paths should point to actual files in cr_dir
+        assert result["shared_prompt"] == str(cr_dir / "shared_prompt.txt")
+        assert result["bha_suffix"] == str(cr_dir / "bha_suffix.txt")
+
+
+# ---------------------------------------------------------------------------
+# Fetch intent
+# ---------------------------------------------------------------------------
+
+
+class TestFetchIntent:
+    def _run(self, scope_kind: str, cr_dir: Path, pr_number: int | None = None,
+             base_ref: str = "main", diff_tip: str = "HEAD") -> dict[str, Any]:
+        import argparse
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_fetch_intent
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(
+                pr_number=pr_number, base_ref=base_ref, diff_tip=diff_tip,
+                scope_kind=scope_kind, cr_dir=str(cr_dir),
+            )
+            cmd_fetch_intent(ns)
+            _sys.stdout.seek(0)
+            return json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+    def test_staged_empty(self, tmp_path: Path) -> None:
+        result = self._run("staged", tmp_path)
+        assert result["source"] == "empty"
+        intent = json.loads((tmp_path / "intent_context.json").read_text())
+        assert intent["title"] == ""
+        assert intent["commits"] == ""
+
+    def test_file_scope_empty(self, tmp_path: Path) -> None:
+        result = self._run("file_paths", tmp_path)
+        assert result["source"] == "empty"
+
+    def test_branch_uses_git_log(self, tmp_path: Path) -> None:
+        from unittest.mock import patch as mock_patch
+        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="feat: add dashboard\nfix: typo\n")
+        with mock_patch("code_review_helpers.subprocess.run", return_value=mock_result):
+            result = self._run("branch", tmp_path, base_ref="main", diff_tip="HEAD")
+        assert result["source"] == "commits"
+        intent = json.loads((tmp_path / "intent_context.json").read_text())
+        assert "add dashboard" in intent["commits"]
+
+    def test_pr_uses_gh(self, tmp_path: Path) -> None:
+        from unittest.mock import patch as mock_patch
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps({"title": "feat: PR title", "body": "PR body"}),
+        )
+        with mock_patch("code_review_helpers.subprocess.run", return_value=mock_result):
+            result = self._run("pr", tmp_path, pr_number=42)
+        assert result["source"] == "pr"
+        intent = json.loads((tmp_path / "intent_context.json").read_text())
+        assert intent["title"] == "feat: PR title"
+
+    def test_pr_fallback_on_error(self, tmp_path: Path) -> None:
+        from unittest.mock import patch as mock_patch
+        with mock_patch("code_review_helpers.subprocess.run", side_effect=subprocess.CalledProcessError(1, "gh")):
+            result = self._run("pr", tmp_path, pr_number=42)
+        assert result["source"] == "empty"
+
+
+# ---------------------------------------------------------------------------
+# Setup --cr-dir-prefix
+# ---------------------------------------------------------------------------
+
+
+class TestSetupCrDir:
+    def test_creates_cr_dir(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+
+        prefix = str(tmp_path / "cr-")
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(mode="local", cr_dir_prefix=prefix)
+            cmd_setup(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert "cr_dir" in result
+        assert Path(result["cr_dir"]).exists()
+        assert result["cr_dir"].startswith(prefix)
+
+    def test_unique_paths(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+
+        prefix = str(tmp_path / "cr-")
+        paths = []
+        for _ in range(5):
+            old_stdout = _sys.stdout
+            _sys.stdout = io.StringIO()
+            try:
+                ns = argparse.Namespace(mode="local", cr_dir_prefix=prefix)
+                cmd_setup(ns)
+                _sys.stdout.seek(0)
+                result = json.load(_sys.stdout)
+            finally:
+                _sys.stdout = old_stdout
+            paths.append(result["cr_dir"])
+
+        # With 5-digit random suffix, collisions across 5 runs are extremely unlikely
+        assert len(set(paths)) >= 2
+
+
+# ---------------------------------------------------------------------------
+# Extract patches
+# ---------------------------------------------------------------------------
+
+
+class TestExtractPatches:
+    def test_creates_partition_and_full_files(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+        from unittest.mock import patch as mock_patch
+
+        from code_review_helpers import cmd_extract_patches
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+
+        partitions_data = {"partitions": [
+            {"id": 0, "files": [{"file": "a.ts"}]},
+            {"id": 1, "files": [{"file": "b.ts"}]},
+        ]}
+        partitions_file = tmp_path / "partitions.json"
+        partitions_file.write_text(json.dumps(partitions_data))
+
+        diff_data = {"files_to_review": ["a.ts", "b.ts", "c.ts"]}
+        diff_data_file = tmp_path / "diff_data.json"
+        diff_data_file.write_text(json.dumps(diff_data))
+
+        def mock_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+            # Write something to stdout if it was redirected
+            stdout = kwargs.get("stdout")
+            if stdout and hasattr(stdout, "write"):
+                stdout.write(f"diff output for {' '.join(cmd)}\n")
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
+                ns = argparse.Namespace(
+                    partitions_file=str(partitions_file), diff_scope="main...HEAD",
+                    diff_data=str(diff_data_file), cr_dir=str(cr_dir),
+                    workdir=None, batch_size=50,
+                )
+                cmd_extract_patches(ns)
+                _sys.stdout.seek(0)
+                result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert "patches_p0.txt" in result["partition_patches"]
+        assert "patches_p1.txt" in result["partition_patches"]
+        assert result["full_patch"] == "patches_all.txt"
+        assert (cr_dir / "patches_p0.txt").exists()
+        assert (cr_dir / "patches_all.txt").exists()
+
+    def test_strips_pathspec_from_scope(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+        from unittest.mock import patch as mock_patch
+
+        from code_review_helpers import cmd_extract_patches
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+
+        partitions_data = {"partitions": [{"id": 0, "files": [{"file": "a.ts"}]}]}
+        partitions_file = tmp_path / "partitions.json"
+        partitions_file.write_text(json.dumps(partitions_data))
+
+        diff_data = {"files_to_review": ["a.ts"]}
+        diff_data_file = tmp_path / "diff_data.json"
+        diff_data_file.write_text(json.dumps(diff_data))
+
+        captured_cmds: list[list[str]] = []
+
+        def mock_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+            captured_cmds.append(cmd)
+            stdout = kwargs.get("stdout")
+            if stdout and hasattr(stdout, "write"):
+                stdout.write("")
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
+                ns = argparse.Namespace(
+                    partitions_file=str(partitions_file),
+                    diff_scope="main...HEAD -- a.ts b.ts",  # pathspec embedded
+                    diff_data=str(diff_data_file), cr_dir=str(cr_dir),
+                    workdir=None, batch_size=50,
+                )
+                cmd_extract_patches(ns)
+        finally:
+            _sys.stdout = old_stdout
+
+        # Verify no double -- in any command
+        for cmd in captured_cmds:
+            separator_count = cmd.count("--")
+            assert separator_count <= 1, f"Double pathspec separator in: {cmd}"
+
+    def test_full_diff_uses_diff_data_not_partitions(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+        from unittest.mock import patch as mock_patch
+
+        from code_review_helpers import cmd_extract_patches
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+
+        # Partitions only have 1 file (uncached), but diff_data has 3 (full set)
+        partitions_data = {"partitions": [{"id": 0, "files": [{"file": "a.ts"}]}]}
+        (tmp_path / "partitions.json").write_text(json.dumps(partitions_data))
+        (tmp_path / "diff_data.json").write_text(json.dumps({"files_to_review": ["a.ts", "b.ts", "c.ts"]}))
+
+        captured_cmds: list[list[str]] = []
+
+        def mock_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+            captured_cmds.append(cmd)
+            stdout = kwargs.get("stdout")
+            if stdout and hasattr(stdout, "write"):
+                stdout.write("")
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
+                ns = argparse.Namespace(
+                    partitions_file=str(tmp_path / "partitions.json"), diff_scope="main...HEAD",
+                    diff_data=str(tmp_path / "diff_data.json"), cr_dir=str(cr_dir),
+                    workdir=None, batch_size=50,
+                )
+                cmd_extract_patches(ns)
+        finally:
+            _sys.stdout = old_stdout
+
+        # The full-diff command (last one) should include all 3 files from diff_data
+        full_diff_cmd = captured_cmds[-1]
+        assert "a.ts" in full_diff_cmd
+        assert "b.ts" in full_diff_cmd
+        assert "c.ts" in full_diff_cmd
+
+    def test_batches_large_diffs(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+        from unittest.mock import patch as mock_patch
+
+        from code_review_helpers import cmd_extract_patches
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+
+        # 250 files -- above the 200 threshold
+        all_files = [f"f{i}.ts" for i in range(250)]
+        partitions_data = {"partitions": [{"id": 0, "files": [{"file": all_files[0]}]}]}
+        (tmp_path / "partitions.json").write_text(json.dumps(partitions_data))
+        (tmp_path / "diff_data.json").write_text(json.dumps({"files_to_review": all_files}))
+
+        captured_cmds: list[list[str]] = []
+
+        def mock_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+            captured_cmds.append(cmd)
+            stdout = kwargs.get("stdout")
+            if stdout and hasattr(stdout, "write"):
+                stdout.write("")
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
+                ns = argparse.Namespace(
+                    partitions_file=str(tmp_path / "partitions.json"), diff_scope="main...HEAD",
+                    diff_data=str(tmp_path / "diff_data.json"), cr_dir=str(cr_dir),
+                    workdir=None, batch_size=50,
+                )
+                cmd_extract_patches(ns)
+        finally:
+            _sys.stdout = old_stdout
+
+        # 1 partition cmd + 5 batched full-diff cmds (250 / 50 = 5)
+        full_diff_cmds = [c for c in captured_cmds if "patches_p" not in " ".join(str(x) for x in c)]
+        # Should be multiple batches (>1 command for the full diff)
+        assert len(full_diff_cmds) >= 5
