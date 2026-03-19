@@ -53,16 +53,15 @@ The PRD to audit is located at `$CLOSEDLOOP_WORKDIR/prd.md`. Read it first.
 
 ## Check 4: Scope Section Structure
 
-1. Locate the scope section in the PRD. It is typically titled "Scope", "Project Scope", "MVP Scope", or similar.
-2. Verify that the scope section contains BOTH of the following subsections (exact wording may vary slightly):
-   - A subsection for **in-scope** items, such as "In (MVP)", "In Scope", "Included", or "MVP Features"
-   - A subsection for **out-of-scope** items, such as "Out (Deferred)", "Out of Scope", "Excluded", or "Deferred"
-3. If either subsection is missing, flag as a **major** finding.
+1. Check for scope coverage using either of two accepted patterns (exact wording may vary):
+   - **Pattern A (split scope):** A parent section titled "Scope", "Project Scope", "MVP Scope", or similar, containing BOTH an in-scope subsection (e.g., "In (MVP)", "In Scope", "Included", "MVP Features") AND an out-of-scope subsection (e.g., "Out (Deferred)", "Out of Scope", "Excluded", "Deferred").
+   - **Pattern B (flat out-of-scope):** A standalone top-level section titled "Out of Scope", "Excluded", or "Deferred" — even without a corresponding in-scope section. This matches the standard prd-template.md format where in-scope work is implicit in the Requirements section.
+2. If neither pattern is found anywhere in the document, flag as a **major** finding.
 
 ## Check 5: Kill Criteria
 
 1. Scan the entire PRD for a section or subsection titled "Kill Criteria", "Kill Switch", "Kill Conditions", or "Go/No-Go Criteria".
-2. If no such section is found anywhere in the document, flag as a **major** finding.
+2. If no such section is found anywhere in the document, flag as a **minor** finding (the standard prd-template.md does not include Kill Criteria; its absence is advisory, not blocking).
 
 ## Score Calculation
 
@@ -70,12 +69,13 @@ Use this exact formula:
 
 ```
 blocking_count = number of blocking findings (Check 1 and Check 3)
-major_count    = number of major findings (Checks 2, 4, 5, 6)
+major_count    = number of major findings (Checks 2, 4, 6)
+minor_count    = number of minor findings (Check 5)
 
 If blocking_count > 0:
   score = 0.0
 Else:
-  score = max(0.0, 1.0 - (0.15 × major_count))
+  score = max(0.0, 1.0 - (0.15 × major_count) - (0.05 × minor_count))
 
 final_status = 1 (pass) if score >= 0.8
 final_status = 2 (fail) if score < 0.8
@@ -129,10 +129,11 @@ After completing your analysis in `<thinking>` tags, you MUST return a CaseScore
 Your justification string MUST include:
 
 1. **Blocking findings** (if any): List each by check number and element (e.g., "Check 1: US-3 has no AC identifiers")
-2. **Major findings** (if any): List each by check number (e.g., "Check 5: Kill Criteria section missing")
-3. **Quantitative breakdown**: Show the calculation (e.g., "0 blocking, 2 major → score = 1.0 - 0.30 = 0.70")
-4. **Passed checks**: Briefly note what passed (e.g., "Checks 3, 4 passed")
-5. **Template check status**: Note if Check 6 was skipped due to missing template
+2. **Major findings** (if any): List each by check number (e.g., "Check 4: No scope coverage found")
+3. **Minor findings** (if any): List each by check number (e.g., "Check 5: Kill Criteria section missing")
+4. **Quantitative breakdown**: Show the calculation (e.g., "0 blocking, 1 major, 1 minor → score = 1.0 - 0.15 - 0.05 = 0.80")
+5. **Passed checks**: Briefly note what passed (e.g., "Checks 3, 4 passed")
+6. **Template check status**: Note if Check 6 was skipped due to missing template
 
 **Output prefilling hint:** Begin your response with:
 ```json
@@ -145,11 +146,11 @@ Your justification string MUST include:
 <example name="pass_all_checks">
 **Scenario:** PRD has US-1 through US-4, each with associated AC identifiers. Success metrics table has complete baselines and targets. No critical open questions. Scope section has both in-scope and out-of-scope subsections. Kill Criteria section present. All template sections present.
 
-**Analysis:** All six checks pass. No blocking or major findings.
+**Analysis:** All six checks pass. No blocking, major, or minor findings.
 
 **Calculation:**
-- blocking_count: 0, major_count: 0
-- score = 1.0 - (0.15 × 0) = 1.0
+- blocking_count: 0, major_count: 0, minor_count: 0
+- score = 1.0 - (0.15 × 0) - (0.05 × 0) = 1.0
 
 ```json
 {
@@ -161,7 +162,33 @@ Your justification string MUST include:
       "metric_name": "structural_completeness",
       "threshold": 0.8,
       "score": 1.0,
-      "justification": "All six structural checks passed. Check 1: US-1 through US-4 each have associated AC identifiers. Check 2: All metric rows have non-empty baselines and targets. Check 3: No critical open questions found. Check 4: Scope section contains both in-scope (MVP Features) and out-of-scope (Deferred) subsections. Check 5: Kill Criteria section present. Check 6: All template H2 sections accounted for. 0 blocking, 0 major → score = 1.0."
+      "justification": "All six structural checks passed. Check 1: US-1 through US-4 each have associated AC identifiers. Check 2: All metric rows have non-empty baselines and targets. Check 3: No critical open questions found. Check 4: Scope section contains both in-scope (MVP Features) and out-of-scope (Deferred) subsections (Pattern A). Check 5: Kill Criteria section present. Check 6: All template H2 sections accounted for. 0 blocking, 0 major, 0 minor → score = 1.0."
+    }
+  ]
+}
+```
+</example>
+
+<example name="pass_template_conformant">
+**Scenario:** PRD follows prd-template.md format exactly: US-1 through US-3 each with AC identifiers, all metrics have baselines and targets, no critical open questions, standalone `## Out of Scope` section (no split Scope section, no Kill Criteria section). Template sections all present.
+
+**Analysis:** Check 4 passes via Pattern B (standalone Out of Scope section). Check 5 produces 1 minor finding (no Kill Criteria). All other checks pass.
+
+**Calculation:**
+- blocking_count: 0, major_count: 0, minor_count: 1
+- score = 1.0 - (0.15 × 0) - (0.05 × 1) = 0.95
+
+```json
+{
+  "type": "case_score",
+  "case_id": "prd-auditor",
+  "final_status": 1,
+  "metrics": [
+    {
+      "metric_name": "structural_completeness",
+      "threshold": 0.8,
+      "score": 0.95,
+      "justification": "No blocking or major findings. Check 1: US-1 through US-3 each have associated AC identifiers. Check 2: All metric rows have non-empty baselines and targets. Check 3: No critical open questions found. Check 4: Standalone '## Out of Scope' section found — passes via Pattern B (flat out-of-scope). Check 5: Kill Criteria section absent (minor — not required by standard template). Check 6: All template H2 sections accounted for. 0 blocking, 0 major, 1 minor → score = 1.0 - 0.05 = 0.95."
     }
   ]
 }
@@ -194,13 +221,13 @@ Your justification string MUST include:
 </example>
 
 <example name="fail_major_findings">
-**Scenario:** PRD has all user stories covered with AC identifiers. Success metrics table has 2 rows with TBD baselines. Scope section is missing the out-of-scope subsection. Kill Criteria section is absent. No critical open questions.
+**Scenario:** PRD has all user stories covered with AC identifiers. Success metrics table has 2 rows with TBD baselines. PRD has neither a split Scope section nor a standalone Out of Scope section. Kill Criteria section is absent. No critical open questions.
 
-**Analysis:** Check 2 produces 2 major findings (TBD baselines). Check 4 produces 1 major finding (missing out-of-scope subsection). Check 5 produces 1 major finding (missing kill criteria). Total: 4 major findings.
+**Analysis:** Check 2 produces 2 major findings (TBD baselines). Check 4 produces 1 major finding (no scope coverage at all — neither pattern found). Check 5 produces 1 minor finding (Kill Criteria absent). Total: 3 major, 1 minor.
 
 **Calculation:**
-- blocking_count: 0, major_count: 4
-- score = max(0.0, 1.0 - (0.15 × 4)) = max(0.0, 0.40) = 0.40
+- blocking_count: 0, major_count: 3, minor_count: 1
+- score = max(0.0, 1.0 - (0.15 × 3) - (0.05 × 1)) = max(0.0, 0.50) = 0.50
 
 ```json
 {
@@ -211,8 +238,8 @@ Your justification string MUST include:
     {
       "metric_name": "structural_completeness",
       "threshold": 0.8,
-      "score": 0.4,
-      "justification": "No blocking findings. Major findings: Check 2: 'Active Users' metric row has TBD baseline (major). Check 2: 'Revenue per User' metric row has TBD baseline (major). Check 4: Scope section missing out-of-scope (Deferred) subsection (major). Check 5: Kill Criteria section absent (major). Check 1 passed: all user stories have AC identifiers. Check 3 passed: no critical open questions. Check 6: Template not found — Check 6 skipped. 0 blocking, 4 major → score = 1.0 - 0.60 = 0.40."
+      "score": 0.5,
+      "justification": "No blocking findings. Major findings: Check 2: 'Active Users' metric row has TBD baseline (major). Check 2: 'Revenue per User' metric row has TBD baseline (major). Check 4: No scope coverage found — neither a split Scope section nor a standalone Out of Scope section present (major). Minor findings: Check 5: Kill Criteria section absent (minor). Check 1 passed: all user stories have AC identifiers. Check 3 passed: no critical open questions. Check 6: Template not found — Check 6 skipped. 0 blocking, 3 major, 1 minor → score = 1.0 - 0.45 - 0.05 = 0.50."
     }
   ]
 }
@@ -285,9 +312,10 @@ When performing your analysis, structure your thinking as follows:
 
 ## 8. Score Calculation
 - blocking_count: [count]
-- major_count: [count]
+- major_count: [count] (Checks 2, 4, 6)
+- minor_count: [count] (Check 5)
 - If blocking_count > 0: score = 0.0
-- Else: score = max(0.0, 1.0 - (0.15 × major_count)) = [calculation]
+- Else: score = max(0.0, 1.0 - (0.15 × major_count) - (0.05 × minor_count)) = [calculation]
 - Final score: [value]
 - Final status: [1/2/3 with reasoning]
 
