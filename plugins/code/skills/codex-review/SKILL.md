@@ -24,6 +24,7 @@ The `scripts/` directory is relative to this skill's base directory (shown above
 bash <base_directory>/scripts/run_codex_review.sh \
   --plan-file <path> \
   --feedback-file <path> \
+  --revisions-file <path> \
   --round <N> \
   --codex-model <model> \
   [--session-id <thread_id>] \
@@ -34,6 +35,7 @@ bash <base_directory>/scripts/run_codex_review.sh \
 |----------|----------|---------|-------------|
 | `--plan-file` | Yes | -- | Absolute path to the plan file Codex should review |
 | `--feedback-file` | Yes | -- | Path where full feedback text will be written |
+| `--revisions-file` | No | -- | Path to Claude's revision summary (accepted/rejected findings). If present and round > 1, Codex reads it for context. |
 | `--round` | No | 1 | Current debate round (affects review prompt intro) |
 | `--codex-model` | No | gpt-5.4 | Codex model to use |
 | `--session-id` | No | -- | Thread ID from a previous round for session resume |

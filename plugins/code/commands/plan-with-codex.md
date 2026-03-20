@@ -61,6 +61,7 @@ Arguments: $ARGUMENTS
 
 Derive sidecar paths from the plan file stem (e.g., for `debate-plan.md`):
 - `{stem}.feedback` -- Codex feedback text
+- `{stem}.revisions` -- Claude's revision summary (changes made + pushback on rejected findings)
 - `{stem}.state` -- phase/round/session state
 - `{stem}.prompt` -- original prompt (plain text)
 
@@ -185,6 +186,7 @@ Activate `code:codex-review` skill and run:
 bash <base_directory>/scripts/run_codex_review.sh \
   --plan-file {plan-file-abs} \
   --feedback-file {feedback-file-abs} \
+  --revisions-file {revisions-file-abs} \
   --round {N} \
   --codex-model {codex-model} \
   [--session-id {codex_session_id}] \
@@ -213,7 +215,7 @@ Update TodoWrite: "Round {N}/{max}: Revising plan..."
 
 Resume the plan-agent:
 - description: "Revise plan based on Codex feedback"
-- prompt: "Revise the plan at {plan-file-abs} based on feedback at {feedback-file-abs}. Address ALL concerns raised."
+- prompt: "Revise the plan at {plan-file-abs} based on feedback at {feedback-file-abs}. Verify each finding against the codebase before acting on it -- reject any that don't hold up. After updating the plan, write a revision summary to {revisions-file-abs}."
 
 Verify plan was updated. Write state: `ROUND={N+1}, PHASE=codex_review`, preserve current `CODEX_SESSION_ID` and `LOG_ID`. Continue to next round.
 
@@ -226,7 +228,7 @@ Report outcome:
 
 Clean up ALL sidecar files (prompt sidecar deleted intentionally to prevent stale intent on future runs):
 ```bash
-rm -f {state_file} {feedback_file} {prompt_file}
+rm -f {state_file} {feedback_file} {revisions_file} {prompt_file}
 ```
 
 Update TodoWrite: mark all remaining items completed.

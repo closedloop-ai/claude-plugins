@@ -300,9 +300,9 @@ Implements the validation loop for agents registered in `loop-agents.json`. When
 
 Injects tool-specific learnings just before tool execution. Filters `org-patterns.toon` by tool type (Bash patterns get build/test tags; Write/Edit patterns get language-specific tags based on file extension). Injects up to 10 matching patterns as `additionalContext`. Also auto-allows tool calls targeting `.closedloop-ai/` workspace paths without prompting.
 
-### `plan-review.sh` (PostToolUse on ExitPlanMode)
+### `plan-review.sh` (not currently registered in `hooks.json`)
 
-Triggers when Claude exits plan mode to get a second opinion via Codex. Extracts plan content from `tool_response.plan`, sends it to Codex (`gpt-5.3-codex-spark`) for review, and injects the feedback as `additionalContext` so Claude sees Codex's concerns inline. Exits silently if no plan content is present or Codex returns empty. Debug logs kept in `.closedloop-ai/plan-review-logs/` (max 15 files).
+Triggers when Claude exits plan mode to get a second opinion via Codex. Extracts plan content from `tool_response.plan`, sends it to Codex (`gpt-5.3-codex-spark`) for review, and injects the feedback as `additionalContext` so Claude sees Codex's concerns inline. Exits silently if no plan content is present or Codex returns empty. Debug logs kept in `.closedloop-ai/plan-review-logs/` (max 15 files). This script exists in `hooks/` but is not wired into `hooks.json` -- it would require a PostToolUse entry matching ExitPlanMode to activate.
 
 ### `validate-plan.sh` (validation script, not a hook directly)
 
