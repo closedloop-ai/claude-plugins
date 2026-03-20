@@ -85,9 +85,15 @@ Analyze for:
 9. Test coverage -- does the plan include unit and/or integration tests for the changes? Flag if new logic, endpoints, or behaviors lack corresponding test tasks.
 10. Unclear or ambiguous task descriptions
 
-For each issue found, provide:
-- The specific problem
-- A concrete proposed fix or revised text that Claude can adopt directly
+Format each finding as:
+
+### Finding N: [short title]
+
+**Problem:** What is wrong and where (reference specific plan sections or code files).
+
+**Fix:** A concrete proposed fix or revised text that Claude can adopt directly.
+
+---
 
 Be direct and specific. Only flag genuine, significant issues. Propose solutions, not just problems.
 
