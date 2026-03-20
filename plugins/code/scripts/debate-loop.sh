@@ -94,8 +94,8 @@ run_claude() {
 }
 
 save_state() {
-  printf 'SESSION_ID=%s\nCODEX_SESSION_ID=%s\nROUND=%s\nPHASE=%s\n' \
-    "$SESSION_ID" "$CODEX_SESSION_ID" "$round" "$PHASE" > "$STATE_FILE"
+  printf 'SESSION_ID=%s\nCODEX_SESSION_ID=%s\nROUND=%s\nPHASE=%s\nLOG_ID=%s\n' \
+    "$SESSION_ID" "$CODEX_SESSION_ID" "$round" "$PHASE" "${CODEX_LOG_ID:-}" > "$STATE_FILE"
 }
 
 load_state() {
@@ -105,6 +105,7 @@ load_state() {
   round="${round:-1}"
   PHASE=$(grep "^PHASE=" "$STATE_FILE" | cut -d= -f2-) || true
   PHASE="${PHASE:-codex_review}"
+  CODEX_LOG_ID=$(grep "^LOG_ID=" "$STATE_FILE" | cut -d= -f2-) || true
 }
 
 # Shared Codex review script (extracted to avoid duplication with the native
@@ -129,6 +130,9 @@ run_codex_review() {
   )
   if [[ -n "$CODEX_SESSION_ID" ]]; then
     review_args+=(--session-id "$CODEX_SESSION_ID")
+  fi
+  if [[ -n "${CODEX_LOG_ID:-}" ]]; then
+    review_args+=(--log-id "$CODEX_LOG_ID")
   fi
 
   local review_output_file review_stderr_file
@@ -157,6 +161,7 @@ run_codex_review() {
     case "$line" in
       VERDICT:*)       CODEX_VERDICT="${line#VERDICT:}" ;;
       CODEX_SESSION:*) CODEX_SESSION_ID="${line#CODEX_SESSION:}"; [[ "$CODEX_SESSION_ID" == "none" ]] && CODEX_SESSION_ID="" ;;
+      LOG_ID:*)        CODEX_LOG_ID="${line#LOG_ID:}"; [[ "$CODEX_LOG_ID" == "none" ]] && CODEX_LOG_ID="" ;;
       CODEX_FAILED:*)  CODEX_VERDICT="FAILED:${line#CODEX_FAILED:}" ;;
       CODEX_EMPTY)     CODEX_VERDICT="EMPTY" ;;
     esac

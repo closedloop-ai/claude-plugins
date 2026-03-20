@@ -3,16 +3,19 @@
 #
 # Usage:
 #   run_codex_review.sh --plan-file <path> --feedback-file <path> --round <N> \
-#                       --codex-model <model> [--session-id <thread_id>]
+#                       --codex-model <model> [--session-id <thread_id>] \
+#                       [--log-id <uuid>]
 #
 # Stdout tokens (machine-parseable):
 #   VERDICT:APPROVED         Plan accepted
 #   VERDICT:NEEDS_CHANGES    Revisions requested
 #   CODEX_SESSION:<id>       Thread ID for session resume
+#   LOG_ID:<uuid>            Log file identifier
 #   CODEX_FAILED:<reason>    Codex error with no usable output
 #   CODEX_EMPTY              Empty response after all attempts
 #
 # Full feedback text is written to --feedback-file.
+# Raw codex JSON stream is appended to ~/.closedloop-ai/plan-with-codex/<log-id>.jsonl
 # Diagnostics go to stderr only.
 
 set -euo pipefail
@@ -24,6 +27,7 @@ FEEDBACK_FILE=""
 ROUND=1
 CODEX_MODEL="gpt-5.4"
 SESSION_ID=""
+LOG_ID=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -32,6 +36,7 @@ while [[ $# -gt 0 ]]; do
     --round)        ROUND="$2"; shift 2 ;;
     --codex-model)  CODEX_MODEL="$2"; shift 2 ;;
     --session-id)   SESSION_ID="$2"; shift 2 ;;
+    --log-id)       LOG_ID="$2"; shift 2 ;;
     *)
       echo "Unknown option: $1" >&2
       exit 1
@@ -44,13 +49,26 @@ if [[ -z "$PLAN_FILE" ]] || [[ -z "$FEEDBACK_FILE" ]]; then
   exit 1
 fi
 
+# ── Dependency checks ─────────────────────────────────────────────────────────
+
 for cmd in codex python3; do
   if ! command -v "$cmd" &>/dev/null; then
     echo "CODEX_FAILED:$cmd command not found"
     echo "CODEX_SESSION:none"
+    echo "LOG_ID:none"
     exit 0
   fi
 done
+
+# ── Log file setup ────────────────────────────────────────────────────────────
+
+if [[ -z "$LOG_ID" ]]; then
+  LOG_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
+fi
+
+LOG_DIR="$HOME/.closedloop-ai/plan-with-codex"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/$LOG_ID.jsonl"
 
 # ── Temp directory with cleanup ───────────────────────────────────────────────
 
@@ -144,7 +162,10 @@ sys.stdout.write('\n'.join(lines))
 
 run_codex_cmd() {
   local json_out="$1"; shift
-  codex "$@" > "$json_out" 2>/dev/null
+  # Log round header
+  printf '\n--- Round %s | %s ---\n' "$ROUND" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOG_FILE"
+  # Tee raw JSON stream to both the capture file and the persistent log
+  codex "$@" 2>/dev/null | tee -a "$LOG_FILE" > "$json_out"
 }
 
 effective_session_id="$SESSION_ID"
@@ -213,6 +234,7 @@ feedback_content=$(cat "$FEEDBACK_FILE" 2>/dev/null || echo "")
 if [[ $codex_exit -ne 0 ]] && [[ -z "$feedback_content" ]]; then
   echo "CODEX_FAILED:codex exited with code $codex_exit"
   echo "CODEX_SESSION:${effective_session_id:-none}"
+  echo "LOG_ID:$LOG_ID"
   exit 0
 fi
 
@@ -220,6 +242,7 @@ fi
 if [[ -z "$feedback_content" ]]; then
   echo "CODEX_EMPTY"
   echo "CODEX_SESSION:${effective_session_id:-none}"
+  echo "LOG_ID:$LOG_ID"
   exit 0
 fi
 
@@ -233,5 +256,6 @@ else
   echo "VERDICT:NEEDS_CHANGES"
 fi
 
-# Always emit session token for round-to-round continuity
+# Always emit session token and log ID for round-to-round continuity
 echo "CODEX_SESSION:${effective_session_id:-none}"
+echo "LOG_ID:$LOG_ID"

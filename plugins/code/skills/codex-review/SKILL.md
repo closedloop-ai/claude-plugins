@@ -26,7 +26,8 @@ bash <base_directory>/scripts/run_codex_review.sh \
   --feedback-file <path> \
   --round <N> \
   --codex-model <model> \
-  [--session-id <thread_id>]
+  [--session-id <thread_id>] \
+  [--log-id <uuid>]
 ```
 
 | Argument | Required | Default | Description |
@@ -36,16 +37,20 @@ bash <base_directory>/scripts/run_codex_review.sh \
 | `--round` | No | 1 | Current debate round (affects review prompt intro) |
 | `--codex-model` | No | gpt-5.4 | Codex model to use |
 | `--session-id` | No | -- | Thread ID from a previous round for session resume |
+| `--log-id` | No | auto-generated | UUID for the persistent log file. Pass the same ID across rounds to append to one log. |
 
 ## Interpreting Output
 
 The script prints structured tokens to stdout. Parse these to control the debate loop.
+
+All stdout responses include three tokens: a verdict (or failure indicator), `CODEX_SESSION`, and `LOG_ID`. The raw Codex JSON stream is appended to `~/.closedloop-ai/plan-with-codex/<uuid>.jsonl`. Pass the LOG_ID back via `--log-id` on subsequent rounds to keep all rounds in one log file.
 
 ### Approval
 
 ```
 VERDICT:APPROVED
 CODEX_SESSION:abc-123-def
+LOG_ID:550e8400-e29b-41d4-a716-446655440000
 ```
 
 **Action:** Announce approval. Clean up sidecar files. Stop the debate loop.
@@ -55,6 +60,7 @@ CODEX_SESSION:abc-123-def
 ```
 VERDICT:NEEDS_CHANGES
 CODEX_SESSION:abc-123-def
+LOG_ID:550e8400-e29b-41d4-a716-446655440000
 ```
 
 **Action:** Read the feedback file for full details. Pass to plan-agent for revision.
@@ -64,6 +70,7 @@ CODEX_SESSION:abc-123-def
 ```
 CODEX_FAILED:<reason>
 CODEX_SESSION:abc-123-def
+LOG_ID:550e8400-e29b-41d4-a716-446655440000
 ```
 
 **Action:** Announce the failure reason. Ask the user to retry or abort. Do NOT increment the round counter.
@@ -73,6 +80,7 @@ CODEX_SESSION:abc-123-def
 ```
 CODEX_EMPTY
 CODEX_SESSION:abc-123-def
+LOG_ID:550e8400-e29b-41d4-a716-446655440000
 ```
 
 **Action:** Announce empty response. Ask the user to retry or abort. Do NOT increment the round counter.
