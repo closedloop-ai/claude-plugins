@@ -26,7 +26,7 @@ Arguments: $ARGUMENTS
 | `--max-rounds N` | 15 | Maximum debate rounds |
 | `--plan-file PATH` | `./debate-plan.md` | Output plan file (resolve to absolute path) |
 | `--codex-model MODEL` | `gpt-5.4` | Codex model for reviews |
-| Remaining text | (required) | The prompt describing what to plan |
+| Remaining text | (required for fresh start) | The prompt describing what to plan. Optional when resuming an existing plan. |
 
 Derive sidecar paths from the plan file stem (e.g., for `debate-plan.md`):
 - `{stem}.feedback` -- Codex feedback text
@@ -45,8 +45,6 @@ TodoWrite([
   {"content": "Final report", "status": "pending"}
 ])
 ```
-
-Error if no prompt is resolvable (no CLI argument and no `{stem}.prompt` sidecar).
 
 ## Step 0.5: Check for Resume
 
@@ -73,7 +71,19 @@ If all preconditions pass, announce "Resuming debate at round {N}, phase: {PHASE
 - `codex_review` -> Step 2a at stored ROUND
 - `claude_revision` -> Step 2f at stored ROUND
 
-If no state file: fresh start at Step 1.
+If no state file but the plan file already exists: ask the user via AskUserQuestion:
+
+> An existing plan was found at `{plan-file-abs}` but no debate state file exists. What would you like to do?
+>
+> - **a) Resume with existing plan** -- skip to Step 1.5 (user review) using the current plan as-is
+> - b) Start fresh -- overwrite the existing plan with a new one
+
+If the user chooses (a):
+- If `{stem}.prompt` does not already exist: read the plan file, extract the `## Summary` section content, and write it to `{stem}.prompt` (satisfies resume preconditions for future re-runs). If the plan has no Summary section, use the first non-heading paragraph instead. Do NOT overwrite an existing prompt sidecar.
+- Write state (`ROUND=1, PHASE=user_review, CODEX_SESSION_ID=, LOG_ID=`)
+- Skip Step 1, go directly to Step 1.5. There is no resumable plan-agent in this case -- if the user requests changes or open questions need resolving, launch a fresh plan-agent.
+
+If the user chooses (b) or no plan file exists: a prompt is required. Error if no prompt is resolvable (no CLI argument and no `{stem}.prompt` sidecar). Proceed to Step 1.
 
 ## Step 1: Create the Plan
 
