@@ -112,13 +112,14 @@ Check if the plan file exists (`test -f {plan-file-abs}`). This is REQUIRED befo
 
 > An existing plan was found at `{plan-file-abs}` but no debate state file exists. What would you like to do?
 >
-> - **a) Resume with existing plan** -- skip to Step 1.5 using the current plan
+> - **a) Resume with existing plan** -- resolve any open questions, then start the Codex debate immediately
 > - b) Start fresh -- overwrite the existing plan
 
 If (a):
 - If no `{stem}.prompt`: extract `## Summary` content (or first non-heading paragraph) and write to `{stem}.prompt`. Do NOT overwrite existing prompt sidecar.
-- Write state: `ROUND=1, PHASE=user_review, CODEX_SESSION_ID=, LOG_ID=`
-- Go to Step 1.5. No resumable plan-agent -- launch fresh if changes are needed.
+- Read the plan and check for open questions (lines matching `Q-` or `- [ ] Q-`). If any exist, resolve them using the open questions flow in Step 1.5, then continue below. No resumable plan-agent -- launch fresh if changes are needed.
+- Write state: `ROUND=1, PHASE=codex_review, CODEX_SESSION_ID=, LOG_ID=`
+- Skip Step 1.5 entirely (user already confirmed by choosing to resume) and go directly to Step 2.
 
 If (b) or plan doesn't exist: continue to Step 1. Error if no prompt is resolvable.
 
