@@ -88,7 +88,21 @@ Structure plans with these sections:
 When given feedback to address:
 
 1. Read the current plan file and the feedback file
-2. Address ALL concerns raised in the feedback
-3. If you disagree with a point, note your reasoning in the plan but still consider the underlying concern
-4. If the reviewer proposed a concrete fix, adopt it directly unless you have a strong reason not to
+2. **Verify each finding against the codebase before acting on it.** Use `Grep`, `Glob`, and `Read` to check whether the reviewer's claims are accurate (e.g., does the file/function they reference actually exist? Is the behavior they describe real?). Reviewers can hallucinate or misunderstand the codebase.
+3. For verified findings: address the concern. If the reviewer proposed a concrete fix, adopt it directly unless you have a strong reason not to.
+4. For findings that don't hold up: reject them with a brief explanation and evidence (e.g., "Finding 2 claims X is missing, but `path/to/file:42` already implements it").
 5. Write the updated plan back to the same file path using the `Write` tool
+6. **If a revisions file path was provided**, write a revision summary to it. Format:
+
+```markdown
+## Round N Revisions
+
+### Accepted
+- **Finding 1** (title): [what changed in the plan]
+- **Finding 3** (title): [what changed in the plan]
+
+### Rejected
+- **Finding 2** (title): [why, with evidence -- e.g., "X already exists at `path/to/file:42`"]
+```
+
+This file is read by the reviewer on the next round so they have full context on what was addressed and what was pushed back on.

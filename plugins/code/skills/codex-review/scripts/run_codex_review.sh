@@ -24,6 +24,7 @@ set -euo pipefail
 
 PLAN_FILE=""
 FEEDBACK_FILE=""
+REVISIONS_FILE=""
 ROUND=1
 CODEX_MODEL="gpt-5.4"
 SESSION_ID=""
@@ -31,12 +32,13 @@ LOG_ID=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --plan-file)    PLAN_FILE="$2"; shift 2 ;;
-    --feedback-file) FEEDBACK_FILE="$2"; shift 2 ;;
-    --round)        ROUND="$2"; shift 2 ;;
-    --codex-model)  CODEX_MODEL="$2"; shift 2 ;;
-    --session-id)   SESSION_ID="$2"; shift 2 ;;
-    --log-id)       LOG_ID="$2"; shift 2 ;;
+    --plan-file)      PLAN_FILE="$2"; shift 2 ;;
+    --feedback-file)  FEEDBACK_FILE="$2"; shift 2 ;;
+    --revisions-file) REVISIONS_FILE="$2"; shift 2 ;;
+    --round)          ROUND="$2"; shift 2 ;;
+    --codex-model)    CODEX_MODEL="$2"; shift 2 ;;
+    --session-id)     SESSION_ID="$2"; shift 2 ;;
+    --log-id)         LOG_ID="$2"; shift 2 ;;
     *)
       echo "Unknown option: $1" >&2
       exit 1
@@ -80,14 +82,22 @@ prompt_file="$tmp_dir/prompt.txt"
 
 # ── Build the review prompt ──────────────────────────────────────────────────
 
+REVISIONS_BLOCK=""
 if [[ "$ROUND" -eq 1 ]]; then
   REVIEW_INTRO="Claude has created an implementation plan. Review it and provide feedback."
 else
   REVIEW_INTRO="Claude has addressed your previous feedback and updated the plan. Re-review the plan for remaining issues."
+  if [[ -n "$REVISIONS_FILE" ]] && [[ -s "$REVISIONS_FILE" ]]; then
+    REVISIONS_BLOCK="
+
+Claude's revision summary (including any findings that were rejected with evidence) is at: ${REVISIONS_FILE}
+Read it before reviewing the plan -- if Claude rejected a finding with valid evidence, do not re-raise it."
+  fi
 fi
 
 cat > "$prompt_file" <<PROMPT_EOF
 ${REVIEW_INTRO}
+${REVISIONS_BLOCK}
 
 Read the plan at: ${PLAN_FILE}
 
