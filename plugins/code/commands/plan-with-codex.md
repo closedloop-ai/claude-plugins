@@ -1,6 +1,6 @@
 ---
 description: "Iterative plan refinement debate between Claude and Codex"
-argument-hint: [--max-rounds N] [--plan-file PATH] [--codex-model MODEL] <prompt>
+argument-hint: --max-rounds N --plan-file PATH --codex-model MODEL <prompt>
 allowed-tools: Bash, Read, Write, Glob, Grep, TodoWrite, Task, AskUserQuestion
 skills: code:codex-review
 effort: max

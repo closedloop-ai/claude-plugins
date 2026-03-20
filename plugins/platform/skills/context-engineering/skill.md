@@ -309,6 +309,17 @@ See [references/extended-thinking.md](references/extended-thinking.md) for detai
 | Misses context | Add role prompting |
 | Drops steps | Chain into separate prompts |
 
+### Refactoring Existing Prompts
+
+When optimizing or compressing an existing prompt, apply these checks after every structural change:
+
+| Pitfall | Check |
+|---------|-------|
+| Stale cross-references | After renaming or renumbering steps, search for ALL references to old labels (jump targets, "see Step X", resume points) and update them |
+| Over-abstraction | If the model needs exact values to execute (specific keys, field names, command arguments), keep them literal even if they look repetitive -- a generic placeholder the model cannot expand is worse than duplication |
+| Lost preconditions | When merging or removing steps, verify that any precondition checks or guards in the removed step are preserved elsewhere |
+| Silent behavior changes | Diff the before/after and confirm every deleted line is either redundant or relocated, not dropped |
+
 ### Common Tag Names
 
 | Tag | Purpose |

@@ -201,7 +201,7 @@ Covers skill anatomy (SKILL.md frontmatter, scripts/, references/, assets/), the
 
 ### Installing the Plugin
 
-Add the plugin to your Claude Code installation following the standard plugin installation process. Once installed, all three skills activate automatically when the conversation context matches their trigger conditions — no slash command or explicit invocation is required.
+Add the plugin to your Claude Code installation following the standard plugin installation process. Once installed, all five skills activate automatically when the conversation context matches their trigger conditions — no slash command or explicit invocation is required.
 
 ### Using claude-code-expert
 
