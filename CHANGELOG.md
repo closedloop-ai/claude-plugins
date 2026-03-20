@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code v1.2.0
+
+#### Added
+- New `plan-agent` agent for creating and revising implementation plans via codebase exploration
+- New `plan-with-codex` command for iterative plan refinement through Claude + Codex debate loops
+- New `codex-review` skill to run Codex plan reviews and return structured verdict feedback
+- New `debate-loop.sh` script providing standalone CLI for Claude + Codex debate orchestration
+- New `plan-review.sh` hook that triggers Codex review when Claude exits plan mode
+
 ### code-review v1.2.0
 
 #### Added

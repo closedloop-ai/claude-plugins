@@ -102,6 +102,30 @@ Conversation state is persisted across GitHub workflow runs via `amend_state.py`
 
 Checks for `.claude/closedloop-loop.local.md`, reads the current iteration, removes the file, and reports the cancellation. Hidden from the slash command picker.
 
+### `/code:plan-with-codex`
+
+**Description:** Iterative plan refinement debate between Claude and Codex.
+
+**Usage:**
+```
+/code:plan-with-codex [--max-rounds N] [--plan-file PATH] [--codex-model MODEL] <prompt>
+```
+
+- `--max-rounds N`: Maximum debate rounds (default: 15)
+- `--plan-file PATH`: Output plan file (default: `./debate-plan.md`)
+- `--codex-model MODEL`: Codex model for reviews (default: `gpt-5.4`)
+- `<prompt>`: Description of what to plan (required; can also be read from a `{stem}.prompt` sidecar file)
+
+**What it does:**
+
+1. Launches `code:plan-agent` to create an initial plan from the prompt, writing it to `--plan-file`
+2. Presents open questions to the user and resolves them via the plan-agent before proceeding
+3. Presents the plan for user review and applies any requested changes
+4. Enters a fully automated debate loop: Codex reviews the plan via the `code:codex-review` skill, Claude revises per feedback, and the loop continues until `VERDICT:APPROVED` or max rounds are reached
+5. Reports the final outcome and cleans up sidecar state files
+
+Supports resuming mid-session via a `{stem}.state` sidecar file that tracks the current round and Codex session ID.
+
 ---
 
 ## Agents
@@ -174,6 +198,9 @@ Extracts actionable plan amendments from unstructured input (meeting notes, Slac
 **`code-review-worker`** / **`code-review-guidelines`**
 Supporting agents for the code review workflow. `code-review-guidelines` provides language-specific review patterns and edge case guidance. `code-review-worker` handles individual file review tasks within the reviewer workflow.
 
+**`plan-agent`** (model: opus)
+Software architect agent for creating and revising implementation plans. Explores the codebase, designs a plan grounded in existing patterns, and writes it directly to a specified file on disk. Used by the `plan-with-codex` command; resumed across debate rounds via `SendMessage` to apply Codex feedback without losing architectural context.
+
 ---
 
 ## Skills
@@ -224,6 +251,10 @@ Dynamically locates files within the Claude Code plugins cache directory (`~/.cl
 
 A 4-phase protocol for orchestrators to refine subagent queries through follow-up questions. Phases: Initial Dispatch, Sufficiency Evaluation (4-question checklist), Refinement Request (resume with targeted follow-ups), and Loop (up to 3 cycles). Used when initial subagent responses may miss important adjacent context.
 
+### `codex-review`
+
+Runs Codex to review a plan file and returns structured feedback with a verdict. Called once per debate round by the `plan-with-codex` command via `debate-loop.sh`. Supports session resume across rounds using a Codex thread ID. Returns `VERDICT:APPROVED` or `VERDICT:NEEDS_CHANGES` plus a `CODEX_SESSION` token. Emits `CODEX_FAILED` or `CODEX_EMPTY` tokens on error so the orchestrator can ask the user to retry or abort.
+
 ---
 
 ## Hooks
@@ -268,6 +299,10 @@ Implements the validation loop for agents registered in `loop-agents.json`. When
 ### `pretooluse-hook.sh` (PreToolUse, matches Read/Bash/Write/Edit)
 
 Injects tool-specific learnings just before tool execution. Filters `org-patterns.toon` by tool type (Bash patterns get build/test tags; Write/Edit patterns get language-specific tags based on file extension). Injects up to 10 matching patterns as `additionalContext`. Also auto-allows tool calls targeting `.closedloop-ai/` workspace paths without prompting.
+
+### `plan-review.sh` (PostToolUse on ExitPlanMode)
+
+Triggers when Claude exits plan mode to get a second opinion via Codex. Extracts plan content from `tool_response.plan`, sends it to Codex (`gpt-5.3-codex-spark`) for review, and injects the feedback as `additionalContext` so Claude sees Codex's concerns inline. Exits silently if no plan content is present or Codex returns empty. Debug logs kept in `.closedloop-ai/plan-review-logs/` (max 15 files).
 
 ### `validate-plan.sh` (validation script, not a hook directly)
 
@@ -325,6 +360,10 @@ Discovers peer repositories for cross-repo orchestration by checking the `CLAUDE
 ### `install-dependencies.sh`
 
 Installs required Python dependencies for the plugin's tools.
+
+### `debate-loop.sh`
+
+Shell harness for the Codex debate loop used by the `plan-with-codex` command. Drives the round-by-round interaction between the `code:plan-agent` and Codex, maintaining state in sidecar files alongside the plan file.
 
 ### `loop-agents.json`
 
