@@ -9,15 +9,46 @@ model: opus
 
 # Debate Loop -- Claude + Codex Plan Refinement
 
-You are the orchestrator for an iterative plan refinement workflow. Claude (via `code:plan-agent`) creates a plan, Codex reviews it, and you coordinate revisions until Codex approves or max rounds are reached.
+You orchestrate iterative plan refinement: Claude (via `code:plan-agent`) creates a plan, Codex reviews it, you coordinate revisions until Codex approves or max rounds are reached.
 
-**CRITICAL RULE: You MUST NEVER edit the plan file directly.** All plan creation and modification is done by the `code:plan-agent` subagent. Your role is to coordinate -- parse arguments, manage state, run Codex, display feedback, and delegate plan changes to the plan-agent via Agent calls with `resume`. If you find yourself about to use Edit or Write on the plan file, stop and delegate to the plan-agent instead.
+<constraints>
+1. **NEVER edit the plan file directly.** All plan creation/modification goes through the plan-agent. If you're about to use Edit or Write on the plan file, STOP and delegate to the plan-agent.
+2. **ALWAYS resume agents via the `resume` parameter.** The plan-agent retains full session context when resumed. Do NOT launch fresh unless resume actually fails with an error. The Agent tool's return says "use SendMessage" -- IGNORE this. SendMessage does not work for completed agents. Always use `Agent(resume="<agent_id>")`.
+3. **The Codex/Claude debate loop is fully automated.** After the user approves in Step 1.5, do NOT ask for confirmation between rounds -- proceed directly.
+</constraints>
 
-**AGENT RESUME RULE: ALWAYS use `resume="<agent_id>"` on Agent calls after the initial launch.** The plan-agent retains full session context when resumed -- it remembers the codebase it explored, the decisions it made, and the feedback it received. Do NOT launch a fresh agent unless the resume call actually fails with an error. Do NOT skip the resume attempt. **IMPORTANT: The Agent tool's return message will say "use SendMessage with to: '<id>' to continue this agent" -- IGNORE THIS. SendMessage does not work for resuming completed agents. Always use `Agent(resume="<agent_id>")` instead.**
+<templates>
+
+### Plan-Agent Call
+
+All plan-agent interactions use this shape. Vary only `description` and `prompt`:
+
+```
+Agent(
+  subagent_type="code:plan-agent",
+  name="plan-agent",
+  mode="acceptEdits",
+  run_in_background=false,
+  description="<DESCRIPTION>",
+  prompt="<PROMPT>",
+  resume="<agent_id>"
+)
+```
+
+**Resume rule:** If an in-memory agent_id exists (from a prior launch in this session), always attempt `resume` first. Only if the call returns an error, launch fresh. If no agent_id exists (cross-session resume), launch fresh immediately -- do not attempt resume. When launching fresh, omit `resume` and prepend to the prompt: "Read the plan at {plan-file-abs} first. Original request: <prompt from sidecar>." Always store the returned agent_id for subsequent calls.
+
+### State Write
+
+All state updates use:
+```bash
+printf 'ROUND=%s\nPHASE=%s\nCODEX_SESSION_ID=%s\nLOG_ID=%s\n' '{round}' '{phase}' '{codex_session_id}' '{log_id}' > {state_file}
+```
+
+Valid phases: `user_review`, `codex_review`, `claude_revision`
+
+</templates>
 
 ## Step 0: Parse Arguments
-
-Parse from `$ARGUMENTS`:
 
 Arguments: $ARGUMENTS
 
@@ -26,14 +57,14 @@ Arguments: $ARGUMENTS
 | `--max-rounds N` | 15 | Maximum debate rounds |
 | `--plan-file PATH` | `./debate-plan.md` | Output plan file (resolve to absolute path) |
 | `--codex-model MODEL` | `gpt-5.4` | Codex model for reviews |
-| Remaining text | (required for fresh start) | The prompt describing what to plan. Optional when resuming an existing plan. |
+| Remaining text | (required for fresh start) | The prompt. Optional when resuming. |
 
 Derive sidecar paths from the plan file stem (e.g., for `debate-plan.md`):
 - `{stem}.feedback` -- Codex feedback text
 - `{stem}.state` -- phase/round/session state
 - `{stem}.prompt` -- original prompt (plain text)
 
-**Prompt resolution**: CLI argument > `{stem}.prompt` sidecar. Only abort when neither exists.
+**Prompt resolution**: CLI argument > `{stem}.prompt` sidecar. Abort only when neither exists.
 
 Initialize TodoWrite:
 ```
@@ -48,7 +79,7 @@ TodoWrite([
 
 ## Step 0.5: Check for Resume
 
-Check if `{stem}.state` exists via Bash (`test -f`). If yes, read `ROUND`, `PHASE`, `CODEX_SESSION_ID`, `LOG_ID` via:
+Check if `{stem}.state` exists (`test -f`). If yes, read all four values:
 ```bash
 grep "^ROUND=" {state_file} | cut -d= -f2-
 grep "^PHASE=" {state_file} | cut -d= -f2-
@@ -56,7 +87,7 @@ grep "^CODEX_SESSION_ID=" {state_file} | cut -d= -f2-
 grep "^LOG_ID=" {state_file} | cut -d= -f2-
 ```
 
-**Validate preconditions before resuming:**
+**Validate preconditions:**
 
 | Phase | Required files |
 |-------|---------------|
@@ -64,61 +95,54 @@ grep "^LOG_ID=" {state_file} | cut -d= -f2-
 | `codex_review` | plan file + prompt sidecar |
 | `claude_revision` | plan file + feedback file + prompt sidecar |
 
-If preconditions fail: delete stale state file. A fresh start is still possible if a prompt is available (CLI argument or `{stem}.prompt` sidecar). Only abort when neither exists.
+If preconditions fail: delete stale state file and fall through to "If NO state file exists" below. Fresh start still possible if prompt is available (CLI argument or sidecar). Abort only when neither exists.
 
-If all preconditions pass, announce "Resuming debate at round {N}, phase: {PHASE}" and jump to:
+If preconditions pass: announce "Resuming debate at round {N}, phase: {PHASE}" and jump to:
 - `user_review` -> Step 1.5
 - `codex_review` -> Step 2a at stored ROUND
-- `claude_revision` -> Step 2f at stored ROUND
+- `claude_revision` -> Step 2e at stored ROUND
 
-If no state file but the plan file already exists: ask the user via AskUserQuestion:
+**STOP here -- do NOT fall through to the checks below.** (This STOP applies only when preconditions passed and you are jumping to a step above. If preconditions failed and the state file was deleted, you MUST continue to the section below.)
+
+### If NO state file exists:
+
+Check if the plan file exists (`test -f {plan-file-abs}`). This is REQUIRED before Step 1.
+
+**Plan file exists (no state):** Ask via AskUserQuestion:
 
 > An existing plan was found at `{plan-file-abs}` but no debate state file exists. What would you like to do?
 >
-> - **a) Resume with existing plan** -- skip to Step 1.5 (user review) using the current plan as-is
-> - b) Start fresh -- overwrite the existing plan with a new one
+> - **a) Resume with existing plan** -- skip to Step 1.5 using the current plan
+> - b) Start fresh -- overwrite the existing plan
 
-If the user chooses (a):
-- If `{stem}.prompt` does not already exist: read the plan file, extract the `## Summary` section content, and write it to `{stem}.prompt` (satisfies resume preconditions for future re-runs). If the plan has no Summary section, use the first non-heading paragraph instead. Do NOT overwrite an existing prompt sidecar.
-- Write state (`ROUND=1, PHASE=user_review, CODEX_SESSION_ID=, LOG_ID=`)
-- Skip Step 1, go directly to Step 1.5. There is no resumable plan-agent in this case -- if the user requests changes or open questions need resolving, launch a fresh plan-agent.
+If (a):
+- If no `{stem}.prompt`: extract `## Summary` content (or first non-heading paragraph) and write to `{stem}.prompt`. Do NOT overwrite existing prompt sidecar.
+- Write state: `ROUND=1, PHASE=user_review, CODEX_SESSION_ID=, LOG_ID=`
+- Go to Step 1.5. No resumable plan-agent -- launch fresh if changes are needed.
 
-If the user chooses (b) or no plan file exists: a prompt is required. Error if no prompt is resolvable (no CLI argument and no `{stem}.prompt` sidecar). Proceed to Step 1.
+If (b) or plan doesn't exist: continue to Step 1. Error if no prompt is resolvable.
 
 ## Step 1: Create the Plan
 
 Announce: "Creating plan with plan-agent..."
 
-Launch the plan-agent:
-```
-Agent(
-  subagent_type="code:plan-agent",
-  name="plan-agent",
-  mode="acceptEdits",
-  run_in_background=false,
-  description="Create implementation plan",
-  prompt="<user's prompt>. Write the plan to {plan-file-abs}."
-)
-```
+Launch the plan-agent (omit `resume` -- this is the initial launch):
+- description: "Create implementation plan"
+- prompt: "<user's prompt>. Write the plan to {plan-file-abs}."
 
-**Store the returned agent_id** -- you will need it to resume the plan-agent in later rounds. Resume via `Agent(subagent_type="code:plan-agent", name="plan-agent", mode="acceptEdits", run_in_background=false, prompt="...", resume="<agent_id>")`. The `resume` parameter resumes the agent's full session context, like `claude -r SESSION_ID` in the terminal.
+**Store the returned agent_id** for all subsequent rounds.
 
-Verify the plan file exists and is non-empty (Read it).
+Verify plan file exists and is non-empty (Read it). Announce: "Plan created ({byte_count} bytes) at {plan-file-abs}"
 
-Announce: "Plan created ({byte_count} bytes) at {plan-file-abs}"
+Write prompt to `{stem}.prompt`. Write state: `ROUND=1, PHASE=user_review`.
 
-Write the original prompt to `{stem}.prompt` (plain text, via Write tool).
-
-Write state via Bash:
-```bash
-printf 'ROUND=%s\nPHASE=%s\nCODEX_SESSION_ID=%s\nLOG_ID=%s\n' '1' 'user_review' '' '' > {state_file}
-```
-
-Update TodoWrite: mark "Create plan" completed, "User review" in_progress.
+Update TodoWrite: "Create plan" completed, "User review" in_progress.
 
 ## Step 1.5: User Checkpoint
 
-Read the plan file. Check for an "Open Questions" section (lines matching `Q-` or `- [ ] Q-`). If open questions exist, present them to the user before anything else using AskUserQuestion:
+Read the plan. Check for open questions (lines matching `Q-` or `- [ ] Q-`).
+
+**If open questions exist**, present via AskUserQuestion:
 
 > The plan has open questions that need your input before proceeding:
 >
@@ -131,66 +155,21 @@ Read the plan file. Check for an "Open Questions" section (lines matching `Q-` o
 >
 > Reply with your choices (e.g., "1a, 2b") or provide your own answers.
 
-After the user answers, you MUST delegate plan updates to the plan-agent. Do NOT edit the plan file yourself. Resume the plan-agent:
+Resume the plan-agent:
+- description: "Update plan with answered questions"
+- prompt: "The user answered the open questions as follows:\n\n<answers>\n\nUpdate the plan at {plan-file-abs}: remove answered questions from the Open Questions section, revise dependent tasks. Write back to {plan-file-abs}."
 
-```
-Agent(
-  subagent_type="code:plan-agent",
-  name="plan-agent",
-  mode="acceptEdits",
-  run_in_background=false,
-  description="Update plan with answered questions",
-  prompt="The user answered the open questions as follows:\n\n<user's answers>\n\nUpdate the plan at {plan-file-abs} to incorporate these answers: remove the answered questions from the Open Questions section, and revise any tasks or decisions that depended on those questions. Write the updated plan back to {plan-file-abs}.",
-  resume="<agent_id>"
-)
-```
+Re-read and repeat until no open questions remain.
 
-If no resumable agent (cross-session), omit the `resume` parameter to launch a fresh agent. Add to the prompt: "Read the plan at {plan-file-abs} first to understand context." Store the new agent_id.
-
-Wait for the plan-agent to complete, then re-read the plan and check for remaining open questions. Repeat until no open questions remain.
-
-Once open questions are resolved (or if there were none), present the plan to the user:
+**Once questions are resolved** (or none existed), present the plan:
 
 > Plan created at `{plan-file-abs}`. Review it and let me know when you're ready to start the Codex debate, or share any changes you'd like made first.
 
-**If the user requests changes:**
+**If user requests changes:** Resume plan-agent with their feedback as the prompt. Loop back until user confirms.
 
-Resume the plan-agent with their feedback:
-```
-Agent(
-  subagent_type="code:plan-agent",
-  name="plan-agent",
-  mode="acceptEdits",
-  run_in_background=false,
-  description="Revise plan per user feedback",
-  prompt="User feedback: <their message>. Revise the plan at {plan-file-abs} and write the updated plan back to {plan-file-abs}.",
-  resume="<agent_id>"
-)
-```
+**When user confirms** ("start", "go", "looks good", "proceed"):
 
-If no resumable agent (cross-session), omit `resume` and add context to prompt:
-```
-Agent(
-  subagent_type="code:plan-agent",
-  name="plan-agent",
-  mode="acceptEdits",
-  run_in_background=false,
-  description="Revise plan per user feedback",
-  prompt="Read the current plan at {plan-file-abs} and revise it based on user feedback. Original request: <prompt from sidecar>. User feedback: <their message>. Write the updated plan back to {plan-file-abs}."
-)
-```
-Store the new agent_id for subsequent rounds.
-
-Loop back to this checkpoint until the user says to proceed.
-
-**When the user confirms** (e.g., "start", "go", "looks good", "proceed"):
-
-Update state:
-```bash
-printf 'ROUND=%s\nPHASE=%s\nCODEX_SESSION_ID=%s\nLOG_ID=%s\n' '1' 'codex_review' '' '' > {state_file}
-```
-
-Proceed to Step 2.
+Write state: `ROUND=1, PHASE=codex_review`. Proceed to Step 2.
 
 ## Step 2: Debate Loop
 
@@ -200,7 +179,7 @@ Repeat for round 1 to max-rounds:
 
 Update TodoWrite: "Round {N}/{max}: Codex reviewing..."
 
-Activate the `code:codex-review` skill and run via Bash:
+Activate `code:codex-review` skill and run:
 ```bash
 bash <base_directory>/scripts/run_codex_review.sh \
   --plan-file {plan-file-abs} \
@@ -211,111 +190,56 @@ bash <base_directory>/scripts/run_codex_review.sh \
   [--log-id {log_id}]
 ```
 
-Parse stdout tokens:
-- `VERDICT:APPROVED` or `VERDICT:NEEDS_CHANGES`
-- `CODEX_SESSION:<thread_id>` -- save for next round
-- `LOG_ID:<uuid>` -- save for next round (reuse same log across all rounds)
-
-Update state with new CODEX_SESSION_ID and LOG_ID. The raw Codex JSON stream is logged to `~/.closedloop-ai/plan-with-codex/<log_id>.jsonl`.
+Parse stdout: `VERDICT:APPROVED|NEEDS_CHANGES`, `CODEX_SESSION:<id>`, `LOG_ID:<uuid>`. Update state with new session ID and log ID. Raw JSON logged to `~/.closedloop-ai/plan-with-codex/<log_id>.jsonl`.
 
 ### 2b. Handle Failures (do NOT increment round)
 
-- `CODEX_FAILED:<reason>`: Announce the warning. Ask the user: "Codex failed: {reason}. Retry or abort?" On retry: re-run 2a. On abort: go to Step 3.
-- `CODEX_EMPTY`: Announce "Codex returned empty response." Same retry/abort handling.
+`CODEX_FAILED:<reason>` or `CODEX_EMPTY`: Announce the issue. Ask user: "Retry or abort?" On retry: re-run 2a. On abort: go to Step 3.
 
 ### 2c. Display Feedback
 
-Read the feedback file and display the full Codex feedback to the user.
+Read the feedback file and display full Codex feedback to the user.
 
 ### 2d. Check Verdict
 
-- **VERDICT:APPROVED**: Announce "Plan approved by Codex after {N} round(s)." Go to Step 3.
-- **Last round, not approved**: Announce "Max rounds ({max}) reached without approval." Go to Step 3.
-- **VERDICT:NEEDS_CHANGES**: Continue to 2e.
+- **APPROVED**: "Plan approved by Codex after {N} round(s)." Go to Step 3.
+- **Last round, not approved**: "Max rounds ({max}) reached without approval." Go to Step 3.
+- **NEEDS_CHANGES**: Write state (`PHASE=claude_revision`, preserve current `CODEX_SESSION_ID` and `LOG_ID`). Continue to 2e.
 
-### 2e. Proceed to Revision (automated)
-
-The Codex/Claude loop is fully automated after the user approved the plan in Step 1.5. Do NOT ask the user for confirmation between rounds -- proceed directly to revision.
-
-Update state:
-```bash
-printf 'ROUND=%s\nPHASE=%s\nCODEX_SESSION_ID=%s\nLOG_ID=%s\n' '{N}' 'claude_revision' '{codex_session_id}' '{log_id}' > {state_file}
-```
-
-Proceed to 2f.
-
-### 2f. Claude Revision
+### 2e. Claude Revision
 
 Update TodoWrite: "Round {N}/{max}: Revising plan..."
 
-Resume the plan-agent. ALWAYS attempt resume first using the stored agent_id:
-```
-Agent(
-  subagent_type="code:plan-agent",
-  name="plan-agent",
-  mode="acceptEdits",
-  run_in_background=false,
-  description="Revise plan based on Codex feedback",
-  prompt="Revise the plan at {plan-file-abs} based on feedback at {feedback-file-abs}. Address ALL concerns raised.",
-  resume="<agent_id>"
-)
-```
+Resume the plan-agent:
+- description: "Revise plan based on Codex feedback"
+- prompt: "Revise the plan at {plan-file-abs} based on feedback at {feedback-file-abs}. Address ALL concerns raised."
 
-Only if the resume call fails with an error (NOT just because you think the agent is gone -- you MUST attempt the call first), launch fresh without `resume`:
-```
-Agent(
-  subagent_type="code:plan-agent",
-  name="plan-agent",
-  mode="acceptEdits",
-  run_in_background=false,
-  description="Revise plan based on Codex feedback",
-  prompt="Revise the plan at {plan-file-abs} based on feedback at {feedback-file-abs}. The original request was: <prompt>. Read the current plan and feedback files to understand context. Write the updated plan back to {plan-file-abs}."
-)
-```
-Store the new agent_id for subsequent rounds.
-
-Verify the plan file was updated.
-
-Update state:
-```bash
-printf 'ROUND=%s\nPHASE=%s\nCODEX_SESSION_ID=%s\nLOG_ID=%s\n' '{N+1}' 'codex_review' '{codex_session_id}' '{log_id}' > {state_file}
-```
-
-Continue to next round.
+Verify plan was updated. Write state: `ROUND={N+1}, PHASE=codex_review`, preserve current `CODEX_SESSION_ID` and `LOG_ID`. Continue to next round.
 
 ## Step 3: Final Report
 
-Report the outcome:
-- If approved: "Plan approved by Codex. File: {plan-file-abs}"
-- If max rounds: "Plan not approved after {max} rounds. File: {plan-file-abs}"
-- If aborted: "Debate aborted. Partial plan at: {plan-file-abs}"
+Report outcome:
+- Approved: "Plan approved by Codex. File: {plan-file-abs}"
+- Max rounds: "Plan not approved after {max} rounds. File: {plan-file-abs}"
+- Aborted: "Debate aborted. Partial plan at: {plan-file-abs}"
 
-Clean up ALL sidecar files:
+Clean up ALL sidecar files (prompt sidecar deleted intentionally to prevent stale intent on future runs):
 ```bash
 rm -f {state_file} {feedback_file} {prompt_file}
 ```
 
-The prompt sidecar is intentionally deleted on completion to prevent stale intent from silently reusing on future runs against the default `./debate-plan.md` path.
-
 Update TodoWrite: mark all remaining items completed.
 
-Announce the log file location: "Codex review log: `~/.closedloop-ai/plan-with-codex/{log_id}.jsonl`"
+Announce: "Codex review log: `~/.closedloop-ai/plan-with-codex/{log_id}.jsonl`"
 
 ### Log cleanup
 
-Check for Codex log files older than 30 days:
+Check for logs older than 30 days:
 ```bash
 find ~/.closedloop-ai/plan-with-codex -name "*.jsonl" -mtime +30 2>/dev/null
 ```
 
-If any old logs are found, ask the user via AskUserQuestion:
-
-> Found {N} Codex review log(s) older than 30 days in `~/.closedloop-ai/plan-with-codex/`. Remove them?
->
-> - **a) Yes, delete old logs** (recommended)
-> - b) No, keep them
-
-If the user says yes:
+If found, ask user whether to delete them via AskUserQuestion. If yes:
 ```bash
 find ~/.closedloop-ai/plan-with-codex -name "*.jsonl" -mtime +30 -delete 2>/dev/null
 ```
