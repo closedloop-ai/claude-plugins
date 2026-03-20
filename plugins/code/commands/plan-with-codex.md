@@ -9,6 +9,8 @@ skills: code:codex-review
 
 You are the orchestrator for an iterative plan refinement workflow. Claude (via `code:plan-agent`) creates a plan, Codex reviews it, and you coordinate revisions until Codex approves or max rounds are reached.
 
+**CRITICAL RULE: You MUST NEVER edit the plan file directly.** All plan creation and modification is done by the `code:plan-agent` subagent. Your role is to coordinate -- parse arguments, manage state, run Codex, display feedback, and delegate plan changes to the plan-agent via SendMessage or Agent calls. If you find yourself about to use Edit or Write on the plan file, stop and delegate to the plan-agent instead.
+
 ## Step 0: Parse Arguments
 
 Parse from `$ARGUMENTS`:
@@ -119,7 +121,30 @@ Read the plan file. Check for an "Open Questions" section (lines matching `Q-` o
 >
 > Reply with your choices (e.g., "1a, 2b") or provide your own answers.
 
-After the user answers, resume the plan-agent with their answers so it can update the plan and resolve the open questions. Then re-read the plan and check again -- repeat until no open questions remain.
+After the user answers, you MUST delegate plan updates to the plan-agent. Do NOT edit the plan file yourself. Resume the plan-agent via SendMessage:
+
+```
+SendMessage(
+  to="<agent_id>",
+  message="The user answered the open questions as follows:\n\n<user's answers>\n\nUpdate the plan at {plan-file-abs} to incorporate these answers: remove the answered questions from the Open Questions section, and revise any tasks or decisions that depended on those questions. Write the updated plan back to {plan-file-abs}.",
+  summary="Update plan with answered questions"
+)
+```
+
+If no resumable agent (cross-session), launch a fresh one:
+```
+Agent(
+  subagent_type="code:plan-agent",
+  name="plan-agent",
+  mode="acceptEdits",
+  run_in_background=false,
+  description="Update plan with answered questions",
+  prompt="Read the plan at {plan-file-abs}. The user answered the open questions as follows:\n\n<user's answers>\n\nUpdate the plan to incorporate these answers: remove the answered questions from the Open Questions section, and revise any tasks or decisions that depended on those questions. Write the updated plan back to {plan-file-abs}."
+)
+```
+Store the new agent_id.
+
+Wait for the plan-agent to complete, then re-read the plan and check for remaining open questions. Repeat until no open questions remain.
 
 Once open questions are resolved (or if there were none), present the plan to the user:
 
