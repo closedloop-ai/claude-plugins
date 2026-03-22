@@ -211,7 +211,7 @@ Read the feedback file and display full Codex feedback to the user.
 
 Update TodoWrite: "Round {N}/{max}: Gathering context..."
 
-**First, launch the feedback-explorer** (haiku) to pre-fetch codebase context referenced in the feedback:
+**First, launch the `code:feedback-explorer`** (haiku) to pre-fetch codebase context referenced in the feedback:
 
 ```
 Agent(
