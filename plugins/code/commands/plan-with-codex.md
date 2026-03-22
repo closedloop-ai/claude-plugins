@@ -39,9 +39,12 @@ Agent(
 
 ### State Write
 
-All state updates use:
-```bash
-printf 'ROUND=%s\nPHASE=%s\nCODEX_SESSION_ID=%s\nLOG_ID=%s\n' '{round}' '{phase}' '{codex_session_id}' '{log_id}' > {state_file}
+All state updates use the Write tool (not Bash), so the user only approves the file path once:
+```
+Write(
+  file_path="{state_file}",
+  content="ROUND={round}\nPHASE={phase}\nCODEX_SESSION_ID={codex_session_id}\nLOG_ID={log_id}\n"
+)
 ```
 
 Valid phases: `user_review`, `codex_review`, `claude_revision`
@@ -80,13 +83,7 @@ TodoWrite([
 
 ## Step 0.5: Check for Resume
 
-Check if `{stem}.state` exists (`test -f`). If yes, read all four values:
-```bash
-grep "^ROUND=" {state_file} | cut -d= -f2-
-grep "^PHASE=" {state_file} | cut -d= -f2-
-grep "^CODEX_SESSION_ID=" {state_file} | cut -d= -f2-
-grep "^LOG_ID=" {state_file} | cut -d= -f2-
-```
+Check if `{stem}.state` exists (`test -f`). If yes, Read the state file and extract values by key name: `ROUND`, `PHASE`, `CODEX_SESSION_ID`, `LOG_ID`. Ignore any unknown keys (the shell-based debate-loop.sh writes an extra `SESSION_ID` field -- skip it).
 
 **Validate preconditions:**
 
