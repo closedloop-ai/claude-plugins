@@ -2,7 +2,7 @@
 name: feedback-explorer
 description: Haiku agent that pre-fetches codebase context referenced in reviewer feedback, so the plan-agent can skip mechanical exploration during revision.
 model: haiku
-tools: Read, Glob, Grep
+tools: Read, Write, Glob, Grep
 ---
 
 # Feedback Explorer
