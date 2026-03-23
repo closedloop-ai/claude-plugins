@@ -1,6 +1,6 @@
 ---
 description: "Iterative plan refinement debate between Claude and Codex"
-argument-hint: [--max-rounds N] [--plan-file PATH] [--codex-model MODEL] <prompt>
+argument-hint: --max-rounds N --plan-file PATH --codex-model MODEL <prompt>
 allowed-tools: Bash, Read, Write, Glob, Grep, TodoWrite, Task, AskUserQuestion
 skills: code:codex-review
 effort: max
@@ -39,9 +39,12 @@ Agent(
 
 ### State Write
 
-All state updates use:
-```bash
-printf 'ROUND=%s\nPHASE=%s\nCODEX_SESSION_ID=%s\nLOG_ID=%s\n' '{round}' '{phase}' '{codex_session_id}' '{log_id}' > {state_file}
+All state updates use the Write tool (not Bash), so the user only approves the file path once:
+```
+Write(
+  file_path="{state_file}",
+  content="ROUND={round}\nPHASE={phase}\nCODEX_SESSION_ID={codex_session_id}\nLOG_ID={log_id}\n"
+)
 ```
 
 Valid phases: `user_review`, `codex_review`, `claude_revision`
@@ -62,6 +65,7 @@ Arguments: $ARGUMENTS
 Derive sidecar paths from the plan file stem (e.g., for `debate-plan.md`):
 - `{stem}.feedback` -- Codex feedback text
 - `{stem}.revisions` -- Claude's revision summary (changes made + pushback on rejected findings)
+- `{stem}.context` -- pre-fetched codebase snippets for the current revision round
 - `{stem}.state` -- phase/round/session state
 - `{stem}.prompt` -- original prompt (plain text)
 
@@ -80,13 +84,7 @@ TodoWrite([
 
 ## Step 0.5: Check for Resume
 
-Check if `{stem}.state` exists (`test -f`). If yes, read all four values:
-```bash
-grep "^ROUND=" {state_file} | cut -d= -f2-
-grep "^PHASE=" {state_file} | cut -d= -f2-
-grep "^CODEX_SESSION_ID=" {state_file} | cut -d= -f2-
-grep "^LOG_ID=" {state_file} | cut -d= -f2-
-```
+Check if `{stem}.state` exists (`test -f`). If yes, Read the state file and extract values by key name: `ROUND`, `PHASE`, `CODEX_SESSION_ID`, `LOG_ID`. Ignore any unknown keys (the shell-based debate-loop.sh writes an extra `SESSION_ID` field -- skip it).
 
 **Validate preconditions:**
 
@@ -211,11 +209,27 @@ Read the feedback file and display full Codex feedback to the user.
 
 ### 2e. Claude Revision
 
+Update TodoWrite: "Round {N}/{max}: Gathering context..."
+
+**First, launch the `code:feedback-explorer`** (haiku) to pre-fetch codebase context referenced in the feedback:
+
+```
+Agent(
+  subagent_type="code:feedback-explorer",
+  name="feedback-explorer",
+  model="haiku",
+  mode="bypassPermissions",
+  run_in_background=false,
+  description="Pre-fetch context for round {N} feedback",
+  prompt="Read the feedback at {feedback-file-abs} and the plan at {plan-file-abs}. For every file path, function name, and code pattern referenced in the findings, locate and fetch the relevant code snippets. Write the context brief to {context-file-abs}."
+)
+```
+
 Update TodoWrite: "Round {N}/{max}: Revising plan..."
 
-Resume the plan-agent:
+**Then resume the plan-agent** with the pre-fetched context:
 - description: "Revise plan based on Codex feedback"
-- prompt: "Revise the plan at {plan-file-abs} based on feedback at {feedback-file-abs}. Verify each finding against the codebase before acting on it -- reject any that don't hold up. After updating the plan, write a revision summary to {revisions-file-abs}."
+- prompt: "A context brief with pre-fetched code snippets is available at {context-file-abs} -- read it first to avoid redundant exploration. Then revise the plan at {plan-file-abs} based on feedback at {feedback-file-abs}. Verify each finding against the codebase before acting on it -- reject any that don't hold up. If the context brief is missing a file you need, use your own tools to fetch it. After updating the plan, write a revision summary to {revisions-file-abs}."
 
 Verify plan was updated. Write state: `ROUND={N+1}, PHASE=codex_review`, preserve current `CODEX_SESSION_ID` and `LOG_ID`. Continue to next round.
 
@@ -228,7 +242,7 @@ Report outcome:
 
 Clean up ALL sidecar files (prompt sidecar deleted intentionally to prevent stale intent on future runs):
 ```bash
-rm -f {state_file} {feedback_file} {revisions_file} {prompt_file}
+rm -f {state_file} {feedback_file} {revisions_file} {context_file} {prompt_file}
 ```
 
 Update TodoWrite: mark all remaining items completed.
