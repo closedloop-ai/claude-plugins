@@ -35,7 +35,7 @@ Agent(
 )
 ```
 
-**Resume rule:** If an in-memory agent_id exists (from a prior launch in this session), always attempt `resume` first. Only if the call returns an error, launch fresh. If no agent_id exists (cross-session resume), launch fresh immediately -- do not attempt resume. When launching fresh, omit `resume` and prepend to the prompt: "Read the plan at {plan-file-abs} first. Original request: <prompt from sidecar>." Always store the returned agent_id for subsequent calls.
+**Resume rule:** If an in-memory agent_id exists (from a prior launch in this session), always attempt `resume` first. Only if the call returns an error, launch fresh. If no agent_id exists (cross-session resume), launch fresh immediately -- do not attempt resume. When launching fresh, omit `resume` and prepend to the prompt: "Read the plan at {plan-file-abs} first. Original request: <prompt from sidecar>." If `{stem}.exclusions` exists, also append: "The user has confirmed these items are out of scope -- do not re-add them: <contents of exclusions file>." Always store the returned agent_id for subsequent calls.
 
 ### State Write
 
@@ -67,7 +67,8 @@ Derive sidecar paths from the plan file stem (e.g., for `debate-plan.md`):
 - `{stem}.revisions` -- Claude's revision summary (changes made + pushback on rejected findings)
 - `{stem}.context` -- pre-fetched codebase snippets for the current revision round
 - `{stem}.state` -- phase/round/session state
-- `{stem}.prompt` -- original prompt (plain text)
+- `{stem}.prompt` -- original prompt (plain text, never mutated after initial write)
+- `{stem}.exclusions` -- user-confirmed deferral exclusions (written by Step 1.5)
 
 **Prompt resolution**: CLI argument > `{stem}.prompt` sidecar. Abort only when neither exists.
 
@@ -96,7 +97,9 @@ Check if `{stem}.state` exists (`test -f`). If yes, Read the state file and extr
 
 If preconditions fail: delete stale state file and fall through to "If NO state file exists" below. Fresh start still possible if prompt is available (CLI argument or sidecar). Abort only when neither exists.
 
-If preconditions pass: announce "Resuming debate at round {N}, phase: {PHASE}" and jump to:
+If preconditions pass: check whether `{stem}.exclusions` exists. If ROUND > 1 and the exclusions file is missing, warn the user via AskUserQuestion: "Resuming at round {N}, but the exclusions file (`{stem}.exclusions`) is missing. Any previously confirmed deferral decisions may be lost if the plan-agent is re-launched fresh. Continue anyway, or abort?" On abort, go to Step 3. On continue, proceed normally.
+
+Announce "Resuming debate at round {N}, phase: {PHASE}" and jump to:
 - `user_review` -> Step 1.5
 - `codex_review` -> Step 2a at stored ROUND
 - `claude_revision` -> Step 2e at stored ROUND
@@ -115,8 +118,8 @@ Check if the plan file exists (`test -f {plan-file-abs}`). This is REQUIRED befo
 > - b) Start fresh -- overwrite the existing plan
 
 If (a):
-- If no `{stem}.prompt`: extract `## Summary` content (or first non-heading paragraph) and write to `{stem}.prompt`. Do NOT overwrite existing prompt sidecar.
-- Read the plan and check for open questions (lines matching `Q-` or `- [ ] Q-`). If any exist, resolve them using the open questions flow in Step 1.5, then continue below. No resumable plan-agent -- launch fresh if changes are needed.
+- If no `{stem}.prompt`: extract `## Summary` content (or first non-heading paragraph) and write to `{stem}.prompt` with a `[synthesized]` marker on the first line. Do NOT overwrite existing prompt sidecar. (The marker tells Step 1.5 this is plan-derived text, not the user's actual words.)
+- Read the plan and check for open questions (lines matching `Q-` or `- [ ] Q-`) and deferred work (sections/items containing "Deferred", "Out of Scope", "Future Work", "Post-MVP", or "Nice to Have" -- same keywords as Step 1.5). If any exist, resolve them using the open questions flow in Step 1.5, then continue below. No resumable plan-agent -- launch fresh if changes are needed.
 - Write state: `ROUND=1, PHASE=codex_review, CODEX_SESSION_ID=, LOG_ID=`
 - Skip Step 1.5 entirely (user already confirmed by choosing to resume) and go directly to Step 2.
 
@@ -142,24 +145,62 @@ Update TodoWrite: "Create plan" completed, "User review" in_progress.
 
 Read the plan. Check for open questions (lines matching `Q-` or `- [ ] Q-`).
 
-**If open questions exist**, present via AskUserQuestion:
+**Also scan for deferred work.** First, read `{stem}.prompt`. If the file starts with `[synthesized]`, it was derived from the plan itself -- do NOT use it to judge user intent (always run the deferral scan in this case). If the prompt is not synthesized and the user explicitly requested a phased rollout, future-work breakdown, or similar structure, skip the deferral scan -- those sections are intentional. Otherwise, search the plan for sections or items containing any of these keywords (case-insensitive): "Deferred", "Out of Scope", "Future Work", "Post-MVP", "Nice to Have". If any are found, extract each deferred item and present it to the user alongside open questions (see format below). The user must explicitly approve any deferral -- the plan-agent is not allowed to unilaterally exclude work.
 
-> The plan has open questions that need your input before proceeding:
+**If open questions or deferred items exist**, present via AskUserQuestion:
+
+> The plan has items that need your input before proceeding:
 >
+> **Open Questions:**
 > 1. **Q-001**: [question text]
 >    - **a) [recommended answer]** (recommended)
 >    - b) [alternative]
-> 2. **Q-002**: [question text]
->    - **a) [recommended answer]** (recommended)
->    - b) [alternative]
+>
+> **Deferred Items** (the plan excludes these from scope -- do you agree?):
+> 2. **D-001**: [deferred item description]
+>    - **a) Include in plan** -- add tasks for this work
+>    - b) Confirm deferral -- leave it out
 >
 > Reply with your choices (e.g., "1a, 2b") or provide your own answers.
 
-Resume the plan-agent:
-- description: "Update plan with answered questions"
-- prompt: "The user answered the open questions as follows:\n\n<answers>\n\nUpdate the plan at {plan-file-abs}: remove answered questions from the Open Questions section, revise dependent tasks. Write back to {plan-file-abs}."
+(Omit the "Open Questions" heading if there are none. Omit the "Deferred Items" heading if there are none.)
 
-Re-read and repeat until no open questions remain.
+**Build the plan-agent prompt** by including the full text of each deferred item and the user's decision (not just "2a"). Example format:
+
+```
+The user answered the open questions and deferral decisions as follows:
+
+Open Questions:
+- Q-001: [question text] -- Answer: [user's answer]
+
+Deferred Items:
+- D-001: "[full deferred item description]" -- Decision: INCLUDE (add tasks for this work)
+- D-002: "[full deferred item description]" -- Decision: EXCLUDE (user confirmed deferral)
+
+Update the plan at {plan-file-abs}:
+1. Remove answered questions from the Open Questions section, revise dependent tasks.
+2. For INCLUDE items, add concrete tasks to the appropriate phase.
+3. Remove any "Deferred", "Out of Scope", "Future Work", "Post-MVP", and "Nice to Have" sections that were flagged as deferred items above. Do not remove sections that the user explicitly requested in their original prompt (e.g., phased rollouts, future-work breakdowns).
+Write back to {plan-file-abs}.
+```
+
+Resume the plan-agent:
+- description: "Update plan with answered questions and deferral decisions"
+- prompt: (built as above)
+
+**After the plan-agent returns**, update the exclusions sidecar (do NOT modify `{stem}.prompt`). This is a full rewrite each pass -- not an append -- so reversed decisions are reflected:
+
+- If any deferrals were confirmed as EXCLUDE, write them:
+  ```
+  Write {stem}.exclusions with content:
+
+  User-confirmed exclusions (do not re-add):
+  - [excluded item 1]
+  - [excluded item 2]
+  ```
+- If no EXCLUDE items remain (all were reversed or none existed), delete the file: `rm -f {stem}.exclusions`
+
+Re-read and repeat until no open questions or deferred items remain.
 
 **Once questions are resolved** (or none existed), present the plan:
 
@@ -211,7 +252,12 @@ Read the feedback file and display full Codex feedback to the user.
 
 Update TodoWrite: "Round {N}/{max}: Gathering context..."
 
-**First, launch the `code:feedback-explorer`** (haiku) to pre-fetch codebase context referenced in the feedback:
+**First, compute the repo HEAD** for cache stamping:
+```
+Bash("git rev-parse HEAD")  # store result as {git-head}
+```
+
+**Then launch the `code:feedback-explorer`** (haiku) to pre-fetch codebase context referenced in the feedback:
 
 ```
 Agent(
@@ -221,7 +267,7 @@ Agent(
   mode="bypassPermissions",
   run_in_background=false,
   description="Pre-fetch context for round {N} feedback",
-  prompt="Read the feedback at {feedback-file-abs} and the plan at {plan-file-abs}. For every file path, function name, and code pattern referenced in the findings, locate and fetch the relevant code snippets. Write the context brief to {context-file-abs}."
+  prompt="Read the feedback at {feedback-file-abs} and the plan at {plan-file-abs}. This is round {N}, session {codex_session_id}, repo HEAD {git-head}. For every file path, function name, and code pattern referenced in the findings, locate and fetch the relevant code snippets. Write the context brief to {context-file-abs}."
 )
 ```
 
@@ -242,7 +288,7 @@ Report outcome:
 
 Clean up ALL sidecar files (prompt sidecar deleted intentionally to prevent stale intent on future runs):
 ```bash
-rm -f {state_file} {feedback_file} {revisions_file} {context_file} {prompt_file}
+rm -f {state_file} {feedback_file} {revisions_file} {context_file} {prompt_file} {exclusions_file}
 ```
 
 Update TodoWrite: mark all remaining items completed.

@@ -6,10 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### code v1.2.2
+### code v1.3.1
+
+#### Added
+- New `feedback-explorer` agent (haiku) for pre-fetching codebase context referenced in reviewer feedback, reducing redundant exploration during plan revisions with delta caching across debate rounds
+- Deferral detection in `plan-with-codex` -- scans plans for "Deferred", "Out of Scope", "Future Work" items and requires explicit user approval before excluding work from scope
+- Exclusions sidecar file (`{stem}.exclusions`) in `plan-with-codex` to persist user-confirmed deferral decisions across debate rounds
 
 #### Changed
-- Updated `plan-with-codex` command argument-hint to use positional syntax instead of optional bracket notation
+- `plan-with-codex` argument-hint updated to positional syntax instead of optional bracket notation
+- `plan-with-codex` uses Write tool for state persistence instead of Bash printf
+- `plan-with-codex` launches `feedback-explorer` before `plan-agent` revision rounds to pre-fetch context
+- `plan-agent` enforces "no silent deferrals" rule -- must not create deferred/out-of-scope sections without explicit user approval
+- `plan-agent` supports pre-fetched context briefs from `feedback-explorer`, reads brief before revision to skip redundant exploration
+- Added `Write` tool to `plan-agent` tools list
+
+#### Fixed
+- Fixed `plan-with-codex` to use fully qualified agent name `code:feedback-explorer`
 
 ### platform v1.0.2
 

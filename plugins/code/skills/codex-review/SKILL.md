@@ -33,13 +33,13 @@ bash <base_directory>/scripts/run_codex_review.sh \
 
 | Argument | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `--plan-file` | Yes | -- | Absolute path to the plan file Codex should review |
-| `--feedback-file` | Yes | -- | Path where full feedback text will be written |
-| `--revisions-file` | No | -- | Path to Claude's revision summary (accepted/rejected findings). If present and round > 1, Codex reads it for context. |
-| `--round` | No | 1 | Current debate round (affects review prompt intro) |
-| `--codex-model` | No | gpt-5.4 | Codex model to use |
-| `--session-id` | No | -- | Thread ID from a previous round for session resume |
-| `--log-id` | No | auto-generated | UUID for the persistent log file. Pass the same ID across rounds to append to one log. |
+| `--plan-file` | Yes | -- | Absolute path to the implementation plan (plan.json or plan.md) that Codex will review. The script injects this path into the review prompt so Codex can read and analyze the plan's contents. |
+| `--feedback-file` | Yes | -- | Absolute path where the script writes Codex's full feedback text (parsed from the JSON stream). The orchestrator reads this file after the script completes to get the detailed findings. This file is overwritten each round. |
+| `--revisions-file` | No | -- | Absolute path to Claude's revision summary from the previous round, listing which findings were accepted and which were rejected with evidence. Only meaningful when round > 1 AND the file exists with actual content (the script checks `-s` for non-empty). The script injects this path into Codex's prompt so it can read the revisions before re-reviewing, preventing it from re-raising findings that Claude already refuted with valid evidence. **Omit entirely on round 1 or when no revisions file has been written yet** -- do not pass `/dev/null` or an empty file. |
+| `--round` | No | 1 | The current debate round number (1-indexed). Controls the review prompt tone: round 1 says "Review this new plan", rounds 2+ say "Claude addressed your feedback, re-review for remaining issues." Also gates whether the revisions file is included in the prompt. |
+| `--codex-model` | No | gpt-5.4 | The OpenAI model ID passed to `codex -m`. Controls which model performs the review. |
+| `--session-id` | No | -- | Codex thread ID returned as `CODEX_SESSION` from a previous round. When provided, the script attempts `codex exec resume <session_id>` to continue the conversation with full prior context. If resume fails, it falls back to a fresh session automatically. Omit on round 1. |
+| `--log-id` | No | auto-generated UUID | Identifier for the persistent JSONL log file at `~/.closedloop-ai/plan-with-codex/<log-id>.jsonl`. The raw Codex JSON stream is appended here each round. Pass the same ID across all rounds of a debate to keep the full conversation history in one file. If omitted, a new UUID is generated. |
 
 ## Interpreting Output
 
