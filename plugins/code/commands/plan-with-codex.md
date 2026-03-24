@@ -217,7 +217,6 @@ Update TodoWrite: "Round {N}/{max}: Gathering context..."
 Agent(
   subagent_type="code:feedback-explorer",
   name="feedback-explorer",
-  model="haiku",
   mode="bypassPermissions",
   run_in_background=false,
   description="Pre-fetch context for round {N} feedback",

@@ -3,3 +3,7 @@ target-version = "py311"
 
 [tool.pyright]
 pythonVersion = "3.11"
+extraPaths = [
+  "plugins/code/tools/python",
+  "plugins/code/skills/plan-validate/scripts",
+]

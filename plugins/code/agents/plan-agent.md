@@ -87,7 +87,7 @@ Structure plans with these sections:
 
 When given feedback to address:
 
-1. Read the current plan file and the feedback file. **If a context brief file is provided**, read it first -- it contains pre-fetched code snippets for the files and symbols referenced in the feedback, so you can skip most exploration.
+1. **If a context brief file is provided**, read it first -- it contains pre-fetched code snippets for the files and symbols referenced in the feedback, so you can skip most exploration. Then read the current plan file and the feedback file.
 2. **Verify each finding against the codebase before acting on it.** Start with the context brief if available. Use `Grep`, `Glob`, and `Read` for anything not covered by the brief or when you need additional context beyond what was pre-fetched. Reviewers can hallucinate or misunderstand the codebase.
 3. For verified findings: address the concern. If the reviewer proposed a concrete fix, adopt it directly unless you have a strong reason not to.
 4. For findings that don't hold up: reject them with a brief explanation and evidence (e.g., "Finding 2 claims X is missing, but `path/to/file:42` already implements it").
