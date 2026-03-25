@@ -1,8 +1,9 @@
 #!/bin/bash
-# Pre-push hook: Require CHANGELOG.md updates when modifying plugins in plugins/
+# Pre-push hook: Require changelog updates when modifying plugins in plugins/
 #
 # This script checks if any files in plugins/ are being pushed and ensures
-# that at least one CHANGELOG.md within plugins/ is also being modified.
+# that the repository changelog (or a plugin-local changelog, if present) is
+# also being modified.
 
 set -e
 
@@ -37,11 +38,11 @@ while read -r -t 5 local_ref local_sha remote_ref remote_sha; do
         continue
     fi
 
-    # Check for changes in plugins/ (excluding CHANGELOG.md files)
+    # Check for changes in plugins/ (excluding plugin-local CHANGELOG.md files)
     plugin_changes=$(echo "$changed_files" | grep -E '^plugins/' | grep -v 'CHANGELOG.md' || true)
 
-    # Check for CHANGELOG.md changes in plugins/
-    changelog_changes=$(echo "$changed_files" | grep -E '^plugins/.*CHANGELOG\.md$' || true)
+    # Accept either the root CHANGELOG.md or a plugin-local CHANGELOG.md
+    changelog_changes=$(echo "$changed_files" | grep -E '^(CHANGELOG\.md|plugins/.*CHANGELOG\.md)$' || true)
 
     if [ -n "$plugin_changes" ] && [ -z "$changelog_changes" ]; then
         echo -e "${RED}ERROR: Plugin changes detected without CHANGELOG.md update${NC}"
@@ -52,7 +53,8 @@ while read -r -t 5 local_ref local_sha remote_ref remote_sha; do
             echo "... and more"
         fi
         echo ""
-        echo -e "${YELLOW}Please update the appropriate CHANGELOG.md file:${NC}"
+        echo -e "${YELLOW}Please update CHANGELOG.md before pushing.${NC}"
+        echo "  - Preferred: CHANGELOG.md"
         # List available changelogs based on which plugins were modified
         modified_plugins=$(echo "$plugin_changes" | cut -d'/' -f2 | sort -u)
         for plugin in $modified_plugins; do

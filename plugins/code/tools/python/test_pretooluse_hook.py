@@ -1,8 +1,10 @@
-"""Tests for pretooluse-hook.sh security blocklist."""
+"""Tests for pretooluse-hook.sh security blocklist and self-learning guard."""
 
 import json
 import subprocess
 from pathlib import Path
+
+import pytest
 
 HOOK_PATH = Path(__file__).resolve().parent.parent.parent / "hooks" / "pretooluse-hook.sh"
 
@@ -15,6 +17,30 @@ def run_hook(tool_name: str, tool_input: dict) -> subprocess.CompletedProcess:
             "tool_input": tool_input,
             "session_id": "test-session",
             "cwd": "/tmp",
+        }
+    )
+    return subprocess.run(
+        ["bash", str(HOOK_PATH)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+
+def run_hook_with_session(
+    tool_name: str,
+    tool_input: dict,
+    cwd: str,
+    session_id: str = "test-session",
+) -> subprocess.CompletedProcess:
+    """Invoke pretooluse-hook.sh with a session-mapped CWD for self-learning tests."""
+    payload = json.dumps(
+        {
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "session_id": session_id,
+            "cwd": cwd,
         }
     )
     return subprocess.run(
@@ -286,3 +312,78 @@ class TestAllowLegitimateCommands:
         """Normal git commands should not be denied."""
         result = run_hook("Bash", {"command": "git status"})
         assert_not_denied(result)
+
+
+@pytest.fixture()
+def session_env(tmp_path: Path) -> tuple[Path, Path, str]:
+    """Create temp CWD with session mapping and workdir with config.env.
+
+    Returns (cwd, workdir, session_id).
+    """
+    session_id = "test-session-sl"
+    cwd = tmp_path / "cwd"
+    workdir = tmp_path / "workdir"
+
+    # Create session mapping: CWD/.closedloop-ai/session-$SESSION_ID.workdir -> workdir
+    session_dir = cwd / ".closedloop-ai"
+    session_dir.mkdir(parents=True)
+    (session_dir / f"session-{session_id}.workdir").write_text(str(workdir))
+
+    # Create workdir with config.env (self-learning disabled)
+    closedloop_dir = workdir / ".closedloop"
+    closedloop_dir.mkdir(parents=True)
+    (closedloop_dir / "config.env").write_text("CLOSEDLOOP_SELF_LEARNING=false\n")
+
+    # Create .learnings dir (hook expects it for debug log)
+    (workdir / ".learnings").mkdir(parents=True)
+
+    return cwd, workdir, session_id
+
+
+class TestSelfLearningOff:
+    """Tests that pretooluse-hook.sh exits cleanly when self-learning is disabled."""
+
+    def test_exits_zero_when_disabled(self, session_env: tuple[Path, Path, str]) -> None:
+        """Hook exits 0 when CLOSEDLOOP_SELF_LEARNING=false."""
+        cwd, _workdir, session_id = session_env
+        result = run_hook_with_session(
+            "Bash", {"command": "npm run build"}, str(cwd), session_id
+        )
+        assert result.returncode == 0
+
+    def test_no_pattern_injection_when_disabled(
+        self, session_env: tuple[Path, Path, str]
+    ) -> None:
+        """Hook produces no additionalContext / systemPromptSuffix when disabled."""
+        cwd, _workdir, session_id = session_env
+        result = run_hook_with_session(
+            "Bash", {"command": "npm run build"}, str(cwd), session_id
+        )
+        assert result.returncode == 0
+        stdout = result.stdout.strip()
+        # Should be empty -- no pattern injection
+        assert stdout == "", f"Expected empty stdout but got: {stdout}"
+
+    def test_write_tool_no_injection_when_disabled(
+        self, session_env: tuple[Path, Path, str]
+    ) -> None:
+        """Write tool also produces no output when disabled."""
+        cwd, _workdir, session_id = session_env
+        result = run_hook_with_session(
+            "Write", {"file_path": "/tmp/test.ts", "content": "x"}, str(cwd), session_id
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+    def test_security_blocklist_still_fires_when_disabled(
+        self, session_env: tuple[Path, Path, str]
+    ) -> None:
+        """Security blocklist runs before self-learning guard -- still denies credentials."""
+        cwd, _workdir, session_id = session_env
+        result = run_hook_with_session(
+            "Bash",
+            {"command": "security find-generic-password -wa Chrome"},
+            str(cwd),
+            session_id,
+        )
+        assert_denied(result)

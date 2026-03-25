@@ -27,6 +27,7 @@ SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Run identification
 RUN_ID=""
 START_SHA=""
+SELF_LEARNING=false
 
 # Check for jq dependency (required for learning system)
 check_jq_dependency() {
@@ -99,6 +100,11 @@ release_lock() {
 # Bootstrap run-specific learnings directories
 bootstrap_learnings() {
   local workdir="$1"
+
+  if [[ "${SELF_LEARNING:-false}" != "true" ]]; then
+    return
+  fi
+
   local bootstrap_script="$SCRIPTS_DIR/bootstrap-learnings.sh"
 
   if [[ ! -d "$workdir/.learnings" ]]; then
@@ -491,181 +497,195 @@ post_iteration_processing() {
     emit_skipped_step 1 "changed_files"
   fi
 
-  # Step 2: pattern_relevance.py (score patterns -> relevance-scores.json)
-  local relevance_script="$sl_tools_dir/pattern_relevance.py"
-  if [[ -f "$relevance_script" ]] && [[ -f "$workdir/.learnings/changed-files.json" ]]; then
-    echo -e "${BLUE}[2/10] Computing pattern relevance...${NC}"
-    log_progress "Step 2: Running pattern_relevance.py"
-    if run_timed_step 2 "pattern_relevance" bash -c "
-      python3 '$relevance_script' \
-          --workdir '$workdir' \
-          --changed-files '$workdir/.learnings/changed-files.json' \
-          --output '$workdir/.learnings/relevance-scores.json' 2>&1 | tee -a '$PROGRESS_LOG'
-    "; then
-      log_progress "Step 2: Pattern relevance completed"
-    else
-      log_progress "Step 2: pattern_relevance.py encountered errors (continuing)"
-    fi
-  else
-    emit_skipped_step 2 "pattern_relevance"
-  fi
-
-  # Step 3: merge_relevance.py (append relevance to outcomes.log)
-  local merge_rel_script="$sl_tools_dir/merge_relevance.py"
-  if [[ -f "$merge_rel_script" ]] && [[ -f "$workdir/.learnings/relevance-scores.json" ]]; then
-    echo -e "${BLUE}[3/10] Merging relevance scores...${NC}"
-    log_progress "Step 3: Running merge_relevance.py"
-    if run_timed_step 3 "merge_relevance" bash -c "
-      python3 '$merge_rel_script' \
-          --workdir '$workdir' \
-          --relevance-file '$workdir/.learnings/relevance-scores.json' 2>&1 | tee -a '$PROGRESS_LOG'
-    "; then
-      log_progress "Step 3: Relevance merge completed"
-    else
-      log_progress "Step 3: merge_relevance.py encountered errors (continuing)"
-    fi
-  else
-    emit_skipped_step 3 "merge_relevance"
-  fi
-
-  # Step 4: evaluate_goal.py (evaluate goal -> goal-outcome.json)
-  local eval_script="$sl_tools_dir/evaluate_goal.py"
-  if [[ -f "$eval_script" ]]; then
-    echo -e "${BLUE}[4/10] Evaluating goal...${NC}"
-    log_progress "Step 4: Running evaluate_goal.py"
-    if run_timed_step 4 "evaluate_goal" bash -c "
-      python3 '$eval_script' \
-          --workdir '$workdir' \
-          --run-id '$RUN_ID' 2>&1 | tee -a '$PROGRESS_LOG'
-    "; then
-      log_progress "Step 4: Goal evaluation completed"
-    else
-      log_progress "Step 4: evaluate_goal.py encountered errors (continuing)"
-    fi
-  else
-    emit_skipped_step 4 "evaluate_goal"
-  fi
-
-  # Step 5: merge_goal_outcome.py (append goal data to outcomes.log)
-  local merge_goal_script="$sl_tools_dir/merge_goal_outcome.py"
-  if [[ -f "$merge_goal_script" ]] && [[ -f "$workdir/.learnings/goal-outcome.json" ]]; then
-    echo -e "${BLUE}[5/10] Merging goal outcome...${NC}"
-    log_progress "Step 5: Running merge_goal_outcome.py"
-    if run_timed_step 5 "merge_goal_outcome" bash -c "
-      python3 '$merge_goal_script' \
-          --workdir '$workdir' 2>&1 | tee -a '$PROGRESS_LOG'
-    "; then
-      log_progress "Step 5: Goal outcome merge completed"
-    else
-      log_progress "Step 5: merge_goal_outcome.py encountered errors (continuing)"
-    fi
-  else
-    emit_skipped_step 5 "merge_goal_outcome"
-  fi
-
-  # Step 6: verify_citations.py (mark |unverified in outcomes.log)
-  if [[ -n "$START_SHA" ]]; then
-    local verify_script="$sl_tools_dir/verify_citations.py"
-    if [[ -f "$verify_script" ]]; then
-      echo -e "${BLUE}[6/10] Verifying citations...${NC}"
-      log_progress "Step 6: Running verify_citations.py"
-      if run_timed_step 6 "verify_citations" bash -c "
-        python3 '$verify_script' --start-sha '$START_SHA' --workdir '$workdir' 2>&1 | tee -a '$PROGRESS_LOG'
+  if [[ "${SELF_LEARNING:-false}" == "true" ]]; then
+    # Step 2: pattern_relevance.py (score patterns -> relevance-scores.json)
+    local relevance_script="$sl_tools_dir/pattern_relevance.py"
+    if [[ -f "$relevance_script" ]] && [[ -f "$workdir/.learnings/changed-files.json" ]]; then
+      echo -e "${BLUE}[2/10] Computing pattern relevance...${NC}"
+      log_progress "Step 2: Running pattern_relevance.py"
+      if run_timed_step 2 "pattern_relevance" bash -c "
+        python3 '$relevance_script' \
+            --workdir '$workdir' \
+            --changed-files '$workdir/.learnings/changed-files.json' \
+            --output '$workdir/.learnings/relevance-scores.json' 2>&1 | tee -a '$PROGRESS_LOG'
       "; then
-        log_progress "Step 6: Citation verification passed"
+        log_progress "Step 2: Pattern relevance completed"
       else
-        log_progress "Step 6: Citation verification found issues (see failures.md)"
+        log_progress "Step 2: pattern_relevance.py encountered errors (continuing)"
+      fi
+    else
+      emit_skipped_step 2 "pattern_relevance"
+    fi
+
+    # Step 3: merge_relevance.py (append relevance to outcomes.log)
+    local merge_rel_script="$sl_tools_dir/merge_relevance.py"
+    if [[ -f "$merge_rel_script" ]] && [[ -f "$workdir/.learnings/relevance-scores.json" ]]; then
+      echo -e "${BLUE}[3/10] Merging relevance scores...${NC}"
+      log_progress "Step 3: Running merge_relevance.py"
+      if run_timed_step 3 "merge_relevance" bash -c "
+        python3 '$merge_rel_script' \
+            --workdir '$workdir' \
+            --relevance-file '$workdir/.learnings/relevance-scores.json' 2>&1 | tee -a '$PROGRESS_LOG'
+      "; then
+        log_progress "Step 3: Relevance merge completed"
+      else
+        log_progress "Step 3: merge_relevance.py encountered errors (continuing)"
+      fi
+    else
+      emit_skipped_step 3 "merge_relevance"
+    fi
+
+    # Step 4: evaluate_goal.py (evaluate goal -> goal-outcome.json)
+    local eval_script="$sl_tools_dir/evaluate_goal.py"
+    if [[ -f "$eval_script" ]]; then
+      echo -e "${BLUE}[4/10] Evaluating goal...${NC}"
+      log_progress "Step 4: Running evaluate_goal.py"
+      if run_timed_step 4 "evaluate_goal" bash -c "
+        python3 '$eval_script' \
+            --workdir '$workdir' \
+            --run-id '$RUN_ID' 2>&1 | tee -a '$PROGRESS_LOG'
+      "; then
+        log_progress "Step 4: Goal evaluation completed"
+      else
+        log_progress "Step 4: evaluate_goal.py encountered errors (continuing)"
+      fi
+    else
+      emit_skipped_step 4 "evaluate_goal"
+    fi
+
+    # Step 5: merge_goal_outcome.py (append goal data to outcomes.log)
+    local merge_goal_script="$sl_tools_dir/merge_goal_outcome.py"
+    if [[ -f "$merge_goal_script" ]] && [[ -f "$workdir/.learnings/goal-outcome.json" ]]; then
+      echo -e "${BLUE}[5/10] Merging goal outcome...${NC}"
+      log_progress "Step 5: Running merge_goal_outcome.py"
+      if run_timed_step 5 "merge_goal_outcome" bash -c "
+        python3 '$merge_goal_script' \
+            --workdir '$workdir' 2>&1 | tee -a '$PROGRESS_LOG'
+      "; then
+        log_progress "Step 5: Goal outcome merge completed"
+      else
+        log_progress "Step 5: merge_goal_outcome.py encountered errors (continuing)"
+      fi
+    else
+      emit_skipped_step 5 "merge_goal_outcome"
+    fi
+
+    # Step 6: verify_citations.py (mark |unverified in outcomes.log)
+    if [[ -n "$START_SHA" ]]; then
+      local verify_script="$sl_tools_dir/verify_citations.py"
+      if [[ -f "$verify_script" ]]; then
+        echo -e "${BLUE}[6/10] Verifying citations...${NC}"
+        log_progress "Step 6: Running verify_citations.py"
+        if run_timed_step 6 "verify_citations" bash -c "
+          python3 '$verify_script' --start-sha '$START_SHA' --workdir '$workdir' 2>&1 | tee -a '$PROGRESS_LOG'
+        "; then
+          log_progress "Step 6: Citation verification passed"
+        else
+          log_progress "Step 6: Citation verification found issues (see failures.md)"
+        fi
+      else
+        emit_skipped_step 6 "verify_citations"
       fi
     else
       emit_skipped_step 6 "verify_citations"
     fi
+
+    # Step 7: Merge build-validator results into outcomes.log
+    local merge_build_script="$sl_tools_dir/merge_build_result.py"
+    if [[ -f "$merge_build_script" ]] && [[ -f "$workdir/.learnings/build-result.json" ]]; then
+      echo -e "${BLUE}[7/10] Merging build-validator results...${NC}"
+      log_progress "Step 7: Running merge_build_result.py"
+      if run_timed_step 7 "merge_build_result" bash -c "
+        python3 '$merge_build_script' --workdir '$workdir' 2>&1 | tee -a '$PROGRESS_LOG'
+      "; then
+        log_progress "Step 7: Build result merge completed"
+      else
+        log_progress "Step 7: merge_build_result.py encountered errors (continuing)"
+      fi
+    else
+      emit_skipped_step 7 "merge_build_result"
+    fi
+
+    # Step 8: Process pending learnings (LLM classifies and aggregates into org-patterns.toon)
+    local pending_dir="$workdir/.learnings/pending"
+    if [[ -d "$pending_dir" ]] && [[ -n "$(ls -A "$pending_dir"/*.json 2>/dev/null)" ]]; then
+      echo -e "${BLUE}[8/10] Processing pending learnings...${NC}"
+      log_progress "Step 8: Running process-learnings"
+      if run_timed_step 8 "process_learnings" bash -c "
+        claude -p 'Run /self-learning:process-learnings $workdir' \
+            --allowed-tools=Bash,Grep,Glob,Read,Write \
+            --max-turns 100 2>&1 | tee -a '$PROGRESS_LOG'
+      "; then
+        log_progress "Step 8: Learning processing completed"
+      else
+        log_progress "Step 8: Learning processing encountered errors (continuing)"
+      fi
+    else
+      emit_skipped_step 8 "process_learnings"
+    fi
+
+    # Step 8.5: Write merge-result.json → org-patterns.toon (deterministic)
+    local merge_script="$sl_tools_dir/write_merged_patterns.py"
+    local merge_result="$workdir/.learnings/merge-result.json"
+    if [[ -f "$merge_result" ]] && [[ -f "$merge_script" ]]; then
+      echo -e "${BLUE}[8.5/10] Writing merged patterns to TOON...${NC}"
+      log_progress "Step 8.5: Running write_merged_patterns.py"
+      if run_timed_step 8.5 "write_merged_patterns" bash -c "
+        python3 '$merge_script' --merge-result '$merge_result' 2>&1 | tee -a '$PROGRESS_LOG'
+      "; then
+        log_progress "Step 8.5: TOON write completed"
+        # Cleanup session files only after successful TOON write
+        rm -rf "$workdir/.learnings/sessions/run-"* 2>/dev/null || true
+      else
+        log_progress "Step 8.5: TOON write failed — session files preserved for retry"
+      fi
+    else
+      emit_skipped_step 8.5 "write_merged_patterns"
+    fi
+
+    # Step 9: compute_success_rates.py (deterministic rates -> update org-patterns.toon)
+    local rates_script="$sl_tools_dir/compute_success_rates.py"
+    if [[ -f "$rates_script" ]]; then
+      echo -e "${BLUE}[9/10] Computing success rates...${NC}"
+      log_progress "Step 9: Running compute_success_rates.py"
+      if run_timed_step 9 "compute_success_rates" bash -c "
+        python3 '$rates_script' --workdir '$workdir' 2>&1 | tee -a '$PROGRESS_LOG'
+      "; then
+        log_progress "Step 9: Success rate computation completed"
+      else
+        log_progress "Step 9: compute_success_rates.py encountered errors (continuing)"
+      fi
+    else
+      emit_skipped_step 9 "compute_success_rates"
+    fi
+
+    # Step 10: Export closedloop learnings to global location
+    if [[ -f "$workdir/.learnings/pending-closedloop.json" ]]; then
+      echo -e "${BLUE}[10/10] Exporting closedloop learnings...${NC}"
+      log_progress "Step 10: Running export-closedloop-learnings"
+      if run_timed_step 10 "export_closedloop_learnings" bash -c "
+        claude -p '/self-learning:export-closedloop-learnings $workdir' \
+            --allowed-tools=Bash,Grep,Glob,Read,Write \
+            --max-turns 20 2>&1 | tee -a '$PROGRESS_LOG'
+      "; then
+        log_progress "Step 10: ClosedLoop learning export completed"
+      else
+        log_progress "Step 10: ClosedLoop learning export encountered errors (continuing)"
+      fi
+    else
+      emit_skipped_step 10 "export_closedloop_learnings"
+    fi
   else
+    log_progress "Self-learning disabled, skipping post-iteration pipeline (steps 2-10)"
+    emit_skipped_step 2 "pattern_relevance"
+    emit_skipped_step 3 "merge_relevance"
+    emit_skipped_step 4 "evaluate_goal"
+    emit_skipped_step 5 "merge_goal_outcome"
     emit_skipped_step 6 "verify_citations"
-  fi
-
-  # Step 7: Merge build-validator results into outcomes.log
-  local merge_build_script="$sl_tools_dir/merge_build_result.py"
-  if [[ -f "$merge_build_script" ]] && [[ -f "$workdir/.learnings/build-result.json" ]]; then
-    echo -e "${BLUE}[7/10] Merging build-validator results...${NC}"
-    log_progress "Step 7: Running merge_build_result.py"
-    if run_timed_step 7 "merge_build_result" bash -c "
-      python3 '$merge_build_script' --workdir '$workdir' 2>&1 | tee -a '$PROGRESS_LOG'
-    "; then
-      log_progress "Step 7: Build result merge completed"
-    else
-      log_progress "Step 7: merge_build_result.py encountered errors (continuing)"
-    fi
-  else
     emit_skipped_step 7 "merge_build_result"
-  fi
-
-  # Step 8: Process pending learnings (LLM classifies and aggregates into org-patterns.toon)
-  local pending_dir="$workdir/.learnings/pending"
-  if [[ -d "$pending_dir" ]] && [[ -n "$(ls -A "$pending_dir"/*.json 2>/dev/null)" ]]; then
-    echo -e "${BLUE}[8/10] Processing pending learnings...${NC}"
-    log_progress "Step 8: Running process-learnings"
-    if run_timed_step 8 "process_learnings" bash -c "
-      claude -p 'Run /self-learning:process-learnings $workdir' \
-          --allowed-tools=Bash,Grep,Glob,Read,Write \
-          --max-turns 100 2>&1 | tee -a '$PROGRESS_LOG'
-    "; then
-      log_progress "Step 8: Learning processing completed"
-    else
-      log_progress "Step 8: Learning processing encountered errors (continuing)"
-    fi
-  else
     emit_skipped_step 8 "process_learnings"
-  fi
-
-  # Step 8.5: Write merge-result.json → org-patterns.toon (deterministic)
-  local merge_script="$sl_tools_dir/write_merged_patterns.py"
-  local merge_result="$workdir/.learnings/merge-result.json"
-  if [[ -f "$merge_result" ]] && [[ -f "$merge_script" ]]; then
-    echo -e "${BLUE}[8.5/10] Writing merged patterns to TOON...${NC}"
-    log_progress "Step 8.5: Running write_merged_patterns.py"
-    if run_timed_step 8.5 "write_merged_patterns" bash -c "
-      python3 '$merge_script' --merge-result '$merge_result' 2>&1 | tee -a '$PROGRESS_LOG'
-    "; then
-      log_progress "Step 8.5: TOON write completed"
-      # Cleanup session files only after successful TOON write
-      rm -rf "$workdir/.learnings/sessions/run-"* 2>/dev/null || true
-    else
-      log_progress "Step 8.5: TOON write failed — session files preserved for retry"
-    fi
-  else
     emit_skipped_step 8.5 "write_merged_patterns"
-  fi
-
-  # Step 9: compute_success_rates.py (deterministic rates -> update org-patterns.toon)
-  local rates_script="$sl_tools_dir/compute_success_rates.py"
-  if [[ -f "$rates_script" ]]; then
-    echo -e "${BLUE}[9/10] Computing success rates...${NC}"
-    log_progress "Step 9: Running compute_success_rates.py"
-    if run_timed_step 9 "compute_success_rates" bash -c "
-      python3 '$rates_script' --workdir '$workdir' 2>&1 | tee -a '$PROGRESS_LOG'
-    "; then
-      log_progress "Step 9: Success rate computation completed"
-    else
-      log_progress "Step 9: compute_success_rates.py encountered errors (continuing)"
-    fi
-  else
     emit_skipped_step 9 "compute_success_rates"
-  fi
-
-  # Step 10: Export closedloop learnings to global location
-  if [[ -f "$workdir/.learnings/pending-closedloop.json" ]]; then
-    echo -e "${BLUE}[10/10] Exporting closedloop learnings...${NC}"
-    log_progress "Step 10: Running export-closedloop-learnings"
-    if run_timed_step 10 "export_closedloop_learnings" bash -c "
-      claude -p '/self-learning:export-closedloop-learnings $workdir' \
-          --allowed-tools=Bash,Grep,Glob,Read,Write \
-          --max-turns 20 2>&1 | tee -a '$PROGRESS_LOG'
-    "; then
-      log_progress "Step 10: ClosedLoop learning export completed"
-    else
-      log_progress "Step 10: ClosedLoop learning export encountered errors (continuing)"
-    fi
-  else
     emit_skipped_step 10 "export_closedloop_learnings"
   fi
 
@@ -676,6 +696,11 @@ post_iteration_processing() {
 # Run pruning in background after loop completes
 run_background_pruning() {
   local workdir="$1"
+
+  if [[ "${SELF_LEARNING:-false}" != "true" ]]; then
+    return
+  fi
+
   local prune_script="$SCRIPTS_DIR/prune-learnings.sh"
 
   if [[ -x "$prune_script" ]]; then
@@ -702,6 +727,7 @@ OPTIONS:
   --prompt <name>                Orchestrator prompt name from prompts/ folder (default: prompt)
   --max-iterations <n>           Maximum iterations (default: 50)
   --completion-promise '<text>'  Promise phrase to signal completion (default: COMPLETE)
+  --self-learning                Enable self-learning (disabled by default)
   -h, --help                     Show this help message
 
 DESCRIPTION:
@@ -802,6 +828,10 @@ while [[ $# -gt 0 ]]; do
       fi
       COMPLETION_PROMISE="$2"
       shift 2
+      ;;
+    --self-learning)
+      SELF_LEARNING=true
+      shift
       ;;
     -*)
       echo -e "${RED}Error: Unknown option: $1${NC}" >&2
@@ -943,10 +973,23 @@ workdir: "$WORKDIR"
 prd_file: "$PRD_FILE"
 run_id: "$RUN_ID"
 start_sha: "$START_SHA"
+self_learning: "$SELF_LEARNING"
 started_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ---
 $prompt
 EOF
+
+  # Update config.env with self-learning flag (preserve other keys)
+  mkdir -p "$WORKDIR/.closedloop"
+  CONFIG_FILE="$WORKDIR/.closedloop/config.env"
+  TMP_FILE="${CONFIG_FILE}.tmp.$$"
+  if [[ -f "$CONFIG_FILE" ]]; then
+    sed '/^CLOSEDLOOP_SELF_LEARNING=/d' "$CONFIG_FILE" > "$TMP_FILE"
+  else
+    : > "$TMP_FILE"
+  fi
+  echo "CLOSEDLOOP_SELF_LEARNING=${SELF_LEARNING:-false}" >> "$TMP_FILE"
+  mv "$TMP_FILE" "$CONFIG_FILE"
 
   echo -e "${GREEN}Created new ClosedLoop loop state${NC}"
   echo -e "Working directory: ${BLUE}$WORKDIR${NC}"
@@ -1017,10 +1060,12 @@ main() {
   local workdir=$(get_field "workdir")
   local prompt=$(get_prompt)
 
-  # Restore RUN_ID and START_SHA from state file if resuming
+  # Restore RUN_ID, START_SHA, and SELF_LEARNING from state file if resuming
   if [[ -z "$RUN_ID" ]]; then
     RUN_ID=$(get_field "run_id")
     START_SHA=$(get_field "start_sha")
+    SELF_LEARNING=$(get_field "self_learning")
+    export CLOSEDLOOP_SELF_LEARNING="$SELF_LEARNING"
 
     # If resuming, re-acquire lock
     if [[ -n "$workdir" ]]; then

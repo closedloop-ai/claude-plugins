@@ -68,15 +68,15 @@ All commits MUST follow the conventions in `CONTRIBUTING.md`. Specifically:
 - Valid types: `feat`, `fix`, `docs`, `refactor`
 - Valid scopes: `bootstrap`, `code`, `code-review`, `judges`, `platform`, `self-learning`
 - Examples: `feat(code): add visual-qa-subagent`, `fix(platform): correct tool list`
-- When modifying files under `plugins/`, also update the plugin version in `plugin.json` (semver) and `CHANGELOG.md`
+- When modifying files under `plugins/`, also update the plugin version in `plugin.json` (semver) and the root `CHANGELOG.md`
 
 ### Versioning
 
 Semver in each plugin's `plugin.json`. PATCH for bug fixes/prompt wording, MINOR for new agents/skills/commands, MAJOR for breaking changes to orchestration/hook API/skill interfaces.
 
-### Pre-push Hook
+### Pre-push Hook and CHANGELOG
 
-The `.githooks/pre-push` hook blocks pushes that modify files under `plugins/` without updating a `CHANGELOG.md` in the affected plugin directory.
+The `.githooks/pre-push` hook blocks pushes that modify files under `plugins/` without a `CHANGELOG.md` update. The CHANGELOG lives at the **repo root** (`CHANGELOG.md`), NOT inside individual plugin directories. Never create `plugins/<name>/CHANGELOG.md`.
 
 ### Branching
 

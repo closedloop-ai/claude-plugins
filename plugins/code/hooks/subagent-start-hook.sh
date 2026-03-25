@@ -169,6 +169,14 @@ export CLAUDE_PLUGIN_ROOT=\"$PLUGIN_ROOT\"
 </closedloop-environment>"
 SUFFIX_PARTS="$ENV_INFO"
 
+# Skip learning injection if self-learning is disabled (agent-type tracking above is unconditional)
+if [[ "${CLOSEDLOOP_SELF_LEARNING:-false}" != "true" ]]; then
+    SUFFIX_ESCAPED=$(echo "$SUFFIX_PARTS" | jq -Rs '.')
+    echo "$(date): Self-learning disabled, skipping learning injection" >> "$DEBUG_LOG"
+    echo "{\"hookSpecificOutput\": {\"additionalContext\": $SUFFIX_ESCAPED}}"
+    exit 0
+fi
+
 # Derive agent name for learnings filtering
 # SubagentStart input provides agent_type (e.g., "code:plan-writer")
 # but not agentName. Use the short name already derived above.

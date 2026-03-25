@@ -134,6 +134,15 @@ mkdir -p "$CLOSEDLOOP_WORKDIR/.learnings"
 DEBUG_LOG="$CLOSEDLOOP_WORKDIR/.learnings/pretooluse-hook-debug.log"
 echo "$(date): PreToolUse hook started, tool=$TOOL_NAME" >> "$DEBUG_LOG"
 
+# Source closedloop config and skip learning injection if disabled
+CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/.closedloop/config.env"
+if [[ -f "$CLOSEDLOOP_CONFIG" ]]; then
+    source "$CLOSEDLOOP_CONFIG"
+fi
+if [[ "${CLOSEDLOOP_SELF_LEARNING:-false}" != "true" ]]; then
+    exit 0
+fi
+
 # Path to org-patterns.toon (fall back to legacy location during migration)
 PATTERNS_FILE="$HOME/.closedloop-ai/learnings/org-patterns.toon"
 if [[ ! -f "$PATTERNS_FILE" ]]; then

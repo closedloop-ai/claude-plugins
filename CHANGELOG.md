@@ -4,7 +4,22 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [Releases]
+
+### code v1.5.0
+
+### Added
+- `--self-learning` opt-in flag for `run-loop.sh` -- self-learning is now disabled by default
+- `CLOSEDLOOP_SELF_LEARNING` config propagation via `config.env` and state frontmatter
+- Self-learning guard in `subagent-start-hook.sh` to skip learning injection when disabled
+- Self-learning guard in `subagent-stop-hook.sh` to skip entire learning region when disabled
+- Self-learning guard in `pretooluse-hook.sh` to skip tool-specific pattern injection when disabled
+
+### Changed
+- `post_iteration_processing()` skips steps 2-10 when self-learning is off; step 1 (changed-files.json) and step 11 (judges) always run
+- `bootstrap_learnings()` skips `.learnings/` directory creation when self-learning is off
+- `run_background_pruning()` skips pruning when self-learning is off
+- Resume restores `SELF_LEARNING` from state frontmatter and re-exports to hooks
 
 ### code v1.4.1
 
