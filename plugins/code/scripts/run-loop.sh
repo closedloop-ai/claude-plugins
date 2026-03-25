@@ -401,6 +401,7 @@ has_code_changes() {
 # and there are implementation changes. Reports skip reasons.
 run_judges_if_needed() {
   local workdir="$1"
+  local IMPORTED_PLAN_MARKER="$workdir/.closedloop/imported-plan"
   if [[ ! -f "$workdir/plan.json" ]]; then
     echo -e "${BLUE}[Judges] Skipping: plan.json missing${NC}"
     log_progress "Judges skipped: plan.json missing"
@@ -408,23 +409,28 @@ run_judges_if_needed() {
     return 0
   fi
   if [[ ! -f "$workdir/judges.json" ]]; then
-    if [[ ! -f "$workdir/prd.md" ]]; then
+    if [[ -f "$IMPORTED_PLAN_MARKER" ]]; then
+      echo -e "${BLUE}[Judges] Skipping plan judges: imported-plan marker found${NC}"
+      log_progress "Judges skipped: imported-plan marker"
+      emit_skipped_step "$CLOSEDLOOP_JUDGES_STEP" "plan_judges"
+    elif [[ ! -f "$workdir/prd.md" ]]; then
       echo -e "${BLUE}[Judges] Skipping: prd.md missing (required for plan judges)${NC}"
       log_progress "Judges skipped: prd.md missing"
       emit_skipped_step "$CLOSEDLOOP_JUDGES_STEP" "plan_judges"
       return 0
+    else
+      echo -e "${BLUE}[Judges] Running plan judges (plan.json exists, judges.json missing)...${NC}"
+      log_progress "Running plan judges"
+      run_timed_step "$CLOSEDLOOP_JUDGES_STEP" "plan_judges" bash -c "
+        CLOSEDLOOP_WORKDIR='$workdir' \
+        CLOSEDLOOP_PARENT_STEP='$CLOSEDLOOP_JUDGES_STEP' \
+        CLOSEDLOOP_PARENT_STEP_NAME='plan_judges' \
+        claude -p 'Activate judges:run-judges skill. --workdir $workdir --artifact-type plan. Write judges.json to $workdir.' \
+          --allowed-tools=Bash,Grep,Glob,Read,Write,Task,Skill,TodoWrite \
+          --max-turns 150 2>&1 | tee -a '$PROGRESS_LOG'
+      " || log_progress "Plan judges encountered errors (continuing)"
+      return 0
     fi
-    echo -e "${BLUE}[Judges] Running plan judges (plan.json exists, judges.json missing)...${NC}"
-    log_progress "Running plan judges"
-    run_timed_step "$CLOSEDLOOP_JUDGES_STEP" "plan_judges" bash -c "
-      CLOSEDLOOP_WORKDIR='$workdir' \
-      CLOSEDLOOP_PARENT_STEP='$CLOSEDLOOP_JUDGES_STEP' \
-      CLOSEDLOOP_PARENT_STEP_NAME='plan_judges' \
-      claude -p 'Activate judges:run-judges skill. --workdir $workdir --artifact-type plan. Write judges.json to $workdir.' \
-        --allowed-tools=Bash,Grep,Glob,Read,Write,Task,Skill,TodoWrite \
-        --max-turns 150 2>&1 | tee -a '$PROGRESS_LOG'
-    " || log_progress "Plan judges encountered errors (continuing)"
-    return 0
   fi
   if [[ ! -f "$workdir/.learnings/changed-files.json" ]]; then
     echo -e "${BLUE}[Judges] Skipping: changed-files.json missing (cannot detect code changes)${NC}"

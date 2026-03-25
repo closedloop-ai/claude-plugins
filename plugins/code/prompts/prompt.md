@@ -164,30 +164,38 @@ Mark each todo as `in_progress` when starting, `completed` when done. NEVER skip
 
 Here are the key phases you must complete:
 
-**PHASE 0.9: PRE-EXPLORATION** (only if plan.json does NOT exist)
+**PHASE 0.9: PRE-EXPLORATION** (only if plan.json does NOT exist and no plan file was supplied)
 
 - **Update state.json** with phase tracking (see State Tracking table above)
 - Check if $CLOSEDLOOP_WORKDIR/plan.json exists using: `ls -la $CLOSEDLOOP_WORKDIR/plan.json 2>/dev/null`
 - If plan.json EXISTS: skip Phase 0.9 entirely, proceed to Phase 1
 - If plan.json does NOT exist:
-  1. Launch @code:pre-explorer with prompt:
-     "WORKDIR=$CLOSEDLOOP_WORKDIR. Explore the codebase and prepare context for plan drafting.
-      Read the PRD in $CLOSEDLOOP_WORKDIR, scan the codebase for relevant files and patterns.
-      Write: requirements-extract.json, code-map.json, investigation-log.md to $CLOSEDLOOP_WORKDIR."
-  2. Proceed to Phase 1
+  - **If `CLOSEDLOOP_PLAN_FILE` is set:** skip Phase 0.9 entirely (no exploration needed when plan supplied), proceed to Phase 1
+  - **If `CLOSEDLOOP_PLAN_FILE` is NOT set:**
+    1. Launch @code:pre-explorer with prompt:
+       "WORKDIR=$CLOSEDLOOP_WORKDIR. Explore the codebase and prepare context for plan drafting.
+        Read the PRD in $CLOSEDLOOP_WORKDIR, scan the codebase for relevant files and patterns.
+        Write: requirements-extract.json, code-map.json, investigation-log.md to $CLOSEDLOOP_WORKDIR."
+    2. Proceed to Phase 1
 
 **PHASE 1: PLANNING**
 
 - **Update state.json** with phase tracking (see State Tracking table above)
-- Track `plan_was_created = false` at the start
+- Track `plan_was_created = false` and `plan_was_imported = false` at the start
 - Check if $CLOSEDLOOP_WORKDIR/plan.json exists using: `ls -la $CLOSEDLOOP_WORKDIR/plan.json 2>/dev/null`
 - If $CLOSEDLOOP_WORKDIR/plan.json does NOT exist (ls returns error):
-  1. Set `plan_was_created = true`
-  2. Launch @code:plan-draft-writer with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. Create plan at $CLOSEDLOOP_WORKDIR/plan.json. Pre-computed context may be available — check for requirements-extract.json, code-map.json, and investigation-log.md in $CLOSEDLOOP_WORKDIR before starting codebase exploration."
-  3. The agent will iterate automatically until validation passes (max 10 iterations)
-  4. Validation checks: PRD coverage, task format, architecture review (no unnecessary new files), completeness
-  5. Once the agent outputs `<promise>PLAN_VALIDATED</promise>`, **immediately activate `code:plan-validate` skill** (runs Python script against $CLOSEDLOOP_WORKDIR)
-  6. If script returns `VALID`: additionally launch @code:plan-validator with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. SEMANTIC ONLY: Check semantic consistency of $CLOSEDLOOP_WORKDIR/plan.json — verify storage/query alignment and task/architecture decision consistency. Skip structural validation (already passed)."
+  - **If `CLOSEDLOOP_PLAN_FILE` is set:**
+    1. Set `plan_was_imported = true`
+    2. Launch @code:plan-importer with prompt: "WORKDIR=<literal-path>. Convert the markdown plan at $CLOSEDLOOP_PLAN_FILE into plan.json and plan.md."
+    3. After plan-importer completes, activate `code:plan-validate` skill (runs Python script against $CLOSEDLOOP_WORKDIR)
+    4. Proceed directly to Phase 1.1 (do NOT launch @code:plan-draft-writer)
+  - **If `CLOSEDLOOP_PLAN_FILE` is NOT set:**
+    1. Set `plan_was_created = true`
+    2. Launch @code:plan-draft-writer with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. Create plan at $CLOSEDLOOP_WORKDIR/plan.json. Pre-computed context may be available — check for requirements-extract.json, code-map.json, and investigation-log.md in $CLOSEDLOOP_WORKDIR before starting codebase exploration."
+    3. The agent will iterate automatically until validation passes (max 10 iterations)
+    4. Validation checks: PRD coverage, task format, architecture review (no unnecessary new files), completeness
+    5. Once the agent outputs `<promise>PLAN_VALIDATED</promise>`, **immediately activate `code:plan-validate` skill** (runs Python script against $CLOSEDLOOP_WORKDIR)
+    6. If script returns `VALID`: additionally launch @code:plan-validator with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. SEMANTIC ONLY: Check semantic consistency of $CLOSEDLOOP_WORKDIR/plan.json — verify storage/query alignment and task/architecture decision consistency. Skip structural validation (already passed)."
 - If $CLOSEDLOOP_WORKDIR/plan.json EXISTS (ls succeeds):
   1. Activate `code:plan-validate` skill (runs Python script against $CLOSEDLOOP_WORKDIR)
   2. If status is `EMPTY_FILE` or `FORMAT_ISSUES`:
@@ -198,6 +206,7 @@ Here are the key phases you must complete:
 
 **PHASE 1.1: PLAN REVIEW CHECKPOINT**
 
+- **If `plan_was_imported = true`**: Skip the HARD STOP entirely, proceed directly to Phase 1.2 (plan was supplied externally and pre-validated; no user review gate needed).
 - **If `plan_was_created = true`**: Run the HARD STOP sequence below (plan just created, needs review).
 - **If `plan_was_created = false`**: Proceed directly to Phase 1.2 (resumed after user approval; plan and code judges run from the external loop, not here).
 
@@ -235,6 +244,7 @@ Here are the key phases you must complete:
 
 **PHASE 1.3: SIMPLE MODE EVALUATION**
 
+- **If `plan_was_imported = true`:** Mark phases 1.3, 1.4, 1.4.1, 1.4.2, 1.4.3, 2.5, 2.6, 2.7 as `completed` in TodoWrite, then proceed directly to Phase 3. Skip all steps below.
 - **Update state.json** with phase tracking (see State Tracking table above)
 - **Cache check first:** Activate the `judges:eval-cache` skill with `WORKDIR=$CLOSEDLOOP_WORKDIR`. Parse the output:
   - If `EVAL_CACHE_HIT`: Use the cached `simple_mode` and `selected_critics` values. Skip launching the evaluator.

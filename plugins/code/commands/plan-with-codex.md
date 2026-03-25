@@ -263,7 +263,6 @@ Bash("git rev-parse HEAD")  # store result as {git-head}
 Agent(
   subagent_type="code:feedback-explorer",
   name="feedback-explorer",
-  model="haiku",
   mode="bypassPermissions",
   run_in_background=false,
   description="Pre-fetch context for round {N} feedback",

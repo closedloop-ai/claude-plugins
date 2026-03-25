@@ -58,6 +58,10 @@ MANUAL_TASK_RE = re.compile(r"^\s*- \[ \] \*\*T-(\d+\.\d+)\*\* \[MANUAL\]:")
 OPEN_Q_RE = re.compile(r"^\s*- \[ \] (Q-\d{3}):")
 # Answered question line
 ANSWERED_Q_RE = re.compile(r"^\s*- \[x\] (Q-\d{3}):")
+# AC table row pattern
+AC_TABLE_ROW_RE = re.compile(r"\| (AC-\d{3}) \|")
+# Gap content pattern
+GAP_CONTENT_RE = re.compile(r"\*\*(GAP-\d{3})\*\*")
 # Task ID pattern
 TASK_ID_RE = re.compile(r"^T-\d+\.\d+$")
 # AC ID pattern
@@ -261,6 +265,22 @@ def validate_sync(data: dict, content: str) -> list[str]:
     # answeredQuestions sync
     for qid in json_answered_q - content_answered_q:
         issues.append(f"Sync error: answeredQuestions contains {qid} but no matching line in content")
+
+    # AC sync
+    content_ac_ids = set(AC_TABLE_ROW_RE.findall(content))
+    json_ac_ids = {ac["id"] for ac in data.get("acceptanceCriteria", []) if isinstance(ac, dict)}
+    for acid in json_ac_ids - content_ac_ids:
+        issues.append(f"Sync error: acceptanceCriteria contains {acid} but no matching row in content")
+    for acid in content_ac_ids - json_ac_ids:
+        issues.append(f"Sync error: content has AC {acid} but not in acceptanceCriteria array")
+
+    # Gap sync
+    content_gap_ids = set(GAP_CONTENT_RE.findall(content))
+    json_gap_ids = {g["id"] for g in data.get("gaps", []) if isinstance(g, dict)}
+    for gid in json_gap_ids - content_gap_ids:
+        issues.append(f"Sync error: gaps contains {gid} but no matching entry in content")
+    for gid in content_gap_ids - json_gap_ids:
+        issues.append(f"Sync error: content has gap {gid} but not in gaps array")
 
     return issues
 

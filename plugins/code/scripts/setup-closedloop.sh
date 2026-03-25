@@ -1,6 +1,6 @@
 #!/bin/bash
 # Setup ClosedLoop config for hooks to source
-# Usage: setup-closedloop.sh [workdir] [--prd <file>] [--max-iterations <n>] [--prompt <name>]
+# Usage: setup-closedloop.sh [workdir] [--prd <file>] [--plan <file>] [--max-iterations <n>] [--prompt <name>]
 
 set -e
 
@@ -13,6 +13,7 @@ PLUGIN_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Parse arguments — collect positional args into an array for classification after parsing
 PRD_FILE=""
+PLAN_FILE=""
 MAX_ITERATIONS=10
 PROMPT_NAME=""
 POSITIONAL_ARGS=()
@@ -21,6 +22,10 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --prd)
             PRD_FILE="$2"
+            shift 2
+            ;;
+        --plan)
+            PLAN_FILE="$2"
             shift 2
             ;;
         --max-iterations)
@@ -58,7 +63,7 @@ WORKDIR="${WORKDIR:-.}"
 if [[ ! "$WORKDIR" = /* ]]; then
     WORKDIR="$PWD/$WORKDIR"
 fi
-if [[ -z "$PRD_FILE" ]]; then
+if [[ -z "$PLAN_FILE" ]] && [[ -z "$PRD_FILE" ]]; then
     # Try common patterns in order of preference
     for pattern in "prd.md" "prd.pdf" "requirements.md" "requirements.txt" "ticket.md"; do
         if [[ -f "$WORKDIR/$pattern" ]]; then
@@ -73,6 +78,23 @@ if [[ -z "$PRD_FILE" ]]; then
         if [[ -n "$PRD_FILE" ]]; then
             echo "$(date): Discovered PRD file (fallback): $PRD_FILE" >> "$DEBUG_LOG"
         fi
+    fi
+fi
+
+# Mutual exclusion: --plan and --prd cannot both be set
+if [[ -n "$PLAN_FILE" ]] && [[ -n "$PRD_FILE" ]]; then
+    echo "Error: --plan and --prd are mutually exclusive; specify only one" >&2
+    exit 1
+fi
+
+# Resolve PLAN_FILE to absolute path and validate it exists
+if [[ -n "$PLAN_FILE" ]]; then
+    if [[ ! "$PLAN_FILE" = /* ]]; then
+        PLAN_FILE="$PWD/$PLAN_FILE"
+    fi
+    if [[ ! -f "$PLAN_FILE" ]]; then
+        echo "Error: plan file not found: $PLAN_FILE" >&2
+        exit 1
     fi
 fi
 
@@ -135,6 +157,7 @@ mkdir -p "$WORKDIR/.closedloop"
 cat > "$WORKDIR/.closedloop/config.env" << EOF
 CLOSEDLOOP_WORKDIR="$WORKDIR"
 CLOSEDLOOP_PRD_FILE="$PRD_FILE"
+CLOSEDLOOP_PLAN_FILE="$PLAN_FILE"
 CLOSEDLOOP_MAX_ITERATIONS="$MAX_ITERATIONS"
 CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
 CLOSEDLOOP_PROMPT_FILE="$CLOSEDLOOP_PROMPT_FILE"
