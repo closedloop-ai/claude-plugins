@@ -144,6 +144,9 @@ Validates `plan.json` structure: JSON parsing, schema validation, task checkbox 
 **`plan-evaluator`** (model: sonnet)
 Evaluates whether a plan qualifies for **simple mode** (skipping critics, cross-repo coordination, and finalization) using six threshold signals: PRD word count, acceptance criteria count, task count, open question count, forbidden complexity terms, and cross-repo keywords. If not simple, selects which critic agents to run based on `critic-gates.json` configuration.
 
+**`plan-importer`** (model: sonnet)
+Imports an external markdown plan into the ClosedLoop `plan.json` format. Reads a source markdown plan, normalizes headings and task lines to ClosedLoop conventions, derives acceptance criteria, populates all JSON arrays, writes `plan.json` and `plan.md`, validates the result via `validate_plan.py`, and writes a completion marker. Runs as a loop agent with up to 3 validation retries.
+
 **`answered-questions-subagent`** (model: haiku)
 Processes the `answeredQuestions` array from `plan.json` and incorporates answers into the relevant task descriptions. Removes processed questions from both the structured array and the markdown content field.
 
