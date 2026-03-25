@@ -15,6 +15,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - Refactored `run-loop.sh` workdir references to use a single `effective_workdir` local variable instead of repeated `${workdir:-$WORKDIR}` expansions
 
+### judges v1.3.2
+
+#### Added
+- Agents snapshot pre-step in `run-judges` skill — creates `$CLOSEDLOOP_WORKDIR/agents-snapshot/` with all judge agent `.md` files and a `manifest.json` before judge execution begins (skipped if snapshot already exists)
+- New `ensure_agents_snapshot.sh` script in `run-judges` skill scripts
+
+#### Changed
+- Renamed plan evaluation output from `judges.json` to `plan-judges.json` for consistency with `code-judges.json` and `prd-judges.json`
+- Updated `validate_judge_report.py` default filename for plan category to `plan-judges.json`
+- Legacy `-judges` report_id suffix remains accepted for backward compatibility
+
 ### code v1.4.1
 
 #### Added

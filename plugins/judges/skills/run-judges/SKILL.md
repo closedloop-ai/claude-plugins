@@ -1,6 +1,6 @@
 ---
 name: run-judges
-description: Orchestrate parallel judge agent execution, aggregate CaseScore results, write judges.json, code-judges.json, or prd-judges.json, and validate output. Supports evaluating implementation plans (16 judges), code artifacts (11 judges), or PRD artifacts (4 judges) via --artifact-type parameter.
+description: Orchestrate parallel judge agent execution, aggregate CaseScore results, write plan-judges.json, code-judges.json, or prd-judges.json, and validate output. Supports evaluating implementation plans (16 judges), code artifacts (11 judges), or PRD artifacts (4 judges) via --artifact-type parameter.
 context: fork
 ---
 
@@ -8,7 +8,7 @@ context: fork
 
 ## Purpose
 
-Execute specialized judge agents in parallel to evaluate implementation plan quality (16 judges), code quality (11 judges), or PRD quality (4 judges). Aggregates results into `$CLOSEDLOOP_WORKDIR/judges.json` (plan), `$CLOSEDLOOP_WORKDIR/code-judges.json` (code), or `$CLOSEDLOOP_WORKDIR/prd-judges.json` (prd) with validated output format.
+Execute specialized judge agents in parallel to evaluate implementation plan quality (16 judges), code quality (11 judges), or PRD quality (4 judges). Aggregates results into `$CLOSEDLOOP_WORKDIR/plan-judges.json` (plan), `$CLOSEDLOOP_WORKDIR/code-judges.json` (code), or `$CLOSEDLOOP_WORKDIR/prd-judges.json` (prd) with validated output format.
 
 ## Parameters
 
@@ -16,11 +16,11 @@ Execute specialized judge agents in parallel to evaluate implementation plan qua
 
 - Resolved in order: `--workdir` argument → `$CLOSEDLOOP_WORKDIR` environment variable → `.closedloop-ai/judges` (default, relative to current working directory)
 - The directory is created automatically if it does not exist
-- All output files (`judges.json`, `code-judges.json`, `prd-judges.json`, `judge-input.json`, `perf.jsonl`, etc.) are written to this resolved directory
+- All output files (`plan-judges.json`, `code-judges.json`, `prd-judges.json`, `judge-input.json`, `perf.jsonl`, etc.) are written to this resolved directory
 
 **--artifact-type**: Artifact category to evaluate (plan | code | prd), default: plan
 
-- **plan** (default): Evaluate implementation plan with 16 judges, 4 batches, output to judges.json
+- **plan** (default): Evaluate implementation plan with 16 judges, 4 batches, output to plan-judges.json
 - **code**: Evaluate implemented code with 11 judges, 3 batches, output to code-judges.json
 - **prd**: Evaluate PRD document with 4 judges, single parallel batch, output to prd-judges.json
 
@@ -41,7 +41,7 @@ You are orchestrating quality evaluation for a ClosedLoop artifact (implementati
 2. Build `judge-input.json` with plan task/context mapping
 3. Launch all 16 judge agents in parallel batches
 4. Aggregate their CaseScore outputs into a valid EvaluationReport
-5. Write the report to `$CLOSEDLOOP_WORKDIR/judges.json`
+5. Write the report to `$CLOSEDLOOP_WORKDIR/plan-judges.json`
 6. Validate output structure and completeness
 
 **For code artifacts (--artifact-type code):**
@@ -253,6 +253,22 @@ Where `$ARG_WORKDIR` is the value passed via `--workdir` in the invocation promp
 
 ---
 
+### Agents Snapshot (Pre-Step)
+
+**Before any judge execution**, ensure a snapshot of judge agent definitions exists in `$CLOSEDLOOP_WORKDIR/agents-snapshot/`. This preserves the exact agent versions used for each evaluation run.
+
+**Action:** Run the snapshot script via Bash:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/skills/run-judges/scripts/ensure_agents_snapshot.sh" "$CLOSEDLOOP_WORKDIR"
+```
+
+The script is idempotent — it skips if `manifest.json` already exists.
+
+**Error handling:** If the script fails or is not found, log a warning and continue — snapshot failure must not block judge execution.
+
+---
+
 ### Step 0: Mandatory Contract Pre-Read
 
 Before any prerequisite checks or judge launches:
@@ -408,8 +424,8 @@ The run-judges skill supports three artifact types with different judge configur
 ### Plan Artifacts (Default)
 - **Judges**: 16 total
 - **Batches**: 4 sequential batches (max 4 concurrent per batch)
-- **Output**: `judges.json`
-- **Report ID**: `{RUN_ID}-judges`
+- **Output**: `plan-judges.json`
+- **Report ID**: `{RUN_ID}-plan-judges`
 - **Validation**: `--category plan` (16 judges expected)
 
 ### Code Artifacts (--artifact-type code)
@@ -656,15 +672,15 @@ elif artifact_type == 'prd':
     report_filename = 'prd-judges.json'
     report_id = f'{RUN_ID}-prd-judges'
 else:
-    report_filename = 'judges.json'
-    report_id = f'{RUN_ID}-judges'
+    report_filename = 'plan-judges.json'
+    report_id = f'{RUN_ID}-plan-judges'
 output_path = $CLOSEDLOOP_WORKDIR / report_filename
 ```
 
-**Plan artifact report structure (judges.json):**
+**Plan artifact report structure (plan-judges.json):**
 ```json
 {
-  "report_id": "{RUN_ID}-judges",
+  "report_id": "{RUN_ID}-plan-judges",
   "timestamp": "2024-02-03T15:45:30Z",
   "stats": [
     { /* CaseScore from dry-judge */ },
@@ -726,7 +742,7 @@ output_path = $CLOSEDLOOP_WORKDIR / report_filename
 
 | Field | Format | How to Derive |
 |-------|--------|---------------|
-| `report_id` | `{RUN_ID}-judges`, `{RUN_ID}-code-judges`, or `{RUN_ID}-prd-judges` | Extract RUN_ID from `$CLOSEDLOOP_WORKDIR` directory name, append suffix based on artifact type |
+| `report_id` | `{RUN_ID}-plan-judges`, `{RUN_ID}-code-judges`, or `{RUN_ID}-prd-judges` | Extract RUN_ID from `$CLOSEDLOOP_WORKDIR` directory name, append suffix based on artifact type |
 | `timestamp` | ISO 8601 | Generate with `date -u +%Y-%m-%dT%H:%M:%SZ` |
 | `stats` | Array[CaseScore] | 16 CaseScore objects for plan, 11 for code, 4 for prd (one per judge) |
 
@@ -738,7 +754,7 @@ output_path = $CLOSEDLOOP_WORKDIR / report_filename
 
 **Performance:** Run "start of phase" with sub_step 6 (plan), 5 (code), or 3 (prd), sub_step_name=validate. Emit 'end of phase' after each validation attempt regardless of exit code, then apply failure recovery logic.
 
-**CRITICAL:** You MUST run the validation script after writing `judges.json`. Do not consider the task complete until validation passes.
+**CRITICAL:** You MUST run the validation script after writing the judge report. Do not consider the task complete until validation passes.
 
 <validation_workflow>
 
@@ -780,7 +796,7 @@ uv run "$SCRIPT_PATH" --workdir "$CLOSEDLOOP_WORKDIR" --category "$CATEGORY"
 **Argument requirements:**
 - `--workdir` must be the **absolute path** to `$CLOSEDLOOP_WORKDIR`
 - `--category` must be `plan` (16 judges), `code` (11 judges), or `prd` (4 judges)
-- This is where `judges.json`, `code-judges.json`, or `prd-judges.json` is located
+- This is where `plan-judges.json`, `code-judges.json`, or `prd-judges.json` is located
 
 </validation_workflow>
 
@@ -857,7 +873,7 @@ prd-scope-judge
 | Code | Meaning | Action |
 |------|---------|--------|
 | `0` | Valid | Task complete ✓ |
-| `1` | Invalid | Read error, fix `judges.json`, re-validate |
+| `1` | Invalid | Read error, fix report JSON, re-validate |
 
 ---
 
@@ -868,7 +884,7 @@ prd-scope-judge
 **Follow this sequence:**
 
 1. **Read error message** - Understand what failed
-2. **Fix `judges.json`** - Correct the specific validation error
+2. **Fix report JSON** - Correct the specific validation error
 3. **Re-run validation** - Repeat until exit code 0
 4. **Never skip validation** - Do not mark task complete until validation passes
 
@@ -918,6 +934,9 @@ class EvaluationReport(BaseModel):
 
 Before marking this task complete, verify:
 
+**For all artifact types:**
+- [ ] **Agents snapshot** - `agents-snapshot/manifest.json` exists in `$CLOSEDLOOP_WORKDIR` (created if missing, skipped if present)
+
 **For plan artifacts (default):**
 - [ ] **Input validation** - prd.md and plan.json exist (or graceful skip)
 - [ ] **Context preparation** - context-manager-for-judges launched with `artifact_type=plan`
@@ -926,7 +945,7 @@ Before marking this task complete, verify:
 - [ ] **Investigation context resolution** - `investigation-log.md` reused, generated via pre-explorer, or best-effort generated internally
 - [ ] **Parallel execution** - All 16 judges launched in 4 batches (max 4 per batch)
 - [ ] **Result aggregation** - Valid EvaluationReport with 16 CaseScore entries
-- [ ] **File output** - `judges.json` written to `$CLOSEDLOOP_WORKDIR`
+- [ ] **File output** - `plan-judges.json` written to `$CLOSEDLOOP_WORKDIR`
 - [ ] **Validation passed** - Script exits with code 0 using `--category plan`
 
 **For code artifacts (--artifact-type code):**
@@ -961,11 +980,11 @@ Before marking this task complete, verify:
 
 | Error Message | Root Cause | Solution |
 |---------------|------------|----------|
-| "Report file does not exist" | File not written to correct location | Verify `$CLOSEDLOOP_WORKDIR` is set; check write path matches artifact type (judges.json or code-judges.json) |
-| "Invalid JSON" | Syntax error in output file | Run `python3 -m json.tool "$CLOSEDLOOP_WORKDIR/[code-]judges.json"` to identify syntax error |
+| "Report file does not exist" | File not written to correct location | Verify `$CLOSEDLOOP_WORKDIR` is set; check write path matches artifact type (plan-judges.json, code-judges.json, or prd-judges.json) |
+| "Invalid JSON" | Syntax error in output file | Run `python3 -m json.tool "$CLOSEDLOOP_WORKDIR/{plan,code,prd}-judges.json"` to identify syntax error |
 | "Missing expected judges" | Incomplete batch execution | Verify all batches launched (4 for plan, 3 for code, 1 for prd); check error CaseScores for failures; plan expects 16 judges, code expects 11, prd expects 4 |
 | "final_status must be 1, 2, or 3" | Invalid status code | Use only: 1 (pass), 2 (fail), 3 (error) |
-| "report_id should end with '-judges'" | Incorrect ID format for plan | Use pattern: `{RUN_ID}-judges` for plan artifacts |
+| "report_id should end with '-plan-judges'" | Incorrect ID format for plan | Use pattern: `{RUN_ID}-plan-judges` for plan artifacts |
 | "report_id should end with '-code-judges'" | Incorrect ID format for code | Use pattern: `{RUN_ID}-code-judges` for code artifacts |
 | "Judge {name} has no metrics" | Empty metrics array | Each CaseScore must have ≥1 MetricStatistics entry |
 | "Context preparation failed" | context-manager-for-judges failed | Check context-manager agent output; verify artifact files exist |
@@ -1020,7 +1039,7 @@ If a single judge Task call fails during execution:
 When `--artifact-type` is not specified or equals 'plan':
 - Execute standard 16-judge plan logic
 - Launch 4 batches with existing judge assignments
-- Write to `judges.json` (not `code-judges.json`)
+- Write to `plan-judges.json` (not `code-judges.json`)
 - Launch context-manager-for-judges for plan context preparation
 - Use `plan-context.json` as primary input; use one-run compatibility fallback only if context preparation fails
 - Build and pass `judge-input.json` envelope to judges
