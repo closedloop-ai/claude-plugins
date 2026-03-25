@@ -198,6 +198,9 @@ Extracts actionable plan amendments from unstructured input (meeting notes, Slac
 **`code-review-worker`** / **`code-review-guidelines`**
 Supporting agents for the code review workflow. `code-review-guidelines` provides language-specific review patterns and edge case guidance. `code-review-worker` handles individual file review tasks within the reviewer workflow.
 
+**`feedback-explorer`** (model: haiku)
+Pre-fetches codebase context referenced in reviewer feedback so that `plan-agent` can skip mechanical exploration during revision. Reads the feedback and plan files, extracts file paths, function names, and pattern keywords, locates the relevant code, and writes a context brief. Does not analyze or judge findings — purely a context-gathering agent.
+
 **`plan-agent`** (model: opus)
 Software architect agent for creating and revising implementation plans. Explores the codebase, designs a plan grounded in existing patterns, and writes it directly to a specified file on disk. Used by the `plan-with-codex` command; resumed across debate rounds via `SendMessage` to apply Codex feedback without losing architectural context.
 
