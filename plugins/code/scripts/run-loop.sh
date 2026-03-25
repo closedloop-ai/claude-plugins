@@ -20,8 +20,6 @@ PROGRESS_LOG=".claude/closedloop-progress.log"
 
 # Learning system paths
 LOCK_FILE=".learnings/.lock"
-AGENTS_SNAPSHOT_DIR="agents-snapshot"
-readonly CLOSEDLOOP_JUDGES_STEP=11
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Run identification
@@ -138,191 +136,6 @@ bootstrap_learnings() {
   fi
 }
 
-# Returns 0 if the directory exists and includes at least one markdown file.
-is_valid_judges_agents_dir() {
-  local dir="$1"
-  [[ -d "$dir" ]] || return 1
-  find "$dir" -type f -name "*.md" -print -quit | grep -q .
-}
-
-# Resolve judges agents dir under a root (e.g., .../judges/<version>/agents).
-# Iterates candidates from newest to oldest semver and returns the first valid
-# one, so a corrupt or partially-installed latest version falls back gracefully
-# to an older usable release rather than failing outright.
-resolve_versioned_judges_agents_dir() {
-  local judges_root="$1"
-  local versioned_candidates=""
-
-  if [[ ! -d "$judges_root" ]]; then
-    return 1
-  fi
-
-  # Semver: no leading zeros in core; optional prerelease (-id.id) and build (+id.id).
-  local semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
-
-  while IFS= read -r agents_dir; do
-    local version_dir
-    version_dir="$(basename "$(dirname "$agents_dir")")"
-    if [[ "$version_dir" =~ $semver_re ]]; then
-      versioned_candidates+="${version_dir}|${agents_dir}"$'\n'
-    fi
-  done < <(find "$judges_root" -mindepth 2 -maxdepth 2 -type d -name "agents" 2>/dev/null)
-
-  # Walk candidates newest → oldest; return the first one that passes validation.
-  while IFS='|' read -r _version agents_dir; do
-    [[ -z "$agents_dir" ]] && continue
-    if is_valid_judges_agents_dir "$agents_dir"; then
-      echo "$agents_dir"
-      return 0
-    fi
-  done < <(printf "%s" "$versioned_candidates" | LC_ALL=C sort -t'|' -k1,1V -r)
-
-  return 1
-}
-
-# Resolve judges/agents path across monorepo, cache, and marketplace layouts.
-resolve_judges_agents_dir() {
-  local code_plugin_dir
-  code_plugin_dir="$(cd "$SCRIPTS_DIR/.." 2>/dev/null && pwd || echo "")"
-  local code_root_dir="$code_plugin_dir"
-
-  # For versioned cache layout (.../code/<version>/scripts), normalize to .../code.
-  if [[ "$(basename "$code_plugin_dir")" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$ ]]; then
-    code_root_dir="$(dirname "$code_plugin_dir")"
-  fi
-
-  local plugins_parent
-  plugins_parent="$(dirname "$code_root_dir")"
-
-  local sibling_judges_agents="$plugins_parent/judges/agents"
-  local sibling_judges_root="$plugins_parent/judges"
-  local tried=()
-
-  sibling_judges_agents="$(cd "$sibling_judges_agents" 2>/dev/null && pwd || echo "$sibling_judges_agents")"
-  sibling_judges_root="$(cd "$sibling_judges_root" 2>/dev/null && pwd || echo "$sibling_judges_root")"
-
-  # 1) Explicit env override (best for deterministic tests and custom installs)
-  if [[ -n "${CLOSEDLOOP_JUDGES_AGENTS_DIR:-}" ]]; then
-    local override_dir
-    override_dir="$(cd "$CLOSEDLOOP_JUDGES_AGENTS_DIR" 2>/dev/null && pwd || echo "$CLOSEDLOOP_JUDGES_AGENTS_DIR")"
-    tried+=("$override_dir")
-    if is_valid_judges_agents_dir "$override_dir"; then
-      log_progress "resolve_judges_agents_dir: using CLOSEDLOOP_JUDGES_AGENTS_DIR=$override_dir"
-      echo "$override_dir"
-      return 0
-    fi
-  fi
-
-  # 2) Non-versioned sibling plugin layout (.../judges/agents).
-  tried+=("$sibling_judges_agents")
-  if is_valid_judges_agents_dir "$sibling_judges_agents"; then
-    log_progress "resolve_judges_agents_dir: using sibling plugin path $sibling_judges_agents"
-    echo "$sibling_judges_agents"
-    return 0
-  fi
-
-  # 3) Versioned sibling plugin layout (.../judges/<version>/agents), newest valid semver wins.
-  tried+=("$sibling_judges_root/<version>/agents")
-  local versioned_agents_dir
-  versioned_agents_dir="$(resolve_versioned_judges_agents_dir "$sibling_judges_root" || true)"
-  if [[ -n "$versioned_agents_dir" ]]; then
-    log_progress "resolve_judges_agents_dir: using versioned path $versioned_agents_dir"
-    echo "$versioned_agents_dir"
-    return 0
-  fi
-
-  log_progress "resolve_judges_agents_dir: no valid judges agents dir found; tried: ${tried[*]}"
-  return 1
-}
-
-# Ensure agents snapshot exists in workdir; create if missing (runs on first launch or re-launch)
-ensure_agents_snapshot() {
-  local workdir="$1"
-  local snapshot_dir="$workdir/$AGENTS_SNAPSHOT_DIR"
-  local manifest="$snapshot_dir/manifest.json"
-
-  if [[ -f "$manifest" ]]; then
-    return 0
-  fi
-
-  store_agents_snapshot "$workdir"
-}
-
-# Snapshot all .md judge agent files into workdir/$AGENTS_SNAPSHOT_DIR with manifest.json
-store_agents_snapshot() {
-  local workdir="$1"
-  local snapshot_dir="$workdir/$AGENTS_SNAPSHOT_DIR"
-  local plugin_name="judges"
-  local agents_src
-  agents_src="$(resolve_judges_agents_dir || true)"
-  local plugin_dir=""
-
-  # AC-004: Check for agents directory existence
-  if [[ -z "$agents_src" ]] || [[ ! -d "$agents_src" ]]; then
-    log_progress "store_agents_snapshot: agents directory could not be resolved, skipping"
-    return 0
-  fi
-
-  plugin_dir="$(dirname "$agents_src")"
-
-  mkdir -p "$snapshot_dir" || { log_progress "WARNING: store_agents_snapshot: failed to create snapshot dir $snapshot_dir"; return 0; }
-
-  # AC-002: Build file list with deterministic, deduplicated output
-  local file_list
-  file_list=$(find "$agents_src" -type f -name "*.md" | LC_ALL=C sort -u)
-
-  if [[ -z "$file_list" ]]; then
-    log_progress "store_agents_snapshot: no .md files found in $agents_src, skipping"
-    return 0
-  fi
-
-  # AC-001, AC-005: Copy all .md files preserving directory structure
-  while IFS= read -r src_file; do
-    local rel_path
-    rel_path=$(echo "$src_file" | sed "s|^$agents_src/||")
-    local dest_file="$snapshot_dir/$rel_path"
-    local dest_dir
-    dest_dir="$(dirname "$dest_file")"
-
-    mkdir -p "$dest_dir" || { log_progress "WARNING: store_agents_snapshot: failed to create dir $dest_dir"; return 0; }
-    cp "$src_file" "$dest_file" || { log_progress "WARNING: store_agents_snapshot: failed to copy $src_file"; return 0; }
-  done <<< "$file_list"
-
-  # AC-002, AC-006: Build JSON array of relative paths and generate manifest.json
-  local files_json
-  files_json=$(echo "$file_list" | sed "s|^$agents_src/||" | jq -R . | jq -s .)
-
-  local file_count
-  file_count=$(echo "$file_list" | grep -c . || echo "0")
-
-  local plugin_version
-  plugin_version=$(jq -r '.version // "unknown"' "$plugin_dir/.claude-plugin/plugin.json" 2>/dev/null || echo "unknown")
-
-  local run_id
-  run_id="${RUN_ID:-$(basename "$workdir")}"
-
-  local created_at
-  created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-  jq -n \
-    --arg plugin "$plugin_name" \
-    --arg plugin_version "$plugin_version" \
-    --arg run_id "$run_id" \
-    --arg created_at "$created_at" \
-    --arg source_dir "$agents_src" \
-    --argjson files "$files_json" \
-    --argjson file_count "$file_count" \
-    '{plugin:$plugin,plugin_version:$plugin_version,run_id:$run_id,created_at:$created_at,source_dir:$source_dir,files:$files,file_count:$file_count}' \
-    > "$snapshot_dir/manifest.json" || { log_progress "WARNING: store_agents_snapshot: failed to write manifest.json"; return 0; }
-
-  # AC-006: Validate manifest with explicit type and cross-checks
-  jq -e '(.file_count | type == "number") and (.file_count == (.files | length))' \
-    "$snapshot_dir/manifest.json" > /dev/null 2>&1 \
-    || log_progress "WARNING: manifest validation failed"
-
-  log_progress "store_agents_snapshot: snapshot complete — $file_count files in $snapshot_dir"
-}
-
 # Load goal configuration
 load_goal_config() {
   local workdir="$1"
@@ -378,91 +191,6 @@ write_runs_log_entry() {
   local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   mkdir -p "$(dirname "$runs_log")"
   echo "$RUN_ID|$timestamp|${CLOSEDLOOP_ACTIVE_GOAL:-reduce-failures}|$iteration|$status" >> "$runs_log"
-}
-
-# Returns 0 when implementation code changes exist, 1 otherwise.
-# Excludes plan artifacts and .learnings/ paths.
-has_code_changes() {
-  local workdir="$1"
-  local changed_files="$workdir/.learnings/changed-files.json"
-  if [[ ! -f "$changed_files" ]]; then
-    return 1
-  fi
-
-  if jq -e '[.[] | select(
-    (endswith("plan.json") | not) and
-    (endswith("plan.md") | not) and
-    (endswith("prd.md") | not) and
-    (endswith("judges.json") | not) and
-    ((startswith(".learnings/") or contains("/.learnings/")) | not)
-  )] | length > 0' "$changed_files" >/dev/null 2>&1; then
-    return 0
-  fi
-
-  return 1
-}
-
-# Run plan or code judges as the last post-iteration step. Runs at most one: plan judges
-# when plan.json exists and judges.json does not; code judges when judges.json exists
-# and there are implementation changes. Reports skip reasons.
-run_judges_if_needed() {
-  local workdir="$1"
-  local IMPORTED_PLAN_MARKER="$workdir/.closedloop/imported-plan"
-  if [[ ! -f "$workdir/plan.json" ]]; then
-    echo -e "${BLUE}[Judges] Skipping: plan.json missing${NC}"
-    log_progress "Judges skipped: plan.json missing"
-    emit_skipped_step "$CLOSEDLOOP_JUDGES_STEP" "plan_judges"
-    return 0
-  fi
-  if [[ ! -f "$workdir/judges.json" ]]; then
-    if [[ -f "$IMPORTED_PLAN_MARKER" ]]; then
-      echo -e "${BLUE}[Judges] Skipping plan judges: imported-plan marker found${NC}"
-      log_progress "Judges skipped: imported-plan marker"
-      emit_skipped_step "$CLOSEDLOOP_JUDGES_STEP" "plan_judges"
-    elif [[ ! -f "$workdir/prd.md" ]]; then
-      echo -e "${BLUE}[Judges] Skipping: prd.md missing (required for plan judges)${NC}"
-      log_progress "Judges skipped: prd.md missing"
-      emit_skipped_step "$CLOSEDLOOP_JUDGES_STEP" "plan_judges"
-      return 0
-    else
-      echo -e "${BLUE}[Judges] Running plan judges (plan.json exists, judges.json missing)...${NC}"
-      log_progress "Running plan judges"
-      run_timed_step "$CLOSEDLOOP_JUDGES_STEP" "plan_judges" bash -c "
-        CLOSEDLOOP_WORKDIR='$workdir' \
-        CLOSEDLOOP_PARENT_STEP='$CLOSEDLOOP_JUDGES_STEP' \
-        CLOSEDLOOP_PARENT_STEP_NAME='plan_judges' \
-        claude -p 'Activate judges:run-judges skill. --workdir $workdir --artifact-type plan. Write judges.json to $workdir.' \
-          --allowed-tools=Bash,Grep,Glob,Read,Write,Task,Skill,TodoWrite \
-          --max-turns 150 2>&1 | tee -a '$PROGRESS_LOG'
-      " || log_progress "Plan judges encountered errors (continuing)"
-      return 0
-    fi
-  fi
-  if [[ ! -f "$workdir/.learnings/changed-files.json" ]]; then
-    echo -e "${BLUE}[Judges] Skipping: changed-files.json missing (cannot detect code changes)${NC}"
-    log_progress "Judges skipped: changed-files.json missing"
-    emit_skipped_step "$CLOSEDLOOP_JUDGES_STEP" "code_judges"
-    return 0
-  fi
-  if ! has_code_changes "$workdir"; then
-    echo -e "${BLUE}[Judges] Skipping: no implementation changes (only plan artifacts)${NC}"
-    log_progress "Judges skipped: no code changes"
-    emit_skipped_step "$CLOSEDLOOP_JUDGES_STEP" "code_judges"
-    return 0
-  fi
-  if [[ -n "${START_SHA:-}" ]] && [[ ! -f "$workdir/.start-sha" ]]; then
-    echo "$START_SHA" > "$workdir/.start-sha"
-  fi
-  echo -e "${BLUE}[Judges] Running code judges (judges.json exists, implementation changes detected)...${NC}"
-  log_progress "Running code judges (implementation changes detected)"
-  run_timed_step "$CLOSEDLOOP_JUDGES_STEP" "code_judges" bash -c "
-    CLOSEDLOOP_WORKDIR='$workdir' \
-    CLOSEDLOOP_PARENT_STEP='$CLOSEDLOOP_JUDGES_STEP' \
-    CLOSEDLOOP_PARENT_STEP_NAME='code_judges' \
-    claude -p 'Activate judges:run-judges skill. --workdir $workdir --artifact-type code. Write code-judges.json to $workdir.' \
-      --allowed-tools=Bash,Grep,Glob,Read,Write,Task,Skill,TodoWrite \
-      --max-turns 150 2>&1 | tee -a '$PROGRESS_LOG'
-  " || log_progress "Code judges encountered errors (continuing)"
 }
 
 # Post-iteration processing: enrichment pipeline, learning capture, citation verification, success rates
@@ -688,9 +416,6 @@ post_iteration_processing() {
     emit_skipped_step 9 "compute_success_rates"
     emit_skipped_step 10 "export_closedloop_learnings"
   fi
-
-  # Step 11: Judges (plan or code, never both)
-  run_judges_if_needed "$workdir"
 }
 
 # Run pruning in background after loop completes
@@ -999,25 +724,6 @@ EOF
   echo -e "Run ID: ${BLUE}$RUN_ID${NC}"
 }
 
-# Check for completion promise in output
-check_completion() {
-  local output="$1"
-  local promise="$2"
-
-  if [[ -z "$promise" ]]; then
-    return 1  # No promise set, never complete
-  fi
-
-  # Extract text from <promise> tags
-  local promise_text=$(echo "$output" | perl -0777 -pe 's/.*?<promise>(.*?)<\/promise>.*/$1/s; s/^\s+|\s+$//g; s/\s+/ /g' 2>/dev/null || echo "")
-
-  if [[ -n "$promise_text" ]] && [[ "$promise_text" = "$promise" ]]; then
-    return 0  # Complete
-  fi
-
-  return 1  # Not complete
-}
-
 # Main loop
 main() {
   # Check for jq dependency
@@ -1073,8 +779,8 @@ main() {
     fi
   fi
 
-  # Ensure agents snapshot exists (create if missing; runs on first launch or re-launch)
-  ensure_agents_snapshot "${workdir:-$WORKDIR}"
+  # Effective workdir: prefer state-file value, fall back to CLI argument
+  local effective_workdir="${workdir:-$WORKDIR}"
 
   # Validate state
   if [[ ! "$iteration" =~ ^[0-9]+$ ]]; then
@@ -1093,11 +799,11 @@ main() {
   fi
 
   # Export environment variables for learning system
-  export CLOSEDLOOP_WORKDIR="${workdir:-$WORKDIR}"
+  export CLOSEDLOOP_WORKDIR="$effective_workdir"
   export CLOSEDLOOP_RUN_ID="$RUN_ID"
 
   # Load goal configuration
-  load_goal_config "${workdir:-$WORKDIR}"
+  load_goal_config "$effective_workdir"
 
   echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
   echo -e "${BLUE}ClosedLoop External Loop${NC}"
@@ -1143,17 +849,17 @@ main() {
       log_progress "Loop ended - max iterations reached"
 
       # Write runs.log entry
-      write_runs_log_entry "${workdir:-$WORKDIR}" "$iteration" "max_iterations"
+      write_runs_log_entry "$effective_workdir" "$iteration" "max_iterations"
 
       # Final post-iteration processing
-      post_iteration_processing "${workdir:-$WORKDIR}" "$iteration"
+      post_iteration_processing "$effective_workdir" "$iteration"
 
       # Clean up
-      release_lock "${workdir:-$WORKDIR}"
+      release_lock "$effective_workdir"
       rm -f "$STATE_FILE"
 
       # Run pruning in background
-      run_background_pruning "${workdir:-$WORKDIR}"
+      run_background_pruning "$effective_workdir"
 
       exit 0
     fi
@@ -1168,7 +874,7 @@ main() {
     export CLOSEDLOOP_ITERATION="$iteration"
 
     # Create iteration marker
-    create_iteration_marker "${workdir:-$WORKDIR}" "$iteration"
+    create_iteration_marker "$effective_workdir" "$iteration"
 
     # Capture iteration start time for perf instrumentation
     local iter_start_epoch
@@ -1219,7 +925,7 @@ main() {
       rm -f "$output_file"
 
       # Post-iteration processing: learning capture, aggregation, citation verification
-      post_iteration_processing "${workdir:-$WORKDIR}" "$iteration"
+      post_iteration_processing "$effective_workdir" "$iteration"
 
       # Check for completion
       if [[ "$result" == *"<promise>$completion_promise</promise>"* ]]; then
@@ -1248,14 +954,14 @@ main() {
         log_progress "Loop completed - promise fulfilled after $iteration iterations"
 
         # Write runs.log entry
-        write_runs_log_entry "${workdir:-$WORKDIR}" "$iteration" "completed"
+        write_runs_log_entry "$effective_workdir" "$iteration" "completed"
 
         # Clean up
-        release_lock "${workdir:-$WORKDIR}"
+        release_lock "$effective_workdir"
         rm -f "$STATE_FILE"
 
         # Run pruning in background
-        run_background_pruning "${workdir:-$WORKDIR}"
+        run_background_pruning "$effective_workdir"
 
         exit 0
       fi
@@ -1263,7 +969,7 @@ main() {
       log_progress "Iteration $iteration completed - continuing"
 
       # Write runs.log entry
-      write_runs_log_entry "${workdir:-$WORKDIR}" "$iteration" "in_progress"
+      write_runs_log_entry "$effective_workdir" "$iteration" "in_progress"
 
     else
       echo -e "\n${YELLOW}Warning: Claude exited with non-zero status (exit code: $claude_exit)${NC}"
@@ -1274,10 +980,10 @@ main() {
       log_progress "Iteration $iteration - Claude exited with error (code: $claude_exit)"
 
       # Write runs.log entry
-      write_runs_log_entry "${workdir:-$WORKDIR}" "$iteration" "error"
+      write_runs_log_entry "$effective_workdir" "$iteration" "error"
 
       # Still run post-iteration processing even on error
-      post_iteration_processing "${workdir:-$WORKDIR}" "$iteration"
+      post_iteration_processing "$effective_workdir" "$iteration"
     fi
 
     rm -f "$output_file" "$stderr_file" 2>/dev/null || true

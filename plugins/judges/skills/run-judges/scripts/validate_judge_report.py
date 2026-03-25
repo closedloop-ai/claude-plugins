@@ -8,7 +8,7 @@
 """
 ClosedLoop Judge Report Validation
 
-Validates judges.json output from the judge orchestrator against the expected
+Validates judge report JSON output from the judge orchestrator against the expected
 Pydantic models.
 """
 
@@ -108,19 +108,19 @@ VALID_SUFFIXES: dict[str, list[str]] = {
     "prd": ["-prd-judges"],
 }
 
-# Default report filename per category (the plan category uses 'judges.json' without a prefix)
+# Default report filename per category
 DEFAULT_FILENAMES: dict[str, str] = {
-    "plan": "judges.json",
+    "plan": "plan-judges.json",
     "code": "code-judges.json",
     "prd": "prd-judges.json",
 }
 
 
 def validate_report(report_path: Path, category: str = "plan") -> tuple[bool, str]:
-    """Validate judges.json against Pydantic models.
+    """Validate judge report JSON against Pydantic models.
 
     Args:
-        report_path: Path to the judges.json file
+        report_path: Path to the judge report file
         category: Judge category to validate against ('plan', 'code', or 'prd')
 
     Returns:
@@ -177,7 +177,7 @@ def main() -> int:
         0 if valid, 1 if invalid
     """
     parser = argparse.ArgumentParser(description='Validate judge report JSON format')
-    parser.add_argument('--workdir', required=True, help='Working directory containing judges.json')
+    parser.add_argument('--workdir', required=True, help='Working directory containing judge report files')
     parser.add_argument('--report-path', help='Path to report file (defaults to $WORKDIR/{category}-judges.json)')
     parser.add_argument('--category', choices=list(JUDGE_REGISTRY.keys()), default='plan',
                         help='Judge category to validate against (default: plan)')

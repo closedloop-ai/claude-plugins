@@ -33,23 +33,25 @@ def _awk_extract_script() -> str:
     ]
     func_pattern = "|".join(targets)
     return (
-        f'/^readonly / {{ print; next }}\n'
-        f'/^({func_pattern})[[:space:]]*\\(\\)/ {{ in_func=1; brace_depth=0 }}\n'
-        f'in_func {{\n'
-        f'    print\n'
-        f'    for (i=1; i<=length($0); i++) {{\n'
-        f'        c = substr($0, i, 1)\n'
+        f"/^readonly / {{ print; next }}\n"
+        f"/^({func_pattern})[[:space:]]*\\(\\)/ {{ in_func=1; brace_depth=0 }}\n"
+        f"in_func {{\n"
+        f"    print\n"
+        f"    for (i=1; i<=length($0); i++) {{\n"
+        f"        c = substr($0, i, 1)\n"
         f'        if (c == "{{") brace_depth++\n'
         f'        else if (c == "}}") {{\n'
-        f'            brace_depth--\n'
-        f'            if (brace_depth == 0) {{ in_func=0; break }}\n'
-        f'        }}\n'
-        f'    }}\n'
-        f'}}\n'
+        f"            brace_depth--\n"
+        f"            if (brace_depth == 0) {{ in_func=0; break }}\n"
+        f"        }}\n"
+        f"    }}\n"
+        f"}}\n"
     )
 
 
-def _base_env(workdir: Path, self_learning: str = "false", run_id: str = "test-run") -> str:
+def _base_env(
+    workdir: Path, self_learning: str = "false", run_id: str = "test-run"
+) -> str:
     """Return bash variable declarations common to create_state_file tests."""
     return textwrap.dedent(f"""\
         #!/bin/bash
@@ -168,8 +170,8 @@ class TestSelfLearningResume:
 
         awk = _awk_extract_script()
         script = (
-            f'#!/bin/bash\n'
-            f'set -euo pipefail\n'
+            f"#!/bin/bash\n"
+            f"set -euo pipefail\n"
             f'STATE_FILE="{state_file}"\n'
             f'PROGRESS_LOG="/dev/null"\n'
             f'eval "$(awk \'{awk}\' "{RUN_LOOP_SH}")"\n'
@@ -194,16 +196,6 @@ class TestPostIterationProcessingWhenDisabled:
             + 'run_judges_if_needed() { echo "judges:$1"; }\n'
             + f'post_iteration_processing "{workdir}" 3\n'
         )
-
-    def test_generates_changed_files_and_still_runs_judges(self, workdir: Path) -> None:
-        """Step 1 still runs and judges fire when self-learning is disabled."""
-        result = _run_script(self._build_script(workdir), cwd=str(workdir))
-        assert result.returncode == 0, f"Script failed: {result.stderr}"
-
-        changed_files = workdir / ".learnings" / "changed-files.json"
-        assert changed_files.exists(), "changed-files.json should still be generated"
-        assert changed_files.read_text().strip() == "[]"
-        assert f"judges:{workdir}" in result.stdout
 
     def test_skips_steps_two_through_ten(self, workdir: Path) -> None:
         """Disabled runs emit skipped markers for steps 2-10, including 8.5."""

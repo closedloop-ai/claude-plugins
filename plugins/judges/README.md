@@ -1,10 +1,10 @@
 # judges
 
-A collection of specialized LLM judge agents that evaluate implementation plans and code artifacts against software engineering principles and best practices. Judges run in parallel, score artifacts using a structured `CaseScore` JSON schema, and aggregate results into a validation report.
+A collection of specialized LLM judge agents that evaluate implementation plans, code artifacts, and PRD documents against software engineering principles and best practices. Judges run in parallel, score artifacts using a structured `CaseScore` JSON schema, and aggregate results into a validation report.
 
 ## Features
 
-- **Plan and code evaluation modes** with mode-specific judge sets selected by `run-judges`
+- **Plan, code, and PRD evaluation modes** with mode-specific judge sets selected by `run-judges`
 - **Parallel judge execution** in controlled batches with deterministic aggregation
 - **Batched judge fan-out** via Task calls (up to 4 concurrent judges per batch)
 - **Structured output** using a validated `CaseScore` JSON schema with Pydantic enforcement
@@ -37,7 +37,7 @@ graph TD
     CompatInput --> CommonPlan
     PlanBatches --> Agg[Aggregation into EvaluationReport]
     CodeBatches --> Agg
-    Agg --> Report["judges.json / code-judges.json"]
+    Agg --> Report["plan-judges.json / code-judges.json / prd-judges.json"]
     Report --> Validate["validate_judge_report.py"]
 
     style PlanBatches fill:#e1f5fe
@@ -113,6 +113,46 @@ The `artifact-type-tailored-context` skill compresses individual artifact files 
 
 ---
 
+### prd-auditor
+
+**Purpose:** Performs a structural completeness audit of the PRD document.
+
+**Model:** sonnet
+
+**Artifact type:** prd
+
+---
+
+### prd-dependency-judge
+
+**Purpose:** Evaluates dependency clarity and completeness within the PRD.
+
+**Model:** sonnet
+
+**Artifact type:** prd
+
+---
+
+### prd-scope-judge
+
+**Purpose:** Evaluates scope definition and boundary clarity in the PRD.
+
+**Model:** sonnet
+
+**Artifact type:** prd
+
+---
+
+### prd-testability-judge
+
+**Purpose:** Evaluates whether PRD requirements are testable and include clear acceptance criteria.
+
+**Model:** sonnet
+
+**Artifact type:** prd
+
+---
+
 ## Judge Input and Output Contracts
 
 All judge runs are contract-driven: orchestrators assemble `judge-input.json`, judges emit `CaseScore`, and `run-judges` aggregates those results into a validated report.
@@ -128,7 +168,7 @@ At runtime, this contract guidance is injected from `common_input_preamble.md`, 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `evaluation_type` | string | Evaluation mode (`plan` or `code`) |
+| `evaluation_type` | string | Evaluation mode (`plan`, `code`, or `prd`) |
 | `task` | string | Natural-language objective judges must evaluate against |
 | `primary_artifact` | object | Authoritative evidence artifact descriptor |
 | `supporting_artifacts` | array | Secondary evidence artifact descriptors in priority order |
@@ -175,10 +215,11 @@ Each judge returns one `CaseScore` JSON object:
 ### Aggregated output report
 
 `run-judges` wraps all `CaseScore` entries into:
-- `$CLOSEDLOOP_WORKDIR/judges.json` for plan evaluation
+- `$CLOSEDLOOP_WORKDIR/plan-judges.json` for plan evaluation
 - `$CLOSEDLOOP_WORKDIR/code-judges.json` for code evaluation
+- `$CLOSEDLOOP_WORKDIR/prd-judges.json` for PRD evaluation
 
-The report is validated after generation using `scripts/validate_judge_report.py`.
+The report is validated after generation using `skills/run-judges/scripts/validate_judge_report.py`.
 
 ## Skills
 
@@ -187,7 +228,7 @@ The report is validated after generation using `scripts/validate_judge_report.py
 Orchestrates parallel judge agent execution, aggregates `CaseScore` results, and validates output.
 
 **Parameters:**
-- `--artifact-type`: `plan` (default) or `code`
+- `--artifact-type`: `plan` (default), `code`, or `prd`
 
 **Plan mode** (default):
 - Launches `context-manager-for-judges` to produce `plan-context.json`
@@ -198,7 +239,7 @@ Orchestrates parallel judge agent execution, aggregates `CaseScore` results, and
 - If plan context generation fails: uses one emergency compatibility fallback to `plan.json` + `prd.md` for that run
 - Prepends `common_input_preamble.md` + `plan_preamble.md` to each judge prompt
 - Runs 16 judges in 4 sequential batches (max 4 concurrent per batch)
-- Writes `$CLOSEDLOOP_WORKDIR/judges.json`
+- Writes `$CLOSEDLOOP_WORKDIR/plan-judges.json`
 
 **Code mode** (`--artifact-type code`):
 - Launches `context-manager-for-judges` agent to produce `code-context.json`
@@ -208,7 +249,16 @@ Orchestrates parallel judge agent execution, aggregates `CaseScore` results, and
 - Runs 11 judges in 3 sequential batches
 - Writes `$CLOSEDLOOP_WORKDIR/code-judges.json`
 
-**Output validation** is run after writing the report using `scripts/validate_judge_report.py`. The skill retries until validation passes.
+**PRD mode** (`--artifact-type prd`):
+- Checks `$CLOSEDLOOP_WORKDIR/prd.md` exists (graceful exit if missing)
+- Builds `judge-input.json` with `evaluation_type: "prd"` and primary artifact pointing to `prd.md`
+- Does NOT launch `context-manager-for-judges`
+- Runs 4 PRD judges in a single parallel batch
+- Writes `$CLOSEDLOOP_WORKDIR/prd-judges.json`
+
+**Agent snapshot**: Before launching judge batches, `run-judges` runs `skills/run-judges/scripts/ensure_agents_snapshot.sh` to capture an idempotent snapshot of all judge agent definitions into `$CLOSEDLOOP_WORKDIR/agents-snapshot/`.
+
+**Output validation** is run after writing the report using `skills/run-judges/scripts/validate_judge_report.py`. The skill retries until validation passes.
 
 ---
 
@@ -251,7 +301,7 @@ Checks for a cached plan evaluation result before launching the plan-evaluator a
 
 4. The skill runs `context-manager-for-judges` to create `plan-context.json`, then builds `judge-input.json` for judges.
 5. If plan context generation fails, one-run compatibility fallback uses `plan.json` + `prd.md`.
-6. Results are written to `$CLOSEDLOOP_WORKDIR/judges.json`.
+6. Results are written to `$CLOSEDLOOP_WORKDIR/plan-judges.json`.
 
 ### Evaluating Implemented Code
 
@@ -286,7 +336,7 @@ Each judge produces a `CaseScore`:
 }
 ```
 
-The aggregated report (`judges.json` or `code-judges.json`) wraps all `CaseScore` objects:
+The aggregated report (`plan-judges.json`, `code-judges.json`, or `prd-judges.json`) wraps all `CaseScore` objects:
 
 ```json
 {

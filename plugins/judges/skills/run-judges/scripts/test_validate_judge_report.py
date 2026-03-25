@@ -66,7 +66,7 @@ class TestBackwardCompatibility:
         plan_judges = sorted(JUDGE_REGISTRY["plan"])
         report = create_evaluation_report("run-20250211-plan-judges", plan_judges)
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, message = validate_report(report_path, category="plan")
@@ -79,7 +79,7 @@ class TestBackwardCompatibility:
         plan_judges = sorted(JUDGE_REGISTRY["plan"])
         report = create_evaluation_report("run-20250211-judges", plan_judges)
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, message = validate_report(report_path, category="plan")
@@ -93,7 +93,7 @@ class TestBackwardCompatibility:
         plan_judges = sorted(JUDGE_REGISTRY["plan"])
         report = create_evaluation_report("run-20250211-judges", plan_judges)
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         # Call validate_report WITHOUT category parameter (uses default='plan')
@@ -109,7 +109,7 @@ class TestBackwardCompatibility:
         plan_judges = sorted(JUDGE_REGISTRY["plan"])
         report = create_evaluation_report("run-20250211-judges", plan_judges)
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         # Call without category - should default to 'plan'
@@ -121,7 +121,7 @@ class TestBackwardCompatibility:
         plan_judges = sorted(JUDGE_REGISTRY["plan"])
         report = create_evaluation_report("abc123-judges", plan_judges)
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, _ = validate_report(report_path, category="plan")
@@ -137,7 +137,7 @@ class TestBackwardCompatibility:
         plan_judges = sorted(JUDGE_REGISTRY["plan"])
         report = create_evaluation_report("run-xyz-plan-judges", plan_judges)
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, message = validate_report(report_path, category="plan")
@@ -150,7 +150,7 @@ class TestBackwardCompatibility:
         code_judges = sorted(JUDGE_REGISTRY["code"])
         report = create_evaluation_report("run-20250211-judges", code_judges)
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, message = validate_report(report_path, category="plan")
@@ -262,7 +262,7 @@ class TestSchemaValidation:
         # Add extra field to CaseScore - should be ignored, not rejected
         report["stats"][0]["extra_data"] = "this_gets_ignored"
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, message = validate_report(report_path, category="plan")
@@ -278,7 +278,7 @@ class TestSchemaValidation:
         # Set threshold as string instead of float
         report["stats"][0]["metrics"][0]["threshold"] = "0.8"
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, message = validate_report(report_path, category="plan")
@@ -295,7 +295,7 @@ class TestSchemaValidation:
         report = create_evaluation_report("run-123-judges", plan_judges)
         report["stats"][0]["final_status"] = invalid_status
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, message = validate_report(report_path, category="plan")
@@ -309,7 +309,7 @@ class TestSchemaValidation:
         report = create_evaluation_report("run-123-judges", plan_judges)
         report["stats"][0]["metrics"] = []
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, message = validate_report(report_path, category="plan")
@@ -325,7 +325,7 @@ class TestSchemaValidation:
         # Remove required field from CaseScore
         del report["stats"][0][missing_field]
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, message = validate_report(report_path, category="plan")
@@ -361,7 +361,7 @@ class TestEdgeCases:
             "stats": [],
         }
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, message = validate_report(report_path, category="plan")
@@ -372,7 +372,7 @@ class TestEdgeCases:
         """Verify validation fails with helpful message for invalid category."""
         report = create_evaluation_report("run-123-judges", ["test-judge"])
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, message = validate_report(report_path, category="invalid")
@@ -390,7 +390,7 @@ class TestBoundaryValues:
         report = create_evaluation_report("run-123-judges", plan_judges)
         report["stats"][0]["metrics"][0]["score"] = 0.0
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, _ = validate_report(report_path, category="plan")
@@ -402,7 +402,7 @@ class TestBoundaryValues:
         report = create_evaluation_report("run-123-judges", plan_judges)
         report["stats"][0]["metrics"][0]["score"] = 1.0
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, _ = validate_report(report_path, category="plan")
@@ -414,7 +414,7 @@ class TestBoundaryValues:
         report = create_evaluation_report("run-123-judges", plan_judges)
         report["stats"][0]["metrics"][0]["score"] = -0.5
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, _ = validate_report(report_path, category="plan")
@@ -427,7 +427,7 @@ class TestBoundaryValues:
         report = create_evaluation_report("run-123-judges", plan_judges)
         report["stats"][0]["metrics"][0]["score"] = 1.5
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, _ = validate_report(report_path, category="plan")
@@ -441,7 +441,7 @@ class TestBoundaryValues:
         report = create_evaluation_report("run-123-judges", plan_judges)
         report["stats"][0]["final_status"] = status
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, _ = validate_report(report_path, category="plan")
@@ -453,7 +453,7 @@ class TestBoundaryValues:
         report = create_evaluation_report("run-123-judges", plan_judges)
         report["stats"][0]["metrics"][0]["threshold"] = 0.0
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, _ = validate_report(report_path, category="plan")
@@ -465,7 +465,7 @@ class TestBoundaryValues:
         report = create_evaluation_report("run-123-judges", plan_judges)
         report["stats"][0]["metrics"][0]["threshold"] = None
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, _ = validate_report(report_path, category="plan")
@@ -490,7 +490,7 @@ class TestBoundaryValues:
             },
         ]
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, _ = validate_report(report_path, category="plan")
@@ -508,7 +508,7 @@ class TestUnicodeHandling:
             "Excellent quality ✓ 优秀的代码质量 très bien"
         )
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(
             json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -522,7 +522,7 @@ class TestUnicodeHandling:
         report = create_evaluation_report("run-123-judges", plan_judges)
         report["stats"][0]["metrics"][0]["justification"] = "Great work! 🎉 👍 ✨"
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(
             json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -536,7 +536,7 @@ class TestUnicodeHandling:
         report = create_evaluation_report("run-123-judges", plan_judges)
         report["stats"][0]["metrics"][0]["metric_name"] = "测试指标_test_métrique"
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(
             json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -549,7 +549,7 @@ class TestUnicodeHandling:
         plan_judges = sorted(JUDGE_REGISTRY["plan"])
         report = create_evaluation_report("run-测试-judges", plan_judges)
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(
             json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -562,7 +562,7 @@ class TestUnicodeHandling:
         """Unicode in case_id fails judge name matching."""
         report = create_evaluation_report("run-123-judges", ["test-judge-中文"])
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(
             json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -737,7 +737,7 @@ class TestCategoryPrdValidation:
         prd_judges = sorted(JUDGE_REGISTRY["prd"])
         report = create_evaluation_report("run-20250211-plan-judges", prd_judges)
 
-        report_path = tmp_path / "judges.json"
+        report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
         valid, message = validate_report(report_path, category="plan")
@@ -745,6 +745,14 @@ class TestCategoryPrdValidation:
             "PRD judges should not satisfy plan category requirements"
         )
         assert "Missing expected judges" in message
+
+    def test_default_filename_for_plan_category(self) -> None:
+        """DEFAULT_FILENAMES produces 'plan-judges.json' for plan category."""
+        from validate_judge_report import (
+            DEFAULT_FILENAMES,  # type: ignore[import-not-found]
+        )
+
+        assert DEFAULT_FILENAMES["plan"] == "plan-judges.json"
 
     def test_default_filename_for_prd_category(self) -> None:
         """DEFAULT_FILENAMES produces 'prd-judges.json' for prd category."""
