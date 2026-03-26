@@ -316,6 +316,7 @@ End your response with exactly ONE of these promises:
 5. **Always run from WORKDIR** - Use `cd "$CLOSEDLOOP_WORKDIR"` before commands
 6. **Capture learnings if possible** - But don't fail if learning infrastructure doesn't exist
 7. **Clear output** - Make it obvious what passed, failed, and needs attention
+8. **NEVER use pkill, killall, or broad kill patterns** - These kill processes outside the worktree (e.g. a running desktop-dev in the main tree). If a command hangs, use `timeout` to bound it. If a test process is stuck, report it as a failure — do not attempt to kill processes you didn't spawn
 
 ## Mixed Projects
 

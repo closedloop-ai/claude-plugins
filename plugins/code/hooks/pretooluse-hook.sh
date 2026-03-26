@@ -31,6 +31,14 @@ case "$TOOL_NAME" in
     Bash)
         _sec_cmd=$(echo "$TOOL_INPUT" | jq -r '.command // empty' 2>/dev/null || echo "")
         case "$_sec_cmd" in
+            # Broad process killing — globally denied.
+            # pkill/killall match by name and kill processes outside the current context
+            # (e.g. a running desktop-dev in the main tree killed by a worktree agent).
+            # Claude should never need these; use process.kill(pid) for specific PIDs instead.
+            *pkill*|*killall*)
+                echo "$_SEC_DENY"
+                exit 0
+                ;;
             # macOS Keychain
             *security\ find-generic-password*|*security\ find-internet-password*|*security\ dump-keychain*|\
             *security\ delete-generic-password*|*security\ delete-internet-password*|\
