@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code v1.5.3
+
+#### Changed
+- Migrated work directory paths from `.claude/` to `.closedloop-ai/` across `run-loop.sh` (state file, progress log, directory creation), `amend-plan` command (default workdir), and `cancel-code` command (loop state file path)
+- Enhanced `codex-review` prompt with 6 new analysis criteria: canonical state preservation, task specificity, behavioral precision, order-of-operations, lifecycle symmetry, and test fidelity -- plus implementability-focused preamble instructions
+
 ### code v1.5.2
 
 #### Added
@@ -37,14 +43,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### code v1.5.0
 
-### Added
+#### Added
 - `--self-learning` opt-in flag for `run-loop.sh` -- self-learning is now disabled by default
 - `CLOSEDLOOP_SELF_LEARNING` config propagation via `config.env` and state frontmatter
 - Self-learning guard in `subagent-start-hook.sh` to skip learning injection when disabled
 - Self-learning guard in `subagent-stop-hook.sh` to skip entire learning region when disabled
 - Self-learning guard in `pretooluse-hook.sh` to skip tool-specific pattern injection when disabled
 
-### Changed
+#### Changed
 - `post_iteration_processing()` skips steps 2-10 when self-learning is off; step 1 (changed-files.json) and step 11 (judges) always run
 - `bootstrap_learnings()` skips `.learnings/` directory creation when self-learning is off
 - `run_background_pruning()` skips pruning when self-learning is off
