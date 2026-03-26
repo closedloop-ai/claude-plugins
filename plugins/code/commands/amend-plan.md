@@ -16,18 +16,18 @@ When you invoke this command, **you are the orchestrator**. You handle the conve
 
 ```bash
 # With workdir (GitHub workflow passes this via $CLOSEDLOOP_WORKDIR)
-/code:amend-plan --workdir .claude/work --message "for task T-1.1, don't remove the SplashScreen.setLoadingInfo call"
+/code:amend-plan --workdir .closedloop-ai/work --message "for task T-1.1, don't remove the SplashScreen.setLoadingInfo call"
 
-# Auto-detect from $CLOSEDLOOP_WORKDIR or .claude/work
+# Auto-detect from $CLOSEDLOOP_WORKDIR or .closedloop-ai/work
 /code:amend-plan --message "change the caching approach in T-2.1"
 
 # With explicit state file
-/code:amend-plan --workdir .claude/work --state-file .claude/work/amend-session.json --message "yes go ahead"
+/code:amend-plan --workdir .closedloop-ai/work --state-file .closedloop-ai/work/amend-session.json --message "yes go ahead"
 ```
 
 ## Options
 
-- `--workdir <path>` - Path to the work directory. If not provided, uses `$CLOSEDLOOP_WORKDIR` env var or defaults to `.claude/work`
+- `--workdir <path>` - Path to the work directory. If not provided, uses `$CLOSEDLOOP_WORKDIR` env var or defaults to `.closedloop-ai/work`
 - `--message <text>` - The user's message (required)
 - `--state-file <path>` - Path to amend session state file. Defaults to `{workdir}/amend-session.json`
 
@@ -61,7 +61,7 @@ TodoWrite([
 2. **Determine workdir**:
    - If `--workdir` provided, use it
    - Else if `$CLOSEDLOOP_WORKDIR` env var is set, use it
-   - Otherwise, default to `.claude/work`
+   - Otherwise, default to `.closedloop-ai/work`
 
 3. **Set state file path**:
    - If `--state-file` provided, use it
@@ -393,7 +393,7 @@ The `amend-session.json` file tracks:
 ```json
 {
   "version": "1.0",
-  "run_dir": ".claude/work",
+  "run_dir": ".closedloop-ai/work",
   "status": "discussing",
   "conversation": [
     {"role": "user", "content": "...", "timestamp": "..."},

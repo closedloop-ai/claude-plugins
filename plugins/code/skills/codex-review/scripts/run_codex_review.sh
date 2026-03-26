@@ -101,6 +101,12 @@ ${REVISIONS_BLOCK}
 
 Read the plan at: ${PLAN_FILE}
 
+Review for implementability, not just conceptual correctness. Ask: if a different engineer executed this plan literally, could they still produce behavior that contradicts the plan's intent while believing they followed it? If yes, flag the plan as underspecified and propose exact wording that removes the ambiguity.
+
+Before raising or dismissing any finding, verify the plan's claims against the current codebase by reading the referenced files and searching for adjacent callsites or related logic. Do not rely on plan text alone.
+
+For large or multi-area plans, use subagents in parallel to audit separate file clusters or subsystems, then synthesize their results into a single review.
+
 Analyze for:
 1. Goal alignment -- does the plan actually accomplish what was requested? Would executing it fully deliver the feature, fix the bug, or achieve the stated objective? Flag if the plan misses the core intent or only partially addresses it.
 2. Over-engineering -- is the plan more complex than necessary? Flag unnecessary abstractions, helper utilities, configuration layers, or indirection that a simpler approach would avoid.
@@ -111,7 +117,13 @@ Analyze for:
 7. Architectural concerns or flawed assumptions
 8. Security or performance risks
 9. Test coverage -- does the plan include unit and/or integration tests for the changes? Flag if new logic, endpoints, or behaviors lack corresponding test tasks.
-10. Unclear or ambiguous task descriptions
+10. Unclear, ambiguous, or easy-to-misimplement task descriptions -- flag tasks that are technically correct in intent but leave room for materially wrong implementations. Focus on missing algorithms, missing ordering constraints, unspecified overwrite behavior, unspecified canonical-write targets, and vague "apply this pattern everywhere" instructions.
+11. Canonical state and invariant preservation -- for any plan that migrates, renames, caches, mirrors, or falls back between multiple representations/locations, verify that it explicitly defines: the canonical source of truth after the change; read behavior when old and new state both exist; write behavior when old and new state both exist; whether legacy state must be migrated, ignored, or cleaned up. Flag plans that permit split-brain state, continued mutation of legacy state, or mixed-state behavior that never converges.
+12. Task specificity and omission resistance -- check whether each task is concrete enough that an implementer cannot accidentally skip part of it. Flag tasks that rely on shorthand like "apply the same pattern," "update all handlers," or "mirror the above change" without naming exact functions, branches, side effects, and cleanup paths. Prefer plans that enumerate the concrete callsites or require a verification sweep proving none were missed.
+13. Behavioral precision and algorithmic ambiguity -- check whether key behavioral words are operationalized into exact steps. Flag terms like "merge," "prefer," "preserve," "reuse," "best effort," "safe," "destination-precedence," "fallback," or "migrate" when the plan does not specify the exact algorithm, overwrite semantics, and non-goals. If two reasonable engineers could implement the sentence in opposite ways, the task is too ambiguous.
+14. Order-of-operations and sequencing constraints -- check whether the plan specifies the required order between validation, reads, migration, locking, PID checks, writes, cleanup, and response generation. Flag tasks where doing the right steps in the wrong order would change behavior, create races, or violate invariants. Require explicit sequencing whenever earlier steps affect what later steps are allowed to read or write.
+15. Lifecycle symmetry and cleanup completeness -- for every create/read/write/start path in the plan, verify the corresponding stop/delete/reset/cleanup path is also updated. Flag one-sided migrations where the plan updates creation or reads but not teardown, cancellation, cleanup, backfill, or legacy-path removal. This includes "clear both locations," "stop both process types," and "remove stale artifacts from all relevant stores."
+16. Test fidelity to real execution paths -- evaluate not just whether tests exist, but whether they exercise the real behavior boundary that enforces the contract. Flag test tasks that: reimplement production logic inside mocks; only test helpers when the risk lives in route/handler orchestration; mock away ordering, filesystem, or state-transition behavior that is the actual source of risk; do not cover mixed-state, partial-migration, or contradiction scenarios. Require the plan to specify the test level where needed: unit, integration, route/handler, or end-to-end.
 
 Format each finding as:
 

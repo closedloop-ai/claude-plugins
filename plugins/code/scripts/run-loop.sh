@@ -2,7 +2,7 @@
 
 # ClosedLoop External Loop Runner
 # Runs Claude iterations with fresh context by launching claude -p in a loop
-# State maintained in .claude/closedloop-loop.local.md
+# State maintained in .closedloop-ai/closedloop-loop.local.md
 # Integrates with the ClosedLoop Self-Learning System
 
 set -euo pipefail
@@ -15,8 +15,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # State file location
-STATE_FILE=".claude/closedloop-loop.local.md"
-PROGRESS_LOG=".claude/closedloop-progress.log"
+STATE_FILE=".closedloop-ai/closedloop-loop.local.md"
+PROGRESS_LOG=".closedloop-ai/closedloop-progress.log"
 
 # Learning system paths
 LOCK_FILE=".learnings/.lock"
@@ -459,7 +459,7 @@ DESCRIPTION:
   Runs Claude in a loop with fresh context on each iteration. Each iteration
   invokes `claude -p "/code:code <workdir>"`.
 
-  State is persisted to .claude/closedloop-loop.local.md so loops can be resumed.
+  State is persisted to .closedloop-ai/closedloop-loop.local.md so loops can be resumed.
 
   To signal completion, Claude must output: <promise>COMPLETE</promise>
 
@@ -491,10 +491,10 @@ STOPPING:
 
 MONITORING:
   # View current iteration:
-  grep '^iteration:' .claude/closedloop-loop.local.md
+  grep '^iteration:' .closedloop-ai/closedloop-loop.local.md
 
   # View progress log:
-  tail -20 .claude/closedloop-progress.log
+  tail -20 .closedloop-ai/closedloop-progress.log
 
   # View learning system status:
   ls -la .learnings/sessions/
@@ -673,10 +673,10 @@ update_iteration() {
 
 # Create state file
 create_state_file() {
-  mkdir -p .claude
+  mkdir -p .closedloop-ai
 
   # WORKDIR is the closedloop work directory passed by the caller
-  # (e.g., /path/to/worktree/.claude/work)
+  # (e.g., /path/to/worktree/.closedloop-ai/work)
   mkdir -p "$WORKDIR"
 
   # Build the prompt - this is what gets passed to claude -p

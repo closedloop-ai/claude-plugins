@@ -82,7 +82,7 @@ The command runs inside a ClosedLoop loop — the external loop runner (`run-loo
 /code:amend-plan --workdir [path] --message "<text>" [--state-file [path]]
 ```
 
-- `--workdir <path>`: Work directory containing `plan.json` (defaults to `$CLOSEDLOOP_WORKDIR` or `.claude/work`)
+- `--workdir <path>`: Work directory containing `plan.json` (defaults to `$CLOSEDLOOP_WORKDIR` or `.closedloop-ai/work`)
 - `--message <text>`: The user's message (required)
 - `--state-file <path>`: Path to the amend session state file (defaults to `{workdir}/amend-session.json`)
 
@@ -100,7 +100,7 @@ Conversation state is persisted across GitHub workflow runs via `amend_state.py`
 
 **Description:** Cancel an active ClosedLoop loop.
 
-Checks for `.claude/closedloop-loop.local.md`, reads the current iteration, removes the file, and reports the cancellation. Hidden from the slash command picker.
+Checks for `.closedloop-ai/closedloop-loop.local.md`, reads the current iteration, removes the file, and reports the cancellation. Hidden from the slash command picker.
 
 ### `/code:plan-with-codex`
 
@@ -353,7 +353,7 @@ Initializes a ClosedLoop session. Parses arguments (`--prd`, `--max-iterations`,
 
 ### `run-loop.sh`
 
-External loop runner. Launches `claude -p` in a loop, maintaining state in `.claude/closedloop-loop.local.md`. Integrates with the self-learning system. Tracks run ID, start SHA, iteration count, and progress log. Continues until the orchestrator outputs `<promise>COMPLETE</promise>` or max iterations are reached.
+External loop runner. Launches `claude -p` in a loop, maintaining state in `.closedloop-ai/closedloop-loop.local.md`. Integrates with the self-learning system. Tracks run ID, start SHA, iteration count, and progress log. Continues until the orchestrator outputs `<promise>COMPLETE</promise>` or max iterations are reached.
 
 ### `setup-loop.sh`
 
@@ -412,23 +412,23 @@ Python dependencies: `pyyaml>=6.0`, `tree-sitter>=0.20.0` (optional, for AST par
 
 1. Create a work directory and place your PRD inside it:
    ```
-   mkdir .claude/work
-   cp requirements.md .claude/work/prd.md
+   mkdir .closedloop-ai/work
+   cp requirements.md .closedloop-ai/work/prd.md
    ```
 
 2. Start the session:
    ```
-   /code:code .claude/work
+   /code:code .closedloop-ai/work
    ```
 
 3. ClosedLoop will run the pre-explorer, then create a plan. It pauses after plan creation with:
    ```
-   Plan created. Review it at .claude/work/plan.md. Run /code:code .claude/work when ready to continue.
+   Plan created. Review it at .closedloop-ai/work/plan.md. Run /code:code .closedloop-ai/work when ready to continue.
    ```
 
 4. Review `plan.md`, add answers to open questions if needed, then continue:
    ```
-   /code:code .claude/work
+   /code:code .closedloop-ai/work
    ```
 
 5. The orchestrator proceeds through critic review, implementation, testing, and validation.
