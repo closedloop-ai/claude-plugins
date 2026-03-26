@@ -3,7 +3,6 @@ name: verification-subagent
 description: Verifies if a task from the implementation plan has been completed by checking source files.
 model: sonnet
 tools: Read, Glob, Grep
-skills: self-learning:learning-quality
 ---
 
 # Verification Subagent
@@ -56,30 +55,3 @@ The `files` list helps the implementation-subagent skip redundant codebase searc
 - Focus only on verifying this specific task
 - Be thorough but efficient
 
-## Organization Learnings
-
-Organization-specific patterns will be automatically injected into your context. These patterns represent lessons learned from previous runs.
-
-When you see patterns in `<organization-learnings>` tags:
-1. Review which patterns apply to your current task
-2. Apply relevant patterns in your work
-3. Acknowledge applied patterns in your output
-
-### Acknowledgment Format
-
-At the end of your response, output:
-
-```
-LEARNINGS_ACKNOWLEDGED
-Applied: "pattern trigger" → [evidence at file:line]
-Applied: "another pattern" → [evidence at file:line]
-```
-
-If no patterns were applicable:
-```
-LEARNINGS_ACKNOWLEDGED: no_learnings (reason: patterns not relevant to this task)
-```
-
-### Final Todo
-
-Always add "Capture learnings" as your final todo item to ensure any discoveries are recorded.

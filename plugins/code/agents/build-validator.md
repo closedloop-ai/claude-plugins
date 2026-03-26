@@ -231,31 +231,7 @@ For test/typecheck/build failures:
 - Report the failure with error output
 - Include file:line information if available
 
-### Step 5: Capture Learning (if infrastructure exists)
-
-If `$CLOSEDLOOP_WORKDIR/.learnings/pending/` directory exists, write a learning:
-
-```bash
-if [[ -d "$CLOSEDLOOP_WORKDIR/.learnings/pending" ]]; then
-  TIMESTAMP=$(date +%s)
-  cat > "$CLOSEDLOOP_WORKDIR/.learnings/pending/${TIMESTAMP}-build-validator-pattern_discovered.json" << EOF
-{
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "agent": "build-validator",
-  "trigger": "pattern_discovered",
-  "learning": {
-    "what_happened": "Discovered project validation commands",
-    "pattern_to_remember": "project_commands: test=$TEST_CMD | typecheck=$TYPECHECK_CMD | lint=$LINT_CMD | build=$BUILD_CMD",
-    "applies_to": ["build-validator", "phase-5-validation"]
-  }
-}
-EOF
-fi
-```
-
-This learning will be aggregated into `org-patterns.toon` and used by future runs.
-
-### Step 6: Report Results
+### Step 5: Report Results
 
 Output a clear summary:
 

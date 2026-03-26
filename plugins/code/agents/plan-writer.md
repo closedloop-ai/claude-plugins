@@ -3,7 +3,7 @@ name: plan-writer
 description: Modifies existing implementation plans — merges critic feedback, finalizes with implementation details, and incorporates addressed gaps. Does not create plans from scratch (use plan-draft-writer for that).
 model: sonnet
 tools: Read, Write, Edit, Glob, Grep, Bash, Skill
-skills: code:plan-structure, engineering:mermaid-visualizer, self-learning:learning-quality
+skills: code:plan-structure, engineering:mermaid-visualizer
 ---
 
 # Plan Writer Agent
@@ -213,13 +213,6 @@ Output `<promise>PLAN_WRITER_COMPLETE</promise>` when all blocking findings are 
 
 ## Completion
 
-**Before outputting any completion promise**, you MUST:
-
-1. Read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-writer-learning.md` for domain-specific learning guidance
-2. Reflect on what you discovered during this modification (patterns, scope insights)
-3. Write learnings to `$CLOSEDLOOP_WORKDIR/.learnings/pending/plan-writer-$CLOSEDLOOP_AGENT_ID.json`
-4. If no learnings, write `{"no_learnings": true, "reason": "..."}` to the same location
-
 **Completion promise (all modes):** Output `<promise>PLAN_WRITER_COMPLETE</promise>` when:
 - **Merge Mode**: All blocking findings addressed, no scope expansion beyond critic findings
 - **Finalize Mode**: All tasks enriched with code patterns, function signatures, and integration points
@@ -228,8 +221,7 @@ Output `<promise>PLAN_WRITER_COMPLETE</promise>` when all blocking findings are 
 **All modes require** before outputting the promise:
 1. Quality checklist items pass (valid JSON, sync checks)
 2. JSON structured fields match markdown content exactly
-3. Learnings have been captured (or explicitly marked as none)
-4. `$CLOSEDLOOP_WORKDIR/plan.json` and `$CLOSEDLOOP_WORKDIR/plan.md` both exist and are in sync
+3. `$CLOSEDLOOP_WORKDIR/plan.json` and `$CLOSEDLOOP_WORKDIR/plan.md` both exist and are in sync
 
 <examples>
 <example name="addressed_gap_json">
@@ -252,30 +244,3 @@ In markdown content:
 </example>
 </examples>
 
-## Organization Learnings
-
-Organization-specific patterns will be automatically injected into your context. These patterns represent lessons learned from previous runs.
-
-When you see patterns in `<organization-learnings>` tags:
-1. Review which patterns apply to your current task
-2. Apply relevant patterns in your work
-3. Acknowledge applied patterns in your output
-
-### Acknowledgment Format
-
-At the end of your response, output:
-
-```
-LEARNINGS_ACKNOWLEDGED
-Applied: "pattern trigger" → [evidence at file:line]
-Applied: "another pattern" → [evidence at file:line]
-```
-
-If no patterns were applicable:
-```
-LEARNINGS_ACKNOWLEDGED: no_learnings (reason: patterns not relevant to this task)
-```
-
-### Capture New Learnings
-
-Before completion, you MUST capture any discoveries from your planning work. See the **Completion** section above for the required steps and read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-writer-learning.md` for guidance on what plan-writer-specific learnings to capture.

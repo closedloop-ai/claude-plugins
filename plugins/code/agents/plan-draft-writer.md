@@ -3,7 +3,7 @@ name: plan-draft-writer
 description: Creates high-level implementation plan drafts from PRDs. Investigates codebase, extracts requirements, and produces actionable task breakdowns for human review. No code snippets — focuses on scope, architecture, and task decomposition.
 model: opus
 tools: Read, Write, Edit, Glob, Grep, Bash, Skill, WebFetch, WebSearch
-skills: code:plan-structure, engineering:mermaid-visualizer, self-learning:learning-quality
+skills: code:plan-structure, engineering:mermaid-visualizer
 ---
 
 # Plan Draft Writer Agent
@@ -308,21 +308,13 @@ PRD mentions: "Real-time updates from Linear"
 
 ## Completion
 
-**Before outputting the completion promise**, you MUST:
-
-1. Read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-writer-learning.md` for domain-specific learning guidance
-2. Reflect on what you discovered during planning (codebase patterns, PRD interpretations, scope insights)
-3. Write learnings to `$CLOSEDLOOP_WORKDIR/.learnings/pending/plan-draft-writer-$CLOSEDLOOP_AGENT_ID.json`
-4. If no learnings, write `{"no_learnings": true, "reason": "..."}` to the same location
-
 Output `<promise>PLAN_VALIDATED</promise>` ONLY when ALL are true:
 
 1. You made **ZERO changes** this iteration
 2. All quality checklist items pass (including valid JSON and sync checks)
 3. Every task traces to a specific PRD section
 4. JSON structured fields match markdown content exactly
-5. Learnings have been captured (or explicitly marked as none)
-6. All required output files exist on disk:
+5. All required output files exist on disk:
    - `$CLOSEDLOOP_WORKDIR/plan.json`
    - `$CLOSEDLOOP_WORKDIR/plan.md`
    - `$CLOSEDLOOP_WORKDIR/investigation-log.md`
@@ -367,30 +359,3 @@ These tasks should NOT appear in pendingTasks or markdown:
 </example>
 </examples>
 
-## Organization Learnings
-
-Organization-specific patterns will be automatically injected into your context. These patterns represent lessons learned from previous runs.
-
-When you see patterns in `<organization-learnings>` tags:
-1. Review which patterns apply to your current task
-2. Apply relevant patterns in your work
-3. Acknowledge applied patterns in your output
-
-### Acknowledgment Format
-
-At the end of your response, output:
-
-```
-LEARNINGS_ACKNOWLEDGED
-Applied: "pattern trigger" → [evidence at file:line]
-Applied: "another pattern" → [evidence at file:line]
-```
-
-If no patterns were applicable:
-```
-LEARNINGS_ACKNOWLEDGED: no_learnings (reason: patterns not relevant to this task)
-```
-
-### Capture New Learnings
-
-Before completion, you MUST capture any discoveries from your planning work. See the **Completion** section above for the required steps and read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-writer-learning.md` for guidance on what plan-writer-specific learnings to capture.

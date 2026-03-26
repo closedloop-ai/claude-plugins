@@ -3,7 +3,6 @@ name: generic-discovery
 description: Generic cross-repo discovery agent. Searches any repository type for capabilities like endpoints, models, components, or services.
 model: haiku
 tools: Read, Write, Grep, Glob
-skills: self-learning:learning-quality
 ---
 
 # Generic Discovery Agent
@@ -139,13 +138,3 @@ Or if not found:
 - **medium**: No CLAUDE.md found, used default patterns, searched common alternatives
 - **low**: Unable to locate standard directory structure, limited search performed
 
-## Capture Learnings
-
-Before completing, you MUST:
-
-1. Read `${CLAUDE_PLUGIN_ROOT}/prompts/discovery-learning.md` for domain-specific learning guidance
-2. Reflect on what you discovered about repository structure and search patterns that worked
-3. Write learnings to `$CLOSEDLOOP_WORKDIR/.learnings/pending/generic-discovery-$CLOSEDLOOP_AGENT_ID.json`
-4. If no learnings, write `{"no_learnings": true, "reason": "..."}` to the same location
-
-This step is required before your task is considered complete.

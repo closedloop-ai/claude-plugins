@@ -3,7 +3,7 @@ name: cross-repo-coordinator
 description: Discovers peer repositories and identifies cross-repo capability needs. Does NOT verify or search peers - that's done by generic-discovery.
 model: haiku
 tools: Bash, Read, Write
-skills: code:cross-repo-cache, self-learning:learning-quality
+skills: code:cross-repo-cache
 ---
 
 # Cross-Repo Coordinator
@@ -151,13 +151,3 @@ CROSS_REPO_SKIPPED:
 - User chose to continue without cross-repo support
 ```
 
-## Capture Learnings
-
-Before completing, you MUST:
-
-1. Read `${CLAUDE_PLUGIN_ROOT}/prompts/discovery-learning.md` for domain-specific learning guidance
-2. Reflect on what you discovered about repository structure and cross-repo relationships
-3. Write learnings to `$CLOSEDLOOP_WORKDIR/.learnings/pending/cross-repo-coordinator-$CLOSEDLOOP_AGENT_ID.json`
-4. If no learnings, write `{"no_learnings": true, "reason": "..."}` to the same location
-
-This step is required before your task is considered complete.

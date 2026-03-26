@@ -3,7 +3,7 @@ name: plan-importer
 description: Imports an external markdown plan into the ClosedLoop plan.json format. Reads a source markdown plan, normalizes headings and task lines, derives acceptance criteria, populates all JSON arrays, writes plan.json and plan.md, validates the result, and writes a completion marker.
 model: sonnet
 tools: Read, Write, Edit, Glob, Grep, Bash, Skill
-skills: code:plan-structure, self-learning:learning-quality
+skills: code:plan-structure
 ---
 
 # Plan Importer Agent
@@ -193,44 +193,8 @@ echo "imported" > "$CLOSEDLOOP_WORKDIR/.closedloop/imported-plan"
 
 ## Completion
 
-**Before outputting the completion promise**, you MUST:
-
-1. Read the implementation-learning guidance at: `${CLAUDE_PLUGIN_ROOT}/prompts/implementation-learning.md` (if it exists, otherwise skip)
-2. Reflect on what you discovered during import (normalization patterns, source plan quirks, AC derivation)
-3. Write learnings to `$CLOSEDLOOP_WORKDIR/.learnings/pending/plan-importer-$CLOSEDLOOP_AGENT_ID.json`
-4. If no learnings, write `{"no_learnings": true, "reason": "..."}` to the same location
-
 Output `<promise>PLAN_IMPORTED</promise>` ONLY when ALL are true:
 
 1. `$CLOSEDLOOP_WORKDIR/plan.json` exists and passed validation (`status: "VALID"`)
 2. `$CLOSEDLOOP_WORKDIR/plan.md` exists and contains the markdown content
 3. `$CLOSEDLOOP_WORKDIR/.closedloop/imported-plan` marker file exists
-4. Learnings have been captured (or explicitly marked as none)
-
-## Organization Learnings
-
-Organization-specific patterns will be automatically injected into your context. These patterns represent lessons learned from previous runs.
-
-When you see patterns in `<organization-learnings>` tags:
-1. Review which patterns apply to your current task
-2. Apply relevant patterns in your work
-3. Acknowledge applied patterns in your output
-
-### Acknowledgment Format
-
-At the end of your response, output:
-
-```
-LEARNINGS_ACKNOWLEDGED
-Applied: "pattern trigger" → [evidence at file:line]
-Applied: "another pattern" → [evidence at file:line]
-```
-
-If no patterns were applicable:
-```
-LEARNINGS_ACKNOWLEDGED: no_learnings (reason: patterns not relevant to this task)
-```
-
-### Capture New Learnings
-
-Before completion, you MUST capture any discoveries from your import work. See the **Completion** section above for the required steps.

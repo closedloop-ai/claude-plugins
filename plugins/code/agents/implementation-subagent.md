@@ -3,7 +3,6 @@ name: implementation-subagent
 description: Implements missing requirements for a task from the implementation plan.
 model: sonnet
 tools: Read, Write, Edit, Glob, Grep, Bash
-skills: self-learning:learning-quality
 ---
 
 # Implementation Subagent
@@ -118,37 +117,4 @@ Output your progress without the promise tag. The loop will continue automatical
 - Stay focused on the specific task
 - Do not over-engineer solutions
 
-## Organization Learnings
 
-Organization-specific patterns will be automatically injected into your context. These patterns represent lessons learned from previous runs.
-
-When you see patterns in `<organization-learnings>` tags:
-1. Review which patterns apply to your current task
-2. Apply relevant patterns in your work
-3. Acknowledge applied patterns in your output
-
-### Acknowledgment Format
-
-At the end of your response, output:
-
-```
-LEARNINGS_ACKNOWLEDGED
-Applied: "pattern trigger" → [evidence at file:line]
-Applied: "another pattern" → [evidence at file:line]
-```
-
-If no patterns were applicable:
-```
-LEARNINGS_ACKNOWLEDGED: no_learnings (reason: patterns not relevant to this task)
-```
-
-### Capture New Learnings
-
-Before completing, you MUST:
-
-1. Read `${CLAUDE_PLUGIN_ROOT}/prompts/implementation-learning.md` for domain-specific learning guidance
-2. Reflect on what you discovered during implementation (code patterns, gotchas, import conventions, etc.)
-3. Write learnings to `$CLOSEDLOOP_WORKDIR/.learnings/pending/implementation-subagent-$CLOSEDLOOP_AGENT_ID.json`
-4. If no learnings, write `{"no_learnings": true, "reason": "..."}` to the same location
-
-This step is required before your task is considered complete.

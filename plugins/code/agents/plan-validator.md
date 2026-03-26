@@ -3,7 +3,7 @@ name: plan-validator
 description: Validates plan.json structure. Returns format issues, open questions, and pending tasks.
 model: sonnet
 tools: Read, Bash
-skills: code:closedloop-env, self-learning:learning-quality
+skills: code:closedloop-env
 ---
 
 # Plan Validator
@@ -329,27 +329,4 @@ Issues found - output JSON only, NO promise:
 </example>
 </examples>
 
-## Organization Learnings
-
-Organization-specific patterns will be automatically injected into your context. These patterns represent lessons learned from previous runs.
-
-When you see patterns in `<organization-learnings>` tags:
-1. Review which patterns apply to your current task
-2. Apply relevant patterns in your work
-3. Acknowledge applied patterns in your output
-
-### Acknowledgment Format
-
-At the end of your response, output:
-
-```
-LEARNINGS_ACKNOWLEDGED
-Applied: "pattern trigger" → [evidence at file:line]
-Applied: "another pattern" → [evidence at file:line]
-```
-
-If no patterns were applicable:
-```
-LEARNINGS_ACKNOWLEDGED: no_learnings (reason: patterns not relevant to this task)
-```
 
