@@ -45,8 +45,8 @@ The script:
 
 **After editing plan.json, sync plan.md:**
 ```bash
-python3 <base_directory>/scripts/extract.py .claude/work/plan.json
-# Updates .claude/work/plan.md to match
+python3 <base_directory>/scripts/extract.py .closedloop-ai/work/plan.json
+# Updates .closedloop-ai/work/plan.md to match
 ```
 
 **Extract from a specific plan:**

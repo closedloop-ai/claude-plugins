@@ -55,7 +55,7 @@ Result: Subagent handles edit, orchestrator stays focused
 
 **Note on CLOSEDLOOP_WORKDIR:** When launching subagents, you MUST include `WORKDIR=` followed by the **literal resolved path** in your prompt. NEVER pass the string `$CLOSEDLOOP_WORKDIR` — always substitute it with the actual path value you received from the command arguments.
 
-Example: If CLOSEDLOOP_WORKDIR is `/Users/dan/project/.claude/work`, your prompt must say `WORKDIR=/Users/dan/project/.claude/work`, NOT `WORKDIR=$CLOSEDLOOP_WORKDIR`.
+Example: If CLOSEDLOOP_WORKDIR is `/Users/dan/project/.closedloop-ai/work`, your prompt must say `WORKDIR=/Users/dan/project/.closedloop-ai/work`, NOT `WORKDIR=$CLOSEDLOOP_WORKDIR`.
 </orchestrator_identity>
 
 ## Available Skills

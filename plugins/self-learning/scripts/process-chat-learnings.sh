@@ -5,7 +5,7 @@
 # Extracted from run-loop.sh Step 7 for standalone use when the chat dialog closes.
 #
 # Usage: process-chat-learnings.sh <workdir>
-#   workdir: The .claude/work directory containing .learnings/pending/*.json
+#   workdir: The .closedloop-ai/work directory containing .learnings/pending/*.json
 
 set -euo pipefail
 
