@@ -18,6 +18,7 @@ from code_review_helpers import (
     _classify_intent,
     _compute_composite_key,
     _compute_patch_hash,
+    _detect_open_pr,  # noqa: F401
     _entry_matches_v2,
     _first_added_line,
     _format_comment_body,
@@ -37,6 +38,7 @@ from code_review_helpers import (
     _parse_name_status,
     _parse_numstat,
     _parse_u0_output,
+    _resolve_pr_scope,  # noqa: F401
     _run_gc,
     _severity_for_hygiene_file,
     _write_manifest,
@@ -47,6 +49,8 @@ from code_review_helpers import (
     CACHE_MANIFEST_FILENAME,
     CACHE_SCHEMA_VERSION_V2,
     DEFAULT_MAX_BHA_AGENTS,
+    FAST_PATH_MAX_FILES,  # noqa: F401
+    FAST_PATH_MAX_LOC,  # noqa: F401
     REVIEW_STATE_FILENAME,
     cmd_auto_incremental,
     cmd_cache_check,
@@ -726,6 +730,48 @@ class TestRoute:
         result = self._run_route(data)
         assert result["models"]["premise_reviewer"] == "opus"
 
+    def test_fast_path_small_diff(self) -> None:
+        files = ["a.ts", "b.ts", "c.ts"]
+        loc = {f: {"added": 17, "removed": 16} for f in files}  # 33 * 3 = ~99 LOC
+        data = _make_diff_data(files=files, loc=loc)
+        data["total_loc"] = 100
+        result = self._run_route(data)
+        assert result["fast_path"] is True
+        assert result["models"]["fast_path_reviewer"] == "sonnet"
+
+    def test_fast_path_false_above_loc(self) -> None:
+        files = ["a.ts", "b.ts", "c.ts"]
+        loc = {f: {"added": 34, "removed": 33} for f in files}
+        data = _make_diff_data(files=files, loc=loc)
+        data["total_loc"] = 200
+        result = self._run_route(data)
+        assert result["fast_path"] is False
+
+    def test_fast_path_false_above_files(self) -> None:
+        files = [f"f{i}.ts" for i in range(6)]
+        loc = {f: {"added": 9, "removed": 8} for f in files}
+        data = _make_diff_data(files=files, loc=loc)
+        data["total_loc"] = 100
+        result = self._run_route(data)
+        assert result["fast_path"] is False
+
+    def test_fast_path_disabled_when_domain_critics(self, tmp_path: Path) -> None:
+        gates = {
+            "defaults": {"reviewBudget": 2},
+            "moduleCritics": [
+                {"patterns": [".ts"], "critics": ["ts-reviewer"]},
+            ],
+        }
+        gates_path = tmp_path / "critic-gates.json"
+        gates_path.write_text(json.dumps(gates))
+        files = ["a.ts", "b.ts", "c.ts"]
+        loc = {f: {"added": 17, "removed": 16} for f in files}
+        data = _make_diff_data(files=files, loc=loc)
+        data["total_loc"] = 100
+        result = self._run_route(data, str(gates_path))
+        assert len(result["domain_critics"]) > 0
+        assert result["fast_path"] is False
+
 
 # ---------------------------------------------------------------------------
 # Partition post-processing
@@ -833,6 +879,67 @@ class TestPartitionPostProcessing:
         data = _make_diff_data(files=files, loc=loc)
         result = self._run_partition(data, loc_budget=150, max_files=20, max_bha_agents=5)
         assert len(result["partitions"]) <= 5
+
+    def test_cap_enforcement_force_merges_large_partitions(self) -> None:
+        # 10 files at 800 LOC each -> 10 partitions (800+800=1600 > loc_budget=1000).
+        # 1600 > REBALANCE_LOC_BUDGET=1200, so Phase 2a cannot merge any pair.
+        # Phase 2b force-merges down to max_bha_agents=5.
+        files = [f"f{i}.ts" for i in range(10)]
+        loc = {f: {"added": 800, "removed": 0} for f in files}
+        data = _make_diff_data(files=files, loc=loc)
+        result = self._run_partition(data, loc_budget=1000, max_files=20, max_bha_agents=5)
+        assert len(result["partitions"]) == 5
+        assert result["force_merged_count"] > 0
+
+    def test_cap_enforcement_cross_type_force_merge(self) -> None:
+        # 4 impl files + 4 test files at 700 LOC each -> 8 partitions.
+        # 700+700=1400 > REBALANCE_LOC_BUDGET=1200, Phase 2a can't merge.
+        # Phase 2b force-merges cross-type until 4 partitions.
+        impl_files = [f"src/f{i}.ts" for i in range(4)]
+        test_files = [f"tests/test_f{i}.ts" for i in range(4)]
+        files = impl_files + test_files
+        loc = {f: {"added": 700, "removed": 0} for f in files}
+        data = _make_diff_data(files=files, loc=loc)
+        result = self._run_partition(data, loc_budget=1000, max_files=20, max_bha_agents=4)
+        assert len(result["partitions"]) == 4
+        assert result["force_merged_count"] > 0
+
+    def test_cap_enforcement_force_merge_ignores_max_files(self) -> None:
+        # 6 files at 700 LOC, max_files=1 blocks all merges in Phase 2a.
+        # 700+700=1400 > REBALANCE_LOC_BUDGET=1200, so Phase 2a can't merge anyway.
+        # Phase 2b ignores max_files, force-merges to 3 partitions.
+        files = [f"f{i}.ts" for i in range(6)]
+        loc = {f: {"added": 700, "removed": 0} for f in files}
+        data = _make_diff_data(files=files, loc=loc)
+        result = self._run_partition(data, loc_budget=1000, max_files=1, max_bha_agents=3)
+        assert len(result["partitions"]) == 3
+        assert result["force_merged_count"] > 0
+
+    def test_cap_enforcement_skips_smallest_pair_when_max_files_blocks(self) -> None:
+        # 4 same-type partitions: two smallest have 15 files each (30 > max_files=25),
+        # two larger have 1 file each with LOC that fits budget when merged.
+        # Phase 2a should skip the blocked smallest pair and merge the legal pair.
+        # Build: 15 small files at 5 LOC each -> grouped into one partition of 75 LOC,
+        # another 15 small files at 5 LOC each -> another partition of 75 LOC,
+        # one large file at 500 LOC, one large file at 500 LOC.
+        # 500+500=1000 <= REBALANCE_LOC_BUDGET=1200 and 1+1=2 <= max_files=25: legal merge.
+        small_files_a = [f"src/a{i}.ts" for i in range(15)]
+        small_files_b = [f"src/b{i}.ts" for i in range(15)]
+        large_files = ["src/big1.ts", "src/big2.ts"]
+        files = small_files_a + small_files_b + large_files
+        loc: dict[str, dict[str, int]] = {}
+        for f in small_files_a + small_files_b:
+            loc[f] = {"added": 5, "removed": 0}
+        for f in large_files:
+            loc[f] = {"added": 500, "removed": 0}
+        data = _make_diff_data(files=files, loc=loc)
+        # loc_budget=80 so each group of 15 small files lands in its own partition (15*5=75 < 80,
+        # but each 500 LOC file exceeds budget and gets its own partition). Result: 4 partitions.
+        result = self._run_partition(data, loc_budget=80, max_files=25, max_bha_agents=3)
+        assert len(result["partitions"]) == 3
+        # Phase 2a merged the two 500-LOC partitions (legal), not the 15-file ones (blocked).
+        # No force merge needed.
+        assert result["force_merged_count"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -4089,9 +4196,11 @@ class TestResolveScope:
             _sys.stdout = old_stdout
 
     def test_local_branch(self, tmp_path: Path) -> None:
-        result = self._run("local", tmp_path=tmp_path)
+        with patch("code_review_helpers._detect_open_pr", return_value=None):
+            result = self._run("local", tmp_path=tmp_path)
         assert result["diff_scope"] == "main...HEAD"
         assert result["scope_kind"] == "branch"
+        assert result["pr_auto_detected"] is False
 
     def test_staged(self, tmp_path: Path) -> None:
         result = self._run("local", scope_args="staged", tmp_path=tmp_path)
@@ -4105,7 +4214,8 @@ class TestResolveScope:
         assert result["path_filter"] == "-- file1.ts file2.ts"
 
     def test_base_override(self, tmp_path: Path) -> None:
-        result = self._run("local", base_ref_override="develop", tmp_path=tmp_path)
+        with patch("code_review_helpers._detect_open_pr", return_value=None):
+            result = self._run("local", base_ref_override="develop", tmp_path=tmp_path)
         assert "origin/develop" in result["diff_scope"]
         assert result["base_ref"] == "develop"
 
@@ -4113,6 +4223,177 @@ class TestResolveScope:
         result = self._run("local", scope_args="file1.ts", base_ref_override="develop", tmp_path=tmp_path)
         assert "origin/develop" in result["diff_scope"]
         assert "-- file1.ts" in result["path_filter"]
+
+    # -- PR auto-detection tests ------------------------------------------------
+
+    def _gh_pr_view_detect(self, pr_number: str = "675") -> subprocess.CompletedProcess[str]:
+        """Mock result for ``gh pr view --json number``."""
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout=pr_number + "\n")
+
+    def _gh_pr_view_refs(
+        self, base: str = "main", head: str = "feat-x",
+    ) -> subprocess.CompletedProcess[str]:
+        """Mock result for ``gh pr view <N> --json baseRefName,headRefName``."""
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout=f"{base}\n{head}\n")
+
+    def _git_fetch_ok(self) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+    def _mock_subprocess_side_effect(
+        self,
+        detect_result: subprocess.CompletedProcess[str] | Exception | None = None,
+        resolve_result: subprocess.CompletedProcess[str] | Exception | None = None,
+        fetch_result: subprocess.CompletedProcess[str] | Exception | None = None,
+    ):
+        """Return a side_effect callable that dispatches on command prefix."""
+        def _side_effect(cmd, **_kwargs):  # noqa: ANN001, ANN202
+            cmd_list = list(cmd)
+            # Detection: gh pr view --json number
+            if cmd_list[:2] == ["gh", "pr"] and "number" in " ".join(cmd_list):
+                if isinstance(detect_result, Exception):
+                    raise detect_result
+                return detect_result
+            # Resolution: gh pr view <N> --json baseRefName,headRefName
+            if cmd_list[:2] == ["gh", "pr"] and "baseRefName" in " ".join(cmd_list):
+                if isinstance(resolve_result, Exception):
+                    raise resolve_result
+                return resolve_result
+            # git fetch
+            if cmd_list[:2] == ["git", "fetch"]:
+                if isinstance(fetch_result, Exception):
+                    raise fetch_result
+                return fetch_result
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        return _side_effect
+
+    def test_pr_auto_detected_when_open_pr(self, tmp_path: Path) -> None:
+        side_effect = self._mock_subprocess_side_effect(
+            detect_result=self._gh_pr_view_detect("675"),
+            resolve_result=self._gh_pr_view_refs("main", "feat-x"),
+            fetch_result=self._git_fetch_ok(),
+        )
+        with patch("code_review_helpers.subprocess.run", side_effect=side_effect):
+            result = self._run("local", tmp_path=tmp_path)
+        assert result["scope_kind"] == "pr"
+        assert result["pr_auto_detected"] is True
+        assert result["pr_number"] == 675
+        assert result["diff_scope"] == "origin/main...origin/feat-x"
+        assert result["base_ref"] == "main"
+        assert result["head_ref"] == "feat-x"
+        assert result["review_branch"] == "feat-x"
+        assert result["diff_tip"] == "origin/feat-x"
+
+    def test_pr_auto_detect_falls_back_on_no_pr(self, tmp_path: Path) -> None:
+        side_effect = self._mock_subprocess_side_effect(
+            detect_result=subprocess.CalledProcessError(1, "gh"),
+        )
+        with patch("code_review_helpers.subprocess.run", side_effect=side_effect):
+            result = self._run("local", tmp_path=tmp_path)
+        assert result["scope_kind"] == "branch"
+        assert result["diff_scope"] == "main...HEAD"
+        assert result["pr_auto_detected"] is False
+
+    def test_explicit_pr_number_resolves_pr_scope_without_auto_detect(self, tmp_path: Path) -> None:
+        side_effect = self._mock_subprocess_side_effect(
+            resolve_result=self._gh_pr_view_refs("main", "feat-x"),
+            fetch_result=self._git_fetch_ok(),
+        )
+        with patch("code_review_helpers.subprocess.run", side_effect=side_effect):
+            result = self._run("local", pr_number=100, tmp_path=tmp_path)
+        assert result["scope_kind"] == "pr"
+        assert result["pr_number"] == 100
+        assert result["pr_auto_detected"] is False
+        assert result["diff_scope"] == "origin/main...origin/feat-x"
+        assert result["base_ref"] == "main"
+        assert result["head_ref"] == "feat-x"
+        assert result["review_branch"] == "feat-x"
+        assert result["diff_tip"] == "origin/feat-x"
+
+    def test_explicit_pr_number_gh_missing_is_hard_failure(self, tmp_path: Path) -> None:
+        side_effect = self._mock_subprocess_side_effect(
+            resolve_result=FileNotFoundError("gh not found"),
+        )
+        import pytest
+        with patch("code_review_helpers.subprocess.run", side_effect=side_effect):
+            with pytest.raises(FileNotFoundError):
+                self._run("local", pr_number=100, tmp_path=tmp_path)
+
+    def test_explicit_pr_number_gh_oserror_is_hard_failure(self, tmp_path: Path) -> None:
+        side_effect = self._mock_subprocess_side_effect(
+            resolve_result=OSError("spawn failed"),
+        )
+        import pytest
+        with patch("code_review_helpers.subprocess.run", side_effect=side_effect):
+            with pytest.raises(OSError):
+                self._run("local", pr_number=100, tmp_path=tmp_path)
+
+    def test_pr_auto_detect_falls_back_when_gh_missing(self, tmp_path: Path) -> None:
+        side_effect = self._mock_subprocess_side_effect(
+            detect_result=FileNotFoundError("gh not found"),
+        )
+        with patch("code_review_helpers.subprocess.run", side_effect=side_effect):
+            result = self._run("local", tmp_path=tmp_path)
+        assert result["scope_kind"] == "branch"
+        assert result["diff_scope"] == "main...HEAD"
+        assert result["pr_auto_detected"] is False
+
+    def test_pr_auto_detect_falls_back_on_malformed_number(self, tmp_path: Path) -> None:
+        bad_detect = subprocess.CompletedProcess(args=[], returncode=0, stdout="not-a-number\n")
+        side_effect = self._mock_subprocess_side_effect(detect_result=bad_detect)
+        with patch("code_review_helpers.subprocess.run", side_effect=side_effect):
+            result = self._run("local", tmp_path=tmp_path)
+        assert result["scope_kind"] == "branch"
+        assert result["pr_auto_detected"] is False
+
+    def test_pr_auto_detect_falls_back_on_fetch_failure(self, tmp_path: Path) -> None:
+        side_effect = self._mock_subprocess_side_effect(
+            detect_result=self._gh_pr_view_detect("675"),
+            resolve_result=self._gh_pr_view_refs("main", "feat-x"),
+            fetch_result=subprocess.CalledProcessError(128, "git fetch"),
+        )
+        with patch("code_review_helpers.subprocess.run", side_effect=side_effect):
+            result = self._run("local", tmp_path=tmp_path)
+        assert result["pr_auto_detected"] is False
+        assert result["pr_number"] is None
+        assert result["scope_kind"] == "branch"
+        assert result["diff_scope"] == "main...HEAD"
+        assert result["diff_tip"] == "HEAD"
+
+    def test_pr_auto_detect_succeeds_but_resolve_fails(self, tmp_path: Path) -> None:
+        side_effect = self._mock_subprocess_side_effect(
+            detect_result=self._gh_pr_view_detect("675"),
+            resolve_result=subprocess.CalledProcessError(1, "gh"),
+        )
+        with patch("code_review_helpers.subprocess.run", side_effect=side_effect):
+            result = self._run("local", tmp_path=tmp_path)
+        assert result["pr_auto_detected"] is False
+        assert result["scope_kind"] == "branch"
+        assert result["diff_scope"] == "main...HEAD"
+
+    def test_pr_auto_detected_when_scope_args_branch_literal(self, tmp_path: Path) -> None:
+        side_effect = self._mock_subprocess_side_effect(
+            detect_result=self._gh_pr_view_detect("675"),
+            resolve_result=self._gh_pr_view_refs("main", "feat-x"),
+            fetch_result=self._git_fetch_ok(),
+        )
+        with patch("code_review_helpers.subprocess.run", side_effect=side_effect):
+            result = self._run("local", scope_args="branch", tmp_path=tmp_path)
+        assert result["scope_kind"] == "pr"
+        assert result["pr_auto_detected"] is True
+        assert result["pr_number"] == 675
+        assert result["diff_scope"] == "origin/main...origin/feat-x"
+
+    def test_pr_auto_detected_respects_base_override(self, tmp_path: Path) -> None:
+        side_effect = self._mock_subprocess_side_effect(
+            detect_result=self._gh_pr_view_detect("675"),
+            resolve_result=self._gh_pr_view_refs("main", "feat-x"),
+            fetch_result=self._git_fetch_ok(),
+        )
+        with patch("code_review_helpers.subprocess.run", side_effect=side_effect):
+            result = self._run("local", base_ref_override="develop", tmp_path=tmp_path)
+        assert result["diff_scope"] == "origin/develop...origin/feat-x"
+        assert result["base_ref"] == "develop"
+        assert result["pr_auto_detected"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -4462,3 +4743,45 @@ class TestExtractPatches:
         full_diff_cmds = [c for c in captured_cmds if "patches_p" not in " ".join(str(x) for x in c)]
         # Should be multiple batches (>1 command for the full diff)
         assert len(full_diff_cmds) >= 5
+
+    def test_extract_patches_no_partitions_file(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+        from unittest.mock import patch as mock_patch
+
+        from code_review_helpers import cmd_extract_patches
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+
+        diff_data = {"files_to_review": ["a.ts", "b.ts"]}
+        diff_data_file = tmp_path / "diff_data.json"
+        diff_data_file.write_text(json.dumps(diff_data))
+
+        def mock_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+            stdout = kwargs.get("stdout")
+            if stdout and hasattr(stdout, "write"):
+                stdout.write(f"diff output for {' '.join(cmd)}\n")
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
+                ns = argparse.Namespace(
+                    partitions_file=None, diff_scope="main...HEAD",
+                    diff_data=str(diff_data_file), cr_dir=str(cr_dir),
+                    workdir=None, batch_size=50,
+                )
+                cmd_extract_patches(ns)
+                _sys.stdout.seek(0)
+                result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert result["partition_patches"] == []
+        assert result["full_patch"] == "patches_all.txt"
+        assert (cr_dir / "patches_all.txt").exists()
+        # No partition patch files should exist
+        assert not list(cr_dir.glob("patches_p*.txt"))

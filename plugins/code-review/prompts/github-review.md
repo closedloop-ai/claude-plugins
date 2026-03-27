@@ -191,14 +191,31 @@ SUMMARY_EOF
 
 ### Summary Format
 
+Read `<CR_DIR>/route.json` before rendering. Extract `fast_path`, `models["fast_path_reviewer"]`, and `domain_critics`.
+
 ```markdown
 ## Code Review Summary
 
 **Status:** [Approved | Changes Requested | Needs Attention]
+```
 
-**Reviewers:** Bug Hunter A, Bug Hunter B, Unified Auditor
+**Reviewers line is conditional on `fast_path`:**
+
+- **If `fast_path == true`:**
+```markdown
+**Reviewers:** Fast Path Reviewer (single-agent mode)
+**Model Routing:** Fast path — <MODEL> single reviewer
+```
+
+- **If `fast_path == false`:**
+```markdown
+**Reviewers:** Bug Hunter A, Bug Hunter B, Unified Auditor, Premise Reviewer
 [+ domain specialist if triggered]
+```
 
+Then continue with the remaining summary content:
+
+```markdown
 ### Findings
 
 | Severity | Count |

@@ -93,6 +93,10 @@ DEFAULT_MAX_BHA_AGENTS = 5
 REBALANCE_LOC_BUDGET = 1200
 MIXED_PARTITION_SPLIT_THRESHOLD = 50
 
+# Fast-path routing thresholds
+FAST_PATH_MAX_LOC = 150
+FAST_PATH_MAX_FILES = 5
+
 # Validation thresholds
 CONFIDENCE_DISCARD_THRESHOLD = 0.5
 LINE_TOLERANCE = 3
@@ -163,6 +167,63 @@ def _run_git(args: list[str], workdir: str | None = None) -> str:
     cmd += args
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return result.stdout
+
+
+def _detect_open_pr() -> int | None:
+    """Detect an open PR for the current branch via ``gh pr view``.
+
+    Returns the PR number or ``None`` when detection fails for any reason
+    (no open PR, ``gh`` not installed, network error, malformed output).
+    """
+    try:
+        result = subprocess.run(
+            ["gh", "pr", "view", "--json", "number", "-q", ".number"],
+            capture_output=True, text=True, check=True,
+        )
+        return int(result.stdout.strip())
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError, ValueError):
+        return None
+
+
+def _resolve_pr_scope(
+    pr_number: int,
+    current_branch: str,
+    *,
+    allow_guess_fallback: bool,
+) -> dict[str, str | int]:
+    """Resolve diff scope fields for a given PR number.
+
+    When *allow_guess_fallback* is ``True`` (explicit ``--pr-number``), a
+    ``CalledProcessError`` from ``gh pr view`` falls back to
+    ``base_ref="main"`` / ``head_ref=current_branch``.  When ``False``
+    (auto-detect path), errors propagate so the caller can revert to branch
+    scope.
+    """
+    try:
+        result = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--json", "baseRefName,headRefName",
+             "-q", ".baseRefName,.headRefName"],
+            capture_output=True, text=True, check=True,
+        )
+        lines = result.stdout.strip().splitlines()
+        base_ref = lines[0].strip() if len(lines) > 0 else "main"
+        head_ref = lines[1].strip() if len(lines) > 1 else current_branch
+    except subprocess.CalledProcessError:
+        if not allow_guess_fallback:
+            raise
+        base_ref = "main"
+        head_ref = current_branch
+
+    return {
+        "diff_scope": f"origin/{base_ref}...origin/{head_ref}",
+        "base_ref": base_ref,
+        "head_ref": head_ref,
+        "review_branch": head_ref,
+        "diff_tip": f"origin/{head_ref}",
+        "path_filter": "",
+        "scope_kind": "pr",
+        "pr_number": pr_number,
+    }
 
 
 def _parse_scope(scope: str) -> list[str]:
@@ -744,40 +805,60 @@ def cmd_partition(args: argparse.Namespace) -> int:
             new_partitions.append(part)
     partitions = new_partitions
 
-    # Pass 2 -- Agent cap enforcement
-    # If len(partitions) > max_bha_agents, merge the two smallest same-type partitions.
+    # Pass 2a -- Budget-respecting merges (all same-type pairs)
+    # Enumerate ALL same-type partition pairs, merge the lowest-total-LOC pair
+    # that satisfies both REBALANCE_LOC_BUDGET and max_files.
     while len(partitions) > max_bha_agents:
-        # Try same-type merges first (test with test, impl with impl)
-        merged = False
+        best_pair: tuple[int, int, int, bool] | None = None  # (idx_a, idx_b, merged_loc, is_test)
         for is_test in (True, False):
             same_type = [
                 (i, p) for i, p in enumerate(partitions) if p["is_test_only"] == is_test
             ]
             if len(same_type) < 2:
                 continue
-            # Sort by total_loc ascending to find the two smallest
-            same_type.sort(key=lambda x: x[1]["total_loc"])
-            idx_a, part_a = same_type[0]
-            idx_b, part_b = same_type[1]
-            merged_loc = part_a["total_loc"] + part_b["total_loc"]
-            merged_file_count = len(part_a["files"]) + len(part_b["files"])
-            if merged_loc <= REBALANCE_LOC_BUDGET and merged_file_count <= max_files:
-                merged_files = part_a["files"] + part_b["files"]
-                new_part: dict[str, Any] = {
-                    "id": 0,
-                    "files": merged_files,
-                    "total_loc": merged_loc,
-                    "is_test_only": is_test,
-                }
-                # Remove the two originals (remove higher index first)
-                remove_indices = sorted([idx_a, idx_b], reverse=True)
-                for ri in remove_indices:
-                    partitions.pop(ri)
-                partitions.append(new_part)
-                merged = True
-                break
-        if not merged:
-            break  # No valid same-type merge possible, stop
+            for ai in range(len(same_type)):
+                for bi in range(ai + 1, len(same_type)):
+                    idx_a, part_a = same_type[ai]
+                    idx_b, part_b = same_type[bi]
+                    merged_loc = part_a["total_loc"] + part_b["total_loc"]
+                    merged_file_count = len(part_a["files"]) + len(part_b["files"])
+                    if merged_loc <= REBALANCE_LOC_BUDGET and merged_file_count <= max_files:
+                        if best_pair is None or merged_loc < best_pair[2]:
+                            best_pair = (idx_a, idx_b, merged_loc, is_test)
+        if best_pair is None:
+            break  # No valid same-type merge possible, proceed to Phase 2b
+        idx_a, idx_b, merged_loc, is_test = best_pair
+        part_a = partitions[idx_a]
+        part_b = partitions[idx_b]
+        merged_files = part_a["files"] + part_b["files"]
+        new_part: dict[str, Any] = {
+            "id": 0,
+            "files": merged_files,
+            "total_loc": merged_loc,
+            "is_test_only": is_test,
+        }
+        for ri in sorted([idx_a, idx_b], reverse=True):
+            partitions.pop(ri)
+        partitions.append(new_part)
+
+    # Pass 2b -- Unconditional cap enforcement (force-merge fallback)
+    # When Phase 2a cannot reduce further, ignore budget and max_files constraints.
+    # Sort by total_loc ascending, merge the two smallest partitions (any type).
+    force_merged_count = 0
+    while len(partitions) > max_bha_agents:
+        partitions.sort(key=lambda p: p["total_loc"])
+        part_a = partitions.pop(0)
+        part_b = partitions.pop(0)
+        merged_files = part_a["files"] + part_b["files"]
+        is_test_only = all(f.get("is_test", False) for f in merged_files)
+        new_part = {
+            "id": 0,
+            "files": merged_files,
+            "total_loc": part_a["total_loc"] + part_b["total_loc"],
+            "is_test_only": is_test_only,
+        }
+        partitions.append(new_part)
+        force_merged_count += 1
 
     # Pass 3 -- Trivial merge
     # Merge partitions below TRIVIAL_PARTITION_THRESHOLD into same-type normal partitions.
@@ -821,7 +902,7 @@ def cmd_partition(args: argparse.Namespace) -> int:
         part["id"] = idx
 
     json.dump(
-        {"partitions": partitions, "test_file_paths": test_file_paths},
+        {"partitions": partitions, "test_file_paths": test_file_paths, "force_merged_count": force_merged_count},
         sys.stdout,
         indent=2,
     )
@@ -884,6 +965,7 @@ def cmd_route(args: argparse.Namespace) -> int:
         "bug_hunter_b": "sonnet",
         "unified_auditor": "sonnet",
         "premise_reviewer": premise_model,
+        "fast_path_reviewer": "sonnet",
     }
 
     # Risk scoring for high-risk files (large diffs)
@@ -925,10 +1007,17 @@ def cmd_route(args: argparse.Namespace) -> int:
 
     max_bha_agents = 9 - 3 - len(selected_domain_critics)  # 3 = BHB + Auditor + Premise
 
+    fast_path = (
+        total_loc <= FAST_PATH_MAX_LOC
+        and len(files_to_review) <= FAST_PATH_MAX_FILES
+        and not selected_domain_critics
+    )
+
     json.dump(
         {
             "size_category": size_category,
             "total_loc": total_loc,
+            "fast_path": fast_path,
             "models": models,
             "high_risk_files": high_risk_files,
             "domain_critics": selected_domain_critics,
@@ -2373,36 +2462,60 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
     path_filter = ""
     scope_kind = "branch"
 
-    if pr_number is not None:
-        # Fetch PR base/head from gh
-        try:
-            result = subprocess.run(
-                ["gh", "pr", "view", str(pr_number), "--json", "baseRefName,headRefName",
-                 "-q", ".baseRefName,.headRefName"],
-                capture_output=True, text=True, check=True,
-            )
-            lines = result.stdout.strip().splitlines()
-            base_ref = lines[0].strip() if len(lines) > 0 else "main"
-            head_ref = lines[1].strip() if len(lines) > 1 else current_branch
-        except subprocess.CalledProcessError:
-            base_ref = "main"
-            head_ref = current_branch
+    pr_auto_detected = False
 
-        # Fetch origin head (allow failure)
+    if pr_number is not None:
+        # Explicit --pr-number: use _resolve_pr_scope with guess fallback.
+        # FileNotFoundError / OSError propagate as hard failures.
+        pr_scope = _resolve_pr_scope(pr_number, current_branch, allow_guess_fallback=True)
+        base_ref = str(pr_scope["base_ref"])
+        head_ref = str(pr_scope["head_ref"])
+        diff_scope = str(pr_scope["diff_scope"])
+        diff_tip = str(pr_scope["diff_tip"])
+        review_branch = str(pr_scope["review_branch"])
+        path_filter = str(pr_scope["path_filter"])
+        scope_kind = str(pr_scope["scope_kind"])
+
+        # Fetch origin head (allow failure for explicit PR)
         subprocess.run(
             ["git", "fetch", "origin", head_ref],
             capture_output=True, text=True,
         )
 
-        diff_scope = f"origin/{base_ref}...origin/{head_ref}"
-        diff_tip = f"origin/{head_ref}"
-        scope_kind = "pr"
-        review_branch = head_ref
-
     elif mode == "local":
         if not scope_args or scope_args.strip() in ("", "branch"):
-            diff_scope = "main...HEAD"
-            scope_kind = "branch"
+            # Try auto-detecting an open PR for the current branch
+            detected_pr = _detect_open_pr()
+            if detected_pr is not None:
+                try:
+                    pr_scope = _resolve_pr_scope(
+                        detected_pr, current_branch, allow_guess_fallback=False,
+                    )
+                    # Three-step success: fetch must also succeed
+                    subprocess.run(
+                        ["git", "fetch", "origin", str(pr_scope["head_ref"])],
+                        capture_output=True, text=True, check=True,
+                    )
+                    # All three steps succeeded
+                    base_ref = str(pr_scope["base_ref"])
+                    head_ref = str(pr_scope["head_ref"])
+                    diff_scope = str(pr_scope["diff_scope"])
+                    diff_tip = str(pr_scope["diff_tip"])
+                    review_branch = str(pr_scope["review_branch"])
+                    path_filter = str(pr_scope["path_filter"])
+                    scope_kind = str(pr_scope["scope_kind"])
+                    pr_number = detected_pr
+                    pr_auto_detected = True
+                except (subprocess.CalledProcessError, FileNotFoundError,
+                        OSError, ValueError):
+                    # Any failure: fall back to branch scope
+                    pr_number = None
+                    pr_auto_detected = False
+                    diff_scope = "main...HEAD"
+                    scope_kind = "branch"
+            else:
+                diff_scope = "main...HEAD"
+                scope_kind = "branch"
         elif scope_args.strip() == "staged":
             diff_scope = "--cached"
             scope_kind = "staged"
@@ -2437,6 +2550,7 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
         "pr_number": pr_number,
         "path_filter": path_filter,
         "scope_kind": scope_kind,
+        "pr_auto_detected": pr_auto_detected,
     }
     json.dump(result_out, sys.stdout, indent=2)
     sys.stdout.write("\n")
@@ -3195,9 +3309,12 @@ def cmd_extract_patches(args: argparse.Namespace) -> int:
     batch_size: int = getattr(args, "batch_size", _EXTRACT_PATCHES_BATCH_SIZE)
 
     # Read partitions for per-partition patches
-    with open(partitions_file) as f:
-        pdata = json.load(f)
-    partitions: list[dict[str, Any]] = pdata.get("partitions", [])
+    if partitions_file is not None:
+        with open(partitions_file) as f:
+            pdata = json.load(f)
+        partitions: list[dict[str, Any]] = pdata.get("partitions", [])
+    else:
+        partitions = []
 
     # Read full diff_data for patches_all.txt (includes cached files too)
     with open(diff_data_path) as f:
@@ -3445,7 +3562,7 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
 
     # extract-patches
     p_ep = subparsers.add_parser("extract-patches", help="Extract git diff patches to disk files")
-    p_ep.add_argument("--partitions-file", required=True, help="Path to partitions.json")
+    p_ep.add_argument("--partitions-file", default=None, help="Path to partitions.json")
     p_ep.add_argument("--diff-scope", required=True, help="Git diff scope string")
     p_ep.add_argument("--diff-data", required=True, help="Path to full diff_data.json (for patches_all.txt)")
     p_ep.add_argument("--cr-dir", required=True, help="Output directory for patch files")

@@ -13,7 +13,7 @@ Run a multi-agent code review with partitioned deep review, deterministic hygien
 ## Usage
 
 ```
-/start                              # Review all changes on current branch vs main (default)
+/start                              # Review open PR diff for current branch, or main...HEAD if no PR
 /start staged                       # Review only staged changes
 /start file1 file2                  # Review specific files
 /start 123                          # Review PR #123 diff locally (no posting)
@@ -63,7 +63,7 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 ### Task 3: Parse scope and resolve diff
 - Mark todo "Parse scope and get diff data" as `in_progress`
 - Run Bash: `python <HELPERS> resolve-scope --mode <MODE> --setup-json <CR_DIR>/setup.json [--pr-number <N>] [--scope-args "<REMAINING_ARGS>"] [--base-ref-override <REF>] > <CR_DIR>/scope.json`
-- Read `<CR_DIR>/scope.json` for `DIFF_SCOPE`, `BASE_REF`, `HEAD_REF`, `REVIEW_BRANCH`, `DIFF_TIP`, `PR_NUMBER`, `PATH_FILTER`, `SCOPE_KIND`
+- Read `<CR_DIR>/scope.json` for `DIFF_SCOPE`, `BASE_REF`, `HEAD_REF`, `REVIEW_BRANCH`, `DIFF_TIP`, `PR_NUMBER`, `PATH_FILTER`, `SCOPE_KIND`, `PR_AUTO_DETECTED`
 - Finalize `CACHE_DIR` now that scope/PR context is known (must happen before auto-incremental)
 - See: [Step 2 — Parse Arguments](#parse-arguments-remaining-after-flag-removal)
 
@@ -71,6 +71,7 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 - Evaluate auto-incremental eligibility using `REVIEW_BRANCH:BASE_REF` as the state key and `DIFF_TIP` as the ref
 - Set `REVIEW_MODE_LINE` to one of the **exact** prescribed strings — do NOT improvise
 - Print `<REVIEW_MODE_LINE>`
+- If `PR_AUTO_DETECTED` is true, print `"Auto-detected PR #<PR_NUMBER> for branch <REVIEW_BRANCH>."`
 - See: [Auto Incremental Mode](#auto-incremental-mode-phase-4--local-only)
 
 ### Task 5: Get diff data + fetch intent (GitHub: also get PR metadata)
@@ -85,8 +86,10 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 ### Task 6: Compute prompt hash + cache check (if CACHE_DIR set)
 - Prompt assets already copied in Task 2 (prep-assets)
 - Compute `PROMPT_HASH` and `CONTEXT_KEY` using `<DIFF_TIP>`
-- Run cache-check via `python <HELPERS> cache-check ...`
-- Print `cache_result.json -> status_message` to report cache status
+- Run cache-check via `python <HELPERS> cache-check ... > /dev/null` (redirect stdout to suppress inline print)
+- Read `<CR_DIR>/cache_result.json` and store `status_message` as `CACHE_STATUS_MESSAGE`
+- Do NOT print cache status here — it is printed later in Task 7 (hygiene exit) or Task 8 (after routing)
+- If `CACHE_DIR` is empty, set `CACHE_STATUS_MESSAGE=""`
 - Skip if `CACHE_DIR` is empty
 - See: [Step 2.1](#step-21-compute-prompt-hash--context-key-when-caching-is-active), [Step 2.2](#step-22-bha-cache-check-when-caching-is-active)
 
@@ -94,33 +97,41 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 - Mark todo "Run deterministic hygiene checks" as `in_progress`
 - Run Bash: `python <HELPERS> hygiene --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/hygiene.json`
 - Mark todo as `completed`
-- **If HYGIENE_ONLY**: present hygiene findings and EXIT — skip all remaining tasks
+- **If HYGIENE_ONLY**: if `CACHE_DIR` is set and `CACHE_STATUS_MESSAGE` is non-empty, print `CACHE_STATUS_MESSAGE`. Then present hygiene findings and EXIT — skip all remaining tasks
 - See: [Step 2.5](#step-25-deterministic-hygiene-checks)
 
 ### Task 8: Route models + partition + extract patches
 - Mark todo "Assess scope and route models" as `in_progress`
 - Run Bash: `python <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .claude/settings/critic-gates.json --intent <INTENT> > <CR_DIR>/route.json`
-- Read `<CR_DIR>/route.json` for `models`, `domain_critics`, `max_bha_agents`
-- Run Bash: `python <HELPERS> partition --diff-data <CR_DIR>/diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json` (use `uncached_diff_data.json` when caching is active)
-- Run Bash: `python <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope "<DIFF_SCOPE>" --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>`
+- Read `<CR_DIR>/route.json` for `models`, `domain_critics`, `max_bha_agents`, `fast_path`
+- **If `fast_path` is false (standard flow):**
+  - Print `CACHE_STATUS_MESSAGE` if non-empty
+  - Run Bash: `python <HELPERS> partition --diff-data <CR_DIR>/diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json` (use `uncached_diff_data.json` when caching is active)
+  - Run Bash: `python <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope "<DIFF_SCOPE>" --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>`
+- **If `fast_path` is true:**
+  - Print `"Fast path selected: 1 reviewer (<MODEL>)."` where `<MODEL>` = `route.json -> models.fast_path_reviewer`
+  - If `CACHE_DIR` is set, print `"BHA Cache: bypassed in fast-path mode."` and delete `<CR_DIR>/agent_cached_bha.json` if it exists
+  - Skip partition entirely (no `partitions.json` created)
+  - Run Bash: `python <HELPERS> extract-patches --diff-scope "<DIFF_SCOPE>" --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>` (no `--partitions-file` -- only `patches_all.txt` is created)
+  - Update TodoWrite: replace "Spawn reviewer agents in parallel" with "Run fast-path review"
 - Mark todo as `completed`
-- See: [Step 3](#step-3-assess-scope-and-route-models), [Step 4 — Partitioning](#file-partitioning-critical-for-large-diffs)
+- See: [Step 3](#step-3-assess-scope-and-route-models), [Step 4A](#step-4a-spawn-reviewer-agents-fast_path--false), [Step 4B](#step-4b-fast-path-single-agent-review-fast_path--true)
 
 ### Task 9: Spawn agents
-- Mark todo "Spawn reviewer agents in parallel" as `in_progress`
+- Mark todo as `in_progress` (text depends on `fast_path` -- either "Spawn reviewer agents in parallel" or "Run fast-path review")
 - Prompt assets already in `<CR_DIR>` from Task 2 (prep-assets)
-- Spawn ALL agents using `subagent_type: "code:code-review-worker"` with `run_in_background: true`
-- Use the exact per-agent prompt template from the reference section
-- See: [Step 4 — Spawn Reviewer Agents](#step-4-spawn-reviewer-agents)
+- **If `fast_path == false`**: Spawn the standard reviewer fleet using `subagent_type: "code:code-review-worker"` with `run_in_background: true`. See [Step 4A](#step-4a-spawn-reviewer-agents-fast_path--false)
+- **If `fast_path == true`**: Spawn exactly one fast-path reviewer task using `subagent_type: "code:code-review-worker"` with `run_in_background: true`. See [Step 4B](#step-4b-fast-path-single-agent-review-fast_path--true)
+- Task 9 spawns background task(s) ONLY. Do NOT call `TaskOutput` here -- collection happens in Task 10
 
 ### Task 10: Collect + validate findings
 - Mark todo "Collect, normalize, and validate findings" as `in_progress`
-- Collect ALL agent outputs via `TaskOutput` (block=true for each)
+- Collect the task(s) spawned by Task 9 via `TaskOutput` (block=true for each). Perform one initial parallel `TaskOutput` sweep. If any retry task is spawned (WRITE_DENIED fallback or failure recovery), perform an additional `TaskOutput` sweep for those retry tasks
 - Run Bash: `python <HELPERS> collect-findings --cr-dir <CR_DIR> --hygiene <CR_DIR>/hygiene.json`
 - Run Bash: `python <HELPERS> validate --findings <CR_DIR>/findings.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/validate_output.json`
-- Run cache-update if `CACHE_DIR` is set (add `--exclude-test-partitions` flag)
+- Run `cache-update` only when `fast_path == false` AND `CACHE_DIR` is set (add `--exclude-test-partitions` flag)
 - Mark todo as `completed`
-- See: [Step 5](#step-5-collect-normalize-and-validate-findings), [Step 5.5](#step-55-bha-cache-update-when-caching-is-active)
+- See: [Step 5](#step-5-collect-normalize-and-validate-findings), [Step 5.5 (fast_path == false AND CACHE_DIR set)](#step-55-bha-cache-update-fast_path--false-and-cache_dir-set)
 
 ### Task 11: Present results
 - **GitHub mode**: follow Steps 6 and 8 in `github-review.md` — write findings JSON, threads JSON, and summary.md to `.claude/`
@@ -273,7 +284,7 @@ Run the `resolve-scope` subcommand to handle all scope resolution deterministica
 python <HELPERS> resolve-scope --mode <MODE> --setup-json <CR_DIR>/setup.json [--pr-number <N>] [--scope-args "<REMAINING_ARGS>"] [--base-ref-override <REF>] > <CR_DIR>/scope.json
 ```
 
-Read `<CR_DIR>/scope.json` for: `DIFF_SCOPE`, `BASE_REF`, `HEAD_REF`, `REVIEW_BRANCH`, `DIFF_TIP`, `PR_NUMBER`, `PATH_FILTER`, `SCOPE_KIND`.
+Read `<CR_DIR>/scope.json` for: `DIFF_SCOPE`, `BASE_REF`, `HEAD_REF`, `REVIEW_BRANCH`, `DIFF_TIP`, `PR_NUMBER`, `PATH_FILTER`, `SCOPE_KIND`, `PR_AUTO_DETECTED`.
 
 The helper handles PR branch lookup (`gh pr view`), `git fetch`, `origin/` prefixes, `--base` overrides, path filter preservation, and scope kind classification.
 
@@ -291,9 +302,9 @@ Omit `--pr-number` if no PR number is set. Read `<CR_DIR>/cache_config.json` —
 
 **After scope parsing and before `parse-diff`**, check for auto-incremental eligibility:
 
-Determine `DIFF_TIP` based on scope:
-- PR number provided: `DIFF_TIP="origin/${HEAD_REF}"` (remote ref)
-- No PR number: `DIFF_TIP="HEAD"` (local ref)
+Use `DIFF_TIP` from `scope.json` (set by `resolve-scope` based on scope kind). Do not re-derive it here.
+
+Store `PR_AUTO_DETECTED` from `scope.json` but do not print anything yet.
 
 Run the `auto-incremental` subcommand to evaluate eligibility:
 
@@ -321,6 +332,8 @@ python <HELPERS> auto-incremental \
 - Set `REVIEW_MODE_LINE` from `review_mode_line`
 
 Print `<REVIEW_MODE_LINE>` (always, at the start of every run). Use the EXACT string from the JSON — do NOT improvise or rephrase.
+
+If `PR_AUTO_DETECTED` is true, print `"Auto-detected PR #<PR_NUMBER> for branch <REVIEW_BRANCH>."` immediately after `REVIEW_MODE_LINE`.
 
 ### GitHub Mode: Get PR Metadata
 
@@ -409,7 +422,8 @@ python <HELPERS> cache-check \
   --schema-version 1 \
   --output-dir <CR_DIR> \
   --global-cache <GLOBAL_CACHE> \
-  --context-key <CONTEXT_KEY>
+  --context-key <CONTEXT_KEY> \
+  > /dev/null
 ```
 
 This produces three files:
@@ -417,7 +431,9 @@ This produces three files:
 - `<CR_DIR>/agent_cached_bha.json` — cached BHA findings (glob-compatible with `agent_*`)
 - `<CR_DIR>/uncached_diff_data.json` — filtered diff_data with only uncached files
 
-Read `<CR_DIR>/cache_result.json` and print the `status_message` field to report cache status.
+Read `<CR_DIR>/cache_result.json` and store the `status_message` field as `CACHE_STATUS_MESSAGE`. Do NOT print it here -- it is printed later in Task 7 (hygiene-only exit) or Task 8 (after reading `route.json` and determining `fast_path`).
+
+If `CACHE_DIR` is empty, set `CACHE_STATUS_MESSAGE=""`.
 
 ---
 
@@ -440,6 +456,8 @@ Mark todo as `completed`.
 **If `HYGIENE_ONLY` is true**, skip all agent spawning and validation. Output hygiene findings directly and exit:
 
 ```
+If CACHE_DIR is set and CACHE_STATUS_MESSAGE is non-empty, print CACHE_STATUS_MESSAGE.
+
 Mark todo "Present hygiene findings" as in_progress.
 
 Parse `<CR_DIR>/hygiene.json` and present findings in the local presentation format:
@@ -483,19 +501,22 @@ python <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .claud
 Read `<CR_DIR>/route.json` with the Read tool.
 
 The script outputs:
+- **fast_path**: `true` when `total_loc <= 150` and `len(files_to_review) <= 5` and no domain critics; `false` otherwise
 - **size_category**: "Small" (<=500), "Medium" (501-2000), or "Large" (2001+)
-- **models**: Model assignments for each agent role. `bug_hunter_a` is `{"default": "opus", "test_only": "sonnet"}`. `premise_reviewer` is "opus" (fix/refactor/mixed) or "sonnet" (feature).
+- **models**: Model assignments for each agent role. `bug_hunter_a` is `{"default": "opus", "test_only": "sonnet"}`. `premise_reviewer` is "opus" (fix/refactor/mixed) or "sonnet" (feature). `fast_path_reviewer` is "sonnet".
 - **high_risk_files**: Top 5 files by risk score
 - **domain_critics**: Selected domain critics from critic-gates.json (max 1)
 - **max_bha_agents**: Maximum BHA partitions (9 minus non-BHA agents). Pass this to `--max-bha-agents` on the partition call.
 
-Report to user: model routing decision, which agents will run (including Premise Reviewer), and domain critics (if any).
+After reading `route.json`, branch on `fast_path`. See Task 8 summary for branching logic.
 
 Mark todo as `completed`.
 
 ---
 
-## Step 4: Spawn Reviewer Agents
+## Step 4A: Spawn Reviewer Agents (fast_path == false)
+
+**Skip this section if `fast_path` is true -- see [Step 4B](#step-4b-fast-path-single-agent-review-fast_path--true) instead.**
 
 Mark todo "Spawn reviewer agents in parallel" as `in_progress`.
 
@@ -780,6 +801,142 @@ Call all `TaskOutput` calls in a **single message** (parallel) so they resolve t
 
 ---
 
+## Step 4B: Fast-Path Single-Agent Review (fast_path == true)
+
+**Skip this section if `fast_path` is false -- see [Step 4A](#step-4a-spawn-reviewer-agents-fast_path--false) instead.**
+
+Mark todo "Run fast-path review" as `in_progress`.
+
+The fast-path spawns a single agent that performs all review passes in one run. Use the standard per-agent prompt wrapper from Step 4A unchanged (`mode: standalone`, `<output_file>`, `<patches_file>`, `<files_assigned>`), with the fast-path-specific suffix below.
+
+### Fast-Path Agent
+
+- **`subagent_type`**: `"code:code-review-worker"`
+- **`model`**: from `route.json -> models.fast_path_reviewer` (not hardcoded)
+- **`run_in_background`**: `true`
+- **`AGENT_ID`**: `"fast"`
+- **`<output_file>`**: `{CR_DIR}/agent_fast.json`
+- **`<patches_file>`**: `{CR_DIR}/patches_all.txt`
+- **`<files_assigned>`**: ALL `files_to_review`
+
+The agent MUST read: `<CR_DIR>/patches_all.txt`, `<CR_DIR>/shared_prompt.txt`, `<CR_DIR>/bha_suffix.txt`, `<CR_DIR>/intent_context.json`, repository root `CLAUDE.md`, and any directory-level `CLAUDE.md` files relevant to changed paths.
+
+### Fast-Path Agent Suffix
+
+Replace `{AGENT_SPECIFIC_SUFFIX}` with:
+
+```
+You are the Fast Path Reviewer — a single agent performing all review passes for a small diff.
+
+Perform three scoped passes against the patches file, writing ALL findings to a single output file:
+
+=== PASS 1: Bug Hunter ===
+Read <CR_DIR>/bha_suffix.txt for your role and focus areas.
+Standard severity/priority rules apply.
+Use Read, Grep, and Glob for codebase context. Do NOT use Bash.
+
+=== PASS 2: Bug Hunter B / Unified Auditor ===
+You are Bug Hunter B — a codebase-aware reviewer focused on cross-file issues.
+
+You will explore files outside your assigned list for CONTEXT — but every finding you report
+must be filed against a file in your <files_assigned> list. If you discover a bug in an
+unassigned file while exploring, discard it.
+
+Focus areas:
+- DRY: Use Grep to search for similar function/component names. Flag >60% structural
+  similarity with existing code. Cite the existing file path. The finding goes on YOUR assigned file (the new duplicate), not the existing one.
+- API contracts: Read service implementations to verify call correctness.
+  Check that parameters match (undefined vs null vs empty string matters).
+- Pattern consistency: Find existing examples of similar code, verify new code matches.
+- Import validation: Verify imports resolve to real modules.
+
+For DRY claims, one concrete example of prior art is sufficient (cite file path + function name).
+
+IMPORTANT: Read the repository root CLAUDE.md file before starting your review. Use it for
+DRY detection (check Learned Patterns for known conventions) and pattern consistency checks.
+
+Then as the Unified Auditor — check changes against project rules and architectural conventions.
+
+Read all applicable CLAUDE.md files:
+- Repository root CLAUDE.md
+- Any directory-level CLAUDE.md files relevant to changed file paths
+
+For each changed file, check against:
+1. Rules tagged [mistake] in CLAUDE.md Learned Patterns — these are HIGH severity
+2. Rules tagged [convention] — these are MEDIUM severity
+3. Rules tagged [pattern] — these are MEDIUM severity (verify pattern is followed)
+4. Explicit rules in the main CLAUDE.md sections (Architecture, Type Definitions, etc.)
+5. Architectural conventions: data access patterns, type locations, service layer responsibilities, code organization
+
+For every finding, cite the exact rule text from CLAUDE.md.
+Use Grep and Glob to verify claims. Do NOT flag issues without searching first.
+
+Standard severity/priority rules apply for all pass 2 findings.
+
+=== PASS 3: Premise Reviewer ===
+You are the Premise Reviewer — you question whether the changes in this diff were necessary at all.
+
+FIRST, Read {CR_DIR}/intent_context.json to understand the author's stated motivation (PR title/body
+or commit messages). If the file has empty fields, infer intent from the diff content instead.
+
+Then Read the patches file and use Read, Grep, and Glob to investigate the EXISTING codebase.
+Your job is to find evidence that contradicts the stated motivation for these changes.
+
+Focus areas — flag ONLY when you have concrete proof:
+- Non-existent bug "fix": The author claims to fix a bug, but the original code was correct.
+  Verify the bug can actually trigger: trace the input source — is the "untrusted" input
+  actually self-authored config, a constant, or data the process itself writes? For security
+  claims specifically, evaluate the threat model: if an attacker must already have write access
+  to the input source, the vulnerability doesn't exist. Also flag internal contradictions where
+  the fix undermines its own premise (e.g., sanitizing "untrusted" input then passing it to
+  os.path.expandvars() — which re-introduces the exact exposure it claimed to prevent).
+- Redundant workaround: The problem the code works around is already handled by the framework,
+  library, or upstream code — verify by reading the relevant source
+- Phantom dead-code removal: Code was removed as "unused" but is still imported, referenced,
+  or dynamically invoked elsewhere — verify with Grep
+- Duplicate abstraction: A new helper/utility/wrapper was added, but an existing one with
+  equivalent functionality already exists — cite the existing implementation
+- Unnecessary perf optimization: The code adds caching, memoization, or batching for a path
+  that is not a bottleneck (e.g., called once at startup, processes <100 items)
+- Regressive fix: A change removes or restricts intentional behavior in the name of safety
+  or correctness, but the removed behavior was necessary for the feature to work. Check
+  whether the original code's behavior (e.g., shell pipelines, environment expansion, broad
+  permissions) was documented or relied upon by callers — if so, the fix introduces a
+  functional regression that outweighs any theoretical benefit.
+
+Do NOT flag: correctness issues, style violations, DRY problems, CLAUDE.md compliance,
+naming conventions, or missing tests. Other agents cover those areas.
+
+IMPORTANT — The following constraints apply ONLY to findings emitted in this pass 3:
+- Overrides to shared prompt constraints for the "Premise" category:
+  The shared prompt requires findings to be "Introduced in this changeset" (constraint 3) and
+  "The original author would likely fix it if aware" (constraint 4). For Premise findings,
+  replace these with:
+    3. The changeset's stated motivation is contradicted by evidence you found in the codebase
+    4. The change is net-negative: it adds complexity, removes working code, or introduces risk
+       for a problem that does not exist
+  All other shared prompt constraints (file in scope, discrete and actionable, concrete evidence)
+  still apply.
+- Use ONLY priority 0 (BLOCKING) or priority 1 (HIGH). Never use priority 2 or 3.
+- Confidence must be >= 0.7. If you are not confident the premise is wrong, do not report it.
+- category MUST be "Premise" for every finding in this pass.
+- For the `line` field, use the first added line in the primary file's changed range.
+- The `recommendation` field must state the actionable outcome plainly.
+
+These Premise constraints do NOT apply to findings from passes 1 and 2.
+
+Use Read, Grep, and Glob for codebase context. Do NOT use Bash.
+```
+
+### Fast-Path Spawn + Collection Contract
+
+- Spawn exactly one background task (`AGENT_ID: "fast"`). Task 10 collects it.
+- `DONE ... file=WRITE_DENIED` is a success path, not a failure. Extract `<findings_json>` from `TaskOutput` and write it to `<CR_DIR>/agent_fast.json`. Retry only when the task fails to return `DONE`, times out/crashes, or returns malformed findings with no usable output file.
+- On failure (not WRITE_DENIED): retry once with `model: "haiku"`, same `AGENT_ID: "fast"`, same output file `<CR_DIR>/agent_fast.json`. Delete any existing `agent_fast.json` before retrying. Do NOT create `agent_fast_retry.json`.
+- If retry also fails: warn and continue with zero fast-path findings.
+
+---
+
 ## Step 5: Collect, Normalize, and Validate Findings
 
 Mark todo "Collect, normalize, and validate findings" as `in_progress`.
@@ -836,9 +993,9 @@ Mark todo as `completed`.
 
 ---
 
-## Step 5.5: BHA Cache Update (when caching is active)
+## Step 5.5: BHA Cache Update (fast_path == false AND CACHE_DIR set)
 
-**Skip this step if `CACHE_DIR` is empty.**
+**Skip this step if `fast_path` is true OR `CACHE_DIR` is empty.**
 
 After collecting all BHA findings, update the cache manifest so the next push/re-review can reuse results for unchanged files:
 
@@ -883,9 +1040,24 @@ Output in this format:
 
 **Scope:** [staged/branch/files]
 **Files Reviewed:** [count]
+```
+
+**Reviewers and Model Routing lines are conditional on `fast_path`:**
+
+- **If `fast_path == false`:**
+```markdown
 **Reviewers:** Bug Hunter A, Bug Hunter B, Unified Auditor, Premise Reviewer
 [+ domain specialist if triggered]
 **Model Routing:** [Small/Medium/Large] — [model assignments summary]
+```
+
+- **If `fast_path == true`:**
+```markdown
+**Reviewers:** Fast Path Reviewer (single-agent mode)
+**Model Routing:** Fast path — <MODEL> single reviewer
+```
+
+Then continue with:
 
 ---
 
@@ -1013,7 +1185,7 @@ python <HELPERS> footer \
   > <CR_DIR>/footer.json
 ```
 
-**Note:** Omit `--cache-result` if `CACHE_DIR` is empty (no caching active). The `--cr-dir` flag lets footer read `review_mode_line` from `auto_incremental.json` automatically — no need to pass `--review-mode-line` explicitly.
+**Note:** Omit `--cache-result` if `CACHE_DIR` is empty (no caching active) OR if `fast_path` is true (cache was intentionally bypassed). The footer will show `"Cache: disabled"` as the existing fallback when `--cache-result` is absent. The `--cr-dir` flag lets footer read `review_mode_line` from `auto_incremental.json` automatically — no need to pass `--review-mode-line` explicitly.
 
 Read `<CR_DIR>/footer.json` with the Read tool. It contains:
 ```json

@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code-review v1.3.0
+
+#### Added
+- PR auto-detection in local mode: when the current branch has an open PR, `resolve-scope` now auto-detects it via `gh pr view` and scopes the review to the PR diff instead of `main...HEAD`
+- Small-diff fast path: diffs with <=150 LOC and <=5 files now route to a single fast-path reviewer agent instead of spawning the full 5-agent fleet, reducing review time and token usage
+- Fast-path reviewer performs three scoped passes (Bug Hunter, Bug Hunter B / Unified Auditor, Premise) in a single agent run
+- Partition cap enforcement with unconditional force-merge fallback when budget-respecting merges cannot reduce partition count below the cap
+
+#### Changed
+- Deferred cache-status printing from Task 6 to Task 8 (standard flow) or Task 7 (hygiene-only exit) to allow fast-path routing to suppress cache output
+- `extract-patches` `--partitions-file` is now optional; omitting it produces only `patches_all.txt`
+- Reviewer/model routing lines in local output and GitHub summary are now conditional on `fast_path`
+- Footer omits `--cache-result` on fast-path runs (cache intentionally bypassed)
+- Renamed Step 4 to Step 4A (standard flow) and added Step 4B (fast-path flow); Step 5.5 now gated on `fast_path == false`
+
+### code v1.5.6
+
+#### Added
+- Severity gate for Codex debate rounds 5+ in `run_codex_review.sh` -- only flags findings that would cause functionally wrong behavior (incorrect output, data loss, crashes, security holes); suppresses wording ambiguities, hypothetical misimplementations, and style suggestions
+
+#### Changed
+- Split Codex debate round handling into three tiers: round 1 (initial review), rounds 2-4 (standard re-review), rounds 5+ (severity-gated re-review with elevated approval bar)
+- Codex responses with no verdict AND no findings now emit `CODEX_EMPTY` instead of defaulting to `NEEDS_CHANGES`, distinguishing truncated/empty responses from genuine review feedback
+
 ### code v1.5.5
 
 #### Changed

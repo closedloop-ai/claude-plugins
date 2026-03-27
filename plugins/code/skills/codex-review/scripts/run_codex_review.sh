@@ -83,9 +83,10 @@ prompt_file="$tmp_dir/prompt.txt"
 # ── Build the review prompt ──────────────────────────────────────────────────
 
 REVISIONS_BLOCK=""
+SEVERITY_GATE=""
 if [[ "$ROUND" -eq 1 ]]; then
   REVIEW_INTRO="Claude has created an implementation plan. Review it and provide feedback."
-else
+elif [[ "$ROUND" -le 4 ]]; then
   REVIEW_INTRO="Claude has addressed your previous feedback and updated the plan. Re-review the plan for remaining issues."
   if [[ -n "$REVISIONS_FILE" ]] && [[ -s "$REVISIONS_FILE" ]]; then
     REVISIONS_BLOCK="
@@ -93,6 +94,25 @@ else
 Claude's revision summary (including any findings that were rejected with evidence) is at: ${REVISIONS_FILE}
 Read it before reviewing the plan -- if Claude rejected a finding with valid evidence, do not re-raise it."
   fi
+else
+  # Round 5+: raise the bar -- only flag things that would cause wrong behavior
+  REVIEW_INTRO="Claude has addressed your previous feedback and updated the plan. This is round ${ROUND}. Re-review for any remaining critical issues."
+  if [[ -n "$REVISIONS_FILE" ]] && [[ -s "$REVISIONS_FILE" ]]; then
+    REVISIONS_BLOCK="
+
+Claude's revision summary (including any findings that were rejected with evidence) is at: ${REVISIONS_FILE}
+Read it before reviewing the plan -- if Claude rejected a finding with valid evidence, do not re-raise it."
+  fi
+  SEVERITY_GATE="
+IMPORTANT -- Severity threshold for round ${ROUND}:
+At this stage of the debate, only flag findings where a competent engineer following the plan would produce functionally wrong behavior -- incorrect output, data loss, crashes, security holes, or silently broken features. Do NOT flag:
+- Wording ambiguities that a reasonable implementer would resolve correctly
+- Missing prose for behavior that is already obvious from context
+- Hypothetical misimplementations that require actively misreading the plan
+- Test coverage gaps for edge cases that are unlikely in practice
+- Style or naming suggestions
+
+If you find no issues meeting this bar, respond with VERDICT: APPROVED."
 fi
 
 cat > "$prompt_file" <<PROMPT_EOF
@@ -136,6 +156,7 @@ Format each finding as:
 ---
 
 Be direct and specific. Only flag genuine, significant issues. Propose solutions, not just problems.
+${SEVERITY_GATE}
 
 The LAST line of your response MUST be exactly one of these two lines (nothing after it):
 VERDICT: APPROVED
@@ -273,9 +294,12 @@ if echo "$feedback_content" | grep -q "VERDICT: APPROVED"; then
   echo "VERDICT:APPROVED"
 elif echo "$feedback_content" | grep -q "VERDICT: NEEDS_CHANGES"; then
   echo "VERDICT:NEEDS_CHANGES"
-else
-  # No explicit verdict found -- treat as needs changes
+elif echo "$feedback_content" | grep -q "^### Finding"; then
+  # Has findings but no explicit verdict -- treat as needs changes
   echo "VERDICT:NEEDS_CHANGES"
+else
+  # No verdict AND no findings -- likely truncated response, not a real review
+  echo "CODEX_EMPTY"
 fi
 
 # Always emit session token and log ID for round-to-round continuity
