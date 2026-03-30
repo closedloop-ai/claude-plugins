@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code v1.5.7
+
+#### Added
+- Ghost loop detection in `run-loop.sh` -- tracks consecutive empty iterations and aborts after 3 to prevent infinite loops with no output
+- Session/context limit detection from `is_error` flag in Claude JSONL result records, with immediate abort and `context_limit` run log entry
+- Session/context limit detection from stderr pattern matching (`prompt is too long`, `context limit reached`, etc.), with immediate abort on non-zero exit
+
 ### code-review v1.3.0
 
 #### Added

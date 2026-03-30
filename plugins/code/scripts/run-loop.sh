@@ -827,6 +827,8 @@ main() {
   # jq filter to extract final result
   local final_result='select(.type == "result").result // empty'
 
+  local consecutive_empty=0
+
   while true; do
     # Check max iterations
     if [[ $max_iterations -gt 0 ]] && [[ $iteration -gt $max_iterations ]]; then
@@ -922,6 +924,39 @@ main() {
 
     if [[ $claude_exit -eq 0 ]]; then
       local result=$(jq -r "$final_result" "$output_file")
+
+      # 1B: Detect is_error in JSONL result record (session/context limit)
+      local is_error
+      is_error=$(jq -r 'select(.type == "result") | .is_error // false' "$output_file" 2>/dev/null | tail -1)
+      if [[ "$is_error" == "true" ]]; then
+        local error_text
+        error_text=$(jq -r 'select(.type == "result") | .result // ""' "$output_file" 2>/dev/null | tail -1)
+        echo -e "\n${RED}ERROR: Claude reported is_error=true in result record.${NC}"
+        echo -e "${RED}Error text: $error_text${NC}"
+        log_progress "Context limit: is_error=true, text=$error_text"
+        write_runs_log_entry "$effective_workdir" "$iteration" "context_limit"
+        release_lock "$effective_workdir"
+        rm -f "$STATE_FILE"
+        rm -f "$output_file" "$stderr_file" 2>/dev/null || true
+        exit 2
+      fi
+
+      # 1A: Detect consecutive empty iterations (ghost loop fix)
+      if [[ -z "$result" ]]; then
+        consecutive_empty=$((consecutive_empty + 1))
+        if [[ $consecutive_empty -ge 3 ]]; then
+          echo -e "\n${RED}ERROR: $consecutive_empty consecutive iterations with no output. Aborting to prevent ghost loop.${NC}"
+          log_progress "Aborting: ghost loop detected after $consecutive_empty empty iterations"
+          write_runs_log_entry "$effective_workdir" "$iteration" "ghost_loop_abort"
+          release_lock "$effective_workdir"
+          rm -f "$STATE_FILE"
+          rm -f "$output_file" "$stderr_file" 2>/dev/null || true
+          exit 1
+        fi
+      else
+        consecutive_empty=0
+      fi
+
       rm -f "$output_file"
 
       # Post-iteration processing: learning capture, aggregation, citation verification
@@ -976,11 +1011,26 @@ main() {
       if [[ -s "$stderr_file" ]]; then
         echo -e "${YELLOW}Claude stderr:${NC}"
         cat "$stderr_file"
+
+        # 1C: Detect session/context limit from stderr
+        if grep -qiE "prompt is too long|exceed context limit|context limit reached|conversation too long" "$stderr_file"; then
+          echo -e "\n${RED}Context limit detected in stderr${NC}"
+          log_progress "Context limit: detected in stderr (exit $claude_exit)"
+          write_runs_log_entry "$effective_workdir" "$iteration" "context_limit"
+          release_lock "$effective_workdir"
+          rm -f "$STATE_FILE"
+          rm -f "$output_file" "$stderr_file" 2>/dev/null || true
+          exit 2
+        fi
       fi
       log_progress "Iteration $iteration - Claude exited with error (code: $claude_exit)"
 
       # Write runs.log entry
       write_runs_log_entry "$effective_workdir" "$iteration" "error"
+
+      # Non-zero exit resets consecutive_empty -- the guard tracks consecutive
+      # exit-0-with-no-output iterations, not intermixed failures.
+      consecutive_empty=0
 
       # Still run post-iteration processing even on error
       post_iteration_processing "$effective_workdir" "$iteration"
