@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code v1.5.9
+
+#### Fixed
+- `stream_formatter.py` now uses `Optional[str]` instead of `str | None` union syntax,
+  making it import-safe on Python 3.9 and preventing silent JSONL pipeline truncation
+  on macOS systems using the default system Python
+
 ### code v1.5.8
 
 #### Removed

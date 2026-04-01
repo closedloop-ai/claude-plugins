@@ -13,7 +13,9 @@ to stdout. Designed for use in a pipeline:
 """
 
 import json
+import os
 import sys
+from typing import Optional
 
 # ANSI colors
 DIM = "\033[2m"
@@ -78,7 +80,7 @@ def _format_result_preview(content: str) -> str:
     return text
 
 
-def _format_assistant(msg: object) -> str | None:
+def _format_assistant(msg: object) -> Optional[str]:
     """Format an assistant event."""
     if not isinstance(msg, dict):
         return None
@@ -133,7 +135,7 @@ def _extract_tool_result_text(block: dict[str, object]) -> tuple[str, bool]:
     return str(raw), is_error
 
 
-def _format_user(msg: object) -> str | None:
+def _format_user(msg: object) -> Optional[str]:
     """Format a user event (tool results)."""
     if not isinstance(msg, dict):
         return None
@@ -161,7 +163,7 @@ def _format_user(msg: object) -> str | None:
     return "\n".join(parts) if parts else None
 
 
-def _format_system(event: dict[str, object]) -> str | None:
+def _format_system(event: dict[str, object]) -> Optional[str]:
     """Format a system event."""
     subtype = event.get("subtype", "")
     hook = event.get("hook_name") or event.get("hook_event", "")
@@ -173,7 +175,7 @@ def _format_system(event: dict[str, object]) -> str | None:
     return None
 
 
-def _format_result(event: dict[str, object]) -> str | None:
+def _format_result(event: dict[str, object]) -> Optional[str]:
     """Format a final result event."""
     result = event.get("result", "")
     if not result:
@@ -184,7 +186,7 @@ def _format_result(event: dict[str, object]) -> str | None:
     return f"\n{GREEN}{BOLD}Result:{RESET} {text}"
 
 
-def format_event(event: dict[str, object]) -> str | None:
+def format_event(event: dict[str, object]) -> Optional[str]:
     """Format a single stream-json event into readable text."""
     etype = event.get("type")
     if etype == "assistant":
@@ -270,6 +272,11 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     except BrokenPipeError:
+        # Suppress the "Exception ignored on flushing sys.stdout" message
+        # that Python prints during interpreter shutdown after a broken pipe.
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.dup2(devnull, sys.stderr.fileno())
         return 0
 
     _print_usage_summary(tokens_by_model)
