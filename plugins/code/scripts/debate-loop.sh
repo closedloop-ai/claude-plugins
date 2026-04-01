@@ -11,7 +11,7 @@
 # Options:
 #   --max-rounds N        Maximum debate rounds (default: 15)
 #   --plan-file PATH      Output plan file path (default: ./debate-plan.md)
-#   --codex-model MODEL   Codex model to use (default: gpt-5.4)
+#   --codex-model MODEL   Codex model to use (default: gpt-5.3-codex)
 #   -h, --help            Show this help
 #
 # Claude sessions are resumed across rounds for context continuity.
@@ -33,7 +33,7 @@ NC='\033[0m'
 # Defaults
 MAX_ROUNDS=15
 PLAN_FILE=""
-CODEX_MODEL="gpt-5.4"
+CODEX_MODEL="gpt-5.3-codex"
 CLAUDE_MODEL="opus[1m]"
 PROMPT=""
 VERBOSE=false
@@ -187,7 +187,7 @@ USAGE:
 OPTIONS:
   --max-rounds N        Maximum debate rounds (default: 15)
   --plan-file PATH      Output plan file path (default: ./debate-plan.md)
-  --codex-model MODEL   Codex model to use (default: gpt-5.4)
+  --codex-model MODEL   Codex model to use (default: gpt-5.3-codex)
   --model MODEL         Claude model to use (default: opus[1m])
   --add-dir DIR...      Additional directories to allow Claude tool access to
   --verbose             Stream Claude output in real-time (default: off)
@@ -202,7 +202,7 @@ DESCRIPTION:
 EXAMPLES:
   debate-loop.sh "Build a REST API for user management"
   debate-loop.sh --plan-file auth-plan.md --max-rounds 10 "Refactor the auth system"
-  debate-loop.sh --codex-model gpt-5.4 "Add caching layer"
+  debate-loop.sh --codex-model gpt-5.3-codex "Add caching layer"
 EOF
 }
 

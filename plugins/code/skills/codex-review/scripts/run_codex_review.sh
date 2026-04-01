@@ -214,7 +214,7 @@ run_codex_cmd() {
 effective_session_id="$SESSION_ID"
 codex_exit=0
 
-base_args=(--full-auto --json -m "$CODEX_MODEL" -c model_reasoning_effort=xhigh)
+base_args=(--full-auto --json -m "$CODEX_MODEL" -c model_reasoning_effort=high)
 prompt_content=$(cat "$prompt_file")
 
 # Attempt session resume if we have a prior session ID
