@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code v1.5.8
+
+#### Removed
+- Deleted `feedback-explorer` agent and removed its integration from `plan-with-codex` debate loop -- plan-agent now receives feedback directly without pre-fetched context briefs
+- Removed `{stem}.context` sidecar file from `plan-with-codex` debate loop
+
+#### Changed
+- Updated default Codex model from `gpt-5.4` to `gpt-5.3-codex` in `plan-with-codex` command and `debate-loop.sh` (completes model migration started in v1.5.5)
+- Reduced Codex reasoning effort from `xhigh` to `high` in `run_codex_review.sh`
+
 ### code v1.5.7
 
 #### Added
