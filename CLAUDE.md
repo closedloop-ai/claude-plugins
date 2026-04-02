@@ -68,15 +68,14 @@ All commits MUST follow the conventions in `CONTRIBUTING.md`. Specifically:
 - Valid types: `feat`, `fix`, `docs`, `refactor`
 - Valid scopes: `bootstrap`, `code`, `code-review`, `judges`, `platform`, `self-learning`
 - Examples: `feat(code): add visual-qa-subagent`, `fix(platform): correct tool list`
-- When modifying files under `plugins/`, also update the plugin version in `plugin.json` (semver) and the root `CHANGELOG.md`
 
-### Versioning
+### Version Bumps (Required)
 
-Semver in each plugin's `plugin.json`. PATCH for bug fixes/prompt wording, MINOR for new agents/skills/commands, MAJOR for breaking changes to orchestration/hook API/skill interfaces.
+**Any change to a plugin's files MUST include a version bump in that plugin's `plugin.json`.** This is not optional -- the version must be updated in the same commit as the code change. Semver rules: PATCH for bug fixes/prompt wording, MINOR for new agents/skills/commands, MAJOR for breaking changes to orchestration/hook API/skill interfaces.
 
-### Pre-push Hook and CHANGELOG
+### Documentation (CHANGELOG.md, README.md)
 
-The `.githooks/pre-push` hook blocks pushes that modify files under `plugins/` without a `CHANGELOG.md` update. The CHANGELOG lives at the **repo root** (`CHANGELOG.md`), NOT inside individual plugin directories. Never create `plugins/<name>/CHANGELOG.md`.
+**Do NOT manually edit `CHANGELOG.md` or `README.md`.** After all code changes are finalized, run `/update-documentation` to generate documentation updates. The `.githooks/pre-push` hook blocks pushes that modify files under `plugins/` without a `CHANGELOG.md` update, so always run `/update-documentation` before pushing. The CHANGELOG lives at the **repo root** (`CHANGELOG.md`), NOT inside individual plugin directories. Never create `plugins/<name>/CHANGELOG.md`.
 
 ### Branching
 
