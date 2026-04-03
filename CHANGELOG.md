@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code v1.5.10
+
+#### Changed
+- Enhanced `plan-agent` with verification-before-proposing requirements: must `Read` every function, type, and validator before writing tasks that modify them; must check receiving validators/schemas when tasks construct events or payloads
+- `plan-agent` now requires explicit task dependency declarations ("Depends on T-A.B"), null/empty/missing edge case specification for every new field, and accurate summary language (no overclaiming)
+- Added multi-repository plan guidelines to `plan-agent`: absolute file paths for cross-repo references, per-repo file existence verification, repo labels on tasks, and cross-repo contract documentation
+- Added self-check gates to `plan-agent`: modification targets verified, validators audited, edge cases specified, dependencies declared, summary accuracy confirmed -- with a concrete good-vs-bad task example
+
 ### code v1.5.9
 
 #### Fixed
