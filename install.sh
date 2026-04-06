@@ -51,7 +51,7 @@ if command -v python3 &>/dev/null; then
     PY_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
     PY_MAJOR=$(echo "$PY_VERSION" | cut -d. -f1)
     PY_MINOR=$(echo "$PY_VERSION" | cut -d. -f2)
-    if [[ "$PY_MAJOR" -ge 3 && "$PY_MINOR" -ge 11 ]]; then
+    if [[ "$PY_MAJOR" -gt 3 || ( "$PY_MAJOR" -eq 3 && "$PY_MINOR" -ge 11 ) ]]; then
         info "Python $PY_VERSION"
     else
         warn "Python $PY_VERSION found — 3.11+ recommended for full functionality"
@@ -92,15 +92,15 @@ for plugin in "${PLUGINS[@]}"; do
     PLUGIN_REF="${plugin}@${MARKETPLACE_NAME}"
     if claude plugin install "$PLUGIN_REF" --scope user 2>/dev/null; then
         info "Installed: $plugin"
-        ((INSTALLED++))
+        INSTALLED=$((INSTALLED + 1))
     else
         # May already be installed — try to update instead
         if claude plugin update "$PLUGIN_REF" --scope user 2>/dev/null; then
             info "Updated: $plugin"
-            ((INSTALLED++))
+            INSTALLED=$((INSTALLED + 1))
         else
             warn "Could not install/update: $plugin"
-            ((FAILED++))
+            FAILED=$((FAILED + 1))
         fi
     fi
 done
