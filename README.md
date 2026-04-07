@@ -47,21 +47,41 @@ Multi-repository, adaptive self-learning, & artifact-bound phased workflow gates
 
 ## Quick Start
 
+**One-line install** — installs all plugins globally and keeps them auto-updated:
+
 ```bash
-# Install a plugin from the marketplace
+curl -fsSL https://raw.githubusercontent.com/closedloop-ai/claude-plugins/main/install.sh | bash
+```
+
+Or install interactively from within Claude Code:
+
+```bash
 claude /plugin marketplace install closedloop
+```
 
-# Or install from source for development
-git clone git@github.com:closedloop-ai/claude-plugins.git
-cd claude-plugins
-git config core.hooksPath .githooks
+Then start using the plugins:
 
+```bash
 # Bootstrap.
 claude /bootstrap:start
 
 # Plan. Code.
-claude /code:start --prd requirements.md
+claude /code:code --prd requirements.md
+
+# Review.
+claude /code-review:start
 ```
+
+<details>
+<summary><strong>Development setup</strong></summary>
+
+```bash
+git clone git@github.com:closedloop-ai/claude-plugins.git
+cd claude-plugins
+git config core.hooksPath .githooks
+```
+
+</details>
 
 ## Benchmarks
 <img width="1421" height="862" alt="image" src="https://github.com/user-attachments/assets/82e42af7-9386-4a36-9bc0-2fd5d3564eba" />
