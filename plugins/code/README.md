@@ -358,7 +358,7 @@ Sets up a ClosedLoop loop with initial configuration and state.
 
 ### `discover-repos.sh`
 
-Discovers peer repositories for cross-repo orchestration by checking the `CLAUDE_WORKSPACE_REPOS` environment variable, scanning sibling directories for `.claude/.repo-identity.json` files, or detecting monorepo structures. Returns JSON describing the current repo and all discovered peers.
+Discovers peer repositories for cross-repo orchestration by checking the `CLAUDE_WORKSPACE_REPOS` environment variable, scanning sibling directories for `.closedloop-ai/.repo-identity.json` files, or detecting monorepo structures. Returns JSON describing the current repo and all discovered peers.
 
 ### `install-dependencies.sh`
 

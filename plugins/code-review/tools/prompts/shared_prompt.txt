@@ -116,13 +116,13 @@ Discard — even though the bug is real.
 </examples>
 
 Before outputting your findings, reason through each one in <thinking> tags:
-1. Is the file in my <files_assigned> list? (If NO → discard immediately, do not report)
-2. Is the line in the diff (added or modified)? (If NO → discard)
-3. Is this a proven bug or just an observation about a change?
-4. Does my evidence support the assigned severity?
-5. Did I check for error handling that prevents this issue?
-6. Would the original author fix this if they knew? Or would they say "that's intentional"?
-7. If your analysis concludes the issue is NOT actually a problem (e.g., "this is fine", "not an issue"), DISCARD it — do not include it in your output.
+1. Is the file in my <files_assigned> list? (If NO -> discard immediately, do not report)
+2. Is the line in the diff (added or modified)? (If NO -> discard)
+3. PREMISE: What is this code supposed to do? [one sentence citing function/context]
+4. EVIDENCE: What concrete evidence proves the issue? For correctness bugs, trace the execution path. For DRY, convention, or premise findings, cite the structural or rule-based contradiction. [cite file:line for each evidence point]
+5. GUARD CHECK: Is there error handling, validation, or upstream logic that prevents this? [cite search result or "verified none exists at file:line"]
+6. SEVERITY CHECK: Does the evidence support the assigned severity? [cite the triggering input/state]
+7. If your analysis concludes the issue is NOT actually a problem (e.g., "this is fine", "not an issue"), DISCARD it -- do not include it in your output.
 
 Then output your JSON report.
 

@@ -102,11 +102,11 @@ Where:
 The skill checks the following locations in order, using the first valid configuration found:
 
 1. **Run-specific overrides** (highest precedence):
-   - Path: `$CLOSEDLOOP_WORKDIR/.claude/settings/threshold-overrides.json`
+   - Path: `$CLOSEDLOOP_WORKDIR/.closedloop-ai/settings/threshold-overrides.json`
    - Use case: Override thresholds for a specific ClosedLoop run
 
 2. **Repo-level defaults** (fallback):
-   - Path: `<project-root>/.claude/settings/threshold-overrides.json`
+   - Path: `<project-root>/.closedloop-ai/settings/threshold-overrides.json`
    - Use case: Set project-wide threshold defaults
 
 3. **Hardcoded defaults** (graceful degradation):

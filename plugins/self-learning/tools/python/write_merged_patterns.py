@@ -21,7 +21,6 @@ from compute_success_rates import parse_toon_patterns, serialize_toon
 # --- Constants ---
 
 DEFAULT_TOON_PATH = Path.home() / ".closedloop-ai" / "learnings" / "org-patterns.toon"
-LEGACY_TOON_PATH = Path.home() / ".claude" / ".learnings" / "org-patterns.toon"
 PATTERN_CAP = 50
 
 VALID_CATEGORIES = {"mistake", "pattern", "convention", "insight"}
@@ -125,9 +124,6 @@ def main() -> int:
 
     merge_result_path = Path(args.merge_result)
     toon_path = Path(args.toon_path) if args.toon_path else DEFAULT_TOON_PATH
-    # Fall back to legacy location during migration
-    if not args.toon_path and not toon_path.exists() and LEGACY_TOON_PATH.exists():
-        toon_path = LEGACY_TOON_PATH
 
     # Read merge-result.json
     if not merge_result_path.exists():

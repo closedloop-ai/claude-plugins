@@ -14,7 +14,7 @@ Imports organization patterns from a shared repository into local TOON format.
 
 ## Process
 
-1. **Read shared patterns**: Load `$CLOSEDLOOP_WORKDIR/.claude/learnings/org-patterns.json`
+1. **Read shared patterns**: Load `$CLOSEDLOOP_WORKDIR/.closedloop-ai/learnings/org-patterns.json`
 2. **Convert JSON → TOON**: For LLM consumption
 3. **Regenerate local IDs**: Maintain unique IDs within local file
 4. **Skip echo patterns**: Exclude patterns that originated from this project

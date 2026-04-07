@@ -378,7 +378,7 @@ Write to `$RUN/synthesis/agent-validation.json`:
 
 ## Schema Validation
 
-Before running semantic checks, validate input artifacts against schemas in `.claude/schemas/`:
+Before running semantic checks, validate input artifacts against schemas in `.closedloop-ai/schemas/`:
 
 - `$RUN/synthesis/decomposed-agents.json` → `decomposed-agents.schema.json`
 - `.closedloop-ai/bootstrap-metadata.json` → `bootstrap-metadata.schema.json`

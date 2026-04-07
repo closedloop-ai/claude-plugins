@@ -29,7 +29,7 @@ You are a specialized agent that processes captured learnings from ClosedLoop ru
 
 **ClosedLoop learnings** (improvements to the tooling itself):
 - Mentions ClosedLoop, orchestrator, plan-writer, implementation-subagent
-- References `.claude/` configuration or agent definitions
+- References `.closedloop-ai/` configuration or `.claude/agents` definitions
 - Discusses hook behavior or workflow improvements
 - Contains keywords: "agent should", "workflow", "orchestration"
 

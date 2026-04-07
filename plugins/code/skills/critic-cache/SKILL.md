@@ -45,8 +45,8 @@ reason: <why the cache is stale or missing>
 **Action:** Run critics as normal. After all critics complete, stamp the cache:
 
 ```bash
-if [ -f ".claude/settings/critic-gates.json" ]; then
-  cat $WORKDIR/plan.json .claude/settings/critic-gates.json | shasum -a 256 > $WORKDIR/reviews/.plan-hash
+if [ -f ".closedloop-ai/settings/critic-gates.json" ]; then
+  cat $WORKDIR/plan.json .closedloop-ai/settings/critic-gates.json | shasum -a 256 > $WORKDIR/reviews/.plan-hash
 else
   shasum -a 256 $WORKDIR/plan.json > $WORKDIR/reviews/.plan-hash
 fi
@@ -54,7 +54,7 @@ fi
 
 ## How Freshness Works
 
-The script hashes both `plan.json` and `.claude/settings/critic-gates.json` (if it exists) into a single combined hash. This ensures:
+The script hashes both `plan.json` and `.closedloop-ai/settings/critic-gates.json` (if it exists) into a single combined hash. This ensures:
 - Plan content changes → cache miss → critics re-run
 - Critic configuration changes (adding/removing critics) → cache miss → critics re-run
 - No changes → cache hit → critics skipped

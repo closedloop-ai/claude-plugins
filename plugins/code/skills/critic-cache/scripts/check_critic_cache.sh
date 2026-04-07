@@ -48,8 +48,12 @@ fi
 # --- compute current combined hash ---
 # Hash both plan.json and critic-gates.json (if it exists) to detect config changes
 current_hash=""
-if [ -f ".claude/settings/critic-gates.json" ]; then
-  current_hash=$(cat "$PLAN_JSON" ".claude/settings/critic-gates.json" | shasum -a 256 | cut -d' ' -f1)
+CRITIC_GATES_PATH=".closedloop-ai/settings/critic-gates.json"
+WORKDIR_STATE_DIR=$(dirname "$WORKDIR")
+if [ -f "$CRITIC_GATES_PATH" ]; then
+  current_hash=$(cat "$PLAN_JSON" "$CRITIC_GATES_PATH" | shasum -a 256 | cut -d' ' -f1)
+elif [ -f "$WORKDIR_STATE_DIR/settings/critic-gates.json" ]; then
+  current_hash=$(cat "$PLAN_JSON" "$WORKDIR_STATE_DIR/settings/critic-gates.json" | shasum -a 256 | cut -d' ' -f1)
 else
   current_hash=$(shasum -a 256 "$PLAN_JSON" | cut -d' ' -f1)
 fi

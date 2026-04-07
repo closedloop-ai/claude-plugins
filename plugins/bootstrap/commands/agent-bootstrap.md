@@ -109,7 +109,7 @@ Maps detected languages and domains to base expert agent roles.
 
 Analyzes candidate agents and decides which should be split into specialists based on complexity and breadth. Generates critic-gates.json configuration for the code workflow.
 
-**Produces:** `synthesis/decomposed-agents.json`, `.claude/settings/critic-gates.json`
+**Produces:** `synthesis/decomposed-agents.json`, `.closedloop-ai/settings/critic-gates.json`
 
 ### Phase 5: Pre-Generation Validation
 
@@ -157,7 +157,7 @@ Generated agents written to `.claude/agents/`:
 
 Generated configuration files:
 
-- `.claude/settings/critic-gates.json` - Critic selection rules for the code workflow (safe write)
+- `.closedloop-ai/settings/critic-gates.json` - Critic selection rules for the code workflow (safe write)
 
 ## Examples
 
@@ -227,7 +227,7 @@ Constrain analysis to backend domains:
 
 ## Configuration
 
-Bootstrap behavior can be customized via `.claude/commands/agent-bootstrap.json` (created automatically on first run).
+Bootstrap behavior is defined by `commands/agent-bootstrap.json`; generated run state lives under `.closedloop-ai/`, and generated agents are written to `.claude/agents/`.
 
 ## Exit Criteria
 

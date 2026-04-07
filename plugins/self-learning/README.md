@@ -212,7 +212,7 @@ Lightweight wrapper invoked when a chat session ends. Checks for pending learnin
 
 Validates all required and optional dependencies before using the self-learning system.
 
-**Required:** Python 3.11+, jq, gawk (with FPAT support), git, PyYAML
+**Required:** Python 3.11+, jq, awk, git, PyYAML
 **Optional:** tree-sitter, tree-sitter-python (for AST-based analysis)
 
 **Exit codes:** 0 = all OK, 1 = missing required, 2 = missing optional

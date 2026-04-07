@@ -118,13 +118,14 @@ bootstrap_learnings() {
       echo -e "${GREEN}Created minimal .learnings structure${NC}"
     fi
 
-    # Copy org learnings from .claude/learnings/ if available (overwrite defaults)
+    # Copy org learnings from .closedloop-ai/learnings/ if available (overwrite defaults)
     local org_learnings_dir=""
-    # Check project root first, then workdir
-    if [[ -d ".claude/learnings" ]]; then
-      org_learnings_dir=".claude/learnings"
-    elif [[ -d "$workdir/.claude/learnings" ]]; then
-      org_learnings_dir="$workdir/.claude/learnings"
+    local workdir_state_dir="$(dirname "$workdir")"
+    # Check project root first, then the workdir-adjacent .closedloop-ai state directory.
+    if [[ -d ".closedloop-ai/learnings" ]]; then
+      org_learnings_dir=".closedloop-ai/learnings"
+    elif [[ "$(basename "$workdir_state_dir")" == ".closedloop-ai" ]] && [[ -d "$workdir_state_dir/learnings" ]]; then
+      org_learnings_dir="$workdir_state_dir/learnings"
     fi
 
     if [[ -n "$org_learnings_dir" ]]; then

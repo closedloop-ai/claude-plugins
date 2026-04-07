@@ -1,5 +1,6 @@
 """Tests for setup-closedloop.sh script."""
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -113,3 +114,30 @@ def test_plan_skips_prd_autodiscovery(tmp_workdir: Path) -> None:
 
     # PRD_FILE should be empty (not auto-discovered)
     assert 'CLOSEDLOOP_PRD_FILE=""' in result.stdout
+
+
+
+def test_writes_session_mapping_from_closedloop_pid_file(tmp_workdir: Path) -> None:
+    """Should create a workdir mapping when a `.closedloop-ai` PID mapping exists."""
+    session_dir = tmp_workdir / ".closedloop-ai"
+    session_dir.mkdir(parents=True)
+    session_id = "session-from-closedloop"
+    (session_dir / f"pid-{os.getpid()}.session").write_text(session_id)
+
+    result = _run_setup_in_workdir(tmp_workdir)
+
+    assert result.returncode == 0
+    assert (session_dir / f"session-{session_id}.workdir").read_text().strip() == str(tmp_workdir)
+
+
+def test_ignores_legacy_pid_mapping(tmp_workdir: Path) -> None:
+    """Should not use legacy `.claude/.closedloop` PID mappings."""
+    legacy_dir = tmp_workdir / ".claude" / ".closedloop"
+    legacy_dir.mkdir(parents=True)
+    session_id = "legacy-session"
+    (legacy_dir / f"pid-{os.getpid()}.session").write_text(session_id)
+
+    result = _run_setup_in_workdir(tmp_workdir)
+
+    assert result.returncode == 0
+    assert not (tmp_workdir / ".closedloop-ai" / f"session-{session_id}.workdir").exists()

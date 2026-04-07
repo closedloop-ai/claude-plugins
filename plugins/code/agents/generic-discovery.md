@@ -30,7 +30,7 @@ Search a peer repository to verify if a capability exists.
 - Note any project-specific patterns or quirks
 - Identify the correct locations to search based on documented structure
 
-Also check for `.claude/.repo-identity.json` at `$PEER_PATH/.claude/.repo-identity.json`:
+Also check for `.closedloop-ai/.repo-identity.json` at `$PEER_PATH/.closedloop-ai/.repo-identity.json`:
 - Read the `owns.patterns` array for authoritative file locations
 - Use `owns.capabilities` to understand what this repo is responsible for
 

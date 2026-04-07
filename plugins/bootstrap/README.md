@@ -92,7 +92,7 @@ Decomposition is driven by domain complexity (high complexity favors decompositi
 
 Also generates `critic-gates.json`, which defines which agents act as critics in the `code` workflow. Required agents (`test-strategist`, `security-privacy`) and language experts are always base critics. Domain agents are mapped to module patterns so they are only invoked when relevant.
 
-Produces: `synthesis/decomposed-agents.json`, `.claude/settings/critic-gates.json`
+Produces: `synthesis/decomposed-agents.json`, `.closedloop-ai/settings/critic-gates.json`
 
 ### generation-validator
 
@@ -214,7 +214,7 @@ Durable outputs written outside the run directory:
   <agent-name>.md            (one file per generated agent)
 .closedloop-ai/
   bootstrap-metadata.json    (tracks all generated agents for --update mode)
-.claude/settings/
+.closedloop-ai/settings/
   critic-gates.json          (critic selection rules for the code workflow)
 ```
 

@@ -25,10 +25,6 @@ echo "$(date): SubagentStart hook fired — agent_type=$AGENT_TYPE agent_id=$AGE
 CLOSEDLOOP_WORKDIR=""
 if [[ -n "$SESSION_ID" ]]; then
     WORKDIR_FILE="$CWD/.closedloop-ai/session-$SESSION_ID.workdir"
-    # Fallback: check legacy path for mid-upgrade sessions
-    if [[ ! -f "$WORKDIR_FILE" ]] && [[ -f "$CWD/.claude/.closedloop/session-$SESSION_ID.workdir" ]]; then
-        WORKDIR_FILE="$CWD/.claude/.closedloop/session-$SESSION_ID.workdir"
-    fi
     if [[ -f "$WORKDIR_FILE" ]]; then
         CLOSEDLOOP_WORKDIR=$(cat "$WORKDIR_FILE")
         echo "$(date): Found WORKDIR=$CLOSEDLOOP_WORKDIR from session mapping" >> "$DEBUG_LOG"
@@ -130,12 +126,6 @@ fi
 # Write base environment (same for all agents, only write once)
 mkdir -p "$CWD/.closedloop-ai"
 BASE_ENV_FILE="$CWD/.closedloop-ai/env"
-# If legacy env exists but new one doesn't, copy it forward
-LEGACY_ENV_FILE="$CWD/.claude/.closedloop/env"
-if [[ ! -f "$BASE_ENV_FILE" ]] && [[ -f "$LEGACY_ENV_FILE" ]]; then
-    cp "$LEGACY_ENV_FILE" "$BASE_ENV_FILE"
-    echo "$(date): Copied legacy env to $BASE_ENV_FILE" >> "$DEBUG_LOG"
-fi
 if [[ ! -f "$BASE_ENV_FILE" ]]; then
     cat > "$BASE_ENV_FILE" << EOF
 CLOSEDLOOP_WORKDIR=$CLOSEDLOOP_WORKDIR
@@ -182,11 +172,8 @@ fi
 # but not agentName. Use the short name already derived above.
 AGENT_NAME="$AGENT_NAME_ONLY"
 
-# Path to org-patterns.toon (fall back to legacy location during migration)
+# Path to org-patterns.toon
 PATTERNS_FILE="$HOME/.closedloop-ai/learnings/org-patterns.toon"
-if [[ ! -f "$PATTERNS_FILE" ]]; then
-    PATTERNS_FILE="$HOME/.claude/.learnings/org-patterns.toon"
-fi
 
 # Only process learnings if we have agent name and patterns file
 if [[ -z "$AGENT_NAME" ]] || [[ ! -f "$PATTERNS_FILE" ]]; then
@@ -260,60 +247,99 @@ echo "$(date): Derived REPO_ID=$REPO_ID" >> "$DEBUG_LOG"
 # TOON format (comma-delimited, 10 fields):
 # id,category,summary,confidence,seen_count,success_rate,flags,applies_to,context,repo
 # Legacy 9-field rows accepted (repo defaults to "*")
-# Use gawk with FPAT to handle quoted fields properly
+# Prefer gawk when available, but keep the parser portable to plain awk.
 
-LEARNINGS=$(gawk -v agent="$AGENT_NAME" -v agent_full="$AGENT_TYPE" -v priority="$PATTERN_PRIORITY" -v repo="$REPO_ID" '
+AWK_BIN=$(command -v gawk || command -v awk || true)
+if [[ -z "$AWK_BIN" ]]; then
+    SUFFIX_ESCAPED=$(echo "$SUFFIX_PARTS" | jq -Rs ".")
+    echo "$(date): No awk interpreter available, skipping learning injection" >> "$DEBUG_LOG"
+    echo "{\"hookSpecificOutput\": {\"additionalContext\": $SUFFIX_ESCAPED}}"
+    exit 0
+fi
+
+LEARNINGS=$("$AWK_BIN" -v agent="$AGENT_NAME" -v agent_full="$AGENT_TYPE" -v priority="$PATTERN_PRIORITY" -v repo="$REPO_ID" '
+function csv_split(line, fields,   i, ch, next_ch, in_quotes, field, count) {
+    count = 1
+    field = ""
+    in_quotes = 0
+    for (i = 1; i <= length(line); i++) {
+        ch = substr(line, i, 1)
+        if (ch == "\"") {
+            next_ch = substr(line, i + 1, 1)
+            if (in_quotes && next_ch == "\"") {
+                field = field "\""
+                i++
+            } else {
+                in_quotes = !in_quotes
+            }
+        } else if (ch == "," && !in_quotes) {
+            fields[count++] = field
+            field = ""
+        } else {
+            field = field ch
+        }
+    }
+    fields[count] = field
+    return count
+}
+function category_priority(cat,   idx) {
+    for (idx = 1; idx <= prio_count; idx++) {
+        if (prio_order[idx] == cat) return idx
+    }
+    return 999
+}
+function confidence_value(conf) {
+    return (conf == "high" ? 0 : (conf == "medium" ? 1 : 2))
+}
+function swap_rows(i, j,   tmp) {
+    tmp = categories[i]
+    categories[i] = categories[j]
+    categories[j] = tmp
+
+    tmp = confidences[i]
+    confidences[i] = confidences[j]
+    confidences[j] = tmp
+
+    tmp = flags_list[i]
+    flags_list[i] = flags_list[j]
+    flags_list[j] = tmp
+
+    tmp = summaries[i]
+    summaries[i] = summaries[j]
+    summaries[j] = tmp
+}
 BEGIN {
-    FPAT = "([^,]*|\"[^\"]*\")"
     n = 0
 }
-/^#/ { next }  # Skip comments
-/^[[:space:]]*$/ { next }  # Skip empty lines
-/^patterns\[/ { next }  # Skip schema declaration
+/^#/ { next }
+/^[[:space:]]*$/ { next }
+/^patterns\[/ { next }
 {
-    # Strip leading whitespace (TOON rows are indented 2 spaces)
     gsub(/^[[:space:]]+/, "")
+    for (field_idx in fields) delete fields[field_idx]
+    field_count = csv_split($0, fields)
+    if (field_count < 9) next
 
-    # Parse comma-delimited fields
-    id = $1
-    category = $2
-    summary = $3
-    confidence = $4
-    seen_count = $5
-    success_rate = $6
-    flags = $7
-    applies_to = $8
-    context = $9
-    repo_field = $10  # 10th field; empty for legacy 9-field rows
+    category = fields[2]
+    summary = fields[3]
+    confidence = fields[4]
+    flags = fields[7]
+    applies_to = fields[8]
+    repo_field = (field_count >= 10 ? fields[10] : "")
 
-    # Remove surrounding quotes from summary if present
     gsub(/^"|"$/, "", summary)
-
-    # Remove surrounding quotes from repo_field if present
+    gsub(/^"|"$/, "", applies_to)
     gsub(/^"|"$/, "", repo_field)
 
-    # Check if pattern applies to this repo
-    # repo_field: "*" or empty = matches all repos, otherwise must match current repo
-    repo_applies = 0
-    if (repo_field == "*" || repo_field == "" || repo_field == repo) {
-        repo_applies = 1
-    }
-
+    repo_applies = (repo_field == "*" || repo_field == "" || repo_field == repo)
     if (!repo_applies) next
 
-    # Check if pattern applies to this agent
-    # applies_to uses pipe-separated agent names: * (all), agent_name, or "agent1|agent2"
     applies = 0
-    gsub(/^"|"$/, "", applies_to)
     if (applies_to == "*" || applies_to == "") {
         applies = 1
     } else {
-        # Split by pipe (agents are pipe-separated in TOON)
-        # Match against both short name (e.g., "plan-writer") and
-        # full name (e.g., "code:plan-writer") since applies_to
-        # uses both conventions
-        split(applies_to, agents, "|")
-        for (i in agents) {
+        agent_count = split(applies_to, agents, /\|/)
+        for (i = 1; i <= agent_count; i++) {
             if (agents[i] == agent || agents[i] == agent_full) {
                 applies = 1
                 break
@@ -322,57 +348,39 @@ BEGIN {
     }
 
     if (applies) {
-        patterns[n]["id"] = id
-        patterns[n]["category"] = category
-        patterns[n]["confidence"] = confidence
-        patterns[n]["flags"] = flags
-        patterns[n]["summary"] = summary
+        categories[n] = category
+        confidences[n] = confidence
+        flags_list[n] = flags
+        summaries[n] = summary
         n++
     }
 }
 END {
     if (n == 0) exit
 
-    # Sort by category priority (default: mistake > convention > pattern > insight)
     if (priority == "") {
         priority = "mistake,convention,pattern,insight"
     }
-    split(priority, prio_order, ",")
+    prio_count = split(priority, prio_order, /,/)
 
-    # Confidence sort values: high=0, medium=1, low=2
-    # Bubble sort by: 1) category priority, 2) confidence (high first)
-    for (i = 0; i < n-1; i++) {
-        for (j = 0; j < n-1-i; j++) {
-            cat1 = patterns[j]["category"]
-            cat2 = patterns[j+1]["category"]
-            prio1 = 999
-            prio2 = 999
-            for (p in prio_order) {
-                if (prio_order[p] == cat1) prio1 = p
-                if (prio_order[p] == cat2) prio2 = p
-            }
-            swap = 0
+    for (i = 0; i < n - 1; i++) {
+        for (j = 0; j < n - 1 - i; j++) {
+            prio1 = category_priority(categories[j])
+            prio2 = category_priority(categories[j + 1])
+            swap_needed = 0
             if (prio1 > prio2) {
-                swap = 1
+                swap_needed = 1
             } else if (prio1 == prio2) {
-                # Secondary sort: confidence (high < medium < low)
-                conf1 = patterns[j]["confidence"]
-                conf2 = patterns[j+1]["confidence"]
-                cv1 = (conf1 == "high" ? 0 : (conf1 == "medium" ? 1 : 2))
-                cv2 = (conf2 == "high" ? 0 : (conf2 == "medium" ? 1 : 2))
-                if (cv1 > cv2) swap = 1
-            }
-            if (swap) {
-                for (k in patterns[j]) {
-                    tmp = patterns[j][k]
-                    patterns[j][k] = patterns[j+1][k]
-                    patterns[j+1][k] = tmp
+                if (confidence_value(confidences[j]) > confidence_value(confidences[j + 1])) {
+                    swap_needed = 1
                 }
+            }
+            if (swap_needed) {
+                swap_rows(j, j + 1)
             }
         }
     }
 
-    # Cap at 15 patterns
     max_inject = 15
     truncated = 0
     if (n > max_inject) {
@@ -380,7 +388,6 @@ END {
         n = max_inject
     }
 
-    # Output for LLM consumption
     print "<organization-learnings>"
     print "# Patterns from organization knowledge base"
     print "# Format: [CONFIDENCE] SUMMARY (FLAGS if any)"
@@ -389,9 +396,9 @@ END {
     }
     print ""
     for (i = 0; i < n; i++) {
-        conf = patterns[i]["confidence"]
-        summ = patterns[i]["summary"]
-        flgs = patterns[i]["flags"]
+        conf = confidences[i]
+        summ = summaries[i]
+        flgs = flags_list[i]
 
         if (flgs != "") {
             printf "[%s] %s %s\n", conf, summ, flgs

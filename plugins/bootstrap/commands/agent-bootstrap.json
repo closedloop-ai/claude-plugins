@@ -50,7 +50,7 @@
         "$RUN/discovery/project-context.md",
         "$RUN/discovery/domains.json"
       ],
-      "produces": ["$RUN/synthesis/decomposed-agents.json", ".claude/settings/critic-gates.json"],
+      "produces": ["$RUN/synthesis/decomposed-agents.json", ".closedloop-ai/settings/critic-gates.json"],
       "parallelizable": false
     },
     {

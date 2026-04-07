@@ -8,7 +8,7 @@ PROJECT_ROOT="${1:-$PWD}"
 PROJECT_ROOT=$(cd "$PROJECT_ROOT" && pwd)
 
 # Read current repo's identity
-CURRENT_IDENTITY="$PROJECT_ROOT/.claude/.repo-identity.json"
+CURRENT_IDENTITY="$PROJECT_ROOT/.closedloop-ai/.repo-identity.json"
 if [[ -f "$CURRENT_IDENTITY" ]]; then
     CURRENT_NAME=$(jq -r '.name // "unknown"' "$CURRENT_IDENTITY")
     CURRENT_TYPE=$(jq -r '.type // "unknown"' "$CURRENT_IDENTITY")
@@ -45,7 +45,7 @@ if [[ -n "$CLAUDE_WORKSPACE_REPOS" ]]; then
         [[ "$path" == "$PROJECT_ROOT" ]] && continue
 
         # Read identity if exists
-        identity_file="$path/.claude/.repo-identity.json"
+        identity_file="$path/.closedloop-ai/.repo-identity.json"
         if [[ -f "$identity_file" ]]; then
             type=$(jq -r '.type // "unknown"' "$identity_file")
             repo_name=$(jq -r '.name // "'"$name"'"' "$identity_file")
@@ -77,7 +77,7 @@ for sibling in "$PARENT_DIR"/*/; do
     [[ "$sibling" == "$PROJECT_ROOT" ]] && continue
     [[ ! -d "$sibling" ]] && continue
 
-    identity_file="$sibling/.claude/.repo-identity.json"
+    identity_file="$sibling/.closedloop-ai/.repo-identity.json"
     if [[ -f "$identity_file" ]]; then
         name=$(jq -r '.name // "unknown"' "$identity_file")
         type=$(jq -r '.type // "unknown"' "$identity_file")

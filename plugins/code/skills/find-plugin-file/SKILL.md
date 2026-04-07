@@ -7,7 +7,7 @@ description: This skill should be used when needing to locate files within the C
 
 ## Overview
 
-This skill provides a utility to dynamically locate files within the Claude Code plugins cache directory. Instead of hardcoding paths like `.claude/tools/python`, use this skill to find files in `~/.claude/plugins/cache/closedloop-ai/` with automatic latest-version resolution.
+This skill provides a utility to dynamically locate files within the Claude Code plugins cache directory. Instead of hardcoding plugin-cache paths, use this skill to find files in `~/.claude/plugins/cache/closedloop-ai/` with automatic latest-version resolution.
 
 ## Quick Start
 

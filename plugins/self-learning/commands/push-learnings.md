@@ -17,7 +17,7 @@ Exports local organization patterns to a shared repository for team-wide distrib
 1. **Read local patterns**: Load `$CLOSEDLOOP_WORKDIR/.learnings/org-patterns.toon`
 2. **Convert TOON → JSON**: For cross-project compatibility
 3. **Regenerate pattern IDs**: Resolve collisions (P-001 might exist in target)
-4. **Merge with shared patterns**: Read `$CLOSEDLOOP_WORKDIR/.claude/learnings/org-patterns.json`
+4. **Merge with shared patterns**: Read `$CLOSEDLOOP_WORKDIR/.closedloop-ai/learnings/org-patterns.json`
 5. **Track source project**: Update `sources.json` with origin metadata
 6. **Write merged output**: Save to shared location
 

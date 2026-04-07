@@ -59,7 +59,7 @@ def run_start_hook(
         }
     )
     env = dict(env_overrides) if env_overrides else {}
-    # Ensure PATH is inherited so jq, gawk, etc. are available
+    # Ensure PATH is inherited so jq, awk, etc. are available
     import os
 
     env.setdefault("PATH", os.environ.get("PATH", "/usr/bin:/bin"))
@@ -202,3 +202,99 @@ class TestSelfLearningOn:
         output = json.loads(stdout)
         ctx = output["hookSpecificOutput"]["additionalContext"]
         assert "CLOSEDLOOP_WORKDIR=" in ctx
+
+
+
+def test_ignores_legacy_session_mapping(tmp_path: Path) -> None:
+    """Should not resolve workdir mappings from legacy `.claude/.closedloop`."""
+    session_id = "legacy-start-session"
+    cwd = tmp_path / "cwd"
+    workdir = tmp_path / "workdir"
+    legacy_dir = cwd / ".claude" / ".closedloop"
+    legacy_dir.mkdir(parents=True)
+    workdir.mkdir(parents=True)
+    (workdir / ".closedloop").mkdir(parents=True)
+    (legacy_dir / f"session-{session_id}.workdir").write_text(str(workdir))
+
+    payload = json.dumps(
+        {
+            "agent_id": "agent-legacy",
+            "agent_type": "code:implementation-subagent",
+            "cwd": str(cwd),
+            "session_id": session_id,
+        }
+    )
+
+    import os
+
+    result = subprocess.run(
+        ["bash", str(HOOK_PATH)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env={
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": os.environ.get("HOME", "/tmp"),
+        },
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == ""
+    assert not (workdir / ".agent-types").exists()
+
+
+
+
+
+
+def test_ignores_legacy_home_patterns(session_env: tuple[Path, Path, str]) -> None:
+    """Should not inject patterns from legacy `~/.claude/.learnings`."""
+    cwd, workdir, session_id = session_env
+    home_dir = workdir / "legacy_home"
+    legacy_dir = home_dir / ".claude" / ".learnings"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "org-patterns.toon").write_text(
+        "# TOON org-patterns\npatterns[\n"
+        "  p1,testing,\"Legacy pattern\",high,5,0.8,\"\","
+        "\"implementation-subagent\",\"validation context\"\n"
+        "]\n"
+    )
+
+    result = run_start_hook(
+        str(cwd),
+        session_id,
+        self_learning=True,
+        env_overrides={"HOME": str(home_dir)},
+    )
+
+    assert result.returncode == 0, f"Hook failed: {result.stderr}"
+    output = json.loads(result.stdout.strip())
+    ctx = output["hookSpecificOutput"]["additionalContext"]
+    assert "Legacy pattern" not in ctx
+
+def test_injects_when_only_plain_awk_is_available(session_env: tuple[Path, Path, str]) -> None:
+    """Should continue injecting learnings when only plain awk is available."""
+    cwd, workdir, session_id = session_env
+
+    home_dir = workdir / "plain-awk-home"
+    patterns_dir = home_dir / ".closedloop-ai" / "learnings"
+    patterns_dir.mkdir(parents=True)
+    (patterns_dir / "org-patterns.toon").write_text(
+        "# TOON org-patterns\npatterns[\n"
+        "  p1,testing,\"Always validate inputs before processing\",high,5,0.8,\"\",\"implementation-subagent\",\"validation context\"\n"
+        "]\n"
+    )
+
+    result = run_start_hook(
+        str(cwd),
+        session_id,
+        self_learning=True,
+        env_overrides={"HOME": str(home_dir), "PATH": "/usr/bin:/bin"},
+    )
+
+    assert result.returncode == 0, f"Hook failed: {result.stderr}"
+    output = json.loads(result.stdout.strip())
+    ctx = output["hookSpecificOutput"]["additionalContext"]
+    assert "CLOSEDLOOP_WORKDIR=" in ctx
+    assert "Always validate inputs before processing" in ctx

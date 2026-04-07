@@ -145,6 +145,35 @@ class TestBootstrapLearningsGuard:
         assert not (workdir / ".learnings" / "pending").exists()
 
 
+class TestBootstrapLearningsCopy:
+    """Verify bootstrap_learnings copies org learnings from .closedloop-ai/."""
+
+    def test_bootstrap_copies_adjacent_closedloop_ai_learnings(self, tmp_path: Path) -> None:
+        """bootstrap_learnings copies org patterns from project-root .closedloop-ai/learnings."""
+        project_root = tmp_path / "project"
+        workdir = project_root / ".closedloop-ai" / "work"
+        workdir.mkdir(parents=True)
+
+        org_dir = project_root / ".closedloop-ai" / "learnings"
+        org_dir.mkdir(parents=True)
+        (org_dir / "org-patterns.toon").write_text("pattern: use tests\n")
+        (org_dir / "goal.yaml").write_text("active_goal: improve-reliability\n")
+        (org_dir / "retention.yaml").write_text("max_runs: 10\n")
+
+        awk = _awk_extract_script()
+        script = (
+            _base_env(workdir, self_learning="true")
+            + f'eval "$(awk \'{awk}\' "{RUN_LOOP_SH}")"\n'
+            + f'bootstrap_learnings "{workdir}"\n'
+        )
+
+        result = _run_script(script, cwd=str(project_root))
+        assert result.returncode == 0, f"Script failed: {result.stderr}"
+        assert (workdir / ".learnings" / "org-patterns.toon").read_text() == "pattern: use tests\n"
+        assert (workdir / ".learnings" / "goal.yaml").read_text() == "active_goal: improve-reliability\n"
+        assert (workdir / ".learnings" / "retention.yaml").read_text() == "max_runs: 10\n"
+
+
 class TestSelfLearningResume:
     """Verify SELF_LEARNING is restored from state file on resume."""
 

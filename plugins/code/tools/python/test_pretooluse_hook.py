@@ -33,6 +33,7 @@ def run_hook_with_session(
     tool_input: dict,
     cwd: str,
     session_id: str = "test-session",
+    env_overrides: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     """Invoke pretooluse-hook.sh with a session-mapped CWD for self-learning tests."""
     payload = json.dumps(
@@ -43,12 +44,19 @@ def run_hook_with_session(
             "cwd": cwd,
         }
     )
+    env = dict(env_overrides) if env_overrides else {}
+    import os
+
+    env.setdefault("PATH", os.environ.get("PATH", "/usr/bin:/bin"))
+    env.setdefault("HOME", os.environ.get("HOME", "/tmp"))
+
     return subprocess.run(
         ["bash", str(HOOK_PATH)],
         input=payload,
         capture_output=True,
         text=True,
         timeout=10,
+        env=env,
     )
 
 
@@ -387,3 +395,65 @@ class TestSelfLearningOff:
             session_id,
         )
         assert_denied(result)
+
+
+
+
+
+
+def test_ignores_legacy_home_patterns(session_env: tuple[Path, Path, str]) -> None:
+    """Should not inject patterns from legacy `~/.claude/.learnings`."""
+    cwd, workdir, session_id = session_env
+    (workdir / ".closedloop" / "config.env").write_text(
+        "CLOSEDLOOP_SELF_LEARNING=true\n"
+    )
+
+    home_dir = workdir / "legacy-home"
+    legacy_dir = home_dir / ".claude" / ".learnings"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "org-patterns.toon").write_text(
+        "# TOON\npatterns[\n"
+        "  p1,testing,\"Legacy pattern\",high,5,0.8,\"\",*,\"test context\"\n"
+        "]\n"
+    )
+
+    result = run_hook_with_session(
+        "Bash",
+        {"command": "npm run build"},
+        str(cwd),
+        session_id,
+        env_overrides={"HOME": str(home_dir)},
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == ""
+
+def test_injects_when_only_plain_awk_is_available(session_env: tuple[Path, Path, str]) -> None:
+    """Should continue injecting tool learnings when only plain awk is available."""
+    cwd, workdir, session_id = session_env
+    (workdir / ".closedloop" / "config.env").write_text(
+        "CLOSEDLOOP_SELF_LEARNING=true\n"
+    )
+
+    home_dir = workdir / "plain-awk-home"
+    patterns_dir = home_dir / ".closedloop-ai" / "learnings"
+    patterns_dir.mkdir(parents=True)
+    (patterns_dir / "org-patterns.toon").write_text(
+        "# TOON\npatterns[\n"
+        "  p1,testing,\"Build pattern\",high,5,0.8,\"\",*,\"build context\"\n"
+        "]\n"
+    )
+
+    result = run_hook_with_session(
+        "Bash",
+        {"command": "npm run build"},
+        str(cwd),
+        session_id,
+        env_overrides={"HOME": str(home_dir), "PATH": "/usr/bin:/bin"},
+    )
+
+    assert result.returncode == 0, f"Hook failed: {result.stderr}"
+    output = json.loads(result.stdout.strip())
+    ctx = output["hookSpecificOutput"]["additionalContext"]
+    assert "<tool-learnings tool=\"Bash\">" in ctx
+    assert "Build pattern" in ctx

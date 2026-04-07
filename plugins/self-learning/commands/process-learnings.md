@@ -37,7 +37,7 @@ Parse the argument to identify CLOSEDLOOP_WORKDIR:
 
 1. If argument provided → use it as `CLOSEDLOOP_WORKDIR`
 2. Else if `.learnings/pending/` exists in current directory → use current directory
-3. Else check `.claude/runs/*/` for recent runs with pending learnings
+3. Else check `.closedloop-ai/runs/*/` for recent runs with pending learnings
 
 ### Step 1.5: Rescue Stray Learnings from Project Root
 
@@ -262,7 +262,7 @@ Updated: ~/.closedloop-ai/learnings/org-patterns.toon
 
 ```bash
 # Process learnings from a specific run
-/process-learnings /Users/daniel.ochoa/Source/astoria-frontend-main/.claude/runs/new-feature
+/process-learnings /Users/user/Source/project/.closedloop-ai/runs/new-feature
 
 # Process learnings from current directory
 /process-learnings

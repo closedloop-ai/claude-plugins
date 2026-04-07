@@ -6,6 +6,69 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### bootstrap v1.2.0
+
+#### Changed
+- Migrated critic-gates configuration path from `.claude/settings/critic-gates.json` to `.closedloop-ai/settings/critic-gates.json` across `agent-decomposer`, `agent-prompt-validator`, `generation-validator`, and `agent-bootstrap` command
+- Migrated schema validation path from `.claude/schemas/` to `.closedloop-ai/schemas/` in `agent-prompt-validator`
+- Updated agent output path references from `.claude/runs/` to `.closedloop-ai/runs/` in `agent-prompt-generator`
+- Updated bootstrap configuration documentation in `agent-bootstrap.md` to reference `.closedloop-ai/` state directory
+
+### code v1.6.0
+
+#### Changed
+- Migrated all remaining `.claude/` path references to `.closedloop-ai/` across hooks, scripts, agents, skills, and orchestrator prompt -- completes the directory migration started in v1.1.0
+- Replaced `gawk` FPAT-based TOON parser with portable `csv_split()` function in `pretooluse-hook.sh` and `subagent-start-hook.sh`, removing the hard dependency on GNU awk
+- Refactored awk array usage from associative `patterns[n]["key"]` to parallel flat arrays for POSIX awk compatibility
+- Updated `install-dependencies.sh` to verify any `awk` instead of requiring `gawk` with FPAT support
+- Updated org learnings copy path in `run-loop.sh` to use `.closedloop-ai/learnings/` with workdir-adjacent state directory resolution
+
+#### Removed
+- Removed all legacy `.claude/.closedloop/` session/workdir/env fallback paths from `loop-stop-hook.sh`, `pretooluse-hook.sh`, `session-end-hook.sh`, `subagent-start-hook.sh`, `subagent-stop-hook.sh`, and `setup-closedloop.sh`
+- Removed legacy `~/.claude/.learnings/org-patterns.toon` fallback from `pretooluse-hook.sh` and `subagent-start-hook.sh`
+- Removed legacy cleanup logic from `session-end-hook.sh` (PID cleanup, stale session removal, legacy directory deletion)
+
+#### Added
+- Tests for legacy path ignorance in pretooluse and subagent-start hooks, setup-closedloop, and self-learning flag tests
+- Tests for portable awk injection (`test_injects_when_only_plain_awk_is_available`) in both hook test suites
+
+### code-review v1.4.0
+
+#### Changed
+- Migrated GitHub mode output file paths from `.claude/` to `.closedloop-ai/`: `code-review-findings.json`, `code-review-threads.json`, and `code-review-summary.md`
+- Updated `route` subcommand to read critic-gates from `.closedloop-ai/settings/critic-gates.json`
+- Simplified fast-path routing to `total_loc <= 200` threshold only (was `<= 150 LOC AND <= 5 files AND no domain critics`); domain critics are now folded into the fast-path agent as an additional pass
+
+#### Added
+- Structured reasoning protocol for Premise Reviewer: `AUTHOR'S CLAIM / COUNTER-EVIDENCE / ALTERNATIVE CHECK / CONCLUSION` validation gate before reporting premise findings
+- Reasoning certificate for Bug Hunter A: `PREMISE / TRACE / DIVERGENCE / GUARD CHECK / CONCLUSION` trace-based bug confirmation gate with emission filtering
+- Domain critic pass injection in fast-path reviewer via `{DOMAIN_CRITIC_PASS}` placeholder, enabling domain expert review within single-agent fast-path runs
+- Replaced shared prompt reasoning checklist with structured `PREMISE / EVIDENCE / GUARD CHECK / SEVERITY CHECK` analysis framework
+
+### judges v1.5.0
+
+#### Changed
+- Migrated threshold override paths from `.claude/settings/threshold-overrides.json` to `.closedloop-ai/settings/threshold-overrides.json` in `run-judges` skill (both run-specific and repo-level locations)
+
+### platform v1.1.0
+
+#### Changed
+- Version bump to align with cross-plugin `.closedloop-ai/` directory migration
+
+### self-learning v1.1.0
+
+#### Changed
+- Migrated org learnings paths from `.claude/learnings/` to `.closedloop-ai/learnings/` across `pull-learnings`, `push-learnings`, and `bootstrap-learnings.sh`
+- Migrated run path references from `.claude/runs/` to `.closedloop-ai/runs/` in `process-learnings` command
+- Simplified `preflight-check.sh` to verify `awk` availability instead of requiring `gawk` with FPAT support
+
+#### Removed
+- Removed legacy `~/.claude/.learnings/org-patterns.toon` fallback from `compute_success_rates.py` and `write_merged_patterns.py`
+- Removed legacy session file lookup path from `evaluate_goal.py`
+
+#### Added
+- Test verifying CLI ignores legacy home TOON path in `test_compute_success_rates.py`
+
 ### code v1.5.10
 
 #### Changed

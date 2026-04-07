@@ -94,8 +94,7 @@ REBALANCE_LOC_BUDGET = 1200
 MIXED_PARTITION_SPLIT_THRESHOLD = 50
 
 # Fast-path routing thresholds
-FAST_PATH_MAX_LOC = 150
-FAST_PATH_MAX_FILES = 5
+FAST_PATH_MAX_LOC = 200
 
 # Validation thresholds
 CONFIDENCE_DISCARD_THRESHOLD = 0.5
@@ -1007,11 +1006,7 @@ def cmd_route(args: argparse.Namespace) -> int:
 
     max_bha_agents = 9 - 3 - len(selected_domain_critics)  # 3 = BHB + Auditor + Premise
 
-    fast_path = (
-        total_loc <= FAST_PATH_MAX_LOC
-        and len(files_to_review) <= FAST_PATH_MAX_FILES
-        and not selected_domain_critics
-    )
+    fast_path = total_loc <= FAST_PATH_MAX_LOC
 
     json.dump(
         {

@@ -5,13 +5,13 @@
 These constraints apply ONLY when `MODE=github`. Local mode has no restrictions.
 
 - ✅ READ files and analyze the PR diff
-- ✅ Write validated findings to `.claude/code-review-findings.json` (workflow posts inline comments)
-- ✅ Write outdated thread IDs to `.claude/code-review-threads.json` (workflow resolves threads)
-- ✅ Write review summary to `.claude/code-review-summary.md` (workflow handles posting)
+- ✅ Write validated findings to `.closedloop-ai/code-review-findings.json` (workflow posts inline comments)
+- ✅ Write outdated thread IDs to `.closedloop-ai/code-review-threads.json` (workflow resolves threads)
+- ✅ Write review summary to `.closedloop-ai/code-review-summary.md` (workflow handles posting)
 - ✅ Write temp files to `<CR_DIR>/*` (session directory created during setup)
 - ❌ Do NOT use compound Bash commands — no `&&`, `||`, `;`, or `|` pipes. Each Bash call must be a single simple command. CI permissions deny compound commands by design.
 - ❌ Do NOT checkout, switch branches, or modify any code
-- ❌ Do NOT create, edit, or modify any files in the repository (except `.claude/code-review-summary.md`, `.claude/code-review-findings.json`, `.claude/code-review-threads.json`, and `$CR_DIR/*`)
+- ❌ Do NOT create, edit, or modify any files in the repository (except `.closedloop-ai/code-review-summary.md`, `.closedloop-ai/code-review-findings.json`, `.closedloop-ai/code-review-threads.json`, and `$CR_DIR/*`)
 - ❌ Do NOT call `resolveReviewThread` mutations directly
 - ❌ Do NOT use `mcp__github_inline_comment__create_inline_comment` — write findings to file instead
 - ❌ Do NOT merge, close, approve, or request changes on the PR
@@ -139,7 +139,7 @@ For each unresolved thread authored by a review bot (`closedloop-cl`, `closedloo
 - Read current state of file/line (use `git diff` or Read tool)
 - If issue is FIXED or line no longer exists: collect its thread ID
 
-Write `.claude/code-review-threads.json`:
+Write `.closedloop-ai/code-review-threads.json`:
 ```json
 {"schema_version": 1, "pr_number": 123, "outdated_thread_ids": ["PRRT_...", "PRRT_..."]}
 ```
@@ -150,7 +150,7 @@ If no threads are outdated, write with an empty array — the workflow step hand
 
 Read `$CR_DIR/validate_output.json`, extract the `validated` array.
 
-Write `.claude/code-review-findings.json`:
+Write `.closedloop-ai/code-review-findings.json`:
 ```json
 {"schema_version": 1, "pr_number": 123, "head_sha": "abc123...", "findings": [...]}
 ```
@@ -163,7 +163,7 @@ Mark todo as `completed`.
 
 ## Step 8: Write Summary
 
-Mark todo "Write summary to .claude/code-review-summary.md" as `in_progress`.
+Mark todo "Write summary to .closedloop-ai/code-review-summary.md" as `in_progress`.
 
 **CRITICAL**: This step is MANDATORY, even if there are no findings.
 
@@ -178,11 +178,11 @@ Based on validated findings, set status label for the summary comment:
 
 ### Write Summary to File
 
-Write the summary to `.claude/code-review-summary.md`. The CI workflow will handle marking old summaries as outdated and posting the new one deterministically.
+Write the summary to `.closedloop-ai/code-review-summary.md`. The CI workflow will handle marking old summaries as outdated and posting the new one deterministically.
 
 ```bash
 # Write the summary content to the file
-cat > .claude/code-review-summary.md << 'SUMMARY_EOF'
+cat > .closedloop-ai/code-review-summary.md << 'SUMMARY_EOF'
 <summary content here>
 SUMMARY_EOF
 ```

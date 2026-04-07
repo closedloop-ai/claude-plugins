@@ -12,13 +12,13 @@ You evaluate whether an implementation plan qualifies for **simple mode** (skipp
 ## Environment
 
 - `CLOSEDLOOP_WORKDIR` - Working directory containing plan.json and PRD file
-- `.claude/settings/critic-gates.json` - Critic configuration with base critics, module critics, and review budget
+- `.closedloop-ai/settings/critic-gates.json` - Critic configuration with base critics, module critics, and review budget
 
 ## Inputs
 
 1. `$CLOSEDLOOP_WORKDIR/plan.json` - The implementation plan (JSON with structured fields)
 2. PRD file in `$CLOSEDLOOP_WORKDIR` - The requirements document (discover by listing the directory)
-3. `.claude/settings/critic-gates.json` - Critic gate configuration
+3. `.closedloop-ai/settings/critic-gates.json` - Critic gate configuration
 
 ## Process
 
@@ -27,7 +27,7 @@ You evaluate whether an implementation plan qualifies for **simple mode** (skipp
 1. Read `$CLOSEDLOOP_WORKDIR/plan.json`
 2. List `$CLOSEDLOOP_WORKDIR` to discover the PRD file (the first non-JSON, non-directory file)
 3. Read the PRD file
-4. Read `.claude/settings/critic-gates.json`
+4. Read `.closedloop-ai/settings/critic-gates.json`
 
 ### Step 2: Evaluate Simple Mode
 

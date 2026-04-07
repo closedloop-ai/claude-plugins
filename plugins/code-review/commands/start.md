@@ -102,7 +102,7 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 
 ### Task 8: Route models + partition + extract patches
 - Mark todo "Assess scope and route models" as `in_progress`
-- Run Bash: `python <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .claude/settings/critic-gates.json --intent <INTENT> > <CR_DIR>/route.json`
+- Run Bash: `python <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .closedloop-ai/settings/critic-gates.json --intent <INTENT> > <CR_DIR>/route.json`
 - Read `<CR_DIR>/route.json` for `models`, `domain_critics`, `max_bha_agents`, `fast_path`
 - **If `fast_path` is false (standard flow):**
   - Print `CACHE_STATUS_MESSAGE` if non-empty
@@ -134,7 +134,7 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 - See: [Step 5](#step-5-collect-normalize-and-validate-findings), [Step 5.5 (fast_path == false AND CACHE_DIR set)](#step-55-bha-cache-update-fast_path--false-and-cache_dir-set)
 
 ### Task 11: Present results
-- **GitHub mode**: follow Steps 6 and 8 in `github-review.md` — write findings JSON, threads JSON, and summary.md to `.claude/`
+- **GitHub mode**: follow Steps 6 and 8 in `github-review.md` — write findings JSON, threads JSON, and summary.md to `.closedloop-ai/`
 - **Local mode**: present findings by severity in terminal — see [Local Mode: Present Results](#local-mode-present-results)
 - Mark remaining todos as `completed`
 
@@ -227,7 +227,7 @@ If SINCE_LAST_REVIEW AND FULL_REVIEW:
 **GitHub mode adds:**
 ```
 { content: "Write findings and thread data to files", status: "pending", activeForm: "Writing review data" }
-{ content: "Write summary to .claude/code-review-summary.md", status: "pending", activeForm: "Writing summary" }
+{ content: "Write summary to .closedloop-ai/code-review-summary.md", status: "pending", activeForm: "Writing summary" }
 ```
 
 **Local mode adds:**
@@ -478,8 +478,8 @@ Parse `<CR_DIR>/hygiene.json` and present findings in the local presentation for
 
 **Summary:** [count] hygiene issues found. No LLM-based review was performed.
 
-If MODE=github, write the hygiene findings to .claude/code-review-summary.md
-(same summary file path) and .claude/code-review-findings.json (findings only
+If MODE=github, write the hygiene findings to .closedloop-ai/code-review-summary.md
+(same summary file path) and .closedloop-ai/code-review-findings.json (findings only
 contain hygiene items). No inline comments are posted for hygiene-only runs
 unless findings exist.
 
@@ -495,13 +495,13 @@ Mark todo "Assess scope and route models" as `in_progress`.
 Run the `route` subcommand to compute risk scores and model routing. Pass the `INTENT` value from `<CR_DIR>/intent.json` (classified in Task 5):
 
 ```bash
-python <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .claude/settings/critic-gates.json --intent <INTENT> > <CR_DIR>/route.json
+python <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .closedloop-ai/settings/critic-gates.json --intent <INTENT> > <CR_DIR>/route.json
 ```
 
 Read `<CR_DIR>/route.json` with the Read tool.
 
 The script outputs:
-- **fast_path**: `true` when `total_loc <= 150` and `len(files_to_review) <= 5` and no domain critics; `false` otherwise
+- **fast_path**: `true` when `total_loc <= 200`; `false` otherwise. Domain critics are folded into the fast-path agent as an additional pass rather than forcing standard flow.
 - **size_category**: "Small" (<=500), "Medium" (501-2000), or "Large" (2001+)
 - **models**: Model assignments for each agent role. `bug_hunter_a` is `{"default": "opus", "test_only": "sonnet"}`. `premise_reviewer` is "opus" (fix/refactor/mixed) or "sonnet" (feature). `fast_path_reviewer` is "sonnet".
 - **high_risk_files**: Top 5 files by risk score
@@ -754,6 +754,18 @@ Focus areas — flag ONLY when you have concrete proof:
   permissions) was documented or relied upon by callers — if so, the fix introduces a
   functional regression that outweighs any theoretical benefit.
 
+REASONING PROTOCOL -- complete for each potential finding:
+Before reporting that a change's premise is wrong, explicitly check the alternative:
+
+AUTHOR'S CLAIM: [What the author says this change does, from intent_context.json or diff]
+COUNTER-EVIDENCE: [Specific codebase evidence that contradicts the claim -- cite file:line]
+ALTERNATIVE CHECK: If the change IS justified, what evidence would support it?
+  - Searched for: [what you looked for to validate the author's premise]
+  - Found: [what you found -- cite file:line, or "no supporting evidence found"]
+CONCLUSION: [PREMISE REFUTED -- counter-evidence outweighs] or [PREMISE SUPPORTED -- discard finding]
+
+Only report findings where CONCLUSION = PREMISE REFUTED.
+
 Do NOT flag: correctness issues, style violations, DRY problems, CLAUDE.md compliance,
 naming conventions, or missing tests. Other agents cover those areas.
 
@@ -904,6 +916,18 @@ Focus areas — flag ONLY when you have concrete proof:
   permissions) was documented or relied upon by callers — if so, the fix introduces a
   functional regression that outweighs any theoretical benefit.
 
+REASONING PROTOCOL -- complete for each potential finding:
+Before reporting that a change's premise is wrong, explicitly check the alternative:
+
+AUTHOR'S CLAIM: [What the author says this change does, from intent_context.json or diff]
+COUNTER-EVIDENCE: [Specific codebase evidence that contradicts the claim -- cite file:line]
+ALTERNATIVE CHECK: If the change IS justified, what evidence would support it?
+  - Searched for: [what you looked for to validate the author's premise]
+  - Found: [what you found -- cite file:line, or "no supporting evidence found"]
+CONCLUSION: [PREMISE REFUTED -- counter-evidence outweighs] or [PREMISE SUPPORTED -- discard finding]
+
+Only report findings where CONCLUSION = PREMISE REFUTED.
+
 Do NOT flag: correctness issues, style violations, DRY problems, CLAUDE.md compliance,
 naming conventions, or missing tests. Other agents cover those areas.
 
@@ -925,8 +949,22 @@ IMPORTANT — The following constraints apply ONLY to findings emitted in this p
 
 These Premise constraints do NOT apply to findings from passes 1 and 2.
 
+{DOMAIN_CRITIC_PASS}
+
 Use Read, Grep, and Glob for codebase context. Do NOT use Bash.
 ```
+
+**Domain critic pass injection:** If `route.json -> domain_critics` is non-empty, replace `{DOMAIN_CRITIC_PASS}` with:
+
+```
+=== PASS 4: Domain Expert ({critic_name}) ===
+You are a domain expert reviewer: {critic_name}.
+Review the assigned files for issues within your domain expertise.
+Read the repository CLAUDE.md for project context.
+Standard severity/priority rules apply.
+```
+
+If `domain_critics` is empty, remove the `{DOMAIN_CRITIC_PASS}` placeholder entirely.
 
 ### Fast-Path Spawn + Collection Contract
 
@@ -1013,7 +1051,7 @@ python <HELPERS> cache-update \
   --exclude-test-partitions
 ```
 
-This writes the updated manifest to `<CACHE_DIR>/manifest.json`. The `--exclude-test-partitions` flag skips caching files from `is_test_only=True` partitions (which were reviewed by Sonnet, not Opus). In GitHub mode, the `actions/cache` post-action saves this directory for subsequent workflow runs. In local mode, the `.claude/cr-cache-*` directory persists on disk across CLI sessions.
+This writes the updated manifest to `<CACHE_DIR>/manifest.json`. The `--exclude-test-partitions` flag skips caching files from `is_test_only=True` partitions (which were reviewed by Sonnet, not Opus). In GitHub mode, the `actions/cache` post-action saves this directory for subsequent workflow runs. In local mode, the `~/.claude/cr-cache-*` directory persists on disk across CLI sessions.
 
 **Important:** Use `diff_data.json` (full diff), NOT `uncached_diff_data.json`, so the update has patch hashes for all files.
 

@@ -2,20 +2,20 @@
 # ClosedLoop Self-Learning System - Bootstrap Script
 # Initializes the learning system directory structure
 # Usage: ./bootstrap-learnings.sh [output_dir]
-#   output_dir: Where to create learnings (default: .claude/learnings)
+#   output_dir: Where to create learnings (default: .closedloop-ai/learnings)
 #
 # Examples:
-#   ./bootstrap-learnings.sh                     # Creates .claude/learnings/ (org learnings)
+#   ./bootstrap-learnings.sh                     # Creates .closedloop-ai/learnings/ (org learnings)
 #   ./bootstrap-learnings.sh /tmp/run/.learnings # Creates run-specific learnings
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LEARNINGS_DIR="${1:-.claude/learnings}"
+LEARNINGS_DIR="${1:-.closedloop-ai/learnings}"
 
 # Derive PROJECT_DIR for gitignore updates (only if using default path)
-if [[ "$LEARNINGS_DIR" == ".claude/learnings" ]] || [[ "$LEARNINGS_DIR" == *"/.claude/learnings" ]]; then
-    PROJECT_DIR="${LEARNINGS_DIR%/.claude/learnings}"
+if [[ "$LEARNINGS_DIR" == ".closedloop-ai/learnings" ]] || [[ "$LEARNINGS_DIR" == *"/.closedloop-ai/learnings" ]]; then
+    PROJECT_DIR="${LEARNINGS_DIR%/.closedloop-ai/learnings}"
     PROJECT_DIR="${PROJECT_DIR:-.}"
     UPDATE_PROJECT_GITIGNORE=true
 else
@@ -245,7 +245,7 @@ update_project_gitignore() {
 # Run-specific learnings (ephemeral, per-workdir)
 .learnings/
 
-# Org learnings are in .claude/learnings/ and SHOULD be committed
+# Org learnings are in .closedloop-ai/learnings/ and SHOULD be committed
 EOF
 
     log_info "Project .gitignore updated"
@@ -263,7 +263,7 @@ main() {
     init_retention_yaml
     init_gitignore
 
-    # Only update project .gitignore if creating org learnings in .claude/learnings
+    # Only update project .gitignore if creating org learnings in .closedloop-ai/learnings
     if [[ "$UPDATE_PROJECT_GITIGNORE" == "true" ]]; then
         update_project_gitignore
     fi

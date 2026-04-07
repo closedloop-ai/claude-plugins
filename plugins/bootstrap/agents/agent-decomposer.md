@@ -23,7 +23,7 @@ For each decomposable candidate agent, decide: keep as single agent OR split int
 
 ### Generating Critic Gates Configuration
 
-After decomposition decisions are made, generate `.claude/settings/critic-gates.json` to define which agents can act as critics.
+After decomposition decisions are made, generate `.closedloop-ai/settings/critic-gates.json` to define which agents can act as critics.
 
 **Step 1: Identify Base Critics**
 
@@ -492,7 +492,7 @@ For each final agent (decomposed or not), define:
 }
 ```
 
-### 2. Critic Gates Configuration: `.claude/settings/critic-gates.json`
+### 2. Critic Gates Configuration: `.closedloop-ai/settings/critic-gates.json`
 
 Generated critic configuration for the code workflow:
 
@@ -543,7 +543,7 @@ Generated critic configuration for the code workflow:
 - Only include agents that exist in finalAgents
 - Skip moduleCritics entries if no relevant agents exist (e.g., don't add database patterns if no database-architect)
 - Only include language experts that were detected (don't add python-pro if no Python found)
-- Safe-write: If `.claude/settings/critic-gates.json` already exists, write to `$RUN/settings/critic-gates.json` instead and warn user
+- Safe-write: If `.closedloop-ai/settings/critic-gates.json` already exists, write to `$RUN/settings/critic-gates.json` instead and warn user
 
 ## Input Validation
 
@@ -581,7 +581,7 @@ This ensures the upstream `expertise-mapper` produced valid output before decomp
 - ✅ Critic-capable agents (from generated critic-gates.json) contain `supportsCriticMode` + `modes` blocks with review metadata
 - ✅ Both output files are valid JSON
 - ✅ decomposed-agents.json written to synthesis/
-- ✅ critic-gates.json written to .claude/settings/ (or $RUN/settings/ if file exists)
+- ✅ critic-gates.json written to .closedloop-ai/settings/ (or $RUN/settings/ if file exists)
 
 ## Error Handling
 

@@ -7,4 +7,18 @@ Focus areas:
 - Error handling: missing try-catch on async, unhandled promise rejections
 - Data transformations: off-by-one, incorrect parsing, wrong parameter types
 
+For each potential finding, complete this reasoning certificate in your <thinking> before including it:
+
+PREMISE: [What the code is supposed to do -- cite the function signature, docstring, or callsite context]
+TRACE: [Step-by-step execution path through the changed code. Each step = file:line + what happens]
+DIVERGENCE: [The exact input, state, or condition where behavior goes wrong -- or "NONE FOUND" if trace shows correct behavior]
+GUARD CHECK: [Search for error handling, validation, type guards, or upstream checks that prevent this. Cite file:line of each check examined, or "verified none exists"]
+CONCLUSION: [BUG CONFIRMED -- cite the trace step where failure occurs] or [DISCARDED -- trace shows code is correct because ...]
+
+Apply this certificate and BUG CONFIRMED emission gate only when acting as Bug Hunter A
+(standalone BHA agents and fast-path PASS 1). It does not apply to fast-path PASS 2 or PASS 3 findings.
+
+Only emit findings where CONCLUSION = BUG CONFIRMED with a completed trace.
+Discard immediately if DIVERGENCE = "NONE FOUND" or GUARD CHECK reveals the issue is already handled.
+
 Use Read, Grep, and Glob for codebase context. Do NOT use Bash.

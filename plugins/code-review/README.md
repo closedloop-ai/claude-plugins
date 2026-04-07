@@ -107,7 +107,7 @@ The orchestrator executes these steps in order:
 9. **Spawn reviewer agents in parallel** — launches one `code:code-review-worker` sub-agent per partition; all run concurrently with `run_in_background: true`
 10. **Collect and validate findings** — collects all agent outputs, merges with hygiene findings, runs the `validate` subcommand (normalize severity, filter low-confidence, deduplicate, validate line numbers)
 11. **Cache update** (if caching is active) — writes validated findings to the cache for future incremental runs
-12. **Present results** — local mode: prints findings by severity in the terminal; GitHub mode: writes `.claude/code-review-findings.json`, `.claude/code-review-threads.json`, and `.claude/code-review-summary.md` for the CI workflow to post
+12. **Present results** — local mode: prints findings by severity in the terminal; GitHub mode: writes `.closedloop-ai/code-review-findings.json`, `.closedloop-ai/code-review-threads.json`, and `.closedloop-ai/code-review-summary.md` for the CI workflow to post
 13. **Review state write** — persists the current diff tip so future `--since-last-review` runs can narrow the scope
 14. **Footer** — prints elapsed time, token usage stats, and a deterministic `<pr_verdict>` tag
 
@@ -148,9 +148,9 @@ In GitHub mode (`--github`), the orchestrator does not post comments directly. I
 
 | File | Contents |
 |---|---|
-| `.claude/code-review-findings.json` | Validated findings in structured JSON; CI workflow posts inline comments |
-| `.claude/code-review-threads.json` | Outdated review thread IDs; CI workflow resolves them |
-| `.claude/code-review-summary.md` | Review summary in Markdown; CI workflow posts as a PR comment |
+| `.closedloop-ai/code-review-findings.json` | Validated findings in structured JSON; CI workflow posts inline comments |
+| `.closedloop-ai/code-review-threads.json` | Outdated review thread IDs; CI workflow resolves them |
+| `.closedloop-ai/code-review-summary.md` | Review summary in Markdown; CI workflow posts as a PR comment |
 
 This file-based handoff ensures that Claude never directly calls GitHub mutation APIs during the review (read-only), and lets the CI workflow handle deduplication, error handling, and rate limiting.
 

@@ -1,5 +1,8 @@
 """Tests for compute_success_rates.py."""
 
+import os
+import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -545,3 +548,33 @@ class TestFlagAssignment:
         ]
         result = compute_rates(patterns, outcomes, max_iteration=21)
         assert result[0]["flags"] != "[PRUNE]"
+
+
+
+def test_main_ignores_legacy_home_toon(tmp_path: Path) -> None:
+    """CLI should not fall back to `~/.claude/.learnings/org-patterns.toon`."""
+    workdir = tmp_path / "workdir"
+    (workdir / ".learnings").mkdir(parents=True)
+
+    home_dir = tmp_path / "home"
+    legacy_dir = home_dir / ".claude" / ".learnings"
+    legacy_dir.mkdir(parents=True)
+    _write_toon(
+        legacy_dir / "org-patterns.toon",
+        """            patterns[1]{id,category,summary,confidence,seen_count,success_rate,flags,applies_to,context,repo}:
+              P-001,pattern,"Legacy pattern",high,5,0.85,,*,test,*
+        """,
+    )
+
+    script_path = Path(__file__).resolve().with_name("compute_success_rates.py")
+    result = subprocess.run(
+        [sys.executable, str(script_path), "--workdir", str(workdir)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env={**os.environ, "HOME": str(home_dir)},
+    )
+
+    assert result.returncode == 0
+    expected = home_dir / ".closedloop-ai" / "learnings" / "org-patterns.toon"
+    assert f"No TOON file found at {expected}" in result.stderr

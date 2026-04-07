@@ -57,8 +57,8 @@ check_required "Python 3.11+" 'python3 -c "import sys; exit(0 if sys.version_inf
 # jq
 check_required "jq" 'command -v jq'
 
-# awk with FPAT support (gawk)
-check_required "awk with FPAT" 'echo "test" | awk "BEGIN{FPAT=\"[^,]*\"}{print \$1}" 2>/dev/null | grep -q test'
+# awk
+check_required "awk" 'command -v awk'
 
 # git
 check_required "git" 'command -v git'

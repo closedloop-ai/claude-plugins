@@ -423,7 +423,7 @@ Translate the agent's `requires` and `produces` into clear documentation:
 ```markdown
 ## Output Format
 
-Write to `.claude/runs/<timestamp>/arch/database-schema.md`:
+Write to `.closedloop-ai/runs/<timestamp>/arch/database-schema.md`:
 
 ### Required Sections
 

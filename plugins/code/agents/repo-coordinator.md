@@ -61,7 +61,7 @@ If no peers found:
   "peers": [],
   "discoveryMethod": "sibling_scan",
   "monorepo": false,
-  "suggestion": "Set CLAUDE_WORKSPACE_REPOS env var or add .claude/.repo-identity.json to sibling repos"
+  "suggestion": "Set CLAUDE_WORKSPACE_REPOS env var or add .closedloop-ai/.repo-identity.json to sibling repos"
 }
 ```
 

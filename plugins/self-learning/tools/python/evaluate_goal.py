@@ -156,10 +156,9 @@ def evaluate_minimize_tokens(config: GoalConfig, run_id: str, workdir: Path) -> 
     session_id = os.environ.get('CLOSEDLOOP_SESSION_ID', '')
     session_file = None
 
-    # Try common session file locations
+    # Claude session transcripts live in home state; ClosedLoop does not use repo-local Claude state outside .claude/agents.
     possible_paths = [
         Path.home() / '.claude' / 'sessions' / f'{session_id}.jsonl',
-        workdir / '.claude' / 'sessions' / f'{session_id}.jsonl',
     ]
 
     for path in possible_paths:

@@ -105,10 +105,6 @@ SESSION_ID=""
 CURRENT_PID=$$
 while [[ $CURRENT_PID -gt 1 ]]; do
     SESSION_FILE=".closedloop-ai/pid-$CURRENT_PID.session"
-    # Fallback: check legacy path for mid-upgrade sessions
-    if [[ ! -f "$SESSION_FILE" ]] && [[ -f ".claude/.closedloop/pid-$CURRENT_PID.session" ]]; then
-        SESSION_FILE=".claude/.closedloop/pid-$CURRENT_PID.session"
-    fi
     echo "$(date): Checking $SESSION_FILE" >> "$DEBUG_LOG"
     if [[ -f "$SESSION_FILE" ]]; then
         SESSION_ID=$(cat "$SESSION_FILE")

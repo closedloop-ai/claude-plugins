@@ -5,7 +5,7 @@ A comprehensive guide to ClosedLoop terminology and concepts.
 ## Orchestration
 
 **Closed Loop**
-The external bash loop (`run-loop.sh`) that drives fresh-context Claude iterations. Each iteration launches `claude -p` with a clean context window, preventing context exhaustion on long tasks. State persists between iterations in `.claude/closedloop-loop.local.md`.
+The external bash loop (`run-loop.sh`) that drives fresh-context Claude iterations. Each iteration launches `claude -p` with a clean context window, preventing context exhaustion on long tasks. State persists between iterations in `.closedloop-ai/closedloop-loop.local.md`.
 
 **Orchestrator**
 The `prompt.md` system prompt loaded by `run-loop.sh` at the start of each iteration. Coordinates 8 workflow phases (discovery, planning, judge review, plan refinement, implementation, verification, build validation, and learning capture) entirely through subagent delegation. The orchestrator never reads project files directly.

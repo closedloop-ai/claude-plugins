@@ -28,45 +28,11 @@ echo "$(date): Session end hook started, session=$SESSION_ID, reason=$REASON" >>
 # ============================================================================
 
 CLOSEDLOOP_DIR="$CWD/.closedloop-ai"
-LEGACY_DIR="$CWD/.claude/.closedloop"
 
 # Discover CLOSEDLOOP_WORKDIR before cleaning up mappings
 CLOSEDLOOP_WORKDIR=""
-if [[ -n "$SESSION_ID" ]]; then
-    if [[ -f "$CLOSEDLOOP_DIR/session-$SESSION_ID.workdir" ]]; then
-        CLOSEDLOOP_WORKDIR=$(cat "$CLOSEDLOOP_DIR/session-$SESSION_ID.workdir")
-    elif [[ -f "$LEGACY_DIR/session-$SESSION_ID.workdir" ]]; then
-        CLOSEDLOOP_WORKDIR=$(cat "$LEGACY_DIR/session-$SESSION_ID.workdir")
-    fi
-fi
-
-# Clean up legacy directory if it exists (only this session's files + stale PIDs)
-if [[ -d "$LEGACY_DIR" ]]; then
-    echo "$(date): Cleaning up legacy directory: $LEGACY_DIR" >> "$DEBUG_LOG"
-
-    # Remove only this session's workdir mapping
-    rm -f "$LEGACY_DIR/session-$SESSION_ID.workdir" 2>/dev/null || true
-
-    # Remove stale PID mappings (processes that no longer exist)
-    for pid_file in "$LEGACY_DIR"/pid-*.session; do
-        if [[ -f "$pid_file" ]]; then
-            PID=$(basename "$pid_file" | sed 's/pid-\(.*\)\.session/\1/')
-            if ! ps -p "$PID" &>/dev/null; then
-                rm -f "$pid_file"
-            fi
-        fi
-    done
-
-    # Remove stale session workdir mappings (older than 24 hours)
-    find "$LEGACY_DIR" -name "session-*.workdir" -mmin +1440 -delete 2>/dev/null || true
-
-    # Remove ephemeral files only if no active sessions remain
-    if ! ls "$LEGACY_DIR"/pid-*.session &>/dev/null && ! ls "$LEGACY_DIR"/session-*.workdir &>/dev/null; then
-        rm -f "$LEGACY_DIR"/learnings-* "$LEGACY_DIR"/env 2>/dev/null || true
-    fi
-
-    # Remove directory if empty
-    rmdir "$LEGACY_DIR" 2>/dev/null || true
+if [[ -n "$SESSION_ID" ]] && [[ -f "$CLOSEDLOOP_DIR/session-$SESSION_ID.workdir" ]]; then
+    CLOSEDLOOP_WORKDIR=$(cat "$CLOSEDLOOP_DIR/session-$SESSION_ID.workdir")
 fi
 
 if [[ -d "$CLOSEDLOOP_DIR" ]]; then

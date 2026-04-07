@@ -123,10 +123,6 @@ esac
 CLOSEDLOOP_WORKDIR=""
 if [[ -n "$SESSION_ID" ]]; then
     WORKDIR_FILE="$CWD/.closedloop-ai/session-$SESSION_ID.workdir"
-    # Fallback: check legacy path for mid-upgrade sessions
-    if [[ ! -f "$WORKDIR_FILE" ]] && [[ -f "$CWD/.claude/.closedloop/session-$SESSION_ID.workdir" ]]; then
-        WORKDIR_FILE="$CWD/.claude/.closedloop/session-$SESSION_ID.workdir"
-    fi
     if [[ -f "$WORKDIR_FILE" ]]; then
         CLOSEDLOOP_WORKDIR=$(cat "$WORKDIR_FILE")
     fi
@@ -151,11 +147,8 @@ if [[ "${CLOSEDLOOP_SELF_LEARNING:-false}" != "true" ]]; then
     exit 0
 fi
 
-# Path to org-patterns.toon (fall back to legacy location during migration)
+# Path to org-patterns.toon
 PATTERNS_FILE="$HOME/.closedloop-ai/learnings/org-patterns.toon"
-if [[ ! -f "$PATTERNS_FILE" ]]; then
-    PATTERNS_FILE="$HOME/.claude/.learnings/org-patterns.toon"
-fi
 
 if [[ ! -f "$PATTERNS_FILE" ]]; then
     echo "$(date): No patterns file found, exiting" >> "$DEBUG_LOG"
@@ -196,41 +189,61 @@ echo "$(date): FILTER_TAGS=$FILTER_TAGS INPUT_FILTER=${INPUT_FILTER:0:80}" >> "$
 # Parse org-patterns.toon and filter for tool relevance
 # TOON format (comma-delimited, 9 fields):
 # id,category,summary,confidence,seen_count,success_rate,flags,applies_to,context
-# Use gawk with FPAT to handle quoted fields; filter by context tags + input keywords
-LEARNINGS=$(gawk -v filter_tags="$FILTER_TAGS" -v input_filter="$INPUT_FILTER" -v tool_name="$TOOL_NAME" '
+# Prefer gawk when available, but keep the parser portable because these hooks
+# run on a mix of developer and CI machines.
+AWK_BIN=$(command -v gawk || command -v awk || true)
+if [[ -z "$AWK_BIN" ]]; then
+    echo "$(date): No awk interpreter available, skipping tool learnings" >> "$DEBUG_LOG"
+    exit 0
+fi
+LEARNINGS=$("$AWK_BIN" -v filter_tags="$FILTER_TAGS" -v input_filter="$INPUT_FILTER" -v tool_name="$TOOL_NAME" '
+function csv_split(line, fields,   i, ch, next_ch, in_quotes, field, count) {
+    count = 1
+    field = ""
+    in_quotes = 0
+    for (i = 1; i <= length(line); i++) {
+        ch = substr(line, i, 1)
+        if (ch == "\"") {
+            next_ch = substr(line, i + 1, 1)
+            if (in_quotes && next_ch == "\"") {
+                field = field "\""
+                i++
+            } else {
+                in_quotes = !in_quotes
+            }
+        } else if (ch == "," && !in_quotes) {
+            fields[count++] = field
+            field = ""
+        } else {
+            field = field ch
+        }
+    }
+    fields[count] = field
+    return count
+}
 BEGIN {
-    FPAT = "([^,]*|\"[^\"]*\")"
     n = 0
-    # Split filter tags into array
-    split(filter_tags, tag_arr, "|")
+    num_tags = split(filter_tags, tag_arr, /\|/)
 }
 /^#/ { next }
 /^[[:space:]]*$/ { next }
 /^patterns\[/ { next }
 {
-    # Strip leading whitespace (TOON rows are indented 2 spaces)
     gsub(/^[[:space:]]+/, "")
+    for (field_idx in fields) delete fields[field_idx]
+    if (csv_split($0, fields) < 9) next
 
-    id = $1
-    category = $2
-    summary = $3
-    confidence = $4
-    seen_count = $5
-    success_rate = $6
-    flags = $7
-    applies_to = $8
-    context = $9
+    summary = fields[3]
+    confidence = fields[4]
+    context = fields[9]
 
     gsub(/^"|"$/, "", summary)
     gsub(/^"|"$/, "", context)
 
-    # Check context tags and summary for filter tag matches
     text_to_check = tolower(summary " " context)
-
     matched = 0
 
-    # Check if any filter tag appears in the pattern text
-    for (i in tag_arr) {
+    for (i = 1; i <= num_tags; i++) {
         tag = tolower(tag_arr[i])
         if (tag != "" && index(text_to_check, tag) > 0) {
             matched = 1
@@ -238,12 +251,10 @@ BEGIN {
         }
     }
 
-    # Additional: if we have input text, check for keyword overlap with summary
     if (!matched && input_filter != "") {
         input_lower = tolower(input_filter)
-        # Extract words from summary
-        split(tolower(summary), summ_words, /[^a-z0-9]+/)
-        for (w in summ_words) {
+        word_count = split(tolower(summary), summ_words, /[^a-z0-9]+/)
+        for (w = 1; w <= word_count; w++) {
             if (length(summ_words[w]) > 3 && index(input_lower, summ_words[w]) > 0) {
                 matched = 1
                 break
@@ -252,8 +263,8 @@ BEGIN {
     }
 
     if (matched) {
-        patterns[n]["confidence"] = confidence
-        patterns[n]["summary"] = summary
+        pattern_confidence[n] = confidence
+        pattern_summary[n] = summary
         n++
     }
 }
@@ -262,7 +273,7 @@ END {
 
     printf "<tool-learnings tool=\"%s\">\n", tool_name
     for (i = 0; i < n && i < 10; i++) {
-        printf "[%s] %s\n", patterns[i]["confidence"], patterns[i]["summary"]
+        printf "[%s] %s\n", pattern_confidence[i], pattern_summary[i]
     }
     printf "</tool-learnings>\n"
 }

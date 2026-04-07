@@ -251,7 +251,7 @@ Here are the key phases you must complete:
   - If `EVAL_CACHE_MISS`: Launch @code:plan-evaluator with prompt:
     "WORKDIR=$CLOSEDLOOP_WORKDIR. Evaluate plan complexity and select critics.
      Read $CLOSEDLOOP_WORKDIR/plan.json, the PRD in $CLOSEDLOOP_WORKDIR,
-     and .claude/settings/critic-gates.json.
+     and .closedloop-ai/settings/critic-gates.json.
      Write results to $CLOSEDLOOP_WORKDIR/plan-evaluation.json"
     Parse the agent's text response for `simple_mode` and `selected_critics`
 - If `simple_mode` is true:
@@ -323,8 +323,8 @@ Here are the key phases you must complete:
 - If zero reviews: log warning, skip Phase 2.6, proceed to Phase 3
 - If reviews exist: stamp the critic cache, then proceed to Phase 2.6:
   ```bash
-  if [ -f ".claude/settings/critic-gates.json" ]; then
-    cat $CLOSEDLOOP_WORKDIR/plan.json .claude/settings/critic-gates.json | shasum -a 256 > $CLOSEDLOOP_WORKDIR/reviews/.plan-hash
+  if [ -f ".closedloop-ai/settings/critic-gates.json" ]; then
+    cat $CLOSEDLOOP_WORKDIR/plan.json .closedloop-ai/settings/critic-gates.json | shasum -a 256 > $CLOSEDLOOP_WORKDIR/reviews/.plan-hash
   else
     shasum -a 256 $CLOSEDLOOP_WORKDIR/plan.json > $CLOSEDLOOP_WORKDIR/reviews/.plan-hash
   fi

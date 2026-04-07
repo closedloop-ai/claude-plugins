@@ -106,16 +106,15 @@ install_jq() {
     log_info "jq installed successfully"
 }
 
-# Install gawk (for FPAT support)
-install_gawk() {
-    # Check if awk supports FPAT
-    if echo 'test' | awk 'BEGIN{FPAT="[^,]*"}{print $1}' 2>/dev/null | grep -q test; then
-        log_info "awk with FPAT support found"
+# Verify awk availability (portable parser path; GNU awk is optional)
+check_awk() {
+    if command -v awk &> /dev/null; then
+        log_info "awk already installed"
         return 0
     fi
 
-    log_warn "awk with FPAT support not found"
-    if ! confirm "Install gawk?"; then
+    log_warn "awk not found"
+    if ! confirm "Install awk (via gawk package where applicable)?"; then
         return 1
     fi
 
@@ -124,7 +123,7 @@ install_gawk() {
             if command -v brew &> /dev/null; then
                 brew install gawk
             else
-                log_error "Homebrew not found. Please install gawk manually."
+                log_error "Homebrew not found. Please install awk manually."
                 return 1
             fi
             ;;
@@ -136,16 +135,16 @@ install_gawk() {
             elif command -v dnf &> /dev/null; then
                 sudo dnf install -y gawk
             else
-                log_error "Package manager not found. Please install gawk manually."
+                log_error "Package manager not found. Please install awk manually."
                 return 1
             fi
             ;;
         *)
-            log_error "Please install gawk manually for your OS"
+            log_error "Please install awk manually for your OS"
             return 1
             ;;
     esac
-    log_info "gawk installed successfully"
+    log_info "awk installed successfully"
 }
 
 # Find or create virtual environment (only called when needed)
@@ -258,7 +257,7 @@ main() {
 
     check_python || FAILED=1
     install_jq || FAILED=1
-    install_gawk || FAILED=1
+    check_awk || FAILED=1
     install_python_deps || FAILED=1
 
     echo
