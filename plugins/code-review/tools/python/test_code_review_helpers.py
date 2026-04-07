@@ -49,7 +49,6 @@ from code_review_helpers import (
     CACHE_MANIFEST_FILENAME,
     CACHE_SCHEMA_VERSION_V2,
     DEFAULT_MAX_BHA_AGENTS,
-    FAST_PATH_MAX_FILES,  # noqa: F401
     FAST_PATH_MAX_LOC,  # noqa: F401
     REVIEW_STATE_FILENAME,
     cmd_auto_incremental,
@@ -743,19 +742,19 @@ class TestRoute:
         files = ["a.ts", "b.ts", "c.ts"]
         loc = {f: {"added": 34, "removed": 33} for f in files}
         data = _make_diff_data(files=files, loc=loc)
-        data["total_loc"] = 200
+        data["total_loc"] = FAST_PATH_MAX_LOC + 1
         result = self._run_route(data)
         assert result["fast_path"] is False
 
-    def test_fast_path_false_above_files(self) -> None:
+    def test_fast_path_ignores_file_count_when_below_loc(self) -> None:
         files = [f"f{i}.ts" for i in range(6)]
         loc = {f: {"added": 9, "removed": 8} for f in files}
         data = _make_diff_data(files=files, loc=loc)
         data["total_loc"] = 100
         result = self._run_route(data)
-        assert result["fast_path"] is False
+        assert result["fast_path"] is True
 
-    def test_fast_path_disabled_when_domain_critics(self, tmp_path: Path) -> None:
+    def test_fast_path_ignores_domain_critics_when_below_loc(self, tmp_path: Path) -> None:
         gates = {
             "defaults": {"reviewBudget": 2},
             "moduleCritics": [
@@ -770,7 +769,7 @@ class TestRoute:
         data["total_loc"] = 100
         result = self._run_route(data, str(gates_path))
         assert len(result["domain_critics"]) > 0
-        assert result["fast_path"] is False
+        assert result["fast_path"] is True
 
 
 # ---------------------------------------------------------------------------
