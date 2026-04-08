@@ -1,0 +1,30 @@
+# Pinned dev/CI dependencies for claude-plugins.
+#
+# Installed in every CI job via `pip install -r requirements-dev.txt`, then
+# validated with `pip check` to guard against broken dependency graphs.
+#
+# Bumped manually. To regenerate:
+#
+#   python3.13 -m venv /tmp/claude-plugins-lockfile
+#   /tmp/claude-plugins-lockfile/bin/pip install --upgrade pip
+#   /tmp/claude-plugins-lockfile/bin/pip install ruff pyright pytest pyyaml anthropic mcp
+#   /tmp/claude-plugins-lockfile/bin/pip freeze
+#
+# Then update the pinned direct dependencies below. Transitive dependencies
+# are resolved by pip at install time; `pip check` verifies the resolved graph
+# is internally consistent.
+#
+# Direct dependencies used by CI jobs:
+#   - ruff:     linting (lint job)
+#   - pyright:  type checking (typecheck job)
+#   - pytest:   test runner (test / contract-tests / quarantine jobs)
+#   - pyyaml:   YAML parsing in plugin tools + tests
+#   - anthropic: Anthropic SDK (imported by plugin code under test)
+#   - mcp:      MCP SDK (imported by plugin code under test)
+
+anthropic==0.92.0
+mcp==1.27.0
+pyright==1.1.408
+pytest==9.0.3
+PyYAML==6.0.3
+ruff==0.15.9

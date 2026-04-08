@@ -7,3 +7,10 @@ extraPaths = [
   "plugins/code/tools/python",
   "plugins/code/skills/plan-validate/scripts",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["plugins"]
+markers = [
+    "contract: repo-level contract tests (FEA-107)",
+    "quarantine: quarantined flaky tests, non-blocking (FEA-107)",
+]
