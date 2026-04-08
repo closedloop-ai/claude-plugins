@@ -86,10 +86,17 @@ jobs:
           echo "### Quarantined tests" >> "$GITHUB_STEP_SUMMARY"
           pytest plugins/ -m quarantine 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
           rc=${PIPESTATUS[0]}
+          # pytest exit code 5 = no tests collected. Treat as a vacuous pass
+          # until quarantined tests exist.
           if [ $rc -eq 5 ]; then
             echo "No quarantined tests." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
-          exit 0
+          # Job has continue-on-error: true, so a real failure here surfaces
+          # as a yellow non-blocking warning rather than blocking the merge.
+          # Do NOT mask the exit code with `exit 0` -- that would render real
+          # quarantine breakages as silent green checks.
+          exit $rc
 
   pr-gates:
     name: PR gates
