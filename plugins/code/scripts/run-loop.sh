@@ -706,8 +706,8 @@ $prompt
 EOF
 
   # Update config.env with self-learning flag (preserve other keys)
-  mkdir -p "$WORKDIR/.closedloop"
-  CONFIG_FILE="$WORKDIR/.closedloop/config.env"
+  mkdir -p "$WORKDIR/.closedloop-ai"
+  CONFIG_FILE="$WORKDIR/.closedloop-ai/config.env"
   TMP_FILE="${CONFIG_FILE}.tmp.$$"
   if [[ -f "$CONFIG_FILE" ]]; then
     sed '/^CLOSEDLOOP_SELF_LEARNING=/d' "$CONFIG_FILE" > "$TMP_FILE"

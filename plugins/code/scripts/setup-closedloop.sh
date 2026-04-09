@@ -148,9 +148,9 @@ if [[ ! -f "$CLOSEDLOOP_PROMPT_FILE" ]]; then
 fi
 
 # Write full config to WORKDIR
-mkdir -p "$WORKDIR/.closedloop"
+mkdir -p "$WORKDIR/.closedloop-ai"
 
-cat > "$WORKDIR/.closedloop/config.env" << EOF
+cat > "$WORKDIR/.closedloop-ai/config.env" << EOF
 CLOSEDLOOP_WORKDIR="$WORKDIR"
 CLOSEDLOOP_PRD_FILE="$PRD_FILE"
 CLOSEDLOOP_PLAN_FILE="$PLAN_FILE"
@@ -159,5 +159,5 @@ CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
 CLOSEDLOOP_PROMPT_FILE="$CLOSEDLOOP_PROMPT_FILE"
 EOF
 
-echo "ClosedLoop config written to $WORKDIR/.closedloop/config.env"
-cat "$WORKDIR/.closedloop/config.env"
+echo "ClosedLoop config written to $WORKDIR/.closedloop-ai/config.env"
+cat "$WORKDIR/.closedloop-ai/config.env"

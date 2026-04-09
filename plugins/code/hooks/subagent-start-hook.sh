@@ -35,7 +35,7 @@ fi
 
 # Source closedloop config from WORKDIR if found
 if [[ -n "$CLOSEDLOOP_WORKDIR" ]]; then
-    CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/.closedloop/config.env"
+    CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env"
     if [[ -f "$CLOSEDLOOP_CONFIG" ]]; then
         source "$CLOSEDLOOP_CONFIG"
     fi
@@ -72,13 +72,13 @@ if [[ -f "$LOOP_CONFIG" ]] && [[ -n "$AGENT_TYPE" ]]; then
         MAX_ITERATIONS="${CLOSEDLOOP_MAX_ITERATIONS:-$CONFIG_MAX_ITERATIONS}"
         PRD_FILE="${CLOSEDLOOP_PRD_FILE:-}"
         WORKDIR="${CLOSEDLOOP_WORKDIR:-$CWD}"
-        STATE_FILE="$WORKDIR/.closedloop/$STATE_FILE_SUFFIX"
+        STATE_FILE="$WORKDIR/.closedloop-ai/$STATE_FILE_SUFFIX"
 
         echo "$(date): Loop agent detected: $AGENT_TYPE, state_file=$STATE_FILE" >> "$DEBUG_LOG"
 
         # Only create if state file doesn't exist (idempotent)
         if [[ ! -f "$STATE_FILE" ]] && [[ -n "$WORKDIR" ]]; then
-            mkdir -p "$WORKDIR/.closedloop"
+            mkdir -p "$WORKDIR/.closedloop-ai"
 
             PROMPT="Create a comprehensive implementation plan for the requirements in @${PRD_FILE}.
 

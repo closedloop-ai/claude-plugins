@@ -25,7 +25,7 @@ def session_env(tmp_path: Path) -> tuple[Path, Path, str]:
     (session_dir / f"session-{session_id}.workdir").write_text(str(workdir))
 
     # Create workdir structure
-    closedloop_dir = workdir / ".closedloop"
+    closedloop_dir = workdir / ".closedloop-ai"
     closedloop_dir.mkdir(parents=True)
 
     learnings_dir = workdir / ".learnings"
@@ -46,7 +46,7 @@ def run_start_hook(
     # Write config.env
     workdir_file = Path(cwd) / ".closedloop-ai" / f"session-{session_id}.workdir"
     workdir = workdir_file.read_text().strip()
-    config_path = Path(workdir) / ".closedloop" / "config.env"
+    config_path = Path(workdir) / ".closedloop-ai" / "config.env"
     sl_value = "true" if self_learning else "false"
     config_path.write_text(f"CLOSEDLOOP_SELF_LEARNING={sl_value}\n")
 

@@ -68,11 +68,6 @@ fi
 # Remove any orphaned .agent-types files in CLOSEDLOOP_WORKDIR (if known)
 # ============================================================================
 
-# Fallback: Check CWD's config.env (CLOSEDLOOP_WORKDIR was discovered above before cleanup)
-if [[ -z "$CLOSEDLOOP_WORKDIR" ]] && [[ -f "$CWD/.closedloop/config.env" ]]; then
-    source "$CWD/.closedloop/config.env"
-fi
-
 if [[ -n "$CLOSEDLOOP_WORKDIR" ]] && [[ -d "$CLOSEDLOOP_WORKDIR/.agent-types" ]]; then
     echo "$(date): Cleaning up agent-types directory: $CLOSEDLOOP_WORKDIR/.agent-types" >> "$DEBUG_LOG"
 

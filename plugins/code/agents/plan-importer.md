@@ -20,7 +20,7 @@ You import an external markdown plan into the ClosedLoop `plan.json` format. You
 
 - `$CLOSEDLOOP_WORKDIR/plan.json` - Schema-compliant plan JSON
 - `$CLOSEDLOOP_WORKDIR/plan.md` - The markdown `content` field value (for human review)
-- `$CLOSEDLOOP_WORKDIR/.closedloop/imported-plan` - Marker file written on successful validation
+- `$CLOSEDLOOP_WORKDIR/.closedloop-ai/imported-plan` - Marker file written on successful validation
 
 ## Process
 
@@ -174,8 +174,8 @@ Common issues to fix:
 On successful validation (`status: "VALID"`), create the imported-plan marker:
 
 ```bash
-mkdir -p "$CLOSEDLOOP_WORKDIR/.closedloop"
-echo "imported" > "$CLOSEDLOOP_WORKDIR/.closedloop/imported-plan"
+mkdir -p "$CLOSEDLOOP_WORKDIR/.closedloop-ai"
+echo "imported" > "$CLOSEDLOOP_WORKDIR/.closedloop-ai/imported-plan"
 ```
 
 ## Quality Checklist
@@ -189,7 +189,7 @@ echo "imported" > "$CLOSEDLOOP_WORKDIR/.closedloop/imported-plan"
 | JSON sync | Structured arrays match markdown content exactly |
 | Valid JSON | No trailing commas, newlines escaped as `\n` in content string |
 | Validation | `validate_plan.py` returns `status: "VALID"` |
-| Marker file | `.closedloop/imported-plan` written on success |
+| Marker file | `.closedloop-ai/imported-plan` written on success |
 
 ## Completion
 
@@ -197,4 +197,4 @@ Output `<promise>PLAN_IMPORTED</promise>` ONLY when ALL are true:
 
 1. `$CLOSEDLOOP_WORKDIR/plan.json` exists and passed validation (`status: "VALID"`)
 2. `$CLOSEDLOOP_WORKDIR/plan.md` exists and contains the markdown content
-3. `$CLOSEDLOOP_WORKDIR/.closedloop/imported-plan` marker file exists
+3. `$CLOSEDLOOP_WORKDIR/.closedloop-ai/imported-plan` marker file exists
