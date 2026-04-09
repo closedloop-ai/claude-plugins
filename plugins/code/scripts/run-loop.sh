@@ -436,6 +436,151 @@ run_background_pruning() {
   fi
 }
 
+# Run post-loop code review after implementation completes
+run_post_loop_review() {
+  local workdir="$1"
+
+  # Skip if START_SHA is not available (no git context)
+  if [[ -z "$START_SHA" ]]; then
+    log_progress "Post-loop code review skipped: no START_SHA"
+    return 0
+  fi
+
+  # Skip if no code changes were made (check working tree + staged + committed)
+  local changed_count
+  changed_count=$( {
+    git diff --name-only "$START_SHA" 2>/dev/null;        # uncommitted changes vs start
+    git diff --name-only --cached 2>/dev/null;             # staged changes
+    git diff --name-only "$START_SHA" HEAD 2>/dev/null;    # committed changes
+  } | sort -u | wc -l | tr -d ' ')
+  if [[ "$changed_count" -eq 0 ]]; then
+    echo -e "\n${GREEN}No code changes detected. Skipping post-loop code review.${NC}"
+    log_progress "Post-loop code review skipped: no changes since $START_SHA"
+    return 0
+  fi
+
+  echo -e "\n${BLUE}═══════════════════════════════════════════════════════════${NC}"
+  echo -e "${BLUE}Post-Loop Code Review${NC}"
+  echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+
+  log_progress "Starting post-loop code review ($changed_count files changed)"
+
+  local review_start_epoch
+  review_start_epoch=$(date +%s)
+  local review_output
+  review_output=$(mktemp)
+  local review_stderr
+  review_stderr=$(mktemp)
+
+  # Run code review scoped to this run's changes
+  # Uses same pipeline pattern as main loop iterations (background subshell + wait)
+  local formatter="$SCRIPTS_DIR/../tools/python/stream_formatter.py"
+  local review_exit_file
+  review_exit_file=$(mktemp)
+  set +e
+  (
+    claude \
+      --allowed-tools=Bash,Grep,Glob,Read,Write,Edit,Task,TodoWrite \
+      --output-format stream-json \
+      --verbose \
+      -p "/code-review:start --base $START_SHA" 2>"$review_stderr" \
+      | { grep --line-buffered '^{' || true; } \
+      | tee "$review_output" \
+      | tee -a "${workdir}/claude-output.jsonl" \
+      | python3 "$formatter"
+    echo "${PIPESTATUS[0]}" > "$review_exit_file"
+  ) &
+  wait $! 2>/dev/null || true
+  local review_exit
+  review_exit=$(cat "$review_exit_file" 2>/dev/null || echo 1)
+  rm -f "$review_exit_file"
+  set -e
+
+  # Find the most recent CR_DIR (code-review session directory)
+  local cr_dir
+  cr_dir=$(ls -td .closedloop-ai/code-review/cr-* 2>/dev/null | head -1)
+
+  # Read verdict from CR_DIR/verdict.json (written by code-review:start)
+  local verdict="approve"
+  if [[ -n "$cr_dir" ]] && [[ -f "$cr_dir/verdict.json" ]]; then
+    verdict=$(jq -r '.verdict // "approve"' "$cr_dir/verdict.json" 2>/dev/null || echo "approve")
+  fi
+
+  # Emit perf event
+  local review_end_epoch
+  review_end_epoch=$(date +%s)
+  local review_duration=$((review_end_epoch - review_start_epoch))
+  emit_perf_event "$(jq -n -c \
+    --arg event "post_loop_review" \
+    --arg run_id "$RUN_ID" \
+    --arg verdict "$verdict" \
+    --argjson duration_s "$review_duration" \
+    --argjson exit_code "$review_exit" \
+    '{event:$event,run_id:$run_id,verdict:$verdict,duration_s:$duration_s,exit_code:$exit_code}'
+  )"
+
+  rm -f "$review_output" "$review_stderr"
+
+  if [[ "$verdict" == "approve" ]]; then
+    echo -e "\n${GREEN}Code review passed${NC}"
+    log_progress "Post-loop code review: approved"
+    return 0
+  fi
+
+  echo -e "\n${YELLOW}Code review found issues (verdict: $verdict). Running fix cycle...${NC}"
+  log_progress "Post-loop code review: $verdict, running fix"
+
+  if [[ -z "$cr_dir" ]]; then
+    echo -e "${RED}Warning: Could not determine code review session directory. Skipping fix.${NC}"
+    log_progress "Post-loop fix skipped: CR_DIR not found"
+    return 0
+  fi
+
+  # Run fix command
+  local fix_start_epoch
+  fix_start_epoch=$(date +%s)
+  local fix_output
+  fix_output=$(mktemp)
+  local fix_stderr
+  fix_stderr=$(mktemp)
+  local fix_exit_file
+  fix_exit_file=$(mktemp)
+
+  set +e
+  (
+    claude \
+      --allowed-tools=Bash,Grep,Glob,Read,Write,Edit,Task,TodoWrite \
+      --output-format stream-json \
+      --verbose \
+      -p "/code-review:fix $cr_dir --max-cycles 2" 2>"$fix_stderr" \
+      | { grep --line-buffered '^{' || true; } \
+      | tee "$fix_output" \
+      | tee -a "${workdir}/claude-output.jsonl" \
+      | python3 "$formatter"
+    echo "${PIPESTATUS[0]}" > "$fix_exit_file"
+  ) &
+  wait $! 2>/dev/null || true
+  local fix_exit
+  fix_exit=$(cat "$fix_exit_file" 2>/dev/null || echo 1)
+  rm -f "$fix_exit_file"
+  set -e
+
+  # Emit perf event for fix
+  local fix_end_epoch
+  fix_end_epoch=$(date +%s)
+  emit_perf_event "$(jq -n -c \
+    --arg event "post_loop_fix" \
+    --arg run_id "$RUN_ID" \
+    --argjson duration_s "$((fix_end_epoch - fix_start_epoch))" \
+    --argjson exit_code "$fix_exit" \
+    '{event:$event,run_id:$run_id,duration_s:$duration_s,exit_code:$exit_code}'
+  )"
+
+  rm -f "$fix_output" "$fix_stderr"
+
+  log_progress "Post-loop fix cycle completed (exit: $fix_exit)"
+}
+
 # Show help
 show_help() {
   cat << 'EOF'
@@ -710,11 +855,12 @@ EOF
   CONFIG_FILE="$WORKDIR/.closedloop/config.env"
   TMP_FILE="${CONFIG_FILE}.tmp.$$"
   if [[ -f "$CONFIG_FILE" ]]; then
-    sed '/^CLOSEDLOOP_SELF_LEARNING=/d' "$CONFIG_FILE" > "$TMP_FILE"
+    sed -e '/^CLOSEDLOOP_SELF_LEARNING=/d' -e '/^CLOSEDLOOP_START_SHA=/d' "$CONFIG_FILE" > "$TMP_FILE"
   else
     : > "$TMP_FILE"
   fi
   echo "CLOSEDLOOP_SELF_LEARNING=${SELF_LEARNING:-false}" >> "$TMP_FILE"
+  echo "CLOSEDLOOP_START_SHA=${START_SHA}" >> "$TMP_FILE"
   mv "$TMP_FILE" "$CONFIG_FILE"
 
   echo -e "${GREEN}Created new ClosedLoop loop state${NC}"
@@ -857,6 +1003,9 @@ main() {
       # Final post-iteration processing
       post_iteration_processing "$effective_workdir" "$iteration"
 
+      # Run post-loop code review
+      run_post_loop_review "$effective_workdir"
+
       # Clean up
       release_lock "$effective_workdir"
       rm -f "$STATE_FILE"
@@ -991,6 +1140,9 @@ main() {
 
         # Write runs.log entry
         write_runs_log_entry "$effective_workdir" "$iteration" "completed"
+
+        # Run post-loop code review
+        run_post_loop_review "$effective_workdir"
 
         # Clean up
         release_lock "$effective_workdir"

@@ -129,7 +129,7 @@ TodoWrite([
   {"content": "Phase 2.7: Plan finalization", "status": "pending", "activeForm": "Finalizing plan"},
   {"content": "Phase 3: Implementation", "status": "pending", "activeForm": "Implementing"},
   {"content": "Phase 4: Code simplification", "status": "pending", "activeForm": "Simplifying code"},
-  {"content": "Phase 5: Testing and Code Review", "status": "pending", "activeForm": "Testing"},
+  {"content": "Phase 5: Testing and Validation", "status": "pending", "activeForm": "Testing"},
   {"content": "Phase 6: Visual inspection", "status": "pending", "activeForm": "Inspecting visuals"},
   {"content": "Phase 7: Logging and completion", "status": "pending", "activeForm": "Completing"}
 ])
@@ -393,7 +393,7 @@ Here are the key phases you must complete:
 - The agent applies simplifications directly — do not edit code yourself
 - This runs BEFORE testing so that tests validate the final simplified code
 
-**PHASE 5: TESTING AND CODE REVIEW**
+**PHASE 5: TESTING AND VALIDATION**
 
 - **Update state.json** with phase tracking (see State Tracking table above)
 
@@ -403,12 +403,7 @@ Here are the key phases you must complete:
 - The test-engineer will identify testable code and write appropriate unit/integration tests
 - Skip this step only if: (a) no code was implemented, or (b) the project has no test framework
 
-**Step 2: Code review**
-- Launch @code:code-reviewer with prompt:
-  "WORKDIR=$CLOSEDLOOP_WORKDIR. Review the code changes made in this session. Check for: security issues (especially authorization and tenant scoping on data-access endpoints), type safety, correctness, performance (unbounded parallel calls), code duplication across changed files, and package boundary violations."
-- Fix all blockers and critical bugs until none remain (delegate fixes to subagents, not orchestrator)
-
-**Step 3: Run validation via build-validator agent:**
+**Step 2: Run validation via build-validator agent:**
 1. Launch @code:build-validator with `WORKDIR=$CLOSEDLOOP_WORKDIR`
 2. Process the result:
    - `VALIDATION_PASSED`: Stamp the build cache, then proceed to Phase 6:
@@ -431,7 +426,7 @@ Here are the key phases you must complete:
 
         1. **FIRST** - Write state.json with AWAITING_USER status:
            ```bash
-           echo '{"phase": "Phase 5: Testing and Code Review", "status": "AWAITING_USER", "reason": "Validation failed after 20 attempts", "userAction": {"description": "Fix validation issues manually and run the command to continue", "file": null, "command": "/code:code $ARGUMENTS"}, "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > $CLOSEDLOOP_WORKDIR/state.json
+           echo '{"phase": "Phase 5: Testing and Validation", "status": "AWAITING_USER", "reason": "Validation failed after 20 attempts", "userAction": {"description": "Fix validation issues manually and run the command to continue", "file": null, "command": "/code:code $ARGUMENTS"}, "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > $CLOSEDLOOP_WORKDIR/state.json
            ```
         2. **ONLY AFTER state.json is written** - Output `<promise>COMPLETE</promise>`
         3. Tell the user: "Validation failed after 20 attempts. Fix issues manually and run `/code:code $ARGUMENTS` to continue."
