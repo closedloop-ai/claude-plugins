@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Multi-repo planning and exploration support via new `--add-dir` flag in `run-loop.sh`, exposing `CLOSEDLOOP_ADD_DIRS` and `CLOSEDLOOP_REPO_MAP` env vars to downstream agents
 - `pre-explorer` agent produces per-repo code maps (`code-map-{name}.json`) when secondary repos are supplied
 - `plan-draft-writer` agent emits multi-repo plans with a `## Repositories` table and `@{repo}:path` task prefixes
-- New `prompt-multi-repo.md` orchestrator prompt for cross-repository planning workflows
+- New `multi-repo.overlay.md` overlay assembled onto `prompt.md` at runtime for cross-repository planning workflows
 - `repo` field added to task schema in `plan-schema.json` for multi-repo plan traceability
 - Tier 0 explicit-directory discovery and dedup helpers in `discover-repos.sh`, with structured JSON output
 - Enhancements to `cross-repo-coordinator` and `cross-repo-prd-writer` agents for multi-repo context

@@ -31,8 +31,8 @@ def _run_discover_with_env(
     """Invoke discover-repos.sh with extra environment variables merged in."""
     env = {**os.environ, **extra_env}
     # Remove Tier 1 env var unless explicitly set by caller, to avoid test interference
-    env.pop("CLAUDE_WORKSPACE_REPOS", None)
-    env.update(extra_env)
+    if "CLAUDE_WORKSPACE_REPOS" not in extra_env:
+        env.pop("CLAUDE_WORKSPACE_REPOS", None)
     return subprocess.run(
         ["bash", str(SCRIPT_PATH), str(project_root)],
         capture_output=True,

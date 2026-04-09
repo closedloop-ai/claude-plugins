@@ -44,6 +44,10 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --add-dir)
+            if [[ -z "${2:-}" ]]; then
+                echo "Error: --add-dir requires a directory path" >&2
+                exit 1
+            fi
             ADD_DIRS+=("$2")
             shift 2
             ;;

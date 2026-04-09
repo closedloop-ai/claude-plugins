@@ -61,7 +61,7 @@ Parse the JSON output to get:
 
 ### Step 1.5: Local Repos (--add-dir)
 
-After running `discover-repos.sh`, check `CLOSEDLOOP_ADD_DIRS` from the environment. This variable contains colon-separated paths passed via `--add-dir` flags, representing local repositories that are already part of the current task plan.
+After running `discover-repos.sh`, check `CLOSEDLOOP_ADD_DIRS` from the environment. This variable contains pipe-separated paths passed via `--add-dir` flags, representing local repositories that are already part of the current task plan. Example: `CLOSEDLOOP_ADD_DIRS="/path/to/a|/path/to/b"`.
 
 For each path in `CLOSEDLOOP_ADD_DIRS`:
 1. Normalize the path (resolve symlinks, trailing slashes)
