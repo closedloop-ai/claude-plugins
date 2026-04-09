@@ -3,7 +3,7 @@
 # Usage: get-env.sh <CLOSEDLOOP_WORKDIR>
 
 WORKDIR="${1:-.}"
-CONFIG_FILE="$WORKDIR/.closedloop/config.env"
+CONFIG_FILE="$WORKDIR/.closedloop-ai/config.env"
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "Error: Config file not found at $CONFIG_FILE" >&2

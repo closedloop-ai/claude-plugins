@@ -36,7 +36,7 @@ fi
 
 # Source closedloop config from WORKDIR if found
 if [[ -n "$CLOSEDLOOP_WORKDIR" ]]; then
-    CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/.closedloop/config.env"
+    CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env"
     if [[ -f "$CLOSEDLOOP_CONFIG" ]]; then
         source "$CLOSEDLOOP_CONFIG"
     fi

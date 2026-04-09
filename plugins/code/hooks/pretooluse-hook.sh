@@ -139,7 +139,7 @@ DEBUG_LOG="$CLOSEDLOOP_WORKDIR/.learnings/pretooluse-hook-debug.log"
 echo "$(date): PreToolUse hook started, tool=$TOOL_NAME" >> "$DEBUG_LOG"
 
 # Source closedloop config and skip learning injection if disabled
-CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/.closedloop/config.env"
+CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env"
 if [[ -f "$CLOSEDLOOP_CONFIG" ]]; then
     source "$CLOSEDLOOP_CONFIG"
 fi
