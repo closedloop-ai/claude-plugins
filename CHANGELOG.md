@@ -14,6 +14,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Updated agent output path references from `.claude/runs/` to `.closedloop-ai/runs/` in `agent-prompt-generator`
 - Updated bootstrap configuration documentation in `agent-bootstrap.md` to reference `.closedloop-ai/` state directory
 
+### code v1.7.0
+
+#### Added
+- Multi-repo planning and exploration support via new `--add-dir` flag in `run-loop.sh`, exposing `CLOSEDLOOP_ADD_DIRS` and `CLOSEDLOOP_REPO_MAP` env vars to downstream agents
+- `pre-explorer` agent produces per-repo code maps (`code-map-{name}.json`) when secondary repos are supplied
+- `plan-draft-writer` agent emits multi-repo plans with a `## Repositories` table and `@{repo}:path` task prefixes
+- New `prompt-multi-repo.md` orchestrator prompt for cross-repository planning workflows
+- `repo` field added to task schema in `plan-schema.json` for multi-repo plan traceability
+- Tier 0 explicit-directory discovery and dedup helpers in `discover-repos.sh`, with structured JSON output
+- Enhancements to `cross-repo-coordinator` and `cross-repo-prd-writer` agents for multi-repo context
+- Tests for `discover-repos.sh` and `setup-closedloop.sh` (`test_discover_repos.py`, `test_setup_closedloop.py`) plus new multi-repo cases in `test_validate_plan.py`
+
 ### code v1.6.0
 
 #### Changed
