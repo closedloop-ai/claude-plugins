@@ -995,13 +995,25 @@ main() {
         consecutive_empty=0
       fi
 
+      # Scan the full per-iteration stream for the completion promise, not
+      # just the final `type==result` record. It was observed that the orchestrator may
+      # emit the promise in an intermediate assistant/subagent message and then continue
+      # producing output (tool_use, wrap-up text), which overwrite
+      # $result and cause the completion signal to be missed. $output_file is
+      # a per-iteration mktemp, so this cannot match a stale promise from a
+      # prior iteration.
+      local promise_found=0
+      if grep -qF "<promise>$completion_promise</promise>" "$output_file"; then
+        promise_found=1
+      fi
+
       rm -f "$output_file"
 
       # Post-iteration processing: learning capture, aggregation, citation verification
       post_iteration_processing "$effective_workdir" "$iteration"
 
       # Check for completion
-      if [[ "$result" == *"<promise>$completion_promise</promise>"* ]]; then
+      if [[ $promise_found -eq 1 ]]; then
         # Emit iteration perf event for the completing iteration
         local iter_end_epoch
         iter_end_epoch=$(date +%s)
@@ -1121,9 +1133,9 @@ cleanup_on_interrupt() {
   local pids
   pids=$(jobs -p 2>/dev/null)
   if [[ -n "$pids" ]]; then
-    kill $pids 2>/dev/null || true
+    kill """""$"p"i"d"s" 2>/dev/null || true
     sleep 0.5
-    kill -9 $pids 2>/dev/null || true
+    kill -9 """""$"p"i"d"s" 2>/dev/null || true
   fi
 
   # Release lock on interrupt
