@@ -4,7 +4,10 @@
 import json
 import os
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
+
+import pytest
 
 SCRIPT_PATH = Path(__file__).resolve().parent.parent.parent / "scripts" / "discover-repos.sh"
 
@@ -88,97 +91,160 @@ def _make_repo(parent: Path, name: str, identity: dict | None = None) -> Path:
     return repo
 
 
-def test_tier0_add_dir_appears_in_peers(tmp_path: Path) -> None:
-    """A path in CLOSEDLOOP_ADD_DIRS should appear in peers with discoveryMethod add_dir."""
-    current = _make_repo(tmp_path, "current")
-    extra = _make_repo(tmp_path, "extra", {"name": "extra-svc", "type": "service"})
+# ---------------------------------------------------------------------------
+# Tier 0 harness: scenarios are declarative — one test drives them all.
+#
+# Each Tier0Scenario builds a set of repos under a temp dir, runs
+# discover-repos.sh with CLOSEDLOOP_ADD_DIRS derived from scenario keys, and
+# validates the peer list against declarative PeerExpect entries.
+# ---------------------------------------------------------------------------
 
-    result = _run_discover_with_env(current, {"CLOSEDLOOP_ADD_DIRS": str(extra)})
 
+# Sentinel used in `add_dir_keys` to reference the current repo's own path.
+_CURRENT = "__current__"
+
+
+@dataclass(frozen=True)
+class RepoSpec:
+    """Declarative description of a repo to create on disk for a scenario."""
+
+    key: str                         # identifier used to reference the repo within the scenario
+    dirname: str                     # directory name under the scenario root
+    identity: dict | None = None     # contents of .closedloop-ai/.repo-identity.json, or None to skip
+    is_current: bool = False         # exactly one RepoSpec per scenario must set this
+
+
+@dataclass(frozen=True)
+class PeerExpect:
+    """Declarative assertion over a peer entry in the discover-repos.sh output."""
+
+    key: str                         # references a RepoSpec.key in the same scenario
+    count: int = 1                   # expected number of peer entries with this repo's path
+    discovery_method: str | None = None
+    name: str | None = None
+    type: str | None = None
+
+
+@dataclass(frozen=True)
+class Tier0Scenario:
+    id: str
+    repos: tuple[RepoSpec, ...]
+    add_dir_keys: tuple[str, ...]    # repo keys (or _CURRENT) to join into CLOSEDLOOP_ADD_DIRS
+    workspace_subdir: bool = False   # place repos under tmp_path/workspace/ (enables Tier 2 sibling scan)
+    expect_peers: tuple[PeerExpect, ...] = field(default_factory=tuple)
+    forbidden_keys: tuple[str, ...] = field(default_factory=tuple)  # repo keys that must NOT appear as peers
+
+
+TIER0_SCENARIOS: tuple[Tier0Scenario, ...] = (
+    Tier0Scenario(
+        id="add_dir_appears_in_peers",
+        repos=(
+            RepoSpec("current", "current", is_current=True),
+            RepoSpec("extra", "extra", identity={"name": "extra-svc", "type": "service"}),
+        ),
+        add_dir_keys=("extra",),
+        expect_peers=(
+            PeerExpect("extra", discovery_method="add_dir", name="extra-svc", type="service"),
+        ),
+    ),
+    Tier0Scenario(
+        id="basename_fallback_without_identity",
+        repos=(
+            RepoSpec("current", "current", is_current=True),
+            RepoSpec("anon", "my-anon-repo"),  # no identity → name falls back to basename
+        ),
+        add_dir_keys=("anon",),
+        expect_peers=(PeerExpect("anon", name="my-anon-repo"),),
+    ),
+    Tier0Scenario(
+        id="multiple_add_dirs_pipe_separated",
+        repos=(
+            RepoSpec("current", "current", is_current=True),
+            RepoSpec("a", "repo-a"),
+            RepoSpec("b", "repo-b"),
+        ),
+        add_dir_keys=("a", "b"),
+        expect_peers=(PeerExpect("a"), PeerExpect("b")),
+    ),
+    Tier0Scenario(
+        id="skips_current_repo",
+        repos=(RepoSpec("current", "current", is_current=True),),
+        add_dir_keys=(_CURRENT,),
+        forbidden_keys=("current",),
+    ),
+    # A sibling that is ALSO listed in CLOSEDLOOP_ADD_DIRS must appear exactly
+    # once AND be marked `add_dir` (Tier 0 wins over Tier 2 sibling scan).
+    Tier0Scenario(
+        id="add_dir_wins_over_sibling_scan",
+        workspace_subdir=True,
+        repos=(
+            RepoSpec("current", "current", identity={"name": "current", "type": "service"}, is_current=True),
+            RepoSpec(
+                "sibling",
+                "sibling-svc",
+                identity={"name": "sibling-svc", "type": "library", "discoverable": True},
+            ),
+        ),
+        add_dir_keys=("sibling",),
+        expect_peers=(PeerExpect("sibling", count=1, discovery_method="add_dir"),),
+    ),
+)
+
+
+@pytest.mark.parametrize("scenario", TIER0_SCENARIOS, ids=lambda s: s.id)
+def test_tier0_add_dirs(tmp_path: Path, scenario: Tier0Scenario) -> None:
+    """Drives every Tier 0 scenario through a single harness.
+
+    Build repos, invoke discover-repos.sh with the scenario's CLOSEDLOOP_ADD_DIRS,
+    then validate peer count and per-field attributes declaratively.
+    """
+    # 1. Materialize repos on disk
+    root = tmp_path / "workspace" if scenario.workspace_subdir else tmp_path
+    paths: dict[str, Path] = {
+        spec.key: _make_repo(root, spec.dirname, spec.identity) for spec in scenario.repos
+    }
+    current_specs = [s for s in scenario.repos if s.is_current]
+    assert len(current_specs) == 1, f"Scenario {scenario.id!r} must declare exactly one current repo"
+    current_path = paths[current_specs[0].key]
+
+    # 2. Build CLOSEDLOOP_ADD_DIRS, resolving _CURRENT sentinel against the current repo
+    def _resolve(key: str) -> Path:
+        return current_path if key == _CURRENT else paths[key]
+
+    add_dirs = "|".join(str(_resolve(k)) for k in scenario.add_dir_keys)
+
+    # 3. Invoke the script
+    result = _run_discover_with_env(current_path, {"CLOSEDLOOP_ADD_DIRS": add_dirs})
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    peer_paths = {p["path"] for p in payload["peers"]}
-    assert str(extra) in peer_paths
+    peers = payload["peers"]
 
-    extra_peer = next(p for p in payload["peers"] if p["path"] == str(extra))
-    assert extra_peer["discoveryMethod"] == "add_dir"
-    assert extra_peer["name"] == "extra-svc"
-    assert extra_peer["type"] == "service"
+    # 4. Forbidden paths must not appear at all
+    peer_paths = [p["path"] for p in peers]
+    for key in scenario.forbidden_keys:
+        forbidden = str(paths[key])
+        assert forbidden not in peer_paths, (
+            f"[{scenario.id}] {key!r} should not appear in peers; got: {peer_paths}"
+        )
 
-
-def test_tier0_add_dir_falls_back_to_basename_without_identity(tmp_path: Path) -> None:
-    """Tier 0 peer with no identity file should use the directory basename as name."""
-    current = _make_repo(tmp_path, "current")
-    anon = _make_repo(tmp_path, "my-anon-repo")
-
-    result = _run_discover_with_env(current, {"CLOSEDLOOP_ADD_DIRS": str(anon)})
-
-    assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
-    peer = next((p for p in payload["peers"] if p["path"] == str(anon)), None)
-    assert peer is not None, f"Expected peer for {anon}, got {payload['peers']}"
-    assert peer["name"] == "my-anon-repo"
-
-
-def test_tier0_multiple_add_dirs_pipe_separated(tmp_path: Path) -> None:
-    """Multiple pipe-separated paths in CLOSEDLOOP_ADD_DIRS should all appear as peers."""
-    current = _make_repo(tmp_path, "current")
-    repo_a = _make_repo(tmp_path, "repo-a")
-    repo_b = _make_repo(tmp_path, "repo-b")
-
-    add_dirs = f"{repo_a}|{repo_b}"
-    result = _run_discover_with_env(current, {"CLOSEDLOOP_ADD_DIRS": add_dirs})
-
-    assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
-    peer_paths = {p["path"] for p in payload["peers"]}
-    assert str(repo_a) in peer_paths
-    assert str(repo_b) in peer_paths
-
-
-def test_tier0_skips_current_repo(tmp_path: Path) -> None:
-    """A CLOSEDLOOP_ADD_DIRS entry equal to the current repo path should be skipped."""
-    current = _make_repo(tmp_path, "current")
-
-    result = _run_discover_with_env(current, {"CLOSEDLOOP_ADD_DIRS": str(current)})
-
-    assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
-    peer_paths = [p["path"] for p in payload["peers"]]
-    assert str(current) not in peer_paths, f"Current repo should not appear in peers: {peer_paths}"
-
-
-def test_tier0_deduplicates_with_tier2_sibling_scan(tmp_path: Path) -> None:
-    """A sibling that is also in CLOSEDLOOP_ADD_DIRS should appear only once in peers."""
-    workspace = tmp_path / "workspace"
-    current = _make_repo(workspace, "current", {"name": "current", "type": "service"})
-    sibling = _make_repo(
-        workspace, "sibling-svc", {"name": "sibling-svc", "type": "library", "discoverable": True}
-    )
-
-    # The sibling is both a Tier 0 add-dir AND a Tier 2 sibling
-    result = _run_discover_with_env(current, {"CLOSEDLOOP_ADD_DIRS": str(sibling)})
-
-    assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
-    paths = [p["path"] for p in payload["peers"]]
-    assert paths.count(str(sibling)) == 1, (
-        f"Sibling should appear exactly once; got peers: {payload['peers']}"
-    )
-
-
-def test_tier0_peer_marked_as_add_dir_not_sibling_scan(tmp_path: Path) -> None:
-    """When a sibling is in Tier 0, the peer's discoveryMethod must be 'add_dir', not sibling_scan."""
-    workspace = tmp_path / "workspace"
-    current = _make_repo(workspace, "current", {"name": "current", "type": "service"})
-    sibling = _make_repo(
-        workspace, "shared-lib", {"name": "shared-lib", "type": "library", "discoverable": True}
-    )
-
-    result = _run_discover_with_env(current, {"CLOSEDLOOP_ADD_DIRS": str(sibling)})
-
-    assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
-    peer = next((p for p in payload["peers"] if p["path"] == str(sibling)), None)
-    assert peer is not None
-    assert peer["discoveryMethod"] == "add_dir"
+    # 5. Each expectation: check occurrence count and per-field attributes
+    for exp in scenario.expect_peers:
+        target = str(paths[exp.key])
+        matches = [p for p in peers if p["path"] == target]
+        assert len(matches) == exp.count, (
+            f"[{scenario.id}] expected {exp.count} peer(s) for {exp.key!r}, "
+            f"got {len(matches)}; peers={peers}"
+        )
+        if exp.count == 0:
+            continue
+        peer = matches[0]
+        for attr, field_name in (
+            (exp.discovery_method, "discoveryMethod"),
+            (exp.name, "name"),
+            (exp.type, "type"),
+        ):
+            if attr is not None:
+                assert peer.get(field_name) == attr, (
+                    f"[{scenario.id}] peer {exp.key!r} {field_name}: "
+                    f"expected {attr!r}, got {peer.get(field_name)!r}"
+                )
