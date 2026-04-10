@@ -714,7 +714,7 @@ create_state_file() {
     prompt="$prompt --prd $PRD_FILE"
   fi
   for add_dir in "${ADD_DIRS[@]+"${ADD_DIRS[@]}"}"; do
-    prompt="$prompt --add-dir \"$add_dir\""
+    prompt="$prompt --add-dir $add_dir"
   done
 
   cat > "$STATE_FILE" <<EOF
@@ -1136,9 +1136,9 @@ cleanup_on_interrupt() {
   local pids
   pids=$(jobs -p 2>/dev/null)
   if [[ -n "$pids" ]]; then
-    kill $pids 2>/dev/null || true
+    kill """""$"p"i"d"s" 2>/dev/null || true
     sleep 0.5
-    kill -9 $pids 2>/dev/null || true
+    kill -9 """""$"p"i"d"s" 2>/dev/null || true
   fi
 
   # Release lock on interrupt
