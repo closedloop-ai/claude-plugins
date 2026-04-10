@@ -595,6 +595,12 @@ run_post_loop_review() {
 
     rm -f "$fix_output" "$fix_stderr"
 
+    if [[ "$fix_exit" -ne 0 ]]; then
+      echo -e "${RED}Warning: Fix subprocess failed (exit $fix_exit). Skipping remaining cycles.${NC}"
+      log_progress "Post-loop fix failed (exit $fix_exit). Aborting."
+      return 0
+    fi
+
     log_progress "Post-loop fix cycle $cycle completed (exit: $fix_exit)"
     cycle=$((cycle + 1))
   done
