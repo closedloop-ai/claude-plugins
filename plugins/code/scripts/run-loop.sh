@@ -1306,9 +1306,11 @@ cleanup_on_interrupt() {
   local pids
   pids=$(jobs -p 2>/dev/null)
   if [[ -n "$pids" ]]; then
-    kill "$pids" 2>/dev/null || true
+    # shellcheck disable=SC2086 -- intentional word splitting: $pids contains newline-separated PIDs from jobs -p
+    kill $pids 2>/dev/null || true
     sleep 0.5
-    kill -9 "$pids" 2>/dev/null || true
+    # shellcheck disable=SC2086
+    kill -9 $pids 2>/dev/null || true
   fi
 
   # Release lock on interrupt
