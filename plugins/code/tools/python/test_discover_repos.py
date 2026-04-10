@@ -6,11 +6,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import CLOSEDLOOP_STATE_DIR
 
 SCRIPT_PATH = (
     Path(__file__).resolve().parent.parent.parent / "scripts" / "discover-repos.sh"
 )
-from conftest import CLOSEDLOOP_STATE_DIR
 
 
 def run_discover(

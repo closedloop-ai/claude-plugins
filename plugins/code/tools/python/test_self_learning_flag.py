@@ -5,10 +5,10 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from conftest import CLOSEDLOOP_STATE_DIR
 
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts"
 RUN_LOOP_SH = SCRIPTS_DIR / "run-loop.sh"
-from conftest import CLOSEDLOOP_STATE_DIR
 
 
 @pytest.fixture()

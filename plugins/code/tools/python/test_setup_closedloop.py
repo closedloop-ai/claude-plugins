@@ -5,9 +5,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import CLOSEDLOOP_STATE_DIR
 
 SETUP_SCRIPT = Path(__file__).parent.parent.parent / "scripts" / "setup-closedloop.sh"
-from conftest import CLOSEDLOOP_STATE_DIR
 
 
 @pytest.fixture

@@ -5,9 +5,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import CLOSEDLOOP_STATE_DIR
 
 HOOK_PATH = Path(__file__).resolve().parent.parent.parent / "hooks" / "subagent-stop-hook.sh"
-from conftest import CLOSEDLOOP_STATE_DIR
 
 
 @pytest.fixture()

@@ -6,6 +6,8 @@ import hashlib
 import subprocess
 from pathlib import Path
 
+from conftest import CLOSEDLOOP_STATE_DIR
+
 SCRIPT = (
     Path(__file__).resolve().parent.parent.parent
     / "skills"
@@ -13,7 +15,6 @@ SCRIPT = (
     / "scripts"
     / "check_critic_cache.sh"
 )
-from conftest import CLOSEDLOOP_STATE_DIR
 
 
 def _run(workdir: Path, cwd: Path) -> subprocess.CompletedProcess[str]:
