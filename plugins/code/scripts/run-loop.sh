@@ -465,120 +465,138 @@ run_post_loop_review() {
 
   log_progress "Starting post-loop code review ($changed_count files changed)"
 
-  local review_start_epoch
-  review_start_epoch=$(date +%s)
-  local review_output
-  review_output=$(mktemp)
-  local review_stderr
-  review_stderr=$(mktemp)
-
-  # Run code review scoped to this run's changes
-  # Uses same pipeline pattern as main loop iterations (background subshell + wait)
   local formatter="$SCRIPTS_DIR/../tools/python/stream_formatter.py"
-  local review_exit_file
-  review_exit_file=$(mktemp)
-  set +e
-  (
-    claude \
-      --allowed-tools=Bash,Grep,Glob,Read,Write,Edit,Task,TodoWrite \
-      --output-format stream-json \
-      --verbose \
-      -p "/code-review:start --base $START_SHA" 2>"$review_stderr" \
-      | { grep --line-buffered '^{' || true; } \
-      | tee "$review_output" \
-      | tee -a "${workdir}/claude-output.jsonl" \
-      | python3 "$formatter"
-    echo "${PIPESTATUS[0]}" > "$review_exit_file"
-  ) &
-  wait $! 2>/dev/null || true
-  local review_exit
-  review_exit=$(cat "$review_exit_file" 2>/dev/null || echo 1)
-  rm -f "$review_exit_file"
-  set -e
+  local max_cycles="${POST_LOOP_REVIEW_CYCLES:-2}"
+  local cycle=1
 
-  # Find the most recent CR_DIR (code-review session directory)
-  local cr_dir
-  cr_dir=$(ls -td .closedloop-ai/code-review/cr-* 2>/dev/null | head -1)
+  while [[ "$cycle" -le "$max_cycles" ]]; do
+    echo -e "\n${BLUE}Review cycle $cycle of $max_cycles${NC}"
 
-  # Read verdict from CR_DIR/verdict.json (written by code-review:start)
-  local verdict="approve"
-  if [[ -n "$cr_dir" ]] && [[ -f "$cr_dir/verdict.json" ]]; then
-    verdict=$(jq -r '.verdict // "approve"' "$cr_dir/verdict.json" 2>/dev/null || echo "approve")
-  fi
+    # --- Run review ---
+    local review_start_epoch
+    review_start_epoch=$(date +%s)
+    local review_output
+    review_output=$(mktemp)
+    local review_stderr
+    review_stderr=$(mktemp)
+    local review_exit_file
+    review_exit_file=$(mktemp)
 
-  # Emit perf event
-  local review_end_epoch
-  review_end_epoch=$(date +%s)
-  local review_duration=$((review_end_epoch - review_start_epoch))
-  emit_perf_event "$(jq -n -c \
-    --arg event "post_loop_review" \
-    --arg run_id "$RUN_ID" \
-    --arg verdict "$verdict" \
-    --argjson duration_s "$review_duration" \
-    --argjson exit_code "$review_exit" \
-    '{event:$event,run_id:$run_id,verdict:$verdict,duration_s:$duration_s,exit_code:$exit_code}'
-  )"
+    set +e
+    (
+      claude \
+        --allowed-tools=Bash,Grep,Glob,Read,Write,Edit,Task,TodoWrite \
+        --output-format stream-json \
+        --verbose \
+        -p "/code-review:start --base $START_SHA" 2>"$review_stderr" \
+        | { grep --line-buffered '^{' || true; } \
+        | tee "$review_output" \
+        | tee -a "${workdir}/claude-output.jsonl" \
+        | python3 "$formatter"
+      echo "${PIPESTATUS[0]}" > "$review_exit_file"
+    ) &
+    wait $! 2>/dev/null || true
+    local review_exit
+    review_exit=$(cat "$review_exit_file" 2>/dev/null || echo 1)
+    rm -f "$review_exit_file"
+    set -e
 
-  rm -f "$review_output" "$review_stderr"
+    # Guard: if the review process itself failed, don't consume stale results
+    if [[ "$review_exit" -ne 0 ]]; then
+      log_progress "Post-loop review failed (exit $review_exit). Skipping fix."
+      rm -f "$review_output" "$review_stderr"
+      return 0
+    fi
 
-  if [[ "$verdict" == "approve" ]]; then
-    echo -e "\n${GREEN}Code review passed${NC}"
-    log_progress "Post-loop code review: approved"
-    return 0
-  fi
+    # Find the most recent CR_DIR (code-review session directory)
+    local cr_dir
+    cr_dir=$(ls -td .closedloop-ai/code-review/cr-* 2>/dev/null | head -1)
 
-  echo -e "\n${YELLOW}Code review found issues (verdict: $verdict). Running fix cycle...${NC}"
-  log_progress "Post-loop code review: $verdict, running fix"
+    # Read verdict from CR_DIR/verdict.json (written by code-review:start)
+    local verdict="approve"
+    if [[ -n "$cr_dir" ]] && [[ -f "$cr_dir/verdict.json" ]]; then
+      verdict=$(jq -r '.verdict // "approve"' "$cr_dir/verdict.json" 2>/dev/null || echo "approve")
+    fi
 
-  if [[ -z "$cr_dir" ]]; then
-    echo -e "${RED}Warning: Could not determine code review session directory. Skipping fix.${NC}"
-    log_progress "Post-loop fix skipped: CR_DIR not found"
-    return 0
-  fi
+    # Emit perf event
+    local review_end_epoch
+    review_end_epoch=$(date +%s)
+    local review_duration=$((review_end_epoch - review_start_epoch))
+    emit_perf_event "$(jq -n -c \
+      --arg event "post_loop_review" \
+      --arg run_id "$RUN_ID" \
+      --arg verdict "$verdict" \
+      --argjson cycle "$cycle" \
+      --argjson duration_s "$review_duration" \
+      --argjson exit_code "$review_exit" \
+      '{event:$event,run_id:$run_id,verdict:$verdict,cycle:$cycle,duration_s:$duration_s,exit_code:$exit_code}'
+    )"
 
-  # Run fix command
-  local fix_start_epoch
-  fix_start_epoch=$(date +%s)
-  local fix_output
-  fix_output=$(mktemp)
-  local fix_stderr
-  fix_stderr=$(mktemp)
-  local fix_exit_file
-  fix_exit_file=$(mktemp)
+    rm -f "$review_output" "$review_stderr"
 
-  set +e
-  (
-    claude \
-      --allowed-tools=Bash,Grep,Glob,Read,Write,Edit,Task,TodoWrite \
-      --output-format stream-json \
-      --verbose \
-      -p "/code-review:fix $cr_dir --max-cycles 2" 2>"$fix_stderr" \
-      | { grep --line-buffered '^{' || true; } \
-      | tee "$fix_output" \
-      | tee -a "${workdir}/claude-output.jsonl" \
-      | python3 "$formatter"
-    echo "${PIPESTATUS[0]}" > "$fix_exit_file"
-  ) &
-  wait $! 2>/dev/null || true
-  local fix_exit
-  fix_exit=$(cat "$fix_exit_file" 2>/dev/null || echo 1)
-  rm -f "$fix_exit_file"
-  set -e
+    if [[ "$verdict" == "approve" ]]; then
+      echo -e "\n${GREEN}Code review passed${NC}"
+      log_progress "Post-loop code review: approved (cycle $cycle)"
+      return 0
+    fi
 
-  # Emit perf event for fix
-  local fix_end_epoch
-  fix_end_epoch=$(date +%s)
-  emit_perf_event "$(jq -n -c \
-    --arg event "post_loop_fix" \
-    --arg run_id "$RUN_ID" \
-    --argjson duration_s "$((fix_end_epoch - fix_start_epoch))" \
-    --argjson exit_code "$fix_exit" \
-    '{event:$event,run_id:$run_id,duration_s:$duration_s,exit_code:$exit_code}'
-  )"
+    echo -e "\n${YELLOW}Code review found issues (verdict: $verdict). Running fix cycle...${NC}"
+    log_progress "Post-loop code review: $verdict, running fix (cycle $cycle)"
 
-  rm -f "$fix_output" "$fix_stderr"
+    if [[ -z "$cr_dir" ]]; then
+      echo -e "${RED}Warning: Could not determine code review session directory. Skipping fix.${NC}"
+      log_progress "Post-loop fix skipped: CR_DIR not found"
+      return 0
+    fi
 
-  log_progress "Post-loop fix cycle completed (exit: $fix_exit)"
+    # --- Run fix ---
+    local fix_start_epoch
+    fix_start_epoch=$(date +%s)
+    local fix_output
+    fix_output=$(mktemp)
+    local fix_stderr
+    fix_stderr=$(mktemp)
+    local fix_exit_file
+    fix_exit_file=$(mktemp)
+
+    set +e
+    (
+      claude \
+        --allowed-tools=Bash,Grep,Glob,Read,Write,Edit,Task,TodoWrite \
+        --output-format stream-json \
+        --verbose \
+        -p "/code-review:fix $cr_dir" 2>"$fix_stderr" \
+        | { grep --line-buffered '^{' || true; } \
+        | tee "$fix_output" \
+        | tee -a "${workdir}/claude-output.jsonl" \
+        | python3 "$formatter"
+      echo "${PIPESTATUS[0]}" > "$fix_exit_file"
+    ) &
+    wait $! 2>/dev/null || true
+    local fix_exit
+    fix_exit=$(cat "$fix_exit_file" 2>/dev/null || echo 1)
+    rm -f "$fix_exit_file"
+    set -e
+
+    # Emit perf event for fix
+    local fix_end_epoch
+    fix_end_epoch=$(date +%s)
+    emit_perf_event "$(jq -n -c \
+      --arg event "post_loop_fix" \
+      --arg run_id "$RUN_ID" \
+      --argjson cycle "$cycle" \
+      --argjson duration_s "$((fix_end_epoch - fix_start_epoch))" \
+      --argjson exit_code "$fix_exit" \
+      '{event:$event,run_id:$run_id,cycle:$cycle,duration_s:$duration_s,exit_code:$exit_code}'
+    )"
+
+    rm -f "$fix_output" "$fix_stderr"
+
+    log_progress "Post-loop fix cycle $cycle completed (exit: $fix_exit)"
+    cycle=$((cycle + 1))
+  done
+
+  log_progress "Post-loop review: max cycles ($max_cycles) reached, proceeding"
 }
 
 # Show help

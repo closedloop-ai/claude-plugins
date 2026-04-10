@@ -1,148 +1,136 @@
 ---
 name: fix
-description: Verify and fix code review findings, then run project verification. Use this skill whenever the user wants to address, fix, or remediate code review findings after running /code-review:start, when there are BLOCKING or HIGH severity issues to resolve, or when the user says things like "fix the review comments", "address the findings", or "remediate code review issues". Only applies when a prior code review session directory exists. Accepts a review session directory path and optional --max-cycles flag.
+description: Verify and fix BLOCKING/HIGH code review findings from a prior review session, then run project verification.
+argument-hint: "<cr-dir>"
 ---
 
 # Fix Code Review Findings
 
-Verify and remediate BLOCKING and HIGH severity findings from a prior `/code-review:start` run, then run project verification (test, lint, typecheck, build). Caps at a configurable number of review-fix cycles to prevent infinite loops.
+Single verify-and-fix pass for BLOCKING/HIGH findings from a prior code review. The caller controls re-review cycles.
 
-## Usage
+## Arguments
 
-```
-/code-review:fix .closedloop-ai/code-review/cr-abc123
-/code-review:fix .closedloop-ai/code-review/cr-abc123 --max-cycles 1
-```
-
-**Finding the session directory:** The most recent review session is the latest `cr-*` directory under `.closedloop-ai/code-review/`:
-```bash
-ls -td .closedloop-ai/code-review/cr-* | head -1
-```
+$ARGUMENTS
 
 ---
 
 ## Step 1: Parse Arguments and Load Findings
 
-Parse `$ARGUMENTS` to extract:
-- **CR_DIR** (required positional): Path to the code-review session directory
-- **--max-cycles N** (optional, default: 2): Maximum review-fix cycles. Initialize `CYCLE = 1`.
-
-Validation:
-- If CR_DIR is missing: auto-discover by running `ls -td .closedloop-ai/code-review/cr-* | head -1`. If no session directories exist, print error "No code review session found. Run /code-review:start first." and exit
-- If `<CR_DIR>/validate_output.json` does not exist: print error "No validate_output.json found in <CR_DIR>. Run /code-review:start first." and exit
-
-### Load Findings
-
-- Read `<CR_DIR>/validate_output.json`
-- Extract the `validated` array
-- Filter to findings where `severity` is `BLOCKING` or `HIGH`
-- Count and log MEDIUM/LOW findings that will be skipped
-- If no BLOCKING/HIGH findings: print "No actionable findings (BLOCKING/HIGH). Review complete." and mark all todos completed and exit
-
-### Create Todo List
-
 ```json
 TodoWrite([
-  {"content": "Parse arguments and load findings", "status": "completed", "activeForm": "Parsing arguments"},
+  {"content": "Parse arguments and load findings", "status": "in_progress", "activeForm": "Parsing arguments"},
   {"content": "Verify findings", "status": "pending", "activeForm": "Verifying findings"},
   {"content": "Fix confirmed findings", "status": "pending", "activeForm": "Fixing findings"},
   {"content": "Run project verification", "status": "pending", "activeForm": "Running verification"},
-  {"content": "Re-review", "status": "pending", "activeForm": "Re-reviewing"},
   {"content": "Print summary", "status": "pending", "activeForm": "Printing summary"}
 ])
 ```
+
+Extract **CR_DIR** (positional) from `$ARGUMENTS`.
+
+<constraints>
+- CR_DIR missing: auto-discover via `ls -td .closedloop-ai/code-review/cr-* | head -1`. No directories found → error "No code review session found. Run a code review first." → exit.
+- `CR_DIR/validate_output.json` missing → error "No validate_output.json found in CR_DIR. Run a code review first." → exit.
+</constraints>
+
+### Load Findings
+
+Read `CR_DIR/validate_output.json`. Each entry in the `validated` array:
+```json
+{"file": "path/to/file.ts", "line": 42, "severity": "HIGH", "category": "Correctness", "issue": "[P1] Brief title", "explanation": "...", "recommendation": "...", "code_snippet": "...", "priority": 1, "confidence": 0.9}
+```
+
+Filter to `severity` = `"BLOCKING"` or `"HIGH"`. Log skipped MEDIUM count.
+No BLOCKING/HIGH findings → print "No actionable findings. Review complete." → mark all todos completed → exit.
 
 ---
 
 ## Step 2: Verify Each Finding
 
-For each BLOCKING/HIGH finding, launch a verification subagent to determine if it is a real bug or a false positive.
+For each BLOCKING/HIGH finding, launch an `Agent` tool call with `subagent_type: "general-purpose"`, `model: "sonnet"`. Inline all finding values — no shell variables.
 
-For each finding, launch a Task with `model: sonnet` and tools `Read, Grep, Glob`:
+Launch all verification agents **in parallel** (multiple Agent tool calls in a single message).
 
-**Prompt template** (inline all values -- no shell variables):
+**Prompt template:**
+
 ```
-Determine if this code review finding is a real bug or a false positive.
+<context>
+Verify whether this code review finding is a real bug or a false positive.
+File: {file} | Line: {line} | Severity: {severity} | Category: {category}
+Issue: {issue}
+Explanation: {explanation}
+Code snippet: {code_snippet}
+Recommendation: {recommendation}
+</context>
 
-**Finding:**
-- File: <file>
-- Line: <line>
-- Severity: <severity>
-- Category: <category>
-- Issue: <issue>
-- Explanation: <explanation>
-- Code snippet: <code_snippet>
-- Recommendation: <recommendation>
+<instructions>
+Read the cited file and 50 lines of surrounding context. Reason through:
+1. PREMISE: What is this code supposed to do? (cite function/context)
+2. EVIDENCE: What concrete evidence proves or disproves the issue? (trace execution path, cite file:line)
+3. GUARD CHECK: Is there error handling or upstream logic that prevents this? (cite search result or "verified none exists at file:line")
+4. VERDICT: Real bug or false positive?
 
-Read the cited file and 50 lines of surrounding context. Check for error handling, type guards, intentional patterns, or inline justifications that would make this a false positive. Verify the issue actually exists at the cited line.
+If analysis concludes the issue is NOT a problem, verdict MUST be REJECTED.
+</instructions>
 
-Output exactly one of:
-CONFIRMED: <brief reasoning why this is a real bug>
-REJECTED: <brief reasoning why this is a false positive>
+<examples>
+CONFIRMED — proven bug:
+Input flows from req.body (line 12) → processData (line 30) → SQL query (line 47) with no escaping. Searched for sanitize/escape calls — none exist.
+{"verdict": "CONFIRMED", "reasoning": "Unsanitized user input flows directly into SQL query at line 47 with no upstream validation."}
+
+REJECTED — false positive:
+Flagged null dereference at line 85, but variable is guarded by type check at line 78 (if (x !== null)) covering all paths to line 85.
+{"verdict": "REJECTED", "reasoning": "Null dereference prevented by type guard at line 78 covering all paths to line 85."}
+</examples>
+
+<output_format>
+Output ONLY: {"verdict": "CONFIRMED"|"REJECTED", "reasoning": "...citing specific evidence..."}
+</output_format>
 ```
-
-Launch all verification agents **in parallel** (multiple Task calls in a single message).
 
 ### Collect Results
 
-- Parse each agent's response for `CONFIRMED` or `REJECTED`
-- Filter to only CONFIRMED findings
-- If no confirmed findings remain: print "All findings were false positives. No fixes needed." and mark remaining todos as completed and exit
+Parse each response for `verdict` field. Keep only `"CONFIRMED"` findings.
+No confirmed findings → print "All findings were false positives. No fixes needed." → mark todos completed → exit.
 
 ---
 
 ## Step 3: Fix Confirmed Findings
 
-Group related confirmed findings by file. Findings in the same file should be fixed together.
+Group confirmed findings by file. Fix **sequentially** (one agent at a time) — findings may share source files, so each fix must see prior results.
 
-Fix each finding **one at a time, sequentially** -- do NOT launch fix agents in parallel. Separate findings may affect the same source files, so each fix must see the results of prior fixes to avoid conflicts.
+For each finding/group, launch `Agent` with `subagent_type: "general-purpose"`, `model: "sonnet"`:
 
-For each finding or group, launch a Task with `model: sonnet` and tools `Read, Write, Edit, Grep, Glob`:
-
-**Prompt template** (inline all values -- no shell variables):
 ```
-Fix this code review finding. Apply the minimal change needed -- do NOT refactor surrounding code, add new features, or add unnecessary error handling.
+Fix this code review finding. Minimal change only — no refactoring, no new features, no unnecessary error handling.
+File: {file} | Line: {line}
+Issue: {issue}
+Explanation: {explanation}
+Recommendation: {recommendation}
 
-**Finding:**
-- File: <file>
-- Line: <line>
-- Issue: <issue>
-- Explanation: <explanation>
-- Recommendation: <recommendation>
-
-Read the file, apply the fix, and confirm what you changed.
+Read the file, apply the fix, confirm what changed.
 ```
 
-Wait for each fix agent to complete before launching the next one. Track the list of modified files for re-review in Step 5.
+Track modified files for Step 5 summary.
 
 ---
 
 ## Step 4: Run Project Verification
 
-Launch a Task with `subagent_type: "code:build-validator"`:
+Launch `Agent` with `subagent_type: "code:build-validator"`:
 
 ```
-Run all validation commands (test, lint, typecheck, build) for this project. Report VALIDATION_PASSED, VALIDATION_FAILED, or NO_VALIDATION.
+Run all validation commands (test, lint, typecheck, build). Report VALIDATION_PASSED, VALIDATION_FAILED, or NO_VALIDATION.
 ```
 
-- **VALIDATION_PASSED** or **NO_VALIDATION**: Proceed to Step 5
-- **VALIDATION_FAILED**: Delegate fix to a Sonnet subagent and retry the validator, up to 5 attempts total. Log a warning and proceed on persistent failure.
+Do NOT run validation commands directly — the `build-validator` discovers and runs them.
+
+- **PASSED** or **NO_VALIDATION** → proceed to Step 5
+- **FAILED** → launch `general-purpose` subagent (`model: "sonnet"`) to fix, re-run `build-validator`. Max 5 attempts. Warn and proceed on persistent failure.
 
 ---
 
-## Step 5: Re-review (Conditional)
-
-- If `CYCLE >= MAX_CYCLES`: log any remaining concerns as warnings, proceed to Step 6
-- If `CYCLE < MAX_CYCLES` AND fixes were applied in Step 3:
-  - Increment `CYCLE`
-  - Invoke the code review on only the modified files using the Skill tool: `Skill(skill="code-review:start", args="<file1> <file2> ...")`
-  - Find the new session directory (`ls -td .closedloop-ai/code-review/cr-* | head -1`) and read its `validate_output.json`
-  - If new BLOCKING/HIGH findings exist: loop back to Step 2 with the new findings
-  - If clean: proceed to Step 6
-
----
-
-## Step 6: Summary
+## Step 5: Summary
 
 Print a structured summary of the fix session:
 
@@ -156,11 +144,7 @@ Print a structured summary of the fix session:
 | Fixed | N |
 | Remaining (warnings) | N |
 | Verification | PASSED/FAILED/NO_VALIDATION |
-| Cycles used | N of MAX |
+| Modified files | file1, file2, ... |
 ```
 
 Mark all todos as `completed`.
-
----
-
-$ARGUMENTS
