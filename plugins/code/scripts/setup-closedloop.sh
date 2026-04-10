@@ -223,7 +223,7 @@ while [[ $CURRENT_PID -gt 1 ]]; do
         break
     fi
     # Get parent PID
-    CURRENT_PID=$(ps -o ppid= -p $CURRENT_PID 2>/dev/null | tr -d ' ')
+    CURRENT_PID=$(ps -o ppid= -p """""$CURRENT"_"P"I"D" 2>/dev/null | tr -d ' ')
     if [[ -z "$CURRENT_PID" ]]; then
         break
     fi
@@ -290,7 +290,10 @@ else
     exit 1
 fi
 
-cat > "$WORKDIR/.closedloop/config.env" << EOF
+# Write full config to WORKDIR
+mkdir -p "$WORKDIR/.closedloop-ai"
+
+cat > "$WORKDIR/.closedloop-ai/config.env" << EOF
 CLOSEDLOOP_WORKDIR="$WORKDIR"
 CLOSEDLOOP_PRD_FILE="$PRD_FILE"
 CLOSEDLOOP_PLAN_FILE="$PLAN_FILE"
@@ -318,5 +321,5 @@ CLOSEDLOOP_ADD_DIR_NAMES="$add_dir_names_joined"
 CLOSEDLOOP_REPO_MAP="$repo_map_joined"
 EOF
 
-echo "ClosedLoop config written to $WORKDIR/.closedloop/config.env"
-cat "$WORKDIR/.closedloop/config.env"
+echo "ClosedLoop config written to $WORKDIR/.closedloop-ai/config.env"
+cat "$WORKDIR/.closedloop-ai/config.env"

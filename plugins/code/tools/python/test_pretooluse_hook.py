@@ -338,7 +338,7 @@ def session_env(tmp_path: Path) -> tuple[Path, Path, str]:
     (session_dir / f"session-{session_id}.workdir").write_text(str(workdir))
 
     # Create workdir with config.env (self-learning disabled)
-    closedloop_dir = workdir / ".closedloop"
+    closedloop_dir = workdir / ".closedloop-ai"
     closedloop_dir.mkdir(parents=True)
     (closedloop_dir / "config.env").write_text("CLOSEDLOOP_SELF_LEARNING=false\n")
 
@@ -404,7 +404,7 @@ class TestSelfLearningOff:
 def test_ignores_legacy_home_patterns(session_env: tuple[Path, Path, str]) -> None:
     """Should not inject patterns from legacy `~/.claude/.learnings`."""
     cwd, workdir, session_id = session_env
-    (workdir / ".closedloop" / "config.env").write_text(
+    (workdir / ".closedloop-ai" / "config.env").write_text(
         "CLOSEDLOOP_SELF_LEARNING=true\n"
     )
 
@@ -431,7 +431,7 @@ def test_ignores_legacy_home_patterns(session_env: tuple[Path, Path, str]) -> No
 def test_injects_when_only_plain_awk_is_available(session_env: tuple[Path, Path, str]) -> None:
     """Should continue injecting tool learnings when only plain awk is available."""
     cwd, workdir, session_id = session_env
-    (workdir / ".closedloop" / "config.env").write_text(
+    (workdir / ".closedloop-ai" / "config.env").write_text(
         "CLOSEDLOOP_SELF_LEARNING=true\n"
     )
 

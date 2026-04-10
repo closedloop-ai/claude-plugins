@@ -190,7 +190,7 @@ Use `sub_step` as numeric phase order and optional `sub_step_name` to capture th
 SUB_STEP_NUM=0
 SUB_STEP_LABEL="context_manager"   # context_manager | batch_1 … | aggregate | validate
 
-mkdir -p "$CLOSEDLOOP_WORKDIR/.closedloop"
+mkdir -p "$CLOSEDLOOP_WORKDIR/.closedloop-ai"
 {
   echo "SUB_STEP=${SUB_STEP_NUM}"
   echo "SUB_STEP_NAME=${SUB_STEP_LABEL}"
@@ -198,13 +198,13 @@ mkdir -p "$CLOSEDLOOP_WORKDIR/.closedloop"
   echo "PARENT_STEP_NAME=${CLOSEDLOOP_PARENT_STEP_NAME:-unknown}"
   echo "STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "START_EPOCH=$(date +%s)"
-} > "$CLOSEDLOOP_WORKDIR/.closedloop/perf-substep-start.env"
+} > "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
 ```
 
 **End of phase (run Bash once at the end of each phase, after the phase work is done):** Read start time, compute duration, append one line to `perf.jsonl`, then remove the temp file.
 
 ```bash
-source "$CLOSEDLOOP_WORKDIR/.closedloop/perf-substep-start.env"
+source "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
 END_EPOCH=$(date +%s)
 ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 DURATION=$((END_EPOCH - START_EPOCH))
@@ -222,7 +222,7 @@ jq -n -c \
   --argjson exit_code 0 \
   --argjson skipped false \
   '{event:$event,run_id:$run_id,iteration:$iteration,step:$step,step_name:$step_name,sub_step:$sub_step,sub_step_name:$sub_step_name,started_at:$started_at,ended_at:$ended_at,duration_s:$duration_s,exit_code:$exit_code,skipped:$skipped}' >> "$CLOSEDLOOP_WORKDIR/perf.jsonl"
-rm -f "$CLOSEDLOOP_WORKDIR/.closedloop/perf-substep-start.env"
+rm -f "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
 ```
 
 **Order of operations per phase:** Run the "start of phase" Bash first (set `SUB_STEP_NUM` and `SUB_STEP_LABEL` at the top, then run the block), then perform the phase work, then run the "end of phase" Bash.

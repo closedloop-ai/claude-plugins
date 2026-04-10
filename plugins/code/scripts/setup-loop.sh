@@ -118,7 +118,7 @@ CONFIG_MAX_ITERATIONS=$(echo "$AGENT_CONFIG" | jq -r '.max_iterations // 10')
 # Use command line override or config default
 MAX_ITERATIONS="${MAX_ITERATIONS:-$CONFIG_MAX_ITERATIONS}"
 
-STATE_FILE="$WORKDIR/.closedloop/$STATE_FILE_SUFFIX"
+STATE_FILE="$WORKDIR/.closedloop-ai/$STATE_FILE_SUFFIX"
 
 # Idempotency checks
 if [[ -f "$WORKDIR/plan.json" ]]; then
@@ -132,7 +132,7 @@ if [[ -f "$STATE_FILE" ]]; then
 fi
 
 # Create state file
-mkdir -p "$WORKDIR/.closedloop"
+mkdir -p "$WORKDIR/.closedloop-ai"
 
 PROMPT="Create a comprehensive implementation plan for the requirements in @${PRD_FILE}.
 
