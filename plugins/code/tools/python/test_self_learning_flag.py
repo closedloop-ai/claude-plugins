@@ -8,7 +8,7 @@ import pytest
 
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts"
 RUN_LOOP_SH = SCRIPTS_DIR / "run-loop.sh"
-CLOSEDLOOP_STATE_DIR = ".closedloop-ai"
+from conftest import CLOSEDLOOP_STATE_DIR
 
 
 @pytest.fixture()

@@ -13,7 +13,7 @@ SCRIPT = (
     / "scripts"
     / "check_critic_cache.sh"
 )
-CLOSEDLOOP_STATE_DIR = ".closedloop-ai"
+from conftest import CLOSEDLOOP_STATE_DIR
 
 
 def _run(workdir: Path, cwd: Path) -> subprocess.CompletedProcess[str]:

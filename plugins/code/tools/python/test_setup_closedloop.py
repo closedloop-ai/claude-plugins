@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 SETUP_SCRIPT = Path(__file__).parent.parent.parent / "scripts" / "setup-closedloop.sh"
-CLOSEDLOOP_STATE_DIR = ".closedloop-ai"
+from conftest import CLOSEDLOOP_STATE_DIR
 
 
 @pytest.fixture

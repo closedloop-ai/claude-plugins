@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 HOOK_PATH = Path(__file__).resolve().parent.parent.parent / "hooks" / "subagent-stop-hook.sh"
-CLOSEDLOOP_STATE_DIR = ".closedloop-ai"
+from conftest import CLOSEDLOOP_STATE_DIR
 
 
 @pytest.fixture()

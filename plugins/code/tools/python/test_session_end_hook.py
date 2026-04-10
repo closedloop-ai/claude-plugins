@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 HOOK_PATH = Path(__file__).resolve().parent.parent.parent / "hooks" / "session-end-hook.sh"
-CLOSEDLOOP_STATE_DIR = ".closedloop-ai"
+from conftest import CLOSEDLOOP_STATE_DIR
 
 
 def run_session_end(cwd: Path, session_id: str) -> subprocess.CompletedProcess:
