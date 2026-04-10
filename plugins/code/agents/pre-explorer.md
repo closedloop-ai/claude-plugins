@@ -40,6 +40,59 @@ ls $CLOSEDLOOP_WORKDIR/code-map-*.json 2>/dev/null
   - `code-map-{name}.json` exists for a given repo → skip re-exploration for that repo in the Multi-Repo Exploration section
 - If **no** files exist: proceed with all steps.
 
+## Step 1: Read and Parse the PRD
+
+1. List `$CLOSEDLOOP_WORKDIR` to find the PRD file (typically the first non-directory, non-JSON file, excluding `attachments/`)
+2. Read the PRD file thoroughly
+3. Extract:
+   - **Entity names**: nouns that represent domain objects (e.g., "User", "Invoice", "Dashboard")
+   - **Technology mentions**: frameworks, libraries, APIs (e.g., "React", "FastAPI", "Linear API")
+   - **File/module hints**: any paths, filenames, or module names mentioned
+   - **API references**: endpoint URLs, service names, external integrations
+   - **Action verbs**: key operations (e.g., "create", "delete", "sync", "export")
+
+## Step 2: Extract Acceptance Criteria Candidates
+
+From the PRD, identify statements that look like acceptance criteria:
+- "Users should be able to..."
+- "The system must..."
+- "When X happens, Y should..."
+- Numbered requirements or bullet points with testable conditions
+
+For each, note the PRD section reference (heading or paragraph number).
+
+## Step 3: Check for Visual Attachments
+
+Use `Glob` to check: `$CLOSEDLOOP_WORKDIR/attachments/*`
+
+If attachments exist:
+- Read each image file (you are multimodal)
+- Extract: UI element descriptions, layout patterns, component names, interaction hints
+- Add these to the search terms
+
+### Write `requirements-extract.json`
+
+```json
+{
+  "searchTerms": {
+    "entities": ["User", "Invoice"],
+    "technologies": ["React", "FastAPI"],
+    "fileHints": ["src/components/", "api/routes"],
+    "apiReferences": ["POST /api/auth/login"],
+    "actions": ["create", "delete", "sync"]
+  },
+  "acceptanceCriteria": [
+    {"id": "AC-001", "text": "User can log in with email", "prdSection": "§2.1"}
+  ],
+  "externalDependencies": [
+    {"name": "Linear API", "type": "api", "prdMention": "§3.2"}
+  ],
+  "visualSummary": [
+    {"file": "attachments/mockup.png", "elements": ["login form", "sidebar nav"]}
+  ]
+}
+```
+
 ## Multi-Repo Exploration
 
 **Skip this entire section if `CLOSEDLOOP_ADD_DIRS` is empty or unset.**
@@ -130,60 +183,7 @@ Note: file paths in `code-map-{name}.json` use the absolute path rooted at `{pat
 
 If `investigation-log.md` does not yet exist, create it with the standard structure from Step 7, then append the `## Cross-Repo Context` subsection. If the file already exists, append the subsection at the end.
 
-Process all repos in `CLOSEDLOOP_REPO_MAP` before moving on to Step 1.
-
-## Step 1: Read and Parse the PRD
-
-1. List `$CLOSEDLOOP_WORKDIR` to find the PRD file (typically the first non-directory, non-JSON file, excluding `attachments/`)
-2. Read the PRD file thoroughly
-3. Extract:
-   - **Entity names**: nouns that represent domain objects (e.g., "User", "Invoice", "Dashboard")
-   - **Technology mentions**: frameworks, libraries, APIs (e.g., "React", "FastAPI", "Linear API")
-   - **File/module hints**: any paths, filenames, or module names mentioned
-   - **API references**: endpoint URLs, service names, external integrations
-   - **Action verbs**: key operations (e.g., "create", "delete", "sync", "export")
-
-## Step 2: Extract Acceptance Criteria Candidates
-
-From the PRD, identify statements that look like acceptance criteria:
-- "Users should be able to..."
-- "The system must..."
-- "When X happens, Y should..."
-- Numbered requirements or bullet points with testable conditions
-
-For each, note the PRD section reference (heading or paragraph number).
-
-## Step 3: Check for Visual Attachments
-
-Use `Glob` to check: `$CLOSEDLOOP_WORKDIR/attachments/*`
-
-If attachments exist:
-- Read each image file (you are multimodal)
-- Extract: UI element descriptions, layout patterns, component names, interaction hints
-- Add these to the search terms
-
-### Write `requirements-extract.json`
-
-```json
-{
-  "searchTerms": {
-    "entities": ["User", "Invoice"],
-    "technologies": ["React", "FastAPI"],
-    "fileHints": ["src/components/", "api/routes"],
-    "apiReferences": ["POST /api/auth/login"],
-    "actions": ["create", "delete", "sync"]
-  },
-  "acceptanceCriteria": [
-    {"id": "AC-001", "text": "User can log in with email", "prdSection": "§2.1"}
-  ],
-  "externalDependencies": [
-    {"name": "Linear API", "type": "api", "prdMention": "§3.2"}
-  ],
-  "visualSummary": [
-    {"file": "attachments/mockup.png", "elements": ["login form", "sidebar nav"]}
-  ]
-}
-```
+Process all repos in `CLOSEDLOOP_REPO_MAP` before moving on to Step 4.
 
 ## Step 4: Run Targeted Codebase Searches
 
