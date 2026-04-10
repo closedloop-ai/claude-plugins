@@ -28,9 +28,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Fixed
 - `run-loop.sh` now scans the full per-iteration stream for the `<promise>` completion marker instead of only inspecting the final `type==result` record, preventing missed completion signals when the orchestrator emits the promise in an intermediate message followed by additional tool_use or wrap-up output
+- `discover-repos.sh` now filters add-dirs that are ancestors of the workdir and deduplicates repo entries to prevent duplicate discovery results
+- Fixed multi-repo execution ordering and prompt definition string assembly in overlay resolution
 
 #### Changed
 - Consolidated Tier 0 `discover-repos.sh` tests into a single scenario-driven harness, replacing the prior fragmented per-case test files
+- Migrated workdir internal state directory from `.closedloop/` to `.closedloop-ai/` across hooks, setup scripts, and loop state management
+- Established `CLOSEDLOOP_STATE_DIR` constant as single source of truth for state directory name across shell scripts
+- Added `Skill` to `plan-evaluator` agent's allowed tools to enable `code:plan-validate` skill execution
 
 ### code v1.6.0
 
@@ -63,6 +68,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Domain critic pass injection in fast-path reviewer via `{DOMAIN_CRITIC_PASS}` placeholder, enabling domain expert review within single-agent fast-path runs
 - Replaced shared prompt reasoning checklist with structured `PREMISE / EVIDENCE / GUARD CHECK / SEVERITY CHECK` analysis framework
 
+### judges v1.5.1
+
+#### Changed
+- Migrated perf-substep state paths from `.closedloop/` to `.closedloop-ai/` in `run-judges` skill telemetry instrumentation
+
 ### judges v1.5.0
 
 #### Changed
@@ -72,6 +82,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - Version bump to align with cross-plugin `.closedloop-ai/` directory migration
+
+### self-learning v1.1.1
+
+#### Changed
+- Established `CLOSEDLOOP_STATE_DIR` constant as single source of truth for state directory name in `bootstrap-learnings.sh`, `compute_success_rates.py`, and `write_merged_patterns.py`
 
 ### self-learning v1.1.0
 
