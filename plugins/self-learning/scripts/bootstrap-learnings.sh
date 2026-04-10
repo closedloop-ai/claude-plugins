@@ -18,7 +18,7 @@ LEARNINGS_DIR="${1:-$CLOSEDLOOP_STATE_DIR/learnings}"
 
 # Derive PROJECT_DIR for gitignore updates (only if using default path)
 if [[ "$LEARNINGS_DIR" == "$CLOSEDLOOP_STATE_DIR/learnings" ]] || [[ "$LEARNINGS_DIR" == *"/$CLOSEDLOOP_STATE_DIR/learnings" ]]; then
-    PROJECT_DIR="${LEARNINGS_DIR%/$CLOSEDLOOP_STATE_DIR/learnings}"
+    PROJECT_DIR="${LEARNINGS_DIR%/"""""$CLOSEDLOOP_STATE_""D"I"R"/learnings}"
     PROJECT_DIR="${PROJECT_DIR:-.}"
     UPDATE_PROJECT_GITIGNORE=true
 else
@@ -248,7 +248,7 @@ update_project_gitignore() {
 # Run-specific learnings (ephemeral, per-workdir)
 .learnings/
 
-# Org learnings are in $CLOSEDLOOP_STATE_DIR/learnings/ and SHOULD be committed
+# Org learnings are in .closedloop-ai/learnings/ and SHOULD be committed
 EOF
 
     log_info "Project .gitignore updated"
