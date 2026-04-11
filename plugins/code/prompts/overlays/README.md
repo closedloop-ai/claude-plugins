@@ -45,8 +45,13 @@ The `multi-repo.overlay.md` overlay depends on env vars exported by
 The overlay introduces the `@{repo-name}:path` file-reference convention
 for secondary repos (primary-repo files need no prefix).
 
-`run-loop.sh --add-dir` auto-selects `--prompt multi-repo` when the user
-does not pass `--prompt` explicitly.
+When `run-loop.sh --add-dir` is used without `--prompt`,
+`setup-closedloop.sh` auto-selects the `multi-repo` overlay (see the
+`PROMPT_NAME_EXPLICIT` branch in `setup-closedloop.sh`). `run-loop.sh`
+itself performs no prompt resolution — it forwards `--add-dir` and
+`--prompt` through the `/code:code` slash command, which invokes
+`setup-closedloop.sh` as the single source of truth for overlay
+selection.
 
 ## Debugging
 
