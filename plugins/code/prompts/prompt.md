@@ -145,7 +145,7 @@ Here are the key phases you must complete:
 **Phase 1.4.1: Discover peers**
 - Activate `code:cross-repo-cache` skill. On `CACHE_HIT` with `NO_CROSS_REPO_NEEDED`: mark 1.4.x complete, skip to Phase 2.5. On `CAPABILITIES_IDENTIFIED`: skip to 1.4.2.
 - On `CACHE_MISS`: Launch @code:cross-repo-coordinator with `WORKDIR` and `PLAN_PATH=$CLOSEDLOOP_WORKDIR/plan.json`
-- Stamp cache: `bash scripts/stamp_cross_repo_cache.sh $CLOSEDLOOP_WORKDIR`
+- Stamp cache: `bash "$CLAUDE_PLUGIN_ROOT/scripts/stamp_cross_repo_cache.sh" "$CLOSEDLOOP_WORKDIR"`
 - `NO_CROSS_REPO_NEEDED`/`CROSS_REPO_SKIPPED` → mark 1.4.x complete, Phase 2.5. `CAPABILITIES_IDENTIFIED` → Phase 1.4.2
 
 **Phase 1.4.2: Verify capabilities**
@@ -166,7 +166,7 @@ Here are the key phases you must complete:
 - Activate `code:critic-cache` skill. On `CACHE_HIT`: skip to Phase 2.6. On `CACHE_MISS`: continue.
 - `mkdir -p $CLOSEDLOOP_WORKDIR/reviews`
 - Launch Task() **in parallel** for each critic: "WORKDIR=$CLOSEDLOOP_WORKDIR. Review plan as {critic_name} specialist. Read plan.md, investigation-log.md, PRD. Write to reviews/{critic_name}.review.json with findings: {severity, description, recommendation, affectedTasks}."
-- If zero reviews written: skip to Phase 3. Otherwise: stamp cache (`bash scripts/stamp_critic_cache.sh $CLOSEDLOOP_WORKDIR`), proceed to Phase 2.6
+- If zero reviews written: skip to Phase 3. Otherwise: stamp cache (`bash "$CLAUDE_PLUGIN_ROOT/scripts/stamp_critic_cache.sh" "$CLOSEDLOOP_WORKDIR"`), proceed to Phase 2.6
 
 **PHASE 2.6: PLAN REFINEMENT** (only if Phase 2.5 produced reviews)
 
@@ -222,7 +222,7 @@ Here are the key phases you must complete:
    - `VALIDATION_FAILED`:
      a. Delegate fixes to subagents (test failures → @test-engineer, other → sonnet subagent)
      b. Re-run @code:build-validator. Repeat until VALIDATION_PASSED (max 20 attempts)
-     e. If still failing after 20 attempts: Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5: Testing and Validation", reason="Validation failed after 20 attempts", file=null, command="/code:code $ARGUMENTS". Tell the user: "Validation failed after 20 attempts. Fix issues manually and run `/code:code $ARGUMENTS` to continue."
+     c. If still failing after 20 attempts: Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5: Testing and Validation", reason="Validation failed after 20 attempts", file=null, command="/code:code $ARGUMENTS". Tell the user: "Validation failed after 20 attempts. Fix issues manually and run `/code:code $ARGUMENTS` to continue."
 
 **PHASE 6: VISUAL INSPECTION (if UI changes were made)**
 
