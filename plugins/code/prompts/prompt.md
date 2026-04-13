@@ -109,6 +109,25 @@ This orchestrator also has access to the **iterative-retrieval** skill for refin
 
 See the skill documentation for the 4-phase protocol (Initial Dispatch → Sufficiency Evaluation → Refinement Request → Loop).
 
+## Reusable Procedures
+
+### PLAN_VALIDATION_SEQUENCE
+
+Use this sequence whenever a phase needs full plan validation (structural + semantic):
+1. Activate `code:plan-validate` skill (runs Python script against $CLOSEDLOOP_WORKDIR)
+2. If `FORMAT_ISSUES`: launch @code:plan-writer to fix format issues, then re-activate `code:plan-validate`
+3. If `VALID`: launch @code:plan-validator with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. SEMANTIC ONLY: Check semantic consistency of $CLOSEDLOOP_WORKDIR/plan.json — verify storage/query alignment and task/architecture decision consistency. Skip structural validation (already passed)."
+4. If semantic check finds issues: launch @code:plan-writer to fix, then re-activate `code:plan-validate`
+
+### AWAITING_USER_SEQUENCE
+
+Use this sequence at any hard-stop that requires user action before continuing:
+1. **FIRST** — Write state.json with AWAITING_USER status:
+   `echo '{"phase": "<current phase>", "status": "AWAITING_USER", "reason": "<why>", "userAction": {"description": "<what user should do>", "file": "<path or null>", "command": "<resume command>"}, "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > $CLOSEDLOOP_WORKDIR/state.json`
+2. **ONLY AFTER state.json is written** — Output `<promise>COMPLETE</promise>`
+3. Tell the user what to do (review file, fix issues, run command)
+4. **HARD STOP** — Do not continue even if the user asks
+
 ## Required TodoWrite
 
 **MANDATORY: Before doing ANY work, create this TodoWrite list:**
@@ -194,8 +213,7 @@ Here are the key phases you must complete:
     2. Launch @code:plan-draft-writer with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. Create plan at $CLOSEDLOOP_WORKDIR/plan.json. Pre-computed context may be available — check for requirements-extract.json, code-map.json, and investigation-log.md in $CLOSEDLOOP_WORKDIR before starting codebase exploration."
     3. The agent will iterate automatically until validation passes (max 10 iterations)
     4. Validation checks: PRD coverage, task format, architecture review (no unnecessary new files), completeness
-    5. Once the agent outputs `<promise>PLAN_VALIDATED</promise>`, **immediately activate `code:plan-validate` skill** (runs Python script against $CLOSEDLOOP_WORKDIR)
-    6. If script returns `VALID`: additionally launch @code:plan-validator with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. SEMANTIC ONLY: Check semantic consistency of $CLOSEDLOOP_WORKDIR/plan.json — verify storage/query alignment and task/architecture decision consistency. Skip structural validation (already passed)."
+    5. Once the agent outputs `<promise>PLAN_VALIDATED</promise>`, run **PLAN_VALIDATION_SEQUENCE**
 - If $CLOSEDLOOP_WORKDIR/plan.json EXISTS (ls succeeds):
   1. Activate `code:plan-validate` skill (runs Python script against $CLOSEDLOOP_WORKDIR)
   2. If status is `EMPTY_FILE` or `FORMAT_ISSUES`:
@@ -211,17 +229,7 @@ Here are the key phases you must complete:
 - **If `plan_was_created = false`**: Proceed directly to Phase 1.2 (resumed after user approval; plan and code judges run from the external loop, not here).
 
 **HARD STOP sequence** (only when plan_was_created = true):
-  <awaiting_user_sequence>
-  **CRITICAL: Execute these steps IN THIS EXACT ORDER.**
-
-  1. **FIRST** - Write state.json with AWAITING_USER status:
-     ```bash
-     echo '{"phase": "Phase 1.1: Plan review checkpoint", "status": "AWAITING_USER", "reason": "Plan was created and requires review", "userAction": {"description": "Review the plan and run the command when ready", "file": "$CLOSEDLOOP_WORKDIR/plan.md", "command": "/code:code $ARGUMENTS"}, "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > $CLOSEDLOOP_WORKDIR/state.json
-     ```
-  2. **ONLY AFTER state.json is written** - Output `<promise>COMPLETE</promise>`
-  3. Tell the user: "Plan created. Review it at `$CLOSEDLOOP_WORKDIR/plan.md`. Run `/code:code $ARGUMENTS` when ready to continue."
-  4. **HARD STOP** - Do not continue even if the user asks. You have already output the promise and the loop must be restarted.
-  </awaiting_user_sequence>
+  Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 1.1: Plan review checkpoint", reason="Plan was created and requires review", file="$CLOSEDLOOP_WORKDIR/plan.md", command="/code:code $ARGUMENTS". Tell the user: "Plan created. Review it at `$CLOSEDLOOP_WORKDIR/plan.md`. Run `/code:code $ARGUMENTS` when ready to continue."
 
 **PHASE 1.2: PROCESS ANSWERED QUESTIONS**
 
@@ -273,21 +281,7 @@ Here are the key phases you must complete:
   - If `CROSS_REPO_CACHE_MISS`: Launch coordinator below
 - Launch @code:cross-repo-coordinator with `WORKDIR=$CLOSEDLOOP_WORKDIR` and `PLAN_PATH=$CLOSEDLOOP_WORKDIR/plan.json`
 - The agent discovers peers, identifies needed capabilities, writes to `$CLOSEDLOOP_WORKDIR/.cross-repo-needs.json`
-- After coordinator completes, stamp the cross-repo cache:
-  ```bash
-  if [ -f ".workspace-repos.json" ]; then
-    python3 -c "import json; [print(r['path']) for r in json.load(open('.workspace-repos.json')) if r.get('path')]" 2>/dev/null \
-      | while IFS= read -r repo_path; do
-          if [ -d "$repo_path/.git" ]; then
-            printf '%s:%s\n' "$repo_path" "$(git -C "$repo_path" rev-parse HEAD 2>/dev/null || echo unknown)"
-          fi
-        done \
-      | LC_ALL=C sort \
-      | shasum -a 256 > "$CLOSEDLOOP_WORKDIR/.cross-repo-hash"
-  else
-    shasum -a 256 "$CLOSEDLOOP_WORKDIR/.cross-repo-needs.json" > "$CLOSEDLOOP_WORKDIR/.cross-repo-hash"
-  fi
-  ```
+- After coordinator completes, stamp the cross-repo cache: `bash scripts/stamp_cross_repo_cache.sh $CLOSEDLOOP_WORKDIR` (use `code:find-plugin-file` skill to resolve the absolute script path if needed)
 - Handle return status:
   - `NO_CROSS_REPO_NEEDED`: Mark 1.4.x phases complete, proceed to Phase 2.5
   - `CROSS_REPO_SKIPPED`: Mark 1.4.x phases complete, proceed to Phase 2.5
@@ -321,14 +315,7 @@ Here are the key phases you must complete:
 - After all Task calls complete, check review count:
   `ls $CLOSEDLOOP_WORKDIR/reviews/*.review.json 2>/dev/null | wc -l`
 - If zero reviews: log warning, skip Phase 2.6, proceed to Phase 3
-- If reviews exist: stamp the critic cache, then proceed to Phase 2.6:
-  ```bash
-  if [ -f ".closedloop-ai/settings/critic-gates.json" ]; then
-    cat $CLOSEDLOOP_WORKDIR/plan.json .closedloop-ai/settings/critic-gates.json | shasum -a 256 > $CLOSEDLOOP_WORKDIR/reviews/.plan-hash
-  else
-    shasum -a 256 $CLOSEDLOOP_WORKDIR/plan.json > $CLOSEDLOOP_WORKDIR/reviews/.plan-hash
-  fi
-  ```
+- If reviews exist: stamp the critic cache (`bash scripts/stamp_critic_cache.sh $CLOSEDLOOP_WORKDIR`), then proceed to Phase 2.6
 
 **PHASE 2.6: PLAN REFINEMENT** (only if Phase 2.5 produced reviews)
 
@@ -338,10 +325,7 @@ Here are the key phases you must complete:
    Read reviews from $CLOSEDLOOP_WORKDIR/reviews/*.review.json.
    Read current plan at $CLOSEDLOOP_WORKDIR/plan.json and PRD in $CLOSEDLOOP_WORKDIR.
    Update plan.json and plan.md. Do NOT add scope beyond critic findings."
-- After plan-writer completes, activate `code:plan-validate` skill (runs Python script against $CLOSEDLOOP_WORKDIR)
-- If validation fails (FORMAT_ISSUES): launch plan-writer to fix format issues (same as Phase 1)
-- If validation passes (VALID): additionally launch @code:plan-validator with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. SEMANTIC ONLY: Check semantic consistency of $CLOSEDLOOP_WORKDIR/plan.json — verify storage/query alignment and task/architecture decision consistency. Skip structural validation (already passed)."
-- If semantic check finds issues: launch plan-writer to fix, then re-activate `code:plan-validate` skill
+- After plan-writer completes, run **PLAN_VALIDATION_SEQUENCE**
 - Proceed to Phase 2.7
 
 **PHASE 2.7: PLAN FINALIZATION** (skipped if simple_mode = true)
@@ -353,10 +337,7 @@ Here are the key phases you must complete:
    Read $CLOSEDLOOP_WORKDIR/plan.json, $CLOSEDLOOP_WORKDIR/investigation-log.md, and the PRD in $CLOSEDLOOP_WORKDIR.
    Enrich task descriptions with code patterns, function signatures, integration points, and edge cases.
    Do NOT add, remove, or renumber tasks. Preserve the approved scope."
-- After plan-writer completes (outputs `<promise>PLAN_WRITER_COMPLETE</promise>`), activate `code:plan-validate` skill (runs Python script against $CLOSEDLOOP_WORKDIR)
-- If validation fails (FORMAT_ISSUES): launch plan-writer to fix format issues (same as Phase 1)
-- If validation passes (VALID): additionally launch @code:plan-validator with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. SEMANTIC ONLY: Check semantic consistency of $CLOSEDLOOP_WORKDIR/plan.json — verify storage/query alignment and task/architecture decision consistency. Skip structural validation (already passed)."
-- If semantic check finds issues: launch plan-writer to fix, then re-activate `code:plan-validate` skill
+- After plan-writer completes (outputs `<promise>PLAN_WRITER_COMPLETE</promise>`), run **PLAN_VALIDATION_SEQUENCE**
 - Proceed to Phase 3
 
 **PHASE 3: IMPLEMENTATION**
@@ -420,18 +401,7 @@ Here are the key phases you must complete:
         **CRITICAL: The orchestrator must NOT attempt to fix code itself - always delegate to subagents**
      c. Re-run @code:build-validator
      d. Repeat until VALIDATION_PASSED (max 20 attempts)
-     e. If still failing after 20 attempts:
-        <awaiting_user_sequence>
-        **CRITICAL: Execute these steps IN THIS EXACT ORDER.**
-
-        1. **FIRST** - Write state.json with AWAITING_USER status:
-           ```bash
-           echo '{"phase": "Phase 5: Testing and Validation", "status": "AWAITING_USER", "reason": "Validation failed after 20 attempts", "userAction": {"description": "Fix validation issues manually and run the command to continue", "file": null, "command": "/code:code $ARGUMENTS"}, "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > $CLOSEDLOOP_WORKDIR/state.json
-           ```
-        2. **ONLY AFTER state.json is written** - Output `<promise>COMPLETE</promise>`
-        3. Tell the user: "Validation failed after 20 attempts. Fix issues manually and run `/code:code $ARGUMENTS` to continue."
-        4. **HARD STOP** - Do not continue.
-        </awaiting_user_sequence>
+     e. If still failing after 20 attempts: Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5: Testing and Validation", reason="Validation failed after 20 attempts", file=null, command="/code:code $ARGUMENTS". Tell the user: "Validation failed after 20 attempts. Fix issues manually and run `/code:code $ARGUMENTS` to continue."
 
 **PHASE 6: VISUAL INSPECTION (if UI changes were made)**
 
