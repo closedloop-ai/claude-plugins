@@ -2,7 +2,7 @@
 
 This document defines the canonical contract for `$CLOSEDLOOP_WORKDIR/judge-input.json`.
 
-All judge runs (plan/code) must construct this envelope before launching judge agents.
+All judge runs (plan/code/prd) must construct this envelope before launching judge agents.
 
 ## Required Path
 
@@ -14,7 +14,7 @@ All judge runs (plan/code) must construct this envelope before launching judge a
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `evaluation_type` | string | Evaluation mode, e.g. `plan`, `code` |
+| `evaluation_type` | string | Evaluation mode: `plan`, `code`, or `prd` |
 | `task` | string | Natural-language objective judges must evaluate against |
 | `primary_artifact` | object | Primary evidence descriptor |
 | `supporting_artifacts` | array | Secondary evidence descriptors |
@@ -62,3 +62,16 @@ Before launching judges, orchestrator should verify:
 - `judge-input.json` exists and parses as valid JSON
 - all required fields are present
 - all required mapped artifact paths exist and are readable
+
+## PRD Evaluation Envelope
+
+When `evaluation_type` is `prd`, the envelope shape is:
+
+- `primary_artifact`: points to `$CLOSEDLOOP_WORKDIR/prd.md` (required)
+- `supporting_artifacts`: conditionally populated with pre-exploration artifacts when present:
+  - `investigation-log.md` — codebase findings from @code:pre-explorer
+  - `code-map.json` — targeted file discovery map
+  - `requirements-extract.json` — structured PRD extraction
+  If none are present, `supporting_artifacts` is `[]`.
+- `source_of_truth`: `["prd"]`
+- context-manager-for-judges is NOT invoked for PRD type; judge-input.json is built directly by run-judges.

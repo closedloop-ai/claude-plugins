@@ -17,7 +17,7 @@ You are responsible for preparing compacted context bundles for judge evaluation
 ## Input Parameters
 
 You will receive:
-- `artifact_type` - The type of artifact to evaluate: `plan` or `code`
+- `artifact_type` - The type of artifact to evaluate: `plan` or `code` (`prd` type is explicitly rejected — see PRD Type Guard section)
 - Optional: `multi_repo` - Boolean flag indicating multi-repository mode (default: false, auto-detected from repos.json)
 
 ## Artifact Path Mappings
@@ -63,6 +63,22 @@ You will receive:
 | `investigation-log.md` | 10% | 3,000 |
 | `build-result.json` | 10% | 3,000 |
 | `outcomes.log` | 10% | 3,000 |
+
+## PRD Type Guard
+
+**Check this before Step 1.**
+
+If `artifact_type` is `prd`:
+- Output the following error message and stop immediately. Do NOT proceed to context collection.
+- Do NOT compress any artifacts.
+
+```
+CONTEXT_PREPARATION_FAILED: artifact_type="prd" is not supported by context-manager-for-judges.
+PRD evaluation builds judge-input.json directly in run-judges without a context manager.
+Caller must use run-judges PRD mode (--artifact-type prd) which bypasses this agent.
+```
+
+This guard prevents silent fallback to plan-type budget allocation when artifact_type="prd" is passed accidentally. The belt-and-suspenders design means run-judges already never calls context-manager for PRD, but this guard prevents regression from future callers.
 
 ## Process
 

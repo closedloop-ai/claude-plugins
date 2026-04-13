@@ -399,11 +399,51 @@ if [ ! -f "$CLOSEDLOOP_WORKDIR/prd.md" ]; then
   exit 0  # Graceful exit — do not fail parent workflow
 fi
 
+# Resolve investigation context for PRD judges (optional, non-blocking)
+if [ -f "$CLOSEDLOOP_WORKDIR/investigation-log.md" ]; then
+  echo "INFO: Reusing existing investigation-log.md for PRD context."
+else
+  echo "INFO: investigation-log.md missing. Attempting @code:pre-explorer fallback..."
+  # Launch @code:pre-explorer with WORKDIR=$CLOSEDLOOP_WORKDIR
+  # PRD-mode pre-explorer note: must work with prd.md alone (no plan.json exists).
+  # pre-explorer reads prd.md, extracts search seeds (entities, technologies, actions),
+  # runs targeted Glob/Grep, and writes investigation-log.md + code-map.json +
+  # requirements-extract.json to $CLOSEDLOOP_WORKDIR.
+  # If @code:pre-explorer is unavailable or fails:
+  #   Log warning; continue with prd.md only (non-blocking).
+  #   Do NOT attempt an internal fallback log generation — PRD evaluation is
+  #   designed to be lightweight and prd.md alone is sufficient.
+fi
+if [ ! -f "$CLOSEDLOOP_WORKDIR/investigation-log.md" ]; then echo "WARNING: investigation-log.md unavailable after fallback. Continuing with prd.md only."; fi
+
+# DOCUMENTATION CONSTRAINT — NEVER include these paths in supporting_artifacts:
+#   .closedloop-ai/context/artifacts/*   (run-specific generated artifacts)
+#   .closedloop-ai/context/prompt.md     (orchestrator prompt)
+#   prior-loops.md                       (historical loop summary)
+#   attachments/*                        (uploaded binary/media attachments)
+#   repo file dumps (e.g., full-repo.txt, repo-dump.md)
+# This is not runtime-enforced code — it is a documentation constraint for maintainers.
+# Primary hard enforcement: run-judges never invokes context-manager for PRD;
+# context-manager rejects PRD type (belt-and-suspenders guard).
+
+# Token soft ceiling: if combined size of prd.md + supporting artifacts approaches
+# 20k tokens, truncate or omit supporting artifacts first (preserve prd.md in full).
+
 # Build prd-mode judge-input.json
 # - evaluation_type: "prd"
 # - task: PRD quality evaluation objective (prd-auditor + 3 critics)
 # - primary_artifact: $CLOSEDLOOP_WORKDIR/prd.md
-# - supporting_artifacts: [] (none required)
+# - supporting_artifacts: conditionally populated:
+#     if $CLOSEDLOOP_WORKDIR/investigation-log.md exists:
+#       [{"id": "investigation_log", "path": "$CLOSEDLOOP_WORKDIR/investigation-log.md",
+#         "type": "markdown", "required": false, "description": "Pre-exploration codebase findings"}]
+#     if $CLOSEDLOOP_WORKDIR/code-map.json also exists:
+#       append {"id": "code_map", "path": "$CLOSEDLOOP_WORKDIR/code-map.json",
+#               "type": "json", "required": false, "description": "Targeted file discovery map"}
+#     if $CLOSEDLOOP_WORKDIR/requirements-extract.json also exists:
+#       append {"id": "requirements_extract", "path": "$CLOSEDLOOP_WORKDIR/requirements-extract.json",
+#               "type": "json", "required": false, "description": "Structured PRD extraction"}
+#     if none present: supporting_artifacts = []
 # - source_of_truth: ["prd"]
 ```
 
@@ -411,6 +451,9 @@ fi
 - Missing `prd.md` results in a WARNING and graceful exit (code 0), not an error
 - No context manager is launched; `judge-input.json` is built directly with `primary_artifact` pointing to `$CLOSEDLOOP_WORKDIR/prd.md`
 - Performance: emit sub_step=0 (context_prep, skipped=true) perf event immediately, then proceed to sub_step=1 (prd_judges)
+- Block list documented: `.closedloop-ai/context/artifacts/*`, `.closedloop-ai/context/prompt.md`, `prior-loops.md`, attachments, and repo file dumps must NOT appear in the PRD evaluation context
+- Token budget: if combined size of `prd.md` + supporting artifacts approaches 20k tokens, truncate or omit supporting artifacts first; `prd.md` is always preserved in full
+- Investigation context: reuse `investigation-log.md` when present; attempt `@code:pre-explorer` fallback when missing; missing `investigation-log.md` does NOT block PRD judging
 
 **If required files are missing:**
 - Plan mode: Exit gracefully with code 0 (do not fail parent workflow)
@@ -963,6 +1006,7 @@ Before marking this task complete, verify:
 **For PRD artifacts (--artifact-type prd):**
 - [ ] **prd.md existence check** - `$CLOSEDLOOP_WORKDIR/prd.md` found, or graceful exit with WARNING (code 0)
 - [ ] **No context manager** - context-manager-for-judges is NOT launched for prd mode
+- [ ] **Investigation context resolution** - investigation-log.md reused when present, or generated via @code:pre-explorer fallback when missing; missing investigation-log.md does NOT block PRD judging
 - [ ] **Judge input contract** - `judge-input.json` written with `evaluation_type="prd"` and `primary_artifact=$CLOSEDLOOP_WORKDIR/prd.md`
 - [ ] **Parallel execution** - All 4 PRD judges launched in a single parallel batch (sub_step=1)
 - [ ] **Result aggregation** - Valid EvaluationReport with 4 CaseScore entries (sub_step=2)
@@ -997,6 +1041,8 @@ Before marking this task complete, verify:
 | "investigation-log.md missing in code mode" | pre-explorer unavailable or generation failed during code preflight | Log warning and continue with `code-context.json` only (non-blocking) |
 | "Invalid --artifact-type value" | Unsupported artifact type | Use only 'plan', 'code', or 'prd' |
 | "prd.md not found" | PRD document missing from workdir | Emit WARNING and exit gracefully (code 0); do not fail the parent workflow |
+| "pre-explorer unavailable in PRD mode" | `@code:pre-explorer` not installed/resolvable during PRD context prep | Log warning, skip investigation-log.md generation, continue with prd.md only; missing investigation-log.md does NOT block PRD judging |
+| "investigation-log.md missing after fallback in PRD mode" | Both pre-explorer invocation and fallback failed during PRD context prep | Log warning and continue PRD judging with prd.md as sole context; do not block or abort |
 | "report_id should end with '-prd-judges'" | Incorrect ID format for prd | Use pattern: `{RUN_ID}-prd-judges` for PRD artifacts |
 
 </troubleshooting>
@@ -1053,7 +1099,8 @@ This is the standard plan mode flow; orchestrators must support context-manager 
 When `--artifact-type prd` is specified:
 - Check `$CLOSEDLOOP_WORKDIR/prd.md` exists; emit WARNING and exit gracefully (code 0) if missing
 - Do NOT launch context-manager-for-judges
-- Build `judge-input.json` with `evaluation_type="prd"` and `primary_artifact=$CLOSEDLOOP_WORKDIR/prd.md`
+- Resolve investigation context: reuse `investigation-log.md` when present at `$CLOSEDLOOP_WORKDIR/investigation-log.md`; invoke `@code:pre-explorer` fallback only when `investigation-log.md` is missing (non-blocking if unavailable; continue with `prd.md` only — no internal fallback log generation)
+- Build `judge-input.json` with `evaluation_type="prd"`, `primary_artifact=$CLOSEDLOOP_WORKDIR/prd.md`, and `supporting_artifacts` conditionally populated (investigation-log.md, code-map.json, requirements-extract.json when present; `[]` if none present)
 - Launch all 4 PRD judges in a single parallel batch (sub_step=1)
 - Aggregate all 4 CaseScores (sub_step=2) and write to `prd-judges.json`
 - Validate with `--category prd` (sub_step=3)
