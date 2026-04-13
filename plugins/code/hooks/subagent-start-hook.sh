@@ -162,6 +162,9 @@ IMPORTANT: When your instructions reference \${VARIABLE_NAME} (e.g., \${CLAUDE_P
 When running bash commands that need these variables, first export them:
 export CLOSEDLOOP_WORKDIR=\"$CLOSEDLOOP_WORKDIR\"
 export CLAUDE_PLUGIN_ROOT=\"$PLUGIN_ROOT\"
+export CLOSEDLOOP_ADD_DIRS=\"${CLOSEDLOOP_ADD_DIRS:-}\"
+export CLOSEDLOOP_ADD_DIR_NAMES=\"${CLOSEDLOOP_ADD_DIR_NAMES:-}\"
+export CLOSEDLOOP_REPO_MAP=\"${CLOSEDLOOP_REPO_MAP:-}\"
 </closedloop-environment>"
 SUFFIX_PARTS="$ENV_INFO"
 

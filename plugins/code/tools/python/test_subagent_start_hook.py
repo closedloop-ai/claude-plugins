@@ -42,6 +42,7 @@ def run_start_hook(
     agent_id: str = "agent-456",
     self_learning: bool = False,
     env_overrides: dict[str, str] | None = None,
+    config_values: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     """Invoke subagent-start-hook.sh with crafted JSON input."""
     # Write config.env
@@ -49,7 +50,10 @@ def run_start_hook(
     workdir = workdir_file.read_text().strip()
     config_path = Path(workdir) / CLOSEDLOOP_STATE_DIR / "config.env"
     sl_value = "true" if self_learning else "false"
-    config_path.write_text(f"CLOSEDLOOP_SELF_LEARNING={sl_value}\n")
+    config_lines = [f"CLOSEDLOOP_SELF_LEARNING={sl_value}"]
+    if config_values:
+        config_lines.extend(f"{key}={value}" for key, value in config_values.items())
+    config_path.write_text("\n".join(config_lines) + "\n")
 
     payload = json.dumps(
         {
@@ -140,6 +144,29 @@ class TestSelfLearningOff:
         assert agent_type_file.exists(), "Agent-type file should be written regardless of self-learning"
         content = agent_type_file.read_text()
         assert "code:implementation-subagent" in content
+
+    def test_includes_multi_repo_exports_in_additional_context(
+        self, session_env: tuple[Path, Path, str]
+    ) -> None:
+        """Hook includes export commands for multi-repo env vars in additionalContext."""
+        cwd, _workdir, session_id = session_env
+        result = run_start_hook(
+            str(cwd),
+            session_id,
+            self_learning=False,
+            config_values={
+                "CLOSEDLOOP_ADD_DIRS": '"/tmp/repo-a|/tmp/repo-b"',
+                "CLOSEDLOOP_ADD_DIR_NAMES": '"repo-a|repo-b"',
+                "CLOSEDLOOP_REPO_MAP": '"repo-a=/tmp/repo-a|repo-b=/tmp/repo-b"',
+            },
+        )
+        assert result.returncode == 0, f"Hook failed: {result.stderr}"
+
+        output = json.loads(result.stdout.strip())
+        ctx = output["hookSpecificOutput"]["additionalContext"]
+        assert 'export CLOSEDLOOP_ADD_DIRS="/tmp/repo-a|/tmp/repo-b"' in ctx
+        assert 'export CLOSEDLOOP_ADD_DIR_NAMES="repo-a|repo-b"' in ctx
+        assert 'export CLOSEDLOOP_REPO_MAP="repo-a=/tmp/repo-a|repo-b=/tmp/repo-b"' in ctx
 
 
 class TestSelfLearningOn:
