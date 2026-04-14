@@ -725,8 +725,8 @@ while [[ $# -gt 0 ]]; do
         echo -e "${RED}Error: --prompt name must not contain spaces or path separators${NC}" >&2
         exit 1
       fi
-      if [[ ! -f "$SCRIPTS_DIR/../prompts/$2.md" && ! -f "$SCRIPTS_DIR/../prompts/overlays/$2.overlay.md" ]]; then
-        echo -e "${RED}Error: prompt not found: prompts/$2.md or prompts/overlays/$2.overlay.md${NC}" >&2
+      if [[ ! -f "$SCRIPTS_DIR/../prompts/$2.md" ]]; then
+        echo -e "${RED}Error: prompt not found: prompts/$2.md${NC}" >&2
         exit 1
       fi
       PROMPT_NAME="$2"

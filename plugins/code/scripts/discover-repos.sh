@@ -64,7 +64,7 @@ if [[ -n "${CLOSEDLOOP_ADD_DIRS:-}" ]]; then
         fi
         repo_name="${repo_name:-$(basename "$path")}"
 
-        PEER_JSONS+=("{\"name\": \"$repo_name\", \"type\": \"$repo_type\", \"path\": \"$path\", \"discoveryMethod\": \"add_dir\", \"local\": true}")
+        PEER_JSONS+=("{\"name\": \"$repo_name\", \"type\": \"$repo_type\", \"path\": \"$path\", \"local\": true}")
     done
 fi
 

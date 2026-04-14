@@ -44,7 +44,7 @@ Always use `plugin-name:skill-name` format (e.g., `self-learning:learning-qualit
 
 ### Closed Loop (run-loop.sh)
 
-The core orchestration loop in `plugins/code/scripts/run-loop.sh`. Drives fresh-context Claude iterations — each `claude -p` invocation gets a clean context window. The orchestrator prompt at `plugins/code/prompts/prompt.md` coordinates 8 workflow phases via subagent delegation. Post-iteration, `run-loop.sh` runs an 11-step pipeline calling Python scripts from `self-learning/tools/python/`. The base prompt is the single source of truth; variants (e.g. `--prompt multi-repo`) are expressed as append-only overlays under `plugins/code/prompts/overlays/` and assembled at runtime — see `plugins/code/prompts/overlays/README.md`.
+The core orchestration loop in `plugins/code/scripts/run-loop.sh`. Drives fresh-context Claude iterations — each `claude -p` invocation gets a clean context window. The orchestrator prompt at `plugins/code/prompts/prompt.md` coordinates 8 workflow phases via subagent delegation. Post-iteration, `run-loop.sh` runs an 11-step pipeline calling Python scripts from `self-learning/tools/python/`. Multi-repo behavior lives in the agents themselves (`pre-explorer`, `plan-draft-writer`, `cross-repo-coordinator`, `cross-repo-prd-writer`), which read `CLOSEDLOOP_REPO_MAP`, `CLOSEDLOOP_ADD_DIRS`, and the `local` flag on peers — no orchestrator-level branching is required.
 
 ### Hooks
 

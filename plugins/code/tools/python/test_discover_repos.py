@@ -112,7 +112,6 @@ TIER0_SCENARIOS: list[dict] = [
         "add_dirs": ["extra"],
         "expect": {
             "extra": {
-                "discoveryMethod": "add_dir",
                 "local": True,
                 "name": "extra-svc",
                 "type": "service",
@@ -138,7 +137,7 @@ TIER0_SCENARIOS: list[dict] = [
         "forbidden": ["current"],
     },
     # Sibling also listed in CLOSEDLOOP_ADD_DIRS must appear exactly once
-    # and be marked `add_dir` (Tier 0 wins over Tier 2 sibling scan).
+    # and be marked `local: true` (Tier 0 wins over Tier 2 sibling scan).
     {
         "id": "add_dir_wins_over_sibling_scan",
         "workspace": True,
@@ -151,7 +150,7 @@ TIER0_SCENARIOS: list[dict] = [
             },
         },
         "add_dirs": ["sibling-svc"],
-        "expect": {"sibling-svc": {"discoveryMethod": "add_dir", "local": True}},
+        "expect": {"sibling-svc": {"local": True}},
     },
 ]
 

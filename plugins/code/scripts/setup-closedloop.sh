@@ -19,7 +19,6 @@ PRD_FILE=""
 PLAN_FILE=""
 MAX_ITERATIONS=10
 PROMPT_NAME=""
-PROMPT_NAME_EXPLICIT=false
 POSITIONAL_ARGS=()
 ADD_DIRS=()
 
@@ -111,7 +110,6 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             PROMPT_NAME="$2"
-            PROMPT_NAME_EXPLICIT=true
             shift 2
             ;;
         --add-dir)
@@ -240,14 +238,8 @@ else
     echo "$(date): WARNING: Could not find session_id in process tree" >> "$DEBUG_LOG"
 fi
 
-# Step 3: Auto-select prompt based on whether extra repos were provided
-if [[ "$PROMPT_NAME_EXPLICIT" == false ]]; then
-    if [[ ${#RESOLVED_ADD_DIRS[@]} -gt 0 ]]; then
-        PROMPT_NAME="multi-repo"
-    else
-        PROMPT_NAME="${PROMPT_NAME:-prompt}"
-    fi
-fi
+# Step 3: Default prompt name
+PROMPT_NAME="${PROMPT_NAME:-prompt}"
 
 # Validate prompt name contains no path separators
 if [[ "$PROMPT_NAME" == */* || "$PROMPT_NAME" == *..* || "$PROMPT_NAME" =~ [[:space:]] ]]; then
@@ -255,43 +247,22 @@ if [[ "$PROMPT_NAME" == */* || "$PROMPT_NAME" == *..* || "$PROMPT_NAME" =~ [[:sp
     exit 1
 fi
 
-# Resolve prompt: direct base file takes precedence; otherwise assemble
-# base prompt.md + overlay. See plugins/code/prompts/overlays/README.md.
 DIRECT_PROMPT="$PLUGIN_ROOT/prompts/$PROMPT_NAME.md"
-OVERLAY_PROMPT="$PLUGIN_ROOT/prompts/overlays/$PROMPT_NAME.overlay.md"
-BASE_PROMPT="$PLUGIN_ROOT/prompts/prompt.md"
-
-# Ensure WORKDIR/$CLOSEDLOOP_STATE_DIR exists before writing the assembled file
-mkdir -p "$WORKDIR/$CLOSEDLOOP_STATE_DIR"
 
 if [[ -f "$DIRECT_PROMPT" ]]; then
     CLOSEDLOOP_PROMPT_FILE="$DIRECT_PROMPT"
-elif [[ -f "$OVERLAY_PROMPT" ]]; then
-    if [[ ! -f "$BASE_PROMPT" ]]; then
-        echo "ERROR: base prompt missing: $BASE_PROMPT" >&2
-        exit 1
-    fi
-    ASSEMBLED_PROMPT="$WORKDIR/$CLOSEDLOOP_STATE_DIR/prompt-assembled.md"
-    {
-        cat "$BASE_PROMPT"
-        printf '\n\n'
-        cat "$OVERLAY_PROMPT"
-    } > "$ASSEMBLED_PROMPT"
-    CLOSEDLOOP_PROMPT_FILE="$ASSEMBLED_PROMPT"
 else
-    echo "ERROR: Prompt '$PROMPT_NAME' not found (no $DIRECT_PROMPT, no $OVERLAY_PROMPT)" >&2
+    echo "ERROR: Prompt '$PROMPT_NAME' not found (no $DIRECT_PROMPT)" >&2
     echo "Available prompts:" >&2
     shopt -s nullglob
     for f in "$PLUGIN_ROOT/prompts/"*.md; do
         basename "$f" .md >&2
     done
-    for f in "$PLUGIN_ROOT/prompts/overlays/"*.overlay.md; do
-        name="$(basename "$f" .overlay.md)"
-        echo "$name (overlay)" >&2
-    done
     shopt -u nullglob
     exit 1
 fi
+
+mkdir -p "$WORKDIR/$CLOSEDLOOP_STATE_DIR"
 
 # Write full config to WORKDIR
 mkdir -p "$WORKDIR/$CLOSEDLOOP_STATE_DIR"

@@ -63,7 +63,7 @@ State is maintained in `$CLOSEDLOOP_WORKDIR/state.json` at each phase transition
 ```
 
 - `working-directory`: Path to the work directory containing the PRD (defaults to current directory)
-- `--prompt <name>`: Select an alternate orchestrator prompt. Resolves to `prompts/<name>.md` if present, otherwise to `prompts/prompt.md` assembled with `prompts/overlays/<name>.overlay.md`. Defaults to `prompt`. See `prompts/overlays/README.md` for the overlay authoring guide.
+- `--prompt <name>`: Select an alternate orchestrator prompt (`prompts/<name>.md`). Defaults to `prompt`.
 - `--prd <file>`: Explicitly specify the requirements file (auto-detected if omitted)
 
 **What it does:**

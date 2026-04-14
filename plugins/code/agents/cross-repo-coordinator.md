@@ -59,14 +59,6 @@ Parse the JSON output to get:
 
 **Write the discovery result to `$CLOSEDLOOP_WORKDIR/.workspace-repos.json`** so other agents can access it.
 
-### Step 1.1: Preserve Local Peer Markers
-
-`discover-repos.sh` marks `--add-dir` peers with `"local": true` in the `peers[]` output.
-
-When writing `.cross-repo-needs.json`:
-1. If a peer entry from `discover-repos.sh` has `"local": true`, preserve that value on the corresponding need entry
-2. Otherwise, write `"local": false`
-
 ### Step 2: Handle No Peers Case
 
 If `peers` array is empty:
@@ -97,7 +89,7 @@ Extract task IDs (T-X.Y format) that depend on each capability.
 
 ### Step 4: Write Capability Needs
 
-Write `$CLOSEDLOOP_WORKDIR/.cross-repo-needs.json`:
+Write `$CLOSEDLOOP_WORKDIR/.cross-repo-needs.json`. The `local` field on each need entry comes directly from the peer's `local` field in `discover-repos.sh` output (defaulting to `false` when absent — only `--add-dir` peers carry `local: true`):
 
 ```json
 {
