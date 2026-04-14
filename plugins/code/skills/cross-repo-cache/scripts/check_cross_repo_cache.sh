@@ -61,7 +61,8 @@ except Exception as e:
       repo_hashes="$repo_hashes$repo_path:$h "
     fi
   done <<< "$repo_paths"
-  current_hash=$(echo "$repo_hashes" | shasum -a 256 | cut -d' ' -f1)
+  # Sort for deterministic ordering regardless of JSON array order
+  current_hash=$(echo "$repo_hashes" | tr ' ' '\n' | LC_ALL=C sort | tr '\n' ' ' | shasum -a 256 | cut -d' ' -f1)
 else
   # No workspace repos file - hash the needs file alone
   current_hash=$(shasum -a 256 "$NEEDS_FILE" | cut -d' ' -f1)

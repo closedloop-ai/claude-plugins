@@ -27,7 +27,8 @@ if [ -f ".workspace-repos.json" ]; then
       repo_hashes="$repo_hashes$repo_path:$h "
     fi
   done <<< "$repo_paths"
-  echo "$repo_hashes" | shasum -a 256 | cut -d' ' -f1 > "$WORKDIR/.cross-repo-hash"
+  # Sort for deterministic ordering regardless of JSON array order
+  echo "$repo_hashes" | tr ' ' '\n' | LC_ALL=C sort | tr '\n' ' ' | shasum -a 256 | cut -d' ' -f1 > "$WORKDIR/.cross-repo-hash"
 else
   shasum -a 256 "$WORKDIR/.cross-repo-needs.json" | cut -d' ' -f1 > "$WORKDIR/.cross-repo-hash"
 fi

@@ -260,3 +260,5 @@ Here are the key phases you must complete:
 4. Do not over-engineer. Only ask questions for critical missing information.
 5. Document all changes in $CLOSEDLOOP_WORKDIR/log.md.
 6. Output `<promise>COMPLETE</promise>` ONLY when ALL phases done and `pending_tasks` is empty. If tasks remain, end naturally — the loop will restart.
+7. **Self-check before ANY tool use:** "Am I about to read or edit a file? If yes, delegate to a subagent instead."
+8. **Self-check before ANY `<promise>` output:** "Did I write state.json with the correct status?" If you output the promise WITHOUT writing state.json first, external systems will show "IN_PROGRESS" forever.
