@@ -5,6 +5,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from conftest import CLOSEDLOOP_STATE_DIR
 
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts"
 RUN_LOOP_SH = SCRIPTS_DIR / "run-loop.sh"
@@ -13,7 +14,7 @@ RUN_LOOP_SH = SCRIPTS_DIR / "run-loop.sh"
 @pytest.fixture()
 def workdir(tmp_path: Path) -> Path:
     """Create a minimal workdir with .closedloop-ai/ directory."""
-    (tmp_path / ".closedloop-ai").mkdir()
+    (tmp_path / CLOSEDLOOP_STATE_DIR).mkdir()
     (tmp_path / ".learnings").mkdir()
     return tmp_path
 
@@ -56,13 +57,14 @@ def _base_env(
     return textwrap.dedent(f"""\
         #!/bin/bash
         set -euo pipefail
+        CLOSEDLOOP_STATE_DIR="{CLOSEDLOOP_STATE_DIR}"
         SELF_LEARNING={self_learning}
         SCRIPTS_DIR="{SCRIPTS_DIR}"
         BLUE='\\033[0;34m'
         GREEN='\\033[0;32m'
         NC='\\033[0m'
         PROGRESS_LOG="/dev/null"
-        STATE_FILE="{workdir}/.closedloop-ai/state.local.md"
+        STATE_FILE="{workdir}/{CLOSEDLOOP_STATE_DIR}/state.local.md"
         WORKDIR="{workdir}"
         MAX_ITERATIONS=5
         COMPLETION_PROMISE="COMPLETE"
@@ -100,7 +102,7 @@ class TestCreateStateFilePersistsSelfLearning:
         result = _run_script(self._build_script(workdir, "true"), cwd=str(workdir))
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
-        content = (workdir / ".closedloop-ai" / "state.local.md").read_text()
+        content = (workdir / CLOSEDLOOP_STATE_DIR /"state.local.md").read_text()
         assert 'self_learning: "true"' in content
 
     def test_state_file_contains_self_learning_false(self, workdir: Path) -> None:
@@ -108,12 +110,12 @@ class TestCreateStateFilePersistsSelfLearning:
         result = _run_script(self._build_script(workdir, "false"), cwd=str(workdir))
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
-        content = (workdir / ".closedloop-ai" / "state.local.md").read_text()
+        content = (workdir / CLOSEDLOOP_STATE_DIR /"state.local.md").read_text()
         assert 'self_learning: "false"' in content
 
     def test_config_env_written_with_self_learning(self, workdir: Path) -> None:
         """create_state_file writes CLOSEDLOOP_SELF_LEARNING to config.env."""
-        config_env = workdir / ".closedloop-ai" / "config.env"
+        config_env = workdir / CLOSEDLOOP_STATE_DIR / "config.env"
         config_env.write_text("CLOSEDLOOP_WORKDIR=/tmp/test\n")
 
         result = _run_script(self._build_script(workdir, "true"), cwd=str(workdir))
@@ -151,10 +153,10 @@ class TestBootstrapLearningsCopy:
     def test_bootstrap_copies_adjacent_closedloop_ai_learnings(self, tmp_path: Path) -> None:
         """bootstrap_learnings copies org patterns from project-root .closedloop-ai/learnings."""
         project_root = tmp_path / "project"
-        workdir = project_root / ".closedloop-ai" / "work"
+        workdir = project_root / CLOSEDLOOP_STATE_DIR / "work"
         workdir.mkdir(parents=True)
 
-        org_dir = project_root / ".closedloop-ai" / "learnings"
+        org_dir = project_root / CLOSEDLOOP_STATE_DIR / "learnings"
         org_dir.mkdir(parents=True)
         (org_dir / "org-patterns.toon").write_text("pattern: use tests\n")
         (org_dir / "goal.yaml").write_text("active_goal: improve-reliability\n")
@@ -179,7 +181,7 @@ class TestSelfLearningResume:
 
     def test_get_field_reads_self_learning(self, workdir: Path) -> None:
         """get_field can extract self_learning from state frontmatter."""
-        state_file = workdir / ".closedloop-ai" / "state.local.md"
+        state_file = workdir / CLOSEDLOOP_STATE_DIR / "state.local.md"
         # Write frontmatter without indentation -- must start at column 0
         state_file.write_text(
             "---\n"

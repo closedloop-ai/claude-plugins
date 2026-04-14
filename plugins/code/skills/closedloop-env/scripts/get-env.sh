@@ -2,8 +2,11 @@
 # Reads ClosedLoop config and outputs environment variables
 # Usage: get-env.sh <CLOSEDLOOP_WORKDIR>
 
+# Single source of truth for the state directory name
+CLOSEDLOOP_STATE_DIR=".closedloop-ai"
+
 WORKDIR="${1:-.}"
-CONFIG_FILE="$WORKDIR/.closedloop-ai/config.env"
+CONFIG_FILE="$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "Error: Config file not found at $CONFIG_FILE" >&2

@@ -7,6 +7,9 @@
 
 set -euo pipefail
 
+# Single source of truth for the state directory name
+CLOSEDLOOP_STATE_DIR=".closedloop-ai"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -15,8 +18,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # State file location
-STATE_FILE=".closedloop-ai/closedloop-loop.local.md"
-PROGRESS_LOG=".closedloop-ai/closedloop-progress.log"
+STATE_FILE="$CLOSEDLOOP_STATE_DIR/closedloop-loop.local.md"
+PROGRESS_LOG="$CLOSEDLOOP_STATE_DIR/closedloop-progress.log"
 
 # Learning system paths
 LOCK_FILE=".learnings/.lock"
@@ -122,9 +125,9 @@ bootstrap_learnings() {
     local org_learnings_dir=""
     local workdir_state_dir="$(dirname "$workdir")"
     # Check project root first, then the workdir-adjacent .closedloop-ai state directory.
-    if [[ -d ".closedloop-ai/learnings" ]]; then
-      org_learnings_dir=".closedloop-ai/learnings"
-    elif [[ "$(basename "$workdir_state_dir")" == ".closedloop-ai" ]] && [[ -d "$workdir_state_dir/learnings" ]]; then
+    if [[ -d "$CLOSEDLOOP_STATE_DIR/learnings" ]]; then
+      org_learnings_dir="$CLOSEDLOOP_STATE_DIR/learnings"
+    elif [[ "$(basename "$workdir_state_dir")" == "$CLOSEDLOOP_STATE_DIR" ]] && [[ -d "$workdir_state_dir/learnings" ]]; then
       org_learnings_dir="$workdir_state_dir/learnings"
     fi
 
@@ -468,6 +471,7 @@ run_post_loop_review() {
   local formatter="$SCRIPTS_DIR/../tools/python/stream_formatter.py"
   local max_cycles="${POST_LOOP_REVIEW_CYCLES:-2}"
   local cycle=1
+  local consecutive_failures=0
 
   while [[ "$cycle" -le "$max_cycles" ]]; do
     echo -e "\n${BLUE}Review cycle $cycle of $max_cycles${NC}"
@@ -592,6 +596,18 @@ run_post_loop_review() {
 
     rm -f "$fix_output" "$fix_stderr"
 
+    if [[ "$fix_exit" -ne 0 ]]; then
+      echo -e "${YELLOW}Warning: Fix subprocess failed (exit $fix_exit). Retrying on next cycle.${NC}"
+      consecutive_failures=$((consecutive_failures + 1))
+      if [[ "$consecutive_failures" -ge 2 ]]; then
+        echo -e "${RED}Fix failed $consecutive_failures consecutive times. Skipping remaining cycles.${NC}"
+        log_progress "Post-loop fix failed $consecutive_failures consecutive times. Aborting."
+        return 0
+      fi
+    else
+      consecutive_failures=0
+    fi
+
     log_progress "Post-loop fix cycle $cycle completed (exit: $fix_exit)"
     cycle=$((cycle + 1))
   done
@@ -616,6 +632,7 @@ OPTIONS:
   --prompt <name>                Orchestrator prompt name from prompts/ folder (default: prompt)
   --max-iterations <n>           Maximum iterations (default: 50)
   --completion-promise '<text>'  Promise phrase to signal completion (default: COMPLETE)
+  --add-dir <path>               Add a secondary repository for multi-repo planning (repeatable)
   --self-learning                Enable self-learning (disabled by default)
   -h, --help                     Show this help message
 
@@ -671,12 +688,25 @@ PRD_FILE=""
 PROMPT_NAME=""
 MAX_ITERATIONS=50
 COMPLETION_PROMISE="COMPLETE"
+ADD_DIRS=()
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help)
       show_help
       exit 0
+      ;;
+    --add-dir)
+      if [[ -z "${2:-}" ]]; then
+        echo -e "${RED}Error: --add-dir requires a directory path${NC}" >&2
+        exit 1
+      fi
+      if [[ ! -d "$2" ]]; then
+        echo -e "${RED}Error: --add-dir path does not exist or is not a directory: $2${NC}" >&2
+        exit 1
+      fi
+      ADD_DIRS+=("$2")
+      shift 2
       ;;
     --prd)
       if [[ -z "${2:-}" ]]; then
@@ -696,7 +726,7 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       if [[ ! -f "$SCRIPTS_DIR/../prompts/$2.md" ]]; then
-        echo -e "${RED}Error: prompt file not found: prompts/$2.md${NC}" >&2
+        echo -e "${RED}Error: prompt not found: prompts/$2.md${NC}" >&2
         exit 1
       fi
       PROMPT_NAME="$2"
@@ -837,7 +867,7 @@ update_iteration() {
 
 # Create state file
 create_state_file() {
-  mkdir -p .closedloop-ai
+  mkdir -p "$CLOSEDLOOP_STATE_DIR"
 
   # WORKDIR is the closedloop work directory passed by the caller
   # (e.g., /path/to/worktree/.closedloop-ai/work)
@@ -851,6 +881,9 @@ create_state_file() {
   if [[ -n "$PRD_FILE" ]]; then
     prompt="$prompt --prd $PRD_FILE"
   fi
+  for add_dir in "${ADD_DIRS[@]+"${ADD_DIRS[@]}"}"; do
+    prompt="$prompt --add-dir \"$add_dir\""
+  done
 
   cat > "$STATE_FILE" <<EOF
 ---
@@ -869,8 +902,8 @@ $prompt
 EOF
 
   # Update config.env with self-learning flag (preserve other keys)
-  mkdir -p "$WORKDIR/.closedloop-ai"
-  CONFIG_FILE="$WORKDIR/.closedloop-ai/config.env"
+  mkdir -p "$WORKDIR/$CLOSEDLOOP_STATE_DIR"
+  CONFIG_FILE="$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
   TMP_FILE="${CONFIG_FILE}.tmp.$$"
   if [[ -f "$CONFIG_FILE" ]]; then
     sed -e '/^CLOSEDLOOP_SELF_LEARNING=/d' -e '/^CLOSEDLOOP_START_SHA=/d' "$CONFIG_FILE" > "$TMP_FILE"
@@ -1074,7 +1107,7 @@ main() {
     set +e
     (
       claude \
-          --allowed-tools=Bash,Grep,Glob,Read,Edit,Write,Task,TodoWrite,WebSearch,WebFetch,mcp__playwright__browser_navigate,mcp__playwright__browser_snapshot,mcp__playwright__browser_take_screenshot,mcp__playwright__browser_click,mcp__playwright__browser_type,mcp__playwright__browser_evaluate \
+          --allowed-tools=Bash,Grep,Glob,Read,Edit,Write,Task,TodoWrite,Skill,WebSearch,WebFetch,mcp__playwright__browser_navigate,mcp__playwright__browser_snapshot,mcp__playwright__browser_take_screenshot,mcp__playwright__browser_click,mcp__playwright__browser_type,mcp__playwright__browser_evaluate \
           --output-format stream-json \
           --verbose \
           -p "$full_prompt" 2>"$stderr_file" \
@@ -1125,13 +1158,25 @@ main() {
         consecutive_empty=0
       fi
 
+      # Scan the full per-iteration stream for the completion promise, not
+      # just the final `type==result` record. It was observed that the orchestrator may
+      # emit the promise in an intermediate assistant/subagent message and then continue
+      # producing output (tool_use, wrap-up text), which overwrite
+      # $result and cause the completion signal to be missed. $output_file is
+      # a per-iteration mktemp, so this cannot match a stale promise from a
+      # prior iteration.
+      local promise_found=0
+      if grep -qF "<promise>$completion_promise</promise>" "$output_file"; then
+        promise_found=1
+      fi
+
       rm -f "$output_file"
 
       # Post-iteration processing: learning capture, aggregation, citation verification
       post_iteration_processing "$effective_workdir" "$iteration"
 
       # Check for completion
-      if [[ "$result" == *"<promise>$completion_promise</promise>"* ]]; then
+      if [[ $promise_found -eq 1 ]]; then
         # Emit iteration perf event for the completing iteration
         local iter_end_epoch
         iter_end_epoch=$(date +%s)
@@ -1254,8 +1299,10 @@ cleanup_on_interrupt() {
   local pids
   pids=$(jobs -p 2>/dev/null)
   if [[ -n "$pids" ]]; then
+    # shellcheck disable=SC2086 -- intentional word splitting: $pids contains newline-separated PIDs from jobs -p
     kill $pids 2>/dev/null || true
     sleep 0.5
+    # shellcheck disable=SC2086
     kill -9 $pids 2>/dev/null || true
   fi
 

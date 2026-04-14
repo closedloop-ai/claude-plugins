@@ -5,6 +5,9 @@
 
 set -e
 
+# Single source of truth for the state directory name
+CLOSEDLOOP_STATE_DIR=".closedloop-ai"
+
 # Debug logging (redirected to WORKDIR once discovered)
 DEBUG_LOG="/dev/null"
 
@@ -25,7 +28,7 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 # Discover WORKDIR via session_id mapping (created by setup-closedloop.sh)
 CLOSEDLOOP_WORKDIR=""
 if [[ -n "$SESSION_ID" ]]; then
-    WORKDIR_FILE="$CWD/.closedloop-ai/session-$SESSION_ID.workdir"
+    WORKDIR_FILE="$CWD/$CLOSEDLOOP_STATE_DIR/session-$SESSION_ID.workdir"
     if [[ -f "$WORKDIR_FILE" ]]; then
         CLOSEDLOOP_WORKDIR=$(cat "$WORKDIR_FILE")
         echo "$(date): Found WORKDIR=$CLOSEDLOOP_WORKDIR from session mapping" >> "$DEBUG_LOG"
@@ -36,7 +39,7 @@ fi
 
 # Source closedloop config from WORKDIR if found
 if [[ -n "$CLOSEDLOOP_WORKDIR" ]]; then
-    CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env"
+    CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
     if [[ -f "$CLOSEDLOOP_CONFIG" ]]; then
         source "$CLOSEDLOOP_CONFIG"
     fi
@@ -179,7 +182,7 @@ if [[ "${CLOSEDLOOP_SELF_LEARNING:-false}" == "true" ]]; then
     # This ensures compute_success_rates.py always has data to work with.
     # ============================================================================
     AGENT_NAME_LOWER=$(echo "$AGENT_NAME" | tr '[:upper:]' '[:lower:]')
-    LEARNINGS_FILE="$CWD/.closedloop-ai/learnings-$AGENT_NAME_LOWER"
+    LEARNINGS_FILE="$CWD/$CLOSEDLOOP_STATE_DIR/learnings-$AGENT_NAME_LOWER"
 
     if [[ -f "$LEARNINGS_FILE" ]]; then
         echo "$(date): Reading injected patterns from $LEARNINGS_FILE" >> "$DEBUG_LOG"

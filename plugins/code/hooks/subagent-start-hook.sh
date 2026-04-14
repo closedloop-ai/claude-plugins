@@ -4,6 +4,9 @@
 
 set -e
 
+# Single source of truth for the state directory name
+CLOSEDLOOP_STATE_DIR=".closedloop-ai"
+
 # Debug logging (redirected to WORKDIR once discovered)
 DEBUG_LOG="/dev/null"
 
@@ -17,14 +20,14 @@ CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 
 # Early debug log (before WORKDIR discovery) to catch all SubagentStart events
-EARLY_DEBUG_LOG="${CWD:-.}/.closedloop-ai/subagent-start-hook-debug.log"
+EARLY_DEBUG_LOG="${CWD:-.}/$CLOSEDLOOP_STATE_DIR/subagent-start-hook-debug.log"
 mkdir -p "$(dirname "$EARLY_DEBUG_LOG")" 2>/dev/null
 echo "$(date): SubagentStart hook fired — agent_type=$AGENT_TYPE agent_id=$AGENT_ID session_id=$SESSION_ID" >> "$EARLY_DEBUG_LOG"
 
 # Discover WORKDIR via session_id mapping (created by setup-closedloop.sh)
 CLOSEDLOOP_WORKDIR=""
 if [[ -n "$SESSION_ID" ]]; then
-    WORKDIR_FILE="$CWD/.closedloop-ai/session-$SESSION_ID.workdir"
+    WORKDIR_FILE="$CWD/$CLOSEDLOOP_STATE_DIR/session-$SESSION_ID.workdir"
     if [[ -f "$WORKDIR_FILE" ]]; then
         CLOSEDLOOP_WORKDIR=$(cat "$WORKDIR_FILE")
         echo "$(date): Found WORKDIR=$CLOSEDLOOP_WORKDIR from session mapping" >> "$DEBUG_LOG"
@@ -35,7 +38,7 @@ fi
 
 # Source closedloop config from WORKDIR if found
 if [[ -n "$CLOSEDLOOP_WORKDIR" ]]; then
-    CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env"
+    CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
     if [[ -f "$CLOSEDLOOP_CONFIG" ]]; then
         source "$CLOSEDLOOP_CONFIG"
     fi
@@ -72,13 +75,13 @@ if [[ -f "$LOOP_CONFIG" ]] && [[ -n "$AGENT_TYPE" ]]; then
         MAX_ITERATIONS="${CLOSEDLOOP_MAX_ITERATIONS:-$CONFIG_MAX_ITERATIONS}"
         PRD_FILE="${CLOSEDLOOP_PRD_FILE:-}"
         WORKDIR="${CLOSEDLOOP_WORKDIR:-$CWD}"
-        STATE_FILE="$WORKDIR/.closedloop-ai/$STATE_FILE_SUFFIX"
+        STATE_FILE="$WORKDIR/$CLOSEDLOOP_STATE_DIR/$STATE_FILE_SUFFIX"
 
         echo "$(date): Loop agent detected: $AGENT_TYPE, state_file=$STATE_FILE" >> "$DEBUG_LOG"
 
         # Only create if state file doesn't exist (idempotent)
         if [[ ! -f "$STATE_FILE" ]] && [[ -n "$WORKDIR" ]]; then
-            mkdir -p "$WORKDIR/.closedloop-ai"
+            mkdir -p "$WORKDIR/$CLOSEDLOOP_STATE_DIR"
 
             PROMPT="Create a comprehensive implementation plan for the requirements in @${PRD_FILE}.
 
@@ -124,8 +127,8 @@ if [[ -z "$CLOSEDLOOP_WORKDIR" ]]; then
 fi
 
 # Write base environment (same for all agents, only write once)
-mkdir -p "$CWD/.closedloop-ai"
-BASE_ENV_FILE="$CWD/.closedloop-ai/env"
+mkdir -p "$CWD/$CLOSEDLOOP_STATE_DIR"
+BASE_ENV_FILE="$CWD/$CLOSEDLOOP_STATE_DIR/env"
 if [[ ! -f "$BASE_ENV_FILE" ]]; then
     cat > "$BASE_ENV_FILE" << EOF
 CLOSEDLOOP_WORKDIR=$CLOSEDLOOP_WORKDIR
@@ -150,12 +153,18 @@ CLOSEDLOOP_PRD_FILE=${CLOSEDLOOP_PRD_FILE:-}
 CLOSEDLOOP_PLAN_FILE=${CLOSEDLOOP_PLAN_FILE:-}
 CLOSEDLOOP_MAX_ITERATIONS=${CLOSEDLOOP_MAX_ITERATIONS:-10}
 CLAUDE_PLUGIN_ROOT=$PLUGIN_ROOT
+CLOSEDLOOP_ADD_DIRS=${CLOSEDLOOP_ADD_DIRS:-}
+CLOSEDLOOP_ADD_DIR_NAMES=${CLOSEDLOOP_ADD_DIR_NAMES:-}
+CLOSEDLOOP_REPO_MAP=${CLOSEDLOOP_REPO_MAP:-}
 
 IMPORTANT: When your instructions reference \${VARIABLE_NAME} (e.g., \${CLAUDE_PLUGIN_ROOT}), substitute it with the corresponding value from this block. For example, \${CLAUDE_PLUGIN_ROOT}/schemas/plan-schema.json means: $PLUGIN_ROOT/schemas/plan-schema.json
 
 When running bash commands that need these variables, first export them:
 export CLOSEDLOOP_WORKDIR=\"$CLOSEDLOOP_WORKDIR\"
 export CLAUDE_PLUGIN_ROOT=\"$PLUGIN_ROOT\"
+export CLOSEDLOOP_ADD_DIRS=\"${CLOSEDLOOP_ADD_DIRS:-}\"
+export CLOSEDLOOP_ADD_DIR_NAMES=\"${CLOSEDLOOP_ADD_DIR_NAMES:-}\"
+export CLOSEDLOOP_REPO_MAP=\"${CLOSEDLOOP_REPO_MAP:-}\"
 </closedloop-environment>"
 SUFFIX_PARTS="$ENV_INFO"
 
@@ -173,7 +182,7 @@ fi
 AGENT_NAME="$AGENT_NAME_ONLY"
 
 # Path to org-patterns.toon
-PATTERNS_FILE="$HOME/.closedloop-ai/learnings/org-patterns.toon"
+PATTERNS_FILE="$HOME/$CLOSEDLOOP_STATE_DIR/learnings/org-patterns.toon"
 
 # Only process learnings if we have agent name and patterns file
 if [[ -z "$AGENT_NAME" ]] || [[ ! -f "$PATTERNS_FILE" ]]; then
@@ -421,7 +430,7 @@ if [[ -n "$LEARNINGS" ]]; then
 
 $LEARNINGS"
     # Write learnings to agent-specific file
-    LEARNINGS_FILE="$CWD/.closedloop-ai/learnings-$AGENT_NAME_LOWER"
+    LEARNINGS_FILE="$CWD/$CLOSEDLOOP_STATE_DIR/learnings-$AGENT_NAME_LOWER"
     echo "$LEARNINGS" > "$LEARNINGS_FILE"
     echo "$(date): Wrote learnings to $LEARNINGS_FILE" >> "$DEBUG_LOG"
 fi

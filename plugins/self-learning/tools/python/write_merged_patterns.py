@@ -20,7 +20,8 @@ from compute_success_rates import parse_toon_patterns, serialize_toon
 
 # --- Constants ---
 
-DEFAULT_TOON_PATH = Path.home() / ".closedloop-ai" / "learnings" / "org-patterns.toon"
+CLOSEDLOOP_STATE_DIR = ".closedloop-ai"
+DEFAULT_TOON_PATH = Path.home() / CLOSEDLOOP_STATE_DIR / "learnings" / "org-patterns.toon"
 PATTERN_CAP = 50
 
 VALID_CATEGORIES = {"mistake", "pattern", "convention", "insight"}

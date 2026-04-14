@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import CLOSEDLOOP_STATE_DIR
 
 HOOK_PATH = Path(__file__).resolve().parent.parent.parent / "hooks" / "subagent-start-hook.sh"
 
@@ -20,12 +21,12 @@ def session_env(tmp_path: Path) -> tuple[Path, Path, str]:
     workdir = tmp_path / "workdir"
 
     # Create session mapping
-    session_dir = cwd / ".closedloop-ai"
+    session_dir = cwd / CLOSEDLOOP_STATE_DIR
     session_dir.mkdir(parents=True)
     (session_dir / f"session-{session_id}.workdir").write_text(str(workdir))
 
     # Create workdir structure
-    closedloop_dir = workdir / ".closedloop-ai"
+    closedloop_dir = workdir / CLOSEDLOOP_STATE_DIR
     closedloop_dir.mkdir(parents=True)
 
     learnings_dir = workdir / ".learnings"
@@ -41,14 +42,18 @@ def run_start_hook(
     agent_id: str = "agent-456",
     self_learning: bool = False,
     env_overrides: dict[str, str] | None = None,
+    config_values: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     """Invoke subagent-start-hook.sh with crafted JSON input."""
     # Write config.env
-    workdir_file = Path(cwd) / ".closedloop-ai" / f"session-{session_id}.workdir"
+    workdir_file = Path(cwd) / CLOSEDLOOP_STATE_DIR / f"session-{session_id}.workdir"
     workdir = workdir_file.read_text().strip()
-    config_path = Path(workdir) / ".closedloop-ai" / "config.env"
+    config_path = Path(workdir) / CLOSEDLOOP_STATE_DIR / "config.env"
     sl_value = "true" if self_learning else "false"
-    config_path.write_text(f"CLOSEDLOOP_SELF_LEARNING={sl_value}\n")
+    config_lines = [f"CLOSEDLOOP_SELF_LEARNING={sl_value}"]
+    if config_values:
+        config_lines.extend(f"{key}={value}" for key, value in config_values.items())
+    config_path.write_text("\n".join(config_lines) + "\n")
 
     payload = json.dumps(
         {
@@ -103,7 +108,7 @@ class TestSelfLearningOff:
 
         # Create a patterns file in HOME to verify it's NOT read
         home_dir = workdir / "fake_home"
-        patterns_dir = home_dir / ".closedloop-ai" / "learnings"
+        patterns_dir = home_dir / CLOSEDLOOP_STATE_DIR / "learnings"
         patterns_dir.mkdir(parents=True)
         (patterns_dir / "org-patterns.toon").write_text(
             '# TOON\npatterns[\n  p1,testing,"Test pattern",high,5,0.8,"",*,"test context"\n]\n'
@@ -140,6 +145,29 @@ class TestSelfLearningOff:
         content = agent_type_file.read_text()
         assert "code:implementation-subagent" in content
 
+    def test_includes_multi_repo_exports_in_additional_context(
+        self, session_env: tuple[Path, Path, str]
+    ) -> None:
+        """Hook includes export commands for multi-repo env vars in additionalContext."""
+        cwd, _workdir, session_id = session_env
+        result = run_start_hook(
+            str(cwd),
+            session_id,
+            self_learning=False,
+            config_values={
+                "CLOSEDLOOP_ADD_DIRS": '"/tmp/repo-a|/tmp/repo-b"',
+                "CLOSEDLOOP_ADD_DIR_NAMES": '"repo-a|repo-b"',
+                "CLOSEDLOOP_REPO_MAP": '"repo-a=/tmp/repo-a|repo-b=/tmp/repo-b"',
+            },
+        )
+        assert result.returncode == 0, f"Hook failed: {result.stderr}"
+
+        output = json.loads(result.stdout.strip())
+        ctx = output["hookSpecificOutput"]["additionalContext"]
+        assert 'export CLOSEDLOOP_ADD_DIRS="/tmp/repo-a|/tmp/repo-b"' in ctx
+        assert 'export CLOSEDLOOP_ADD_DIR_NAMES="repo-a|repo-b"' in ctx
+        assert 'export CLOSEDLOOP_REPO_MAP="repo-a=/tmp/repo-a|repo-b=/tmp/repo-b"' in ctx
+
 
 class TestSelfLearningOn:
     """Tests that subagent-start-hook.sh proceeds to patterns injection when enabled."""
@@ -156,7 +184,7 @@ class TestSelfLearningOn:
 
         # Create patterns file under fake HOME
         home_dir = workdir / "fake_home"
-        patterns_dir = home_dir / ".closedloop-ai" / "learnings"
+        patterns_dir = home_dir / CLOSEDLOOP_STATE_DIR / "learnings"
         patterns_dir.mkdir(parents=True)
         (patterns_dir / "org-patterns.toon").write_text(
             '# TOON org-patterns\npatterns[\n'
@@ -278,7 +306,7 @@ def test_injects_when_only_plain_awk_is_available(session_env: tuple[Path, Path,
     cwd, workdir, session_id = session_env
 
     home_dir = workdir / "plain-awk-home"
-    patterns_dir = home_dir / ".closedloop-ai" / "learnings"
+    patterns_dir = home_dir / CLOSEDLOOP_STATE_DIR / "learnings"
     patterns_dir.mkdir(parents=True)
     (patterns_dir / "org-patterns.toon").write_text(
         "# TOON org-patterns\npatterns[\n"

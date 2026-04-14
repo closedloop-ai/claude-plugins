@@ -21,15 +21,25 @@ Read `$CLOSEDLOOP_WORKDIR/.cross-repo-needs.json` for the list of needed capabil
 
 Read `$CLOSEDLOOP_WORKDIR/.discovery-cache/{peer_name}.json` for each peer to see verification results.
 
-### Step 2: Identify Missing Capabilities
+### Step 2: Filter Out Local Repos
 
-For each capability in the needs file, check the discovery cache:
+Before evaluating capabilities, inspect each peer entry in `.cross-repo-needs.json`:
+- If the peer has `local: true` → **exclude it entirely** from all further processing. These are add-dir repos whose tasks are already incorporated into the plan; there is nothing to build in a remote repo.
+- Only process peers where `local` is absent or `local: false`.
+
+Track the count of excluded peers for the output summary.
+
+### Step 3: Identify Missing Capabilities
+
+For each **non-local** peer's capabilities, check the discovery cache:
 - If `exists: true` → skip (already exists in peer)
 - If `exists: false` → include in PRD
 
-### Step 3: Generate PRDs
+### Step 4: Generate PRDs
 
-For each peer with missing capabilities, create `$CLOSEDLOOP_WORKDIR/cross-repo-prd-{peer_name}.md`:
+For each non-local peer with missing capabilities, create `$CLOSEDLOOP_WORKDIR/cross-repo-prd-{peer_name}.md`.
+
+**Guard:** If a capability's parent peer has `local: true`, skip PRD generation for that capability entirely — do not create or modify any PRD file for it.
 
 **IMPORTANT:** Before writing any file, you MUST first attempt to Read it. This is required by Claude Code's safety system:
 1. Try to Read the target file path
@@ -67,7 +77,7 @@ This document describes capabilities needed from **{peer_name}** to support impl
 ...
 ```
 
-### Step 4: Update plan.json
+### Step 5: Update plan.json
 
 **Note:** Read `$CLOSEDLOOP_WORKDIR/plan.json` first before editing it.
 
@@ -91,6 +101,7 @@ PRDS_GENERATED:
 - PRDs written: [list of files]
 - Missing capabilities: [count]
 - Existing capabilities: [count]
+- Local repos skipped: [count]
 - plan.json updated: yes/no
 ```
 
@@ -98,4 +109,5 @@ If no missing capabilities:
 ```
 NO_PRDS_NEEDED:
 - All capabilities exist in peer repos
+- Local repos skipped: [count]
 ```

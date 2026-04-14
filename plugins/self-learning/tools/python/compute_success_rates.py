@@ -14,6 +14,8 @@ import re
 import sys
 from pathlib import Path
 
+CLOSEDLOOP_STATE_DIR = ".closedloop-ai"
+
 
 # --- TOON parsing ---
 
@@ -363,7 +365,7 @@ def main() -> int:
 
     workdir = Path(args.workdir).resolve()
     outcomes_path = workdir / ".learnings" / "outcomes.log"
-    toon_path = Path(args.toon_file) if args.toon_file else Path.home() / ".closedloop-ai" / "learnings" / "org-patterns.toon"
+    toon_path = Path(args.toon_file) if args.toon_file else Path.home() / CLOSEDLOOP_STATE_DIR / "learnings" / "org-patterns.toon"
 
     # Exit cleanly if files don't exist
     if not toon_path.exists():

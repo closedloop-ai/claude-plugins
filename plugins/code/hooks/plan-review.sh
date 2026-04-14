@@ -3,13 +3,16 @@
 # Triggers when Claude exits plan mode to get a second opinion on the plan
 # The plan content is available directly from tool_response.plan
 
+# Single source of truth for the state directory name
+CLOSEDLOOP_STATE_DIR=".closedloop-ai"
+
 # Read hook input from stdin (must happen before CWD extraction)
 INPUT=$(cat)
 
-# Debug logging — keeps at most 15 log files in .closedloop-ai/plan-review-logs/
+# Debug logging — keeps at most 15 log files in $CLOSEDLOOP_STATE_DIR/plan-review-logs/
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 CWD="${CWD:-$PWD}"
-LOG_DIR="$CWD/.closedloop-ai/plan-review-logs"
+LOG_DIR="$CWD/$CLOSEDLOOP_STATE_DIR/plan-review-logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/$(date +%Y%m%d-%H%M%S).log"
 

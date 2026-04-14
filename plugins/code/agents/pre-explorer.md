@@ -29,13 +29,15 @@ Write these files to `$CLOSEDLOOP_WORKDIR/`:
 Check which output files already exist:
 ```bash
 ls $CLOSEDLOOP_WORKDIR/requirements-extract.json $CLOSEDLOOP_WORKDIR/code-map.json $CLOSEDLOOP_WORKDIR/investigation-log.md 2>/dev/null
+ls $CLOSEDLOOP_WORKDIR/code-map-*.json 2>/dev/null
 ```
 
-- If **ALL three** files exist: output `PRE_EXPLORATION_CACHED` and stop immediately.
+- If **ALL three** primary files exist AND all expected `code-map-{name}.json` files exist for every repo in `CLOSEDLOOP_REPO_MAP`: output `PRE_EXPLORATION_CACHED` and stop immediately.
 - If **some** files exist, skip the steps that produced them:
   - `requirements-extract.json` exists → skip Steps 1-3, read it for search terms
   - `code-map.json` exists → skip Steps 4-5, read it for file list
   - `investigation-log.md` exists → skip Steps 6-7, use as-is
+  - `code-map-{name}.json` exists for a given repo → skip re-exploration for that repo in the Multi-Repo Exploration section
 - If **no** files exist: proceed with all steps.
 
 ## Step 1: Read and Parse the PRD
@@ -90,6 +92,98 @@ If attachments exist:
   ]
 }
 ```
+
+## Multi-Repo Exploration
+
+**Skip this entire section if `CLOSEDLOOP_ADD_DIRS` is empty or unset.**
+
+If `CLOSEDLOOP_ADD_DIRS` is set (non-empty), iterate over each `name=path` entry in `CLOSEDLOOP_REPO_MAP`. The variable uses pipe (`|`) as the separator between entries. For example:
+
+```
+CLOSEDLOOP_REPO_MAP="frontend=/workspace/ui|backend=/workspace/api"
+```
+
+Parse each entry as `{name}={path}`. For each repo:
+
+### Per-Repo Steps
+
+**A. Skip check**: If `$CLOSEDLOOP_WORKDIR/code-map-{name}.json` already exists, skip this repo (it was explored in a prior run).
+
+**B. Read repo identity files** (if they exist):
+- Read `{path}/CLAUDE.md` — captures project conventions, architecture notes, and key directories
+- Read `{path}/.closedloop-ai/.repo-identity.json` — captures repo metadata (tech stack, entry points, owners)
+- Note what was found; these files inform which patterns to search for in the next step.
+
+**C. Run Glob/Grep searches rooted at `{path}`**, mirroring Steps 4-5 of the primary exploration:
+1. **Entity-based searches**: For each entity from `requirements-extract.json`, run `Glob` patterns `{path}/**/*{Entity}*`
+2. **Pattern searches**: Look for structural patterns inside `{path}`:
+   - `{path}/**/routes*`, `{path}/**/api*` — API routes
+   - `{path}/**/components*`, `{path}/**/screens*` — UI components
+   - `{path}/**/services*`, `{path}/**/hooks*` — Business logic
+   - `{path}/**/test*`, `{path}/**/*.test.*`, `{path}/**/*.spec.*` — Tests
+   - `{path}/**/config*`, `{path}/**/*.config.*` — Configuration
+3. **Project structure**: Run `Glob` for `{path}/**/package.json`, `{path}/**/pyproject.toml`, `{path}/**/Cargo.toml` to understand the repo type
+4. **Technology searches**: Use `Grep` for imports/usages of technologies mentioned in `requirements-extract.json`, scoped to `{path}`
+
+**D. Classify discovered files** using the same table from Step 5:
+
+| Convention | Role |
+|-----------|------|
+| `routes/`, `api/`, `endpoints/` | `route` |
+| `screens/`, `pages/`, `views/` | `screen` |
+| `components/` | `component` |
+| `hooks/`, `use*.ts` | `hook` |
+| `services/`, `clients/` | `service` |
+| `utils/`, `helpers/`, `lib/` | `util` |
+| `test`, `.test.`, `.spec.` | `test` |
+| `config`, `.config.`, `settings` | `config` |
+
+Assign confidence scores using the same 0-1 scale as Step 5.
+
+**E. Write `$CLOSEDLOOP_WORKDIR/code-map-{name}.json`** using the same schema as `code-map.json`:
+
+```json
+{
+  "feature": "Feature name from PRD",
+  "scope": "Cross-repo context for {name} ({path})",
+  "platforms": [],
+  "modules": ["relative/module/path"],
+  "files": [
+    {
+      "path": "{path}/src/components/Example.tsx",
+      "role": "component",
+      "confidence": 0.8,
+      "neighbors": []
+    }
+  ],
+  "parity_risk": false,
+  "parity_reasons": []
+}
+```
+
+Note: file paths in `code-map-{name}.json` use the absolute path rooted at `{path}` so the plan-draft-writer can locate them unambiguously.
+
+**F. Append a `## Cross-Repo Context` subsection to `$CLOSEDLOOP_WORKDIR/investigation-log.md`**:
+
+```markdown
+## Cross-Repo Context: {name} ({path})
+
+### Repo Identity
+[Summary of CLAUDE.md and .repo-identity.json findings, or "No identity files found"]
+
+### Files Discovered
+[Relevant files found in this repo with roles and confidence scores]
+
+### Key Patterns
+[Architecture patterns, conventions, integration points observed in this repo]
+
+### Relevance to PRD
+[How this repo relates to the current task/feature being planned]
+```
+
+If `investigation-log.md` does not yet exist, create it with the standard structure from Step 7, then append the `## Cross-Repo Context` subsection. If the file already exists, append the subsection at the end.
+
+Process all repos in `CLOSEDLOOP_REPO_MAP` before moving on to Step 4.
 
 ## Step 4: Run Targeted Codebase Searches
 

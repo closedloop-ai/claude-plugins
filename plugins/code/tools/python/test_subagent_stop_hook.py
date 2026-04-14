@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import CLOSEDLOOP_STATE_DIR
 
 HOOK_PATH = Path(__file__).resolve().parent.parent.parent / "hooks" / "subagent-stop-hook.sh"
 
@@ -20,12 +21,12 @@ def session_env(tmp_path: Path) -> tuple[Path, Path, str]:
     workdir = tmp_path / "workdir"
 
     # Create session mapping
-    session_dir = cwd / ".closedloop-ai"
+    session_dir = cwd / CLOSEDLOOP_STATE_DIR
     session_dir.mkdir(parents=True)
     (session_dir / f"session-{session_id}.workdir").write_text(str(workdir))
 
     # Create workdir structure
-    closedloop_dir = workdir / ".closedloop-ai"
+    closedloop_dir = workdir / CLOSEDLOOP_STATE_DIR
     closedloop_dir.mkdir(parents=True)
 
     learnings_dir = workdir / ".learnings"
@@ -51,9 +52,9 @@ def run_stop_hook(
 ) -> subprocess.CompletedProcess:
     """Invoke subagent-stop-hook.sh with crafted JSON input."""
     # Write config.env
-    workdir_file = Path(cwd) / ".closedloop-ai" / f"session-{session_id}.workdir"
+    workdir_file = Path(cwd) / CLOSEDLOOP_STATE_DIR / f"session-{session_id}.workdir"
     workdir = workdir_file.read_text().strip()
-    config_path = Path(workdir) / ".closedloop-ai" / "config.env"
+    config_path = Path(workdir) / CLOSEDLOOP_STATE_DIR / "config.env"
     sl_value = "true" if self_learning else "false"
     config_path.write_text(
         f"CLOSEDLOOP_SELF_LEARNING={sl_value}\n{config_env_extra}"

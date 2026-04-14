@@ -8,6 +8,9 @@
 
 set -e
 
+# Single source of truth for the state directory name
+CLOSEDLOOP_STATE_DIR=".closedloop-ai"
+
 # Debug logging (redirected to WORKDIR once discovered)
 DEBUG_LOG="/dev/null"
 
@@ -122,7 +125,7 @@ esac
 # Discover WORKDIR via session_id mapping (same pattern as subagent-start-hook.sh)
 CLOSEDLOOP_WORKDIR=""
 if [[ -n "$SESSION_ID" ]]; then
-    WORKDIR_FILE="$CWD/.closedloop-ai/session-$SESSION_ID.workdir"
+    WORKDIR_FILE="$CWD/$CLOSEDLOOP_STATE_DIR/session-$SESSION_ID.workdir"
     if [[ -f "$WORKDIR_FILE" ]]; then
         CLOSEDLOOP_WORKDIR=$(cat "$WORKDIR_FILE")
     fi
@@ -139,7 +142,7 @@ DEBUG_LOG="$CLOSEDLOOP_WORKDIR/.learnings/pretooluse-hook-debug.log"
 echo "$(date): PreToolUse hook started, tool=$TOOL_NAME" >> "$DEBUG_LOG"
 
 # Source closedloop config and skip learning injection if disabled
-CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env"
+CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
 if [[ -f "$CLOSEDLOOP_CONFIG" ]]; then
     source "$CLOSEDLOOP_CONFIG"
 fi
@@ -148,7 +151,7 @@ if [[ "${CLOSEDLOOP_SELF_LEARNING:-false}" != "true" ]]; then
 fi
 
 # Path to org-patterns.toon
-PATTERNS_FILE="$HOME/.closedloop-ai/learnings/org-patterns.toon"
+PATTERNS_FILE="$HOME/$CLOSEDLOOP_STATE_DIR/learnings/org-patterns.toon"
 
 if [[ ! -f "$PATTERNS_FILE" ]]; then
     echo "$(date): No patterns file found, exiting" >> "$DEBUG_LOG"

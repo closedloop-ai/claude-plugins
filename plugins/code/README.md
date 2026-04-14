@@ -63,7 +63,7 @@ State is maintained in `$CLOSEDLOOP_WORKDIR/state.json` at each phase transition
 ```
 
 - `working-directory`: Path to the work directory containing the PRD (defaults to current directory)
-- `--prompt <name>`: Select an alternate orchestrator prompt from `prompts/` (defaults to `prompt`)
+- `--prompt <name>`: Select an alternate orchestrator prompt (`prompts/<name>.md`). Defaults to `prompt`.
 - `--prd <file>`: Explicitly specify the requirements file (auto-detected if omitted)
 
 **What it does:**
@@ -276,7 +276,7 @@ Cleans up session-level artifacts: removes the session workdir mapping file, cle
 
 Runs when any subagent starts. Performs three tasks:
 
-1. **Loop agent state creation**: If the agent type appears in `loop-agents.json`, creates the initial state file in `{WORKDIR}/.closedloop/` if it does not already exist.
+1. **Loop agent state creation**: If the agent type appears in `loop-agents.json`, creates the initial state file in `{WORKDIR}/.closedloop-ai/` if it does not already exist.
 2. **Agent type tracking**: Writes the agent type, short name, and start timestamp to `.agent-types/{agent_id}` so the stop hook can track timing and type.
 3. **Learning injection**: Reads `~/.closedloop-ai/learnings/org-patterns.toon`, filters patterns matching the agent's name, sorts by category priority (mistake > convention > pattern > insight) and confidence, and injects up to 15 patterns into the agent's context via `additionalContext`. Also injects environment variables (`CLOSEDLOOP_WORKDIR`, `CLAUDE_PLUGIN_ROOT`, etc.) into every agent's context.
 
@@ -293,7 +293,7 @@ Runs when any subagent exits. Performs:
 
 Implements the validation loop for agents registered in `loop-agents.json`. When an agent exits:
 
-1. Reads the loop state file (`{WORKDIR}/.closedloop/{state_file_suffix}`)
+1. Reads the loop state file (`{WORKDIR}/.closedloop-ai/{state_file_suffix}`)
 2. Checks whether the agent output contains the expected completion promise (e.g., `<promise>PLAN_VALIDATED</promise>`)
 3. If the promise is present, optionally runs a validation script (e.g., `validate-plan.sh`)
 4. If validation passes, allows the agent to exit (returns nothing)
@@ -346,7 +346,7 @@ Defines the structure of `code-map.json` produced by the `pre-explorer` agent. R
 
 ### `setup-closedloop.sh`
 
-Initializes a ClosedLoop session. Parses arguments (`--prd`, `--max-iterations`, `--prompt`, positional workdir), auto-detects the PRD file by checking common patterns (`prd.md`, `prd.pdf`, `requirements.md`, etc.), establishes the session-to-workdir mapping, validates the prompt name, and writes `{WORKDIR}/.closedloop/config.env` with all environment variables.
+Initializes a ClosedLoop session. Parses arguments (`--prd`, `--max-iterations`, `--prompt`, positional workdir), auto-detects the PRD file by checking common patterns (`prd.md`, `prd.pdf`, `requirements.md`, etc.), establishes the session-to-workdir mapping, validates the prompt name, and writes `{WORKDIR}/.closedloop-ai/config.env` with all environment variables.
 
 ### `run-loop.sh`
 
@@ -485,7 +485,7 @@ After a full run, the work directory will contain:
   log.md                     # Change log appended each phase
   perf.jsonl                 # Agent timing events
   reviews/                   # Critic review files (*.review.json)
-  .closedloop/config.env     # Session environment variables
+  .closedloop-ai/config.env   # Session environment variables
   .learnings/                # Self-learning artifacts
     pending/                 # Unprocessed learning JSON files
     outcomes.log             # Pattern application outcomes

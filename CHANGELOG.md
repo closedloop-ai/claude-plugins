@@ -14,6 +14,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Updated agent output path references from `.claude/runs/` to `.closedloop-ai/runs/` in `agent-prompt-generator`
 - Updated bootstrap configuration documentation in `agent-bootstrap.md` to reference `.closedloop-ai/` state directory
 
+### code v1.9.0
+
+#### Added
+- Multi-repo planning and exploration support via new `--add-dir` flag in `run-loop.sh`, exposing `CLOSEDLOOP_ADD_DIRS` and `CLOSEDLOOP_REPO_MAP` env vars to downstream agents
+- `pre-explorer` agent produces per-repo code maps (`code-map-{name}.json`) when secondary repos are supplied
+- `plan-draft-writer` agent emits multi-repo plans with a `## Repositories` table and `@{repo}:path` task prefixes
+- `repositories` map field added to the plan root schema in `plan-schema.json` for multi-repo plan traceability, keyed by repo short-name with `path` and `isPrimary` metadata
+- Tier 0 explicit-directory discovery and dedup helpers in `discover-repos.sh`, with structured JSON output and a `local: true` marker on `--add-dir` peers
+- Tests for `discover-repos.sh` and `setup-closedloop.sh` (`test_discover_repos.py`, `test_setup_closedloop.py`) plus new multi-repo cases in `test_validate_plan.py`
+
+#### Fixed
+- `run-loop.sh` now scans the full per-iteration stream for the `<promise>` completion marker instead of only inspecting the final `type==result` record, preventing missed completion signals when the orchestrator emits the promise in an intermediate message followed by additional tool_use or wrap-up output
+- `discover-repos.sh` now filters add-dirs that are ancestors of the workdir and deduplicates repo entries to prevent duplicate discovery results
+
+#### Changed
+- Consolidated Tier 0 `discover-repos.sh` tests into a single scenario-driven harness, replacing the prior fragmented per-case test files
+- Migrated workdir internal state directory from `.closedloop/` to `.closedloop-ai/` across hooks, setup scripts, and loop state management
+- Established `CLOSEDLOOP_STATE_DIR` constant as single source of truth for state directory name across shell scripts
+- Added `Skill` to `plan-evaluator` agent's allowed tools to enable `code:plan-validate` skill execution
+
 ### code v1.6.0
 
 #### Changed
@@ -45,6 +65,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Domain critic pass injection in fast-path reviewer via `{DOMAIN_CRITIC_PASS}` placeholder, enabling domain expert review within single-agent fast-path runs
 - Replaced shared prompt reasoning checklist with structured `PREMISE / EVIDENCE / GUARD CHECK / SEVERITY CHECK` analysis framework
 
+### judges v1.5.1
+
+#### Changed
+- Migrated perf-substep state paths from `.closedloop/` to `.closedloop-ai/` in `run-judges` skill telemetry instrumentation
+
 ### judges v1.5.0
 
 #### Changed
@@ -54,6 +79,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - Version bump to align with cross-plugin `.closedloop-ai/` directory migration
+
+### self-learning v1.1.1
+
+#### Changed
+- Established `CLOSEDLOOP_STATE_DIR` constant as single source of truth for state directory name in `bootstrap-learnings.sh`, `compute_success_rates.py`, and `write_merged_patterns.py`
 
 ### self-learning v1.1.0
 

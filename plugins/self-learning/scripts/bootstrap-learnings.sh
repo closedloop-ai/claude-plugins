@@ -10,12 +10,16 @@
 
 set -e
 
+# Single source of truth for the state directory name
+CLOSEDLOOP_STATE_DIR=".closedloop-ai"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LEARNINGS_DIR="${1:-.closedloop-ai/learnings}"
+LEARNINGS_DIR="${1:-$CLOSEDLOOP_STATE_DIR/learnings}"
+PROJECT_LEARNINGS_SUFFIX="/$CLOSEDLOOP_STATE_DIR/learnings"
 
 # Derive PROJECT_DIR for gitignore updates (only if using default path)
-if [[ "$LEARNINGS_DIR" == ".closedloop-ai/learnings" ]] || [[ "$LEARNINGS_DIR" == *"/.closedloop-ai/learnings" ]]; then
-    PROJECT_DIR="${LEARNINGS_DIR%/.closedloop-ai/learnings}"
+if [[ "$LEARNINGS_DIR" == "$CLOSEDLOOP_STATE_DIR/learnings" ]] || [[ "$LEARNINGS_DIR" == *"$PROJECT_LEARNINGS_SUFFIX" ]]; then
+    PROJECT_DIR="${LEARNINGS_DIR%"$PROJECT_LEARNINGS_SUFFIX"}"
     PROJECT_DIR="${PROJECT_DIR:-.}"
     UPDATE_PROJECT_GITIGNORE=true
 else
@@ -263,7 +267,7 @@ main() {
     init_retention_yaml
     init_gitignore
 
-    # Only update project .gitignore if creating org learnings in .closedloop-ai/learnings
+    # Only update project .gitignore if creating org learnings in $CLOSEDLOOP_STATE_DIR/learnings
     if [[ "$UPDATE_PROJECT_GITIGNORE" == "true" ]]; then
         update_project_gitignore
     fi

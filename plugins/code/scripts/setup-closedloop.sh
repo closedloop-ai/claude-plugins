@@ -4,6 +4,9 @@
 
 set -e
 
+# Single source of truth for the state directory name
+CLOSEDLOOP_STATE_DIR=".closedloop-ai"
+
 DEBUG_LOG="/tmp/setup-closedloop-debug.log"
 echo "$(date): Setup started, PID=$$, PPID=$PPID, args: $*" >> "$DEBUG_LOG"
 
@@ -17,6 +20,75 @@ PLAN_FILE=""
 MAX_ITERATIONS=10
 PROMPT_NAME=""
 POSITIONAL_ARGS=()
+ADD_DIRS=()
+
+array_contains() {
+    local needle="$1"
+    shift
+
+    local value
+    for value in "$@"; do
+        if [[ "$value" == "$needle" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+make_unique_repo_name() {
+    local base_name="$1"
+    local repo_path="$2"
+    shift 2
+    local used_names=("$@")
+
+    local path_without_root="${repo_path#/}"
+    local path_parts=()
+    local old_ifs="$IFS"
+    IFS='/'
+    read -r -a path_parts <<< "$path_without_root"
+    IFS="$old_ifs"
+
+    local last_index=$((${#path_parts[@]} - 1))
+    local suffix_end_index="$last_index"
+    local start_index="$last_index"
+    if [[ ${#path_parts[@]} -gt 0 ]] && [[ "${path_parts[$last_index]}" == "$base_name" ]]; then
+        start_index=$((last_index - 1))
+        suffix_end_index=$((last_index - 1))
+    fi
+
+    local candidate=""
+    local suffix=""
+    local counter=2
+    while [[ $start_index -ge 0 ]]; do
+        suffix="$(IFS='-'; echo "${path_parts[*]:$start_index:$((suffix_end_index - start_index + 1))}")"
+        candidate="$base_name-$suffix"
+        if ! array_contains "$candidate" "${used_names[@]}"; then
+            echo "$candidate"
+            return 0
+        fi
+        start_index=$((start_index - 1))
+    done
+
+    candidate="$base_name-$counter"
+    while array_contains "$candidate" "${used_names[@]}"; do
+        counter=$((counter + 1))
+        candidate="$base_name-$counter"
+    done
+
+    echo "$candidate"
+}
+
+resolve_directory_path() {
+    local raw_dir="$1"
+    local resolved_path=""
+
+    if ! resolved_path="$(cd "$raw_dir" 2>/dev/null && pwd -P)"; then
+        return 1
+    fi
+
+    echo "$resolved_path"
+}
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -40,6 +112,14 @@ while [[ $# -gt 0 ]]; do
             PROMPT_NAME="$2"
             shift 2
             ;;
+        --add-dir)
+            if [[ -z "${2:-}" ]]; then
+                echo "Error: --add-dir requires a directory path" >&2
+                exit 1
+            fi
+            ADD_DIRS+=("$2")
+            shift 2
+            ;;
         -*)
             echo "Unknown option: $1" >&2
             shift
@@ -57,12 +137,44 @@ if [[ ${#POSITIONAL_ARGS[@]} -gt 0 ]]; then
     WORKDIR="${POSITIONAL_ARGS[0]}"
 fi
 
-PROMPT_NAME="${PROMPT_NAME:-prompt}"
 WORKDIR="${WORKDIR:-.}"
-# Convert to absolute path for consistent hook injection
-if [[ ! "$WORKDIR" = /* ]]; then
-    WORKDIR="$PWD/$WORKDIR"
+# Resolve to a canonical absolute path so primary-vs-secondary comparisons are reliable.
+if ! WORKDIR="$(resolve_directory_path "$WORKDIR")"; then
+    echo "Error: workdir path does not exist or is not a directory: ${POSITIONAL_ARGS[0]:-.}" >&2
+    exit 1
 fi
+
+PRIMARY_REPO_NAME="$(basename "$WORKDIR")"
+PRIMARY_REPO_NAME="${PRIMARY_REPO_NAME:-primary}"
+
+# Post-loop: resolve and validate each ADD_DIRS entry
+RESOLVED_ADD_DIRS=()
+ADD_DIR_NAMES=()
+USED_REPO_NAMES=("$PRIMARY_REPO_NAME")
+for raw_dir in "${ADD_DIRS[@]}"; do
+    if ! abs_path="$(resolve_directory_path "$raw_dir")"; then
+        echo "Error: --add-dir path does not exist or is not a directory: $raw_dir" >&2
+        exit 1
+    fi
+    if [[ "$abs_path" == "$WORKDIR" || "$WORKDIR" == "$abs_path"/* || "$abs_path" == "$WORKDIR"/* ]]; then
+        continue
+    fi
+    if array_contains "$abs_path" "${RESOLVED_ADD_DIRS[@]}"; then
+        continue
+    fi
+    identity_file="$abs_path/$CLOSEDLOOP_STATE_DIR/.repo-identity.json"
+    repo_name="$(jq -r '.name // empty' "$identity_file" 2>/dev/null || true)"
+    if [[ -z "$repo_name" ]]; then
+        repo_name="$(basename "$abs_path")"
+    fi
+    if array_contains "$repo_name" "${USED_REPO_NAMES[@]}"; then
+        repo_name="$(make_unique_repo_name "$repo_name" "$abs_path" "${USED_REPO_NAMES[@]}")"
+    fi
+    RESOLVED_ADD_DIRS+=("$abs_path")
+    ADD_DIR_NAMES+=("$repo_name")
+    USED_REPO_NAMES+=("$repo_name")
+done
+
 if [[ -z "$PLAN_FILE" ]] && [[ -z "$PRD_FILE" ]]; then
     # Try common patterns in order of preference
     for pattern in "prd.md" "prd.pdf" "requirements.md" "requirements.txt" "ticket.md"; do
@@ -99,12 +211,12 @@ if [[ -n "$PLAN_FILE" ]]; then
 fi
 
 # Step 1: Find session_id by walking up process tree
-# SessionStart hook wrote to .closedloop-ai/pid-<Claude Code PID>.session
+# SessionStart hook wrote to $CLOSEDLOOP_STATE_DIR/pid-<Claude Code PID>.session
 # Claude Code's PID is an ancestor of this process
 SESSION_ID=""
 CURRENT_PID=$$
 while [[ $CURRENT_PID -gt 1 ]]; do
-    SESSION_FILE=".closedloop-ai/pid-$CURRENT_PID.session"
+    SESSION_FILE="$CLOSEDLOOP_STATE_DIR/pid-$CURRENT_PID.session"
     echo "$(date): Checking $SESSION_FILE" >> "$DEBUG_LOG"
     if [[ -f "$SESSION_FILE" ]]; then
         SESSION_ID=$(cat "$SESSION_FILE")
@@ -112,7 +224,7 @@ while [[ $CURRENT_PID -gt 1 ]]; do
         break
     fi
     # Get parent PID
-    CURRENT_PID=$(ps -o ppid= -p $CURRENT_PID 2>/dev/null | tr -d ' ')
+    CURRENT_PID=$(ps -o ppid= -p "$CURRENT_PID" 2>/dev/null | tr -d ' ')
     if [[ -z "$CURRENT_PID" ]]; then
         break
     fi
@@ -120,24 +232,27 @@ done
 
 if [[ -n "$SESSION_ID" ]]; then
     # Step 2: Write workdir mapping so hooks can find it via session_id
-    echo "$WORKDIR" > ".closedloop-ai/session-$SESSION_ID.workdir"
-    echo "$(date): Wrote workdir mapping: .closedloop-ai/session-$SESSION_ID.workdir -> $WORKDIR" >> "$DEBUG_LOG"
+    echo "$WORKDIR" > "$CLOSEDLOOP_STATE_DIR/session-$SESSION_ID.workdir"
+    echo "$(date): Wrote workdir mapping: $CLOSEDLOOP_STATE_DIR/session-$SESSION_ID.workdir -> $WORKDIR" >> "$DEBUG_LOG"
 else
     echo "$(date): WARNING: Could not find session_id in process tree" >> "$DEBUG_LOG"
 fi
 
-# Step 3: Validate prompt before creating any directories
+# Step 3: Default prompt name
+PROMPT_NAME="${PROMPT_NAME:-prompt}"
+
 # Validate prompt name contains no path separators
 if [[ "$PROMPT_NAME" == */* || "$PROMPT_NAME" == *..* || "$PROMPT_NAME" =~ [[:space:]] ]]; then
     echo "ERROR: prompt name must not contain path separators or spaces" >&2
     exit 1
 fi
 
-CLOSEDLOOP_PROMPT_FILE="$PLUGIN_ROOT/prompts/$PROMPT_NAME.md"
+DIRECT_PROMPT="$PLUGIN_ROOT/prompts/$PROMPT_NAME.md"
 
-# Validate the prompt file exists
-if [[ ! -f "$CLOSEDLOOP_PROMPT_FILE" ]]; then
-    echo "ERROR: Prompt file not found: $CLOSEDLOOP_PROMPT_FILE" >&2
+if [[ -f "$DIRECT_PROMPT" ]]; then
+    CLOSEDLOOP_PROMPT_FILE="$DIRECT_PROMPT"
+else
+    echo "ERROR: Prompt '$PROMPT_NAME' not found (no $DIRECT_PROMPT)" >&2
     echo "Available prompts:" >&2
     shopt -s nullglob
     for f in "$PLUGIN_ROOT/prompts/"*.md; do
@@ -147,10 +262,12 @@ if [[ ! -f "$CLOSEDLOOP_PROMPT_FILE" ]]; then
     exit 1
 fi
 
-# Write full config to WORKDIR
-mkdir -p "$WORKDIR/.closedloop-ai"
+mkdir -p "$WORKDIR/$CLOSEDLOOP_STATE_DIR"
 
-cat > "$WORKDIR/.closedloop-ai/config.env" << EOF
+# Write full config to WORKDIR
+mkdir -p "$WORKDIR/$CLOSEDLOOP_STATE_DIR"
+
+cat > "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env" << EOF
 CLOSEDLOOP_WORKDIR="$WORKDIR"
 CLOSEDLOOP_PRD_FILE="$PRD_FILE"
 CLOSEDLOOP_PLAN_FILE="$PLAN_FILE"
@@ -159,5 +276,24 @@ CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
 CLOSEDLOOP_PROMPT_FILE="$CLOSEDLOOP_PROMPT_FILE"
 EOF
 
-echo "ClosedLoop config written to $WORKDIR/.closedloop-ai/config.env"
-cat "$WORKDIR/.closedloop-ai/config.env"
+# Build pipe-joined multi-repo variables (empty strings when no extra repos)
+add_dirs_joined=""
+add_dir_names_joined=""
+repo_map_joined=""
+if [[ ${#RESOLVED_ADD_DIRS[@]} -gt 0 ]]; then
+    add_dirs_joined="$(IFS='|'; echo "${RESOLVED_ADD_DIRS[*]}")"
+    add_dir_names_joined="$(IFS='|'; echo "${ADD_DIR_NAMES[*]}")"
+    repo_map_parts=()
+    for i in "${!RESOLVED_ADD_DIRS[@]}"; do
+        repo_map_parts+=("${ADD_DIR_NAMES[$i]}=${RESOLVED_ADD_DIRS[$i]}")
+    done
+    repo_map_joined="$(IFS='|'; echo "${repo_map_parts[*]}")"
+fi
+cat >> "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env" << EOF
+CLOSEDLOOP_ADD_DIRS="$add_dirs_joined"
+CLOSEDLOOP_ADD_DIR_NAMES="$add_dir_names_joined"
+CLOSEDLOOP_REPO_MAP="$repo_map_joined"
+EOF
+
+echo "ClosedLoop config written to $WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
+cat "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"

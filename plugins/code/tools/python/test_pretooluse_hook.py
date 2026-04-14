@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import CLOSEDLOOP_STATE_DIR
 
 HOOK_PATH = Path(__file__).resolve().parent.parent.parent / "hooks" / "pretooluse-hook.sh"
 
@@ -332,13 +333,13 @@ def session_env(tmp_path: Path) -> tuple[Path, Path, str]:
     cwd = tmp_path / "cwd"
     workdir = tmp_path / "workdir"
 
-    # Create session mapping: CWD/.closedloop-ai/session-$SESSION_ID.workdir -> workdir
-    session_dir = cwd / ".closedloop-ai"
+    # Create session mapping: CWD/$CLOSEDLOOP_STATE_DIR/session-$SESSION_ID.workdir -> workdir
+    session_dir = cwd / CLOSEDLOOP_STATE_DIR
     session_dir.mkdir(parents=True)
     (session_dir / f"session-{session_id}.workdir").write_text(str(workdir))
 
     # Create workdir with config.env (self-learning disabled)
-    closedloop_dir = workdir / ".closedloop-ai"
+    closedloop_dir = workdir / CLOSEDLOOP_STATE_DIR
     closedloop_dir.mkdir(parents=True)
     (closedloop_dir / "config.env").write_text("CLOSEDLOOP_SELF_LEARNING=false\n")
 
@@ -404,7 +405,7 @@ class TestSelfLearningOff:
 def test_ignores_legacy_home_patterns(session_env: tuple[Path, Path, str]) -> None:
     """Should not inject patterns from legacy `~/.claude/.learnings`."""
     cwd, workdir, session_id = session_env
-    (workdir / ".closedloop-ai" / "config.env").write_text(
+    (workdir / CLOSEDLOOP_STATE_DIR / "config.env").write_text(
         "CLOSEDLOOP_SELF_LEARNING=true\n"
     )
 
@@ -431,12 +432,12 @@ def test_ignores_legacy_home_patterns(session_env: tuple[Path, Path, str]) -> No
 def test_injects_when_only_plain_awk_is_available(session_env: tuple[Path, Path, str]) -> None:
     """Should continue injecting tool learnings when only plain awk is available."""
     cwd, workdir, session_id = session_env
-    (workdir / ".closedloop-ai" / "config.env").write_text(
+    (workdir / CLOSEDLOOP_STATE_DIR / "config.env").write_text(
         "CLOSEDLOOP_SELF_LEARNING=true\n"
     )
 
     home_dir = workdir / "plain-awk-home"
-    patterns_dir = home_dir / ".closedloop-ai" / "learnings"
+    patterns_dir = home_dir / CLOSEDLOOP_STATE_DIR / "learnings"
     patterns_dir.mkdir(parents=True)
     (patterns_dir / "org-patterns.toon").write_text(
         "# TOON\npatterns[\n"

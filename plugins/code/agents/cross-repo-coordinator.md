@@ -89,7 +89,7 @@ Extract task IDs (T-X.Y format) that depend on each capability.
 
 ### Step 4: Write Capability Needs
 
-Write `$CLOSEDLOOP_WORKDIR/.cross-repo-needs.json`:
+Write `$CLOSEDLOOP_WORKDIR/.cross-repo-needs.json`. The `local` field on each need entry comes directly from the peer's `local` field in `discover-repos.sh` output (defaulting to `false` when absent — only `--add-dir` peers carry `local: true`):
 
 ```json
 {
@@ -104,6 +104,7 @@ Write `$CLOSEDLOOP_WORKDIR/.cross-repo-needs.json`:
       "peerName": "astoria-service",
       "peerType": "backend",
       "peerPath": "/path/to/backend",
+      "local": false,
       "capabilities": [
         {
           "type": "endpoint",
@@ -114,6 +115,19 @@ Write `$CLOSEDLOOP_WORKDIR/.cross-repo-needs.json`:
           "type": "endpoint",
           "description": "GET /api/v1/users/{id}",
           "neededBy": ["T-3.1"]
+        }
+      ]
+    },
+    {
+      "peerName": "astoria-shared",
+      "peerType": "library",
+      "peerPath": "/path/to/shared",
+      "local": true,
+      "capabilities": [
+        {
+          "type": "module",
+          "description": "Shared auth utilities",
+          "neededBy": ["T-1.2"]
         }
       ]
     }

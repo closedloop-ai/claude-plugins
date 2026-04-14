@@ -4,6 +4,9 @@
 
 set -e
 
+# Single source of truth for the state directory name
+CLOSEDLOOP_STATE_DIR=".closedloop-ai"
+
 # Debug logging (redirected once CWD is known)
 DEBUG_LOG="/dev/null"
 
@@ -17,8 +20,8 @@ REASON=$(echo "$INPUT" | jq -r '.reason // empty')
 
 # Redirect debug logs into project dir (not shared /tmp)
 if [[ -n "$CWD" ]]; then
-    mkdir -p "$CWD/.closedloop-ai"
-    DEBUG_LOG="$CWD/.closedloop-ai/session-end-hook-debug.log"
+    mkdir -p "$CWD/$CLOSEDLOOP_STATE_DIR"
+    DEBUG_LOG="$CWD/$CLOSEDLOOP_STATE_DIR/session-end-hook-debug.log"
 fi
 echo "$(date): Session end hook started, session=$SESSION_ID, reason=$REASON" >> "$DEBUG_LOG"
 
@@ -27,7 +30,7 @@ echo "$(date): Session end hook started, session=$SESSION_ID, reason=$REASON" >>
 # Remove session-specific files from .closedloop-ai/
 # ============================================================================
 
-CLOSEDLOOP_DIR="$CWD/.closedloop-ai"
+CLOSEDLOOP_DIR="$CWD/$CLOSEDLOOP_STATE_DIR"
 
 # Discover CLOSEDLOOP_WORKDIR before cleaning up mappings
 CLOSEDLOOP_WORKDIR=""

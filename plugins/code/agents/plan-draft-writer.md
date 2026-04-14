@@ -92,6 +92,14 @@ The `content` field contains the full markdown plan following this structure:
 ## Summary
 [2-3 sentences describing what will be implemented]
 
+## Repositories
+(Only present when CLOSEDLOOP_ADD_DIRS is non-empty)
+
+| Repo | Path | Primary |
+|------|------|---------|
+| primary | /path/to/primary | Yes |
+| secondary-name | /path/to/secondary | No |
+
 ## Acceptance Criteria
 
 | ID | Criterion | Source |
@@ -140,6 +148,7 @@ The `content` field contains the full markdown plan following this structure:
 
 7. **Visual References** (if attachments exist) - Embed images using `![description](attachments/filename.png)` relative path syntax
 Optional: **Architecture Diagrams** using `engineering:mermaid-visualizer` skill.
+Optional: **Repositories** (only when `CLOSEDLOOP_ADD_DIRS` is non-empty) - Table of all repos, placed after Summary. See `## Multi-Repository Plans`.
 
 ## JSON Field Sync
 
@@ -178,6 +187,87 @@ Optional: **Architecture Diagrams** using `engineering:mermaid-visualizer` skill
 
 Manual tasks do NOT block the automated loop from completing. They are reported at the end for the human to perform.
 </critical_constraint>
+
+## Multi-Repository Plans
+
+**Skip this entire section if `CLOSEDLOOP_ADD_DIRS` is empty or unset.**
+
+When `CLOSEDLOOP_ADD_DIRS` is non-empty, the plan spans multiple repositories. Follow these steps:
+
+### Step M1: Parse Repository Map
+
+Read the `CLOSEDLOOP_REPO_MAP` environment variable (pipe-separated `name=path` entries) to get the list of secondary repos. The primary repo is the main project codebase. Example:
+
+```
+CLOSEDLOOP_REPO_MAP="frontend=/workspace/ui|backend=/workspace/api"
+```
+
+Parse each entry as `{name}={path}`.
+
+### Step M2: Read Per-Repo Code Maps
+
+For each `name=path` entry in `CLOSEDLOOP_REPO_MAP`, read the pre-computed code map if it exists:
+
+```bash
+cat $CLOSEDLOOP_WORKDIR/code-map-{name}.json 2>/dev/null
+```
+
+These files are produced by the pre-explorer agent. Each contains the relevant files and patterns for that repository. Use this information to understand what files in each secondary repo are affected by the plan.
+
+### Step M3: Use `@{repo-name}:path` Prefix for File References
+
+When writing task descriptions that reference files in secondary repos, prefix them with `@{repo-name}:`:
+
+- **Primary repo** (no prefix): `src/components/LoginForm.tsx`
+- **Secondary repo** (with prefix): `@frontend:src/components/LoginForm.tsx`
+- **Another secondary repo**: `@backend:api/routes/auth.py`
+
+This convention makes cross-repo task scope unambiguous. Apply it consistently in all task descriptions, acceptance criteria references, and the Repositories section.
+
+### Step M4: Add `## Repositories` Section to Plan Markdown
+
+Include a `## Repositories` section in the markdown `content` field, placed immediately after `## Summary`:
+
+```markdown
+## Repositories
+
+| Repo | Path | Primary |
+|------|------|---------|
+| primary | /absolute/path/to/primary/repo | Yes |
+| frontend | /workspace/ui | No |
+| backend | /workspace/api | No |
+```
+
+- The primary repo name is derived from the base directory name of the project (or `primary` if ambiguous).
+- Each secondary repo appears as a row with `No` in the Primary column.
+- Use the absolute path as it appears in `CLOSEDLOOP_REPO_MAP`.
+
+### Step M5: Populate `repositories` Field in plan.json
+
+Add an optional `repositories` field to plan.json as an object map keyed by repo short name:
+
+```json
+{
+  "repositories": {
+    "primary": {
+      "path": "/absolute/path/to/primary/repo",
+      "isPrimary": true
+    },
+    "frontend": {
+      "path": "/workspace/ui",
+      "isPrimary": false
+    },
+    "backend": {
+      "path": "/workspace/api",
+      "isPrimary": false
+    }
+  }
+}
+```
+
+Fields per entry:
+- `path`: Absolute filesystem path to the repository root
+- `isPrimary`: `true` only for the primary repo
 
 ## Process
 
@@ -305,6 +395,7 @@ PRD mentions: "Real-time updates from Linear"
 | No Code | Zero code snippets, function signatures, or pseudo-code in task descriptions |
 | Valid JSON | Output is valid JSON with all required fields |
 | JSON Sync | Structured fields match markdown content exactly |
+| Multi-Repo (if applicable) | When `CLOSEDLOOP_ADD_DIRS` is set: `## Repositories` table present in markdown, `repositories` field in plan.json, `@{repo-name}:path` prefix used for secondary repo file references |
 
 ## Completion
 

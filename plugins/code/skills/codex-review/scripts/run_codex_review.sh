@@ -20,6 +20,9 @@
 
 set -euo pipefail
 
+# Single source of truth for the state directory name
+CLOSEDLOOP_STATE_DIR=".closedloop-ai"
+
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 PLAN_FILE=""
@@ -68,7 +71,7 @@ if [[ -z "$LOG_ID" ]]; then
   LOG_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
 fi
 
-LOG_DIR="$HOME/.closedloop-ai/plan-with-codex"
+LOG_DIR="$HOME/$CLOSEDLOOP_STATE_DIR/plan-with-codex"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/$LOG_ID.jsonl"
 

@@ -6,6 +6,9 @@
 
 set -euo pipefail
 
+# Single source of truth for the state directory name
+CLOSEDLOOP_STATE_DIR=".closedloop-ai"
+
 # Debug logging (redirected to WORKDIR once discovered)
 DEBUG_LOG="/dev/null"
 
@@ -39,7 +42,7 @@ SESSION_ID=$(echo "$HOOK_INPUT" | jq -r '.session_id // empty')
 # Discover WORKDIR via session_id mapping (created by setup-closedloop.sh)
 CLOSEDLOOP_WORKDIR=""
 if [[ -n "$SESSION_ID" ]]; then
-  WORKDIR_FILE="$CWD/.closedloop-ai/session-$SESSION_ID.workdir"
+  WORKDIR_FILE="$CWD/$CLOSEDLOOP_STATE_DIR/session-$SESSION_ID.workdir"
   if [[ -f "$WORKDIR_FILE" ]]; then
     CLOSEDLOOP_WORKDIR=$(cat "$WORKDIR_FILE")
   fi
@@ -47,7 +50,7 @@ fi
 
 # Source closedloop config from WORKDIR if found
 if [[ -n "$CLOSEDLOOP_WORKDIR" ]]; then
-  CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env"
+  CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
   if [[ -f "$CLOSEDLOOP_CONFIG" ]]; then
     source "$CLOSEDLOOP_CONFIG"
   fi
@@ -90,14 +93,14 @@ STATE_FILE_SUFFIX=$(echo "$AGENT_CONFIG" | jq -r '.state_file_suffix // "loop.lo
 
 echo "$(date): Agent config - validation=$VALIDATION_SCRIPT, max_iter=$MAX_ITERATIONS_DEFAULT, promise=$PROMISE, state_suffix=$STATE_FILE_SUFFIX" >> "$DEBUG_LOG"
 
-# Build state file path (in CLOSEDLOOP_WORKDIR/.closedloop-ai/)
+# Build state file path (in CLOSEDLOOP_WORKDIR/$CLOSEDLOOP_STATE_DIR/)
 # Exit early if CLOSEDLOOP_WORKDIR is not set - no loop context
 if [[ -z "$CLOSEDLOOP_WORKDIR" ]]; then
   echo "$(date): No CLOSEDLOOP_WORKDIR, exiting loop-stop-hook" >> "$DEBUG_LOG"
   exit 0
 fi
 
-STATE_FILE="$CLOSEDLOOP_WORKDIR/.closedloop-ai/$STATE_FILE_SUFFIX"
+STATE_FILE="$CLOSEDLOOP_WORKDIR/$CLOSEDLOOP_STATE_DIR/$STATE_FILE_SUFFIX"
 
 if [[ ! -f "$STATE_FILE" ]]; then
   echo "$(date): No active loop - state file not found: $STATE_FILE" >> "$DEBUG_LOG"

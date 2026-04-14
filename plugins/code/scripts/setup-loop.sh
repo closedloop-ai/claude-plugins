@@ -6,6 +6,9 @@
 
 set -euo pipefail
 
+# Single source of truth for the state directory name
+CLOSEDLOOP_STATE_DIR=".closedloop-ai"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOOP_CONFIG="$SCRIPT_DIR/loop-agents.json"
 
@@ -118,7 +121,7 @@ CONFIG_MAX_ITERATIONS=$(echo "$AGENT_CONFIG" | jq -r '.max_iterations // 10')
 # Use command line override or config default
 MAX_ITERATIONS="${MAX_ITERATIONS:-$CONFIG_MAX_ITERATIONS}"
 
-STATE_FILE="$WORKDIR/.closedloop-ai/$STATE_FILE_SUFFIX"
+STATE_FILE="$WORKDIR/$CLOSEDLOOP_STATE_DIR/$STATE_FILE_SUFFIX"
 
 # Idempotency checks
 if [[ -f "$WORKDIR/plan.json" ]]; then
@@ -132,7 +135,7 @@ if [[ -f "$STATE_FILE" ]]; then
 fi
 
 # Create state file
-mkdir -p "$WORKDIR/.closedloop-ai"
+mkdir -p "$WORKDIR/$CLOSEDLOOP_STATE_DIR"
 
 PROMPT="Create a comprehensive implementation plan for the requirements in @${PRD_FILE}.
 

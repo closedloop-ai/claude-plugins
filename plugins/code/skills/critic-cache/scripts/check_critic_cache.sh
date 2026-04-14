@@ -12,6 +12,9 @@
 
 set -euo pipefail
 
+# Single source of truth for the state directory name
+CLOSEDLOOP_STATE_DIR=".closedloop-ai"
+
 WORKDIR="${1:?Usage: check_critic_cache.sh <WORKDIR>}"
 
 PLAN_JSON="$WORKDIR/plan.json"
@@ -48,7 +51,7 @@ fi
 # --- compute current combined hash ---
 # Hash both plan.json and critic-gates.json (if it exists) to detect config changes
 current_hash=""
-CRITIC_GATES_PATH=".closedloop-ai/settings/critic-gates.json"
+CRITIC_GATES_PATH="$CLOSEDLOOP_STATE_DIR/settings/critic-gates.json"
 WORKDIR_STATE_DIR=$(dirname "$WORKDIR")
 if [ -f "$CRITIC_GATES_PATH" ]; then
   current_hash=$(cat "$PLAN_JSON" "$CRITIC_GATES_PATH" | shasum -a 256 | cut -d' ' -f1)
