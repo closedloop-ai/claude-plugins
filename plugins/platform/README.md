@@ -146,7 +146,7 @@ A comprehensive guide for creating Mermaid diagrams embedded in markdown. Covers
 
 A two-mode workflow for uploading file content to the ClosedLoop platform as a typed artifact:
 
-**Script mode** (preferred when `CLOSEDLOOP_API_KEY` is available in `.env.local`): Runs `skills/upload-artifact/scripts/upload_artifact.py` via `uv`, which connects directly to the MCP server over Streamable HTTP without loading file content into the conversation context. Supports creating new artifacts and new versions of existing artifacts.
+**Script mode** (preferred when `CLOSEDLOOP_API_KEY` is available in the shell environment): Runs `skills/upload-artifact/scripts/upload_artifact.py` via `uv`, which connects directly to the MCP server over Streamable HTTP without loading file content into the conversation context. Supports creating new artifacts and new versions of existing artifacts.
 
 **MCP fallback** (when no API key is configured): Uses Claude Code's existing MCP authentication to call `mcp__closedloop__create-artifact` or `mcp__closedloop__create-artifact-version` directly. File content is loaded into conversation context in this mode.
 
@@ -229,4 +229,4 @@ The skill activates on explicit upload requests. Example triggers:
 - "Save this implementation plan as an artifact."
 - "Create a new version of artifact `art_abc123` from `plan-v2.md`."
 
-For script mode, ensure `CLOSEDLOOP_API_KEY` and `NEXT_PUBLIC_MCP_SERVER_URL` are set in `.env.local`. For MCP fallback, ensure the ClosedLoop MCP server is configured in Claude Code's MCP settings.
+For script mode, ensure `CLOSEDLOOP_API_KEY` and `NEXT_PUBLIC_MCP_SERVER_URL` are set in the shell environment. For MCP fallback, ensure the ClosedLoop MCP server is configured in Claude Code's MCP settings.

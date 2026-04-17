@@ -117,14 +117,20 @@ def test_writes_session_mapping_from_closedloop_pid_file(tmp_workdir: Path) -> N
     session_dir = tmp_workdir / CLOSEDLOOP_STATE_DIR
     session_dir.mkdir(parents=True)
     session_id = "session-from-closedloop"
-    (session_dir / f"pid-{os.getpid()}.session").write_text(session_id)
-
-    result = _run_setup_in_workdir(tmp_workdir)
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'echo "{session_id}" > "{session_dir}/pid-$$.session"; '
+            f'exec bash "{SETUP_SCRIPT}" "{tmp_workdir}"',
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_workdir),
+    )
 
     assert result.returncode == 0
-    assert (session_dir / f"session-{session_id}.workdir").read_text().strip() == str(
-        tmp_workdir
-    )
+    assert (session_dir / f"session-{session_id}.workdir").read_text().strip() == str(tmp_workdir.resolve())
 
 
 def test_ignores_legacy_pid_mapping(tmp_workdir: Path) -> None:
@@ -405,3 +411,55 @@ def test_no_add_dir_config_env_has_empty_add_dirs(tmp_workdir: Path) -> None:
     assert 'CLOSEDLOOP_ADD_DIRS=""' in config
     assert 'CLOSEDLOOP_ADD_DIR_NAMES=""' in config
     assert 'CLOSEDLOOP_REPO_MAP=""' in config
+
+
+def test_reconstructs_split_workdir_and_prd_paths_with_spaces(tmp_path: Path) -> None:
+    """Handles unquoted split tokens for workdir/--prd paths that contain spaces."""
+    project_root = tmp_path / "AI Platform" / "ai-matching-platform-loop-pln-2"
+    workdir = project_root / CLOSEDLOOP_STATE_DIR / "work"
+    workdir.mkdir(parents=True)
+    prd = workdir / "prd.md"
+    prd.write_text("# PRD\n\nRequirements here\n")
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(SETUP_SCRIPT),
+            *str(workdir).split(" "),
+            "--prd",
+            *str(prd).split(" "),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(project_root),
+    )
+
+    assert result.returncode == 0, result.stderr
+    config = _config_env(workdir)
+    assert _config_value(config, "CLOSEDLOOP_WORKDIR") == str(workdir.resolve())
+    assert _config_value(config, "CLOSEDLOOP_PRD_FILE") == str(prd.resolve())
+
+
+def test_reconstructs_split_add_dir_path_with_spaces(
+    tmp_workdir: Path, tmp_path: Path
+) -> None:
+    """Handles unquoted split tokens for --add-dir paths that contain spaces."""
+    extra_repo = tmp_path / "peer repo"
+    extra_repo.mkdir()
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(SETUP_SCRIPT),
+            str(tmp_workdir),
+            "--add-dir",
+            *str(extra_repo).split(" "),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_workdir),
+    )
+
+    assert result.returncode == 0, result.stderr
+    config = _config_env(tmp_workdir)
+    assert _config_value(config, "CLOSEDLOOP_ADD_DIRS") == str(extra_repo.resolve())

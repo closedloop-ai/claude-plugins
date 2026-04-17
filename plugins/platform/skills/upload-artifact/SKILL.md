@@ -17,10 +17,13 @@ Upload file content as a ClosedLoop MCP artifact. Two modes:
 
 1. **Script mode** (preferred) — uses a standalone Python script that reads the
    file and calls MCP directly over Streamable HTTP. No conversation context
-   consumed for file content. Requires a `CLOSEDLOOP_API_KEY` in `.env.local`.
+   consumed for file content. Requires `CLOSEDLOOP_API_KEY` and
+   `NEXT_PUBLIC_MCP_SERVER_URL` to already be present in the current shell
+   environment.
 
 2. **MCP fallback** — reads the file into context and calls `mcp__closedloop__create-artifact`
-   directly. Uses Claude Code's existing MCP auth. Used when no API key is available.
+   directly. Uses Claude Code's existing MCP auth. Used when the required
+   script-mode environment variables are not available.
 
 ## Workflow
 
@@ -28,16 +31,17 @@ Follow these steps in order:
 
 ### Step 1: Resolve Credentials and Choose Mode
 
-Read `.env.local` and look for:
+Read these values from the current shell environment. Do not read, source, or
+otherwise rely on a `.env.local` file in the current working directory:
 - `CLOSEDLOOP_API_KEY` — the API key (starts with `sk_live_`)
 - `NEXT_PUBLIC_MCP_SERVER_URL` — the MCP server URL
 
 **If both exist** → use **script mode** (Steps 2a–5a).
-**If API key is missing** → use **MCP fallback** (Steps 2b–5b).
+**If either variable is missing** → use **MCP fallback** (Steps 2b–5b).
 
 ---
 
-## Script Mode (API key available)
+## Script Mode (required env vars available)
 
 ### Step 2a: List Projects
 
@@ -45,8 +49,8 @@ Run the script with `--list-projects`:
 
 ```bash
 uv run --with 'mcp[cli]' <base_directory>/scripts/upload_artifact.py \
-  --url <MCP_URL> \
-  --api-key <API_KEY> \
+  --url "$NEXT_PUBLIC_MCP_SERVER_URL" \
+  --api-key "$CLOSEDLOOP_API_KEY" \
   --list-projects
 ```
 
@@ -73,8 +77,8 @@ type — only ask for the title.
 
 ```bash
 uv run --with 'mcp[cli]' <base_directory>/scripts/upload_artifact.py \
-  --url <MCP_URL> \
-  --api-key <API_KEY> \
+  --url "$NEXT_PUBLIC_MCP_SERVER_URL" \
+  --api-key "$CLOSEDLOOP_API_KEY" \
   --file <FILE_PATH> \
   --title "<TITLE>" \
   --type <TYPE> \
@@ -96,7 +100,7 @@ Parse the JSON output and report to the user:
 
 ---
 
-## MCP Fallback (no API key)
+## MCP Fallback (required env vars missing)
 
 ### Step 2b: List Projects
 

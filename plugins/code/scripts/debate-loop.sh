@@ -128,6 +128,13 @@ run_codex_review() {
     --round "$round"
     --codex-model "$CODEX_MODEL"
   )
+  if [[ -n "$PROMPT" ]]; then
+    local request_file
+    request_file=$(mktemp)
+    TMPFILES+=("$request_file")
+    printf '%s' "$PROMPT" > "$request_file"
+    review_args+=(--request-file "$request_file")
+  fi
   if [[ -n "$CODEX_SESSION_ID" ]]; then
     review_args+=(--session-id "$CODEX_SESSION_ID")
   fi
@@ -551,7 +558,7 @@ while [[ $round -le $MAX_ROUNDS ]]; do
   run_claude \
     -p "Resume the plan agent from your conversation history and pass it this task:
 
-'Revise the plan at ${PLAN_FILE_ABS} based on feedback at ${FEEDBACK_FILE}. Write the updated plan back to ${PLAN_FILE_ABS}.'
+'Revise the plan at ${PLAN_FILE_ABS} based on feedback at ${FEEDBACK_FILE}. Verify each finding against the codebase before acting on it. Do not dismiss a finding solely because it looks broader than the request or involves refactoring -- distinguish between required work, justified enabling refactor, and true optional scope creep. Reject only findings that do not hold up or are genuinely optional beyond the minimum needed to deliver the request safely. Write the updated plan back to ${PLAN_FILE_ABS}.'
 
 Do not spawn a new plan agent -- resume the existing session." \
     -r "$SESSION_ID" \
@@ -568,7 +575,7 @@ Do not spawn a new plan agent -- resume the existing session." \
       run_claude \
         -p "Use the Agent tool to invoke the code:plan-agent with the following task:
 
-'Revise the plan at ${PLAN_FILE_ABS} based on feedback at ${FEEDBACK_FILE}. Write the updated plan back to ${PLAN_FILE_ABS}.
+'Revise the plan at ${PLAN_FILE_ABS} based on feedback at ${FEEDBACK_FILE}. Verify each finding against the codebase before acting on it. Do not dismiss a finding solely because it looks broader than the request or involves refactoring -- distinguish between required work, justified enabling refactor, and true optional scope creep. Reject only findings that do not hold up or are genuinely optional beyond the minimum needed to deliver the request safely. Write the updated plan back to ${PLAN_FILE_ABS}.
 
 The original request was: ${PROMPT}'" \
         --permission-mode acceptEdits \

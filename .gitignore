@@ -9,6 +9,7 @@ __pycache__/
 .env.local
 .env.*.local
 .ruff_cache/
+.venv/
 
 # Tests
 **/route-knowledge.json

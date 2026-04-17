@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code v1.9.1
+
+#### Added
+- `--request-file` parameter in `codex-review` skill and `run_codex_review.sh` so Codex reads the original user request before reviewing and judges the plan against the actual request, not just the plan's self-framing
+- "Re-scoped" revision-summary bucket in `plan-agent` for findings accepted as the minimal required or enabling change
+- Additional tests in `test_setup_closedloop.py` covering unquoted paths with spaces in slash-command arguments
+
+#### Changed
+- `plan-agent` scope discipline now distinguishes between required work, justified localized enabling refactors, and true optional scope creep — findings are no longer rejected solely because they look broader than the current task
+- `/plan-with-codex` command switched from `Agent(resume=...)` to `SendMessage` for plan-agent continuation across rounds, preserving full prior context via transcript auto-resume
+- Round-aware Codex review prompts in `run_codex_review.sh`: round 1 is a broad material audit, rounds 2-4 are delta reviews that verify prior findings, rounds 5+ are blocker-only convergence reviews
+- `debate-loop.sh` now forwards the original prompt to `run_codex_review.sh` via `--request-file` and uses the refactor-aware revision guidance when asking plan-agent to revise
+- `setup-closedloop.sh` argument parser tolerates unquoted paths containing spaces by joining consecutive non-flag tokens into a single value for `--prd`, `--plan`, `--add-dir`, and the positional workdir
+- `/code` slash command now invokes `setup-closedloop.sh` via `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-closedloop.sh"` for portability
+- `run-loop.sh` now emits quoted `/code:code` arguments for workdir, `--prompt`, `--prd`, and `--add-dir` in loop state, preserving argument boundaries for values that contain spaces
+- `plan-with-codex` command gains `SendMessage` in its allowed-tools list
+
+### platform v1.1.1
+
+#### Changed
+- `upload-artifact` skill now reads `CLOSEDLOOP_API_KEY` and `NEXT_PUBLIC_MCP_SERVER_URL` from the current shell environment instead of `.env.local`, and falls back to MCP mode when either variable is missing
+- `upload_artifact.py` defaults `--api-key` and `--url` to the `CLOSEDLOOP_API_KEY` and `NEXT_PUBLIC_MCP_SERVER_URL` environment variables, exiting with a clear parser error when neither the flag nor the env var is set
+
 ### bootstrap v1.2.0
 
 #### Changed

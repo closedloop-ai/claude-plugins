@@ -43,6 +43,7 @@ This repository is a plugin monorepo under `plugins/`.
 
 ## Commit & Pull Request Guidelines
 - Follow conventional commits (`feat(code): ...`, `fix(platform): ...`) and preserve repo scope style (`AI-####:` style tags are present in history).
+- Use the repository `.gitmessage` template for all new commits and amended commit messages.
 - Recommended branches: `feat/*`, `fix/*`, `docs/*`, `refactor/*`.
 - PR workflow: fork, create topic branch from `main`, rebase onto upstream, then open PR from your fork.
 - PR description should include purpose, affected plugins/files, and exact commands run.

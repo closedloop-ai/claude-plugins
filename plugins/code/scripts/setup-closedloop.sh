@@ -14,13 +14,38 @@ echo "$(date): Setup started, PID=$$, PPID=$PPID, args: $*" >> "$DEBUG_LOG"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Parse arguments — collect positional args into an array for classification after parsing
+# Parse arguments
+# Be tolerant of unquoted paths containing spaces. Some invocations pass
+# slash-command arguments through a raw string where paths can be split.
 PRD_FILE=""
 PLAN_FILE=""
 MAX_ITERATIONS=10
 PROMPT_NAME=""
-POSITIONAL_ARGS=()
+WORKDIR=""
 ADD_DIRS=()
+ARGS=("$@")
+ARG_INDEX=0
+ARG_COUNT=${#ARGS[@]}
+CONSUMED_PATH_VALUE=""
+
+consume_joined_path_value() {
+    CONSUMED_PATH_VALUE=""
+
+    while [[ $ARG_INDEX -lt $ARG_COUNT ]]; do
+        local token="${ARGS[$ARG_INDEX]}"
+        if [[ "$token" == --* ]]; then
+            break
+        fi
+
+        if [[ -z "$CONSUMED_PATH_VALUE" ]]; then
+            CONSUMED_PATH_VALUE="$token"
+        else
+            CONSUMED_PATH_VALUE="$CONSUMED_PATH_VALUE $token"
+        fi
+
+        ARG_INDEX=$((ARG_INDEX + 1))
+    done
+}
 
 array_contains() {
     local needle="$1"
@@ -90,57 +115,82 @@ resolve_directory_path() {
     echo "$resolved_path"
 }
 
-while [[ $# -gt 0 ]]; do
-    case $1 in
+if [[ $ARG_INDEX -lt $ARG_COUNT ]] && [[ "${ARGS[$ARG_INDEX]}" != --* ]]; then
+    consume_joined_path_value
+    WORKDIR="$CONSUMED_PATH_VALUE"
+fi
+
+while [[ $ARG_INDEX -lt $ARG_COUNT ]]; do
+    token="${ARGS[$ARG_INDEX]}"
+    case "$token" in
         --prd)
-            PRD_FILE="$2"
-            shift 2
+            ARG_INDEX=$((ARG_INDEX + 1))
+            consume_joined_path_value
+            PRD_FILE="$CONSUMED_PATH_VALUE"
+            if [[ -z "$PRD_FILE" ]]; then
+                echo "Error: --prd requires a file path" >&2
+                exit 1
+            fi
             ;;
         --plan)
-            PLAN_FILE="$2"
-            shift 2
+            ARG_INDEX=$((ARG_INDEX + 1))
+            consume_joined_path_value
+            PLAN_FILE="$CONSUMED_PATH_VALUE"
+            if [[ -z "$PLAN_FILE" ]]; then
+                echo "Error: --plan requires a file path" >&2
+                exit 1
+            fi
             ;;
         --max-iterations)
-            MAX_ITERATIONS="$2"
-            shift 2
+            ARG_INDEX=$((ARG_INDEX + 1))
+            if [[ $ARG_INDEX -ge $ARG_COUNT ]]; then
+                echo "Error: --max-iterations requires a value" >&2
+                exit 1
+            fi
+            MAX_ITERATIONS="${ARGS[$ARG_INDEX]}"
+            ARG_INDEX=$((ARG_INDEX + 1))
             ;;
         --prompt)
-            if [[ -z "${2:-}" ]]; then
+            ARG_INDEX=$((ARG_INDEX + 1))
+            if [[ $ARG_INDEX -ge $ARG_COUNT ]]; then
                 echo "Error: --prompt requires a prompt name" >&2
                 exit 1
             fi
-            PROMPT_NAME="$2"
-            shift 2
+            PROMPT_NAME="${ARGS[$ARG_INDEX]}"
+            ARG_INDEX=$((ARG_INDEX + 1))
             ;;
         --add-dir)
-            if [[ -z "${2:-}" ]]; then
+            ARG_INDEX=$((ARG_INDEX + 1))
+            consume_joined_path_value
+            add_dir_value="$CONSUMED_PATH_VALUE"
+            if [[ -z "$add_dir_value" ]]; then
                 echo "Error: --add-dir requires a directory path" >&2
                 exit 1
             fi
-            ADD_DIRS+=("$2")
-            shift 2
+            ADD_DIRS+=("$add_dir_value")
             ;;
         -*)
-            echo "Unknown option: $1" >&2
-            shift
+            echo "Unknown option: $token" >&2
+            ARG_INDEX=$((ARG_INDEX + 1))
             ;;
         *)
-            POSITIONAL_ARGS+=("$1")
-            shift
+            # Preserve unexpected trailing positional tokens by appending to
+            # workdir. This keeps compatibility with raw split-path invocations.
+            if [[ -z "$WORKDIR" ]]; then
+                WORKDIR="$token"
+            else
+                WORKDIR="$WORKDIR $token"
+            fi
+            ARG_INDEX=$((ARG_INDEX + 1))
             ;;
     esac
 done
 
-# First positional arg is workdir
-WORKDIR=""
-if [[ ${#POSITIONAL_ARGS[@]} -gt 0 ]]; then
-    WORKDIR="${POSITIONAL_ARGS[0]}"
-fi
-
-WORKDIR="${WORKDIR:-.}"
+RAW_WORKDIR="${WORKDIR:-.}"
+WORKDIR="$RAW_WORKDIR"
 # Resolve to a canonical absolute path so primary-vs-secondary comparisons are reliable.
 if ! WORKDIR="$(resolve_directory_path "$WORKDIR")"; then
-    echo "Error: workdir path does not exist or is not a directory: ${POSITIONAL_ARGS[0]:-.}" >&2
+    echo "Error: workdir path does not exist or is not a directory: $RAW_WORKDIR" >&2
     exit 1
 fi
 

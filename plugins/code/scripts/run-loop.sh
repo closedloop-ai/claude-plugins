@@ -873,16 +873,37 @@ create_state_file() {
   # (e.g., /path/to/worktree/.closedloop-ai/work)
   mkdir -p "$WORKDIR"
 
-  # Build the prompt - this is what gets passed to claude -p
-  local prompt="/code:code $WORKDIR"
+  # Build the prompt - this is what gets passed to claude -p.
+  # Quote values so paths with spaces survive slash-command argument parsing.
+  local workdir_arg="$WORKDIR"
+  workdir_arg="${workdir_arg//\\/\\\\}"
+  workdir_arg="${workdir_arg//\"/\\\"}"
+  workdir_arg="${workdir_arg//\$/\\\$}"
+  workdir_arg="${workdir_arg//\`/\\\`}"
+  local prompt="/code:code \"$workdir_arg\""
   if [[ -n "$PROMPT_NAME" ]]; then
-    prompt="$prompt --prompt $PROMPT_NAME"
+    local prompt_name_arg="$PROMPT_NAME"
+    prompt_name_arg="${prompt_name_arg//\\/\\\\}"
+    prompt_name_arg="${prompt_name_arg//\"/\\\"}"
+    prompt_name_arg="${prompt_name_arg//\$/\\\$}"
+    prompt_name_arg="${prompt_name_arg//\`/\\\`}"
+    prompt="$prompt --prompt \"$prompt_name_arg\""
   fi
   if [[ -n "$PRD_FILE" ]]; then
-    prompt="$prompt --prd $PRD_FILE"
+    local prd_arg="$PRD_FILE"
+    prd_arg="${prd_arg//\\/\\\\}"
+    prd_arg="${prd_arg//\"/\\\"}"
+    prd_arg="${prd_arg//\$/\\\$}"
+    prd_arg="${prd_arg//\`/\\\`}"
+    prompt="$prompt --prd \"$prd_arg\""
   fi
   for add_dir in "${ADD_DIRS[@]+"${ADD_DIRS[@]}"}"; do
-    prompt="$prompt --add-dir \"$add_dir\""
+    local add_dir_arg="$add_dir"
+    add_dir_arg="${add_dir_arg//\\/\\\\}"
+    add_dir_arg="${add_dir_arg//\"/\\\"}"
+    add_dir_arg="${add_dir_arg//\$/\\\$}"
+    add_dir_arg="${add_dir_arg//\`/\\\`}"
+    prompt="$prompt --add-dir \"$add_dir_arg\""
   done
 
   cat > "$STATE_FILE" <<EOF

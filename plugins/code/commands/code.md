@@ -6,7 +6,7 @@ allowed-tools: Bash, Edit, Write, Task, TodoWrite
 
 # Bootstrap ClosedLoop
 
-!`${CLAUDE_PLUGIN_ROOT}/scripts/setup-closedloop.sh $ARGUMENTS`
+!`bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-closedloop.sh" $ARGUMENTS`
 
 Follow the orchestrator instructions in the prompt file specified by `CLOSEDLOOP_PROMPT_FILE` in the config output above. You are running inside a ClosedLoop loop which provides fresh context on each iteration. Your previous work is visible in files and git history.
 

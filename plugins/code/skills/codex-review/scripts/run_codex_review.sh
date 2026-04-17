@@ -2,7 +2,8 @@
 # run_codex_review.sh - Call Codex to review a plan file and return structured results.
 #
 # Usage:
-#   run_codex_review.sh --plan-file <path> --feedback-file <path> --round <N> \
+#   run_codex_review.sh --plan-file <path> --feedback-file <path> \
+#                       [--request-file <path>] --round <N> \
 #                       --codex-model <model> [--session-id <thread_id>] \
 #                       [--log-id <uuid>]
 #
@@ -27,6 +28,7 @@ CLOSEDLOOP_STATE_DIR=".closedloop-ai"
 
 PLAN_FILE=""
 FEEDBACK_FILE=""
+REQUEST_FILE=""
 REVISIONS_FILE=""
 ROUND=1
 CODEX_MODEL="gpt-5.3-codex"
@@ -37,6 +39,7 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     --plan-file)      PLAN_FILE="$2"; shift 2 ;;
     --feedback-file)  FEEDBACK_FILE="$2"; shift 2 ;;
+    --request-file)   REQUEST_FILE="$2"; shift 2 ;;
     --revisions-file) REVISIONS_FILE="$2"; shift 2 ;;
     --round)          ROUND="$2"; shift 2 ;;
     --codex-model)    CODEX_MODEL="$2"; shift 2 ;;
@@ -85,68 +88,117 @@ prompt_file="$tmp_dir/prompt.txt"
 
 # ── Build the review prompt ──────────────────────────────────────────────────
 
+REQUEST_BLOCK=""
 REVISIONS_BLOCK=""
-SEVERITY_GATE=""
+ROUND_GUIDANCE=""
+REVIEW_AREAS=""
+if [[ -n "$REQUEST_FILE" ]] && [[ -s "$REQUEST_FILE" ]]; then
+  REQUEST_BLOCK="
+
+Original user request is at: ${REQUEST_FILE}
+Read it before reviewing the plan. Judge the plan against that request, not just against the plan's own framing. If the request file begins with [synthesized], treat it as a weak hint rather than authoritative user intent."
+fi
+
 if [[ "$ROUND" -eq 1 ]]; then
-  REVIEW_INTRO="Claude has created an implementation plan. Review it and provide feedback."
+  REVIEW_INTRO="Claude has created an implementation plan. This is the first review pass."
+  ROUND_GUIDANCE="
+Do a broad but material review. Flag issues only if they would likely cause wrong behavior, miss the stated objective, choose the wrong implementation approach, leave important implementation gaps, or add clearly unnecessary complexity or scope. Do not nitpick style, naming, or minor wording improvements."
+  REVIEW_AREAS="
+Analyze for:
+1. Goal alignment against the original request when available, otherwise against the plan's stated context, title, and explicit objectives. If the original request is not stated clearly in the plan, do not invent extra requirements.
+2. Approach choice and pragmatism -- is the plan solving the problem in the right layer, with the right abstraction, and with a materially simpler or more local approach where appropriate? Flag plans whose overall approach is wrong, heavier than necessary, or less pragmatic than an obvious simpler alternative.
+3. Over-engineering that materially increases complexity without clear benefit.
+4. Scope creep that adds work beyond the stated objective. Do not treat a localized enabling refactor as scope creep if it is needed to implement the request safely, clearly, or without making an already bloated file worse.
+5. Reinventing existing code when the plan should reuse an existing implementation or pattern.
+6. Technical soundness and feasibility.
+7. Missing steps, missing callsites, or edge cases that would likely matter in real execution.
+8. Security or performance risks that are concrete and relevant.
+9. Test coverage and test fidelity for the real behavior boundary being changed.
+10. Unclear, ambiguous, or easy-to-misimplement task descriptions.
+11. Canonical state and invariant preservation.
+12. Task specificity and omission resistance.
+13. Behavioral precision and algorithmic ambiguity.
+14. Order-of-operations and sequencing constraints.
+15. Lifecycle symmetry and cleanup completeness.
+16. File-shape pragmatism -- if the touched file is already bloated, fragile, or overly coupled, check whether the plan's approach makes that worse. A small restructuring or extraction can be warranted when it is the most practical way to implement the requested change safely and keep the result maintainable."
 elif [[ "$ROUND" -le 4 ]]; then
-  REVIEW_INTRO="Claude has addressed your previous feedback and updated the plan. Re-review the plan for remaining issues."
+  REVIEW_INTRO="Claude has addressed your previous feedback and updated the plan. This is round ${ROUND}."
   if [[ -n "$REVISIONS_FILE" ]] && [[ -s "$REVISIONS_FILE" ]]; then
     REVISIONS_BLOCK="
 
 Claude's revision summary (including any findings that were rejected with evidence) is at: ${REVISIONS_FILE}
-Read it before reviewing the plan -- if Claude rejected a finding with valid evidence, do not re-raise it."
+Read it before reviewing the plan, but treat it as a claim to verify against the updated plan and the current codebase. Do not automatically trust or reject it."
   fi
+  ROUND_GUIDANCE="
+This is a delta review, not a fresh blank-slate audit.
+1. First check whether prior findings are actually resolved in the updated plan.
+2. Verify Claude's rebuttals and claimed fixes against the updated plan and the codebase before accepting them.
+3. Only raise net-new findings if they are clearly material, high-confidence, and not just rephrasings of earlier points.
+4. Do not churn on explicit design choices already spelled out in the plan unless they remain incorrect, incomplete, or dangerous.
+5. Do not accept an 'out of scope' rebuttal unless the work is truly optional. Required work and localized enabling refactors are in scope if they are the most pragmatic way to deliver the request safely."
+  REVIEW_AREAS="
+Analyze for:
+1. Previously raised issues that are still unresolved or only partially fixed.
+2. Remaining goal-alignment gaps that would cause the plan to miss its stated objective.
+3. Material missing steps, missing callsites, or missing cleanup paths.
+4. Canonical state, migration, fallback, caching, or invariant problems that could leave the system in the wrong state.
+5. Ambiguous algorithms, overwrite semantics, sequencing, or lifecycle rules where two reasonable engineers could implement opposite behaviors.
+6. Test gaps only when they would allow a real behavioral regression or incorrect implementation to ship unnoticed.
+7. Over-engineering, wrong-layer approach, or scope creep only if it is substantial enough to distort delivery or conflict with the stated plan.
+8. Cases where Claude dismissed a necessary or strongly justified enabling refactor as out of scope, even though the codebase shape makes the narrower plan materially less pragmatic or more error-prone."
 else
-  # Round 5+: raise the bar -- only flag things that would cause wrong behavior
-  REVIEW_INTRO="Claude has addressed your previous feedback and updated the plan. This is round ${ROUND}. Re-review for any remaining critical issues."
+  REVIEW_INTRO="Claude has addressed your previous feedback and updated the plan. This is round ${ROUND}."
   if [[ -n "$REVISIONS_FILE" ]] && [[ -s "$REVISIONS_FILE" ]]; then
     REVISIONS_BLOCK="
 
 Claude's revision summary (including any findings that were rejected with evidence) is at: ${REVISIONS_FILE}
-Read it before reviewing the plan -- if Claude rejected a finding with valid evidence, do not re-raise it."
+Read it before reviewing the plan, but treat it as a claim to verify against the updated plan and the current codebase. Do not automatically trust or reject it."
   fi
-  SEVERITY_GATE="
-IMPORTANT -- Severity threshold for round ${ROUND}:
-At this stage of the debate, only flag findings where a competent engineer following the plan would produce functionally wrong behavior -- incorrect output, data loss, crashes, security holes, or silently broken features. Do NOT flag:
-- Wording ambiguities that a reasonable implementer would resolve correctly
-- Missing prose for behavior that is already obvious from context
-- Hypothetical misimplementations that require actively misreading the plan
-- Test coverage gaps for edge cases that are unlikely in practice
-- Style or naming suggestions
+  ROUND_GUIDANCE="
+This is a blocker-only convergence review.
+First check whether any previously raised findings are still unresolved. Only flag issues where a competent engineer following the plan would still likely:
+- produce functionally wrong behavior
+- violate invariants or create split-brain state
+- miss required scope, required callsites, or required cleanup paths
+- ship tests that would allow broken behavior to pass unnoticed
 
-If you find no issues meeting this bar, respond with VERDICT: APPROVED."
+Do NOT flag:
+- Style, naming, or wording improvements
+- Minor ambiguity that a reasonable implementer would resolve correctly
+- Hypothetical misimplementations that require actively misreading the plan
+- Optional refactors, polish, or generic architecture preferences
+- Generic test wishlist items not tied to a concrete correctness risk
+
+If you find no blocker-level issues meeting this bar, respond with VERDICT: APPROVED."
+  REVIEW_AREAS="
+Analyze only for:
+1. Remaining unresolved prior findings that still imply broken behavior.
+2. Incorrect or missing algorithms, overwrite semantics, or sequencing that would change behavior.
+3. Missing required callsites, migrations, state transitions, teardown paths, or cleanup paths.
+4. Canonical-state or invariant violations that could leave mixed or contradictory state.
+5. Missing tests only when the absence of those tests would plausibly allow a broken implementation to ship."
 fi
 
 cat > "$prompt_file" <<PROMPT_EOF
 ${REVIEW_INTRO}
 ${REVISIONS_BLOCK}
+${REQUEST_BLOCK}
 
 Read the plan at: ${PLAN_FILE}
 
 Review for implementability, not just conceptual correctness. Ask: if a different engineer executed this plan literally, could they still produce behavior that contradicts the plan's intent while believing they followed it? If yes, flag the plan as underspecified and propose exact wording that removes the ambiguity.
 
+Do not only check whether the plan is internally consistent. Also challenge whether it has chosen the right overall approach for the request. If a materially simpler, more local, or more pragmatic solution would satisfy the request with less risk or complexity, flag that and propose the better direction.
+
+A localized refactor within an already bloated, fragile, or overly coupled file can be warranted when it is the most practical way to implement the requested change safely, clearly, or testably. Do not treat every refactor as scope creep; distinguish required enabling refactors from optional cleanup.
+
 Before raising or dismissing any finding, verify the plan's claims against the current codebase by reading the referenced files and searching for adjacent callsites or related logic. Do not rely on plan text alone.
 
-For large or multi-area plans, use subagents in parallel to audit separate file clusters or subsystems, then synthesize their results into a single review.
+${ROUND_GUIDANCE}
 
-Analyze for:
-1. Goal alignment -- does the plan actually accomplish what was requested? Would executing it fully deliver the feature, fix the bug, or achieve the stated objective? Flag if the plan misses the core intent or only partially addresses it.
-2. Over-engineering -- is the plan more complex than necessary? Flag unnecessary abstractions, helper utilities, configuration layers, or indirection that a simpler approach would avoid.
-3. Scope creep -- does the plan add work that was not requested? Flag "while we're at it" improvements, refactors, or features beyond what the original request requires.
-4. Reinventing existing code -- does the plan propose creating something that likely already exists in the codebase? Flag new utilities, helpers, or patterns when existing implementations should be reused instead.
-5. Technical soundness and feasibility
-6. Missing steps or edge cases not addressed
-7. Architectural concerns or flawed assumptions
-8. Security or performance risks
-9. Test coverage -- does the plan include unit and/or integration tests for the changes? Flag if new logic, endpoints, or behaviors lack corresponding test tasks.
-10. Unclear, ambiguous, or easy-to-misimplement task descriptions -- flag tasks that are technically correct in intent but leave room for materially wrong implementations. Focus on missing algorithms, missing ordering constraints, unspecified overwrite behavior, unspecified canonical-write targets, and vague "apply this pattern everywhere" instructions.
-11. Canonical state and invariant preservation -- for any plan that migrates, renames, caches, mirrors, or falls back between multiple representations/locations, verify that it explicitly defines: the canonical source of truth after the change; read behavior when old and new state both exist; write behavior when old and new state both exist; whether legacy state must be migrated, ignored, or cleaned up. Flag plans that permit split-brain state, continued mutation of legacy state, or mixed-state behavior that never converges.
-12. Task specificity and omission resistance -- check whether each task is concrete enough that an implementer cannot accidentally skip part of it. Flag tasks that rely on shorthand like "apply the same pattern," "update all handlers," or "mirror the above change" without naming exact functions, branches, side effects, and cleanup paths. Prefer plans that enumerate the concrete callsites or require a verification sweep proving none were missed.
-13. Behavioral precision and algorithmic ambiguity -- check whether key behavioral words are operationalized into exact steps. Flag terms like "merge," "prefer," "preserve," "reuse," "best effort," "safe," "destination-precedence," "fallback," or "migrate" when the plan does not specify the exact algorithm, overwrite semantics, and non-goals. If two reasonable engineers could implement the sentence in opposite ways, the task is too ambiguous.
-14. Order-of-operations and sequencing constraints -- check whether the plan specifies the required order between validation, reads, migration, locking, PID checks, writes, cleanup, and response generation. Flag tasks where doing the right steps in the wrong order would change behavior, create races, or violate invariants. Require explicit sequencing whenever earlier steps affect what later steps are allowed to read or write.
-15. Lifecycle symmetry and cleanup completeness -- for every create/read/write/start path in the plan, verify the corresponding stop/delete/reset/cleanup path is also updated. Flag one-sided migrations where the plan updates creation or reads but not teardown, cancellation, cleanup, backfill, or legacy-path removal. This includes "clear both locations," "stop both process types," and "remove stale artifacts from all relevant stores."
-16. Test fidelity to real execution paths -- evaluate not just whether tests exist, but whether they exercise the real behavior boundary that enforces the contract. Flag test tasks that: reimplement production logic inside mocks; only test helpers when the risk lives in route/handler orchestration; mock away ordering, filesystem, or state-transition behavior that is the actual source of risk; do not cover mixed-state, partial-migration, or contradiction scenarios. Require the plan to specify the test level where needed: unit, integration, route/handler, or end-to-end.
+If the plan spans clearly separable subsystems, you may use subagents in parallel to audit distinct file clusters or subsystems, then synthesize the results into a single review. Otherwise, review directly.
+
+${REVIEW_AREAS}
 
 Format each finding as:
 
@@ -159,7 +211,7 @@ Format each finding as:
 ---
 
 Be direct and specific. Only flag genuine, significant issues. Propose solutions, not just problems.
-${SEVERITY_GATE}
+If you find no issues worth flagging for this round, write no findings and end with VERDICT: APPROVED.
 
 The LAST line of your response MUST be exactly one of these two lines (nothing after it):
 VERDICT: APPROVED

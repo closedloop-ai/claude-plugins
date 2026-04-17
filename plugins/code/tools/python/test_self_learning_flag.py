@@ -126,6 +126,43 @@ class TestCreateStateFilePersistsSelfLearning:
         assert "CLOSEDLOOP_WORKDIR=/tmp/test" in content
 
 
+class TestCreateStateFilePromptQuoting:
+    """Verify create_state_file emits quoted slash-command arguments."""
+
+    def test_prompt_quotes_workdir_prd_and_add_dir_with_spaces(
+        self, tmp_path: Path
+    ) -> None:
+        """State prompt should preserve argument boundaries for paths with spaces."""
+        project_root = tmp_path / "AI Platform"
+        workdir = project_root / "workdir"
+        workdir.mkdir(parents=True)
+        prd_file = workdir / "docs" / "prd file.md"
+        prd_file.parent.mkdir(parents=True)
+        add_dir = tmp_path / "peer repo"
+        add_dir.mkdir()
+
+        awk = _awk_extract_script()
+        script = (
+            _base_env(workdir, self_learning="false")
+            + f'PRD_FILE="{prd_file}"\n'
+            + 'PROMPT_NAME="prompt"\n'
+            + f'ADD_DIRS=("{add_dir}")\n'
+            + f'eval "$(awk \'{awk}\' "{RUN_LOOP_SH}")"\n'
+            + "create_state_file\n"
+        )
+
+        result = _run_script(script, cwd=str(workdir))
+        assert result.returncode == 0, f"Script failed: {result.stderr}"
+
+        state_file = workdir / CLOSEDLOOP_STATE_DIR / "state.local.md"
+        prompt_line = state_file.read_text().splitlines()[-1]
+        expected = (
+            f'/code:code "{workdir}" --prompt "prompt" --prd "{prd_file}" '
+            f'--add-dir "{add_dir}"'
+        )
+        assert prompt_line == expected
+
+
 class TestBootstrapLearningsGuard:
     """Verify bootstrap_learnings skips when self-learning is off."""
 

@@ -4,17 +4,20 @@
 Connects directly to the MCP server, authenticates with an API key,
 and calls create-artifact or create-artifact-version.
 
+Reads `CLOSEDLOOP_API_KEY` and `NEXT_PUBLIC_MCP_SERVER_URL` from the current
+process environment by default. `--api-key` and `--url` can still be provided
+explicitly to override those values.
+
 Usage:
+    export CLOSEDLOOP_API_KEY=sk_live_...
+    export NEXT_PUBLIC_MCP_SERVER_URL=https://example.com/mcp
+
     # List available projects:
     uv run --with 'mcp[cli]' scripts/upload_artifact.py \\
-        --url http://localhost:3010/mcp \\
-        --api-key sk_live_... \\
         --list-projects
 
     # Create artifact:
     uv run --with 'mcp[cli]' scripts/upload_artifact.py \\
-        --url http://localhost:3010/mcp \\
-        --api-key sk_live_... \\
         --file /path/to/content.md \\
         --title "My PRD" \\
         --type PRD \\
@@ -22,15 +25,11 @@ Usage:
 
     # New version of existing artifact:
     uv run --with 'mcp[cli]' scripts/upload_artifact.py \\
-        --url http://localhost:3010/mcp \\
-        --api-key sk_live_... \\
         --file /path/to/content.md \\
         --artifact-id <ARTIFACT_ID>
 
     # Create + verify round-trip:
     uv run --with 'mcp[cli]' scripts/upload_artifact.py \\
-        --url http://localhost:3010/mcp \\
-        --api-key sk_live_... \\
         --file /path/to/content.md \\
         --title "My PRD" \\
         --type PRD \\
@@ -42,6 +41,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -63,6 +63,10 @@ class _Args(argparse.Namespace):
     workstream_id: str | None
     artifact_id: str | None
     verify: bool
+
+
+_API_KEY_ENV_VAR = "CLOSEDLOOP_API_KEY"
+_MCP_URL_ENV_VAR = "NEXT_PUBLIC_MCP_SERVER_URL"
 
 
 def _build_http_client(api_key: str) -> httpx.AsyncClient:
@@ -252,17 +256,41 @@ def _format_exception(exc: Exception | ExceptionGroup) -> dict:  # type: ignore[
     return {"error": str(exc), "traceback": traceback.format_exc()}
 
 
+def _require_arg_or_env(
+    parser: argparse.ArgumentParser,
+    *,
+    value: str | None,
+    flag: str,
+    env_var: str,
+) -> str:
+    """Return a CLI/env value or exit with a clear parser error."""
+    if value:
+        return value
+    parser.error(
+        f"{flag} is required. Set {env_var} in the current environment "
+        f"or pass {flag} explicitly."
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Upload file content as a ClosedLoop MCP artifact."
     )
     parser.add_argument(
         "--url",
-        default="http://localhost:3010/mcp",
-        help="MCP server URL (default: http://localhost:3010/mcp)",
+        default=os.environ.get(_MCP_URL_ENV_VAR),
+        help=(
+            "MCP server URL. Defaults to the "
+            f"{_MCP_URL_ENV_VAR} environment variable."
+        ),
     )
     parser.add_argument(
-        "--api-key", required=True, help="ClosedLoop API key (sk_live_...)"
+        "--api-key",
+        default=os.environ.get(_API_KEY_ENV_VAR),
+        help=(
+            "ClosedLoop API key (sk_live_...). Defaults to the "
+            f"{_API_KEY_ENV_VAR} environment variable."
+        ),
     )
     parser.add_argument(
         "--list-projects",
@@ -287,6 +315,18 @@ def main() -> None:
         help="After upload, fetch the artifact back and verify content length.",
     )
     args = parser.parse_args(namespace=_Args())
+    args.url = _require_arg_or_env(
+        parser,
+        value=args.url,
+        flag="--url",
+        env_var=_MCP_URL_ENV_VAR,
+    )
+    args.api_key = _require_arg_or_env(
+        parser,
+        value=args.api_key,
+        flag="--api-key",
+        env_var=_API_KEY_ENV_VAR,
+    )
 
     if args.list_projects:
         result = asyncio.run(list_projects(args))
