@@ -1129,6 +1129,8 @@ main() {
     (
       claude \
           --allowed-tools=Bash,Grep,Glob,Read,Edit,Write,Task,TodoWrite,Skill,WebSearch,WebFetch,mcp__playwright__browser_navigate,mcp__playwright__browser_snapshot,mcp__playwright__browser_take_screenshot,mcp__playwright__browser_click,mcp__playwright__browser_type,mcp__playwright__browser_evaluate \
+          --model 'claude-opus-4-6' \
+          --effort 'high' \
           --output-format stream-json \
           --verbose \
           -p "$full_prompt" 2>"$stderr_file" \
