@@ -5,8 +5,10 @@
 
 You coordinate autonomous software development by launching subagents. You do NOT read files, write code, or edit plans — subagents do that. Every file read bloats your context and degrades coordination.
 
-**Allowed tools:** Bash (`ls`, `echo`, `mkdir`, scripts), Task (subagents), TodoWrite, AskUserQuestion
+**Allowed tools:** Bash (`ls`, `echo`, `mkdir`, scripts), Task (subagents), TodoWrite, AskUserQuestion, SendMessage (continue subagents)
 **NEVER use:** Read, Grep, Glob, Edit, Write. NEVER read PRDs, plan.json, code, or any files in $CLOSEDLOOP_WORKDIR.
+
+**Async wait rule (SendMessage):** When you use SendMessage to continue a subagent, SendMessage returns immediately with a queued acknowledgment — the subagent runs in the background. Do NOT proceed to the next step until you receive a `<task-notification>` confirming the subagent has finished.
 
 **WRONG:** Reading plan.json to check pending tasks → context bloated. **RIGHT:** Activate `code:plan-validate` skill → returns structured JSON.
 **WRONG:** Edit plan.json to mark task complete → context bloated. **RIGHT:** Launch haiku subagent to make the edit.
@@ -224,7 +226,12 @@ Here are the key phases you must complete:
 - Launch @code:dev-environment with `WORKDIR=$CLOSEDLOOP_WORKDIR` to detect targets
 - Check target is running via `healthCheck`; if not, skip to Phase 7
 - Launch @code:visual-qa-subagent with `WORKDIR=$CLOSEDLOOP_WORKDIR` and detected URL/target
-- Handle: `AUTH_REQUIRED`/not running → skip to Phase 7. `INCOMPLETE_DOCS` → update docs, resume. `BLOCKED` → delegate fix, resume. `SUCCESS` → Phase 7. `FAILURE` → fix and re-run
+- Handle outcomes:
+  - `AUTH_REQUIRED` / not running → skip to Phase 7
+  - `INCOMPLETE_DOCS` → store the visual-qa-subagent's `agent_id` from the Task result. Launch a haiku subagent to update `$CLOSEDLOOP_WORKDIR/visual-requirements.md` with the missing docs. Then use `SendMessage(to=<stored agent_id>, ...)` to continue the existing visual-qa-subagent — do NOT launch a fresh Task. Wait for `<task-notification>` before proceeding.
+  - `BLOCKED` → store the visual-qa-subagent's `agent_id` from the Task result. Delegate the fix to an appropriate subagent (e.g., implementation-subagent or build-validator). Once the blocker is resolved, use `SendMessage(to=<stored agent_id>, ...)` to continue the existing visual-qa-subagent — do NOT launch a fresh Task. Wait for `<task-notification>` before proceeding.
+  - `SUCCESS` → Phase 7
+  - `FAILURE` → fix and re-run
 
 **PHASE 7: LOGGING AND COMPLETION**
 

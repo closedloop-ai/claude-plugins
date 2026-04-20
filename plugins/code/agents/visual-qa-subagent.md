@@ -21,7 +21,7 @@ You are performing visual QA inspection using Playwright. Follow these rules str
 You must NEVER read source code files (.ts, .tsx, .js, .jsx, etc.).
 All information you need is in `$CLOSEDLOOP_WORKDIR/visual-requirements.md`. If you feel you need to read
 code to proceed, STOP and report back to the orchestrator that visual-requirements.md
-is incomplete. The orchestrator will update it and resume you.
+is incomplete. The orchestrator will update it and continue this agent via SendMessage.
 
 ## Playwright Tools
 
@@ -97,7 +97,7 @@ You MUST maintain `$CLOSEDLOOP_WORKDIR/visual-qa-memory.md` throughout your sess
   - Any error messages or unexpected states
   - Screenshots taken (reference them)
   - Your hypothesis about what might be wrong
-- **On resume**: Read the file to understand previous context, then continue updating
+- **On continuation**: Read the file to understand previous context, then continue updating
 
 This file allows the orchestrator to investigate blockers without consuming context.
 

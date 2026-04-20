@@ -64,21 +64,23 @@ Authorization checks found in src/middleware/authorize.ts:
 ### Refinement Request
 
 ```
-# Resume the agent using stored ID
-Task(
-  subagent_type="Explore",
-  resume="agent-auth-789",
-  prompt="<follow-up questions below>"
-)
-
-Thank you - the middleware locations and basic validation logic are helpful.
+# agent_id "agent-auth-789" was stored from the initial Task(...) dispatch above
+SendMessage(
+  to="agent-auth-789",
+  summary="Follow up on auth middleware gaps",
+  message="Thank you - the middleware locations and basic validation logic are helpful.
 
 However, I need additional context:
 1. How are these middleware functions applied to routes? Show examples of protected routes.
-2. Where are the "required permissions" defined that checkPermissions() compares against?
+2. Where are the \"required permissions\" defined that checkPermissions() compares against?
 3. What error responses are sent when auth fails?
 
-Is there related information about authentication patterns or conventions I should know?
+Is there related information about authentication patterns or conventions I should know?"
+)
+# SendMessage returns immediately with a queued acknowledgment.
+# Wait for the <task-notification> before proceeding.
+# Fallback: if no agent_id is in memory (cross-session) or SendMessage returns an actual
+# error, fall back to a fresh Task(...) launch with a self-contained prompt.
 ```
 
 ### Outcome
@@ -179,21 +181,21 @@ Found streaming implementation in exportToCSV() using Node streams for memory ef
 ### Phase 3: Refinement Request (Cycle 1)
 
 ```
-# Resume with stored agent ID
-Task(
-  subagent_type="Explore",
-  resume="agent-export-123",
-  prompt="<follow-up questions below>"
-)
-
-Great - I can see the export endpoints and the streaming approach for CSVs.
+# agent_id "agent-export-123" was stored from the initial Task(...) dispatch above
+SendMessage(
+  to="agent-export-123",
+  summary="Follow up on CSV export implementation details",
+  message="Great - I can see the export endpoints and the streaming approach for CSVs.
 
 I need more detail on:
 1. Show the actual implementation of exportToCSV() - how does it integrate transformers with streams?
 2. What error handling exists for failed exports or timeouts?
 3. Are there rate limits or authentication checks on export endpoints?
 
-Are there other export-related utilities or middleware I should know about?
+Are there other export-related utilities or middleware I should know about?"
+)
+# SendMessage returns immediately with a queued acknowledgment.
+# Wait for the <task-notification> before proceeding.
 ```
 
 ### Sub-agent Response (Cycle 2)
@@ -236,7 +238,7 @@ Iterative Retrieval Summary:
   * Error handling patterns (middleware, timeouts, logging)
   * Security patterns (auth, rate limiting)
   * CSV validation utilities
-- Agent ID: agent-export-123 (available for future resumption if needed)
+- Agent ID: agent-export-123 (available for future continuation via SendMessage)
 
 The orchestrator can now implement the new export endpoint following established patterns for streaming, error handling, auth, and validation.
 ```
@@ -317,7 +319,7 @@ The orchestrator **skips phases 3-4** and proceeds directly with implementation.
 Iterative Retrieval Summary:
 - Cycles used: 1 (initial dispatch only - sufficient context on first pass)
 - Additional context gathered: N/A (initial response complete)
-- Agent ID: agent-form-456 (available for future resumption if needed)
+- Agent ID: agent-form-456 (available for future continuation via SendMessage)
 
 Early termination: The initial response provided complete context including validation library (Zod), existing patterns, and exact syntax for email validation.
 ```

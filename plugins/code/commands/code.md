@@ -1,7 +1,7 @@
 ---
 description: "Begin coding session"
 argument-hint: [working-directory] [--prompt <name>] [--prd <requirements-file>] [--plan <plan-file>]
-allowed-tools: Bash, Edit, Write, Task, TodoWrite
+allowed-tools: Bash, Edit, Write, Task, TodoWrite, SendMessage
 ---
 
 # Bootstrap ClosedLoop

@@ -252,7 +252,7 @@ Dynamically locates files within the Claude Code plugins cache directory (`~/.cl
 
 ### `iterative-retrieval`
 
-A 4-phase protocol for orchestrators to refine subagent queries through follow-up questions. Phases: Initial Dispatch, Sufficiency Evaluation (4-question checklist), Refinement Request (resume with targeted follow-ups), and Loop (up to 3 cycles). Used when initial subagent responses may miss important adjacent context.
+A 4-phase protocol for orchestrators to refine subagent queries through follow-up questions. Phases: Initial Dispatch, Sufficiency Evaluation (4-question checklist), Refinement Request (continue via SendMessage with targeted follow-ups), and Loop (up to 3 cycles). Used when initial subagent responses may miss important adjacent context.
 
 ### `codex-review`
 

@@ -3548,10 +3548,12 @@ class TestSetup:
                 return "feature-x\n"
             raise subprocess.CalledProcessError(1, cmd)
 
+        env_without_cache = {k: v for k, v in os.environ.items() if k != "CR_GLOBAL_CACHE"}
         with patch("code_review_helpers._run_git", side_effect=git_side_effect):
             with patch("time.time", return_value=1700000000):
-                ns = argparse.Namespace(mode="github")
-                rc = cmd_setup(ns)
+                with patch.dict("os.environ", env_without_cache, clear=True):
+                    ns = argparse.Namespace(mode="github")
+                    rc = cmd_setup(ns)
 
         assert rc == 0
         captured = capsys.readouterr()

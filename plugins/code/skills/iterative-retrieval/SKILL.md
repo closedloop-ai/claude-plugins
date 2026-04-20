@@ -28,7 +28,7 @@ Define and dispatch the initial query with full context:
 1. **Define PRIMARY OBJECTIVE**: Clearly state what you ultimately need to accomplish
 2. **Formulate INITIAL QUERIES**: Specific questions or search criteria for the sub-agent
 3. **Dispatch with BOTH**: Send both the queries AND the primary objective to provide semantic context
-4. **Store AGENT ID**: Keep the agent ID returned from the Task() call for potential resumption
+4. **Store AGENT ID**: Keep the `agent_id` returned from the `Task(...)` call for potential continuation via SendMessage
 
 ### Phase 2: Sufficiency Evaluation
 
@@ -47,12 +47,16 @@ If you answer "no" to question 1 or 4, OR "yes" to questions 2 or 3, the context
 
 ### Phase 3: Refinement Request
 
-Resume the sub-agent with targeted follow-up questions:
+Continue the sub-agent with targeted follow-up questions using SendMessage:
 
-1. **Resume with AGENT ID**: Use the stored agent ID to continue the conversation
+1. **Continue via SendMessage**: Use `SendMessage(to=<stored_agent_id>, summary=<5-10 word summary>, message=<prompt>)` to continue the subagent; completed subagents auto-resume from transcript in the background with full prior context intact
 2. **Acknowledge what was useful**: Briefly confirm what information was valuable
 3. **Specify EXACTLY what's needed**: Be precise about what additional context is required
 4. **Ask about related info**: "Is there related information that might be relevant to [primary objective]?"
+
+**Async flow:** SendMessage returns immediately with a queued acknowledgment. The subagent then runs in the background and you will receive a `<task-notification>` when it finishes. Do not proceed to the next step until that notification arrives.
+
+**Fallback:** If no `agent_id` is in memory (cross-session resume after a previous Claude Code session ended) or SendMessage returns an actual error, fall back to a fresh `Task(...)` launch with a self-contained prompt that includes all prior context needed.
 
 ### Phase 4: Loop
 
@@ -77,14 +81,14 @@ When iterative retrieval completes, report:
 
 1. **Total refinement cycles used**: Number of iterations (including initial dispatch)
 2. **What additional context was gathered**: Summarize what the follow-ups uncovered
-3. **Agent ID for future resumption**: Store for potential later follow-ups
+3. **Agent ID for future continuation via SendMessage**: Store for potential later follow-ups
 
 Example:
 ```
 Iterative Retrieval Summary:
 - Cycles used: 2 (initial + 1 follow-up)
 - Additional context gathered: Error handling patterns, retry logic implementation, timeout configuration
-- Agent ID: agent-abc123 (available for resumption)
+- Agent ID: agent-abc123 (available for future continuation via SendMessage)
 ```
 
 ## When to Use This Skill
