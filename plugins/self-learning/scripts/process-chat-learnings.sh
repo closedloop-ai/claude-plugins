@@ -9,6 +9,11 @@
 
 set -euo pipefail
 
+# Claude binary path. When spawned by the closedloop-electron desktop app,
+# CLAUDE_BIN is set to the absolute path that the desktop validated in its
+# pre-flight check. Falls back to bare `claude` for manual runs.
+CLAUDE="${CLAUDE_BIN:-claude}"
+
 WORKDIR="${1:?Usage: process-chat-learnings.sh <workdir>}"
 
 PENDING_DIR="$WORKDIR/.learnings/pending"
@@ -41,7 +46,7 @@ write_status "processing" "Running process-learnings"
 
 # Run the process-learnings command via Claude
 CLAUDE_OK=false
-if claude -p "Run /self-learning:process-learnings $WORKDIR" \
+if "$CLAUDE" -p "Run /self-learning:process-learnings $WORKDIR" \
     --allowed-tools=Bash,Grep,Glob,Read,Write \
     --max-turns 100 2>/dev/null; then
   CLAUDE_OK=true

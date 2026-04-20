@@ -19,6 +19,12 @@
 
 set -euo pipefail
 
+# Claude binary path. When spawned by the closedloop-electron desktop app,
+# CLAUDE_BIN is set to the absolute path that the desktop validated in its
+# pre-flight check. Falls back to bare `claude` for manual/interactive runs
+# where PATH is trusted. See run-loop.sh for the same pattern.
+CLAUDE="${CLAUDE_BIN:-claude}"
+
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FORMATTER="$SCRIPTS_DIR/../tools/python/stream_formatter.py"
 
@@ -78,14 +84,14 @@ run_claude() {
     local claude_exit_file
     claude_exit_file=$(mktemp)
     TMPFILES+=("$claude_exit_file")
-    { claude "${claude_args[@]}" --output-format stream-json --verbose 2>"$CLAUDE_STDERR"; echo $? > "$claude_exit_file"; } \
+    { "$CLAUDE" "${claude_args[@]}" --output-format stream-json --verbose 2>"$CLAUDE_STDERR"; echo $? > "$claude_exit_file"; } \
       | python3 "$FORMATTER" &
     CURRENT_CHILD_PID=$!
     wait $CURRENT_CHILD_PID || true
     CURRENT_CHILD_PID=0
     exit_code=$(cat "$claude_exit_file" 2>/dev/null || echo "1")
   else
-    claude "${claude_args[@]}" --output-format text > /dev/null 2>"$CLAUDE_STDERR" &
+    "$CLAUDE" "${claude_args[@]}" --output-format text > /dev/null 2>"$CLAUDE_STDERR" &
     CURRENT_CHILD_PID=$!
     wait $CURRENT_CHILD_PID && exit_code=0 || exit_code=$?
     CURRENT_CHILD_PID=0
@@ -303,7 +309,7 @@ if [[ ${#ADD_DIRS[@]} -gt 0 ]]; then
 fi
 
 # Check dependencies
-for cmd in claude codex; do
+for cmd in "$CLAUDE" codex; do
   if ! command -v "$cmd" &> /dev/null; then
     echo -e "${RED}Error: $cmd is required but not found${NC}" >&2
     exit 1
@@ -452,7 +458,7 @@ if [[ "$PHASE" == "user_review" ]]; then
     if [[ ${#ADD_DIR_ARGS[@]} -gt 0 ]]; then
       local_claude_args+=("${ADD_DIR_ARGS[@]}")
     fi
-    claude "${local_claude_args[@]}" 2>/dev/null
+    "$CLAUDE" "${local_claude_args[@]}" 2>/dev/null
     INTERACTIVE_EXIT=$?
 
     echo ""
