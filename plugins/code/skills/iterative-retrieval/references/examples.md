@@ -27,7 +27,7 @@ INITIAL QUERIES:
 - Show how JWT tokens are validated
 - Identify where authorization checks happen
 
-# Dispatch using Task tool, store returned agent ID for potential resumption
+# Dispatch and store agent ID
 Task(
   subagent_type="Explore",
   description="Find auth middleware and patterns",

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code v1.9.2
+
+#### Changed
+- Migrated subagent resumption pattern from Task-based re-launch to SendMessage continuation across orchestrator prompt, `visual-qa-subagent` agent, `iterative-retrieval` skill, and `/code` command allowed-tools list
+- Orchestrator Phase 6 INCOMPLETE_DOCS and BLOCKED handlers now store `agent_id` from initial Task spawn and continue via `SendMessage(to=<agent_id>)` instead of launching fresh Task instances
+- Added async wait rule requiring orchestrator to wait for `<task-notification>` before proceeding after SendMessage dispatch
+
+### code-review v1.5.2
+
+#### Fixed
+- Fixed `test_github_mode` test isolation to prevent `CR_GLOBAL_CACHE` environment variable from leaking into test assertions
+
 ### code v1.9.1
 
 #### Added
