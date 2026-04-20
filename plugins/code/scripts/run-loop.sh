@@ -7,6 +7,13 @@
 
 set -euo pipefail
 
+# Claude binary path. When spawned by the closedloop-electron desktop app,
+# CLAUDE_BIN is set to the absolute path that the desktop validated in its
+# pre-flight check. This avoids PATH mismatches between Electron's spawn env
+# and the user's login shell (e.g. non-Homebrew installs, symlinked binaries).
+# Falls back to bare `claude` for manual/interactive runs where PATH is trusted.
+CLAUDE="${CLAUDE_BIN:-claude}"
+
 # Single source of truth for the state directory name
 CLOSEDLOOP_STATE_DIR=".closedloop-ai"
 
@@ -344,7 +351,7 @@ post_iteration_processing() {
       echo -e "${BLUE}[8/10] Processing pending learnings...${NC}"
       log_progress "Step 8: Running process-learnings"
       if run_timed_step 8 "process_learnings" bash -c "
-        claude -p 'Run /self-learning:process-learnings $workdir' \
+        \"$CLAUDE\" -p 'Run /self-learning:process-learnings $workdir' \
             --allowed-tools=Bash,Grep,Glob,Read,Write \
             --max-turns 100 2>&1 | tee -a '$PROGRESS_LOG'
       "; then
@@ -396,7 +403,7 @@ post_iteration_processing() {
       echo -e "${BLUE}[10/10] Exporting closedloop learnings...${NC}"
       log_progress "Step 10: Running export-closedloop-learnings"
       if run_timed_step 10 "export_closedloop_learnings" bash -c "
-        claude -p '/self-learning:export-closedloop-learnings $workdir' \
+        \"$CLAUDE\" -p '/self-learning:export-closedloop-learnings $workdir' \
             --allowed-tools=Bash,Grep,Glob,Read,Write \
             --max-turns 20 2>&1 | tee -a '$PROGRESS_LOG'
       "; then
@@ -488,7 +495,7 @@ run_post_loop_review() {
 
     set +e
     (
-      claude \
+      "$CLAUDE" \
         --allowed-tools=Bash,Grep,Glob,Read,Write,Edit,Task,TodoWrite \
         --output-format stream-json \
         --verbose \
@@ -565,7 +572,7 @@ run_post_loop_review() {
 
     set +e
     (
-      claude \
+      "$CLAUDE" \
         --allowed-tools=Bash,Grep,Glob,Read,Write,Edit,Task,TodoWrite \
         --output-format stream-json \
         --verbose \
@@ -1127,7 +1134,7 @@ main() {
     exit_code_file=$(mktemp)
     set +e
     (
-      claude \
+      "$CLAUDE" \
           --allowed-tools=Bash,Grep,Glob,Read,Edit,Write,Task,TodoWrite,Skill,WebSearch,WebFetch,mcp__playwright__browser_navigate,mcp__playwright__browser_snapshot,mcp__playwright__browser_take_screenshot,mcp__playwright__browser_click,mcp__playwright__browser_type,mcp__playwright__browser_evaluate \
           --output-format stream-json \
           --verbose \
