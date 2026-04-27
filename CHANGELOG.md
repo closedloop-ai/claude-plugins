@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code v1.9.4
+
+#### Fixed
+- `setup-closedloop.sh` no longer clobbers `CLOSEDLOOP_PLAN_FILE` when the env var is already set by the caller (e.g. closedloop-electron). Previously, omitting `--plan` unconditionally overwrote the env var with an empty string, causing imported plans to be silently ignored and regenerated from scratch.
+
 ### code v1.9.3
 
 #### Changed
