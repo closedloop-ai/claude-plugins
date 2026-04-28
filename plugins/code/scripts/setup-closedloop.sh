@@ -314,6 +314,17 @@ fi
 
 mkdir -p "$WORKDIR/$CLOSEDLOOP_STATE_DIR"
 
+# Preserve run-loop-managed keys before truncating config.env. run-loop.sh
+# writes CLOSEDLOOP_START_SHA and CLOSEDLOOP_SELF_LEARNING during create_state_file;
+# setup-closedloop.sh runs every /code:code iteration and previously clobbered
+# them with the truncating heredoc below.
+EXISTING_START_SHA=""
+EXISTING_SELF_LEARNING=""
+if [[ -f "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env" ]]; then
+    EXISTING_START_SHA=$(grep '^CLOSEDLOOP_START_SHA=' "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env" 2>/dev/null | head -n1 | cut -d= -f2-)
+    EXISTING_SELF_LEARNING=$(grep '^CLOSEDLOOP_SELF_LEARNING=' "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env" 2>/dev/null | head -n1 | cut -d= -f2-)
+fi
+
 # Write full config to WORKDIR
 mkdir -p "$WORKDIR/$CLOSEDLOOP_STATE_DIR"
 
@@ -344,6 +355,14 @@ CLOSEDLOOP_ADD_DIRS="$add_dirs_joined"
 CLOSEDLOOP_ADD_DIR_NAMES="$add_dir_names_joined"
 CLOSEDLOOP_REPO_MAP="$repo_map_joined"
 EOF
+
+# Re-append run-loop-managed keys captured above.
+if [[ -n "$EXISTING_START_SHA" ]]; then
+    echo "CLOSEDLOOP_START_SHA=$EXISTING_START_SHA" >> "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
+fi
+if [[ -n "$EXISTING_SELF_LEARNING" ]]; then
+    echo "CLOSEDLOOP_SELF_LEARNING=$EXISTING_SELF_LEARNING" >> "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
+fi
 
 echo "ClosedLoop config written to $WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
 cat "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"

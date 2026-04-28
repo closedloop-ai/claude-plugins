@@ -28,6 +28,7 @@ Activate with `Skill(skill="<id>")`.
 | `code:cross-repo-cache` | Phase 1.4.1 entry, before cross-repo-coordinator | `CROSS_REPO_CACHE_HIT` (with status) / `CROSS_REPO_CACHE_MISS` |
 | `judges:eval-cache` | Phase 1.3 entry, before plan-evaluator | `EVAL_CACHE_HIT` (with `simple_mode`, `selected_critics`) / `EVAL_CACHE_MISS` |
 | `code:iterative-retrieval` | Complex subagent calls where initial response may be incomplete (not for simple queries) | 4-phase protocol: Dispatch → Evaluate → Refine → Loop |
+| `code:decision-table` | Phase 2.7 (generation via plan-writer) and Phase 5.5 (verification-only via behavior-verifier) | Activated by subagents, not directly by orchestrator |
 
 **plan-validate vs plan-validator:** Use `code:plan-validate` skill for structural checks. Only launch @code:plan-validator agent after phases that modify plan content (Phase 1, 2.6, 2.7) with "SEMANTIC ONLY" prompt.
 
@@ -72,6 +73,7 @@ Use this sequence at any hard-stop that requires user action before continuing:
 | Phase 3: Implementation | Implementing |
 | Phase 4: Code simplification | Simplifying code |
 | Phase 5: Testing and Validation | Testing |
+| Phase 5.5: Behavioral Verification | Verifying behavioral alignment |
 | Phase 6: Visual inspection | Inspecting visuals |
 | Phase 7: Logging and completion | Completing |
 
@@ -89,8 +91,15 @@ Use this sequence at any hard-stop that requires user action before continuing:
 - Phase 7 failures: add `"reason": "..."` and optionally `"pendingTasks": [...]`
 - Hard stops: status=`AWAITING_USER`, add `"reason"`, `"userAction": {"description", "file", "command"}`
 - Final completion: status=`COMPLETED`
+- Run start: add `"startSha": "<git sha>"` as a top-level field. Written once at the start of the first iteration and re-included on every subsequent state.json write using the value held in orchestrator working memory.
 
 **Rule:** Update state.json at the START of every phase below. This is implied and not repeated per-phase.
+
+**startSha initialization:** At the very start of the first iteration (before Phase 0.9, immediately after writing the initial state.json), source startSha from config.env with a single Bash call and store it in orchestrator working memory for the rest of the run:
+```bash
+START_SHA=$(grep '^CLOSEDLOOP_START_SHA=' "$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env" 2>/dev/null | cut -d= -f2- | head -n1)
+```
+Always quote `"$CLOSEDLOOP_WORKDIR"` in shell snippets to handle workdir paths that contain spaces. Include `"startSha": "$START_SHA"` in this initial state.json write. On every subsequent state.json write, re-include `"startSha": "$START_SHA"` from working memory — do NOT re-read config.env or state.json. If config.env is absent or `CLOSEDLOOP_START_SHA` is empty, set `startSha` to `""`.
 
 Here are the key phases you must complete:
 
@@ -176,7 +185,10 @@ Here are the key phases you must complete:
 
 **PHASE 2.7: PLAN FINALIZATION**
 
-- Launch @code:plan-writer with `WORKDIR`, FINALIZE MODE: enrich task descriptions with implementation details (code patterns, signatures, edge cases). Do NOT add/remove/renumber tasks.
+- Launch @code:plan-writer with `WORKDIR`, FINALIZE MODE: enrich task descriptions with implementation details (code patterns, signatures, edge cases). Do NOT add/remove/renumber tasks. Include plan_was_imported=$plan_was_imported and simple_mode=$simple_mode in the prompt so plan-writer knows whether to skip decision-table generation.
+- **After @code:plan-writer completes, check its output for the failure marker before proceeding:**
+  - If the output contains the string `DECISION_TABLE_ARTIFACT_COUNT_MISMATCH` (treat the marker as authoritative even if `PLAN_WRITER_COMPLETE` is also present): execute **AWAITING_USER_SEQUENCE** with: phase='Phase 2.7: Plan Finalization', reason='Decision-table artifact count mismatch (expected exactly 1 new file under .closedloop-ai/decision-tables/)', file='$CLOSEDLOOP_WORKDIR/.closedloop-ai/decision-tables/', command='/code:code $ARGUMENTS'. Tell the user: 'Plan-writer found 0 or more than 1 new decision-table files. Inspect .closedloop-ai/decision-tables/, decide which file to keep as the canonical artifact, set plan.json.decisionTable.path to its relative path, and run /code:code $ARGUMENTS to continue.' **HARD STOP.**
+  - If the output does NOT contain the marker, proceed normally (verify PLAN_WRITER_COMPLETE was emitted, then continue to Phase 3).
 - After plan-writer completes (outputs `<promise>PLAN_WRITER_COMPLETE</promise>`), run **PLAN_VALIDATION_SEQUENCE**
 - Proceed to Phase 3
 
@@ -220,6 +232,51 @@ Here are the key phases you must complete:
      b. Re-run @code:build-validator. Repeat until VALIDATION_PASSED (max 20 attempts)
      c. If still failing after 20 attempts: Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5: Testing and Validation", reason="Validation failed after 20 attempts", file=null, command="/code:code $ARGUMENTS". Tell the user: "Validation failed after 20 attempts. Fix issues manually and run `/code:code $ARGUMENTS` to continue."
 
+**PHASE 5.5: BEHAVIORAL VERIFICATION**
+
+**Skip conditions (check in order):**
+- If `simple_mode = true`: mark Phase 5.5 as `completed`, skip to Phase 6.
+- If `plan_was_imported = true`: mark Phase 5.5 as `completed`, skip to Phase 6.
+
+NOTE: These are the only two valid skip conditions. If neither skip applies, Phase 5.5 MUST run regardless of the decisionTable field state. An empty or missing `decision_table_path` in plan-validate output when no skip flag is set indicates a Phase 2.7 regression and must escalate, not skip.
+
+**Setup (values from orchestrator working memory and last plan-validate output -- no file reads):**
+- `decisionTablePath` = `decision_table_path` field from last `code:plan-validate` skill output
+- `startSha` = value held in orchestrator working memory since T-4.0 initialization
+- Set `dt_attempt = 0`, `dt_max_attempts = 5`, `dt_status = "pending"`, `dt_any_clarifications = false`, `dt_last_failure_reason = ""`.
+- Telemetry counters: `dt_drift_kind_counts = {"code_drift": 0, "test_drift": 0, "plan_ambiguity": 0}`, `dt_fixes_attempted = 0`, `dt_parse_failures = 0`, `dt_verifier_invocations = 0`, `dt_phase_start_iso = $(date -u +%Y-%m-%dT%H:%M:%SZ)`, `dt_phase_start_epoch_ms = $(($(date +%s%N | cut -c1-13)))` (macOS-portable form: `$(($(date +%s) * 1000))` if nanoseconds unavailable).
+
+If `startSha` is `""` in orchestrator working memory (no git context or resumed run predating this feature): log warning "startSha unavailable, skipping Phase 5.5", mark `completed`, skip to Phase 6.
+
+If `decisionTablePath` is `""` (Phase 2.7 generation failed or pointer not written): set `dt_status = "verification_failed"`. Launch haiku subagent: "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'verification_failed' if the field exists." Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5.5: Behavioral Verification", reason="Decision-table artifact path is missing from plan.json. Phase 2.7 generation appears to have failed.", file="$CLOSEDLOOP_WORKDIR/plan.json", command="/code:code $ARGUMENTS". Tell the user: "Phase 2.7 did not write a decision-table pointer into plan.json. Review plan.json and re-run /code:code $ARGUMENTS to resume." **HARD STOP.**
+
+**Verification loop:**
+1. Increment `dt_attempt`. **Step 1 is the sole site that increments `dt_attempt` -- no other step may increment it.** Then check: if `dt_attempt > dt_max_attempts`, set `dt_status = "verification_failed"`. Launch haiku subagent: "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'verification_failed'." Determine the escalation reason based on the previous iteration's outcome (tracked in `dt_last_failure_reason`, initialized to `""`): if `dt_last_failure_reason == "unparseable"`, use reason=`behavior-verifier output unparseable after $dt_max_attempts attempts`; otherwise use reason=`Behavioral drift detected after $dt_max_attempts verification attempts`. Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5.5: Behavioral Verification", reason=<determined above>, file="$CLOSEDLOOP_WORKDIR/$decisionTablePath", command="/code:code $ARGUMENTS". **HARD STOP.**
+2. Launch @code:behavior-verifier with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. DECISION_TABLE_PATH=$CLOSEDLOOP_WORKDIR/$decisionTablePath. START_SHA=$startSha. Verify final code against the decision-table artifact. Report only; do not fix code or tests." Increment `dt_verifier_invocations` by 1.
+3. Parse verifier output:
+   - If `ALIGNED` (first line of output is `ALIGNED`):
+     - If `dt_any_clarifications = true`: set `dt_status = "aligned_with_clarifications"`. Launch haiku subagent: "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'aligned_with_clarifications'."
+     - Otherwise: set `dt_status = "aligned"`. Launch haiku subagent: "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'aligned'."
+     - Run telemetry emit (see below), then mark Phase 5.5 `completed`, proceed to Phase 6.
+   - If `MISALIGNED` (first line of output is `MISALIGNED`):
+     - Extract the `<drift_rows>...</drift_rows>` JSON block from the verifier output. Parse the JSON array. **If the block is missing, the JSON is malformed, or any row has an unknown `kind` value not in `{code_drift, test_drift, plan_ambiguity}`, treat as a verifier parse failure**: set `dt_last_failure_reason = "unparseable"`, increment `dt_parse_failures` by 1, log a warning, do NOT route any drift rows, and immediately loop back to step 1. Do NOT increment `dt_attempt` here -- Step 1 owns all increments.
+     - If the block is parseable, set `dt_last_failure_reason = "drift"`. For each JSON object in the `drift_rows` array, increment `dt_drift_kind_counts[kind]` by 1 and `dt_fixes_attempted` by 1, then route by the `kind` field:
+       - `code_drift`: launch @code:implementation-subagent with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. Implement missing behavioral requirement. Area: {row.area}. Missing: {row.description}. Source file hint: {row.source_file}."
+       - `test_drift`: launch @test-engineer with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. Write tests for missing scenario. Area: {row.area}. Missing test scenario: {row.description}. Source file hint: {row.source_file}. Write the test in the appropriate test file for this area." If `row.source_file` points to a non-test file (indicating production code changes are also needed), also launch @code:implementation-subagent with the production-code requirement.
+       - `plan_ambiguity`: set `dt_any_clarifications = true`. Launch a haiku subagent to append a `Plan Clarifications` note to the decision-table artifact at "$CLOSEDLOOP_WORKDIR/$decisionTablePath" for the following ambiguity: {row.description}. Area: {row.area}. The haiku must NOT modify the `Current Code` or `Intended Change` sections — append only. Quote all paths in shell commands.
+     - After all row handlers complete, loop back to step 1.
+
+**State tracking:** Update state.json at start of Phase 5.5 and after each attempt with `{"phase": "Phase 5.5: Behavioral Verification", "status": "IN_PROGRESS", "startSha": "$startSha", "attempt": dt_attempt, "timestamp": "..."}`.
+
+**Telemetry emit (final step, run at exit before proceeding to Phase 6 or AWAITING_USER hard stop):**
+
+Compute `dt_phase_duration_ms = $(($(date +%s%N | cut -c1-13) - dt_phase_start_epoch_ms))` (or seconds-precision fallback).
+
+Launch a haiku subagent with prompt:
+"WORKDIR=$CLOSEDLOOP_WORKDIR. Append a single JSON line to $CLOSEDLOOP_WORKDIR/.closedloop-ai/decision-table-verifications.jsonl with the following exact fields and values: {\"timestamp\":\"<dt_phase_start_iso>\", \"workdir\":\"$CLOSEDLOOP_WORKDIR\", \"decision_table_path\":\"<decision_table_path from plan-validate>\", \"final_status\":\"<dt_status>\", \"iterations\":<dt_attempt>, \"drift_kind_counts\":<dt_drift_kind_counts>, \"fixes_attempted\":<dt_fixes_attempted>, \"parse_failures\":<dt_parse_failures>, \"verifier_invocations\":<dt_verifier_invocations>, \"phase_duration_ms\":<dt_phase_duration_ms>}. Use mkdir -p on the parent directory first. Use a shell append (>>) so prior lines are preserved. Do NOT pretty-print; one compact line. The file is JSONL, not JSON — no enclosing array, one object per line."
+
+The haiku writes one line and exits. The orchestrator does NOT read the file back. Failure mode: if the haiku append fails for any reason, log a warning and continue — telemetry is non-blocking. Do NOT block phase exit on telemetry failure, do NOT retry, do NOT escalate.
+
 **PHASE 6: VISUAL INSPECTION (if UI changes were made)**
 
 - If `$CLOSEDLOOP_WORKDIR/visual-requirements.md` does not exist or is empty, skip to Phase 7
@@ -235,7 +292,7 @@ Here are the key phases you must complete:
 
 **PHASE 7: LOGGING AND COMPLETION**
 
-- Append a summary of all changes made to $CLOSEDLOOP_WORKDIR/log.md file
+- Append a summary of all changes made to $CLOSEDLOOP_WORKDIR/log.md file. Include the decision-table alignment status if one exists: activate `code:plan-validate` skill and read `decision_table_status` from its output. If `aligned`: mention `Behavioral alignment verified: .closedloop-ai/decision-tables/<filename>.md`. If `aligned_with_clarifications`: mention `Behavioral alignment verified with plan clarifications: .closedloop-ai/decision-tables/<filename>.md`. If `verification_failed`: this state should not reach Phase 7 (AWAITING_USER would have fired at Phase 5.5); log a warning if it somehow does. If `""` (simple mode, imported plan, or no artifact): omit the mention.
 
 **Final verification gate (all must pass before COMPLETE):**
 

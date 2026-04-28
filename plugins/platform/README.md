@@ -7,7 +7,7 @@ The Platform plugin provides foundational skills for working with the ClosedLoop
 - **Claude Code expert guidance**: Comprehensive quick-reference for building and maintaining skills, agents, slash commands, hooks, and plugins, including file format specifications, validation checklists, and a decision framework for choosing extension types.
 - **Context engineering**: Distilled Anthropic prompt engineering documentation covering nine techniques—from basic clarity to extended thinking—with prioritized guidance on when to apply each.
 - **Mermaid visualization**: Generates clear, effective Mermaid diagrams for system architectures, control flows, data flows, state machines, sequence diagrams, and entity relationships directly in markdown.
-- **Artifact upload**: Automates uploading files to the ClosedLoop platform as typed artifacts (PRD, implementation plan, or template) using either a direct-API script or MCP fallback.
+- **Artifact upload**: Automates uploading files to the ClosedLoop platform as typed documents (PRD, implementation plan, feature, or template) using either a direct-API script or MCP fallback.
 - **Skill creation**: Scaffolds new skill directories with proper structure, generates SKILL.md templates with frontmatter, and guides through a five-step creation process from understanding use cases through iteration.
 
 ## Architecture Overview
@@ -140,19 +140,19 @@ A comprehensive guide for creating Mermaid diagrams embedded in markdown. Covers
 
 ### upload-artifact
 
-**Trigger conditions**: Any of the following phrases or intentions — "upload artifact", "upload PRD", "upload implementation plan", "create artifact from file", "save as artifact", "push to closedloop", "new artifact version", "test artifact upload", "verify artifact content", "upload to project".
+**Trigger conditions**: Any of the following phrases or intentions — "upload artifact", "upload PRD", "upload implementation plan", "upload feature", "create artifact from file", "save as artifact", "push to closedloop", "new artifact version", "test artifact upload", "verify artifact content", "upload to project".
 
 **What it provides**:
 
-A two-mode workflow for uploading file content to the ClosedLoop platform as a typed artifact:
+A two-mode workflow for uploading file content to the ClosedLoop platform as a typed document:
 
-**Script mode** (preferred when `CLOSEDLOOP_API_KEY` is available in the shell environment): Runs `skills/upload-artifact/scripts/upload_artifact.py` via `uv`, which connects directly to the MCP server over Streamable HTTP without loading file content into the conversation context. Supports creating new artifacts and new versions of existing artifacts.
+**Script mode** (preferred when `CLOSEDLOOP_API_KEY` is available in the shell environment): Runs `skills/upload-artifact/scripts/upload_artifact.py` via `uv`, which connects directly to the MCP server over Streamable HTTP without loading file content into the conversation context. Supports creating new documents and new versions of existing documents.
 
-**MCP fallback** (when no API key is configured): Uses Claude Code's existing MCP authentication to call `mcp__closedloop__create-artifact` or `mcp__closedloop__create-artifact-version` directly. File content is loaded into conversation context in this mode.
+**MCP fallback** (when no API key is configured): Uses Claude Code's existing MCP authentication to call `mcp__closedloop__create-document` or `mcp__closedloop__create-document-version` directly. File content is loaded into conversation context in this mode.
 
 Both modes follow the same five-step workflow: resolve credentials and choose mode, list projects, collect remaining parameters (file path, title, type), upload, and report results.
 
-**Artifact types**: `PRD`, `IMPLEMENTATION_PLAN`, `TEMPLATE`
+**Document types**: `PRD`, `IMPLEMENTATION_PLAN`, `FEATURE`, `TEMPLATE`
 
 **Script parameters**:
 
@@ -162,12 +162,12 @@ Both modes follow the same five-step workflow: resolve credentials and choose mo
 | `--api-key` | Yes | ClosedLoop API key (`sk_live_...`) |
 | `--list-projects` | No | List projects and exit |
 | `--file` | Upload | Path to content file |
-| `--title` | Create | Artifact title |
-| `--type` | Create | `PRD`, `IMPLEMENTATION_PLAN`, or `TEMPLATE` |
-| `--project-id` | No | Project association |
-| `--workstream-id` | No | Workstream association |
-| `--artifact-id` | Version | Existing artifact ID for new version |
-| `--verify` | No | Fetch artifact back after upload and compare content lengths |
+| `--title` | Create | Document title |
+| `--type` | Create | `PRD`, `IMPLEMENTATION_PLAN`, `FEATURE`, or `TEMPLATE` |
+| `--project-id` | No | Project ID or slug (`PRO-*`) |
+| `--workstream-id` | No | Workstream ID or slug (`WRK-*`) |
+| `--artifact-id` | Version | Existing document ID or slug (`PRD-*`/`PLN-*`/`FEA-*`) for new version |
+| `--verify` | No | Fetch the document back after upload and compare content lengths |
 
 ### claude-creator
 

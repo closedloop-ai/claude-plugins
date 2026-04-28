@@ -44,11 +44,13 @@ The script prints JSON to stdout matching the exact plan-validator output format
   "addressed_gaps": [],
   "pending_tasks": [{"id": "T-1.1", "description": "...", "acceptanceCriteria": ["AC-001"]}],
   "completed_tasks": [],
-  "manual_tasks": []
+  "manual_tasks": [],
+  "decision_table_path": ".closedloop-ai/decision-tables/pln-001.md",
+  "decision_table_status": "pending"
 }
 ```
 
-**Action:** Parse the extracted data fields. Use `pending_tasks`, `completed_tasks`, etc. as if the plan-validator agent returned them.
+**Action:** Parse the extracted data fields. Use `pending_tasks`, `completed_tasks`, etc. as if the plan-validator agent returned them. The `decision_table_path` and `decision_table_status` keys are always present — they are empty strings (`""`) when the plan does not yet reference a decision-table artifact.
 
 ### Plan Format Issues (PLAN_FORMAT_ISSUES)
 

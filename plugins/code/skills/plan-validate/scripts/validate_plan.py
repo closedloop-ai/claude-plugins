@@ -54,10 +54,10 @@ PENDING_TASK_RE = re.compile(r"^\s*- \[ \] \*\*T-(\d+\.\d+)\*\*(?:\s+\[MANUAL\])
 COMPLETED_TASK_RE = re.compile(r"^\s*- \[x\] \*\*T-(\d+\.\d+)\*\*:")
 # Manual task line
 MANUAL_TASK_RE = re.compile(r"^\s*- \[ \] \*\*T-(\d+\.\d+)\*\* \[MANUAL\]:")
-# Open question line
-OPEN_Q_RE = re.compile(r"^\s*- \[ \] (Q-\d{3}):")
-# Answered question line
-ANSWERED_Q_RE = re.compile(r"^\s*- \[x\] (Q-\d{3}):")
+# Open question line (supports optional bold markers: **Q-001** or Q-001)
+OPEN_Q_RE = re.compile(r"^\s*- \[ \] \*{0,2}(Q-\d{3})\*{0,2}:")
+# Answered question line (supports optional bold markers: **Q-001** or Q-001)
+ANSWERED_Q_RE = re.compile(r"^\s*- \[x\] \*{0,2}(Q-\d{3})\*{0,2}:")
 # AC table row pattern
 AC_TABLE_ROW_RE = re.compile(r"\| (AC-\d{3}) \|")
 # Gap content pattern
@@ -170,6 +170,20 @@ def validate_schema_fields(data: dict) -> list[str]:
         gid = gap.get("id", "")
         if not GAP_ID_RE.match(gid):
             issues.append(f"Invalid gap ID format: '{gid}'")
+
+    if "decisionTable" in data:
+        dt = data["decisionTable"]
+        if not isinstance(dt, dict):
+            issues.append("Field 'decisionTable' must be an object")
+        else:
+            dt_path = dt.get("path")
+            if not isinstance(dt_path, str) or not dt_path:
+                issues.append("decisionTable.path must be a non-empty string")
+            allowed_statuses = {"pending", "aligned", "aligned_with_clarifications", "verification_failed"}
+            if dt.get("status") not in allowed_statuses:
+                issues.append(
+                    "decisionTable.status must be one of pending|aligned|aligned_with_clarifications|verification_failed"
+                )
 
     return issues
 
@@ -344,6 +358,10 @@ def extract_data(data: dict) -> dict:
         if isinstance(t, dict)
     ]
 
+    decision_table = data.get("decisionTable")
+    dt_path = decision_table.get("path", "") if isinstance(decision_table, dict) else ""
+    dt_status = decision_table.get("status", "") if isinstance(decision_table, dict) else ""
+
     return {
         "status": "VALID",
         "issues": [],
@@ -356,6 +374,8 @@ def extract_data(data: dict) -> dict:
         "pending_tasks": pending,
         "completed_tasks": completed,
         "manual_tasks": manual,
+        "decision_table_path": dt_path,
+        "decision_table_status": dt_status,
     }
 
 

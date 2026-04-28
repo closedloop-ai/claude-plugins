@@ -12,7 +12,7 @@
       "max_iterations": 5,
       "promise": "PLAN_WRITER_COMPLETE",
       "state_file_suffix": "plan-writer-loop.local.md",
-      "verification_criteria": "JSON/markdown sync valid, task IDs preserved (no renumbering or removal), no scope expansion beyond requested changes, all tasks enriched with code patterns and integration points (finalize mode) or all blocking findings addressed (merge mode), valid JSON with all required fields"
+      "verification_criteria": "JSON/markdown sync valid, task IDs preserved (no renumbering or removal), no scope expansion beyond requested changes, all tasks enriched with code patterns and integration points (finalize mode) or all blocking findings addressed (merge mode), valid JSON with all required fields, decision-table artifact written to .closedloop-ai/decision-tables/ and plan.json decisionTable pointer set with status=pending (finalize mode only, unless plan_was_imported or simple_mode). If the marker DECISION_TABLE_ARTIFACT_COUNT_MISMATCH is present in plan-writer output, plan-writer's exit without PLAN_WRITER_COMPLETE is a legitimate detection state, not a loop-agent failure; the orchestrator handles escalation."
     },
     "code:code-reviewer": {
       "max_iterations": 5,
@@ -30,6 +30,12 @@
       "promise": "IMPLEMENTATION_VERIFIED",
       "state_file_suffix": "implementation-subagent-loop.local.md",
       "verification_criteria": "All referenced types and interfaces verified from source before use, no new utilities or constants that duplicate existing codebase implementations, all integration points connected, static analysis passes on modified files"
+    },
+    "code:behavior-verifier": {
+      "max_iterations": 3,
+      "promise": "BEHAVIOR_VERIFIER_COMPLETE",
+      "state_file_suffix": "behavior-verifier-loop.local.md",
+      "verification_criteria": "Output is ALIGNED (with verified_rows count, no drift_rows block required) or MISALIGNED (with a parseable <drift_rows>...</drift_rows> JSON block containing at least one object with required fields: kind [enum: code_drift|test_drift|plan_ambiguity], area, description, source_file, artifact_row). Promise is always emitted regardless of verdict. Missing artifact must produce MISALIGNED with a drift_rows block, not ALIGNED. Agent is verification-only: it does not modify code or tests. The artifact Verification Findings section is the human audit channel; the <drift_rows> JSON block is the machine routing channel."
     }
   },
   "learning_agents": {
@@ -42,7 +48,8 @@
       "code:cross-repo-coordinator",
       "code:generic-discovery",
       "code:code-reviewer",
-      "code:plan-validator"
+      "code:plan-validator",
+      "code:behavior-verifier"
     ]
   }
 }

@@ -568,8 +568,10 @@ Read `<CR_DIR>/partitions.json` with the Read tool.
 
 The script performs greedy bin-packing (sorted by LOC descending), splits oversized single files by hunks, and detects test files. It outputs:
 - **partitions**: Array of `{id, files, total_loc, is_test_only}` objects
-- Each `files[]` entry may include optional `line_range: [start, end]` when a large file is split by hunks
+- Each `files[]` entry has the shape `{"file": <path>, "loc": <int>, "is_test": <bool>, "line_range": [start, end]?}`. The path is under the key `file` (NOT `path`). `line_range` is present only when a large file is split by hunks.
 - **test_file_paths**: Array of detected test file paths
+
+When constructing agent prompts, read each entry's `file` field for the path. Do NOT run ad-hoc Python one-liners against `partitions.json` — use the Read tool, then map `entry["file"]` directly into the prompt template.
 
 ### Pre-Extract Patches to Disk (CRITICAL -- eliminates sub-agent Bash dependency)
 
@@ -618,6 +620,12 @@ Each agent's prompt is ONLY the lightweight per-agent parts. The shared instruct
 The orchestrator assigns each agent a unique `AGENT_ID` (e.g., `bha_p0`, `bhb`, `auditor`, `premise`, `domain_0`). The agent writes its findings to `{CR_DIR}/agent_{AGENT_ID}.json`.
 
 **Important:** When constructing agent prompts, substitute the resolved `CR_DIR` path (e.g., `.closedloop-ai/code-review/cr-38291`) into `{CR_DIR}` — agents run in separate processes and do not have access to the orchestrator's shell variables.
+
+**Placeholder source mapping** (read these directly from the partition entry — do NOT run a Python one-liner to inspect the JSON):
+- `{filepath_N}` ← `partition["files"][N]["file"]` (key is `file`, NOT `path`)
+- `{loc_N}` ← `partition["files"][N]["loc"]`
+- `{status_N}` ← `diff_data["file_statuses"][filepath]` (added/modified/removed)
+- `{start_N}-{end_N}` ← `partition["files"][N]["line_range"]` (only emit the `[lines X-Y]` segment if `line_range` is present)
 
 ```
 mode: standalone

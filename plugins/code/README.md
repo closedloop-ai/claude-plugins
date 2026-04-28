@@ -36,13 +36,15 @@ graph TD
     P27 --> P3["Phase 3: Implementation"]
     P3 --> P4["Phase 4: Code Simplification"]
     P4 --> P5["Phase 5: Testing & Code Review"]
-    P5 --> P6["Phase 6: Visual Inspection"]
+    P5 --> P55["Phase 5.5: Behavioral Verification"]
+    P55 --> P6["Phase 6: Visual Inspection"]
     P6 --> P7["Phase 7: Logging & Completion"]
 
     style Review fill:#fff3e0
     style P25 fill:#e1f5fe
     style P3 fill:#e8f5e9
     style P5 fill:#fce4ec
+    style P55 fill:#ede7f6
 ```
 
 The orchestrator never reads project files directly. All file operations are delegated to subagents, keeping the orchestrator's context lean for coordination work.
@@ -167,6 +169,9 @@ Discovers and runs project-specific validation commands (test, lint, typecheck, 
 **`code-reviewer`** (model: sonnet)
 Reviews code changes for security vulnerabilities, correctness bugs, type safety issues, performance problems, and DRY violations. Operates on git diffs, applying a strict evidence standard: Critical/High findings require concrete proof, not speculation. Checks multi-tenant authorization on data-access endpoints. Runs as a loop agent (max 5 iterations) — only exits when no Critical/High findings remain.
 
+**`behavior-verifier`** (model: sonnet)
+Verifies that final code aligns with the intended behavior captured in the decision-table artifact. Activates `code:decision-table` in verification-only mode (SKILL.md step 17), appends Verification Findings to the artifact, and returns a structured verdict (`ALIGNED` or `MISALIGNED` with typed `<drift_rows>` JSON: `code_drift`, `test_drift`, `plan_ambiguity`) for orchestrator routing in Phase 5.5. Read-and-report only — never modifies code or tests; drift remediation is owned by the orchestrator. Runs as a loop agent (max 3 iterations).
+
 ### Cross-Repo Agents
 
 **`cross-repo-coordinator`** (model: haiku)
@@ -257,6 +262,10 @@ A 4-phase protocol for orchestrators to refine subagent queries through follow-u
 ### `codex-review`
 
 Runs Codex to review a plan file and returns structured feedback with a verdict. Called once per debate round by the `plan-with-codex` command via `debate-loop.sh`. Supports session resume across rounds using a Codex thread ID. Returns `VERDICT:APPROVED` or `VERDICT:NEEDS_CHANGES` plus a `CODEX_SESSION` token. Emits `CODEX_FAILED` or `CODEX_EMPTY` tokens on error so the orchestrator can ask the user to retry or abort.
+
+### `decision-table`
+
+Generates a repo-local decision-table artifact that makes control-flow and stateful edge cases reviewable. Used when the user wants a code-grounded table for current behavior, wants to compare current behavior against a plan or work item, or needs a control-flow artifact for recovery, retry, finalization, validation, state-machine, or review-heavy edge cases. Writes one artifact per work item under `.closedloop-ai/decision-tables/` (`<plan-id>.md` for plan-scoped work, `<short-work-name>.md` otherwise) using the format defined in `references/artifact-format.md`. Builds the `Current Code` table from code (not expectations), captures the target behavior in `Intended Change`, and freezes both once implementation begins; post-implementation drift is recorded in append-only `Verification Findings`, `Fixes Applied`, `Final Alignment Status`, and optional `Plan Clarifications` sections. Includes a behavioral edge-case expansion pass that explicitly models structured-result setup failures, library-managed lifecycle re-entry, time-bound credentials/signatures, diagnostic reason taxonomies, and side-effect boundaries for validation failures.
 
 ---
 
