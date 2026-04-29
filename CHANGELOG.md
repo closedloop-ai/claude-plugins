@@ -77,6 +77,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `upload-artifact` now supports the `FEATURE` document type alongside `PRD`, `IMPLEMENTATION_PLAN`, and `TEMPLATE`.
 - `upload_artifact.py` and the skill's `--artifact-id` flag now accept a UUID or a user-facing slug (`PRD-*`, `PLN-*`, `FEA-*`) for new-version uploads; the MCP server resolves the identifier. `--project-id` and `--workstream-id` similarly accept slugs (`PRO-*`, `WRK-*`).
 - Result payloads now include `document_id` (mirroring `artifact_id` for backward compatibility) and report the document slug alongside the ID.
+- `context-engineering` skill: Refactoring Existing Prompts section gains a "Dropped qualifiers" pitfall row (load-bearing single modifiers like `only`, `unless`, `when appropriate`, `must`, `never`) and a four-step Validation Pass that requires labeling every removed line as relocated, redundant, or dropped on purpose before declaring a refactor done.
 
 ### platform v1.1.1
 

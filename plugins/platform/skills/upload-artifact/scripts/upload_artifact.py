@@ -130,10 +130,12 @@ async def _version_document(
         return {"error": "create-document-version failed", **_error_details(result)}
     text = _extract_text(result)
     parsed = json.loads(text) if text else {}
+    data = parsed.get("data", parsed) if isinstance(parsed, dict) else {}
     return {
         "mode": "version",
         "artifact_id": document_id,
         "document_id": document_id,
+        "slug": data.get("slug", parsed.get("slug") if isinstance(parsed, dict) else None),
         "content_length": len(content),
         "status": "success",
         "response": parsed,
