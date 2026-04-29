@@ -1,6 +1,6 @@
 ---
 name: run-judges
-description: Orchestrate parallel judge agent execution, aggregate CaseScore results, write plan-judges.json, code-judges.json, or prd-judges.json, and validate output. Supports evaluating implementation plans (16 judges), code artifacts (11 judges), or PRD artifacts (4 judges) via --artifact-type parameter.
+description: Orchestrate parallel judge agent execution, aggregate CaseScore results, write plan-judges.json, code-judges.json, or prd-judges.json, and validate output. Supports evaluating implementation plans (16 judges), code artifacts (11 judges), or PRD artifacts (5 judges) via --artifact-type parameter.
 context: fork
 ---
 
@@ -8,7 +8,7 @@ context: fork
 
 ## Purpose
 
-Execute specialized judge agents in parallel to evaluate implementation plan quality (16 judges), code quality (11 judges), or PRD quality (4 judges). Aggregates results into `$CLOSEDLOOP_WORKDIR/plan-judges.json` (plan), `$CLOSEDLOOP_WORKDIR/code-judges.json` (code), or `$CLOSEDLOOP_WORKDIR/prd-judges.json` (prd) with validated output format.
+Execute specialized judge agents in parallel to evaluate implementation plan quality (16 judges), code quality (11 judges), or PRD quality (5 judges). Aggregates results into `$CLOSEDLOOP_WORKDIR/plan-judges.json` (plan), `$CLOSEDLOOP_WORKDIR/code-judges.json` (code), or `$CLOSEDLOOP_WORKDIR/prd-judges.json` (prd) with validated output format.
 
 ## Parameters
 
@@ -22,7 +22,7 @@ Execute specialized judge agents in parallel to evaluate implementation plan qua
 
 - **plan** (default): Evaluate implementation plan with 16 judges, 4 batches, output to plan-judges.json
 - **code**: Evaluate implemented code with 11 judges, 3 batches, output to code-judges.json
-- **prd**: Evaluate PRD document with 4 judges, single parallel batch, output to prd-judges.json
+- **prd**: Evaluate PRD document with 5 judges, single parallel batch, output to prd-judges.json
 
 ## Judge Input Contract (`judge-input.json`)
 
@@ -55,8 +55,8 @@ You are orchestrating quality evaluation for a ClosedLoop artifact (implementati
 **For PRD artifacts (--artifact-type prd):**
 1. Check `$CLOSEDLOOP_WORKDIR/prd.md` exists (graceful exit if missing)
 2. Build `judge-input.json` with evaluation_type: "prd" and primary_artifact pointing to prd.md
-3. Launch all 4 PRD judges in a single parallel batch
-4. Aggregate all 4 CaseScores into a valid EvaluationReport
+3. Launch all 5 PRD judges in a single parallel batch
+4. Aggregate all 5 CaseScores into a valid EvaluationReport
 5. Write the report to `$CLOSEDLOOP_WORKDIR/prd-judges.json`
 6. Validate output structure and completeness
 
@@ -401,7 +401,7 @@ fi
 
 # Build prd-mode judge-input.json
 # - evaluation_type: "prd"
-# - task: PRD quality evaluation objective (prd-auditor + 3 critics)
+# - task: PRD quality evaluation objective (prd-auditor + 4 critics)
 # - primary_artifact: $CLOSEDLOOP_WORKDIR/prd.md
 # - supporting_artifacts: [] (none required)
 # - source_of_truth: ["prd"]
@@ -455,16 +455,17 @@ The run-judges skill supports three artifact types with different judge configur
 - `judges:test-judge`
 
 ### PRD Artifacts (--artifact-type prd)
-- **Judges**: 4 total (parallel batch)
+- **Judges**: 5 total (parallel batch)
 - **Execution**: single parallel batch
 - **Output**: `prd-judges.json`
 - **Report ID**: `{RUN_ID}-prd-judges`
-- **Validation**: `--category prd` (4 judges expected)
+- **Validation**: `--category prd` (5 judges expected)
 - **Canonical input**: `$CLOSEDLOOP_WORKDIR/prd.md`
 
 **PRD Execution:**
 
 **Batch 1: All PRD Judges (sub_step=1)**
+- `judges:feature-completeness-judge` — evaluates Feature request completeness and clarity
 - `judges:prd-auditor` — structural completeness audit of the PRD
 - `judges:prd-dependency-judge` — evaluates dependency clarity and completeness
 - `judges:prd-testability-judge` — evaluates requirement testability
@@ -520,12 +521,13 @@ The run-judges skill supports three artifact types with different judge configur
 | `judges:codebase-grounding-judge` | File-path/module-reference accuracy and existing-code awareness grounded in investigation findings |
 | `judges:convention-adherence-judge` | Alignment with established naming, structural, and tooling conventions in the codebase |
 
-### PRD Artifact Judge Batch (4 judges, single parallel batch)
+### PRD Artifact Judge Batch (5 judges, single parallel batch)
 
 **Batch 1: All PRD Judges (sub_step=1)**
 
 | Agent Type | Evaluates |
 |------------|-----------|
+| `judges:feature-completeness-judge` | Feature request completeness and clarity |
 | `judges:prd-auditor` | Structural completeness, section coverage, clarity |
 | `judges:prd-dependency-judge` | Dependency clarity and completeness |
 | `judges:prd-testability-judge` | Requirement testability and measurability |
@@ -648,7 +650,7 @@ Each judge returns a **CaseScore** JSON object:
 
 **Continue-on-failure semantics:**
 - Even if ALL judges fail, you MUST aggregate error CaseScores
-- Always produce a complete report with 16 CaseScore entries (plan), 11 CaseScore entries (code), or 4 CaseScore entries (prd)
+- Always produce a complete report with 16 CaseScore entries (plan), 11 CaseScore entries (code), or 5 CaseScore entries (prd)
 - Never abort the workflow due to judge failures
 
 </error_handling>
@@ -730,6 +732,7 @@ output_path = $CLOSEDLOOP_WORKDIR / report_filename
   "report_id": "{RUN_ID}-prd-judges",
   "timestamp": "2024-02-03T15:45:30Z",
   "stats": [
+    { /* CaseScore from feature-completeness-judge */ },
     { /* CaseScore from prd-auditor */ },
     { /* CaseScore from prd-dependency-judge */ },
     { /* CaseScore from prd-testability-judge */ },
@@ -744,7 +747,7 @@ output_path = $CLOSEDLOOP_WORKDIR / report_filename
 |-------|--------|---------------|
 | `report_id` | `{RUN_ID}-plan-judges`, `{RUN_ID}-code-judges`, or `{RUN_ID}-prd-judges` | Extract RUN_ID from `$CLOSEDLOOP_WORKDIR` directory name, append suffix based on artifact type |
 | `timestamp` | ISO 8601 | Generate with `date -u +%Y-%m-%dT%H:%M:%SZ` |
-| `stats` | Array[CaseScore] | 16 CaseScore objects for plan, 11 for code, 4 for prd (one per judge) |
+| `stats` | Array[CaseScore] | 16 CaseScore objects for plan, 11 for code, 5 for prd (one per judge) |
 
 </output_structure>
 
@@ -795,7 +798,7 @@ uv run "$SCRIPT_PATH" --workdir "$CLOSEDLOOP_WORKDIR" --category "$CATEGORY"
 
 **Argument requirements:**
 - `--workdir` must be the **absolute path** to `$CLOSEDLOOP_WORKDIR`
-- `--category` must be `plan` (16 judges), `code` (11 judges), or `prd` (4 judges)
+- `--category` must be `plan` (16 judges), `code` (11 judges), or `prd` (5 judges)
 - This is where `plan-judges.json`, `code-judges.json`, or `prd-judges.json` is located
 
 </validation_workflow>
@@ -812,7 +815,7 @@ The script validates using strict Pydantic models:
 |-------|-------------|
 | **JSON syntax** | Valid JSON format |
 | **Required fields** | report_id, timestamp, stats array |
-| **Judge coverage** | All expected judges present (16 for plan, 11 for code, 4 for prd) |
+| **Judge coverage** | All expected judges present (16 for plan, 11 for code, 5 for prd) |
 | **Status values** | final_status ∈ {1, 2, 3} |
 | **Metric completeness** | Each judge has ≥1 metric |
 | **Report ID format** | Ends with '-judges' (plan), '-code-judges' (code), or '-prd-judges' (prd) |
@@ -854,15 +857,16 @@ test-judge
 
 **Note:** Code artifacts exclude: goal-alignment-judge, verbosity-judge
 
-**Expected judge case_ids for PRD artifacts (4 total):**
+**Expected judge case_ids for PRD artifacts (5 total):**
 ```
+feature-completeness-judge
 prd-auditor
 prd-dependency-judge
 prd-testability-judge
 prd-scope-judge
 ```
 
-**Note:** All 4 PRD judges run in a single parallel batch.
+**Note:** All 5 PRD judges run in a single parallel batch.
 
 </validation_checks>
 
@@ -964,8 +968,8 @@ Before marking this task complete, verify:
 - [ ] **prd.md existence check** - `$CLOSEDLOOP_WORKDIR/prd.md` found, or graceful exit with WARNING (code 0)
 - [ ] **No context manager** - context-manager-for-judges is NOT launched for prd mode
 - [ ] **Judge input contract** - `judge-input.json` written with `evaluation_type="prd"` and `primary_artifact=$CLOSEDLOOP_WORKDIR/prd.md`
-- [ ] **Parallel execution** - All 4 PRD judges launched in a single parallel batch (sub_step=1)
-- [ ] **Result aggregation** - Valid EvaluationReport with 4 CaseScore entries (sub_step=2)
+- [ ] **Parallel execution** - All 5 PRD judges launched in a single parallel batch (sub_step=1)
+- [ ] **Result aggregation** - Valid EvaluationReport with 5 CaseScore entries (sub_step=2)
 - [ ] **File output** - `prd-judges.json` written to `$CLOSEDLOOP_WORKDIR`
 - [ ] **Report ID format** - report_id ends with '-prd-judges'
 - [ ] **Validation passed** - Script exits with code 0 using `--category prd` (sub_step=3)
@@ -982,7 +986,7 @@ Before marking this task complete, verify:
 |---------------|------------|----------|
 | "Report file does not exist" | File not written to correct location | Verify `$CLOSEDLOOP_WORKDIR` is set; check write path matches artifact type (plan-judges.json, code-judges.json, or prd-judges.json) |
 | "Invalid JSON" | Syntax error in output file | Run `python3 -m json.tool "$CLOSEDLOOP_WORKDIR/{plan,code,prd}-judges.json"` to identify syntax error |
-| "Missing expected judges" | Incomplete batch execution | Verify all batches launched (4 for plan, 3 for code, 1 for prd); check error CaseScores for failures; plan expects 16 judges, code expects 11, prd expects 4 |
+| "Missing expected judges" | Incomplete batch execution | Verify all batches launched (4 for plan, 3 for code, 1 for prd); check error CaseScores for failures; plan expects 16 judges, code expects 11, prd expects 5 |
 | "final_status must be 1, 2, or 3" | Invalid status code | Use only: 1 (pass), 2 (fail), 3 (error) |
 | "report_id should end with '-plan-judges'" | Incorrect ID format for plan | Use pattern: `{RUN_ID}-plan-judges` for plan artifacts |
 | "report_id should end with '-code-judges'" | Incorrect ID format for code | Use pattern: `{RUN_ID}-code-judges` for code artifacts |
@@ -1054,8 +1058,8 @@ When `--artifact-type prd` is specified:
 - Check `$CLOSEDLOOP_WORKDIR/prd.md` exists; emit WARNING and exit gracefully (code 0) if missing
 - Do NOT launch context-manager-for-judges
 - Build `judge-input.json` with `evaluation_type="prd"` and `primary_artifact=$CLOSEDLOOP_WORKDIR/prd.md`
-- Launch all 4 PRD judges in a single parallel batch (sub_step=1)
-- Aggregate all 4 CaseScores (sub_step=2) and write to `prd-judges.json`
+- Launch all 5 PRD judges in a single parallel batch (sub_step=1)
+- Aggregate all 5 CaseScores (sub_step=2) and write to `prd-judges.json`
 - Validate with `--category prd` (sub_step=3)
 
 ---
