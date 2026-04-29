@@ -95,6 +95,7 @@ JUDGE_REGISTRY: dict[str, set[str]] = {
         "test-judge",
     },
     "prd": {
+        "feature-completeness-judge",
         "prd-auditor",
         "prd-dependency-judge",
         "prd-testability-judge",
