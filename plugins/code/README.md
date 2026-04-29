@@ -377,6 +377,14 @@ Installs required Python dependencies for the plugin's tools.
 
 Shell harness for the Codex debate loop used by the `plan-with-codex` command. Drives the round-by-round interaction between the `code:plan-agent` and Codex, maintaining state in sidecar files alongside the plan file.
 
+### `stamp_critic_cache.sh`
+
+Stamps the critic cache after Phase 2.5 reviews complete. Hashes `plan.json` (and `critic-gates.json` when present) and writes the hash to `{WORKDIR}/reviews/.plan-hash` so subsequent iterations can skip critics via the `code:critic-cache` skill.
+
+### `stamp_cross_repo_cache.sh`
+
+Stamps the cross-repo cache after Phase 1.4 coordinator completes. Hashes peer-repo HEADs from `.workspace-repos.json` (falling back to `.cross-repo-needs.json`) and writes to `{WORKDIR}/.cross-repo-hash` so subsequent iterations skip cross-repo discovery via the `code:cross-repo-cache` skill.
+
 ### `loop-agents.json`
 
 Configuration file (not a script) defining which agents participate in the validation loop. Each entry specifies: `validation_script`, `max_iterations`, `promise` (expected completion string), `state_file_suffix`, and `verification_criteria`. Also defines `learning_agents` — the subset of agents that must both acknowledge injected learnings and capture new learnings before stopping.

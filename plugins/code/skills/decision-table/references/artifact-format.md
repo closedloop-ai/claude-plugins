@@ -25,11 +25,14 @@ Use this structure:
 
 ## Behavioral Edge-Case Expansion
 
+Apply every category in [`edge-cases.md`](edge-cases.md). Each must be represented by rows or an explicit non-applicability note before marking `Final Alignment Status: Aligned`. The bullets below are placeholder shape — the canonical list is in `edge-cases.md`; do not skip categories that are absent from this template.
+
 - Structured-result setup failures: <rows or non-applicability note>
 - Library-managed lifecycle re-entry: <rows or non-applicability note>
 - Time-bound credentials/signatures: <rows or non-applicability note>
 - Diagnostic reason/category taxonomy: <rows or non-applicability note>
 - Side-effect boundaries for validation/preparation failures: <rows or non-applicability note>
+- ... (continue with every category from `edge-cases.md`)
 
 ## Shared State Axes
 

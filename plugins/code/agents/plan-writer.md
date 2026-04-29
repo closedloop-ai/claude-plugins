@@ -190,7 +190,7 @@ When the orchestrator prompt contains **"FINALIZE MODE"**, flesh out the existin
       ```bash
       DT_AFTER=$(ls -1 "$CLOSEDLOOP_WORKDIR/.closedloop-ai/decision-tables/" 2>/dev/null || true)
       DT_NEW=$(comm -13 <(echo "$DT_BEFORE" | sort) <(echo "$DT_AFTER" | sort))
-      DT_NEW_COUNT=$(echo "$DT_NEW" | grep -c . 2>/dev/null || echo 0)
+      DT_NEW_COUNT=$(echo "$DT_NEW" | grep -c . 2>/dev/null || true)
       ```
    4. **Require exactly one new file**: If `DT_NEW_COUNT` is 0 or greater than 1, do NOT guess. Emit the failure marker `DECISION_TABLE_ARTIFACT_COUNT_MISMATCH` to stdout and do NOT emit `<promise>PLAN_WRITER_COMPLETE</promise>`. plan-writer's loop will exit without success and the orchestrator owns the hard stop. If `DT_NEW_COUNT` equals 1, write the exact relative path `.closedloop-ai/decision-tables/$DT_NEW` into `plan.json` as `decisionTable: { path: ".closedloop-ai/decision-tables/$DT_NEW", status: "pending" }` as a top-level JSON-only field (do NOT add it to the `content` markdown or regenerate plan.md for this field alone).
 
