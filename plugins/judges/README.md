@@ -113,6 +113,16 @@ The `artifact-type-tailored-context` skill compresses individual artifact files 
 
 ---
 
+### feature-completeness-judge
+
+**Purpose:** Evaluates incoming Feature/PRD requests for readiness before plan creation. Applies five checks: Problem Statement Presence (blocking), Clarity and Specificity (major; vague qualifiers are suppressed when an adjacent measurable target, observable behavior, or bounded scope clarifies them), Acceptance Criteria (major), Ambiguous Language (minor, capped at 5), and Solution Essence (blocking — Feature must include either a Proposed Solution or a Desired Outcome section).
+
+**Model:** sonnet
+
+**Artifact type:** prd
+
+---
+
 ### prd-auditor
 
 **Purpose:** Performs a structural completeness audit of the PRD document.
@@ -253,7 +263,7 @@ Orchestrates parallel judge agent execution, aggregates `CaseScore` results, and
 - Checks `$CLOSEDLOOP_WORKDIR/prd.md` exists (graceful exit if missing)
 - Builds `judge-input.json` with `evaluation_type: "prd"` and primary artifact pointing to `prd.md`
 - Does NOT launch `context-manager-for-judges`
-- Runs 4 PRD judges in a single parallel batch
+- Runs 5 PRD judges across 2 sequential batches (3 + 2) to respect the Task tool's 4-concurrent-agent limit
 - Writes `$CLOSEDLOOP_WORKDIR/prd-judges.json`
 
 **Agent snapshot**: Before launching judge batches, `run-judges` runs `skills/run-judges/scripts/ensure_agents_snapshot.sh` to capture an idempotent snapshot of all judge agent definitions into `$CLOSEDLOOP_WORKDIR/agents-snapshot/`.

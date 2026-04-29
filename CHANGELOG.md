@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### judges v1.5.3
+
+#### Added
+- New `feature-completeness-judge` agent (sonnet) that evaluates incoming Feature/PRD requests for readiness before plan creation. Reads `$CLOSEDLOOP_WORKDIR/prd.md` and emits a CaseScore. Applies five checks: Problem Statement Presence (blocking, user-pain framings only — pure business-opportunity framings no longer satisfy the check), Clarity and Specificity (major, with context-aware suppression of vague qualifiers when the same paragraph supplies a measurable target, observable behavior, or bounded scope reference), Acceptance Criteria (major), Ambiguous Language (minor, capped at 5), and Solution Essence (blocking — Feature must include either a Proposed Solution or a Desired Outcome section).
+
+#### Changed
+- `run-judges` PRD mode now runs the 5 PRD judges across **2 sequential batches** (`batch_1`: feature-completeness-judge + prd-auditor + prd-scope-judge; `batch_2`: prd-dependency-judge + prd-testability-judge) to respect the Task tool's 4-concurrent-agent limit. Sub-step numbering renumbered (`batch_1=1`, `batch_2=2`, `aggregate=3`, `validate=4`); skill description, batch tables, success checklist, troubleshooting guide, and PRD Mode Execution Flow narrative all updated.
+- `JUDGE_REGISTRY["prd"]` in `validate_judge_report.py` now includes `feature-completeness-judge`; PRD validator tests updated for 5-judge expectations.
+
 ### code v1.9.4
 
 #### Fixed
