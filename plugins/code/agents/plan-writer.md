@@ -178,8 +178,27 @@ When the orchestrator prompt contains **"FINALIZE MODE"**, flesh out the existin
    - Edge cases to handle
 4. **Update plan.json**: Modify both the `content` markdown field and structured fields
 5. **Update plan.md**: Write the updated `content` field value
-6. **Preserve all IDs and structure**: Do NOT add, remove, or renumber tasks, ACs, or phases
-7. **Run sync check**: Verify JSON structured fields match the updated markdown
+6. **Generate decision-table artifact**: When `plan_was_imported=false` and `simple_mode=false`, use the following four-step algorithm to generate and capture the artifact path:
+
+   1. **Snapshot before**: Before activating the skill, capture the current file set under `.closedloop-ai/decision-tables/` into a shell variable:
+      ```bash
+      mkdir -p "$CLOSEDLOOP_WORKDIR/.closedloop-ai/decision-tables"
+      DT_BEFORE=$(ls -1 "$CLOSEDLOOP_WORKDIR/.closedloop-ai/decision-tables/" 2>/dev/null || true)
+      ```
+   2. **Activate skill**: Activate `code:decision-table` with the finalized plan as context.
+   3. **Compute set-difference**: After the skill completes, capture the new file set and compute what was added:
+      ```bash
+      DT_AFTER=$(ls -1 "$CLOSEDLOOP_WORKDIR/.closedloop-ai/decision-tables/" 2>/dev/null || true)
+      DT_NEW=$(comm -13 <(echo "$DT_BEFORE" | sort) <(echo "$DT_AFTER" | sort))
+      DT_NEW_COUNT=$(echo "$DT_NEW" | grep -c . 2>/dev/null || true)
+      ```
+   4. **Require exactly one new file**: If `DT_NEW_COUNT` is 0 or greater than 1, do NOT guess. Emit the failure marker `DECISION_TABLE_ARTIFACT_COUNT_MISMATCH` to stdout and do NOT emit `<promise>PLAN_WRITER_COMPLETE</promise>`. plan-writer's loop will exit without success and the orchestrator owns the hard stop. If `DT_NEW_COUNT` equals 1, write the exact relative path `.closedloop-ai/decision-tables/$DT_NEW` into `plan.json` as `decisionTable: { path: ".closedloop-ai/decision-tables/$DT_NEW", status: "pending" }` as a top-level JSON-only field (do NOT add it to the `content` markdown or regenerate plan.md for this field alone).
+
+   Note: SKILL.md does allow splitting into multiple files for very large work items, but this plan's schema supports only one `decisionTable.path` pointer. Emitting the failure marker and withholding `PLAN_WRITER_COMPLETE` is intentional: it delegates the hard stop and user-facing message to the orchestrator.
+
+   When `plan_was_imported=true` or `simple_mode=true`, skip this step entirely.
+7. **Preserve all IDs and structure**: Do NOT add, remove, or renumber tasks, ACs, or phases
+8. **Run sync check**: Verify JSON structured fields match the updated markdown
 
 <critical_constraint>
 **FINALIZE MODE SCOPE** — Only add implementation detail to existing tasks. Do not change the plan's scope, add new tasks, or alter architecture decisions. The human already approved the structure.
@@ -222,6 +241,14 @@ Output `<promise>PLAN_WRITER_COMPLETE</promise>` when all blocking findings are 
 1. Quality checklist items pass (valid JSON, sync checks)
 2. JSON structured fields match markdown content exactly
 3. `$CLOSEDLOOP_WORKDIR/plan.json` and `$CLOSEDLOOP_WORKDIR/plan.md` both exist and are in sync
+
+**Decision-table gate (Finalize Mode only, when not skipped)**: Read `plan.json` and confirm `decisionTable.path` is present and non-empty. Then verify the file at that path exists and is non-empty:
+```bash
+wc -c "$CLOSEDLOOP_WORKDIR/<path-from-plan-json>"
+```
+where `<path-from-plan-json>` is the literal value read from `plan.json.decisionTable.path`. If `plan.json.decisionTable.path` is absent or empty, or the file is missing or zero bytes, this gate has failed — re-run the T-2.1 four-step algorithm (snapshot, activate, set-difference, require exactly one new file) rather than guessing or re-activating blindly. If `DT_NEW_COUNT` is again 0 or >1, emit the failure marker `DECISION_TABLE_ARTIFACT_COUNT_MISMATCH` to stdout and do NOT emit `<promise>PLAN_WRITER_COMPLETE</promise>` (the orchestrator owns the hard stop). If skipped (`plan_was_imported=true` or `simple_mode=true`), bypass this gate entirely. Never recompute the artifact name — always use the value already written in `plan.json.decisionTable.path`.
+
+The gate runs AFTER the existing sync check. No changes to Merge Mode or Addressed Gaps completion conditions.
 
 <examples>
 <example name="addressed_gap_json">

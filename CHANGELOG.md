@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code v1.10.0
+
+#### Added
+- New `decision-table` skill for generating code-grounded decision-table artifacts that map current vs. intended control-flow behavior, capturing recovery, retry, finalization, validation, and state-machine edge cases under `.closedloop-ai/decision-tables/`. Includes baseline/target table rules, behavioral edge-case expansion guidance (call-site inventory for shared surfaces, exception scope, serverless async side effects, testable invariants), post-implementation verification sections, contract-heavy review checklist, and a referenced artifact format template at `references/artifact-format.md`.
+- New `behavior-verifier` agent that activates the `decision-table` skill in verification-only mode (SKILL.md step 17), reads final code against the artifact's Intended Change rows, appends Verification Findings and Final Alignment Status, and emits a structured `ALIGNED` or `MISALIGNED` verdict with a typed `<drift_rows>` JSON block (`code_drift`, `test_drift`, `plan_ambiguity`) for orchestrator routing. Read-and-report only — never modifies code or tests.
+- Optional `decisionTable` property on the plan schema (`path` + `status` enum: `pending|aligned|aligned_with_clarifications|verification_failed`) so the orchestrator can persist artifact pointers and verification state across iterations.
+- Phase 5.5 Behavioral Verification loop in the orchestrator prompt with a 5-attempt cap, drift routing by kind (`code_drift` → `implementation-subagent`, `test_drift` → `test-engineer`, `plan_ambiguity` → haiku append), parse-failure circuit breaker, and per-run telemetry emit to `.closedloop-ai/decision-table-verifications.jsonl` (timestamp, final status, iteration count, drift counts, parse failures, phase duration).
+- `startSha` state-tracking field initialized once per run from `CLOSEDLOOP_START_SHA` in `config.env` and propagated on every `state.json` write so Phase 5.5 can scope the changed-file set without re-reading config.
+
+#### Changed
+- `plan-writer` Finalize Mode now generates the decision-table artifact via a snapshot/set-difference algorithm (mkdir → ls before → activate `decision-table` skill → comm -13 to compute new files) and writes `decisionTable.path` + `status: "pending"` into `plan.json`. Skips when `plan_was_imported=true` or `simple_mode=true`. Emits `DECISION_TABLE_ARTIFACT_COUNT_MISMATCH` and withholds `PLAN_WRITER_COMPLETE` when 0 or >1 new artifact files appear, delegating the hard stop to the orchestrator rather than guessing.
+- `plan-writer` Completion section adds a decision-table gate that re-verifies `plan.json.decisionTable.path` is non-empty and the artifact file is non-zero bytes before emitting `PLAN_WRITER_COMPLETE`.
+- `plan-validate` skill now validates the optional `decisionTable` shape and surfaces `decision_table_path` and `decision_table_status` in the `extract_data` output (always present; empty strings when the field is absent), so the orchestrator can read both values without touching the filesystem. PLAN_VALID example in `SKILL.md` updated.
+- Phase 2.7 in the orchestrator prompt now passes `plan_was_imported` and `simple_mode` flags through to `plan-writer` and inspects the launch output for `DECISION_TABLE_ARTIFACT_COUNT_MISMATCH`. On marker present: executes AWAITING_USER_SEQUENCE pointing at `.closedloop-ai/decision-tables/` and HARD STOPS, treating the marker as authoritative even if `PLAN_WRITER_COMPLETE` was also emitted.
+- Phase 7 completion summary now reads `decision_table_status` from the latest `plan-validate` output and logs `Behavioral alignment verified` (or `…with plan clarifications`) referencing the artifact path.
+- `loop-agents.json`: registered `code:behavior-verifier` (max 3 iterations, promise `BEHAVIOR_VERIFIER_COMPLETE`, ALIGNED/MISALIGNED criteria with required `<drift_rows>` fields and `kind` enum); extended `code:plan-writer` `verification_criteria` so `DECISION_TABLE_ARTIFACT_COUNT_MISMATCH` is a legitimate detection state, not a loop failure. `code:behavior-verifier` added to `learning_agents.agents` for capture coverage.
+- Available Skills table in the orchestrator prompt now lists `code:decision-table` with usage in Phase 2.7 (generation via plan-writer) and Phase 5.5 (verification-only via behavior-verifier).
+
 ### code v1.9.4
 
 #### Fixed
@@ -18,6 +36,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Orchestrator Phase 6 INCOMPLETE_DOCS and BLOCKED handlers now store `agent_id` from initial Task spawn and continue via `SendMessage(to=<agent_id>)` instead of launching fresh Task instances
 - Added async wait rule requiring orchestrator to wait for `<task-notification>` before proceeding after SendMessage dispatch
 - `run-loop.sh` now pins `--model claude-opus-4-6` and `--effort high` on the per-iteration `claude` invocation
+
+### code-review v1.5.3
+
+#### Fixed
+- Clarified `partitions.json` schema documentation in `/start` command. The partition output's `files[]` entries use the key `file` (not `path`) for the file path, but the prior doc only listed the entry-level shape implicitly via `{filepath_1}` placeholders. The underspecification caused the orchestrator LLM to construct ad-hoc Python one-liners against `partitions.json` using `f['path']`, throwing `KeyError: 'path'` mid-pipeline. The doc now spells out each entry as `{"file", "loc", "is_test", "line_range"?}`, adds a placeholder-to-source mapping for the per-agent prompt template, and instructs the orchestrator to use the Read tool rather than introspect the JSON shell-style.
 
 ### code-review v1.5.2
 
@@ -46,6 +69,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `/code` slash command now invokes `setup-closedloop.sh` via `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-closedloop.sh"` for portability
 - `run-loop.sh` now emits quoted `/code:code` arguments for workdir, `--prompt`, `--prd`, and `--add-dir` in loop state, preserving argument boundaries for values that contain spaces
 - `plan-with-codex` command gains `SendMessage` in its allowed-tools list
+
+### platform v1.1.2
+
+#### Changed
+- `upload-artifact` skill renamed terminology from "artifact" to "document" to match the renamed ClosedLoop MCP tools (`create-artifact` → `create-document`, `create-artifact-version` → `create-document-version`). Skill description, prompts, and result reporting updated accordingly.
+- `upload-artifact` now supports the `FEATURE` document type alongside `PRD`, `IMPLEMENTATION_PLAN`, and `TEMPLATE`.
+- `upload_artifact.py` and the skill's `--artifact-id` flag now accept a UUID or a user-facing slug (`PRD-*`, `PLN-*`, `FEA-*`) for new-version uploads; the MCP server resolves the identifier. `--project-id` and `--workstream-id` similarly accept slugs (`PRO-*`, `WRK-*`).
+- Result payloads now include `document_id` (mirroring `artifact_id` for backward compatibility) and report the document slug alongside the ID.
+- `context-engineering` skill: Refactoring Existing Prompts section gains a "Dropped qualifiers" pitfall row (load-bearing single modifiers like `only`, `unless`, `when appropriate`, `must`, `never`) and a four-step Validation Pass that requires labeling every removed line as relocated, redundant, or dropped on purpose before declaring a refactor done.
 
 ### platform v1.1.1
 

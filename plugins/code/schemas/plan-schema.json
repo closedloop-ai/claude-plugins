@@ -150,6 +150,23 @@
         }
       }
     },
+    "decisionTable": {
+      "type": "object",
+      "description": "Reference to a decision-table artifact produced via the code:decision-table skill, used to ground plan acceptance criteria in current code behavior.",
+      "required": ["path", "status"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Relative path from workdir to the decision-table artifact, e.g. `.closedloop-ai/decision-tables/pln-123.md`"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "aligned", "aligned_with_clarifications", "verification_failed"],
+          "description": "Current verification status of the decision table relative to the plan"
+        }
+      }
+    },
     "amendments": {
       "type": "array",
       "description": "History of plan amendments applied via amend-plan command",
