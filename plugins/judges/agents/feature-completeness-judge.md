@@ -97,7 +97,7 @@ A Feature must give some indication of what is accomplished when it is built. Th
 It is fine for both to be present. It is NOT fine for neither to be present.
 
 This check **passes** if any of the following is found:
-- An explicit section titled "Proposed Solution", "Solution", "Approach", "Design", "Desired Outcome", "Outcome", "Goal", "Goals", "What Success Looks Like", or "Impact".
+- An explicit section titled "Proposed Solution", "Solution", "Approach", "Design", "Desired Outcome", "Outcome", "Goals", or "Impact".
 - Unlabeled prose that clearly proposes a concrete solution shape OR describes the post-Feature user/system state.
 - A hypothesis framing ("We believe that X will produce Y") **only when the outcome clause Y is concrete and observable** (e.g., "users complete checkout in fewer steps"). A hypothesis with a vague outcome clause does NOT satisfy this check.
 
