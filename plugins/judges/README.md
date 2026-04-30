@@ -4,7 +4,7 @@ A collection of specialized LLM judge agents that evaluate implementation plans,
 
 ## Features
 
-- **Plan, code, and PRD evaluation modes** with mode-specific judge sets selected by `run-judges`
+- **Plan, code, PRD, and Feature evaluation modes** with mode-specific judge sets selected by `run-judges`
 - **Parallel judge execution** in controlled batches with deterministic aggregation
 - **Batched judge fan-out** via Task calls (up to 4 concurrent judges per batch)
 - **Structured output** using a validated `CaseScore` JSON schema with Pydantic enforcement
@@ -37,7 +37,7 @@ graph TD
     CompatInput --> CommonPlan
     PlanBatches --> Agg[Aggregation into EvaluationReport]
     CodeBatches --> Agg
-    Agg --> Report["plan-judges.json / code-judges.json / prd-judges.json"]
+    Agg --> Report["plan-judges.json / code-judges.json / prd-judges.json / feature-judges.json"]
     Report --> Validate["validate_judge_report.py"]
 
     style PlanBatches fill:#e1f5fe
@@ -168,7 +168,7 @@ At runtime, this contract guidance is injected from `common_input_preamble.md`, 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `evaluation_type` | string | Evaluation mode (`plan`, `code`, or `prd`) |
+| `evaluation_type` | string | Evaluation mode (`plan`, `code`, `prd`, or `feature`) |
 | `task` | string | Natural-language objective judges must evaluate against |
 | `primary_artifact` | object | Authoritative evidence artifact descriptor |
 | `supporting_artifacts` | array | Secondary evidence artifact descriptors in priority order |
@@ -218,6 +218,7 @@ Each judge returns one `CaseScore` JSON object:
 - `$CLOSEDLOOP_WORKDIR/plan-judges.json` for plan evaluation
 - `$CLOSEDLOOP_WORKDIR/code-judges.json` for code evaluation
 - `$CLOSEDLOOP_WORKDIR/prd-judges.json` for PRD evaluation
+- `$CLOSEDLOOP_WORKDIR/feature-judges.json` for feature evaluation
 
 The report is validated after generation using `skills/run-judges/scripts/validate_judge_report.py`.
 
@@ -228,7 +229,7 @@ The report is validated after generation using `skills/run-judges/scripts/valida
 Orchestrates parallel judge agent execution, aggregates `CaseScore` results, and validates output.
 
 **Parameters:**
-- `--artifact-type`: `plan` (default), `code`, or `prd`
+- `--artifact-type`: `plan` (default), `code`, `prd`, or `feature`
 
 **Plan mode** (default):
 - Launches `context-manager-for-judges` to produce `plan-context.json`
@@ -255,6 +256,15 @@ Orchestrates parallel judge agent execution, aggregates `CaseScore` results, and
 - Does NOT launch `context-manager-for-judges`
 - Runs 4 PRD judges in a single parallel batch
 - Writes `$CLOSEDLOOP_WORKDIR/prd-judges.json`
+
+**Feature mode** (`--artifact-type feature`):
+- Checks `$CLOSEDLOOP_WORKDIR/prd.md` exists (graceful exit if missing)
+- Builds `judge-input.json` with `evaluation_type: "feature"` and primary artifact pointing to `prd.md`
+- Does NOT launch `context-manager-for-judges`
+- Runs 3 Feature judges in a single parallel batch: `feature-completeness-judge`, `prd-testability-judge`, `prd-dependency-judge`
+- Writes `$CLOSEDLOOP_WORKDIR/feature-judges.json`
+- `prd-auditor` is excluded because its rubric assumes PRD-specific structural elements (US-### identifiers, AC-#.# numbering, Success Metrics table with Baseline/Target columns, Kill Criteria section) absent from Feature artifacts
+- `prd-scope-judge` is excluded because its rubric evaluates multi-story boundary clarity and cross-story scope management assuming PRD structure not present in a single Feature artifact
 
 **Agent snapshot**: Before launching judge batches, `run-judges` runs `skills/run-judges/scripts/ensure_agents_snapshot.sh` to capture an idempotent snapshot of all judge agent definitions into `$CLOSEDLOOP_WORKDIR/agents-snapshot/`.
 
@@ -336,7 +346,7 @@ Each judge produces a `CaseScore`:
 }
 ```
 
-The aggregated report (`plan-judges.json`, `code-judges.json`, or `prd-judges.json`) wraps all `CaseScore` objects:
+The aggregated report (`plan-judges.json`, `code-judges.json`, `prd-judges.json`, or `feature-judges.json`) wraps all `CaseScore` objects:
 
 ```json
 {

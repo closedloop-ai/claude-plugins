@@ -100,12 +100,18 @@ JUDGE_REGISTRY: dict[str, set[str]] = {
         "prd-testability-judge",
         "prd-scope-judge",
     },
+    "feature": {
+        "feature-completeness-judge",
+        "prd-testability-judge",
+        "prd-dependency-judge",
+    },
 }
 
 VALID_SUFFIXES: dict[str, list[str]] = {
     "plan": ["-plan-judges", "-judges"],
     "code": ["-code-judges"],
     "prd": ["-prd-judges"],
+    "feature": ["-feature-judges"],
 }
 
 # Default report filename per category
@@ -113,6 +119,7 @@ DEFAULT_FILENAMES: dict[str, str] = {
     "plan": "plan-judges.json",
     "code": "code-judges.json",
     "prd": "prd-judges.json",
+    "feature": "feature-judges.json",
 }
 
 
@@ -121,7 +128,7 @@ def validate_report(report_path: Path, category: str = "plan") -> tuple[bool, st
 
     Args:
         report_path: Path to the judge report file
-        category: Judge category to validate against ('plan', 'code', or 'prd')
+        category: Judge category to validate against ('plan', 'code', 'prd', or 'feature')
 
     Returns:
         Tuple of (valid: bool, message: str)

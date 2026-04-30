@@ -771,6 +771,132 @@ class TestCategoryPrdValidation:
         assert VALID_SUFFIXES["prd"] == ["-prd-judges"]
 
 
+class TestCategoryFeatureValidation:
+    """Tests for the feature category with 3 judges."""
+
+    def test_accepts_valid_3_judge_report(self, tmp_path: Path) -> None:
+        """Valid 3-judge feature report passes validation."""
+        feature_judges = sorted(JUDGE_REGISTRY["feature"])
+        assert len(feature_judges) == 3, "Feature judges count should be 3"
+
+        report = create_evaluation_report("run-20250211-feature-judges", feature_judges)
+
+        report_path = tmp_path / "feature-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="feature")
+        assert valid is True, f"Expected valid feature report, got: {message}"
+        assert "3 judge results" in message
+
+    def test_feature_registry_contains_expected_judges(self) -> None:
+        """Verify feature JUDGE_REGISTRY contains the 3 expected feature judges."""
+        assert JUDGE_REGISTRY["feature"] == {
+            "feature-completeness-judge",
+            "prd-testability-judge",
+            "prd-dependency-judge",
+        }
+
+    def test_feature_report_id_requires_feature_judges_suffix(self, tmp_path: Path) -> None:
+        """Feature report must use -feature-judges suffix in report_id."""
+        feature_judges = sorted(JUDGE_REGISTRY["feature"])
+        report = create_evaluation_report("run-20250211-feature-judges", feature_judges)
+
+        report_path = tmp_path / "feature-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="feature")
+        assert valid is True, (
+            f"Expected valid report with -feature-judges suffix, got: {message}"
+        )
+
+    def test_feature_rejects_wrong_suffix(self, tmp_path: Path) -> None:
+        """Feature report with bare -judges suffix fails validation."""
+        feature_judges = sorted(JUDGE_REGISTRY["feature"])
+        report = create_evaluation_report("run-20250211-judges", feature_judges)
+
+        report_path = tmp_path / "feature-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="feature")
+        assert valid is False, "Expected rejection for wrong suffix"
+        assert "report_id should end with one of" in message
+        assert "-feature-judges" in message
+
+    def test_feature_rejects_prd_suffix(self, tmp_path: Path) -> None:
+        """Feature report using prd-style suffix fails validation."""
+        feature_judges = sorted(JUDGE_REGISTRY["feature"])
+        report = create_evaluation_report("run-20250211-prd-judges", feature_judges)
+
+        report_path = tmp_path / "feature-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="feature")
+        assert valid is False, (
+            "Expected rejection for prd suffix used with feature category"
+        )
+        assert "report_id should end with one of" in message
+
+    def test_feature_rejects_missing_judges(self, tmp_path: Path) -> None:
+        """Feature report missing prd-dependency-judge fails validation."""
+        partial_judges = [
+            j for j in sorted(JUDGE_REGISTRY["feature"]) if j != "prd-dependency-judge"
+        ]
+        assert len(partial_judges) == 2
+
+        report = create_evaluation_report("run-20250211-feature-judges", partial_judges)
+
+        report_path = tmp_path / "feature-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="feature")
+        assert valid is False
+        assert "Missing expected judges for category 'feature'" in message
+        assert "prd-dependency-judge" in message
+
+    def test_feature_report_extra_judge_passes(self, tmp_path: Path) -> None:
+        """Feature report with extra judges beyond the required 3 still passes."""
+        feature_judges = sorted(JUDGE_REGISTRY["feature"])
+        extra_judges = feature_judges + ["extra-custom-judge"]
+
+        report = create_evaluation_report("run-20250211-feature-judges", extra_judges)
+
+        report_path = tmp_path / "feature-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="feature")
+        assert valid is True, "Extra judges should not cause feature validation failure"
+
+    def test_feature_not_accepted_for_prd_category(self, tmp_path: Path) -> None:
+        """Feature judges submitted as a prd report fail because prd-specific judges are missing."""
+        feature_judges = sorted(JUDGE_REGISTRY["feature"])
+        report = create_evaluation_report("run-20250211-prd-judges", feature_judges)
+
+        report_path = tmp_path / "prd-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="prd")
+        assert valid is False, (
+            "Feature judges should not satisfy prd category requirements"
+        )
+        assert "Missing expected judges" in message
+
+    def test_default_filename_for_feature_category(self) -> None:
+        """DEFAULT_FILENAMES produces 'feature-judges.json' for feature category."""
+        from validate_judge_report import (
+            DEFAULT_FILENAMES,  # type: ignore[import-not-found]
+        )
+
+        assert DEFAULT_FILENAMES["feature"] == "feature-judges.json"
+
+    def test_valid_suffixes_for_feature_category(self) -> None:
+        """VALID_SUFFIXES for feature contains only '-feature-judges'."""
+        from validate_judge_report import (
+            VALID_SUFFIXES,  # type: ignore[import-not-found]
+        )
+
+        assert VALID_SUFFIXES["feature"] == ["-feature-judges"]
+
+
 class TestPlanRegistryReconciliation:
     """Tests verifying the reconciled plan JUDGE_REGISTRY (3 new judges added, no phantom entries)."""
 
