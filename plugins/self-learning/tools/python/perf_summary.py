@@ -10,6 +10,7 @@ import argparse
 import json
 import sys
 from collections.abc import Hashable
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, TypeVar
 
@@ -21,6 +22,11 @@ K = TypeVar("K", bound=Hashable)
 #                 exit_code, skipped, [sub_step], [sub_step_name]}
 # agent:         {event, run_id, iteration, agent_id, agent_type, agent_name,
 #                 started_at, ended_at, duration_s}
+# phase:         {event, run_id, iteration, phase, status, start_sha, started_at}
+#                Phase events carry only started_at; per-phase durations are derived from
+#                the gap to the next phase event in the same iteration (or to the iteration's
+#                ended_at for the final phase). Use --timeline for a chronological per-instance
+#                view; the default summary aggregates by phase name.
 # Legacy compatibility:
 # pipeline_substep rows are still accepted for historical files and mapped into sub-step summaries.
 
@@ -231,6 +237,149 @@ def summarize_agents(
     return rows
 
 
+def _parse_iso(ts: str) -> float | None:
+    """Parse ISO-8601 timestamp (with optional Z suffix) to a POSIX epoch float."""
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def _phase_iter_ends(
+    events: list[dict[str, object]],
+) -> dict[tuple[str, int], str]:
+    """Build (run_id, iteration) -> ended_at lookup from iteration events."""
+    iter_ends: dict[tuple[str, int], str] = {}
+    for e in events:
+        if e.get("event") != "iteration":
+            continue
+        key = (str(e.get("run_id", "")), _get_int(e, "iteration"))
+        ended_at = str(e.get("ended_at", ""))
+        if ended_at:
+            iter_ends[key] = ended_at
+    return iter_ends
+
+
+def _group_phase_events(
+    events: list[dict[str, object]],
+) -> dict[tuple[str, int], list[dict[str, object]]]:
+    """Group phase events by (run_id, iteration)."""
+    grouped: dict[tuple[str, int], list[dict[str, object]]] = {}
+    for e in events:
+        if e.get("event") != "phase":
+            continue
+        key = (str(e.get("run_id", "")), _get_int(e, "iteration"))
+        grouped.setdefault(key, []).append(e)
+    return grouped
+
+
+def summarize_phases(
+    events: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Aggregate phase events by phase name.
+
+    Phase events carry only `started_at`. Duration is derived from the gap to
+    the next phase event in the same (run_id, iteration), or to the iteration's
+    ended_at for the final phase. Returns rows sorted by total time descending.
+    """
+    grouped = _group_phase_events(events)
+    if not grouped:
+        return []
+
+    iter_ends = _phase_iter_ends(events)
+
+    by_phase: dict[str, list[float]] = {}
+    for key, phase_events in grouped.items():
+        sorted_phases = sorted(
+            phase_events, key=lambda x: str(x.get("started_at", ""))
+        )
+        for i, p in enumerate(sorted_phases):
+            start_ts = _parse_iso(str(p.get("started_at", "")))
+            if start_ts is None:
+                continue
+            if i + 1 < len(sorted_phases):
+                end_ts = _parse_iso(
+                    str(sorted_phases[i + 1].get("started_at", ""))
+                )
+            else:
+                end_ts = _parse_iso(iter_ends.get(key, ""))
+            if end_ts is None:
+                continue
+            duration = end_ts - start_ts
+            if duration < 0:
+                continue
+            phase_name = str(p.get("phase", "unknown"))
+            by_phase.setdefault(phase_name, []).append(duration)
+
+    if not by_phase:
+        return []
+
+    rows: list[dict[str, object]] = []
+    for name, durs in by_phase.items():
+        rows.append({"phase": name, **_agg_stats(durs)})
+
+    rows.sort(key=lambda x: x.get("total_s", 0), reverse=True)  # type: ignore[return-value]
+    return rows
+
+
+def phase_timeline(
+    events: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Return chronological per-instance phase rows.
+
+    Unlike summarize_phases (aggregate stats), this emits one row per phase
+    instance with run_id, iteration, started_at, ended_at, and duration_s.
+    Incomplete final phases (no following phase event AND no iteration ended_at)
+    are still emitted with ended_at="" and duration_s=None so in-progress runs
+    are visible. Negative durations from clock skew are filtered. Rows are
+    sorted by started_at ascending.
+    """
+    grouped = _group_phase_events(events)
+    if not grouped:
+        return []
+
+    iter_ends = _phase_iter_ends(events)
+
+    rows: list[dict[str, object]] = []
+    for key, phase_events in grouped.items():
+        run_id, iteration = key
+        sorted_phases = sorted(
+            phase_events, key=lambda x: str(x.get("started_at", ""))
+        )
+        for i, p in enumerate(sorted_phases):
+            started_at = str(p.get("started_at", ""))
+            start_ts = _parse_iso(started_at)
+            if start_ts is None:
+                continue
+            if i + 1 < len(sorted_phases):
+                ended_at = str(sorted_phases[i + 1].get("started_at", ""))
+            else:
+                ended_at = iter_ends.get(key, "")
+            end_ts = _parse_iso(ended_at)
+            duration: float | None
+            if end_ts is None:
+                duration = None
+                ended_at = ""
+            else:
+                raw = end_ts - start_ts
+                if raw < 0:
+                    continue
+                duration = round(raw, 1)
+            rows.append({
+                "run_id": run_id,
+                "iteration": iteration,
+                "phase": str(p.get("phase", "unknown")),
+                "started_at": started_at,
+                "ended_at": ended_at,
+                "duration_s": duration,
+            })
+
+    rows.sort(key=lambda r: str(r.get("started_at", "")))
+    return rows
+
+
 _SECONDS_PER_MINUTE = 60
 _MINUTES_PER_HOUR = 60
 
@@ -265,6 +414,7 @@ def print_text(
     *,
     substeps: list[dict[str, object]],
     agents: list[dict[str, object]],
+    phases: list[dict[str, object]],
 ) -> None:
     """Print human-readable text tables."""
     if iterations:
@@ -288,6 +438,16 @@ def print_text(
                     f"{row.get('status', '')!s:<15} "
                     f"{row.get('started_at', '')!s:<25}"
                 )
+        print()
+
+    if phases:
+        print("=== Phases (by total time) ===")
+        print(f"{'Phase':<40} {_STATS_HEADER}")
+        print("-" * 80)
+        for row in phases:
+            print(
+                f"{row.get('phase', '')!s:<40} {_format_stats_cols(row)}"
+            )
         print()
 
     if pipeline:
@@ -321,8 +481,31 @@ def print_text(
             print(f"{row.get('agent_name', '')!s:<28} {_format_stats_cols(row)}")
         print()
 
-    if not iterations and not pipeline and not substeps and not agents:
+    if not iterations and not pipeline and not substeps and not agents and not phases:
         print("No performance data found.")
+
+
+def print_phase_timeline(rows: list[dict[str, object]]) -> None:
+    """Print one row per phase instance, sorted chronologically."""
+    if not rows:
+        print("No phase events found.")
+        return
+    print("=== Phase Timeline ===")
+    print(
+        f"{'Run':<22} {'Iter':<6} {'Phase':<40} {'Started':<22} {'Ended':<22} {'Duration':<10}"
+    )
+    print("-" * 124)
+    for row in rows:
+        dur = row.get("duration_s")
+        dur_str = _fmt_duration(float(dur)) if isinstance(dur, (int, float)) else "?"
+        print(
+            f"{row.get('run_id', '')!s:<22} "
+            f"{row.get('iteration', '')!s:<6} "
+            f"{row.get('phase', '')!s:<40} "
+            f"{row.get('started_at', '')!s:<22} "
+            f"{row.get('ended_at', '')!s:<22} "
+            f"{dur_str:<10}"
+        )
 
 
 def main() -> int:
@@ -345,6 +528,12 @@ def main() -> int:
         default="text",
         help="Output format (default: text)",
     )
+    parser.add_argument(
+        "--timeline",
+        action="store_true",
+        help="Show chronological phase timeline (one row per phase instance) "
+        "instead of aggregate summary tables",
+    )
 
     args = parser.parse_args()
     workdir = Path(args.workdir).resolve()
@@ -359,14 +548,24 @@ def main() -> int:
         print("No events found in perf.jsonl", file=sys.stderr)
         return 0
 
+    if args.timeline:
+        timeline = phase_timeline(events)
+        if args.format == "json":
+            print(json.dumps(timeline, indent=2))
+        else:
+            print_phase_timeline(timeline)
+        return 0
+
     iterations = summarize_iterations(events)
     pipeline = summarize_pipeline(events)
     substeps = summarize_substeps(events)
     agents = summarize_agents(events)
+    phases = summarize_phases(events)
 
     if args.format == "json":
         output = {
             "iterations": iterations,
+            "phases": phases,
             "pipeline_steps": pipeline,
             "pipeline_substeps": substeps,
             "agents": agents,
@@ -378,6 +577,7 @@ def main() -> int:
             pipeline,
             substeps=substeps,
             agents=agents,
+            phases=phases,
         )
 
     return 0
