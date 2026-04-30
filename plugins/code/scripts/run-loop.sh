@@ -29,6 +29,12 @@ STATE_FILE="$CLOSEDLOOP_STATE_DIR/closedloop-loop.local.md"
 PROGRESS_LOG="$CLOSEDLOOP_STATE_DIR/closedloop-progress.log"
 LOOP_USER_VISIBLE_FAILURE_FILE_NAME="loop-error.json"
 
+# Electron provides this per-run value so the parent harness can sign intentional
+# failure markers. Keep it as a shell variable, then remove the exported env var
+# before spawning Claude so repository/tool commands cannot forge the marker.
+LOOP_USER_VISIBLE_FAILURE_SECRET="${CLOSEDLOOP_USER_VISIBLE_FAILURE_SECRET:-}"
+unset CLOSEDLOOP_USER_VISIBLE_FAILURE_SECRET
+
 # Learning system paths
 LOCK_FILE=".learnings/.lock"
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,6 +60,11 @@ write_loop_user_visible_failure() {
     return 1
   fi
 
+  if [[ -z "$LOOP_USER_VISIBLE_FAILURE_SECRET" ]]; then
+    echo "Error: CLOSEDLOOP_USER_VISIBLE_FAILURE_SECRET is required to write loop failure marker" >&2
+    return 1
+  fi
+
   case "$code" in
     RUNNER_ERROR|PRE_RUN_VALIDATION_FAILED|PLAN_STATE_UNAVAILABLE)
       ;;
@@ -73,16 +84,30 @@ write_loop_user_visible_failure() {
     return 1
   fi
 
+  local payload
+  if ! payload=$(jq -n -c \
+    --arg code "$code" \
+    --arg message "$message" \
+    --arg subcode "$subcode" \
+    '{code:$code,message:$message,result:{subcode:$subcode}}'); then
+    return 1
+  fi
+
+  local signature
+  if ! signature=$(
+    printf '%s\0%s' "$LOOP_USER_VISIBLE_FAILURE_SECRET" "$payload" \
+      | python3 -c 'import hashlib, hmac, sys; secret, payload = sys.stdin.buffer.read().split(b"\0", 1); print("sha256=" + hmac.new(secret, payload, hashlib.sha256).hexdigest())'
+  ); then
+    return 1
+  fi
+
   local failure_file="${CLOSEDLOOP_WORKDIR}/${LOOP_USER_VISIBLE_FAILURE_FILE_NAME}"
   local tmp_file="${failure_file}.tmp.$$"
 
   mkdir -p "$(dirname "$failure_file")"
   umask 077
-  if ! jq -n -c \
-    --arg code "$code" \
-    --arg message "$message" \
-    --arg subcode "$subcode" \
-    '{code:$code,message:$message,result:{subcode:$subcode}}' \
+  if ! jq -c --arg signature "$signature" '. + {signature:$signature}' \
+    <<< "$payload" \
     > "$tmp_file"; then
     rm -f "$tmp_file"
     return 1
