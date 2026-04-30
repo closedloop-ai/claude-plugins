@@ -11,7 +11,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 
 from validate_judge_report import (  # type: ignore[import-not-found]
+    DEFAULT_FILENAMES,
     JUDGE_REGISTRY,
+    VALID_SUFFIXES,
     validate_report,
 )
 
@@ -87,45 +89,19 @@ class TestBackwardCompatibility:
             f"Expected valid report with legacy suffix, got: {message}"
         )
 
-    def test_no_category_flag_validates_16_judges(self, tmp_path: Path) -> None:
-        """Verify default behavior (no category parameter) validates 16 plan judges."""
-        # Create valid report with all 16 plan judges
+    def test_default_category_is_plan(self, tmp_path: Path) -> None:
+        """Verify omitting category parameter defaults to plan validation with 16 judges."""
         plan_judges = sorted(JUDGE_REGISTRY["plan"])
         report = create_evaluation_report("run-20250211-judges", plan_judges)
 
         report_path = tmp_path / "plan-judges.json"
         report_path.write_text(json.dumps(report, indent=2))
 
-        # Call validate_report WITHOUT category parameter (uses default='plan')
         valid, message = validate_report(report_path)
         assert valid is True, (
             f"Expected valid report with default category, got: {message}"
         )
         assert "16 judge results" in message
-
-    def test_default_category_plan(self, tmp_path: Path) -> None:
-        """Verify omitting --category defaults to plan validation."""
-        # This is the same as test_no_category_flag_validates_16_judges but more explicit
-        plan_judges = sorted(JUDGE_REGISTRY["plan"])
-        report = create_evaluation_report("run-20250211-judges", plan_judges)
-
-        report_path = tmp_path / "plan-judges.json"
-        report_path.write_text(json.dumps(report, indent=2))
-
-        # Call without category - should default to 'plan'
-        valid, _ = validate_report(report_path)
-        assert valid is True
-
-    def test_existing_judges_json_suffix(self, tmp_path: Path) -> None:
-        """Verify legacy '-judges' suffix is still accepted for plan reports."""
-        plan_judges = sorted(JUDGE_REGISTRY["plan"])
-        report = create_evaluation_report("abc123-judges", plan_judges)
-
-        report_path = tmp_path / "plan-judges.json"
-        report_path.write_text(json.dumps(report, indent=2))
-
-        valid, _ = validate_report(report_path, category="plan")
-        assert valid is True
 
     def test_16_judges_plan_validation(self, tmp_path: Path) -> None:
         """Verify validation passes with exactly 16 expected plan judges."""
@@ -749,26 +725,14 @@ class TestCategoryPrdValidation:
 
     def test_default_filename_for_plan_category(self) -> None:
         """DEFAULT_FILENAMES produces 'plan-judges.json' for plan category."""
-        from validate_judge_report import (
-            DEFAULT_FILENAMES,  # type: ignore[import-not-found]
-        )
-
         assert DEFAULT_FILENAMES["plan"] == "plan-judges.json"
 
     def test_default_filename_for_prd_category(self) -> None:
         """DEFAULT_FILENAMES produces 'prd-judges.json' for prd category."""
-        from validate_judge_report import (
-            DEFAULT_FILENAMES,  # type: ignore[import-not-found]
-        )
-
         assert DEFAULT_FILENAMES["prd"] == "prd-judges.json"
 
     def test_valid_suffixes_for_prd_category(self) -> None:
         """VALID_SUFFIXES for prd contains only '-prd-judges'."""
-        from validate_judge_report import (
-            VALID_SUFFIXES,  # type: ignore[import-not-found]
-        )
-
         assert VALID_SUFFIXES["prd"] == ["-prd-judges"]
 
 
@@ -824,3 +788,125 @@ class TestPlanRegistryReconciliation:
             assert judge not in JUDGE_REGISTRY["code"], (
                 f"{judge} should not be in code registry"
             )
+
+
+class TestCategoryFeatureValidation:
+    """Tests for the feature category with 3 judges."""
+
+    def test_accepts_valid_3_judge_report(self, tmp_path: Path) -> None:
+        """Valid 3-judge feature report passes validation."""
+        feature_judges = sorted(JUDGE_REGISTRY["feature"])
+        assert len(feature_judges) == 3, "Feature judges count should be 3"
+
+        report = create_evaluation_report("run-20250211-feature-judges", feature_judges)
+
+        report_path = tmp_path / "feature-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="feature")
+        assert valid is True, f"Expected valid feature report, got: {message}"
+        assert "3 judge results" in message
+
+    def test_feature_registry_contains_expected_judges(self) -> None:
+        """Verify feature JUDGE_REGISTRY contains the 3 expected feature judges."""
+        expected = {
+            "feature-completeness-judge",
+            "prd-testability-judge",
+            "prd-dependency-judge",
+        }
+        assert JUDGE_REGISTRY["feature"] == expected, (
+            f"Feature registry mismatch. Expected {expected}, got {JUDGE_REGISTRY['feature']}"
+        )
+
+    def test_feature_rejects_wrong_suffix(self, tmp_path: Path) -> None:
+        """Feature report with non -feature-judges suffix fails validation."""
+        feature_judges = sorted(JUDGE_REGISTRY["feature"])
+        # Use -judges (legacy plan suffix) which is not valid for feature
+        report = create_evaluation_report("run-20250211-judges", feature_judges)
+
+        report_path = tmp_path / "feature-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="feature")
+        assert valid is False, "Expected rejection for wrong suffix"
+        assert "report_id should end with one of" in message
+
+        # Also verify -prd-judges suffix is rejected
+        report2 = create_evaluation_report("run-20250211-prd-judges", feature_judges)
+        report_path2 = tmp_path / "feature-judges2.json"
+        report_path2.write_text(json.dumps(report2, indent=2))
+
+        valid2, message2 = validate_report(report_path2, category="feature")
+        assert valid2 is False, "Expected rejection for -prd-judges suffix under feature category"
+        assert "report_id should end with one of" in message2
+
+    def test_feature_rejects_missing_judges(self, tmp_path: Path) -> None:
+        """Feature report missing required judges fails validation."""
+        # Omit prd-testability-judge
+        partial_judges = [
+            j for j in sorted(JUDGE_REGISTRY["feature"]) if j != "prd-testability-judge"
+        ]
+        assert len(partial_judges) == 2
+
+        report = create_evaluation_report("run-20250211-feature-judges", partial_judges)
+
+        report_path = tmp_path / "feature-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="feature")
+        assert valid is False
+        assert "Missing expected judges for category 'feature'" in message
+        assert "prd-testability-judge" in message
+
+    def test_feature_error_message_includes_category(self, tmp_path: Path) -> None:
+        """Error messages for feature include category context."""
+        # Use only 1 judge to trigger missing judges error
+        partial_judges = ["feature-completeness-judge"]
+
+        report = create_evaluation_report("run-20250211-feature-judges", partial_judges)
+
+        report_path = tmp_path / "feature-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="feature")
+        assert valid is False
+        assert "category 'feature'" in message
+
+    def test_default_filename_for_feature_category(self) -> None:
+        """DEFAULT_FILENAMES produces 'feature-judges.json' for feature category."""
+        assert DEFAULT_FILENAMES["feature"] == "feature-judges.json"
+
+    def test_valid_suffixes_for_feature_category(self) -> None:
+        """VALID_SUFFIXES for feature contains only '-feature-judges'."""
+        assert VALID_SUFFIXES["feature"] == ["-feature-judges"]
+
+    def test_feature_report_fails_under_prd_category(self, tmp_path: Path) -> None:
+        """3-judge feature report with -feature-judges suffix fails prd validation."""
+        feature_judges = sorted(JUDGE_REGISTRY["feature"])
+        report = create_evaluation_report("run-20250211-feature-judges", feature_judges)
+
+        report_path = tmp_path / "feature-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="prd")
+        assert valid is False, (
+            "Feature judges should not satisfy prd category requirements"
+        )
+        # prd requires prd-auditor and prd-scope-judge which are missing from feature set
+        assert "Missing expected judges" in message
+        assert "prd-auditor" in message or "prd-scope-judge" in message
+
+    def test_prd_report_fails_under_feature_category(self, tmp_path: Path) -> None:
+        """5-judge prd report with -prd-judges suffix fails feature validation."""
+        prd_judges = sorted(JUDGE_REGISTRY["prd"])
+        assert len(prd_judges) == 5
+        report = create_evaluation_report("run-20250211-prd-judges", prd_judges)
+
+        report_path = tmp_path / "prd-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="feature")
+        assert valid is False, (
+            "PRD report with -prd-judges suffix should fail feature category validation"
+        )
+        assert "report_id should end with one of" in message

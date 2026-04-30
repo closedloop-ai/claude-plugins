@@ -4,7 +4,7 @@ A collection of specialized LLM judge agents that evaluate implementation plans,
 
 ## Features
 
-- **Plan, code, and PRD evaluation modes** with mode-specific judge sets selected by `run-judges`
+- **Plan, code, PRD, and feature evaluation modes** with mode-specific judge sets selected by `run-judges`
 - **Parallel judge execution** in controlled batches with deterministic aggregation
 - **Batched judge fan-out** via Task calls (up to 4 concurrent judges per batch)
 - **Structured output** using a validated `CaseScore` JSON schema with Pydantic enforcement
@@ -35,13 +35,19 @@ graph TD
     CtxMgr -->|plan context failure| Compat[Compatibility fallback]
     Compat --> CompatInput["judge-input.json (primary = plan.json, supporting = prd.md)"]
     CompatInput --> CommonPlan
+    CtxMgr -->|feature mode| FeatureInput["judge-input.json (primary = feature artifact)"]
+    FeatureInput --> CommonFeature["common_input_preamble.md (shared contract preamble)"]
+    CommonFeature --> FeaturePreamble["prd_preamble.md (reused for feature mode)"]
+    FeaturePreamble --> FeatureBatch[Feature judge batch]
     PlanBatches --> Agg[Aggregation into EvaluationReport]
     CodeBatches --> Agg
-    Agg --> Report["plan-judges.json / code-judges.json / prd-judges.json"]
+    FeatureBatch --> Agg
+    Agg --> Report["plan-judges.json / code-judges.json / prd-judges.json / feature-judges.json"]
     Report --> Validate["validate_judge_report.py"]
 
     style PlanBatches fill:#e1f5fe
     style CodeBatches fill:#e1f5fe
+    style FeatureBatch fill:#e1f5fe
 ```
 
 The `eval-cache` skill short-circuits plan evaluation when `plan-evaluation.json` is newer than `plan.json`, avoiding redundant judge runs.
@@ -178,7 +184,7 @@ At runtime, this contract guidance is injected from `common_input_preamble.md`, 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `evaluation_type` | string | Evaluation mode (`plan`, `code`, or `prd`) |
+| `evaluation_type` | string | Evaluation mode (`plan`, `code`, `prd`, or `feature`) |
 | `task` | string | Natural-language objective judges must evaluate against |
 | `primary_artifact` | object | Authoritative evidence artifact descriptor |
 | `supporting_artifacts` | array | Secondary evidence artifact descriptors in priority order |
@@ -228,6 +234,7 @@ Each judge returns one `CaseScore` JSON object:
 - `$CLOSEDLOOP_WORKDIR/plan-judges.json` for plan evaluation
 - `$CLOSEDLOOP_WORKDIR/code-judges.json` for code evaluation
 - `$CLOSEDLOOP_WORKDIR/prd-judges.json` for PRD evaluation
+- `$CLOSEDLOOP_WORKDIR/feature-judges.json` for feature artifact evaluation
 
 The report is validated after generation using `skills/run-judges/scripts/validate_judge_report.py`.
 
@@ -238,7 +245,7 @@ The report is validated after generation using `skills/run-judges/scripts/valida
 Orchestrates parallel judge agent execution, aggregates `CaseScore` results, and validates output.
 
 **Parameters:**
-- `--artifact-type`: `plan` (default), `code`, or `prd`
+- `--artifact-type`: `plan` (default), `code`, `prd`, or `feature`
 
 **Plan mode** (default):
 - Launches `context-manager-for-judges` to produce `plan-context.json`
@@ -265,6 +272,15 @@ Orchestrates parallel judge agent execution, aggregates `CaseScore` results, and
 - Does NOT launch `context-manager-for-judges`
 - Runs 5 PRD judges across 2 sequential batches (3 + 2) to respect the Task tool's 4-concurrent-agent limit
 - Writes `$CLOSEDLOOP_WORKDIR/prd-judges.json`
+
+**Feature mode** (`--artifact-type feature`):
+- Checks `$CLOSEDLOOP_WORKDIR/prd.md` exists (graceful exit if missing)
+- Builds `judge-input.json` with `evaluation_type: "feature"` and primary artifact pointing to the feature document
+- Does NOT launch `context-manager-for-judges`
+- Runs 3 judges in 1 batch: `feature-completeness-judge`, `prd-testability-judge`, `prd-dependency-judge`
+- Explicitly excludes `prd-auditor` (assumes US-###/AC-#.# numbering present in full PRDs, not feature artifacts) and `prd-scope-judge` (assumes In/Out-of-Scope sections not required for feature artifacts)
+- Prepends `common_input_preamble.md` + `prd_preamble.md` to each judge prompt (feature mode reuses the PRD preamble — there is no separate `feature_preamble.md`)
+- Writes `$CLOSEDLOOP_WORKDIR/feature-judges.json`
 
 **Agent snapshot**: Before launching judge batches, `run-judges` runs `skills/run-judges/scripts/ensure_agents_snapshot.sh` to capture an idempotent snapshot of all judge agent definitions into `$CLOSEDLOOP_WORKDIR/agents-snapshot/`.
 
@@ -326,6 +342,20 @@ Checks for a cached plan evaluation result before launching the plan-evaluator a
 4. The skill runs `context-manager-for-judges` first to produce `code-context.json`, then builds `judge-input.json` and launches 11 judges.
 5. Results are written to `$CLOSEDLOOP_WORKDIR/code-judges.json`.
 
+### Evaluating a Feature Artifact
+
+1. Ensure `$CLOSEDLOOP_WORKDIR/prd.md` exists and contains the feature document to evaluate.
+2. Invoke the `run-judges` skill with the feature artifact type:
+
+```
+@judges:run-judges --artifact-type feature
+```
+
+3. The skill builds `judge-input.json` with `evaluation_type: "feature"` and launches 3 judges in a single batch: `feature-completeness-judge`, `prd-testability-judge`, and `prd-dependency-judge`.
+4. `prd-auditor` and `prd-scope-judge` are not invoked — `prd-auditor` assumes the US-###/AC-#.# numbering format present in full PRDs, and `prd-scope-judge` assumes In/Out-of-Scope sections that feature artifacts do not require.
+5. The `prd_preamble.md` preamble is used (there is no separate `feature_preamble.md`).
+6. Results are written to `$CLOSEDLOOP_WORKDIR/feature-judges.json`.
+
 ### Output Format
 
 Each judge produces a `CaseScore`:
@@ -346,7 +376,7 @@ Each judge produces a `CaseScore`:
 }
 ```
 
-The aggregated report (`plan-judges.json`, `code-judges.json`, or `prd-judges.json`) wraps all `CaseScore` objects:
+The aggregated report (`plan-judges.json`, `code-judges.json`, `prd-judges.json`, or `feature-judges.json`) wraps all `CaseScore` objects:
 
 ```json
 {

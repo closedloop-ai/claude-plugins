@@ -1,6 +1,6 @@
 ---
 name: run-judges
-description: Orchestrate parallel judge agent execution, aggregate CaseScore results, write plan-judges.json, code-judges.json, or prd-judges.json, and validate output. Supports evaluating implementation plans (16 judges, 4 batches), code artifacts (11 judges, 3 batches), or PRD artifacts (5 judges, 2 batches) via --artifact-type parameter.
+description: Orchestrate parallel judge agent execution, aggregate CaseScore results, write plan-judges.json, code-judges.json, prd-judges.json, or feature-judges.json, and validate output. Supports evaluating implementation plans (16 judges, 4 batches), code artifacts (11 judges, 3 batches), PRD artifacts (5 judges, 2 batches), or Feature artifacts (3 judges, 1 batch) via --artifact-type parameter.
 context: fork
 ---
 
@@ -8,7 +8,7 @@ context: fork
 
 ## Purpose
 
-Execute specialized judge agents in parallel to evaluate implementation plan quality (16 judges, 4 batches), code quality (11 judges, 3 batches), or PRD quality (5 judges, 2 batches). All batches respect the Task tool's 4-concurrent-agent limit. Aggregates results into `$CLOSEDLOOP_WORKDIR/plan-judges.json` (plan), `$CLOSEDLOOP_WORKDIR/code-judges.json` (code), or `$CLOSEDLOOP_WORKDIR/prd-judges.json` (prd) with validated output format.
+Execute specialized judge agents in parallel to evaluate implementation plan quality (16 judges, 4 batches), code quality (11 judges, 3 batches), PRD quality (5 judges, 2 batches), or Feature quality (3 judges, 1 batch). All batches respect the Task tool's 4-concurrent-agent limit. Aggregates results into `$CLOSEDLOOP_WORKDIR/plan-judges.json` (plan), `$CLOSEDLOOP_WORKDIR/code-judges.json` (code), `$CLOSEDLOOP_WORKDIR/prd-judges.json` (prd), or `$CLOSEDLOOP_WORKDIR/feature-judges.json` (feature) with validated output format.
 
 ## Parameters
 
@@ -18,11 +18,12 @@ Execute specialized judge agents in parallel to evaluate implementation plan qua
 - The directory is created automatically if it does not exist
 - All output files (`plan-judges.json`, `code-judges.json`, `prd-judges.json`, `judge-input.json`, `perf.jsonl`, etc.) are written to this resolved directory
 
-**--artifact-type**: Artifact category to evaluate (plan | code | prd), default: plan
+**--artifact-type**: Artifact category to evaluate (plan | code | prd | feature), default: plan
 
 - **plan** (default): Evaluate implementation plan with 16 judges, 4 batches, output to plan-judges.json
 - **code**: Evaluate implemented code with 11 judges, 3 batches, output to code-judges.json
 - **prd**: Evaluate PRD document with 5 judges across 2 sequential batches (3 + 2, max 4 concurrent per batch), output to prd-judges.json
+- **feature**: Evaluate Feature artifact with 3 judges, 1 batch, output to feature-judges.json
 
 ## Judge Input Contract (`judge-input.json`)
 
@@ -59,6 +60,20 @@ You are orchestrating quality evaluation for a ClosedLoop artifact (implementati
 4. Aggregate all 5 CaseScores into a valid EvaluationReport
 5. Write the report to `$CLOSEDLOOP_WORKDIR/prd-judges.json`
 6. Validate output structure and completeness
+
+**For Feature artifacts (--artifact-type feature):**
+1. Check `$CLOSEDLOOP_WORKDIR/prd.md` exists (graceful exit code 0 if missing)
+2. Build `judge-input.json` with `evaluation_type="feature"` and `primary_artifact` pointing to `$CLOSEDLOOP_WORKDIR/prd.md`
+3. Launch 3 judges in 1 batch (feature-completeness-judge + prd-testability-judge + prd-dependency-judge)
+4. Aggregate 3 CaseScores into a valid EvaluationReport
+5. Write the report to `$CLOSEDLOOP_WORKDIR/feature-judges.json`
+6. Validate output structure and completeness
+
+**Feature mode judge selection rationale:**
+- `prd-auditor` is excluded because it assumes US-###/AC-#.# numbering and multi-story traceability, which Feature artifacts do not follow
+- `prd-scope-judge` is excluded because it assumes In/Out-of-Scope sections that are not present in Feature artifacts
+
+**Feature mode preamble override:** Feature mode MUST use `prd_preamble.md` (not `feature_preamble.md`, which does not exist). When injecting preambles for feature judges, resolve `{artifact_type}_preamble.md` as `prd_preamble.md`.
 
 **Success criteria:**
 - All judges executed (or error CaseScores generated for failures)
@@ -182,6 +197,10 @@ Use `sub_step` as numeric phase order and optional `sub_step_name` to capture th
 | prd      | 1–2      | batch_1, batch_2 |
 | prd      | 3        | aggregate       |
 | prd      | 4        | validate        |
+| feature  | 0        | context_prep (skipped — feature mode does not use context-manager-for-judges) |
+| feature  | 1        | batch_1         |
+| feature  | 2        | aggregate       |
+| feature  | 3        | validate        |
 
 **Start of phase (run Bash once at the beginning of each phase):** Set the two sub-step variables at the top for the current phase, then run the block. It writes start time to a temp file so the end-of-phase Bash can compute duration. `CLOSEDLOOP_PARENT_STEP` and `CLOSEDLOOP_PARENT_STEP_NAME` are already in the environment (set by run-loop on the `claude` invocation).
 
@@ -281,7 +300,7 @@ Before any prerequisite checks or judge launches:
 
 ### Prerequisites Check
 
-**Performance:** At the start of this phase run the "start of phase" Bash with `SUB_STEP_NUM=0` and `SUB_STEP_LABEL=context_manager` for both plan and code modes. At the end of the phase run the "end of phase" Bash.
+**Performance:** At the start of this phase run the "start of phase" Bash with `SUB_STEP_NUM=0` and `SUB_STEP_LABEL=context_manager` for both plan and code modes. For prd and feature modes, emit sub_step=0 with `SUB_STEP_LABEL=context_prep` and `skipped=true` immediately (no context manager runs). At the end of the phase run the "end of phase" Bash.
 
 **Before starting, verify required inputs exist:**
 
@@ -412,10 +431,69 @@ fi
 - No context manager is launched; `judge-input.json` is built directly with `primary_artifact` pointing to `$CLOSEDLOOP_WORKDIR/prd.md`
 - Performance: emit sub_step=0 (context_prep, skipped=true) perf event immediately, then proceed to sub_step=1 (batch_1) and sub_step=2 (batch_2)
 
+**For Feature artifacts (--artifact-type feature):**
+
+Feature mode does NOT use context-manager-for-judges. Context preparation is lightweight: verify `prd.md` exists, then build judge-input.json directly from it.
+
+```bash
+# Feature mode context prep: check prd.md exists
+if [ ! -f "$CLOSEDLOOP_WORKDIR/prd.md" ]; then
+  echo "WARNING: $CLOSEDLOOP_WORKDIR/prd.md not found. Skipping Feature judges."
+
+  # Emit sub_step=0 skipped perf event before exiting
+  SUB_STEP_NUM=0
+  SUB_STEP_LABEL="context_prep"
+  mkdir -p "$CLOSEDLOOP_WORKDIR/.closedloop-ai"
+  {
+    echo "SUB_STEP=${SUB_STEP_NUM}"
+    echo "SUB_STEP_NAME=${SUB_STEP_LABEL}"
+    echo "PARENT_STEP=${CLOSEDLOOP_PARENT_STEP:-0}"
+    echo "PARENT_STEP_NAME=${CLOSEDLOOP_PARENT_STEP_NAME:-unknown}"
+    echo "STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "START_EPOCH=$(date +%s)"
+  } > "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
+  source "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
+  END_EPOCH=$(date +%s)
+  ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  DURATION=$((END_EPOCH - START_EPOCH))
+  jq -n -c \
+    --arg event "pipeline_step" \
+    --arg run_id "${CLOSEDLOOP_RUN_ID:-unknown}" \
+    --argjson iteration "${CLOSEDLOOP_ITERATION:-0}" \
+    --argjson step "$PARENT_STEP" \
+    --arg step_name "$PARENT_STEP_NAME" \
+    --argjson sub_step "$SUB_STEP" \
+    --arg sub_step_name "$SUB_STEP_NAME" \
+    --arg started_at "$STARTED_AT" \
+    --arg ended_at "$ENDED_AT" \
+    --argjson duration_s "$DURATION" \
+    --argjson exit_code 0 \
+    --argjson skipped true \
+    '{event:$event,run_id:$run_id,iteration:$iteration,step:$step,step_name:$step_name,sub_step:$sub_step,sub_step_name:$sub_step_name,started_at:$started_at,ended_at:$ended_at,duration_s:$duration_s,exit_code:$exit_code,skipped:$skipped}' >> "$CLOSEDLOOP_WORKDIR/perf.jsonl"
+  rm -f "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
+
+  exit 0  # Graceful exit — do not fail parent workflow
+fi
+
+# Build feature-mode judge-input.json
+# - evaluation_type: "feature"
+# - task: Feature quality evaluation objective (3-feature-judge workflow)
+# - primary_artifact: $CLOSEDLOOP_WORKDIR/prd.md
+# - supporting_artifacts: [] (none required)
+# - source_of_truth: ["prd"]
+```
+
+**Feature context prep notes:**
+- Missing `prd.md` results in a WARNING, emission of sub_step=0 (context_prep, skipped=true) perf event, and graceful exit (code 0) — not an error
+- No context manager is launched; `judge-input.json` is built directly with `evaluation_type="feature"` and `primary_artifact` pointing to `$CLOSEDLOOP_WORKDIR/prd.md`
+- Performance: emit sub_step=0 (context_prep, skipped=true) perf event immediately when prd.md is missing, then exit 0; when prd.md is present, emit sub_step=0 skipped=true and proceed to sub_step=1 (batch_1), sub_step=2 (aggregate), sub_step=3 (validate)
+- Preamble override: use `prd_preamble.md` for all 3 feature judges (feature_preamble.md does not exist)
+
 **If required files are missing:**
 - Plan mode: Exit gracefully with code 0 (do not fail parent workflow)
 - Code mode: Exit with error if context preparation fails
 - PRD mode: Exit gracefully with code 0 if prd.md is not found
+- Feature mode: Exit gracefully with code 0 if prd.md is not found
 
 ## Artifact Type Configuration
 
@@ -462,6 +540,15 @@ The run-judges skill supports three artifact types with different judge configur
 - **Validation**: `--category prd` (5 judges expected)
 - **Canonical input**: `$CLOSEDLOOP_WORKDIR/prd.md`
 
+### Feature Artifacts (--artifact-type feature)
+- **Judges**: 3 total (feature-completeness-judge, prd-testability-judge, prd-dependency-judge)
+- **Batches**: 1 batch (max 4 concurrent per batch)
+- **Output**: `feature-judges.json`
+- **Report ID**: `{RUN_ID}-feature-judges`
+- **Validation**: `--category feature` (3 judges expected)
+- **Canonical input**: `$CLOSEDLOOP_WORKDIR/prd.md`
+- **Preamble**: use `prd_preamble.md` (feature_preamble.md does not exist)
+
 **PRD Execution:**
 
 **Batch 1: Structure & Completeness (sub_step=1)**
@@ -477,7 +564,7 @@ The run-judges skill supports three artifact types with different judge configur
 
 ### Step 1: Launch Judge Agents in Parallel
 
-**Performance:** For each batch/phase, run "start of phase" Bash before launching the batch and "end of phase" Bash after the batch completes. Plan: batch_1=sub_step 1, batch_2=sub_step 2, batch_3=sub_step 3, batch_4=sub_step 4. Code: batch_1=sub_step 1, batch_2=sub_step 2, batch_3=sub_step 3. PRD: batch_1=sub_step 1, batch_2=sub_step 2.
+**Performance:** For each batch/phase, run "start of phase" Bash before launching the batch and "end of phase" Bash after the batch completes. Plan: batch_1=sub_step 1, batch_2=sub_step 2, batch_3=sub_step 3, batch_4=sub_step 4. Code: batch_1=sub_step 1, batch_2=sub_step 2, batch_3=sub_step 3. PRD: batch_1=sub_step 1, batch_2=sub_step 2. Feature: batch_1=sub_step 1.
 
 **Constraint:** The Task tool supports maximum 4 concurrent agents per batch.
 
@@ -540,6 +627,20 @@ The run-judges skill supports three artifact types with different judge configur
 | `judges:prd-dependency-judge` | Dependency clarity and completeness |
 | `judges:prd-testability-judge` | Requirement testability and measurability |
 
+### Feature Artifact Judge Batches (3 judges, 1 batch)
+
+**Batch 1: Feature Quality (sub_step=1)**
+
+| Agent Type | Evaluates |
+|------------|-----------|
+| `judges:feature-completeness-judge` | Feature request completeness and clarity |
+| `judges:prd-testability-judge` | Requirement testability and measurability |
+| `judges:prd-dependency-judge` | Dependency clarity and completeness |
+
+**Excluded judges (feature mode):**
+- `judges:prd-auditor` — excluded because it assumes US-###/AC-#.# numbering and multi-story traceability that Feature artifacts do not follow
+- `judges:prd-scope-judge` — excluded because it assumes In/Out-of-Scope sections that are not present in Feature artifacts
+
 </judge_batches>
 
 <prompt_template>
@@ -569,6 +670,8 @@ The run-judges skill supports three artifact types with different judge configur
 - Generate error CaseScore with `final_status=3`, `justification="Preamble file not found: {path}"`
 - Continue with other judges
 
+> **NOTE — Feature Mode Exception:** When `--artifact-type feature` is used, `feature_preamble.md` does **not** exist in the preambles directory. For feature mode, the preamble lookup in step 1 MUST substitute `prd_preamble.md` in place of `feature_preamble.md`. That is, resolve `{artifact_type}_preamble.md` as `prd_preamble.md` whenever `artifact_type == "feature"`. Do NOT attempt to locate or read `feature_preamble.md` — it will not be found and will cause a spurious error CaseScore.
+
 ### Prompt Templates
 
 **For plan artifacts:**
@@ -593,6 +696,14 @@ WORKDIR=$CLOSEDLOOP_WORKDIR. Read $CLOSEDLOOP_WORKDIR/judge-input.json first.
 Evaluate according to `task` and `source_of_truth` ordering.
 Treat the envelope's `primary_artifact` ($CLOSEDLOOP_WORKDIR/prd.md) as the authoritative PRD document.
 Apply your {judge_name} criteria to assess PRD quality.
+```
+
+**For Feature artifacts:**
+```
+WORKDIR=$CLOSEDLOOP_WORKDIR. Read $CLOSEDLOOP_WORKDIR/judge-input.json first.
+Evaluate according to `task` and `source_of_truth` ordering.
+Treat the envelope's `primary_artifact` ($CLOSEDLOOP_WORKDIR/prd.md) as the authoritative Feature document.
+Apply your {judge_name} criteria to assess Feature quality.
 ```
 
 </prompt_template>
@@ -657,7 +768,7 @@ Each judge returns a **CaseScore** JSON object:
 
 **Continue-on-failure semantics:**
 - Even if ALL judges fail, you MUST aggregate error CaseScores
-- Always produce a complete report with 16 CaseScore entries (plan), 11 CaseScore entries (code), or 5 CaseScore entries (prd)
+- Always produce a complete report with 16 CaseScore entries (plan), 11 CaseScore entries (code), 5 CaseScore entries (prd), or 3 CaseScore entries (feature)
 - Never abort the workflow due to judge failures
 
 </error_handling>
@@ -666,7 +777,7 @@ Each judge returns a **CaseScore** JSON object:
 
 ### Step 2: Aggregate Results into EvaluationReport
 
-**Performance:** Run "start of phase" with sub_step 5 (plan), 4 (code), or 3 (prd), sub_step_name=aggregate. Emit 'end of phase' after the aggregation step regardless of file write outcome.
+**Performance:** Run "start of phase" with sub_step 5 (plan), 4 (code), 3 (prd), or 2 (feature), sub_step_name=aggregate. Emit 'end of phase' after the aggregation step regardless of file write outcome.
 
 **Task:** Collect all CaseScore outputs and structure them into an `EvaluationReport`.
 
@@ -680,6 +791,9 @@ if artifact_type == 'code':
 elif artifact_type == 'prd':
     report_filename = 'prd-judges.json'
     report_id = f'{RUN_ID}-prd-judges'
+elif artifact_type == 'feature':
+    report_filename = 'feature-judges.json'
+    report_id = f'{RUN_ID}-feature-judges'
 else:
     report_filename = 'plan-judges.json'
     report_id = f'{RUN_ID}-plan-judges'
@@ -748,13 +862,26 @@ output_path = $CLOSEDLOOP_WORKDIR / report_filename
 }
 ```
 
+**Feature artifact report structure (feature-judges.json):**
+```json
+{
+  "report_id": "{RUN_ID}-feature-judges",
+  "timestamp": "2024-02-03T15:45:30Z",
+  "stats": [
+    { /* CaseScore from feature-completeness-judge */ },
+    { /* CaseScore from prd-testability-judge */ },
+    { /* CaseScore from prd-dependency-judge */ }
+  ]
+}
+```
+
 **Field requirements:**
 
 | Field | Format | How to Derive |
 |-------|--------|---------------|
-| `report_id` | `{RUN_ID}-plan-judges`, `{RUN_ID}-code-judges`, or `{RUN_ID}-prd-judges` | Extract RUN_ID from `$CLOSEDLOOP_WORKDIR` directory name, append suffix based on artifact type |
+| `report_id` | `{RUN_ID}-plan-judges`, `{RUN_ID}-code-judges`, `{RUN_ID}-prd-judges`, or `{RUN_ID}-feature-judges` | Extract RUN_ID from `$CLOSEDLOOP_WORKDIR` directory name, append suffix based on artifact type |
 | `timestamp` | ISO 8601 | Generate with `date -u +%Y-%m-%dT%H:%M:%SZ` |
-| `stats` | Array[CaseScore] | 16 CaseScore objects for plan, 11 for code, 5 for prd (one per judge) |
+| `stats` | Array[CaseScore] | 16 CaseScore objects for plan, 11 for code, 5 for prd, 3 for feature (one per judge) |
 
 </output_structure>
 
@@ -762,7 +889,7 @@ output_path = $CLOSEDLOOP_WORKDIR / report_filename
 
 ### Step 3: Validate Output (MANDATORY)
 
-**Performance:** Run "start of phase" with sub_step 6 (plan), 5 (code), or 4 (prd), sub_step_name=validate. Emit 'end of phase' after each validation attempt regardless of exit code, then apply failure recovery logic.
+**Performance:** Run "start of phase" with sub_step 6 (plan), 5 (code), 4 (prd), or 3 (feature), sub_step_name=validate. Emit 'end of phase' after each validation attempt regardless of exit code, then apply failure recovery logic.
 
 **CRITICAL:** You MUST run the validation script after writing the judge report. Do not consider the task complete until validation passes.
 
@@ -797,6 +924,8 @@ if [ "$ARTIFACT_TYPE" = "code" ]; then
   CATEGORY="code"
 elif [ "$ARTIFACT_TYPE" = "prd" ]; then
   CATEGORY="prd"
+elif [ "$ARTIFACT_TYPE" = "feature" ]; then
+  CATEGORY="feature"
 fi
 
 # Run validation with appropriate category
@@ -805,8 +934,8 @@ uv run "$SCRIPT_PATH" --workdir "$CLOSEDLOOP_WORKDIR" --category "$CATEGORY"
 
 **Argument requirements:**
 - `--workdir` must be the **absolute path** to `$CLOSEDLOOP_WORKDIR`
-- `--category` must be `plan` (16 judges), `code` (11 judges), or `prd` (5 judges)
-- This is where `plan-judges.json`, `code-judges.json`, or `prd-judges.json` is located
+- `--category` must be `plan` (16 judges), `code` (11 judges), `prd` (5 judges), or `feature` (3 judges)
+- This is where `plan-judges.json`, `code-judges.json`, `prd-judges.json`, or `feature-judges.json` is located
 
 </validation_workflow>
 
@@ -822,10 +951,10 @@ The script validates using strict Pydantic models:
 |-------|-------------|
 | **JSON syntax** | Valid JSON format |
 | **Required fields** | report_id, timestamp, stats array |
-| **Judge coverage** | All expected judges present (16 for plan, 11 for code, 5 for prd) |
+| **Judge coverage** | All expected judges present (16 for plan, 11 for code, 5 for prd, 3 for feature) |
 | **Status values** | final_status ∈ {1, 2, 3} |
 | **Metric completeness** | Each judge has ≥1 metric |
-| **Report ID format** | Ends with '-judges' (plan), '-code-judges' (code), or '-prd-judges' (prd) |
+| **Report ID format** | Ends with '-judges' (plan), '-code-judges' (code), '-prd-judges' (prd), or '-feature-judges' (feature) |
 
 **Expected judge case_ids for plan artifacts (16 total):**
 ```
@@ -874,6 +1003,15 @@ prd-scope-judge
 ```
 
 **Note:** PRD judges run in 2 sequential batches (3 + 2) to respect the Task tool's 4-concurrent-agent limit.
+
+**Expected judge case_ids for Feature artifacts (3 total):**
+```
+feature-completeness-judge
+prd-dependency-judge
+prd-testability-judge
+```
+
+**Note:** Feature judges run in 1 batch. prd-auditor and prd-scope-judge are excluded — see Feature mode judge selection rationale in Task Context section.
 
 </validation_checks>
 
@@ -981,6 +1119,17 @@ Before marking this task complete, verify:
 - [ ] **Report ID format** - report_id ends with '-prd-judges'
 - [ ] **Validation passed** - Script exits with code 0 using `--category prd` (sub_step=4)
 
+**For Feature artifacts (--artifact-type feature):**
+- [ ] **prd.md existence check** - `$CLOSEDLOOP_WORKDIR/prd.md` found, or emit sub_step=0 (skipped=true) perf event, emit WARNING, and graceful exit with WARNING (code 0)
+- [ ] **No context manager** - context-manager-for-judges is NOT launched for feature mode
+- [ ] **Judge input contract** - `judge-input.json` written with `evaluation_type="feature"` and `primary_artifact=$CLOSEDLOOP_WORKDIR/prd.md`
+- [ ] **Preamble override** - prd_preamble.md used for all feature judges (feature_preamble.md does not exist)
+- [ ] **Parallel execution** - 3 feature judges launched in 1 batch (sub_step=1): feature-completeness-judge + prd-testability-judge + prd-dependency-judge
+- [ ] **Result aggregation** - Valid EvaluationReport with 3 CaseScore entries (sub_step=2)
+- [ ] **File output** - `feature-judges.json` written to `$CLOSEDLOOP_WORKDIR`
+- [ ] **Report ID format** - report_id ends with '-feature-judges'
+- [ ] **Validation passed** - Script exits with code 0 using `--category feature` (sub_step=3)
+
 </completion_criteria>
 
 ---
@@ -991,9 +1140,9 @@ Before marking this task complete, verify:
 
 | Error Message | Root Cause | Solution |
 |---------------|------------|----------|
-| "Report file does not exist" | File not written to correct location | Verify `$CLOSEDLOOP_WORKDIR` is set; check write path matches artifact type (plan-judges.json, code-judges.json, or prd-judges.json) |
-| "Invalid JSON" | Syntax error in output file | Run `python3 -m json.tool "$CLOSEDLOOP_WORKDIR/{plan,code,prd}-judges.json"` to identify syntax error |
-| "Missing expected judges" | Incomplete batch execution | Verify all batches launched (4 for plan, 3 for code, 2 for prd); check error CaseScores for failures; plan expects 16 judges, code expects 11, prd expects 5 |
+| "Report file does not exist" | File not written to correct location | Verify `$CLOSEDLOOP_WORKDIR` is set; check write path matches artifact type (plan-judges.json, code-judges.json, prd-judges.json, or feature-judges.json) |
+| "Invalid JSON" | Syntax error in output file | Run `python3 -m json.tool "$CLOSEDLOOP_WORKDIR/{plan,code,prd,feature}-judges.json"` to identify syntax error |
+| "Missing expected judges" | Incomplete batch execution | Verify all batches launched (4 for plan, 3 for code, 2 for prd, 1 for feature); check error CaseScores for failures; plan expects 16 judges, code expects 11, prd expects 5, feature expects 3 |
 | "final_status must be 1, 2, or 3" | Invalid status code | Use only: 1 (pass), 2 (fail), 3 (error) |
 | "report_id should end with '-plan-judges'" | Incorrect ID format for plan | Use pattern: `{RUN_ID}-plan-judges` for plan artifacts |
 | "report_id should end with '-code-judges'" | Incorrect ID format for code | Use pattern: `{RUN_ID}-code-judges` for code artifacts |
@@ -1006,9 +1155,12 @@ Before marking this task complete, verify:
 | "pre-explorer unavailable" | `@code:pre-explorer` not installed/resolvable | Log warning and use internal fallback investigation to create `investigation-log.md` |
 | "investigation-log.md missing after fallback" | Both pre-explorer and internal fallback failed | Log warning and continue; do not block context preparation |
 | "investigation-log.md missing in code mode" | pre-explorer unavailable or generation failed during code preflight | Log warning and continue with `code-context.json` only (non-blocking) |
-| "Invalid --artifact-type value" | Unsupported artifact type | Use only 'plan', 'code', or 'prd' |
+| "Invalid --artifact-type value" | Unsupported artifact type | Use only 'plan', 'code', 'prd', or 'feature' |
 | "prd.md not found" | PRD document missing from workdir | Emit WARNING and exit gracefully (code 0); do not fail the parent workflow |
 | "report_id should end with '-prd-judges'" | Incorrect ID format for prd | Use pattern: `{RUN_ID}-prd-judges` for PRD artifacts |
+| "report_id should end with '-feature-judges'" | Incorrect ID format for feature | Use pattern: `{RUN_ID}-feature-judges` for Feature artifacts |
+| "feature_preamble.md not found" | Wrong preamble file for feature mode | Feature mode must use prd_preamble.md; feature_preamble.md does not exist |
+| "Missing expected judges (feature)" | Incomplete batch execution for feature mode | Verify batch_1 launched all 3 judges: feature-completeness-judge, prd-testability-judge, prd-dependency-judge |
 
 </troubleshooting>
 
@@ -1018,7 +1170,7 @@ Before marking this task complete, verify:
 
 ### Invalid Artifact Type
 
-If `--artifact-type` value is not 'plan', 'code', or 'prd':
+If `--artifact-type` value is not 'plan', 'code', 'prd', or 'feature':
 - Fail immediately with clear error message
 - Do not attempt judge execution
 - Exit with non-zero status
@@ -1068,5 +1220,16 @@ When `--artifact-type prd` is specified:
 - Launch the 5 PRD judges in 2 sequential batches (sub_step=1: feature-completeness-judge + prd-auditor + prd-scope-judge; sub_step=2: prd-dependency-judge + prd-testability-judge) to respect the 4-concurrent-agent Task limit
 - Aggregate all 5 CaseScores (sub_step=3) and write to `prd-judges.json`
 - Validate with `--category prd` (sub_step=4)
+
+### Feature Mode Execution Flow
+
+When `--artifact-type feature` is specified:
+- Check `$CLOSEDLOOP_WORKDIR/prd.md` exists; emit sub_step=0 (context_prep, skipped=true) perf event, emit WARNING, and exit gracefully (code 0) if missing
+- Do NOT launch context-manager-for-judges
+- Build `judge-input.json` with `evaluation_type="feature"` and `primary_artifact=$CLOSEDLOOP_WORKDIR/prd.md`
+- Use `prd_preamble.md` for all 3 feature judges (feature_preamble.md does not exist)
+- Launch the 3 feature judges in 1 batch (sub_step=1: feature-completeness-judge + prd-testability-judge + prd-dependency-judge) to respect the 4-concurrent-agent Task limit
+- Aggregate all 3 CaseScores (sub_step=2) and write to `feature-judges.json`
+- Validate with `--category feature` (sub_step=3)
 
 ---
