@@ -1,7 +1,7 @@
 #!/bin/bash
 # record_phase.sh - Append a phase event to perf.jsonl from the current state.json.
 #
-# Called by the orchestrator after every state.json write so workflow.json
+# Called by the orchestrator after every state.json write so perf_summary.py
 # can derive per-phase wall-clock timings.
 #
 # Usage:

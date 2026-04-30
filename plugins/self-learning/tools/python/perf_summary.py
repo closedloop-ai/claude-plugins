@@ -492,13 +492,14 @@ def print_phase_timeline(rows: list[dict[str, object]]) -> None:
         return
     print("=== Phase Timeline ===")
     print(
-        f"{'Iter':<6} {'Phase':<40} {'Started':<22} {'Ended':<22} {'Duration':<10}"
+        f"{'Run':<22} {'Iter':<6} {'Phase':<40} {'Started':<22} {'Ended':<22} {'Duration':<10}"
     )
-    print("-" * 102)
+    print("-" * 124)
     for row in rows:
         dur = row.get("duration_s")
         dur_str = _fmt_duration(float(dur)) if isinstance(dur, (int, float)) else "?"
         print(
+            f"{row.get('run_id', '')!s:<22} "
             f"{row.get('iteration', '')!s:<6} "
             f"{row.get('phase', '')!s:<40} "
             f"{row.get('started_at', '')!s:<22} "
