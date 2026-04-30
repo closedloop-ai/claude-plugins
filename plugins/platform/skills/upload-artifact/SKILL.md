@@ -1,14 +1,14 @@
 ---
 name: upload-artifact
 description: |
-  Upload a file as a ClosedLoop artifact (PRD, implementation plan, or template).
+  Upload a file as a ClosedLoop document (PRD, implementation plan, feature, or template).
   Reads file content and uploads via MCP without consuming conversation context.
-  Also supports creating new versions of existing artifacts.
+  Also supports creating new versions of existing documents.
   Triggers on: "upload artifact", "upload PRD", "upload implementation plan",
-  "create artifact from file", "save as artifact", "push to closedloop",
-  "new artifact version", "test artifact upload", "verify artifact content",
-  "upload to project".
-allowed-tools: Bash, Read, AskUserQuestion, mcp__closedloop__create-artifact, mcp__closedloop__create-artifact-version, mcp__closedloop__list-projects
+  "upload feature", "create artifact from file", "save as artifact",
+  "push to closedloop", "new artifact version", "test artifact upload",
+  "verify artifact content", "upload to project".
+allowed-tools: Bash, Read, AskUserQuestion, mcp__closedloop__create-document, mcp__closedloop__create-document-version, mcp__closedloop__list-projects
 ---
 
 # Upload Artifact
@@ -21,7 +21,7 @@ Upload file content as a ClosedLoop MCP artifact. Two modes:
    `NEXT_PUBLIC_MCP_SERVER_URL` to already be present in the current shell
    environment.
 
-2. **MCP fallback** — reads the file into context and calls `mcp__closedloop__create-artifact`
+2. **MCP fallback** — reads the file into context and calls `mcp__closedloop__create-document`
    directly. Uses Claude Code's existing MCP auth. Used when the required
    script-mode environment variables are not available.
 
@@ -66,8 +66,8 @@ If only one project exists, skip the question and use it automatically.
 
 Use `AskUserQuestion` to collect any parameters the user hasn't already specified:
 - **file_path**: "Which file should be uploaded?"
-- **title**: "What title should this artifact have?"
-- **type**: "What type of artifact?" (options: PRD, IMPLEMENTATION_PLAN, TEMPLATE)
+- **title**: "What title should this document have?"
+- **type**: "What type of document?" (options: PRD, IMPLEMENTATION_PLAN, FEATURE, TEMPLATE)
 
 Only ask for parameters the user hasn't already specified. For example, if they
 said "upload /tmp/my-prd.txt as a PRD", you already have the file path and
@@ -87,13 +87,14 @@ uv run --with 'mcp[cli]' <base_directory>/scripts/upload_artifact.py \
 
 Add `--verify` if the user requested verification or if testing limits.
 
-Add `--artifact-id <ID>` instead of `--title`/`--type`/`--project-id` when
-creating a new version of an existing artifact.
+Add `--artifact-id <ID_OR_SLUG>` instead of `--title`/`--type`/`--project-id`
+when creating a new version of an existing document. The flag accepts a UUID
+or a user-facing slug (`PRD-*`, `PLN-*`, `FEA-*`); the server resolves it.
 
 ### Step 5a: Report Result
 
 Parse the JSON output and report to the user:
-- Artifact ID
+- Document slug (e.g. `PLN-376`) and ID
 - Content length (characters)
 - Upload status
 - Verification results (if `--verify` was used)
@@ -115,16 +116,18 @@ Same as Step 3a — use `AskUserQuestion` for any missing file_path, title, or t
 ### Step 4b: Upload via MCP Tool
 
 Read the file content with the `Read` tool, then call:
-- `mcp__closedloop__create-artifact` for new artifacts (pass `title`, `type`,
-  `content`, and `projectId`)
-- `mcp__closedloop__create-artifact-version` for new versions (pass `artifactId`
-  and `content`)
+- `mcp__closedloop__create-document` for new documents (pass `title`, `type`,
+  `content`, and `projectId`). `type` is one of `PRD`, `IMPLEMENTATION_PLAN`,
+  `FEATURE`, or `TEMPLATE`.
+- `mcp__closedloop__create-document-version` for new versions (pass
+  `documentId` and `content`). `documentId` accepts a UUID or a user-facing
+  slug (`PRD-*`, `PLN-*`, `FEA-*`).
 
 Note: the file content will be loaded into conversation context in this mode.
 
 ### Step 5b: Report Result
 
-Report the artifact ID and confirmation from the MCP tool response.
+Report the document slug (`PRD-*`, `PLN-*`, `FEA-*`) and ID from the MCP tool response.
 
 ## Script Parameters
 
@@ -134,9 +137,9 @@ Report the artifact ID and confirmation from the MCP tool response.
 | `--api-key` | Yes | ClosedLoop API key (`sk_live_...`) |
 | `--list-projects` | No | List projects and exit |
 | `--file` | Upload | Path to content file |
-| `--title` | Create | Artifact title |
-| `--type` | Create | `PRD`, `IMPLEMENTATION_PLAN`, or `TEMPLATE` |
-| `--project-id` | No | Project association |
-| `--workstream-id` | No | Workstream association |
-| `--artifact-id` | Version | Existing artifact ID for new version |
+| `--title` | Create | Document title |
+| `--type` | Create | `PRD`, `IMPLEMENTATION_PLAN`, `FEATURE`, or `TEMPLATE` |
+| `--project-id` | No | Project ID or slug (`PRO-*`) |
+| `--workstream-id` | No | Workstream ID or slug (`WRK-*`) |
+| `--artifact-id` | Version | Existing document ID or slug (`PRD-*`/`PLN-*`/`FEA-*`) for new version |
 | `--verify` | No | Fetch back after upload and compare lengths |

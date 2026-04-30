@@ -316,9 +316,17 @@ When optimizing or compressing an existing prompt, apply these checks after ever
 | Pitfall | Check |
 |---------|-------|
 | Stale cross-references | After renaming or renumbering steps, search for ALL references to old labels (jump targets, "see Step X", resume points) and update them |
-| Over-abstraction | If the model needs exact values to execute (specific keys, field names, command arguments), keep them literal even if they look repetitive -- a generic placeholder the model cannot expand is worse than duplication |
+| Over-abstraction | If the model needs exact values to execute (specific keys, field names, command arguments), keep them literal even if they look repetitive. A generic placeholder the model cannot expand is worse than duplication |
 | Lost preconditions | When merging or removing steps, verify that any precondition checks or guards in the removed step are preserved elsewhere |
+| Dropped qualifiers | Single modifiers like `only`, `when appropriate`, `unless X`, `if it affects Y`, `must`, `never`, `always` are load-bearing constraints that look like filler during compression. For every modifier deleted, confirm the constraint it carried is preserved or that dropping it is the intended behavior change |
 | Silent behavior changes | Diff the before/after and confirm every deleted line is either redundant or relocated, not dropped |
+
+**Validation Pass (run before declaring a refactor done):**
+
+1. Read the original and the refactor side by side, top to bottom.
+2. For every line removed from the original, classify it as: (a) relocated (state where), (b) genuinely redundant (state which surviving line subsumes it), or (c) dropped on purpose (state why).
+3. Pay special attention to qualifiers and short connector phrases. They compress to nothing visually but carry constraints.
+4. Only declare done after every removed line has a label.
 
 ### Common Tag Names
 

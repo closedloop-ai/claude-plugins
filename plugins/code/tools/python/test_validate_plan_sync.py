@@ -70,6 +70,16 @@ def test_manual_task_without_manual_line() -> None:
     )
 
 
+def test_decision_table_field_ignored_by_sync() -> None:
+    """validate_sync ignores the decisionTable field — content has no marker for it."""
+    data = make_minimal_data(
+        decisionTable={"path": "x", "status": "pending"},
+    )
+    content = ""
+
+    assert validate_sync(data, content) == []
+
+
 def test_valid_plan_all_fields_in_sync() -> None:
     """A plan where all arrays and content are in sync produces no issues."""
     content = (

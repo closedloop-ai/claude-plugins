@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Upload a file as a ClosedLoop MCP artifact via Streamable HTTP transport.
+"""Upload a file as a ClosedLoop MCP document via Streamable HTTP transport.
 
 Connects directly to the MCP server, authenticates with an API key,
-and calls create-artifact or create-artifact-version.
+and calls create-document or create-document-version. The CLI flag
+``--artifact-id`` is preserved for backward compatibility and refers to the
+same identifier the server now exposes via ``documentId``.
 
 Reads `CLOSEDLOOP_API_KEY` and `NEXT_PUBLIC_MCP_SERVER_URL` from the current
 process environment by default. `--api-key` and `--url` can still be provided
@@ -16,17 +18,17 @@ Usage:
     uv run --with 'mcp[cli]' scripts/upload_artifact.py \\
         --list-projects
 
-    # Create artifact:
+    # Create document:
     uv run --with 'mcp[cli]' scripts/upload_artifact.py \\
         --file /path/to/content.md \\
         --title "My PRD" \\
         --type PRD \\
         --project-id <PROJECT_ID>
 
-    # New version of existing artifact:
+    # New version of existing document:
     uv run --with 'mcp[cli]' scripts/upload_artifact.py \\
         --file /path/to/content.md \\
-        --artifact-id <ARTIFACT_ID>
+        --artifact-id <DOCUMENT_ID_OR_SLUG>
 
     # Create + verify round-trip:
     uv run --with 'mcp[cli]' scripts/upload_artifact.py \\
@@ -116,31 +118,34 @@ def _error_details(result: object) -> dict:
     return {"details": [getattr(c, "text", str(c)) for c in content]}
 
 
-async def _version_artifact(
-    session: ClientSession, artifact_id: str, content: str
+async def _version_document(
+    session: ClientSession, document_id: str, content: str
 ) -> dict:
-    """Create a new version of an existing artifact."""
+    """Append a new version to an existing document."""
     result = await session.call_tool(
-        "create-artifact-version",
-        {"artifactId": artifact_id, "content": content},
+        "create-document-version",
+        {"documentId": document_id, "content": content},
     )
     if result.isError:
-        return {"error": "create-artifact-version failed", **_error_details(result)}
+        return {"error": "create-document-version failed", **_error_details(result)}
     text = _extract_text(result)
     parsed = json.loads(text) if text else {}
+    data = parsed.get("data", parsed) if isinstance(parsed, dict) else {}
     return {
         "mode": "version",
-        "artifact_id": artifact_id,
+        "artifact_id": document_id,
+        "document_id": document_id,
+        "slug": data.get("slug", parsed.get("slug") if isinstance(parsed, dict) else None),
         "content_length": len(content),
         "status": "success",
         "response": parsed,
     }
 
 
-async def _create_artifact(
+async def _create_document(
     session: ClientSession, args: _Args, content: str
 ) -> dict:
-    """Create a new artifact."""
+    """Create a new document."""
     assert args.title is not None
     assert args.type is not None
     tool_args: dict[str, str] = {
@@ -153,17 +158,20 @@ async def _create_artifact(
     if args.workstream_id:
         tool_args["workstreamId"] = args.workstream_id
 
-    result = await session.call_tool("create-artifact", tool_args)
+    result = await session.call_tool("create-document", tool_args)
     if result.isError:
-        return {"error": "create-artifact failed", **_error_details(result)}
+        return {"error": "create-document failed", **_error_details(result)}
     text = _extract_text(result)
     if not text:
-        return {"error": "Empty response from create-artifact"}
+        return {"error": "Empty response from create-document"}
     parsed = json.loads(text)
     data = parsed.get("data", parsed)
+    document_id = data.get("id", parsed.get("id", "unknown"))
     return {
         "mode": "create",
-        "artifact_id": data.get("id", parsed.get("id", "unknown")),
+        "artifact_id": document_id,
+        "document_id": document_id,
+        "slug": data.get("slug", parsed.get("slug")),
         "content_length": len(content),
         "status": "success",
         "response": parsed,
@@ -171,7 +179,7 @@ async def _create_artifact(
 
 
 async def upload(args: _Args) -> dict:
-    """Create or version an artifact from a file."""
+    """Create or version a document from a file."""
     assert args.file is not None
     file_path = Path(args.file).expanduser().resolve()
     if not file_path.is_file():
@@ -188,12 +196,12 @@ async def upload(args: _Args) -> dict:
                 await session.initialize()
 
                 if args.artifact_id:
-                    output = await _version_artifact(session, args.artifact_id, content)
+                    output = await _version_document(session, args.artifact_id, content)
                 else:
-                    output = await _create_artifact(session, args, content)
+                    output = await _create_document(session, args, content)
 
                 if "error" not in output and args.verify:
-                    output["verify"] = await _verify_artifact(
+                    output["verify"] = await _verify_document(
                         session, output["artifact_id"], len(content)
                     )
 
@@ -202,29 +210,29 @@ async def upload(args: _Args) -> dict:
         return _format_exception(exc)
 
 
-async def _verify_artifact(
-    session: ClientSession, artifact_id: str, expected_length: int
+async def _verify_document(
+    session: ClientSession, document_id: str, expected_length: int
 ) -> dict:
-    """Fetch an artifact back and compare content lengths."""
+    """Fetch a document back and compare content lengths."""
     fetch_max = min(expected_length, 120_000)
     result = await session.call_tool(
-        "get-artifact",
+        "get-document",
         {
-            "artifactId": artifact_id,
+            "documentId": document_id,
             "includeContent": True,
             "contentMaxChars": fetch_max,
         },
     )
     if result.isError:
         return {
-            "error": "get-artifact failed",
+            "error": "get-document failed",
             "details": [
                 getattr(c, "text", str(c)) for c in (result.content or [])
             ],
         }
     text = _extract_text(result)
     if not text:
-        return {"error": "Empty response from get-artifact"}
+        return {"error": "Empty response from get-document"}
     parsed = json.loads(text)
     version_data = parsed.get("version", {})
     actual_length = version_data.get("contentLength", 0)
@@ -274,7 +282,7 @@ def _require_arg_or_env(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Upload file content as a ClosedLoop MCP artifact."
+        description="Upload file content as a ClosedLoop MCP document."
     )
     parser.add_argument(
         "--url",
@@ -298,16 +306,17 @@ def main() -> None:
         help="List available projects and exit.",
     )
     parser.add_argument("--file", help="Path to content file.")
-    parser.add_argument("--title", help="Artifact title (create mode).")
+    parser.add_argument("--title", help="Document title (create mode).")
     parser.add_argument(
         "--type",
-        choices=["PRD", "IMPLEMENTATION_PLAN", "TEMPLATE"],
-        help="Artifact type (create mode).",
+        choices=["PRD", "IMPLEMENTATION_PLAN", "TEMPLATE", "FEATURE"],
+        help="Document type (create mode).",
     )
-    parser.add_argument("--project-id", help="Project ID.")
-    parser.add_argument("--workstream-id", help="Workstream ID.")
+    parser.add_argument("--project-id", help="Project ID or slug (PRO-*).")
+    parser.add_argument("--workstream-id", help="Workstream ID or slug (WRK-*).")
     parser.add_argument(
-        "--artifact-id", help="Existing artifact ID (version mode)."
+        "--artifact-id",
+        help="Existing document ID or slug (PRD-*/PLN-*/FEA-*) (version mode).",
     )
     parser.add_argument(
         "--verify",
