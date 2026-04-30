@@ -5,8 +5,10 @@ from pathlib import Path
 
 from perf_summary import (
     load_events,
+    phase_timeline,
     summarize_agents,
     summarize_iterations,
+    summarize_phases,
     summarize_pipeline,
     summarize_substeps,
 )
@@ -292,3 +294,276 @@ class TestSummarizeAgents:
             "mid-agent",
             "fast-agent",
         ]
+
+
+class TestSummarizePhases:
+    def test_empty_events(self) -> None:
+        assert summarize_phases([]) == []
+
+    def test_derives_durations_from_consecutive_phases(self) -> None:
+        events = [
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "phase": "Phase 1: Planning",
+                "started_at": "2026-04-30T10:00:00Z",
+            },
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "phase": "Phase 3: Implementation",
+                "started_at": "2026-04-30T10:02:30Z",
+            },
+            {
+                "event": "iteration",
+                "run_id": "r1",
+                "iteration": 1,
+                "ended_at": "2026-04-30T10:05:00Z",
+            },
+        ]
+        result = summarize_phases(events)
+        by_name = {row["phase"]: row for row in result}
+        assert by_name["Phase 1: Planning"]["total_s"] == 150.0
+        assert by_name["Phase 3: Implementation"]["total_s"] == 150.0
+
+    def test_skips_final_phase_without_iteration_end(self) -> None:
+        events = [
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "phase": "Phase 1: Planning",
+                "started_at": "2026-04-30T10:00:00Z",
+            },
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "phase": "Phase 3: Implementation",
+                "started_at": "2026-04-30T10:02:30Z",
+            },
+        ]
+        result = summarize_phases(events)
+        by_name = {row["phase"]: row for row in result}
+        assert "Phase 1: Planning" in by_name
+        assert "Phase 3: Implementation" not in by_name
+
+    def test_does_not_pair_phases_across_iterations(self) -> None:
+        events = [
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "phase": "Phase 7: Logging",
+                "started_at": "2026-04-30T10:04:00Z",
+            },
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 2,
+                "phase": "Phase 1: Planning",
+                "started_at": "2026-04-30T10:10:00Z",
+            },
+            {
+                "event": "iteration",
+                "run_id": "r1",
+                "iteration": 1,
+                "ended_at": "2026-04-30T10:05:00Z",
+            },
+            {
+                "event": "iteration",
+                "run_id": "r1",
+                "iteration": 2,
+                "ended_at": "2026-04-30T10:15:00Z",
+            },
+        ]
+        result = summarize_phases(events)
+        by_name = {row["phase"]: row for row in result}
+        assert by_name["Phase 7: Logging"]["total_s"] == 60.0
+        assert by_name["Phase 1: Planning"]["total_s"] == 300.0
+
+    def test_aggregates_repeated_phase_across_iterations(self) -> None:
+        events = [
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "phase": "Phase 3: Implementation",
+                "started_at": "2026-04-30T10:00:00Z",
+            },
+            {
+                "event": "iteration",
+                "run_id": "r1",
+                "iteration": 1,
+                "ended_at": "2026-04-30T10:01:00Z",
+            },
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 2,
+                "phase": "Phase 3: Implementation",
+                "started_at": "2026-04-30T10:02:00Z",
+            },
+            {
+                "event": "iteration",
+                "run_id": "r1",
+                "iteration": 2,
+                "ended_at": "2026-04-30T10:05:00Z",
+            },
+        ]
+        result = summarize_phases(events)
+        assert len(result) == 1
+        assert result[0]["count"] == 2
+        assert result[0]["total_s"] == 240.0
+
+    def test_sorts_by_total_time_descending(self) -> None:
+        events = [
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "phase": "Phase A",
+                "started_at": "2026-04-30T10:00:00Z",
+            },
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "phase": "Phase B",
+                "started_at": "2026-04-30T10:00:10Z",
+            },
+            {
+                "event": "iteration",
+                "run_id": "r1",
+                "iteration": 1,
+                "ended_at": "2026-04-30T10:02:00Z",
+            },
+        ]
+        result = summarize_phases(events)
+        assert [row["phase"] for row in result] == ["Phase B", "Phase A"]
+
+
+class TestPhaseTimeline:
+    def test_empty_events(self) -> None:
+        assert phase_timeline([]) == []
+
+    def test_emits_chronological_rows_with_durations(self) -> None:
+        events = [
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "phase": "Phase 3: Implementation",
+                "started_at": "2026-04-30T10:02:30Z",
+            },
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "phase": "Phase 1: Planning",
+                "started_at": "2026-04-30T10:00:00Z",
+            },
+            {
+                "event": "iteration",
+                "run_id": "r1",
+                "iteration": 1,
+                "ended_at": "2026-04-30T10:05:00Z",
+            },
+        ]
+        result = phase_timeline(events)
+        assert [row["phase"] for row in result] == [
+            "Phase 1: Planning",
+            "Phase 3: Implementation",
+        ]
+        assert result[0]["started_at"] == "2026-04-30T10:00:00Z"
+        assert result[0]["ended_at"] == "2026-04-30T10:02:30Z"
+        assert result[0]["duration_s"] == 150.0
+        assert result[1]["started_at"] == "2026-04-30T10:02:30Z"
+        assert result[1]["ended_at"] == "2026-04-30T10:05:00Z"
+        assert result[1]["duration_s"] == 150.0
+        for row in result:
+            assert row["run_id"] == "r1"
+            assert row["iteration"] == 1
+
+    def test_emits_incomplete_final_phase_with_null_duration(self) -> None:
+        events = [
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "phase": "Phase 1: Planning",
+                "started_at": "2026-04-30T10:00:00Z",
+            },
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "phase": "Phase 3: Implementation",
+                "started_at": "2026-04-30T10:02:30Z",
+            },
+        ]
+        result = phase_timeline(events)
+        assert len(result) == 2
+        impl = result[1]
+        assert impl["phase"] == "Phase 3: Implementation"
+        assert impl["ended_at"] == ""
+        assert impl["duration_s"] is None
+
+    def test_does_not_pair_phases_across_iterations(self) -> None:
+        events = [
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "phase": "Phase 7: Logging",
+                "started_at": "2026-04-30T10:04:00Z",
+            },
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 2,
+                "phase": "Phase 1: Planning",
+                "started_at": "2026-04-30T10:10:00Z",
+            },
+            {
+                "event": "iteration",
+                "run_id": "r1",
+                "iteration": 1,
+                "ended_at": "2026-04-30T10:05:00Z",
+            },
+            {
+                "event": "iteration",
+                "run_id": "r1",
+                "iteration": 2,
+                "ended_at": "2026-04-30T10:15:00Z",
+            },
+        ]
+        result = phase_timeline(events)
+        by_phase = {row["phase"]: row for row in result}
+        assert by_phase["Phase 7: Logging"]["ended_at"] == "2026-04-30T10:05:00Z"
+        assert by_phase["Phase 7: Logging"]["duration_s"] == 60.0
+        assert by_phase["Phase 1: Planning"]["ended_at"] == "2026-04-30T10:15:00Z"
+        assert by_phase["Phase 1: Planning"]["duration_s"] == 300.0
+
+    def test_includes_run_id_and_iteration_per_row(self) -> None:
+        events = [
+            {
+                "event": "phase",
+                "run_id": "run-a",
+                "iteration": 3,
+                "phase": "Phase 5",
+                "started_at": "2026-04-30T10:00:00Z",
+            },
+            {
+                "event": "iteration",
+                "run_id": "run-a",
+                "iteration": 3,
+                "ended_at": "2026-04-30T10:01:00Z",
+            },
+        ]
+        result = phase_timeline(events)
+        assert len(result) == 1
+        assert result[0]["run_id"] == "run-a"
+        assert result[0]["iteration"] == 3

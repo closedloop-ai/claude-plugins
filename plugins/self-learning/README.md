@@ -317,11 +317,11 @@ python3 verify_citations.py --start-sha <git-sha> --workdir /path/to/workdir
 
 ### `perf_summary.py`
 
-Reads `perf.jsonl` and prints timing tables for iterations, pipeline steps, sub-steps, and agents. Useful for identifying bottlenecks in the ClosedLoop loop.
+Reads `perf.jsonl` and prints timing tables for iterations, phases, pipeline steps, sub-steps, and agents. Useful for identifying bottlenecks in the ClosedLoop loop. Pass `--timeline` for a chronological per-instance phase view (one row per phase invocation with start/end timestamps and duration) instead of aggregate stats.
 
 **Usage:**
 ```bash
-python3 perf_summary.py --workdir /path/to/workdir [--run-id 20240115-103000] [--format text|json]
+python3 perf_summary.py --workdir /path/to/workdir [--run-id 20240115-103000] [--format text|json] [--timeline]
 ```
 
 ### `write_merged_patterns.py`
