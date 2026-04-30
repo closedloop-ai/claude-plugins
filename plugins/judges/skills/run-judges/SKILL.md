@@ -475,6 +475,39 @@ if [ ! -f "$CLOSEDLOOP_WORKDIR/prd.md" ]; then
   exit 0  # Graceful exit — do not fail parent workflow
 fi
 
+# Happy path: prd.md is present. Emit sub_step=0 (context_prep, skipped=true)
+# perf event before proceeding to sub_step=1 (batch_1).
+SUB_STEP_NUM=0
+SUB_STEP_LABEL="context_prep"
+mkdir -p "$CLOSEDLOOP_WORKDIR/.closedloop-ai"
+{
+  echo "SUB_STEP=${SUB_STEP_NUM}"
+  echo "SUB_STEP_NAME=${SUB_STEP_LABEL}"
+  echo "PARENT_STEP=${CLOSEDLOOP_PARENT_STEP:-0}"
+  echo "PARENT_STEP_NAME=${CLOSEDLOOP_PARENT_STEP_NAME:-unknown}"
+  echo "STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "START_EPOCH=$(date +%s)"
+} > "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
+source "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
+END_EPOCH=$(date +%s)
+ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+DURATION=$((END_EPOCH - START_EPOCH))
+jq -n -c \
+  --arg event "pipeline_step" \
+  --arg run_id "${CLOSEDLOOP_RUN_ID:-unknown}" \
+  --argjson iteration "${CLOSEDLOOP_ITERATION:-0}" \
+  --argjson step "$PARENT_STEP" \
+  --arg step_name "$PARENT_STEP_NAME" \
+  --argjson sub_step "$SUB_STEP" \
+  --arg sub_step_name "$SUB_STEP_NAME" \
+  --arg started_at "$STARTED_AT" \
+  --arg ended_at "$ENDED_AT" \
+  --argjson duration_s "$DURATION" \
+  --argjson exit_code 0 \
+  --argjson skipped true \
+  '{event:$event,run_id:$run_id,iteration:$iteration,step:$step,step_name:$step_name,sub_step:$sub_step,sub_step_name:$sub_step_name,started_at:$started_at,ended_at:$ended_at,duration_s:$duration_s,exit_code:$exit_code,skipped:$skipped}' >> "$CLOSEDLOOP_WORKDIR/perf.jsonl"
+rm -f "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
+
 # Build feature-mode judge-input.json
 # - evaluation_type: "feature"
 # - task: Feature quality evaluation objective (3-feature-judge workflow)

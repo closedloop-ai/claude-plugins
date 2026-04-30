@@ -35,7 +35,7 @@ graph TD
     CtxMgr -->|plan context failure| Compat[Compatibility fallback]
     Compat --> CompatInput["judge-input.json (primary = plan.json, supporting = prd.md)"]
     CompatInput --> CommonPlan
-    CtxMgr -->|feature mode| FeatureInput["judge-input.json (primary = feature artifact)"]
+    Check -->|feature mode| FeatureInput["judge-input.json (primary = feature artifact)"]
     FeatureInput --> CommonFeature["common_input_preamble.md (shared contract preamble)"]
     CommonFeature --> FeaturePreamble["prd_preamble.md (reused for feature mode)"]
     FeaturePreamble --> FeatureBatch[Feature judge batch]

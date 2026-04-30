@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Added
 - Feature artifact type support (`--artifact-type feature`) in `run-judges` skill — evaluates feature artifacts using 3 judges (`feature-completeness-judge`, `prd-testability-judge`, `prd-dependency-judge`) in 1 batch and writes `$CLOSEDLOOP_WORKDIR/feature-judges.json`. Explicitly excludes `prd-auditor` (assumes US-###/AC-#.# numbering not present in feature artifacts) and `prd-scope-judge` (assumes In/Out-of-Scope sections not required for feature artifacts). Reuses `prd_preamble.md` — no separate `feature_preamble.md` is needed.
 - `"feature"` category in `validate_judge_report.py`: added to `JUDGE_REGISTRY` with 3 expected judges, to `VALID_SUFFIXES` mapping `feature` to `["-feature-judges"]`, and to `DEFAULT_FILENAMES` mapping `feature` to `feature-judges.json`.
-- `TestCategoryFeatureValidation` test class in `validate_judge_report.py` tests with 10 test methods covering the new feature category.
+- `TestCategoryFeatureValidation` test class in `validate_judge_report.py` tests with 9 test methods covering the new feature category.
 - Complete `SKILL.md` documentation for feature mode in `run-judges` skill.
 
 ### judges v1.5.2

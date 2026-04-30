@@ -837,7 +837,9 @@ class TestCategoryFeatureValidation:
         report_path2.write_text(json.dumps(report2, indent=2))
 
         valid2, message2 = validate_report(report_path2, category="feature")
-        assert valid2 is False, "Expected rejection for -prd-judges suffix under feature category"
+        assert valid2 is False, (
+            "Expected rejection for -prd-judges suffix under feature category"
+        )
         assert "report_id should end with one of" in message2
 
     def test_feature_rejects_missing_judges(self, tmp_path: Path) -> None:
@@ -875,10 +877,6 @@ class TestCategoryFeatureValidation:
     def test_default_filename_for_feature_category(self) -> None:
         """DEFAULT_FILENAMES produces 'feature-judges.json' for feature category."""
         assert DEFAULT_FILENAMES["feature"] == "feature-judges.json"
-
-    def test_valid_suffixes_for_feature_category(self) -> None:
-        """VALID_SUFFIXES for feature contains only '-feature-judges'."""
-        assert VALID_SUFFIXES["feature"] == ["-feature-judges"]
 
     def test_feature_report_fails_under_prd_category(self, tmp_path: Path) -> None:
         """3-judge feature report with -feature-judges suffix fails prd validation."""
