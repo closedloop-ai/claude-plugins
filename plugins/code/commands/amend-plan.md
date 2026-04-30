@@ -55,7 +55,7 @@ TodoWrite([
    Use `code:find-plugin-file` skill to find `tools/python/amend_state.py`:
    ```bash
    # Find the amend_state.py file
-   AMEND_STATE_PATH=$(python ~/.claude/plugins/cache/closedloop-ai/code/*/skills/find-plugin-file/scripts/find_plugin_file.py tools/python/amend_state.py --plugin code)
+   AMEND_STATE_PATH=$(python3 ~/.claude/plugins/cache/closedloop-ai/code/*/skills/find-plugin-file/scripts/find_plugin_file.py tools/python/amend_state.py --plugin code)
    ```
 
 2. **Determine workdir**:
@@ -69,7 +69,7 @@ TodoWrite([
 
 4. **Load session state**:
    ```bash
-   python "$AMEND_STATE_PATH" load \
+   python3 "$AMEND_STATE_PATH" load \
      --state-file {state_file} \
      --run-dir {workdir}
    ```
@@ -83,7 +83,7 @@ TodoWrite([
 
 6. **Add user message to conversation**:
    ```bash
-   python "$AMEND_STATE_PATH" add-message \
+   python3 "$AMEND_STATE_PATH" add-message \
      --state-file {state_file} \
      --role user \
      --content "{user_message}"
@@ -126,21 +126,21 @@ If the user is giving a directive (telling you to make a change):
    - **Regenerate plan.md** after editing plan.json by activating the `extract-plan-md` skill
    - Track the change:
      ```bash
-     python "$AMEND_STATE_PATH" add-change \
+     python3 "$AMEND_STATE_PATH" add-change \
        --state-file {state_file} \
        --description "Description of what was changed" \
        --task-id "T-1.1"  # if applicable
      ```
    - **IMPORTANT: Save your response BEFORE calling apply** (apply deletes the state file):
      ```bash
-     python "$AMEND_STATE_PATH" add-message \
+     python3 "$AMEND_STATE_PATH" add-message \
        --state-file {state_file} \
        --role assistant \
        --content "Updated T-1.1 to keep the SplashScreen.setLoadingInfo call."
      ```
    - Apply to finalize the amendment:
      ```bash
-     python "$AMEND_STATE_PATH" apply \
+     python3 "$AMEND_STATE_PATH" apply \
        --state-file {state_file} \
        --run-dir {workdir} \
        --plan-format json
@@ -150,14 +150,14 @@ If the user is giving a directive (telling you to make a change):
    - Explain the issue clearly
    - Track the proposed change but don't apply yet:
      ```bash
-     python "$AMEND_STATE_PATH" add-change \
+     python3 "$AMEND_STATE_PATH" add-change \
        --state-file {state_file} \
        --description "Proposed: change X to Y" \
        --task-id "T-2.1"
      ```
    - **Save your response** (this is how the GitHub workflow posts your reply):
      ```bash
-     python "$AMEND_STATE_PATH" add-message \
+     python3 "$AMEND_STATE_PATH" add-message \
        --state-file {state_file} \
        --role assistant \
        --content "Your response explaining the concern..."
@@ -178,7 +178,7 @@ If the user is asking a question:
 
 3. **Save your response** (required - this is how the GitHub workflow posts your reply):
    ```bash
-   python "$AMEND_STATE_PATH" add-message \
+   python3 "$AMEND_STATE_PATH" add-message \
      --state-file {state_file} \
      --role assistant \
      --content "Your response here"
@@ -195,7 +195,7 @@ If the user is confirming a previously discussed change (e.g., "yes", "go ahead"
 3. **Regenerate plan.md** by activating the `extract-plan-md` skill
 4. **Save your response BEFORE calling apply** (apply deletes the state file):
    ```bash
-   python "$AMEND_STATE_PATH" add-message \
+   python3 "$AMEND_STATE_PATH" add-message \
      --state-file {state_file} \
      --role assistant \
      --content "Done - I've updated the plan."
@@ -234,7 +234,7 @@ If the user provides unstructured content (meeting notes, Slack threads, etc.):
 3. **Save extracted changes to state** for later reference:
    ```bash
    # For each extracted change, add it as a pending change
-   python "$AMEND_STATE_PATH" add-change \
+   python3 "$AMEND_STATE_PATH" add-change \
      --state-file {state_file} \
      --description "[1] {change.description}" \
      --task-id "{change.task_id}"
@@ -249,7 +249,7 @@ If the user provides unstructured content (meeting notes, Slack threads, etc.):
 
 5. **Save your response** with the extracted changes:
    ```bash
-   python "$AMEND_STATE_PATH" add-message \
+   python3 "$AMEND_STATE_PATH" add-message \
      --state-file {state_file} \
      --role assistant \
      --content "I extracted X potential changes from your notes:\n\n1. **T-1.1** (high confidence): [description]\n2. ...\n\nNeeds clarification:\n- [unclear item]\n\nWhich would you like me to apply? You can say 'all', list numbers (e.g., '1 and 3'), or we can discuss any of them."
@@ -276,22 +276,22 @@ When editing plan.json, remember:
 
 ```bash
 # Load state (creates new if missing)
-python "$AMEND_STATE_PATH" load --state-file {path} --run-dir {workdir}
+python3 "$AMEND_STATE_PATH" load --state-file {path} --run-dir {workdir}
 
 # Add message to conversation
-python "$AMEND_STATE_PATH" add-message --state-file {path} --role user|assistant --content "text"
+python3 "$AMEND_STATE_PATH" add-message --state-file {path} --role user|assistant --content "text"
 
 # Track a pending change
-python "$AMEND_STATE_PATH" add-change --state-file {path} --description "text" [--task-id "id"]
+python3 "$AMEND_STATE_PATH" add-change --state-file {path} --description "text" [--task-id "id"]
 
 # Clear pending changes (if user abandons a discussed change)
-python "$AMEND_STATE_PATH" clear-changes --state-file {path}
+python3 "$AMEND_STATE_PATH" clear-changes --state-file {path}
 
 # Apply changes and reset for re-validation (IMPORTANT: use --plan-format json)
-python "$AMEND_STATE_PATH" apply --state-file {path} --run-dir {workdir} --plan-format json
+python3 "$AMEND_STATE_PATH" apply --state-file {path} --run-dir {workdir} --plan-format json
 
 # Get conversation context (for debugging)
-python "$AMEND_STATE_PATH" context --state-file {path}
+python3 "$AMEND_STATE_PATH" context --state-file {path}
 ```
 
 ## What Apply Does
@@ -338,14 +338,14 @@ TodoWrite: Mark "Process" completed, "Save response" in_progress
 ```
 6. **Save response to state file** (CRITICAL - do this BEFORE apply):
    ```bash
-   python "$AMEND_STATE_PATH" add-message --state-file {state_file} --role assistant --content "Updated T-1.1 to keep the SplashScreen.setLoadingInfo call."
+   python3 "$AMEND_STATE_PATH" add-message --state-file {state_file} --role assistant --content "Updated T-1.1 to keep the SplashScreen.setLoadingInfo call."
    ```
 ```
 TodoWrite: Mark "Save response" completed, "Apply changes" in_progress
 ```
 7. Run apply to finalize:
    ```bash
-   python "$AMEND_STATE_PATH" apply --state-file {state_file} --run-dir {workdir} --plan-format json
+   python3 "$AMEND_STATE_PATH" apply --state-file {state_file} --run-dir {workdir} --plan-format json
    ```
 ```
 TodoWrite: Mark "Apply changes" completed
@@ -361,7 +361,7 @@ TodoWrite: Mark "Apply changes" completed
 3. Process: Read the plan and code, analyze the context
 4. **Save response to state file**:
    ```bash
-   python "$AMEND_STATE_PATH" add-message --state-file {state_file} --role assistant --content "The plan removes it because it's only used during development. If you're using it for debugging or want it for UX reasons, it's safe to keep - it's isolated. Want me to update the plan to keep it?"
+   python3 "$AMEND_STATE_PATH" add-message --state-file {state_file} --role assistant --content "The plan removes it because it's only used during development. If you're using it for debugging or want it for UX reasons, it's safe to keep - it's isolated. Want me to update the plan to keep it?"
    ```
 5. Skip "Apply changes" todo - this was just a question
 
@@ -376,7 +376,7 @@ TodoWrite: Mark "Apply changes" completed
 4. Activate `extract-plan-md` skill to regenerate `plan.md`
 5. **Save response to state file BEFORE calling apply**:
    ```bash
-   python "$AMEND_STATE_PATH" add-message --state-file {state_file} --role assistant --content "Done - I've updated the plan."
+   python3 "$AMEND_STATE_PATH" add-message --state-file {state_file} --role assistant --content "Done - I've updated the plan."
    ```
 6. Apply with `--plan-format json` (this deletes the state file, but amendment is recorded in plan.json)
 

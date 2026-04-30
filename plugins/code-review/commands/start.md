@@ -55,14 +55,14 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 - Create the TodoWrite task list (depends on MODE and HYGIENE_ONLY)
 - If MODE=github: Read `${CLAUDE_PLUGIN_ROOT}/prompts/github-review.md` for GitHub-specific constraints and steps
 - Resolve HELPERS path: `echo "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py"` — track the resolved path internally
-- Run setup with CR_DIR creation: `python <HELPERS> setup --mode <MODE> --cr-dir-prefix .closedloop-ai/code-review/cr-` -- read stdout JSON for `cr_dir`, `start_time`, `repo_name`, `current_branch`, `global_cache`. Then write the JSON to `<CR_DIR>/setup.json` for downstream helpers.
+- Run setup with CR_DIR creation: `python3 <HELPERS> setup --mode <MODE> --cr-dir-prefix .closedloop-ai/code-review/cr-` -- read stdout JSON for `cr_dir`, `start_time`, `repo_name`, `current_branch`, `global_cache`. Then write the JSON to `<CR_DIR>/setup.json` for downstream helpers.
 - Initialize `CACHE_DIR=""` (final cache path is resolved after scope parsing)
-- Run prep-assets: `python <HELPERS> prep-assets --plugin-root <PLUGIN_ROOT> --cr-dir <CR_DIR>`
+- Run prep-assets: `python3 <HELPERS> prep-assets --plugin-root <PLUGIN_ROOT> --cr-dir <CR_DIR>`
 - See: [Session Setup](#session-setup)
 
 ### Task 3: Parse scope and resolve diff
 - Mark todo "Parse scope and get diff data" as `in_progress`
-- Run Bash: `python <HELPERS> resolve-scope --mode <MODE> --setup-json <CR_DIR>/setup.json [--pr-number <N>] [--scope-args "<REMAINING_ARGS>"] [--base-ref-override <REF>] > <CR_DIR>/scope.json`
+- Run Bash: `python3 <HELPERS> resolve-scope --mode <MODE> --setup-json <CR_DIR>/setup.json [--pr-number <N>] [--scope-args "<REMAINING_ARGS>"] [--base-ref-override <REF>] > <CR_DIR>/scope.json`
 - Read `<CR_DIR>/scope.json` for `DIFF_SCOPE`, `BASE_REF`, `HEAD_REF`, `REVIEW_BRANCH`, `DIFF_TIP`, `PR_NUMBER`, `PATH_FILTER`, `SCOPE_KIND`, `PR_AUTO_DETECTED`
 - Finalize `CACHE_DIR` now that scope/PR context is known (must happen before auto-incremental)
 - See: [Step 2 — Parse Arguments](#parse-arguments-remaining-after-flag-removal)
@@ -76,9 +76,9 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 
 ### Task 5: Get diff data + fetch intent (GitHub: also get PR metadata)
 - GitHub mode: follow PR Metadata section from `github-review.md`
-- Run Bash: `python <HELPERS> parse-diff --scope=<DIFF_SCOPE> > <CR_DIR>/diff_data.json`
-- Run Bash: `python <HELPERS> fetch-intent --scope-kind <SCOPE_KIND> --cr-dir <CR_DIR> [--pr-number <N>] [--base-ref <BASE_REF>] [--diff-tip <DIFF_TIP>]`
-- Run Bash: `python <HELPERS> classify-intent --intent-context <CR_DIR>/intent_context.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/intent.json`
+- Run Bash: `python3 <HELPERS> parse-diff --scope=<DIFF_SCOPE> > <CR_DIR>/diff_data.json`
+- Run Bash: `python3 <HELPERS> fetch-intent --scope-kind <SCOPE_KIND> --cr-dir <CR_DIR> [--pr-number <N>] [--base-ref <BASE_REF>] [--diff-tip <DIFF_TIP>]`
+- Run Bash: `python3 <HELPERS> classify-intent --intent-context <CR_DIR>/intent_context.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/intent.json`
 - Read `<CR_DIR>/intent.json` for `INTENT` value
 - Mark todo "Parse scope and get diff data" as `completed`
 - See: [Get Diff Data](#get-diff-data-both-modes), [GitHub Mode: Get PR Metadata](#github-mode-get-pr-metadata)
@@ -86,7 +86,7 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 ### Task 6: Compute prompt hash + cache check (if CACHE_DIR set)
 - Prompt assets already copied in Task 2 (prep-assets)
 - Compute `PROMPT_HASH` and `CONTEXT_KEY` using `<DIFF_TIP>`
-- Run cache-check via `python <HELPERS> cache-check ... > /dev/null` (redirect stdout to suppress inline print)
+- Run cache-check via `python3 <HELPERS> cache-check ... > /dev/null` (redirect stdout to suppress inline print)
 - Read `<CR_DIR>/cache_result.json` and store `status_message` as `CACHE_STATUS_MESSAGE`
 - Do NOT print cache status here — it is printed later in Task 7 (hygiene exit) or Task 8 (after routing)
 - If `CACHE_DIR` is empty, set `CACHE_STATUS_MESSAGE=""`
@@ -95,24 +95,24 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 
 ### Task 7: Hygiene checks
 - Mark todo "Run deterministic hygiene checks" as `in_progress`
-- Run Bash: `python <HELPERS> hygiene --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/hygiene.json`
+- Run Bash: `python3 <HELPERS> hygiene --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/hygiene.json`
 - Mark todo as `completed`
 - **If HYGIENE_ONLY**: if `CACHE_DIR` is set and `CACHE_STATUS_MESSAGE` is non-empty, print `CACHE_STATUS_MESSAGE`. Then present hygiene findings and EXIT — skip all remaining tasks
 - See: [Step 2.5](#step-25-deterministic-hygiene-checks)
 
 ### Task 8: Route models + partition + extract patches
 - Mark todo "Assess scope and route models" as `in_progress`
-- Run Bash: `python <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .closedloop-ai/settings/critic-gates.json --intent <INTENT> > <CR_DIR>/route.json`
+- Run Bash: `python3 <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .closedloop-ai/settings/critic-gates.json --intent <INTENT> > <CR_DIR>/route.json`
 - Read `<CR_DIR>/route.json` for `models`, `domain_critics`, `max_bha_agents`, `fast_path`
 - **If `fast_path` is false (standard flow):**
   - Print `CACHE_STATUS_MESSAGE` if non-empty
-  - Run Bash: `python <HELPERS> partition --diff-data <CR_DIR>/diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json` (use `uncached_diff_data.json` when caching is active)
-  - Run Bash: `python <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope "<DIFF_SCOPE>" --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>`
+  - Run Bash: `python3 <HELPERS> partition --diff-data <CR_DIR>/diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json` (use `uncached_diff_data.json` when caching is active)
+  - Run Bash: `python3 <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope "<DIFF_SCOPE>" --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>`
 - **If `fast_path` is true:**
   - Print `"Fast path selected: 1 reviewer (<MODEL>)."` where `<MODEL>` = `route.json -> models.fast_path_reviewer`
   - If `CACHE_DIR` is set, print `"BHA Cache: bypassed in fast-path mode."` and delete `<CR_DIR>/agent_cached_bha.json` if it exists
   - Skip partition entirely (no `partitions.json` created)
-  - Run Bash: `python <HELPERS> extract-patches --diff-scope "<DIFF_SCOPE>" --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>` (no `--partitions-file` -- only `patches_all.txt` is created)
+  - Run Bash: `python3 <HELPERS> extract-patches --diff-scope "<DIFF_SCOPE>" --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>` (no `--partitions-file` -- only `patches_all.txt` is created)
   - Update TodoWrite: replace "Spawn reviewer agents in parallel" with "Run fast-path review"
 - Mark todo as `completed`
 - See: [Step 3](#step-3-assess-scope-and-route-models), [Step 4A](#step-4a-spawn-reviewer-agents-fast_path--false), [Step 4B](#step-4b-fast-path-single-agent-review-fast_path--true)
@@ -127,8 +127,8 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 ### Task 10: Collect + validate findings
 - Mark todo "Collect, normalize, and validate findings" as `in_progress`
 - Collect the task(s) spawned by Task 9 via `TaskOutput` (block=true for each). Perform one initial parallel `TaskOutput` sweep. If any retry task is spawned (WRITE_DENIED fallback or failure recovery), perform an additional `TaskOutput` sweep for those retry tasks
-- Run Bash: `python <HELPERS> collect-findings --cr-dir <CR_DIR> --hygiene <CR_DIR>/hygiene.json`
-- Run Bash: `python <HELPERS> validate --findings <CR_DIR>/findings.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/validate_output.json`
+- Run Bash: `python3 <HELPERS> collect-findings --cr-dir <CR_DIR> --hygiene <CR_DIR>/hygiene.json`
+- Run Bash: `python3 <HELPERS> validate --findings <CR_DIR>/findings.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/validate_output.json`
 - Run `cache-update` only when `fast_path == false` AND `CACHE_DIR` is set (add `--exclude-test-partitions` flag)
 - Mark todo as `completed`
 - See: [Step 5](#step-5-collect-normalize-and-validate-findings), [Step 5.5 (fast_path == false AND CACHE_DIR set)](#step-55-bha-cache-update-fast_path--false-and-cache_dir-set)
@@ -144,7 +144,7 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 - See: [Review Footer](#review-footer-final-output)
 
 ### Task 13: PR verdict tag
-- Run Bash: `python <HELPERS> verdict --validate-output <CR_DIR>/validate_output.json > <CR_DIR>/verdict.json`
+- Run Bash: `python3 <HELPERS> verdict --validate-output <CR_DIR>/validate_output.json > <CR_DIR>/verdict.json`
 - Read `<CR_DIR>/verdict.json` and print the `tag` value as the last line of output
 - See: [PR Verdict](#pr-verdict)
 
@@ -247,7 +247,7 @@ Read the output. This is the resolved HELPERS path. Track it internally -- **all
 
 **Step 2 -- Run setup subcommand (creates CR_DIR):**
 ```bash
-python <HELPERS> setup --mode <MODE> --cr-dir-prefix .closedloop-ai/code-review/cr-
+python3 <HELPERS> setup --mode <MODE> --cr-dir-prefix .closedloop-ai/code-review/cr-
 ```
 Read stdout JSON. It contains:
 ```json
@@ -264,7 +264,7 @@ Write the JSON to `<CR_DIR>/setup.json` so downstream helpers can read it.
 
 **Step 3 -- Copy prompt assets to CR_DIR:**
 ```bash
-python <HELPERS> prep-assets --plugin-root <PLUGIN_ROOT> --cr-dir <CR_DIR>
+python3 <HELPERS> prep-assets --plugin-root <PLUGIN_ROOT> --cr-dir <CR_DIR>
 ```
 This copies `shared_prompt.txt` and `bha_suffix.txt` from the plugin to `<CR_DIR>`. Both cache and non-cache paths use these assets.
 
@@ -281,7 +281,7 @@ Mark todo "Parse scope and get diff data" as `in_progress`.
 Run the `resolve-scope` subcommand to handle all scope resolution deterministically:
 
 ```bash
-python <HELPERS> resolve-scope --mode <MODE> --setup-json <CR_DIR>/setup.json [--pr-number <N>] [--scope-args "<REMAINING_ARGS>"] [--base-ref-override <REF>] > <CR_DIR>/scope.json
+python3 <HELPERS> resolve-scope --mode <MODE> --setup-json <CR_DIR>/setup.json [--pr-number <N>] [--scope-args "<REMAINING_ARGS>"] [--base-ref-override <REF>] > <CR_DIR>/scope.json
 ```
 
 Read `<CR_DIR>/scope.json` for: `DIFF_SCOPE`, `BASE_REF`, `HEAD_REF`, `REVIEW_BRANCH`, `DIFF_TIP`, `PR_NUMBER`, `PATH_FILTER`, `SCOPE_KIND`, `PR_AUTO_DETECTED`.
@@ -293,7 +293,7 @@ The helper handles PR branch lookup (`gh pr view`), `git fetch`, `origin/` prefi
 Now that `PR_NUMBER` and `MODE` are known, resolve the final `CACHE_DIR` using the `finalize-cache` subcommand:
 
 ```bash
-python <HELPERS> finalize-cache --setup-json <CR_DIR>/setup.json --mode <MODE> --pr-number <PR_NUMBER> > <CR_DIR>/cache_config.json
+python3 <HELPERS> finalize-cache --setup-json <CR_DIR>/setup.json --mode <MODE> --pr-number <PR_NUMBER> > <CR_DIR>/cache_config.json
 ```
 
 Omit `--pr-number` if no PR number is set. Read `<CR_DIR>/cache_config.json` — it contains `{"cache_dir": "..."}`. Set `CACHE_DIR` from the `cache_dir` value (empty string means no cache). The subcommand handles global cache logic, `RUNNER_TEMP`, and `mkdir -p` internally.
@@ -309,7 +309,7 @@ Store `PR_AUTO_DETECTED` from `scope.json` but do not print anything yet.
 Run the `auto-incremental` subcommand to evaluate eligibility:
 
 ```bash
-python <HELPERS> auto-incremental \
+python3 <HELPERS> auto-incremental \
   --cache-dir <CACHE_DIR> \
   --key "<REVIEW_BRANCH>:<BASE_REF>" \
   --diff-tip <DIFF_TIP> \
@@ -346,7 +346,7 @@ Follow the "PR Metadata Resolution" section in `github-review.md` (already loade
 Run the `parse-diff` subcommand to execute all git diff commands and produce structured JSON:
 
 ```bash
-python <HELPERS> parse-diff --scope=<DIFF_SCOPE> > <CR_DIR>/diff_data.json
+python3 <HELPERS> parse-diff --scope=<DIFF_SCOPE> > <CR_DIR>/diff_data.json
 ```
 
 This runs `--name-only`, `--name-status`, `--numstat`, and `-U0` internally (batching `-U0` if >200 files), and writes a single JSON object to `<CR_DIR>/diff_data.json` with:
@@ -372,8 +372,8 @@ Mark todo as `completed`.
 After `parse-diff` completes, fetch the stated motivation and classify intent:
 
 ```bash
-python <HELPERS> fetch-intent --scope-kind <SCOPE_KIND> --cr-dir <CR_DIR> [--pr-number <PR_NUMBER>] [--base-ref <BASE_REF>] [--diff-tip <DIFF_TIP>]
-python <HELPERS> classify-intent --intent-context <CR_DIR>/intent_context.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/intent.json
+python3 <HELPERS> fetch-intent --scope-kind <SCOPE_KIND> --cr-dir <CR_DIR> [--pr-number <PR_NUMBER>] [--base-ref <BASE_REF>] [--diff-tip <DIFF_TIP>]
+python3 <HELPERS> classify-intent --intent-context <CR_DIR>/intent_context.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/intent.json
 ```
 
 Read `<CR_DIR>/intent.json` for the `INTENT` value (`feature`, `fix`, `refactor`, or `mixed`). This is passed to the `route` subcommand for Premise Reviewer model routing.
@@ -389,7 +389,7 @@ The `fetch-intent` helper handles PR description retrieval (`gh pr view`), local
 Prompt assets (`shared_prompt.txt` and `bha_suffix.txt`) were already copied to `<CR_DIR>` by `prep-assets` in Task 2. Compute the prompt hash:
 
 ```bash
-python <HELPERS> compute-hashes \
+python3 <HELPERS> compute-hashes \
   --shared-prompt <CR_DIR>/shared_prompt.txt \
   --bha-suffix <CR_DIR>/bha_suffix.txt \
   --diff-tip <DIFF_TIP> \
@@ -414,7 +414,7 @@ Assign `PROMPT_HASH` and `CONTEXT_KEY` from the JSON.
 Check the BHA findings cache for files that haven't changed since the last review:
 
 ```bash
-python <HELPERS> cache-check \
+python3 <HELPERS> cache-check \
   --cache-dir <CACHE_DIR> \
   --diff-data <CR_DIR>/diff_data.json" \
   --prompt-hash <PROMPT_HASH> \
@@ -444,7 +444,7 @@ Mark todo "Run deterministic hygiene checks" as `in_progress`.
 Run the `hygiene` subcommand to perform deterministic checks for CI artifacts, path leakage, gitignore drift, and sensitive files:
 
 ```bash
-python <HELPERS> hygiene --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/hygiene.json
+python3 <HELPERS> hygiene --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/hygiene.json
 ```
 
 The script handles all 4 checks (CI artifacts, path leakage, gitignore drift, sensitive files), severity routing (skip test/fixture/docs, auto-upgrade to HIGH for code/config files), and outputs findings in standard format. Store findings on disk at `<CR_DIR>/hygiene.json` for Step 5 merge/validation.
@@ -495,7 +495,7 @@ Mark todo "Assess scope and route models" as `in_progress`.
 Run the `route` subcommand to compute risk scores and model routing. Pass the `INTENT` value from `<CR_DIR>/intent.json` (classified in Task 5):
 
 ```bash
-python <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .closedloop-ai/settings/critic-gates.json --intent <INTENT> > <CR_DIR>/route.json
+python3 <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .closedloop-ai/settings/critic-gates.json --intent <INTENT> > <CR_DIR>/route.json
 ```
 
 Read `<CR_DIR>/route.json` with the Read tool.
@@ -556,10 +556,10 @@ When caching is active (`CACHE_DIR` is set), partition only uncached files. Othe
 
 ```bash
 # Caching active: use uncached_diff_data.json (from cache-check)
-python <HELPERS> partition --diff-data <CR_DIR>/uncached_diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json
+python3 <HELPERS> partition --diff-data <CR_DIR>/uncached_diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json
 
 # No caching: use full diff_data.json
-python <HELPERS> partition --diff-data <CR_DIR>/diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json
+python3 <HELPERS> partition --diff-data <CR_DIR>/diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json
 ```
 
 Read `<CR_DIR>/partitions.json` with the Read tool.
@@ -578,7 +578,7 @@ When constructing agent prompts, read each entry's `file` field for the path. Do
 After partitioning, extract patches to disk files so agents can Read them without needing Bash permissions. Run this BEFORE spawning any agents:
 
 ```bash
-python <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope "<DIFF_SCOPE>" --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>
+python3 <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope "<DIFF_SCOPE>" --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>
 ```
 
 This creates `patches_p{N}.txt` (one per partition) and `patches_all.txt` (full diff from all files in `diff_data.json`). When caching is active, partitions contain only uncached files, but `patches_all.txt` includes ALL files since BHB/Auditor/Premise review the full diff.
@@ -1008,8 +1008,8 @@ If any agent failed (context overflow, subscription limits, timeout) or its outp
 Merge and validate:
 
 ```bash
-python <HELPERS> collect-findings --cr-dir <CR_DIR> --hygiene <CR_DIR>/hygiene.json
-python <HELPERS> validate --findings <CR_DIR>/findings.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/validate_output.json
+python3 <HELPERS> collect-findings --cr-dir <CR_DIR> --hygiene <CR_DIR>/hygiene.json
+python3 <HELPERS> validate --findings <CR_DIR>/findings.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/validate_output.json
 ```
 
 The `collect-findings` helper merges all `agent_*.json` files + hygiene findings into `<CR_DIR>/findings.json`. Malformed agent files are skipped with a warning.
@@ -1046,7 +1046,7 @@ Mark todo as `completed`.
 After collecting all BHA findings, update the cache manifest so the next push/re-review can reuse results for unchanged files:
 
 ```bash
-python <HELPERS> cache-update \
+python3 <HELPERS> cache-update \
   --cache-dir <CACHE_DIR> \
   --diff-data <CR_DIR>/diff_data.json" \
   --bha-dir <CR_DIR> \
@@ -1202,7 +1202,7 @@ Mark todo as `completed`.
 ```bash
 if [ <MODE> = "local" ] && [ -n <CACHE_DIR> ] && [ <DIFF_SCOPE> != "--cached" ]; then
   # Use REVIEW_BRANCH (PR head branch or local branch) and DIFF_TIP (origin/HEAD_REF or HEAD)
-  python <HELPERS> review-state-write \
+  python3 <HELPERS> review-state-write \
     --cache-dir <CACHE_DIR> \
     --key "<REVIEW_BRANCH>:<BASE_REF>" \
     --ref <DIFF_TIP>
@@ -1224,7 +1224,7 @@ As the very last output of the review, print a footer with timing, cache stats, 
 Run the `footer` subcommand to compute elapsed time, cache stats, and token usage in one call:
 
 ```bash
-python <HELPERS> footer \
+python3 <HELPERS> footer \
   --start-time <CR_START_TIME> \
   --cache-result <CR_DIR>/cache_result.json \
   --cr-dir <CR_DIR> \
@@ -1252,7 +1252,7 @@ Print a markdown horizontal rule (`---`) followed by the `footer_line` value fro
 Run the verdict helper to compute the deterministic verdict:
 
 ```bash
-python <HELPERS> verdict --validate-output <CR_DIR>/validate_output.json > <CR_DIR>/verdict.json
+python3 <HELPERS> verdict --validate-output <CR_DIR>/validate_output.json > <CR_DIR>/verdict.json
 ```
 
 Read `<CR_DIR>/verdict.json` and print the `tag` value as the absolute last line of output. This tag is parsed by the ClosedLoop UI to render a verdict banner.

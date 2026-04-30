@@ -6,13 +6,13 @@ automatically selecting the latest version of each plugin using
 semantic versioning.
 
 Usage:
-    python find_plugin_file.py <file_pattern> [--plugin <plugin-name>]
+    python3 find_plugin_file.py <file_pattern> [--plugin <plugin-name>]
 
 Examples:
-    python find_plugin_file.py parse_args.py
-    python find_plugin_file.py plan/parse_args.py
-    python find_plugin_file.py parse_args.py --plugin code
-    python find_plugin_file.py SKILL.md --all
+    python3 find_plugin_file.py parse_args.py
+    python3 find_plugin_file.py plan/parse_args.py
+    python3 find_plugin_file.py parse_args.py --plugin code
+    python3 find_plugin_file.py SKILL.md --all
 """
 
 import argparse

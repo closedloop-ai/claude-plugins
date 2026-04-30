@@ -227,7 +227,7 @@ Here are the key phases you must complete:
 **Step 2: Run validation via build-validator agent:**
 1. Launch @code:build-validator with `WORKDIR=$CLOSEDLOOP_WORKDIR`
 2. Process the result:
-   - `VALIDATION_PASSED`: Stamp the build cache (`bash scripts/check_build_cache.sh $CLOSEDLOOP_WORKDIR stamp`), proceed to Phase 6
+   - `VALIDATION_PASSED`: Stamp the build cache (`bash "$CLAUDE_PLUGIN_ROOT/skills/build-status-cache/scripts/check_build_cache.sh" "$CLOSEDLOOP_WORKDIR" stamp`), proceed to Phase 6
    - `NO_VALIDATION`: Proceed to Phase 6
    - `VALIDATION_FAILED`:
      a. Delegate fixes to subagents (test failures → @test-engineer, other → sonnet subagent)

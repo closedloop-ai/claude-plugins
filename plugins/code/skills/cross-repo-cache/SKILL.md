@@ -19,12 +19,10 @@ Activate this skill at the start of Phase 1.4.1 (Discover peers), **before** lau
 
 ## Usage
 
-The `scripts/` directory is relative to this skill's base directory (shown above as "Base directory for this skill").
-
 ### Check Cache (Phase 1.4.1)
 
 ```bash
-bash <base_directory>/scripts/check_cross_repo_cache.sh <WORKDIR>
+bash ${CLAUDE_SKILL_DIR}/scripts/check_cross_repo_cache.sh <WORKDIR>
 ```
 
 ### Stamp Cache (after coordinator completes)

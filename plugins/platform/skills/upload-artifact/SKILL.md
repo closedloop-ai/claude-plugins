@@ -48,7 +48,7 @@ otherwise rely on a `.env.local` file in the current working directory:
 Run the script with `--list-projects`:
 
 ```bash
-uv run --with 'mcp[cli]' <base_directory>/scripts/upload_artifact.py \
+uv run --with 'mcp[cli]' ${CLAUDE_SKILL_DIR}/scripts/upload_artifact.py \
   --url "$NEXT_PUBLIC_MCP_SERVER_URL" \
   --api-key "$CLOSEDLOOP_API_KEY" \
   --list-projects
@@ -76,7 +76,7 @@ type — only ask for the title.
 ### Step 4a: Upload via Script
 
 ```bash
-uv run --with 'mcp[cli]' <base_directory>/scripts/upload_artifact.py \
+uv run --with 'mcp[cli]' ${CLAUDE_SKILL_DIR}/scripts/upload_artifact.py \
   --url "$NEXT_PUBLIC_MCP_SERVER_URL" \
   --api-key "$CLOSEDLOOP_API_KEY" \
   --file <FILE_PATH> \
