@@ -500,7 +500,7 @@ After a full run, the work directory will contain:
   code-map.json              # Codebase file map (from pre-explorer)
   state.json                 # Current phase/status for monitoring
   log.md                     # Change log appended each phase
-  perf.jsonl                 # Agent timing events
+  perf.jsonl                 # Phase, iteration, pipeline_step, and agent timing events
   reviews/                   # Critic review files (*.review.json)
   .closedloop-ai/config.env   # Session environment variables
   .learnings/                # Self-learning artifacts
