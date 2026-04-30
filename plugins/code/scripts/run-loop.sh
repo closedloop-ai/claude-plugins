@@ -27,6 +27,7 @@ NC='\033[0m' # No Color
 # State file location
 STATE_FILE="$CLOSEDLOOP_STATE_DIR/closedloop-loop.local.md"
 PROGRESS_LOG="$CLOSEDLOOP_STATE_DIR/closedloop-progress.log"
+LOOP_USER_VISIBLE_FAILURE_FILE_NAME="loop-error.json"
 
 # Learning system paths
 LOCK_FILE=".learnings/.lock"
@@ -36,6 +37,73 @@ SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_ID=""
 START_SHA=""
 SELF_LEARNING=false
+
+# Write an intentionally user-visible failure marker for the Electron finalizer.
+#
+# This is an explicit opt-in channel only. Do not call this from ERR traps or
+# generic command-failure handling; ordinary bash failures should stay generic.
+# Usage:
+#   fail_loop_user_visible RUNNER_ERROR XYZ "Loop execution failed because XYZ."
+write_loop_user_visible_failure() {
+  local code="$1"
+  local subcode="$2"
+  local message="$3"
+
+  if [[ -z "${CLOSEDLOOP_WORKDIR:-}" ]]; then
+    echo "Error: CLOSEDLOOP_WORKDIR is required to write loop failure marker" >&2
+    return 1
+  fi
+
+  case "$code" in
+    RUNNER_ERROR|PRE_RUN_VALIDATION_FAILED|PLAN_STATE_UNAVAILABLE)
+      ;;
+    *)
+      echo "Error: unsupported loop failure code: $code" >&2
+      return 1
+      ;;
+  esac
+
+  if [[ ! "$subcode" =~ ^[A-Z][A-Z0-9_]{2,63}$ ]]; then
+    echo "Error: loop failure subcode must match ^[A-Z][A-Z0-9_]{2,63}$" >&2
+    return 1
+  fi
+
+  if [[ -z "$message" || ${#message} -gt 1000 ]]; then
+    echo "Error: loop failure message must be 1-1000 characters" >&2
+    return 1
+  fi
+
+  local failure_file="${CLOSEDLOOP_WORKDIR}/${LOOP_USER_VISIBLE_FAILURE_FILE_NAME}"
+  local tmp_file="${failure_file}.tmp.$$"
+
+  mkdir -p "$(dirname "$failure_file")"
+  umask 077
+  if ! jq -n -c \
+    --arg code "$code" \
+    --arg message "$message" \
+    --arg subcode "$subcode" \
+    '{code:$code,message:$message,result:{subcode:$subcode}}' \
+    > "$tmp_file"; then
+    rm -f "$tmp_file"
+    return 1
+  fi
+  if ! mv "$tmp_file" "$failure_file"; then
+    rm -f "$tmp_file"
+    return 1
+  fi
+}
+
+fail_loop_user_visible() {
+  local code="$1"
+  local subcode="$2"
+  local message="$3"
+
+  if ! write_loop_user_visible_failure "$code" "$subcode" "$message"; then
+    echo "Error: failed to write user-visible loop failure marker" >&2
+  fi
+  echo "CLOSEDLOOP_FATAL[$subcode]: $message" >&2
+  exit 1
+}
 
 # Check for jq dependency (required for learning system)
 check_jq_dependency() {
@@ -1346,6 +1414,7 @@ cleanup_on_interrupt() {
   exit 130
 }
 
-trap cleanup_on_interrupt INT TERM
-
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  trap cleanup_on_interrupt INT TERM
+  main "$@"
+fi
