@@ -439,74 +439,8 @@ Feature mode does NOT use context-manager-for-judges. Context preparation is lig
 # Feature mode context prep: check prd.md exists
 if [ ! -f "$CLOSEDLOOP_WORKDIR/prd.md" ]; then
   echo "WARNING: $CLOSEDLOOP_WORKDIR/prd.md not found. Skipping Feature judges."
-
-  # Emit sub_step=0 skipped perf event before exiting
-  SUB_STEP_NUM=0
-  SUB_STEP_LABEL="context_prep"
-  mkdir -p "$CLOSEDLOOP_WORKDIR/.closedloop-ai"
-  {
-    echo "SUB_STEP=${SUB_STEP_NUM}"
-    echo "SUB_STEP_NAME=${SUB_STEP_LABEL}"
-    echo "PARENT_STEP=${CLOSEDLOOP_PARENT_STEP:-0}"
-    echo "PARENT_STEP_NAME=${CLOSEDLOOP_PARENT_STEP_NAME:-unknown}"
-    echo "STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "START_EPOCH=$(date +%s)"
-  } > "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
-  source "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
-  END_EPOCH=$(date +%s)
-  ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  DURATION=$((END_EPOCH - START_EPOCH))
-  jq -n -c \
-    --arg event "pipeline_step" \
-    --arg run_id "${CLOSEDLOOP_RUN_ID:-unknown}" \
-    --argjson iteration "${CLOSEDLOOP_ITERATION:-0}" \
-    --argjson step "$PARENT_STEP" \
-    --arg step_name "$PARENT_STEP_NAME" \
-    --argjson sub_step "$SUB_STEP" \
-    --arg sub_step_name "$SUB_STEP_NAME" \
-    --arg started_at "$STARTED_AT" \
-    --arg ended_at "$ENDED_AT" \
-    --argjson duration_s "$DURATION" \
-    --argjson exit_code 0 \
-    --argjson skipped true \
-    '{event:$event,run_id:$run_id,iteration:$iteration,step:$step,step_name:$step_name,sub_step:$sub_step,sub_step_name:$sub_step_name,started_at:$started_at,ended_at:$ended_at,duration_s:$duration_s,exit_code:$exit_code,skipped:$skipped}' >> "$CLOSEDLOOP_WORKDIR/perf.jsonl"
-  rm -f "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
-
   exit 0  # Graceful exit — do not fail parent workflow
 fi
-
-# Happy path: prd.md is present. Emit sub_step=0 (context_prep, skipped=true)
-# perf event before proceeding to sub_step=1 (batch_1).
-SUB_STEP_NUM=0
-SUB_STEP_LABEL="context_prep"
-mkdir -p "$CLOSEDLOOP_WORKDIR/.closedloop-ai"
-{
-  echo "SUB_STEP=${SUB_STEP_NUM}"
-  echo "SUB_STEP_NAME=${SUB_STEP_LABEL}"
-  echo "PARENT_STEP=${CLOSEDLOOP_PARENT_STEP:-0}"
-  echo "PARENT_STEP_NAME=${CLOSEDLOOP_PARENT_STEP_NAME:-unknown}"
-  echo "STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "START_EPOCH=$(date +%s)"
-} > "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
-source "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
-END_EPOCH=$(date +%s)
-ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-DURATION=$((END_EPOCH - START_EPOCH))
-jq -n -c \
-  --arg event "pipeline_step" \
-  --arg run_id "${CLOSEDLOOP_RUN_ID:-unknown}" \
-  --argjson iteration "${CLOSEDLOOP_ITERATION:-0}" \
-  --argjson step "$PARENT_STEP" \
-  --arg step_name "$PARENT_STEP_NAME" \
-  --argjson sub_step "$SUB_STEP" \
-  --arg sub_step_name "$SUB_STEP_NAME" \
-  --arg started_at "$STARTED_AT" \
-  --arg ended_at "$ENDED_AT" \
-  --argjson duration_s "$DURATION" \
-  --argjson exit_code 0 \
-  --argjson skipped true \
-  '{event:$event,run_id:$run_id,iteration:$iteration,step:$step,step_name:$step_name,sub_step:$sub_step,sub_step_name:$sub_step_name,started_at:$started_at,ended_at:$ended_at,duration_s:$duration_s,exit_code:$exit_code,skipped:$skipped}' >> "$CLOSEDLOOP_WORKDIR/perf.jsonl"
-rm -f "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
 
 # Build feature-mode judge-input.json
 # - evaluation_type: "feature"
@@ -517,9 +451,9 @@ rm -f "$CLOSEDLOOP_WORKDIR/.closedloop-ai/perf-substep-start.env"
 ```
 
 **Feature context prep notes:**
-- Missing `prd.md` results in a WARNING, emission of sub_step=0 (context_prep, skipped=true) perf event, and graceful exit (code 0) — not an error
+- Missing `prd.md` results in a WARNING and graceful exit (code 0), not an error
 - No context manager is launched; `judge-input.json` is built directly with `evaluation_type="feature"` and `primary_artifact` pointing to `$CLOSEDLOOP_WORKDIR/prd.md`
-- Performance: emit sub_step=0 (context_prep, skipped=true) perf event immediately when prd.md is missing, then exit 0; when prd.md is present, emit sub_step=0 skipped=true and proceed to sub_step=1 (batch_1), sub_step=2 (aggregate), sub_step=3 (validate)
+- Performance: emit sub_step=0 (context_prep, skipped=true) perf event immediately, then proceed to sub_step=1 (batch_1), sub_step=2 (aggregate), sub_step=3 (validate)
 - Preamble override: use `prd_preamble.md` for all 3 feature judges (feature_preamble.md does not exist)
 
 **If required files are missing:**
@@ -582,7 +516,16 @@ The run-judges skill supports three artifact types with different judge configur
 - **Canonical input**: `$CLOSEDLOOP_WORKDIR/prd.md`
 - **Preamble**: use `prd_preamble.md` (feature_preamble.md does not exist)
 
-**PRD Execution:**
+**Feature Mode Execution:**
+
+**Batch 1: Feature Quality (sub_step=1)**
+- `judges:feature-completeness-judge` — evaluates Feature request completeness and clarity
+- `judges:prd-testability-judge` — evaluates requirement testability
+- `judges:prd-dependency-judge` — evaluates dependency clarity and completeness
+
+---
+
+**PRD Mode Execution:**
 
 **Batch 1: Structure & Completeness (sub_step=1)**
 - `judges:feature-completeness-judge` — evaluates Feature request completeness and clarity
