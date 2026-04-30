@@ -20,12 +20,10 @@ Check whether a Phase 7 build-validator launch can be skipped because no code ha
 
 ## Usage
 
-The `scripts/` directory is relative to this skill's base directory (shown above as "Base directory for this skill").
-
 ### Stamp (after Phase 5 build passes)
 
 ```bash
-bash <base_directory>/scripts/check_build_cache.sh <WORKDIR> stamp
+bash ${CLAUDE_SKILL_DIR}/scripts/check_build_cache.sh <WORKDIR> stamp
 ```
 
 Output: `BUILD_CACHE_STAMPED`
@@ -33,7 +31,7 @@ Output: `BUILD_CACHE_STAMPED`
 ### Check (before Phase 7 build)
 
 ```bash
-bash <base_directory>/scripts/check_build_cache.sh <WORKDIR>
+bash ${CLAUDE_SKILL_DIR}/scripts/check_build_cache.sh <WORKDIR>
 ```
 
 ## Interpreting Output

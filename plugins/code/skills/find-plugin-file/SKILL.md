@@ -14,7 +14,7 @@ This skill provides a utility to dynamically locate files within the Claude Code
 To find a file in the plugins cache, run the `find_plugin_file.py` script:
 
 ```bash
-python scripts/find_plugin_file.py <file_pattern>
+python3 scripts/find_plugin_file.py <file_pattern>
 ```
 
 ## Usage Examples
@@ -23,33 +23,33 @@ python scripts/find_plugin_file.py <file_pattern>
 
 ```bash
 # Find parse_args.py in any plugin (returns first match)
-python scripts/find_plugin_file.py parse_args.py
+python3 scripts/find_plugin_file.py parse_args.py
 
 # Find all SKILL.md files across all plugins
-python scripts/find_plugin_file.py SKILL.md --all
+python3 scripts/find_plugin_file.py SKILL.md --all
 ```
 
 ### Find by path pattern
 
 ```bash
 # Find a specific file using path pattern
-python scripts/find_plugin_file.py plan/parse_args.py
+python3 scripts/find_plugin_file.py plan/parse_args.py
 
 # Find tools in a specific subdirectory
-python scripts/find_plugin_file.py tools/python/plan/parse_args.py
+python3 scripts/find_plugin_file.py tools/python/plan/parse_args.py
 ```
 
 ### Restrict to specific plugin
 
 ```bash
 # Search only in code plugin
-python scripts/find_plugin_file.py parse_args.py --plugin code
+python3 scripts/find_plugin_file.py parse_args.py --plugin code
 ```
 
 ### List available plugins
 
 ```bash
-python scripts/find_plugin_file.py --list-plugins
+python3 scripts/find_plugin_file.py --list-plugins
 ```
 
 ## Integration with Slash Commands
@@ -61,11 +61,11 @@ To use in a slash command that needs to reference plugin tools, use a two-step a
 FIND_SCRIPT=`ls ~/.claude/plugins/cache/closedloop-ai/code/*/skills/find-plugin-file/scripts/find_plugin_file.py 2>/dev/null | sort -V | tail -1`
 
 # Step 2: Use the script to find the target file, then derive TOOLS_PATH
-TARGET_FILE=`python "$FIND_SCRIPT" plan/parse_args.py`
+TARGET_FILE=`python3 "$FIND_SCRIPT" plan/parse_args.py`
 TOOLS_PATH=`dirname \`dirname "$TARGET_FILE"\``
 
 # Step 3: Run with correct PYTHONPATH
-PYTHONPATH="$TOOLS_PATH:$PYTHONPATH" python "$TARGET_FILE" --help
+PYTHONPATH="$TOOLS_PATH:$PYTHONPATH" python3 "$TARGET_FILE" --help
 ```
 
 **Important:**

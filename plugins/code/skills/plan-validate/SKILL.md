@@ -20,10 +20,10 @@ Activate this skill **instead of** launching `@code:plan-validator` at every pla
 
 ## Usage
 
-Run the validation script. The `scripts/` directory is relative to this skill's base directory (shown above as "Base directory for this skill"):
+Run the validation script:
 
 ```bash
-python3 <base_directory>/scripts/validate_plan.py <WORKDIR>
+python3 ${CLAUDE_SKILL_DIR}/scripts/validate_plan.py <WORKDIR>
 ```
 
 ## Interpreting Output

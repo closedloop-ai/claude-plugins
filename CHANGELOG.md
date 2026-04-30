@@ -2,9 +2,34 @@
 
 All notable changes to the claude-plugins project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-## [Unreleased]
+### code v1.11.2
+
+#### Fixed
+- Migrated 6 SKILL.md files (`build-status-cache`, `codex-review`, `critic-cache`, `cross-repo-cache`, `extract-plan-md`, `plan-validate`) and the `plan-with-codex` command from the unofficial `<base_directory>` placeholder to the documented `${CLAUDE_SKILL_DIR}` substitution variable (commands use `${CLAUDE_PLUGIN_ROOT}/skills/<name>/...`). The `<base_directory>` placeholder was relying on the model to infer the path from context — Claude Code's harness only pre-substitutes `${CLAUDE_SKILL_DIR}` (per the [official skills docs](https://code.claude.com/docs/en/skills.md)), so the prior pattern was unreliable. Removed the now-stale "shown above as 'Base directory for this skill'" explanatory text from the affected SKILL.md files.
+- Phase 5 build-cache stamp instruction in the orchestrator prompt was using a relative `bash scripts/check_build_cache.sh` path that resolved against the orchestrator's CWD (typically wrong). Replaced with the absolute `bash "$CLAUDE_PLUGIN_ROOT/skills/build-status-cache/scripts/check_build_cache.sh" "$CLOSEDLOOP_WORKDIR" stamp` pattern that matches the other cache-stamp invocations in `prompt.md`.
+- Migrated bare `python ...` invocations to `python3 ...` in `find-plugin-file` SKILL.md (7 examples + the slash-command integration snippet), `find_plugin_file.py` docstring, and the `amend-plan` command (12 invocations of `python "$AMEND_STATE_PATH" ...`). Modern macOS and many Linux distros do not symlink `python` → `python3`, so bare `python` was failing with `command not found: python` mid-orchestration when the orchestrator activated the `find-plugin-file` skill or ran `amend-plan` from `prompt.md`-driven workflows.
+- `run-loop.sh` now guards against spurious `<promise>COMPLETE</promise>` emissions. The orchestrator's Phase 7 contract forbids emitting `COMPLETE` when `plan.json` has pending tasks, but it sometimes violates that contract — typically when tasks are blocked by unanswered questions. The runner now reads `plan.json` directly (not via `validate_plan.py` extraction, which would mask `pendingTasks` on a `FORMAT_ISSUES` plan), and if `pendingTasks` is non-empty after `COMPLETE` is detected, it routes through `fail_loop_user_visible` (from v1.11.1) with `RUNNER_ERROR` plus `PENDING_TASKS_BLOCKED_BY_QUESTIONS` (when open questions remain) or `PENDING_TASKS_AT_COMPLETION`. The `loop-error.json` marker carries an actionable user message; post-loop code review is skipped. New helpers `detect_spurious_complete()` and `handle_spurious_complete()` keep the orchestration loop readable. `iteration` perf events use `status="spurious_complete"` instead of `"completed"` for these cases.
+- `run-loop.sh` now signs user-visible `loop-error.json` markers with the per-run `CLOSEDLOOP_USER_VISIBLE_FAILURE_SECRET` provided by Electron, then unsets the exported env var before spawning Claude. This lets the parent harness emit trusted intentional failure markers while preventing repository/tool commands from forging the marker by writing JSON directly into the workdir. Failure-marker tests now cover signed output, missing-secret rejection, and secret removal from the exported environment.
+
+#### Changed
+- Flattened `CHANGELOG.md` structure: removed the `## [Unreleased]` and `## [Releases]` separator headings. Every plugin entry is now listed newest-first under the top-level `# Changelog` heading and is treated as released when merged to `main`. Updated `.claude/commands/update-documentation.md` to teach `/update-documentation` runs not to reintroduce those headings.
+
+### code-review v1.5.4
+
+#### Fixed
+- Migrated 25+ bare `python <HELPERS> ...` invocations in the `/start` command to `python3 <HELPERS> ...`. Same root cause as the corresponding `code` plugin entry — bare `python` is unresolved on modern macOS and many Linux distros.
+
+### judges v1.5.2
+
+#### Fixed
+- Migrated `eval-cache` SKILL.md from the unofficial `<base_directory>` placeholder to the documented `${CLAUDE_SKILL_DIR}` substitution variable. Removed the stale "shown above as 'Base directory for this skill'" explanatory text. See the corresponding `code` plugin entry for context.
+
+### platform v1.1.3
+
+#### Fixed
+- Migrated `upload-artifact` SKILL.md (both `--list-projects` and upload invocations) from the unofficial `<base_directory>` placeholder to the documented `${CLAUDE_SKILL_DIR}` substitution variable. See the corresponding `code` plugin entry for context.
 
 ### code v1.11.1
 
@@ -290,8 +315,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - Migrated `.claude/work` path reference to `.closedloop-ai/work` in `process-chat-learnings.sh` usage documentation
-
-## [Releases]
 
 ### code v1.5.1
 

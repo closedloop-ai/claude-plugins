@@ -29,6 +29,12 @@ STATE_FILE="$CLOSEDLOOP_STATE_DIR/closedloop-loop.local.md"
 PROGRESS_LOG="$CLOSEDLOOP_STATE_DIR/closedloop-progress.log"
 LOOP_USER_VISIBLE_FAILURE_FILE_NAME="loop-error.json"
 
+# Electron provides this per-run value so the parent harness can sign intentional
+# failure markers. Keep it as a shell variable, then remove the exported env var
+# before spawning Claude so repository/tool commands cannot forge the marker.
+LOOP_USER_VISIBLE_FAILURE_SECRET="${CLOSEDLOOP_USER_VISIBLE_FAILURE_SECRET:-}"
+unset CLOSEDLOOP_USER_VISIBLE_FAILURE_SECRET
+
 # Learning system paths
 LOCK_FILE=".learnings/.lock"
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,6 +60,11 @@ write_loop_user_visible_failure() {
     return 1
   fi
 
+  if [[ -z "$LOOP_USER_VISIBLE_FAILURE_SECRET" ]]; then
+    echo "Error: CLOSEDLOOP_USER_VISIBLE_FAILURE_SECRET is required to write loop failure marker" >&2
+    return 1
+  fi
+
   case "$code" in
     RUNNER_ERROR|PRE_RUN_VALIDATION_FAILED|PLAN_STATE_UNAVAILABLE)
       ;;
@@ -73,16 +84,30 @@ write_loop_user_visible_failure() {
     return 1
   fi
 
+  local payload
+  if ! payload=$(jq -n -c \
+    --arg code "$code" \
+    --arg message "$message" \
+    --arg subcode "$subcode" \
+    '{code:$code,message:$message,result:{subcode:$subcode}}'); then
+    return 1
+  fi
+
+  local signature
+  if ! signature=$(
+    printf '%s\0%s' "$LOOP_USER_VISIBLE_FAILURE_SECRET" "$payload" \
+      | python3 -c 'import hashlib, hmac, sys; secret, payload = sys.stdin.buffer.read().split(b"\0", 1); print("sha256=" + hmac.new(secret, payload, hashlib.sha256).hexdigest())'
+  ); then
+    return 1
+  fi
+
   local failure_file="${CLOSEDLOOP_WORKDIR}/${LOOP_USER_VISIBLE_FAILURE_FILE_NAME}"
   local tmp_file="${failure_file}.tmp.$$"
 
   mkdir -p "$(dirname "$failure_file")"
   umask 077
-  if ! jq -n -c \
-    --arg code "$code" \
-    --arg message "$message" \
-    --arg subcode "$subcode" \
-    '{code:$code,message:$message,result:{subcode:$subcode}}' \
+  if ! jq -c --arg signature "$signature" '. + {signature:$signature}' \
+    <<< "$payload" \
     > "$tmp_file"; then
     rm -f "$tmp_file"
     return 1
@@ -103,6 +128,74 @@ fail_loop_user_visible() {
   fi
   echo "CLOSEDLOOP_FATAL[$subcode]: $message" >&2
   exit 1
+}
+
+# Detect a spurious COMPLETE: the orchestrator's Phase 7 contract forbids
+# emitting <promise>COMPLETE</promise> when plan.json has pending tasks, but
+# it sometimes violates that contract -- typically when tasks are blocked by
+# unanswered questions. Reads plan.json directly (not via validate_plan.py
+# extraction) so the check still fires when the plan has format issues that
+# would otherwise mask pendingTasks.
+#
+# Echoes a JSON object on stdout:
+#   {"subcode": "...", "message": "..."}   when a violation is detected
+#   {}                                      otherwise
+#
+# Caller is responsible for telemetry, cleanup, and invoking
+# fail_loop_user_visible.
+detect_spurious_complete() {
+  local workdir="$1"
+  local plan_file="$workdir/plan.json"
+
+  if [[ ! -f "$plan_file" ]]; then
+    echo '{}'
+    return
+  fi
+
+  local pending_count
+  pending_count=$(jq -r '(.pendingTasks // []) | length' "$plan_file" 2>/dev/null || echo 0)
+  if ! [[ "$pending_count" =~ ^[0-9]+$ ]] || [[ "$pending_count" -eq 0 ]]; then
+    echo '{}'
+    return
+  fi
+
+  local pending_ids
+  pending_ids=$(jq -r '(.pendingTasks // []) | map(.id // "?") | .[0:10] | join(", ")' "$plan_file" 2>/dev/null || echo "unknown")
+  if [[ "$pending_count" -gt 10 ]]; then
+    pending_ids="$pending_ids, +$((pending_count - 10)) more"
+  fi
+
+  local open_q_count
+  open_q_count=$(jq -r '(.openQuestions // []) | length' "$plan_file" 2>/dev/null || echo 0)
+
+  local subcode message
+  if [[ "$open_q_count" =~ ^[0-9]+$ ]] && [[ "$open_q_count" -gt 0 ]]; then
+    subcode="PENDING_TASKS_BLOCKED_BY_QUESTIONS"
+    message="Loop emitted COMPLETE but $pending_count task(s) remain pending ($pending_ids) while $open_q_count open question(s) are unanswered in plan.json. Answer the open questions and re-run /code:code to continue."
+  else
+    subcode="PENDING_TASKS_AT_COMPLETION"
+    message="Loop emitted COMPLETE but $pending_count task(s) still pending ($pending_ids). Inspect plan.json and re-run /code:code to continue."
+  fi
+
+  jq -n -c --arg subcode "$subcode" --arg message "$message" \
+    '{subcode:$subcode,message:$message}'
+}
+
+# Handle a spurious COMPLETE: emit telemetry, release the lock, remove the
+# state file, and fail out via fail_loop_user_visible (which exits 1).
+# Only call when detect_spurious_complete returned a non-empty result.
+handle_spurious_complete() {
+  local workdir="$1"
+  local iteration="$2"
+  local subcode="$3"
+  local message="$4"
+
+  echo -e "\n${RED}Spurious COMPLETE detected: $message${NC}" >&2
+  log_progress "Spurious COMPLETE: $message"
+  write_runs_log_entry "$workdir" "$iteration" "spurious_complete"
+  release_lock "$workdir"
+  rm -f "$STATE_FILE"
+  fail_loop_user_visible "RUNNER_ERROR" "$subcode" "$message"
 }
 
 # Check for jq dependency (required for learning system)
@@ -1275,6 +1368,15 @@ main() {
 
       # Check for completion
       if [[ $promise_found -eq 1 ]]; then
+        # Validate that the orchestrator's COMPLETE is legitimate before
+        # proceeding to post-loop code review. See detect_spurious_complete().
+        local spurious_check
+        spurious_check=$(detect_spurious_complete "$effective_workdir")
+        local iter_status="completed"
+        if [[ "$spurious_check" != "{}" ]]; then
+          iter_status="spurious_complete"
+        fi
+
         # Emit iteration perf event for the completing iteration
         local iter_end_epoch
         iter_end_epoch=$(date +%s)
@@ -1289,9 +1391,19 @@ main() {
           --arg ended_at "$iter_ended_at" \
           --argjson duration_s "$iter_duration" \
           --argjson claude_exit_code 0 \
-          --arg status "completed" \
+          --arg status "$iter_status" \
           '{event:$event,run_id:$run_id,iteration:$iteration,started_at:$started_at,ended_at:$ended_at,duration_s:$duration_s,claude_exit_code:$claude_exit_code,status:$status}'
         )"
+
+        # Spurious COMPLETE: surface a user-visible failure marker and bail
+        # out before post-loop code review (which would compound misleading
+        # state). handle_spurious_complete exits 1.
+        if [[ "$iter_status" == "spurious_complete" ]]; then
+          local spurious_subcode spurious_message
+          spurious_subcode=$(echo "$spurious_check" | jq -r '.subcode')
+          spurious_message=$(echo "$spurious_check" | jq -r '.message')
+          handle_spurious_complete "$effective_workdir" "$iteration" "$spurious_subcode" "$spurious_message"
+        fi
 
         echo -e "\n${GREEN}═══════════════════════════════════════════════════════════${NC}"
         echo -e "${GREEN}Completion promise detected: $completion_promise${NC}"

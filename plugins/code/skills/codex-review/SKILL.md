@@ -18,10 +18,8 @@ Activated once per debate round in the `/plan-with-codex` command, before Claude
 
 ## Usage
 
-The `scripts/` directory is relative to this skill's base directory (shown above as "Base directory for this skill").
-
 ```bash
-bash <base_directory>/scripts/run_codex_review.sh \
+bash ${CLAUDE_SKILL_DIR}/scripts/run_codex_review.sh \
   --plan-file <path> \
   --feedback-file <path> \
   --request-file <path> \

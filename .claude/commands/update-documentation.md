@@ -46,16 +46,14 @@ Determine the execution mode before starting:
 
 ## Changelog Format
 
-The root `CHANGELOG.md` uses a single file with plugin-scoped sections:
+The root `CHANGELOG.md` uses a single file with plugin-scoped sections in a flat, newest-first list. There is no `## [Unreleased]` / `## [Releases]` separator: every plugin entry is treated as released when merged to `main`. New entries are inserted at the top of the list.
 
 ```markdown
 # Changelog
 
 All notable changes to the claude-plugins project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-
-## [Unreleased]
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
 ### code v1.1.0
 
@@ -74,7 +72,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Category subsections use `####` (Added/Changed/Fixed/Removed)
 - Entries within a category are bullet points
 - Only include plugin sections that have changes
-- Order plugin sections alphabetically within a release
+- New plugin sections are inserted at the top of the file (newest-first); when multiple plugins are introduced in a single change, group them contiguously and order alphabetically within that group
+- **Do NOT add or restore `## [Unreleased]` or `## [Releases]` separator headings** — the flat structure is intentional
 
 <examples id="changelog-entries">
 
@@ -205,12 +204,13 @@ See the `duplicate-detection` examples in `<data>`. If a duplicate is found, ski
 
 ### Step 4: Update CHANGELOG.md
 
-1. **Find or create** the `## [Unreleased]` section at the top (below the header)
-2. **Find or create** the plugin subsection `### {plugin} v{version}` within `[Unreleased]`
-3. **Find or create** the category `#### Added/Changed/Fixed/Removed` within the plugin subsection
-4. **Add entries** as bullet points under the appropriate category
+The file uses a flat newest-first structure. There is no `## [Unreleased]` or `## [Releases]` separator heading — do not add one.
 
-When a release is cut, `## [Unreleased]` gets renamed to `## [YYYY-MM-DD]` with the release date.
+1. **Find or create** the plugin subsection `### {plugin} v{version}` at the top of the entry list (below the introductory paragraph, above all existing `### plugin v...` entries)
+2. **Find or create** the category `#### Added/Changed/Fixed/Removed` within the plugin subsection
+3. **Add entries** as bullet points under the appropriate category
+
+If the version already exists as a `### {plugin} v{version}` heading further down (because that version already shipped), do **not** edit it retroactively — bump the plugin's `plugin.json` to a new version and create a fresh entry for that new version at the top.
 
 ### Step 5: Verify and Update Plugin READMEs
 

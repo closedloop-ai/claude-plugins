@@ -29,10 +29,10 @@ Sync plan.md with plan.json content. **Use this skill after ANY edit to plan.jso
 
 ## Usage
 
-To sync plan.md with plan.json. The `scripts/` directory is relative to this skill's base directory (shown above as "Base directory for this skill"):
+To sync plan.md with plan.json:
 
 ```bash
-python3 <base_directory>/scripts/extract.py /path/to/plan.json
+python3 ${CLAUDE_SKILL_DIR}/scripts/extract.py /path/to/plan.json
 ```
 
 The script:
@@ -45,12 +45,12 @@ The script:
 
 **After editing plan.json, sync plan.md:**
 ```bash
-python3 <base_directory>/scripts/extract.py .closedloop-ai/work/plan.json
+python3 ${CLAUDE_SKILL_DIR}/scripts/extract.py .closedloop-ai/work/plan.json
 # Updates .closedloop-ai/work/plan.md to match
 ```
 
 **Extract from a specific plan:**
 ```bash
-python3 <base_directory>/scripts/extract.py ~/work/plan.json
+python3 ${CLAUDE_SKILL_DIR}/scripts/extract.py ~/work/plan.json
 # Creates/updates ~/work/plan.md
 ```

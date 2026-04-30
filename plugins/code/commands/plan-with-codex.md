@@ -238,7 +238,7 @@ Update TodoWrite: "Round {N}/{max}: Codex reviewing..."
 
 Activate `code:codex-review` skill and run:
 ```bash
-bash <base_directory>/scripts/run_codex_review.sh \
+bash ${CLAUDE_PLUGIN_ROOT}/skills/codex-review/scripts/run_codex_review.sh \
   --plan-file {plan-file-abs} \
   --feedback-file {feedback-file-abs} \
   --request-file {stem}.prompt \

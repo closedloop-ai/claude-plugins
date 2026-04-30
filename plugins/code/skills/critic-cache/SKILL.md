@@ -19,10 +19,10 @@ Activate this skill at the start of Phase 2.5 (Critic Validation), **before** la
 
 ## Usage
 
-Run the cache check script. The `scripts/` directory is relative to this skill's base directory (shown above as "Base directory for this skill"):
+Run the cache check script:
 
 ```bash
-bash <base_directory>/scripts/check_critic_cache.sh <WORKDIR>
+bash ${CLAUDE_SKILL_DIR}/scripts/check_critic_cache.sh <WORKDIR>
 ```
 
 ## Interpreting Output

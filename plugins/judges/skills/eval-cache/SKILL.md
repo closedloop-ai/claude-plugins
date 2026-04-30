@@ -19,10 +19,10 @@ Activate this skill at the start of Phase 1.3 (Simple Mode Evaluation), **before
 
 ## Usage
 
-Run the cache check script. The `scripts/` directory is relative to this skill's base directory (shown above as "Base directory for this skill"):
+Run the cache check script:
 
 ```bash
-bash <base_directory>/scripts/check_eval_cache.sh <WORKDIR>
+bash ${CLAUDE_SKILL_DIR}/scripts/check_eval_cache.sh <WORKDIR>
 ```
 
 ## Interpreting Output
