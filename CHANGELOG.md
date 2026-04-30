@@ -15,6 +15,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `run-judges` PRD mode now runs the 5 PRD judges across **2 sequential batches** (`batch_1`: feature-completeness-judge + prd-auditor + prd-scope-judge; `batch_2`: prd-dependency-judge + prd-testability-judge) to respect the Task tool's 4-concurrent-agent limit. Sub-step numbering renumbered (`batch_1=1`, `batch_2=2`, `aggregate=3`, `validate=4`); skill description, batch tables, success checklist, troubleshooting guide, and PRD Mode Execution Flow narrative all updated.
 - `JUDGE_REGISTRY["prd"]` in `validate_judge_report.py` now includes `feature-completeness-judge`; PRD validator tests updated for 5-judge expectations.
 
+### code v1.11.0
+
+#### Added
+- New `record_phase.sh` script that appends a `phase` event to `perf.jsonl` from the current `state.json`. Captures `phase`, `status`, `start_sha`, `started_at`, `run_id`, and `iteration` so per-phase wall-clock durations can be reconstructed across an entire run.
+
+#### Changed
+- Orchestrator State Tracking section in `prompt.md` now instructs the orchestrator to call `record_phase.sh` after every `state.json` write (non-blocking; failures ignored). Phase events stream into the same `perf.jsonl` file as iteration, pipeline_step, and agent timing events.
+
+### self-learning v1.2.0
+
+#### Added
+- New `summarize_phases()` aggregator in `perf_summary.py` that reads `phase` events from `perf.jsonl`, derives per-phase durations from the gap to the next phase event in the same `(run_id, iteration)` (or to the iteration's `ended_at` for the final phase), and reports count/avg/min/max/total. Phases never pair across iteration boundaries.
+- Phases summary table added to `perf_summary.py` text output and `phases` field added to its JSON output, alongside the existing Iterations / Pipeline Steps / Sub-steps / Agents tables.
+- New `--timeline` CLI flag and `phase_timeline()` function in `perf_summary.py` that emits a chronological per-instance view (one row per phase invocation with `run_id`, `iteration`, `started_at`, `ended_at`, `duration_s`). Incomplete final phases (no following phase event AND no iteration `ended_at`) are emitted with `ended_at=""` and `duration_s=null` so in-progress runs remain visible. Works with `--format json` for machine-readable output.
+- Tests for phase summarization and timeline covering iteration boundaries, missing iteration end (final phase skipped vs surfaced), aggregation across iterations, total-time descending sort, and per-row run/iteration provenance.
+
 ### code v1.10.0
 
 #### Added
