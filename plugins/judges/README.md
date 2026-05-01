@@ -37,7 +37,7 @@ graph TD
     CompatInput --> CommonPlan
     Check -->|feature mode| FeatureInput["judge-input.json (primary = feature artifact)"]
     FeatureInput --> CommonFeature["common_input_preamble.md (shared contract preamble)"]
-    CommonFeature --> FeaturePreamble["prd_preamble.md (reused for feature mode)"]
+    CommonFeature --> FeaturePreamble["feature_preamble.md (feature-shaped contract)"]
     FeaturePreamble --> FeatureBatch[Feature judge batch]
     PlanBatches --> Agg[Aggregation into EvaluationReport]
     CodeBatches --> Agg
@@ -279,7 +279,7 @@ Orchestrates parallel judge agent execution, aggregates `CaseScore` results, and
 - Does NOT launch `context-manager-for-judges`
 - Runs 3 judges in 1 batch: `feature-completeness-judge`, `prd-testability-judge`, `prd-dependency-judge`
 - Explicitly excludes `prd-auditor` (assumes US-###/AC-#.# numbering present in full PRDs, not feature artifacts) and `prd-scope-judge` (assumes In/Out-of-Scope sections not required for feature artifacts)
-- Prepends `common_input_preamble.md` + `prd_preamble.md` to each judge prompt (feature mode reuses the PRD preamble — there is no separate `feature_preamble.md`)
+- Prepends `common_input_preamble.md` + `feature_preamble.md` to each judge prompt (Feature-shaped contract; do not substitute `prd_preamble.md`, which would frame the input as a full PRD)
 - Writes `$CLOSEDLOOP_WORKDIR/feature-judges.json`
 
 **Agent snapshot**: Before launching judge batches, `run-judges` runs `skills/run-judges/scripts/ensure_agents_snapshot.sh` to capture an idempotent snapshot of all judge agent definitions into `$CLOSEDLOOP_WORKDIR/agents-snapshot/`.
@@ -353,7 +353,7 @@ Checks for a cached plan evaluation result before launching the plan-evaluator a
 
 3. The skill builds `judge-input.json` with `evaluation_type: "feature"` and launches 3 judges in a single batch: `feature-completeness-judge`, `prd-testability-judge`, and `prd-dependency-judge`.
 4. `prd-auditor` and `prd-scope-judge` are not invoked — `prd-auditor` assumes the US-###/AC-#.# numbering format present in full PRDs, and `prd-scope-judge` assumes In/Out-of-Scope sections that feature artifacts do not require.
-5. The `prd_preamble.md` preamble is used (there is no separate `feature_preamble.md`).
+5. The dedicated `feature_preamble.md` is prepended (alongside `common_input_preamble.md`) so judges receive a Feature-shaped contract — `evaluation_type=feature`, no PRD-only sections required.
 6. Results are written to `$CLOSEDLOOP_WORKDIR/feature-judges.json`.
 
 ### Output Format

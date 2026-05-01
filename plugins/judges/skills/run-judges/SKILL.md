@@ -73,7 +73,7 @@ You are orchestrating quality evaluation for a ClosedLoop artifact (implementati
 - `prd-auditor` is excluded because it assumes US-###/AC-#.# numbering and multi-story traceability, which Feature artifacts do not follow
 - `prd-scope-judge` is excluded because it assumes In/Out-of-Scope sections that are not present in Feature artifacts
 
-**Feature mode preamble override:** Feature mode MUST use `prd_preamble.md` (not `feature_preamble.md`, which does not exist). When injecting preambles for feature judges, resolve `{artifact_type}_preamble.md` as `prd_preamble.md`.
+**Feature mode preamble:** Feature mode uses the dedicated `feature_preamble.md` so judges receive a Feature-shaped contract (`evaluation_type=feature`, lightweight structure, no PRD-only sections). Do NOT substitute `prd_preamble.md` — it would frame the input as a full PRD and contradict the envelope's `evaluation_type`.
 
 **Success criteria:**
 - All judges executed (or error CaseScores generated for failures)
@@ -454,7 +454,7 @@ fi
 - Missing `prd.md` results in a WARNING and graceful exit (code 0), not an error
 - No context manager is launched; `judge-input.json` is built directly with `evaluation_type="feature"` and `primary_artifact` pointing to `$CLOSEDLOOP_WORKDIR/prd.md`
 - Performance: emit sub_step=0 (context_prep, skipped=true) perf event immediately, then proceed to sub_step=1 (batch_1), sub_step=2 (aggregate), sub_step=3 (validate)
-- Preamble override: use `prd_preamble.md` for all 3 feature judges (feature_preamble.md does not exist)
+- Preamble: use `feature_preamble.md` for all 3 feature judges
 
 **If required files are missing:**
 - Plan mode: Exit gracefully with code 0 (do not fail parent workflow)
@@ -514,7 +514,7 @@ The run-judges skill supports three artifact types with different judge configur
 - **Report ID**: `{RUN_ID}-feature-judges`
 - **Validation**: `--category feature` (3 judges expected)
 - **Canonical input**: `$CLOSEDLOOP_WORKDIR/prd.md`
-- **Preamble**: use `prd_preamble.md` (feature_preamble.md does not exist)
+- **Preamble**: use `feature_preamble.md` (Feature-shaped contract; do NOT substitute `prd_preamble.md`)
 
 **Feature Mode Execution:**
 
@@ -646,7 +646,7 @@ The run-judges skill supports three artifact types with different judge configur
 - Generate error CaseScore with `final_status=3`, `justification="Preamble file not found: {path}"`
 - Continue with other judges
 
-> **NOTE — Feature Mode Exception:** When `--artifact-type feature` is used, `feature_preamble.md` does **not** exist in the preambles directory. For feature mode, the preamble lookup in step 1 MUST substitute `prd_preamble.md` in place of `feature_preamble.md`. That is, resolve `{artifact_type}_preamble.md` as `prd_preamble.md` whenever `artifact_type == "feature"`. Do NOT attempt to locate or read `feature_preamble.md` — it will not be found and will cause a spurious error CaseScore.
+> **NOTE — Feature Mode:** When `--artifact-type feature` is used, resolve `{artifact_type}_preamble.md` as `feature_preamble.md` (not `prd_preamble.md`). The Feature preamble frames the input as a Feature artifact (`evaluation_type=feature`, lightweight structure, no PRD-only sections such as US-###/AC-#.# numbering or In/Out-of-Scope) and aligns with the envelope built by feature mode. Substituting `prd_preamble.md` would inject contradictory contract instructions and may cause judges to error or evaluate against PRD-only expectations.
 
 ### Prompt Templates
 
@@ -1099,7 +1099,7 @@ Before marking this task complete, verify:
 - [ ] **prd.md existence check** - `$CLOSEDLOOP_WORKDIR/prd.md` found, or emit sub_step=0 (skipped=true) perf event, emit WARNING, and graceful exit with WARNING (code 0)
 - [ ] **No context manager** - context-manager-for-judges is NOT launched for feature mode
 - [ ] **Judge input contract** - `judge-input.json` written with `evaluation_type="feature"` and `primary_artifact=$CLOSEDLOOP_WORKDIR/prd.md`
-- [ ] **Preamble override** - prd_preamble.md used for all feature judges (feature_preamble.md does not exist)
+- [ ] **Preamble** - feature_preamble.md used for all 3 feature judges (Feature-shaped contract; do NOT substitute prd_preamble.md)
 - [ ] **Parallel execution** - 3 feature judges launched in 1 batch (sub_step=1): feature-completeness-judge + prd-testability-judge + prd-dependency-judge
 - [ ] **Result aggregation** - Valid EvaluationReport with 3 CaseScore entries (sub_step=2)
 - [ ] **File output** - `feature-judges.json` written to `$CLOSEDLOOP_WORKDIR`
@@ -1135,7 +1135,7 @@ Before marking this task complete, verify:
 | "prd.md not found" | PRD document missing from workdir | Emit WARNING and exit gracefully (code 0); do not fail the parent workflow |
 | "report_id should end with '-prd-judges'" | Incorrect ID format for prd | Use pattern: `{RUN_ID}-prd-judges` for PRD artifacts |
 | "report_id should end with '-feature-judges'" | Incorrect ID format for feature | Use pattern: `{RUN_ID}-feature-judges` for Feature artifacts |
-| "feature_preamble.md not found" | Wrong preamble file for feature mode | Feature mode must use prd_preamble.md; feature_preamble.md does not exist |
+| "feature_preamble.md not found" | feature_preamble.md missing from preambles directory | Verify `skills/artifact-type-tailored-context/preambles/feature_preamble.md` exists; do NOT fall back to prd_preamble.md (it injects contradictory contract instructions for feature mode) |
 | "Missing expected judges (feature)" | Incomplete batch execution for feature mode | Verify batch_1 launched all 3 judges: feature-completeness-judge, prd-testability-judge, prd-dependency-judge |
 
 </troubleshooting>
@@ -1203,7 +1203,7 @@ When `--artifact-type feature` is specified:
 - Check `$CLOSEDLOOP_WORKDIR/prd.md` exists; emit sub_step=0 (context_prep, skipped=true) perf event, emit WARNING, and exit gracefully (code 0) if missing
 - Do NOT launch context-manager-for-judges
 - Build `judge-input.json` with `evaluation_type="feature"` and `primary_artifact=$CLOSEDLOOP_WORKDIR/prd.md`
-- Use `prd_preamble.md` for all 3 feature judges (feature_preamble.md does not exist)
+- Use `feature_preamble.md` for all 3 feature judges (Feature-shaped contract; do NOT substitute `prd_preamble.md`)
 - Launch the 3 feature judges in 1 batch (sub_step=1: feature-completeness-judge + prd-testability-judge + prd-dependency-judge) to respect the 4-concurrent-agent Task limit
 - Aggregate all 3 CaseScores (sub_step=2) and write to `feature-judges.json`
 - Validate with `--category feature` (sub_step=3)
