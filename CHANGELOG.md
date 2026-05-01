@@ -36,6 +36,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Added
 - New runner-side user-visible failure marker infrastructure in `run-loop.sh`. Helpers `write_loop_user_visible_failure()` and `fail_loop_user_visible()` emit a structured `{code, message, result.subcode}` JSON marker to `$CLOSEDLOOP_WORKDIR/loop-error.json` so downstream consumers (e.g. the Electron desktop app's finalizer) can surface actionable runner failures to the user. Inputs are validated: `code` against an allowlist (`RUNNER_ERROR`, `PRE_RUN_VALIDATION_FAILED`, `PLAN_STATE_UNAVAILABLE`), `subcode` against `^[A-Z][A-Z0-9_]{2,63}$`, and `message` length 1-1000 characters. Marker is written atomically (`tmp` then `mv`) under `umask 077`. The bottom-of-file `trap` and `main "$@"` invocation are now guarded by `[[ "${BASH_SOURCE[0]}" == "$0" ]]` so the script can be sourced (e.g. by tests) without launching the loop. New tests in `plugins/code/tools/python/test_run_loop_failure_marker.py` cover the happy path, the unsupported-code rejection, and the fail-and-exit path.
 
+### judges v1.5.2
+
+#### Added
+- New `feature-completeness-judge` agent (sonnet) that evaluates incoming Feature/PRD requests for readiness before plan creation. Reads `$CLOSEDLOOP_WORKDIR/prd.md` and emits a CaseScore. Applies five checks: Problem Statement Presence (blocking, user-pain framings only — pure business-opportunity framings no longer satisfy the check), Clarity and Specificity (major, with context-aware suppression of vague qualifiers when the same paragraph supplies a measurable target, observable behavior, or bounded scope reference), Acceptance Criteria (major), Ambiguous Language (minor, capped at 5), and Solution Essence (blocking — Feature must include either a Proposed Solution or a Desired Outcome section).
+
+#### Changed
+- `run-judges` PRD mode now runs the 5 PRD judges across **2 sequential batches** (`batch_1`: feature-completeness-judge + prd-auditor + prd-scope-judge; `batch_2`: prd-dependency-judge + prd-testability-judge) to respect the Task tool's 4-concurrent-agent limit. Sub-step numbering renumbered (`batch_1=1`, `batch_2=2`, `aggregate=3`, `validate=4`); skill description, batch tables, success checklist, troubleshooting guide, and PRD Mode Execution Flow narrative all updated.
+- `JUDGE_REGISTRY["prd"]` in `validate_judge_report.py` now includes `feature-completeness-judge`; PRD validator tests updated for 5-judge expectations.
+
 ### code v1.11.0
 
 #### Added

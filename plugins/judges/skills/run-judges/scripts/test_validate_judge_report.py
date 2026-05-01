@@ -105,7 +105,7 @@ class TestBackwardCompatibility:
 
     def test_default_category_plan(self, tmp_path: Path) -> None:
         """Verify omitting --category defaults to plan validation."""
-        # This is the same as test_no_category_flag_validates_15_judges but more explicit
+        # This is the same as test_no_category_flag_validates_16_judges but more explicit
         plan_judges = sorted(JUDGE_REGISTRY["plan"])
         report = create_evaluation_report("run-20250211-judges", plan_judges)
 
@@ -601,12 +601,12 @@ class TestIntegration:
 
 
 class TestCategoryPrdValidation:
-    """Tests for the new prd category with 4 judges."""
+    """Tests for the prd category with 5 judges."""
 
-    def test_accepts_valid_4_judge_report(self, tmp_path: Path) -> None:
-        """Valid 4-judge prd report passes validation."""
+    def test_accepts_valid_5_judge_report(self, tmp_path: Path) -> None:
+        """Valid 5-judge prd report passes validation."""
         prd_judges = sorted(JUDGE_REGISTRY["prd"])
-        assert len(prd_judges) == 4, "PRD judges count should be 4"
+        assert len(prd_judges) == 5, "PRD judges count should be 5"
 
         report = create_evaluation_report("run-20250211-prd-judges", prd_judges)
 
@@ -615,11 +615,12 @@ class TestCategoryPrdValidation:
 
         valid, message = validate_report(report_path, category="prd")
         assert valid is True, f"Expected valid prd report, got: {message}"
-        assert "4 judge results" in message
+        assert "5 judge results" in message
 
     def test_prd_registry_contains_expected_judges(self) -> None:
-        """Verify prd JUDGE_REGISTRY contains the 4 expected PRD judges."""
+        """Verify prd JUDGE_REGISTRY contains the 5 expected PRD judges."""
         expected = {
+            "feature-completeness-judge",
             "prd-auditor",
             "prd-dependency-judge",
             "prd-testability-judge",
@@ -689,7 +690,7 @@ class TestCategoryPrdValidation:
         partial_judges = [
             j for j in sorted(JUDGE_REGISTRY["prd"]) if j != "prd-scope-judge"
         ]
-        assert len(partial_judges) == 3
+        assert len(partial_judges) == 4
 
         report = create_evaluation_report("run-20250211-prd-judges", partial_judges)
 
@@ -716,7 +717,7 @@ class TestCategoryPrdValidation:
         assert "category 'prd'" in message
 
     def test_prd_report_extra_judge_passes(self, tmp_path: Path) -> None:
-        """PRD report with extra judges beyond the required 4 still passes."""
+        """PRD report with extra judges beyond the required 5 still passes."""
         prd_judges = sorted(JUDGE_REGISTRY["prd"])
         extra_judges = prd_judges + ["extra-custom-judge"]
 
