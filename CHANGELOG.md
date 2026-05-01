@@ -36,6 +36,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Added
 - New runner-side user-visible failure marker infrastructure in `run-loop.sh`. Helpers `write_loop_user_visible_failure()` and `fail_loop_user_visible()` emit a structured `{code, message, result.subcode}` JSON marker to `$CLOSEDLOOP_WORKDIR/loop-error.json` so downstream consumers (e.g. the Electron desktop app's finalizer) can surface actionable runner failures to the user. Inputs are validated: `code` against an allowlist (`RUNNER_ERROR`, `PRE_RUN_VALIDATION_FAILED`, `PLAN_STATE_UNAVAILABLE`), `subcode` against `^[A-Z][A-Z0-9_]{2,63}$`, and `message` length 1-1000 characters. Marker is written atomically (`tmp` then `mv`) under `umask 077`. The bottom-of-file `trap` and `main "$@"` invocation are now guarded by `[[ "${BASH_SOURCE[0]}" == "$0" ]]` so the script can be sourced (e.g. by tests) without launching the loop. New tests in `plugins/code/tools/python/test_run_loop_failure_marker.py` cover the happy path, the unsupported-code rejection, and the fail-and-exit path.
 
+### judges v1.6.0
+
+#### Added
+- Feature artifact type support (`--artifact-type feature`) in `run-judges` skill — evaluates feature artifacts using 3 judges (`feature-completeness-judge`, `prd-testability-judge`, `prd-dependency-judge`) in 1 batch and writes `$CLOSEDLOOP_WORKDIR/feature-judges.json`. Explicitly excludes `prd-auditor` (assumes US-###/AC-#.# numbering not present in feature artifacts) and `prd-scope-judge` (assumes In/Out-of-Scope sections not required for feature artifacts). Reuses `prd_preamble.md` — no separate `feature_preamble.md` is needed.
+- `"feature"` category in `validate_judge_report.py`: added to `JUDGE_REGISTRY` with 3 expected judges, to `VALID_SUFFIXES` mapping `feature` to `["-feature-judges"]`, and to `DEFAULT_FILENAMES` mapping `feature` to `feature-judges.json`.
+- `TestCategoryFeatureValidation` test class in `validate_judge_report.py` tests with 8 test methods covering the new feature category.
+- Complete `SKILL.md` documentation for feature mode in `run-judges` skill.
+
 ### judges v1.5.2
 
 #### Added
