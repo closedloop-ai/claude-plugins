@@ -107,12 +107,12 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 - **If `fast_path` is false (standard flow):**
   - Print `CACHE_STATUS_MESSAGE` if non-empty
   - Run Bash: `python3 <HELPERS> partition --diff-data <CR_DIR>/diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json` (use `uncached_diff_data.json` when caching is active)
-  - Run Bash: `python3 <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope "<DIFF_SCOPE>" --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>`
+  - Run Bash: `python3 <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope=<DIFF_SCOPE> --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>`
 - **If `fast_path` is true:**
   - Print `"Fast path selected: 1 reviewer (<MODEL>)."` where `<MODEL>` = `route.json -> models.fast_path_reviewer`
   - If `CACHE_DIR` is set, print `"BHA Cache: bypassed in fast-path mode."` and delete `<CR_DIR>/agent_cached_bha.json` if it exists
   - Skip partition entirely (no `partitions.json` created)
-  - Run Bash: `python3 <HELPERS> extract-patches --diff-scope "<DIFF_SCOPE>" --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>` (no `--partitions-file` -- only `patches_all.txt` is created)
+  - Run Bash: `python3 <HELPERS> extract-patches --diff-scope=<DIFF_SCOPE> --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>` (no `--partitions-file` -- only `patches_all.txt` is created)
   - Update TodoWrite: replace "Spawn reviewer agents in parallel" with "Run fast-path review"
 - Mark todo as `completed`
 - See: [Step 3](#step-3-assess-scope-and-route-models), [Step 4A](#step-4a-spawn-reviewer-agents-fast_path--false), [Step 4B](#step-4b-fast-path-single-agent-review-fast_path--true)
@@ -313,7 +313,7 @@ python3 <HELPERS> auto-incremental \
   --cache-dir <CACHE_DIR> \
   --key "<REVIEW_BRANCH>:<BASE_REF>" \
   --diff-tip <DIFF_TIP> \
-  --original-scope <DIFF_SCOPE> \
+  --original-scope=<DIFF_SCOPE> \
   --full-review <FULL_REVIEW> \
   --since-last-review <SINCE_LAST_REVIEW> \
   --mode <MODE> \
@@ -578,7 +578,7 @@ When constructing agent prompts, read each entry's `file` field for the path. Do
 After partitioning, extract patches to disk files so agents can Read them without needing Bash permissions. Run this BEFORE spawning any agents:
 
 ```bash
-python3 <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope "<DIFF_SCOPE>" --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>
+python3 <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope=<DIFF_SCOPE> --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>
 ```
 
 This creates `patches_p{N}.txt` (one per partition) and `patches_all.txt` (full diff from all files in `diff_data.json`). When caching is active, partitions contain only uncached files, but `patches_all.txt` includes ALL files since BHB/Auditor/Premise review the full diff.

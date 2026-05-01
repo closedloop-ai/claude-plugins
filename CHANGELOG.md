@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.3
+
+#### Added
+- Four new edge-case sections in the `decision-table` skill's `references/edge-cases.md`: **State propagation across isolation boundaries** (subprocesses, workers, callbacks, transactions, child tasks — require explicit propagation rows for success, validation failure, dependency failure, cancellation/timeout, and partial-output branches, plus a real production-sequencing test); **Finalizer-visible cleanup state** (deferred finalizers, traps, disposers, signal handlers, process-exit hooks — require rows describing handle scope, clearing, and exit-via-error paths, plus a failure-path test that exits through the real finalizer); **Transformed input validation parity** (trim/parse/decode/normalize/canonicalize/default/coerce flows — require rows for raw, transformed, validated, and consumed values plus mutations that prove validation runs against the consumed value); **Canonical value persistence** (paths, identities, endpoints, workspaces, profiles, tenants — require rows distinguishing raw, expanded, normalized, canonical/resolved, and serialized output, plus alternate-spelling tests proving durable output uses the canonical value).
+- Five new common-misses items (8-12) and six new contract-heavy review-surface bullets in the `decision-table` skill's `references/review-prevention.md` covering: cleanup/finalizer state scoped too narrowly for the actual cleanup mechanism; durable output that serializes raw input after validation used a transformed value; validation that checks a different representation than the consumed value; state produced inside an isolated execution context without an explicit propagation mechanism; and distinct modeled states whose observable status/message/affordance/styling/telemetry/response signal is indistinguishable in implementation despite the table treating them as different outcomes.
+
+### code-review v1.5.5
+
+#### Fixed
+- `/start` command now passes `--diff-scope` and `--original-scope` to `code_review_helpers.py` using the `--flag=value` form instead of `--flag "value"` (three call sites: standard-flow `extract-patches`, fast-path `extract-patches`, and `auto-incremental`). The space-separated form caused `argparse` to treat scope values that began with a leading dash as a separate option and fail with `unrecognized arguments`; the `=` form binds the value unambiguously.
+
 ### code v1.11.2
 
 #### Fixed
