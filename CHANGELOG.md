@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.4
+
+#### Added
+- Three new common-misses items (13-15) and two new contract-heavy review-surface bullets in the `decision-table` skill's `references/review-prevention.md`: **replay or continuation path bypasses an initial-entry gate** (conflict replays, retry callbacks, confirmation callbacks, and deferred command callbacks must enforce the same guard, policy, validation, target resolver, or health check as the original entry path); **owner-scoped pending state leaks across surfaces** (loading, disabled, or label state reading a global pending/checking flag without matching the current owner, command, document, target, or attempt id); and **sentinel value semantics collapse** (omitted, `undefined`, `null`, empty, and explicit payload values that have different downstream meaning but are defaulted, coalesced, or serialized as the wrong shape).
+
+#### Fixed
+- `detect_spurious_complete` in `run-loop.sh` was firing on legitimate `AWAITING_USER_SEQUENCE` hard stops (most visibly the Phase 1.1 plan review checkpoint), causing `/code:code` to fail with a `PENDING_TASKS_BLOCKED_BY_QUESTIONS` marker the moment the orchestrator drafted a new plan. The detector inspected only `plan.json`, where pending tasks and open questions are expected on a freshly drafted plan. It now reads `state.json.status` first and short-circuits when the status is `AWAITING_USER` — final-completion regressions (`status: "COMPLETED"` with leftover `pendingTasks`) are still flagged as before. New tests in `test_run_loop_failure_marker.py` cover the AWAITING_USER skip plus the existing positive/negative cases for `detect_spurious_complete`.
+- Phase 5.5 telemetry instruction in the orchestrator prompt now writes `decision-table-verifications.jsonl` directly under `$CLOSEDLOOP_WORKDIR` instead of `$CLOSEDLOOP_WORKDIR/.closedloop-ai/`, matching where the rest of the run's per-loop artifacts (`plan.json`, `log.md`, `state.json`) live and avoiding a bespoke nested directory the haiku subagent had to `mkdir -p` on every Phase 5.5 exit.
+
 ### code v1.11.3
 
 #### Added

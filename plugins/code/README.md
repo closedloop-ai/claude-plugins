@@ -385,6 +385,10 @@ Stamps the critic cache after Phase 2.5 reviews complete. Hashes `plan.json` (an
 
 Stamps the cross-repo cache after Phase 1.4 coordinator completes. Hashes peer-repo HEADs from `.workspace-repos.json` (falling back to `.cross-repo-needs.json`) and writes to `{WORKDIR}/.cross-repo-hash` so subsequent iterations skip cross-repo discovery via the `code:cross-repo-cache` skill.
 
+### `record_phase.sh`
+
+Appends a phase event to `perf.jsonl` from the current `state.json`. Called by the orchestrator after every `state.json` write so downstream analysis scripts can derive per-phase wall-clock timings. Reads `phase`, `status`, and `startSha` from `state.json` and emits a JSON line with `event`, `run_id`, `iteration`, `phase`, `status`, `start_sha`, and `started_at` fields. Exits silently if `state.json` does not exist or contains no phase.
+
 ### `loop-agents.json`
 
 Configuration file (not a script) defining which agents participate in the validation loop. Each entry specifies: `validation_script`, `max_iterations`, `promise` (expected completion string), `state_file_suffix`, and `verification_criteria`. Also defines `learning_agents` — the subset of agents that must both acknowledge injected learnings and capture new learnings before stopping.
