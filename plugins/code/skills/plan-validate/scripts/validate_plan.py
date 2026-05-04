@@ -129,12 +129,15 @@ def auto_sync_markdown_answers(data: dict, content: str) -> tuple[dict, list[str
     Handles three answer formats:
 
     1. **Inline with prefix** — ``**Answer: text**``, ``*Answer: text*``, or
-       plain ``Answer: text`` on a checked ``[x]`` question line.
+       plain ``Answer: text`` on the question line.
     2. **A-### keyed answer** — a separate ``A-001: answer text`` line that
-       corresponds to ``Q-001``.  The question checkbox does not need to be
-       checked; the function updates the markdown content to check it.
+       corresponds to ``Q-001``.
     3. **Inline comment** — extra text appended after the known question text
-       on a checked line (no ``Answer:`` prefix).
+       on the question line (no ``Answer:`` prefix).
+
+    The question checkbox does not need to be checked for any format.  When
+    a question is migrated from an unchecked ``[ ]`` line, the function
+    updates the markdown content to check it automatically.
 
     Returns ``(data, migrated_ids)`` where *migrated_ids* lists the question
     IDs that were moved.  The caller is responsible for writing the modified
@@ -178,18 +181,22 @@ def auto_sync_markdown_answers(data: dict, content: str) -> tuple[dict, list[str
             migrated.append(qid)
             continue
 
-        # Unchecked question lines — only migrate if an A-### answer exists
+        # Unchecked question lines — migrate if answer text is extractable
         m = OPEN_Q_RE.match(line)
         if m:
             qid = m.group(1)
-            if qid in open_q_by_id and qid in a_answers:
-                q_obj = open_q_by_id.pop(qid)
-                data["openQuestions"] = [q for q in data["openQuestions"] if q.get("id") != qid]
-                data.setdefault("answeredQuestions", []).append(
-                    {"id": qid, "question": q_obj.get("question", ""), "answer": a_answers[qid]}
-                )
-                migrated.append(qid)
-                needs_check.add(qid)
+            if qid not in open_q_by_id:
+                continue
+            answer_text = _extract_answer(line, open_q_by_id[qid], a_answers)
+            if not answer_text:
+                continue
+            q_obj = open_q_by_id.pop(qid)
+            data["openQuestions"] = [q for q in data["openQuestions"] if q.get("id") != qid]
+            data.setdefault("answeredQuestions", []).append(
+                {"id": qid, "question": q_obj.get("question", ""), "answer": answer_text}
+            )
+            migrated.append(qid)
+            needs_check.add(qid)
 
     # Update markdown content: check boxes for questions migrated via A-### lines
     if needs_check:

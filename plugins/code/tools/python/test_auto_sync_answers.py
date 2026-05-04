@@ -211,9 +211,33 @@ def test_already_in_answered_ignored() -> None:
     assert data["answeredQuestions"][0]["answer"] == "Previous answer."
 
 
-def test_unchecked_question_without_a_answer_not_migrated() -> None:
-    """An unchecked question without A-### answer stays in openQuestions."""
+def test_unchecked_question_with_prefix_answer_migrated() -> None:
+    """An unchecked question with **Answer:** prefix is migrated and auto-checked."""
     content = "- [ ] Q-001: What model? **Answer: Some text.**"
+    data = _base_data(content=content)
+
+    data, migrated = auto_sync_markdown_answers(data, content)
+
+    assert migrated == ["Q-001"]
+    assert data["answeredQuestions"][0]["answer"] == "Some text."
+    assert "- [x] Q-001:" in data["content"]
+
+
+def test_unchecked_question_with_inline_comment_migrated() -> None:
+    """An unchecked question with inline comment is migrated and auto-checked."""
+    content = "- [ ] Q-001: What model? Use codex."
+    data = _base_data(content=content)
+
+    data, migrated = auto_sync_markdown_answers(data, content)
+
+    assert migrated == ["Q-001"]
+    assert data["answeredQuestions"][0]["answer"] == "Use codex."
+    assert "- [x] Q-001:" in data["content"]
+
+
+def test_unchecked_question_without_answer_not_migrated() -> None:
+    """An unchecked question with no answer text stays in openQuestions."""
+    content = "- [ ] Q-001: What model?"
     data = _base_data(content=content)
 
     data, migrated = auto_sync_markdown_answers(data, content)

@@ -30,9 +30,11 @@ The `--auto-sync` flag detects questions answered in the markdown `content` that
 
 Three answer formats are supported:
 
-1. **Inline with prefix** — `**Answer: text**`, `*Answer: text*`, or plain `Answer: text` on a checked `[x]` question line.
-2. **A-### keyed answer** — a separate `A-001: answer text` line corresponding to `Q-001`. The question checkbox does not need to be checked; the script checks it automatically.
-3. **Inline comment** — extra text appended after the known question text on a checked line, without any `Answer:` prefix. Metadata markers like `(BLOCKING T-X.Y)` and `[Recommended: ...]` are stripped.
+1. **Inline with prefix** — `**Answer: text**`, `*Answer: text*`, or plain `Answer: text` on the question line.
+2. **A-### keyed answer** — a separate `A-001: answer text` line corresponding to `Q-001`.
+3. **Inline comment** — extra text appended after the known question text on the question line, without any `Answer:` prefix. Metadata markers like `(BLOCKING T-X.Y)` and `[Recommended: ...]` are stripped.
+
+The question checkbox does not need to be checked for any format. When a question is migrated from an unchecked `[ ]` line, the script checks it automatically.
 
 If none of these yield answer text, falls back to the `recommendedAnswer` field from the JSON entry. Questions with no extractable answer are left in `openQuestions`.
 
