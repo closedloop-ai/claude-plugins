@@ -61,7 +61,7 @@ ANSWERED_Q_RE = re.compile(r"^\s*- \[x\] \*{0,2}(Q-\d{3})\*{0,2}:")
 # Extract answer text from a checked question line.
 # Matches **Answer: text**, *Answer: text*, or trailing Answer: text
 ANSWER_TEXT_RE = re.compile(r"\*{1,2}\s*Answer:\s*(.+?)\s*\*{1,2}\s*$")
-ANSWER_TEXT_PLAIN_RE = re.compile(r"(?:^|[\].])\s*Answer:\s*(.+?)\s*$")
+ANSWER_TEXT_PLAIN_RE = re.compile(r"(?:^|[\].])\s*Answer:\s*(.+?)\s*$|\bAnswer:\s*(.+?)\s*$")
 # A-### keyed answer line (flexible: optional list marker, optional checkbox)
 A_ANSWER_RE = re.compile(r"^\s*-?\s*\[?\s*[x ]?\s*\]?\s*A-(\d{3}):\s*(.+)")
 # Metadata markers to strip when extracting inline comments
@@ -98,10 +98,10 @@ def _extract_answer(line: str, q_obj: dict, a_answers: dict[str, str]) -> str:
     if m:
         return m.group(1).strip()
 
-    # 2. Plain prefix
+    # 2. Plain prefix (group 1 for ]/. anchor, group 2 for \bAnswer: anywhere)
     m = ANSWER_TEXT_PLAIN_RE.search(line)
     if m:
-        return m.group(1).strip()
+        return (m.group(1) or m.group(2)).strip()
 
     # 3. A-### keyed answer
     if qid in a_answers:
@@ -174,7 +174,7 @@ def auto_sync_markdown_answers(data: dict, content: str) -> tuple[dict, list[str
             if not answer_text:
                 continue
             q_obj = open_q_by_id.pop(qid)
-            data["openQuestions"] = [q for q in data["openQuestions"] if q.get("id") != qid]
+            data["openQuestions"] = [q for q in data["openQuestions"] if not (isinstance(q, dict) and q.get("id") == qid)]
             data.setdefault("answeredQuestions", []).append(
                 {"id": qid, "question": q_obj.get("question", ""), "answer": answer_text}
             )
@@ -191,14 +191,14 @@ def auto_sync_markdown_answers(data: dict, content: str) -> tuple[dict, list[str
             if not answer_text:
                 continue
             q_obj = open_q_by_id.pop(qid)
-            data["openQuestions"] = [q for q in data["openQuestions"] if q.get("id") != qid]
+            data["openQuestions"] = [q for q in data["openQuestions"] if not (isinstance(q, dict) and q.get("id") == qid)]
             data.setdefault("answeredQuestions", []).append(
                 {"id": qid, "question": q_obj.get("question", ""), "answer": answer_text}
             )
             migrated.append(qid)
             needs_check.add(qid)
 
-    # Update markdown content: check boxes for questions migrated via A-### lines
+    # Update markdown content: flip checkboxes for all questions migrated from unchecked lines
     if needs_check:
         updated_lines: list[str] = []
         for line in content.splitlines():

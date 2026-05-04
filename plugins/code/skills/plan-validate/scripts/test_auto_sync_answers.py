@@ -1,29 +1,19 @@
 """Tests for auto_sync_markdown_answers() in validate_plan.py."""
 import copy
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "skills" / "plan-validate" / "scripts"))
-
-from validate_plan import auto_sync_markdown_answers  # noqa: E402
+from conftest import make_minimal_data
+from validate_plan import auto_sync_markdown_answers
 
 
 def _base_data(**overrides: object) -> dict:
     """Return a plan dict with one open question and matching content."""
-    data: dict = {
-        "content": "",
-        "acceptanceCriteria": [],
-        "pendingTasks": [],
-        "completedTasks": [],
+    defaults: dict = {
         "openQuestions": [
             {"id": "Q-001", "question": "What model?", "blockingTask": "T-1.1", "recommendedAnswer": None},
         ],
-        "answeredQuestions": [],
-        "gaps": [],
-        "manualTasks": [],
     }
-    data.update(overrides)
-    return data
+    defaults.update(overrides)
+    return make_minimal_data(**defaults)
 
 
 # --- Scenario 2: Inline answer with prefix ---
@@ -66,6 +56,17 @@ def test_plain_answer_after_bracket() -> None:
 
     assert migrated == ["Q-001"]
     assert data["answeredQuestions"][0]["answer"] == "Default to user selection."
+
+
+def test_plain_answer_midline_without_bracket() -> None:
+    """A checked question with plain Answer: after question text (no ] or . preceding) is migrated."""
+    content = "- [x] Q-001: What model? Answer: Use codex."
+    data = _base_data(content=content)
+
+    data, migrated = auto_sync_markdown_answers(data, content)
+
+    assert migrated == ["Q-001"]
+    assert data["answeredQuestions"][0]["answer"] == "Use codex."
 
 
 # --- Scenario 3: A-### keyed answer line ---
