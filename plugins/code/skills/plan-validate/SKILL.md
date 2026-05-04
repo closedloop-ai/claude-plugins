@@ -23,8 +23,12 @@ Activate this skill **instead of** launching `@code:plan-validator` at every pla
 Run the validation script:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/validate_plan.py <WORKDIR>
+python3 ${CLAUDE_SKILL_DIR}/scripts/validate_plan.py <WORKDIR> --auto-sync
 ```
+
+The `--auto-sync` flag detects questions marked as answered in the markdown `content` (checked `[x]` checkbox) that are still in the `openQuestions` JSON array. It extracts the answer text from the markdown line and moves the question to `answeredQuestions` before validation, writing the updated plan.json back to disk. Answer text is extracted from `**Answer: text**`, `*Answer: text*`, or plain `Answer: text` in the markdown line. If no answer text is found, it falls back to the `recommendedAnswer` field from the JSON entry. Questions with no extractable answer are left in `openQuestions`.
+
+Always pass `--auto-sync` so that users can answer questions by editing the markdown directly.
 
 ## Interpreting Output
 
