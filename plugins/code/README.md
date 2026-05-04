@@ -359,7 +359,13 @@ Initializes a ClosedLoop session. Parses arguments (`--prd`, `--max-iterations`,
 
 ### `run-loop.sh`
 
-External loop runner. Launches `claude -p` in a loop, maintaining state in `.closedloop-ai/closedloop-loop.local.md`. Integrates with the self-learning system. Tracks run ID, start SHA, iteration count, and progress log. Continues until the orchestrator outputs `<promise>COMPLETE</promise>` or max iterations are reached.
+External loop runner. Launches `claude -p` in a loop, maintaining state in `.closedloop-ai/closedloop-loop.local.md`. Integrates with the self-learning system. Tracks run ID, start SHA, iteration count, and progress log. Continues until the orchestrator outputs `<promise>COMPLETE</promise>` or max iterations are reached. Emits a `run` event to `perf.jsonl` at startup via `record_run.sh`.
+
+Supports the following CLI flags:
+
+- `--run-id <ID>`: User-supplied run identifier (alphanumeric, hyphens, underscores). If omitted, a run ID is generated.
+- `--resume`: Resume a previous run by reading the existing `.closedloop-ai/closedloop-loop.local.md` state file. Cannot be combined with a workdir argument or `--run-id`.
+- `--command '<STRING>'`: Arbitrary slash-command string passed to Claude (e.g. `"/code:code"` or `"/some-skill arg1 arg2"`), overriding the default `/code:code` invocation.
 
 ### `setup-loop.sh`
 
@@ -387,7 +393,11 @@ Stamps the cross-repo cache after Phase 1.4 coordinator completes. Hashes peer-r
 
 ### `record_phase.sh`
 
-Appends a phase event to `perf.jsonl` from the current `state.json`. Called by the orchestrator after every `state.json` write so downstream analysis scripts can derive per-phase wall-clock timings. Reads `phase`, `status`, and `startSha` from `state.json` and emits a JSON line with `event`, `run_id`, `iteration`, `phase`, `status`, `start_sha`, and `started_at` fields. Exits silently if `state.json` does not exist or contains no phase.
+Appends a phase event to `perf.jsonl` from the current `state.json`. Called by the orchestrator after every `state.json` write so downstream analysis scripts can derive per-phase wall-clock timings. Reads `phase`, `status`, and `startSha` from `state.json` and emits a JSON line with `event`, `run_id`, `iteration`, `phase`, `status`, `start_sha`, `started_at`, and `command` fields (the `command` field carries the slash-command string from `CLOSEDLOOP_COMMAND` so phase events can be correlated with the invoking command). Exits silently if `state.json` does not exist or contains no phase.
+
+### `record_run.sh`
+
+Appends a `run` event to `perf.jsonl` when a loop run starts so `perf_summary.py` and downstream analytics can correlate per-run metadata (command, resume flag, workdir) with iteration and pipeline_step events that share the same `run_id`. Called by `run-loop.sh` at startup. Emits a JSON line with `event`, `run_id`, `command`, `resume`, `timestamp`, and `workdir` fields. Fail-open: missing arguments or write failures exit silently so telemetry never blocks the main loop.
 
 ### `loop-agents.json`
 

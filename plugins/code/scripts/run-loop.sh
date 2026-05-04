@@ -817,8 +817,14 @@ OPTIONS:
   --max-iterations <n>           Maximum iterations (default: 50)
   --completion-promise '<text>'  Promise phrase to signal completion (default: COMPLETE)
   --add-dir <path>               Add a secondary repository for multi-repo planning (repeatable)
+  --run-id <ID>                  User-supplied run identifier (alphanumeric, hyphens, underscores)
+  --resume                       Resume a previous run using the existing state file
+  --command <STRING>             Arbitrary slash-command string passed to Claude (e.g. "/code:code" or "/some-skill arg1 arg2")
   --self-learning                Enable self-learning (disabled by default)
   -h, --help                     Show this help message
+
+NOTE:
+  --run-id and --resume are mutually exclusive.
 
 DESCRIPTION:
   Runs Claude in a loop with fresh context on each iteration. Each iteration
@@ -873,12 +879,39 @@ PROMPT_NAME=""
 MAX_ITERATIONS=50
 COMPLETION_PROMISE="COMPLETE"
 ADD_DIRS=()
+RUN_ID_ARG=""
+RESUME_FLAG=false
+COMMAND_ARG=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help)
       show_help
       exit 0
+      ;;
+    --run-id)
+      if [[ -z "${2:-}" ]]; then
+        echo -e "${RED}Error: --run-id requires a value${NC}" >&2
+        exit 1
+      fi
+      if [[ ! "$2" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo -e "${RED}Error: --run-id value must contain only alphanumeric characters, hyphens, and underscores${NC}" >&2
+        exit 1
+      fi
+      RUN_ID_ARG="$2"
+      shift 2
+      ;;
+    --resume)
+      RESUME_FLAG=true
+      shift
+      ;;
+    --command)
+      if [[ -z "${2:-}" ]]; then
+        echo -e "${RED}Error: --command requires a slash-command string${NC}" >&2
+        exit 1
+      fi
+      COMMAND_ARG="$2"
+      shift 2
       ;;
     --add-dir)
       if [[ -z "${2:-}" ]]; then
@@ -953,6 +986,24 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Validate mutual exclusivity of --run-id and --resume
+if [[ -n "$RUN_ID_ARG" ]] && [[ "$RESUME_FLAG" == "true" ]]; then
+  echo -e "${RED}Error: --run-id and --resume are mutually exclusive${NC}" >&2
+  echo "Use --help for usage information"
+  exit 1
+fi
+
+if [[ -n "$RUN_ID_ARG" ]]; then
+  RUN_ID="$RUN_ID_ARG"
+fi
+
+# --resume requires no workdir argument (it reads from the existing state file)
+if [[ "$RESUME_FLAG" == "true" ]] && [[ -n "$WORKDIR" ]]; then
+  echo -e "${RED}Error: --resume cannot be combined with a workdir argument${NC}" >&2
+  echo "Use --help for usage information"
+  exit 1
+fi
+
 # Parse YAML frontmatter from state file
 parse_frontmatter() {
   sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$STATE_FILE"
@@ -1013,7 +1064,8 @@ run_timed_step() {
     --argjson duration_s "$step_duration" \
     --argjson exit_code "$step_exit" \
     --argjson skipped false \
-    '{event:$event,run_id:$run_id,iteration:$iteration,step:$step,step_name:$step_name,started_at:$started_at,ended_at:$ended_at,duration_s:$duration_s,exit_code:$exit_code,skipped:$skipped}'
+    --arg command "${CLOSEDLOOP_COMMAND:-interactive}" \
+    '{event:$event,run_id:$run_id,iteration:$iteration,step:$step,step_name:$step_name,started_at:$started_at,ended_at:$ended_at,duration_s:$duration_s,exit_code:$exit_code,skipped:$skipped,command:$command}'
   )"
 
   return "$step_exit"
@@ -1037,7 +1089,8 @@ emit_skipped_step() {
     --argjson duration_s 0 \
     --argjson exit_code 0 \
     --argjson skipped true \
-    '{event:$event,run_id:$run_id,iteration:$iteration,step:$step,step_name:$step_name,started_at:$started_at,ended_at:$ended_at,duration_s:$duration_s,exit_code:$exit_code,skipped:$skipped}'
+    --arg command "${CLOSEDLOOP_COMMAND:-interactive}" \
+    '{event:$event,run_id:$run_id,iteration:$iteration,step:$step,step_name:$step_name,started_at:$started_at,ended_at:$ended_at,duration_s:$duration_s,exit_code:$exit_code,skipped:$skipped,command:$command}'
   )"
 }
 
@@ -1059,36 +1112,42 @@ create_state_file() {
 
   # Build the prompt - this is what gets passed to claude -p.
   # Quote values so paths with spaces survive slash-command argument parsing.
-  local workdir_arg="$WORKDIR"
-  workdir_arg="${workdir_arg//\\/\\\\}"
-  workdir_arg="${workdir_arg//\"/\\\"}"
-  workdir_arg="${workdir_arg//\$/\\\$}"
-  workdir_arg="${workdir_arg//\`/\\\`}"
-  local prompt="/code:code \"$workdir_arg\""
-  if [[ -n "$PROMPT_NAME" ]]; then
-    local prompt_name_arg="$PROMPT_NAME"
-    prompt_name_arg="${prompt_name_arg//\\/\\\\}"
-    prompt_name_arg="${prompt_name_arg//\"/\\\"}"
-    prompt_name_arg="${prompt_name_arg//\$/\\\$}"
-    prompt_name_arg="${prompt_name_arg//\`/\\\`}"
-    prompt="$prompt --prompt \"$prompt_name_arg\""
+  local prompt
+  if [[ -n "$COMMAND_ARG" ]]; then
+    # --command overrides the default /code:code invocation entirely
+    prompt="$COMMAND_ARG"
+  else
+    local workdir_arg="$WORKDIR"
+    workdir_arg="${workdir_arg//\\/\\\\}"
+    workdir_arg="${workdir_arg//\"/\\\"}"
+    workdir_arg="${workdir_arg//\$/\\\$}"
+    workdir_arg="${workdir_arg//\`/\\\`}"
+    prompt="/code:code \"$workdir_arg\""
+    if [[ -n "$PROMPT_NAME" ]]; then
+      local prompt_name_arg="$PROMPT_NAME"
+      prompt_name_arg="${prompt_name_arg//\\/\\\\}"
+      prompt_name_arg="${prompt_name_arg//\"/\\\"}"
+      prompt_name_arg="${prompt_name_arg//\$/\\\$}"
+      prompt_name_arg="${prompt_name_arg//\`/\\\`}"
+      prompt="$prompt --prompt \"$prompt_name_arg\""
+    fi
+    if [[ -n "$PRD_FILE" ]]; then
+      local prd_arg="$PRD_FILE"
+      prd_arg="${prd_arg//\\/\\\\}"
+      prd_arg="${prd_arg//\"/\\\"}"
+      prd_arg="${prd_arg//\$/\\\$}"
+      prd_arg="${prd_arg//\`/\\\`}"
+      prompt="$prompt --prd \"$prd_arg\""
+    fi
+    for add_dir in "${ADD_DIRS[@]+"${ADD_DIRS[@]}"}"; do
+      local add_dir_arg="$add_dir"
+      add_dir_arg="${add_dir_arg//\\/\\\\}"
+      add_dir_arg="${add_dir_arg//\"/\\\"}"
+      add_dir_arg="${add_dir_arg//\$/\\\$}"
+      add_dir_arg="${add_dir_arg//\`/\\\`}"
+      prompt="$prompt --add-dir \"$add_dir_arg\""
+    done
   fi
-  if [[ -n "$PRD_FILE" ]]; then
-    local prd_arg="$PRD_FILE"
-    prd_arg="${prd_arg//\\/\\\\}"
-    prd_arg="${prd_arg//\"/\\\"}"
-    prd_arg="${prd_arg//\$/\\\$}"
-    prd_arg="${prd_arg//\`/\\\`}"
-    prompt="$prompt --prd \"$prd_arg\""
-  fi
-  for add_dir in "${ADD_DIRS[@]+"${ADD_DIRS[@]}"}"; do
-    local add_dir_arg="$add_dir"
-    add_dir_arg="${add_dir_arg//\\/\\\\}"
-    add_dir_arg="${add_dir_arg//\"/\\\"}"
-    add_dir_arg="${add_dir_arg//\$/\\\$}"
-    add_dir_arg="${add_dir_arg//\`/\\\`}"
-    prompt="$prompt --add-dir \"$add_dir_arg\""
-  done
 
   cat > "$STATE_FILE" <<EOF
 ---
@@ -1137,8 +1196,10 @@ main() {
     # Resolve to absolute path
     WORKDIR=$(cd "$WORKDIR" 2>/dev/null && pwd || echo "$WORKDIR")
 
-    # Generate run ID for new loop
-    RUN_ID=$(generate_run_id)
+    # Use provided --run-id or generate a new one
+    if [[ -z "$RUN_ID" ]]; then
+      RUN_ID=$(generate_run_id)
+    fi
 
     # Capture start SHA for citation verification
     capture_start_sha "$WORKDIR"
@@ -1154,12 +1215,21 @@ main() {
 
   # Check for state file
   if [[ ! -f "$STATE_FILE" ]]; then
-    echo -e "${RED}Error: No active ClosedLoop loop found${NC}"
-    echo ""
-    echo "To start a new loop:"
-    echo "  run-loop.sh ./path/to/workdir"
-    echo ""
-    echo "For help: run-loop.sh --help"
+    if [[ "$RESUME_FLAG" == "true" ]]; then
+      echo -e "${RED}Error: --resume specified but no active ClosedLoop loop state found${NC}"
+      echo ""
+      echo "State file not found: $STATE_FILE"
+      echo ""
+      echo "To start a new loop:"
+      echo "  run-loop.sh ./path/to/workdir"
+    else
+      echo -e "${RED}Error: No active ClosedLoop loop found${NC}"
+      echo ""
+      echo "To start a new loop:"
+      echo "  run-loop.sh ./path/to/workdir"
+      echo ""
+      echo "For help: run-loop.sh --help"
+    fi
     exit 1
   fi
 
@@ -1204,6 +1274,7 @@ main() {
   # Export environment variables for learning system
   export CLOSEDLOOP_WORKDIR="$effective_workdir"
   export CLOSEDLOOP_RUN_ID="$RUN_ID"
+  export CLOSEDLOOP_COMMAND="$COMMAND_ARG"
 
   # Load goal configuration
   load_goal_config "$effective_workdir"
@@ -1226,6 +1297,9 @@ main() {
   echo ""
 
   log_progress "Loop started - run_id=$RUN_ID iteration=$iteration max=$max_iterations promise=$completion_promise"
+
+  # Record run metadata to perf.jsonl (non-blocking; telemetry only)
+  bash "$SCRIPTS_DIR/record_run.sh" "$RUN_ID" "$COMMAND_ARG" "$RESUME_FLAG" "$effective_workdir" 2>/dev/null || true
 
   # jq filter to extract final result
   local final_result='select(.type == "result").result // empty'

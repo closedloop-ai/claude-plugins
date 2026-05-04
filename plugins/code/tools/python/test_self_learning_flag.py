@@ -72,6 +72,10 @@ def _base_env(
         PRD_FILE=""
         RUN_ID="{run_id}"
         START_SHA="abc123"
+        COMMAND_ARG=""
+        ADD_DIRS=()
+        RUN_ID_ARG=""
+        RESUME_FLAG=false
         run_timed_step() {{ :; }}
     """)
 

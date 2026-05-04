@@ -17,16 +17,20 @@ from typing import Callable, TypeVar
 K = TypeVar("K", bound=Hashable)
 
 # Canonical perf.jsonl event schemas:
+# run:           {event, run_id, command, resume, timestamp, workdir}
+#                Emitted once per loop run at startup by record_run.sh. Captures the
+#                slash-command used, whether the run was a resume, and the workdir path.
 # iteration:     {event, run_id, iteration, duration_s, status, started_at, claude_exit_code}
 # pipeline_step: {event, run_id, iteration, step, step_name, started_at, ended_at, duration_s,
-#                 exit_code, skipped, [sub_step], [sub_step_name]}
+#                 exit_code, skipped, command, [sub_step], [sub_step_name]}
 # agent:         {event, run_id, iteration, agent_id, agent_type, agent_name,
 #                 started_at, ended_at, duration_s}
-# phase:         {event, run_id, iteration, phase, status, start_sha, started_at}
+# phase:         {event, run_id, iteration, phase, status, start_sha, started_at, command}
 #                Phase events carry only started_at; per-phase durations are derived from
 #                the gap to the next phase event in the same iteration (or to the iteration's
-#                ended_at for the final phase). Use --timeline for a chronological per-instance
-#                view; the default summary aggregates by phase name.
+#                ended_at for the final phase). The "command" field records the slash-command
+#                active when the phase was recorded (e.g. "/code"). Use --timeline for a
+#                chronological per-instance view; the default summary aggregates by phase name.
 # Legacy compatibility:
 # pipeline_substep rows are still accepted for historical files and mapped into sub-step summaries.
 
@@ -99,6 +103,29 @@ def load_events(
             events.append(event)
 
     return events
+
+
+def summarize_runs(
+    events: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Summarize run events.
+
+    Returns a list of dicts, one per "run" event, sorted by timestamp ascending.
+    Each dict contains run_id, command, resume, and timestamp.
+    """
+    runs = sorted(
+        (e for e in events if e.get("event") == "run"),
+        key=lambda x: str(x.get("timestamp", "")),
+    )
+    return [
+        {
+            "run_id": r.get("run_id", ""),
+            "command": r.get("command", ""),
+            "resume": r.get("resume", False),
+            "timestamp": r.get("timestamp", ""),
+        }
+        for r in runs
+    ]
 
 
 def summarize_iterations(
@@ -291,6 +318,7 @@ def summarize_phases(
     iter_ends = _phase_iter_ends(events)
 
     by_phase: dict[str, list[float]] = {}
+    phase_commands: dict[str, dict[str, int]] = {}
     for key, phase_events in grouped.items():
         sorted_phases = sorted(
             phase_events, key=lambda x: str(x.get("started_at", ""))
@@ -312,13 +340,19 @@ def summarize_phases(
                 continue
             phase_name = str(p.get("phase", "unknown"))
             by_phase.setdefault(phase_name, []).append(duration)
+            cmd = str(p.get("command", ""))
+            if cmd:
+                counts = phase_commands.setdefault(phase_name, {})
+                counts[cmd] = counts.get(cmd, 0) + 1
 
     if not by_phase:
         return []
 
     rows: list[dict[str, object]] = []
     for name, durs in by_phase.items():
-        rows.append({"phase": name, **_agg_stats(durs)})
+        cmd_counts = phase_commands.get(name, {})
+        top_command = max(cmd_counts, key=lambda c: cmd_counts[c]) if cmd_counts else ""
+        rows.append({"phase": name, "command": top_command, **_agg_stats(durs)})
 
     rows.sort(key=lambda x: x.get("total_s", 0), reverse=True)  # type: ignore[return-value]
     return rows
@@ -371,6 +405,7 @@ def phase_timeline(
                 "run_id": run_id,
                 "iteration": iteration,
                 "phase": str(p.get("phase", "unknown")),
+                "command": str(p.get("command", "")),
                 "started_at": started_at,
                 "ended_at": ended_at,
                 "duration_s": duration,
@@ -415,8 +450,23 @@ def print_text(
     substeps: list[dict[str, object]],
     agents: list[dict[str, object]],
     phases: list[dict[str, object]],
+    runs: list[dict[str, object]],
 ) -> None:
     """Print human-readable text tables."""
+    if runs:
+        print("=== Runs ===")
+        print(f"{'Run ID':<30} {'Command':<20} {'Resume':<8} {'Timestamp':<25}")
+        print("-" * 85)
+        for row in runs:
+            resume_str = "yes" if row.get("resume") else "no"
+            print(
+                f"{row.get('run_id', '')!s:<30} "
+                f"{row.get('command', '')!s:<20} "
+                f"{resume_str:<8} "
+                f"{row.get('timestamp', '')!s:<25}"
+            )
+        print()
+
     if iterations:
         print("=== Iterations ===")
         print(f"{'Iter':<6} {'Duration':<10} {'Status':<15} {'Started':<25}")
@@ -442,11 +492,13 @@ def print_text(
 
     if phases:
         print("=== Phases (by total time) ===")
-        print(f"{'Phase':<40} {_STATS_HEADER}")
-        print("-" * 80)
+        print(f"{'Phase':<40} {'Command':<16} {_STATS_HEADER}")
+        print("-" * 96)
         for row in phases:
             print(
-                f"{row.get('phase', '')!s:<40} {_format_stats_cols(row)}"
+                f"{row.get('phase', '')!s:<40} "
+                f"{row.get('command', '')!s:<16} "
+                f"{_format_stats_cols(row)}"
             )
         print()
 
@@ -481,7 +533,7 @@ def print_text(
             print(f"{row.get('agent_name', '')!s:<28} {_format_stats_cols(row)}")
         print()
 
-    if not iterations and not pipeline and not substeps and not agents and not phases:
+    if not runs and not iterations and not pipeline and not substeps and not agents and not phases:
         print("No performance data found.")
 
 
@@ -492,9 +544,9 @@ def print_phase_timeline(rows: list[dict[str, object]]) -> None:
         return
     print("=== Phase Timeline ===")
     print(
-        f"{'Run':<22} {'Iter':<6} {'Phase':<40} {'Started':<22} {'Ended':<22} {'Duration':<10}"
+        f"{'Run':<22} {'Iter':<6} {'Phase':<40} {'Command':<16} {'Started':<22} {'Ended':<22} {'Duration':<10}"
     )
-    print("-" * 124)
+    print("-" * 140)
     for row in rows:
         dur = row.get("duration_s")
         dur_str = _fmt_duration(float(dur)) if isinstance(dur, (int, float)) else "?"
@@ -502,6 +554,7 @@ def print_phase_timeline(rows: list[dict[str, object]]) -> None:
             f"{row.get('run_id', '')!s:<22} "
             f"{row.get('iteration', '')!s:<6} "
             f"{row.get('phase', '')!s:<40} "
+            f"{row.get('command', '')!s:<16} "
             f"{row.get('started_at', '')!s:<22} "
             f"{row.get('ended_at', '')!s:<22} "
             f"{dur_str:<10}"
@@ -556,6 +609,7 @@ def main() -> int:
             print_phase_timeline(timeline)
         return 0
 
+    runs = summarize_runs(events)
     iterations = summarize_iterations(events)
     pipeline = summarize_pipeline(events)
     substeps = summarize_substeps(events)
@@ -564,6 +618,7 @@ def main() -> int:
 
     if args.format == "json":
         output = {
+            "runs": runs,
             "iterations": iterations,
             "phases": phases,
             "pipeline_steps": pipeline,
@@ -578,6 +633,7 @@ def main() -> int:
             substeps=substeps,
             agents=agents,
             phases=phases,
+            runs=runs,
         )
 
     return 0

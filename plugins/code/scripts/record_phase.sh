@@ -34,8 +34,7 @@ fi
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 RUN_ID="${CLOSEDLOOP_RUN_ID:-unknown}"
 ITERATION="${CLOSEDLOOP_ITERATION:-0}"
-
-mkdir -p "$(dirname "$PERF_FILE")"
+COMMAND="${CLOSEDLOOP_COMMAND:-}"
 
 jq -n -c \
   --arg event "phase" \
@@ -45,5 +44,6 @@ jq -n -c \
   --arg status "$STATUS" \
   --arg start_sha "$START_SHA" \
   --arg started_at "$TIMESTAMP" \
-  '{event:$event,run_id:$run_id,iteration:$iteration,phase:$phase,status:$status,start_sha:$start_sha,started_at:$started_at}' \
+  --arg command "$COMMAND" \
+  '{event:$event,run_id:$run_id,iteration:$iteration,phase:$phase,status:$status,start_sha:$start_sha,started_at:$started_at,command:$command}' \
   >> "$PERF_FILE"

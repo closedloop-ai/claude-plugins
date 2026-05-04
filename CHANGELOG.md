@@ -4,6 +4,25 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.12.0
+
+#### Added
+- `run-loop.sh` now accepts three new CLI flags: `--run-id <ID>` (user-supplied alphanumeric/hyphen/underscore run identifier — replaces the auto-generated id and is mutually exclusive with `--resume`), `--resume` (re-enter an existing loop using the workdir recorded in `state.json`, no positional workdir argument allowed), and `--command '<STRING>'` (override the default `/code:code <workdir>` prompt with an arbitrary slash-command string, e.g. `/code:code` plus custom flags or an entirely different skill invocation). The `--command` value is also exported as `CLOSEDLOOP_COMMAND` so downstream telemetry can attribute events to the active command.
+- New `plugins/code/scripts/record_run.sh` script emits a single `run` event to `$CLOSEDLOOP_WORKDIR/perf.jsonl` at the start of each loop run with fields `event`, `run_id`, `command`, `resume` (JSON boolean), `timestamp`, and `workdir`. `run-loop.sh` invokes it once from `main()` before the iteration loop begins. The script is fail-open — missing arguments or write failures silently exit 0 so telemetry never blocks the loop. Companion test suite in `plugins/code/tools/python/test_record_run.py` covers the happy path, fail-open cases (missing args, empty run_id), JSON shape, ISO 8601 timestamp validation, and append-vs-overwrite semantics.
+- Orchestrator prompt (`prompts/prompt.md`) documents the new run-start telemetry contract alongside the existing phase-event telemetry.
+
+#### Changed
+- `record_phase.sh` now stamps each phase event with the active `CLOSEDLOOP_COMMAND` value so `perf_summary.py` and downstream analytics can attribute per-phase durations to the slash-command that produced them. The `pipeline_step` events emitted by `run_timed_step` and `emit_skipped_step` in `run-loop.sh` carry the same `command` field (defaulting to `"interactive"` when unset). Removed a redundant `mkdir -p "$(dirname "$PERF_FILE")"` call from `record_phase.sh` — the parent directory is guaranteed to exist by the time the script runs.
+- Test fixture `test_self_learning_flag.py` updated to declare the new `COMMAND_ARG`, `ADD_DIRS`, `RUN_ID_ARG`, and `RESUME_FLAG` variables so the existing `set -u` self-learning gate test continues to pass against the refactored argument parser in `run-loop.sh`.
+
+### self-learning v1.2.1
+
+#### Added
+- `perf_summary.py` now ingests the new `run` events from `perf.jsonl`. New `summarize_runs()` returns one row per run with `run_id`, `command`, `resume`, and `timestamp` fields, sorted by timestamp ascending. The text formatter prints a leading `=== Runs ===` table and the JSON formatter exposes the rows under a top-level `runs` key.
+
+#### Changed
+- Phase summary and `--timeline` outputs now surface the `command` column read from each phase event. The summary picks the most-frequent command across phases with the same name; the timeline shows the per-instance value. Header widths and separator rules adjusted accordingly. Module-level event-schema docs updated to list the new `command` field on `phase` and `pipeline_step` events and to describe the new `run` event schema.
+
 ### code v1.11.4
 
 #### Added

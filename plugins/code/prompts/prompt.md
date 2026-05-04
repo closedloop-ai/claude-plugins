@@ -83,6 +83,8 @@ Use this sequence at any hard-stop that requires user action before continuing:
 
 **How to write:** `echo '<json>' > $CLOSEDLOOP_WORKDIR/state.json` (use `$(date -u +%Y-%m-%dT%H:%M:%SZ)` for timestamp)
 
+**Telemetry (run start):** `run-loop.sh` calls `record_run.sh` once at the start of `main()`, before the iteration loop begins. This appends a single `run` event to `perf.jsonl` with the fields: `event` ("run"), `run_id`, `command`, `resume` (boolean), `timestamp`, `workdir`. Non-blocking — failures are silently ignored so telemetry never blocks the loop.
+
 **Telemetry (after every state.json write):** Run `bash "$CLAUDE_PLUGIN_ROOT/scripts/record_phase.sh" 2>/dev/null || true` to append a `phase` event to `perf.jsonl`. Non-blocking — ignore failures. The event lets `perf_summary.py` derive per-phase wall-clock durations across the run.
 
 **Base schema:** `{"phase": "<name>", "status": "IN_PROGRESS", "timestamp": "..."}`
