@@ -26,7 +26,15 @@ Run the validation script:
 python3 ${CLAUDE_SKILL_DIR}/scripts/validate_plan.py <WORKDIR> --auto-sync
 ```
 
-The `--auto-sync` flag detects questions marked as answered in the markdown `content` (checked `[x]` checkbox) that are still in the `openQuestions` JSON array. It extracts the answer text from the markdown line and moves the question to `answeredQuestions` before validation, writing the updated plan.json back to disk. Answer text is extracted from `**Answer: text**`, `*Answer: text*`, or plain `Answer: text` in the markdown line. If no answer text is found, it falls back to the `recommendedAnswer` field from the JSON entry. Questions with no extractable answer are left in `openQuestions`.
+The `--auto-sync` flag detects questions answered in the markdown `content` that are still in the `openQuestions` JSON array, extracts the answer text, and moves them to `answeredQuestions` before validation — writing the updated plan.json back to disk.
+
+Three answer formats are supported:
+
+1. **Inline with prefix** — `**Answer: text**`, `*Answer: text*`, or plain `Answer: text` on a checked `[x]` question line.
+2. **A-### keyed answer** — a separate `A-001: answer text` line corresponding to `Q-001`. The question checkbox does not need to be checked; the script checks it automatically.
+3. **Inline comment** — extra text appended after the known question text on a checked line, without any `Answer:` prefix. Metadata markers like `(BLOCKING T-X.Y)` and `[Recommended: ...]` are stripped.
+
+If none of these yield answer text, falls back to the `recommendedAnswer` field from the JSON entry. Questions with no extractable answer are left in `openQuestions`.
 
 Always pass `--auto-sync` so that users can answer questions by editing the markdown directly.
 
