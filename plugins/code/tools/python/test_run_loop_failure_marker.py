@@ -99,6 +99,124 @@ def test_write_loop_user_visible_failure_rejects_unknown_code(tmp_path: Path) ->
     assert "unsupported loop failure code" in result.stderr
 
 
+def test_detect_spurious_complete_no_plan_returns_empty(tmp_path: Path) -> None:
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        detect_spurious_complete "{tmp_path}"
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "{}"
+
+
+def test_detect_spurious_complete_no_pending_tasks_returns_empty(tmp_path: Path) -> None:
+    (tmp_path / "plan.json").write_text(json.dumps({"pendingTasks": []}))
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        detect_spurious_complete "{tmp_path}"
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "{}"
+
+
+def test_detect_spurious_complete_pending_with_questions_flags(tmp_path: Path) -> None:
+    (tmp_path / "plan.json").write_text(json.dumps({
+        "pendingTasks": [{"id": "T-1.0"}, {"id": "T-2.0"}],
+        "openQuestions": [{"id": "Q1", "text": "?"}],
+    }))
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        detect_spurious_complete "{tmp_path}"
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["subcode"] == "PENDING_TASKS_BLOCKED_BY_QUESTIONS"
+    assert "T-1.0" in payload["message"]
+    assert "T-2.0" in payload["message"]
+
+
+def test_detect_spurious_complete_pending_without_questions_flags(tmp_path: Path) -> None:
+    (tmp_path / "plan.json").write_text(json.dumps({
+        "pendingTasks": [{"id": "T-1.0"}],
+        "openQuestions": [],
+    }))
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        detect_spurious_complete "{tmp_path}"
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["subcode"] == "PENDING_TASKS_AT_COMPLETION"
+
+
+def test_detect_spurious_complete_skips_when_awaiting_user(tmp_path: Path) -> None:
+    # Phase 1.1 plan review checkpoint: a freshly drafted plan has pending
+    # tasks and open questions by definition, but state.json signals an
+    # AWAITING_USER hard stop, not final completion. Must not be flagged.
+    (tmp_path / "plan.json").write_text(json.dumps({
+        "pendingTasks": [{"id": "T-1.0"}],
+        "openQuestions": [{"id": "Q1", "text": "?"}],
+    }))
+    (tmp_path / "state.json").write_text(json.dumps({
+        "phase": "Phase 1.1: Plan review checkpoint",
+        "status": "AWAITING_USER",
+    }))
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        detect_spurious_complete "{tmp_path}"
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "{}"
+
+
+def test_detect_spurious_complete_flags_when_completed_status_with_pending(tmp_path: Path) -> None:
+    # Final-completion claim with leftover pendingTasks remains a contract
+    # violation and must still be flagged.
+    (tmp_path / "plan.json").write_text(json.dumps({
+        "pendingTasks": [{"id": "T-1.0"}],
+        "openQuestions": [],
+    }))
+    (tmp_path / "state.json").write_text(json.dumps({
+        "phase": "Phase 7: Logging and completion",
+        "status": "COMPLETED",
+    }))
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        detect_spurious_complete "{tmp_path}"
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["subcode"] == "PENDING_TASKS_AT_COMPLETION"
+
+
 def test_fail_loop_user_visible_prints_reason_and_exits(tmp_path: Path) -> None:
     result = run_bash(
         f"""
