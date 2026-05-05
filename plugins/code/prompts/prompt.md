@@ -97,6 +97,8 @@ Use this sequence at any hard-stop that requires user action before continuing:
 
 **Rule:** Update state.json at the START of every phase below. This is implied and not repeated per-phase.
 
+**run event (once per Loop):** `record_run.sh` is called by `run-loop.sh` at the very start of every Loop (after RUN_ID generation, before Phase 0.9) to append a single `run` event to `perf.jsonl`; this is handled automatically by the shell script and requires no orchestrator action.
+
 **startSha initialization:** At the very start of the first iteration (before Phase 0.9, immediately after writing the initial state.json), source startSha from config.env with a single Bash call and store it in orchestrator working memory for the rest of the run:
 ```bash
 START_SHA=$(grep '^CLOSEDLOOP_START_SHA=' "$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env" 2>/dev/null | cut -d= -f2- | head -n1)
