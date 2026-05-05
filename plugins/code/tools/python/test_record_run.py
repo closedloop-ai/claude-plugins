@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -206,6 +207,11 @@ class TestRecordRunOutput:
         without the `command -v timeout` guard, `timeout 5 git ...` would hit
         "command not found", and the `|| echo ""` fallback would silently emit
         empty repo/branch in every run event.
+
+        On Linux CI, `bash`, `git`, `timeout`, etc. are colocated in `/usr/bin`,
+        so we cannot just strip `timeout`'s dir from PATH. Instead, build a
+        fake-bin temp dir with symlinks to ONLY the binaries the script needs
+        (NOT `timeout`), and point the child's PATH there.
         """
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -219,13 +225,28 @@ class TestRecordRunOutput:
             capture_output=True,
         )
 
-        # Strip every directory containing `timeout` from PATH so the script
-        # exercises its no-timeout branch.
-        base_path = os.environ.get("PATH", "")
-        sanitized_path = ":".join(
-            d
-            for d in base_path.split(":")
-            if d and not os.path.exists(os.path.join(d, "timeout"))
+        # Resolve absolute path to bash before sanitizing PATH. The child sees
+        # the sanitized PATH; the parent invokes bash by absolute path so it
+        # doesn't matter what the parent's PATH contains.
+        bash_path = shutil.which("bash")
+        assert bash_path, "bash must be on PATH for this test"
+
+        # Build a fake-bin with symlinks to every external binary record_run.sh
+        # invokes -- but NOT `timeout`. The script's `command -v timeout` will
+        # return empty under this PATH, exercising the bare-git fallback.
+        fake_bin = tmp_path / "fake_bin"
+        fake_bin.mkdir()
+        required_tools = ["bash", "jq", "git", "date", "mkdir", "dirname"]
+        for tool in required_tools:
+            src = shutil.which(tool)
+            if src is None:
+                import pytest
+                pytest.skip(f"required tool {tool!r} not on PATH; cannot isolate timeout")
+            os.symlink(src, fake_bin / tool)
+
+        # Sanity check: timeout must NOT be reachable via fake_bin.
+        assert shutil.which("timeout", path=str(fake_bin)) is None, (
+            "fake_bin unexpectedly resolves `timeout`"
         )
 
         env = {
@@ -234,10 +255,10 @@ class TestRecordRunOutput:
             "CLOSEDLOOP_RUN_ID": "test-no-timeout",
             "CLOSEDLOOP_COMMAND": "feature",
             "CLOSEDLOOP_WORKDIR": str(workdir),
-            "PATH": sanitized_path,
+            "PATH": str(fake_bin),
         }
         result = subprocess.run(
-            ["bash", str(SCRIPT_PATH), str(workdir)],
+            [bash_path, str(SCRIPT_PATH), str(workdir)],
             capture_output=True,
             text=True,
             timeout=15,
