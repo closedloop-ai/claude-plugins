@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.5
+
+#### Fixed
+- Phase 1 of the orchestrator prompt (`plugins/code/prompts/prompt.md`) now tolerates a `plan.json` whose contents are raw markdown instead of JSON — a shape produced by older gateway versions that wrote the plan source straight to `plan.json`. Before activating the `code:plan-validate` skill, the orchestrator validates `plan.json` with `python3 -m json.tool`; if parsing fails, it renames the file to `plan-source.md`, sets `CLOSEDLOOP_PLAN_FILE` to that path, marks `plan_was_imported = true`, and routes through `@code:plan-importer`. A new branch in the "plan.json does NOT exist" path also picks up a pre-existing `plan-source.md` for import. This unblocks runs that previously failed at Phase 1 with `EMPTY_FILE`/`FORMAT_ISSUES` against markdown content.
+
 ### code v1.11.4
 
 #### Added
