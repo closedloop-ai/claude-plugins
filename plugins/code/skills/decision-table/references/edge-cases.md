@@ -26,6 +26,14 @@ When a flow can receive a new event/request/callback/file/message/retry while an
 
 **Tests:** require an idle path, an active-processing path, and a drain or terminal-outcome assertion when the implementation queues, coalesces, deduplicates, drops, or rejects repeated work.
 
+## State propagation across isolation boundaries
+
+When one phase computes, validates, or mutates state inside an isolated execution context and a later phase depends on that state, include rows for how the state crosses the boundary. Isolation contexts include subprocesses, workers, job steps, containers, sandboxes, transactions, callbacks, closures, remote commands, child tasks, separate event loops, and separate requests. State whether each required value is returned, emitted, persisted, recomputed in the parent/consumer, passed through an explicit output channel, or intentionally unavailable after the boundary exits.
+
+Include rows for success, validation failure, dependency failure, cancellation/timeout, and partial-output branches. For each branch, state which later side effects must still see the value, which must not run without it, and how missing or stale propagated state is classified.
+
+**Tests:** require at least one test that exercises the real production sequencing across the boundary, not only direct helper calls in a shared context. The test must prove the later phase receives the expected value, rejects the missing value, or records the intended fallback.
+
 ## Terminal-state transition guards
 
 When a flow has terminal/one-way states (approved, denied, expired, consumed, completed, cancelled, revoked, failed), include rows for every mutating action attempted from each terminal state. State which states are mutable, which are no-ops, which return a terminal error, and which durable fields must never be rewritten. Include repeated UI actions (approve-then-deny, deny-then-approve, double-clicks, retries after timeout, stale browser tabs after another actor completed the flow).
@@ -35,6 +43,12 @@ Final verification must prove terminal states cannot be overwritten by later act
 ## Cancellation and shutdown
 
 When a flow waits, sleeps, backs off, schedules a timer, retries, or runs asynchronously, include rows for cancellation/shutdown before the wait, during the wait, after the wait but before the next side effect, and during the side effect when applicable.
+
+## Finalizer-visible cleanup state
+
+When cleanup runs through a deferred finalizer, trap, disposer, signal handler, process-exit hook, framework cleanup callback, or language cleanup block, include rows for the state available at cleanup execution time. State where cleanup handles, mounted resources, temp paths, locks, subscriptions, transactions, or staged artifacts are stored; which scopes can see them when cleanup executes; when each handle is cleared; and what happens if the main flow exits through an error helper, early return, cancellation, signal, or raised/rejected failure branch.
+
+**Tests:** require at least one failure path that exits through the real finalizer mechanism after cleanup state is populated, proving the intended cleanup action runs. A happy-path cleanup assertion alone is not enough.
 
 ## Time-bound credentials, signatures, or payloads
 
@@ -77,6 +91,18 @@ For serverless or edge route handlers, include rows for side effects after the r
 For allowlists, denylists, ownership checks, cache keys, dedupe keys, lock keys, object identifiers, and other policy comparisons, include rows for raw input, normalized form, canonical form, aliases, symbolic references, case/separator variants, parent/child boundaries, empty values, and missing targets where applicable.
 
 **Tests:** require a safe positive control, a blocked canonical control, and at least one equivalent or near-equivalent mutation that could bypass naive string comparison.
+
+## Transformed input validation parity
+
+When a flow trims, parses, decodes, normalizes, canonicalizes, defaults, coerces, or otherwise transforms input from a user, dependency, file, message, request, or environment before a decision or side effect, include rows for the raw input, transformed value, validation target, and final consumed value. State whether validation is intentionally applied before or after transformation, and ensure rejection/acceptance messages match the value actually used. This applies even when the transformed value is not durable.
+
+**Tests:** require at least one mutation where transformation removes harmless input (for example leading/trailing whitespace) and one mutation where invalid content remains after transformation, proving validation accepts/rejects based on the final consumed value rather than an unrelated raw spelling.
+
+## Canonical value persistence
+
+When a validated path, identity, endpoint, workspace, profile, tenant, account, or other policy-bearing value is later written to a durable message, handoff, configuration, state record, command, or file, include rows proving the persisted value is the same canonical value that was validated. Distinguish raw input, expanded input, normalized input, canonical/resolved input, and serialized output. If raw spelling is intentionally preserved for display, keep it separate from the value consumed for policy or execution.
+
+**Tests:** require at least one alternate spelling such as a relative path, parent segment, alias, case/separator variant, or symbolic reference where applicable, and assert that durable output contains the canonical validated value rather than the raw input.
 
 ## Partial update preservation
 

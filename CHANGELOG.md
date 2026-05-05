@@ -4,6 +4,31 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.5
+
+#### Fixed
+- Phase 1 of the orchestrator prompt (`plugins/code/prompts/prompt.md`) now tolerates a `plan.json` whose contents are raw markdown instead of JSON — a shape produced by older gateway versions that wrote the plan source straight to `plan.json`. Before activating the `code:plan-validate` skill, the orchestrator validates `plan.json` with `python3 -m json.tool`; if parsing fails, it renames the file to `plan-source.md`, sets `CLOSEDLOOP_PLAN_FILE` to that path, marks `plan_was_imported = true`, and routes through `@code:plan-importer`. A new branch in the "plan.json does NOT exist" path also picks up a pre-existing `plan-source.md` for import. This unblocks runs that previously failed at Phase 1 with `EMPTY_FILE`/`FORMAT_ISSUES` against markdown content.
+
+### code v1.11.4
+
+#### Added
+- Three new common-misses items (13-15) and two new contract-heavy review-surface bullets in the `decision-table` skill's `references/review-prevention.md`: **replay or continuation path bypasses an initial-entry gate** (conflict replays, retry callbacks, confirmation callbacks, and deferred command callbacks must enforce the same guard, policy, validation, target resolver, or health check as the original entry path); **owner-scoped pending state leaks across surfaces** (loading, disabled, or label state reading a global pending/checking flag without matching the current owner, command, document, target, or attempt id); and **sentinel value semantics collapse** (omitted, `undefined`, `null`, empty, and explicit payload values that have different downstream meaning but are defaulted, coalesced, or serialized as the wrong shape).
+
+#### Fixed
+- `detect_spurious_complete` in `run-loop.sh` was firing on legitimate `AWAITING_USER_SEQUENCE` hard stops (most visibly the Phase 1.1 plan review checkpoint), causing `/code:code` to fail with a `PENDING_TASKS_BLOCKED_BY_QUESTIONS` marker the moment the orchestrator drafted a new plan. The detector inspected only `plan.json`, where pending tasks and open questions are expected on a freshly drafted plan. It now reads `state.json.status` first and short-circuits when the status is `AWAITING_USER` — final-completion regressions (`status: "COMPLETED"` with leftover `pendingTasks`) are still flagged as before. New tests in `test_run_loop_failure_marker.py` cover the AWAITING_USER skip plus the existing positive/negative cases for `detect_spurious_complete`.
+- Phase 5.5 telemetry instruction in the orchestrator prompt now writes `decision-table-verifications.jsonl` directly under `$CLOSEDLOOP_WORKDIR` instead of `$CLOSEDLOOP_WORKDIR/.closedloop-ai/`, matching where the rest of the run's per-loop artifacts (`plan.json`, `log.md`, `state.json`) live and avoiding a bespoke nested directory the haiku subagent had to `mkdir -p` on every Phase 5.5 exit.
+
+### code v1.11.3
+
+#### Added
+- Four new edge-case sections in the `decision-table` skill's `references/edge-cases.md`: **State propagation across isolation boundaries** (subprocesses, workers, callbacks, transactions, child tasks — require explicit propagation rows for success, validation failure, dependency failure, cancellation/timeout, and partial-output branches, plus a real production-sequencing test); **Finalizer-visible cleanup state** (deferred finalizers, traps, disposers, signal handlers, process-exit hooks — require rows describing handle scope, clearing, and exit-via-error paths, plus a failure-path test that exits through the real finalizer); **Transformed input validation parity** (trim/parse/decode/normalize/canonicalize/default/coerce flows — require rows for raw, transformed, validated, and consumed values plus mutations that prove validation runs against the consumed value); **Canonical value persistence** (paths, identities, endpoints, workspaces, profiles, tenants — require rows distinguishing raw, expanded, normalized, canonical/resolved, and serialized output, plus alternate-spelling tests proving durable output uses the canonical value).
+- Five new common-misses items (8-12) and six new contract-heavy review-surface bullets in the `decision-table` skill's `references/review-prevention.md` covering: cleanup/finalizer state scoped too narrowly for the actual cleanup mechanism; durable output that serializes raw input after validation used a transformed value; validation that checks a different representation than the consumed value; state produced inside an isolated execution context without an explicit propagation mechanism; and distinct modeled states whose observable status/message/affordance/styling/telemetry/response signal is indistinguishable in implementation despite the table treating them as different outcomes.
+
+### code-review v1.5.5
+
+#### Fixed
+- `/start` command now passes `--diff-scope` and `--original-scope` to `code_review_helpers.py` using the `--flag=value` form instead of `--flag "value"` (three call sites: standard-flow `extract-patches`, fast-path `extract-patches`, and `auto-incremental`). The space-separated form caused `argparse` to treat scope values that began with a leading dash as a separate option and fail with `unrecognized arguments`; the `=` form binds the value unambiguously.
+
 ### code v1.11.2
 
 #### Fixed

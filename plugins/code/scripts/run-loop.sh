@@ -146,6 +146,22 @@ fail_loop_user_visible() {
 detect_spurious_complete() {
   local workdir="$1"
   local plan_file="$workdir/plan.json"
+  local state_file="$workdir/state.json"
+
+  # Skip the check when the orchestrator emitted COMPLETE as part of an
+  # AWAITING_USER_SEQUENCE hard stop (e.g., the Phase 1.1 plan review
+  # checkpoint). In those cases pending tasks and open questions are
+  # expected -- the plan was just drafted and is waiting on the user. Only
+  # a status of COMPLETED (or no state file at all) represents a final
+  # completion claim that should be validated against pendingTasks.
+  if [[ -f "$state_file" ]]; then
+    local state_status
+    state_status=$(jq -r '.status // ""' "$state_file" 2>/dev/null || echo "")
+    if [[ "$state_status" == "AWAITING_USER" ]]; then
+      echo '{}'
+      return
+    fi
+  fi
 
   if [[ ! -f "$plan_file" ]]; then
     echo '{}'

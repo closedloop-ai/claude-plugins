@@ -116,11 +116,14 @@ Here are the key phases you must complete:
 - Check if $CLOSEDLOOP_WORKDIR/plan.json exists (`ls`)
 - **If plan.json does NOT exist:**
   - If `CLOSEDLOOP_PLAN_FILE` is set: Set `plan_was_imported = true`. Launch @code:plan-importer with `WORKDIR`. After completion, activate `code:plan-validate` skill. Proceed to Phase 1.1.
+  - Else if `$CLOSEDLOOP_WORKDIR/plan-source.md` exists (`ls "$CLOSEDLOOP_WORKDIR/plan-source.md"` returns 0): Set `CLOSEDLOOP_PLAN_FILE="$CLOSEDLOOP_WORKDIR/plan-source.md"`. Set `plan_was_imported = true`. Launch @code:plan-importer with `WORKDIR`. After completion, activate `code:plan-validate` skill. Proceed to Phase 1.1.
   - Otherwise: Set `plan_was_created = true`. Launch @code:plan-draft-writer with `WORKDIR=$CLOSEDLOOP_WORKDIR` (mention pre-computed context files if available). Once agent outputs `<promise>PLAN_VALIDATED</promise>`, run **PLAN_VALIDATION_SEQUENCE**.
 - **If plan.json EXISTS:**
-  - Activate `code:plan-validate` skill
-  - `EMPTY_FILE`/`FORMAT_ISSUES`: Fix via haiku subagent (missing checkboxes → add `[ ]`) or @code:plan-writer, then re-validate
-  - `VALID`: Proceed to Phase 1.1
+  - First, check if plan.json contains valid JSON: `python3 -m json.tool "$CLOSEDLOOP_WORKDIR/plan.json" > /dev/null 2>&1`
+  - If plan.json is NOT valid JSON (exit code non-zero — raw markdown written by an older gateway): Run `mv "$CLOSEDLOOP_WORKDIR/plan.json" "$CLOSEDLOOP_WORKDIR/plan-source.md"` to rename it. Set `CLOSEDLOOP_PLAN_FILE="$CLOSEDLOOP_WORKDIR/plan-source.md"`. Set `plan_was_imported = true`. Launch @code:plan-importer with `WORKDIR`. After completion, activate `code:plan-validate` skill. Proceed to Phase 1.1.
+  - If plan.json IS valid JSON: Activate `code:plan-validate` skill
+    - `EMPTY_FILE`/`FORMAT_ISSUES`: Fix via haiku subagent (missing checkboxes → add `[ ]`) or @code:plan-writer, then re-validate
+    - `VALID`: Proceed to Phase 1.1
 
 **PHASE 1.1: PLAN REVIEW CHECKPOINT**
 
@@ -275,7 +278,7 @@ If `decisionTablePath` is `""` (Phase 2.7 generation failed or pointer not writt
 Compute `dt_phase_duration_ms = $(($(date +%s%N | cut -c1-13) - dt_phase_start_epoch_ms))` (or seconds-precision fallback).
 
 Launch a haiku subagent with prompt:
-"WORKDIR=$CLOSEDLOOP_WORKDIR. Append a single JSON line to $CLOSEDLOOP_WORKDIR/.closedloop-ai/decision-table-verifications.jsonl with the following exact fields and values: {\"timestamp\":\"<dt_phase_start_iso>\", \"workdir\":\"$CLOSEDLOOP_WORKDIR\", \"decision_table_path\":\"<decision_table_path from plan-validate>\", \"final_status\":\"<dt_status>\", \"iterations\":<dt_attempt>, \"drift_kind_counts\":<dt_drift_kind_counts>, \"fixes_attempted\":<dt_fixes_attempted>, \"parse_failures\":<dt_parse_failures>, \"verifier_invocations\":<dt_verifier_invocations>, \"phase_duration_ms\":<dt_phase_duration_ms>}. Use mkdir -p on the parent directory first. Use a shell append (>>) so prior lines are preserved. Do NOT pretty-print; one compact line. The file is JSONL, not JSON — no enclosing array, one object per line."
+"WORKDIR=$CLOSEDLOOP_WORKDIR. Append a single JSON line to $CLOSEDLOOP_WORKDIR/decision-table-verifications.jsonl with the following exact fields and values: {\"timestamp\":\"<dt_phase_start_iso>\", \"workdir\":\"$CLOSEDLOOP_WORKDIR\", \"decision_table_path\":\"<decision_table_path from plan-validate>\", \"final_status\":\"<dt_status>\", \"iterations\":<dt_attempt>, \"drift_kind_counts\":<dt_drift_kind_counts>, \"fixes_attempted\":<dt_fixes_attempted>, \"parse_failures\":<dt_parse_failures>, \"verifier_invocations\":<dt_verifier_invocations>, \"phase_duration_ms\":<dt_phase_duration_ms>}. Use mkdir -p on the parent directory first. Use a shell append (>>) so prior lines are preserved. Do NOT pretty-print; one compact line. The file is JSONL, not JSON — no enclosing array, one object per line."
 
 The haiku writes one line and exits. The orchestrator does NOT read the file back. Failure mode: if the haiku append fails for any reason, log a warning and continue — telemetry is non-blocking. Do NOT block phase exit on telemetry failure, do NOT retry, do NOT escalate.
 
