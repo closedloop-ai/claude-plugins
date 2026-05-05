@@ -233,3 +233,139 @@ def test_fail_loop_user_visible_prints_reason_and_exits(tmp_path: Path) -> None:
         "message": "Plan state is not loadable.",
         "result": {"subcode": "BAD_PLAN_STATE"},
     })
+
+
+def test_rename_output_on_exit_moves_jsonl_and_writes_sidecar(tmp_path: Path) -> None:
+    (tmp_path / "claude-output.jsonl").write_text('{"type":"result"}\n')
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        RUN_ID='run-exit'
+        rename_output_on_exit
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "claude-output.jsonl").exists()
+    assert (tmp_path / "claude-output-run-exit.jsonl").read_text() == '{"type":"result"}\n'
+    assert (tmp_path / "claude-output.name.txt").read_text() == "claude-output-run-exit.jsonl\n"
+
+
+def test_rename_orphan_output_on_start_clears_sidecar_and_uses_runs_log(tmp_path: Path) -> None:
+    (tmp_path / "claude-output.jsonl").write_text('{"type":"result"}\n')
+    (tmp_path / "claude-output.name.txt").write_text("claude-output-stale.jsonl\n")
+    (tmp_path / "runs.log").write_text("prev-run|2026-05-05T00:00:00Z|reduce-failures|1|error\n")
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        WORKDIR="$CLOSEDLOOP_WORKDIR"
+        rename_orphan_output_on_start
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "claude-output.jsonl").exists()
+    assert (tmp_path / "claude-output-prev-run.jsonl").read_text() == '{"type":"result"}\n'
+    assert (tmp_path / "claude-output.name.txt").read_text() == ""
+
+
+def test_write_runs_log_entry_uses_workdir_root(tmp_path: Path) -> None:
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        RUN_ID='run-root-log'
+        write_runs_log_entry "$CLOSEDLOOP_WORKDIR" 2 completed
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "runs.log").exists()
+    fields = (tmp_path / "runs.log").read_text().strip().split("|")
+    assert fields[0] == "run-root-log"
+    assert fields[5] == "self_learning"
+    assert fields[6] == ""
+    assert not (tmp_path / ".learnings" / "runs.log").exists()
+
+
+def test_plan_execute_session_capture_writes_primary_session_and_runs_log(
+    tmp_path: Path,
+) -> None:
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        output_file="$CLOSEDLOOP_WORKDIR/output.jsonl"
+        printf '%s\\n' '{{"type":"system","session_id":"plan-session-123"}}' > "$output_file"
+        printf '%s\\n' '{{"type":"result","subtype":"success"}}' >> "$output_file"
+        session_id=$(extract_claude_session_id "$output_file")
+        RUN_ID='run-plan-session'
+        record_claude_session_id "$CLOSEDLOOP_WORKDIR" plan_execute "$session_id"
+        write_runs_log_entry "$CLOSEDLOOP_WORKDIR" 3 completed plan_execute "$session_id"
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "session-id.txt").read_text() == "plan-session-123\n"
+    fields = (tmp_path / "runs.log").read_text().strip().split("|")
+    assert fields[0] == "run-plan-session"
+    assert fields[3] == "3"
+    assert fields[4] == "completed"
+    assert fields[5] == "plan_execute"
+    assert fields[6] == "plan-session-123"
+
+
+def test_code_review_session_capture_does_not_overwrite_primary_session(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "session-id.txt").write_text("plan-session-123\n")
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        output_file="$CLOSEDLOOP_WORKDIR/output.jsonl"
+        printf '%s\\n' '{{"type":"result","sessionId":"review-session-456"}}' > "$output_file"
+        session_id=$(extract_claude_session_id "$output_file")
+        RUN_ID='run-review-session'
+        record_claude_session_id "$CLOSEDLOOP_WORKDIR" code_review "$session_id"
+        write_runs_log_entry "$CLOSEDLOOP_WORKDIR" 3 review_approve code_review "$session_id"
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "session-id.txt").read_text() == "plan-session-123\n"
+    fields = (tmp_path / "runs.log").read_text().strip().split("|")
+    assert fields[0] == "run-review-session"
+    assert fields[4] == "review_approve"
+    assert fields[5] == "code_review"
+    assert fields[6] == "review-session-456"
+
+
+def test_code_review_log_with_no_session_does_not_backfill_plan_session(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "session-id.txt").write_text("plan-session-123\n")
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        output_file="$CLOSEDLOOP_WORKDIR/output.jsonl"
+        printf '%s\\n' '{{"type":"result","subtype":"error"}}' > "$output_file"
+        session_id=$(extract_claude_session_id "$output_file")
+        RUN_ID='run-review-empty-session'
+        write_runs_log_entry "$CLOSEDLOOP_WORKDIR" 3 review_error code_review "$session_id"
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    fields = (tmp_path / "runs.log").read_text().strip().split("|")
+    assert fields[0] == "run-review-empty-session"
+    assert fields[4] == "review_error"
+    assert fields[5] == "code_review"
+    assert fields[6] == ""

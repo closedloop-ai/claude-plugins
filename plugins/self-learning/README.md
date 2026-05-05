@@ -197,7 +197,7 @@ Initializes the learning system directory structure for a new project or run.
 Cleans up old sessions, rotates large log files, and removes stale archived files according to `retention.yaml`. Respects active lock files and protects runs active within the last 30 minutes (configurable).
 
 **Reads:** `$CLOSEDLOOP_WORKDIR/.learnings/retention.yaml`
-**Operates on:** `sessions/`, `runs.log`, `outcomes.log`, `acknowledgments.log`, `pending/archived/`
+**Operates on:** `$WORKDIR/runs.log`, `.learnings/sessions/`, `.learnings/outcomes.log`, `.learnings/acknowledgments.log`, `.learnings/pending/archived/`
 
 ### `scripts/process-chat-learnings.sh`
 
@@ -336,20 +336,21 @@ python3 write_merged_patterns.py --merge-result /path/to/merge-result.json [--to
 ## Directory Structure
 
 ```
-$CLOSEDLOOP_WORKDIR/.learnings/
-  pending/               # Raw JSON learnings from agents (ephemeral)
-    archived/            # Processed pending files (pruned after max_archive_age_days)
-  sessions/              # Classified learning files per run (pruned after max_sessions)
-    run-{ID}/
-      iter-{N}.json
-  org-patterns.toon      # Shared pattern store (committed to version control)
-  goal.yaml              # Goal configuration (committed)
-  retention.yaml         # Pruning policy (committed)
-  outcomes.log           # Pattern application records (local only)
-  runs.log               # Run metadata (local only)
-  acknowledgments.log    # Agent acknowledgment records (local only)
-  goal-outcome.json      # Latest goal evaluation result (local only)
-  pending-closedloop.json # ClosedLoop-specific learnings pending export
+$CLOSEDLOOP_WORKDIR/
+  runs.log               # Run metadata: run_id|timestamp|goal|iteration|status[|command|last_session_id] (local only)
+  .learnings/
+    pending/             # Raw JSON learnings from agents (ephemeral)
+      archived/          # Processed pending files (pruned after max_archive_age_days)
+    sessions/            # Classified learning files per run (pruned after max_sessions)
+      run-{ID}/
+        iter-{N}.json
+    org-patterns.toon    # Shared pattern store (committed to version control)
+    goal.yaml            # Goal configuration (committed)
+    retention.yaml       # Pruning policy (committed)
+    outcomes.log         # Pattern application records (local only)
+    acknowledgments.log  # Agent acknowledgment records (local only)
+    goal-outcome.json    # Latest goal evaluation result (local only)
+    pending-closedloop.json # ClosedLoop-specific learnings pending export
 
 ~/.closedloop-ai/learnings/
   org-patterns.toon      # Global cross-project pattern store
