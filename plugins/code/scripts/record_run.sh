@@ -31,9 +31,16 @@ RUN_ID="${CLOSEDLOOP_RUN_ID:-unknown}"
 COMMAND="${CLOSEDLOOP_COMMAND:-interactive}"
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
 
-# Capture repo and branch via git -C with a timeout to prevent hangs.
-REPO=$(timeout 5 git -C "$WORKDIR" remote get-url origin 2>/dev/null || echo "")
-BRANCH=$(timeout 5 git -C "$WORKDIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+# Capture repo and branch via git -C. Prefer GNU `timeout` as a hang guard, but
+# fall back to bare `git` when timeout isn't installed (default macOS lacks it),
+# so this never silently drops repo/branch attribution on dev machines.
+if command -v timeout >/dev/null 2>&1; then
+  REPO=$(timeout 5 git -C "$WORKDIR" remote get-url origin 2>/dev/null || echo "")
+  BRANCH=$(timeout 5 git -C "$WORKDIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+else
+  REPO=$(git -C "$WORKDIR" remote get-url origin 2>/dev/null || echo "")
+  BRANCH=$(git -C "$WORKDIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+fi
 
 mkdir -p "$(dirname "$PERF_FILE")"
 

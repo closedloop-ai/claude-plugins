@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.6
+
+#### Fixed
+- `run-loop.sh` now persists the launching command in `state.json` (`command:` field in the YAML frontmatter) and restores `PROMPT_NAME` from it on resume, so `CLOSEDLOOP_COMMAND` keeps the original slash-command attribution instead of silently degrading to `"interactive"` when a Loop is resumed without re-passing `--prompt`. Older state files lacking the `command` field preserve prior behavior. Verified against PRD-254 AC-1 ("every event carries the `command` field matching the slash-command that launched the Loop").
+- `record_run.sh` invocation in `run-loop.sh:main()` is now gated on `[[ -n "$WORKDIR" ]]` so it fires only on fresh-start invocations. On resume, the original `run` event is already in `perf.jsonl`, so re-emitting would violate PRD-254 AC-1's "exactly one `run` event per Loop" guarantee.
+- `record_run.sh` no longer requires GNU `timeout` to capture `repo` and `branch`. The `timeout 5 git -C ...` wrapper is now gated on `command -v timeout` and falls back to bare `git -C ...` when the binary isn't on `PATH` (default macOS without `coreutils`). Previously, every run event on those systems silently emitted empty `repo`/`branch` strings even on healthy git checkouts. New regression test in `test_record_run.py:test_repo_captured_when_timeout_unavailable` strips every PATH directory containing `timeout` and asserts the URL is still captured.
+
+#### Changed
+- Corrected `code v1.11.5` test-count claims in this changelog: `test_record_run.py` has 22 tests (now 23 after the no-`timeout` regression test) and `test_record_phase.py` has 13 tests — the prior entry quoted 16/19 in inverted order. Removed the redundant in-function `import json as _json` in `test_record_run.py` (line 268, now using the module-level `import json`).
+
 ### self-learning v1.2.1
 
 #### Changed
@@ -15,7 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - New `record_run.sh` script emits exactly one `run` event per Loop to `perf.jsonl` carrying `command`, `repo`, `branch`, and `started_at`, so every perf record can be attributed to the slash-command that launched the Loop. Gated behind `CLOSEDLOOP_PERF_V2=1`; fails open on any unexpected error (`trap 'exit 0' ERR`, `timeout 5` on the `git` calls capturing repo/branch). Invoked synchronously from `run-loop.sh:main()` after `RUN_ID` generation with `|| true`, so the `run` event is appended before the first `phase` event without ever changing the Loop's exit code.
 - New `CLOSEDLOOP_COMMAND` environment variable exported by `run-loop.sh` next to `CLOSEDLOOP_RUN_ID`, derived from `PROMPT_NAME` and defaulting to `interactive` for bare `/code:code` invocations. Hooks and child processes inherit it automatically.
 - New `command` field on every `phase`, `iteration`, `pipeline_step`, and `agent` perf event when `CLOSEDLOOP_PERF_V2=1`. Implemented in `record_phase.sh`, `subagent-stop-hook.sh`, and the `emit_perf_event` helper in `run-loop.sh` (which folds the gate into a single `jq -n -c` filter via `--arg perf_v2` rather than spawning a second `jq` per event). The field is omitted entirely when the gate is off, preserving the legacy JSON shape.
-- New `plugins/code/tools/python/test_record_run.py` (16 tests covering gate behavior, JSON shape, fail-open paths, and repo/branch capture under a fake-`git` PATH shim) and `plugins/code/tools/python/test_record_phase.py` (19 tests covering V2 gating, field correctness, and missing-state fail-open). Both files run under `pytest` with no extra fixtures.
+- New `plugins/code/tools/python/test_record_run.py` (covering gate behavior, JSON shape, fail-open paths, and repo/branch capture under a fake-`git` PATH shim plus a no-`timeout`-on-PATH regression case) and `plugins/code/tools/python/test_record_phase.py` (covering V2 gating, field correctness, and missing-state fail-open). Both files run under `pytest` with no extra fixtures.
 - One-line note in `prompts/prompt.md` documenting that `record_run.sh` is invoked automatically by `run-loop.sh` at the start of every Loop (before Phase 0.9) and requires no orchestrator action.
 
 ### code v1.11.4

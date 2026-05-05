@@ -183,7 +183,7 @@ class TestRecordRunOutput:
         assert first["run_id"] == "run-1"
         assert second["run_id"] == "run-2"
 
-    def test_noop_when_no_workdir(self, tmp_path: Path) -> None:
+    def test_noop_when_no_workdir(self) -> None:
         """Script exits 0 when WORKDIR arg and CLOSEDLOOP_WORKDIR are both absent."""
         env = {
             **os.environ,
@@ -198,6 +198,56 @@ class TestRecordRunOutput:
             env=env,
         )
         assert result.returncode == 0, f"Script failed: {result.stderr}"
+
+    def test_repo_captured_when_timeout_unavailable(self, tmp_path: Path) -> None:
+        """When `timeout` is not in PATH, repo is still captured via bare git.
+
+        Regression for the macOS-default case where GNU `timeout` is not installed:
+        without the `command -v timeout` guard, `timeout 5 git ...` would hit
+        "command not found", and the `|| echo ""` fallback would silently emit
+        empty repo/branch in every run event.
+        """
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        subprocess.run(
+            ["git", "init"], cwd=workdir, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://example.test/repo.git"],
+            cwd=workdir,
+            check=True,
+            capture_output=True,
+        )
+
+        # Strip every directory containing `timeout` from PATH so the script
+        # exercises its no-timeout branch.
+        base_path = os.environ.get("PATH", "")
+        sanitized_path = ":".join(
+            d
+            for d in base_path.split(":")
+            if d and not os.path.exists(os.path.join(d, "timeout"))
+        )
+
+        env = {
+            **os.environ,
+            "CLOSEDLOOP_PERF_V2": "1",
+            "CLOSEDLOOP_RUN_ID": "test-no-timeout",
+            "CLOSEDLOOP_COMMAND": "feature",
+            "CLOSEDLOOP_WORKDIR": str(workdir),
+            "PATH": sanitized_path,
+        }
+        result = subprocess.run(
+            ["bash", str(SCRIPT_PATH), str(workdir)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=env,
+        )
+        assert result.returncode == 0, f"Script failed: {result.stderr!r}"
+        record = json.loads((workdir / "perf.jsonl").read_text().strip())
+        assert record["repo"] == "https://example.test/repo.git", (
+            f"repo should be captured when timeout unavailable, got: {record['repo']!r}"
+        )
 
 
 class TestRecordRunFailOpen:
@@ -265,8 +315,7 @@ class TestRecordRunFailOpen:
         )
         perf_file = tmp_path / "perf.jsonl"
         assert perf_file.exists(), "perf.jsonl should still be written when git fails"
-        import json as _json
-        record = _json.loads(perf_file.read_text().strip())
+        record = json.loads(perf_file.read_text().strip())
         assert record.get("event") == "run"
         assert record.get("repo") == "", "repo should be empty string when git fails"
         assert record.get("branch") == "", "branch should be empty string when git fails"
