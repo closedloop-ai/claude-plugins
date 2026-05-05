@@ -436,19 +436,101 @@ if [[ -n "$AGENT_ID" ]] && [[ -n "$CLOSEDLOOP_WORKDIR" ]] && [[ -f "$AGENT_TYPES
             AGENT_DURATION=0
         fi
         PERF_FILE="$CLOSEDLOOP_WORKDIR/perf.jsonl"
-        jq -n -c \
-            --arg event "agent" \
-            --arg run_id "${CLOSEDLOOP_RUN_ID:-unknown}" \
-            --argjson iteration "${CLOSEDLOOP_ITERATION:-0}" \
-            --arg agent_id "$AGENT_ID" \
-            --arg agent_type "${AGENT_TYPE:-unknown}" \
-            --arg agent_name "${AGENT_NAME:-unknown}" \
-            --arg started_at "$AGENT_STARTED_AT" \
-            --arg ended_at "$AGENT_ENDED_AT" \
-            --argjson duration_s "$AGENT_DURATION" \
-            '{event:$event,run_id:$run_id,iteration:$iteration,agent_id:$agent_id,agent_type:$agent_type,agent_name:$agent_name,started_at:$started_at,ended_at:$ended_at,duration_s:$duration_s}' \
-            >> "$PERF_FILE"
-        echo "$(date): Emitted agent perf event: agent=$AGENT_NAME duration=${AGENT_DURATION}s" >> "$DEBUG_LOG"
+
+        if [[ "${CLOSEDLOOP_PERF_V2:-}" == "1" ]]; then
+            # --- Extended agent event with token aggregation (PERF_V2) ---
+            PERF_INPUT_TOKENS=0
+            PERF_OUTPUT_TOKENS=0
+            PERF_CACHE_CREATION=0
+            PERF_CACHE_READ=0
+            PERF_TOTAL_CONTEXT=0
+
+            # Read model and parent_session_id from hook input payload
+            PERF_MODEL=$(echo "$INPUT" | jq -r '.model // empty' 2>/dev/null || echo "")
+            PERF_PARENT_SESSION=$(echo "$INPUT" | jq -r '.parent_session_id // empty' 2>/dev/null || echo "")
+
+            # Read command from env var, falling back to config.env
+            PERF_COMMAND="${CLOSEDLOOP_COMMAND:-}"
+            if [[ -z "$PERF_COMMAND" ]]; then
+                CLOSEDLOOP_CONFIG_PATH="$CLOSEDLOOP_WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
+                if [[ -f "$CLOSEDLOOP_CONFIG_PATH" ]]; then
+                    PERF_COMMAND=$(grep '^CLOSEDLOOP_COMMAND=' "$CLOSEDLOOP_CONFIG_PATH" 2>/dev/null | head -1 | cut -d'=' -f2- || echo "")
+                fi
+            fi
+
+            # Aggregate tokens from transcript if available
+            if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
+                # Parse assistant entries from transcript JSONL and sum token usage.
+                # Follows the accumulation pattern from stream_formatter.py:203-226:
+                #   input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens
+                # Also tracks total_context_tokens as the high-water mark (running max of
+                # cumulative token sum across all entries).
+                TOKEN_RESULT=$(jq -s -c '
+                    [.[] | select(.role == "assistant") | .message.usage // empty] |
+                    reduce .[] as $u (
+                        {"input": 0, "output": 0, "cache_creation": 0, "cache_read": 0, "hwm": 0};
+                        .input += (($u.input_tokens // 0) | tonumber) |
+                        .output += (($u.output_tokens // 0) | tonumber) |
+                        .cache_creation += (($u.cache_creation_input_tokens // 0) | tonumber) |
+                        .cache_read += (($u.cache_read_input_tokens // 0) | tonumber) |
+                        (.input + .output + .cache_creation + .cache_read) as $cumul |
+                        .hwm = (if $cumul > .hwm then $cumul else .hwm end)
+                    )
+                ' "$TRANSCRIPT_PATH" 2>/dev/null) || TOKEN_RESULT=""
+
+                if [[ -n "$TOKEN_RESULT" ]]; then
+                    PERF_INPUT_TOKENS=$(echo "$TOKEN_RESULT" | jq -r '.input // 0' 2>/dev/null || echo "0")
+                    PERF_OUTPUT_TOKENS=$(echo "$TOKEN_RESULT" | jq -r '.output // 0' 2>/dev/null || echo "0")
+                    PERF_CACHE_CREATION=$(echo "$TOKEN_RESULT" | jq -r '.cache_creation // 0' 2>/dev/null || echo "0")
+                    PERF_CACHE_READ=$(echo "$TOKEN_RESULT" | jq -r '.cache_read // 0' 2>/dev/null || echo "0")
+                    PERF_TOTAL_CONTEXT=$(echo "$TOKEN_RESULT" | jq -r '.hwm // 0' 2>/dev/null || echo "0")
+                    echo "$(date): Token aggregation: in=$PERF_INPUT_TOKENS out=$PERF_OUTPUT_TOKENS cc=$PERF_CACHE_CREATION cr=$PERF_CACHE_READ hwm=$PERF_TOTAL_CONTEXT" >> "$DEBUG_LOG"
+                else
+                    echo "$(date): Token aggregation failed, defaulting to 0" >> "$DEBUG_LOG"
+                fi
+            else
+                echo "$(date): No transcript for token aggregation (PERF_V2)" >> "$DEBUG_LOG"
+            fi
+
+            # Emit extended event with token/model fields
+            # Use jq --argjson for numeric fields; emit null for missing model/parent_session_id
+            jq -n -c \
+                --arg event "agent" \
+                --arg run_id "${CLOSEDLOOP_RUN_ID:-unknown}" \
+                --argjson iteration "${CLOSEDLOOP_ITERATION:-0}" \
+                --arg agent_id "$AGENT_ID" \
+                --arg agent_type "${AGENT_TYPE:-unknown}" \
+                --arg agent_name "${AGENT_NAME:-unknown}" \
+                --arg started_at "$AGENT_STARTED_AT" \
+                --arg ended_at "$AGENT_ENDED_AT" \
+                --argjson duration_s "$AGENT_DURATION" \
+                --argjson input_tokens "${PERF_INPUT_TOKENS:-0}" \
+                --argjson output_tokens "${PERF_OUTPUT_TOKENS:-0}" \
+                --argjson cache_creation_input_tokens "${PERF_CACHE_CREATION:-0}" \
+                --argjson cache_read_input_tokens "${PERF_CACHE_READ:-0}" \
+                --argjson total_context_tokens "${PERF_TOTAL_CONTEXT:-0}" \
+                --arg model "${PERF_MODEL}" \
+                --arg parent_session_id "${PERF_PARENT_SESSION}" \
+                --arg command "${PERF_COMMAND}" \
+                '{event:$event,run_id:$run_id,iteration:$iteration,agent_id:$agent_id,agent_type:$agent_type,agent_name:$agent_name,started_at:$started_at,ended_at:$ended_at,duration_s:$duration_s,command:$command,model:(if $model == "" then null else $model end),parent_session_id:(if $parent_session_id == "" then null else $parent_session_id end),input_tokens:$input_tokens,output_tokens:$output_tokens,cache_creation_input_tokens:$cache_creation_input_tokens,cache_read_input_tokens:$cache_read_input_tokens,total_context_tokens:$total_context_tokens}' \
+                >> "$PERF_FILE"
+            echo "$(date): Emitted PERF_V2 agent event: agent=$AGENT_NAME duration=${AGENT_DURATION}s tokens_in=$PERF_INPUT_TOKENS" >> "$DEBUG_LOG"
+        else
+            # --- Baseline FEA-764 agent event (timing only) ---
+            jq -n -c \
+                --arg event "agent" \
+                --arg run_id "${CLOSEDLOOP_RUN_ID:-unknown}" \
+                --argjson iteration "${CLOSEDLOOP_ITERATION:-0}" \
+                --arg agent_id "$AGENT_ID" \
+                --arg agent_type "${AGENT_TYPE:-unknown}" \
+                --arg agent_name "${AGENT_NAME:-unknown}" \
+                --arg started_at "$AGENT_STARTED_AT" \
+                --arg ended_at "$AGENT_ENDED_AT" \
+                --argjson duration_s "$AGENT_DURATION" \
+                '{event:$event,run_id:$run_id,iteration:$iteration,agent_id:$agent_id,agent_type:$agent_type,agent_name:$agent_name,started_at:$started_at,ended_at:$ended_at,duration_s:$duration_s}' \
+                >> "$PERF_FILE"
+            echo "$(date): Emitted agent perf event: agent=$AGENT_NAME duration=${AGENT_DURATION}s" >> "$DEBUG_LOG"
+        fi
     fi
 fi
 
