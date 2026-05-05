@@ -980,6 +980,9 @@ log_progress() {
 emit_perf_event() {
   local json_line="$1"
   local perf_file="${CLOSEDLOOP_WORKDIR:-.}/perf.jsonl"
+  if [[ "${CLOSEDLOOP_PERF_V2:-}" == "1" ]]; then
+    json_line=$(echo "$json_line" | jq -c --arg command "${CLOSEDLOOP_COMMAND:-interactive}" '. + {command:$command}')
+  fi
   echo "$json_line" >> "$perf_file"
 }
 
@@ -1204,6 +1207,7 @@ main() {
   # Export environment variables for learning system
   export CLOSEDLOOP_WORKDIR="$effective_workdir"
   export CLOSEDLOOP_RUN_ID="$RUN_ID"
+  export CLOSEDLOOP_COMMAND="${PROMPT_NAME:-interactive}"
 
   # Load goal configuration
   load_goal_config "$effective_workdir"
@@ -1226,6 +1230,9 @@ main() {
   echo ""
 
   log_progress "Loop started - run_id=$RUN_ID iteration=$iteration max=$max_iterations promise=$completion_promise"
+
+  # Record run event to perf.jsonl (non-blocking; gated behind CLOSEDLOOP_PERF_V2=1)
+  bash "$SCRIPTS_DIR/record_run.sh" "$effective_workdir" &
 
   # jq filter to extract final result
   local final_result='select(.type == "result").result // empty'
