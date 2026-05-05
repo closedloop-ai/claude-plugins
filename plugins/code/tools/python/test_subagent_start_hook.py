@@ -326,3 +326,181 @@ def test_injects_when_only_plain_awk_is_available(session_env: tuple[Path, Path,
     ctx = output["hookSpecificOutput"]["additionalContext"]
     assert "CLOSEDLOOP_WORKDIR=" in ctx
     assert "Always validate inputs before processing" in ctx
+
+
+def _make_booster_manifest(tmp_path: Path, skills: list[dict]) -> Path:
+    """Write a booster.json manifest to tmp_path and return its path."""
+    manifest = {
+        "name": "GStack",
+        "skills": skills,
+    }
+    manifest_path = tmp_path / "booster.json"
+    manifest_path.write_text(json.dumps(manifest))
+    return manifest_path
+
+
+class TestGStackBoosterSkills:
+    """Tests for GStack booster skill injection (T-4.2)."""
+
+    def test_gstack_skills_injected_with_prefix(
+        self, session_env: tuple[Path, Path, str], tmp_path: Path
+    ) -> None:
+        """GStack skills appear with 'gstack:' prefix when CLOSEDLOOP_BOOSTER_MANIFEST_PATH is set."""
+        import os
+
+        cwd, _workdir, session_id = session_env
+
+        manifest_path = _make_booster_manifest(
+            tmp_path,
+            [
+                {"name": "visual-qa", "description": "Run visual QA checks", "requiresBrowser": False},
+                {"name": "perf-audit", "description": "Run performance audit", "requiresBrowser": False},
+            ],
+        )
+
+        result = run_start_hook(
+            str(cwd),
+            session_id,
+            self_learning=False,
+            env_overrides={
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "HOME": os.environ.get("HOME", "/tmp"),
+                "CLOSEDLOOP_BOOSTER_MANIFEST_PATH": str(manifest_path),
+                "CLOSEDLOOP_BOOSTER": "gstack",
+            },
+        )
+
+        assert result.returncode == 0, f"Hook failed: {result.stderr}"
+        output = json.loads(result.stdout.strip())
+        ctx = output["hookSpecificOutput"]["additionalContext"]
+        assert "gstack:visual-qa" in ctx, f"Expected 'gstack:visual-qa' in context; got: {ctx}"
+        assert "gstack:perf-audit" in ctx, f"Expected 'gstack:perf-audit' in context; got: {ctx}"
+        assert "<booster-skills>" in ctx
+        assert "Run visual QA checks" in ctx
+        assert "Run performance audit" in ctx
+
+    def test_no_gstack_skills_when_env_var_absent(
+        self, session_env: tuple[Path, Path, str]
+    ) -> None:
+        """No booster skills are injected when CLOSEDLOOP_BOOSTER_MANIFEST_PATH is not set."""
+        import os
+
+        cwd, _workdir, session_id = session_env
+
+        result = run_start_hook(
+            str(cwd),
+            session_id,
+            self_learning=False,
+            env_overrides={
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "HOME": os.environ.get("HOME", "/tmp"),
+                # CLOSEDLOOP_BOOSTER_MANIFEST_PATH deliberately omitted
+            },
+        )
+
+        assert result.returncode == 0, f"Hook failed: {result.stderr}"
+        output = json.loads(result.stdout.strip())
+        ctx = output["hookSpecificOutput"]["additionalContext"]
+        assert "<booster-skills>" not in ctx, (
+            "Expected no booster-skills block when CLOSEDLOOP_BOOSTER_MANIFEST_PATH is absent"
+        )
+        assert "gstack:" not in ctx
+
+    def test_browser_dependent_skills_skipped_with_warning_when_playwright_unavailable(
+        self, session_env: tuple[Path, Path, str], tmp_path: Path
+    ) -> None:
+        """Browser-dependent skills are skipped with a stderr warning when Playwright is unavailable.
+
+        Uses a Python wrapper script placed ahead of the real python3 on PATH.
+        When invoked with '-' (stdin mode, as the hook does), the wrapper prepends
+        a playwright stub and a shutil.which patch so that Playwright is seen as
+        unavailable, then executes the hook's inline script.
+        """
+        import os
+        import stat
+        import sys as _sys
+
+        cwd, _workdir, session_id = session_env
+
+        # Manifest with one non-browser and one browser-only skill
+        manifest_path = _make_booster_manifest(
+            tmp_path,
+            [
+                {"name": "no-browser-skill", "description": "Works without browser", "requiresBrowser": False},
+                {"name": "screenshot", "description": "Takes screenshots", "requiresBrowser": True},
+            ],
+        )
+
+        # Build a Python wrapper that intercepts stdin-mode invocations and
+        # makes playwright unavailable. The wrapper is a Python script itself
+        # so there are no bash heredoc quoting issues.
+        fake_bin_dir = tmp_path / "fake_bin"
+        fake_bin_dir.mkdir()
+        real_python = _sys.executable  # absolute path to the running interpreter
+
+        # The playwright stub prepended to the hook's inline script
+        playwright_stub = (
+            "import sys as _sys, types as _types\n"
+            "class _NoPW:\n"
+            "    def find_module(self, n, p=None):\n"
+            "        if n == 'playwright' or n.startswith('playwright.'): return self\n"
+            "    def load_module(self, n):\n"
+            "        raise ImportError('No module named ' + repr(n) + ' (stubbed)')\n"
+            "_sys.meta_path.insert(0, _NoPW())\n"
+            "import shutil as _sh; _ow = _sh.which\n"
+            "def _pw(name, *a, **kw): return None if name == 'npx' else _ow(name, *a, **kw)\n"
+            "_sh.which = _pw\n"
+        )
+
+        fake_python_script = fake_bin_dir / "python3"
+        # Use the absolute shebang to avoid infinite self-lookup when fake_bin_dir is on PATH
+        fake_python_script.write_text(
+            "#!" + real_python + "\n"
+            "import sys, os\n"
+            "\n"
+            "# When first arg is '-', we are in stdin-script mode (as called by the hook).\n"
+            "# Read the hook's inline Python, prepend the playwright stub, run it.\n"
+            "if sys.argv[1:2] == ['-']:\n"
+            "    hook_code = sys.stdin.read()\n"
+            "    stub = " + repr(playwright_stub) + "\n"
+            "    combined = stub + hook_code\n"
+            "    # Pass remaining argv items as sys.argv for the hook script\n"
+            "    sys.argv = [sys.argv[0]] + sys.argv[2:]\n"
+            "    exec(compile(combined, '<booster-hook>', 'exec'))\n"
+            "else:\n"
+            "    # Forward all other invocations to the real python3\n"
+            "    os.execv(" + repr(real_python) + ", [" + repr(real_python) + "] + sys.argv[1:])\n"
+        )
+        fake_python_script.chmod(
+            fake_python_script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
+        )
+
+        real_path = os.environ.get("PATH", "/usr/bin:/bin")
+        result = run_start_hook(
+            str(cwd),
+            session_id,
+            self_learning=False,
+            env_overrides={
+                "PATH": f"{fake_bin_dir}:{real_path}",
+                "HOME": os.environ.get("HOME", "/tmp"),
+                "CLOSEDLOOP_BOOSTER_MANIFEST_PATH": str(manifest_path),
+                "CLOSEDLOOP_BOOSTER": "gstack",
+            },
+        )
+
+        assert result.returncode == 0, f"Hook failed: {result.stderr}"
+        output = json.loads(result.stdout.strip())
+        ctx = output["hookSpecificOutput"]["additionalContext"]
+
+        # Non-browser skill should be present
+        assert "gstack:no-browser-skill" in ctx, (
+            f"Expected 'gstack:no-browser-skill' in context; got: {ctx}"
+        )
+        # Browser-dependent skill should be absent from context
+        assert "gstack:screenshot" not in ctx, (
+            f"Expected 'gstack:screenshot' to be absent from context; got: {ctx}"
+        )
+        # Warning should appear in stderr (the hook's Python emits it to stderr)
+        assert "Playwright" in result.stderr or "playwright" in result.stderr, (
+            f"Expected Playwright warning in stderr; got: {result.stderr}"
+        )

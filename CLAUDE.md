@@ -58,6 +58,32 @@ Token-Oriented Object Notation — ~40% token reduction vs JSON, used for `org-p
 
 Standalone scripts with no cross-tool imports within a plugin. Each lives in `plugins/<name>/tools/python/`. Tests are co-located (`test_*.py`).
 
+### Booster Packs
+
+Boosters are optional capability packs that extend the plugin system without modifying core plugins (e.g., `gstack` adds browser-testing skills via Playwright). They live under `boosters/<name>/` and are activated with the `--booster <name>` flag passed to `run-loop.sh`.
+
+**Registry / Manifest format.** `boosters/registry.json` maps each booster name to its manifest path:
+
+```json
+{
+  "gstack": "boosters/gstack/booster.json"
+}
+```
+
+Each `booster.json` lists the skills the booster provides:
+
+```json
+{
+  "name": "gstack",
+  "skills": [
+    { "name": "visual-qa", "path": "boosters/gstack/skills/visual-qa.md", "requiresBrowser": true },
+    { "name": "api-test",  "path": "boosters/gstack/skills/api-test.md",  "requiresBrowser": false }
+  ]
+}
+```
+
+**Hook injection.** When `--booster <name>` is set, `SubagentStart` (`subagent-start-hook.sh`) reads the booster manifest and injects each skill into the agent context using the `<booster-name>:<skill-name>` identifier format (e.g., `gstack:visual-qa`). Skills marked `requiresBrowser: true` are silently skipped when Playwright is unavailable, so the booster degrades gracefully in environments without a browser.
+
 ## Conventions
 
 ### Commits

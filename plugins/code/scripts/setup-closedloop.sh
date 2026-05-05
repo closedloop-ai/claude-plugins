@@ -1,6 +1,6 @@
 #!/bin/bash
 # Setup ClosedLoop config for hooks to source
-# Usage: setup-closedloop.sh [workdir] [--prd <file>] [--plan <file>] [--max-iterations <n>] [--prompt <name>]
+# Usage: setup-closedloop.sh [workdir] [--prd <file>] [--plan <file>] [--max-iterations <n>] [--prompt <name>] [--booster <name>]
 
 set -e
 
@@ -23,6 +23,7 @@ MAX_ITERATIONS=10
 PROMPT_NAME=""
 WORKDIR=""
 ADD_DIRS=()
+BOOSTER_NAME=""
 ARGS=("$@")
 ARG_INDEX=0
 ARG_COUNT=${#ARGS[@]}
@@ -169,6 +170,15 @@ while [[ $ARG_INDEX -lt $ARG_COUNT ]]; do
             fi
             ADD_DIRS+=("$add_dir_value")
             ;;
+        --booster)
+            ARG_INDEX=$((ARG_INDEX + 1))
+            if [[ $ARG_INDEX -ge $ARG_COUNT ]]; then
+                echo "Error: --booster requires a name" >&2
+                exit 1
+            fi
+            BOOSTER_NAME="${ARGS[$ARG_INDEX]}"
+            ARG_INDEX=$((ARG_INDEX + 1))
+            ;;
         -*)
             echo "Unknown option: $token" >&2
             ARG_INDEX=$((ARG_INDEX + 1))
@@ -312,6 +322,58 @@ else
     exit 1
 fi
 
+REPO_ROOT="$(dirname "$(dirname "$PLUGIN_ROOT")")"
+
+# Validate booster name if provided
+BOOSTER_MANIFEST_PATH=""
+if [[ -n "$BOOSTER_NAME" ]]; then
+    BOOSTER_REGISTRY="$REPO_ROOT/boosters/registry.json"
+    if [[ ! -f "$BOOSTER_REGISTRY" ]]; then
+        echo "Error: boosters/registry.json not found at $BOOSTER_REGISTRY" >&2
+        exit 1
+    fi
+    BOOSTER_MANIFEST_PATH="$(python3 - "$BOOSTER_NAME" "$BOOSTER_REGISTRY" <<'PYEOF'
+import json, sys
+
+booster_name = sys.argv[1]
+registry_path = sys.argv[2]
+
+try:
+    with open(registry_path) as f:
+        registry = json.load(f)
+except (json.JSONDecodeError, OSError) as e:
+    print(f"Error: failed to read {registry_path}: {e}", file=sys.stderr)
+    sys.exit(1)
+
+for booster in registry.get("boosters", []):
+    if booster.get("name") == booster_name:
+        path = booster.get("manifestPath", "")
+        if path:
+            print(path)
+            sys.exit(0)
+        print(f"Error: booster '{booster_name}' has no manifestPath in registry", file=sys.stderr)
+        sys.exit(1)
+
+print(f"Error: booster '{booster_name}' not found in boosters/registry.json", file=sys.stderr)
+print("Available boosters:", file=sys.stderr)
+for booster in registry.get("boosters", []):
+    name = booster.get("name", "")
+    desc = booster.get("description", "")
+    print(f"  {name}: {desc[:80]}", file=sys.stderr)
+sys.exit(1)
+PYEOF
+    )"
+    if [[ $? -ne 0 ]] || [[ -z "$BOOSTER_MANIFEST_PATH" ]]; then
+        exit 1
+    fi
+    BOOSTER_DIR="$(dirname "$REPO_ROOT/$BOOSTER_MANIFEST_PATH")"
+    if [[ ! -d "$BOOSTER_DIR" ]]; then
+        echo "Error: booster '$BOOSTER_NAME' directory not found: $BOOSTER_DIR" >&2
+        exit 1
+    fi
+    BOOSTER_MANIFEST_PATH="$REPO_ROOT/$BOOSTER_MANIFEST_PATH"
+fi
+
 mkdir -p "$WORKDIR/$CLOSEDLOOP_STATE_DIR"
 
 # Preserve run-loop-managed keys before truncating config.env. run-loop.sh
@@ -335,6 +397,8 @@ CLOSEDLOOP_PLAN_FILE="${PLAN_FILE:-${CLOSEDLOOP_PLAN_FILE:-}}"
 CLOSEDLOOP_MAX_ITERATIONS="$MAX_ITERATIONS"
 CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
 CLOSEDLOOP_PROMPT_FILE="$CLOSEDLOOP_PROMPT_FILE"
+CLOSEDLOOP_BOOSTER="${BOOSTER_NAME:-${CLOSEDLOOP_BOOSTER:-}}"
+CLOSEDLOOP_BOOSTER_MANIFEST_PATH="${BOOSTER_MANIFEST_PATH:-${CLOSEDLOOP_BOOSTER_MANIFEST_PATH:-}}"
 EOF
 
 # Build pipe-joined multi-repo variables (empty strings when no extra repos)

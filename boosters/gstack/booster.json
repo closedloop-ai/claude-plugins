@@ -1,0 +1,37 @@
+{
+  "name": "gstack",
+  "version": "1.0.0",
+  "description": "GStack browser automation booster by Garry Tan. Provides 30+ specialist workflows including browser-based QA, security audits, staff-engineer code review, design reviews, systematic debugging, and product interrogation.",
+  "skills": [
+    {
+      "name": "navigate",
+      "path": "skills/navigate.md",
+      "description": "Navigate to a URL in the headless browser, wait for page load, and return the resulting DOM state.",
+      "requiresBrowser": true
+    },
+    {
+      "name": "screenshot",
+      "path": "skills/screenshot.md",
+      "description": "Capture a full-page or element-scoped screenshot using Playwright and return the image for visual inspection.",
+      "requiresBrowser": true
+    },
+    {
+      "name": "interact",
+      "path": "skills/interact.md",
+      "description": "Perform user interactions on a live page (click, type, select, hover) via Playwright and report resulting state changes.",
+      "requiresBrowser": true
+    },
+    {
+      "name": "verify-state",
+      "path": "skills/verify-state.md",
+      "description": "Assert that the page or component matches expected state (text content, attribute values, visibility, URL) using Playwright locators.",
+      "requiresBrowser": true
+    },
+    {
+      "name": "responsive-test",
+      "path": "skills/responsive-test.md",
+      "description": "Resize the browser viewport to multiple breakpoints and capture screenshots to verify responsive layout behavior.",
+      "requiresBrowser": true
+    }
+  ]
+}

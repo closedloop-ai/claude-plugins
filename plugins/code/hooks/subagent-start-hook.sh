@@ -168,6 +168,80 @@ export CLOSEDLOOP_REPO_MAP=\"${CLOSEDLOOP_REPO_MAP:-}\"
 </closedloop-environment>"
 SUFFIX_PARTS="$ENV_INFO"
 
+# Inject booster skills into additionalContext if CLOSEDLOOP_BOOSTER_MANIFEST_PATH is set
+if [[ -n "${CLOSEDLOOP_BOOSTER_MANIFEST_PATH:-}" ]] && [[ -f "$CLOSEDLOOP_BOOSTER_MANIFEST_PATH" ]] && command -v python3 &>/dev/null; then
+    BOOSTER_PREFIX="${CLOSEDLOOP_BOOSTER:-booster}"
+    BOOSTER_SKILLS=$(python3 - "$CLOSEDLOOP_BOOSTER_MANIFEST_PATH" "$BOOSTER_PREFIX" <<'PYEOF'
+import json, sys, subprocess, shutil
+
+manifest_path = sys.argv[1]
+prefix = sys.argv[2]
+
+def playwright_available():
+    # Check 1: Python playwright package
+    try:
+        import playwright  # noqa: F401
+        return True
+    except ImportError:
+        pass
+    # Check 2: npx playwright CLI
+    npx = shutil.which("npx")
+    if npx:
+        try:
+            result = subprocess.run(
+                [npx, "playwright", "--version"],
+                capture_output=True, timeout=5
+            )
+            if result.returncode == 0:
+                return True
+        except Exception:
+            pass
+    return False
+
+try:
+    with open(manifest_path) as f:
+        manifest = json.load(f)
+    skills = manifest.get("skills", [])
+    if not skills:
+        sys.exit(0)
+
+    browser_ok = None  # Lazy-evaluate only if needed
+
+    lines = ["<booster-skills>"]
+    lines.append(f"# Booster: {manifest.get('name', prefix)} — available skills (use skill name with '{prefix}:' prefix)")
+    for skill in skills:
+        name = skill.get("name", "")
+        description = skill.get("description", "")
+        requires_browser = skill.get("requiresBrowser", False)
+        if not name:
+            continue
+        if requires_browser:
+            if browser_ok is None:
+                browser_ok = playwright_available()
+            if not browser_ok:
+                print(
+                    f"WARNING: skipping browser-dependent skill '{prefix}:{name}' "
+                    "— Playwright/Chromium is not available",
+                    file=sys.stderr
+                )
+                continue
+        lines.append(f"- {prefix}:{name}: {description}")
+    lines.append("</booster-skills>")
+    # Only print if we have at least one skill entry (beyond the header lines)
+    if len(lines) > 3:
+        print("\n".join(lines))
+except Exception:
+    sys.exit(0)
+PYEOF
+    )
+    if [[ -n "$BOOSTER_SKILLS" ]]; then
+        SUFFIX_PARTS="$SUFFIX_PARTS
+
+$BOOSTER_SKILLS"
+        echo "$(date): Injected booster skills from $CLOSEDLOOP_BOOSTER_MANIFEST_PATH (prefix=$BOOSTER_PREFIX)" >> "$DEBUG_LOG"
+    fi
+fi
+
 # Skip learning injection if self-learning is disabled (agent-type tracking above is unconditional)
 if [[ "${CLOSEDLOOP_SELF_LEARNING:-false}" != "true" ]]; then
     SUFFIX_ESCAPED=$(echo "$SUFFIX_PARTS" | jq -Rs '.')

@@ -97,6 +97,21 @@ fi
 
 echo
 
+# ── Initialize git submodules (e.g. GStack) ──────────────────────────────────
+step "Initializing git submodules..."
+if git rev-parse --git-dir &>/dev/null; then
+    if git submodule init 2>"$WORK_DIR/submodule_err" && git submodule update 2>>"$WORK_DIR/submodule_err"; then
+        info "Git submodules initialized"
+    else
+        warn "Git submodule init/update encountered an issue (non-fatal):"
+        sanitize_stderr "$WORK_DIR/submodule_err"
+    fi
+else
+    warn "Not inside a git repository — skipping submodule initialization"
+fi
+
+echo
+
 # ── Add marketplace ─────────────────────────────────────────────────────────
 step "Registering closedloop-ai marketplace..."
 

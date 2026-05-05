@@ -1,5 +1,6 @@
 """Tests for setup-closedloop.sh script."""
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -8,6 +9,9 @@ import pytest
 from conftest import CLOSEDLOOP_STATE_DIR
 
 SETUP_SCRIPT = Path(__file__).parent.parent.parent / "scripts" / "setup-closedloop.sh"
+# Repo root is two levels above the plugin root (plugins/code -> plugins -> repo root)
+_PLUGIN_ROOT = SETUP_SCRIPT.parent.parent
+REPO_ROOT = _PLUGIN_ROOT.parent.parent
 
 
 @pytest.fixture
@@ -463,3 +467,68 @@ def test_reconstructs_split_add_dir_path_with_spaces(
     assert result.returncode == 0, result.stderr
     config = _config_env(tmp_workdir)
     assert _config_value(config, "CLOSEDLOOP_ADD_DIRS") == str(extra_repo.resolve())
+
+
+# ---------------------------------------------------------------------------
+# --booster tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def registry_with_missing_dir():
+    """Temporarily add a booster entry pointing to a nonexistent directory.
+
+    Restores the original registry.json after the test completes so no real
+    file is permanently modified.
+    """
+    registry_path = REPO_ROOT / "boosters" / "registry.json"
+    original_text = registry_path.read_text()
+    registry = json.loads(original_text)
+    registry["boosters"].append(
+        {
+            "name": "test-booster-missing-dir",
+            "description": "Test booster with nonexistent directory",
+            "manifestPath": "boosters/nonexistent-booster-dir/booster.json",
+        }
+    )
+    registry_path.write_text(json.dumps(registry, indent=2))
+    yield "test-booster-missing-dir"
+    registry_path.write_text(original_text)
+
+
+def test_booster_gstack_parses_correctly(tmp_workdir: Path) -> None:
+    """Should succeed when --booster gstack is passed and the booster exists."""
+    result = _run_setup_in_workdir(tmp_workdir, "--booster", "gstack")
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_booster_written_to_config_env(tmp_workdir: Path) -> None:
+    """CLOSEDLOOP_BOOSTER must be written to config.env after --booster gstack."""
+    result = _run_setup_in_workdir(tmp_workdir, "--booster", "gstack")
+
+    assert result.returncode == 0, result.stderr
+    config = _config_env(tmp_workdir)
+    assert "CLOSEDLOOP_BOOSTER=" in config
+    assert _config_value(config, "CLOSEDLOOP_BOOSTER") == "gstack"
+
+
+def test_unknown_booster_name_fails(tmp_workdir: Path) -> None:
+    """Should exit non-zero when --booster names a booster not in registry.json."""
+    result = _run_setup_in_workdir(
+        tmp_workdir, "--booster", "totally-unknown-booster-xyz-does-not-exist"
+    )
+
+    assert result.returncode != 0
+    assert "not found" in result.stderr.lower()
+
+
+def test_missing_booster_directory_fails(
+    tmp_workdir: Path, registry_with_missing_dir: str
+) -> None:
+    """Should exit non-zero when the booster is in the registry but its directory is absent."""
+    booster_name = registry_with_missing_dir
+    result = _run_setup_in_workdir(tmp_workdir, "--booster", booster_name)
+
+    assert result.returncode != 0
+    assert "not found" in result.stderr.lower() or "directory" in result.stderr.lower()

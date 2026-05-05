@@ -148,6 +148,100 @@ refactor(code): simplify plan-writer merge mode
 
 Scopes: `bootstrap`, `code`, `code-review`, `judges`, `platform`, `self-learning`
 
+## Creating Booster Packs
+
+Booster packs are optional bundles of skills that extend the orchestration loop with specialist workflows. They live under `boosters/<name>/` and are activated with `--booster <name>`.
+
+### Directory Structure
+
+```
+boosters/
+  <name>/
+    booster.json        # manifest (required)
+    skills/
+      <skill-name>.md   # one file per skill (required if referenced in manifest)
+  registry.json         # global booster registry
+```
+
+Naming conventions:
+- Use lowercase kebab-case for the booster directory name and skill names (e.g., `my-booster`, `verify-state`)
+- The directory name must match the `name` field in `booster.json` and the `name` field in `registry.json`
+
+### `booster.json` Manifest Schema
+
+Every booster must include a `booster.json` at `boosters/<name>/booster.json`:
+
+```json
+{
+  "name": "my-booster",
+  "version": "1.0.0",
+  "description": "Short description of what the booster provides.",
+  "skills": [
+    {
+      "name": "my-skill",
+      "path": "skills/my-skill.md",
+      "description": "What this skill does and when it is invoked.",
+      "requiresBrowser": false
+    }
+  ]
+}
+```
+
+Required fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | Booster identifier (matches directory name and registry entry) |
+| `version` | string | Semver version string (e.g., `"1.0.0"`) |
+| `description` | string | Human-readable summary of the booster's purpose |
+| `skills` | array | List of skill objects (may be empty `[]`) |
+
+Each entry in `skills` requires:
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | Skill identifier used when referencing the skill |
+| `path` | string | Relative path from the booster directory to the skill Markdown file |
+| `description` | string | What the skill does and when it is used |
+| `requiresBrowser` | boolean | `true` if the skill needs Playwright / a headless browser |
+
+### Registering in `boosters/registry.json`
+
+After creating the booster directory and manifest, add an entry to `boosters/registry.json`:
+
+```json
+{
+  "boosters": [
+    {
+      "name": "my-booster",
+      "description": "One-line summary shown to users when listing available boosters.",
+      "manifestPath": "boosters/my-booster/booster.json",
+      "featureFlag": "my-booster-pack"
+    }
+  ]
+}
+```
+
+Required fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | Must match the `name` in `booster.json` and the directory name |
+| `description` | string | User-facing description (shown in marketplace / help output) |
+| `manifestPath` | string | Relative path from the repo root to `booster.json` |
+| `featureFlag` | string | Identifier used to gate the booster behind a feature flag |
+
+### Testing a New Booster
+
+Pass `--booster <name>` when invoking the runner to verify that your skills are injected correctly:
+
+```bash
+# Smoke-test skill injection with your booster active
+claude -p "describe what you can do" --booster my-booster
+```
+
+Confirm that the skills listed in `booster.json` appear in the agent's available skill set before opening a PR.
+
 ## Plugin Version Management
 
 When modifying agents, skills, hooks, commands, or any file under `plugins/{plugin-name}/`:

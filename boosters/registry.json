@@ -1,0 +1,10 @@
+{
+  "boosters": [
+    {
+      "name": "gstack",
+      "description": "A bundle of 30+ specialist workflows by Garry Tan including browser-based QA (/qa), security audits (/cso), staff-engineer code review (/review), design reviews (/design-review), systematic debugging (/investigate), and product interrogation (/office-hours). Activate with --booster gstack to enhance Execute, Create PRD, and Generate Implementation Plan loops.",
+      "manifestPath": "boosters/gstack/booster.json",
+      "featureFlag": "gstack-booster-pack"
+    }
+  ]
+}

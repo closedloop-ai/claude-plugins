@@ -24,6 +24,7 @@ def _awk_extract_script() -> str:
     targets = [
         "emit_skipped_step",
         "log_progress",
+        "escape_prompt_arg",
         "create_state_file",
         "parse_frontmatter",
         "get_field",

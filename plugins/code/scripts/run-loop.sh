@@ -802,6 +802,7 @@ OPTIONS:
   --completion-promise '<text>'  Promise phrase to signal completion (default: COMPLETE)
   --add-dir <path>               Add a secondary repository for multi-repo planning (repeatable)
   --self-learning                Enable self-learning (disabled by default)
+  --booster <name>               Name of the booster to activate (sets CLOSEDLOOP_BOOSTER)
   -h, --help                     Show this help message
 
 DESCRIPTION:
@@ -857,6 +858,7 @@ PROMPT_NAME=""
 MAX_ITERATIONS=50
 COMPLETION_PROMISE="COMPLETE"
 ADD_DIRS=()
+CLOSEDLOOP_BOOSTER=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -919,6 +921,14 @@ while [[ $# -gt 0 ]]; do
     --self-learning)
       SELF_LEARNING=true
       shift
+      ;;
+    --booster)
+      if [[ -z "${2:-}" ]]; then
+        echo -e "${RED}Error: --booster requires a name argument${NC}" >&2
+        exit 1
+      fi
+      CLOSEDLOOP_BOOSTER="$2"
+      shift 2
       ;;
     -*)
       echo -e "${RED}Error: Unknown option: $1${NC}" >&2
@@ -1033,6 +1043,17 @@ update_iteration() {
   mv "$temp_file" "$STATE_FILE"
 }
 
+# Escape a value for safe embedding inside double-quoted prompt arguments.
+# Escapes backslash, double-quote, dollar-sign, and backtick.
+escape_prompt_arg() {
+  local val="$1"
+  val="${val//\\/\\\\}"
+  val="${val//\"/\\\"}"
+  val="${val//\$/\\\$}"
+  val="${val//\`/\\\`}"
+  printf '%s' "$val"
+}
+
 # Create state file
 create_state_file() {
   mkdir -p "$CLOSEDLOOP_STATE_DIR"
@@ -1043,36 +1064,29 @@ create_state_file() {
 
   # Build the prompt - this is what gets passed to claude -p.
   # Quote values so paths with spaces survive slash-command argument parsing.
-  local workdir_arg="$WORKDIR"
-  workdir_arg="${workdir_arg//\\/\\\\}"
-  workdir_arg="${workdir_arg//\"/\\\"}"
-  workdir_arg="${workdir_arg//\$/\\\$}"
-  workdir_arg="${workdir_arg//\`/\\\`}"
+  local workdir_arg
+  workdir_arg=$(escape_prompt_arg "$WORKDIR")
   local prompt="/code:code \"$workdir_arg\""
   if [[ -n "$PROMPT_NAME" ]]; then
-    local prompt_name_arg="$PROMPT_NAME"
-    prompt_name_arg="${prompt_name_arg//\\/\\\\}"
-    prompt_name_arg="${prompt_name_arg//\"/\\\"}"
-    prompt_name_arg="${prompt_name_arg//\$/\\\$}"
-    prompt_name_arg="${prompt_name_arg//\`/\\\`}"
+    local prompt_name_arg
+    prompt_name_arg=$(escape_prompt_arg "$PROMPT_NAME")
     prompt="$prompt --prompt \"$prompt_name_arg\""
   fi
   if [[ -n "$PRD_FILE" ]]; then
-    local prd_arg="$PRD_FILE"
-    prd_arg="${prd_arg//\\/\\\\}"
-    prd_arg="${prd_arg//\"/\\\"}"
-    prd_arg="${prd_arg//\$/\\\$}"
-    prd_arg="${prd_arg//\`/\\\`}"
+    local prd_arg
+    prd_arg=$(escape_prompt_arg "$PRD_FILE")
     prompt="$prompt --prd \"$prd_arg\""
   fi
   for add_dir in "${ADD_DIRS[@]+"${ADD_DIRS[@]}"}"; do
-    local add_dir_arg="$add_dir"
-    add_dir_arg="${add_dir_arg//\\/\\\\}"
-    add_dir_arg="${add_dir_arg//\"/\\\"}"
-    add_dir_arg="${add_dir_arg//\$/\\\$}"
-    add_dir_arg="${add_dir_arg//\`/\\\`}"
+    local add_dir_arg
+    add_dir_arg=$(escape_prompt_arg "$add_dir")
     prompt="$prompt --add-dir \"$add_dir_arg\""
   done
+  if [[ -n "${CLOSEDLOOP_BOOSTER:-}" ]]; then
+    local booster_arg
+    booster_arg=$(escape_prompt_arg "${CLOSEDLOOP_BOOSTER:-}")
+    prompt="$prompt --booster \"$booster_arg\""
+  fi
 
   cat > "$STATE_FILE" <<EOF
 ---

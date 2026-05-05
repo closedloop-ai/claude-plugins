@@ -484,6 +484,34 @@ The following variables are injected into every agent context via `subagent-star
 | `CLOSEDLOOP_MAX_ITERATIONS` | Maximum loop iterations (default: 10) |
 | `CLOSEDLOOP_AGENT_ID` | The current agent's unique ID |
 
+### Booster Packs
+
+Booster packs extend the ClosedLoop loop with optional capabilities. Activate a booster by passing `--booster <name>` to `run-loop.sh`:
+
+```bash
+./run-loop.sh .closedloop-ai/work --booster gstack
+```
+
+When a booster is active, its skills are injected into every agent context automatically. Skills are referenced using the `<booster>:<skill>` prefix (e.g., `gstack:screenshot`).
+
+#### GStack Booster
+
+The `gstack` booster is a bundle of 30+ specialist workflows by Garry Tan. It enhances three loop types: **Execute**, **Create PRD**, and **Generate Implementation Plan**.
+
+Browser automation skills (all require Playwright/Chromium):
+
+| Skill | Description |
+|---|---|
+| `gstack:navigate` | Navigate to a URL in the headless browser, wait for page load, and return the resulting DOM state |
+| `gstack:screenshot` | Capture a full-page or element-scoped screenshot using Playwright and return the image for visual inspection |
+| `gstack:interact` | Perform user interactions on a live page (click, type, select, hover) via Playwright and report resulting state changes |
+| `gstack:verify-state` | Assert that the page or component matches expected state (text content, attribute values, visibility, URL) using Playwright locators |
+| `gstack:responsive-test` | Resize the browser viewport to multiple breakpoints and capture screenshots to verify responsive layout behavior |
+
+All five browser-dependent skills require Playwright and Chromium to be installed. If Playwright is unavailable, those skills are silently omitted from agent contexts at runtime.
+
+---
+
 ### Working directory structure
 
 After a full run, the work directory will contain:
