@@ -389,6 +389,10 @@ Stamps the cross-repo cache after Phase 1.4 coordinator completes. Hashes peer-r
 
 Appends a phase event to `perf.jsonl` from the current `state.json`. Called by the orchestrator after every `state.json` write so downstream analysis scripts can derive per-phase wall-clock timings. Reads `phase`, `status`, and `startSha` from `state.json` and emits a JSON line with `event`, `run_id`, `iteration`, `phase`, `status`, `start_sha`, and `started_at` fields. Exits silently if `state.json` does not exist or contains no phase.
 
+### `record_run.sh`
+
+Appends a single `run` event to `perf.jsonl` once per Loop, capturing `command`, `repo`, `branch`, `run_id`, and `started_at` so every perf event can be attributed to the slash command that launched the Loop. Gated behind `CLOSEDLOOP_PERF_V2=1` and fails open (exits 0) on any error so the caller loop is unaffected. Reads `CLOSEDLOOP_COMMAND` and `CLOSEDLOOP_RUN_ID` from the environment.
+
 ### `loop-agents.json`
 
 Configuration file (not a script) defining which agents participate in the validation loop. Each entry specifies: `validation_script`, `max_iterations`, `promise` (expected completion string), `state_file_suffix`, and `verification_criteria`. Also defines `learning_agents` — the subset of agents that must both acknowledge injected learnings and capture new learnings before stopping.

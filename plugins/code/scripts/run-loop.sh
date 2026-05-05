@@ -1232,7 +1232,7 @@ main() {
   log_progress "Loop started - run_id=$RUN_ID iteration=$iteration max=$max_iterations promise=$completion_promise"
 
   # Record run event to perf.jsonl (non-blocking; gated behind CLOSEDLOOP_PERF_V2=1)
-  bash "$SCRIPTS_DIR/record_run.sh" "$effective_workdir" &
+  bash "$SCRIPTS_DIR/record_run.sh" "$effective_workdir" || true
 
   # jq filter to extract final result
   local final_result='select(.type == "result").result // empty'

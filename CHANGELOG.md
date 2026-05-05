@@ -4,6 +4,20 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### self-learning v1.2.1
+
+#### Changed
+- Coordination version bump alongside `code` v1.11.5 per the PRD-254 producer-side rollout (FEA-887). No functional changes; the bump exists so the two plugins ship together as a matched set, mirroring the FEA-764 precedent.
+
+### code v1.11.5
+
+#### Added
+- New `record_run.sh` script emits exactly one `run` event per Loop to `perf.jsonl` carrying `command`, `repo`, `branch`, and `started_at`, so every perf record can be attributed to the slash-command that launched the Loop. Gated behind `CLOSEDLOOP_PERF_V2=1`; fails open on any unexpected error (`trap 'exit 0' ERR`, `timeout 5` on the `git` calls capturing repo/branch). Invoked synchronously from `run-loop.sh:main()` after `RUN_ID` generation with `|| true`, so the `run` event is appended before the first `phase` event without ever changing the Loop's exit code.
+- New `CLOSEDLOOP_COMMAND` environment variable exported by `run-loop.sh` next to `CLOSEDLOOP_RUN_ID`, derived from `PROMPT_NAME` and defaulting to `interactive` for bare `/code:code` invocations. Hooks and child processes inherit it automatically.
+- New `command` field on every `phase`, `iteration`, `pipeline_step`, and `agent` perf event when `CLOSEDLOOP_PERF_V2=1`. Implemented in `record_phase.sh`, `subagent-stop-hook.sh`, and the `emit_perf_event` helper in `run-loop.sh` (which folds the gate into a single `jq -n -c` filter via `--arg perf_v2` rather than spawning a second `jq` per event). The field is omitted entirely when the gate is off, preserving the legacy JSON shape.
+- New `plugins/code/tools/python/test_record_run.py` (16 tests covering gate behavior, JSON shape, fail-open paths, and repo/branch capture under a fake-`git` PATH shim) and `plugins/code/tools/python/test_record_phase.py` (19 tests covering V2 gating, field correctness, and missing-state fail-open). Both files run under `pytest` with no extra fixtures.
+- One-line note in `prompts/prompt.md` documenting that `record_run.sh` is invoked automatically by `run-loop.sh` at the start of every Loop (before Phase 0.9) and requires no orchestrator action.
+
 ### code v1.11.4
 
 #### Added

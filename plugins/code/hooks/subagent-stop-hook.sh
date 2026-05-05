@@ -436,7 +436,7 @@ if [[ -n "$AGENT_ID" ]] && [[ -n "$CLOSEDLOOP_WORKDIR" ]] && [[ -f "$AGENT_TYPES
             AGENT_DURATION=0
         fi
         PERF_FILE="$CLOSEDLOOP_WORKDIR/perf.jsonl"
-        JSON=$(jq -n -c \
+        jq -n -c \
             --arg event "agent" \
             --arg run_id "${CLOSEDLOOP_RUN_ID:-unknown}" \
             --argjson iteration "${CLOSEDLOOP_ITERATION:-0}" \
@@ -446,11 +446,10 @@ if [[ -n "$AGENT_ID" ]] && [[ -n "$CLOSEDLOOP_WORKDIR" ]] && [[ -f "$AGENT_TYPES
             --arg started_at "$AGENT_STARTED_AT" \
             --arg ended_at "$AGENT_ENDED_AT" \
             --argjson duration_s "$AGENT_DURATION" \
-            '{event:$event,run_id:$run_id,iteration:$iteration,agent_id:$agent_id,agent_type:$agent_type,agent_name:$agent_name,started_at:$started_at,ended_at:$ended_at,duration_s:$duration_s}')
-        if [[ "${CLOSEDLOOP_PERF_V2:-}" == "1" ]]; then
-            JSON=$(echo "$JSON" | jq -c --arg command "${CLOSEDLOOP_COMMAND:-interactive}" '. + {command:$command}')
-        fi
-        echo "$JSON" >> "$PERF_FILE"
+            --arg command "${CLOSEDLOOP_COMMAND:-interactive}" \
+            --arg perf_v2 "${CLOSEDLOOP_PERF_V2:-}" \
+            '{event:$event,run_id:$run_id,iteration:$iteration,agent_id:$agent_id,agent_type:$agent_type,agent_name:$agent_name,started_at:$started_at,ended_at:$ended_at,duration_s:$duration_s} + (if $perf_v2 == "1" then {command:$command} else {} end)' \
+            >> "$PERF_FILE"
         echo "$(date): Emitted agent perf event: agent=$AGENT_NAME duration=${AGENT_DURATION}s" >> "$DEBUG_LOG"
     fi
 fi

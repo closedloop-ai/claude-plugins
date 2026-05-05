@@ -38,7 +38,7 @@ COMMAND="${CLOSEDLOOP_COMMAND:-interactive}"
 
 mkdir -p "$(dirname "$PERF_FILE")"
 
-JSON=$(jq -n -c \
+jq -n -c \
   --arg event "phase" \
   --arg run_id "$RUN_ID" \
   --argjson iteration "$ITERATION" \
@@ -46,8 +46,7 @@ JSON=$(jq -n -c \
   --arg status "$STATUS" \
   --arg start_sha "$START_SHA" \
   --arg started_at "$TIMESTAMP" \
-  '{event:$event,run_id:$run_id,iteration:$iteration,phase:$phase,status:$status,start_sha:$start_sha,started_at:$started_at}')
-if [[ "${CLOSEDLOOP_PERF_V2:-}" == "1" ]]; then
-  JSON=$(echo "$JSON" | jq -c --arg command "$COMMAND" '. + {command:$command}')
-fi
-echo "$JSON" >> "$PERF_FILE"
+  --arg command "$COMMAND" \
+  --arg perf_v2 "${CLOSEDLOOP_PERF_V2:-}" \
+  '{event:$event,run_id:$run_id,iteration:$iteration,phase:$phase,status:$status,start_sha:$start_sha,started_at:$started_at} + (if $perf_v2 == "1" then {command:$command} else {} end)' \
+  >> "$PERF_FILE"
