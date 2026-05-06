@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.10
+
+#### Added
+- `subagent-stop-hook.sh` agent perf event extended unconditionally with token aggregation and routing metadata. The hook now parses the agent transcript JSONL, sums `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` across assistant turns, and tracks `total_context_tokens` as the per-turn high-water mark (max of any single turn's full usage) rather than a cumulative running total — preserving a peak-pressure signal instead of collapsing to the final sum. The event also carries `model` and `parent_session_id` from the hook payload (emitted as `null` when absent) and a `command` field that defaults to `"interactive"` when `CLOSEDLOOP_COMMAND` is unset, matching `record_phase.sh` and `run-loop.sh`'s `emit_perf_event` so phase, iteration, pipeline_step, and agent rows can be joined by command in Datadog. Transcript selection keys on top-level `type == "assistant"` reading `.message.usage` (mirroring `stream_formatter._accumulate_usage`); a malformed or missing transcript fails open and emits zero-token fields without aborting the hook. The extended event has no env-var gate — closedloop-electron ships claude-plugins bundled in the desktop app and end users have no way to set runtime env vars, so safety comes from (a) the additive event schema (every new field is additive on the FEA-764 baseline; existing consumers ignore unknown fields) and (b) the fail-open contract that defaults every numeric field to `0` on any missing or malformed input. New tests in `test_subagent_stop_hook.py` cover token sums with cache reads, per-turn HWM, missing/malformed transcripts, the always-on extended-event contract (`TestExtendedEventUnconditional` pins that the new fields appear even with `CLOSEDLOOP_PERF_V2` explicitly unset), model/parent_session_id null handling, and the command-default join contract.
+
 ### code v1.11.8
 
 #### Fixed
@@ -22,6 +27,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `write_runs_log_entry` in `run-loop.sh` now writes to `$workdir/runs.log` instead of `$workdir/.learnings/runs.log`, matching the new `self-learning` `prune-learnings.sh` and `evaluate_goal.py` location. Keeps the runs ledger at the workdir root next to `state.json` and `plan.json` rather than nested inside `.learnings/`.
 - `runs.log` row format extended to `run_id|timestamp|goal|iteration|status|command|last_session_id`. The first five fields are the legacy contract; `command` (e.g. `plan_execute`, `code_review`, `self_learning`) and `last_session_id` are append-only so older self-learning readers stay compatible. `write_runs_log_entry` accepts optional 4th/5th arguments for explicit command/session overrides and falls back to `LAST_CLAUDE_COMMAND`/`LAST_CLAUDE_SESSION_ID` (or `session-id.txt`) otherwise.
 - `--codex-model` default in the `/code:plan-with-codex` README documentation updated from `gpt-5.4` to `gpt-5.3-codex` to match the actual command default.
+
+### self-learning v1.2.3
+
+#### Changed
+- `perf_summary.py` agent-event schema docstring now documents the optional `command`, `model`, `parent_session_id`, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, and `total_context_tokens` fields emitted only when `CLOSEDLOOP_PERF_V2=1`, keeping the consumer-side schema reference aligned with the producer in `subagent-stop-hook.sh`. Coordination version bump alongside `code` v1.11.8 so the two plugins ship together as a matched set.
 
 ### self-learning v1.2.2
 
