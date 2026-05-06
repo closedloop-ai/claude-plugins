@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### code v1.12.0
+### code v1.11.9
 
 #### Added
 - New `pre-tool-use-hook.sh` and `post-tool-use-hook.sh` hooks (FEA-889 of PRD-254) that emit `tool`, `skill`, and `spawn` perf events to `perf.jsonl` for every Claude Code tool invocation inside a Loop. The pre-hook writes a sentinel file at `$CLOSEDLOOP_WORKDIR/.tool-calls/{TOOL_USE_ID}` capturing call-time attribution (`started_at`, `tool_name`, `agent_id`, `run_id`, `command`, `iteration`); the post-hook reads it to compute `duration_s` and emit the `tool` event, deletes it on success, and additionally emits a `skill` event for `Skill` tool calls. The pre-hook emits a `spawn` event with `parent_session_id`, `parent_agent_id`, and `planned_subagent_type` for `Agent` tool calls. Both hooks gated behind `CLOSEDLOOP_PERF_V2=1` and use the `trap 'exit 0' ERR` fail-open pattern so a hook crash never blocks the underlying tool call or the Loop. Registered in `plugins/code/hooks/hooks.json` as a new `PreToolUse` entry and the first `PostToolUse` entry.
