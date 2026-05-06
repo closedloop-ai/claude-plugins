@@ -43,6 +43,8 @@ SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_ID=""
 START_SHA=""
 SELF_LEARNING=false
+LAST_CLAUDE_COMMAND=""
+LAST_CLAUDE_SESSION_ID=""
 
 # Write an intentionally user-visible failure marker for the Electron finalizer.
 #
@@ -208,7 +210,8 @@ handle_spurious_complete() {
 
   echo -e "\n${RED}Spurious COMPLETE detected: $message${NC}" >&2
   log_progress "Spurious COMPLETE: $message"
-  write_runs_log_entry "$workdir" "$iteration" "spurious_complete"
+  write_runs_log_entry "$workdir" "$iteration" "spurious_complete" "plan_execute"
+  rename_output_on_exit
   release_lock "$workdir"
   rm -f "$STATE_FILE"
   fail_loop_user_visible "RUNNER_ERROR" "$subcode" "$message"
@@ -370,15 +373,92 @@ create_iteration_marker() {
   echo "$iteration" > "$session_dir/current-iteration"
 }
 
-# Write runs.log entry for goal evaluation
+sanitize_runs_log_field() {
+  local raw="$1"
+  raw="${raw//$'\r'/ }"
+  raw="${raw//$'\n'/ }"
+  raw="${raw//|/_}"
+  echo "$raw"
+}
+
+extract_claude_session_id() {
+  local output_file="$1"
+  if [[ ! -s "$output_file" ]]; then
+    return 0
+  fi
+
+  jq -r '
+    [
+      .session_id?,
+      .sessionId?,
+      .message.session_id?,
+      .message.sessionId?,
+      .item.session_id?,
+      .item.sessionId?
+    ]
+    | map(select(type == "string" and length > 0))
+    | .[0] // empty
+    | select(length > 0)
+  ' "$output_file" 2>/dev/null | tail -n 1
+}
+
+record_claude_session_id() {
+  local workdir="$1"
+  local command="$2"
+  local session_id="$3"
+
+  if [[ -z "$session_id" ]]; then
+    return 0
+  fi
+
+  LAST_CLAUDE_COMMAND="$command"
+  LAST_CLAUDE_SESSION_ID="$session_id"
+  export CLOSEDLOOP_SESSION_ID="$session_id"
+
+  # Desktop finalization reads one session-id.txt. Keep that file scoped to the
+  # primary plan/execute Claude session so post-loop review/fix sessions do not
+  # overwrite the operation-level correlation id.
+  if [[ "$command" == "plan_execute" ]]; then
+    printf '%s\n' "$session_id" > "$workdir/session-id.txt"
+  fi
+}
+
+# Write runs.log entry for goal evaluation and session correlation.
+#
+# Format:
+#   run_id|timestamp|goal|iteration|status|command|last_session_id
+# The first five fields are the legacy contract; append-only fields keep older
+# self-learning readers compatible while allowing command-scoped session lookup.
 write_runs_log_entry() {
   local workdir="$1"
   local iteration="$2"
   local status="${3:-in_progress}"
-  local runs_log="$workdir/.learnings/runs.log"
-  local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local command
+  local session_id
+  local explicit_session_id=false
+  if [[ $# -ge 4 ]]; then
+    command="$4"
+  else
+    command="${LAST_CLAUDE_COMMAND:-self_learning}"
+  fi
+  if [[ $# -ge 5 ]]; then
+    session_id="$5"
+    explicit_session_id=true
+  else
+    session_id="${LAST_CLAUDE_SESSION_ID:-}"
+  fi
+  local runs_log="$workdir/runs.log"
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  if [[ "$explicit_session_id" == "false" && -z "$session_id" && -f "$workdir/session-id.txt" ]]; then
+    session_id=$(tr -d '\r\n' < "$workdir/session-id.txt" 2>/dev/null || true)
+  fi
+
+  command=$(sanitize_runs_log_field "$command")
+  session_id=$(sanitize_runs_log_field "$session_id")
   mkdir -p "$(dirname "$runs_log")"
-  echo "$RUN_ID|$timestamp|${CLOSEDLOOP_ACTIVE_GOAL:-reduce-failures}|$iteration|$status" >> "$runs_log"
+  echo "$RUN_ID|$timestamp|${CLOSEDLOOP_ACTIVE_GOAL:-reduce-failures}|$iteration|$status|$command|$session_id" >> "$runs_log"
 }
 
 # Post-iteration processing: enrichment pipeline, learning capture, citation verification, success rates
@@ -688,10 +768,14 @@ run_post_loop_review() {
     review_exit=$(cat "$review_exit_file" 2>/dev/null || echo 1)
     rm -f "$review_exit_file"
     set -e
+    local review_session_id
+    review_session_id=$(extract_claude_session_id "$review_output")
+    record_claude_session_id "$workdir" "code_review" "$review_session_id"
 
     # Guard: if the review process itself failed, don't consume stale results
     if [[ "$review_exit" -ne 0 ]]; then
       log_progress "Post-loop review failed (exit $review_exit). Skipping fix."
+      write_runs_log_entry "$workdir" "${CLOSEDLOOP_ITERATION:-0}" "review_error" "code_review" "$review_session_id"
       rm -f "$review_output" "$review_stderr"
       return 0
     fi
@@ -719,6 +803,7 @@ run_post_loop_review() {
       --argjson exit_code "$review_exit" \
       '{event:$event,run_id:$run_id,verdict:$verdict,cycle:$cycle,duration_s:$duration_s,exit_code:$exit_code}'
     )"
+    write_runs_log_entry "$workdir" "${CLOSEDLOOP_ITERATION:-0}" "review_${verdict}" "code_review" "$review_session_id"
 
     rm -f "$review_output" "$review_stderr"
 
@@ -765,6 +850,9 @@ run_post_loop_review() {
     fix_exit=$(cat "$fix_exit_file" 2>/dev/null || echo 1)
     rm -f "$fix_exit_file"
     set -e
+    local fix_session_id
+    fix_session_id=$(extract_claude_session_id "$fix_output")
+    record_claude_session_id "$workdir" "code_review" "$fix_session_id"
 
     # Emit perf event for fix
     local fix_end_epoch
@@ -777,6 +865,11 @@ run_post_loop_review() {
       --argjson exit_code "$fix_exit" \
       '{event:$event,run_id:$run_id,cycle:$cycle,duration_s:$duration_s,exit_code:$exit_code}'
     )"
+    local fix_status="fix_completed"
+    if [[ "$fix_exit" -ne 0 ]]; then
+      fix_status="fix_error"
+    fi
+    write_runs_log_entry "$workdir" "${CLOSEDLOOP_ITERATION:-0}" "$fix_status" "code_review" "$fix_session_id"
 
     rm -f "$fix_output" "$fix_stderr"
 
@@ -1153,6 +1246,8 @@ main() {
     # Acquire lock to prevent concurrent loops
     acquire_lock "$WORKDIR"
 
+    rename_orphan_output_on_start
+
     create_state_file
   fi
 
@@ -1275,7 +1370,7 @@ main() {
       log_progress "Loop ended - max iterations reached"
 
       # Write runs.log entry
-      write_runs_log_entry "$effective_workdir" "$iteration" "max_iterations"
+      write_runs_log_entry "$effective_workdir" "$iteration" "max_iterations" "plan_execute"
 
       # Final post-iteration processing
       post_iteration_processing "$effective_workdir" "$iteration"
@@ -1284,6 +1379,7 @@ main() {
       run_post_loop_review "$effective_workdir"
 
       # Clean up
+      rename_output_on_exit
       release_lock "$effective_workdir"
       rm -f "$STATE_FILE"
 
@@ -1350,6 +1446,9 @@ main() {
     claude_exit=$(cat "$exit_code_file" 2>/dev/null || echo 1)
     rm -f "$exit_code_file"
     set -e
+    local plan_session_id
+    plan_session_id=$(extract_claude_session_id "$output_file")
+    record_claude_session_id "$effective_workdir" "plan_execute" "$plan_session_id"
 
     if [[ $claude_exit -eq 0 ]]; then
       local result=$(jq -r "$final_result" "$output_file")
@@ -1363,7 +1462,8 @@ main() {
         echo -e "\n${RED}ERROR: Claude reported is_error=true in result record.${NC}"
         echo -e "${RED}Error text: $error_text${NC}"
         log_progress "Context limit: is_error=true, text=$error_text"
-        write_runs_log_entry "$effective_workdir" "$iteration" "context_limit"
+        write_runs_log_entry "$effective_workdir" "$iteration" "context_limit" "plan_execute"
+        rename_output_on_exit
         release_lock "$effective_workdir"
         rm -f "$STATE_FILE"
         rm -f "$output_file" "$stderr_file" 2>/dev/null || true
@@ -1376,7 +1476,8 @@ main() {
         if [[ $consecutive_empty -ge 3 ]]; then
           echo -e "\n${RED}ERROR: $consecutive_empty consecutive iterations with no output. Aborting to prevent ghost loop.${NC}"
           log_progress "Aborting: ghost loop detected after $consecutive_empty empty iterations"
-          write_runs_log_entry "$effective_workdir" "$iteration" "ghost_loop_abort"
+          write_runs_log_entry "$effective_workdir" "$iteration" "ghost_loop_abort" "plan_execute"
+          rename_output_on_exit
           release_lock "$effective_workdir"
           rm -f "$STATE_FILE"
           rm -f "$output_file" "$stderr_file" 2>/dev/null || true
@@ -1449,12 +1550,13 @@ main() {
         log_progress "Loop completed - promise fulfilled after $iteration iterations"
 
         # Write runs.log entry
-        write_runs_log_entry "$effective_workdir" "$iteration" "completed"
+        write_runs_log_entry "$effective_workdir" "$iteration" "completed" "plan_execute"
 
         # Run post-loop code review
         run_post_loop_review "$effective_workdir"
 
         # Clean up
+        rename_output_on_exit
         release_lock "$effective_workdir"
         rm -f "$STATE_FILE"
 
@@ -1467,7 +1569,7 @@ main() {
       log_progress "Iteration $iteration completed - continuing"
 
       # Write runs.log entry
-      write_runs_log_entry "$effective_workdir" "$iteration" "in_progress"
+      write_runs_log_entry "$effective_workdir" "$iteration" "in_progress" "plan_execute"
 
     else
       echo -e "\n${YELLOW}Warning: Claude exited with non-zero status (exit code: $claude_exit)${NC}"
@@ -1479,7 +1581,8 @@ main() {
         if grep -qiE "prompt is too long|exceed context limit|context limit reached|conversation too long" "$stderr_file"; then
           echo -e "\n${RED}Context limit detected in stderr${NC}"
           log_progress "Context limit: detected in stderr (exit $claude_exit)"
-          write_runs_log_entry "$effective_workdir" "$iteration" "context_limit"
+          write_runs_log_entry "$effective_workdir" "$iteration" "context_limit" "plan_execute"
+          rename_output_on_exit
           release_lock "$effective_workdir"
           rm -f "$STATE_FILE"
           rm -f "$output_file" "$stderr_file" 2>/dev/null || true
@@ -1489,7 +1592,7 @@ main() {
       log_progress "Iteration $iteration - Claude exited with error (code: $claude_exit)"
 
       # Write runs.log entry
-      write_runs_log_entry "$effective_workdir" "$iteration" "error"
+      write_runs_log_entry "$effective_workdir" "$iteration" "error" "plan_execute"
 
       # Non-zero exit resets consecutive_empty -- the guard tracks consecutive
       # exit-0-with-no-output iterations, not intermixed failures.
@@ -1532,6 +1635,104 @@ main() {
   done
 }
 
+sanitize_output_run_id() {
+  local raw="$1"
+  raw="${raw//[^A-Za-z0-9._-]/_}"
+  echo "$raw"
+}
+
+rename_orphan_output_on_start() {
+  local workdir="${CLOSEDLOOP_WORKDIR:-${WORKDIR:-}}"
+  if [[ -z "$workdir" ]]; then
+    return
+  fi
+
+  local sidecar="${workdir}/claude-output.name.txt"
+  if ! : > "$sidecar" 2>/dev/null; then
+    if rm -f "$sidecar" 2>/dev/null; then
+      : > "$sidecar" 2>/dev/null || \
+        echo "Warning: cannot recreate empty sidecar; stale prior-run reads possible" >&2
+    else
+      echo "Warning: cannot clear sidecar; stale prior-run reads possible" >&2
+    fi
+  fi
+
+  local jsonl_file="${workdir}/claude-output.jsonl"
+  if [[ ! -f "$jsonl_file" ]]; then
+    return
+  fi
+
+  local prev_run_id=""
+  if [[ -f "$STATE_FILE" ]]; then
+    prev_run_id=$(get_field "run_id" 2>/dev/null || true)
+  fi
+
+  if [[ -z "$prev_run_id" ]]; then
+    local runs_log="${workdir}/runs.log"
+    if [[ -f "$runs_log" ]]; then
+      local last_run_line
+      last_run_line=$(tail -n 1 "$runs_log" 2>/dev/null || true)
+      prev_run_id="${last_run_line%%|*}"
+    fi
+  fi
+
+  if [[ -z "$prev_run_id" ]]; then
+    prev_run_id="orphan-$(date +%Y%m%d-%H%M%S)"
+  fi
+  prev_run_id=$(sanitize_output_run_id "$prev_run_id")
+  if [[ -z "$prev_run_id" ]]; then
+    prev_run_id="orphan-$(date +%Y%m%d-%H%M%S)"
+  fi
+
+  local dest="${workdir}/claude-output-${prev_run_id}.jsonl"
+  if ! mv "$jsonl_file" "$dest"; then
+    echo "Warning: failed to rename orphaned claude-output.jsonl; truncating" >&2
+    > "$jsonl_file" 2>/dev/null || \
+      echo "Warning: failed to truncate claude-output.jsonl" >&2
+  fi
+}
+
+rename_output_on_exit() {
+  local workdir="${CLOSEDLOOP_WORKDIR:-}"
+  if [[ -z "$workdir" ]]; then
+    workdir=$(get_field "workdir" 2>/dev/null || echo "")
+  fi
+  if [[ -z "$workdir" ]]; then
+    return
+  fi
+
+  local jsonl_file="${workdir}/claude-output.jsonl"
+  if [[ ! -f "$jsonl_file" ]]; then
+    return
+  fi
+
+  local run_id="${RUN_ID:-}"
+  if [[ -z "$run_id" ]]; then
+    run_id=$(get_field "run_id" 2>/dev/null || echo "")
+  fi
+  if [[ -z "$run_id" ]]; then
+    run_id="orphan-$(date +%Y%m%d-%H%M%S)"
+  fi
+  run_id=$(sanitize_output_run_id "$run_id")
+  if [[ -z "$run_id" ]]; then
+    run_id="orphan-$(date +%Y%m%d-%H%M%S)"
+  fi
+
+  local basename="claude-output-${run_id}.jsonl"
+  local dest="${workdir}/${basename}"
+  if mv "$jsonl_file" "$dest"; then
+    local sidecar="${workdir}/claude-output.name.txt"
+    local tmp_sidecar="${sidecar}.tmp.$$"
+    if printf '%s\n' "$basename" > "$tmp_sidecar" && mv "$tmp_sidecar" "$sidecar"; then
+      return
+    fi
+    rm -f "$tmp_sidecar" "$sidecar" 2>/dev/null || true
+    echo "Warning: failed to write claude-output sidecar for $basename" >&2
+  else
+    echo "Warning: failed to rename claude-output.jsonl to $(basename "$dest")" >&2
+  fi
+}
+
 # Handle Ctrl+C gracefully
 # NOTE: The pipeline is run in the background so that `wait` (which IS
 # interruptible by trapped signals) is the foreground operation.  If the
@@ -1557,6 +1758,7 @@ cleanup_on_interrupt() {
   local workdir
   workdir=$(get_field "workdir" 2>/dev/null || echo "")
   if [[ -n "$workdir" ]]; then
+    rename_output_on_exit
     release_lock "$workdir"
   fi
 
