@@ -491,9 +491,11 @@ def registry_with_missing_dir():
             "manifestPath": "boosters/nonexistent-booster-dir/booster.json",
         }
     )
-    registry_path.write_text(json.dumps(registry, indent=2))
-    yield "test-booster-missing-dir"
-    registry_path.write_text(original_text)
+    try:
+        registry_path.write_text(json.dumps(registry, indent=2))
+        yield "test-booster-missing-dir"
+    finally:
+        registry_path.write_text(original_text)
 
 
 def test_booster_gstack_parses_correctly(tmp_workdir: Path) -> None:

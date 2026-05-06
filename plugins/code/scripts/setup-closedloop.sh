@@ -332,7 +332,7 @@ if [[ -n "$BOOSTER_NAME" ]]; then
         echo "Error: boosters/registry.json not found at $BOOSTER_REGISTRY" >&2
         exit 1
     fi
-    BOOSTER_MANIFEST_PATH="$(python3 - "$BOOSTER_NAME" "$BOOSTER_REGISTRY" <<'PYEOF'
+    if ! BOOSTER_MANIFEST_PATH="$(python3 - "$BOOSTER_NAME" "$BOOSTER_REGISTRY" <<'PYEOF'
 import json, sys
 
 booster_name = sys.argv[1]
@@ -362,16 +362,23 @@ for booster in registry.get("boosters", []):
     print(f"  {name}: {desc[:80]}", file=sys.stderr)
 sys.exit(1)
 PYEOF
-    )"
-    if [[ $? -ne 0 ]] || [[ -z "$BOOSTER_MANIFEST_PATH" ]]; then
+    )"; then
         exit 1
     fi
-    BOOSTER_DIR="$(dirname "$REPO_ROOT/$BOOSTER_MANIFEST_PATH")"
+    if [[ -z "$BOOSTER_MANIFEST_PATH" ]]; then
+        echo "Error: booster '$BOOSTER_NAME' resolved to empty manifest path" >&2
+        exit 1
+    fi
+    BOOSTER_MANIFEST_PATH="$REPO_ROOT/$BOOSTER_MANIFEST_PATH"
+    BOOSTER_DIR="$(dirname "$BOOSTER_MANIFEST_PATH")"
     if [[ ! -d "$BOOSTER_DIR" ]]; then
         echo "Error: booster '$BOOSTER_NAME' directory not found: $BOOSTER_DIR" >&2
         exit 1
     fi
-    BOOSTER_MANIFEST_PATH="$REPO_ROOT/$BOOSTER_MANIFEST_PATH"
+    if [[ ! -f "$BOOSTER_MANIFEST_PATH" ]]; then
+        echo "Error: booster '$BOOSTER_NAME' manifest not found: $BOOSTER_MANIFEST_PATH" >&2
+        exit 1
+    fi
 fi
 
 mkdir -p "$WORKDIR/$CLOSEDLOOP_STATE_DIR"

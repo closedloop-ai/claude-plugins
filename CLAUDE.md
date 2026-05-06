@@ -62,11 +62,18 @@ Standalone scripts with no cross-tool imports within a plugin. Each lives in `pl
 
 Boosters are optional capability packs that extend the plugin system without modifying core plugins (e.g., `gstack` adds browser-testing skills via Playwright). They live under `boosters/<name>/` and are activated with the `--booster <name>` flag passed to `run-loop.sh`.
 
-**Registry / Manifest format.** `boosters/registry.json` maps each booster name to its manifest path:
+**Registry / Manifest format.** `boosters/registry.json` lists boosters as an array of objects:
 
 ```json
 {
-  "gstack": "boosters/gstack/booster.json"
+  "boosters": [
+    {
+      "name": "gstack",
+      "description": "...",
+      "manifestPath": "boosters/gstack/booster.json",
+      "featureFlag": "gstack-booster-pack"
+    }
+  ]
 }
 ```
 
