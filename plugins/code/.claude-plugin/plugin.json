@@ -2,7 +2,6 @@
   "name": "code",
   "description": "Code and planning framework plugin",
   "version": "1.11.8",
-  "claudeCodeMinimumVersion": "1.0.0",
   "author": {
     "name": "ClosedLoop",
     "email": "support@closedloop.ai"

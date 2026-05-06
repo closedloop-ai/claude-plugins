@@ -8,8 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Added
 - Extended `agent` perf event in `perf.jsonl` (FEA-888 of PRD-254) with per-agent token usage when `CLOSEDLOOP_PERF_V2=1`: `model`, `parent_session_id`, `command`, four token-count fields (`input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`), and a `total_context_tokens` per-turn high-water mark. The four cumulative fields sum across all assistant turns; `total_context_tokens` reports the maximum single-turn full usage so context-pressure spikes are visible (a cumulative max would just be the final total). Token aggregation is implemented in `subagent-stop-hook.sh` via `jq -s` reduction following the accumulation pattern from `stream_formatter._accumulate_usage`. Baseline FEA-764 timing-only event remains the default when the gate is off, byte-identical to prior output.
-- New `claudeCodeMinimumVersion: "1.0.0"` field in `plugins/code/.claude-plugin/plugin.json` documenting the SubagentStop hook payload contract this feature relies on (`agent_transcript_path`, `model`, `parent_session_id`).
 - New tests in `plugins/code/tools/python/test_subagent_stop_hook.py` (13 total) covering token aggregation across cache-read entries, the per-turn high-water-mark calculation, missing-transcript graceful degradation, malformed-JSONL fail-open contract, V2-gate on/off behavior, and `model`/`parent_session_id`/`command` field presence. Fixtures use the real Claude Code transcript shape (`{"type": "assistant", "message": {"role": "assistant", "usage": ...}}`) so the bash port and the Python `_accumulate_usage` reference can't drift apart silently.
+
+#### Notes
+- This feature relies on `agent_transcript_path`, `model`, and `parent_session_id` being present in the SubagentStop hook payload. There is no documented schema field in `plugin.json` for pinning a minimum Claude Code version (the published manifest schema only supports `name`, `version`, `description`, `author`, `homepage`, `repository`, `license`, `keywords`, `dependencies`, and component-path fields). If a SubagentStop payload lacks these fields on an older Claude Code version, the hook degrades gracefully — token fields default to `0` and the agent event still emits with the FEA-764 timing baseline.
+
+### self-learning v1.2.3
+
+#### Changed
+- Updated the `agent` event schema docstring in `tools/python/perf_summary.py` to document the new fields shipped with `code` v1.11.8 (`command`, `model`, `parent_session_id`, four token-count fields, `total_context_tokens`). No behavior change; documentation only.
 
 ### code v1.11.7
 
