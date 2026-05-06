@@ -27,6 +27,18 @@
         "hooks": [
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse-hook.sh" }
         ]
+      },
+      {
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use-hook.sh" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use-hook.sh" }
+        ]
       }
     ],
     "SubagentStop": [
