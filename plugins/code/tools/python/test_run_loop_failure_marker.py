@@ -235,6 +235,317 @@ def test_fail_loop_user_visible_prints_reason_and_exits(tmp_path: Path) -> None:
     })
 
 
+def write_jsonl(path: Path, entries: list[dict[str, object] | str]) -> None:
+    lines = [
+        entry if isinstance(entry, str) else json.dumps(entry, separators=(",", ":"))
+        for entry in entries
+    ]
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_detect_claude_terminal_failure_observed_rate_limit_jsonl(tmp_path: Path) -> None:
+    write_jsonl(tmp_path / "output.jsonl", [
+        {
+            "type": "rate_limit_event",
+            "rate_limit_info": {
+                "status": "rejected",
+                "rateLimitType": "five_hour",
+                "resetsAt": 1778095200,
+            },
+        },
+        {
+            "type": "assistant",
+            "error": "rate_limit",
+            "message": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "You've hit your limit - resets 2:20pm (America/Chicago)",
+                    },
+                ],
+            },
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": True,
+            "api_error_status": 429,
+            "result": "You've hit your limit - resets 2:20pm (America/Chicago)",
+        },
+    ])
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        detect_claude_terminal_failure "$CLOSEDLOOP_WORKDIR/output.jsonl" ""
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "claude_rate_limit"
+    assert payload["subcode"] == "CLAUDE_RATE_LIMIT"
+    assert "You've hit your limit" in payload["message"]
+
+
+def test_detect_claude_terminal_failure_camel_case_api_status(tmp_path: Path) -> None:
+    write_jsonl(tmp_path / "output.jsonl", [
+        {
+            "type": "assistant",
+            "isApiErrorMessage": True,
+            "error": "rate_limit_error",
+            "apiErrorStatus": 429,
+        },
+    ])
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        detect_claude_terminal_failure "$CLOSEDLOOP_WORKDIR/output.jsonl" ""
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "claude_rate_limit"
+    assert payload["subcode"] == "CLAUDE_RATE_LIMIT"
+    assert "rate_limit_error" in payload["message"]
+
+
+def test_detect_claude_terminal_failure_context_limit_jsonl(tmp_path: Path) -> None:
+    write_jsonl(tmp_path / "output.jsonl", [
+        {
+            "type": "result",
+            "is_error": True,
+            "result": "Prompt is too long for this model context limit.",
+        },
+    ])
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        detect_claude_terminal_failure "$CLOSEDLOOP_WORKDIR/output.jsonl" ""
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "context_limit"
+    assert payload["subcode"] == "CLAUDE_CONTEXT_LIMIT"
+    assert "context limit" in payload["message"].lower()
+
+
+def test_detect_claude_terminal_failure_context_limit_stderr(tmp_path: Path) -> None:
+    (tmp_path / "output.jsonl").write_text("")
+    (tmp_path / "stderr.txt").write_text(
+        "Error: prompt is too long for the model context limit.\n",
+    )
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        detect_claude_terminal_failure "$CLOSEDLOOP_WORKDIR/output.jsonl" "$CLOSEDLOOP_WORKDIR/stderr.txt"
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "context_limit"
+    assert payload["subcode"] == "CLAUDE_CONTEXT_LIMIT"
+    assert "context limit" in payload["message"].lower()
+
+
+def test_detect_claude_terminal_failure_auth_challenge_jsonl(tmp_path: Path) -> None:
+    write_jsonl(tmp_path / "output.jsonl", [
+        {
+            "type": "result",
+            "is_error": True,
+            "result": "Invalid bearer token. Please log in to Claude.",
+        },
+    ])
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        detect_claude_terminal_failure "$CLOSEDLOOP_WORKDIR/output.jsonl" ""
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "claude_auth_error"
+    assert payload["subcode"] == "CLAUDE_AUTH_CHALLENGE"
+    assert "Invalid bearer token" in payload["message"]
+
+
+def test_detect_claude_terminal_failure_clamps_long_marker_message(
+    tmp_path: Path,
+) -> None:
+    write_jsonl(tmp_path / "output.jsonl", [
+        {
+            "type": "result",
+            "is_error": True,
+            "api_error_status": 429,
+            "result": "x" * 1200,
+        },
+    ])
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        detect_claude_terminal_failure "$CLOSEDLOOP_WORKDIR/output.jsonl" ""
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["subcode"] == "CLAUDE_RATE_LIMIT"
+    assert len(payload["message"]) <= 1000
+    assert payload["message"].endswith("...")
+
+
+def test_detect_claude_terminal_failure_ignores_unknown_or_malformed_jsonl(
+    tmp_path: Path,
+) -> None:
+    write_jsonl(tmp_path / "output.jsonl", [
+        "not-json",
+        {
+            "type": "result",
+            "is_error": True,
+            "result": "Unknown tool failed",
+        },
+    ])
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        detect_claude_terminal_failure "$CLOSEDLOOP_WORKDIR/output.jsonl" ""
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {}
+
+
+def test_detect_claude_terminal_failure_ignores_successful_rate_limit_prose(
+    tmp_path: Path,
+) -> None:
+    write_jsonl(tmp_path / "output.jsonl", [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Implemented rate limit handling in the API client.",
+                    },
+                ],
+            },
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": "Completed the rate limit feature.",
+        },
+    ])
+
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        detect_claude_terminal_failure "$CLOSEDLOOP_WORKDIR/output.jsonl" ""
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {}
+
+
+def test_handle_claude_terminal_failure_writes_marker_and_stops_retry(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".learnings").mkdir()
+    (tmp_path / ".learnings" / ".lock").write_text("locked")
+    (tmp_path / "state.local").write_text("state")
+    (tmp_path / "claude-output.jsonl").write_text('{"type":"result"}\n')
+
+    message = "Claude rate limit reached: You've hit your limit - resets 2:20pm"
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        RUN_ID='rate-run'
+        STATE_FILE="$CLOSEDLOOP_WORKDIR/state.local"
+        PROGRESS_LOG="$CLOSEDLOOP_WORKDIR/progress.log"
+        handle_claude_terminal_failure "$CLOSEDLOOP_WORKDIR" 7 claude_rate_limit CLAUDE_RATE_LIMIT "{message}"
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 1
+    assert "CLOSEDLOOP_FATAL[CLAUDE_RATE_LIMIT]" in result.stderr
+    assert not (tmp_path / ".learnings" / ".lock").exists()
+    assert not (tmp_path / "state.local").exists()
+    assert not (tmp_path / "claude-output.jsonl").exists()
+    assert (tmp_path / "claude-output-rate-run.jsonl").read_text() == '{"type":"result"}\n'
+    assert (tmp_path / "claude-output.name.txt").read_text() == "claude-output-rate-run.jsonl\n"
+    assert json.loads((tmp_path / "loop-error.json").read_text()) == signed_marker({
+        "code": "RUNNER_ERROR",
+        "message": message,
+        "result": {"subcode": "CLAUDE_RATE_LIMIT"},
+    })
+
+    fields = (tmp_path / "runs.log").read_text().strip().split("|")
+    assert fields[0] == "rate-run"
+    assert fields[3] == "7"
+    assert fields[4] == "claude_rate_limit"
+    assert fields[5] == "plan_execute"
+
+
+def test_handle_claude_terminal_failure_writes_context_marker(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".learnings").mkdir()
+    (tmp_path / ".learnings" / ".lock").write_text("locked")
+    (tmp_path / "state.local").write_text("state")
+    (tmp_path / "claude-output.jsonl").write_text('{"type":"result"}\n')
+
+    message = "Claude context limit reached. Start a fresh run with reduced context."
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        RUN_ID='context-run'
+        STATE_FILE="$CLOSEDLOOP_WORKDIR/state.local"
+        PROGRESS_LOG="$CLOSEDLOOP_WORKDIR/progress.log"
+        handle_claude_terminal_failure "$CLOSEDLOOP_WORKDIR" 2 context_limit CLAUDE_CONTEXT_LIMIT "{message}"
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 1
+    assert "CLOSEDLOOP_FATAL[CLAUDE_CONTEXT_LIMIT]" in result.stderr
+    assert not (tmp_path / ".learnings" / ".lock").exists()
+    assert not (tmp_path / "state.local").exists()
+    assert (tmp_path / "claude-output.name.txt").read_text() == "claude-output-context-run.jsonl\n"
+    assert json.loads((tmp_path / "loop-error.json").read_text()) == signed_marker({
+        "code": "RUNNER_ERROR",
+        "message": message,
+        "result": {"subcode": "CLAUDE_CONTEXT_LIMIT"},
+    })
+
+    fields = (tmp_path / "runs.log").read_text().strip().split("|")
+    assert fields[3] == "2"
+    assert fields[4] == "context_limit"
+    assert fields[5] == "plan_execute"
+
+
 def test_rename_output_on_exit_moves_jsonl_and_writes_sidecar(tmp_path: Path) -> None:
     (tmp_path / "claude-output.jsonl").write_text('{"type":"result"}\n')
 

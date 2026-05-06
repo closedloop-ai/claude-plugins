@@ -4,10 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### code v1.11.8
+### code v1.11.9
 
 #### Added
 - `subagent-stop-hook.sh` agent perf event extended under `CLOSEDLOOP_PERF_V2=1` with token aggregation and routing metadata. The hook now parses the agent transcript JSONL, sums `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` across assistant turns, and tracks `total_context_tokens` as the per-turn high-water mark (max of any single turn's full usage) rather than a cumulative running total — preserving a peak-pressure signal instead of collapsing to the final sum. The event also carries `model` and `parent_session_id` from the hook payload (emitted as `null` when absent) and a `command` field that defaults to `"interactive"` when `CLOSEDLOOP_COMMAND` is unset, matching `record_phase.sh` and `run-loop.sh`'s `emit_perf_event` so phase, iteration, pipeline_step, and agent rows can be joined by command in Datadog. Transcript selection keys on top-level `type == "assistant"` reading `.message.usage` (mirroring `stream_formatter._accumulate_usage`); a malformed or missing transcript fails open and emits zero-token fields without aborting the hook. Baseline (non-`PERF_V2`) emission is unchanged. New tests in `test_subagent_stop_hook.py` cover token sums with cache reads, per-turn HWM, missing/malformed transcripts, gate behavior, model/parent_session_id null handling, and the command-default join contract.
+
+### code v1.11.8
 
 #### Fixed
 - `run-loop.sh` now classifies known Claude terminal failures before generic exit-code retry handling. Structured JSONL/stderr rate-limit, context-limit, and auth/account challenge signals write signed `loop-error.json` markers with stable subcodes, archive `claude-output.jsonl` through the existing `claude-output.name.txt` sidecar, release lock/state, and stop retrying. Unknown or malformed failures remain generic, and successful prose mentioning rate limits no longer creates false markers. Marker messages derived from Claude JSONL are clamped before reaching the existing 1000-character marker writer limit. New tests in `test_run_loop_failure_marker.py` cover observed rate-limit JSONL, camelCase API status, stderr context limits, auth/account challenges, oversized messages, false-positive prose, and rate/context marker finalization.
