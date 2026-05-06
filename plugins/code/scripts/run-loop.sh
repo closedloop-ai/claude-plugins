@@ -980,6 +980,9 @@ log_progress() {
 emit_perf_event() {
   local json_line="$1"
   local perf_file="${CLOSEDLOOP_WORKDIR:-.}/perf.jsonl"
+  if [[ "${CLOSEDLOOP_PERF_V2:-}" == "1" ]]; then
+    json_line=$(echo "$json_line" | jq -c --arg command "${CLOSEDLOOP_COMMAND:-interactive}" '. + {command:$command}')
+  fi
   echo "$json_line" >> "$perf_file"
 }
 
@@ -1101,6 +1104,7 @@ prd_file: "$PRD_FILE"
 run_id: "$RUN_ID"
 start_sha: "$START_SHA"
 self_learning: "$SELF_LEARNING"
+command: "$PROMPT_NAME"
 started_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ---
 $prompt
@@ -1169,12 +1173,20 @@ main() {
   local workdir=$(get_field "workdir")
   local prompt=$(get_prompt)
 
-  # Restore RUN_ID, START_SHA, and SELF_LEARNING from state file if resuming
+  # Restore RUN_ID, START_SHA, SELF_LEARNING, and PROMPT_NAME from state file if resuming
   if [[ -z "$RUN_ID" ]]; then
     RUN_ID=$(get_field "run_id")
     START_SHA=$(get_field "start_sha")
     SELF_LEARNING=$(get_field "self_learning")
     export CLOSEDLOOP_SELF_LEARNING="$SELF_LEARNING"
+
+    # Restore PROMPT_NAME so CLOSEDLOOP_COMMAND keeps the original launching
+    # command on resume (instead of degrading to "interactive" because the
+    # --prompt CLI flag isn't re-passed). Older state files without `command`
+    # leave PROMPT_NAME empty, preserving prior behavior.
+    if [[ -z "$PROMPT_NAME" ]]; then
+      PROMPT_NAME=$(get_field "command")
+    fi
 
     # If resuming, re-acquire lock
     if [[ -n "$workdir" ]]; then
@@ -1204,6 +1216,7 @@ main() {
   # Export environment variables for learning system
   export CLOSEDLOOP_WORKDIR="$effective_workdir"
   export CLOSEDLOOP_RUN_ID="$RUN_ID"
+  export CLOSEDLOOP_COMMAND="${PROMPT_NAME:-interactive}"
 
   # Load goal configuration
   load_goal_config "$effective_workdir"
@@ -1226,6 +1239,14 @@ main() {
   echo ""
 
   log_progress "Loop started - run_id=$RUN_ID iteration=$iteration max=$max_iterations promise=$completion_promise"
+
+  # Record run event to perf.jsonl (non-blocking; gated behind CLOSEDLOOP_PERF_V2=1).
+  # Only fires on fresh-start invocations -- on resume ($WORKDIR is empty), the
+  # `run` event was already appended by the original invocation, so re-emitting
+  # would violate PRD-254 AC-1 ("exactly one run event per Loop").
+  if [[ -n "$WORKDIR" ]]; then
+    bash "$SCRIPTS_DIR/record_run.sh" "$effective_workdir" || true
+  fi
 
   # jq filter to extract final result
   local final_result='select(.type == "result").result // empty'

@@ -97,6 +97,8 @@ Use this sequence at any hard-stop that requires user action before continuing:
 
 **Rule:** Update state.json at the START of every phase below. This is implied and not repeated per-phase.
 
+**run event (once per Loop):** `record_run.sh` is called by `run-loop.sh` at the very start of every Loop (after RUN_ID generation, before Phase 0.9) to append a single `run` event to `perf.jsonl`; this is handled automatically by the shell script and requires no orchestrator action.
+
 **startSha initialization:** At the very start of the first iteration (before Phase 0.9, immediately after writing the initial state.json), source startSha from config.env with a single Bash call and store it in orchestrator working memory for the rest of the run:
 ```bash
 START_SHA=$(grep '^CLOSEDLOOP_START_SHA=' "$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env" 2>/dev/null | cut -d= -f2- | head -n1)
@@ -116,11 +118,14 @@ Here are the key phases you must complete:
 - Check if $CLOSEDLOOP_WORKDIR/plan.json exists (`ls`)
 - **If plan.json does NOT exist:**
   - If `CLOSEDLOOP_PLAN_FILE` is set: Set `plan_was_imported = true`. Launch @code:plan-importer with `WORKDIR`. After completion, activate `code:plan-validate` skill. Proceed to Phase 1.1.
+  - Else if `$CLOSEDLOOP_WORKDIR/plan-source.md` exists (`ls "$CLOSEDLOOP_WORKDIR/plan-source.md"` returns 0): Set `CLOSEDLOOP_PLAN_FILE="$CLOSEDLOOP_WORKDIR/plan-source.md"`. Set `plan_was_imported = true`. Launch @code:plan-importer with `WORKDIR`. After completion, activate `code:plan-validate` skill. Proceed to Phase 1.1.
   - Otherwise: Set `plan_was_created = true`. Launch @code:plan-draft-writer with `WORKDIR=$CLOSEDLOOP_WORKDIR` (mention pre-computed context files if available). Once agent outputs `<promise>PLAN_VALIDATED</promise>`, run **PLAN_VALIDATION_SEQUENCE**.
 - **If plan.json EXISTS:**
-  - Activate `code:plan-validate` skill
-  - `EMPTY_FILE`/`FORMAT_ISSUES`: Fix via haiku subagent (missing checkboxes → add `[ ]`) or @code:plan-writer, then re-validate
-  - `VALID`: Proceed to Phase 1.1
+  - First, check if plan.json contains valid JSON: `python3 -m json.tool "$CLOSEDLOOP_WORKDIR/plan.json" > /dev/null 2>&1`
+  - If plan.json is NOT valid JSON (exit code non-zero — raw markdown written by an older gateway): Run `mv "$CLOSEDLOOP_WORKDIR/plan.json" "$CLOSEDLOOP_WORKDIR/plan-source.md"` to rename it. Set `CLOSEDLOOP_PLAN_FILE="$CLOSEDLOOP_WORKDIR/plan-source.md"`. Set `plan_was_imported = true`. Launch @code:plan-importer with `WORKDIR`. After completion, activate `code:plan-validate` skill. Proceed to Phase 1.1.
+  - If plan.json IS valid JSON: Activate `code:plan-validate` skill
+    - `EMPTY_FILE`/`FORMAT_ISSUES`: Fix via haiku subagent (missing checkboxes → add `[ ]`) or @code:plan-writer, then re-validate
+    - `VALID`: Proceed to Phase 1.1
 
 **PHASE 1.1: PLAN REVIEW CHECKPOINT**
 

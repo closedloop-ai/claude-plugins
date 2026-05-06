@@ -4,6 +4,26 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.6
+
+#### Added
+- New `record_run.sh` script emits exactly one `run` event per Loop to `perf.jsonl` carrying `command`, `repo`, `branch`, and `started_at`, so every perf record can be attributed to the slash-command that launched the Loop. Gated behind `CLOSEDLOOP_PERF_V2=1`; fails open on any unexpected error (`trap 'exit 0' ERR`). Invoked synchronously from `run-loop.sh:main()` with `|| true` and only on fresh-start invocations (resumed Loops do not re-emit), so the `run` event is appended before the first `phase` event without ever changing the Loop's exit code and without violating PRD-254 AC-1's "exactly one `run` event per Loop" guarantee.
+- New `CLOSEDLOOP_COMMAND` environment variable exported by `run-loop.sh` next to `CLOSEDLOOP_RUN_ID`, derived from `PROMPT_NAME` and defaulting to `interactive` for bare `/code:code` invocations. The launching command is also persisted in `state.json` (`command:` field in the YAML frontmatter) and restored on resume so `CLOSEDLOOP_COMMAND` keeps its original value instead of degrading to `"interactive"` when the `--prompt` CLI flag isn't re-passed. Older state files lacking the `command` field preserve prior behavior. Hooks and child processes inherit the variable automatically.
+- New `command` field on every `phase`, `iteration`, `pipeline_step`, and `agent` perf event when `CLOSEDLOOP_PERF_V2=1`. Implemented in `record_phase.sh`, `subagent-stop-hook.sh`, and the `emit_perf_event` helper in `run-loop.sh` (which folds the gate into a single `jq -n -c` filter via `--arg perf_v2` rather than spawning a second `jq` per event). The field is omitted entirely when the gate is off, preserving the legacy JSON shape.
+- `record_run.sh` captures `repo` and `branch` via `git -C` with GNU `timeout` as a hang guard when available, falling back to bare `git -C ...` when `timeout` isn't on `PATH` (default macOS without `coreutils`) so dev machines never silently emit empty `repo`/`branch` fields.
+- New `plugins/code/tools/python/test_record_run.py` (covering gate behavior, JSON shape, fail-open paths, repo/branch capture under a fake-`git` PATH shim, and a no-`timeout`-on-PATH regression case) and `plugins/code/tools/python/test_record_phase.py` (covering V2 gating, field correctness, and missing-state fail-open). Both files run under `pytest` with no extra fixtures.
+- One-line note in `prompts/prompt.md` documenting that `record_run.sh` is invoked automatically by `run-loop.sh` at the start of every Loop (before Phase 0.9) and requires no orchestrator action.
+
+### self-learning v1.2.1
+
+#### Changed
+- Coordination version bump alongside `code` v1.11.6 per the PRD-254 producer-side rollout (FEA-887). No functional changes; the bump exists so the two plugins ship together as a matched set, mirroring the FEA-764 precedent.
+
+### code v1.11.5
+
+#### Fixed
+- Phase 1 of the orchestrator prompt (`plugins/code/prompts/prompt.md`) now tolerates a `plan.json` whose contents are raw markdown instead of JSON — a shape produced by older gateway versions that wrote the plan source straight to `plan.json`. Before activating the `code:plan-validate` skill, the orchestrator validates `plan.json` with `python3 -m json.tool`; if parsing fails, it renames the file to `plan-source.md`, sets `CLOSEDLOOP_PLAN_FILE` to that path, marks `plan_was_imported = true`, and routes through `@code:plan-importer`. A new branch in the "plan.json does NOT exist" path also picks up a pre-existing `plan-source.md` for import. This unblocks runs that previously failed at Phase 1 with `EMPTY_FILE`/`FORMAT_ISSUES` against markdown content.
+
 ### code v1.11.4
 
 #### Added
