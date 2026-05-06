@@ -449,19 +449,18 @@ if [[ -n "$AGENT_ID" ]] && [[ -n "$CLOSEDLOOP_WORKDIR" ]] && [[ -f "$AGENT_TYPES
             PERF_MODEL=$(echo "$INPUT" | jq -r '.model // empty' 2>/dev/null || echo "")
             PERF_PARENT_SESSION=$(echo "$INPUT" | jq -r '.parent_session_id // empty' 2>/dev/null || echo "")
 
-            # Read command from env var, falling back to config.env, then to "interactive"
-            # to match the default used by record_phase.sh and run-loop.sh's emit_perf_event
-            # helper. Without this final fallback, agent rows can carry command="" while
-            # phase/iteration/pipeline_step rows carry command="interactive", breaking joins
-            # by command in Datadog (PRD-254 attribution discipline).
-            PERF_COMMAND="${CLOSEDLOOP_COMMAND:-}"
-            if [[ -z "$PERF_COMMAND" ]]; then
-                CLOSEDLOOP_CONFIG_PATH="$CLOSEDLOOP_WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
-                if [[ -f "$CLOSEDLOOP_CONFIG_PATH" ]]; then
-                    PERF_COMMAND=$(grep '^CLOSEDLOOP_COMMAND=' "$CLOSEDLOOP_CONFIG_PATH" 2>/dev/null | head -1 | cut -d'=' -f2- || echo "")
-                fi
-            fi
-            PERF_COMMAND="${PERF_COMMAND:-interactive}"
+            # Read command from env var, defaulting to "interactive" to match the
+            # default used by record_phase.sh and run-loop.sh's emit_perf_event helper.
+            # Without this fallback, agent rows could carry command="" while phase /
+            # iteration / pipeline_step rows carry command="interactive", breaking
+            # joins by command in Datadog (PRD-254 attribution discipline).
+            #
+            # Note: config.env (sourced at line 44 above) would already populate
+            # CLOSEDLOOP_COMMAND if any caller wrote it there; but no caller currently
+            # does (run-loop.sh exports the env var directly and persists `command:`
+            # to state.json, not config.env). A redundant grep on config.env was
+            # removed.
+            PERF_COMMAND="${CLOSEDLOOP_COMMAND:-interactive}"
 
             # Aggregate tokens from transcript if available
             if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then

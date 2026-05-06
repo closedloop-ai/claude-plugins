@@ -26,7 +26,9 @@ K = TypeVar("K", bound=Hashable)
 #                 [input_tokens], [output_tokens],
 #                 [cache_creation_input_tokens], [cache_read_input_tokens],
 #                 [total_context_tokens]}
-#                 Token/model fields are present when CLOSEDLOOP_PERF_V2=1.
+#                 Optional fields (marked [...]) — including command, model,
+#                 parent_session_id, the four token-count fields, and
+#                 total_context_tokens — are emitted only when CLOSEDLOOP_PERF_V2=1.
 # phase:         {event, run_id, iteration, phase, status, start_sha, started_at}
 #                Phase events carry only started_at; per-phase durations are derived from
 #                the gap to the next phase event in the same iteration (or to the iteration's

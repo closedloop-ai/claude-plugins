@@ -419,12 +419,7 @@ class TestPerfV2ModelAndMetadata:
         """When model is missing from hook payload, emit model: null."""
         cwd, workdir, session_id = session_env
 
-        # Re-create agent-type file (cleaned up by previous tests)
-        agent_types_dir = workdir / ".agent-types"
-        agent_types_dir.mkdir(parents=True, exist_ok=True)
-        (agent_types_dir / "agent-123").write_text(
-            "code:implementation-subagent|implementation-subagent|2026-03-25T00:00:00Z"
-        )
+        _recreate_agent_type_file(workdir)
 
         result = run_stop_hook(
             str(cwd),
@@ -449,12 +444,7 @@ class TestPerfV2ModelAndMetadata:
         """When parent_session_id is missing from hook payload, emit null."""
         cwd, workdir, session_id = session_env
 
-        # Re-create agent-type file
-        agent_types_dir = workdir / ".agent-types"
-        agent_types_dir.mkdir(parents=True, exist_ok=True)
-        (agent_types_dir / "agent-123").write_text(
-            "code:implementation-subagent|implementation-subagent|2026-03-25T00:00:00Z"
-        )
+        _recreate_agent_type_file(workdir)
 
         result = run_stop_hook(
             str(cwd),
@@ -479,18 +469,12 @@ class TestPerfV2ModelAndMetadata:
     def test_missing_command_defaults_to_interactive(
         self, session_env: tuple[Path, Path, str]
     ) -> None:
-        """When CLOSEDLOOP_COMMAND is not set and config.env has no fallback, command
-        defaults to "interactive" — matching record_phase.sh and run-loop.sh's
-        emit_perf_event helper, so agent rows can be joined with phase/iteration rows
-        by command in Datadog."""
+        """When CLOSEDLOOP_COMMAND is not set, command defaults to "interactive" —
+        matching record_phase.sh and run-loop.sh's emit_perf_event helper, so agent
+        rows can be joined with phase/iteration rows by command in Datadog."""
         cwd, workdir, session_id = session_env
 
-        # Re-create agent-type file
-        agent_types_dir = workdir / ".agent-types"
-        agent_types_dir.mkdir(parents=True, exist_ok=True)
-        (agent_types_dir / "agent-123").write_text(
-            "code:implementation-subagent|implementation-subagent|2026-03-25T00:00:00Z"
-        )
+        _recreate_agent_type_file(workdir)
 
         # Explicitly remove CLOSEDLOOP_COMMAND from env
         env = os.environ.copy()
