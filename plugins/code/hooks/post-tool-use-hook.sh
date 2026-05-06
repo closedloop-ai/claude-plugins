@@ -39,22 +39,16 @@ eval "$(jq -r '
     "OK=\(if (.tool_response // {}) | ((.error != null and .error != "") or .success == false) then "false" else "true" end)"
 ' <<< "$INPUT")"
 
-# Extract tool_use_id with fallback chain (mirrors pre-tool-use-hook.sh):
-#   1. tool_use_id
-#   2. tool_call_id
-#   3. monotonic counter file in .closedloop-ai/
+# Resolve tool-call correlation id, mirroring pre-tool-use-hook.sh. Prefer
+# `tool_use_id`, fall back to `tool_call_id`. If neither is present we cannot
+# safely correlate this post-hook with its pre-hook sentinel, and a counter
+# fallback would race under parallel tool invocations (this post may pick up
+# a counter that's already been advanced by a later pre-hook). Skip silently.
 if [[ -z "$TOOL_USE_ID" ]]; then
     TOOL_USE_ID="$TOOL_CALL_ID"
 fi
 if [[ -z "$TOOL_USE_ID" ]]; then
-    # Monotonic counter fallback: read the current counter value (do NOT increment —
-    # the pre-tool-use hook already incremented it, so we just read the same value).
-    COUNTER_FILE="${CWD:-.}/$CLOSEDLOOP_STATE_DIR/.tool-call-counter"
-    COUNTER=0
-    if [[ -f "$COUNTER_FILE" ]]; then
-        COUNTER=$(cat "$COUNTER_FILE" 2>/dev/null || echo 0)
-    fi
-    TOOL_USE_ID="counter-$COUNTER"
+    exit 0
 fi
 
 # Discover WORKDIR via session_id mapping (same pattern as pre-tool-use-hook.sh)
@@ -80,17 +74,41 @@ if [[ ! -f "$SENTINEL_FILE" ]]; then
     exit 0
 fi
 
-# Read all fields from sentinel in a single jq invocation
+# Read all fields from sentinel in a single jq invocation. The sentinel was
+# written at call-time by pre-tool-use-hook.sh and is the authoritative source
+# for attribution — the env vars (CLOSEDLOOP_RUN_ID, _COMMAND, _ITERATION) can
+# drift between pre and post (e.g., iteration advancing mid-call), so prefer
+# sentinel fields and fall back to env only when sentinel fields are missing.
 eval "$(jq -r '
     @sh "STARTED_AT=\(.started_at // empty)",
     @sh "SENTINEL_TOOL_NAME=\(.tool_name // empty)",
-    @sh "SENTINEL_AGENT_ID=\(.agent_id // empty)"
+    @sh "SENTINEL_AGENT_ID=\(.agent_id // empty)",
+    @sh "SENTINEL_RUN_ID=\(.run_id // empty)",
+    @sh "SENTINEL_COMMAND=\(.command // empty)",
+    @sh "SENTINEL_ITERATION=\(.iteration // empty)"
 ' "$SENTINEL_FILE" 2>/dev/null || echo "")"
 
-# Use sentinel values as authoritative source (they were set at call time);
-# fall back to hook input fields if sentinel fields are missing.
+# Defense-in-depth: if the sentinel file existed but parsed to nothing useful
+# (corrupt JSON, missing required fields), skip emission entirely. Emitting
+# `started_at: ""` with `duration_s: 0` would pollute Datadog with a record
+# that looks valid but carries no real timing information.
+if [[ -z "${STARTED_AT:-}" ]]; then
+    rm -f "$SENTINEL_FILE"
+    exit 0
+fi
+
+# Use sentinel values as authoritative source; fall back to hook input or env.
 TOOL_NAME="${SENTINEL_TOOL_NAME:-$TOOL_NAME}"
 AGENT_ID="${SENTINEL_AGENT_ID:-$AGENT_ID}"
+RUN_ID="${SENTINEL_RUN_ID:-${CLOSEDLOOP_RUN_ID:-unknown}}"
+COMMAND="${SENTINEL_COMMAND:-${CLOSEDLOOP_COMMAND:-interactive}}"
+
+# Sanitize iteration (sentinel or env) before --argjson to prevent jq abort
+# on non-numeric input.
+ITERATION="${SENTINEL_ITERATION:-${CLOSEDLOOP_ITERATION:-0}}"
+if ! [[ "$ITERATION" =~ ^[0-9]+$ ]]; then
+    ITERATION=0
+fi
 
 # Capture end time: get epoch first, then derive ISO timestamp to avoid skew
 END_EPOCH=$(date +%s)
@@ -113,13 +131,14 @@ if [[ -n "$STARTED_AT" ]] && [[ -n "$ENDED_AT" ]]; then
     fi
 fi
 
-# Append tool event to perf.jsonl
+# Append tool event to perf.jsonl. Attribution fields (run_id/command/iteration)
+# come from the sentinel — see sentinel-parse block above for the rationale.
 PERF_FILE="$CLOSEDLOOP_WORKDIR/perf.jsonl"
 jq -n -c \
     --arg event "tool" \
-    --arg run_id "${CLOSEDLOOP_RUN_ID:-unknown}" \
-    --arg command "${CLOSEDLOOP_COMMAND:-interactive}" \
-    --argjson iteration "${CLOSEDLOOP_ITERATION:-0}" \
+    --arg run_id "$RUN_ID" \
+    --arg command "$COMMAND" \
+    --argjson iteration "$ITERATION" \
     --arg agent_id "${AGENT_ID:-}" \
     --arg tool_name "${TOOL_NAME:-}" \
     --arg started_at "${STARTED_AT:-}" \
@@ -131,13 +150,15 @@ jq -n -c \
 
 # When the tool is "Skill", additionally append a "skill" event to perf.jsonl
 if [[ "$TOOL_NAME" == "Skill" ]]; then
-    # Extract skill_name: prefer tool_input.skill, fall back to tool_input.command
+    # Extract skill_name: prefer tool_input.skill, fall back to tool_input.command.
+    # Per Claude Code's Skill tool docs the field is `skill`, but PRD-466 GAP-004
+    # noted ambiguity; keeping `command` as a forward-compat fallback.
     SKILL_NAME="${SKILL_INPUT_SKILL:-$SKILL_INPUT_COMMAND}"
     jq -n -c \
         --arg event "skill" \
-        --arg run_id "${CLOSEDLOOP_RUN_ID:-unknown}" \
-        --arg command "${CLOSEDLOOP_COMMAND:-interactive}" \
-        --argjson iteration "${CLOSEDLOOP_ITERATION:-0}" \
+        --arg run_id "$RUN_ID" \
+        --arg command "$COMMAND" \
+        --argjson iteration "$ITERATION" \
         --arg agent_id "${AGENT_ID:-}" \
         --arg tool_name "${TOOL_NAME:-}" \
         --arg skill_name "${SKILL_NAME:-}" \

@@ -46,24 +46,28 @@ eval "$(echo "$INPUT" | jq -r '
     @sh "PLANNED_SUBAGENT_TYPE=\(.tool_input.subagent_type // empty)"
 ')"
 
-# Apply tool_use_id fallback chain:
-#   1. tool_use_id
-#   2. tool_call_id
-#   3. monotonic counter file in .closedloop-ai/
+# Resolve a tool-call correlation id. Prefer `tool_use_id` (Claude Code's documented
+# field), fall back to `tool_call_id` (PRD spelling). If neither is present we
+# cannot safely correlate this pre-hook with its post-hook — a counter-file
+# fallback would race under parallel tool invocations (two hooks reading the
+# same value, the post hook matching the wrong sentinel) and produce silently
+# wrong telemetry. Skip the pre-hook silently in that case; the post-hook will
+# also skip, so no orphaned sentinels accumulate.
 TOOL_USE_ID="$TOOL_USE_ID_RAW"
 if [[ -z "$TOOL_USE_ID" ]]; then
     TOOL_USE_ID="$TOOL_CALL_ID"
 fi
 if [[ -z "$TOOL_USE_ID" ]]; then
-    # Monotonic counter fallback: increment a shared counter file
-    COUNTER_FILE="${CWD:-.}/$CLOSEDLOOP_STATE_DIR/.tool-call-counter"
-    mkdir -p "$(dirname "$COUNTER_FILE")" 2>/dev/null || true
-    COUNTER=1
-    if [[ -f "$COUNTER_FILE" ]]; then
-        COUNTER=$(( $(cat "$COUNTER_FILE" 2>/dev/null || echo 0) + 1 ))
-    fi
-    echo "$COUNTER" > "$COUNTER_FILE"
-    TOOL_USE_ID="counter-$COUNTER"
+    exit 0
+fi
+
+# Sanitize CLOSEDLOOP_ITERATION: must be a non-negative integer or jq's
+# --argjson will fail and abort this hook (silently, via `trap exit 0 ERR`),
+# losing the sentinel. Default invalid values to 0 — telemetry remains
+# attributable to the run even when iteration is unset/malformed.
+ITERATION="${CLOSEDLOOP_ITERATION:-0}"
+if ! [[ "$ITERATION" =~ ^[0-9]+$ ]]; then
+    ITERATION=0
 fi
 
 # Discover WORKDIR via session_id mapping (same pattern as pretooluse-hook.sh and subagent-start-hook.sh)
@@ -92,7 +96,7 @@ jq -n -c \
     --arg agent_id "${AGENT_ID:-}" \
     --arg run_id "${CLOSEDLOOP_RUN_ID:-}" \
     --arg command "${CLOSEDLOOP_COMMAND:-}" \
-    --argjson iteration "${CLOSEDLOOP_ITERATION:-0}" \
+    --argjson iteration "$ITERATION" \
     '{started_at:$started_at,tool_name:$tool_name,agent_id:$agent_id,run_id:$run_id,command:$command,iteration:$iteration}' \
     > "$TOOL_CALLS_DIR/$TOOL_USE_ID"
 
@@ -103,7 +107,7 @@ if [[ "$TOOL_NAME" == "Agent" ]]; then
         --arg event "spawn" \
         --arg run_id "${CLOSEDLOOP_RUN_ID:-unknown}" \
         --arg command "${CLOSEDLOOP_COMMAND:-interactive}" \
-        --argjson iteration "${CLOSEDLOOP_ITERATION:-0}" \
+        --argjson iteration "$ITERATION" \
         --arg parent_session_id "${SESSION_ID:-}" \
         --arg parent_agent_id "${AGENT_ID:-}" \
         --arg planned_subagent_type "${PLANNED_SUBAGENT_TYPE:-}" \

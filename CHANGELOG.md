@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.12.0
+
+#### Added
+- New `pre-tool-use-hook.sh` and `post-tool-use-hook.sh` hooks (FEA-889 of PRD-254) that emit `tool`, `skill`, and `spawn` perf events to `perf.jsonl` for every Claude Code tool invocation inside a Loop. The pre-hook writes a sentinel file at `$CLOSEDLOOP_WORKDIR/.tool-calls/{TOOL_USE_ID}` capturing call-time attribution (`started_at`, `tool_name`, `agent_id`, `run_id`, `command`, `iteration`); the post-hook reads it to compute `duration_s` and emit the `tool` event, deletes it on success, and additionally emits a `skill` event for `Skill` tool calls. The pre-hook emits a `spawn` event with `parent_session_id`, `parent_agent_id`, and `planned_subagent_type` for `Agent` tool calls. Both hooks gated behind `CLOSEDLOOP_PERF_V2=1` and use the `trap 'exit 0' ERR` fail-open pattern so a hook crash never blocks the underlying tool call or the Loop. Registered in `plugins/code/hooks/hooks.json` as a new `PreToolUse` entry and the first `PostToolUse` entry. New `minClaudeCodeVersion: "1.0.33"` in plugin.json documents the required `tool_use_id`/`PostToolUse` payload contract.
+- Correlation-id resolution prefers `tool_use_id` → `tool_call_id` and skips silently if both are absent. The earlier counter-file fallback was removed because it was race-prone under parallel tool invocations: two pre-hooks could read the same counter value, write the same sentinel name, and the post-hooks would correlate to the wrong calls. Skipping is the only safe option without atomic locking.
+- Post-hook now treats the sentinel as the authoritative source for `run_id`, `command`, and `iteration` (in addition to `tool_name` and `agent_id`), with env vars as fallback. This keeps tool-event attribution stable even if iteration advances or env vars drift between the pre and post hook firing.
+- Defense-in-depth: corrupt sentinel JSON (empty `started_at` after parse) suppresses the tool event entirely rather than emitting a record with `started_at: ""` and `duration_s: 0` — the missing-timing case now consistently surfaces as "no event" rather than "polluted event."
+- `CLOSEDLOOP_ITERATION` is numerically validated before `--argjson` in both hooks. A non-numeric value silently aborted the hook via `trap exit 0 ERR` and lost the sentinel; values not matching `^[0-9]+$` are now normalized to `0`.
+- Bash test suite under `plugins/code/hooks/tests/` (5 files, 103 tests total) covering `tool` event emission, `skill` event emission with `tool_input.skill` → `tool_input.command` fallback, `spawn` event emission for `Agent` calls, fail-open contract for both hooks, and a new `test_correlation.sh` (20 tests) that exercises real pre→post correlation, sentinel-attribution-wins-over-env-drift, corrupt-sentinel suppression, missing-correlation-id silent skip, and non-numeric iteration normalization.
+
 ### code v1.11.6
 
 #### Added
