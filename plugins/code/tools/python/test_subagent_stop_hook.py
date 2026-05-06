@@ -197,11 +197,17 @@ class TestPerfV2TokenAggregation:
         """Verify four token fields sum correctly across transcript entries with cache reads."""
         cwd, workdir, session_id = session_env
 
-        # Create a mock transcript with multiple assistant entries including cache reads
+        # Create a mock transcript with multiple assistant entries including cache reads.
+        # Shape mirrors what Claude Code actually writes to agent_transcript_path:
+        # top-level `type: "assistant"` with the API message (incl. role/model/usage)
+        # under `.message`. This matches stream_formatter._accumulate_usage which reads
+        # event["message"]["usage"]; the bash port's jq filter selects on `.type` for
+        # the same reason.
         transcript_entries = [
             {
-                "role": "assistant",
+                "type": "assistant",
                 "message": {
+                    "role": "assistant",
                     "model": "claude-sonnet-4-20250514",
                     "usage": {
                         "input_tokens": 1000,
@@ -212,12 +218,13 @@ class TestPerfV2TokenAggregation:
                 },
             },
             {
-                "role": "user",
-                "message": {"content": "some user message"},
+                "type": "user",
+                "message": {"role": "user", "content": "some user message"},
             },
             {
-                "role": "assistant",
+                "type": "assistant",
                 "message": {
+                    "role": "assistant",
                     "model": "claude-sonnet-4-20250514",
                     "usage": {
                         "input_tokens": 800,
@@ -228,8 +235,9 @@ class TestPerfV2TokenAggregation:
                 },
             },
             {
-                "role": "assistant",
+                "type": "assistant",
                 "message": {
+                    "role": "assistant",
                     "model": "claude-sonnet-4-20250514",
                     "usage": {
                         "input_tokens": 1200,
@@ -270,17 +278,20 @@ class TestPerfV2TokenAggregation:
             f"Expected cache_read_input_tokens=800, got {evt['cache_read_input_tokens']}"
         )
 
-        # Verify total_context_tokens is the high-water mark:
-        # After entry 1: 1000+200+500+0=1700 -> hwm=1700
-        # After entry 2: 1700+800+300+0+500=3300 -> hwm=3300
-        # After entry 3: 3300+1200+150+100+300=5050 -> hwm=5050
-        assert evt["total_context_tokens"] == 5050, (
-            f"Expected total_context_tokens=5050, got {evt['total_context_tokens']}"
+        # Verify total_context_tokens is the per-turn high-water mark — the max of any
+        # single assistant turn's full token usage (PRD: "useful for spotting context-pressure
+        # spikes"). Cumulative sums would be monotonic and equal the final total, providing
+        # no peak signal.
+        # Entry 1: 1000+200+500+0 = 1700
+        # Entry 2:  800+300+0+500 = 1600
+        # Entry 3: 1200+150+100+300 = 1750  <- peak
+        assert evt["total_context_tokens"] == 1750, (
+            f"Expected total_context_tokens=1750 (per-turn HWM), got {evt['total_context_tokens']}"
         )
 
 
 class TestPerfV2MissingTranscript:
-    """T-3.2: Graceful degradation when transcript is missing under PERF_V2."""
+    """T-3.2: Graceful degradation when transcript is missing or malformed under PERF_V2."""
 
     def test_missing_transcript_emits_zero_tokens(
         self, session_env: tuple[Path, Path, str]
@@ -306,6 +317,43 @@ class TestPerfV2MissingTranscript:
             assert evt[field] == 0, f"Expected {field}=0, got {evt[field]}"
         for field in ("duration_s", "started_at", "ended_at"):
             assert field in evt
+
+    def test_malformed_transcript_emits_zero_tokens_and_does_not_abort(
+        self, session_env: tuple[Path, Path, str], tmp_path: Path
+    ) -> None:
+        """When the transcript file exists but isn't valid JSONL (jq fails), the hook
+        must still exit 0 and emit an agent event with zero token fields. Regression
+        guard for the fail-open contract: a transcript-parser bug must never break the
+        SubagentStop hook or the parent Loop."""
+        cwd, workdir, session_id = session_env
+
+        # Write garbage that is NOT valid JSONL
+        bad_transcript = tmp_path / "transcript.jsonl"
+        bad_transcript.write_text("not valid json\n{broken: [\n\x00\x01garbage\n")
+
+        _recreate_agent_type_file(workdir)
+
+        result = run_stop_hook(
+            str(cwd),
+            session_id,
+            self_learning=False,
+            transcript_path=str(bad_transcript),
+            env_extra={"CLOSEDLOOP_PERF_V2": "1"},
+        )
+        assert result.returncode == 0, (
+            f"Hook must exit 0 on malformed transcript, got {result.returncode}. "
+            f"stderr: {result.stderr!r}"
+        )
+
+        agent_events = _read_agent_events(workdir)
+        assert len(agent_events) == 1, "Agent event must still be emitted on malformed transcript"
+
+        evt = agent_events[0]
+        for field in ("input_tokens", "output_tokens", "cache_creation_input_tokens",
+                      "cache_read_input_tokens", "total_context_tokens"):
+            assert evt[field] == 0, (
+                f"On malformed transcript, expected {field}=0, got {evt[field]}"
+            )
 
 
 class TestPerfV2GateBehavior:
@@ -428,10 +476,13 @@ class TestPerfV2ModelAndMetadata:
             f"Expected parent_session_id=null, got {evt['parent_session_id']}"
         )
 
-    def test_missing_command_emits_null_string(
+    def test_missing_command_defaults_to_interactive(
         self, session_env: tuple[Path, Path, str]
     ) -> None:
-        """When CLOSEDLOOP_COMMAND is not set, command field should be empty string."""
+        """When CLOSEDLOOP_COMMAND is not set and config.env has no fallback, command
+        defaults to "interactive" — matching record_phase.sh and run-loop.sh's
+        emit_perf_event helper, so agent rows can be joined with phase/iteration rows
+        by command in Datadog."""
         cwd, workdir, session_id = session_env
 
         # Re-create agent-type file
@@ -468,5 +519,6 @@ class TestPerfV2ModelAndMetadata:
         assert len(agent_events) == 1
 
         evt = agent_events[0]
-        # command should be empty string when not set (not null — it's always a string)
-        assert evt["command"] == "", f"Expected empty command, got {evt['command']!r}"
+        assert evt["command"] == "interactive", (
+            f"Expected command='interactive', got {evt['command']!r}"
+        )

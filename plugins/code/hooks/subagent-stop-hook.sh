@@ -449,7 +449,11 @@ if [[ -n "$AGENT_ID" ]] && [[ -n "$CLOSEDLOOP_WORKDIR" ]] && [[ -f "$AGENT_TYPES
             PERF_MODEL=$(echo "$INPUT" | jq -r '.model // empty' 2>/dev/null || echo "")
             PERF_PARENT_SESSION=$(echo "$INPUT" | jq -r '.parent_session_id // empty' 2>/dev/null || echo "")
 
-            # Read command from env var, falling back to config.env
+            # Read command from env var, falling back to config.env, then to "interactive"
+            # to match the default used by record_phase.sh and run-loop.sh's emit_perf_event
+            # helper. Without this final fallback, agent rows can carry command="" while
+            # phase/iteration/pipeline_step rows carry command="interactive", breaking joins
+            # by command in Datadog (PRD-254 attribution discipline).
             PERF_COMMAND="${CLOSEDLOOP_COMMAND:-}"
             if [[ -z "$PERF_COMMAND" ]]; then
                 CLOSEDLOOP_CONFIG_PATH="$CLOSEDLOOP_WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
@@ -457,24 +461,34 @@ if [[ -n "$AGENT_ID" ]] && [[ -n "$CLOSEDLOOP_WORKDIR" ]] && [[ -f "$AGENT_TYPES
                     PERF_COMMAND=$(grep '^CLOSEDLOOP_COMMAND=' "$CLOSEDLOOP_CONFIG_PATH" 2>/dev/null | head -1 | cut -d'=' -f2- || echo "")
                 fi
             fi
+            PERF_COMMAND="${PERF_COMMAND:-interactive}"
 
             # Aggregate tokens from transcript if available
             if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
                 # Parse assistant entries from transcript JSONL and sum token usage.
                 # Follows the accumulation pattern from stream_formatter.py:203-226:
                 #   input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens
-                # Also tracks total_context_tokens as the high-water mark (running max of
-                # cumulative token sum across all entries).
+                # The four cumulative fields sum across all assistant turns. total_context_tokens
+                # is the per-turn high-water mark (max of any single turn's full usage), per the
+                # PRD's "context-pressure spikes" framing — a running cumulative max would just be
+                # the final total and provide no peak signal.
+                #
+                # The stream/transcript JSONL Claude Code emits has top-level `type: "assistant"`
+                # with the message under `.message` (mirroring stream_formatter.py:208 which reads
+                # `event.get("message")`). Selecting on `.role` would silently miss every entry.
                 TOKEN_RESULT=$(jq -s -c '
-                    [.[] | select(.role == "assistant") | .message.usage // empty] |
+                    [.[] | select(.type == "assistant") | .message.usage // empty] |
                     reduce .[] as $u (
                         {"input": 0, "output": 0, "cache_creation": 0, "cache_read": 0, "hwm": 0};
                         .input += (($u.input_tokens // 0) | tonumber) |
                         .output += (($u.output_tokens // 0) | tonumber) |
                         .cache_creation += (($u.cache_creation_input_tokens // 0) | tonumber) |
                         .cache_read += (($u.cache_read_input_tokens // 0) | tonumber) |
-                        (.input + .output + .cache_creation + .cache_read) as $cumul |
-                        .hwm = (if $cumul > .hwm then $cumul else .hwm end)
+                        ((($u.input_tokens // 0) | tonumber)
+                          + (($u.output_tokens // 0) | tonumber)
+                          + (($u.cache_creation_input_tokens // 0) | tonumber)
+                          + (($u.cache_read_input_tokens // 0) | tonumber)) as $entry_total |
+                        .hwm = (if $entry_total > .hwm then $entry_total else .hwm end)
                     )
                 ' "$TRANSCRIPT_PATH" 2>/dev/null) || TOKEN_RESULT=""
 
