@@ -3,8 +3,14 @@
 # Writes a sentinel file for each tool call so downstream hooks can compute
 # tool-call duration and attribution.
 #
-# Gated behind CLOSEDLOOP_PERF_V2=1 — no-ops silently when the gate is off.
 # Designed to be non-blocking: exits 0 on any failure (fail-open pattern).
+# Emitted unconditionally (no env-var gate). Safety properties come from
+# (a) the additive sentinel/event schema — perf.jsonl readers ignore unknown
+# events, so emitting an extra `tool`/`spawn` row never breaks downstream
+# consumers — and (b) the fail-open contract above. The earlier draft was
+# gated behind CLOSEDLOOP_PERF_V2=1, but closedloop-electron ships
+# claude-plugins bundled and end users have no way to set runtime env vars,
+# so that gate was permanently off in production.
 #
 # Sentinel file location:
 #   $CLOSEDLOOP_WORKDIR/.tool-calls/{TOOL_USE_ID}
@@ -23,11 +29,6 @@
 
 # Fail open: any unexpected error exits 0 so the caller is unaffected.
 trap 'exit 0' ERR
-
-# Gate: only run when CLOSEDLOOP_PERF_V2=1
-if [[ "${CLOSEDLOOP_PERF_V2:-}" != "1" ]]; then
-    exit 0
-fi
 
 # Single source of truth for the state directory name
 CLOSEDLOOP_STATE_DIR=".closedloop-ai"

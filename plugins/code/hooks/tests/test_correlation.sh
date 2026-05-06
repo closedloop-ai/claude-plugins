@@ -65,7 +65,7 @@ echo "Test 1: pre-hook writes sentinel, post-hook reads it and emits tool event"
 
     # Run pre-hook
     mock_pre_input "$session_id" "$cwd" "$tool_use_id" "Read" "agent-real-1" \
-        | env CLOSEDLOOP_PERF_V2=1 \
+        | env \
               CLOSEDLOOP_RUN_ID="run-real-1" \
               CLOSEDLOOP_COMMAND="feat" \
               CLOSEDLOOP_ITERATION=5 \
@@ -82,7 +82,7 @@ echo "Test 1: pre-hook writes sentinel, post-hook reads it and emits tool event"
 
     # Run post-hook with same tool_use_id
     mock_post_input "$session_id" "$cwd" "$tool_use_id" "Read" "agent-real-1" \
-        | env CLOSEDLOOP_PERF_V2=1 \
+        | env \
               CLOSEDLOOP_RUN_ID="run-real-1" \
               CLOSEDLOOP_COMMAND="feat" \
               CLOSEDLOOP_ITERATION=5 \
@@ -127,7 +127,7 @@ echo "Test 2: sentinel attribution wins over post-time env vars"
 
     # Pre-hook with a particular env
     mock_pre_input "$session_id" "$cwd" "$tool_use_id" "Bash" "agent-attr" \
-        | env CLOSEDLOOP_PERF_V2=1 \
+        | env \
               CLOSEDLOOP_RUN_ID="ORIGINAL_RUN" \
               CLOSEDLOOP_COMMAND="ORIGINAL_CMD" \
               CLOSEDLOOP_ITERATION=7 \
@@ -135,7 +135,7 @@ echo "Test 2: sentinel attribution wins over post-time env vars"
 
     # Post-hook with a DIFFERENT env (simulating mid-call iteration advance, etc.)
     mock_post_input "$session_id" "$cwd" "$tool_use_id" "Bash" "agent-attr" \
-        | env CLOSEDLOOP_PERF_V2=1 \
+        | env \
               CLOSEDLOOP_RUN_ID="DRIFTED_RUN" \
               CLOSEDLOOP_COMMAND="DRIFTED_CMD" \
               CLOSEDLOOP_ITERATION=99 \
@@ -170,7 +170,7 @@ echo "Test 3: corrupt sentinel does not emit a tool event"
     echo "this is not valid json {[}" > "$workdir/.tool-calls/$tool_use_id"
 
     mock_post_input "$session_id" "$cwd" "$tool_use_id" "Bash" "agent-corrupt" \
-        | env CLOSEDLOOP_PERF_V2=1 \
+        | env \
               CLOSEDLOOP_RUN_ID="run-corrupt" \
               CLOSEDLOOP_COMMAND="test" \
               CLOSEDLOOP_ITERATION=0 \
@@ -215,12 +215,12 @@ echo "Test 4: missing correlation id skips silently in both hooks"
         '{session_id:$session_id,cwd:$cwd,tool_name:"Bash",agent_id:"a",tool_response:{}}')
 
     pre_exit=0
-    echo "$pre_input" | env CLOSEDLOOP_PERF_V2=1 \
+    echo "$pre_input" | env \
         CLOSEDLOOP_RUN_ID="r" CLOSEDLOOP_COMMAND="c" CLOSEDLOOP_ITERATION=0 \
         bash "$PRE_HOOK" || pre_exit=$?
 
     post_exit=0
-    echo "$post_input" | env CLOSEDLOOP_PERF_V2=1 \
+    echo "$post_input" | env \
         CLOSEDLOOP_RUN_ID="r" CLOSEDLOOP_COMMAND="c" CLOSEDLOOP_ITERATION=0 \
         bash "$POST_HOOK" || post_exit=$?
 
@@ -254,7 +254,7 @@ echo "Test 5: non-numeric CLOSEDLOOP_ITERATION is normalized to 0"
     tool_use_id="non-numeric-iter-id"
 
     mock_pre_input "$session_id" "$cwd" "$tool_use_id" "Read" "agent-iter" \
-        | env CLOSEDLOOP_PERF_V2=1 \
+        | env \
               CLOSEDLOOP_RUN_ID="r" \
               CLOSEDLOOP_COMMAND="c" \
               CLOSEDLOOP_ITERATION="abc-not-a-number" \
@@ -271,7 +271,7 @@ echo "Test 5: non-numeric CLOSEDLOOP_ITERATION is normalized to 0"
     fi
 
     mock_post_input "$session_id" "$cwd" "$tool_use_id" "Read" "agent-iter" \
-        | env CLOSEDLOOP_PERF_V2=1 \
+        | env \
               CLOSEDLOOP_RUN_ID="r" \
               CLOSEDLOOP_COMMAND="c" \
               CLOSEDLOOP_ITERATION="zzz" \
@@ -315,7 +315,7 @@ echo "Test 6: post-hook normalizes non-numeric env iteration when sentinel lacks
         > "$sentinel_path"
 
     mock_post_input "$session_id" "$cwd" "$tool_use_id" "Bash" "agent-x" \
-        | env CLOSEDLOOP_PERF_V2=1 \
+        | env \
               CLOSEDLOOP_RUN_ID="r" \
               CLOSEDLOOP_COMMAND="c" \
               CLOSEDLOOP_ITERATION="garbage" \

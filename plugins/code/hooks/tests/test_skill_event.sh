@@ -2,9 +2,9 @@
 # Tests that post-tool-use-hook.sh emits a valid "skill" event to perf.jsonl
 # when the tool_name is "Skill".
 #
-# Validates that when post-tool-use-hook.sh is invoked with CLOSEDLOOP_PERF_V2=1,
-# a pre-created sentinel file, and a mock PostToolUse hook payload with tool_name
-# "Skill", the resulting perf.jsonl contains both a "tool" event and a "skill" event
+# Validates that when post-tool-use-hook.sh is invoked with a pre-created sentinel
+# file and a mock PostToolUse hook payload with tool_name "Skill", the resulting
+# perf.jsonl contains both a "tool" event and a "skill" event
 # with the correct skill_name field extracted from tool_input.skill (or falling back
 # to tool_input.command when tool_input.skill is absent).
 #
@@ -121,7 +121,6 @@ echo "Test 1: Skill tool emits both tool event and skill event"
 
     actual_exit=0
     echo "$mock_input" | env \
-        CLOSEDLOOP_PERF_V2=1 \
         CLOSEDLOOP_RUN_ID="$run_id" \
         CLOSEDLOOP_COMMAND="$command" \
         CLOSEDLOOP_ITERATION="$iteration" \
@@ -201,7 +200,6 @@ echo "Test 2: skill_name is correctly extracted from tool_input.skill"
     perf_file="$workdir/perf.jsonl"
 
     echo "$mock_input" | env \
-        CLOSEDLOOP_PERF_V2=1 \
         CLOSEDLOOP_RUN_ID="$run_id" \
         CLOSEDLOOP_COMMAND="$command" \
         CLOSEDLOOP_ITERATION="$iteration" \
@@ -239,7 +237,6 @@ echo "Test 3: skill_name falls back to tool_input.command when tool_input.skill 
     perf_file="$workdir/perf.jsonl"
 
     echo "$mock_input" | env \
-        CLOSEDLOOP_PERF_V2=1 \
         CLOSEDLOOP_RUN_ID="$run_id" \
         CLOSEDLOOP_COMMAND="$command" \
         CLOSEDLOOP_ITERATION="$iteration" \
@@ -282,7 +279,6 @@ echo "Test 4: non-Skill tool does not emit a skill event"
     perf_file="$workdir/perf.jsonl"
 
     echo "$mock_input" | env \
-        CLOSEDLOOP_PERF_V2=1 \
         CLOSEDLOOP_RUN_ID="$run_id" \
         CLOSEDLOOP_COMMAND="$command" \
         CLOSEDLOOP_ITERATION="$iteration" \
@@ -332,7 +328,6 @@ echo "Test 5: tool_input.skill wins over tool_input.command when both are presen
     perf_file="$workdir/perf.jsonl"
 
     echo "$mock_input" | env \
-        CLOSEDLOOP_PERF_V2=1 \
         CLOSEDLOOP_RUN_ID="run-pri" \
         CLOSEDLOOP_COMMAND="feat" \
         CLOSEDLOOP_ITERATION=0 \
@@ -372,7 +367,6 @@ echo "Test 6: skill_name is empty when tool_input has neither skill nor command"
 
     actual_exit=0
     echo "$mock_input" | env \
-        CLOSEDLOOP_PERF_V2=1 \
         CLOSEDLOOP_RUN_ID="run-n" \
         CLOSEDLOOP_COMMAND="feat" \
         CLOSEDLOOP_ITERATION=0 \

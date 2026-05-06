@@ -2,9 +2,9 @@
 # Tests that pre-tool-use-hook.sh emits a valid "spawn" event to perf.jsonl
 # when the tool_name is "Agent".
 #
-# Validates that when pre-tool-use-hook.sh is invoked with CLOSEDLOOP_PERF_V2=1
-# and a mock PreToolUse hook payload with tool_name "Agent", the resulting
-# perf.jsonl contains a "spawn" event with:
+# Validates that when pre-tool-use-hook.sh is invoked with a mock PreToolUse hook
+# payload with tool_name "Agent", the resulting perf.jsonl contains a "spawn"
+# event with:
 #   parent_session_id  -- from session_id in the hook payload
 #   parent_agent_id    -- from agent_id in the hook payload
 #   planned_subagent_type -- from tool_input.subagent_type in the hook payload
@@ -69,7 +69,6 @@ echo "Test 1: Agent tool emits spawn event and writes sentinel file"
 
     actual_exit=0
     echo "$mock_input" | env \
-        CLOSEDLOOP_PERF_V2=1 \
         CLOSEDLOOP_RUN_ID="$run_id" \
         CLOSEDLOOP_COMMAND="$command" \
         CLOSEDLOOP_ITERATION="$iteration" \
@@ -156,7 +155,6 @@ echo "Test 2: parent_session_id and parent_agent_id are correctly extracted from
     perf_file="$workdir/perf.jsonl"
 
     echo "$mock_input" | env \
-        CLOSEDLOOP_PERF_V2=1 \
         CLOSEDLOOP_RUN_ID="$run_id" \
         CLOSEDLOOP_COMMAND="$command" \
         CLOSEDLOOP_ITERATION="$iteration" \
@@ -191,7 +189,6 @@ echo "Test 3: planned_subagent_type is correctly extracted from tool_input.subag
     perf_file="$workdir/perf.jsonl"
 
     echo "$mock_input" | env \
-        CLOSEDLOOP_PERF_V2=1 \
         CLOSEDLOOP_RUN_ID="$run_id" \
         CLOSEDLOOP_COMMAND="$command" \
         CLOSEDLOOP_ITERATION="$iteration" \
@@ -230,7 +227,6 @@ echo "Test 4: non-Agent tool does not emit a spawn event"
     perf_file="$workdir/perf.jsonl"
 
     echo "$mock_input" | env \
-        CLOSEDLOOP_PERF_V2=1 \
         CLOSEDLOOP_RUN_ID="$run_id" \
         CLOSEDLOOP_COMMAND="$command" \
         CLOSEDLOOP_ITERATION="$iteration" \
@@ -258,16 +254,21 @@ echo "Test 4: non-Agent tool does not emit a spawn event"
 }
 
 # ------------------------------------------------------------------
-# Test 5: no-op when CLOSEDLOOP_PERF_V2 is unset
+# Test 5: spawn event emits unconditionally — no env-var gate
+#
+# The earlier draft was gated behind CLOSEDLOOP_PERF_V2=1; closedloop-electron
+# ships claude-plugins bundled and end users cannot set runtime env vars, so
+# the gate was removed. With CLOSEDLOOP_PERF_V2 explicitly unset, the Agent
+# tool must still produce a spawn event and a sentinel.
 # ------------------------------------------------------------------
-echo "Test 5: pre-tool-use-hook.sh no-ops when CLOSEDLOOP_PERF_V2 is unset"
+echo "Test 5: pre-tool-use-hook.sh emits spawn event with CLOSEDLOOP_PERF_V2 unset"
 {
     read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env)"
 
-    tool_use_id="tool-use-id-gate-test"
+    tool_use_id="tool-use-id-no-gate-spawn"
     subagent_type="code:plan-writer"
-    agent_id="agent-gate"
-    run_id="run-gate"
+    agent_id="agent-no-gate"
+    run_id="run-no-gate"
     command="test"
     iteration=0
 
@@ -276,24 +277,31 @@ echo "Test 5: pre-tool-use-hook.sh no-ops when CLOSEDLOOP_PERF_V2 is unset"
     sentinel_file="$workdir/.tool-calls/$tool_use_id"
 
     actual_exit=0
-    echo "$mock_input" | bash "$PRE_HOOK" ; actual_exit=$?
+    echo "$mock_input" | env -u CLOSEDLOOP_PERF_V2 \
+        CLOSEDLOOP_RUN_ID="$run_id" \
+        CLOSEDLOOP_COMMAND="$command" \
+        CLOSEDLOOP_ITERATION="$iteration" \
+        bash "$PRE_HOOK" ; actual_exit=$?
 
     if [[ "$actual_exit" -eq 0 ]]; then
-        pass "pre-tool-use-hook.sh exits 0 when gate is off"
+        pass "pre-tool-use-hook.sh exits 0 with CLOSEDLOOP_PERF_V2 unset"
     else
-        fail "pre-tool-use-hook.sh exits 0 when gate is off" "expected exit 0 but got $actual_exit"
+        fail "pre-tool-use-hook.sh exits 0 with CLOSEDLOOP_PERF_V2 unset" \
+             "expected exit 0 but got $actual_exit"
     fi
 
-    if [[ ! -f "$perf_file" ]]; then
-        pass "no perf.jsonl created when gate is off"
+    if [[ -f "$perf_file" ]] && grep -q '"event":"spawn"' "$perf_file" 2>/dev/null; then
+        pass "spawn event emitted with CLOSEDLOOP_PERF_V2 unset (gate removed)"
     else
-        fail "no perf.jsonl created when gate is off" "perf.jsonl was unexpectedly created"
+        fail "spawn event emitted with CLOSEDLOOP_PERF_V2 unset (gate removed)" \
+             "no spawn event in perf.jsonl"
     fi
 
-    if [[ ! -f "$sentinel_file" ]]; then
-        pass "no sentinel file created when gate is off"
+    if [[ -f "$sentinel_file" ]]; then
+        pass "sentinel written with CLOSEDLOOP_PERF_V2 unset (gate removed)"
     else
-        fail "no sentinel file created when gate is off" "sentinel was unexpectedly created"
+        fail "sentinel written with CLOSEDLOOP_PERF_V2 unset (gate removed)" \
+             "sentinel not found at $sentinel_file"
     fi
 
     rm -rf "$tmpdir"

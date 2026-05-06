@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Tests that post-tool-use-hook.sh emits a valid "tool" event to perf.jsonl.
 #
-# Validates that when post-tool-use-hook.sh is invoked with CLOSEDLOOP_PERF_V2=1,
-# a pre-created sentinel file, and a mock PostToolUse hook payload, the resulting
-# perf.jsonl line contains all required fields for a "tool" event:
+# Validates that when post-tool-use-hook.sh is invoked with a pre-created sentinel
+# file and a mock PostToolUse hook payload, the resulting perf.jsonl line contains
+# all required fields for a "tool" event:
 #   event, run_id, command, iteration, agent_id, tool_name,
 #   started_at, ended_at, duration_s, ok
 #
@@ -68,7 +68,6 @@ echo "Test 1: post-tool-use-hook.sh emits tool event with all required fields"
 
     actual_exit=0
     echo "$mock_input" | env \
-        CLOSEDLOOP_PERF_V2=1 \
         CLOSEDLOOP_RUN_ID="$run_id" \
         CLOSEDLOOP_COMMAND="$command" \
         CLOSEDLOOP_ITERATION="$iteration" \
@@ -130,7 +129,6 @@ echo "Test 2: sentinel file is deleted after successful tool event emission"
     mock_input=$(build_mock_input "$session_id" "$cwd" "$tool_use_id" "Read" "agent-02")
 
     echo "$mock_input" | env \
-        CLOSEDLOOP_PERF_V2=1 \
         CLOSEDLOOP_RUN_ID="run-xyz" \
         CLOSEDLOOP_COMMAND="feat" \
         CLOSEDLOOP_ITERATION=1 \
@@ -166,7 +164,6 @@ echo "Test 3: ok=false when tool_response contains error field"
     perf_file="$workdir/perf.jsonl"
 
     echo "$error_input" | env \
-        CLOSEDLOOP_PERF_V2=1 \
         CLOSEDLOOP_RUN_ID="run-err" \
         CLOSEDLOOP_COMMAND="test" \
         CLOSEDLOOP_ITERATION=0 \
@@ -210,7 +207,6 @@ echo "Test 4: sentinel tool_name and agent_id override hook input values"
     perf_file="$workdir/perf.jsonl"
 
     echo "$override_input" | env \
-        CLOSEDLOOP_PERF_V2=1 \
         CLOSEDLOOP_RUN_ID="run-ov" \
         CLOSEDLOOP_COMMAND="feat" \
         CLOSEDLOOP_ITERATION=2 \
@@ -228,32 +224,43 @@ echo "Test 4: sentinel tool_name and agent_id override hook input values"
 }
 
 # ------------------------------------------------------------------
-# Test 5: no-op when CLOSEDLOOP_PERF_V2 is unset
+# Test 5: tool event emits unconditionally — no env-var gate
+#
+# The earlier draft was gated behind CLOSEDLOOP_PERF_V2=1; closedloop-electron
+# ships claude-plugins bundled and end users cannot set runtime env vars, so
+# the gate was removed. With CLOSEDLOOP_PERF_V2 explicitly unset, the post-hook
+# must still emit a tool event when its sentinel is present.
 # ------------------------------------------------------------------
-echo "Test 5: post-tool-use-hook.sh no-ops when CLOSEDLOOP_PERF_V2 is unset"
+echo "Test 5: post-tool-use-hook.sh emits tool event with CLOSEDLOOP_PERF_V2 unset"
 {
     read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env)"
 
-    tool_use_id="tool-use-id-gate-test"
+    tool_use_id="tool-use-id-no-gate-tool"
     sentinel_file="$workdir/.tool-calls/$tool_use_id"
-    create_sentinel "$sentinel_file" "2024-01-15T10:00:00Z" "Bash" "agent-gate" "run-gate" "test" 0
+    create_sentinel "$sentinel_file" "2024-01-15T10:00:00Z" "Bash" "agent-no-gate" "run-no-gate" "test" 0
 
     mock_input=$(build_mock_input "$session_id" "$cwd" "$tool_use_id")
     perf_file="$workdir/perf.jsonl"
 
     actual_exit=0
-    echo "$mock_input" | bash "$POST_HOOK" ; actual_exit=$?
+    echo "$mock_input" | env -u CLOSEDLOOP_PERF_V2 \
+        CLOSEDLOOP_RUN_ID="run-no-gate" \
+        CLOSEDLOOP_COMMAND="test" \
+        CLOSEDLOOP_ITERATION=0 \
+        bash "$POST_HOOK" ; actual_exit=$?
 
     if [[ "$actual_exit" -eq 0 ]]; then
-        pass "post-tool-use-hook.sh exits 0 when gate is off"
+        pass "post-tool-use-hook.sh exits 0 with CLOSEDLOOP_PERF_V2 unset"
     else
-        fail "post-tool-use-hook.sh exits 0 when gate is off" "expected exit 0 but got $actual_exit"
+        fail "post-tool-use-hook.sh exits 0 with CLOSEDLOOP_PERF_V2 unset" \
+             "expected exit 0 but got $actual_exit"
     fi
 
-    if [[ ! -f "$perf_file" ]]; then
-        pass "no perf.jsonl created when gate is off"
+    if [[ -f "$perf_file" ]] && grep -q '"event":"tool"' "$perf_file" 2>/dev/null; then
+        pass "tool event emitted with CLOSEDLOOP_PERF_V2 unset (gate removed)"
     else
-        fail "no perf.jsonl created when gate is off" "perf.jsonl was unexpectedly created"
+        fail "tool event emitted with CLOSEDLOOP_PERF_V2 unset (gate removed)" \
+             "no tool event in perf.jsonl"
     fi
 
     rm -rf "$tmpdir"
