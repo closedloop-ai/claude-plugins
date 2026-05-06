@@ -116,6 +116,8 @@ When adding persisted fields, tables, indexes, uniqueness constraints, or cleanu
 
 For new uniqueness constraints or stricter persisted invariants on existing tables, include rows for the current-data migration path: no violating rows, existing duplicate/invalid rows, cleanup or backfill behavior, explicit preflight failure when cleanup is not safe, and writes racing with the migration where applicable. Do not assume old app-level validation made invalid persisted states impossible when the new constraint closes a race.
 
+When cleanup or backfill changes persisted identity fields to satisfy a new invariant, also model the adjacent constraints, references, preferences, and first normal application write that will reconcile the cleaned rows. The migration must not leave stale rows in a state where the next legitimate update, registration, retry, or recovery path fails on a different constraint than the one being introduced.
+
 ## Side-effect boundary
 
 For every validation or preparation failure, state whether network calls, persistence, key generation, retries, telemetry, or other durable side effects should happen.
