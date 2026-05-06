@@ -16,6 +16,8 @@ When a helper, service, adapter, route, command, job, or handler can be called b
 
 When a dependency or peer returns multiple signals affecting the same decision (transport status, structured body fields, error codes, reason strings, headers, metadata, exit status, sentinel files), include rows for each signal and for conflicts between signals. State which signal wins and how unknown/missing signals degrade. Cover transport-vs-payload conflicts, older peers omitting newer fields, and newer peers sending unknown values.
 
+For ORM or database errors whose metadata shape varies by adapter or version, include every documented shape that drives the branch, such as constraint-name strings, field-name arrays, column-name arrays, missing metadata, and unrelated constraint metadata. Tests must prove the intended mapping for each accepted shape and the fallback for unrelated shapes.
+
 ## Library-managed lifecycle re-entry
 
 Include rows for automatic reconnects, retry timers, callbacks, restarts, framework-owned replays, and other paths that re-enter with reused state.
@@ -111,6 +113,8 @@ When a route or service updates a nested object, JSON blob, configuration record
 ## Persistence access paths
 
 When adding persisted fields, tables, indexes, uniqueness constraints, or cleanup jobs, inventory the actual reads, writes, filters, sort orders, expiry scans, rate limits, and ownership checks that will use them. Distinguish query-critical indexes from write-only metadata, future-only fields, redundant left-prefix indexes, and indexes that need additional columns to match the real predicate. Remove or mark not-applicable any index not justified by a current query, rate limit, cleanup path, uniqueness guarantee, sort order, or documented near-term requirement.
+
+For new uniqueness constraints or stricter persisted invariants on existing tables, include rows for the current-data migration path: no violating rows, existing duplicate/invalid rows, cleanup or backfill behavior, explicit preflight failure when cleanup is not safe, and writes racing with the migration where applicable. Do not assume old app-level validation made invalid persisted states impossible when the new constraint closes a race.
 
 ## Side-effect boundary
 

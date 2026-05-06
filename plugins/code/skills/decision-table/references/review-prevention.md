@@ -21,6 +21,8 @@ For every item: fix it, mark it already covered by a named row/test, mark not ap
 13. **Replay or continuation path bypasses an initial-entry gate** such as a command guard, policy check, validation step, target resolver, or health check.
 14. **Owner-scoped pending state leaks across surfaces** because loading, disabled, or label state reads a global pending/checking flag without matching the current owner, command, document, target, or attempt id.
 15. **Sentinel value semantics collapse** where omitted, `undefined`, `null`, empty, and explicit values have different downstream meaning but are defaulted, coalesced, or serialized as the wrong shape.
+16. **Adapter-variant error metadata mismatch** where code maps a dependency or database error by only one metadata shape even though the dependency may report an equivalent signal as a constraint name, field array, column array, structured object, missing metadata, or legacy/unknown value.
+17. **Existing-data migration blocker** where a new unique constraint or stricter persisted invariant assumes all existing rows already satisfy the invariant instead of cleaning, backfilling, or explicitly preflighting violating rows before the constraint is created.
 
 ## Contract-Heavy Review Surface
 
@@ -47,6 +49,8 @@ For contract-heavy work, also explicitly review:
 - partial updates that overwrite unrelated fields when the intended behavior is additive or merge-preserving
 - semantically distinct user-visible states that share the same observable status signal, label, action affordance, or presentation despite the table claiming different outcomes
 - schema indexes/constraints that are redundant, unused by current access paths, mismatched to predicates or sort orders, or added for write-only metadata without a documented read path
+- unique constraints or stricter persisted invariants that can fail on existing violating rows because the migration lacks a cleanup, backfill, or explicit preflight before creating the constraint
+- database/ORM error mapping that only recognizes one adapter-specific metadata shape when equivalent constraint or field signals can be reported in multiple shapes
 - serverless async side effects that may be dropped unless awaited, scheduled with a platform primitive, or persisted
 - test oracle quality for canonicalization, signing, validation, and compatibility rows
 - duplicated policy logic or wire-contract constants that can drift between intended-parity entry paths

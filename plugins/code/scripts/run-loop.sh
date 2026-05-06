@@ -217,6 +217,178 @@ handle_spurious_complete() {
   fail_loop_user_visible "RUNNER_ERROR" "$subcode" "$message"
 }
 
+# Classify Claude CLI terminal failures from one iteration's structured stream.
+# The helper is side-effect free so tests can exercise new/legacy JSONL shapes
+# without running the full loop.
+detect_claude_terminal_failure() {
+  local output_file="$1"
+  local stderr_file="${2:-}"
+
+  if [[ -s "$output_file" ]]; then
+    local detection
+    detection=$(jq -R -s -c '
+      def entries:
+        split("\n") | map(fromjson? | select(type == "object"));
+
+      def clamp_message:
+        if length > 900 then .[0:900] + "..." else . end;
+
+      def user_texts:
+        [
+          (.result? | strings),
+          (.message.content[]?.text? | strings),
+          (.message.content? | strings)
+        ];
+
+      def error_string:
+        if (.error? | type) == "string" then .error else "" end;
+
+      def error_texts:
+        [error_string | select(length > 0)];
+
+      def text_blob:
+        (user_texts + error_texts) | join("\n");
+
+      def first_user_text($entries):
+        [$entries[] | user_texts[] | select(length > 0)] | .[0] // "";
+
+      def first_error_text($entries):
+        [$entries[] | error_texts[] | select(length > 0)] | .[0] // "";
+
+      def rate_event_message($entries):
+        [
+          $entries[]
+          | select(.type == "rate_limit_event")
+          | .rate_limit_info?
+          | select(type == "object")
+          | "Claude rate limit reached"
+            + (if .rateLimitType then " (" + (.rateLimitType | tostring) + ")" else "" end)
+            + (if .resetsAt then "; resetsAt=" + (.resetsAt | tostring) else "" end)
+        ] | .[0] // "";
+
+      def status_429:
+        ((.api_error_status? | tostring) == "429")
+        or ((.apiErrorStatus? | tostring) == "429");
+
+      def error_shaped:
+        (.is_error? == true)
+        or (.isApiErrorMessage? == true)
+        or (.subtype? == "error")
+        or ((error_string | length) > 0);
+
+      def rate_limit_signal:
+        (.type? == "rate_limit_event")
+        or (error_string | ascii_downcase | test("^rate_limit(_error)?$"))
+        or status_429
+        or (error_shaped and (text_blob | test("you.?ve hit your limit|usage limit|rate[_ -]?limit|rate limit reached"; "i")));
+
+      def context_limit_signal:
+        error_shaped and (text_blob | test("prompt is too long|exceed context limit|context limit reached|conversation too long"; "i"));
+
+      def auth_challenge_signal:
+        error_shaped and (text_blob | test("authentication_error|invalid bearer token|billing_error|permission_error|overloaded_error|api overloaded|unauthorized|token.*expired|not authenticated|please log in|login required"; "i"));
+
+      entries as $entries
+      | first_user_text($entries) as $userMessage
+      | first_error_text($entries) as $errorMessage
+      | rate_event_message($entries) as $rateMessage
+      | if any($entries[]; rate_limit_signal) then
+          {
+            status: "claude_rate_limit",
+            subcode: "CLAUDE_RATE_LIMIT",
+            message: (
+              if ($userMessage | length) > 0 then
+                "Claude rate limit reached: " + $userMessage
+              elif ($rateMessage | length) > 0 then
+                $rateMessage
+              elif ($errorMessage | length) > 0 then
+                "Claude rate limit reached: " + $errorMessage
+              else
+                "Claude rate limit reached. Wait for the limit to reset, then re-run /code:code."
+              end
+              | clamp_message
+            )
+          }
+        elif any($entries[]; context_limit_signal) then
+          {
+            status: "context_limit",
+            subcode: "CLAUDE_CONTEXT_LIMIT",
+            message: (
+              if ($userMessage | length) > 0 then
+                "Claude context limit reached: " + $userMessage
+              else
+                "Claude context limit reached. Start a fresh run with a smaller prompt or reduced context."
+              end
+              | clamp_message
+            )
+          }
+        elif any($entries[]; auth_challenge_signal) then
+          {
+            status: "claude_auth_error",
+            subcode: "CLAUDE_AUTH_CHALLENGE",
+            message: (
+              if ($userMessage | length) > 0 then
+                "Claude authentication or account challenge: " + $userMessage
+              elif ($errorMessage | length) > 0 then
+                "Claude authentication or account challenge: " + $errorMessage
+              else
+                "Claude authentication or account challenge detected. Re-authenticate Claude, then re-run /code:code."
+              end
+              | clamp_message
+            )
+          }
+        else
+          {}
+        end
+    ' "$output_file" 2>/dev/null || echo '{}')
+
+    if [[ "$detection" != "{}" ]]; then
+      echo "$detection"
+      return
+    fi
+  fi
+
+  if [[ -s "$stderr_file" ]]; then
+    local stderr_text
+    stderr_text=$(tr '\n' ' ' < "$stderr_file" | sed 's/[[:space:]][[:space:]]*/ /g' | cut -c 1-800)
+    if grep -qiE "you.?ve hit your limit|usage limit|rate[_ -]?limit|rate limit reached" "$stderr_file"; then
+      jq -n -c --arg message "Claude rate limit reached: ${stderr_text:-Wait for the limit to reset, then re-run /code:code.}" \
+        '{status:"claude_rate_limit",subcode:"CLAUDE_RATE_LIMIT",message:$message}'
+      return
+    fi
+    if grep -qiE "prompt is too long|exceed context limit|context limit reached|conversation too long" "$stderr_file"; then
+      jq -n -c --arg message "Claude context limit reached: ${stderr_text:-Start a fresh run with a smaller prompt or reduced context.}" \
+        '{status:"context_limit",subcode:"CLAUDE_CONTEXT_LIMIT",message:$message}'
+      return
+    fi
+    if grep -qiE "authentication_error|invalid bearer token|billing_error|permission_error|overloaded_error|api overloaded|unauthorized|token.*expired|not authenticated|please log in|login required" "$stderr_file"; then
+      jq -n -c --arg message "Claude authentication or account challenge: ${stderr_text:-Re-authenticate Claude, then re-run /code:code.}" \
+        '{status:"claude_auth_error",subcode:"CLAUDE_AUTH_CHALLENGE",message:$message}'
+      return
+    fi
+  fi
+
+  echo '{}'
+}
+
+# Terminal known Claude failures are intentionally user-visible: preserve the
+# output sidecar for Desktop, release local state, then write the signed marker.
+handle_claude_terminal_failure() {
+  local workdir="$1"
+  local iteration="$2"
+  local status="$3"
+  local subcode="$4"
+  local message="$5"
+
+  echo -e "\n${RED}Claude terminal failure detected: $message${NC}" >&2
+  log_progress "Claude terminal failure [$subcode]: $message"
+  write_runs_log_entry "$workdir" "$iteration" "$status" "plan_execute"
+  rename_output_on_exit
+  release_lock "$workdir"
+  rm -f "$STATE_FILE"
+  fail_loop_user_visible "RUNNER_ERROR" "$subcode" "$message"
+}
+
 # Check for jq dependency (required for learning system)
 check_jq_dependency() {
   if ! command -v jq &> /dev/null; then
@@ -1450,10 +1622,23 @@ main() {
     plan_session_id=$(extract_claude_session_id "$output_file")
     record_claude_session_id "$effective_workdir" "plan_execute" "$plan_session_id"
 
+    local terminal_failure
+    terminal_failure=$(detect_claude_terminal_failure "$output_file" "$stderr_file")
+    if [[ "$terminal_failure" != "{}" ]]; then
+      local failure_status failure_subcode failure_message
+      failure_status=$(echo "$terminal_failure" | jq -r '.status')
+      failure_subcode=$(echo "$terminal_failure" | jq -r '.subcode')
+      failure_message=$(echo "$terminal_failure" | jq -r '.message')
+      rm -f "$output_file" "$stderr_file" 2>/dev/null || true
+      handle_claude_terminal_failure "$effective_workdir" "$iteration" "$failure_status" "$failure_subcode" "$failure_message"
+    fi
+
     if [[ $claude_exit -eq 0 ]]; then
       local result=$(jq -r "$final_result" "$output_file")
 
-      # 1B: Detect is_error in JSONL result record (session/context limit)
+      # 1B: Unknown result-level errors are terminal but not user-visible
+      # markers. Known Claude account/session failures are classified before
+      # this branch by detect_claude_terminal_failure().
       local is_error
       is_error=$(jq -r 'select(.type == "result") | .is_error // false' "$output_file" 2>/dev/null | tail -1)
       if [[ "$is_error" == "true" ]]; then
@@ -1461,13 +1646,13 @@ main() {
         error_text=$(jq -r 'select(.type == "result") | .result // ""' "$output_file" 2>/dev/null | tail -1)
         echo -e "\n${RED}ERROR: Claude reported is_error=true in result record.${NC}"
         echo -e "${RED}Error text: $error_text${NC}"
-        log_progress "Context limit: is_error=true, text=$error_text"
-        write_runs_log_entry "$effective_workdir" "$iteration" "context_limit" "plan_execute"
+        log_progress "Unclassified Claude result error: is_error=true, text=$error_text"
+        write_runs_log_entry "$effective_workdir" "$iteration" "error" "plan_execute"
         rename_output_on_exit
         release_lock "$effective_workdir"
         rm -f "$STATE_FILE"
         rm -f "$output_file" "$stderr_file" 2>/dev/null || true
-        exit 2
+        exit 1
       fi
 
       # 1A: Detect consecutive empty iterations (ghost loop fix)
@@ -1577,16 +1762,12 @@ main() {
         echo -e "${YELLOW}Claude stderr:${NC}"
         cat "$stderr_file"
 
-        # 1C: Detect session/context limit from stderr
+        # 1C: Fallback for stderr-only context-limit detection. Most known
+        # Claude account/session failures are classified before this branch,
+        # including nonzero exits whose signal is only present in stdout JSONL.
         if grep -qiE "prompt is too long|exceed context limit|context limit reached|conversation too long" "$stderr_file"; then
-          echo -e "\n${RED}Context limit detected in stderr${NC}"
-          log_progress "Context limit: detected in stderr (exit $claude_exit)"
-          write_runs_log_entry "$effective_workdir" "$iteration" "context_limit" "plan_execute"
-          rename_output_on_exit
-          release_lock "$effective_workdir"
-          rm -f "$STATE_FILE"
           rm -f "$output_file" "$stderr_file" 2>/dev/null || true
-          exit 2
+          handle_claude_terminal_failure "$effective_workdir" "$iteration" "context_limit" "CLAUDE_CONTEXT_LIMIT" "Claude context limit reached. Start a fresh run with a smaller prompt or reduced context."
         fi
       fi
       log_progress "Iteration $iteration - Claude exited with error (code: $claude_exit)"

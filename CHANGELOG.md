@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.8
+
+#### Fixed
+- `run-loop.sh` now classifies known Claude terminal failures before generic exit-code retry handling. Structured JSONL/stderr rate-limit, context-limit, and auth/account challenge signals write signed `loop-error.json` markers with stable subcodes, archive `claude-output.jsonl` through the existing `claude-output.name.txt` sidecar, release lock/state, and stop retrying. Unknown or malformed failures remain generic, and successful prose mentioning rate limits no longer creates false markers. Marker messages derived from Claude JSONL are clamped before reaching the existing 1000-character marker writer limit. New tests in `test_run_loop_failure_marker.py` cover observed rate-limit JSONL, camelCase API status, stderr context limits, auth/account challenges, oversized messages, false-positive prose, and rate/context marker finalization.
+
+#### Changed
+- Decision-table review guidance now calls out adapter-variant ORM/database error metadata and existing-data migration blockers for new uniqueness constraints or stricter persisted invariants. The edge-case and review-prevention references require rows and tests for constraint-name strings, field/column arrays, missing or unrelated metadata, duplicate/invalid existing rows, cleanup/backfill paths, explicit preflight failures, and migration races.
+
 ### code v1.11.7
 
 #### Added
