@@ -16,7 +16,7 @@
 #
 # Exit code: 0 if all tests pass, 1 if any test fails.
 
-set -euo pipefail
+set -uo pipefail  # -e dropped: tests use explicit ||-capture and assertion reporters
 
 # ---- Paths ---------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

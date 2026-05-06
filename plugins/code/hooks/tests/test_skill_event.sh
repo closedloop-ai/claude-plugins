@@ -13,7 +13,7 @@
 #
 # Exit code: 0 if all tests pass, 1 if any test fails.
 
-set -euo pipefail
+set -uo pipefail  # -e dropped: tests use explicit ||-capture and assertion reporters
 
 # ---- Paths ---------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,6 +56,40 @@ build_mock_skill_input_command_fallback() {
         --arg command_name "$command_name" \
         --arg agent_id "$agent_id" \
         '{session_id:$session_id,cwd:$cwd,tool_name:"Skill",agent_id:$agent_id,tool_use_id:$tool_use_id,tool_input:{command:$command_name},tool_response:{}}'
+}
+
+build_mock_skill_input_both() {
+    # Emits a PostToolUse payload where BOTH tool_input.skill and tool_input.command
+    # are set — tests that `skill` wins (the documented priority).
+    local session_id="$1"
+    local cwd="$2"
+    local tool_use_id="$3"
+    local skill_name="$4"
+    local command_name="$5"
+    local agent_id="${6:-agent-test}"
+    jq -n -c \
+        --arg session_id "$session_id" \
+        --arg cwd "$cwd" \
+        --arg tool_use_id "$tool_use_id" \
+        --arg skill_name "$skill_name" \
+        --arg command_name "$command_name" \
+        --arg agent_id "$agent_id" \
+        '{session_id:$session_id,cwd:$cwd,tool_name:"Skill",agent_id:$agent_id,tool_use_id:$tool_use_id,tool_input:{skill:$skill_name,command:$command_name},tool_response:{}}'
+}
+
+build_mock_skill_input_neither() {
+    # Emits a PostToolUse payload where neither tool_input.skill nor tool_input.command
+    # is set — tests that skill_name is empty (no crash, just empty extraction).
+    local session_id="$1"
+    local cwd="$2"
+    local tool_use_id="$3"
+    local agent_id="${4:-agent-test}"
+    jq -n -c \
+        --arg session_id "$session_id" \
+        --arg cwd "$cwd" \
+        --arg tool_use_id "$tool_use_id" \
+        --arg agent_id "$agent_id" \
+        '{session_id:$session_id,cwd:$cwd,tool_name:"Skill",agent_id:$agent_id,tool_use_id:$tool_use_id,tool_input:{},tool_response:{}}'
 }
 
 # ---- Tests ---------------------------------------------------------------
@@ -273,6 +307,92 @@ echo "Test 4: non-Skill tool does not emit a skill event"
         fi
     else
         fail "non-Skill tool emits tool event" "perf.jsonl not created"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+# ------------------------------------------------------------------
+# Test 5: priority — when BOTH tool_input.skill and tool_input.command are
+# present, the implementation uses `skill` (documented priority order). Locks
+# in the contract so a future refactor can't silently flip the precedence.
+# ------------------------------------------------------------------
+echo "Test 5: tool_input.skill wins over tool_input.command when both are present"
+{
+    read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env)"
+
+    tool_use_id="tool-use-id-skill-priority"
+    skill_name="actual-skill"
+    command_name="ignored-command"
+    agent_id="agent-pri"
+    sentinel_file="$workdir/.tool-calls/$tool_use_id"
+    create_sentinel "$sentinel_file" "2024-01-15T10:00:00Z" "Skill" "$agent_id" "run-pri" "feat" 0
+
+    mock_input=$(build_mock_skill_input_both "$session_id" "$cwd" "$tool_use_id" "$skill_name" "$command_name" "$agent_id")
+    perf_file="$workdir/perf.jsonl"
+
+    echo "$mock_input" | env \
+        CLOSEDLOOP_PERF_V2=1 \
+        CLOSEDLOOP_RUN_ID="run-pri" \
+        CLOSEDLOOP_COMMAND="feat" \
+        CLOSEDLOOP_ITERATION=0 \
+        bash "$POST_HOOK"
+
+    if [[ -f "$perf_file" ]]; then
+        skill_line=$(grep '"event":"skill"' "$perf_file" | tail -1)
+        if [[ -n "$skill_line" ]]; then
+            assert_field_equals "skill > command priority" "$skill_line" "skill_name" "$skill_name"
+        else
+            fail "skill > command priority" "no skill event emitted"
+        fi
+    else
+        fail "skill > command priority" "perf.jsonl not created"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+# ------------------------------------------------------------------
+# Test 6: when neither tool_input.skill NOR tool_input.command is present,
+# skill_name is emitted as empty string (and the hook does not crash). Tests
+# the floor of the fallback chain — defends against undocumented Skill tool
+# input shapes.
+# ------------------------------------------------------------------
+echo "Test 6: skill_name is empty when tool_input has neither skill nor command"
+{
+    read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env)"
+
+    tool_use_id="tool-use-id-skill-neither"
+    agent_id="agent-neither"
+    sentinel_file="$workdir/.tool-calls/$tool_use_id"
+    create_sentinel "$sentinel_file" "2024-01-15T10:00:00Z" "Skill" "$agent_id" "run-n" "feat" 0
+
+    mock_input=$(build_mock_skill_input_neither "$session_id" "$cwd" "$tool_use_id" "$agent_id")
+    perf_file="$workdir/perf.jsonl"
+
+    actual_exit=0
+    echo "$mock_input" | env \
+        CLOSEDLOOP_PERF_V2=1 \
+        CLOSEDLOOP_RUN_ID="run-n" \
+        CLOSEDLOOP_COMMAND="feat" \
+        CLOSEDLOOP_ITERATION=0 \
+        bash "$POST_HOOK" ; actual_exit=$?
+
+    if [[ "$actual_exit" -eq 0 ]]; then
+        pass "post-hook exits 0 when Skill tool_input is empty"
+    else
+        fail "post-hook exits 0 when Skill tool_input is empty" "got $actual_exit"
+    fi
+
+    if [[ -f "$perf_file" ]]; then
+        skill_line=$(grep '"event":"skill"' "$perf_file" | tail -1)
+        if [[ -n "$skill_line" ]]; then
+            assert_field_equals "neither skill nor command" "$skill_line" "skill_name" ""
+        else
+            fail "skill event still emitted" "no skill event for empty tool_input"
+        fi
+    else
+        fail "skill event still emitted" "perf.jsonl not created"
     fi
 
     rm -rf "$tmpdir"

@@ -36,7 +36,7 @@ eval "$(jq -r '
     @sh "TOOL_CALL_ID=\(.tool_call_id // empty)",
     @sh "SKILL_INPUT_SKILL=\(.tool_input.skill // empty)",
     @sh "SKILL_INPUT_COMMAND=\(.tool_input.command // empty)",
-    "OK=\(if (.tool_response // {}) | ((.error != null and .error != "") or .success == false) then "false" else "true" end)"
+    "OK=\(if (.tool_response | type) != "object" then "true" elif (.tool_response.error != null and .tool_response.error != "") or .tool_response.success == false then "false" else "true" end)"
 ' <<< "$INPUT")"
 
 # Resolve tool-call correlation id, mirroring pre-tool-use-hook.sh. Prefer

@@ -10,7 +10,7 @@
 #
 # Exit code: 0 if all tests pass, 1 if any test fails.
 
-set -euo pipefail
+set -uo pipefail  # -e dropped: tests use explicit ||-capture and assertion reporters
 
 # ---- Paths ---------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -150,54 +150,68 @@ echo "Test 2: post-tool-use-hook.sh fail-open exit code (no sentinel)"
 }
 
 # ------------------------------------------------------------------
-# Test 3: pre-tool-use-hook.sh stub (exit 1) — simulated replacement
+# Test 3: REAL pre-tool-use-hook.sh exits 0 on malformed JSON input
 #
-# We replace the hook binary itself and call it through a wrapper that
-# mirrors the fail-open trap behavior expected of any hook in this system.
-# Verifies that the exit code returned to Claude is 0.
+# Feeds garbage JSON to the actual hook (not a stub) so the hook's own
+# `trap 'exit 0' ERR` is what catches the failure. If a future change
+# removed or weakened the trap in the real hook, this test would fail.
+# This is the test the original Test 3 *intended* to be — the prior
+# version wrapped a stub with a hand-written trap and so was self-
+# validating (would still pass even if the real hook lost its trap).
 # ------------------------------------------------------------------
-echo "Test 3: stub hook (exit 1) invoked directly — verifies fail-open contract"
+echo "Test 3: real pre-tool-use-hook.sh exits 0 on malformed JSON (real trap exercised)"
 {
-    tmpdir=$(mktemp -d)
-    stub_hook="$tmpdir/pre-tool-use-hook.sh"
-    make_stub_hook "$stub_hook"
+    read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env)"
 
-    # Wrap the stub exactly as the real hook wraps itself: trap 'exit 0' ERR
-    wrapper="$tmpdir/wrapper.sh"
-    cat > "$wrapper" <<WRAPPER
-#!/usr/bin/env bash
-trap 'exit 0' ERR
-bash "$stub_hook"
-WRAPPER
-    chmod +x "$wrapper"
-
+    # Malformed JSON — jq inside the hook will fail; the hook's own
+    # `trap 'exit 0' ERR` must catch and exit 0.
     actual_exit=0
-    echo '{}' | bash "$wrapper" ; actual_exit=$?
-    assert_exit_zero "stub hook (exit 1) wrapped with fail-open trap exits 0" "$actual_exit"
+    echo '{not valid json' | env \
+        CLOSEDLOOP_PERF_V2=1 \
+        CLOSEDLOOP_RUN_ID="run-test" \
+        CLOSEDLOOP_COMMAND="test" \
+        CLOSEDLOOP_ITERATION=0 \
+        bash "$PRE_HOOK" ; actual_exit=$?
+
+    assert_exit_zero "real pre-tool-use-hook.sh exits 0 on malformed JSON" "$actual_exit"
+
+    # Also assert no sentinel was written (the hook bailed before the write step)
+    sentinel_count=$(find "$workdir/.tool-calls" -type f 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$sentinel_count" == "0" ]]; then
+        pass "real pre-tool-use-hook.sh: no sentinel written on malformed input"
+    else
+        fail "real pre-tool-use-hook.sh: no sentinel written on malformed input" \
+             "$sentinel_count sentinels found"
+    fi
 
     rm -rf "$tmpdir"
 }
 
 # ------------------------------------------------------------------
-# Test 4: post-tool-use-hook.sh stub (exit 1) — simulated replacement
+# Test 4: REAL post-tool-use-hook.sh exits 0 on malformed JSON input
+# (mirror of Test 3 for the post-hook)
 # ------------------------------------------------------------------
-echo "Test 4: stub post hook (exit 1) invoked directly — verifies fail-open contract"
+echo "Test 4: real post-tool-use-hook.sh exits 0 on malformed JSON (real trap exercised)"
 {
-    tmpdir=$(mktemp -d)
-    stub_hook="$tmpdir/post-tool-use-hook.sh"
-    make_stub_hook "$stub_hook"
-
-    wrapper="$tmpdir/wrapper.sh"
-    cat > "$wrapper" <<WRAPPER
-#!/usr/bin/env bash
-trap 'exit 0' ERR
-bash "$stub_hook"
-WRAPPER
-    chmod +x "$wrapper"
+    read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env)"
 
     actual_exit=0
-    echo '{}' | bash "$wrapper" ; actual_exit=$?
-    assert_exit_zero "stub post hook (exit 1) wrapped with fail-open trap exits 0" "$actual_exit"
+    echo '{not valid json' | env \
+        CLOSEDLOOP_PERF_V2=1 \
+        CLOSEDLOOP_RUN_ID="run-test" \
+        CLOSEDLOOP_COMMAND="test" \
+        CLOSEDLOOP_ITERATION=0 \
+        bash "$POST_HOOK" ; actual_exit=$?
+
+    assert_exit_zero "real post-tool-use-hook.sh exits 0 on malformed JSON" "$actual_exit"
+
+    # And no perf.jsonl emission — bad input must not produce an event
+    if [[ ! -f "$workdir/perf.jsonl" ]] || [[ ! -s "$workdir/perf.jsonl" ]]; then
+        pass "real post-tool-use-hook.sh: no perf event emitted on malformed input"
+    else
+        fail "real post-tool-use-hook.sh: no perf event emitted on malformed input" \
+             "perf.jsonl has content: $(cat "$workdir/perf.jsonl")"
+    fi
 
     rm -rf "$tmpdir"
 }

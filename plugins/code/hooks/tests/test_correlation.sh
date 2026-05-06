@@ -17,7 +17,7 @@
 #   bash plugins/code/hooks/tests/test_correlation.sh
 # Exit code: 0 if all pass, 1 if any fail.
 
-set -euo pipefail
+set -uo pipefail  # -e dropped: tests use explicit ||-capture and assertion reporters
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOKS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -283,6 +283,50 @@ echo "Test 5: non-numeric CLOSEDLOOP_ITERATION is normalized to 0"
         assert_field_equals "non-numeric iter" "$line" "iteration" "0"
     else
         fail "post-hook handled non-numeric iteration" "no tool event emitted"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+# ----------------------------------------------------------------------------
+# Test 6: post-hook independently normalizes non-numeric env iteration when
+# the sentinel does not carry an iteration field. Test 5 above exercises the
+# pre-hook normalization (and the post-hook reads sentinel.iteration which is
+# already 0), so the post-hook's own `^[0-9]+$` guard would be dead code if
+# only Test 5 ran. This test forces the env-fallback path by writing a sentinel
+# WITHOUT an iteration field — simulating an older sentinel format or a sentinel
+# written by a future variant.
+# ----------------------------------------------------------------------------
+echo "Test 6: post-hook normalizes non-numeric env iteration when sentinel lacks the field"
+{
+    read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env "correlation")"
+    tool_use_id="post-norm-id"
+    sentinel_path="$workdir/.tool-calls/$tool_use_id"
+
+    # Hand-craft a sentinel WITHOUT iteration — forces post-hook to fall back to
+    # CLOSEDLOOP_ITERATION env var, where we'll inject a non-numeric value.
+    jq -n -c \
+        --arg started_at "2024-01-15T10:00:00Z" \
+        --arg tool_name "Bash" \
+        --arg agent_id "agent-x" \
+        --arg run_id "run-x" \
+        --arg command "feat" \
+        '{started_at:$started_at,tool_name:$tool_name,agent_id:$agent_id,run_id:$run_id,command:$command}' \
+        > "$sentinel_path"
+
+    mock_post_input "$session_id" "$cwd" "$tool_use_id" "Bash" "agent-x" \
+        | env CLOSEDLOOP_PERF_V2=1 \
+              CLOSEDLOOP_RUN_ID="r" \
+              CLOSEDLOOP_COMMAND="c" \
+              CLOSEDLOOP_ITERATION="garbage" \
+              bash "$POST_HOOK"
+
+    perf_file="$workdir/perf.jsonl"
+    if [[ -f "$perf_file" ]] && grep -q '"event":"tool"' "$perf_file"; then
+        line=$(grep '"event":"tool"' "$perf_file" | tail -1)
+        assert_field_equals "post-hook env-fallback iter" "$line" "iteration" "0"
+    else
+        fail "post-hook env-fallback normalization" "no tool event emitted"
     fi
 
     rm -rf "$tmpdir"
