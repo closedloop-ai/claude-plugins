@@ -22,8 +22,11 @@ except ImportError:
     sys.path.insert(0, str(Path(__file__).parent))
     from goal_config import load_goal_config, GoalConfig
 
-# Log format field indices
-RUNS_LOG_MIN_FIELDS = 4  # run_id|timestamp|goal_name|iteration|status
+# runs.log is append-only:
+# run_id|timestamp|goal_name|iteration|status[|command|last_session_id]
+# reduce-failures only needs run_id and iteration, so legacy 4+ field rows and
+# newer session-correlated rows are both accepted.
+RUNS_LOG_MIN_FIELDS = 4
 
 
 @dataclass
@@ -44,7 +47,7 @@ def evaluate_reduce_failures(config: GoalConfig, run_id: str, workdir: Path) -> 
     Success criteria: Complete in fewer iterations than target.
     Score: 1.0 - (iterations / (target * 2)), clamped to [0, 1]
     """
-    runs_log = workdir / '.learnings' / 'runs.log'
+    runs_log = workdir / 'runs.log'
 
     # Default values
     iterations = 10

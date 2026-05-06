@@ -123,8 +123,10 @@ prune_sessions() {
     IFS=' ' read -r -a protected <<< "$(get_protected_runs)"
 
     # Get all session directories sorted by modification time (oldest first)
-    local -a all_sessions
-    mapfile -t all_sessions < <(ls -1t "$sessions_dir" 2>/dev/null | tac)
+    local -a all_sessions=()
+    while IFS= read -r session; do
+        all_sessions+=("$session")
+    done < <(ls -1tr "$sessions_dir" 2>/dev/null)
 
     local total=${#all_sessions[@]}
     local to_delete=$((total - MAX_SESSIONS))
@@ -216,7 +218,7 @@ clean_archived() {
 
 # Sync runs.log with existing sessions
 sync_runs_log() {
-    local runs_log="$LEARNINGS_DIR/runs.log"
+    local runs_log="$WORKDIR/runs.log"
     [[ -f "$runs_log" ]] || return 0
 
     local sessions_dir="$LEARNINGS_DIR/sessions"
@@ -265,7 +267,7 @@ main() {
     # Run pruning tasks
     prune_sessions
 
-    rotate_log "$LEARNINGS_DIR/runs.log"
+    rotate_log "$WORKDIR/runs.log"
     rotate_log "$LEARNINGS_DIR/outcomes.log"
     rotate_log "$LEARNINGS_DIR/acknowledgments.log"
 

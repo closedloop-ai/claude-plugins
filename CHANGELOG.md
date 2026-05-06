@@ -4,6 +4,27 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.7
+
+#### Added
+- Per-run `claude-output.jsonl` archival in `run-loop.sh`. New helpers `sanitize_output_run_id`, `rename_orphan_output_on_start`, and `rename_output_on_exit` rename the live JSONL to `claude-output-<run_id>.jsonl` on every loop exit (including spurious-complete, interrupt, and error paths) and write a `claude-output.name.txt` sidecar pointing at the latest archived file. On startup, any orphaned `claude-output.jsonl` left from a prior run is renamed using the previous `RUN_ID` from `state.json` or the last entry in `runs.log` (or an `orphan-<timestamp>` fallback), and the sidecar is cleared so consumers do not read stale prior-run pointers. Run id values are sanitized (`[^A-Za-z0-9._-]` collapsed to `_`) before being interpolated into the destination filename. New tests in `test_run_loop_failure_marker.py` cover the rename-on-exit, orphan-rename-from-runs.log, and workdir-root `runs.log` paths.
+- Claude session-id capture in `run-loop.sh`. New helpers `extract_claude_session_id` (jq-based extraction across `session_id`/`sessionId`/`message.*`/`item.*` shapes), `record_claude_session_id` (sets `LAST_CLAUDE_COMMAND`/`LAST_CLAUDE_SESSION_ID`, exports `CLOSEDLOOP_SESSION_ID`), and `sanitize_runs_log_field` (strips `\r`/`\n` and replaces `|` with `_`). `record_claude_session_id` writes `$workdir/session-id.txt` only for the `plan_execute` command so post-loop `code_review` and fix sessions do not overwrite the operation-level correlation id consumed by desktop finalization. Plan/execute, post-loop review, and fix invocations now capture session ids and route them into the runs.log entry for that step. New tests cover the primary plan/execute write, the code-review preservation of the primary session, and the runs.log workdir-root location with sanitized command/session fields.
+
+#### Changed
+- `write_runs_log_entry` in `run-loop.sh` now writes to `$workdir/runs.log` instead of `$workdir/.learnings/runs.log`, matching the new `self-learning` `prune-learnings.sh` and `evaluate_goal.py` location. Keeps the runs ledger at the workdir root next to `state.json` and `plan.json` rather than nested inside `.learnings/`.
+- `runs.log` row format extended to `run_id|timestamp|goal|iteration|status|command|last_session_id`. The first five fields are the legacy contract; `command` (e.g. `plan_execute`, `code_review`, `self_learning`) and `last_session_id` are append-only so older self-learning readers stay compatible. `write_runs_log_entry` accepts optional 4th/5th arguments for explicit command/session overrides and falls back to `LAST_CLAUDE_COMMAND`/`LAST_CLAUDE_SESSION_ID` (or `session-id.txt`) otherwise.
+- `--codex-model` default in the `/code:plan-with-codex` README documentation updated from `gpt-5.4` to `gpt-5.3-codex` to match the actual command default.
+
+### self-learning v1.2.2
+
+#### Changed
+- `prune-learnings.sh` and `evaluate_goal.py` now read and rotate `runs.log` from `$WORKDIR/runs.log` instead of `$LEARNINGS_DIR/runs.log` (`<workdir>/.learnings/runs.log`). The runs ledger now lives at the workdir root alongside `state.json` and `plan.json`, matching where `run-loop.sh` writes it. New tests `test_prune_learnings.py` and a `test_reduce_failures_reads_runs_log_from_workdir_root` case in `test_evaluate_goal.py` lock in the new location.
+- `goal-stats` command documentation (`commands/goal-stats.md`) now describes the pipe-delimited `runs.log` row format `run_id|timestamp|goal|iteration|status[|command|last_session_id]` and notes that `command` and `last_session_id` are optional append-only fields so legacy 4+ field rows remain valid. The `runs.log` data-source description was updated to mention the optional command/session correlation columns.
+- `evaluate_goal.py` comment on `RUNS_LOG_MIN_FIELDS` clarifies that reduce-failures only needs `run_id` and `iteration`, so legacy 4+ field rows and newer session-correlated rows are both accepted.
+
+#### Fixed
+- `prune-learnings.sh` session enumeration in `prune_sessions()` no longer relies on `mapfile` piped through `tac`. Replaced `mapfile -t all_sessions < <(ls -1t "$sessions_dir" | tac)` with a `while IFS= read -r ... done < <(ls -1tr ...)` loop, which avoids the `tac` external dependency (not present on default macOS) and keeps the oldest-first ordering needed for FIFO pruning.
+
 ### code v1.11.6
 
 #### Added

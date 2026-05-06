@@ -115,7 +115,7 @@ Checks for `.closedloop-ai/closedloop-loop.local.md`, reads the current iteratio
 
 - `--max-rounds N`: Maximum debate rounds (default: 15)
 - `--plan-file PATH`: Output plan file (default: `./debate-plan.md`)
-- `--codex-model MODEL`: Codex model for reviews (default: `gpt-5.4`)
+- `--codex-model MODEL`: Codex model for reviews (default: `gpt-5.3-codex`)
 - `<prompt>`: Description of what to plan (required; can also be read from a `{stem}.prompt` sidecar file)
 
 **What it does:**

@@ -16,7 +16,10 @@ Analyzes goal performance by examining runs.log and outcomes.log to compute stat
 
 ## Process
 
-1. Read `runs.log` for run outcomes
+1. Read `runs.log` for run outcomes. Rows are pipe-delimited:
+   `run_id|timestamp|goal|iteration|status[|command|last_session_id]`.
+   Treat `command` and `last_session_id` as optional append-only fields so
+   legacy rows remain valid.
 2. Read `outcomes.log` for pattern applications and goal results
 3. Correlate pattern usage with goal success/failure
 4. Calculate aggregate statistics
@@ -60,7 +63,7 @@ Recommendations:
 
 ## Dependencies
 
-- `runs.log`: Contains run metadata with goal outcomes
+- `runs.log`: Contains run metadata with goal outcomes and optional command/session correlation
 - `outcomes.log`: Contains pattern applications with success tracking
 - `goal.yaml`: Defines active goal for filtering
 
