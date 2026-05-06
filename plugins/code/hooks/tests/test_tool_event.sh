@@ -19,76 +19,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOKS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 POST_HOOK="$HOOKS_DIR/post-tool-use-hook.sh"
 
-# ---- Test helpers --------------------------------------------------------
-PASS_COUNT=0
-FAIL_COUNT=0
-
-pass() {
-    local name="$1"
-    echo "  PASS: $name"
-    PASS_COUNT=$(( PASS_COUNT + 1 ))
-}
-
-fail() {
-    local name="$1"
-    local reason="$2"
-    echo "  FAIL: $name -- $reason"
-    FAIL_COUNT=$(( FAIL_COUNT + 1 ))
-}
-
-assert_field_present() {
-    # Asserts that a JSON field exists and is non-empty in a given JSON string.
-    local test_name="$1"
-    local json="$2"
-    local field="$3"
-    local value
-    value=$(echo "$json" | jq -r --arg f "$field" '.[$f] // empty' 2>/dev/null || echo "")
-    if [[ -n "$value" ]] && [[ "$value" != "null" ]]; then
-        pass "$test_name: field '$field' present (value: $value)"
-    else
-        fail "$test_name: field '$field' missing or null in: $json"
-    fi
-}
-
-assert_field_equals() {
-    # Asserts that a JSON field has a specific expected value.
-    local test_name="$1"
-    local json="$2"
-    local field="$3"
-    local expected="$4"
-    local actual
-    actual=$(echo "$json" | jq -r --arg f "$field" '.[$f] | tostring' 2>/dev/null || echo "")
-    if [[ "$actual" == "$expected" ]]; then
-        pass "$test_name: field '$field' = '$expected'"
-    else
-        fail "$test_name: field '$field' expected '$expected' but got '$actual'"
-    fi
-}
-
-# ---- Setup / teardown helpers --------------------------------------------
-setup_temp_env() {
-    # Creates an isolated temp directory with:
-    #   $TMPDIR/cwd/                          -- fake CWD
-    #   $TMPDIR/cwd/.closedloop-ai/           -- state dir
-    #   $TMPDIR/workdir/                      -- CLOSEDLOOP_WORKDIR
-    #   $TMPDIR/workdir/.tool-calls/          -- sentinel dir
-    #   Session mapping: $TMPDIR/cwd/.closedloop-ai/session-$SESSION_ID.workdir -> $TMPDIR/workdir
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    local cwd="$tmpdir/cwd"
-    local workdir="$tmpdir/workdir"
-    local session_id="test-tool-event-$$"
-    local state_dir="$cwd/.closedloop-ai"
-
-    mkdir -p "$state_dir"
-    mkdir -p "$workdir/.tool-calls"
-
-    # Write session mapping so hooks can discover CLOSEDLOOP_WORKDIR
-    echo "$workdir" > "$state_dir/session-$session_id.workdir"
-
-    # Export for callers
-    echo "$tmpdir $cwd $workdir $session_id"
-}
+# ---- Shared helpers ------------------------------------------------------
+# pass/fail counters, assert_field_*, setup_temp_env, create_sentinel.
+source "$SCRIPT_DIR/test_helpers.sh"
 
 build_mock_input() {
     # Emits a minimal JSON PostToolUse hook payload to stdout.
@@ -104,26 +37,6 @@ build_mock_input() {
         --arg agent_id "$agent_id" \
         --arg tool_use_id "$tool_use_id" \
         '{session_id:$session_id,cwd:$cwd,tool_name:$tool_name,agent_id:$agent_id,tool_use_id:$tool_use_id,tool_response:{}}'
-}
-
-create_sentinel() {
-    # Writes a sentinel JSON file (as pre-tool-use-hook.sh would) to the given path.
-    local sentinel_path="$1"
-    local started_at="$2"
-    local tool_name="$3"
-    local agent_id="$4"
-    local run_id="$5"
-    local command="$6"
-    local iteration="$7"
-    jq -n -c \
-        --arg started_at "$started_at" \
-        --arg tool_name "$tool_name" \
-        --arg agent_id "$agent_id" \
-        --arg run_id "$run_id" \
-        --arg command "$command" \
-        --argjson iteration "$iteration" \
-        '{started_at:$started_at,tool_name:$tool_name,agent_id:$agent_id,run_id:$run_id,command:$command,iteration:$iteration}' \
-        > "$sentinel_path"
 }
 
 # ---- Tests ---------------------------------------------------------------

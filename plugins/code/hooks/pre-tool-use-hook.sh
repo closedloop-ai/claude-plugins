@@ -35,8 +35,10 @@ CLOSEDLOOP_STATE_DIR=".closedloop-ai"
 # Read hook input from stdin (JSON)
 INPUT=$(</dev/stdin)
 
-# Parse all hook input fields in a single jq invocation
-eval "$(echo "$INPUT" | jq -r '
+# Parse all hook input fields in a single jq invocation. Use a here-string
+# (`<<<`) instead of `echo "$INPUT" |` to match the post-tool-use-hook idiom
+# — symmetric hooks should read stdin the same way.
+eval "$(jq -r '
     @sh "TOOL_NAME=\(.tool_name // empty)",
     @sh "SESSION_ID=\(.session_id // empty)",
     @sh "CWD=\(.cwd // empty)",
@@ -44,7 +46,7 @@ eval "$(echo "$INPUT" | jq -r '
     @sh "TOOL_USE_ID_RAW=\(.tool_use_id // empty)",
     @sh "TOOL_CALL_ID=\(.tool_call_id // empty)",
     @sh "PLANNED_SUBAGENT_TYPE=\(.tool_input.subagent_type // empty)"
-')"
+' <<< "$INPUT")"
 
 # Resolve a tool-call correlation id. Prefer `tool_use_id` (Claude Code's documented
 # field), fall back to `tool_call_id` (PRD spelling). If neither is present we

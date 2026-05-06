@@ -24,33 +24,9 @@ HOOKS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PRE_HOOK="$HOOKS_DIR/pre-tool-use-hook.sh"
 POST_HOOK="$HOOKS_DIR/post-tool-use-hook.sh"
 
-PASS_COUNT=0
-FAIL_COUNT=0
-
-pass() { echo "  PASS: $1"; PASS_COUNT=$(( PASS_COUNT + 1 )); }
-fail() { echo "  FAIL: $1 -- $2"; FAIL_COUNT=$(( FAIL_COUNT + 1 )); }
-
-assert_eq() {
-    local name="$1" json="$2" field="$3" expected="$4"
-    local actual
-    actual=$(echo "$json" | jq -r --arg f "$field" '.[$f] | tostring' 2>/dev/null || echo "")
-    if [[ "$actual" == "$expected" ]]; then
-        pass "$name: $field == $expected"
-    else
-        fail "$name: $field" "expected '$expected', got '$actual'"
-    fi
-}
-
-setup_env() {
-    local tmpdir cwd workdir session_id
-    tmpdir=$(mktemp -d)
-    cwd="$tmpdir/cwd"
-    workdir="$tmpdir/workdir"
-    session_id="test-correlation-$$-$RANDOM"
-    mkdir -p "$cwd/.closedloop-ai" "$workdir/.tool-calls"
-    echo "$workdir" > "$cwd/.closedloop-ai/session-$session_id.workdir"
-    echo "$tmpdir $cwd $workdir $session_id"
-}
+# ---- Shared helpers ------------------------------------------------------
+# pass/fail counters, assert_field_*, setup_temp_env, create_sentinel.
+source "$SCRIPT_DIR/test_helpers.sh"
 
 mock_pre_input() {
     # Args: session_id cwd tool_use_id tool_name agent_id [planned_subagent_type]
@@ -84,7 +60,7 @@ echo ""
 # ----------------------------------------------------------------------------
 echo "Test 1: pre-hook writes sentinel, post-hook reads it and emits tool event"
 {
-    read -r tmpdir cwd workdir session_id <<< "$(setup_env)"
+    read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env "correlation")"
     tool_use_id="real-correlation-id-1"
 
     # Run pre-hook
@@ -115,11 +91,11 @@ echo "Test 1: pre-hook writes sentinel, post-hook reads it and emits tool event"
     perf_file="$workdir/perf.jsonl"
     if [[ -f "$perf_file" ]]; then
         line=$(grep '"event":"tool"' "$perf_file" | tail -1)
-        assert_eq "e2e tool event" "$line" "event" "tool"
-        assert_eq "e2e tool event" "$line" "tool_name" "Read"
-        assert_eq "e2e tool event" "$line" "run_id" "run-real-1"
-        assert_eq "e2e tool event" "$line" "command" "feat"
-        assert_eq "e2e tool event" "$line" "iteration" "5"
+        assert_field_equals "e2e tool event" "$line" "event" "tool"
+        assert_field_equals "e2e tool event" "$line" "tool_name" "Read"
+        assert_field_equals "e2e tool event" "$line" "run_id" "run-real-1"
+        assert_field_equals "e2e tool event" "$line" "command" "feat"
+        assert_field_equals "e2e tool event" "$line" "iteration" "5"
         # duration_s should be >= 1 because we slept 1s between pre and post
         duration=$(echo "$line" | jq -r '.duration_s' 2>/dev/null || echo "0")
         if (( duration >= 1 )); then
@@ -146,7 +122,7 @@ echo "Test 1: pre-hook writes sentinel, post-hook reads it and emits tool event"
 # ----------------------------------------------------------------------------
 echo "Test 2: sentinel attribution wins over post-time env vars"
 {
-    read -r tmpdir cwd workdir session_id <<< "$(setup_env)"
+    read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env "correlation")"
     tool_use_id="sentinel-attr-id"
 
     # Pre-hook with a particular env
@@ -170,9 +146,9 @@ echo "Test 2: sentinel attribution wins over post-time env vars"
         line=$(grep '"event":"tool"' "$perf_file" | tail -1)
         # All three attribution fields must come from the sentinel (pre-hook env),
         # NOT the post-hook env that "drifted".
-        assert_eq "sentinel-wins" "$line" "run_id" "ORIGINAL_RUN"
-        assert_eq "sentinel-wins" "$line" "command" "ORIGINAL_CMD"
-        assert_eq "sentinel-wins" "$line" "iteration" "7"
+        assert_field_equals "sentinel-wins" "$line" "run_id" "ORIGINAL_RUN"
+        assert_field_equals "sentinel-wins" "$line" "command" "ORIGINAL_CMD"
+        assert_field_equals "sentinel-wins" "$line" "iteration" "7"
     else
         fail "sentinel-wins" "no perf.jsonl created"
     fi
@@ -187,7 +163,7 @@ echo "Test 2: sentinel attribution wins over post-time env vars"
 # ----------------------------------------------------------------------------
 echo "Test 3: corrupt sentinel does not emit a tool event"
 {
-    read -r tmpdir cwd workdir session_id <<< "$(setup_env)"
+    read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env "correlation")"
     tool_use_id="corrupt-sentinel-id"
 
     # Write garbage to the sentinel file directly (skip the pre-hook)
@@ -227,7 +203,7 @@ echo "Test 3: corrupt sentinel does not emit a tool event"
 # ----------------------------------------------------------------------------
 echo "Test 4: missing correlation id skips silently in both hooks"
 {
-    read -r tmpdir cwd workdir session_id <<< "$(setup_env)"
+    read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env "correlation")"
 
     pre_input=$(jq -n -c \
         --arg session_id "$session_id" \
@@ -274,7 +250,7 @@ echo "Test 4: missing correlation id skips silently in both hooks"
 # ----------------------------------------------------------------------------
 echo "Test 5: non-numeric CLOSEDLOOP_ITERATION is normalized to 0"
 {
-    read -r tmpdir cwd workdir session_id <<< "$(setup_env)"
+    read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env "correlation")"
     tool_use_id="non-numeric-iter-id"
 
     mock_pre_input "$session_id" "$cwd" "$tool_use_id" "Read" "agent-iter" \
@@ -304,7 +280,7 @@ echo "Test 5: non-numeric CLOSEDLOOP_ITERATION is normalized to 0"
     perf_file="$workdir/perf.jsonl"
     if [[ -f "$perf_file" ]] && grep -q '"event":"tool"' "$perf_file"; then
         line=$(grep '"event":"tool"' "$perf_file" | tail -1)
-        assert_eq "non-numeric iter" "$line" "iteration" "0"
+        assert_field_equals "non-numeric iter" "$line" "iteration" "0"
     else
         fail "post-hook handled non-numeric iteration" "no tool event emitted"
     fi

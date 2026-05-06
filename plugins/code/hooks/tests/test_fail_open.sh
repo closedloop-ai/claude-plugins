@@ -19,22 +19,11 @@ PRE_HOOK="$HOOKS_DIR/pre-tool-use-hook.sh"
 POST_HOOK="$HOOKS_DIR/post-tool-use-hook.sh"
 
 # ---- Test helpers --------------------------------------------------------
-PASS_COUNT=0
-FAIL_COUNT=0
+# ---- Shared helpers ------------------------------------------------------
+# pass/fail counters, assert_field_*, setup_temp_env, create_sentinel.
+source "$SCRIPT_DIR/test_helpers.sh"
 
-pass() {
-    local name="$1"
-    echo "  PASS: $name"
-    PASS_COUNT=$(( PASS_COUNT + 1 ))
-}
-
-fail() {
-    local name="$1"
-    local reason="$2"
-    echo "  FAIL: $name -- $reason"
-    FAIL_COUNT=$(( FAIL_COUNT + 1 ))
-}
-
+# ---- Test-file-specific helpers ------------------------------------------
 assert_exit_zero() {
     local test_name="$1"
     local actual_exit="$2"
@@ -72,31 +61,6 @@ assert_perf_not_corrupted() {
     else
         fail "$test_name" "$bad_lines corrupted line(s) in perf.jsonl"
     fi
-}
-
-# ---- Setup / teardown helpers --------------------------------------------
-setup_temp_env() {
-    # Creates an isolated temp directory with:
-    #   $TMPDIR/cwd/                          -- fake CWD
-    #   $TMPDIR/cwd/.closedloop-ai/           -- state dir
-    #   $TMPDIR/workdir/                      -- CLOSEDLOOP_WORKDIR
-    #   $TMPDIR/workdir/.tool-calls/          -- sentinel dir
-    #   Session mapping: $TMPDIR/cwd/.closedloop-ai/session-$SESSION_ID.workdir -> $TMPDIR/workdir
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    local cwd="$tmpdir/cwd"
-    local workdir="$tmpdir/workdir"
-    local session_id="test-failopen-$$"
-    local state_dir="$cwd/.closedloop-ai"
-
-    mkdir -p "$state_dir"
-    mkdir -p "$workdir/.tool-calls"
-
-    # Write session mapping so hooks can discover CLOSEDLOOP_WORKDIR
-    echo "$workdir" > "$state_dir/session-$session_id.workdir"
-
-    # Export for callers
-    echo "$tmpdir $cwd $workdir $session_id"
 }
 
 make_stub_hook() {
