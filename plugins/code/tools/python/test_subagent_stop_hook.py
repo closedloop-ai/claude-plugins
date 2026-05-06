@@ -356,13 +356,21 @@ class TestPerfV2MissingTranscript:
             )
 
 
-class TestPerfV2GateBehavior:
-    """T-3.3: CLOSEDLOOP_PERF_V2 gate behavior."""
+class TestExtendedEventUnconditional:
+    """The extended `agent` event is emitted regardless of any env-var gate.
 
-    def test_perf_v2_unset_emits_baseline_event(
+    The earlier draft of this hook was gated behind `CLOSEDLOOP_PERF_V2=1` so
+    the new fields would only appear when an operator opted in. That gate was
+    removed (the closedloop-electron app ships claude-plugins bundled and end
+    users have no way to set runtime env vars), so the extended event is now
+    the only path. This test pins the contract.
+    """
+
+    def test_extended_event_emitted_when_env_var_unset(
         self, session_env: tuple[Path, Path, str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When PERF_V2 is unset, emit FEA-764 baseline event (timing only, no token fields)."""
+        """Even with `CLOSEDLOOP_PERF_V2` explicitly unset, the agent event still
+        carries the new attribution fields. No gate, no opt-in."""
         cwd, workdir, session_id = session_env
         monkeypatch.delenv("CLOSEDLOOP_PERF_V2", raising=False)
 
@@ -373,12 +381,21 @@ class TestPerfV2GateBehavior:
         assert len(agent_events) == 1
 
         evt = agent_events[0]
-        # Baseline event should have timing fields
+        # FEA-764 timing fields still present
         for field in ("duration_s", "started_at", "ended_at", "agent_name"):
             assert field in evt
-        # Baseline event should NOT have token/model fields
-        for field in ("input_tokens", "output_tokens", "model", "parent_session_id", "command"):
-            assert field not in evt, f"Baseline event should not have {field}"
+        # New fields are ALWAYS present (no gate)
+        for field in (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+            "total_context_tokens",
+            "model",
+            "parent_session_id",
+            "command",
+        ):
+            assert field in evt, f"Extended event must always carry {field}"
 
 
 class TestPerfV2ModelAndMetadata:
