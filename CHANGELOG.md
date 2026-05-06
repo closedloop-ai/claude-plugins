@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### code v1.11.9
+### code v1.11.10
 
 #### Added
 - New `pre-tool-use-hook.sh` writes a per-tool-call sentinel JSON file at `$CLOSEDLOOP_WORKDIR/.closedloop-ai/.tool-calls/{TOOL_USE_ID}` capturing `started_at`, `tool_name`, `agent_id`, `run_id`, `command`, and `iteration`. Gated behind `CLOSEDLOOP_PERF_V2=1`; fails open (`trap 'exit 0' ERR`) so any internal error leaves the caller unaffected. Emits a `spawn` perf event when `tool_name` is `Agent`, recording `parent_session_id`, `parent_agent_id`, and `planned_subagent_type` from the hook payload. Stdin parsed via a single `jq` `@sh` invocation matching the post-hook idiom.
