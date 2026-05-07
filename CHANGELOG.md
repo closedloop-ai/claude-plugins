@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.12
+
+#### Fixed
+- `run-loop.sh` now fails the loop when `max_iterations` is reached with zero successful iterations, emitting a `RUNNER_ERROR/MAX_ITERATIONS_NO_PROGRESS` user-visible failure and exiting with code 4. A new `successful_iterations` counter is incremented on non-empty results or `COMPLETE` promise detection, and `runs.log` entries gain an optional 8th field (`successful_iterations`) appended only on the max-iterations exit path — older readers that parse the leading 7 fields stay compatible. Covered by new `test_run_loop_failure_marker.py` cases for the no-progress failure path. Also isolates `test_reduce_failures_reads_runs_log_from_workdir_root` from the ambient `CLOSEDLOOP_ITERATION` env var so the test no longer depends on the caller's environment.
+
 ### code v1.11.11
 
 #### Fixed
