@@ -438,11 +438,9 @@ if [[ -n "$AGENT_ID" ]] && [[ -n "$CLOSEDLOOP_WORKDIR" ]] && [[ -f "$AGENT_TYPES
         PERF_FILE="$CLOSEDLOOP_WORKDIR/perf.jsonl"
 
         # --- Extended agent event with token aggregation ---
-        # Emitted unconditionally (no env-var gate). Safety properties come from
-        # (a) the additive event schema — every new field is additive on the
-        # FEA-764 baseline, existing consumers ignore unknown fields — and
-        # (b) the fail-open contract — token aggregation defaults to 0 on any
-        # missing/malformed input so the event still emits cleanly.
+        # All numeric fields default to 0 on missing/malformed input so the
+        # event still emits cleanly even when the transcript is unavailable
+        # or corrupt.
         PERF_INPUT_TOKENS=0
         PERF_OUTPUT_TOKENS=0
         PERF_CACHE_CREATION=0

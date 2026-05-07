@@ -1,11 +1,4 @@
-"""Tests for record_run.sh JSON output (T-4.1 / AC-001) and fail-open behavior (T-4.2 / AC-003).
-
-The script previously gated all output behind `CLOSEDLOOP_PERF_V2=1`. The gate
-was removed because closedloop-electron ships claude-plugins bundled and end
-users have no way to set runtime env vars — the gate was permanently off in
-production, defeating the data-collection goal. The script now emits the `run`
-event unconditionally; fail-open and additive-schema invariants are preserved.
-"""
+"""Tests for record_run.sh JSON output (T-4.1 / AC-001) and fail-open behavior (T-4.2 / AC-003)."""
 
 from __future__ import annotations
 
@@ -34,10 +27,6 @@ def run_record_run(
         "CLOSEDLOOP_COMMAND": command,
         "CLOSEDLOOP_WORKDIR": str(workdir),
     }
-    # Strip any inherited CLOSEDLOOP_PERF_V2 from the parent env so this test
-    # always exercises the un-gated production path, regardless of how the
-    # developer invokes pytest.
-    env.pop("CLOSEDLOOP_PERF_V2", None)
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
@@ -47,32 +36,6 @@ def run_record_run(
         timeout=15,
         env=env,
     )
-
-
-class TestRecordRunUnconditional:
-    """Pins the no-gate contract: record_run.sh writes a `run` event regardless
-    of CLOSEDLOOP_PERF_V2 state. The gate was removed because closedloop-electron
-    ships claude-plugins bundled and end users cannot set runtime env vars.
-    """
-
-    def test_writes_run_event_when_perf_v2_unset(self, tmp_path: Path) -> None:
-        """`run` event is written when CLOSEDLOOP_PERF_V2 is explicitly unset."""
-        # run_record_run already pops CLOSEDLOOP_PERF_V2, but be explicit here.
-        result = run_record_run(tmp_path, extra_env={})
-        assert result.returncode == 0, f"Script failed: {result.stderr}"
-        perf_file = tmp_path / "perf.jsonl"
-        assert perf_file.exists(), "perf.jsonl must be written even with no env-var gate"
-        record = json.loads(perf_file.read_text().strip())
-        assert record["event"] == "run"
-
-    def test_writes_run_event_when_perf_v2_zero(self, tmp_path: Path) -> None:
-        """`run` event is written even when CLOSEDLOOP_PERF_V2=0 (the prior 'gate-off' value)."""
-        result = run_record_run(tmp_path, extra_env={"CLOSEDLOOP_PERF_V2": "0"})
-        assert result.returncode == 0, f"Script failed: {result.stderr}"
-        perf_file = tmp_path / "perf.jsonl"
-        assert perf_file.exists(), "perf.jsonl must be written regardless of legacy gate value"
-        record = json.loads(perf_file.read_text().strip())
-        assert record["event"] == "run"
 
 
 class TestRecordRunOutput:

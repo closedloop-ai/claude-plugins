@@ -1,11 +1,4 @@
-"""Tests for record_phase.sh JSON output (T-4.3 / AC-002, AC-003).
-
-The script previously gated the `command:` field behind `CLOSEDLOOP_PERF_V2=1`.
-The gate was removed because closedloop-electron ships claude-plugins bundled
-and end users have no way to set runtime env vars — the gate was permanently
-off in production, defeating the PRD-254 goal of attributing every event to
-its slash command. The `command:` field is now always present.
-"""
+"""Tests for record_phase.sh JSON output (T-4.3 / AC-002, AC-003)."""
 
 from __future__ import annotations
 
@@ -39,9 +32,6 @@ def run_record_phase(
         "CLOSEDLOOP_WORKDIR": str(workdir),
         "CLOSEDLOOP_ITERATION": "1",
     }
-    # Strip any inherited CLOSEDLOOP_PERF_V2 from the parent env so this test
-    # always exercises the un-gated production path.
-    env.pop("CLOSEDLOOP_PERF_V2", None)
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
@@ -53,36 +43,19 @@ def run_record_phase(
     )
 
 
-class TestRecordPhaseCommandFieldAlwaysPresent:
-    """Pins the no-gate contract: `command:` field is always present in the
-    `phase` event regardless of CLOSEDLOOP_PERF_V2 state. The gate was removed
-    because closedloop-electron ships claude-plugins bundled and end users
-    cannot set runtime env vars.
-    """
+class TestRecordPhaseCommandField:
+    """Tests that the `command:` field is populated correctly on `phase` events."""
 
-    def test_command_field_present_when_perf_v2_unset(self, tmp_path: Path) -> None:
-        """`command:` field is present even when CLOSEDLOOP_PERF_V2 is unset."""
+    def test_command_field_present(self, tmp_path: Path) -> None:
+        """`command:` field is included in every `phase` event."""
         _write_state(tmp_path)
         result = run_record_phase(tmp_path, command="feature")
         assert result.returncode == 0, f"Script failed: {result.stderr}"
         record = json.loads((tmp_path / "perf.jsonl").read_text().strip())
-        assert "command" in record, "command field must be present unconditionally"
+        assert "command" in record, "command field must be present on phase events"
         assert record["command"] == "feature", (
             f"command value mismatch: expected 'feature', got '{record['command']}'"
         )
-
-    def test_command_field_present_when_perf_v2_zero(self, tmp_path: Path) -> None:
-        """`command:` field is present even when CLOSEDLOOP_PERF_V2=0 (legacy 'gate off' value)."""
-        _write_state(tmp_path)
-        result = run_record_phase(
-            tmp_path, command="feature", extra_env={"CLOSEDLOOP_PERF_V2": "0"}
-        )
-        assert result.returncode == 0, f"Script failed: {result.stderr}"
-        record = json.loads((tmp_path / "perf.jsonl").read_text().strip())
-        assert "command" in record, (
-            "command field must be present regardless of legacy gate value"
-        )
-        assert record["command"] == "feature"
 
     def test_command_value_matches_env_var(self, tmp_path: Path) -> None:
         """command field value matches CLOSEDLOOP_COMMAND."""
@@ -103,7 +76,6 @@ class TestRecordPhaseCommandFieldAlwaysPresent:
             "CLOSEDLOOP_ITERATION": "1",
         }
         env.pop("CLOSEDLOOP_COMMAND", None)
-        env.pop("CLOSEDLOOP_PERF_V2", None)
         result = subprocess.run(
             ["bash", str(SCRIPT_PATH), str(tmp_path)],
             capture_output=True,

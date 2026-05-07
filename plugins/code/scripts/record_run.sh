@@ -3,15 +3,8 @@
 #
 # Emits exactly one `run` event containing command, repo, branch, and start
 # time so every perf.jsonl record can be attributed to the slash-command that
-# launched the Loop.
-#
-# Emitted unconditionally (no env-var gate). Safety properties come from
-# (a) the additive event schema — perf.jsonl readers ignore unknown events,
-# so emitting an extra `run` row never breaks downstream consumers — and
-# (b) the fail-open contract below. The earlier draft was gated behind
-# CLOSEDLOOP_PERF_V2=1, but closedloop-electron ships claude-plugins bundled
-# and end users have no way to set runtime env vars, so that gate was
-# permanently off in production.
+# launched the Loop. Fails open (exits 0) on any error so the caller loop is
+# unaffected.
 #
 # Usage:
 #   bash record_run.sh [WORKDIR]

@@ -188,8 +188,8 @@ def _recreate_agent_type_file(workdir: Path, agent_id: str = "agent-123") -> Non
     )
 
 
-class TestPerfV2TokenAggregation:
-    """T-3.1: Token aggregation with cache reads on the extended `agent` event."""
+class TestAgentEventTokenAggregation:
+    """T-3.1: Token aggregation with cache reads on the `agent` event."""
 
     def test_token_aggregation_sums_correctly(
         self, session_env: tuple[Path, Path, str], tmp_path: Path
@@ -289,7 +289,7 @@ class TestPerfV2TokenAggregation:
         )
 
 
-class TestPerfV2MissingTranscript:
+class TestAgentEventMissingTranscript:
     """T-3.2: Graceful degradation when transcript is missing or malformed under PERF_V2."""
 
     def test_missing_transcript_emits_zero_tokens(
@@ -353,23 +353,16 @@ class TestPerfV2MissingTranscript:
             )
 
 
-class TestExtendedEventUnconditional:
-    """The extended `agent` event is emitted regardless of any env-var gate.
+class TestAgentEventAttributionFields:
+    """T-3.4: model, parent_session_id, command, and the four token-count fields
+    are populated on every `agent` event."""
 
-    The earlier draft of this hook was gated behind `CLOSEDLOOP_PERF_V2=1` so
-    the new fields would only appear when an operator opted in. That gate was
-    removed (the closedloop-electron app ships claude-plugins bundled and end
-    users have no way to set runtime env vars), so the extended event is now
-    the only path. This test pins the contract.
-    """
-
-    def test_extended_event_emitted_when_env_var_unset(
-        self, session_env: tuple[Path, Path, str], monkeypatch: pytest.MonkeyPatch
+    def test_agent_event_carries_all_attribution_fields(
+        self, session_env: tuple[Path, Path, str]
     ) -> None:
-        """Even with `CLOSEDLOOP_PERF_V2` explicitly unset, the agent event still
-        carries the new attribution fields. No gate, no opt-in."""
+        """The `agent` event carries the FEA-764 timing fields plus model,
+        parent_session_id, command, and the token-count fields."""
         cwd, workdir, session_id = session_env
-        monkeypatch.delenv("CLOSEDLOOP_PERF_V2", raising=False)
 
         result = run_stop_hook(str(cwd), session_id, self_learning=False)
         assert result.returncode == 0, f"Hook failed: {result.stderr}"
@@ -378,10 +371,8 @@ class TestExtendedEventUnconditional:
         assert len(agent_events) == 1
 
         evt = agent_events[0]
-        # FEA-764 timing fields still present
         for field in ("duration_s", "started_at", "ended_at", "agent_name"):
             assert field in evt
-        # New fields are ALWAYS present (no gate)
         for field in (
             "input_tokens",
             "output_tokens",
@@ -392,11 +383,11 @@ class TestExtendedEventUnconditional:
             "parent_session_id",
             "command",
         ):
-            assert field in evt, f"Extended event must always carry {field}"
+            assert field in evt, f"Agent event must carry {field}"
 
 
-class TestPerfV2ModelAndMetadata:
-    """T-3.4: model, parent_session_id, and command field emission under PERF_V2."""
+class TestAgentEventModelAndMetadata:
+    """T-3.4: model, parent_session_id, and command field emission."""
 
     def test_model_and_parent_session_id_present(
         self, session_env: tuple[Path, Path, str]
