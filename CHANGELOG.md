@@ -34,7 +34,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### self-learning v1.2.3
 
 #### Changed
-- `perf_summary.py` agent-event schema docstring promotes `command` to a required field on both `agent` and `phase` events (matching the un-gated producer in `subagent-stop-hook.sh`, `record_phase.sh`, `record_run.sh`, and `run-loop.sh::emit_perf_event()`). `model`, `parent_session_id`, and the four token-count fields (`input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`) plus `total_context_tokens` remain marked optional, but only because they fall back to `null`/`0` when the SubagentStop payload or transcript is missing or unparseable — not because of any env-var gate. Coordination version bump alongside `code` v1.11.10 so the two plugins ship together as a matched set.
+- `perf_summary.py` agent-event schema docstring promotes `command` to a required field on both `agent` and `phase` events (matching the un-gated producer in `subagent-stop-hook.sh`, `record_phase.sh`, `record_run.sh`, and `run-loop.sh::emit_perf_event()`). `model`, `parent_session_id`, and the four token-count fields (`input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`) plus `total_context_tokens` remain marked optional, but only because they fall back to `null`/`0` when the SubagentStop payload or transcript is missing or unparseable — not because of any env-var gate. Coordination version bump alongside `code` v1.11.9 so the two plugins ship together as a matched set.
 
 ### self-learning v1.2.2
 
