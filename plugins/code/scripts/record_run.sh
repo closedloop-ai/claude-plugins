@@ -5,8 +5,13 @@
 # time so every perf.jsonl record can be attributed to the slash-command that
 # launched the Loop.
 #
-# Gated behind CLOSEDLOOP_PERF_V2=1 — no-ops silently when the gate is off.
-# Designed to be non-blocking: exits 0 on any failure.
+# Emitted unconditionally (no env-var gate). Safety properties come from
+# (a) the additive event schema — perf.jsonl readers ignore unknown events,
+# so emitting an extra `run` row never breaks downstream consumers — and
+# (b) the fail-open contract below. The earlier draft was gated behind
+# CLOSEDLOOP_PERF_V2=1, but closedloop-electron ships claude-plugins bundled
+# and end users have no way to set runtime env vars, so that gate was
+# permanently off in production.
 #
 # Usage:
 #   bash record_run.sh [WORKDIR]
@@ -14,11 +19,6 @@
 
 # Fail open: any unexpected error exits 0 so the caller loop is unaffected.
 trap 'exit 0' ERR
-
-# Gate: only run when CLOSEDLOOP_PERF_V2=1
-if [[ "${CLOSEDLOOP_PERF_V2:-}" != "1" ]]; then
-  exit 0
-fi
 
 WORKDIR="${1:-${CLOSEDLOOP_WORKDIR:-}}"
 if [[ -z "$WORKDIR" ]]; then

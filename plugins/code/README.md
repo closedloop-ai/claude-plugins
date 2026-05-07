@@ -391,7 +391,7 @@ Appends a phase event to `perf.jsonl` from the current `state.json`. Called by t
 
 ### `record_run.sh`
 
-Appends a single `run` event to `perf.jsonl` once per Loop, capturing `command`, `repo`, `branch`, `run_id`, and `started_at` so every perf event can be attributed to the slash command that launched the Loop. Gated behind `CLOSEDLOOP_PERF_V2=1` and fails open (exits 0) on any error so the caller loop is unaffected. Reads `CLOSEDLOOP_COMMAND` and `CLOSEDLOOP_RUN_ID` from the environment.
+Appends a single `run` event to `perf.jsonl` once per Loop, capturing `command`, `repo`, `branch`, `run_id`, and `started_at` so every perf event can be attributed to the slash command that launched the Loop. Emitted unconditionally and fails open (exits 0) on any error so the caller loop is unaffected. Reads `CLOSEDLOOP_COMMAND` and `CLOSEDLOOP_RUN_ID` from the environment.
 
 ### `loop-agents.json`
 

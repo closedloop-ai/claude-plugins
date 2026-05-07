@@ -21,15 +21,15 @@ K = TypeVar("K", bound=Hashable)
 # pipeline_step: {event, run_id, iteration, step, step_name, started_at, ended_at, duration_s,
 #                 exit_code, skipped, [sub_step], [sub_step_name]}
 # agent:         {event, run_id, iteration, agent_id, agent_type, agent_name,
-#                 started_at, ended_at, duration_s,
-#                 [command], [model], [parent_session_id],
+#                 started_at, ended_at, duration_s, command,
+#                 [model], [parent_session_id],
 #                 [input_tokens], [output_tokens],
 #                 [cache_creation_input_tokens], [cache_read_input_tokens],
 #                 [total_context_tokens]}
-#                 Optional fields (marked [...]) — including command, model,
-#                 parent_session_id, the four token-count fields, and
-#                 total_context_tokens — are emitted only when CLOSEDLOOP_PERF_V2=1.
-# phase:         {event, run_id, iteration, phase, status, start_sha, started_at}
+#                 model, parent_session_id, and the token-count fields are marked
+#                 optional ([...]) because they fall back to null/0 when the
+#                 SubagentStop payload or transcript is missing or unparseable.
+# phase:         {event, run_id, iteration, phase, status, start_sha, started_at, command}
 #                Phase events carry only started_at; per-phase durations are derived from
 #                the gap to the next phase event in the same iteration (or to the iteration's
 #                ended_at for the final phase). Use --timeline for a chronological per-instance

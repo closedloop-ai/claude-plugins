@@ -189,7 +189,7 @@ def _recreate_agent_type_file(workdir: Path, agent_id: str = "agent-123") -> Non
 
 
 class TestPerfV2TokenAggregation:
-    """T-3.1: Token aggregation with cache reads under CLOSEDLOOP_PERF_V2=1."""
+    """T-3.1: Token aggregation with cache reads on the extended `agent` event."""
 
     def test_token_aggregation_sums_correctly(
         self, session_env: tuple[Path, Path, str], tmp_path: Path
@@ -259,7 +259,6 @@ class TestPerfV2TokenAggregation:
             transcript_path=transcript_path,
             model="claude-sonnet-4-20250514",
             parent_session_id="parent-abc-123",
-            env_extra={"CLOSEDLOOP_PERF_V2": "1"},
         )
         assert result.returncode == 0, f"Hook failed: {result.stderr}"
 
@@ -304,7 +303,6 @@ class TestPerfV2MissingTranscript:
             session_id,
             self_learning=False,
             transcript_path="",
-            env_extra={"CLOSEDLOOP_PERF_V2": "1"},
         )
         assert result.returncode == 0, f"Hook failed: {result.stderr}"
 
@@ -338,7 +336,6 @@ class TestPerfV2MissingTranscript:
             session_id,
             self_learning=False,
             transcript_path=str(bad_transcript),
-            env_extra={"CLOSEDLOOP_PERF_V2": "1"},
         )
         assert result.returncode == 0, (
             f"Hook must exit 0 on malformed transcript, got {result.returncode}. "
@@ -413,10 +410,7 @@ class TestPerfV2ModelAndMetadata:
             self_learning=False,
             model="claude-sonnet-4-20250514",
             parent_session_id="parent-session-xyz",
-            env_extra={
-                "CLOSEDLOOP_PERF_V2": "1",
-                "CLOSEDLOOP_COMMAND": "code",
-            },
+            env_extra={"CLOSEDLOOP_COMMAND": "code"},
         )
         assert result.returncode == 0, f"Hook failed: {result.stderr}"
 
@@ -443,7 +437,6 @@ class TestPerfV2ModelAndMetadata:
             session_id,
             self_learning=False,
             # model not provided -> omitted from payload
-            env_extra={"CLOSEDLOOP_PERF_V2": "1"},
         )
         assert result.returncode == 0, f"Hook failed: {result.stderr}"
 
@@ -469,7 +462,6 @@ class TestPerfV2ModelAndMetadata:
             self_learning=False,
             model="claude-sonnet-4-20250514",
             # parent_session_id not provided
-            env_extra={"CLOSEDLOOP_PERF_V2": "1"},
         )
         assert result.returncode == 0, f"Hook failed: {result.stderr}"
 
@@ -496,7 +488,6 @@ class TestPerfV2ModelAndMetadata:
         # Explicitly remove CLOSEDLOOP_COMMAND from env
         env = os.environ.copy()
         env.pop("CLOSEDLOOP_COMMAND", None)
-        env["CLOSEDLOOP_PERF_V2"] = "1"
 
         result = subprocess.run(
             ["bash", str(HOOK_PATH)],
