@@ -1241,13 +1241,12 @@ log_progress() {
 
 # --- Performance instrumentation helpers ---
 
-# Append a single-line JSON event to perf.jsonl
+# Append a single-line JSON event to perf.jsonl. The `command:` field is added
+# to every event row so it can be filtered by slash command in Datadog.
 emit_perf_event() {
   local json_line="$1"
   local perf_file="${CLOSEDLOOP_WORKDIR:-.}/perf.jsonl"
-  if [[ "${CLOSEDLOOP_PERF_V2:-}" == "1" ]]; then
-    json_line=$(echo "$json_line" | jq -c --arg command "${CLOSEDLOOP_COMMAND:-interactive}" '. + {command:$command}')
-  fi
+  json_line=$(echo "$json_line" | jq -c --arg command "${CLOSEDLOOP_COMMAND:-interactive}" '. + {command:$command}')
   echo "$json_line" >> "$perf_file"
 }
 
@@ -1507,7 +1506,7 @@ main() {
 
   log_progress "Loop started - run_id=$RUN_ID iteration=$iteration max=$max_iterations promise=$completion_promise"
 
-  # Record run event to perf.jsonl (non-blocking; gated behind CLOSEDLOOP_PERF_V2=1).
+  # Record run event to perf.jsonl (non-blocking).
   # Only fires on fresh-start invocations -- on resume ($WORKDIR is empty), the
   # `run` event was already appended by the original invocation, so re-emitting
   # would violate PRD-254 AC-1 ("exactly one run event per Loop").
