@@ -219,6 +219,7 @@ class TestRecordRunOutput:
             if src is None:
                 import pytest
                 pytest.skip(f"required tool {tool!r} not on PATH; cannot isolate timeout")
+                continue  # unreachable; hint for type-checkers that can't resolve pytest.skip -> NoReturn
             os.symlink(src, fake_bin / tool)
 
         # Sanity check: timeout must NOT be reachable via fake_bin.

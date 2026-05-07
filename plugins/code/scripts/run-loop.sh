@@ -277,32 +277,42 @@ detect_claude_terminal_failure() {
         or ((error_string | length) > 0);
 
       def rate_limit_signal:
-        (.type? == "rate_limit_event")
+        ((.type? == "rate_limit_event") and (
+          (.rate_limit_info? | type) == "object"
+          and (
+            ((.rate_limit_info.status? // null) != null and (.rate_limit_info.status? != "allowed"))
+            or ((.rate_limit_info.overageStatus? // null) != null and (.rate_limit_info.overageStatus? != "allowed"))
+          )
+        ))
         or (error_string | ascii_downcase | test("^rate_limit(_error)?$"))
         or status_429
-        or (error_shaped and (text_blob | test("you.?ve hit your limit|usage limit|rate[_ -]?limit|rate limit reached"; "i")));
+        or ((.is_error? == true) and ((.result? | strings | test("you.?ve hit your limit|usage limit|rate[_ -]?limit|rate limit reached"; "i")) // false))
+        or ((.isApiErrorMessage? == true) and ((.error? | strings | test("you.?ve hit your limit|usage limit|rate[_ -]?limit|rate limit reached"; "i")) // false));
 
       def context_limit_signal:
-        error_shaped and (text_blob | test("prompt is too long|exceed context limit|context limit reached|conversation too long"; "i"));
+        ((.is_error? == true) and ((.result? | strings | test("prompt is too long|exceed context limit|context limit reached|conversation too long"; "i")) // false))
+        or ((.isApiErrorMessage? == true) and ((.error? | strings | test("prompt is too long|exceed context limit|context limit reached|conversation too long"; "i")) // false));
 
       def auth_challenge_signal:
-        error_shaped and (text_blob | test("authentication_error|invalid bearer token|billing_error|permission_error|overloaded_error|api overloaded|unauthorized|token.*expired|not authenticated|please log in|login required"; "i"));
+        ((.is_error? == true) and ((.result? | strings | test("authentication_error|invalid bearer token|billing_error|permission_error|overloaded_error|api overloaded|unauthorized|token.*expired|not authenticated|please log in|login required"; "i")) // false))
+        or ((.isApiErrorMessage? == true) and ((.error? | strings | test("authentication_error|invalid bearer token|billing_error|permission_error|overloaded_error|api overloaded|unauthorized|token.*expired|not authenticated|please log in|login required"; "i")) // false));
+
+      def entry_message:
+        ((.result? | strings) // (.error? | strings) // "");
 
       entries as $entries
-      | first_user_text($entries) as $userMessage
-      | first_error_text($entries) as $errorMessage
       | rate_event_message($entries) as $rateMessage
       | if any($entries[]; rate_limit_signal) then
-          {
+          ([$entries[] | select(rate_limit_signal)] | .[0]) as $trigger
+          | ($trigger | entry_message) as $triggerMsg
+          | {
             status: "claude_rate_limit",
             subcode: "CLAUDE_RATE_LIMIT",
             message: (
-              if ($userMessage | length) > 0 then
-                "Claude rate limit reached: " + $userMessage
+              if ($triggerMsg | length) > 0 then
+                "Claude rate limit reached: " + $triggerMsg
               elif ($rateMessage | length) > 0 then
                 $rateMessage
-              elif ($errorMessage | length) > 0 then
-                "Claude rate limit reached: " + $errorMessage
               else
                 "Claude rate limit reached. Wait for the limit to reset, then re-run /code:code."
               end
@@ -310,12 +320,14 @@ detect_claude_terminal_failure() {
             )
           }
         elif any($entries[]; context_limit_signal) then
-          {
+          ([$entries[] | select(context_limit_signal)] | .[0]) as $trigger
+          | ($trigger | entry_message) as $triggerMsg
+          | {
             status: "context_limit",
             subcode: "CLAUDE_CONTEXT_LIMIT",
             message: (
-              if ($userMessage | length) > 0 then
-                "Claude context limit reached: " + $userMessage
+              if ($triggerMsg | length) > 0 then
+                "Claude context limit reached: " + $triggerMsg
               else
                 "Claude context limit reached. Start a fresh run with a smaller prompt or reduced context."
               end
@@ -323,14 +335,14 @@ detect_claude_terminal_failure() {
             )
           }
         elif any($entries[]; auth_challenge_signal) then
-          {
+          ([$entries[] | select(auth_challenge_signal)] | .[0]) as $trigger
+          | ($trigger | entry_message) as $triggerMsg
+          | {
             status: "claude_auth_error",
             subcode: "CLAUDE_AUTH_CHALLENGE",
             message: (
-              if ($userMessage | length) > 0 then
-                "Claude authentication or account challenge: " + $userMessage
-              elif ($errorMessage | length) > 0 then
-                "Claude authentication or account challenge: " + $errorMessage
+              if ($triggerMsg | length) > 0 then
+                "Claude authentication or account challenge: " + $triggerMsg
               else
                 "Claude authentication or account challenge detected. Re-authenticate Claude, then re-run /code:code."
               end
@@ -341,6 +353,10 @@ detect_claude_terminal_failure() {
           {}
         end
     ' "$output_file" 2>/dev/null || echo '{}')
+
+    if [[ "${DEBUG:-}" == "1" ]] && [[ "$detection" != "{}" ]]; then
+      echo "[detect_claude_terminal_failure] detection=$detection" >&2
+    fi
 
     if [[ "$detection" != "{}" ]]; then
       echo "$detection"
@@ -1844,7 +1860,11 @@ rename_orphan_output_on_start() {
 
   local prev_run_id=""
   if [[ -f "$STATE_FILE" ]]; then
-    prev_run_id=$(get_field "run_id" 2>/dev/null || true)
+    local state_workdir
+    state_workdir=$(get_field "workdir" 2>/dev/null || true)
+    if [[ "$state_workdir" == "$workdir" ]]; then
+      prev_run_id=$(get_field "run_id" 2>/dev/null || true)
+    fi
   fi
 
   if [[ -z "$prev_run_id" ]]; then

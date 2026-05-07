@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.11
+
+#### Fixed
+- `detect_claude_terminal_failure` in `run-loop.sh` no longer treats benign Claude `rate_limit_event` heartbeats as terminal failures. The `rate_limit_signal` jq predicate now requires `rate_limit_info.status` or `overageStatus` to be a non-`allowed` value before a `rate_limit_event` entry counts as a failure, so successful runs that emit allowed-status heartbeats stop creating false `loop-error.json` markers. Failure messages are now sourced from the triggering entry's own `result`/`error` string rather than scanning unrelated assistant prose, and `auth_challenge_signal` only fires inside `is_error` / `isApiErrorMessage` envelopes so plain assistant text mentioning auth never trips the auth-challenge classifier.
+- `rename_orphan_output_on_start` in `run-loop.sh` now requires `state.json`'s recorded `workdir` to match the current workdir before reusing its `prev_run_id` to rename an orphan `claude-output.jsonl`. Prevents cross-workdir RUN_ID reuse when a stale `state.json` from another workdir is reachable.
+
+#### Changed
+- `test_run_loop_failure_marker.py` consolidates the PLN-502 heartbeat-false-positive cases behind a shared `run_detect` helper that centralizes the bash-source boilerplate for invoking `detect_claude_terminal_failure`. Cuts duplicated fixture setup across the rate-limit-signal, message-sourcing, auth-challenge-envelope, and workdir-mismatch test groups so each case focuses on fixture data and assertions.
+
 ### code v1.11.10
 
 #### Added
@@ -161,7 +170,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - New `--timeline` CLI flag and `phase_timeline()` function in `perf_summary.py` that emits a chronological per-instance view (one row per phase invocation with `run_id`, `iteration`, `started_at`, `ended_at`, `duration_s`). Incomplete final phases (no following phase event AND no iteration `ended_at`) are emitted with `ended_at=""` and `duration_s=null` so in-progress runs remain visible. Works with `--format json` for machine-readable output.
 - Tests for phase summarization and timeline covering iteration boundaries, missing iteration end (final phase skipped vs surfaced), aggregation across iterations, total-time descending sort, and per-row run/iteration provenance.
 
-### code v1.10.0
+### code v1.11.0
 
 #### Added
 - New `decision-table` skill for generating code-grounded decision-table artifacts that map current vs. intended control-flow behavior, capturing recovery, retry, finalization, validation, and state-machine edge cases under `.closedloop-ai/decision-tables/`. Includes baseline/target table rules, behavioral edge-case expansion guidance (call-site inventory for shared surfaces, exception scope, serverless async side effects, testable invariants), post-implementation verification sections, contract-heavy review checklist, and a referenced artifact format template at `references/artifact-format.md`.
