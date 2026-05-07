@@ -14,6 +14,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - `plugins/code/hooks/hooks.json` registers the new `pre-tool-use-hook.sh` alongside the existing `pretooluse-hook.sh` under `PreToolUse`, and adds a new `PostToolUse` entry pointing at `post-tool-use-hook.sh`. The legacy pre-hook is preserved so existing JIT-pattern injection behavior is unchanged.
 
+### code v1.11.9
+
+#### Added
+- `subagent-stop-hook.sh` agent perf event extended with token aggregation and routing metadata. The hook now parses the agent transcript JSONL, sums `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` across assistant turns, and tracks `total_context_tokens` as the per-turn high-water mark (max of any single turn's full usage) rather than a cumulative running total — preserving a peak-pressure signal instead of collapsing to the final sum. The event also carries `model` and `parent_session_id` from the hook payload (emitted as `null` when absent) and a `command` field that defaults to `"interactive"` when `CLOSEDLOOP_COMMAND` is unset, matching `record_phase.sh` and `run-loop.sh`'s `emit_perf_event` so phase, iteration, pipeline_step, and agent rows can be joined by command in Datadog. Transcript selection keys on top-level `type == "assistant"` reading `.message.usage` (mirroring `stream_formatter._accumulate_usage`); a malformed or missing transcript fails open and emits zero-token fields without aborting the hook. Every numeric field defaults to `0` on missing or malformed input, and existing `perf.jsonl` consumers ignore unknown fields, so the additive shape is safe. New tests in `test_subagent_stop_hook.py` cover token sums with cache reads, per-turn HWM, missing/malformed transcripts, model/parent_session_id null handling, and the command-default join contract.
+
+#### Changed
+- `command:` field is now populated on every `perf.jsonl` event row produced by the orchestrator and producer scripts. `run-loop.sh::emit_perf_event()` adds `command:` (defaulting to `"interactive"` when `CLOSEDLOOP_COMMAND` is unset) so every `phase`, `iteration`, and `pipeline_step` event carries it; `record_run.sh` emits its singular `run` event on every fresh-start Loop; `record_phase.sh` always includes `command:` in the emitted JSON. The fail-open `trap 'exit 0' ERR` contract on the producer scripts is preserved. `test_record_run.py` and `test_record_phase.py` are updated to assert the `command:` field is present on every event; `plugins/code/README.md`'s `record_run.sh` description now reads "Emitted unconditionally and fails open".
+
 ### code v1.11.8
 
 #### Fixed
@@ -33,6 +41,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `runs.log` row format extended to `run_id|timestamp|goal|iteration|status|command|last_session_id`. The first five fields are the legacy contract; `command` (e.g. `plan_execute`, `code_review`, `self_learning`) and `last_session_id` are append-only so older self-learning readers stay compatible. `write_runs_log_entry` accepts optional 4th/5th arguments for explicit command/session overrides and falls back to `LAST_CLAUDE_COMMAND`/`LAST_CLAUDE_SESSION_ID` (or `session-id.txt`) otherwise.
 - `--codex-model` default in the `/code:plan-with-codex` README documentation updated from `gpt-5.4` to `gpt-5.3-codex` to match the actual command default.
 
+### self-learning v1.2.3
+
+#### Changed
+- `perf_summary.py` agent-event schema docstring promotes `command` to a required field on both `agent` and `phase` events, matching the producer behavior in `subagent-stop-hook.sh`, `record_phase.sh`, `record_run.sh`, and `run-loop.sh::emit_perf_event()`. `model`, `parent_session_id`, and the four token-count fields (`input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`) plus `total_context_tokens` remain marked optional because they fall back to `null`/`0` when the SubagentStop payload or transcript is missing or unparseable. Coordination version bump alongside `code` v1.11.9 so the two plugins ship together as a matched set.
+
 ### self-learning v1.2.2
 
 #### Changed
@@ -46,11 +59,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### code v1.11.6
 
 #### Added
-- New `record_run.sh` script emits exactly one `run` event per Loop to `perf.jsonl` carrying `command`, `repo`, `branch`, and `started_at`, so every perf record can be attributed to the slash-command that launched the Loop. Gated behind `CLOSEDLOOP_PERF_V2=1`; fails open on any unexpected error (`trap 'exit 0' ERR`). Invoked synchronously from `run-loop.sh:main()` with `|| true` and only on fresh-start invocations (resumed Loops do not re-emit), so the `run` event is appended before the first `phase` event without ever changing the Loop's exit code and without violating PRD-254 AC-1's "exactly one `run` event per Loop" guarantee.
+- New `record_run.sh` script emits exactly one `run` event per Loop to `perf.jsonl` carrying `command`, `repo`, `branch`, and `started_at`, so every perf record can be attributed to the slash-command that launched the Loop. Fails open on any unexpected error (`trap 'exit 0' ERR`). Invoked synchronously from `run-loop.sh:main()` with `|| true` and only on fresh-start invocations (resumed Loops do not re-emit), so the `run` event is appended before the first `phase` event without ever changing the Loop's exit code and without violating PRD-254 AC-1's "exactly one `run` event per Loop" guarantee.
 - New `CLOSEDLOOP_COMMAND` environment variable exported by `run-loop.sh` next to `CLOSEDLOOP_RUN_ID`, derived from `PROMPT_NAME` and defaulting to `interactive` for bare `/code:code` invocations. The launching command is also persisted in `state.json` (`command:` field in the YAML frontmatter) and restored on resume so `CLOSEDLOOP_COMMAND` keeps its original value instead of degrading to `"interactive"` when the `--prompt` CLI flag isn't re-passed. Older state files lacking the `command` field preserve prior behavior. Hooks and child processes inherit the variable automatically.
-- New `command` field on every `phase`, `iteration`, `pipeline_step`, and `agent` perf event when `CLOSEDLOOP_PERF_V2=1`. Implemented in `record_phase.sh`, `subagent-stop-hook.sh`, and the `emit_perf_event` helper in `run-loop.sh` (which folds the gate into a single `jq -n -c` filter via `--arg perf_v2` rather than spawning a second `jq` per event). The field is omitted entirely when the gate is off, preserving the legacy JSON shape.
+- New `command` field on every `phase`, `iteration`, `pipeline_step`, and `agent` perf event. Implemented in `record_phase.sh`, `subagent-stop-hook.sh`, and the `emit_perf_event` helper in `run-loop.sh` (single `jq -n -c` filter per event — no extra `jq` invocation cost).
 - `record_run.sh` captures `repo` and `branch` via `git -C` with GNU `timeout` as a hang guard when available, falling back to bare `git -C ...` when `timeout` isn't on `PATH` (default macOS without `coreutils`) so dev machines never silently emit empty `repo`/`branch` fields.
-- New `plugins/code/tools/python/test_record_run.py` (covering gate behavior, JSON shape, fail-open paths, repo/branch capture under a fake-`git` PATH shim, and a no-`timeout`-on-PATH regression case) and `plugins/code/tools/python/test_record_phase.py` (covering V2 gating, field correctness, and missing-state fail-open). Both files run under `pytest` with no extra fixtures.
+- New `plugins/code/tools/python/test_record_run.py` (covering JSON shape, fail-open paths, repo/branch capture under a fake-`git` PATH shim, and a no-`timeout`-on-PATH regression case) and `plugins/code/tools/python/test_record_phase.py` (covering field correctness and missing-state fail-open). Both files run under `pytest` with no extra fixtures.
 - One-line note in `prompts/prompt.md` documenting that `record_run.sh` is invoked automatically by `run-loop.sh` at the start of every Loop (before Phase 0.9) and requires no orchestrator action.
 
 ### self-learning v1.2.1

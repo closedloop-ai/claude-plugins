@@ -47,6 +47,5 @@ jq -n -c \
   --arg start_sha "$START_SHA" \
   --arg started_at "$TIMESTAMP" \
   --arg command "$COMMAND" \
-  --arg perf_v2 "${CLOSEDLOOP_PERF_V2:-}" \
-  '{event:$event,run_id:$run_id,iteration:$iteration,phase:$phase,status:$status,start_sha:$start_sha,started_at:$started_at} + (if $perf_v2 == "1" then {command:$command} else {} end)' \
+  '{event:$event,run_id:$run_id,iteration:$iteration,phase:$phase,status:$status,start_sha:$start_sha,started_at:$started_at,command:$command}' \
   >> "$PERF_FILE"

@@ -3,10 +3,8 @@
 #
 # Emits exactly one `run` event containing command, repo, branch, and start
 # time so every perf.jsonl record can be attributed to the slash-command that
-# launched the Loop.
-#
-# Gated behind CLOSEDLOOP_PERF_V2=1 — no-ops silently when the gate is off.
-# Designed to be non-blocking: exits 0 on any failure.
+# launched the Loop. Fails open (exits 0) on any error so the caller loop is
+# unaffected.
 #
 # Usage:
 #   bash record_run.sh [WORKDIR]
@@ -14,11 +12,6 @@
 
 # Fail open: any unexpected error exits 0 so the caller loop is unaffected.
 trap 'exit 0' ERR
-
-# Gate: only run when CLOSEDLOOP_PERF_V2=1
-if [[ "${CLOSEDLOOP_PERF_V2:-}" != "1" ]]; then
-  exit 0
-fi
 
 WORKDIR="${1:-${CLOSEDLOOP_WORKDIR:-}}"
 if [[ -z "$WORKDIR" ]]; then
