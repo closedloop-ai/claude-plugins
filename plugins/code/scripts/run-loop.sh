@@ -614,9 +614,10 @@ record_claude_session_id() {
 # Write runs.log entry for goal evaluation and session correlation.
 #
 # Format:
-#   run_id|timestamp|goal|iteration|status|command|last_session_id
+#   run_id|timestamp|goal|iteration|status|command|last_session_id[|successful_iterations]
 # The first five fields are the legacy contract; append-only fields keep older
 # self-learning readers compatible while allowing command-scoped session lookup.
+# The optional 8th field (successful_iterations) is appended only when provided.
 write_runs_log_entry() {
   local workdir="$1"
   local iteration="$2"
@@ -635,6 +636,10 @@ write_runs_log_entry() {
   else
     session_id="${LAST_CLAUDE_SESSION_ID:-}"
   fi
+  local success_count=""
+  if [[ $# -ge 6 ]]; then
+    success_count="$6"
+  fi
   local runs_log="$workdir/runs.log"
   local timestamp
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -646,7 +651,11 @@ write_runs_log_entry() {
   command=$(sanitize_runs_log_field "$command")
   session_id=$(sanitize_runs_log_field "$session_id")
   mkdir -p "$(dirname "$runs_log")"
-  echo "$RUN_ID|$timestamp|${CLOSEDLOOP_ACTIVE_GOAL:-reduce-failures}|$iteration|$status|$command|$session_id" >> "$runs_log"
+  local entry="$RUN_ID|$timestamp|${CLOSEDLOOP_ACTIVE_GOAL:-reduce-failures}|$iteration|$status|$command|$session_id"
+  if [[ -n "$success_count" ]]; then
+    entry="$entry|$success_count"
+  fi
+  echo "$entry" >> "$runs_log"
 }
 
 # Post-iteration processing: enrichment pipeline, learning capture, citation verification, success rates
@@ -1534,6 +1543,7 @@ main() {
   local final_result='select(.type == "result").result // empty'
 
   local consecutive_empty=0
+  local successful_iterations=0
 
   while true; do
     # Check max iterations
@@ -1554,10 +1564,10 @@ main() {
       )"
 
       echo -e "\n${GREEN}Max iterations ($max_iterations) reached. Loop complete.${NC}"
-      log_progress "Loop ended - max iterations reached"
+      log_progress "Loop ended - max iterations reached (successful_iterations=$successful_iterations)"
 
-      # Write runs.log entry
-      write_runs_log_entry "$effective_workdir" "$iteration" "max_iterations" "plan_execute"
+      # Write runs.log entry (includes successful_iterations count)
+      write_runs_log_entry "$effective_workdir" "$iteration" "max_iterations" "plan_execute" "" "$successful_iterations"
 
       # Final post-iteration processing
       post_iteration_processing "$effective_workdir" "$iteration"
@@ -1572,6 +1582,12 @@ main() {
 
       # Run pruning in background
       run_background_pruning "$effective_workdir"
+
+      if [[ $successful_iterations -eq 0 ]]; then
+        write_loop_user_visible_failure "RUNNER_ERROR" "MAX_ITERATIONS_NO_PROGRESS" \
+          "Iteration budget exhausted without forward progress (0/$max_iterations iterations succeeded)"
+        exit 4
+      fi
 
       exit 0
     fi
@@ -1685,6 +1701,7 @@ main() {
         fi
       else
         consecutive_empty=0
+        successful_iterations=$((successful_iterations + 1))
       fi
 
       # Scan the full per-iteration stream for the completion promise, not
@@ -1706,6 +1723,12 @@ main() {
 
       # Check for completion
       if [[ $promise_found -eq 1 ]]; then
+        # Count this iteration as successful if a non-empty result didn't
+        # already do so (the promise found in the output stream is itself
+        # evidence of forward progress).
+        if [[ -z "$result" ]]; then
+          successful_iterations=$((successful_iterations + 1))
+        fi
         # Validate that the orchestrator's COMPLETE is legitimate before
         # proceeding to post-loop code review. See detect_spurious_complete().
         local spurious_check
