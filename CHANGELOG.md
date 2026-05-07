@@ -160,7 +160,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - New `--timeline` CLI flag and `phase_timeline()` function in `perf_summary.py` that emits a chronological per-instance view (one row per phase invocation with `run_id`, `iteration`, `started_at`, `ended_at`, `duration_s`). Incomplete final phases (no following phase event AND no iteration `ended_at`) are emitted with `ended_at=""` and `duration_s=null` so in-progress runs remain visible. Works with `--format json` for machine-readable output.
 - Tests for phase summarization and timeline covering iteration boundaries, missing iteration end (final phase skipped vs surfaced), aggregation across iterations, total-time descending sort, and per-row run/iteration provenance.
 
-### code v1.10.0
+### code v1.11.0
 
 #### Added
 - New `decision-table` skill for generating code-grounded decision-table artifacts that map current vs. intended control-flow behavior, capturing recovery, retry, finalization, validation, and state-machine edge cases under `.closedloop-ai/decision-tables/`. Includes baseline/target table rules, behavioral edge-case expansion guidance (call-site inventory for shared surfaces, exception scope, serverless async side effects, testable invariants), post-implementation verification sections, contract-heavy review checklist, and a referenced artifact format template at `references/artifact-format.md`.
