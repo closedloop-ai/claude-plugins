@@ -52,7 +52,6 @@ def evaluate_reduce_failures(config: GoalConfig, run_id: str, workdir: Path) -> 
     # Default values
     iterations = 10
     target = config.success_criteria.get('target', 3)
-    found_in_log = False
 
     # Try to read actual iteration count from runs.log
     if runs_log.exists():
@@ -61,14 +60,12 @@ def evaluate_reduce_failures(config: GoalConfig, run_id: str, workdir: Path) -> 
                 parts = line.strip().split('|')
                 if len(parts) >= RUNS_LOG_MIN_FIELDS and parts[0] == run_id:
                     iterations = int(parts[3]) if parts[3].isdigit() else 10
-                    found_in_log = True
                     break
 
-    # Fall back to environment variable only when run_id was not found in runs.log
-    if not found_in_log:
-        env_iterations = os.environ.get('CLOSEDLOOP_ITERATION')
-        if env_iterations and env_iterations.isdigit():
-            iterations = int(env_iterations)
+    # Also check environment variable
+    env_iterations = os.environ.get('CLOSEDLOOP_ITERATION')
+    if env_iterations and env_iterations.isdigit():
+        iterations = int(env_iterations)
 
     success = iterations <= target
     score = max(0.0, min(1.0, 1.0 - (iterations / (target * 2))))
