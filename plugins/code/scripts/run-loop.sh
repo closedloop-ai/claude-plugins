@@ -286,10 +286,12 @@ detect_claude_terminal_failure() {
         ))
         or (error_string | ascii_downcase | test("^rate_limit(_error)?$"))
         or status_429
-        or (error_shaped and (text_blob | test("you.?ve hit your limit|usage limit|rate[_ -]?limit|rate limit reached"; "i")));
+        or ((.is_error? == true) and ((.result? | strings | test("you.?ve hit your limit|usage limit|rate[_ -]?limit|rate limit reached"; "i")) // false))
+        or ((.isApiErrorMessage? == true) and ((.error? | strings | test("you.?ve hit your limit|usage limit|rate[_ -]?limit|rate limit reached"; "i")) // false));
 
       def context_limit_signal:
-        error_shaped and (text_blob | test("prompt is too long|exceed context limit|context limit reached|conversation too long"; "i"));
+        ((.is_error? == true) and ((.result? | strings | test("prompt is too long|exceed context limit|context limit reached|conversation too long"; "i")) // false))
+        or ((.isApiErrorMessage? == true) and ((.error? | strings | test("prompt is too long|exceed context limit|context limit reached|conversation too long"; "i")) // false));
 
       def auth_challenge_signal:
         ((.is_error? == true) and ((.result? | strings | test("authentication_error|invalid bearer token|billing_error|permission_error|overloaded_error|api overloaded|unauthorized|token.*expired|not authenticated|please log in|login required"; "i")) // false))

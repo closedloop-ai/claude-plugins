@@ -967,6 +967,84 @@ def test_pln500_canonical_planning_jsonl_no_false_positive(tmp_path: Path) -> No
     assert payload == {}
 
 
+def test_rate_limit_prose_in_message_content_does_not_trigger(
+    tmp_path: Path,
+) -> None:
+    """is_error envelope whose .result is empty must not fire on
+    rate-limit prose buried in .message.content[].text."""
+    payload = run_detect(
+        tmp_path,
+        jsonl=[{
+            "type": "assistant",
+            "is_error": True,
+            "result": "",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "Note: you've hit your limit on test fixture cardinality."},
+                ],
+            },
+        }],
+    )
+    assert payload == {}
+
+
+def test_rate_limit_prose_in_result_with_is_error_triggers(
+    tmp_path: Path,
+) -> None:
+    """is_error envelope with rate-limit prose in .result must fire and
+    source the marker message from the triggering entry."""
+    payload = run_detect(
+        tmp_path,
+        jsonl=[{
+            "type": "result",
+            "is_error": True,
+            "result": "You've hit your limit; please wait for reset.",
+        }],
+    )
+    assert payload["status"] == "claude_rate_limit"
+    assert payload["subcode"] == "CLAUDE_RATE_LIMIT"
+    assert "You've hit your limit" in payload["message"]
+
+
+def test_context_limit_prose_in_message_content_does_not_trigger(
+    tmp_path: Path,
+) -> None:
+    """is_error envelope whose .result is empty must not fire on
+    context-limit prose buried in .message.content[].text."""
+    payload = run_detect(
+        tmp_path,
+        jsonl=[{
+            "type": "assistant",
+            "is_error": True,
+            "result": "",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "Discussing why prompt is too long is a common topic."},
+                ],
+            },
+        }],
+    )
+    assert payload == {}
+
+
+def test_context_limit_prose_in_error_with_isapierrormessage_triggers(
+    tmp_path: Path,
+) -> None:
+    """isApiErrorMessage envelope with context-limit prose in .error must
+    fire and source the marker message from the triggering entry."""
+    payload = run_detect(
+        tmp_path,
+        jsonl=[{
+            "type": "assistant",
+            "isApiErrorMessage": True,
+            "error": "Prompt is too long for the model context limit.",
+        }],
+    )
+    assert payload["status"] == "context_limit"
+    assert payload["subcode"] == "CLAUDE_CONTEXT_LIMIT"
+    assert "Prompt is too long" in payload["message"]
+
+
 def test_rename_orphan_output_on_start_skips_when_state_workdir_mismatches(
     tmp_path: Path,
 ) -> None:
