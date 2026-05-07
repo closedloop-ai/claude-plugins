@@ -16,7 +16,6 @@ SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "record_run.sh"
 def run_record_run(
     workdir: Path,
     *,
-    perf_v2: str = "1",
     run_id: str = "test-run-001",
     command: str = "test-command",
     extra_env: Optional[dict[str, str]] = None,
@@ -24,7 +23,6 @@ def run_record_run(
     """Invoke record_run.sh with the given environment and workdir."""
     env = {
         **os.environ,
-        "CLOSEDLOOP_PERF_V2": perf_v2,
         "CLOSEDLOOP_RUN_ID": run_id,
         "CLOSEDLOOP_COMMAND": command,
         "CLOSEDLOOP_WORKDIR": str(workdir),
@@ -40,29 +38,11 @@ def run_record_run(
     )
 
 
-class TestRecordRunGate:
-    """Tests that record_run.sh is no-op when CLOSEDLOOP_PERF_V2 is not 1."""
-
-    def test_noop_when_gate_off(self, tmp_path: Path) -> None:
-        """Script exits 0 and writes nothing when CLOSEDLOOP_PERF_V2 is unset."""
-        result = run_record_run(tmp_path, perf_v2="")
-        assert result.returncode == 0, f"Script failed: {result.stderr}"
-        perf_file = tmp_path / "perf.jsonl"
-        assert not perf_file.exists(), "perf.jsonl should not be created when gate is off"
-
-    def test_noop_when_gate_zero(self, tmp_path: Path) -> None:
-        """Script exits 0 and writes nothing when CLOSEDLOOP_PERF_V2=0."""
-        result = run_record_run(tmp_path, perf_v2="0")
-        assert result.returncode == 0, f"Script failed: {result.stderr}"
-        perf_file = tmp_path / "perf.jsonl"
-        assert not perf_file.exists(), "perf.jsonl should not be created when gate is 0"
-
-
 class TestRecordRunOutput:
-    """Tests that record_run.sh produces correct JSON when CLOSEDLOOP_PERF_V2=1."""
+    """Tests that record_run.sh produces correct JSON output."""
 
     def test_exits_zero(self, tmp_path: Path) -> None:
-        """Script exits 0 when CLOSEDLOOP_PERF_V2=1."""
+        """Script exits 0 on success."""
         result = run_record_run(tmp_path)
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
@@ -70,7 +50,7 @@ class TestRecordRunOutput:
         """Script creates perf.jsonl in the given workdir."""
         run_record_run(tmp_path)
         perf_file = tmp_path / "perf.jsonl"
-        assert perf_file.exists(), "perf.jsonl should be created when CLOSEDLOOP_PERF_V2=1"
+        assert perf_file.exists(), "perf.jsonl should be created on success"
 
     def test_output_is_valid_json(self, tmp_path: Path) -> None:
         """The appended line is valid JSON."""
@@ -138,7 +118,6 @@ class TestRecordRunOutput:
         """When CLOSEDLOOP_RUN_ID is unset, run_id defaults to 'unknown'."""
         env = {
             **os.environ,
-            "CLOSEDLOOP_PERF_V2": "1",
             "CLOSEDLOOP_WORKDIR": str(tmp_path),
         }
         # Remove CLOSEDLOOP_RUN_ID if set in current environment
@@ -158,7 +137,6 @@ class TestRecordRunOutput:
         """When CLOSEDLOOP_COMMAND is unset, command defaults to 'interactive'."""
         env = {
             **os.environ,
-            "CLOSEDLOOP_PERF_V2": "1",
             "CLOSEDLOOP_WORKDIR": str(tmp_path),
         }
         env.pop("CLOSEDLOOP_COMMAND", None)
@@ -188,7 +166,6 @@ class TestRecordRunOutput:
         """Script exits 0 when WORKDIR arg and CLOSEDLOOP_WORKDIR are both absent."""
         env = {
             **os.environ,
-            "CLOSEDLOOP_PERF_V2": "1",
         }
         env.pop("CLOSEDLOOP_WORKDIR", None)
         result = subprocess.run(
@@ -252,7 +229,6 @@ class TestRecordRunOutput:
 
         env = {
             **os.environ,
-            "CLOSEDLOOP_PERF_V2": "1",
             "CLOSEDLOOP_RUN_ID": "test-no-timeout",
             "CLOSEDLOOP_COMMAND": "feature",
             "CLOSEDLOOP_WORKDIR": str(workdir),
@@ -291,7 +267,6 @@ class TestRecordRunFailOpen:
 
         env = {
             **os.environ,
-            "CLOSEDLOOP_PERF_V2": "1",
             "CLOSEDLOOP_RUN_ID": "test-run-git-fail",
             "CLOSEDLOOP_COMMAND": "feature",
             "CLOSEDLOOP_WORKDIR": str(tmp_path),
@@ -322,7 +297,6 @@ class TestRecordRunFailOpen:
 
         env = {
             **os.environ,
-            "CLOSEDLOOP_PERF_V2": "1",
             "CLOSEDLOOP_RUN_ID": "test-run-git-fail",
             "CLOSEDLOOP_COMMAND": "feature",
             "CLOSEDLOOP_WORKDIR": str(tmp_path),
@@ -346,7 +320,6 @@ class TestRecordRunFailOpen:
         """Script exits 0 and produces no stderr when CLOSEDLOOP_RUN_ID is unset."""
         env = {
             **os.environ,
-            "CLOSEDLOOP_PERF_V2": "1",
             "CLOSEDLOOP_WORKDIR": str(tmp_path),
         }
         env.pop("CLOSEDLOOP_RUN_ID", None)
@@ -369,7 +342,6 @@ class TestRecordRunFailOpen:
         """Script exits 0 and produces no stderr when CLOSEDLOOP_COMMAND is unset."""
         env = {
             **os.environ,
-            "CLOSEDLOOP_PERF_V2": "1",
             "CLOSEDLOOP_WORKDIR": str(tmp_path),
         }
         env.pop("CLOSEDLOOP_COMMAND", None)
@@ -392,7 +364,6 @@ class TestRecordRunFailOpen:
         """Script exits 0 and produces no stderr when all optional env vars are unset."""
         env = {
             **os.environ,
-            "CLOSEDLOOP_PERF_V2": "1",
             "CLOSEDLOOP_WORKDIR": str(tmp_path),
         }
         env.pop("CLOSEDLOOP_RUN_ID", None)
