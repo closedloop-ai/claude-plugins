@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.9
+
+#### Fixed
+- `detect_claude_terminal_failure` in `run-loop.sh` no longer treats benign Claude `rate_limit_event` heartbeats as terminal failures. The `rate_limit_signal` jq predicate now requires `rate_limit_info.status` or `overageStatus` to be a non-`allowed` value before a `rate_limit_event` entry counts as a failure, so successful runs that emit allowed-status heartbeats stop creating false `loop-error.json` markers. Failure messages are now sourced from the triggering entry's own `result`/`error` string rather than scanning unrelated assistant prose, and `auth_challenge_signal` only fires inside `is_error` / `isApiErrorMessage` envelopes so plain assistant text mentioning auth never trips the auth-challenge classifier.
+- `rename_orphan_output_on_start` in `run-loop.sh` now requires `state.json`'s recorded `workdir` to match the current workdir before reusing its `prev_run_id` to rename an orphan `claude-output.jsonl`. Prevents cross-workdir RUN_ID reuse when a stale `state.json` from another workdir is reachable.
+- `evaluate_reduce_failures` in `self-learning/tools/python/evaluate_goal.py` only consults the `CLOSEDLOOP_ITERATION` environment variable as a fallback when the current `run_id` is not found in `runs.log`. Previously the env var unconditionally overwrote the iteration count parsed from `runs.log`, which could mis-score goals when an outer loop exported a stale `CLOSEDLOOP_ITERATION` value.
+
+#### Changed
+- `test_run_loop_failure_marker.py` consolidates the PLN-502 heartbeat-false-positive cases behind a shared `run_detect` helper that centralizes the bash-source boilerplate for invoking `detect_claude_terminal_failure`. Cuts duplicated fixture setup across the rate-limit-signal, message-sourcing, auth-challenge-envelope, and workdir-mismatch test groups so each case focuses on fixture data and assertions.
+
 ### code v1.11.8
 
 #### Fixed
