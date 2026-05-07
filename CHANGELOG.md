@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### code v1.11.10
+### code v1.11.11
 
 #### Fixed
 - `detect_claude_terminal_failure` in `run-loop.sh` no longer treats benign Claude `rate_limit_event` heartbeats as terminal failures. The `rate_limit_signal` jq predicate now requires `rate_limit_info.status` or `overageStatus` to be a non-`allowed` value before a `rate_limit_event` entry counts as a failure, so successful runs that emit allowed-status heartbeats stop creating false `loop-error.json` markers. Failure messages are now sourced from the triggering entry's own `result`/`error` string rather than scanning unrelated assistant prose, and `auth_challenge_signal` only fires inside `is_error` / `isApiErrorMessage` envelopes so plain assistant text mentioning auth never trips the auth-challenge classifier.
@@ -12,6 +12,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - `test_run_loop_failure_marker.py` consolidates the PLN-502 heartbeat-false-positive cases behind a shared `run_detect` helper that centralizes the bash-source boilerplate for invoking `detect_claude_terminal_failure`. Cuts duplicated fixture setup across the rate-limit-signal, message-sourcing, auth-challenge-envelope, and workdir-mismatch test groups so each case focuses on fixture data and assertions.
+
+### code v1.11.10
+
+#### Added
+- New `pre-tool-use-hook.sh` writes a per-tool-call sentinel JSON file at `$CLOSEDLOOP_WORKDIR/.closedloop-ai/.tool-calls/{TOOL_USE_ID}` capturing `started_at`, `tool_name`, `agent_id`, `run_id`, `command`, and `iteration`. Designed to be non-blocking: fails open (`trap 'exit 0' ERR`) on any internal error so the caller is unaffected. Emits a `spawn` perf event when `tool_name` is `Agent`, recording `parent_session_id`, `parent_agent_id`, and `planned_subagent_type` from the hook payload. Stdin parsed via a single `jq` `@sh` invocation matching the post-hook idiom. Safety comes from the additive event schema — perf.jsonl readers ignore unknown events, so emitting an extra `tool`/`spawn` row never breaks downstream consumers — and the fail-open contract above.
+- New `post-tool-use-hook.sh` reads the sentinel written by the pre-hook, computes tool-call duration, and appends a `tool` event to `perf.jsonl` with `event`, `run_id`, `command`, `iteration`, `agent_id`, `tool_name`, `started_at`, `ended_at`, `duration_s`, and `ok` fields. Attribution (run_id/command/iteration) is taken from the sentinel rather than the post-hook environment so concurrent runs do not cross-attribute. Emits an additional `skill` event when `tool_name` is `Skill`, sourcing `skill_name` from `tool_input.skill` and falling back to `tool_input.command`. Same fail-open trap and additive-schema safety contract as the pre-hook.
+- New `plugins/code/hooks/tests/` bash suite covering the new perf hooks: `test_helpers.sh` (shared pass/fail counters, `assert_field_present`, `assert_field_equals`, `setup_temp_env`, `create_sentinel`); `test_tool_event.sh` (post-hook emits a complete `tool` event with all required fields and honors sentinel-based attribution overrides); `test_skill_event.sh` (post-hook emits both `tool` and `skill` events for `Skill` tool calls, with skill-name fallback); `test_spawn_event.sh` (pre-hook emits a `spawn` event for `Agent` tool calls and writes a sentinel for non-Agent tools); `test_fail_open.sh` (both hooks exit 0 and do not corrupt `perf.jsonl` when an internal step fatally errors, including read-only sentinel directories, missing/corrupted sentinels, and exit-1 stub replacements); `test_correlation.sh` (end-to-end pre→post run, sentinel-attribution-wins regression for PR #70 review findings).
+
+#### Changed
+- `plugins/code/hooks/hooks.json` registers the new `pre-tool-use-hook.sh` alongside the existing `pretooluse-hook.sh` under `PreToolUse`, and adds a new `PostToolUse` entry pointing at `post-tool-use-hook.sh`. The legacy pre-hook is preserved so existing JIT-pattern injection behavior is unchanged.
 
 ### code v1.11.9
 
