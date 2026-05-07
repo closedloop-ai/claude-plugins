@@ -253,60 +253,6 @@ echo "Test 4: non-Agent tool does not emit a spawn event"
     rm -rf "$tmpdir"
 }
 
-# ------------------------------------------------------------------
-# Test 5: spawn event emits unconditionally — no env-var gate
-#
-# The earlier draft was gated behind CLOSEDLOOP_PERF_V2=1; closedloop-electron
-# ships claude-plugins bundled and end users cannot set runtime env vars, so
-# the gate was removed. With CLOSEDLOOP_PERF_V2 explicitly unset, the Agent
-# tool must still produce a spawn event and a sentinel.
-# ------------------------------------------------------------------
-echo "Test 5: pre-tool-use-hook.sh emits spawn event with CLOSEDLOOP_PERF_V2 unset"
-{
-    read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env)"
-
-    tool_use_id="tool-use-id-no-gate-spawn"
-    subagent_type="code:plan-writer"
-    agent_id="agent-no-gate"
-    run_id="run-no-gate"
-    command="test"
-    iteration=0
-
-    mock_input=$(build_mock_agent_input "$session_id" "$cwd" "$tool_use_id" "$subagent_type" "$agent_id")
-    perf_file="$workdir/perf.jsonl"
-    sentinel_file="$workdir/.tool-calls/$tool_use_id"
-
-    actual_exit=0
-    echo "$mock_input" | env -u CLOSEDLOOP_PERF_V2 \
-        CLOSEDLOOP_RUN_ID="$run_id" \
-        CLOSEDLOOP_COMMAND="$command" \
-        CLOSEDLOOP_ITERATION="$iteration" \
-        bash "$PRE_HOOK" ; actual_exit=$?
-
-    if [[ "$actual_exit" -eq 0 ]]; then
-        pass "pre-tool-use-hook.sh exits 0 with CLOSEDLOOP_PERF_V2 unset"
-    else
-        fail "pre-tool-use-hook.sh exits 0 with CLOSEDLOOP_PERF_V2 unset" \
-             "expected exit 0 but got $actual_exit"
-    fi
-
-    if [[ -f "$perf_file" ]] && grep -q '"event":"spawn"' "$perf_file" 2>/dev/null; then
-        pass "spawn event emitted with CLOSEDLOOP_PERF_V2 unset (gate removed)"
-    else
-        fail "spawn event emitted with CLOSEDLOOP_PERF_V2 unset (gate removed)" \
-             "no spawn event in perf.jsonl"
-    fi
-
-    if [[ -f "$sentinel_file" ]]; then
-        pass "sentinel written with CLOSEDLOOP_PERF_V2 unset (gate removed)"
-    else
-        fail "sentinel written with CLOSEDLOOP_PERF_V2 unset (gate removed)" \
-             "sentinel not found at $sentinel_file"
-    fi
-
-    rm -rf "$tmpdir"
-}
-
 # ---- Summary -------------------------------------------------------------
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"

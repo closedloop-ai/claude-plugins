@@ -4,13 +4,6 @@
 # duration, and appends a "tool" event to perf.jsonl.
 #
 # Designed to be non-blocking: exits 0 on any failure (fail-open pattern).
-# Emitted unconditionally (no env-var gate). Safety properties come from
-# (a) the additive event schema — perf.jsonl readers ignore unknown events,
-# so emitting extra `tool`/`skill` rows never breaks downstream consumers —
-# and (b) the fail-open contract above. The earlier draft was gated behind
-# CLOSEDLOOP_PERF_V2=1, but closedloop-electron ships claude-plugins bundled
-# and end users have no way to set runtime env vars, so that gate was
-# permanently off in production.
 #
 # Sentinel file location (written by pre-tool-use-hook.sh):
 #   $CLOSEDLOOP_WORKDIR/.tool-calls/{TOOL_USE_ID}

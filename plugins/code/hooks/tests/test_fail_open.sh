@@ -106,10 +106,10 @@ echo "Test 1: pre-tool-use-hook.sh fail-open exit code"
 
     mock_input=$(build_mock_input "$session_id" "$cwd")
 
-    # Strategy: run the real hook with CLOSEDLOOP_PERF_V2=1 and a valid session,
-    # then verify exit code is 0 even when the sentinel write location is made
-    # read-only (forcing an internal write error). The hook must still exit 0
-    # due to its `trap 'exit 0' ERR` fail-open guard.
+    # Strategy: run the real hook against a valid session, then verify exit
+    # code is 0 even when the sentinel write location is made read-only
+    # (forcing an internal write error). The hook must still exit 0 due to
+    # its `trap 'exit 0' ERR` fail-open guard.
     chmod 000 "$workdir/.tool-calls" 2>/dev/null || true
 
     actual_exit=0
@@ -274,64 +274,10 @@ echo "Test 6: perf.jsonl not corrupted when post-hook reads corrupted sentinel"
 }
 
 # ------------------------------------------------------------------
-# Test 7: hooks emit unconditionally — no env-var gate
-#
-# The earlier draft was gated behind CLOSEDLOOP_PERF_V2=1 so events would
-# only appear when an operator opted in. That gate was removed because
-# closedloop-electron ships claude-plugins bundled and end users have no way
-# to set runtime env vars. This test pins the contract: with the env var
-# explicitly unset and a valid closedloop session, both hooks still produce
-# their side effects (pre writes a sentinel; post emits a tool event).
-# ------------------------------------------------------------------
-echo "Test 7: hooks emit unconditionally with CLOSEDLOOP_PERF_V2 unset"
-{
-    read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env)"
-
-    tool_use_id="tool-use-id-no-gate"
-    mock_input=$(build_mock_input "$session_id" "$cwd" "$tool_use_id")
-    sentinel_file="$workdir/.tool-calls/$tool_use_id"
-    perf_file="$workdir/perf.jsonl"
-
-    # Run pre-hook with the gate var explicitly unset
-    actual_exit=0
-    echo "$mock_input" | env -u CLOSEDLOOP_PERF_V2 \
-        CLOSEDLOOP_RUN_ID="run-no-gate" \
-        CLOSEDLOOP_COMMAND="test" \
-        CLOSEDLOOP_ITERATION=0 \
-        bash "$PRE_HOOK" ; actual_exit=$?
-    assert_exit_zero "pre-hook exits 0 with CLOSEDLOOP_PERF_V2 unset" "$actual_exit"
-
-    if [[ -f "$sentinel_file" ]]; then
-        pass "pre-hook writes sentinel with CLOSEDLOOP_PERF_V2 unset (gate removed)"
-    else
-        fail "pre-hook writes sentinel with CLOSEDLOOP_PERF_V2 unset (gate removed)" \
-             "sentinel not found at $sentinel_file"
-    fi
-
-    # Run post-hook against the sentinel pre wrote — must emit a tool event
-    actual_exit=0
-    echo "$mock_input" | env -u CLOSEDLOOP_PERF_V2 \
-        CLOSEDLOOP_RUN_ID="run-no-gate" \
-        CLOSEDLOOP_COMMAND="test" \
-        CLOSEDLOOP_ITERATION=0 \
-        bash "$POST_HOOK" ; actual_exit=$?
-    assert_exit_zero "post-hook exits 0 with CLOSEDLOOP_PERF_V2 unset" "$actual_exit"
-
-    if [[ -f "$perf_file" ]] && grep -q '"event":"tool"' "$perf_file" 2>/dev/null; then
-        pass "post-hook emits tool event with CLOSEDLOOP_PERF_V2 unset (gate removed)"
-    else
-        fail "post-hook emits tool event with CLOSEDLOOP_PERF_V2 unset (gate removed)" \
-             "no tool event in perf.jsonl"
-    fi
-
-    rm -rf "$tmpdir"
-}
-
-# ------------------------------------------------------------------
-# Test 8: end-to-end fail-open — replace both hooks with exit-1 stubs,
+# Test 7: end-to-end fail-open — replace both hooks with exit-1 stubs,
 #         feed mock JSON, assert exit code 0 and no perf corruption.
 # ------------------------------------------------------------------
-echo "Test 8: end-to-end — both hooks replaced with exit-1 stubs, assert fail-open"
+echo "Test 7: end-to-end — both hooks replaced with exit-1 stubs, assert fail-open"
 {
     read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env)"
 
