@@ -259,8 +259,8 @@ detect_claude_terminal_failure() {
         ((.type? == "rate_limit_event") and (
           (.rate_limit_info? | type) == "object"
           and (
-            ((.rate_limit_info.status? // null) != null and (.rate_limit_info.status? != "allowed"))
-            or ((.rate_limit_info.isUsingOverage? == true) and ((.rate_limit_info.overageStatus? // null) != null and (.rate_limit_info.overageStatus? != "allowed")))
+            (.rate_limit_info.status? == "rejected")
+            or ((.rate_limit_info.isUsingOverage? == true) and (.rate_limit_info.overageStatus? == "rejected"))
           )
         ))
         or (error_string | ascii_downcase | test("^rate_limit(_error)?$"))

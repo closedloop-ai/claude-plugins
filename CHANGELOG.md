@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.14
+
+#### Fixed
+- `rate_limit_signal` in `run-loop.sh`'s `detect_claude_terminal_failure` now fires only when `rate_limit_info.status == "rejected"` (or `overageStatus == "rejected"` with `isUsingOverage == true`), replacing the prior "any non-`allowed` value" denylist. Benign heartbeats with `status` of `allowed_warning`, `paused`, `throttled`, or informational `exceeded` no longer abort the loop. The `status_429` and error-string match paths remain unchanged, so genuine rate-limit failures continue to be marked. (PLN-530)
+
+#### Changed
+- Expanded `test_rate_limit_event_predicate` parametrization with RL-18..RL-31 covering `allowed_warning`, the rejected-only fatal path, overage-branch regression guards, and cross-branch interactions. Pre-existing rows for `paused`, `throttled`, `exceeded` (with overage on), and bare `rejected` (with `isUsingOverage` false) flip from `CLAUDE_RATE_LIMIT` to no-signal to encode the new gating. Adds Group E (RL-32..RL-35) malformed-payload coverage exercising jq's string-equality and object type guards, plus a Group G end-to-end test feeding a realistic Claude JSONL stream with `allowed_warning` heartbeats and asserting no signal fires.
+
 ### code v1.11.13
 
 #### Fixed
