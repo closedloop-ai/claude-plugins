@@ -806,16 +806,16 @@ def test_code_review_log_with_no_session_does_not_backfill_plan_session(
             "allowed",
             False,
             {},
-            "CLAUDE_RATE_LIMIT",
+            None,
         ),
-        ("RL-06-status-paused", "paused", "allowed", False, {}, "CLAUDE_RATE_LIMIT"),
+        ("RL-06-status-paused", "paused", "allowed", False, {}, None),
         (
             "RL-07-status-throttled",
             "throttled",
             "allowed",
             False,
             {},
-            "CLAUDE_RATE_LIMIT",
+            None,
         ),
         (
             "RL-08-overage-actually-rejected",
@@ -831,7 +831,7 @@ def test_code_review_log_with_no_session_does_not_backfill_plan_session(
             "exceeded",
             True,
             {},
-            "CLAUDE_RATE_LIMIT",
+            None,
         ),
         ("RL-10-overage-rejected-flag-absent", "allowed", "rejected", None, {}, None),
         (
@@ -848,7 +848,7 @@ def test_code_review_log_with_no_session_does_not_backfill_plan_session(
             "rejected",
             False,
             {},
-            "CLAUDE_RATE_LIMIT",
+            None,
         ),
         (
             "RL-15-both-bad-with-overage-on",
@@ -860,6 +860,45 @@ def test_code_review_log_with_no_session_does_not_backfill_plan_session(
         ),
         ("RL-16-malformed-both-missing", None, None, None, {}, None),
         ("RL-17-overage-exceeded-no-flag", "allowed", "exceeded", None, {}, None),
+        # Group A: allowed_warning and rejected statuses (PLN-530)
+        ("RL-18-allowed-warning-no-overage", "allowed_warning", None, False, {}, None),
+        (
+            "RL-19-allowed-warning-with-pct",
+            "allowed_warning",
+            None,
+            False,
+            {"warning_pct_int": 80},
+            None,
+        ),
+        ("RL-20-rejected-no-overage", "rejected", None, False, {}, "CLAUDE_RATE_LIMIT"),
+        (
+            "RL-21-allowed-warning-overage-on",
+            "allowed_warning", "allowed_warning", True, {}, None,
+        ),
+        (
+            "RL-22-allowed-warning-overage-on-with-pct",
+            "allowed_warning", "allowed_warning", True,
+            {"warning_pct_int": 80}, None,
+        ),
+        ("RL-23-rejected-overage-on", "rejected", "rejected", True, {}, "CLAUDE_RATE_LIMIT"),
+        # Group C: overage path regression guards (PLN-530)
+        ("RL-25-overage-allowed-on", "allowed", "allowed", True, {}, None),
+        ("RL-26-overage-exceeded-on", "allowed", "exceeded", True, {}, None),
+        ("RL-27-overage-rejected-off", "allowed", "rejected", False, {}, None),
+        # Group D: cross-branch interaction tests (PLN-530)
+        (
+            "RL-28-rejected-status-allowed-overage",
+            "rejected", "allowed", True, {}, "CLAUDE_RATE_LIMIT",
+        ),
+        (
+            "RL-29-allowed-status-rejected-overage",
+            "allowed", "rejected", True, {}, "CLAUDE_RATE_LIMIT",
+        ),
+        ("RL-30-both-rejected", "rejected", "rejected", True, {}, "CLAUDE_RATE_LIMIT"),
+        (
+            "RL-31-both-allowed-warning",
+            "allowed_warning", "allowed_warning", True, {}, None,
+        ),
     ],
     ids=lambda v: v if isinstance(v, str) else None,
 )
@@ -1439,6 +1478,179 @@ def test_completion_promise_exits_0_regardless_of_counter(tmp_path: Path) -> Non
 
     assert result.returncode == 0, result.stderr
     assert not (tmp_path / "loop-error.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Group E: malformed / unusual rate_limit_info payloads (RL-32 through RL-35)
+#
+# All cases assert no signal fires. The parametrized entries exercise jq type
+# guards: string equality rejects non-string values, and the "object" type
+# check rejects non-object rate_limit_info payloads.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "test_id,rate_limit_info",
+    [
+        # RL-32: empty object passes type check but has no status/overage fields
+        ("RL-32-empty-object", {}),
+        # RL-33: integer status — jq string equality returns false
+        ("RL-33-status-integer", {"status": 429, "rateLimitType": "five_hour", "resetsAt": 1778266200}),
+        # RL-34: boolean status — jq string equality returns false
+        ("RL-34-status-boolean", {"status": True, "rateLimitType": "five_hour", "resetsAt": 1778266200}),
+        # RL-35: string instead of object — "object" type guard rejects it
+        ("RL-35-info-is-string", "rejected"),
+    ],
+    ids=lambda v: v if isinstance(v, str) else None,
+)
+def test_rate_limit_info_malformed(
+    tmp_path: Path,
+    test_id: str,
+    rate_limit_info: object,
+) -> None:
+    payload = run_detect(
+        tmp_path,
+        jsonl=[{"type": "rate_limit_event", "rate_limit_info": rate_limit_info}],
+    )
+    assert payload == {}, f"{test_id}: expected no failure, got {payload!r}"
+
+
+# ---------------------------------------------------------------------------
+# Group G: end-to-end integration test (PLN-530)
+# ---------------------------------------------------------------------------
+
+
+def test_rl_group_g_allowed_warning_e2e(tmp_path: Path) -> None:
+    """Group G: end-to-end integration test (PLN-530).
+
+    Feeds a complete, realistic Claude API response JSONL stream containing a
+    rate_limit_event with status "allowed_warning" through the full
+    detect_claude_terminal_failure pipeline and asserts no rate-limit signal
+    fires.
+
+    Covers the primary branch (isUsingOverage=false) with warning_pct_int=80
+    and other realistic fields that appear in production API responses.
+    """
+    payload = run_detect(
+        tmp_path,
+        jsonl=[
+            # Session initialisation event
+            {
+                "type": "system",
+                "subtype": "init",
+                "session_id": "c80d0b89-7efe-403c-8e7d-439702b89aff",
+                "tools": ["Bash", "Read", "Write", "Edit"],
+                "mcp_servers": [],
+            },
+            # Benign heartbeat — status "allowed", no overage trouble
+            {
+                "type": "rate_limit_event",
+                "rate_limit_info": {
+                    "status": "allowed",
+                    "overageStatus": "allowed",
+                    "isUsingOverage": False,
+                    "rateLimitType": "five_hour",
+                    "resetsAt": 1778266200,
+                    "warning_pct_int": 60,
+                },
+                "uuid": "aaa00000-0000-0000-0000-000000000001",
+                "session_id": "c80d0b89-7efe-403c-8e7d-439702b89aff",
+            },
+            # Key event: allowed_warning with warning_pct_int=80 and isUsingOverage=false
+            {
+                "type": "rate_limit_event",
+                "rate_limit_info": {
+                    "status": "allowed_warning",
+                    "overageStatus": None,
+                    "isUsingOverage": False,
+                    "rateLimitType": "five_hour",
+                    "resetsAt": 1778266200,
+                    "warning_pct_int": 80,
+                    "limit": 100000,
+                    "usage": 80000,
+                },
+                "uuid": "bbb00000-0000-0000-0000-000000000002",
+                "session_id": "c80d0b89-7efe-403c-8e7d-439702b89aff",
+            },
+            # Normal assistant turn with a tool call
+            {
+                "type": "assistant",
+                "message": {
+                    "id": "msg_01XYZ",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_01",
+                            "name": "Read",
+                            "input": {"file_path": "/tmp/foo.py"},
+                        }
+                    ],
+                    "model": "claude-opus-4-6",
+                    "stop_reason": "tool_use",
+                    "usage": {"input_tokens": 1200, "output_tokens": 45},
+                },
+                "session_id": "c80d0b89-7efe-403c-8e7d-439702b89aff",
+            },
+            # Tool result
+            {
+                "type": "tool",
+                "tool_use_id": "toolu_01",
+                "content": "def hello(): pass\n",
+            },
+            # Second benign heartbeat after tool use
+            {
+                "type": "rate_limit_event",
+                "rate_limit_info": {
+                    "status": "allowed_warning",
+                    "overageStatus": None,
+                    "isUsingOverage": False,
+                    "rateLimitType": "five_hour",
+                    "resetsAt": 1778266200,
+                    "warning_pct_int": 82,
+                    "limit": 100000,
+                    "usage": 82000,
+                },
+                "uuid": "ccc00000-0000-0000-0000-000000000003",
+                "session_id": "c80d0b89-7efe-403c-8e7d-439702b89aff",
+            },
+            # Final assistant turn with completion promise
+            {
+                "type": "assistant",
+                "message": {
+                    "id": "msg_02XYZ",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Task complete. <promise>COMPLETE</promise>",
+                        }
+                    ],
+                    "model": "claude-opus-4-6",
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1400, "output_tokens": 30},
+                },
+                "session_id": "c80d0b89-7efe-403c-8e7d-439702b89aff",
+            },
+            # Successful result record
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "Task complete. <promise>COMPLETE</promise>",
+                "session_id": "c80d0b89-7efe-403c-8e7d-439702b89aff",
+                "cost_usd": 0.042,
+                "duration_ms": 8700,
+                "num_turns": 2,
+            },
+        ],
+    )
+    assert payload == {}, (
+        f"Group G e2e: expected no failure signal for allowed_warning with "
+        f"isUsingOverage=false, got {payload!r}"
+    )
 
 
 def test_rename_orphan_output_on_start_skips_when_state_workdir_mismatches(
