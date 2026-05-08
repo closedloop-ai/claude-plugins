@@ -9,6 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Fixed
 - `run-loop.sh` now fails the loop when `max_iterations` is reached with zero successful iterations, emitting a `RUNNER_ERROR/MAX_ITERATIONS_NO_PROGRESS` user-visible failure and exiting with code 4. A new `successful_iterations` counter is incremented on non-empty results or `COMPLETE` promise detection, and `runs.log` entries gain an optional 8th field (`successful_iterations`) appended only on the max-iterations exit path — older readers that parse the leading 7 fields stay compatible. Covered by new `test_run_loop_failure_marker.py` cases for the no-progress failure path. Also isolates `test_reduce_failures_reads_runs_log_from_workdir_root` from the ambient `CLOSEDLOOP_ITERATION` env var so the test no longer depends on the caller's environment.
 
+#### Changed
+- `verification-subagent` now includes `SendMessage` in its allowed tools so verification flows can send follow-up messages while preserving the existing `Read`, `Glob`, and `Grep` inspection access.
+- Decision-table guidance now includes durable finalization and replay eligibility coverage for flows that persist local terminal state before external acknowledgement. The artifact-format, edge-case, and review-prevention references call out retryable finalization failures, acknowledgement cleanup, restart replay, and retained credential or marker data requirements.
+
 ### code v1.11.11
 
 #### Fixed

@@ -2,7 +2,7 @@
 name: verification-subagent
 description: Verifies if a task from the implementation plan has been completed by checking source files.
 model: sonnet
-tools: Read, Glob, Grep
+tools: Read, Glob, Grep, SendMessage
 ---
 
 # Verification Subagent
