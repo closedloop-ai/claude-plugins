@@ -25,7 +25,9 @@ except ImportError:
 # runs.log is append-only:
 # run_id|timestamp|goal_name|iteration|status[|command|last_session_id]
 # reduce-failures only needs run_id and iteration, so legacy 4+ field rows and
-# newer session-correlated rows are both accepted.
+# newer session-correlated rows are both accepted. Because the loop reuses a
+# single run_id across iterations, multiple rows can share the same run_id;
+# reduce-failures uses the maximum iteration across all matching rows.
 RUNS_LOG_MIN_FIELDS = 4
 
 
@@ -54,15 +56,22 @@ def evaluate_reduce_failures(config: GoalConfig, run_id: str, workdir: Path) -> 
     target = config.success_criteria.get('target', 3)
     found_in_log = False
 
-    # Try to read actual iteration count from runs.log
+    # Try to read actual iteration count from runs.log. The loop reuses run_id
+    # across iterations and post_iteration_processing runs before the current
+    # iteration row is appended, so multiple rows can share the same run_id;
+    # take the maximum iteration across all matching valid rows.
     if runs_log.exists():
+        max_iteration = -1
         with open(runs_log, 'r') as f:
             for line in f:
                 parts = line.strip().split('|')
-                if len(parts) >= RUNS_LOG_MIN_FIELDS and parts[0] == run_id:
-                    iterations = int(parts[3]) if parts[3].isdigit() else 10
+                if len(parts) >= RUNS_LOG_MIN_FIELDS and parts[0] == run_id and parts[3].isdigit():
+                    row_iteration = int(parts[3])
+                    if row_iteration > max_iteration:
+                        max_iteration = row_iteration
                     found_in_log = True
-                    break
+        if found_in_log:
+            iterations = max_iteration
 
     # Fall back to environment variable only when run_id was not found in runs.log
     if not found_in_log:

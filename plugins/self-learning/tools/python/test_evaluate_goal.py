@@ -68,7 +68,10 @@ def test_ignores_repo_local_legacy_session_file(
     assert outcome.score == 0.5
 
 
-def test_reduce_failures_reads_runs_log_from_workdir_root(tmp_path: Path) -> None:
+def test_reduce_failures_reads_runs_log_from_workdir_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("CLOSEDLOOP_ITERATION", raising=False)
     workdir = tmp_path / "workdir"
     workdir.mkdir()
     (workdir / "runs.log").write_text(
@@ -83,3 +86,87 @@ def test_reduce_failures_reads_runs_log_from_workdir_root(tmp_path: Path) -> Non
 
     assert outcome.metrics["iterations"] == 2
     assert outcome.success is True
+
+
+def test_reduce_failures_uses_latest_iteration_for_repeated_run_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Multi-row run_id: max iteration wins (regression test for first-match bug)."""
+    monkeypatch.delenv("CLOSEDLOOP_ITERATION", raising=False)
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    (workdir / "runs.log").write_text(
+        "run-1|2026-05-05T00:00:00Z|reduce-failures|1|in_progress|plan_execute|session-1\n"
+        "run-1|2026-05-05T00:01:00Z|reduce-failures|2|in_progress|plan_execute|session-1\n"
+        "run-1|2026-05-05T00:02:00Z|reduce-failures|3|completed|plan_execute|session-1\n"
+    )
+
+    outcome = evaluate_reduce_failures(
+        GoalConfig(name="reduce-failures", success_criteria={"target": 3}),
+        "run-1",
+        workdir,
+    )
+
+    assert outcome.metrics["iterations"] == 3
+
+
+def test_reduce_failures_falls_back_to_env_when_run_id_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When run_id is not in runs.log, CLOSEDLOOP_ITERATION supplies the count."""
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    (workdir / "runs.log").write_text(
+        "other-run|2026-05-05T00:00:00Z|reduce-failures|7|completed|plan_execute|session-x\n"
+    )
+    monkeypatch.setenv("CLOSEDLOOP_ITERATION", "4")
+
+    outcome = evaluate_reduce_failures(
+        GoalConfig(name="reduce-failures", success_criteria={"target": 5}),
+        "run-1",
+        workdir,
+    )
+
+    assert outcome.metrics["iterations"] == 4
+
+
+def test_reduce_failures_ignores_env_when_run_id_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Env var must not leak in when runs.log has at least one row for run_id."""
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    (workdir / "runs.log").write_text(
+        "run-1|2026-05-05T00:00:00Z|reduce-failures|2|completed|plan_execute|session-1\n"
+    )
+    monkeypatch.setenv("CLOSEDLOOP_ITERATION", "99")
+
+    outcome = evaluate_reduce_failures(
+        GoalConfig(name="reduce-failures", success_criteria={"target": 3}),
+        "run-1",
+        workdir,
+    )
+
+    assert outcome.metrics["iterations"] == 2
+
+
+def test_reduce_failures_skips_malformed_iteration_rows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Non-numeric iteration values are skipped; max of valid rows wins."""
+    monkeypatch.delenv("CLOSEDLOOP_ITERATION", raising=False)
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    (workdir / "runs.log").write_text(
+        "run-1|2026-05-05T00:00:00Z|reduce-failures|1|in_progress|plan_execute|session-1\n"
+        "run-1|2026-05-05T00:01:00Z|reduce-failures|foo|in_progress|plan_execute|session-1\n"
+        "run-1|2026-05-05T00:02:00Z|reduce-failures|3|completed|plan_execute|session-1\n"
+    )
+
+    outcome = evaluate_reduce_failures(
+        GoalConfig(name="reduce-failures", success_criteria={"target": 3}),
+        "run-1",
+        workdir,
+    )
+
+    assert outcome.metrics["iterations"] == 3
