@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.13
+
+#### Fixed
+- `rate_limit_signal` in `run-loop.sh`'s `detect_claude_terminal_failure` now requires `rate_limit_info.isUsingOverage == true` before a non-`allowed` `overageStatus` counts as a rate-limit failure. Prevents false positives when the org is not actually consuming overage capacity but `overageStatus` is still populated. The `status != allowed`, `status_429`, and error-string match paths remain unchanged, so existing true-positive detection is preserved.
+
+#### Changed
+- Refactored repeated `is_error` / `isApiErrorMessage` envelope-string matching across `rate_limit_signal`, `context_limit_signal`, and `auth_challenge_signal` into a single shared `envelope_text_match(pat)` jq helper. Three near-identical predicate definitions collapse to one helper invocation each — same behavior, less duplication.
+- Removed dead jq helpers (`user_texts`, `error_texts`, `text_blob`, `first_user_text`, `first_error_text`, `error_shaped`) left over from the wider matching scheme that was scoped down in the v1.11.11 source-attribution fix.
+- Expanded `test_rate_limit_event_predicate` parametrization to cover `isUsingOverage` true/false/missing variants, malformed payloads, and bug-reproduction cases (RL-01..RL-17, RL-X2, RL-X4) so the new gating condition is exercised end-to-end.
+
 ### code v1.11.12
 
 #### Fixed
