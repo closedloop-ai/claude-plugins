@@ -55,6 +55,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `runs.log` row format extended to `run_id|timestamp|goal|iteration|status|command|last_session_id`. The first five fields are the legacy contract; `command` (e.g. `plan_execute`, `code_review`, `self_learning`) and `last_session_id` are append-only so older self-learning readers stay compatible. `write_runs_log_entry` accepts optional 4th/5th arguments for explicit command/session overrides and falls back to `LAST_CLAUDE_COMMAND`/`LAST_CLAUDE_SESSION_ID` (or `session-id.txt`) otherwise.
 - `--codex-model` default in the `/code:plan-with-codex` README documentation updated from `gpt-5.4` to `gpt-5.3-codex` to match the actual command default.
 
+### self-learning v1.2.4
+
+#### Fixed
+- `evaluate_reduce_failures` in `self-learning/tools/python/evaluate_goal.py` only consults the `CLOSEDLOOP_ITERATION` environment variable as a fallback when the current `run_id` is not found in `runs.log`. Previously the env var unconditionally overwrote the iteration count parsed from `runs.log`, which could mis-score goals when an outer loop exported a stale `CLOSEDLOOP_ITERATION` value.
+
 ### self-learning v1.2.3
 
 #### Changed
