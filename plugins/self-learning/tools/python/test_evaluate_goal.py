@@ -1,11 +1,9 @@
-
 """Tests for evaluate_goal.py path handling."""
 
 import json
 from pathlib import Path
 
 import pytest
-
 from evaluate_goal import evaluate_minimize_tokens, evaluate_reduce_failures
 from goal_config import GoalConfig
 
@@ -13,21 +11,21 @@ from goal_config import GoalConfig
 def _write_session(path: Path, input_tokens: int = 10, output_tokens: int = 5) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(
-            {
-                "usage": {
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "cache_creation_input_tokens": 0,
-                    "cache_read_input_tokens": 0,
-                }
+        json.dumps({
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
             }
-        )
+        })
         + "\n"
     )
 
 
-def test_reads_home_session_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_reads_home_session_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Should continue reading Claude session transcripts from `~/.claude/sessions`."""
     session_id = "home-session"
     home_dir = tmp_path / "home"

@@ -173,6 +173,7 @@ def _config_value(config: str, key: str) -> str:
         if line.startswith(prefix):
             return line.split("=", 1)[1].strip('"')
     pytest.fail(f"{key} not found in config")
+    return ""  # unreachable; hint for type-checkers that can't resolve pytest.fail -> NoReturn
 
 
 def test_add_dir_nonexistent_path_fails(tmp_workdir: Path) -> None:
