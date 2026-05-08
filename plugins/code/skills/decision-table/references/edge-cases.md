@@ -62,6 +62,14 @@ When a flow deletes, consumes, rotates, invalidates, acknowledges, commits, uplo
 
 Require parity rows for invalid and dependency-failure branches, not only valid or happy-path branches.
 
+## Durable finalization and replay eligibility
+
+When a flow writes local terminal state and separately posts, uploads, acknowledges, or finalizes external terminal state, include rows for: before local terminal persistence, after local persistence but before external acknowledgement, retryable external failure, non-retryable external failure, successful external acknowledgement, and recovery/replay after restart.
+
+State which durable fields make the item eligible or ineligible for recovery, which credentials, tokens, signatures, secrets, locks, or marker data must be retained until acknowledgement, which cleanup runs only after acknowledgement, and whether replay emits the same user-visible status, code, message, result, diagnostics, and warning semantics as the live path.
+
+**Tests:** require at least one retryable external failure after local terminal persistence, one successful acknowledgement cleanup path, and one recovery/replay assertion that proves the same terminal user-visible outcome is posted.
+
 ## Shared durable resources
 
 When deleting, rotating, revoking, or clearing persisted keys, credentials, locks, cache entries, files, profiles, identities, or other durable resources, include rows for: no remaining references, another saved/profile reference, active runtime reference, stale reference, and unknown lookup failure. State whether the resource is reference-counted, ownership-scoped, shared, or safe to delete unconditionally.

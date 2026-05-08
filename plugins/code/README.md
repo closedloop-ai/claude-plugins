@@ -265,7 +265,7 @@ Runs Codex to review a plan file and returns structured feedback with a verdict.
 
 ### `decision-table`
 
-Generates a repo-local decision-table artifact that makes control-flow and stateful edge cases reviewable. Used when the user wants a code-grounded table for current behavior, wants to compare current behavior against a plan or work item, or needs a control-flow artifact for recovery, retry, finalization, validation, state-machine, or review-heavy edge cases. Writes one artifact per work item under `.closedloop-ai/decision-tables/` (`<plan-id>.md` for plan-scoped work, `<short-work-name>.md` otherwise) using the format defined in `references/artifact-format.md`. Builds the `Current Code` table from code (not expectations), captures the target behavior in `Intended Change`, and freezes both once implementation begins; post-implementation drift is recorded in append-only `Verification Findings`, `Fixes Applied`, `Final Alignment Status`, and optional `Plan Clarifications` sections. Includes a behavioral edge-case expansion pass that explicitly models structured-result setup failures, library-managed lifecycle re-entry, time-bound credentials/signatures, diagnostic reason taxonomies, and side-effect boundaries for validation failures.
+Generates a repo-local decision-table artifact that makes control-flow and stateful edge cases reviewable. Used when the user wants a code-grounded table for current behavior, wants to compare current behavior against a plan or work item, or needs a control-flow artifact for recovery, retry, finalization, validation, state-machine, or review-heavy edge cases. Writes one artifact per work item under `.closedloop-ai/decision-tables/` (`<plan-id>.md` for plan-scoped work, `<short-work-name>.md` otherwise) using the format defined in `references/artifact-format.md`. Builds the `Current Code` table from code (not expectations), captures the target behavior in `Intended Change`, and freezes both once implementation begins; post-implementation drift is recorded in append-only `Verification Findings`, `Fixes Applied`, `Final Alignment Status`, and optional `Plan Clarifications` sections. Includes a behavioral edge-case expansion pass that explicitly models structured-result setup failures, library-managed lifecycle re-entry, time-bound credentials/signatures, durable finalization and replay eligibility, diagnostic reason taxonomies, and side-effect boundaries for validation failures.
 
 ---
 
@@ -311,6 +311,14 @@ Implements the validation loop for agents registered in `loop-agents.json`. When
 ### `pretooluse-hook.sh` (PreToolUse, matches Read/Bash/Write/Edit)
 
 Injects tool-specific learnings just before tool execution. Filters `org-patterns.toon` by tool type (Bash patterns get build/test tags; Write/Edit patterns get language-specific tags based on file extension). Injects up to 10 matching patterns as `additionalContext`. Also auto-allows tool calls targeting `.closedloop-ai/` workspace paths without prompting.
+
+### `pre-tool-use-hook.sh` (PreToolUse)
+
+Writes per-tool-call sentinel files to `{WORKDIR}/.tool-calls/` so post-tool handling can compute duration and attribution. Emits `spawn` perf events for `Agent` tool calls. Registered separately from `pretooluse-hook.sh` and designed to fail open.
+
+### `post-tool-use-hook.sh` (PostToolUse)
+
+Reads sentinels written by `pre-tool-use-hook.sh`, computes tool-call duration, appends `tool` events to `perf.jsonl`, and emits additional `skill` events for `Skill` tool calls. Deletes the sentinel after successful emission and fails open on internal errors.
 
 ### `plan-review.sh` (not currently registered in `hooks.json`)
 

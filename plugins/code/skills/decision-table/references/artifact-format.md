@@ -30,6 +30,7 @@ Apply every category in [`edge-cases.md`](edge-cases.md). Each must be represent
 - Structured-result setup failures: <rows or non-applicability note>
 - Library-managed lifecycle re-entry: <rows or non-applicability note>
 - Time-bound credentials/signatures: <rows or non-applicability note>
+- Durable finalization and replay eligibility: <rows or non-applicability note>
 - Diagnostic reason/category taxonomy: <rows or non-applicability note>
 - Side-effect boundaries for validation/preparation failures: <rows or non-applicability note>
 - ... (continue with every category from `edge-cases.md`)

@@ -10,6 +10,7 @@ __pycache__/
 .env.*.local
 .ruff_cache/
 .venv/
+.codex/
 
 # Tests
 **/route-knowledge.json

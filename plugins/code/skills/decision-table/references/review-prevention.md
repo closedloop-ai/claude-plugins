@@ -24,6 +24,7 @@ For every item: fix it, mark it already covered by a named row/test, mark not ap
 16. **Adapter-variant error metadata mismatch** where code maps a dependency or database error by only one metadata shape even though the dependency may report an equivalent signal as a constraint name, field array, column array, structured object, missing metadata, or legacy/unknown value.
 17. **Existing-data migration blocker** where a new unique constraint or stricter persisted invariant assumes all existing rows already satisfy the invariant instead of cleaning, backfilling, or explicitly preflighting violating rows before the constraint is created.
 18. **Cleanup-induced adjacent constraint failure** where a migration repair satisfies the new invariant but leaves stale identity, reference, or preference state that makes the next normal application update fail on another constraint.
+19. **Terminal local state not recoverable after external finalization failure** where a job, event, marker, status, or artifact is persisted locally but the external post, upload, acknowledgement, or finalization fails, and recovery cannot replay it because eligibility fields are missing or required credentials, tokens, signatures, secrets, locks, or marker data were deleted.
 
 ## Contract-Heavy Review Surface
 
@@ -39,6 +40,7 @@ For contract-heavy work, also explicitly review:
 - replay and continuation paths, including conflict replays, retry callbacks, confirmation callbacks, and deferred command callbacks, that must enforce the same gate or policy as the original entry path
 - owner-keyed pending/loading/disabled UI whose observable state must be scoped to the current owner, command, document, target, or attempt instead of unrelated active work
 - terminal-state guards that fail to preserve approved/denied/expired/consumed/completed/cancelled/revoked/failed state when a later or repeated action arrives
+- terminal local state whose external finalization fails after persistence but before acknowledgement, leaving recovery unable to replay the same user-visible terminal outcome
 - retries or replays that reuse resources after delete/consume/rotate/invalidate/acknowledge/commit/upload/lock side effects
 - payload fields whose omitted, `undefined`, `null`, empty, and explicit values are semantically distinct at the next boundary
 - destructive cleanup that deletes a shared durable resource still referenced by another profile, active runtime identity, fallback identity, retry path, or recovery path
