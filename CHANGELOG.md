@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### code v1.5.10
+
+#### Security
+- Added explicit untrusted-artifact boundaries to the main code orchestrator prompt, `amend-plan`, and key planning agents (`pre-explorer`, `plan-draft-writer`, `plan-evaluator`, `plan-validator`) so PRDs, plans, notes, and attachments are treated as evidence rather than instructions
+
+### judges v1.4.1
+
+#### Security
+- Added shared untrusted-artifact handling guidance to judge context preparation and the common judge input preamble so PRDs, plans, diffs, and logs are evaluated as evidence instead of prompt authority
+
 ### code v1.5.9
 
 #### Fixed
