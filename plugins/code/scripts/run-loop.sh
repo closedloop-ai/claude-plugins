@@ -614,9 +614,10 @@ record_claude_session_id() {
 # Write runs.log entry for goal evaluation and session correlation.
 #
 # Format:
-#   run_id|timestamp|goal|iteration|status|command|last_session_id
+#   run_id|timestamp|goal|iteration|status|command|last_session_id[|successful_iterations]
 # The first five fields are the legacy contract; append-only fields keep older
 # self-learning readers compatible while allowing command-scoped session lookup.
+# The optional 8th field (successful_iterations) is appended only when provided.
 write_runs_log_entry() {
   local workdir="$1"
   local iteration="$2"
@@ -635,6 +636,10 @@ write_runs_log_entry() {
   else
     session_id="${LAST_CLAUDE_SESSION_ID:-}"
   fi
+  local success_count=""
+  if [[ $# -ge 6 ]]; then
+    success_count="$6"
+  fi
   local runs_log="$workdir/runs.log"
   local timestamp
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -646,7 +651,11 @@ write_runs_log_entry() {
   command=$(sanitize_runs_log_field "$command")
   session_id=$(sanitize_runs_log_field "$session_id")
   mkdir -p "$(dirname "$runs_log")"
-  echo "$RUN_ID|$timestamp|${CLOSEDLOOP_ACTIVE_GOAL:-reduce-failures}|$iteration|$status|$command|$session_id" >> "$runs_log"
+  local entry="$RUN_ID|$timestamp|${CLOSEDLOOP_ACTIVE_GOAL:-reduce-failures}|$iteration|$status|$command|$session_id"
+  if [[ -n "$success_count" ]]; then
+    entry="$entry|$success_count"
+  fi
+  echo "$entry" >> "$runs_log"
 }
 
 # Post-iteration processing: enrichment pipeline, learning capture, citation verification, success rates
@@ -1332,6 +1341,23 @@ update_iteration() {
   mv "$temp_file" "$STATE_FILE"
 }
 
+# Update successful iteration count in state file
+update_successful_iterations() {
+  local new_count="$1"
+  local temp_file="${STATE_FILE}.tmp.$$"
+  if grep -q '^successful_iterations:' "$STATE_FILE"; then
+    sed "s/^successful_iterations: .*/successful_iterations: $new_count/" "$STATE_FILE" > "$temp_file"
+  else
+    # Older state file predating this field — insert beneath `iteration:` so
+    # resumes from in-flight legacy loops still persist subsequent counts.
+    awk -v count="$new_count" '
+      { print }
+      /^iteration: / && !ins { print "successful_iterations: " count; ins=1 }
+    ' "$STATE_FILE" > "$temp_file"
+  fi
+  mv "$temp_file" "$STATE_FILE"
+}
+
 # Create state file
 create_state_file() {
   mkdir -p "$CLOSEDLOOP_STATE_DIR"
@@ -1377,6 +1403,7 @@ create_state_file() {
 ---
 active: true
 iteration: 1
+successful_iterations: 0
 max_iterations: $MAX_ITERATIONS
 completion_promise: "$COMPLETION_PROMISE"
 workdir: "$WORKDIR"
@@ -1534,6 +1561,14 @@ main() {
   local final_result='select(.type == "result").result // empty'
 
   local consecutive_empty=0
+  # Restore successful_iterations from state file so resumes preserve prior
+  # forward progress. Legacy state files predating this field yield empty
+  # output from get_field, in which case we default to 0.
+  local successful_iterations
+  successful_iterations=$(get_field "successful_iterations")
+  if [[ ! "$successful_iterations" =~ ^[0-9]+$ ]]; then
+    successful_iterations=0
+  fi
 
   while true; do
     # Check max iterations
@@ -1554,10 +1589,19 @@ main() {
       )"
 
       echo -e "\n${GREEN}Max iterations ($max_iterations) reached. Loop complete.${NC}"
-      log_progress "Loop ended - max iterations reached"
+      log_progress "Loop ended - max iterations reached (successful_iterations=$successful_iterations)"
 
-      # Write runs.log entry
-      write_runs_log_entry "$effective_workdir" "$iteration" "max_iterations" "plan_execute"
+      # Resolve session id at the call site so passing the success count as
+      # arg 6 doesn't suppress write_runs_log_entry's normal fallback chain
+      # (LAST_CLAUDE_SESSION_ID -> session-id.txt -> empty). Mirrors the
+      # helper's own resolution order at lines 637 and 647-649.
+      local session_id_for_log="${LAST_CLAUDE_SESSION_ID:-}"
+      if [[ -z "$session_id_for_log" && -f "$effective_workdir/session-id.txt" ]]; then
+        session_id_for_log=$(tr -d '\r\n' < "$effective_workdir/session-id.txt" 2>/dev/null || true)
+      fi
+
+      # Write runs.log entry (includes successful_iterations count)
+      write_runs_log_entry "$effective_workdir" "$iteration" "max_iterations" "plan_execute" "$session_id_for_log" "$successful_iterations"
 
       # Final post-iteration processing
       post_iteration_processing "$effective_workdir" "$iteration"
@@ -1572,6 +1616,12 @@ main() {
 
       # Run pruning in background
       run_background_pruning "$effective_workdir"
+
+      if [[ $successful_iterations -eq 0 ]]; then
+        write_loop_user_visible_failure "RUNNER_ERROR" "MAX_ITERATIONS_NO_PROGRESS" \
+          "Iteration budget exhausted without forward progress (0/$max_iterations iterations succeeded)"
+        exit 4
+      fi
 
       exit 0
     fi
@@ -1685,6 +1735,8 @@ main() {
         fi
       else
         consecutive_empty=0
+        successful_iterations=$((successful_iterations + 1))
+        update_successful_iterations "$successful_iterations"
       fi
 
       # Scan the full per-iteration stream for the completion promise, not
@@ -1706,6 +1758,13 @@ main() {
 
       # Check for completion
       if [[ $promise_found -eq 1 ]]; then
+        # Count this iteration as successful if a non-empty result didn't
+        # already do so (the promise found in the output stream is itself
+        # evidence of forward progress).
+        if [[ -z "$result" ]]; then
+          successful_iterations=$((successful_iterations + 1))
+          update_successful_iterations "$successful_iterations"
+        fi
         # Validate that the orchestrator's COMPLETE is legitimate before
         # proceeding to post-loop code review. See detect_spurious_complete().
         local spurious_check

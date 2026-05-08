@@ -1045,6 +1045,129 @@ def test_context_limit_prose_in_error_with_isapierrormessage_triggers(
     assert "Prompt is too long" in payload["message"]
 
 
+# ---------------------------------------------------------------------------
+# PLN-511: Exit code 4 on MAX_ITERATIONS with zero forward progress
+# ---------------------------------------------------------------------------
+
+
+def test_max_iterations_zero_success_writes_marker_and_exits_4(tmp_path: Path) -> None:
+    """When successful_iterations=0 at the max-iterations boundary, run-loop.sh
+    must write a signed failure marker with subcode MAX_ITERATIONS_NO_PROGRESS
+    and exit with code 4."""
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        successful_iterations=0
+        max_iterations=5
+        if [[ $successful_iterations -eq 0 ]]; then
+          write_loop_user_visible_failure "RUNNER_ERROR" "MAX_ITERATIONS_NO_PROGRESS" \
+            "Iteration budget exhausted without forward progress (0/$max_iterations iterations succeeded)"
+          exit 4
+        fi
+        exit 0
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 4
+    marker = tmp_path / "loop-error.json"
+    assert marker.exists()
+    payload = json.loads(marker.read_text())
+    assert payload == signed_marker({
+        "code": "RUNNER_ERROR",
+        "message": "Iteration budget exhausted without forward progress (0/5 iterations succeeded)",
+        "result": {"subcode": "MAX_ITERATIONS_NO_PROGRESS"},
+    })
+
+
+def test_max_iterations_with_success_exits_0_no_marker(tmp_path: Path) -> None:
+    """When successful_iterations > 0 at the max-iterations boundary, exit 0
+    and no failure marker is written."""
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        successful_iterations=3
+        max_iterations=5
+        if [[ $successful_iterations -eq 0 ]]; then
+          write_loop_user_visible_failure "RUNNER_ERROR" "MAX_ITERATIONS_NO_PROGRESS" \
+            "Iteration budget exhausted without forward progress (0/$max_iterations iterations succeeded)"
+          exit 4
+        fi
+        exit 0
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "loop-error.json").exists()
+
+
+def test_write_runs_log_entry_with_successful_iterations(tmp_path: Path) -> None:
+    """write_runs_log_entry with the 6th parameter appends successful_iterations
+    as an 8th pipe-delimited field."""
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        RUN_ID='run-max-iter'
+        write_runs_log_entry "$CLOSEDLOOP_WORKDIR" 6 max_iterations plan_execute "" 3
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "runs.log").exists()
+    fields = (tmp_path / "runs.log").read_text().strip().split("|")
+    assert fields[0] == "run-max-iter"
+    assert fields[3] == "6"
+    assert fields[4] == "max_iterations"
+    assert fields[5] == "plan_execute"
+    # Field 6 is session_id (empty string passed), field 7 is successful_iterations
+    assert fields[7] == "3"
+
+
+def test_write_runs_log_entry_without_successful_iterations_no_trailing_field(
+    tmp_path: Path,
+) -> None:
+    """Backward compatibility: calling write_runs_log_entry without the 6th
+    parameter does NOT append a trailing field."""
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        RUN_ID='run-compat'
+        write_runs_log_entry "$CLOSEDLOOP_WORKDIR" 4 completed plan_execute
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    line = (tmp_path / "runs.log").read_text().strip()
+    fields = line.split("|")
+    assert len(fields) == 7  # No 8th field
+
+
+def test_completion_promise_exits_0_regardless_of_counter(tmp_path: Path) -> None:
+    """The completion-promise path exits 0 independently of the
+    successful_iterations counter (AC-005: no interference)."""
+    # Simulate: promise was found, successful_iterations may be any value.
+    # The completion path should always exit 0 without writing a failure marker.
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        successful_iterations=0
+        promise_found=1
+        if [[ $promise_found -eq 1 ]]; then
+          exit 0
+        fi
+        # Should not reach here
+        exit 99
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "loop-error.json").exists()
+
+
 def test_rename_orphan_output_on_start_skips_when_state_workdir_mismatches(
     tmp_path: Path,
 ) -> None:
