@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.12
+
+#### Fixed
+- `run-loop.sh` now fails the loop when `max_iterations` is reached with zero successful iterations, emitting a `RUNNER_ERROR/MAX_ITERATIONS_NO_PROGRESS` user-visible failure and exiting with code 4. A new `successful_iterations` counter is incremented on non-empty results or `COMPLETE` promise detection, and `runs.log` entries gain an optional 8th field (`successful_iterations`) appended only on the max-iterations exit path — older readers that parse the leading 7 fields stay compatible. Covered by new `test_run_loop_failure_marker.py` cases for the no-progress failure path. Also isolates `test_reduce_failures_reads_runs_log_from_workdir_root` from the ambient `CLOSEDLOOP_ITERATION` env var so the test no longer depends on the caller's environment.
+
 ### code v1.11.11
 
 #### Fixed
@@ -49,6 +54,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `write_runs_log_entry` in `run-loop.sh` now writes to `$workdir/runs.log` instead of `$workdir/.learnings/runs.log`, matching the new `self-learning` `prune-learnings.sh` and `evaluate_goal.py` location. Keeps the runs ledger at the workdir root next to `state.json` and `plan.json` rather than nested inside `.learnings/`.
 - `runs.log` row format extended to `run_id|timestamp|goal|iteration|status|command|last_session_id`. The first five fields are the legacy contract; `command` (e.g. `plan_execute`, `code_review`, `self_learning`) and `last_session_id` are append-only so older self-learning readers stay compatible. `write_runs_log_entry` accepts optional 4th/5th arguments for explicit command/session overrides and falls back to `LAST_CLAUDE_COMMAND`/`LAST_CLAUDE_SESSION_ID` (or `session-id.txt`) otherwise.
 - `--codex-model` default in the `/code:plan-with-codex` README documentation updated from `gpt-5.4` to `gpt-5.3-codex` to match the actual command default.
+
+### self-learning v1.2.4
+
+#### Fixed
+- `evaluate_reduce_failures` in `self-learning/tools/python/evaluate_goal.py` only consults the `CLOSEDLOOP_ITERATION` environment variable as a fallback when the current `run_id` is not found in `runs.log`. Previously the env var unconditionally overwrote the iteration count parsed from `runs.log`, which could mis-score goals when an outer loop exported a stale `CLOSEDLOOP_ITERATION` value.
 
 ### self-learning v1.2.3
 

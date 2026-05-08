@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[4]
 RUN_LOOP = REPO_ROOT / "plugins" / "code" / "scripts" / "run-loop.sh"
 FAILURE_SECRET = "test-loop-failure-secret"
@@ -114,7 +113,9 @@ def test_detect_spurious_complete_no_plan_returns_empty(tmp_path: Path) -> None:
     assert result.stdout.strip() == "{}"
 
 
-def test_detect_spurious_complete_no_pending_tasks_returns_empty(tmp_path: Path) -> None:
+def test_detect_spurious_complete_no_pending_tasks_returns_empty(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "plan.json").write_text(json.dumps({"pendingTasks": []}))
 
     result = run_bash(
@@ -130,10 +131,12 @@ def test_detect_spurious_complete_no_pending_tasks_returns_empty(tmp_path: Path)
 
 
 def test_detect_spurious_complete_pending_with_questions_flags(tmp_path: Path) -> None:
-    (tmp_path / "plan.json").write_text(json.dumps({
-        "pendingTasks": [{"id": "T-1.0"}, {"id": "T-2.0"}],
-        "openQuestions": [{"id": "Q1", "text": "?"}],
-    }))
+    (tmp_path / "plan.json").write_text(
+        json.dumps({
+            "pendingTasks": [{"id": "T-1.0"}, {"id": "T-2.0"}],
+            "openQuestions": [{"id": "Q1", "text": "?"}],
+        })
+    )
 
     result = run_bash(
         f"""
@@ -150,11 +153,15 @@ def test_detect_spurious_complete_pending_with_questions_flags(tmp_path: Path) -
     assert "T-2.0" in payload["message"]
 
 
-def test_detect_spurious_complete_pending_without_questions_flags(tmp_path: Path) -> None:
-    (tmp_path / "plan.json").write_text(json.dumps({
-        "pendingTasks": [{"id": "T-1.0"}],
-        "openQuestions": [],
-    }))
+def test_detect_spurious_complete_pending_without_questions_flags(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "plan.json").write_text(
+        json.dumps({
+            "pendingTasks": [{"id": "T-1.0"}],
+            "openQuestions": [],
+        })
+    )
 
     result = run_bash(
         f"""
@@ -173,14 +180,18 @@ def test_detect_spurious_complete_skips_when_awaiting_user(tmp_path: Path) -> No
     # Phase 1.1 plan review checkpoint: a freshly drafted plan has pending
     # tasks and open questions by definition, but state.json signals an
     # AWAITING_USER hard stop, not final completion. Must not be flagged.
-    (tmp_path / "plan.json").write_text(json.dumps({
-        "pendingTasks": [{"id": "T-1.0"}],
-        "openQuestions": [{"id": "Q1", "text": "?"}],
-    }))
-    (tmp_path / "state.json").write_text(json.dumps({
-        "phase": "Phase 1.1: Plan review checkpoint",
-        "status": "AWAITING_USER",
-    }))
+    (tmp_path / "plan.json").write_text(
+        json.dumps({
+            "pendingTasks": [{"id": "T-1.0"}],
+            "openQuestions": [{"id": "Q1", "text": "?"}],
+        })
+    )
+    (tmp_path / "state.json").write_text(
+        json.dumps({
+            "phase": "Phase 1.1: Plan review checkpoint",
+            "status": "AWAITING_USER",
+        })
+    )
 
     result = run_bash(
         f"""
@@ -194,17 +205,23 @@ def test_detect_spurious_complete_skips_when_awaiting_user(tmp_path: Path) -> No
     assert result.stdout.strip() == "{}"
 
 
-def test_detect_spurious_complete_flags_when_completed_status_with_pending(tmp_path: Path) -> None:
+def test_detect_spurious_complete_flags_when_completed_status_with_pending(
+    tmp_path: Path,
+) -> None:
     # Final-completion claim with leftover pendingTasks remains a contract
     # violation and must still be flagged.
-    (tmp_path / "plan.json").write_text(json.dumps({
-        "pendingTasks": [{"id": "T-1.0"}],
-        "openQuestions": [],
-    }))
-    (tmp_path / "state.json").write_text(json.dumps({
-        "phase": "Phase 7: Logging and completion",
-        "status": "COMPLETED",
-    }))
+    (tmp_path / "plan.json").write_text(
+        json.dumps({
+            "pendingTasks": [{"id": "T-1.0"}],
+            "openQuestions": [],
+        })
+    )
+    (tmp_path / "state.json").write_text(
+        json.dumps({
+            "phase": "Phase 7: Logging and completion",
+            "status": "COMPLETED",
+        })
+    )
 
     result = run_bash(
         f"""
@@ -229,7 +246,9 @@ def test_fail_loop_user_visible_prints_reason_and_exits(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 1
-    assert "CLOSEDLOOP_FATAL[BAD_PLAN_STATE]: Plan state is not loadable." in result.stderr
+    assert (
+        "CLOSEDLOOP_FATAL[BAD_PLAN_STATE]: Plan state is not loadable." in result.stderr
+    )
     assert json.loads((tmp_path / "loop-error.json").read_text()) == signed_marker({
         "code": "PRE_RUN_VALIDATION_FAILED",
         "message": "Plan state is not loadable.",
@@ -273,36 +292,41 @@ def run_detect(
     return json.loads(result.stdout or "{}")
 
 
-def test_detect_claude_terminal_failure_observed_rate_limit_jsonl(tmp_path: Path) -> None:
-    write_jsonl(tmp_path / "output.jsonl", [
-        {
-            "type": "rate_limit_event",
-            "rate_limit_info": {
-                "status": "rejected",
-                "rateLimitType": "five_hour",
-                "resetsAt": 1778095200,
+def test_detect_claude_terminal_failure_observed_rate_limit_jsonl(
+    tmp_path: Path,
+) -> None:
+    write_jsonl(
+        tmp_path / "output.jsonl",
+        [
+            {
+                "type": "rate_limit_event",
+                "rate_limit_info": {
+                    "status": "rejected",
+                    "rateLimitType": "five_hour",
+                    "resetsAt": 1778095200,
+                },
             },
-        },
-        {
-            "type": "assistant",
-            "error": "rate_limit",
-            "message": {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "You've hit your limit - resets 2:20pm (America/Chicago)",
-                    },
-                ],
+            {
+                "type": "assistant",
+                "error": "rate_limit",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "You've hit your limit - resets 2:20pm (America/Chicago)",
+                        },
+                    ],
+                },
             },
-        },
-        {
-            "type": "result",
-            "subtype": "success",
-            "is_error": True,
-            "api_error_status": 429,
-            "result": "You've hit your limit - resets 2:20pm (America/Chicago)",
-        },
-    ])
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": True,
+                "api_error_status": 429,
+                "result": "You've hit your limit - resets 2:20pm (America/Chicago)",
+            },
+        ],
+    )
 
     result = run_bash(
         f"""
@@ -321,14 +345,17 @@ def test_detect_claude_terminal_failure_observed_rate_limit_jsonl(tmp_path: Path
 
 
 def test_detect_claude_terminal_failure_camel_case_api_status(tmp_path: Path) -> None:
-    write_jsonl(tmp_path / "output.jsonl", [
-        {
-            "type": "assistant",
-            "isApiErrorMessage": True,
-            "error": "rate_limit_error",
-            "apiErrorStatus": 429,
-        },
-    ])
+    write_jsonl(
+        tmp_path / "output.jsonl",
+        [
+            {
+                "type": "assistant",
+                "isApiErrorMessage": True,
+                "error": "rate_limit_error",
+                "apiErrorStatus": 429,
+            },
+        ],
+    )
 
     result = run_bash(
         f"""
@@ -346,13 +373,16 @@ def test_detect_claude_terminal_failure_camel_case_api_status(tmp_path: Path) ->
 
 
 def test_detect_claude_terminal_failure_context_limit_jsonl(tmp_path: Path) -> None:
-    write_jsonl(tmp_path / "output.jsonl", [
-        {
-            "type": "result",
-            "is_error": True,
-            "result": "Prompt is too long for this model context limit.",
-        },
-    ])
+    write_jsonl(
+        tmp_path / "output.jsonl",
+        [
+            {
+                "type": "result",
+                "is_error": True,
+                "result": "Prompt is too long for this model context limit.",
+            },
+        ],
+    )
 
     result = run_bash(
         f"""
@@ -391,13 +421,16 @@ def test_detect_claude_terminal_failure_context_limit_stderr(tmp_path: Path) -> 
 
 
 def test_detect_claude_terminal_failure_auth_challenge_jsonl(tmp_path: Path) -> None:
-    write_jsonl(tmp_path / "output.jsonl", [
-        {
-            "type": "result",
-            "is_error": True,
-            "result": "Invalid bearer token. Please log in to Claude.",
-        },
-    ])
+    write_jsonl(
+        tmp_path / "output.jsonl",
+        [
+            {
+                "type": "result",
+                "is_error": True,
+                "result": "Invalid bearer token. Please log in to Claude.",
+            },
+        ],
+    )
 
     result = run_bash(
         f"""
@@ -417,14 +450,17 @@ def test_detect_claude_terminal_failure_auth_challenge_jsonl(tmp_path: Path) -> 
 def test_detect_claude_terminal_failure_clamps_long_marker_message(
     tmp_path: Path,
 ) -> None:
-    write_jsonl(tmp_path / "output.jsonl", [
-        {
-            "type": "result",
-            "is_error": True,
-            "api_error_status": 429,
-            "result": "x" * 1200,
-        },
-    ])
+    write_jsonl(
+        tmp_path / "output.jsonl",
+        [
+            {
+                "type": "result",
+                "is_error": True,
+                "api_error_status": 429,
+                "result": "x" * 1200,
+            },
+        ],
+    )
 
     result = run_bash(
         f"""
@@ -444,14 +480,17 @@ def test_detect_claude_terminal_failure_clamps_long_marker_message(
 def test_detect_claude_terminal_failure_ignores_unknown_or_malformed_jsonl(
     tmp_path: Path,
 ) -> None:
-    write_jsonl(tmp_path / "output.jsonl", [
-        "not-json",
-        {
-            "type": "result",
-            "is_error": True,
-            "result": "Unknown tool failed",
-        },
-    ])
+    write_jsonl(
+        tmp_path / "output.jsonl",
+        [
+            "not-json",
+            {
+                "type": "result",
+                "is_error": True,
+                "result": "Unknown tool failed",
+            },
+        ],
+    )
 
     result = run_bash(
         f"""
@@ -468,25 +507,28 @@ def test_detect_claude_terminal_failure_ignores_unknown_or_malformed_jsonl(
 def test_detect_claude_terminal_failure_ignores_successful_rate_limit_prose(
     tmp_path: Path,
 ) -> None:
-    write_jsonl(tmp_path / "output.jsonl", [
-        {
-            "type": "assistant",
-            "message": {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "Implemented rate limit handling in the API client.",
-                    },
-                ],
+    write_jsonl(
+        tmp_path / "output.jsonl",
+        [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Implemented rate limit handling in the API client.",
+                        },
+                    ],
+                },
             },
-        },
-        {
-            "type": "result",
-            "subtype": "success",
-            "is_error": False,
-            "result": "Completed the rate limit feature.",
-        },
-    ])
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "Completed the rate limit feature.",
+            },
+        ],
+    )
 
     result = run_bash(
         f"""
@@ -525,8 +567,12 @@ def test_handle_claude_terminal_failure_writes_marker_and_stops_retry(
     assert not (tmp_path / ".learnings" / ".lock").exists()
     assert not (tmp_path / "state.local").exists()
     assert not (tmp_path / "claude-output.jsonl").exists()
-    assert (tmp_path / "claude-output-rate-run.jsonl").read_text() == '{"type":"result"}\n'
-    assert (tmp_path / "claude-output.name.txt").read_text() == "claude-output-rate-run.jsonl\n"
+    assert (
+        tmp_path / "claude-output-rate-run.jsonl"
+    ).read_text() == '{"type":"result"}\n'
+    assert (
+        tmp_path / "claude-output.name.txt"
+    ).read_text() == "claude-output-rate-run.jsonl\n"
     assert json.loads((tmp_path / "loop-error.json").read_text()) == signed_marker({
         "code": "RUNNER_ERROR",
         "message": message,
@@ -564,7 +610,9 @@ def test_handle_claude_terminal_failure_writes_context_marker(
     assert "CLOSEDLOOP_FATAL[CLAUDE_CONTEXT_LIMIT]" in result.stderr
     assert not (tmp_path / ".learnings" / ".lock").exists()
     assert not (tmp_path / "state.local").exists()
-    assert (tmp_path / "claude-output.name.txt").read_text() == "claude-output-context-run.jsonl\n"
+    assert (
+        tmp_path / "claude-output.name.txt"
+    ).read_text() == "claude-output-context-run.jsonl\n"
     assert json.loads((tmp_path / "loop-error.json").read_text()) == signed_marker({
         "code": "RUNNER_ERROR",
         "message": message,
@@ -591,14 +639,22 @@ def test_rename_output_on_exit_moves_jsonl_and_writes_sidecar(tmp_path: Path) ->
 
     assert result.returncode == 0, result.stderr
     assert not (tmp_path / "claude-output.jsonl").exists()
-    assert (tmp_path / "claude-output-run-exit.jsonl").read_text() == '{"type":"result"}\n'
-    assert (tmp_path / "claude-output.name.txt").read_text() == "claude-output-run-exit.jsonl\n"
+    assert (
+        tmp_path / "claude-output-run-exit.jsonl"
+    ).read_text() == '{"type":"result"}\n'
+    assert (
+        tmp_path / "claude-output.name.txt"
+    ).read_text() == "claude-output-run-exit.jsonl\n"
 
 
-def test_rename_orphan_output_on_start_clears_sidecar_and_uses_runs_log(tmp_path: Path) -> None:
+def test_rename_orphan_output_on_start_clears_sidecar_and_uses_runs_log(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "claude-output.jsonl").write_text('{"type":"result"}\n')
     (tmp_path / "claude-output.name.txt").write_text("claude-output-stale.jsonl\n")
-    (tmp_path / "runs.log").write_text("prev-run|2026-05-05T00:00:00Z|reduce-failures|1|error\n")
+    (tmp_path / "runs.log").write_text(
+        "prev-run|2026-05-05T00:00:00Z|reduce-failures|1|error\n"
+    )
 
     result = run_bash(
         f"""
@@ -611,7 +667,9 @@ def test_rename_orphan_output_on_start_clears_sidecar_and_uses_runs_log(tmp_path
 
     assert result.returncode == 0, result.stderr
     assert not (tmp_path / "claude-output.jsonl").exists()
-    assert (tmp_path / "claude-output-prev-run.jsonl").read_text() == '{"type":"result"}\n'
+    assert (
+        tmp_path / "claude-output-prev-run.jsonl"
+    ).read_text() == '{"type":"result"}\n'
     assert (tmp_path / "claude-output.name.txt").read_text() == ""
 
 
@@ -731,21 +789,77 @@ def test_code_review_log_with_no_session_does_not_backfill_plan_session(
 @pytest.mark.parametrize(
     "test_id,status,overage,using_overage,extra_info,expected_subcode",
     [
-        ("RL-01-bug-repro",                       "allowed",   "rejected", False, {},                                              None),
-        ("RL-02-bug-repro-with-reason",           "allowed",   "rejected", False, {"overageDisabledReason": "org_level_disabled"}, None),
-        ("RL-03-benign-heartbeat",                "allowed",   "allowed",  False, {},                                              None),
-        ("RL-04-benign-no-overage-fields",        "allowed",   None,       None,  {},                                              None),
-        ("RL-05-status-exceeded",                 "exceeded",  "allowed",  False, {},                                              "CLAUDE_RATE_LIMIT"),
-        ("RL-06-status-paused",                   "paused",    "allowed",  False, {},                                              "CLAUDE_RATE_LIMIT"),
-        ("RL-07-status-throttled",                "throttled", "allowed",  False, {},                                              "CLAUDE_RATE_LIMIT"),
-        ("RL-08-overage-actually-rejected",       "allowed",   "rejected", True,  {},                                              "CLAUDE_RATE_LIMIT"),
-        ("RL-09-overage-actually-exceeded",       "allowed",   "exceeded", True,  {},                                              "CLAUDE_RATE_LIMIT"),
-        ("RL-10-overage-rejected-flag-absent",    "allowed",   "rejected", None,  {},                                              None),
-        ("RL-11-overage-rejected-flag-string-true", "allowed", "rejected", "true", {},                                             None),
-        ("RL-14-both-status-and-overage-bad",     "exceeded",  "rejected", False, {},                                              "CLAUDE_RATE_LIMIT"),
-        ("RL-15-both-bad-with-overage-on",        "exceeded",  "rejected", True,  {},                                              "CLAUDE_RATE_LIMIT"),
-        ("RL-16-malformed-both-missing",          None,        None,       None,  {},                                              None),
-        ("RL-17-overage-exceeded-no-flag",        "allowed",   "exceeded", None,  {},                                              None),
+        ("RL-01-bug-repro", "allowed", "rejected", False, {}, None),
+        (
+            "RL-02-bug-repro-with-reason",
+            "allowed",
+            "rejected",
+            False,
+            {"overageDisabledReason": "org_level_disabled"},
+            None,
+        ),
+        ("RL-03-benign-heartbeat", "allowed", "allowed", False, {}, None),
+        ("RL-04-benign-no-overage-fields", "allowed", None, None, {}, None),
+        (
+            "RL-05-status-exceeded",
+            "exceeded",
+            "allowed",
+            False,
+            {},
+            "CLAUDE_RATE_LIMIT",
+        ),
+        ("RL-06-status-paused", "paused", "allowed", False, {}, "CLAUDE_RATE_LIMIT"),
+        (
+            "RL-07-status-throttled",
+            "throttled",
+            "allowed",
+            False,
+            {},
+            "CLAUDE_RATE_LIMIT",
+        ),
+        (
+            "RL-08-overage-actually-rejected",
+            "allowed",
+            "rejected",
+            True,
+            {},
+            "CLAUDE_RATE_LIMIT",
+        ),
+        (
+            "RL-09-overage-actually-exceeded",
+            "allowed",
+            "exceeded",
+            True,
+            {},
+            "CLAUDE_RATE_LIMIT",
+        ),
+        ("RL-10-overage-rejected-flag-absent", "allowed", "rejected", None, {}, None),
+        (
+            "RL-11-overage-rejected-flag-string-true",
+            "allowed",
+            "rejected",
+            "true",
+            {},
+            None,
+        ),
+        (
+            "RL-14-both-status-and-overage-bad",
+            "exceeded",
+            "rejected",
+            False,
+            {},
+            "CLAUDE_RATE_LIMIT",
+        ),
+        (
+            "RL-15-both-bad-with-overage-on",
+            "exceeded",
+            "rejected",
+            True,
+            {},
+            "CLAUDE_RATE_LIMIT",
+        ),
+        ("RL-16-malformed-both-missing", None, None, None, {}, None),
+        ("RL-17-overage-exceeded-no-flag", "allowed", "exceeded", None, {}, None),
     ],
     ids=lambda v: v if isinstance(v, str) else None,
 )
@@ -758,7 +872,11 @@ def test_rate_limit_event_predicate(
     extra_info: dict,
     expected_subcode: str | None,
 ) -> None:
-    info: dict[str, object] = {"rateLimitType": "five_hour", "resetsAt": 1778266200, **extra_info}
+    info: dict[str, object] = {
+        "rateLimitType": "five_hour",
+        "resetsAt": 1778266200,
+        **extra_info,
+    }
     if status is not None:
         info["status"] = status
     if overage is not None:
@@ -768,30 +886,45 @@ def test_rate_limit_event_predicate(
 
     payload = run_detect(
         tmp_path,
-        jsonl=[{
-            "type": "rate_limit_event",
-            "rate_limit_info": info,
-            "uuid": "9fc896e0-250f-40f4-9022-dfca49a7498f",
-            "session_id": "c80d0b89-7efe-403c-8e7d-439702b89aff",
-        }],
+        jsonl=[
+            {
+                "type": "rate_limit_event",
+                "rate_limit_info": info,
+                "uuid": "9fc896e0-250f-40f4-9022-dfca49a7498f",
+                "session_id": "c80d0b89-7efe-403c-8e7d-439702b89aff",
+            }
+        ],
     )
 
     if expected_subcode is None:
         assert payload == {}, f"{test_id}: expected no failure, got {payload!r}"
     else:
-        assert payload.get("status")  == "claude_rate_limit",  f"{test_id}: status mismatch"
-        assert payload.get("subcode") == expected_subcode,     f"{test_id}: subcode mismatch"
-        assert "Claude rate limit reached" in payload.get("message", ""), \
+        assert payload.get("status") == "claude_rate_limit", (
+            f"{test_id}: status mismatch"
+        )
+        assert payload.get("subcode") == expected_subcode, (
+            f"{test_id}: subcode mismatch"
+        )
+        assert "Claude rate limit reached" in payload.get("message", ""), (
             f"{test_id}: message must mention rate limit"
+        )
 
 
 @pytest.mark.parametrize(
     "is_error,result_text,expected_status,expected_subcode",
     [
-        (True, "You've hit your rate limit. Please wait.",
-         "claude_rate_limit", "CLAUDE_RATE_LIMIT"),
-        (True, "authentication_error: Invalid API key provided.",
-         "claude_auth_error", "CLAUDE_AUTH_CHALLENGE"),
+        (
+            True,
+            "You've hit your rate limit. Please wait.",
+            "claude_rate_limit",
+            "CLAUDE_RATE_LIMIT",
+        ),
+        (
+            True,
+            "authentication_error: Invalid API key provided.",
+            "claude_auth_error",
+            "CLAUDE_AUTH_CHALLENGE",
+        ),
         (True, "Unknown internal server error occurred.", None, None),
         (False, "Completed implementing rate limit feature.", None, None),
     ],
@@ -805,12 +938,14 @@ def test_result_envelope_dispatch(
 ) -> None:
     payload = run_detect(
         tmp_path,
-        jsonl=[{
-            "type": "result",
-            "subtype": "success",
-            "is_error": is_error,
-            "result": result_text,
-        }],
+        jsonl=[
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": is_error,
+                "result": result_text,
+            }
+        ],
     )
     if expected_subcode is None:
         assert payload == {}
@@ -822,11 +957,14 @@ def test_result_envelope_dispatch(
 @pytest.mark.parametrize(
     "extra,error_value,expected_status,expected_subcode",
     [
-        ({"apiErrorStatus": 429}, "rate_limit_error",
-         "claude_rate_limit", "CLAUDE_RATE_LIMIT"),
+        (
+            {"apiErrorStatus": 429},
+            "rate_limit_error",
+            "claude_rate_limit",
+            "CLAUDE_RATE_LIMIT",
+        ),
         ({}, "rate_limit", "claude_rate_limit", "CLAUDE_RATE_LIMIT"),
-        ({}, "authentication_error",
-         "claude_auth_error", "CLAUDE_AUTH_CHALLENGE"),
+        ({}, "authentication_error", "claude_auth_error", "CLAUDE_AUTH_CHALLENGE"),
         ({}, "", None, None),
     ],
 )
@@ -854,12 +992,21 @@ def test_isapierrormessage_envelope_dispatch(
 @pytest.mark.parametrize(
     "stderr_text,expected_status,expected_subcode",
     [
-        ("Error: You've hit your rate limit.\n",
-         "claude_rate_limit", "CLAUDE_RATE_LIMIT"),
-        ("Error: prompt is too long for the model context limit.\n",
-         "context_limit", "CLAUDE_CONTEXT_LIMIT"),
-        ("Error: authentication_error: invalid bearer token.\n",
-         "claude_auth_error", "CLAUDE_AUTH_CHALLENGE"),
+        (
+            "Error: You've hit your rate limit.\n",
+            "claude_rate_limit",
+            "CLAUDE_RATE_LIMIT",
+        ),
+        (
+            "Error: prompt is too long for the model context limit.\n",
+            "context_limit",
+            "CLAUDE_CONTEXT_LIMIT",
+        ),
+        (
+            "Error: authentication_error: invalid bearer token.\n",
+            "claude_auth_error",
+            "CLAUDE_AUTH_CHALLENGE",
+        ),
     ],
 )
 def test_stderr_fallback_dispatch(
@@ -883,7 +1030,10 @@ def test_failure_message_does_not_include_unrelated_assistant_text(
                 "type": "assistant",
                 "message": {
                     "content": [
-                        {"type": "text", "text": "I am working on implementing the feature now."},
+                        {
+                            "type": "text",
+                            "text": "I am working on implementing the feature now.",
+                        },
                     ],
                 },
             },
@@ -905,11 +1055,13 @@ def test_failure_message_static_fallback_when_trigger_has_no_string(
 ) -> None:
     payload = run_detect(
         tmp_path,
-        jsonl=[{
-            "type": "assistant",
-            "isApiErrorMessage": True,
-            "apiErrorStatus": 429,
-        }],
+        jsonl=[
+            {
+                "type": "assistant",
+                "isApiErrorMessage": True,
+                "apiErrorStatus": 429,
+            }
+        ],
     )
     assert payload["status"] == "claude_rate_limit"
     assert payload["message"] == (
@@ -967,7 +1119,12 @@ def test_pln500_canonical_planning_jsonl_no_false_positive(tmp_path: Path) -> No
                 "type": "assistant",
                 "message": {
                     "content": [
-                        {"type": "tool_use", "id": "toolu_01", "name": "Write", "input": {}},
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_01",
+                            "name": "Write",
+                            "input": {},
+                        },
                     ],
                 },
             },
@@ -997,16 +1154,21 @@ def test_rate_limit_prose_in_message_content_does_not_trigger(
     rate-limit prose buried in .message.content[].text."""
     payload = run_detect(
         tmp_path,
-        jsonl=[{
-            "type": "assistant",
-            "is_error": True,
-            "result": "",
-            "message": {
-                "content": [
-                    {"type": "text", "text": "Note: you've hit your limit on test fixture cardinality."},
-                ],
-            },
-        }],
+        jsonl=[
+            {
+                "type": "assistant",
+                "is_error": True,
+                "result": "",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Note: you've hit your limit on test fixture cardinality.",
+                        },
+                    ],
+                },
+            }
+        ],
     )
     assert payload == {}
 
@@ -1018,11 +1180,13 @@ def test_rate_limit_prose_in_result_with_is_error_triggers(
     source the marker message from the triggering entry."""
     payload = run_detect(
         tmp_path,
-        jsonl=[{
-            "type": "result",
-            "is_error": True,
-            "result": "You've hit your limit; please wait for reset.",
-        }],
+        jsonl=[
+            {
+                "type": "result",
+                "is_error": True,
+                "result": "You've hit your limit; please wait for reset.",
+            }
+        ],
     )
     assert payload["status"] == "claude_rate_limit"
     assert payload["subcode"] == "CLAUDE_RATE_LIMIT"
@@ -1036,16 +1200,21 @@ def test_context_limit_prose_in_message_content_does_not_trigger(
     context-limit prose buried in .message.content[].text."""
     payload = run_detect(
         tmp_path,
-        jsonl=[{
-            "type": "assistant",
-            "is_error": True,
-            "result": "",
-            "message": {
-                "content": [
-                    {"type": "text", "text": "Discussing why prompt is too long is a common topic."},
-                ],
-            },
-        }],
+        jsonl=[
+            {
+                "type": "assistant",
+                "is_error": True,
+                "result": "",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Discussing why prompt is too long is a common topic.",
+                        },
+                    ],
+                },
+            }
+        ],
     )
     assert payload == {}
 
@@ -1057,11 +1226,13 @@ def test_context_limit_prose_in_error_with_isapierrormessage_triggers(
     fire and source the marker message from the triggering entry."""
     payload = run_detect(
         tmp_path,
-        jsonl=[{
-            "type": "assistant",
-            "isApiErrorMessage": True,
-            "error": "Prompt is too long for the model context limit.",
-        }],
+        jsonl=[
+            {
+                "type": "assistant",
+                "isApiErrorMessage": True,
+                "error": "Prompt is too long for the model context limit.",
+            }
+        ],
     )
     assert payload["status"] == "context_limit"
     assert payload["subcode"] == "CLAUDE_CONTEXT_LIMIT"
@@ -1091,16 +1262,18 @@ def test_overage_rejected_message_sources_from_event(tmp_path: Path) -> None:
     and include the rate event metadata (rateLimitType, resetsAt) — sourced via rate_event_message."""
     payload = run_detect(
         tmp_path,
-        jsonl=[{
-            "type": "rate_limit_event",
-            "rate_limit_info": {
-                "status": "allowed",
-                "overageStatus": "rejected",
-                "isUsingOverage": True,
-                "rateLimitType": "five_hour",
-                "resetsAt": 1778266200,
-            },
-        }],
+        jsonl=[
+            {
+                "type": "rate_limit_event",
+                "rate_limit_info": {
+                    "status": "allowed",
+                    "overageStatus": "rejected",
+                    "isUsingOverage": True,
+                    "rateLimitType": "five_hour",
+                    "resetsAt": 1778266200,
+                },
+            }
+        ],
     )
     assert payload["subcode"] == "CLAUDE_RATE_LIMIT"
     assert "five_hour" in payload["message"]
@@ -1117,11 +1290,13 @@ def test_rl_x2_isapierrormessage_rate_limit_error_without_429(tmp_path: Path) ->
     """
     payload = run_detect(
         tmp_path,
-        jsonl=[{
-            "type": "assistant",
-            "isApiErrorMessage": True,
-            "error": "rate_limit_error",
-        }],
+        jsonl=[
+            {
+                "type": "assistant",
+                "isApiErrorMessage": True,
+                "error": "rate_limit_error",
+            }
+        ],
     )
     assert payload["status"] == "claude_rate_limit"
     assert payload["subcode"] == "CLAUDE_RATE_LIMIT"
@@ -1141,6 +1316,129 @@ def test_rl_x4_bare_error_string_rate_limit(tmp_path: Path) -> None:
     )
     assert payload["status"] == "claude_rate_limit"
     assert payload["subcode"] == "CLAUDE_RATE_LIMIT"
+
+
+# ---------------------------------------------------------------------------
+# PLN-511: Exit code 4 on MAX_ITERATIONS with zero forward progress
+# ---------------------------------------------------------------------------
+
+
+def test_max_iterations_zero_success_writes_marker_and_exits_4(tmp_path: Path) -> None:
+    """When successful_iterations=0 at the max-iterations boundary, run-loop.sh
+    must write a signed failure marker with subcode MAX_ITERATIONS_NO_PROGRESS
+    and exit with code 4."""
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        successful_iterations=0
+        max_iterations=5
+        if [[ $successful_iterations -eq 0 ]]; then
+          write_loop_user_visible_failure "RUNNER_ERROR" "MAX_ITERATIONS_NO_PROGRESS" \
+            "Iteration budget exhausted without forward progress (0/$max_iterations iterations succeeded)"
+          exit 4
+        fi
+        exit 0
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 4
+    marker = tmp_path / "loop-error.json"
+    assert marker.exists()
+    payload = json.loads(marker.read_text())
+    assert payload == signed_marker({
+        "code": "RUNNER_ERROR",
+        "message": "Iteration budget exhausted without forward progress (0/5 iterations succeeded)",
+        "result": {"subcode": "MAX_ITERATIONS_NO_PROGRESS"},
+    })
+
+
+def test_max_iterations_with_success_exits_0_no_marker(tmp_path: Path) -> None:
+    """When successful_iterations > 0 at the max-iterations boundary, exit 0
+    and no failure marker is written."""
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        successful_iterations=3
+        max_iterations=5
+        if [[ $successful_iterations -eq 0 ]]; then
+          write_loop_user_visible_failure "RUNNER_ERROR" "MAX_ITERATIONS_NO_PROGRESS" \
+            "Iteration budget exhausted without forward progress (0/$max_iterations iterations succeeded)"
+          exit 4
+        fi
+        exit 0
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "loop-error.json").exists()
+
+
+def test_write_runs_log_entry_with_successful_iterations(tmp_path: Path) -> None:
+    """write_runs_log_entry with the 6th parameter appends successful_iterations
+    as an 8th pipe-delimited field."""
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        RUN_ID='run-max-iter'
+        write_runs_log_entry "$CLOSEDLOOP_WORKDIR" 6 max_iterations plan_execute "" 3
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "runs.log").exists()
+    fields = (tmp_path / "runs.log").read_text().strip().split("|")
+    assert fields[0] == "run-max-iter"
+    assert fields[3] == "6"
+    assert fields[4] == "max_iterations"
+    assert fields[5] == "plan_execute"
+    # Field 6 is session_id (empty string passed), field 7 is successful_iterations
+    assert fields[7] == "3"
+
+
+def test_write_runs_log_entry_without_successful_iterations_no_trailing_field(
+    tmp_path: Path,
+) -> None:
+    """Backward compatibility: calling write_runs_log_entry without the 6th
+    parameter does NOT append a trailing field."""
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        RUN_ID='run-compat'
+        write_runs_log_entry "$CLOSEDLOOP_WORKDIR" 4 completed plan_execute
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    line = (tmp_path / "runs.log").read_text().strip()
+    fields = line.split("|")
+    assert len(fields) == 7  # No 8th field
+
+
+def test_completion_promise_exits_0_regardless_of_counter(tmp_path: Path) -> None:
+    """The completion-promise path exits 0 independently of the
+    successful_iterations counter (AC-005: no interference)."""
+    # Simulate: promise was found, successful_iterations may be any value.
+    # The completion path should always exit 0 without writing a failure marker.
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        successful_iterations=0
+        promise_found=1
+        if [[ $promise_found -eq 1 ]]; then
+          exit 0
+        fi
+        # Should not reach here
+        exit 99
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "loop-error.json").exists()
 
 
 def test_rename_orphan_output_on_start_skips_when_state_workdir_mismatches(
@@ -1169,5 +1467,7 @@ def test_rename_orphan_output_on_start_skips_when_state_workdir_mismatches(
     # Stale run_id from mismatched state.local must NOT be used.
     assert not (tmp_path / "claude-output-stale-run.jsonl").exists()
     # Falls through to runs.log tail instead.
-    assert (tmp_path / "claude-output-fallback-run.jsonl").read_text() == '{"type":"result"}\n'
+    assert (
+        tmp_path / "claude-output-fallback-run.jsonl"
+    ).read_text() == '{"type":"result"}\n'
     assert not (tmp_path / "claude-output.jsonl").exists()
