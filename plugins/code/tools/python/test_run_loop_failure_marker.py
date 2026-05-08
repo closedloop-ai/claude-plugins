@@ -729,37 +729,60 @@ def test_code_review_log_with_no_session_does_not_backfill_plan_session(
 
 
 @pytest.mark.parametrize(
-    "status,overage,expected_subcode",
+    "test_id,status,overage,using_overage,extra_info,expected_subcode",
     [
-        ("allowed", "allowed", None),                # benign single heartbeat
-        (None, None, None),                          # malformed → fail-open
-        ("exceeded", "allowed", "CLAUDE_RATE_LIMIT"),
-        ("allowed", "exceeded", "CLAUDE_RATE_LIMIT"),
-        ("paused", "allowed", "CLAUDE_RATE_LIMIT"),  # any non-allowed
+        ("RL-01-bug-repro",                       "allowed",   "rejected", False, {},                                              None),
+        ("RL-02-bug-repro-with-reason",           "allowed",   "rejected", False, {"overageDisabledReason": "org_level_disabled"}, None),
+        ("RL-03-benign-heartbeat",                "allowed",   "allowed",  False, {},                                              None),
+        ("RL-04-benign-no-overage-fields",        "allowed",   None,       None,  {},                                              None),
+        ("RL-05-status-exceeded",                 "exceeded",  "allowed",  False, {},                                              "CLAUDE_RATE_LIMIT"),
+        ("RL-06-status-paused",                   "paused",    "allowed",  False, {},                                              "CLAUDE_RATE_LIMIT"),
+        ("RL-07-status-throttled",                "throttled", "allowed",  False, {},                                              "CLAUDE_RATE_LIMIT"),
+        ("RL-08-overage-actually-rejected",       "allowed",   "rejected", True,  {},                                              "CLAUDE_RATE_LIMIT"),
+        ("RL-09-overage-actually-exceeded",       "allowed",   "exceeded", True,  {},                                              "CLAUDE_RATE_LIMIT"),
+        ("RL-10-overage-rejected-flag-absent",    "allowed",   "rejected", None,  {},                                              None),
+        ("RL-11-overage-rejected-flag-string-true", "allowed", "rejected", "true", {},                                             None),
+        ("RL-14-both-status-and-overage-bad",     "exceeded",  "rejected", False, {},                                              "CLAUDE_RATE_LIMIT"),
+        ("RL-15-both-bad-with-overage-on",        "exceeded",  "rejected", True,  {},                                              "CLAUDE_RATE_LIMIT"),
+        ("RL-16-malformed-both-missing",          None,        None,       None,  {},                                              None),
+        ("RL-17-overage-exceeded-no-flag",        "allowed",   "exceeded", None,  {},                                              None),
     ],
+    ids=lambda v: v if isinstance(v, str) else None,
 )
-def test_rate_limit_event_status_dispatch(
+def test_rate_limit_event_predicate(
     tmp_path: Path,
+    test_id: str,
     status: str | None,
     overage: str | None,
+    using_overage: bool | str | None,
+    extra_info: dict,
     expected_subcode: str | None,
 ) -> None:
-    info: dict[str, object] = {"rateLimitType": "five_hour", "resetsAt": 1778095200}
+    info: dict[str, object] = {"rateLimitType": "five_hour", "resetsAt": 1778266200, **extra_info}
     if status is not None:
         info["status"] = status
     if overage is not None:
         info["overageStatus"] = overage
+    if using_overage is not None:
+        info["isUsingOverage"] = using_overage
 
     payload = run_detect(
         tmp_path,
-        jsonl=[{"type": "rate_limit_event", "rate_limit_info": info}],
+        jsonl=[{
+            "type": "rate_limit_event",
+            "rate_limit_info": info,
+            "uuid": "9fc896e0-250f-40f4-9022-dfca49a7498f",
+            "session_id": "c80d0b89-7efe-403c-8e7d-439702b89aff",
+        }],
     )
 
     if expected_subcode is None:
-        assert payload == {}
+        assert payload == {}, f"{test_id}: expected no failure, got {payload!r}"
     else:
-        assert payload["status"] == "claude_rate_limit"
-        assert payload["subcode"] == expected_subcode
+        assert payload.get("status")  == "claude_rate_limit",  f"{test_id}: status mismatch"
+        assert payload.get("subcode") == expected_subcode,     f"{test_id}: subcode mismatch"
+        assert "Claude rate limit reached" in payload.get("message", ""), \
+            f"{test_id}: message must mention rate limit"
 
 
 @pytest.mark.parametrize(
@@ -1043,6 +1066,81 @@ def test_context_limit_prose_in_error_with_isapierrormessage_triggers(
     assert payload["status"] == "context_limit"
     assert payload["subcode"] == "CLAUDE_CONTEXT_LIMIT"
     assert "Prompt is too long" in payload["message"]
+
+
+def test_rate_limit_event_malformed_info_null(tmp_path: Path) -> None:
+    """RL-12: rate_limit_info: null → predicate must not fire."""
+    payload = run_detect(
+        tmp_path,
+        jsonl=[{"type": "rate_limit_event", "rate_limit_info": None}],
+    )
+    assert payload == {}
+
+
+def test_rate_limit_event_malformed_info_missing(tmp_path: Path) -> None:
+    """RL-13: rate_limit_event with no rate_limit_info key → predicate must not fire."""
+    payload = run_detect(
+        tmp_path,
+        jsonl=[{"type": "rate_limit_event"}],
+    )
+    assert payload == {}
+
+
+def test_overage_rejected_message_sources_from_event(tmp_path: Path) -> None:
+    """RL-08 detail: when overage is actually rejected, the message must mention rate limit
+    and include the rate event metadata (rateLimitType, resetsAt) — sourced via rate_event_message."""
+    payload = run_detect(
+        tmp_path,
+        jsonl=[{
+            "type": "rate_limit_event",
+            "rate_limit_info": {
+                "status": "allowed",
+                "overageStatus": "rejected",
+                "isUsingOverage": True,
+                "rateLimitType": "five_hour",
+                "resetsAt": 1778266200,
+            },
+        }],
+    )
+    assert payload["subcode"] == "CLAUDE_RATE_LIMIT"
+    assert "five_hour" in payload["message"]
+    assert "1778266200" in payload["message"]
+
+
+def test_rl_x2_isapierrormessage_rate_limit_error_without_429(tmp_path: Path) -> None:
+    """RL-X2: isApiErrorMessage + error:"rate_limit_error" without apiErrorStatus:429.
+
+    The isApiErrorMessage branch of rate_limit_signal must fire on the bare
+    error string alone, independently of whether apiErrorStatus:429 is present.
+    This isolates the error_string pattern match inside the isApiErrorMessage
+    envelope from the status_429 branch.
+    """
+    payload = run_detect(
+        tmp_path,
+        jsonl=[{
+            "type": "assistant",
+            "isApiErrorMessage": True,
+            "error": "rate_limit_error",
+        }],
+    )
+    assert payload["status"] == "claude_rate_limit"
+    assert payload["subcode"] == "CLAUDE_RATE_LIMIT"
+
+
+def test_rl_x4_bare_error_string_rate_limit(tmp_path: Path) -> None:
+    """RL-X4: bare {"error":"rate_limit"} entry with no envelope flags.
+
+    The error_string branch of rate_limit_signal (matching ^rate_limit(_error)?$)
+    must fire on a JSONL entry that carries only the error key, with no
+    isApiErrorMessage, is_error, or apiErrorStatus fields present.
+    This isolates the error_string branch standalone.
+    """
+    payload = run_detect(
+        tmp_path,
+        jsonl=[{"error": "rate_limit"}],
+    )
+    assert payload["status"] == "claude_rate_limit"
+    assert payload["subcode"] == "CLAUDE_RATE_LIMIT"
 
 
 def test_rename_orphan_output_on_start_skips_when_state_workdir_mismatches(

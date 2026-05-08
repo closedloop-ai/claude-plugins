@@ -233,27 +233,8 @@ detect_claude_terminal_failure() {
       def clamp_message:
         if length > 900 then .[0:900] + "..." else . end;
 
-      def user_texts:
-        [
-          (.result? | strings),
-          (.message.content[]?.text? | strings),
-          (.message.content? | strings)
-        ];
-
       def error_string:
         if (.error? | type) == "string" then .error else "" end;
-
-      def error_texts:
-        [error_string | select(length > 0)];
-
-      def text_blob:
-        (user_texts + error_texts) | join("\n");
-
-      def first_user_text($entries):
-        [$entries[] | user_texts[] | select(length > 0)] | .[0] // "";
-
-      def first_error_text($entries):
-        [$entries[] | error_texts[] | select(length > 0)] | .[0] // "";
 
       def rate_event_message($entries):
         [
@@ -270,32 +251,27 @@ detect_claude_terminal_failure() {
         ((.api_error_status? | tostring) == "429")
         or ((.apiErrorStatus? | tostring) == "429");
 
-      def error_shaped:
-        (.is_error? == true)
-        or (.isApiErrorMessage? == true)
-        or (.subtype? == "error")
-        or ((error_string | length) > 0);
+      def envelope_text_match(pat):
+        ((.is_error? == true) and ((.result? | strings | test(pat; "i")) // false))
+        or ((.isApiErrorMessage? == true) and ((.error? | strings | test(pat; "i")) // false));
 
       def rate_limit_signal:
         ((.type? == "rate_limit_event") and (
           (.rate_limit_info? | type) == "object"
           and (
             ((.rate_limit_info.status? // null) != null and (.rate_limit_info.status? != "allowed"))
-            or ((.rate_limit_info.overageStatus? // null) != null and (.rate_limit_info.overageStatus? != "allowed"))
+            or ((.rate_limit_info.isUsingOverage? == true) and ((.rate_limit_info.overageStatus? // null) != null and (.rate_limit_info.overageStatus? != "allowed")))
           )
         ))
         or (error_string | ascii_downcase | test("^rate_limit(_error)?$"))
         or status_429
-        or ((.is_error? == true) and ((.result? | strings | test("you.?ve hit your limit|usage limit|rate[_ -]?limit|rate limit reached"; "i")) // false))
-        or ((.isApiErrorMessage? == true) and ((.error? | strings | test("you.?ve hit your limit|usage limit|rate[_ -]?limit|rate limit reached"; "i")) // false));
+        or envelope_text_match("you.?ve hit your limit|usage limit|rate[_ -]?limit|rate limit reached");
 
       def context_limit_signal:
-        ((.is_error? == true) and ((.result? | strings | test("prompt is too long|exceed context limit|context limit reached|conversation too long"; "i")) // false))
-        or ((.isApiErrorMessage? == true) and ((.error? | strings | test("prompt is too long|exceed context limit|context limit reached|conversation too long"; "i")) // false));
+        envelope_text_match("prompt is too long|exceed context limit|context limit reached|conversation too long");
 
       def auth_challenge_signal:
-        ((.is_error? == true) and ((.result? | strings | test("authentication_error|invalid bearer token|billing_error|permission_error|overloaded_error|api overloaded|unauthorized|token.*expired|not authenticated|please log in|login required"; "i")) // false))
-        or ((.isApiErrorMessage? == true) and ((.error? | strings | test("authentication_error|invalid bearer token|billing_error|permission_error|overloaded_error|api overloaded|unauthorized|token.*expired|not authenticated|please log in|login required"; "i")) // false));
+        envelope_text_match("authentication_error|invalid bearer token|billing_error|permission_error|overloaded_error|api overloaded|unauthorized|token.*expired|not authenticated|please log in|login required");
 
       def entry_message:
         ((.result? | strings) // (.error? | strings) // "");

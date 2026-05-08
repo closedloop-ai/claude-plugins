@@ -68,12 +68,15 @@ def test_ignores_repo_local_legacy_session_file(
     assert outcome.score == 0.5
 
 
-def test_reduce_failures_reads_runs_log_from_workdir_root(tmp_path: Path) -> None:
+def test_reduce_failures_reads_runs_log_from_workdir_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     workdir = tmp_path / "workdir"
     workdir.mkdir()
     (workdir / "runs.log").write_text(
         "run-1|2026-05-05T00:00:00Z|reduce-failures|2|completed|plan_execute|session-1\n"
     )
+
+    # Clear CLOSEDLOOP_ITERATION env var to isolate test of runs.log reading
+    monkeypatch.delenv("CLOSEDLOOP_ITERATION", raising=False)
 
     outcome = evaluate_reduce_failures(
         GoalConfig(name="reduce-failures", success_criteria={"target": 3}),
