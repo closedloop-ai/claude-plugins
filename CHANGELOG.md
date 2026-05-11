@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.15
+
+#### Changed
+- `pre-tool-use-hook.sh` now falls back to `tool_input.description` when `subagent_type` is empty, so every Agent spawn gets a meaningful label in Datadog telemetry instead of a blank `plannedSubagentType`.
+- Orchestrator prompt (`prompt.md`) annotates all unnamed haiku/sonnet subagent spawns with consistent `description` labels: `plan-editor`, `critic:{critic_name}`, `build-fixer`, `dt-telemetry-writer`, `visual-qa-support`.
+
+#### Added
+- Tests for the description-fallback behavior (Test 5: fallback when subagent_type is empty, Test 6: subagent_type takes precedence over description).
+
 ### code v1.11.14
 
 #### Fixed
