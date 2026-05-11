@@ -8,7 +8,7 @@ semantic consistency check (Step 6: storage/query alignment, task/architecture
 contradictions) requires LLM reasoning and is left to the agent.
 
 Usage:
-    python3 validate_plan.py <WORKDIR> [--schema-path <path>]
+    python3 validate_plan.py <WORKDIR> [--auto-sync] [--schema-path <path>]
 
 Output (JSON to stdout):
     Same format as plan-validator agent output.
@@ -58,6 +58,15 @@ MANUAL_TASK_RE = re.compile(r"^\s*- \[ \] \*\*T-(\d+\.\d+)\*\* \[MANUAL\]:")
 OPEN_Q_RE = re.compile(r"^\s*- \[ \] \*{0,2}(Q-\d{3})\*{0,2}:")
 # Answered question line (supports optional bold markers: **Q-001** or Q-001)
 ANSWERED_Q_RE = re.compile(r"^\s*- \[x\] \*{0,2}(Q-\d{3})\*{0,2}:")
+# Extract answer text from a checked question line.
+# Matches **Answer: text**, *Answer: text*, or trailing Answer: text
+ANSWER_TEXT_RE = re.compile(r"\*{1,2}\s*Answer:\s*(.+?)\s*\*{1,2}\s*$")
+ANSWER_TEXT_PLAIN_RE = re.compile(r"(?:^|[\].])\s*Answer:\s*(.+?)\s*$|\bAnswer:\s*(.+?)\s*$")
+# A-### keyed answer line (flexible: optional list marker, optional checkbox)
+A_ANSWER_RE = re.compile(r"^\s*-?\s*\[?\s*[x ]?\s*\]?\s*A-(\d{3}):\s*(.+)")
+# Metadata markers to strip when extracting inline comments
+BLOCKING_TAG_RE = re.compile(r"\(BLOCKING\s+T-\d+\.\d+\)")
+RECOMMENDED_TAG_RE = re.compile(r"\[Recommended:[^\]]*\]")
 # AC table row pattern
 AC_TABLE_ROW_RE = re.compile(r"\| (AC-\d{3}) \|")
 # Gap content pattern
@@ -70,6 +79,136 @@ AC_ID_RE = re.compile(r"^AC-\d{3}$")
 Q_ID_RE = re.compile(r"^Q-\d{3}$")
 # Gap ID pattern
 GAP_ID_RE = re.compile(r"^GAP-\d{3}$")
+
+
+def _extract_answer(line: str, q_obj: dict, a_answers: dict[str, str]) -> str:
+    """Extract answer text from a question line using multiple strategies.
+
+    Tries, in order:
+    1. Bold/italic ``**Answer: text**`` or ``*Answer: text*``
+    2. Plain ``Answer: text`` (after ``]`` or ``.``)
+    3. ``A-###`` keyed answer line (pre-scanned)
+    4. Inline comment — text appended after the known question, stripped of metadata
+    5. ``recommendedAnswer`` from the JSON entry
+    """
+    qid = q_obj.get("id", "")
+
+    # 1. Bold/italic
+    m = ANSWER_TEXT_RE.search(line)
+    if m:
+        return m.group(1).strip()
+
+    # 2. Plain prefix (group 1 for ]/. anchor, group 2 for \bAnswer: anywhere)
+    m = ANSWER_TEXT_PLAIN_RE.search(line)
+    if m:
+        return (m.group(1) or m.group(2)).strip()
+
+    # 3. A-### keyed answer
+    if qid in a_answers:
+        return a_answers[qid]
+
+    # 4. Inline comment: find text after the known question, strip metadata
+    question_text = q_obj.get("question", "")
+    if question_text:
+        idx = line.find(question_text)
+        if idx >= 0:
+            after = line[idx + len(question_text) :]
+            after = BLOCKING_TAG_RE.sub("", after)
+            after = RECOMMENDED_TAG_RE.sub("", after)
+            after = after.strip().strip("*").strip()
+            if after:
+                return after
+
+    # 5. recommendedAnswer fallback
+    return q_obj.get("recommendedAnswer") or ""
+
+
+def auto_sync_markdown_answers(data: dict, content: str) -> tuple[dict, list[str]]:
+    """Migrate questions answered in markdown to the answeredQuestions JSON array.
+
+    Handles three answer formats:
+
+    1. **Inline with prefix** — ``**Answer: text**``, ``*Answer: text*``, or
+       plain ``Answer: text`` on the question line.
+    2. **A-### keyed answer** — a separate ``A-001: answer text`` line that
+       corresponds to ``Q-001``.
+    3. **Inline comment** — extra text appended after the known question text
+       on the question line (no ``Answer:`` prefix).
+
+    The question checkbox does not need to be checked for any format.  When
+    a question is migrated from an unchecked ``[ ]`` line, the function
+    updates the markdown content to check it automatically.
+
+    Returns ``(data, migrated_ids)`` where *migrated_ids* lists the question
+    IDs that were moved.  The caller is responsible for writing the modified
+    *data* back to disk.
+    """
+    migrated: list[str] = []
+
+    open_q_by_id: dict[str, dict] = {}
+    for q in data.get("openQuestions", []):
+        if isinstance(q, dict) and "id" in q:
+            open_q_by_id[q["id"]] = q
+
+    if not open_q_by_id:
+        return data, migrated
+
+    # Pre-scan for A-### answer lines
+    a_answers: dict[str, str] = {}
+    for line in content.splitlines():
+        m = A_ANSWER_RE.match(line)
+        if m:
+            a_answers[f"Q-{m.group(1)}"] = m.group(2).strip()
+
+    # Track unchecked questions that need their checkbox flipped in content
+    needs_check: set[str] = set()
+
+    for line in content.splitlines():
+        # Checked question lines
+        m = ANSWERED_Q_RE.match(line)
+        if m:
+            qid = m.group(1)
+            if qid not in open_q_by_id:
+                continue
+            answer_text = _extract_answer(line, open_q_by_id[qid], a_answers)
+            if not answer_text:
+                continue
+            q_obj = open_q_by_id.pop(qid)
+            data["openQuestions"] = [q for q in data["openQuestions"] if not (isinstance(q, dict) and q.get("id") == qid)]
+            data.setdefault("answeredQuestions", []).append(
+                {"id": qid, "question": q_obj.get("question", ""), "answer": answer_text}
+            )
+            migrated.append(qid)
+            continue
+
+        # Unchecked question lines — migrate if answer text is extractable
+        m = OPEN_Q_RE.match(line)
+        if m:
+            qid = m.group(1)
+            if qid not in open_q_by_id:
+                continue
+            answer_text = _extract_answer(line, open_q_by_id[qid], a_answers)
+            if not answer_text:
+                continue
+            q_obj = open_q_by_id.pop(qid)
+            data["openQuestions"] = [q for q in data["openQuestions"] if not (isinstance(q, dict) and q.get("id") == qid)]
+            data.setdefault("answeredQuestions", []).append(
+                {"id": qid, "question": q_obj.get("question", ""), "answer": answer_text}
+            )
+            migrated.append(qid)
+            needs_check.add(qid)
+
+    # Update markdown content: flip checkboxes for all questions migrated from unchecked lines
+    if needs_check:
+        updated_lines: list[str] = []
+        for line in content.splitlines():
+            m = OPEN_Q_RE.match(line)
+            if m and m.group(1) in needs_check:
+                line = line.replace("- [ ]", "- [x]", 1)
+            updated_lines.append(line)
+        data["content"] = "\n".join(updated_lines)
+
+    return data, migrated
 
 
 def empty_result(status: str, issues: list[str] | None = None) -> dict:
@@ -381,10 +520,11 @@ def extract_data(data: dict) -> dict:
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print("Usage: validate_plan.py <WORKDIR> [--schema-path <path>]", file=sys.stderr)
+        print("Usage: validate_plan.py <WORKDIR> [--auto-sync] [--schema-path <path>]", file=sys.stderr)
         sys.exit(1)
 
     workdir = sys.argv[1]
+    auto_sync = "--auto-sync" in sys.argv
     plan_path = os.path.join(workdir, "plan.json")
 
     # Check file existence
@@ -408,6 +548,18 @@ def main() -> None:
     if not isinstance(data, dict):
         print(json.dumps(empty_result("INVALID_JSON", ["plan.json root must be an object"])))
         return
+
+    # Auto-sync: migrate markdown-answered questions to JSON before validation
+    if auto_sync and isinstance(data.get("content"), str):
+        data, migrated = auto_sync_markdown_answers(data, data["content"])
+        if migrated:
+            with open(plan_path, "w") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+            print(
+                f"Auto-synced {len(migrated)} answered question(s) from markdown: {', '.join(migrated)}",
+                file=sys.stderr,
+            )
 
     # Step 1: Schema field validation
     all_issues: list[str] = []
