@@ -687,7 +687,10 @@ def test_write_runs_log_entry_uses_workdir_root(tmp_path: Path) -> None:
     assert (tmp_path / "runs.log").exists()
     fields = (tmp_path / "runs.log").read_text().strip().split("|")
     assert fields[0] == "run-root-log"
-    assert fields[5] == "self_learning"
+    # FEA-936 fix 1: the default for write_runs_log_entry when neither
+    # LAST_CLAUDE_COMMAND nor CLOSEDLOOP_COMMAND is set is `plan_execute`,
+    # not the historical `self_learning` (which overcounted fresh-start Loops).
+    assert fields[5] == "plan_execute"
     assert fields[6] == ""
     assert not (tmp_path / ".learnings" / "runs.log").exists()
 
