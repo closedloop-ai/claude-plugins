@@ -1,25 +1,17 @@
 """Tests for auto_sync_markdown_answers() in validate_plan.py."""
 import copy
 
+from conftest import make_minimal_data
 from validate_plan import auto_sync_markdown_answers
+
+_DEFAULT_QUESTION = {"id": "Q-001", "question": "What model?", "blockingTask": "T-1.1", "recommendedAnswer": None}
 
 
 def _base_data(**overrides: object) -> dict:
     """Return a plan dict with one open question and matching content."""
-    data: dict = {
-        "content": "",
-        "acceptanceCriteria": [],
-        "pendingTasks": [],
-        "completedTasks": [],
-        "openQuestions": [
-            {"id": "Q-001", "question": "What model?", "blockingTask": "T-1.1", "recommendedAnswer": None},
-        ],
-        "answeredQuestions": [],
-        "gaps": [],
-        "manualTasks": [],
-    }
-    data.update(overrides)
-    return data
+    if "openQuestions" not in overrides:
+        overrides["openQuestions"] = [copy.deepcopy(_DEFAULT_QUESTION)]
+    return make_minimal_data(**overrides)
 
 
 # --- Scenario 2: Inline answer with prefix ---
