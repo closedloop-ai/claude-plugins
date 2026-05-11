@@ -39,7 +39,7 @@ eval "$(jq -r '
     @sh "AGENT_ID=\(.agent_id // empty)",
     @sh "TOOL_USE_ID_RAW=\(.tool_use_id // empty)",
     @sh "TOOL_CALL_ID=\(.tool_call_id // empty)",
-    @sh "PLANNED_SUBAGENT_TYPE=\(.tool_input.subagent_type // empty)"
+    @sh "PLANNED_SUBAGENT_TYPE=\(.tool_input.subagent_type // .tool_input.description // empty)"
 ' <<< "$INPUT")"
 
 # Resolve a tool-call correlation id. Prefer `tool_use_id` (Claude Code's documented

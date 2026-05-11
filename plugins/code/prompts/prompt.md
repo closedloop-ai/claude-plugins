@@ -14,6 +14,8 @@ You coordinate autonomous software development by launching subagents. You do NO
 **WRONG:** Edit plan.json to mark task complete → context bloated. **RIGHT:** Launch haiku subagent to make the edit.
 
 **WORKDIR rule:** In subagent prompts, always use the literal resolved path (e.g., `WORKDIR=/Users/dan/project/.closedloop-ai/work`), NEVER the string `$CLOSEDLOOP_WORKDIR`.
+
+**Subagent naming rule:** Every Agent/Task call MUST include a specific `description` field for telemetry. Named agents (@code:plan-writer, etc.) get their type automatically. For unnamed agents (haiku/sonnet subagents), use a consistent label from: `"plan-editor"`, `"critic:{critic_name}"`, `"build-fixer"`, `"dt-telemetry-writer"`, `"visual-qa-support"`. The description becomes the agent's identity in dashboards when no subagent_type is set.
 </orchestrator_identity>
 
 ## Available Skills
@@ -124,7 +126,7 @@ Here are the key phases you must complete:
   - First, check if plan.json contains valid JSON: `python3 -m json.tool "$CLOSEDLOOP_WORKDIR/plan.json" > /dev/null 2>&1`
   - If plan.json is NOT valid JSON (exit code non-zero — raw markdown written by an older gateway): Run `mv "$CLOSEDLOOP_WORKDIR/plan.json" "$CLOSEDLOOP_WORKDIR/plan-source.md"` to rename it. Set `CLOSEDLOOP_PLAN_FILE="$CLOSEDLOOP_WORKDIR/plan-source.md"`. Set `plan_was_imported = true`. Launch @code:plan-importer with `WORKDIR`. After completion, activate `code:plan-validate` skill. Proceed to Phase 1.1.
   - If plan.json IS valid JSON: Activate `code:plan-validate` skill
-    - `EMPTY_FILE`/`FORMAT_ISSUES`: Fix via haiku subagent (missing checkboxes → add `[ ]`) or @code:plan-writer, then re-validate
+    - `EMPTY_FILE`/`FORMAT_ISSUES`: Fix via haiku subagent (description: `"plan-editor"`, missing checkboxes → add `[ ]`) or @code:plan-writer, then re-validate
     - `VALID`: Proceed to Phase 1.1
 
 **PHASE 1.1: PLAN REVIEW CHECKPOINT**
@@ -147,8 +149,8 @@ Here are the key phases you must complete:
 
 - Skip if `has_addressed_gaps` is false
 - Launch @code:plan-writer with `WORKDIR` to incorporate `addressed_gaps` (each has `id`, `text`, `resolution`)
-- Then haiku subagent to reset gaps (`addressed: false`, clear `resolution`)
-- Then haiku subagent to regenerate plan.md from plan.json `content` field
+- Then haiku subagent (description: `"plan-editor"`) to reset gaps (`addressed: false`, clear `resolution`)
+- Then haiku subagent (description: `"plan-editor"`) to regenerate plan.md from plan.json `content` field
 
 **PHASE 1.3: SIMPLE MODE EVALUATION**
 
@@ -181,7 +183,7 @@ Here are the key phases you must complete:
 
 - Activate `code:critic-cache` skill. On `CACHE_HIT`: skip to Phase 2.6. On `CACHE_MISS`: continue.
 - `mkdir -p $CLOSEDLOOP_WORKDIR/reviews`
-- Launch Task() **in parallel** for each critic: "WORKDIR=$CLOSEDLOOP_WORKDIR. Review plan as {critic_name} specialist. Read plan.md, investigation-log.md, PRD. Write to reviews/{critic_name}.review.json with findings: {severity, description, recommendation, affectedTasks}."
+- Launch Task() **in parallel** for each critic (description: `"critic:{critic_name}"`): "WORKDIR=$CLOSEDLOOP_WORKDIR. Review plan as {critic_name} specialist. Read plan.md, investigation-log.md, PRD. Write to reviews/{critic_name}.review.json with findings: {severity, description, recommendation, affectedTasks}."
 - If zero reviews written: skip to Phase 3. Otherwise: stamp cache (`bash "$CLAUDE_PLUGIN_ROOT/scripts/stamp_critic_cache.sh" "$CLOSEDLOOP_WORKDIR"`), proceed to Phase 2.6
 
 **PHASE 2.6: PLAN REFINEMENT** (only if Phase 2.5 produced reviews)
@@ -212,7 +214,7 @@ Here are the key phases you must complete:
        - After implementation-subagent returns, check its output:
          - If output contains `IMPLEMENTATION_VERIFIED` or `BLOCKED`: proceed to step 4
          - If output does NOT contain either (max iterations exhausted): log warning "implementation-subagent did not verify T-X.Y", do NOT mark `[x]`, continue to next task
-  4. After task is verified/implemented (and implementation-subagent output passed the check above), launch a **haiku subagent** to mark `- [x]` in the plan. Prompt: "In $CLOSEDLOOP_WORKDIR/plan.json, update the content field to change task T-X.Y from '- [ ]' to '- [x]', and move the task from pendingTasks to completedTasks array. Then write the updated `content` field value to $CLOSEDLOOP_WORKDIR/plan.md"
+  4. After task is verified/implemented (and implementation-subagent output passed the check above), launch a **haiku subagent** (description: `"plan-editor"`) to mark `- [x]` in the plan. Prompt: "In $CLOSEDLOOP_WORKDIR/plan.json, update the content field to change task T-X.Y from '- [ ]' to '- [x]', and move the task from pendingTasks to completedTasks array. Then write the updated `content` field value to $CLOSEDLOOP_WORKDIR/plan.md"
 - Do NOT fix errors outside the implementation loop — the subagent self-verifies (up to 4 attempts). Let Phase 5 catch remaining issues.
 - **Optional:** For complex tasks, use `code:iterative-retrieval` skill when launching implementation/verification subagents to refine incomplete responses.
 - After processing all tasks, re-activate `code:plan-validate` skill to confirm no `pending_tasks` remain
@@ -235,7 +237,7 @@ Here are the key phases you must complete:
    - `VALIDATION_PASSED`: Stamp the build cache (`bash "$CLAUDE_PLUGIN_ROOT/skills/build-status-cache/scripts/check_build_cache.sh" "$CLOSEDLOOP_WORKDIR" stamp`), proceed to Phase 6
    - `NO_VALIDATION`: Proceed to Phase 6
    - `VALIDATION_FAILED`:
-     a. Delegate fixes to subagents (test failures → @test-engineer, other → sonnet subagent)
+     a. Delegate fixes to subagents (test failures → @test-engineer, other → sonnet subagent with description: `"build-fixer"`)
      b. Re-run @code:build-validator. Repeat until VALIDATION_PASSED (max 20 attempts)
      c. If still failing after 20 attempts: Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5: Testing and Validation", reason="Validation failed after 20 attempts", file=null, command="/code:code $ARGUMENTS". Tell the user: "Validation failed after 20 attempts. Fix issues manually and run `/code:code $ARGUMENTS` to continue."
 
@@ -255,22 +257,22 @@ NOTE: These are the only two valid skip conditions. If neither skip applies, Pha
 
 If `startSha` is `""` in orchestrator working memory (no git context or resumed run predating this feature): log warning "startSha unavailable, skipping Phase 5.5", mark `completed`, skip to Phase 6.
 
-If `decisionTablePath` is `""` (Phase 2.7 generation failed or pointer not written): set `dt_status = "verification_failed"`. Launch haiku subagent: "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'verification_failed' if the field exists." Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5.5: Behavioral Verification", reason="Decision-table artifact path is missing from plan.json. Phase 2.7 generation appears to have failed.", file="$CLOSEDLOOP_WORKDIR/plan.json", command="/code:code $ARGUMENTS". Tell the user: "Phase 2.7 did not write a decision-table pointer into plan.json. Review plan.json and re-run /code:code $ARGUMENTS to resume." **HARD STOP.**
+If `decisionTablePath` is `""` (Phase 2.7 generation failed or pointer not written): set `dt_status = "verification_failed"`. Launch haiku subagent (description: `"plan-editor"`): "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'verification_failed' if the field exists." Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5.5: Behavioral Verification", reason="Decision-table artifact path is missing from plan.json. Phase 2.7 generation appears to have failed.", file="$CLOSEDLOOP_WORKDIR/plan.json", command="/code:code $ARGUMENTS". Tell the user: "Phase 2.7 did not write a decision-table pointer into plan.json. Review plan.json and re-run /code:code $ARGUMENTS to resume." **HARD STOP.**
 
 **Verification loop:**
-1. Increment `dt_attempt`. **Step 1 is the sole site that increments `dt_attempt` -- no other step may increment it.** Then check: if `dt_attempt > dt_max_attempts`, set `dt_status = "verification_failed"`. Launch haiku subagent: "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'verification_failed'." Determine the escalation reason based on the previous iteration's outcome (tracked in `dt_last_failure_reason`, initialized to `""`): if `dt_last_failure_reason == "unparseable"`, use reason=`behavior-verifier output unparseable after $dt_max_attempts attempts`; otherwise use reason=`Behavioral drift detected after $dt_max_attempts verification attempts`. Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5.5: Behavioral Verification", reason=<determined above>, file="$CLOSEDLOOP_WORKDIR/$decisionTablePath", command="/code:code $ARGUMENTS". **HARD STOP.**
+1. Increment `dt_attempt`. **Step 1 is the sole site that increments `dt_attempt` -- no other step may increment it.** Then check: if `dt_attempt > dt_max_attempts`, set `dt_status = "verification_failed"`. Launch haiku subagent (description: `"plan-editor"`): "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'verification_failed'." Determine the escalation reason based on the previous iteration's outcome (tracked in `dt_last_failure_reason`, initialized to `""`): if `dt_last_failure_reason == "unparseable"`, use reason=`behavior-verifier output unparseable after $dt_max_attempts attempts`; otherwise use reason=`Behavioral drift detected after $dt_max_attempts verification attempts`. Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5.5: Behavioral Verification", reason=<determined above>, file="$CLOSEDLOOP_WORKDIR/$decisionTablePath", command="/code:code $ARGUMENTS". **HARD STOP.**
 2. Launch @code:behavior-verifier with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. DECISION_TABLE_PATH=$CLOSEDLOOP_WORKDIR/$decisionTablePath. START_SHA=$startSha. Verify final code against the decision-table artifact. Report only; do not fix code or tests." Increment `dt_verifier_invocations` by 1.
 3. Parse verifier output:
    - If `ALIGNED` (first line of output is `ALIGNED`):
-     - If `dt_any_clarifications = true`: set `dt_status = "aligned_with_clarifications"`. Launch haiku subagent: "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'aligned_with_clarifications'."
-     - Otherwise: set `dt_status = "aligned"`. Launch haiku subagent: "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'aligned'."
+     - If `dt_any_clarifications = true`: set `dt_status = "aligned_with_clarifications"`. Launch haiku subagent (description: `"plan-editor"`): "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'aligned_with_clarifications'."
+     - Otherwise: set `dt_status = "aligned"`. Launch haiku subagent (description: `"plan-editor"`): "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'aligned'."
      - Run telemetry emit (see below), then mark Phase 5.5 `completed`, proceed to Phase 6.
    - If `MISALIGNED` (first line of output is `MISALIGNED`):
      - Extract the `<drift_rows>...</drift_rows>` JSON block from the verifier output. Parse the JSON array. **If the block is missing, the JSON is malformed, or any row has an unknown `kind` value not in `{code_drift, test_drift, plan_ambiguity}`, treat as a verifier parse failure**: set `dt_last_failure_reason = "unparseable"`, increment `dt_parse_failures` by 1, log a warning, do NOT route any drift rows, and immediately loop back to step 1. Do NOT increment `dt_attempt` here -- Step 1 owns all increments.
      - If the block is parseable, set `dt_last_failure_reason = "drift"`. For each JSON object in the `drift_rows` array, increment `dt_drift_kind_counts[kind]` by 1 and `dt_fixes_attempted` by 1, then route by the `kind` field:
        - `code_drift`: launch @code:implementation-subagent with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. Implement missing behavioral requirement. Area: {row.area}. Missing: {row.description}. Source file hint: {row.source_file}."
        - `test_drift`: launch @test-engineer with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. Write tests for missing scenario. Area: {row.area}. Missing test scenario: {row.description}. Source file hint: {row.source_file}. Write the test in the appropriate test file for this area." If `row.source_file` points to a non-test file (indicating production code changes are also needed), also launch @code:implementation-subagent with the production-code requirement.
-       - `plan_ambiguity`: set `dt_any_clarifications = true`. Launch a haiku subagent to append a `Plan Clarifications` note to the decision-table artifact at "$CLOSEDLOOP_WORKDIR/$decisionTablePath" for the following ambiguity: {row.description}. Area: {row.area}. The haiku must NOT modify the `Current Code` or `Intended Change` sections — append only. Quote all paths in shell commands.
+       - `plan_ambiguity`: set `dt_any_clarifications = true`. Launch a haiku subagent (description: `"plan-editor"`) to append a `Plan Clarifications` note to the decision-table artifact at "$CLOSEDLOOP_WORKDIR/$decisionTablePath" for the following ambiguity: {row.description}. Area: {row.area}. The haiku must NOT modify the `Current Code` or `Intended Change` sections — append only. Quote all paths in shell commands.
      - After all row handlers complete, loop back to step 1.
 
 **State tracking:** Update state.json at start of Phase 5.5 and after each attempt with `{"phase": "Phase 5.5: Behavioral Verification", "status": "IN_PROGRESS", "startSha": "$startSha", "attempt": dt_attempt, "timestamp": "..."}`.
@@ -279,7 +281,7 @@ If `decisionTablePath` is `""` (Phase 2.7 generation failed or pointer not writt
 
 Compute `dt_phase_duration_ms = $(($(date +%s%N | cut -c1-13) - dt_phase_start_epoch_ms))` (or seconds-precision fallback).
 
-Launch a haiku subagent with prompt:
+Launch a haiku subagent (description: `"dt-telemetry-writer"`) with prompt:
 "WORKDIR=$CLOSEDLOOP_WORKDIR. Append a single JSON line to $CLOSEDLOOP_WORKDIR/decision-table-verifications.jsonl with the following exact fields and values: {\"timestamp\":\"<dt_phase_start_iso>\", \"workdir\":\"$CLOSEDLOOP_WORKDIR\", \"decision_table_path\":\"<decision_table_path from plan-validate>\", \"final_status\":\"<dt_status>\", \"iterations\":<dt_attempt>, \"drift_kind_counts\":<dt_drift_kind_counts>, \"fixes_attempted\":<dt_fixes_attempted>, \"parse_failures\":<dt_parse_failures>, \"verifier_invocations\":<dt_verifier_invocations>, \"phase_duration_ms\":<dt_phase_duration_ms>}. Use mkdir -p on the parent directory first. Use a shell append (>>) so prior lines are preserved. Do NOT pretty-print; one compact line. The file is JSONL, not JSON — no enclosing array, one object per line."
 
 The haiku writes one line and exits. The orchestrator does NOT read the file back. Failure mode: if the haiku append fails for any reason, log a warning and continue — telemetry is non-blocking. Do NOT block phase exit on telemetry failure, do NOT retry, do NOT escalate.
@@ -292,7 +294,7 @@ The haiku writes one line and exits. The orchestrator does NOT read the file bac
 - Launch @code:visual-qa-subagent with `WORKDIR=$CLOSEDLOOP_WORKDIR` and detected URL/target
 - Handle outcomes:
   - `AUTH_REQUIRED` / not running → skip to Phase 7
-  - `INCOMPLETE_DOCS` → store the visual-qa-subagent's `agent_id` from the Task result. Launch a haiku subagent to update `$CLOSEDLOOP_WORKDIR/visual-requirements.md` with the missing docs. Then use `SendMessage(to=<stored agent_id>, ...)` to continue the existing visual-qa-subagent — do NOT launch a fresh Task. Wait for `<task-notification>` before proceeding.
+  - `INCOMPLETE_DOCS` → store the visual-qa-subagent's `agent_id` from the Task result. Launch a haiku subagent (description: `"visual-qa-support"`) to update `$CLOSEDLOOP_WORKDIR/visual-requirements.md` with the missing docs. Then use `SendMessage(to=<stored agent_id>, ...)` to continue the existing visual-qa-subagent — do NOT launch a fresh Task. Wait for `<task-notification>` before proceeding.
   - `BLOCKED` → store the visual-qa-subagent's `agent_id` from the Task result. Delegate the fix to an appropriate subagent (e.g., implementation-subagent or build-validator). Once the blocker is resolved, use `SendMessage(to=<stored agent_id>, ...)` to continue the existing visual-qa-subagent — do NOT launch a fresh Task. Wait for `<task-notification>` before proceeding.
   - `SUCCESS` → Phase 7
   - `FAILURE` → fix and re-run

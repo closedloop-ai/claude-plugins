@@ -253,6 +253,90 @@ echo "Test 4: non-Agent tool does not emit a spawn event"
     rm -rf "$tmpdir"
 }
 
+# ------------------------------------------------------------------
+# Test 5: description fallback when subagent_type is empty
+# ------------------------------------------------------------------
+echo "Test 5: planned_subagent_type falls back to description when subagent_type is empty"
+{
+    read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env)"
+
+    tool_use_id="tool-use-id-desc-fallback-test"
+    agent_id="agent-spawn-05"
+    run_id="run-desc-fallback"
+    command="feat"
+    iteration=1
+    description="plan-editor"
+
+    # Build payload with empty subagent_type but a description field
+    mock_input=$(jq -n -c \
+        --arg session_id "$session_id" \
+        --arg cwd "$cwd" \
+        --arg tool_use_id "$tool_use_id" \
+        --arg agent_id "$agent_id" \
+        --arg description "$description" \
+        '{session_id:$session_id,cwd:$cwd,tool_name:"Agent",agent_id:$agent_id,tool_use_id:$tool_use_id,tool_input:{description:$description}}')
+
+    perf_file="$workdir/perf.jsonl"
+
+    echo "$mock_input" | env \
+        CLOSEDLOOP_RUN_ID="$run_id" \
+        CLOSEDLOOP_COMMAND="$command" \
+        CLOSEDLOOP_ITERATION="$iteration" \
+        bash "$PRE_HOOK"
+
+    if [[ -f "$perf_file" ]]; then
+        spawn_line=$(tail -1 "$perf_file")
+        assert_field_equals "planned_subagent_type from description fallback" "$spawn_line" "planned_subagent_type" "$description"
+    else
+        fail "planned_subagent_type from description fallback" "perf.jsonl not created"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+# ------------------------------------------------------------------
+# Test 6: subagent_type takes precedence over description
+# ------------------------------------------------------------------
+echo "Test 6: subagent_type takes precedence over description"
+{
+    read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env)"
+
+    tool_use_id="tool-use-id-precedence-test"
+    agent_id="agent-spawn-06"
+    run_id="run-precedence"
+    command="feat"
+    iteration=0
+    subagent_type="code:plan-writer"
+    description="some-description"
+
+    # Build payload with BOTH subagent_type and description
+    mock_input=$(jq -n -c \
+        --arg session_id "$session_id" \
+        --arg cwd "$cwd" \
+        --arg tool_use_id "$tool_use_id" \
+        --arg agent_id "$agent_id" \
+        --arg subagent_type "$subagent_type" \
+        --arg description "$description" \
+        '{session_id:$session_id,cwd:$cwd,tool_name:"Agent",agent_id:$agent_id,tool_use_id:$tool_use_id,tool_input:{subagent_type:$subagent_type,description:$description}}')
+
+    perf_file="$workdir/perf.jsonl"
+
+    echo "$mock_input" | env \
+        CLOSEDLOOP_RUN_ID="$run_id" \
+        CLOSEDLOOP_COMMAND="$command" \
+        CLOSEDLOOP_ITERATION="$iteration" \
+        bash "$PRE_HOOK"
+
+    if [[ -f "$perf_file" ]]; then
+        spawn_line=$(tail -1 "$perf_file")
+        assert_field_equals "subagent_type takes precedence" "$spawn_line" "planned_subagent_type" "$subagent_type"
+    else
+        fail "subagent_type takes precedence" "perf.jsonl not created"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
 # ---- Summary -------------------------------------------------------------
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
