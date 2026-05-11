@@ -46,6 +46,11 @@ When a task says "Run Bash:", execute the command in a single Bash tool call.
 
 Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e.g., `<HELPERS>`, `<CR_DIR>`, `<CACHE_DIR>`, `<DIFF_SCOPE>`) to mark values you must replace with the resolved literal string before running the command. These are NOT shell variables — they are template tokens. The only real env var is `${CLAUDE_PLUGIN_ROOT}` (resolved once in session setup).
 
+**Before Task 1**, initialise telemetry (always first):
+```bash
+source "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-init.sh" "code-review"
+```
+
 ### Task 1: Parse flags and detect mode
 - Parse `$ARGUMENTS` for `--github`, `--hygiene-only`, `--base <ref>`, `--since-last-review`, `--full-review`
 - Check flag incompatibilities — exit with error if any
@@ -1256,6 +1261,16 @@ python3 <HELPERS> verdict --validate-output <CR_DIR>/validate_output.json > <CR_
 ```
 
 Read `<CR_DIR>/verdict.json` and print the `tag` value as the absolute last line of output. This tag is parsed by the ClosedLoop UI to render a verdict banner.
+
+---
+
+## Completion
+
+After all tasks are done, run telemetry completion:
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-complete.sh"
+```
 
 ---
 

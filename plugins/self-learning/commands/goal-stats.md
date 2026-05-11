@@ -16,14 +16,23 @@ Analyzes goal performance by examining runs.log and outcomes.log to compute stat
 
 ## Process
 
-1. Read `runs.log` for run outcomes. Rows are pipe-delimited:
+1. **Initialise telemetry** (always first):
+   ```bash
+   source "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-init.sh" "goal-stats"
+   ```
+
+2. Read `runs.log` for run outcomes. Rows are pipe-delimited:
    `run_id|timestamp|goal|iteration|status[|command|last_session_id]`.
    Treat `command` and `last_session_id` as optional append-only fields so
    legacy rows remain valid.
-2. Read `outcomes.log` for pattern applications and goal results
-3. Correlate pattern usage with goal success/failure
-4. Calculate aggregate statistics
-5. Identify patterns to review or promote
+3. Read `outcomes.log` for pattern applications and goal results
+4. Correlate pattern usage with goal success/failure
+5. Calculate aggregate statistics
+6. Identify patterns to review or promote
+7. **Complete telemetry**:
+   ```bash
+   bash "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-complete.sh"
+   ```
 
 ## Output Format
 

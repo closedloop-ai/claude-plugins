@@ -37,51 +37,57 @@ Use TodoWrite to track your progress through the amendment workflow:
 
 ```json
 TodoWrite([
-  {"content": "Setup: Load state, read plan.json, add user message", "status": "pending", "activeForm": "Setting up amendment context"},
+  {"content": "Setup: Init telemetry, load state, read plan.json, add user message", "status": "pending", "activeForm": "Setting up amendment context"},
   {"content": "Analyze user intent (directive, question, or confirmation)", "status": "pending", "activeForm": "Analyzing user intent"},
   {"content": "Process request and determine response", "status": "pending", "activeForm": "Processing amendment request"},
   {"content": "Save response to state file", "status": "pending", "activeForm": "Saving response to state"},
-  {"content": "Apply changes if confirmed (edit plan.json, regenerate plan.md, run apply)", "status": "pending", "activeForm": "Applying changes"}
+  {"content": "Apply changes if confirmed (edit plan.json, regenerate plan.md, run apply)", "status": "pending", "activeForm": "Applying changes"},
+  {"content": "Complete telemetry", "status": "pending", "activeForm": "Finalizing telemetry"}
 ])
 ```
 
-**Note:** The last todo (Apply changes) only applies if the user gave a directive that was safe to apply, or confirmed a previously discussed change. Skip it if you're just answering a question or raising a concern.
+**Note:** The "Apply changes" todo only applies if the user gave a directive that was safe to apply, or confirmed a previously discussed change. Skip it if you're just answering a question or raising a concern. The "Complete telemetry" todo always runs at the end.
 
 ## Execution Instructions
 
 ### Step 1: Setup
 
-1. **Locate amend_state.py** (required for all Python commands):
+1. **Initialise telemetry** (always first):
+   ```bash
+   source "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-init.sh" "amend-plan"
+   ```
+
+2. **Locate amend_state.py** (required for all Python commands):
    Use `code:find-plugin-file` skill to find `tools/python/amend_state.py`:
    ```bash
    # Find the amend_state.py file
    AMEND_STATE_PATH=$(python3 ~/.claude/plugins/cache/closedloop-ai/code/*/skills/find-plugin-file/scripts/find_plugin_file.py tools/python/amend_state.py --plugin code)
    ```
 
-2. **Determine workdir**:
+3. **Determine workdir**:
    - If `--workdir` provided, use it
    - Else if `$CLOSEDLOOP_WORKDIR` env var is set, use it
    - Otherwise, default to `.closedloop-ai/work`
 
-3. **Set state file path**:
+4. **Set state file path**:
    - If `--state-file` provided, use it
    - Otherwise, use `{workdir}/amend-session.json`
 
-4. **Load session state**:
+5. **Load session state**:
    ```bash
    python3 "$AMEND_STATE_PATH" load \
      --state-file {state_file} \
      --run-dir {workdir}
    ```
 
-5. **Determine and read the implementation plan**:
+6. **Determine and read the implementation plan**:
    - Check if `{workdir}/plan.json` exists (required for experimental workflow)
    - If not found, error: "No plan.json found in {workdir}"
    - Read `plan.json` to get the full plan structure including `content` field
    - Also read `{workdir}/plan.md` for human-readable version (if it exists)
    - Store `PLAN_FILE=plan.json`
 
-6. **Add user message to conversation**:
+7. **Add user message to conversation**:
    ```bash
    python3 "$AMEND_STATE_PATH" add-message \
      --state-file {state_file} \
@@ -410,3 +416,11 @@ The `amend-session.json` file tracks:
 Status values:
 - `discussing` - Active conversation
 - `applied` - Changes have been applied, validation running
+
+## Completion
+
+After all steps are done (state saved, apply called if applicable), run telemetry completion:
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-complete.sh"
+```

@@ -65,6 +65,27 @@ protected_window_minutes: 30
 # This is automatically run after each completed run
 ```
 
+## Instructions
+
+When invoked:
+
+1. **Initialise telemetry** (always first):
+   ```bash
+   source "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-init.sh" "prune-learnings"
+   ```
+
+2. Run the pruning script:
+   ```bash
+   bash "$CLAUDE_PLUGIN_ROOT/scripts/prune-learnings.sh"
+   ```
+
+3. Report the output to the user (sessions pruned, log lines rotated, archived files cleaned, any errors).
+
+4. **Complete telemetry**:
+   ```bash
+   bash "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-complete.sh"
+   ```
+
 ## Automatic Pruning
 
 Pruning runs automatically:

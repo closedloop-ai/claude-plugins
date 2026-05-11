@@ -85,11 +85,21 @@ claude -p "/self-learning:export-closedloop-learnings $WORKDIR"
 ## Instructions
 
 When invoked:
-1. Determine the workdir from the first argument or use current directory
-2. Check if `$workdir/.learnings/pending-closedloop.json` exists - if not, output "No pending closedloop learnings" and exit
-3. Read the pending file
-4. Read or create `~/.closedloop-ai/learnings/closedloop-learnings.json` with empty learnings array
-5. For each pending learning, apply deduplication logic
-6. If any new learnings were added, write the updated global file with `last_updated` timestamp
-7. Delete `$workdir/.learnings/pending-closedloop.json`
-8. Report: "Exported N new learnings, skipped M duplicates"
+
+1. **Initialise telemetry** (always first):
+   ```bash
+   source "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-init.sh" "export-closedloop-learnings"
+   ```
+
+2. Determine the workdir from the first argument or use current directory
+3. Check if `$workdir/.learnings/pending-closedloop.json` exists - if not, output "No pending closedloop learnings" and exit
+4. Read the pending file
+5. Read or create `~/.closedloop-ai/learnings/closedloop-learnings.json` with empty learnings array
+6. For each pending learning, apply deduplication logic
+7. If any new learnings were added, write the updated global file with `last_updated` timestamp
+8. Delete `$workdir/.learnings/pending-closedloop.json`
+9. Report: "Exported N new learnings, skipped M duplicates"
+10. **Complete telemetry**:
+    ```bash
+    bash "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-complete.sh"
+    ```

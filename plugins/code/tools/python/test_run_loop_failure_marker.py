@@ -677,6 +677,7 @@ def test_write_runs_log_entry_uses_workdir_root(tmp_path: Path) -> None:
     result = run_bash(
         f"""
         source {RUN_LOOP}
+        unset LAST_CLAUDE_COMMAND CLOSEDLOOP_COMMAND
         RUN_ID='run-root-log'
         write_runs_log_entry "$CLOSEDLOOP_WORKDIR" 2 completed
         """,

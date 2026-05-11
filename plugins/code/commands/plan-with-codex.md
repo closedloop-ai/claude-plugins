@@ -66,7 +66,14 @@ Valid phases: `user_review`, `codex_review`, `claude_revision`
 
 </templates>
 
-## Step 0: Parse Arguments
+## Step 0: Telemetry Init
+
+Run at startup before any other work:
+```bash
+source "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-init.sh" "plan-with-codex"
+```
+
+## Step 0.1: Parse Arguments
 
 Arguments: $ARGUMENTS
 
@@ -301,4 +308,11 @@ find ~/.closedloop-ai/plan-with-codex -name "*.jsonl" -mtime +30 2>/dev/null
 If found, ask user whether to delete them via AskUserQuestion. If yes:
 ```bash
 find ~/.closedloop-ai/plan-with-codex -name "*.jsonl" -mtime +30 -delete 2>/dev/null
+```
+
+### Telemetry completion
+
+Run after all work is done:
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-complete.sh"
 ```

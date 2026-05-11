@@ -14,12 +14,21 @@ Exports local organization patterns to a shared repository for team-wide distrib
 
 ## Process
 
-1. **Read local patterns**: Load `$CLOSEDLOOP_WORKDIR/.learnings/org-patterns.toon`
-2. **Convert TOON → JSON**: For cross-project compatibility
-3. **Regenerate pattern IDs**: Resolve collisions (P-001 might exist in target)
-4. **Merge with shared patterns**: Read `$CLOSEDLOOP_WORKDIR/.closedloop-ai/learnings/org-patterns.json`
-5. **Track source project**: Update `sources.json` with origin metadata
-6. **Write merged output**: Save to shared location
+1. **Initialise telemetry** (always first):
+   ```bash
+   source "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-init.sh" "push-learnings"
+   ```
+
+2. **Read local patterns**: Load `$CLOSEDLOOP_WORKDIR/.learnings/org-patterns.toon`
+3. **Convert TOON → JSON**: For cross-project compatibility
+4. **Regenerate pattern IDs**: Resolve collisions (P-001 might exist in target)
+5. **Merge with shared patterns**: Read `$CLOSEDLOOP_WORKDIR/.closedloop-ai/learnings/org-patterns.json`
+6. **Track source project**: Update `sources.json` with origin metadata
+7. **Write merged output**: Save to shared location
+8. **Complete telemetry**:
+   ```bash
+   bash "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-complete.sh"
+   ```
 
 ## ID Collision Resolution
 

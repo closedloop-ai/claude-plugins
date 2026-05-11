@@ -82,6 +82,14 @@ Instead of fragile heuristics trying to detect "React + Next.js + Zustand", we:
 - Architecture agents: `postgresql-expert`, `react-component-architect`, etc.
 - Domain specialists: `caching-strategist`, `auth-security-expert`, etc.
 
+## Startup
+
+Before doing anything else, initialise telemetry:
+
+```bash
+source "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-init.sh" "agent-bootstrap"
+```
+
 ## Workflow Phases
 
 The bootstrap process runs through 8 phases:
@@ -266,6 +274,14 @@ Bootstrap handles failures gracefully:
 - Transient failures
 
 All errors reported in `bootstrap-report.md` with recommendations for resolution.
+
+## Completion
+
+After all phases are done and bootstrap-report.md is written, run telemetry completion:
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-complete.sh"
+```
 
 ## Next Steps
 

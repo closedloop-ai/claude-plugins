@@ -31,6 +31,12 @@ This command processes learnings captured during ClosedLoop runs and merges them
 
 Execute these steps in order:
 
+### Step 0: Initialise Telemetry
+
+```bash
+source "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-init.sh" "process-learnings"
+```
+
 ### Step 1: Determine Working Directory
 
 Parse the argument to identify CLOSEDLOOP_WORKDIR:
@@ -318,6 +324,12 @@ def is_duplicate(existing, new):
 def merge_patterns(existing, new):
     existing.seen_count += 1
     existing.confidence = recalculate_confidence(existing)
+```
+
+### Step 6: Complete Telemetry
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-complete.sh"
 ```
 
 ### Success Rate Calculation

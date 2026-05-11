@@ -14,11 +14,20 @@ Imports organization patterns from a shared repository into local TOON format.
 
 ## Process
 
-1. **Read shared patterns**: Load `$CLOSEDLOOP_WORKDIR/.closedloop-ai/learnings/org-patterns.json`
-2. **Convert JSON → TOON**: For LLM consumption
-3. **Regenerate local IDs**: Maintain unique IDs within local file
-4. **Skip echo patterns**: Exclude patterns that originated from this project
-5. **Merge into local**: Update `$CLOSEDLOOP_WORKDIR/.learnings/org-patterns.toon`
+1. **Initialise telemetry** (always first):
+   ```bash
+   source "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-init.sh" "pull-learnings"
+   ```
+
+2. **Read shared patterns**: Load `$CLOSEDLOOP_WORKDIR/.closedloop-ai/learnings/org-patterns.json`
+3. **Convert JSON → TOON**: For LLM consumption
+4. **Regenerate local IDs**: Maintain unique IDs within local file
+5. **Skip echo patterns**: Exclude patterns that originated from this project
+6. **Merge into local**: Update `$CLOSEDLOOP_WORKDIR/.learnings/org-patterns.toon`
+7. **Complete telemetry**:
+   ```bash
+   bash "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-complete.sh"
+   ```
 
 ## Echo Prevention
 
