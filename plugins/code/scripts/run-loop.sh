@@ -604,7 +604,12 @@ write_runs_log_entry() {
   if [[ $# -ge 4 ]]; then
     command="$4"
   else
-    command="${LAST_CLAUDE_COMMAND:-self_learning}"
+    # Default precedence: LAST_CLAUDE_COMMAND (set after the first claude
+    # invocation, accurate for review/fix sub-steps) → CLOSEDLOOP_COMMAND
+    # (set by main() from parent-process pre-set or --prompt) → plan_execute.
+    # `self_learning` is no longer used as a default — it overcounted on
+    # fresh-start Loops before any review step had run (FEA-936 fix 1).
+    command="${LAST_CLAUDE_COMMAND:-${CLOSEDLOOP_COMMAND:-plan_execute}}"
   fi
   if [[ $# -ge 5 ]]; then
     session_id="$5"
@@ -1246,6 +1251,16 @@ log_progress() {
 # to every event row so it can be filtered by slash command in Datadog.
 emit_perf_event() {
   local json_line="$1"
+  # Empty input → no-op. Two reasons: (1) historically (older jq + set -euo
+  # pipefail) an empty stdin to jq propagated a non-zero exit and killed the
+  # Loop; (2) even on modern jq (1.8+) which silently exits 0, the resulting
+  # blank line would still get appended to perf.jsonl and corrupt downstream
+  # JSONL parsers (the desktop watcher emits loop.perf.parse_failure on
+  # malformed lines). Any caller that passes empty input has its own bug;
+  # this guard prevents either failure mode (FEA-936 fix 2).
+  if [[ -z "$json_line" ]]; then
+    return 0
+  fi
   local perf_file="${CLOSEDLOOP_WORKDIR:-.}/perf.jsonl"
   json_line=$(echo "$json_line" | jq -c --arg command "${CLOSEDLOOP_COMMAND:-interactive}" '. + {command:$command}')
   echo "$json_line" >> "$perf_file"
@@ -1375,6 +1390,16 @@ create_state_file() {
     prompt="$prompt --add-dir \"$add_dir_arg\""
   done
 
+  # Persist the RESOLVED command (precedence: pre-set CLOSEDLOOP_COMMAND from
+  # parent process > --prompt > "interactive") rather than the raw PROMPT_NAME.
+  # If we only stored PROMPT_NAME, a desktop that set CLOSEDLOOP_COMMAND but
+  # never passed --prompt would write `command: ""` to state.json, and on
+  # resume the restore-from-state path (line ~1507) would re-resolve to
+  # "interactive" — losing the original attribution and violating PRD-254
+  # §FR-1 / AC-001 across resumes.
+  local resolved_command
+  resolved_command=$(resolve_closedloop_command "${CLOSEDLOOP_COMMAND:-}" "$PROMPT_NAME")
+
   cat > "$STATE_FILE" <<EOF
 ---
 active: true
@@ -1387,7 +1412,7 @@ prd_file: "$PRD_FILE"
 run_id: "$RUN_ID"
 start_sha: "$START_SHA"
 self_learning: "$SELF_LEARNING"
-command: "$PROMPT_NAME"
+command: "$resolved_command"
 started_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ---
 $prompt
@@ -1412,6 +1437,28 @@ EOF
     echo -e "PRD file: ${BLUE}$PRD_FILE${NC}"
   fi
   echo -e "Run ID: ${BLUE}$RUN_ID${NC}"
+}
+
+# Resolve CLOSEDLOOP_COMMAND with precedence:
+#   1. Pre-set value from the parent process (e.g. closedloop-electron sets
+#      this from the websocket request command, before spawning run-loop.sh).
+#   2. PROMPT_NAME from the --prompt CLI flag.
+#   3. Literal "interactive" fallback.
+#
+# Lets callers tag perf events with a semantic command name (PLAN, EXECUTE, ...)
+# without having to materialize a corresponding file in plugins/code/prompts/.
+# Args: $1 = pre-set CLOSEDLOOP_COMMAND value (may be empty)
+#       $2 = PROMPT_NAME (may be empty)
+resolve_closedloop_command() {
+  local preset="${1:-}"
+  local prompt_name="${2:-}"
+  if [[ -n "$preset" ]]; then
+    echo "$preset"
+  elif [[ -n "$prompt_name" ]]; then
+    echo "$prompt_name"
+  else
+    echo "interactive"
+  fi
 }
 
 # Main loop
@@ -1469,8 +1516,24 @@ main() {
     # command on resume (instead of degrading to "interactive" because the
     # --prompt CLI flag isn't re-passed). Older state files without `command`
     # leave PROMPT_NAME empty, preserving prior behavior.
+    #
+    # On a successful read of the persisted command, also override any
+    # ambient CLOSEDLOOP_COMMAND in the resume shell. The persisted value is
+    # authoritative for "what this Loop was launched as"; an ambient env var
+    # from a different prior Loop (or a stale developer shell) shouldn't
+    # rewrite history. The desktop-spawned hot path is unaffected because
+    # the desktop sets CLOSEDLOOP_COMMAND to the same value that's persisted.
     if [[ -z "$PROMPT_NAME" ]]; then
-      PROMPT_NAME=$(get_field "command")
+      # `command` is optional on older state files predating PLN-525 / this PR.
+      # Under `set -euo pipefail`, get_field's internal `grep ... | sed ...`
+      # propagates a non-zero exit when the field is absent and would abort
+      # run-loop.sh on resume. Match the established pattern used by the
+      # cleanup/interrupt callers (see lines 1956+): tolerate missing field
+      # via `|| echo ""`.
+      PROMPT_NAME=$(get_field "command" 2>/dev/null || echo "")
+      if [[ -n "$PROMPT_NAME" ]]; then
+        CLOSEDLOOP_COMMAND="$PROMPT_NAME"
+      fi
     fi
 
     # If resuming, re-acquire lock
@@ -1498,10 +1561,10 @@ main() {
     exit 1
   fi
 
-  # Export environment variables for learning system
+  # Export environment variables for learning system.
   export CLOSEDLOOP_WORKDIR="$effective_workdir"
   export CLOSEDLOOP_RUN_ID="$RUN_ID"
-  export CLOSEDLOOP_COMMAND="${PROMPT_NAME:-interactive}"
+  export CLOSEDLOOP_COMMAND="$(resolve_closedloop_command "${CLOSEDLOOP_COMMAND:-}" "$PROMPT_NAME")"
 
   # Load goal configuration
   load_goal_config "$effective_workdir"

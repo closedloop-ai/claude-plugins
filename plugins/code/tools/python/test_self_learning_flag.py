@@ -25,6 +25,9 @@ def _awk_extract_script() -> str:
         "emit_skipped_step",
         "log_progress",
         "create_state_file",
+        # `create_state_file` now calls `resolve_closedloop_command` to
+        # persist the resolved command (PRD-254). Must be extracted alongside.
+        "resolve_closedloop_command",
         "parse_frontmatter",
         "get_field",
         "get_prompt",
