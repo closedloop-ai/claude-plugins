@@ -30,48 +30,114 @@ CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 # rather than auto-allowed by the workspace rule below.
 _SEC_DENY='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Blocked: credential access denied by security policy"}}'
 
+# ── Security overrides ─────────────────────────────────────────────────────
+# Per-user overrides loaded from ~/.claude/security-overrides.json.
+# Only categories explicitly set to true are allowed through.
+# Categories: process-kill, keychain, browser-profiles, ssh-keys,
+#             cloud-credentials-cmd, cloud-credentials-files
+_OVERRIDES_FILE="${CLAUDE_SECURITY_OVERRIDES:-$HOME/.claude/security-overrides.json}"
+_PENDING_DEBUG_LOGS=()
+
+_debug_log() {
+    local message="$1"
+    if [[ "${DEBUG_LOG:-/dev/null}" != "/dev/null" ]]; then
+        echo "$message" >> "$DEBUG_LOG"
+        return 0
+    fi
+    _PENDING_DEBUG_LOGS+=("$message")
+}
+
+_flush_debug_logs() {
+    if [[ "${DEBUG_LOG:-/dev/null}" == "/dev/null" ]]; then
+        return 0
+    fi
+    if [[ ${#_PENDING_DEBUG_LOGS[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    local message
+    for message in "${_PENDING_DEBUG_LOGS[@]}"; do
+        echo "$message" >> "$DEBUG_LOG"
+    done
+    _PENDING_DEBUG_LOGS=()
+}
+
+_override_enabled() {
+    local category="$1"
+    if [[ -f "$_OVERRIDES_FILE" ]]; then
+        local val
+        val=$(jq -r --arg cat "$category" '.overrides[$cat] // false' "$_OVERRIDES_FILE" 2>/dev/null)
+        if [[ "$val" == "true" ]]; then
+            _debug_log "$(date): SECURITY OVERRIDE: allowed category=$category"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+_sec_deny_unless_override() {
+    local category="$1"
+    if _override_enabled "$category"; then
+        return 0  # don't deny — override active, continue normally
+    fi
+    echo "$_SEC_DENY"
+    exit 0
+}
+
 case "$TOOL_NAME" in
     Bash)
         _sec_cmd=$(echo "$TOOL_INPUT" | jq -r '.command // empty' 2>/dev/null || echo "")
+        # Check each sensitive category independently so an allowed earlier
+        # match cannot mask a later disallowed category in the same command.
         case "$_sec_cmd" in
             # Broad process killing — globally denied.
             # pkill/killall match by name and kill processes outside the current context
             # (e.g. a running desktop-dev in the main tree killed by a worktree agent).
             # Claude should never need these; use process.kill(pid) for specific PIDs instead.
             *pkill*|*killall*)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "process-kill"
                 ;;
+        esac
+        case "$_sec_cmd" in
             # macOS Keychain
             *security\ find-generic-password*|*security\ find-internet-password*|*security\ dump-keychain*|\
             *security\ delete-generic-password*|*security\ delete-internet-password*|\
             *find-generic-password*|*find-internet-password*)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "keychain"
                 ;;
+        esac
+        case "$_sec_cmd" in
             # Browser profile directories
             *"Library/Application Support/Google/Chrome"*|*"Library/Application Support/Chromium"*|\
             *"Library/Application Support/BraveSoftware"*|*"Library/Application Support/Microsoft Edge"*|\
             *"Library/Application Support/Firefox"*|*.mozilla/firefox*|*"Library/Safari/Cookies"*)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "browser-profiles"
                 ;;
+        esac
+        case "$_sec_cmd" in
             # Browser DBs via sqlite3
             *sqlite3*Cookies*|*sqlite3*"Login Data"*|*sqlite3*"Web Data"*)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "browser-profiles"
                 ;;
+        esac
+        case "$_sec_cmd" in
             # SSH private keys
             */.ssh/id_*)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "ssh-keys"
                 ;;
-            # Cloud credentials (commands and file paths)
-            */.aws/credentials*|*"gcloud auth print-access-token"*|*"gcloud auth application-default"*|\
+        esac
+        case "$_sec_cmd" in
+            # Cloud credential commands
+            *"gcloud auth print-access-token"*|*"gcloud auth application-default"*)
+                _sec_deny_unless_override "cloud-credentials-cmd"
+                ;;
+        esac
+        case "$_sec_cmd" in
+            # Cloud credential files
+            */.aws/credentials*|\
             */.config/gcloud/credentials.db*|*/.config/gcloud/application_default_credentials.json*|\
             */.config/gcloud/legacy_credentials/*)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "cloud-credentials-files"
                 ;;
         esac
         ;;
@@ -82,19 +148,16 @@ case "$TOOL_NAME" in
             */Google/Chrome/*/Cookies|*/Google/Chrome/*/Login\ Data|\
             */Chromium/*/Cookies|*/Firefox/Profiles/*/cookies.sqlite|\
             */Safari/Cookies/Cookies.binarycookies)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "browser-profiles"
                 ;;
             # SSH private keys
             */.ssh/id_*)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "ssh-keys"
                 ;;
             # Cloud credentials
             */.aws/credentials|*/.config/gcloud/credentials.db|\
             */.config/gcloud/legacy_credentials/*|*/.config/gcloud/application_default_credentials.json)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "cloud-credentials-files"
                 ;;
         esac
         ;;
@@ -139,7 +202,8 @@ fi
 # Redirect debug logs into workdir (per-run, not shared /tmp)
 mkdir -p "$CLOSEDLOOP_WORKDIR/.learnings"
 DEBUG_LOG="$CLOSEDLOOP_WORKDIR/.learnings/pretooluse-hook-debug.log"
-echo "$(date): PreToolUse hook started, tool=$TOOL_NAME" >> "$DEBUG_LOG"
+_flush_debug_logs
+_debug_log "$(date): PreToolUse hook started, tool=$TOOL_NAME"
 
 # Source closedloop config and skip learning injection if disabled
 CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
