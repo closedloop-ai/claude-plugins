@@ -43,6 +43,7 @@ class CaseScore(BaseModel):
     case_id: str
     final_status: int  # 1=pass, 2=fail, 3=error
     metrics: List[MetricStatistics]
+    error_reason: Optional[str] = Field(default=None, description="Agent-reported error context (e.g., tool errors, parse failures). Scores with error_reason set are excluded from aggregation averages.")
 
     @field_validator('final_status')
     @classmethod
@@ -51,6 +52,21 @@ class CaseScore(BaseModel):
         if v not in (1, 2, 3):
             raise ValueError(f"final_status must be 1 (pass), 2 (fail), or 3 (error), got {v}")
         return v
+
+
+def compute_average_excluding_errors(scores: List[CaseScore]) -> Optional[float]:
+    """Compute the average final_status of scores, excluding those with error_reason set.
+
+    Args:
+        scores: List of CaseScore instances to aggregate.
+
+    Returns:
+        The average final_status of valid (non-error) scores, or None if no valid scores remain.
+    """
+    valid_scores = [s for s in scores if s.error_reason is None]
+    if not valid_scores:
+        return None
+    return sum(s.final_status for s in valid_scores) / len(valid_scores)
 
 
 class EvaluationReport(BaseModel):

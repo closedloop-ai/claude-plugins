@@ -288,6 +288,29 @@ The script is idempotent — it skips if `manifest.json` already exists.
 
 ---
 
+### Agent Registry Validation (Pre-Flight Check)
+
+**Before any judge execution**, validate the agent registry to ensure all judge agents required for the current artifact type are resolvable. This prevents launching batches only to discover agents are missing mid-run.
+
+**Action:** Run `validate_agent_registry.py` via Bash:
+
+```bash
+uv run "${CLAUDE_PLUGIN_ROOT}/skills/run-judges/scripts/validate_agent_registry.py" \
+  --artifact-type "$ARTIFACT_TYPE" \
+  --workdir "$CLOSEDLOOP_WORKDIR"
+```
+
+**Exit behavior:**
+- Exit code `0` — all required agents are registered; proceed with judge execution
+- Exit code non-zero — one or more required agents are missing or unresolvable; **abort immediately** and do NOT proceed to judge batches
+
+**On failure:**
+- Log the validation error output in full
+- Exit the skill with a non-zero status code
+- Do NOT generate partial error CaseScores for this failure mode (the workflow should not proceed at all)
+
+---
+
 ### Step 0: Mandatory Contract Pre-Read
 
 Before any prerequisite checks or judge launches:
@@ -731,6 +754,7 @@ Each judge returns a **CaseScore** JSON object:
   "type": "case_score",
   "case_id": "{judge-name}",
   "final_status": 3,
+  "error_reason": "Brief human-readable description of what failed",
   "metrics": [
     {
       "metric_name": "{metric}_score",
@@ -742,12 +766,70 @@ Each judge returns a **CaseScore** JSON object:
 }
 ```
 
+**`error_reason` field guidance:**
+
+- **When to set it**: Set `error_reason` whenever `final_status=3`. Common cases include:
+  - Tool failures (e.g., Task tool returned an error, agent invocation rejected)
+  - Parse errors (e.g., judge output could not be parsed as valid CaseScore JSON)
+  - Timeouts (e.g., judge agent did not respond within the allowed time)
+  - Preamble file not found (e.g., required `{artifact_type}_preamble.md` missing)
+  - Context preparation failures passed down to individual judge error scores
+
+- **What to put in it**: A brief, human-readable string describing the specific failure. Examples:
+  - `"Task tool error: agent not found"`
+  - `"Parse error: response was not valid JSON"`
+  - `"Timeout: judge did not complete within 5 minutes"`
+  - `"Preamble file not found: plan_preamble.md"`
+
+- **Effect on aggregation**: Scores with `error_reason` set are excluded from average calculations by `compute_average_excluding_errors`. This means errored judges do not drag down the aggregate score for judges that did execute successfully.
+
+**Aggregation rules when errors are present:**
+
+- If SOME judges have `error_reason` set, `compute_average_excluding_errors` computes the average over only the non-errored judges and annotates the result as "avg of N/M judges" (where N is non-errored count and M is total).
+- If ALL judges have `error_reason` set, `compute_average_excluding_errors` returns `None` — no meaningful average can be computed.
+
 **Continue-on-failure semantics:**
 - Even if ALL judges fail, you MUST aggregate error CaseScores
 - Always produce a complete report with 16 CaseScore entries (plan), 11 CaseScore entries (code), 5 CaseScore entries (prd), or 3 CaseScore entries (feature)
 - Never abort the workflow due to judge failures
 
 </error_handling>
+
+---
+
+### Summary Table Formatting
+
+When displaying the evaluation results summary (e.g., in the final output or any human-readable report), follow these conventions for errored scores:
+
+**Errored score display:**
+- Use the `ERR` marker in place of a numeric score for any judge whose CaseScore has `error_reason` set (i.e., `final_status=3` with `error_reason` present).
+
+**Example summary table:**
+
+| Judge | Score | Status |
+|-------|-------|--------|
+| dry-judge | 0.92 | PASS |
+| ssot-judge | ERR | ERROR |
+| kiss-judge | 0.75 | FAIL |
+| readability-judge | ERR | ERROR |
+
+**Average annotation:**
+- When some judges are excluded due to errors, annotate the aggregate average as `"avg of N/M judges"`, where N is the number of non-errored judges and M is the total number of judges.
+- Example: `avg of 14/16 judges`
+
+**Footer line:**
+- When one or more judges are excluded, add a footer line to the summary:
+  ```
+  X of Y judges excluded due to errors
+  ```
+  where X is the count of errored judges and Y is the total expected judge count.
+
+- Example: `2 of 16 judges excluded due to errors`
+
+**When ALL judges errored:**
+- Display `ERR` for every judge row
+- Display `N/A` (not a number) for the aggregate average — do not attempt to compute or display an average
+- Footer: `Y of Y judges excluded due to errors`
 
 ---
 
@@ -1036,6 +1118,7 @@ class CaseScore(BaseModel):
     type: Optional[str] = "case_score"
     case_id: str
     final_status: int  # 1=pass, 2=fail, 3=error
+    error_reason: Optional[str] = None  # set when final_status=3; excluded from aggregation averages
     metrics: List[MetricStatistics]
 
 class EvaluationReport(BaseModel):
