@@ -47,11 +47,13 @@ Multi-repository, adaptive self-learning, & artifact-bound phased workflow gates
 
 ## Quick Start
 
-**One-line install** — installs all plugins globally and keeps them auto-updated:
+**One-line install** — installs all plugins at user scope and keeps them auto-updated:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/closedloop-ai/claude-plugins/main/install.sh | bash
 ```
+
+The installer verifies all six ClosedLoop plugins are present at user scope, re-enables disabled user-scoped entries, and attempts to remove stale project-scoped duplicates when Claude reports a usable `projectPath`. If Claude reports a project-scoped entry without a usable project path, the installer prints the project-directory uninstall command and still repairs the user-scoped install.
 
 Or install interactively from within Claude Code:
 
