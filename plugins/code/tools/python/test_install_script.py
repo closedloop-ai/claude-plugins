@@ -163,6 +163,11 @@ def write_fake_claude(bin_dir: Path) -> None:
             raise SystemExit(0)
         if args[:3] == ["plugin", "marketplace", "add"]:
             raise SystemExit(0)
+        if args == ["plugin", "marketplace", "update", "closedloop-ai"]:
+            if scenario == "marketplace-update-fails":
+                print("cannot refresh marketplace", file=sys.stderr)
+                raise SystemExit(1)
+            raise SystemExit(0)
         if args == ["plugin", "list", "--json"]:
             state = load_state()
             state["list_calls"] = state.get("list_calls", 0) + 1
@@ -281,8 +286,18 @@ def test_installs_all_plugins_at_user_scope(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     log = read_log(tmp_path)
+    assert "claude plugin marketplace update closedloop-ai" in log
     for plugin in PLUGINS:
         assert f"claude plugin install {plugin}@closedloop-ai --scope user" in log
+
+
+def test_fails_when_marketplace_refresh_fails(tmp_path: Path) -> None:
+    result = run_installer(tmp_path, scenario="marketplace-update-fails")
+
+    assert result.returncode != 0
+    combined = f"{result.stdout}\n{result.stderr}"
+    assert "Marketplace refresh failed" in combined
+    assert "cannot refresh marketplace" in combined
 
 
 def test_repairs_project_scoped_plugin_from_project_path(tmp_path: Path) -> None:

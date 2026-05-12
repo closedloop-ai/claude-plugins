@@ -260,6 +260,15 @@ else
     fi
 fi
 
+step "Refreshing closedloop-ai marketplace..."
+if claude plugin marketplace update "$MARKETPLACE_NAME" 2>"$WORK_DIR/marketplace_update_err"; then
+    info "Marketplace refreshed: $MARKETPLACE_NAME"
+else
+    err "Marketplace refresh failed:"
+    sanitize_stderr "$WORK_DIR/marketplace_update_err"
+    exit 1
+fi
+
 echo
 
 # ── Install plugins ─────────────────────────────────────────────────────────
