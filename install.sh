@@ -36,6 +36,16 @@ warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 err()   { echo -e "${RED}[✗]${NC} $1"; }
 step()  { echo -e "${BLUE}[→]${NC} ${BOLD}$1${NC}"; }
 snapshot_version() { grep -m1 "^$2 " "$1" 2>/dev/null | awk '{print $2}' || true; }
+snapshot_enabled() { grep -m1 "^$2 " "$1" 2>/dev/null | awk '{print $3}' || true; }
+snapshot_plugins() {
+    local destination="$1"
+    if ! claude plugin list --json 2>/dev/null \
+      | jq -r '.[] | .id + " " + (.version // "unknown") + " " + (if .enabled == true then "enabled" elif .enabled == false then "disabled" else "unknown" end)' \
+      > "$destination" 2>/dev/null; then
+        return 1
+    fi
+    [[ -s "$destination" ]]
+}
 sanitize_stderr()  {
     # Strip ANSI color escapes, then drop non-printable control chars.
     # Uses bash ANSI-C quoting for a literal ESC so this works under BSD sed (macOS)
@@ -126,10 +136,11 @@ FAILED=0
 
 SNAPSHOT_PRE="$WORK_DIR/snapshot_pre"
 SNAPSHOT_POST="$WORK_DIR/snapshot_post"
+SNAPSHOT_READY="$WORK_DIR/snapshot_ready"
 STDERR_FILE="$WORK_DIR/install_err"
+ENABLE_ERR_FILE="$WORK_DIR/enable_err"
 
-claude plugin list --json 2>/dev/null \
-  | jq -r '.[] | .id + " " + .version' > "$SNAPSHOT_PRE" 2>/dev/null || true
+snapshot_plugins "$SNAPSHOT_PRE" || true
 [[ -s "$SNAPSHOT_PRE" ]] || warn "Could not snapshot installed plugins — state detection will be approximate"
 
 SUCCESSFUL_PLUGINS=()
@@ -148,8 +159,9 @@ for plugin in "${PLUGINS[@]}"; do
     fi
 done
 
-claude plugin list --json 2>/dev/null \
-  | jq -r '.[] | .id + " " + .version' > "$SNAPSHOT_POST" 2>/dev/null || true
+snapshot_plugins "$SNAPSHOT_POST" || true
+
+ENABLED=0
 
 for plugin_ref in "${SUCCESSFUL_PLUGINS[@]+"${SUCCESSFUL_PLUGINS[@]}"}"; do
     plugin="${plugin_ref%@*}"
@@ -165,6 +177,28 @@ for plugin_ref in "${SUCCESSFUL_PLUGINS[@]+"${SUCCESSFUL_PLUGINS[@]}"}"; do
         UPDATED=$((UPDATED + 1))
         info "Updated: $plugin ($pre_ver -> $post_ver)"
     fi
+
+    post_enabled=$(snapshot_enabled "$SNAPSHOT_POST" "$plugin_ref")
+    if [[ "$post_enabled" != "enabled" ]]; then
+        if claude plugin enable "$plugin_ref" --scope user 2>"$ENABLE_ERR_FILE"; then
+            ENABLED=$((ENABLED + 1))
+            info "Enabled: $plugin"
+        else
+            [[ -s "$ENABLE_ERR_FILE" ]] && sanitize_stderr "$ENABLE_ERR_FILE"
+            warn "Could not enable: $plugin"
+        fi
+    fi
+done
+
+snapshot_plugins "$SNAPSHOT_READY" || true
+READINESS_FAILED=0
+for plugin in "${PLUGINS[@]}"; do
+    plugin_ref="${plugin}@${MARKETPLACE_NAME}"
+    ready_state=$(snapshot_enabled "$SNAPSHOT_READY" "$plugin_ref")
+    if [[ "$ready_state" != "enabled" ]]; then
+        err "Required plugin is not enabled: $plugin_ref"
+        READINESS_FAILED=$((READINESS_FAILED + 1))
+    fi
 done
 
 echo
@@ -172,10 +206,11 @@ echo
 # ── Summary ──────────────────────────────────────────────────────────────────
 TOTAL=$((INSTALLED + UPDATED + UP_TO_DATE + FAILED))
 echo "────────────────────────────────────"
-if [[ $FAILED -eq 0 ]]; then
-    echo -e "${GREEN}${BOLD}All $TOTAL plugins ready ($INSTALLED installed, $UPDATED updated, $UP_TO_DATE already up to date).${NC}"
+if [[ $FAILED -eq 0 && $READINESS_FAILED -eq 0 ]]; then
+    echo -e "${GREEN}${BOLD}All $TOTAL plugins ready ($INSTALLED installed, $UPDATED updated, $UP_TO_DATE already up to date, $ENABLED enabled).${NC}"
 else
-    echo -e "${YELLOW}${BOLD}$TOTAL plugins processed: $INSTALLED installed, $UPDATED updated, $UP_TO_DATE already up to date, $FAILED failed.${NC}"
+    echo -e "${YELLOW}${BOLD}$TOTAL plugins processed: $INSTALLED installed, $UPDATED updated, $UP_TO_DATE already up to date, $FAILED install/update failed, $READINESS_FAILED readiness failed.${NC}"
+    exit 1
 fi
 
 echo

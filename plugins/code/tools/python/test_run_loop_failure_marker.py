@@ -52,11 +52,13 @@ def test_write_loop_user_visible_failure_writes_marker(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     marker = tmp_path / "loop-error.json"
     assert marker.exists()
-    assert json.loads(marker.read_text()) == signed_marker({
-        "code": "RUNNER_ERROR",
-        "message": "Loop execution failed because XYZ.",
-        "result": {"subcode": "XYZ_FAILURE"},
-    })
+    assert json.loads(marker.read_text()) == signed_marker(
+        {
+            "code": "RUNNER_ERROR",
+            "message": "Loop execution failed because XYZ.",
+            "result": {"subcode": "XYZ_FAILURE"},
+        }
+    )
 
 
 def test_write_loop_user_visible_failure_unsets_exported_secret(tmp_path: Path) -> None:
@@ -132,10 +134,12 @@ def test_detect_spurious_complete_no_pending_tasks_returns_empty(
 
 def test_detect_spurious_complete_pending_with_questions_flags(tmp_path: Path) -> None:
     (tmp_path / "plan.json").write_text(
-        json.dumps({
-            "pendingTasks": [{"id": "T-1.0"}, {"id": "T-2.0"}],
-            "openQuestions": [{"id": "Q1", "text": "?"}],
-        })
+        json.dumps(
+            {
+                "pendingTasks": [{"id": "T-1.0"}, {"id": "T-2.0"}],
+                "openQuestions": [{"id": "Q1", "text": "?"}],
+            }
+        )
     )
 
     result = run_bash(
@@ -157,10 +161,12 @@ def test_detect_spurious_complete_pending_without_questions_flags(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "plan.json").write_text(
-        json.dumps({
-            "pendingTasks": [{"id": "T-1.0"}],
-            "openQuestions": [],
-        })
+        json.dumps(
+            {
+                "pendingTasks": [{"id": "T-1.0"}],
+                "openQuestions": [],
+            }
+        )
     )
 
     result = run_bash(
@@ -181,16 +187,20 @@ def test_detect_spurious_complete_skips_when_awaiting_user(tmp_path: Path) -> No
     # tasks and open questions by definition, but state.json signals an
     # AWAITING_USER hard stop, not final completion. Must not be flagged.
     (tmp_path / "plan.json").write_text(
-        json.dumps({
-            "pendingTasks": [{"id": "T-1.0"}],
-            "openQuestions": [{"id": "Q1", "text": "?"}],
-        })
+        json.dumps(
+            {
+                "pendingTasks": [{"id": "T-1.0"}],
+                "openQuestions": [{"id": "Q1", "text": "?"}],
+            }
+        )
     )
     (tmp_path / "state.json").write_text(
-        json.dumps({
-            "phase": "Phase 1.1: Plan review checkpoint",
-            "status": "AWAITING_USER",
-        })
+        json.dumps(
+            {
+                "phase": "Phase 1.1: Plan review checkpoint",
+                "status": "AWAITING_USER",
+            }
+        )
     )
 
     result = run_bash(
@@ -211,16 +221,20 @@ def test_detect_spurious_complete_flags_when_completed_status_with_pending(
     # Final-completion claim with leftover pendingTasks remains a contract
     # violation and must still be flagged.
     (tmp_path / "plan.json").write_text(
-        json.dumps({
-            "pendingTasks": [{"id": "T-1.0"}],
-            "openQuestions": [],
-        })
+        json.dumps(
+            {
+                "pendingTasks": [{"id": "T-1.0"}],
+                "openQuestions": [],
+            }
+        )
     )
     (tmp_path / "state.json").write_text(
-        json.dumps({
-            "phase": "Phase 7: Logging and completion",
-            "status": "COMPLETED",
-        })
+        json.dumps(
+            {
+                "phase": "Phase 7: Logging and completion",
+                "status": "COMPLETED",
+            }
+        )
     )
 
     result = run_bash(
@@ -249,11 +263,13 @@ def test_fail_loop_user_visible_prints_reason_and_exits(tmp_path: Path) -> None:
     assert (
         "CLOSEDLOOP_FATAL[BAD_PLAN_STATE]: Plan state is not loadable." in result.stderr
     )
-    assert json.loads((tmp_path / "loop-error.json").read_text()) == signed_marker({
-        "code": "PRE_RUN_VALIDATION_FAILED",
-        "message": "Plan state is not loadable.",
-        "result": {"subcode": "BAD_PLAN_STATE"},
-    })
+    assert json.loads((tmp_path / "loop-error.json").read_text()) == signed_marker(
+        {
+            "code": "PRE_RUN_VALIDATION_FAILED",
+            "message": "Plan state is not loadable.",
+            "result": {"subcode": "BAD_PLAN_STATE"},
+        }
+    )
 
 
 def write_jsonl(path: Path, entries: list[dict[str, object] | str]) -> None:
@@ -542,6 +558,47 @@ def test_detect_claude_terminal_failure_ignores_successful_rate_limit_prose(
     assert json.loads(result.stdout) == {}
 
 
+def test_detect_claude_terminal_failure_flags_success_shaped_unknown_skill(
+    tmp_path: Path,
+) -> None:
+    payload = run_detect(
+        tmp_path,
+        jsonl=[
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "Unknown skill: code:code",
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+            },
+        ],
+    )
+
+    assert payload["status"] == "unknown_skill"
+    assert payload["subcode"] == "CLAUDE_UNKNOWN_SKILL"
+    assert payload["message"] == (
+        "Claude plugin command unavailable: Unknown skill: code:code"
+    )
+
+
+def test_detect_claude_terminal_failure_ignores_normal_success_prose(
+    tmp_path: Path,
+) -> None:
+    payload = run_detect(
+        tmp_path,
+        jsonl=[
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "Completed the plugin readiness implementation.",
+            },
+        ],
+    )
+
+    assert payload == {}
+
+
 def test_handle_claude_terminal_failure_writes_marker_and_stops_retry(
     tmp_path: Path,
 ) -> None:
@@ -573,11 +630,13 @@ def test_handle_claude_terminal_failure_writes_marker_and_stops_retry(
     assert (
         tmp_path / "claude-output.name.txt"
     ).read_text() == "claude-output-rate-run.jsonl\n"
-    assert json.loads((tmp_path / "loop-error.json").read_text()) == signed_marker({
-        "code": "RUNNER_ERROR",
-        "message": message,
-        "result": {"subcode": "CLAUDE_RATE_LIMIT"},
-    })
+    assert json.loads((tmp_path / "loop-error.json").read_text()) == signed_marker(
+        {
+            "code": "RUNNER_ERROR",
+            "message": message,
+            "result": {"subcode": "CLAUDE_RATE_LIMIT"},
+        }
+    )
 
     fields = (tmp_path / "runs.log").read_text().strip().split("|")
     assert fields[0] == "rate-run"
@@ -613,16 +672,51 @@ def test_handle_claude_terminal_failure_writes_context_marker(
     assert (
         tmp_path / "claude-output.name.txt"
     ).read_text() == "claude-output-context-run.jsonl\n"
-    assert json.loads((tmp_path / "loop-error.json").read_text()) == signed_marker({
-        "code": "RUNNER_ERROR",
-        "message": message,
-        "result": {"subcode": "CLAUDE_CONTEXT_LIMIT"},
-    })
+    assert json.loads((tmp_path / "loop-error.json").read_text()) == signed_marker(
+        {
+            "code": "RUNNER_ERROR",
+            "message": message,
+            "result": {"subcode": "CLAUDE_CONTEXT_LIMIT"},
+        }
+    )
 
     fields = (tmp_path / "runs.log").read_text().strip().split("|")
     assert fields[3] == "2"
     assert fields[4] == "context_limit"
     assert fields[5] == "plan_execute"
+
+
+def test_handle_claude_terminal_failure_writes_unknown_skill_marker(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".learnings").mkdir()
+    (tmp_path / ".learnings" / ".lock").write_text("locked")
+    (tmp_path / "state.local").write_text("state")
+    (tmp_path / "claude-output.jsonl").write_text(
+        '{"type":"result","subtype":"success","is_error":false,"result":"Unknown skill: code:code"}\n'
+    )
+
+    message = "Claude plugin command unavailable: Unknown skill: code:code"
+    result = run_bash(
+        f"""
+        source {RUN_LOOP}
+        RUN_ID='unknown-skill-run'
+        STATE_FILE="$CLOSEDLOOP_WORKDIR/state.local"
+        PROGRESS_LOG="$CLOSEDLOOP_WORKDIR/progress.log"
+        handle_claude_terminal_failure "$CLOSEDLOOP_WORKDIR" 4 unknown_skill CLAUDE_UNKNOWN_SKILL "{message}"
+        """,
+        tmp_path,
+    )
+
+    assert result.returncode == 1
+    assert "CLOSEDLOOP_FATAL[CLAUDE_UNKNOWN_SKILL]" in result.stderr
+    assert json.loads((tmp_path / "loop-error.json").read_text()) == signed_marker(
+        {
+            "code": "RUNNER_ERROR",
+            "message": message,
+            "result": {"subcode": "CLAUDE_UNKNOWN_SKILL"},
+        }
+    )
 
 
 def test_rename_output_on_exit_moves_jsonl_and_writes_sidecar(tmp_path: Path) -> None:
@@ -876,14 +970,28 @@ def test_code_review_log_with_no_session_does_not_backfill_plan_session(
         ("RL-20-rejected-no-overage", "rejected", None, False, {}, "CLAUDE_RATE_LIMIT"),
         (
             "RL-21-allowed-warning-overage-on",
-            "allowed_warning", "allowed_warning", True, {}, None,
+            "allowed_warning",
+            "allowed_warning",
+            True,
+            {},
+            None,
         ),
         (
             "RL-22-allowed-warning-overage-on-with-pct",
-            "allowed_warning", "allowed_warning", True,
-            {"warning_pct_int": 80}, None,
+            "allowed_warning",
+            "allowed_warning",
+            True,
+            {"warning_pct_int": 80},
+            None,
         ),
-        ("RL-23-rejected-overage-on", "rejected", "rejected", True, {}, "CLAUDE_RATE_LIMIT"),
+        (
+            "RL-23-rejected-overage-on",
+            "rejected",
+            "rejected",
+            True,
+            {},
+            "CLAUDE_RATE_LIMIT",
+        ),
         # Group C: overage path regression guards (PLN-530)
         ("RL-25-overage-allowed-on", "allowed", "allowed", True, {}, None),
         ("RL-26-overage-exceeded-on", "allowed", "exceeded", True, {}, None),
@@ -891,16 +999,28 @@ def test_code_review_log_with_no_session_does_not_backfill_plan_session(
         # Group D: cross-branch interaction tests (PLN-530)
         (
             "RL-28-rejected-status-allowed-overage",
-            "rejected", "allowed", True, {}, "CLAUDE_RATE_LIMIT",
+            "rejected",
+            "allowed",
+            True,
+            {},
+            "CLAUDE_RATE_LIMIT",
         ),
         (
             "RL-29-allowed-status-rejected-overage",
-            "allowed", "rejected", True, {}, "CLAUDE_RATE_LIMIT",
+            "allowed",
+            "rejected",
+            True,
+            {},
+            "CLAUDE_RATE_LIMIT",
         ),
         ("RL-30-both-rejected", "rejected", "rejected", True, {}, "CLAUDE_RATE_LIMIT"),
         (
             "RL-31-both-allowed-warning",
-            "allowed_warning", "allowed_warning", True, {}, None,
+            "allowed_warning",
+            "allowed_warning",
+            True,
+            {},
+            None,
         ),
     ],
     ids=lambda v: v if isinstance(v, str) else None,
@@ -1388,11 +1508,13 @@ def test_max_iterations_zero_success_writes_marker_and_exits_4(tmp_path: Path) -
     marker = tmp_path / "loop-error.json"
     assert marker.exists()
     payload = json.loads(marker.read_text())
-    assert payload == signed_marker({
-        "code": "RUNNER_ERROR",
-        "message": "Iteration budget exhausted without forward progress (0/5 iterations succeeded)",
-        "result": {"subcode": "MAX_ITERATIONS_NO_PROGRESS"},
-    })
+    assert payload == signed_marker(
+        {
+            "code": "RUNNER_ERROR",
+            "message": "Iteration budget exhausted without forward progress (0/5 iterations succeeded)",
+            "result": {"subcode": "MAX_ITERATIONS_NO_PROGRESS"},
+        }
+    )
 
 
 def test_max_iterations_with_success_exits_0_no_marker(tmp_path: Path) -> None:
@@ -1498,9 +1620,15 @@ def test_completion_promise_exits_0_regardless_of_counter(tmp_path: Path) -> Non
         # RL-32: empty object passes type check but has no status/overage fields
         ("RL-32-empty-object", {}),
         # RL-33: integer status — jq string equality returns false
-        ("RL-33-status-integer", {"status": 429, "rateLimitType": "five_hour", "resetsAt": 1778266200}),
+        (
+            "RL-33-status-integer",
+            {"status": 429, "rateLimitType": "five_hour", "resetsAt": 1778266200},
+        ),
         # RL-34: boolean status — jq string equality returns false
-        ("RL-34-status-boolean", {"status": True, "rateLimitType": "five_hour", "resetsAt": 1778266200}),
+        (
+            "RL-34-status-boolean",
+            {"status": True, "rateLimitType": "five_hour", "resetsAt": 1778266200},
+        ),
         # RL-35: string instead of object — "object" type guard rejects it
         ("RL-35-info-is-string", "rejected"),
     ],

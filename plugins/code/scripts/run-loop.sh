@@ -276,9 +276,28 @@ detect_claude_terminal_failure() {
       def entry_message:
         ((.result? | strings) // (.error? | strings) // "");
 
+      def unknown_skill_signal:
+        ((.result? | strings | test("Unknown skill:")) // false)
+        or ((.error? | strings | test("Unknown skill:")) // false);
+
       entries as $entries
       | rate_event_message($entries) as $rateMessage
-      | if any($entries[]; rate_limit_signal) then
+      | if any($entries[]; unknown_skill_signal) then
+          ([$entries[] | select(unknown_skill_signal)] | .[0]) as $trigger
+          | ($trigger | entry_message) as $triggerMsg
+          | {
+            status: "unknown_skill",
+            subcode: "CLAUDE_UNKNOWN_SKILL",
+            message: (
+              if ($triggerMsg | length) > 0 then
+                "Claude plugin command unavailable: " + $triggerMsg
+              else
+                "Claude plugin command unavailable: Unknown skill"
+              end
+              | clamp_message
+            )
+          }
+        elif any($entries[]; rate_limit_signal) then
           ([$entries[] | select(rate_limit_signal)] | .[0]) as $trigger
           | ($trigger | entry_message) as $triggerMsg
           | {
