@@ -945,7 +945,9 @@ class TestCaseScoreErrorReason:
 
     def test_casescore_accepts_error_reason_field(self) -> None:
         """CaseScore can be constructed with an error_reason string."""
-        score = _make_minimal_casescore("test-judge", error_reason="Tool call failed")
+        score = _make_minimal_casescore(
+            "test-judge", final_status=3, error_reason="Tool call failed"
+        )
         assert score.error_reason == "Tool call failed"
 
     def test_casescore_defaults_error_reason_to_none(self) -> None:
