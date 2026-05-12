@@ -47,7 +47,7 @@ This repository is a plugin monorepo under `plugins/`.
 - Recommended branches: `feat/*`, `fix/*`, `docs/*`, `refactor/*`.
 - PR workflow: fork, create topic branch from `main`, rebase onto upstream, then open PR from your fork.
 - PR description should include purpose, affected plugins/files, and exact commands run.
-- Update relevant changelog entries before pushing plugin edits (`.githooks/pre-push` enforces this expectation).
+- Do not manually edit `CHANGELOG.md` or `README.md` for plugin changes; after code changes are final, run the repo's `/update-documentation` workflow so generated documentation satisfies the changelog requirement enforced by `.githooks/pre-push`.
 
 ## Security & Configuration Tips
 - Keep secrets and keys out of version control (`.env`, tokens, credentials).
