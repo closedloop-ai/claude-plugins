@@ -1239,7 +1239,7 @@ If `--artifact-type` value is not 'plan', 'code', 'prd', or 'feature':
 If context-manager-for-judges agent exceeds 5 minutes:
 - Abort judge execution
 - Generate error CaseScores for all 11 judges
-- Each error CaseScore: `final_status=3`, `justification="Context preparation timeout"`
+- Each error CaseScore: `final_status=3`, `error_reason="Timeout: context preparation exceeded 5 minutes"`, `justification="Context preparation timeout"` (see `error_reason` guidance above)
 - Write complete report with all error CaseScores
 
 ### Context Manager Timeout (Plan Mode)
@@ -1252,7 +1252,7 @@ If context-manager-for-judges agent exceeds 5 minutes in plan mode:
 
 If a single judge Task call fails during execution:
 - **Do not abort** the entire workflow
-- Generate error CaseScore for that judge only
+- Generate error CaseScore for that judge only, with `final_status=3` and a populated `error_reason` describing the specific failure (e.g. `"Task tool error: agent not found"`, `"Parse error: response was not valid JSON"`) per the `error_reason` guidance above
 - Continue with remaining judges in batch and subsequent batches
 - Include error CaseScore in final aggregated report
 
