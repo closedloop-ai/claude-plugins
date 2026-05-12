@@ -781,12 +781,12 @@ Each judge returns a **CaseScore** JSON object:
   - `"Timeout: judge did not complete within 5 minutes"`
   - `"Preamble file not found: plan_preamble.md"`
 
-- **Effect on aggregation**: CaseScores with `error_reason` set are excluded by `compute_average_excluding_errors`, which then averages `MetricStatistics.score` across every metric of every remaining (non-errored) CaseScore. Errored judges do not drag down the aggregate score for judges that did execute successfully.
+- **Effect on aggregation**: CaseScores with `final_status=3` are excluded by `compute_average_excluding_errors`, which then averages `MetricStatistics.score` across every metric of every remaining (non-errored) CaseScore. `error_reason` is informational and does not control exclusion (see field docstring at `validate_judge_report.py:46`). Errored judges do not drag down the aggregate score for judges that did execute successfully.
 
 **Aggregation rules when errors are present:**
 
-- If SOME judges have `error_reason` set, `compute_average_excluding_errors` averages the metric scores of only the non-errored judges and annotates the result as "avg of N/M judges" (where N is non-errored count and M is total).
-- If ALL judges have `error_reason` set, or no non-errored judge contributes any metric, `compute_average_excluding_errors` returns `None` — no meaningful average can be computed.
+- If SOME judges have `final_status=3`, `compute_average_excluding_errors` returns the average of `MetricStatistics.score` across only the non-errored judges (return type `Optional[float]`). Callers rendering this for humans should annotate the value as "avg of N/M judges" by separately computing N (non-errored CaseScore count) and M (total CaseScore count) from the input list — the function itself does not return the annotation.
+- If ALL judges have `final_status=3`, or no non-errored judge contributes any metric, `compute_average_excluding_errors` returns `None` — no meaningful average can be computed.
 
 **Continue-on-failure semantics:**
 - Even if ALL judges fail, you MUST aggregate error CaseScores
@@ -802,7 +802,7 @@ Each judge returns a **CaseScore** JSON object:
 When displaying the evaluation results summary (e.g., in the final output or any human-readable report), follow these conventions for errored scores:
 
 **Errored score display:**
-- Use the `ERR` marker in place of a numeric score for any judge whose CaseScore has `error_reason` set (i.e., `final_status=3` with `error_reason` present).
+- Use the `ERR` marker in place of a numeric score for any judge whose CaseScore has `final_status=3`. `error_reason`, when present, can be displayed in a hover/tooltip or separate column but does not control whether `ERR` is shown.
 
 **Example summary table:**
 

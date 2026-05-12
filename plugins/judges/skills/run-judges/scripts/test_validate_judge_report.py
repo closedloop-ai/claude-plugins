@@ -954,7 +954,7 @@ class TestCaseScoreErrorReason:
         assert score.error_reason is None
 
     def test_compute_average_excluding_errors_excludes_errored_scores(self) -> None:
-        """compute_average_excluding_errors excludes scores where error_reason is set."""
+        """compute_average_excluding_errors excludes scores where final_status == 3."""
         scores = [
             _make_minimal_casescore("judge-a", final_status=1, error_reason=None),
             _make_minimal_casescore("judge-b", final_status=3, error_reason="parse error"),
