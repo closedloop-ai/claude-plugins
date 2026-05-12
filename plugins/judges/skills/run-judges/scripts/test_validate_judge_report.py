@@ -16,6 +16,7 @@ from validate_judge_report import (  # type: ignore[import-not-found]
     JUDGE_REGISTRY,
     VALID_SUFFIXES,
     CaseScore,
+    MetricStatistics,
     compute_average_excluding_errors,
     validate_report,
 )
@@ -957,11 +958,12 @@ class TestCaseScoreErrorReason:
         """compute_average_excluding_errors excludes scores where error_reason is set."""
         scores = [
             _make_minimal_casescore("judge-a", final_status=1, error_reason=None),
-            _make_minimal_casescore("judge-b", final_status=2, error_reason="parse error"),
+            _make_minimal_casescore("judge-b", final_status=3, error_reason="parse error"),
         ]
-        # Only judge-a (status=1) should be counted; judge-b is excluded
+        # Only judge-a contributes; judge-b is excluded. _make_minimal_casescore
+        # uses a single metric with score=0.9, so the average is 0.9.
         result = compute_average_excluding_errors(scores)
-        assert result == 1.0
+        assert result == 0.9
 
     def test_compute_average_excluding_errors_returns_none_when_all_errored(self) -> None:
         """compute_average_excluding_errors returns None when all scores have error_reason set."""
@@ -979,6 +981,40 @@ class TestCaseScoreErrorReason:
             _make_minimal_casescore("judge-b", final_status=3, error_reason="tool error"),
             _make_minimal_casescore("judge-c", final_status=2, error_reason=None),
         ]
-        # Valid scores: judge-a (1) and judge-c (2); judge-b is excluded
+        # Valid scores: judge-a and judge-c, each with one metric score=0.9;
+        # judge-b is excluded. Average = (0.9 + 0.9) / 2 = 0.9.
         result = compute_average_excluding_errors(scores)
-        assert result == 1.5
+        assert result == 0.9
+
+    def test_compute_average_excluding_errors_averages_varied_metric_scores(self) -> None:
+        """compute_average_excluding_errors averages every metric across non-errored CaseScores."""
+        scores = [
+            CaseScore(
+                case_id="judge-a",
+                final_status=1,
+                metrics=[
+                    MetricStatistics(metric_name="m1", threshold=0.5, score=0.4, justification="x"),
+                    MetricStatistics(metric_name="m2", threshold=0.5, score=0.6, justification="y"),
+                ],
+                error_reason=None,
+            ),
+            CaseScore(
+                case_id="judge-b",
+                final_status=1,
+                metrics=[
+                    MetricStatistics(metric_name="m1", threshold=0.5, score=1.0, justification="z"),
+                ],
+                error_reason=None,
+            ),
+            CaseScore(
+                case_id="judge-c",
+                final_status=3,
+                metrics=[
+                    MetricStatistics(metric_name="m1", threshold=0.5, score=0.0, justification="w"),
+                ],
+                error_reason="tool error",
+            ),
+        ]
+        # Errored judge-c is excluded. Average over (0.4, 0.6, 1.0) = 2.0/3.
+        result = compute_average_excluding_errors(scores)
+        assert result == pytest.approx(2.0 / 3.0)

@@ -47,6 +47,56 @@ VALID_TOOLS = {
     "Task",
 }
 
+# Required judge agent names per artifact type. Must stay in sync with
+# JUDGE_REGISTRY in plugins/judges/skills/run-judges/scripts/validate_judge_report.py.
+JUDGE_REGISTRY: dict[str, set[str]] = {
+    "plan": {
+        "brownfield-accuracy-judge",
+        "codebase-grounding-judge",
+        "code-organization-judge",
+        "convention-adherence-judge",
+        "custom-best-practices-judge",
+        "dry-judge",
+        "goal-alignment-judge",
+        "kiss-judge",
+        "readability-judge",
+        "solid-isp-dip-judge",
+        "solid-liskov-substitution-judge",
+        "solid-open-closed-judge",
+        "ssot-judge",
+        "technical-accuracy-judge",
+        "test-judge",
+        "verbosity-judge",
+    },
+    "code": {
+        "code-organization-judge",
+        "custom-best-practices-judge",
+        "dry-judge",
+        "kiss-judge",
+        "readability-judge",
+        "solid-isp-dip-judge",
+        "solid-liskov-substitution-judge",
+        "solid-open-closed-judge",
+        "ssot-judge",
+        "technical-accuracy-judge",
+        "test-judge",
+    },
+    "prd": {
+        "feature-completeness-judge",
+        "prd-auditor",
+        "prd-dependency-judge",
+        "prd-testability-judge",
+        "prd-scope-judge",
+    },
+    "feature": {
+        "feature-completeness-judge",
+        "prd-testability-judge",
+        "prd-dependency-judge",
+    },
+}
+
+VALID_ARTIFACT_TYPES = sorted(JUDGE_REGISTRY.keys())
+
 
 class AgentValidationResult(BaseModel):
     """Validation result for a single agent file."""
@@ -228,13 +278,19 @@ def validate_agent_file(file_path: Path) -> AgentValidationResult:
     return result
 
 
-def validate_agent_registry(agents_dir: Path) -> RegistryValidationResult:
+def validate_agent_registry(
+    agents_dir: Path, artifact_type: Optional[str] = None
+) -> RegistryValidationResult:
     """Validate all agent markdown files in a directory.
 
-    Discovers all .md files, validates each one, and aggregates results.
+    Discovers all .md files, validates each one, and aggregates results. When
+    `artifact_type` is provided, also checks that every judge agent required
+    for that artifact type (per JUDGE_REGISTRY) is present and valid.
 
     Args:
         agents_dir: Path to the directory containing agent markdown files.
+        artifact_type: Optional artifact type ("plan", "code", "prd", "feature").
+            When set, validation fails if any required judge is missing/invalid.
 
     Returns:
         RegistryValidationResult with per-agent results and aggregate counts.
@@ -267,6 +323,15 @@ def validate_agent_registry(agents_dir: Path) -> RegistryValidationResult:
 
         all_warnings.extend(f"[{md_file.name}] {w}" for w in agent_result.warnings)
 
+    if artifact_type is not None:
+        required_names = JUDGE_REGISTRY[artifact_type]
+        present_names = {a.agent_name for a in agent_results if a.is_valid and a.agent_name}
+        for missing in sorted(required_names - present_names):
+            all_errors.append(
+                f"Required judge for artifact-type '{artifact_type}' is "
+                f"missing or invalid: '{missing}'"
+            )
+
     invalid_count = sum(1 for a in agent_results if not a.is_valid)
     registry_result.agents = agent_results
     registry_result.total_agents = len(md_files)
@@ -278,13 +343,21 @@ def validate_agent_registry(agents_dir: Path) -> RegistryValidationResult:
     return registry_result
 
 
-def _print_registry_report(result: RegistryValidationResult) -> None:
+def _print_registry_report(
+    result: RegistryValidationResult,
+    artifact_type: Optional[str] = None,
+    workdir: Optional[str] = None,
+) -> None:
     """Print a human-readable validation report to stdout/stderr.
 
     Args:
         result: The aggregated registry validation result to report on.
+        artifact_type: Artifact type the pre-flight check was scoped to, if any.
+        workdir: Workdir context the validation ran in, if provided.
     """
     print(f"\nAgent Registry Validation: {result.agents_dir}")
+    print(f"  Artifact type:       {artifact_type or 'none'}")
+    print(f"  Workdir:             {workdir or 'none'}")
     print(f"  Total agents found:  {result.total_agents}")
     print(f"  Valid:               {result.valid_agents}")
     print(f"  Invalid:             {result.invalid_agents}")
@@ -296,6 +369,9 @@ def _print_registry_report(result: RegistryValidationResult) -> None:
 
     if result.all_errors:
         print("\nErrors:", file=sys.stderr)
+        print(f"  Artifact type: {artifact_type or 'none'}", file=sys.stderr)
+        print(f"  Workdir:       {workdir or 'none'}", file=sys.stderr)
+        print(f"  Agents dir:    {result.agents_dir}", file=sys.stderr)
         for error in result.all_errors:
             print(f"  ✗ {error}", file=sys.stderr)
     else:
@@ -323,6 +399,24 @@ def main() -> int:
             "relative to the repository root, auto-detected from this script's location)."
         ),
     )
+    parser.add_argument(
+        "--artifact-type",
+        choices=VALID_ARTIFACT_TYPES,
+        default=None,
+        help=(
+            "Artifact type being judged. When set, validation also fails if any "
+            "judge required for this artifact type (per JUDGE_REGISTRY) is missing "
+            "or invalid."
+        ),
+    )
+    parser.add_argument(
+        "--workdir",
+        default=None,
+        help=(
+            "ClosedLoop workdir for log context. Printed in the failure header so "
+            "operators can correlate failures with a run; not used for validation."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -335,12 +429,12 @@ def main() -> int:
         agents_dir = script_dir.parent.parent / "agents"
 
     try:
-        result = validate_agent_registry(agents_dir)
+        result = validate_agent_registry(agents_dir, artifact_type=args.artifact_type)
     except Exception as e:
         print(f"Error: unexpected failure during validation: {e}", file=sys.stderr)
         return 1
 
-    _print_registry_report(result)
+    _print_registry_report(result, artifact_type=args.artifact_type, workdir=args.workdir)
 
     return 0 if result.is_valid else 1
 

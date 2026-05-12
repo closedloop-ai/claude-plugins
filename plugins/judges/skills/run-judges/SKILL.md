@@ -295,7 +295,7 @@ The script is idempotent — it skips if `manifest.json` already exists.
 **Action:** Run `validate_agent_registry.py` via Bash:
 
 ```bash
-uv run "${CLAUDE_PLUGIN_ROOT}/skills/run-judges/scripts/validate_agent_registry.py" \
+uv run "${CLAUDE_PLUGIN_ROOT}/tools/python/validate_agent_registry.py" \
   --artifact-type "$ARTIFACT_TYPE" \
   --workdir "$CLOSEDLOOP_WORKDIR"
 ```
@@ -781,12 +781,12 @@ Each judge returns a **CaseScore** JSON object:
   - `"Timeout: judge did not complete within 5 minutes"`
   - `"Preamble file not found: plan_preamble.md"`
 
-- **Effect on aggregation**: Scores with `error_reason` set are excluded from average calculations by `compute_average_excluding_errors`. This means errored judges do not drag down the aggregate score for judges that did execute successfully.
+- **Effect on aggregation**: CaseScores with `error_reason` set are excluded by `compute_average_excluding_errors`, which then averages `MetricStatistics.score` across every metric of every remaining (non-errored) CaseScore. Errored judges do not drag down the aggregate score for judges that did execute successfully.
 
 **Aggregation rules when errors are present:**
 
-- If SOME judges have `error_reason` set, `compute_average_excluding_errors` computes the average over only the non-errored judges and annotates the result as "avg of N/M judges" (where N is non-errored count and M is total).
-- If ALL judges have `error_reason` set, `compute_average_excluding_errors` returns `None` — no meaningful average can be computed.
+- If SOME judges have `error_reason` set, `compute_average_excluding_errors` averages the metric scores of only the non-errored judges and annotates the result as "avg of N/M judges" (where N is non-errored count and M is total).
+- If ALL judges have `error_reason` set, or no non-errored judge contributes any metric, `compute_average_excluding_errors` returns `None` — no meaningful average can be computed.
 
 **Continue-on-failure semantics:**
 - Even if ALL judges fail, you MUST aggregate error CaseScores

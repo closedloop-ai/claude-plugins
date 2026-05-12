@@ -55,18 +55,23 @@ class CaseScore(BaseModel):
 
 
 def compute_average_excluding_errors(scores: List[CaseScore]) -> Optional[float]:
-    """Compute the average final_status of scores, excluding those with error_reason set.
+    """Compute the average MetricStatistics.score across all non-errored CaseScores.
+
+    Flattens metrics from every CaseScore whose error_reason is None and returns
+    the arithmetic mean of their `score` values. Returns None if no non-errored
+    score contributes any metric.
 
     Args:
         scores: List of CaseScore instances to aggregate.
 
     Returns:
-        The average final_status of valid (non-error) scores, or None if no valid scores remain.
+        The average metric score across non-errored CaseScores, or None.
     """
     valid_scores = [s for s in scores if s.error_reason is None]
-    if not valid_scores:
+    metric_scores = [m.score for s in valid_scores for m in s.metrics]
+    if not metric_scores:
         return None
-    return sum(s.final_status for s in valid_scores) / len(valid_scores)
+    return sum(metric_scores) / len(metric_scores)
 
 
 class EvaluationReport(BaseModel):
