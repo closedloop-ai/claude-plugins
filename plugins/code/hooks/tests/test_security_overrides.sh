@@ -8,6 +8,8 @@
 #   4. Malformed override files are treated as no-override (deny)
 #   5. Override works for Read/Write/Edit tool file-path rules
 #   6. Cloud credentials are split into cmd vs files categories
+#   7. Mixed-category Bash commands still deny later disallowed matches
+#   8. Override audit logs are preserved once WORKDIR logging is available
 #
 # Usage:
 #   bash plugins/code/hooks/tests/test_security_overrides.sh
@@ -88,6 +90,17 @@ assert_not_denied() {
         fail "$test_name" "hook exited with code $hook_exit (expected 0)"
     else
         pass "$test_name"
+    fi
+}
+
+assert_file_contains() {
+    local test_name="$1"
+    local file_path="$2"
+    local expected="$3"
+    if [[ -f "$file_path" ]] && grep -Fq "$expected" "$file_path"; then
+        pass "$test_name"
+    else
+        fail "$test_name" "expected '$expected' in $file_path"
     fi
 }
 
@@ -335,10 +348,57 @@ EOF
 }
 
 # ------------------------------------------------------------------
-# Test 9: Non-blocked commands pass through regardless
+# Test 9: Mixed-category commands still deny disallowed categories
 # ------------------------------------------------------------------
 echo ""
-echo "Test 9: Non-blocked commands pass through regardless"
+echo "Test 9: Mixed-category commands still deny disallowed categories"
+{
+    tmpdir=$(mktemp -d)
+    overrides="$tmpdir/overrides.json"
+
+    cat > "$overrides" <<'EOF'
+{"overrides":{"process-kill":true}}
+EOF
+
+    run_hook "$(build_bash_input "pkill node && cat ~/.aws/credentials")" "$overrides"
+    assert_denied "mixed command denied when later cloud credential access is still blocked" "$hook_output"
+
+    cat > "$overrides" <<'EOF'
+{"overrides":{"cloud-credentials-cmd":true}}
+EOF
+
+    run_hook "$(build_bash_input "gcloud auth print-access-token && cat ~/.ssh/id_rsa")" "$overrides"
+    assert_denied "mixed command denied when later ssh key access is still blocked" "$hook_output"
+
+    rm -rf "$tmpdir"
+}
+
+# ------------------------------------------------------------------
+# Test 10: Override audit logs survive once WORKDIR logging is available
+# ------------------------------------------------------------------
+echo ""
+echo "Test 10: Override audit logs are written after workdir discovery"
+{
+    read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env "override")"
+    overrides="$tmpdir/overrides.json"
+    log_file="$workdir/.learnings/pretooluse-hook-debug.log"
+
+    cat > "$overrides" <<'EOF'
+{"overrides":{"process-kill":true}}
+EOF
+
+    run_hook "$(build_bash_input "pkill node" "$session_id" "$cwd")" "$overrides"
+    assert_not_denied "process-kill allowed in mapped session" "$hook_output"
+    assert_file_contains "override audit message written to debug log" "$log_file" "SECURITY OVERRIDE: allowed category=process-kill"
+
+    rm -rf "$tmpdir"
+}
+
+# ------------------------------------------------------------------
+# Test 11: Non-blocked commands pass through regardless
+# ------------------------------------------------------------------
+echo ""
+echo "Test 11: Non-blocked commands pass through regardless"
 {
     tmpdir=$(mktemp -d)
     no_file="$tmpdir/nonexistent.json"
