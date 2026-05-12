@@ -4,9 +4,11 @@ import json
 from pathlib import Path
 
 from perf_summary import (
+    backfill_agent_tokens_from_claude_output,
     load_events,
     phase_timeline,
     summarize_agents,
+    summarize_phase_agents,
     summarize_iterations,
     summarize_phases,
     summarize_pipeline,
@@ -18,6 +20,12 @@ def _write_events(perf_path: Path, events: list[dict[str, object]]) -> None:
     with open(perf_path, "w") as f:
         for event in events:
             f.write(json.dumps(event) + "\n")
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
+    with open(path, "w") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
 
 
 class TestLoadEvents:
@@ -281,6 +289,50 @@ class TestSummarizeAgents:
         kiss = next(r for r in result if r["agent_name"] == "kiss-judge")
         assert kiss["count"] == 1
         assert kiss["total_s"] == 15.0
+        assert dry["total_tokens"] == 0
+        assert dry["peak_context_tokens"] == 0
+
+    def test_aggregates_token_usage_by_agent_name(self) -> None:
+        events = [
+            {
+                "event": "agent",
+                "agent_name": "dry-judge",
+                "duration_s": 22,
+                "input_tokens": 100,
+                "output_tokens": 25,
+                "cache_creation_input_tokens": 10,
+                "cache_read_input_tokens": 5,
+                "total_context_tokens": 900,
+            },
+            {
+                "event": "agent",
+                "agent_name": "dry-judge",
+                "duration_s": 30,
+                "input_tokens": 200,
+                "output_tokens": 75,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 25,
+                "total_context_tokens": 850,
+            },
+            {
+                "event": "agent",
+                "agent_name": "kiss-judge",
+                "duration_s": 15,
+                "input_tokens": 50,
+                "output_tokens": 10,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "total_context_tokens": 100,
+            },
+        ]
+        result = summarize_agents(events)
+        dry = next(r for r in result if r["agent_name"] == "dry-judge")
+        assert dry["input_tokens"] == 300
+        assert dry["output_tokens"] == 100
+        assert dry["cache_creation_input_tokens"] == 10
+        assert dry["cache_read_input_tokens"] == 30
+        assert dry["total_tokens"] == 440
+        assert dry["peak_context_tokens"] == 900
 
     def test_sorts_by_total_time_descending(self) -> None:
         events = [
@@ -294,6 +346,87 @@ class TestSummarizeAgents:
             "mid-agent",
             "fast-agent",
         ]
+
+
+class TestBackfillAgentTokensFromClaudeOutput:
+    def test_hydrates_legacy_agent_rows_from_archived_output_sidecar(
+        self, tmp_path: Path
+    ) -> None:
+        events = [
+            {
+                "event": "agent",
+                "agent_id": "agent-1",
+                "agent_name": "pre-explorer",
+                "duration_s": 10,
+            },
+            {
+                "event": "agent",
+                "agent_id": "agent-2",
+                "agent_name": "plan-validator",
+                "duration_s": 20,
+            },
+        ]
+        archived = tmp_path / "claude-output-run-1.jsonl"
+        (tmp_path / "claude-output.name.txt").write_text(archived.name)
+        _write_jsonl(
+            archived,
+            [
+                {
+                    "type": "user",
+                    "tool_use_result": {
+                        "agentId": "agent-1",
+                        "usage": {
+                            "input_tokens": 1,
+                            "output_tokens": 20,
+                            "cache_creation_input_tokens": 30,
+                            "cache_read_input_tokens": 400,
+                        },
+                    },
+                }
+            ],
+        )
+
+        updated = backfill_agent_tokens_from_claude_output(events, tmp_path)
+        assert updated == 1
+
+        result = summarize_agents(events)
+        pre_explorer = next(r for r in result if r["agent_name"] == "pre-explorer")
+        assert pre_explorer["input_tokens"] == 1
+        assert pre_explorer["output_tokens"] == 20
+        assert pre_explorer["cache_creation_input_tokens"] == 30
+        assert pre_explorer["cache_read_input_tokens"] == 400
+        assert pre_explorer["total_tokens"] == 451
+
+        validator = next(r for r in result if r["agent_name"] == "plan-validator")
+        assert validator["total_tokens"] == 0
+
+    def test_keeps_existing_nonzero_perf_token_fields(self, tmp_path: Path) -> None:
+        events = [
+            {
+                "event": "agent",
+                "agent_id": "agent-1",
+                "agent_name": "pre-explorer",
+                "duration_s": 10,
+                "input_tokens": 9,
+                "output_tokens": 1,
+            },
+        ]
+        _write_jsonl(
+            tmp_path / "claude-output.jsonl",
+            [
+                {
+                    "tool_use_result": {
+                        "agentId": "agent-1",
+                        "usage": {"input_tokens": 100, "output_tokens": 200},
+                    }
+                }
+            ],
+        )
+
+        updated = backfill_agent_tokens_from_claude_output(events, tmp_path)
+        assert updated == 0
+        assert events[0]["input_tokens"] == 9
+        assert events[0]["output_tokens"] == 1
 
 
 class TestSummarizePhases:
@@ -444,6 +577,162 @@ class TestSummarizePhases:
         result = summarize_phases(events)
         assert [row["phase"] for row in result] == ["Phase B", "Phase A"]
 
+    def test_sums_tokens_from_agents_started_inside_phase_window(self) -> None:
+        events = [
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "command": "plan_execute",
+                "phase": "Phase A",
+                "started_at": "2026-04-30T10:00:00Z",
+            },
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "command": "plan_execute",
+                "phase": "Phase B",
+                "started_at": "2026-04-30T10:10:00Z",
+            },
+            {
+                "event": "iteration",
+                "run_id": "r1",
+                "iteration": 1,
+                "ended_at": "2026-04-30T10:20:00Z",
+            },
+            {
+                "event": "agent",
+                "run_id": "r1",
+                "iteration": 1,
+                "command": "plan_execute",
+                "agent_name": "planner",
+                "started_at": "2026-04-30T10:05:00Z",
+                "duration_s": 60,
+                "input_tokens": 100,
+                "output_tokens": 25,
+                "cache_creation_input_tokens": 5,
+                "cache_read_input_tokens": 10,
+                "total_context_tokens": 500,
+            },
+            {
+                "event": "agent",
+                "run_id": "r1",
+                "iteration": 1,
+                "command": "plan_execute",
+                "agent_name": "critic",
+                "started_at": "2026-04-30T10:10:00Z",
+                "duration_s": 30,
+                "input_tokens": 200,
+                "output_tokens": 50,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 20,
+                "total_context_tokens": 700,
+            },
+            {
+                "event": "agent",
+                "run_id": "r1",
+                "iteration": 1,
+                "command": "code_review",
+                "agent_name": "wrong-command",
+                "started_at": "2026-04-30T10:15:00Z",
+                "duration_s": 30,
+                "input_tokens": 999,
+                "output_tokens": 999,
+            },
+        ]
+        result = summarize_phases(events)
+        by_phase = {row["phase"]: row for row in result}
+        assert by_phase["Phase A"]["total_tokens"] == 140
+        assert by_phase["Phase A"]["peak_context_tokens"] == 500
+        assert by_phase["Phase B"]["total_tokens"] == 270
+        assert by_phase["Phase B"]["peak_context_tokens"] == 700
+
+
+class TestSummarizePhaseAgents:
+    def test_empty_events(self) -> None:
+        assert summarize_phase_agents([]) == []
+
+    def test_aggregates_tokens_by_phase_and_agent(self) -> None:
+        events = [
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "command": "plan_execute",
+                "phase": "Planning",
+                "started_at": "2026-04-30T10:00:00Z",
+            },
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "command": "plan_execute",
+                "phase": "Implementation",
+                "started_at": "2026-04-30T10:05:00Z",
+            },
+            {
+                "event": "iteration",
+                "run_id": "r1",
+                "iteration": 1,
+                "ended_at": "2026-04-30T10:20:00Z",
+            },
+            {
+                "event": "agent",
+                "run_id": "r1",
+                "iteration": 1,
+                "command": "plan_execute",
+                "agent_name": "planner",
+                "started_at": "2026-04-30T10:01:00Z",
+                "duration_s": 10,
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "total_context_tokens": 300,
+            },
+            {
+                "event": "agent",
+                "run_id": "r1",
+                "iteration": 1,
+                "command": "plan_execute",
+                "agent_name": "planner",
+                "started_at": "2026-04-30T10:02:00Z",
+                "duration_s": 20,
+                "input_tokens": 150,
+                "output_tokens": 30,
+                "cache_read_input_tokens": 40,
+                "total_context_tokens": 400,
+            },
+            {
+                "event": "agent",
+                "run_id": "r1",
+                "iteration": 1,
+                "command": "plan_execute",
+                "agent_name": "implementation-subagent",
+                "started_at": "2026-04-30T10:06:00Z",
+                "duration_s": 60,
+                "input_tokens": 500,
+                "output_tokens": 200,
+                "cache_creation_input_tokens": 25,
+                "total_context_tokens": 1200,
+            },
+        ]
+        result = summarize_phase_agents(events)
+        by_key = {(row["phase"], row["agent_name"]): row for row in result}
+
+        planning = by_key[("Planning", "planner")]
+        assert planning["count"] == 2
+        assert planning["total_s"] == 30.0
+        assert planning["input_tokens"] == 250
+        assert planning["output_tokens"] == 50
+        assert planning["cache_read_input_tokens"] == 40
+        assert planning["total_tokens"] == 340
+        assert planning["peak_context_tokens"] == 400
+
+        implementation = by_key[("Implementation", "implementation-subagent")]
+        assert implementation["count"] == 1
+        assert implementation["total_tokens"] == 725
+        assert implementation["peak_context_tokens"] == 1200
+
 
 class TestPhaseTimeline:
     def test_empty_events(self) -> None:
@@ -567,3 +856,38 @@ class TestPhaseTimeline:
         assert len(result) == 1
         assert result[0]["run_id"] == "run-a"
         assert result[0]["iteration"] == 3
+
+    def test_includes_phase_instance_token_totals(self) -> None:
+        events = [
+            {
+                "event": "phase",
+                "run_id": "r1",
+                "iteration": 1,
+                "command": "plan_execute",
+                "phase": "Planning",
+                "started_at": "2026-04-30T10:00:00Z",
+            },
+            {
+                "event": "iteration",
+                "run_id": "r1",
+                "iteration": 1,
+                "ended_at": "2026-04-30T10:05:00Z",
+            },
+            {
+                "event": "agent",
+                "run_id": "r1",
+                "iteration": 1,
+                "command": "plan_execute",
+                "agent_name": "planner",
+                "started_at": "2026-04-30T10:01:00Z",
+                "duration_s": 30,
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_creation_input_tokens": 5,
+                "cache_read_input_tokens": 10,
+                "total_context_tokens": 300,
+            },
+        ]
+        result = phase_timeline(events)
+        assert result[0]["total_tokens"] == 135
+        assert result[0]["peak_context_tokens"] == 300

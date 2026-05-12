@@ -30,6 +30,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `compute_average_excluding_errors` was previously averaging `final_status` ordinal codes (`1=pass, 2=fail, 3=error`) — corrected to average `MetricStatistics.score` across non-errored case scores. The original implementation produced numerically meaningful but semantically empty values; the rewrite restores the intended "score average" semantic. A new varied-score test covers the regression.
 - Test fixture for `error_reason` now matches the documented contract (set only when `final_status=3`), preventing tests from accidentally encoding a non-contract-compliant shape into the regression suite.
 
+### code v1.11.18
+
+#### Added
+- `decision-table` skill `references/edge-cases.md` gains six new edge-case categories with mandatory test requirements: External contract literal binding, Cross-surface propagation and reconciliation, Data visibility versus side effects, Cached capability drift, Backward-compatible persisted defaults and promotion, and Distributed lifecycle coverage.
+- `decision-table` `references/artifact-format.md` adds a `Contract Literal Inventory` table schema (Literal / Contract Type / Source of Truth / Producers / Consumers / Compatibility / Failure Behavior) and expands the behavioral edge-case checklist and `Required Tests` guidance with exact contract-literal binding tests whose mocks fail closed.
+- `decision-table` `references/review-prevention.md` adds seven new anti-patterns: external contract literal collision, permissive mock hiding wrong external key, cross-surface write with no reconciliation path, visible data mistaken for fired side effect, stale cached capability false negative/positive, legacy persisted record promoted or deleted without evidence, and distributed lifecycle gap. Contract-Heavy Review Surface section gains parallel coverage bullets.
+
+#### Changed
+- `decision-table` `SKILL.md` steps 6, 8, and 12 require classifying external contract literals (feature flag keys, query parameters, cache segments, headers, event names, command names, plugin identifiers, URL schemes, reason/status strings, etc.) by semantic purpose and source of truth before treating similar-looking strings as aliases; require treating web/backend/Electron/local-store/notification/cache/peer as separate surfaces unless proven shared; require test oracles that fail closed for wrong literals.
+
+### self-learning v1.2.5
+
+#### Added
+- `perf_summary.py` now reports token usage from `agent` perf rows. Agent and phase tables include total, input, output, cache, and peak-context token columns; JSON output includes granular token fields plus a new `phase_agents` table keyed by derived phase and `agent_name`.
+- Phase token attribution now joins `agent` events into completed phase windows by `run_id`, `iteration`, `command`, and `agent.started_at`. Phase timeline output includes per-phase-instance token totals and peak context. Legacy perf rows without token fields remain compatible; when an adjacent `claude-output.jsonl` / `claude-output-*.jsonl` file has matching `tool_use_result.agentId` usage, the summary backfills token totals from that archive.
+
+### code v1.11.17
+
+#### Added
+- `/plan-validate` skill auto-syncs answered questions from markdown plans into `plan.json`. `validate_plan.py` gains an `--auto-sync` flag (passed by default from the skill) that extracts answers in bold, italic, and plain formats from the markdown, migrates entries from `openQuestions` to `answeredQuestions`, and falls back to `recommendedAnswer` when no answer text is found. Covered by `test_auto_sync_answers.py` and `test_validate_plan_sync.py`.
+
+### code v1.11.16
+
+#### Added
+- `run-loop.sh` honors a pre-set `CLOSEDLOOP_COMMAND` from the parent process (e.g. the Electron app's websocket-derived command). New `resolve_closedloop_command()` helper applies the precedence pre-set `CLOSEDLOOP_COMMAND` → `--prompt` value → `"interactive"` fallback and persists the resolved command in `state.json` for correct Datadog per-command attribution and manual-resume recovery. On resume, the persisted command overrides any stale ambient `CLOSEDLOOP_COMMAND`.
+
+#### Fixed
+- `write_runs_log_entry` default chain changes from `LAST_CLAUDE_COMMAND → self_learning` to `LAST_CLAUDE_COMMAND → CLOSEDLOOP_COMMAND → plan_execute`, removing the over-attribution of fresh-start Loops to `self_learning` in Datadog (FEA-936).
+- `emit_perf_event` empty-input guard treats an empty `json_line` as a silent no-op, preventing Loop-wide kills under older jq + `set -euo pipefail` and corrupt blank perf.jsonl lines under modern jq 1.8+ (FEA-936).
+- Legacy state-file read path hardened with `|| echo ""` so older state files lacking the `command:` field do not abort the script under `set -euo pipefail`.
+
 ### code v1.11.15
 
 #### Changed

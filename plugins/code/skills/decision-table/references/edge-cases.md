@@ -18,6 +18,14 @@ When a dependency or peer returns multiple signals affecting the same decision (
 
 For ORM or database errors whose metadata shape varies by adapter or version, include every documented shape that drives the branch, such as constraint-name strings, field-name arrays, column-name arrays, missing metadata, and unrelated constraint metadata. Tests must prove the intended mapping for each accepted shape and the fallback for unrelated shapes.
 
+## External contract literal binding
+
+When behavior depends on a literal string or key outside the immediate helper, inventory the exact literal and classify its semantic type before implementation. This includes feature flag keys, rollout names, query parameters, route paths, header names, cache key segments, storage keys, environment variables, telemetry event names, command names, plugin identifiers, marketplace identifiers, version labels, URL schemes, and reason/status strings.
+
+Include rows for the exact configured literal, absent or disabled literal, wrong but similar literal, legacy/old literal when compatibility is required, and unrelated internal labels that must not be accepted as the external contract. State the source of truth for each literal: plan or PRD text, repo constant, existing API contract, rollout configuration, documented client behavior, or user-provided deployment fact.
+
+**Tests:** require a positive exact-key case and at least one wrong-key or same-looking-key mutation. Mocks must fail closed: do not return enabled, valid, found, or accepted for arbitrary keys. For feature flags, enable only the expected key; for query/header/event/storage/cache/command/plugin identifiers, assert the exact key or name and its semantic role.
+
 ## Library-managed lifecycle re-entry
 
 Include rows for automatic reconnects, retry timers, callbacks, restarts, framework-owned replays, and other paths that re-enter with reused state.
@@ -35,6 +43,30 @@ When one phase computes, validates, or mutates state inside an isolated executio
 Include rows for success, validation failure, dependency failure, cancellation/timeout, and partial-output branches. For each branch, state which later side effects must still see the value, which must not run without it, and how missing or stale propagated state is classified.
 
 **Tests:** require at least one test that exercises the real production sequencing across the boundary, not only direct helper calls in a shared context. The test must prove the later phase receives the expected value, rejects the missing value, or records the intended fallback.
+
+## Cross-surface propagation and reconciliation
+
+When a write affects multiple processes, replicas, apps, windows, stores, or peers, include rows for how every affected surface learns about the write. Cover immediate push/control events, polling, heartbeat, reconnect, startup, manual refresh, missed event, offline recovery, and the durable source of truth that wins when surfaces disagree.
+
+For distributed browser-command, key, authorization, or signing workflows, model the web app, backend, Electron process, local trusted-key store, OS notification layer, command dispatcher, and remote peer separately unless implementation proves two surfaces share the same state and lifecycle.
+
+**Tests:** require at least one immediate propagation assertion and one delayed or missed-event reconciliation assertion. The test must prove the affected consumer changed behavior, not only that the source write succeeded.
+
+## Data visibility versus side effects
+
+When a state change should both become visible and trigger an effect, include separate rows for the data becoming listable/readable and for each side effect firing, deduplicating, retrying, or intentionally not firing. Side effects include OS notifications, telemetry, command dispatch, revocation dispatch, cleanup, acknowledgement, badge/count updates, and user prompts.
+
+Refreshing a list, cache, or view proves only data visibility unless the row and test also assert the side effect. Include rows for duplicate refreshes, repeated events, stale views, and already-notified/already-dispatched state.
+
+**Tests:** require independent assertions for the visible data state and the side-effect state when both are externally visible or operationally important.
+
+## Cached capability drift
+
+When command routing, revocation, authorization, feature availability, or safety behavior depends on cached peer capabilities or supported operations, include rows for fresh cache, stale false negative, stale false positive, old peer with no capability signal, unknown peer shape, cache miss, retry, fallback, and reconciliation after the peer reports authoritative capability.
+
+Do not let a stale false negative silently skip a safety-critical command when retry, fallback dispatch, source-of-truth lookup, or later reconciliation is required. Do not let a stale false positive produce an unrecoverable command failure when an old peer or downgraded peer should degrade safely.
+
+**Tests:** require one stale false-negative case, one stale false-positive or old-peer case, and one reconciliation case that proves the cache is corrected or bypassed according to the intended behavior.
 
 ## Terminal-state transition guards
 
@@ -79,6 +111,22 @@ When deleting, rotating, revoking, or clearing persisted keys, credentials, lock
 When saving, duplicating, importing, switching, or snapshotting a profile/config from active runtime state, include rows for fields that must be copied, regenerated, omitted, or downgraded. Treat credentials, signing keys, service IDs, device IDs, integration IDs, public keys, machine identities, and other ownership-scoped identifiers as non-transferable by default unless the plan explicitly says they are shared.
 
 Final verification must prove a new profile/config cannot accidentally inherit another profile's ownership-scoped identity or credential binding.
+
+## Backward-compatible persisted defaults and promotion
+
+When older persisted records lack new provenance, source, trust, ownership, capability, or lifecycle fields, include rows for missing fields, explicit legacy values, conservative defaults, authoritative evidence that allows promotion/backfill, authoritative evidence that requires downgrade or revocation, and mixed old/new records.
+
+Promotion or backfill must require source-backed evidence from a durable authority or verified peer signal. Include rows proving manual, locally trusted, or user-created records are not accidentally deleted, promoted to managed state, or treated as remotely revocable without that evidence.
+
+**Tests:** require at least one legacy missing-field case, one evidence-backed promotion or backfill case, and one manual or legacy record that must remain conservative.
+
+## Distributed lifecycle coverage
+
+For distributed command, browser-key, authorization, signing, or peer-trust workflows, include lifecycle rows for register/create, approval/authorization, normal command execution, revoke/delete, offline/reconnect reconciliation, repeated action/idempotency, and stale UI/cache behavior.
+
+Each lifecycle row must identify the initiating surface, durable source of truth, affected replicas, expected side effects, idempotency key or dedupe rule when applicable, and recovery behavior after missed events or stale local state.
+
+**Tests:** require coverage for creation/registration, authorization, normal command or use, revocation/deletion, and at least one offline/reconnect or stale-cache reconciliation path.
 
 ## Diagnostic contracts
 

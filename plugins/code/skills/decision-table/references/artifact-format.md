@@ -23,14 +23,28 @@ Use this structure:
 - <area 1>: why this area is included
 - <area 2>: why this area is included
 
+## Contract Literal Inventory
+
+Record exact external contract literals before implementation. Include feature flag keys, rollout names, query parameters, route paths, header names, cache key segments, storage keys, environment variables, event names, command names, plugin identifiers, marketplace identifiers, URL schemes, and reason/status strings when they affect behavior.
+
+| Literal | Contract Type / Purpose | Source of Truth | Producers | Consumers | Compatibility / Failure Behavior |
+| --- | --- | --- | --- | --- | --- |
+| ... | feature flag / query param / cache segment / event / command / plugin id / etc. | plan, repo constant, API contract, rollout config, user-provided fact, or existing code | ... | ... | exact-key behavior, wrong-key behavior, legacy alias if any |
+
 ## Behavioral Edge-Case Expansion
 
 Apply every category in [`edge-cases.md`](edge-cases.md). Each must be represented by rows or an explicit non-applicability note before marking `Final Alignment Status: Aligned`. The bullets below are placeholder shape — the canonical list is in `edge-cases.md`; do not skip categories that are absent from this template.
 
 - Structured-result setup failures: <rows or non-applicability note>
+- External contract literal binding: <rows or non-applicability note>
 - Library-managed lifecycle re-entry: <rows or non-applicability note>
+- Cross-surface propagation and reconciliation: <rows or non-applicability note>
+- Data visibility versus side effects: <rows or non-applicability note>
+- Cached capability drift: <rows or non-applicability note>
 - Time-bound credentials/signatures: <rows or non-applicability note>
 - Durable finalization and replay eligibility: <rows or non-applicability note>
+- Backward-compatible persisted defaults and promotion: <rows or non-applicability note>
+- Distributed lifecycle coverage: <rows or non-applicability note>
 - Diagnostic reason/category taxonomy: <rows or non-applicability note>
 - Side-effect boundaries for validation/preparation failures: <rows or non-applicability note>
 - ... (continue with every category from `edge-cases.md`)
@@ -72,6 +86,7 @@ Repeat as needed.
 ## Required Tests
 
 - Exact scenario coverage implied by the changed rows
+- Exact contract-literal binding tests for feature flags, query parameters, headers, events, cache/storage keys, command names, plugin identifiers, or other external keys. Mocks should fail closed unless the exact intended literal is used.
 
 ## Verification Findings
 
@@ -105,8 +120,14 @@ Guidelines:
 - Use sections for multiple behavior areas inside one artifact.
 - Only split into multiple files if the work spans clearly separate repos/systems or the single artifact becomes too large to review effectively.
 - Use `Behavioral Edge-Case Expansion` to record behavior-only edge cases that must be represented in rows or explicitly ruled out as not applicable.
+- Use `Contract Literal Inventory` to prevent similar-looking strings from being conflated. Classify each literal by semantic role, record the source of truth, and state whether wrong or legacy literals are rejected, ignored, or supported through an explicit compatibility path.
 - Keep the same state axes and column meanings across `Current Code` and `Intended Change` within each behavior area.
 - Use additive rows rather than prose for behavior changes whenever possible.
+- For distributed workflows, include rows for how each replica/process learns about writes, how stale or offline replicas reconcile, and which durable source of truth wins.
+- Keep data visibility rows separate from side-effect rows such as notifications, dispatches, telemetry, cleanup, and deduplication.
+- For capability- or operation-gated behavior, include fresh cache, stale false negative, stale false positive, old peer, fallback, retry, and reconciliation rows.
+- For legacy persisted records missing new fields, include conservative defaults, evidence-backed promotion/backfill, downgrade behavior, and manual-record protection.
+- For distributed command/key/signing workflows, include register/create, approval/authorization, normal command, revoke/delete, offline/reconnect reconciliation, repeated action/idempotency, and stale UI/cache scenarios.
 - Every nontrivial row should include file or plan references.
 - Mark inferred target-state behavior explicitly when the plan implies it but does not say it directly.
 - Freeze `Current Code` and `Intended Change` once implementation begins.
