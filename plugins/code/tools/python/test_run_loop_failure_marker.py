@@ -710,6 +710,15 @@ def test_handle_claude_terminal_failure_writes_unknown_skill_marker(
 
     assert result.returncode == 1
     assert "CLOSEDLOOP_FATAL[CLAUDE_UNKNOWN_SKILL]" in result.stderr
+    assert not (tmp_path / ".learnings" / ".lock").exists()
+    assert not (tmp_path / "state.local").exists()
+    assert not (tmp_path / "claude-output.jsonl").exists()
+    assert (tmp_path / "claude-output-unknown-skill-run.jsonl").read_text() == (
+        '{"type":"result","subtype":"success","is_error":false,"result":"Unknown skill: code:code"}\n'
+    )
+    assert (
+        tmp_path / "claude-output.name.txt"
+    ).read_text() == "claude-output-unknown-skill-run.jsonl\n"
     assert json.loads((tmp_path / "loop-error.json").read_text()) == signed_marker(
         {
             "code": "RUNNER_ERROR",
