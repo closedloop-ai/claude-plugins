@@ -15,33 +15,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
-      - run: pip install -r requirements-dev.txt
-      - run: pip check
-      - run: ruff check .
+      - run: uv sync --frozen --group dev
+      - run: uv run ruff check .
 
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
-      - run: pip install -r requirements-dev.txt
-      - run: pip check
-      - run: pyright
+      - run: uv sync --frozen --group dev
+      - run: uv run pyright
 
   test:
     name: Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
-      - run: pip install -r requirements-dev.txt
-      - run: pip check
-      - run: pytest plugins/
+      - run: uv sync --frozen --group dev
+      - run: uv run pytest plugins/

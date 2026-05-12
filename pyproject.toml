@@ -1,3 +1,8 @@
+[project]
+name = "claude-plugins"
+version = "0"
+requires-python = ">=3.13"
+
 [tool.ruff]
 target-version = "py311"
 
@@ -6,4 +11,29 @@ pythonVersion = "3.11"
 extraPaths = [
   "plugins/code/tools/python",
   "plugins/code/skills/plan-validate/scripts",
+]
+
+# Dev/CI dependencies are managed by uv (PEP 735 dependency groups).
+# uv.lock is the source of truth — full transitive resolution + sha256
+# hashes — and CI installs with `uv sync --frozen --group dev` so any
+# tampered tarball/wheel on PyPI fails the install (mitigation for the
+# Shai-Hulud / TanStack-style npm + PyPI worm wave).
+#
+# To bump or add a dep: edit the version below, then run `uv lock` to
+# regenerate uv.lock.
+#
+# Direct dependencies used by CI jobs:
+#   - ruff:     linting (lint job)
+#   - pyright:  type checking (typecheck job)
+#   - pytest:   test runner (test job)
+#   - anthropic, mcp: imported by plugins under test
+#   - PyYAML:   parsing plugin/skill metadata in tests
+[dependency-groups]
+dev = [
+  "anthropic==0.92.0",
+  "mcp==1.27.0",
+  "pyright==1.1.408",
+  "pytest==9.0.3",
+  "PyYAML==6.0.3",
+  "ruff==0.15.9",
 ]
