@@ -4,16 +4,6 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### judges v1.7.1
-
-#### Fixed
-- `validate_agent_registry()` now returns a structured `RegistryValidationResult` with an `Unknown artifact_type '<value>'. Valid values: [...]` error when called with an `artifact_type` outside `JUDGE_REGISTRY`, instead of raising an uncaught `KeyError`. The CLI was already safe via argparse `choices`, but programmatic callers (and the soon-to-be agent-registry tests) now get the same structured failure shape as the existing "directory does not exist" and "path is not a directory" early-returns. Counters (`total_agents` / `valid_agents` / `invalid_agents`) are populated before the early return so the result shape stays consistent across error paths.
-- `test_validate_judge_report.py::_make_minimal_casescore` no longer re-imports `MetricStatistics` inside the function body — it was already imported at module level via `from validate_judge_report import (..., MetricStatistics, ...)`, so the in-function import shadowed the module-level name and carried a redundant `# type: ignore` comment. One-line removal, no behavior change.
-
-#### Added
-- `TestValidateAgentRegistry::test_unknown_artifact_type_returns_structured_error` covers the new `artifact_type` guard.
-- `TestJudgeRegistrySync::test_judge_registry_matches_validate_judge_report` asserts the two `JUDGE_REGISTRY` definitions (in `plugins/judges/tools/python/validate_agent_registry.py` and `plugins/judges/skills/run-judges/scripts/validate_judge_report.py`) stay byte-for-byte equal. If a judge is added to one registry but not the other, the pre-flight check would pass while post-run validation would fail — exactly the drift scenario the pre-flight check exists to prevent. The test uses the existing `sys.path` manipulation pattern (per CLAUDE.md's "Standalone scripts with no cross-tool imports within a plugin" rule) rather than extracting the registry to a shared module.
-
 ### code v1.11.19
 
 #### Changed
@@ -22,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### judges v1.7.0
 
 #### Added
+- `TestValidateAgentRegistry::test_unknown_artifact_type_returns_structured_error` covers the new `artifact_type` guard.
+- `TestJudgeRegistrySync::test_judge_registry_matches_validate_judge_report` asserts the two `JUDGE_REGISTRY` definitions (in `plugins/judges/tools/python/validate_agent_registry.py` and `plugins/judges/skills/run-judges/scripts/validate_judge_report.py`) stay byte-for-byte equal. If a judge is added to one registry but not the other, the pre-flight check would pass while post-run validation would fail — exactly the drift scenario the pre-flight check exists to prevent. The test uses the existing `sys.path` manipulation pattern (per CLAUDE.md's "Standalone scripts with no cross-tool imports within a plugin" rule) rather than extracting the registry to a shared module.
 - `error_reason: Optional[str]` field on `CaseScore` schema. Judges that terminate via the error path (`final_status=3`) now record their failure context on the case score itself, enabling downstream aggregation to distinguish "judge had no opinion" from "judge said 0". The field is additive with `None` default, so existing report consumers ignore it safely.
 - `compute_average_excluding_errors` helper in `validate_judge_report.py` averages `MetricStatistics.score` across `CaseScore` entries whose `final_status != 3`, returning the average plus an `(N/M)` count of contributing judges. Replaces the prior implementation that averaged `final_status` ordinal codes — a meaningless quantity (e.g. `(pass=1 + fail=2)/2 = 1.5`) — so judge reports now publish a real score average with errored judges excluded rather than dragged into the mean.
 - `validate_agent_registry.py` pre-flight tool at `plugins/judges/tools/python/` validates every agent markdown file in the judges agent directory before a judge batch runs. Discovers `.md` files, validates frontmatter (`name`, `description`, `model`, `tools`, `skills`), checks `model` against `VALID_MODELS`, flags hallucinated tools, and — when `--artifact-type {plan,code,prd,feature}` is passed — verifies every judge required by `JUDGE_REGISTRY` for that artifact is present and valid. Fails fast (exit 1) before the batch is dispatched, surfacing the failures via the structured `RegistryValidationResult` shape. CLI accepts `--artifact-type` and `--workdir` flags so the documented `run-judges` SKILL invocation actually runs.
@@ -33,6 +25,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `validate_judge_report.py` consumes the new `error_reason` field, propagates it through aggregation, and skips errored case scores when computing the per-judge / per-metric average rather than coercing their ordinal status into the mean.
 
 #### Fixed
+- `validate_agent_registry()` now returns a structured `RegistryValidationResult` with an `Unknown artifact_type '<value>'. Valid values: [...]` error when called with an `artifact_type` outside `JUDGE_REGISTRY`, instead of raising an uncaught `KeyError`. The CLI was already safe via argparse `choices`, but programmatic callers (and the soon-to-be agent-registry tests) now get the same structured failure shape as the existing "directory does not exist" and "path is not a directory" early-returns. Counters (`total_agents` / `valid_agents` / `invalid_agents`) are populated before the early return so the result shape stays consistent across error paths.
+- `test_validate_judge_report.py::_make_minimal_casescore` no longer re-imports `MetricStatistics` inside the function body — it was already imported at module level via `from validate_judge_report import (..., MetricStatistics, ...)`, so the in-function import shadowed the module-level name and carried a redundant `# type: ignore` comment. One-line removal, no behavior change.
 - `compute_average_excluding_errors` was previously averaging `final_status` ordinal codes (`1=pass, 2=fail, 3=error`) — corrected to average `MetricStatistics.score` across non-errored case scores. The original implementation produced numerically meaningful but semantically empty values; the rewrite restores the intended "score average" semantic. A new varied-score test covers the regression.
 - Test fixture for `error_reason` now matches the documented contract (set only when `final_status=3`), preventing tests from accidentally encoding a non-contract-compliant shape into the regression suite.
 
