@@ -43,7 +43,7 @@ class CaseScore(BaseModel):
     case_id: str
     final_status: int  # 1=pass, 2=fail, 3=error
     metrics: List[MetricStatistics]
-    error_reason: Optional[str] = Field(default=None, description="Agent-reported error context (e.g., tool errors, parse failures). Scores with error_reason set are excluded from aggregation averages.")
+    error_reason: Optional[str] = Field(default=None, description="Agent-reported error context (e.g., tool errors, parse failures). Set only when final_status=3; scores with final_status=3 are excluded from aggregation averages.")
 
     @field_validator('final_status')
     @classmethod
@@ -57,9 +57,11 @@ class CaseScore(BaseModel):
 def compute_average_excluding_errors(scores: List[CaseScore]) -> Optional[float]:
     """Compute the average MetricStatistics.score across all non-errored CaseScores.
 
-    Flattens metrics from every CaseScore whose error_reason is None and returns
+    Flattens metrics from every CaseScore whose final_status != 3 and returns
     the arithmetic mean of their `score` values. Returns None if no non-errored
-    score contributes any metric.
+    score contributes any metric. Filtering on final_status (rather than on
+    error_reason) keeps this aggregation aligned with the documented contract
+    that error_reason is set only when final_status=3.
 
     Args:
         scores: List of CaseScore instances to aggregate.
@@ -67,7 +69,7 @@ def compute_average_excluding_errors(scores: List[CaseScore]) -> Optional[float]
     Returns:
         The average metric score across non-errored CaseScores, or None.
     """
-    valid_scores = [s for s in scores if s.error_reason is None]
+    valid_scores = [s for s in scores if s.final_status != 3]
     metric_scores = [m.score for s in valid_scores for m in s.metrics]
     if not metric_scores:
         return None

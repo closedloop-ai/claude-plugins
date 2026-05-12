@@ -965,10 +965,10 @@ class TestCaseScoreErrorReason:
         assert result == 0.9
 
     def test_compute_average_excluding_errors_returns_none_when_all_errored(self) -> None:
-        """compute_average_excluding_errors returns None when all scores have error_reason set."""
+        """compute_average_excluding_errors returns None when every score has final_status=3."""
         scores = [
-            _make_minimal_casescore("judge-a", final_status=1, error_reason="error 1"),
-            _make_minimal_casescore("judge-b", final_status=2, error_reason="error 2"),
+            _make_minimal_casescore("judge-a", final_status=3, error_reason="error 1"),
+            _make_minimal_casescore("judge-b", final_status=3, error_reason="error 2"),
         ]
         result = compute_average_excluding_errors(scores)
         assert result is None

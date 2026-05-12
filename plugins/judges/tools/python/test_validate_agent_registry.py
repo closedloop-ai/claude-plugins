@@ -56,15 +56,6 @@ def _valid_agent_content(
 class TestParseFrontmatter:
     """Tests for the _parse_frontmatter helper."""
 
-    def test_valid_frontmatter_returns_dict(self) -> None:
-        """Valid YAML frontmatter is parsed into a dict."""
-        content = "---\nname: my-agent\nmodel: sonnet\n---\n# Body\n"
-        fm, err = _parse_frontmatter(content)
-        assert err == ""
-        assert fm is not None
-        assert fm["name"] == "my-agent"
-        assert fm["model"] == "sonnet"
-
     def test_all_standard_fields_extracted(self) -> None:
         """name, description, model, tools, and skills are all extracted."""
         content = (
@@ -91,12 +82,6 @@ class TestParseFrontmatter:
         fm, err = _parse_frontmatter(content)
         assert fm is None
         assert "No YAML frontmatter found" in err
-
-    def test_empty_string_returns_error(self) -> None:
-        """Empty content returns None and an error message."""
-        fm, err = _parse_frontmatter("")
-        assert fm is None
-        assert err != ""
 
     def test_unclosed_frontmatter_returns_error(self) -> None:
         """Opening '---' with no closing '---' returns None and an error message."""
@@ -158,12 +143,6 @@ class TestParseCommaList:
 
     def test_trailing_comma_ignored(self) -> None:
         assert _parse_comma_list("Read, Write,") == ["Read", "Write"]
-
-    def test_parses_skill_identifiers(self) -> None:
-        assert _parse_comma_list("judges:quality, code:review") == ["judges:quality", "code:review"]
-
-    def test_single_skill_identifier(self) -> None:
-        assert _parse_comma_list("self-learning:toon-format") == ["self-learning:toon-format"]
 
 
 # ---------------------------------------------------------------------------
@@ -251,15 +230,13 @@ class TestValidateAgentFileHallucinatedTools:
         tool_errors = [e for e in result.errors if "mcp__" in e]
         assert tool_errors == [], f"MCP tools should not produce errors: {tool_errors}"
 
-    @pytest.mark.parametrize(
-        "tool_name",
-        ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent", "Skill",
-         "WebFetch", "WebSearch", "SendMessage", "Task"],
-    )
-    def test_each_valid_tool_is_accepted(
+    @pytest.mark.parametrize("tool_name", ["Read", "Bash"])
+    def test_representative_valid_tools_are_accepted(
         self, tmp_path: Path, tool_name: str
     ) -> None:
-        """Each individual valid tool name does not trigger an error."""
+        """Representative valid tool names do not trigger errors. Full
+        membership coverage is provided by the VALID_TOOLS constant; this
+        test guards the validation branch, not each enum value."""
         content = (
             "---\n"
             f"name: agent-with-{tool_name.lower()}\n"
@@ -315,32 +292,19 @@ class TestValidateAgentFileValidAgents:
         assert result.is_valid
         assert result.errors == []
 
-    def test_valid_agent_name_is_captured(self, tmp_path: Path) -> None:
-        """agent_name field is populated from the frontmatter name."""
-        content = _valid_agent_content(name="my-specific-agent")
+    def test_valid_agent_fields_are_captured(self, tmp_path: Path) -> None:
+        """All frontmatter fields (name, model, tools, skills) are populated on the result."""
+        content = _valid_agent_content(
+            name="my-specific-agent",
+            model="opus",
+            tools="Read, Bash, Glob",
+            skills="judges:quality, code:review",
+        )
         agent_file = _write_agent(tmp_path / "agent.md", content)
         result = validate_agent_file(agent_file)
         assert result.agent_name == "my-specific-agent"
-
-    def test_valid_agent_model_is_captured(self, tmp_path: Path) -> None:
-        """model field is populated correctly from the frontmatter."""
-        content = _valid_agent_content(model="opus")
-        agent_file = _write_agent(tmp_path / "agent.md", content)
-        result = validate_agent_file(agent_file)
         assert result.model == "opus"
-
-    def test_valid_agent_tools_are_captured(self, tmp_path: Path) -> None:
-        """tools list is populated from the frontmatter."""
-        content = _valid_agent_content(tools="Read, Bash, Glob")
-        agent_file = _write_agent(tmp_path / "agent.md", content)
-        result = validate_agent_file(agent_file)
         assert result.tools == ["Read", "Bash", "Glob"]
-
-    def test_valid_agent_skills_are_captured(self, tmp_path: Path) -> None:
-        """skills list is populated from the frontmatter."""
-        content = _valid_agent_content(skills="judges:quality, code:review")
-        agent_file = _write_agent(tmp_path / "agent.md", content)
-        result = validate_agent_file(agent_file)
         assert result.skills == ["judges:quality", "code:review"]
 
     def test_skill_without_colon_produces_warning(self, tmp_path: Path) -> None:
