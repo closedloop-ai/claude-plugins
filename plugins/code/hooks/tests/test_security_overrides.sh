@@ -49,13 +49,20 @@ build_read_input() {
         '{tool_name:"Read",tool_input:{file_path:$fp},session_id:$sid,cwd:$cwd}'
 }
 
+hook_output=""
+hook_exit=0
 run_hook() {
     # Runs the pretooluse hook with the given input and override file.
-    # Returns the hook's stdout; exit code is captured in $hook_exit.
+    # Sets hook_output (stdout) and hook_exit (exit code) as globals.
+    # Must NOT be called via $() — that creates a subshell and loses globals.
     local input="$1"
     local overrides_file="$2"
+    local _tmpout
+    _tmpout=$(mktemp)
     hook_exit=0
-    echo "$input" | env CLAUDE_SECURITY_OVERRIDES="$overrides_file" bash "$PRE_HOOK" 2>/dev/null || hook_exit=$?
+    echo "$input" | env CLAUDE_SECURITY_OVERRIDES="$overrides_file" bash "$PRE_HOOK" > "$_tmpout" 2>/dev/null || hook_exit=$?
+    hook_output=$(<"$_tmpout")
+    rm -f "$_tmpout"
 }
 
 assert_denied() {
@@ -66,7 +73,7 @@ assert_denied() {
     if [[ "$decision" == "deny" ]]; then
         pass "$test_name"
     else
-        fail "$test_name" "expected deny but got: $output"
+        fail "$test_name" "expected deny but got: $output (exit=$hook_exit)"
     fi
 }
 
@@ -77,6 +84,8 @@ assert_not_denied() {
     decision=$(echo "$output" | jq -r '.hookSpecificOutput.permissionDecision // empty' 2>/dev/null)
     if [[ "$decision" == "deny" ]]; then
         fail "$test_name" "expected pass-through but got deny"
+    elif [[ "$hook_exit" -ne 0 ]]; then
+        fail "$test_name" "hook exited with code $hook_exit (expected 0)"
     else
         pass "$test_name"
     fi
@@ -96,24 +105,24 @@ echo "Test 1: All categories denied when no override file exists"
     no_file="$tmpdir/nonexistent.json"
 
     # pkill
-    output=$(run_hook "$(build_bash_input "pkill node")" "$no_file")
-    assert_denied "process-kill denied (no override file)" "$output"
+    run_hook "$(build_bash_input "pkill node")" "$no_file"
+    assert_denied "process-kill denied (no override file)" "$hook_output"
 
     # gcloud auth
-    output=$(run_hook "$(build_bash_input "gcloud auth print-access-token")" "$no_file")
-    assert_denied "cloud-credentials-cmd denied (no override file)" "$output"
+    run_hook "$(build_bash_input "gcloud auth print-access-token")" "$no_file"
+    assert_denied "cloud-credentials-cmd denied (no override file)" "$hook_output"
 
     # aws credentials file
-    output=$(run_hook "$(build_bash_input "cat ~/.aws/credentials")" "$no_file")
-    assert_denied "cloud-credentials-files denied (no override file)" "$output"
+    run_hook "$(build_bash_input "cat ~/.aws/credentials")" "$no_file"
+    assert_denied "cloud-credentials-files denied (no override file)" "$hook_output"
 
     # ssh key
-    output=$(run_hook "$(build_bash_input "cat ~/.ssh/id_rsa")" "$no_file")
-    assert_denied "ssh-keys denied (no override file)" "$output"
+    run_hook "$(build_bash_input "cat ~/.ssh/id_rsa")" "$no_file"
+    assert_denied "ssh-keys denied (no override file)" "$hook_output"
 
     # keychain
-    output=$(run_hook "$(build_bash_input "security find-generic-password -s foo")" "$no_file")
-    assert_denied "keychain denied (no override file)" "$output"
+    run_hook "$(build_bash_input "security find-generic-password -s foo")" "$no_file"
+    assert_denied "keychain denied (no override file)" "$hook_output"
 
     rm -rf "$tmpdir"
 }
@@ -132,12 +141,12 @@ echo "Test 2: Per-category override allows specific blocked commands"
 {"overrides":{"process-kill":true}}
 EOF
 
-    output=$(run_hook "$(build_bash_input "pkill node")" "$overrides")
-    assert_not_denied "process-kill allowed with override" "$output"
+    run_hook "$(build_bash_input "pkill node")" "$overrides"
+    assert_not_denied "process-kill allowed with override" "$hook_output"
 
     # killall variant
-    output=$(run_hook "$(build_bash_input "killall node")" "$overrides")
-    assert_not_denied "killall allowed with override" "$output"
+    run_hook "$(build_bash_input "killall node")" "$overrides"
+    assert_not_denied "killall allowed with override" "$hook_output"
 
     rm -rf "$tmpdir"
 }
@@ -157,23 +166,23 @@ echo "Test 3: Partial override only unblocks the specified category"
 EOF
 
     # gcloud auth command should pass
-    output=$(run_hook "$(build_bash_input "gcloud auth print-access-token")" "$overrides")
-    assert_not_denied "cloud-credentials-cmd allowed" "$output"
+    run_hook "$(build_bash_input "gcloud auth print-access-token")" "$overrides"
+    assert_not_denied "cloud-credentials-cmd allowed" "$hook_output"
 
-    output=$(run_hook "$(build_bash_input "gcloud auth application-default print-access-token")" "$overrides")
-    assert_not_denied "gcloud auth application-default allowed" "$output"
+    run_hook "$(build_bash_input "gcloud auth application-default print-access-token")" "$overrides"
+    assert_not_denied "gcloud auth application-default allowed" "$hook_output"
 
     # cloud credential files should still be denied
-    output=$(run_hook "$(build_bash_input "cat ~/.aws/credentials")" "$overrides")
-    assert_denied "cloud-credentials-files still denied" "$output"
+    run_hook "$(build_bash_input "cat ~/.aws/credentials")" "$overrides"
+    assert_denied "cloud-credentials-files still denied" "$hook_output"
 
     # pkill should still be denied
-    output=$(run_hook "$(build_bash_input "pkill node")" "$overrides")
-    assert_denied "process-kill still denied" "$output"
+    run_hook "$(build_bash_input "pkill node")" "$overrides"
+    assert_denied "process-kill still denied" "$hook_output"
 
     # ssh keys should still be denied
-    output=$(run_hook "$(build_bash_input "cat ~/.ssh/id_rsa")" "$overrides")
-    assert_denied "ssh-keys still denied" "$output"
+    run_hook "$(build_bash_input "cat ~/.ssh/id_rsa")" "$overrides"
+    assert_denied "ssh-keys still denied" "$hook_output"
 
     rm -rf "$tmpdir"
 }
@@ -190,11 +199,11 @@ echo "Test 4: Malformed override file treated as no override (deny)"
     # Write invalid JSON
     echo "this is not json" > "$overrides"
 
-    output=$(run_hook "$(build_bash_input "pkill node")" "$overrides")
-    assert_denied "process-kill denied (malformed override file)" "$output"
+    run_hook "$(build_bash_input "pkill node")" "$overrides"
+    assert_denied "process-kill denied (malformed override file)" "$hook_output"
 
-    output=$(run_hook "$(build_bash_input "gcloud auth print-access-token")" "$overrides")
-    assert_denied "cloud-credentials-cmd denied (malformed override file)" "$output"
+    run_hook "$(build_bash_input "gcloud auth print-access-token")" "$overrides"
+    assert_denied "cloud-credentials-cmd denied (malformed override file)" "$hook_output"
 
     rm -rf "$tmpdir"
 }
@@ -214,20 +223,20 @@ echo "Test 5: Override works for Read tool file-path rules"
 EOF
 
     # Read ~/.aws/credentials should pass
-    output=$(run_hook "$(build_read_input "$HOME/.aws/credentials")" "$overrides")
-    assert_not_denied "Read cloud credential file allowed" "$output"
+    run_hook "$(build_read_input "$HOME/.aws/credentials")" "$overrides"
+    assert_not_denied "Read cloud credential file allowed" "$hook_output"
 
     # Read gcloud credentials.db should pass
-    output=$(run_hook "$(build_read_input "$HOME/.config/gcloud/credentials.db")" "$overrides")
-    assert_not_denied "Read gcloud credentials.db allowed" "$output"
+    run_hook "$(build_read_input "$HOME/.config/gcloud/credentials.db")" "$overrides"
+    assert_not_denied "Read gcloud credentials.db allowed" "$hook_output"
 
     # Read SSH key should still be denied
-    output=$(run_hook "$(build_read_input "$HOME/.ssh/id_rsa")" "$overrides")
-    assert_denied "Read ssh key still denied" "$output"
+    run_hook "$(build_read_input "$HOME/.ssh/id_rsa")" "$overrides"
+    assert_denied "Read ssh key still denied" "$hook_output"
 
     # Read browser cookies should still be denied
-    output=$(run_hook "$(build_read_input "$HOME/Library/Application Support/Google/Chrome/Default/Cookies")" "$overrides")
-    assert_denied "Read browser cookies still denied" "$output"
+    run_hook "$(build_read_input "$HOME/Library/Application Support/Google/Chrome/Default/Cookies")" "$overrides"
+    assert_denied "Read browser cookies still denied" "$hook_output"
 
     rm -rf "$tmpdir"
 }
@@ -247,26 +256,26 @@ echo "Test 6: Cloud credentials cmd vs files are independent categories"
 EOF
 
     # File access allowed
-    output=$(run_hook "$(build_bash_input "cat ~/.aws/credentials")" "$overrides")
-    assert_not_denied "cloud-credentials-files Bash allowed" "$output"
+    run_hook "$(build_bash_input "cat ~/.aws/credentials")" "$overrides"
+    assert_not_denied "cloud-credentials-files Bash allowed" "$hook_output"
 
-    output=$(run_hook "$(build_bash_input "cat ~/.config/gcloud/application_default_credentials.json")" "$overrides")
-    assert_not_denied "cloud-credentials-files gcloud ADC allowed" "$output"
+    run_hook "$(build_bash_input "cat ~/.config/gcloud/application_default_credentials.json")" "$overrides"
+    assert_not_denied "cloud-credentials-files gcloud ADC allowed" "$hook_output"
 
     # Command still denied
-    output=$(run_hook "$(build_bash_input "gcloud auth print-access-token")" "$overrides")
-    assert_denied "cloud-credentials-cmd still denied" "$output"
+    run_hook "$(build_bash_input "gcloud auth print-access-token")" "$overrides"
+    assert_denied "cloud-credentials-cmd still denied" "$hook_output"
 
     # Now flip: enable only cmd
     cat > "$overrides" <<'EOF'
 {"overrides":{"cloud-credentials-cmd":true}}
 EOF
 
-    output=$(run_hook "$(build_bash_input "gcloud auth print-access-token")" "$overrides")
-    assert_not_denied "cloud-credentials-cmd allowed" "$output"
+    run_hook "$(build_bash_input "gcloud auth print-access-token")" "$overrides"
+    assert_not_denied "cloud-credentials-cmd allowed" "$hook_output"
 
-    output=$(run_hook "$(build_bash_input "cat ~/.aws/credentials")" "$overrides")
-    assert_denied "cloud-credentials-files denied when only cmd enabled" "$output"
+    run_hook "$(build_bash_input "cat ~/.aws/credentials")" "$overrides"
+    assert_denied "cloud-credentials-files denied when only cmd enabled" "$hook_output"
 
     rm -rf "$tmpdir"
 }
@@ -284,11 +293,11 @@ echo "Test 7: Override set to false is same as not set"
 {"overrides":{"process-kill":false,"cloud-credentials-cmd":false}}
 EOF
 
-    output=$(run_hook "$(build_bash_input "pkill node")" "$overrides")
-    assert_denied "process-kill denied when explicitly false" "$output"
+    run_hook "$(build_bash_input "pkill node")" "$overrides"
+    assert_denied "process-kill denied when explicitly false" "$hook_output"
 
-    output=$(run_hook "$(build_bash_input "gcloud auth print-access-token")" "$overrides")
-    assert_denied "cloud-credentials-cmd denied when explicitly false" "$output"
+    run_hook "$(build_bash_input "gcloud auth print-access-token")" "$overrides"
+    assert_denied "cloud-credentials-cmd denied when explicitly false" "$hook_output"
 
     rm -rf "$tmpdir"
 }
@@ -306,21 +315,21 @@ echo "Test 8: Multiple overrides enabled simultaneously"
 {"overrides":{"process-kill":true,"cloud-credentials-cmd":true,"cloud-credentials-files":true}}
 EOF
 
-    output=$(run_hook "$(build_bash_input "pkill node")" "$overrides")
-    assert_not_denied "process-kill allowed" "$output"
+    run_hook "$(build_bash_input "pkill node")" "$overrides"
+    assert_not_denied "process-kill allowed" "$hook_output"
 
-    output=$(run_hook "$(build_bash_input "gcloud auth print-access-token")" "$overrides")
-    assert_not_denied "cloud-credentials-cmd allowed" "$output"
+    run_hook "$(build_bash_input "gcloud auth print-access-token")" "$overrides"
+    assert_not_denied "cloud-credentials-cmd allowed" "$hook_output"
 
-    output=$(run_hook "$(build_bash_input "cat ~/.aws/credentials")" "$overrides")
-    assert_not_denied "cloud-credentials-files allowed" "$output"
+    run_hook "$(build_bash_input "cat ~/.aws/credentials")" "$overrides"
+    assert_not_denied "cloud-credentials-files allowed" "$hook_output"
 
     # Non-overridden categories still denied
-    output=$(run_hook "$(build_bash_input "cat ~/.ssh/id_rsa")" "$overrides")
-    assert_denied "ssh-keys still denied" "$output"
+    run_hook "$(build_bash_input "cat ~/.ssh/id_rsa")" "$overrides"
+    assert_denied "ssh-keys still denied" "$hook_output"
 
-    output=$(run_hook "$(build_bash_input "security find-generic-password -s foo")" "$overrides")
-    assert_denied "keychain still denied" "$output"
+    run_hook "$(build_bash_input "security find-generic-password -s foo")" "$overrides"
+    assert_denied "keychain still denied" "$hook_output"
 
     rm -rf "$tmpdir"
 }
@@ -334,14 +343,14 @@ echo "Test 9: Non-blocked commands pass through regardless"
     tmpdir=$(mktemp -d)
     no_file="$tmpdir/nonexistent.json"
 
-    output=$(run_hook "$(build_bash_input "ls -la")" "$no_file")
-    assert_not_denied "ls -la passes through" "$output"
+    run_hook "$(build_bash_input "ls -la")" "$no_file"
+    assert_not_denied "ls -la passes through" "$hook_output"
 
-    output=$(run_hook "$(build_bash_input "git status")" "$no_file")
-    assert_not_denied "git status passes through" "$output"
+    run_hook "$(build_bash_input "git status")" "$no_file"
+    assert_not_denied "git status passes through" "$hook_output"
 
-    output=$(run_hook "$(build_read_input "/tmp/somefile.txt")" "$no_file")
-    assert_not_denied "Read /tmp/somefile.txt passes through" "$output"
+    run_hook "$(build_read_input "/tmp/somefile.txt")" "$no_file"
+    assert_not_denied "Read /tmp/somefile.txt passes through" "$hook_output"
 
     rm -rf "$tmpdir"
 }

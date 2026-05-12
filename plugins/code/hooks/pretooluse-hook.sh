@@ -53,7 +53,7 @@ _override_enabled() {
 _sec_deny_unless_override() {
     local category="$1"
     if _override_enabled "$category"; then
-        return 1  # don't deny — override active
+        return 0  # don't deny — override active, continue normally
     fi
     echo "$_SEC_DENY"
     exit 0
