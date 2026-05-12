@@ -30,6 +30,35 @@ CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 # rather than auto-allowed by the workspace rule below.
 _SEC_DENY='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Blocked: credential access denied by security policy"}}'
 
+# ── Security overrides ─────────────────────────────────────────────────────
+# Per-user overrides loaded from ~/.claude/security-overrides.json.
+# Only categories explicitly set to true are allowed through.
+# Categories: process-kill, keychain, browser-profiles, ssh-keys,
+#             cloud-credentials-cmd, cloud-credentials-files
+_OVERRIDES_FILE="${CLAUDE_SECURITY_OVERRIDES:-$HOME/.claude/security-overrides.json}"
+
+_override_enabled() {
+    local category="$1"
+    if [[ -f "$_OVERRIDES_FILE" ]]; then
+        local val
+        val=$(jq -r --arg cat "$category" '.overrides[$cat] // false' "$_OVERRIDES_FILE" 2>/dev/null)
+        if [[ "$val" == "true" ]]; then
+            echo "$(date): SECURITY OVERRIDE: allowed category=$category" >> "${DEBUG_LOG:-/dev/null}"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+_sec_deny_unless_override() {
+    local category="$1"
+    if _override_enabled "$category"; then
+        return 1  # don't deny — override active
+    fi
+    echo "$_SEC_DENY"
+    exit 0
+}
+
 case "$TOOL_NAME" in
     Bash)
         _sec_cmd=$(echo "$TOOL_INPUT" | jq -r '.command // empty' 2>/dev/null || echo "")
@@ -39,39 +68,37 @@ case "$TOOL_NAME" in
             # (e.g. a running desktop-dev in the main tree killed by a worktree agent).
             # Claude should never need these; use process.kill(pid) for specific PIDs instead.
             *pkill*|*killall*)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "process-kill"
                 ;;
             # macOS Keychain
             *security\ find-generic-password*|*security\ find-internet-password*|*security\ dump-keychain*|\
             *security\ delete-generic-password*|*security\ delete-internet-password*|\
             *find-generic-password*|*find-internet-password*)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "keychain"
                 ;;
             # Browser profile directories
             *"Library/Application Support/Google/Chrome"*|*"Library/Application Support/Chromium"*|\
             *"Library/Application Support/BraveSoftware"*|*"Library/Application Support/Microsoft Edge"*|\
             *"Library/Application Support/Firefox"*|*.mozilla/firefox*|*"Library/Safari/Cookies"*)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "browser-profiles"
                 ;;
             # Browser DBs via sqlite3
             *sqlite3*Cookies*|*sqlite3*"Login Data"*|*sqlite3*"Web Data"*)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "browser-profiles"
                 ;;
             # SSH private keys
             */.ssh/id_*)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "ssh-keys"
                 ;;
-            # Cloud credentials (commands and file paths)
-            */.aws/credentials*|*"gcloud auth print-access-token"*|*"gcloud auth application-default"*|\
+            # Cloud credential commands
+            *"gcloud auth print-access-token"*|*"gcloud auth application-default"*)
+                _sec_deny_unless_override "cloud-credentials-cmd"
+                ;;
+            # Cloud credential files
+            */.aws/credentials*|\
             */.config/gcloud/credentials.db*|*/.config/gcloud/application_default_credentials.json*|\
             */.config/gcloud/legacy_credentials/*)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "cloud-credentials-files"
                 ;;
         esac
         ;;
@@ -82,19 +109,16 @@ case "$TOOL_NAME" in
             */Google/Chrome/*/Cookies|*/Google/Chrome/*/Login\ Data|\
             */Chromium/*/Cookies|*/Firefox/Profiles/*/cookies.sqlite|\
             */Safari/Cookies/Cookies.binarycookies)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "browser-profiles"
                 ;;
             # SSH private keys
             */.ssh/id_*)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "ssh-keys"
                 ;;
             # Cloud credentials
             */.aws/credentials|*/.config/gcloud/credentials.db|\
             */.config/gcloud/legacy_credentials/*|*/.config/gcloud/application_default_credentials.json)
-                echo "$_SEC_DENY"
-                exit 0
+                _sec_deny_unless_override "cloud-credentials-files"
                 ;;
         esac
         ;;
