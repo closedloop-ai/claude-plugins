@@ -5,6 +5,7 @@ import json
 # Add scripts directory to path to import validate_judge_report module
 import sys
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -14,6 +15,9 @@ from validate_judge_report import (  # type: ignore[import-not-found]
     DEFAULT_FILENAMES,
     JUDGE_REGISTRY,
     VALID_SUFFIXES,
+    CaseScore,
+    MetricStatistics,
+    compute_average_excluding_errors,
     validate_report,
 )
 
@@ -908,3 +912,110 @@ class TestCategoryFeatureValidation:
             "PRD report with -prd-judges suffix should fail feature category validation"
         )
         assert "report_id should end with one of" in message
+
+
+def _make_minimal_casescore(case_id: str, final_status: int = 1, error_reason: Optional[str] = None) -> CaseScore:
+    """Create a minimal CaseScore instance for unit testing.
+
+    Args:
+        case_id: The judge case_id.
+        final_status: Status code (1=pass, 2=fail, 3=error). Defaults to 1.
+        error_reason: Optional agent-reported error context. Defaults to None.
+
+    Returns:
+        A minimal CaseScore with one dummy metric.
+    """
+    return CaseScore(
+        case_id=case_id,
+        final_status=final_status,
+        metrics=[
+            MetricStatistics(
+                metric_name="dummy",
+                threshold=0.8,
+                score=0.9,
+                justification="Test metric",
+            )
+        ],
+        error_reason=error_reason,
+    )
+
+
+class TestCaseScoreErrorReason:
+    """Tests for CaseScore.error_reason field and compute_average_excluding_errors."""
+
+    def test_casescore_accepts_error_reason_field(self) -> None:
+        """CaseScore can be constructed with an error_reason string."""
+        score = _make_minimal_casescore(
+            "test-judge", final_status=3, error_reason="Tool call failed"
+        )
+        assert score.error_reason == "Tool call failed"
+
+    def test_casescore_defaults_error_reason_to_none(self) -> None:
+        """CaseScore.error_reason defaults to None when not provided."""
+        score = _make_minimal_casescore("test-judge")
+        assert score.error_reason is None
+
+    def test_compute_average_excluding_errors_excludes_errored_scores(self) -> None:
+        """compute_average_excluding_errors excludes scores where final_status == 3."""
+        scores = [
+            _make_minimal_casescore("judge-a", final_status=1, error_reason=None),
+            _make_minimal_casescore("judge-b", final_status=3, error_reason="parse error"),
+        ]
+        # Only judge-a contributes; judge-b is excluded. _make_minimal_casescore
+        # uses a single metric with score=0.9, so the average is 0.9.
+        result = compute_average_excluding_errors(scores)
+        assert result == 0.9
+
+    def test_compute_average_excluding_errors_returns_none_when_all_errored(self) -> None:
+        """compute_average_excluding_errors returns None when every score has final_status=3."""
+        scores = [
+            _make_minimal_casescore("judge-a", final_status=3, error_reason="error 1"),
+            _make_minimal_casescore("judge-b", final_status=3, error_reason="error 2"),
+        ]
+        result = compute_average_excluding_errors(scores)
+        assert result is None
+
+    def test_compute_average_excluding_errors_mixed_valid_and_errored(self) -> None:
+        """compute_average_excluding_errors computes average only over non-errored scores."""
+        scores = [
+            _make_minimal_casescore("judge-a", final_status=1, error_reason=None),
+            _make_minimal_casescore("judge-b", final_status=3, error_reason="tool error"),
+            _make_minimal_casescore("judge-c", final_status=2, error_reason=None),
+        ]
+        # Valid scores: judge-a and judge-c, each with one metric score=0.9;
+        # judge-b is excluded. Average = (0.9 + 0.9) / 2 = 0.9.
+        result = compute_average_excluding_errors(scores)
+        assert result == 0.9
+
+    def test_compute_average_excluding_errors_averages_varied_metric_scores(self) -> None:
+        """compute_average_excluding_errors averages every metric across non-errored CaseScores."""
+        scores = [
+            CaseScore(
+                case_id="judge-a",
+                final_status=1,
+                metrics=[
+                    MetricStatistics(metric_name="m1", threshold=0.5, score=0.4, justification="x"),
+                    MetricStatistics(metric_name="m2", threshold=0.5, score=0.6, justification="y"),
+                ],
+                error_reason=None,
+            ),
+            CaseScore(
+                case_id="judge-b",
+                final_status=1,
+                metrics=[
+                    MetricStatistics(metric_name="m1", threshold=0.5, score=1.0, justification="z"),
+                ],
+                error_reason=None,
+            ),
+            CaseScore(
+                case_id="judge-c",
+                final_status=3,
+                metrics=[
+                    MetricStatistics(metric_name="m1", threshold=0.5, score=0.0, justification="w"),
+                ],
+                error_reason="tool error",
+            ),
+        ]
+        # Errored judge-c is excluded. Average over (0.4, 0.6, 1.0) = 2.0/3.
+        result = compute_average_excluding_errors(scores)
+        assert result == pytest.approx(2.0 / 3.0)

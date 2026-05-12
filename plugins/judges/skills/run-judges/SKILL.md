@@ -288,6 +288,29 @@ The script is idempotent — it skips if `manifest.json` already exists.
 
 ---
 
+### Agent Registry Validation (Pre-Flight Check)
+
+**Before any judge execution**, validate the agent registry to ensure all judge agents required for the current artifact type are resolvable. This prevents launching batches only to discover agents are missing mid-run.
+
+**Action:** Run `validate_agent_registry.py` via Bash:
+
+```bash
+uv run "${CLAUDE_PLUGIN_ROOT}/tools/python/validate_agent_registry.py" \
+  --artifact-type "$ARTIFACT_TYPE" \
+  --workdir "$CLOSEDLOOP_WORKDIR"
+```
+
+**Exit behavior:**
+- Exit code `0` — all required agents are registered; proceed with judge execution
+- Exit code non-zero — one or more required agents are missing or unresolvable; **abort immediately** and do NOT proceed to judge batches
+
+**On failure:**
+- Log the validation error output in full
+- Exit the skill with a non-zero status code
+- Do NOT generate partial error CaseScores for this failure mode (the workflow should not proceed at all)
+
+---
+
 ### Step 0: Mandatory Contract Pre-Read
 
 Before any prerequisite checks or judge launches:
@@ -731,6 +754,7 @@ Each judge returns a **CaseScore** JSON object:
   "type": "case_score",
   "case_id": "{judge-name}",
   "final_status": 3,
+  "error_reason": "Brief human-readable description of what failed",
   "metrics": [
     {
       "metric_name": "{metric}_score",
@@ -742,12 +766,70 @@ Each judge returns a **CaseScore** JSON object:
 }
 ```
 
+**`error_reason` field guidance:**
+
+- **When to set it**: Set `error_reason` whenever `final_status=3`. Common cases include:
+  - Tool failures (e.g., Task tool returned an error, agent invocation rejected)
+  - Parse errors (e.g., judge output could not be parsed as valid CaseScore JSON)
+  - Timeouts (e.g., judge agent did not respond within the allowed time)
+  - Preamble file not found (e.g., required `{artifact_type}_preamble.md` missing)
+  - Context preparation failures passed down to individual judge error scores
+
+- **What to put in it**: A brief, human-readable string describing the specific failure. Examples:
+  - `"Task tool error: agent not found"`
+  - `"Parse error: response was not valid JSON"`
+  - `"Timeout: judge did not complete within 5 minutes"`
+  - `"Preamble file not found: plan_preamble.md"`
+
+- **Effect on aggregation**: CaseScores with `final_status=3` are excluded by `compute_average_excluding_errors`, which then averages `MetricStatistics.score` across every metric of every remaining (non-errored) CaseScore. `error_reason` is informational and does not control exclusion (see field docstring at `validate_judge_report.py:46`). Errored judges do not drag down the aggregate score for judges that did execute successfully.
+
+**Aggregation rules when errors are present:**
+
+- If SOME judges have `final_status=3`, `compute_average_excluding_errors` returns the average of `MetricStatistics.score` across only the non-errored judges (return type `Optional[float]`). Callers rendering this for humans should annotate the value as "avg of N/M judges" by separately computing N (non-errored CaseScore count) and M (total CaseScore count) from the input list — the function itself does not return the annotation.
+- If ALL judges have `final_status=3`, or no non-errored judge contributes any metric, `compute_average_excluding_errors` returns `None` — no meaningful average can be computed.
+
 **Continue-on-failure semantics:**
 - Even if ALL judges fail, you MUST aggregate error CaseScores
 - Always produce a complete report with 16 CaseScore entries (plan), 11 CaseScore entries (code), 5 CaseScore entries (prd), or 3 CaseScore entries (feature)
 - Never abort the workflow due to judge failures
 
 </error_handling>
+
+---
+
+### Summary Table Formatting
+
+When displaying the evaluation results summary (e.g., in the final output or any human-readable report), follow these conventions for errored scores:
+
+**Errored score display:**
+- Use the `ERR` marker in place of a numeric score for any judge whose CaseScore has `final_status=3`. `error_reason`, when present, can be displayed in a hover/tooltip or separate column but does not control whether `ERR` is shown.
+
+**Example summary table:**
+
+| Judge | Score | Status |
+|-------|-------|--------|
+| dry-judge | 0.92 | PASS |
+| ssot-judge | ERR | ERROR |
+| kiss-judge | 0.75 | FAIL |
+| readability-judge | ERR | ERROR |
+
+**Average annotation:**
+- When some judges are excluded due to errors, annotate the aggregate average as `"avg of N/M judges"`, where N is the number of non-errored judges and M is the total number of judges.
+- Example: `avg of 14/16 judges`
+
+**Footer line:**
+- When one or more judges are excluded, add a footer line to the summary:
+  ```
+  X of Y judges excluded due to errors
+  ```
+  where X is the count of errored judges and Y is the total expected judge count.
+
+- Example: `2 of 16 judges excluded due to errors`
+
+**When ALL judges errored:**
+- Display `ERR` for every judge row
+- Display `N/A` (not a number) for the aggregate average — do not attempt to compute or display an average
+- Footer: `Y of Y judges excluded due to errors`
 
 ---
 
@@ -1037,6 +1119,7 @@ class CaseScore(BaseModel):
     case_id: str
     final_status: int  # 1=pass, 2=fail, 3=error
     metrics: List[MetricStatistics]
+    error_reason: Optional[str] = None  # set when final_status=3; excluded from aggregation averages
 
 class EvaluationReport(BaseModel):
     """Top-level report containing all judge evaluations."""
@@ -1156,7 +1239,7 @@ If `--artifact-type` value is not 'plan', 'code', 'prd', or 'feature':
 If context-manager-for-judges agent exceeds 5 minutes:
 - Abort judge execution
 - Generate error CaseScores for all 11 judges
-- Each error CaseScore: `final_status=3`, `justification="Context preparation timeout"`
+- Each error CaseScore: `final_status=3`, `error_reason="Timeout: context preparation exceeded 5 minutes"`, `justification="Context preparation timeout"` (see `error_reason` guidance above)
 - Write complete report with all error CaseScores
 
 ### Context Manager Timeout (Plan Mode)
@@ -1169,7 +1252,7 @@ If context-manager-for-judges agent exceeds 5 minutes in plan mode:
 
 If a single judge Task call fails during execution:
 - **Do not abort** the entire workflow
-- Generate error CaseScore for that judge only
+- Generate error CaseScore for that judge only, with `final_status=3` and a populated `error_reason` describing the specific failure (e.g. `"Task tool error: agent not found"`, `"Parse error: response was not valid JSON"`) per the `error_reason` guidance above
 - Continue with remaining judges in batch and subsequent batches
 - Include error CaseScore in final aggregated report
 

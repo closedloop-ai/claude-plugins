@@ -781,6 +781,9 @@ def test_write_runs_log_entry_uses_workdir_root(tmp_path: Path) -> None:
         f"""
         source {RUN_LOOP}
         RUN_ID='run-root-log'
+        # Unset CLOSEDLOOP_COMMAND and LAST_CLAUDE_COMMAND to test the default
+        unset CLOSEDLOOP_COMMAND
+        unset LAST_CLAUDE_COMMAND
         write_runs_log_entry "$CLOSEDLOOP_WORKDIR" 2 completed
         """,
         tmp_path,

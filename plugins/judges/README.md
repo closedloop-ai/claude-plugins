@@ -284,6 +284,8 @@ Orchestrates parallel judge agent execution, aggregates `CaseScore` results, and
 
 **Agent snapshot**: Before launching judge batches, `run-judges` runs `skills/run-judges/scripts/ensure_agents_snapshot.sh` to capture an idempotent snapshot of all judge agent definitions into `$CLOSEDLOOP_WORKDIR/agents-snapshot/`.
 
+**Agent registry validation**: `tools/python/validate_agent_registry.py` cross-checks the judge agents declared by `run-judges` for each artifact type against the agent definitions present on disk, catching missing, misspelled, or stale judge references before a run launches.
+
 **Output validation** is run after writing the report using `skills/run-judges/scripts/validate_judge_report.py`. The skill retries until validation passes.
 
 ---
