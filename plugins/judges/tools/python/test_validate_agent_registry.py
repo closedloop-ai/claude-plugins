@@ -429,6 +429,54 @@ class TestValidateAgentRegistry:
         result = validate_agent_registry(tmp_path)
         assert result.total_agents == len(result.agents)
 
+    def test_unknown_artifact_type_returns_structured_error(
+        self, tmp_path: Path
+    ) -> None:
+        """An invalid artifact_type returns a structured error instead of raising."""
+        _write_agent(tmp_path / "agent.md", _valid_agent_content())
+        result = validate_agent_registry(tmp_path, artifact_type="not-a-real-type")
+        assert not result.is_valid
+        assert any("Unknown artifact_type" in e for e in result.all_errors)
+
+
+# ---------------------------------------------------------------------------
+# Tests for JUDGE_REGISTRY drift between the two copies
+# ---------------------------------------------------------------------------
+
+class TestJudgeRegistrySync:
+    """Guard against drift between the two JUDGE_REGISTRY copies."""
+
+    def test_judge_registry_matches_validate_judge_report(self) -> None:
+        """The two JUDGE_REGISTRY definitions must stay byte-for-byte equal.
+
+        If a judge is added to one registry but not the other, the pre-flight
+        check passes while post-run validation fails -- exactly what the
+        pre-flight check is meant to prevent.
+        """
+        skill_scripts = (
+            Path(__file__).resolve().parents[2]
+            / "skills"
+            / "run-judges"
+            / "scripts"
+        )
+        sys.path.insert(0, str(skill_scripts))
+        try:
+            from validate_judge_report import (  # type: ignore[import-not-found]
+                JUDGE_REGISTRY as VJR_REGISTRY,
+            )
+        finally:
+            sys.path.remove(str(skill_scripts))
+
+        from validate_agent_registry import (  # type: ignore[import-not-found]
+            JUDGE_REGISTRY as VAR_REGISTRY,
+        )
+
+        assert VAR_REGISTRY == VJR_REGISTRY, (
+            "JUDGE_REGISTRY drift detected between "
+            "plugins/judges/tools/python/validate_agent_registry.py and "
+            "plugins/judges/skills/run-judges/scripts/validate_judge_report.py"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Tests for the CLI main() entrypoint

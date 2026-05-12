@@ -324,6 +324,18 @@ def validate_agent_registry(
         all_warnings.extend(f"[{md_file.name}] {w}" for w in agent_result.warnings)
 
     if artifact_type is not None:
+        if artifact_type not in JUDGE_REGISTRY:
+            all_errors.append(
+                f"Unknown artifact_type '{artifact_type}'. "
+                f"Valid values: {sorted(JUDGE_REGISTRY)}"
+            )
+            registry_result.agents = agent_results
+            registry_result.total_agents = len(md_files)
+            registry_result.invalid_agents = sum(1 for a in agent_results if not a.is_valid)
+            registry_result.valid_agents = len(md_files) - registry_result.invalid_agents
+            registry_result.all_errors = all_errors
+            registry_result.all_warnings = all_warnings
+            return registry_result
         required_names = JUDGE_REGISTRY[artifact_type]
         present_names = {a.agent_name for a in agent_results if a.is_valid and a.agent_name}
         for missing in sorted(required_names - present_names):

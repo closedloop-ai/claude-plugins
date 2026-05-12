@@ -925,7 +925,6 @@ def _make_minimal_casescore(case_id: str, final_status: int = 1, error_reason: O
     Returns:
         A minimal CaseScore with one dummy metric.
     """
-    from validate_judge_report import MetricStatistics  # type: ignore[import-not-found]
     return CaseScore(
         case_id=case_id,
         final_status=final_status,
