@@ -1118,8 +1118,8 @@ class CaseScore(BaseModel):
     type: Optional[str] = "case_score"
     case_id: str
     final_status: int  # 1=pass, 2=fail, 3=error
-    error_reason: Optional[str] = None  # set when final_status=3; excluded from aggregation averages
     metrics: List[MetricStatistics]
+    error_reason: Optional[str] = None  # set when final_status=3; excluded from aggregation averages
 
 class EvaluationReport(BaseModel):
     """Top-level report containing all judge evaluations."""

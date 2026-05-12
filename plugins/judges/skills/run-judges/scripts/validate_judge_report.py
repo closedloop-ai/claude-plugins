@@ -43,7 +43,7 @@ class CaseScore(BaseModel):
     case_id: str
     final_status: int  # 1=pass, 2=fail, 3=error
     metrics: List[MetricStatistics]
-    error_reason: Optional[str] = Field(default=None, description="Agent-reported error context (e.g., tool errors, parse failures). Set only when final_status=3; scores with final_status=3 are excluded from aggregation averages.")
+    error_reason: Optional[str] = Field(default=None, description="Agent-reported error context (e.g., tool errors, parse failures). Conventionally set when final_status=3; aggregation excludes scores by final_status=3, so this field is informational.")
 
     @field_validator('final_status')
     @classmethod
