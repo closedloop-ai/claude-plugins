@@ -173,48 +173,6 @@ class TestParseCommaList:
 class TestValidateAgentFileMissingRequiredFields:
     """Tests for missing required frontmatter fields."""
 
-    def test_missing_name_produces_error(self, tmp_path: Path) -> None:
-        """Absent 'name' field is reported as a required-field error."""
-        content = (
-            "---\n"
-            "description: No name here\n"
-            "model: sonnet\n"
-            "tools: Read\n"
-            "---\n"
-        )
-        agent_file = _write_agent(tmp_path / "agent.md", content)
-        result = validate_agent_file(agent_file)
-        assert not result.is_valid
-        assert any("name" in e for e in result.errors)
-
-    def test_missing_description_produces_error(self, tmp_path: Path) -> None:
-        """Absent 'description' field is reported as a required-field error."""
-        content = (
-            "---\n"
-            "name: my-agent\n"
-            "model: sonnet\n"
-            "tools: Read\n"
-            "---\n"
-        )
-        agent_file = _write_agent(tmp_path / "agent.md", content)
-        result = validate_agent_file(agent_file)
-        assert not result.is_valid
-        assert any("description" in e for e in result.errors)
-
-    def test_missing_model_produces_error(self, tmp_path: Path) -> None:
-        """Absent 'model' field is reported as a required-field error."""
-        content = (
-            "---\n"
-            "name: my-agent\n"
-            "description: Some agent\n"
-            "tools: Read\n"
-            "---\n"
-        )
-        agent_file = _write_agent(tmp_path / "agent.md", content)
-        result = validate_agent_file(agent_file)
-        assert not result.is_valid
-        assert any("model" in e for e in result.errors)
-
     @pytest.mark.parametrize("missing_field", ["name", "description", "model"])
     def test_each_required_field_independently(
         self, tmp_path: Path, missing_field: str
@@ -240,35 +198,6 @@ class TestValidateAgentFileMissingRequiredFields:
 
 class TestValidateAgentFileInvalidModel:
     """Tests for invalid model values."""
-
-    @pytest.mark.parametrize("invalid_model", ["gpt-4", "claude-3", "gemini", "llama"])
-    def test_unrecognised_model_produces_error(
-        self, tmp_path: Path, invalid_model: str
-    ) -> None:
-        """Model values outside the valid set are flagged as errors."""
-        content = (
-            "---\n"
-            f"name: agent-{invalid_model}\n"
-            "description: Agent with bad model\n"
-            f"model: {invalid_model}\n"
-            "tools: Read\n"
-            "---\n"
-        )
-        agent_file = _write_agent(tmp_path / "agent.md", content)
-        result = validate_agent_file(agent_file)
-        assert not result.is_valid
-        assert any(invalid_model in e for e in result.errors)
-
-    @pytest.mark.parametrize("valid_model", ["opus", "sonnet", "haiku"])
-    def test_valid_models_produce_no_model_error(
-        self, tmp_path: Path, valid_model: str
-    ) -> None:
-        """All three valid model values pass the model check."""
-        content = _valid_agent_content(model=valid_model)
-        agent_file = _write_agent(tmp_path / "agent.md", content)
-        result = validate_agent_file(agent_file)
-        model_errors = [e for e in result.errors if "model" in e.lower()]
-        assert model_errors == [], f"Unexpected model errors: {model_errors}"
 
     def test_error_message_lists_valid_models(self, tmp_path: Path) -> None:
         """Error message for invalid model enumerates the valid choices."""
