@@ -10,6 +10,64 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plugin-version-bump:
+    name: Plugin Version Bump
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check changed plugin versions
+        run: |
+          BASE_REF="${{ github.event.pull_request.base.ref }}"
+          BASE=$(git merge-base "origin/$BASE_REF" HEAD)
+
+          changed_plugins=$(
+            git diff --name-only "$BASE"...HEAD -- 'plugins/**' |
+              awk -F/ 'NF >= 2 { print $2 }' |
+              sort -u
+          )
+
+          if [ -z "$changed_plugins" ]; then
+            echo "No plugin changes detected."
+            exit 0
+          fi
+
+          while IFS= read -r plugin; do
+            manifest="plugins/$plugin/.claude-plugin/plugin.json"
+
+            if [ ! -f "$manifest" ]; then
+              echo "::error::plugins/$plugin/ changed but $manifest is missing. Each plugin must include a .claude-plugin/plugin.json manifest."
+              exit 1
+            fi
+
+            if git diff --quiet "$BASE"...HEAD -- "$manifest"; then
+              echo "::error::plugins/$plugin/ changed but $manifest was not updated. Please bump the plugin version."
+              exit 1
+            fi
+
+            old_version=$(git show "$BASE:$manifest" 2>/dev/null | jq -r '.version // empty' || true)
+            new_version=$(jq -r '.version // empty' "$manifest")
+
+            if [ -z "$new_version" ]; then
+              echo "::error::$manifest must define a version."
+              exit 1
+            fi
+
+            if [ -n "$old_version" ] && [ "$old_version" = "$new_version" ]; then
+              echo "::error::plugins/$plugin/ changed but version in $manifest was not bumped (still $new_version). Please bump the version."
+              exit 1
+            fi
+
+            if [ -n "$old_version" ]; then
+              echo "Plugin $plugin version bumped: $old_version -> $new_version"
+            else
+              echo "Plugin $plugin version added: $new_version"
+            fi
+          done <<< "$changed_plugins"
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

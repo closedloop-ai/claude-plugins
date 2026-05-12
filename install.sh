@@ -7,7 +7,7 @@
 # What this does:
 #   1. Checks prerequisites (Claude Code CLI, Python 3.11+, jq)
 #   2. Registers the closedloop-ai plugin marketplace
-#   3. Installs all 6 plugins globally (user scope)
+#   3. Installs the 5 Symphony runtime plugins at user scope
 #   4. Auto-update is enabled by default — plugins stay current automatically
 #
 # NOTE: The BASH_VERSION check below can be bypassed by setting the BASH_VERSION
@@ -57,9 +57,10 @@ sanitize_stderr()  {
 # ── Constants ────────────────────────────────────────────────────────────────
 MARKETPLACE_SOURCE="closedloop-ai/claude-plugins"
 MARKETPLACE_NAME="closedloop-ai"
-PLUGINS=(bootstrap code code-review judges platform self-learning)
-# Bootstrap is installed for manual repo bootstrapping, but Symphony runtime
-# readiness only requires the plugins used by loop execution and review.
+PLUGINS=(code code-review judges platform self-learning)
+# Symphony runtime readiness requires the plugins used by loop execution and
+# review. Bootstrap is available in the marketplace for manual installation but
+# is intentionally not installed or verified by this installer.
 REQUIRED_PLUGINS=(code code-review judges platform self-learning)
 
 is_required_plugin_ref() {
@@ -78,6 +79,128 @@ WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/closedloop-install.XXXXXX")
 chmod 700 "$WORK_DIR"
 _cleanup() { rm -rf "$WORK_DIR"; }
 trap _cleanup EXIT
+
+read_plugin_list() {
+    local output_file="$1"
+    claude plugin list --json > "$output_file" 2>/dev/null \
+      && jq -e 'type == "array"' "$output_file" >/dev/null 2>&1
+}
+
+plugin_enabled_state() {
+    local list_file="$1"
+    local plugin_ref="$2"
+    jq -r --arg key "$plugin_ref" '
+      [ .[] | select(.id == $key and .scope == "user") ] as $matches
+      | if ($matches | length) == 0 then "missing"
+        elif any($matches[]; .enabled == false) then "disabled"
+        else "enabled"
+        end
+    ' "$list_file"
+}
+
+repair_project_scoped_plugins() {
+    local plugin_ref="$1"
+    local list_file="$2"
+    local project_path
+
+    while IFS= read -r project_path; do
+        if [[ -n "$project_path" && -d "$project_path" ]]; then
+            if (cd "$project_path" && claude plugin uninstall "$plugin_ref" --scope project); then
+                info "Removed project-scoped duplicate: $plugin_ref ($project_path)"
+            else
+                warn "Could not remove project-scoped duplicate: $plugin_ref ($project_path)"
+            fi
+        else
+            warn "Project-scoped duplicate found for $plugin_ref without a usable projectPath."
+            warn "From that project directory, run: claude plugin uninstall \"$plugin_ref\" --scope project"
+        fi
+    done < <(jq -r --arg key "$plugin_ref" '.[] | select(.id == $key and .scope == "project") | (.projectPath // "")' "$list_file" 2>/dev/null || true)
+}
+
+ensure_user_plugin_enabled() {
+    local plugin_ref="$1"
+    local plugin_name="${plugin_ref%@*}"
+    local list_file="$WORK_DIR/list_${plugin_name}.json"
+    local state
+
+    if ! read_plugin_list "$list_file"; then
+        warn "Could not verify enabled state for: $plugin_ref"
+        return 1
+    fi
+
+    state="$(plugin_enabled_state "$list_file" "$plugin_ref")" || return 1
+    case "$state" in
+        enabled)
+            return 0
+            ;;
+        disabled)
+            if ! claude plugin enable "$plugin_ref" --scope user; then
+                warn "Could not enable user-scoped plugin: $plugin_ref"
+                return 1
+            fi
+            if ! read_plugin_list "$list_file"; then
+                warn "Could not re-read plugin state after enable: $plugin_ref"
+                return 1
+            fi
+            state="$(plugin_enabled_state "$list_file" "$plugin_ref")" || return 1
+            if [[ "$state" == "enabled" ]]; then
+                info "Enabled: $plugin_name"
+                return 0
+            fi
+            warn "Plugin remains disabled after enable: $plugin_ref"
+            return 1
+            ;;
+        *)
+            warn "User-scoped plugin missing from Claude plugin list: $plugin_ref"
+            return 1
+            ;;
+    esac
+}
+
+registry_has_user_install() {
+    local plugin_ref="$1"
+    local registry="$HOME/.claude/plugins/installed_plugins.json"
+    local install_path
+
+    while IFS= read -r install_path; do
+        if [[ -n "$install_path" && -e "$install_path" ]]; then
+            return 0
+        fi
+    done < <(jq -r --arg key "$plugin_ref" '.plugins[$key][]? | select(.scope == "user") | .installPath // empty' "$registry" 2>/dev/null || true)
+    return 1
+}
+
+print_scope_repair_remediation() {
+    cat >&2 <<'REPAIR'
+Repair ClosedLoop plugins at user scope:
+for p in code code-review judges platform self-learning; do
+  claude plugin uninstall "$p@closedloop-ai" --scope project
+  claude plugin install "$p@closedloop-ai" --scope user
+  claude plugin enable "$p@closedloop-ai" --scope user
+done
+claude plugin list --json
+REPAIR
+}
+
+FAILED_PLUGINS=()
+mark_plugin_failed() {
+    local plugin_ref="$1"
+    plugin_failed "$plugin_ref" && return 0
+    FAILED_PLUGINS+=("$plugin_ref")
+    FAILED=${#FAILED_PLUGINS[@]}
+    if is_required_plugin_ref "$plugin_ref"; then
+        REQUIRED_FAILED=$((REQUIRED_FAILED + 1))
+    fi
+}
+
+plugin_failed() {
+    local plugin_ref="$1"
+    local existing
+    for existing in "${FAILED_PLUGINS[@]+"${FAILED_PLUGINS[@]}"}"; do
+        [[ "$existing" == "$plugin_ref" ]] && return 0
+    done
+    return 1
+}
 
 # ── Preflight checks ────────────────────────────────────────────────────────
 echo
@@ -138,6 +261,15 @@ else
     fi
 fi
 
+step "Refreshing closedloop-ai marketplace..."
+if claude plugin marketplace update "$MARKETPLACE_NAME" 2>"$WORK_DIR/marketplace_update_err"; then
+    info "Marketplace refreshed: $MARKETPLACE_NAME"
+else
+    err "Marketplace refresh failed:"
+    sanitize_stderr "$WORK_DIR/marketplace_update_err"
+    exit 1
+fi
+
 echo
 
 # ── Install plugins ─────────────────────────────────────────────────────────
@@ -162,18 +294,30 @@ SUCCESSFUL_PLUGINS=()
 
 for plugin in "${PLUGINS[@]}"; do
     plugin_ref="${plugin}@${MARKETPLACE_NAME}"
+    LIST_BEFORE="$WORK_DIR/list_before_${plugin}.json"
+    if read_plugin_list "$LIST_BEFORE"; then
+        repair_project_scoped_plugins "$plugin_ref" "$LIST_BEFORE"
+    else
+        warn "Could not inspect project-scoped entries before install: $plugin_ref"
+    fi
+
     if claude plugin install "$plugin_ref" --scope user 2>"$STDERR_FILE"; then
-        SUCCESSFUL_PLUGINS+=("$plugin_ref")
+        if ensure_user_plugin_enabled "$plugin_ref"; then
+            SUCCESSFUL_PLUGINS+=("$plugin_ref")
+        else
+            mark_plugin_failed "$plugin_ref"
+        fi
     # Install failed — may already exist; try update instead
     elif claude plugin update "$plugin_ref" --scope user 2>"$STDERR_FILE"; then
-        SUCCESSFUL_PLUGINS+=("$plugin_ref")
+        if ensure_user_plugin_enabled "$plugin_ref"; then
+            SUCCESSFUL_PLUGINS+=("$plugin_ref")
+        else
+            mark_plugin_failed "$plugin_ref"
+        fi
     else
         [[ -s "$STDERR_FILE" ]] && sanitize_stderr "$STDERR_FILE"
         warn "Could not install/update: $plugin"
-        FAILED=$((FAILED + 1))
-        if is_required_plugin_ref "$plugin_ref"; then
-            REQUIRED_FAILED=$((REQUIRED_FAILED + 1))
-        fi
+        mark_plugin_failed "$plugin_ref"
     fi
 done
 
@@ -181,7 +325,35 @@ snapshot_plugins "$SNAPSHOT_POST" || true
 
 ENABLED=0
 
+FINAL_LIST="$WORK_DIR/list_final.json"
+FINAL_LIST_AVAILABLE=1
+if ! read_plugin_list "$FINAL_LIST"; then
+    warn "Could not read final Claude plugin list for enabled-state verification"
+    FINAL_LIST_AVAILABLE=0
+fi
+
+for plugin in "${REQUIRED_PLUGINS[@]}"; do
+    plugin_ref="${plugin}@${MARKETPLACE_NAME}"
+    if ! registry_has_user_install "$plugin_ref"; then
+        warn "Missing user-scoped registry entry with existing installPath: $plugin_ref"
+        mark_plugin_failed "$plugin_ref"
+        continue
+    fi
+    if [[ "$FINAL_LIST_AVAILABLE" -eq 0 ]]; then
+        warn "Could not verify final enabled state for required plugin: $plugin_ref"
+        mark_plugin_failed "$plugin_ref"
+        continue
+    fi
+    if [[ "$(plugin_enabled_state "$FINAL_LIST" "$plugin_ref" 2>/dev/null || echo missing)" != "enabled" ]]; then
+        warn "Missing enabled user-scoped list entry: $plugin_ref"
+        mark_plugin_failed "$plugin_ref"
+    fi
+done
+
 for plugin_ref in "${SUCCESSFUL_PLUGINS[@]+"${SUCCESSFUL_PLUGINS[@]}"}"; do
+    if plugin_failed "$plugin_ref"; then
+        continue
+    fi
     plugin="${plugin_ref%@*}"
     pre_ver=$(snapshot_version "$SNAPSHOT_PRE" "$plugin_ref")
     post_ver=$(snapshot_version "$SNAPSHOT_POST" "$plugin_ref")
@@ -228,6 +400,7 @@ if [[ $REQUIRED_FAILED -eq 0 && $READINESS_FAILED -eq 0 ]]; then
     echo -e "${GREEN}${BOLD}Required plugins ready ($TOTAL plugins processed: $INSTALLED installed, $UPDATED updated, $UP_TO_DATE already up to date, $FAILED install/update failed, $ENABLED enabled).${NC}"
 else
     echo -e "${YELLOW}${BOLD}$TOTAL plugins processed: $INSTALLED installed, $UPDATED updated, $UP_TO_DATE already up to date, $FAILED install/update failed, $READINESS_FAILED readiness failed.${NC}"
+    print_scope_repair_remediation
     exit 1
 fi
 
@@ -236,7 +409,6 @@ echo "Plugins will auto-update when new versions are released."
 echo
 echo -e "${BOLD}Next steps:${NC}"
 echo "  • Start a new Claude Code session to activate plugins"
-echo "  • Run: claude /bootstrap:start     — to bootstrap a project"
 echo "  • Run: claude /code:code           — to start a coding session"
 echo "  • Run: claude /code-review:start   — to review code"
 echo

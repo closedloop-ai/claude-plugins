@@ -47,11 +47,13 @@ Multi-repository, adaptive self-learning, & artifact-bound phased workflow gates
 
 ## Quick Start
 
-**One-line install** — installs all plugins globally and keeps them auto-updated:
+**One-line install** — installs the five Symphony runtime plugins at user scope and keeps them auto-updated:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/closedloop-ai/claude-plugins/main/install.sh | bash
 ```
+
+The installer installs `code`, `code-review`, `judges`, `platform`, and `self-learning`, then verifies those runtime plugins are present with existing install paths and enabled user-scoped entries. It re-enables disabled user-scoped runtime plugins and attempts to remove stale project-scoped duplicates when Claude reports a usable `projectPath`. If Claude reports a project-scoped entry without a usable project path, the installer prints the project-directory uninstall command and still repairs the user-scoped install. The `bootstrap` plugin remains available in the marketplace for manual installation, but it is not part of the default runtime install.
 
 Or install interactively from within Claude Code:
 
@@ -62,9 +64,6 @@ claude /plugin marketplace install closedloop
 Then start using the plugins:
 
 ```bash
-# Bootstrap.
-claude /bootstrap:start
-
 # Plan. Code.
 claude /code:code --prd requirements.md
 

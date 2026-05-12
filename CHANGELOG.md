@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.20
+
+#### Changed
+- README installation guidance now states the installer installs and verifies the five Symphony runtime plugins at user scope, with `bootstrap` excluded from the default runtime install.
+
+#### Fixed
+- `install.sh` now refreshes the configured `closedloop-ai` marketplace, installs the five Symphony runtime plugins at user scope, then verifies those runtime plugins have existing install paths and enabled user-scoped `claude plugin list --json` entries. Disabled user-scoped runtime plugins are re-enabled once and re-read before the installer reports success.
+- Project-scoped ClosedLoop plugin duplicates are repaired before user-scope install/update when Claude reports a usable `projectPath`; entries without a usable project path now produce a manual project-directory uninstall command while user-scope repair continues.
+
 ### code v1.11.19
 
 #### Changed
@@ -60,7 +69,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `write_runs_log_entry` default chain changes from `LAST_CLAUDE_COMMAND → self_learning` to `LAST_CLAUDE_COMMAND → CLOSEDLOOP_COMMAND → plan_execute`, removing the over-attribution of fresh-start Loops to `self_learning` in Datadog (FEA-936).
 - `emit_perf_event` empty-input guard treats an empty `json_line` as a silent no-op, preventing Loop-wide kills under older jq + `set -euo pipefail` and corrupt blank perf.jsonl lines under modern jq 1.8+ (FEA-936).
 - Legacy state-file read path hardened with `|| echo ""` so older state files lacking the `command:` field do not abort the script under `set -euo pipefail`.
-
 ### code v1.11.15
 
 #### Changed
