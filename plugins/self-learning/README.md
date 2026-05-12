@@ -317,12 +317,14 @@ python3 verify_citations.py --start-sha <git-sha> --workdir /path/to/workdir
 
 ### `perf_summary.py`
 
-Reads `perf.jsonl` and prints timing tables for iterations, phases, pipeline steps, sub-steps, and agents. Useful for identifying bottlenecks in the ClosedLoop loop. Pass `--timeline` for a chronological per-instance phase view (one row per phase invocation with start/end timestamps and duration) instead of aggregate stats.
+Reads `perf.jsonl` and prints timing/token tables for iterations, phases, pipeline steps, sub-steps, agents, and phase-agent pairs. Useful for identifying bottlenecks in the ClosedLoop loop. Agent token usage is summarized from `agent` perf event fields (`input_tokens`, `output_tokens`, cache token fields, and `total_context_tokens`). For legacy perf rows without token fields, the summary backfills matching agent usage from adjacent `claude-output.jsonl` / `claude-output-*.jsonl` files when `tool_use_result.agentId` and `tool_use_result.usage` are available. Phase token usage is attributed from agents whose start time falls inside each derived phase window. Pass `--timeline` for a chronological per-instance phase view (one row per phase invocation with start/end timestamps, duration, token total, and peak context) instead of aggregate stats.
 
 **Usage:**
 ```bash
 python3 perf_summary.py --workdir /path/to/workdir [--run-id 20240115-103000] [--format text|json] [--timeline]
 ```
+
+JSON output includes a `phase_agents` table for the granular phase/agent token breakdown.
 
 ### `write_merged_patterns.py`
 
