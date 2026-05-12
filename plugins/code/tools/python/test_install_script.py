@@ -6,8 +6,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 INSTALL_SH = REPO_ROOT / "install.sh"
-REQUIRED_PLUGIN_REFS = [
+ALL_PLUGIN_REFS = [
     "bootstrap@closedloop-ai",
+    "code@closedloop-ai",
+    "code-review@closedloop-ai",
+    "judges@closedloop-ai",
+    "platform@closedloop-ai",
+    "self-learning@closedloop-ai",
+]
+REQUIRED_PLUGIN_REFS = [
     "code@closedloop-ai",
     "code-review@closedloop-ai",
     "judges@closedloop-ai",
@@ -71,7 +78,7 @@ def install_stub_tools(tmp_path: Path) -> Path:
             import sys
 
             state_file = {str(state_file)!r}
-            required = {REQUIRED_PLUGIN_REFS!r}
+            all_plugins = {ALL_PLUGIN_REFS!r}
 
             def load():
                 with open(state_file, "r", encoding="utf-8") as handle:
@@ -121,7 +128,7 @@ def install_stub_tools(tmp_path: Path) -> Path:
                 raise SystemExit(0)
             if args == ["plugin", "list", "--json"]:
                 state = load()
-                print(json.dumps([state[ref] for ref in required if ref in state]))
+                print(json.dumps([state[ref] for ref in all_plugins if ref in state]))
                 raise SystemExit(0)
 
             print(f"unexpected claude args: {{args}}", file=sys.stderr)
@@ -159,20 +166,59 @@ def test_install_script_succeeds_when_all_required_plugins_are_enabled(
     result = run_install(tmp_path)
 
     assert result.returncode == 0, result.stderr
-    assert "All 6 plugins ready" in result.stdout
+    assert "Required plugins ready" in result.stdout
 
 
 def test_install_script_enables_disabled_required_plugin(tmp_path: Path) -> None:
     result = run_install(
         tmp_path,
-        {"TEST_DISABLED_ON_INSTALL": "bootstrap@closedloop-ai"},
+        {"TEST_DISABLED_ON_INSTALL": "code@closedloop-ai"},
     )
 
     assert result.returncode == 0, result.stderr
-    assert "Enabled: bootstrap" in result.stdout
+    assert "Enabled: code" in result.stdout
 
 
 def test_install_script_exits_nonzero_when_enable_fails(tmp_path: Path) -> None:
+    result = run_install(
+        tmp_path,
+        {
+            "TEST_DISABLED_ON_INSTALL": "code@closedloop-ai",
+            "TEST_ENABLE_FAIL": "code@closedloop-ai",
+        },
+    )
+
+    assert result.returncode != 0
+    assert "Required plugin is not enabled: code@closedloop-ai" in result.stdout
+
+
+def test_install_script_exits_nonzero_when_required_plugin_is_missing(
+    tmp_path: Path,
+) -> None:
+    result = run_install(
+        tmp_path,
+        {"TEST_FAIL_INSTALL": "code@closedloop-ai"},
+    )
+
+    assert result.returncode != 0
+    assert "Required plugin is not enabled: code@closedloop-ai" in result.stdout
+
+
+def test_install_script_does_not_require_bootstrap_when_missing(tmp_path: Path) -> None:
+    result = run_install(
+        tmp_path,
+        {"TEST_FAIL_INSTALL": "bootstrap@closedloop-ai"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        "Required plugin is not enabled: bootstrap@closedloop-ai" not in result.stdout
+    )
+
+
+def test_install_script_does_not_require_bootstrap_when_enable_fails(
+    tmp_path: Path,
+) -> None:
     result = run_install(
         tmp_path,
         {
@@ -181,15 +227,7 @@ def test_install_script_exits_nonzero_when_enable_fails(tmp_path: Path) -> None:
         },
     )
 
-    assert result.returncode != 0
-    assert "Required plugin is not enabled: bootstrap@closedloop-ai" in result.stdout
-
-
-def test_install_script_exits_nonzero_when_bootstrap_is_missing(tmp_path: Path) -> None:
-    result = run_install(
-        tmp_path,
-        {"TEST_FAIL_INSTALL": "bootstrap@closedloop-ai"},
+    assert result.returncode == 0, result.stderr
+    assert (
+        "Required plugin is not enabled: bootstrap@closedloop-ai" not in result.stdout
     )
-
-    assert result.returncode != 0
-    assert "Required plugin is not enabled: bootstrap@closedloop-ai" in result.stdout

@@ -58,6 +58,20 @@ sanitize_stderr()  {
 MARKETPLACE_SOURCE="closedloop-ai/claude-plugins"
 MARKETPLACE_NAME="closedloop-ai"
 PLUGINS=(bootstrap code code-review judges platform self-learning)
+# Bootstrap is installed for manual repo bootstrapping, but Symphony runtime
+# readiness only requires the plugins used by loop execution and review.
+REQUIRED_PLUGINS=(code code-review judges platform self-learning)
+
+is_required_plugin_ref() {
+    local candidate="$1"
+    local plugin
+    for plugin in "${REQUIRED_PLUGINS[@]}"; do
+        if [[ "$candidate" == "${plugin}@${MARKETPLACE_NAME}" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
 
 # ── Per-run working directory ────────────────────────────────────────────────
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/closedloop-install.XXXXXX")
@@ -133,6 +147,7 @@ INSTALLED=0
 UPDATED=0
 UP_TO_DATE=0
 FAILED=0
+REQUIRED_FAILED=0
 
 SNAPSHOT_PRE="$WORK_DIR/snapshot_pre"
 SNAPSHOT_POST="$WORK_DIR/snapshot_post"
@@ -156,6 +171,9 @@ for plugin in "${PLUGINS[@]}"; do
         [[ -s "$STDERR_FILE" ]] && sanitize_stderr "$STDERR_FILE"
         warn "Could not install/update: $plugin"
         FAILED=$((FAILED + 1))
+        if is_required_plugin_ref "$plugin_ref"; then
+            REQUIRED_FAILED=$((REQUIRED_FAILED + 1))
+        fi
     fi
 done
 
@@ -192,7 +210,7 @@ done
 
 snapshot_plugins "$SNAPSHOT_READY" || true
 READINESS_FAILED=0
-for plugin in "${PLUGINS[@]}"; do
+for plugin in "${REQUIRED_PLUGINS[@]}"; do
     plugin_ref="${plugin}@${MARKETPLACE_NAME}"
     ready_state=$(snapshot_enabled "$SNAPSHOT_READY" "$plugin_ref")
     if [[ "$ready_state" != "enabled" ]]; then
@@ -206,8 +224,8 @@ echo
 # ── Summary ──────────────────────────────────────────────────────────────────
 TOTAL=$((INSTALLED + UPDATED + UP_TO_DATE + FAILED))
 echo "────────────────────────────────────"
-if [[ $FAILED -eq 0 && $READINESS_FAILED -eq 0 ]]; then
-    echo -e "${GREEN}${BOLD}All $TOTAL plugins ready ($INSTALLED installed, $UPDATED updated, $UP_TO_DATE already up to date, $ENABLED enabled).${NC}"
+if [[ $REQUIRED_FAILED -eq 0 && $READINESS_FAILED -eq 0 ]]; then
+    echo -e "${GREEN}${BOLD}Required plugins ready ($TOTAL plugins processed: $INSTALLED installed, $UPDATED updated, $UP_TO_DATE already up to date, $FAILED install/update failed, $ENABLED enabled).${NC}"
 else
     echo -e "${YELLOW}${BOLD}$TOTAL plugins processed: $INSTALLED installed, $UPDATED updated, $UP_TO_DATE already up to date, $FAILED install/update failed, $READINESS_FAILED readiness failed.${NC}"
     exit 1
