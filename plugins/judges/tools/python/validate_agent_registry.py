@@ -329,13 +329,9 @@ def validate_agent_registry(
                 f"Unknown artifact_type '{artifact_type}'. "
                 f"Valid values: {sorted(JUDGE_REGISTRY)}"
             )
-            registry_result.agents = agent_results
-            registry_result.total_agents = len(md_files)
-            registry_result.invalid_agents = sum(1 for a in agent_results if not a.is_valid)
-            registry_result.valid_agents = len(md_files) - registry_result.invalid_agents
-            registry_result.all_errors = all_errors
-            registry_result.all_warnings = all_warnings
-            return registry_result
+            return _populate_result(
+                registry_result, agent_results, md_files, all_errors, all_warnings
+            )
         required_names = JUDGE_REGISTRY[artifact_type]
         present_names = {a.agent_name for a in agent_results if a.is_valid and a.agent_name}
         for missing in sorted(required_names - present_names):
@@ -344,6 +340,18 @@ def validate_agent_registry(
                 f"missing or invalid: '{missing}'"
             )
 
+    return _populate_result(
+        registry_result, agent_results, md_files, all_errors, all_warnings
+    )
+
+
+def _populate_result(
+    registry_result: RegistryValidationResult,
+    agent_results: List[AgentValidationResult],
+    md_files: List[Path],
+    all_errors: List[str],
+    all_warnings: List[str],
+) -> RegistryValidationResult:
     invalid_count = sum(1 for a in agent_results if not a.is_valid)
     registry_result.agents = agent_results
     registry_result.total_agents = len(md_files)
@@ -351,7 +359,6 @@ def validate_agent_registry(
     registry_result.invalid_agents = invalid_count
     registry_result.all_errors = all_errors
     registry_result.all_warnings = all_warnings
-
     return registry_result
 
 
