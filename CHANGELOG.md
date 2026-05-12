@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `TestValidateAgentRegistry::test_unknown_artifact_type_returns_structured_error` covers the new `artifact_type` guard.
 - `TestJudgeRegistrySync::test_judge_registry_matches_validate_judge_report` asserts the two `JUDGE_REGISTRY` definitions (in `plugins/judges/tools/python/validate_agent_registry.py` and `plugins/judges/skills/run-judges/scripts/validate_judge_report.py`) stay byte-for-byte equal. If a judge is added to one registry but not the other, the pre-flight check would pass while post-run validation would fail — exactly the drift scenario the pre-flight check exists to prevent. The test uses the existing `sys.path` manipulation pattern (per CLAUDE.md's "Standalone scripts with no cross-tool imports within a plugin" rule) rather than extracting the registry to a shared module.
 
-### code v1.11.18
+### code v1.11.19
 
 #### Changed
 - `test_write_runs_log_entry_uses_workdir_root` in `test_run_loop_failure_marker.py` now `unset`s `CLOSEDLOOP_COMMAND` and `LAST_CLAUDE_COMMAND` inside the bash heredoc before invoking `write_runs_log_entry`, so the default-command path is exercised deterministically regardless of the caller's ambient environment. Test-only change isolating the existing behavior — no production code paths altered.
