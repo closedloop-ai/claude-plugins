@@ -364,11 +364,11 @@ def test_does_not_require_bootstrap_when_enable_fails(tmp_path: Path) -> None:
     assert "Repair ClosedLoop plugins at user scope" not in combined
 
 
-def test_skips_final_enabled_state_check_when_final_list_is_unavailable(tmp_path: Path) -> None:
+def test_fails_when_final_enabled_state_check_is_unavailable(tmp_path: Path) -> None:
     result = run_installer(tmp_path, scenario="final-list-fails")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode != 0
     combined = f"{result.stdout}\n{result.stderr}"
     assert "Could not read final Claude plugin list for enabled-state verification" in combined
-    assert "Missing enabled user-scoped list entry" not in combined
-    assert "Required plugins ready" in combined
+    assert "Could not verify final enabled state for required plugin: code@closedloop-ai" in combined
+    assert "Repair ClosedLoop plugins at user scope" in combined

@@ -330,6 +330,8 @@ for plugin in "${REQUIRED_PLUGINS[@]}"; do
         continue
     fi
     if [[ "$FINAL_LIST_AVAILABLE" -eq 0 ]]; then
+        warn "Could not verify final enabled state for required plugin: $plugin_ref"
+        mark_plugin_failed "$plugin_ref"
         continue
     fi
     if [[ "$(plugin_enabled_state "$FINAL_LIST" "$plugin_ref" 2>/dev/null || echo missing)" != "enabled" ]]; then

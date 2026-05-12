@@ -53,7 +53,7 @@ Multi-repository, adaptive self-learning, & artifact-bound phased workflow gates
 curl -fsSL https://raw.githubusercontent.com/closedloop-ai/claude-plugins/main/install.sh | bash
 ```
 
-The installer verifies all six ClosedLoop plugins are present at user scope, re-enables disabled user-scoped entries, and attempts to remove stale project-scoped duplicates when Claude reports a usable `projectPath`. If Claude reports a project-scoped entry without a usable project path, the installer prints the project-directory uninstall command and still repairs the user-scoped install.
+The installer installs all six ClosedLoop plugins at user scope, then verifies the five Symphony runtime plugins are present with existing install paths and enabled user-scoped entries. It re-enables disabled user-scoped runtime plugins and attempts to remove stale project-scoped duplicates when Claude reports a usable `projectPath`. If Claude reports a project-scoped entry without a usable project path, the installer prints the project-directory uninstall command and still repairs the user-scoped install.
 
 Or install interactively from within Claude Code:
 
