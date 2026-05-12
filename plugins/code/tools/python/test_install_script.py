@@ -7,7 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 INSTALL_SCRIPT = REPO_ROOT / "install.sh"
-PLUGINS = ["bootstrap", "code", "code-review", "judges", "platform", "self-learning"]
+PLUGINS = ["code", "code-review", "judges", "platform", "self-learning"]
 
 
 def write_executable(path: Path, content: str) -> None:
@@ -172,15 +172,13 @@ def write_fake_claude(bin_dir: Path) -> None:
             state = load_state()
             state["list_calls"] = state.get("list_calls", 0) + 1
             save_state(state)
-            if scenario == "final-list-fails" and state["list_calls"] >= 15:
+            if scenario == "final-list-fails" and state["list_calls"] >= 13:
                 raise SystemExit(1)
             print(json.dumps(state["list"]))
             raise SystemExit(0)
         if len(args) >= 5 and args[:2] == ["plugin", "install"] and args[3:] == ["--scope", "user"]:
             ref = args[2]
             if scenario == "no-user-entry" and ref == "code@closedloop-ai":
-                raise SystemExit(0)
-            if scenario == "bootstrap-no-user-entry" and ref == "bootstrap@closedloop-ai":
                 raise SystemExit(0)
             install_user(
                 ref,
@@ -194,14 +192,6 @@ def write_fake_claude(bin_dir: Path) -> None:
                         }
                         and ref == "code@closedloop-ai"
                     )
-                    or (
-                        scenario
-                        in {
-                            "bootstrap-enable-fails",
-                            "bootstrap-enable-still-disabled",
-                        }
-                        and ref == "bootstrap@closedloop-ai"
-                    )
                 ),
             )
             raise SystemExit(0)
@@ -212,14 +202,7 @@ def write_fake_claude(bin_dir: Path) -> None:
             ref = args[2]
             if scenario == "enable-fails" and ref == "code@closedloop-ai":
                 raise SystemExit(1)
-            if scenario == "bootstrap-enable-fails" and ref == "bootstrap@closedloop-ai":
-                raise SystemExit(1)
             if scenario == "enable-still-disabled" and ref == "code@closedloop-ai":
-                raise SystemExit(0)
-            if (
-                scenario == "bootstrap-enable-still-disabled"
-                and ref == "bootstrap@closedloop-ai"
-            ):
                 raise SystemExit(0)
             state = load_state()
             for entry in state["list"]:
@@ -281,7 +264,7 @@ def read_log(tmp_path: Path) -> str:
     return (tmp_path / "claude.log").read_text()
 
 
-def test_installs_all_plugins_at_user_scope(tmp_path: Path) -> None:
+def test_installs_runtime_plugins_at_user_scope(tmp_path: Path) -> None:
     result = run_installer(tmp_path)
 
     assert result.returncode == 0, result.stderr
@@ -289,6 +272,7 @@ def test_installs_all_plugins_at_user_scope(tmp_path: Path) -> None:
     assert "claude plugin marketplace update closedloop-ai" in log
     for plugin in PLUGINS:
         assert f"claude plugin install {plugin}@closedloop-ai --scope user" in log
+    assert "bootstrap@closedloop-ai" not in log
 
 
 def test_fails_when_marketplace_refresh_fails(tmp_path: Path) -> None:
@@ -357,26 +341,6 @@ def test_fails_when_user_scoped_registry_entry_is_missing(tmp_path: Path) -> Non
     combined = f"{result.stdout}\n{result.stderr}"
     assert "Missing user-scoped registry entry with existing installPath: code@closedloop-ai" in combined
     assert "Repair ClosedLoop plugins at user scope" in combined
-
-
-def test_does_not_require_bootstrap_when_user_scoped_registry_entry_is_missing(
-    tmp_path: Path,
-) -> None:
-    result = run_installer(tmp_path, scenario="bootstrap-no-user-entry")
-
-    assert result.returncode == 0, result.stderr
-    combined = f"{result.stdout}\n{result.stderr}"
-    assert "Required plugin is not enabled: bootstrap@closedloop-ai" not in combined
-    assert "Repair ClosedLoop plugins at user scope" not in combined
-
-
-def test_does_not_require_bootstrap_when_enable_fails(tmp_path: Path) -> None:
-    result = run_installer(tmp_path, scenario="bootstrap-enable-fails")
-
-    assert result.returncode == 0, result.stderr
-    combined = f"{result.stdout}\n{result.stderr}"
-    assert "Required plugin is not enabled: bootstrap@closedloop-ai" not in combined
-    assert "Repair ClosedLoop plugins at user scope" not in combined
 
 
 def test_fails_when_final_enabled_state_check_is_unavailable(tmp_path: Path) -> None:

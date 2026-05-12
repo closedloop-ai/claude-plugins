@@ -7,7 +7,7 @@
 # What this does:
 #   1. Checks prerequisites (Claude Code CLI, Python 3.11+, jq)
 #   2. Registers the closedloop-ai plugin marketplace
-#   3. Installs all 6 plugins globally (user scope)
+#   3. Installs the 5 Symphony runtime plugins at user scope
 #   4. Auto-update is enabled by default — plugins stay current automatically
 #
 # NOTE: The BASH_VERSION check below can be bypassed by setting the BASH_VERSION
@@ -57,9 +57,10 @@ sanitize_stderr()  {
 # ── Constants ────────────────────────────────────────────────────────────────
 MARKETPLACE_SOURCE="closedloop-ai/claude-plugins"
 MARKETPLACE_NAME="closedloop-ai"
-PLUGINS=(bootstrap code code-review judges platform self-learning)
-# Bootstrap is installed for manual repo bootstrapping, but Symphony runtime
-# readiness only requires the plugins used by loop execution and review.
+PLUGINS=(code code-review judges platform self-learning)
+# Symphony runtime readiness requires the plugins used by loop execution and
+# review. Bootstrap is available in the marketplace for manual installation but
+# is intentionally not installed or verified by this installer.
 REQUIRED_PLUGINS=(code code-review judges platform self-learning)
 
 is_required_plugin_ref() {
@@ -172,7 +173,7 @@ registry_has_user_install() {
 print_scope_repair_remediation() {
     cat >&2 <<'REPAIR'
 Repair ClosedLoop plugins at user scope:
-for p in bootstrap code code-review judges platform self-learning; do
+for p in code code-review judges platform self-learning; do
   claude plugin uninstall "$p@closedloop-ai" --scope project
   claude plugin install "$p@closedloop-ai" --scope user
   claude plugin enable "$p@closedloop-ai" --scope user
@@ -408,7 +409,6 @@ echo "Plugins will auto-update when new versions are released."
 echo
 echo -e "${BOLD}Next steps:${NC}"
 echo "  • Start a new Claude Code session to activate plugins"
-echo "  • Run: claude /bootstrap:start     — to bootstrap a project"
 echo "  • Run: claude /code:code           — to start a coding session"
 echo "  • Run: claude /code-review:start   — to review code"
 echo

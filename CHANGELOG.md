@@ -4,15 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.11.20
+
+#### Changed
+- README installation guidance now states the installer installs and verifies the five Symphony runtime plugins at user scope, with `bootstrap` excluded from the default runtime install.
+
+#### Fixed
+- `install.sh` now refreshes the configured `closedloop-ai` marketplace, installs the five Symphony runtime plugins at user scope, then verifies those runtime plugins have existing install paths and enabled user-scoped `claude plugin list --json` entries. Disabled user-scoped runtime plugins are re-enabled once and re-read before the installer reports success.
+- Project-scoped ClosedLoop plugin duplicates are repaired before user-scope install/update when Claude reports a usable `projectPath`; entries without a usable project path now produce a manual project-directory uninstall command while user-scope repair continues.
+
 ### code v1.11.19
 
 #### Changed
 - `test_write_runs_log_entry_uses_workdir_root` in `test_run_loop_failure_marker.py` now `unset`s `CLOSEDLOOP_COMMAND` and `LAST_CLAUDE_COMMAND` inside the bash heredoc before invoking `write_runs_log_entry`, so the default-command path is exercised deterministically regardless of the caller's ambient environment. Test-only change isolating the existing behavior — no production code paths altered.
-- README installation guidance now states the user-scope verification, disabled-plugin re-enable, and project-scope repair behavior performed by the installer.
-
-#### Fixed
-- `install.sh` now installs all six ClosedLoop plugins at user scope, then verifies that the five Symphony runtime plugins have existing install paths and enabled user-scoped `claude plugin list --json` entries. Disabled user-scoped runtime plugins are re-enabled once and re-read before the installer reports success.
-- Project-scoped ClosedLoop plugin duplicates are repaired before user-scope install/update when Claude reports a usable `projectPath`; entries without a usable project path now produce a manual project-directory uninstall command while user-scope repair continues.
 
 ### judges v1.7.0
 
