@@ -6,10 +6,10 @@ hooks:
   Stop:
     - hooks:
         - type: command
-          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-complete.sh\""
+          command: bash "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-complete.sh"
 ---
 
-!`source "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-init.sh" process_learnings`
+!`source "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-init.sh" process_learnings "$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-parse-workdir.sh")"`
 
 # Process Learnings Command
 

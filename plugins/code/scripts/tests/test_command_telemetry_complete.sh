@@ -4,9 +4,11 @@
 # Covers:
 #   1. State file read-back   — values persisted in .cmd-state.env are recovered
 #   2. Duration calculation   — computed duration is reasonable (>= 0)
-#   3. command_complete event — perf.jsonl contains the event with exit_status field
+#   3. command_complete event — perf.jsonl contains the event (no exit_status field)
 #   4. State file cleanup     — .cmd-state.env is removed after a successful run
 #   5. Fail-open              — script exits 0 when state file is missing
+#   6. No-argv Stop hook path — workdir recovered from CLOSEDLOOP_WORKDIR env
+#   7. No-argv sidecar path   — workdir recovered from .last-cmd-state sidecar pointer
 #
 # Usage:
 #   bash plugins/code/scripts/tests/test_command_telemetry_complete.sh
@@ -19,6 +21,16 @@ set -uo pipefail  # -e dropped: tests use explicit capture and assertion reporte
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPLETE_SCRIPT="$SCRIPTS_DIR/command-telemetry-complete.sh"
+
+# ---- Portable epoch → ISO 8601 UTC timestamp formatter -------------------
+# GNU date supports `-d @epoch`; BSD date supports `-r epoch`; POSIX uses
+# `-j -f "%s"`. Try each in turn. Returns empty string if none work.
+_iso_from_epoch() {
+    date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+        || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+        || date -u -j -f "%s" "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+        || echo ""
+}
 
 # ---- Counters and reporters ----------------------------------------------
 PASS_COUNT=0
@@ -116,8 +128,7 @@ echo "Test 1: state file read-back"
 
     # Use a start time 10 seconds in the past so duration is computable.
     start_epoch=$(( $(date +%s) - 10 ))
-    cmd_start=$(date -u -r "$start_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
-                date -u -j -f "%s" "$start_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+    cmd_start=$(_iso_from_epoch "$start_epoch")
 
     known_run_id="test-run-id-readback-$$"
     known_command="test_command"
@@ -125,7 +136,7 @@ echo "Test 1: state file read-back"
     write_state_file "$workdir" "$cmd_start" "$known_run_id" "$known_command"
 
     actual_exit=0
-    bash "$COMPLETE_SCRIPT" 0 "$workdir" 2>/dev/null ; actual_exit=$?
+    bash "$COMPLETE_SCRIPT" "$workdir" 2>/dev/null ; actual_exit=$?
 
     assert_exit_zero "state file read-back: script exits 0" "$actual_exit"
 
@@ -152,13 +163,14 @@ echo "Test 2: duration calculation"
     read -r tmpdir workdir <<< "$(setup_temp_workdir)"
 
     start_epoch=$(( $(date +%s) - 5 ))
-    cmd_start=$(date -u -r "$start_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
-                date -u -j -f "%s" "$start_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+    # Format epoch → ISO 8601 timestamp. Three fallbacks to cover GNU
+    # (Linux CI: -d @epoch), BSD (macOS: -r epoch), and POSIX (-j -f).
+    cmd_start=$(_iso_from_epoch "$start_epoch")
 
     write_state_file "$workdir" "$cmd_start" "run-duration-test-$$" "duration_test"
 
     actual_exit=0
-    bash "$COMPLETE_SCRIPT" 0 "$workdir" 2>/dev/null ; actual_exit=$?
+    bash "$COMPLETE_SCRIPT" "$workdir" 2>/dev/null ; actual_exit=$?
 
     assert_exit_zero "duration calculation: script exits 0" "$actual_exit"
 
@@ -186,22 +198,20 @@ echo "Test 2: duration calculation"
 
 # ------------------------------------------------------------------
 # Test 3: command_complete event emission — perf.jsonl must contain an
-#         event with event=command_complete and the correct exit_status.
+#         event with event=command_complete. The exit_status field is
+#         intentionally absent (the Stop hook cannot observe the exit code).
 # ------------------------------------------------------------------
-echo "Test 3: command_complete event emission with exit_status field"
+echo "Test 3: command_complete event emission (no exit_status field)"
 {
     read -r tmpdir workdir <<< "$(setup_temp_workdir)"
 
     start_epoch=$(( $(date +%s) - 2 ))
-    cmd_start=$(date -u -r "$start_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
-                date -u -j -f "%s" "$start_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+    cmd_start=$(_iso_from_epoch "$start_epoch")
 
     write_state_file "$workdir" "$cmd_start" "run-event-test-$$" "event_test_cmd"
 
-    test_exit_status=42
-
     actual_exit=0
-    bash "$COMPLETE_SCRIPT" "$test_exit_status" "$workdir" 2>/dev/null ; actual_exit=$?
+    bash "$COMPLETE_SCRIPT" "$workdir" 2>/dev/null ; actual_exit=$?
 
     assert_exit_zero "event emission: script exits 0" "$actual_exit"
 
@@ -209,14 +219,20 @@ echo "Test 3: command_complete event emission with exit_status field"
     if [[ -f "$perf_file" ]] && [[ -s "$perf_file" ]]; then
         last_event=$(tail -1 "$perf_file")
         assert_field_equals "event emission" "$last_event" "event" "command_complete"
-        assert_field_equals "event emission" "$last_event" "exit_status" "$test_exit_status"
         assert_field_present "event emission" "$last_event" "ended_at"
         assert_field_present "event emission" "$last_event" "run_id"
+        # exit_status must NOT be present — the Stop hook cannot observe it
+        exit_status_val=$(echo "$last_event" | jq -r '.exit_status // "ABSENT"' 2>/dev/null || echo "ABSENT")
+        if [[ "$exit_status_val" == "ABSENT" ]] || [[ "$exit_status_val" == "null" ]]; then
+            pass "event emission: exit_status field absent (as expected)"
+        else
+            fail "event emission: exit_status field absent" "found exit_status=$exit_status_val in event"
+        fi
     else
         fail "event emission: event=command_complete" "perf.jsonl absent or empty"
-        fail "event emission: exit_status field present" "perf.jsonl absent or empty"
         fail "event emission: ended_at field present" "perf.jsonl absent or empty"
         fail "event emission: run_id field present" "perf.jsonl absent or empty"
+        fail "event emission: exit_status field absent" "perf.jsonl absent or empty"
     fi
 
     rm -rf "$tmpdir"
@@ -231,8 +247,7 @@ echo "Test 4: state file cleanup"
     read -r tmpdir workdir <<< "$(setup_temp_workdir)"
 
     start_epoch=$(( $(date +%s) - 1 ))
-    cmd_start=$(date -u -r "$start_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
-                date -u -j -f "%s" "$start_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+    cmd_start=$(_iso_from_epoch "$start_epoch")
 
     write_state_file "$workdir" "$cmd_start" "run-cleanup-test-$$" "cleanup_test"
 
@@ -246,7 +261,7 @@ echo "Test 4: state file cleanup"
     fi
 
     actual_exit=0
-    bash "$COMPLETE_SCRIPT" 0 "$workdir" 2>/dev/null ; actual_exit=$?
+    bash "$COMPLETE_SCRIPT" "$workdir" 2>/dev/null ; actual_exit=$?
 
     assert_exit_zero "state file cleanup: script exits 0" "$actual_exit"
 
@@ -276,7 +291,7 @@ echo "Test 5: fail-open behavior when state file is missing"
     fi
 
     actual_exit=0
-    bash "$COMPLETE_SCRIPT" 0 "$workdir" 2>/dev/null ; actual_exit=$?
+    bash "$COMPLETE_SCRIPT" "$workdir" 2>/dev/null ; actual_exit=$?
 
     assert_exit_zero "fail-open: script exits 0 when state file is missing" "$actual_exit"
 
@@ -294,30 +309,74 @@ echo "Test 5: fail-open behavior when state file is missing"
 }
 
 # ------------------------------------------------------------------
-# Test 6: Fail-open — invalid exit_status argument defaults to 0
-#         and script still exits 0.
+# Test 6: No-argv invocation (Stop hook context) via CLOSEDLOOP_WORKDIR.
+#         The Stop hook calls the script with no positional arguments.
+#         The script must recover the workdir from CLOSEDLOOP_WORKDIR env.
 # ------------------------------------------------------------------
-echo "Test 6: fail-open — invalid exit_status argument is coerced to 0"
+echo "Test 6: no-argv invocation via CLOSEDLOOP_WORKDIR env (Stop hook path)"
 {
     read -r tmpdir workdir <<< "$(setup_temp_workdir)"
 
     start_epoch=$(( $(date +%s) - 1 ))
-    cmd_start=$(date -u -r "$start_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
-                date -u -j -f "%s" "$start_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+    cmd_start=$(_iso_from_epoch "$start_epoch")
 
-    write_state_file "$workdir" "$cmd_start" "run-invalid-exit-$$" "invalid_exit_test"
+    write_state_file "$workdir" "$cmd_start" "run-no-argv-$$" "no_argv_test"
 
     actual_exit=0
-    bash "$COMPLETE_SCRIPT" "not-a-number" "$workdir" 2>/dev/null ; actual_exit=$?
+    CLOSEDLOOP_WORKDIR="$workdir" bash "$COMPLETE_SCRIPT" 2>/dev/null ; actual_exit=$?
 
-    assert_exit_zero "invalid exit_status: script exits 0" "$actual_exit"
+    assert_exit_zero "no-argv invocation: script exits 0" "$actual_exit"
 
     perf_file="$workdir/perf.jsonl"
     if [[ -f "$perf_file" ]] && [[ -s "$perf_file" ]]; then
         last_event=$(tail -1 "$perf_file")
-        assert_field_equals "invalid exit_status: coerced to 0" "$last_event" "exit_status" "0"
+        assert_field_equals "no-argv invocation: event type" "$last_event" "event" "command_complete"
+        assert_field_present "no-argv invocation: run_id present" "$last_event" "run_id"
     else
-        fail "invalid exit_status: coerced to 0" "perf.jsonl absent or empty"
+        fail "no-argv invocation: event=command_complete" "perf.jsonl absent or empty"
+        fail "no-argv invocation: run_id present" "perf.jsonl absent or empty"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+# ------------------------------------------------------------------
+# Test 7: No-argv invocation via sidecar pointer (Stop hook path when
+#         CLOSEDLOOP_WORKDIR is not exported into the subprocess).
+# ------------------------------------------------------------------
+echo "Test 7: no-argv invocation via sidecar pointer (Stop hook fallback path)"
+{
+    read -r tmpdir workdir <<< "$(setup_temp_workdir)"
+
+    start_epoch=$(( $(date +%s) - 1 ))
+    cmd_start=$(_iso_from_epoch "$start_epoch")
+
+    write_state_file "$workdir" "$cmd_start" "run-sidecar-$$" "sidecar_test"
+
+    # Write the sidecar pointer that init.sh would have written.
+    sidecar_dir="$tmpdir/.closedloop-ai/telemetry"
+    mkdir -p "$sidecar_dir"
+    printf '%s\n' "$workdir" > "$sidecar_dir/.last-cmd-state"
+
+    actual_exit=0
+    # Run with no CLOSEDLOOP_WORKDIR and no argv, but from a PWD where the
+    # sidecar pointer exists under .closedloop-ai/telemetry/.last-cmd-state.
+    (
+        cd "$tmpdir" || exit 1
+        unset CLOSEDLOOP_WORKDIR
+        bash "$COMPLETE_SCRIPT" 2>/dev/null
+    ) ; actual_exit=$?
+
+    assert_exit_zero "sidecar recovery: script exits 0" "$actual_exit"
+
+    perf_file="$workdir/perf.jsonl"
+    if [[ -f "$perf_file" ]] && [[ -s "$perf_file" ]]; then
+        last_event=$(tail -1 "$perf_file")
+        assert_field_equals "sidecar recovery: event type" "$last_event" "event" "command_complete"
+        assert_field_present "sidecar recovery: run_id present" "$last_event" "run_id"
+    else
+        fail "sidecar recovery: event=command_complete" "perf.jsonl absent or empty"
+        fail "sidecar recovery: run_id present" "perf.jsonl absent or empty"
     fi
 
     rm -rf "$tmpdir"

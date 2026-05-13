@@ -11,7 +11,7 @@ hooks:
 
 # Experimental Plan Amend Command
 
-!`source "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-init.sh" amend_plan "$(echo "$ARGUMENTS" | awk '{for(i=1;i<=NF;i++) if($i=="--workdir") print $(i+1)}')"`
+!`source "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-init.sh" amend_plan "$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-parse-workdir.sh")"`
 
 Discuss and apply amendments to a plan.json implementation plan through natural conversation.
 

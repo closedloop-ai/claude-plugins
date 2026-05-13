@@ -18,6 +18,14 @@
 #
 # Workdir precedence:
 #   $2 argument > $CLOSEDLOOP_WORKDIR env > .closedloop-ai/telemetry/ under PWD
+#
+# Concurrency note (v1.12.0 known limitation):
+#   Concurrent slash commands in the same project share a single .cmd-state.env
+#   and .last-cmd-state sidecar. Under concurrent execution, the last init wins
+#   and the previous state is overwritten. Telemetry under concurrent commands
+#   is therefore best-effort. Fixing this would require per-run-ID state files
+#   and a matching strategy in complete.sh (which runs from the Stop hook and
+#   does not receive a run ID). Deferred beyond PLN-561 scope.
 
 # --- Argument handling ---
 
@@ -88,10 +96,28 @@ then
   # Fail open: continue anyway — env vars will still be exported below
 fi
 
+# --- Write sidecar pointer at project-default location ---
+# This allows command-telemetry-complete.sh (invoked from the Stop hook with
+# no argv and a potentially clean environment) to recover the real workdir
+# even if CLOSEDLOOP_WORKDIR is not exported into that subprocess.
+
+_cl_sidecar_dir="${PWD}/.closedloop-ai/telemetry"
+# Always overwrite the sidecar so a later run with default workdir does not
+# inherit a stale pointer from a previous --workdir-overridden run. The write
+# is atomic (tmp + mv on same FS) and owner-only (umask 077) to reduce
+# over-readability of the path pointer.
+if mkdir -p "$_cl_sidecar_dir" 2>/dev/null; then
+  _cl_sidecar_tmp="${_cl_sidecar_dir}/.last-cmd-state.tmp.$$"
+  (umask 077 && printf '%s\n' "$_cl_resolved_workdir" > "$_cl_sidecar_tmp") 2>/dev/null \
+    && mv -f "$_cl_sidecar_tmp" "${_cl_sidecar_dir}/.last-cmd-state" 2>/dev/null \
+    || rm -f "$_cl_sidecar_tmp" 2>/dev/null || true
+fi
+
 # --- Export env vars ---
 
 export CLOSEDLOOP_COMMAND="$_cl_command_name"
 export CLOSEDLOOP_RUN_ID="$_cl_run_id"
+export CLOSEDLOOP_WORKDIR="$_cl_resolved_workdir"
 
 # --- Call record_run.sh to emit the run event ---
 
@@ -109,4 +135,4 @@ fi
 # --- Cleanup local vars ---
 
 unset _cl_command_name _cl_resolved_workdir _cl_run_id _cl_start_time
-unset _cl_state_file _cl_scripts_dir _cl_record_run
+unset _cl_state_file _cl_scripts_dir _cl_record_run _cl_sidecar_dir _cl_sidecar_tmp

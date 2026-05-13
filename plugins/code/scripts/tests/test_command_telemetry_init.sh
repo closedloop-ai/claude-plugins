@@ -75,8 +75,9 @@ T1A=$(mktemp -d)
 T1A_ENV=$(mktemp -d)
 T1A_DEFAULT=$(mktemp -d)
 
+T1A_OUT=$(mktemp)
 (
-  set +euo 2>/dev/null || true
+  set +euo pipefail
   export CLOSEDLOOP_WORKDIR="$T1A_ENV"
   unset CLOSEDLOOP_COMMAND CLOSEDLOOP_RUN_ID
   cd "$T1A_DEFAULT"
@@ -97,18 +98,19 @@ STUB
     echo "ARG_WINS=no"
   fi
   rm -rf "$STUB_DIR"
-) > /tmp/_t1a_out.txt 2>/dev/null
+) > "$T1A_OUT" 2>/dev/null
 
-ARG_WINS=$(grep "ARG_WINS=" /tmp/_t1a_out.txt | cut -d= -f2 || echo "no")
+ARG_WINS=$(grep "ARG_WINS=" "$T1A_OUT" | cut -d= -f2 || echo "no")
 assert_eq "1a: arg workdir takes precedence over CLOSEDLOOP_WORKDIR env" "yes" "$ARG_WINS"
-rm -rf "$T1A" "$T1A_ENV" "$T1A_DEFAULT" /tmp/_t1a_out.txt 2>/dev/null || true
+rm -rf "$T1A" "$T1A_ENV" "$T1A_DEFAULT" "$T1A_OUT" 2>/dev/null || true
 
 # 1b. CLOSEDLOOP_WORKDIR env wins over default (no arg)
 T1B_ENV=$(mktemp -d)
 T1B_DEFAULT=$(mktemp -d)
 
+T1B_OUT=$(mktemp)
 (
-  set +euo 2>/dev/null || true
+  set +euo pipefail
   export CLOSEDLOOP_WORKDIR="$T1B_ENV"
   unset CLOSEDLOOP_COMMAND CLOSEDLOOP_RUN_ID
 
@@ -128,17 +130,18 @@ STUB
     echo "ENV_WINS=no"
   fi
   rm -rf "$STUB_DIR"
-) > /tmp/_t1b_out.txt 2>/dev/null
+) > "$T1B_OUT" 2>/dev/null
 
-ENV_WINS=$(grep "ENV_WINS=" /tmp/_t1b_out.txt | cut -d= -f2 || echo "no")
+ENV_WINS=$(grep "ENV_WINS=" "$T1B_OUT" | cut -d= -f2 || echo "no")
 assert_eq "1b: CLOSEDLOOP_WORKDIR env wins when no arg provided" "yes" "$ENV_WINS"
-rm -rf "$T1B_ENV" "$T1B_DEFAULT" /tmp/_t1b_out.txt 2>/dev/null || true
+rm -rf "$T1B_ENV" "$T1B_DEFAULT" "$T1B_OUT" 2>/dev/null || true
 
 # 1c. Default (PWD/.closedloop-ai/telemetry) used when no arg and no env
 T1C_DEFAULT=$(mktemp -d)
 
+T1C_OUT=$(mktemp)
 (
-  set +euo 2>/dev/null || true
+  set +euo pipefail
   unset CLOSEDLOOP_WORKDIR CLOSEDLOOP_COMMAND CLOSEDLOOP_RUN_ID
 
   STUB_DIR=$(mktemp -d)
@@ -158,11 +161,11 @@ STUB
     echo "DEFAULT_WINS=no"
   fi
   rm -rf "$STUB_DIR"
-) > /tmp/_t1c_out.txt 2>/dev/null
+) > "$T1C_OUT" 2>/dev/null
 
-DEFAULT_WINS=$(grep "DEFAULT_WINS=" /tmp/_t1c_out.txt | cut -d= -f2 || echo "no")
+DEFAULT_WINS=$(grep "DEFAULT_WINS=" "$T1C_OUT" | cut -d= -f2 || echo "no")
 assert_eq "1c: default workdir (PWD/.closedloop-ai/telemetry) used as fallback" "yes" "$DEFAULT_WINS"
-rm -rf "$T1C_DEFAULT" /tmp/_t1c_out.txt 2>/dev/null || true
+rm -rf "$T1C_DEFAULT" "$T1C_OUT" 2>/dev/null || true
 
 echo ""
 
@@ -212,8 +215,9 @@ echo "--- 3. Run ID generation ---"
 
 T3=$(mktemp -d)
 
+T3_OUT=$(mktemp)
 (
-  set +euo 2>/dev/null || true
+  set +euo pipefail
   unset CLOSEDLOOP_WORKDIR CLOSEDLOOP_COMMAND CLOSEDLOOP_RUN_ID
 
   STUB_DIR=$(mktemp -d)
@@ -227,9 +231,9 @@ STUB
   source "${STUB_DIR}/command-telemetry-init.sh" "mycommand" "$T3"
   echo "CLOSEDLOOP_RUN_ID=${CLOSEDLOOP_RUN_ID:-}"
   rm -rf "$STUB_DIR"
-) > /tmp/_t3_out.txt 2>/dev/null
+) > "$T3_OUT" 2>/dev/null
 
-RUN_ID_VAL=$(grep "^CLOSEDLOOP_RUN_ID=" /tmp/_t3_out.txt | cut -d= -f2- || echo "")
+RUN_ID_VAL=$(grep "^CLOSEDLOOP_RUN_ID=" "$T3_OUT" | cut -d= -f2- || echo "")
 assert_nonempty "3a: CLOSEDLOOP_RUN_ID is non-empty after sourcing" "$RUN_ID_VAL"
 
 if [[ -n "$RUN_ID_VAL" ]]; then
@@ -245,9 +249,10 @@ fi
 
 # 3c: Fallback run ID when uuidgen is unavailable
 T3C=$(mktemp -d)
+T3C_OUT=$(mktemp)
 
 (
-  set +euo 2>/dev/null || true
+  set +euo pipefail
   unset CLOSEDLOOP_WORKDIR CLOSEDLOOP_COMMAND CLOSEDLOOP_RUN_ID
 
   STUB_DIR=$(mktemp -d)
@@ -263,11 +268,11 @@ STUB
   source "${STUB_DIR}/command-telemetry-init.sh" "mycommand" "$T3C"
   echo "FALLBACK_RUN_ID=${CLOSEDLOOP_RUN_ID:-}"
   rm -rf "$STUB_DIR"
-) > /tmp/_t3c_out.txt 2>/dev/null
+) > "$T3C_OUT" 2>/dev/null
 
-FALLBACK_RUN_ID=$(grep "^FALLBACK_RUN_ID=" /tmp/_t3c_out.txt | cut -d= -f2- || echo "")
+FALLBACK_RUN_ID=$(grep "^FALLBACK_RUN_ID=" "$T3C_OUT" | cut -d= -f2- || echo "")
 assert_nonempty "3c: fallback run ID is non-empty when uuidgen unavailable" "$FALLBACK_RUN_ID"
-rm -rf "$T3" "$T3C" /tmp/_t3_out.txt /tmp/_t3c_out.txt 2>/dev/null || true
+rm -rf "$T3" "$T3C" "$T3_OUT" "$T3C_OUT" 2>/dev/null || true
 echo ""
 
 # ── 4. Fail-open behavior ────────────────────────────────────────────────────
@@ -277,8 +282,9 @@ echo "--- 4. Fail-open behavior ---"
 # 4a: Missing command name does not abort caller (script sources cleanly)
 T4A=$(mktemp -d)
 
+T4A_OUT=$(mktemp)
 (
-  set +euo 2>/dev/null || true
+  set +euo pipefail
   unset CLOSEDLOOP_WORKDIR CLOSEDLOOP_COMMAND CLOSEDLOOP_RUN_ID
 
   STUB_DIR=$(mktemp -d)
@@ -293,11 +299,11 @@ STUB
   source "${STUB_DIR}/command-telemetry-init.sh"
   echo "AFTER_SOURCE=reached"
   rm -rf "$STUB_DIR"
-) > /tmp/_t4a_out.txt 2>/dev/null
+) > "$T4A_OUT" 2>/dev/null
 
-AFTER_SOURCE=$(grep "AFTER_SOURCE=" /tmp/_t4a_out.txt | cut -d= -f2 || echo "")
+AFTER_SOURCE=$(grep "AFTER_SOURCE=" "$T4A_OUT" | cut -d= -f2 || echo "")
 assert_eq "4a: sourcing with no command name does not abort caller (returns 0)" "reached" "$AFTER_SOURCE"
-rm -rf "$T4A" /tmp/_t4a_out.txt 2>/dev/null || true
+rm -rf "$T4A" "$T4A_OUT" 2>/dev/null || true
 
 # 4b: Unwritable workdir does not abort caller
 T4B_PARENT=$(mktemp -d)
@@ -305,8 +311,9 @@ T4B_UNWRITABLE="${T4B_PARENT}/no_write_dir"
 mkdir -p "$T4B_UNWRITABLE"
 chmod 000 "$T4B_UNWRITABLE" 2>/dev/null || true
 
+T4B_OUT=$(mktemp)
 (
-  set +euo 2>/dev/null || true
+  set +euo pipefail
   unset CLOSEDLOOP_WORKDIR CLOSEDLOOP_COMMAND CLOSEDLOOP_RUN_ID
 
   STUB_DIR=$(mktemp -d)
@@ -320,18 +327,19 @@ STUB
   source "${STUB_DIR}/command-telemetry-init.sh" "mycommand" "${T4B_UNWRITABLE}/subdir"
   echo "UNWRITABLE_AFTER=reached"
   rm -rf "$STUB_DIR"
-) > /tmp/_t4b_out.txt 2>/dev/null
+) > "$T4B_OUT" 2>/dev/null
 
-UNWRITABLE_AFTER=$(grep "UNWRITABLE_AFTER=" /tmp/_t4b_out.txt | cut -d= -f2 || echo "")
+UNWRITABLE_AFTER=$(grep "UNWRITABLE_AFTER=" "$T4B_OUT" | cut -d= -f2 || echo "")
 assert_eq "4b: unwritable workdir path does not abort caller" "reached" "$UNWRITABLE_AFTER"
 chmod 755 "$T4B_UNWRITABLE" 2>/dev/null || true
-rm -rf "$T4B_PARENT" /tmp/_t4b_out.txt 2>/dev/null || true
+rm -rf "$T4B_PARENT" "$T4B_OUT" 2>/dev/null || true
 
 # 4c: Missing record_run.sh does not abort caller
 T4C=$(mktemp -d)
 
+T4C_OUT=$(mktemp)
 (
-  set +euo 2>/dev/null || true
+  set +euo pipefail
   unset CLOSEDLOOP_WORKDIR CLOSEDLOOP_COMMAND CLOSEDLOOP_RUN_ID
 
   # Copy init script to a temp dir with no record_run.sh beside it
@@ -342,17 +350,18 @@ T4C=$(mktemp -d)
   source "${STUB_DIR}/command-telemetry-init.sh" "mycommand" "$T4C"
   echo "NO_RECORD_RUN_AFTER=reached"
   rm -rf "$STUB_DIR"
-) > /tmp/_t4c_out.txt 2>/dev/null
+) > "$T4C_OUT" 2>/dev/null
 
-NO_RECORD_RUN_AFTER=$(grep "NO_RECORD_RUN_AFTER=" /tmp/_t4c_out.txt | cut -d= -f2 || echo "")
+NO_RECORD_RUN_AFTER=$(grep "NO_RECORD_RUN_AFTER=" "$T4C_OUT" | cut -d= -f2 || echo "")
 assert_eq "4c: missing record_run.sh does not abort caller" "reached" "$NO_RECORD_RUN_AFTER"
-rm -rf "$T4C" /tmp/_t4c_out.txt 2>/dev/null || true
+rm -rf "$T4C" "$T4C_OUT" 2>/dev/null || true
 
 # 4d: Exported vars are set even when record_run.sh is absent
 T4D=$(mktemp -d)
 
+T4D_OUT=$(mktemp)
 (
-  set +euo 2>/dev/null || true
+  set +euo pipefail
   unset CLOSEDLOOP_WORKDIR CLOSEDLOOP_COMMAND CLOSEDLOOP_RUN_ID
 
   STUB_DIR=$(mktemp -d)
@@ -362,13 +371,13 @@ T4D=$(mktemp -d)
   echo "CMD_EXPORT=${CLOSEDLOOP_COMMAND:-}"
   echo "RUN_ID_EXPORT=${CLOSEDLOOP_RUN_ID:-}"
   rm -rf "$STUB_DIR"
-) > /tmp/_t4d_out.txt 2>/dev/null
+) > "$T4D_OUT" 2>/dev/null
 
-CMD_EXPORT=$(grep "^CMD_EXPORT=" /tmp/_t4d_out.txt | cut -d= -f2- || echo "")
-RUN_ID_EXPORT=$(grep "^RUN_ID_EXPORT=" /tmp/_t4d_out.txt | cut -d= -f2- || echo "")
+CMD_EXPORT=$(grep "^CMD_EXPORT=" "$T4D_OUT" | cut -d= -f2- || echo "")
+RUN_ID_EXPORT=$(grep "^RUN_ID_EXPORT=" "$T4D_OUT" | cut -d= -f2- || echo "")
 assert_eq "4d: CLOSEDLOOP_COMMAND exported even when record_run.sh absent" "check_cmd" "$CMD_EXPORT"
 assert_nonempty "4e: CLOSEDLOOP_RUN_ID exported even when record_run.sh absent" "$RUN_ID_EXPORT"
-rm -rf "$T4D" /tmp/_t4d_out.txt 2>/dev/null || true
+rm -rf "$T4D" "$T4D_OUT" 2>/dev/null || true
 
 echo ""
 

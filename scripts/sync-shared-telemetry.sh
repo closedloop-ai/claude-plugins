@@ -17,6 +17,7 @@ SOURCE_DIR="${REPO_ROOT}/plugins/code/scripts"
 SOURCE_FILES=(
   "command-telemetry-init.sh"
   "command-telemetry-complete.sh"
+  "command-telemetry-parse-workdir.sh"
   "record_run.sh"
   "telemetry-helpers.sh"
 )

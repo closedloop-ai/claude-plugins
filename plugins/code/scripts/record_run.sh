@@ -65,7 +65,13 @@ else
 
   # If WORKDIR is outside any git tree, fall back to walking pwd ancestors.
   if [[ -z "$REPO" && -z "$BRANCH" ]]; then
-    GIT_ROOT=$(_find_git_root "$(pwd)")
+    # `_find_git_root` returns 1 when no ancestor has a .git, which triggers
+    # the script-level `trap 'exit 0' ERR`. Append `|| true` so the failure
+    # is captured by the assignment without aborting the script — empty
+    # REPO/BRANCH must still produce a run event for AC-004 (matched
+    # run+command_complete pair) when the command is invoked outside any
+    # git tree.
+    GIT_ROOT=$(_find_git_root "$(pwd)" || true)
     if [[ -n "$GIT_ROOT" ]]; then
       REPO=$(_git -C "$GIT_ROOT" remote get-url origin || echo "")
       BRANCH=$(_git -C "$GIT_ROOT" rev-parse --abbrev-ref HEAD || echo "")

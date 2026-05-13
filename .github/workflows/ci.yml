@@ -101,6 +101,19 @@ jobs:
       - run: uv sync --frozen --group dev
       - run: uv run pytest plugins/
 
+  bash-tests:
+    name: Bash Telemetry Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run bash telemetry tests
+        run: |
+          bash plugins/code/scripts/tests/test_telemetry_helpers.sh
+          bash plugins/code/scripts/tests/test_command_telemetry_init.sh
+          bash plugins/code/scripts/tests/test_command_telemetry_complete.sh
+          bash plugins/code/scripts/tests/test_command_telemetry_parse_workdir.sh
+          bash plugins/code/scripts/tests/test_record_run.sh
+
   drift-guard:
     name: Telemetry Drift Guard
     runs-on: ubuntu-latest

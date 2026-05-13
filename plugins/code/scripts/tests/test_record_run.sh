@@ -61,9 +61,19 @@ assert_empty() {
 _make_git_repo() {
   local dir="$1"
   mkdir -p "$dir"
-  git -C "$dir" init -q
-  git -C "$dir" checkout -q -b main 2>/dev/null || true
-  # Add a commit so HEAD resolves.
+  # `git init -b main` (git 2.28+) sets HEAD deterministically. Older git
+  # versions ignore -b; fall back to forcing HEAD via symbolic-ref so the
+  # initial branch is always `main` regardless of init.defaultBranch.
+  if ! git -C "$dir" init -q -b main 2>/dev/null; then
+    git -C "$dir" init -q
+    git -C "$dir" symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+  fi
+  # Stable identity for the test commit so commit succeeds even when the
+  # test runner has no user.name/user.email configured (e.g. env -i).
+  git -C "$dir" config user.email "test@example.com"
+  git -C "$dir" config user.name "test"
+  git -C "$dir" config commit.gpgsign false
+  # Add a commit so HEAD resolves to main rather than the unborn ref.
   git -C "$dir" commit -q --allow-empty -m "init"
   git -C "$dir" remote add origin "https://github.com/test/repo.git"
 }
@@ -252,18 +262,26 @@ EXIT_CODE=0
 
 assert_eq "No git root: script exits 0" "0" "$EXIT_CODE"
 
-# When no git root exists anywhere, _find_git_root returns 1 which triggers the
-# ERR trap (exit 0) before jq can run, so perf.jsonl is intentionally NOT
-# created.  The key guarantee is that the script exits 0 (fails open).
-if [[ ! -f "$TMP_WORK_NG/perf.jsonl" ]]; then
-  pass "No git root: script exits cleanly without writing perf.jsonl"
-else
-  # If the file was written (future script change), make sure it's valid JSON.
+# When no git root exists anywhere, the run event must STILL be written with
+# empty repo/branch fields so AC-004 (matched run+command_complete pair) holds
+# for commands invoked outside any git tree. The previous behavior of
+# silently skipping the run event (via ERR trap on _find_git_root's exit 1)
+# was a regression discovered during PLN-561 end-to-end testing.
+if [[ -f "$TMP_WORK_NG/perf.jsonl" ]]; then
+  pass "No git root: perf.jsonl is written"
   if jq . "$TMP_WORK_NG/perf.jsonl" >/dev/null 2>&1; then
-    pass "No git root: perf.jsonl is valid JSON (script behaviour changed)"
+    pass "No git root: perf.jsonl is valid JSON"
+    EVT=$(jq -r '.event' "$TMP_WORK_NG/perf.jsonl")
+    REPO_OUT=$(jq -r '.repo' "$TMP_WORK_NG/perf.jsonl")
+    BRANCH_OUT=$(jq -r '.branch' "$TMP_WORK_NG/perf.jsonl")
+    assert_eq "No git root: event=run" "run" "$EVT"
+    assert_eq "No git root: empty repo" "" "$REPO_OUT"
+    assert_eq "No git root: empty branch" "" "$BRANCH_OUT"
   else
     fail "No git root: perf.jsonl is malformed JSON"
   fi
+else
+  fail "No git root: perf.jsonl was NOT written — record_run.sh silently dropped the run event (regression)"
 fi
 rm -rf "$TMP_NOGIT" "$TMP_WORK_NG"
 

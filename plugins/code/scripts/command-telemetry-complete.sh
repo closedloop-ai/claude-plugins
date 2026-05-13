@@ -9,35 +9,42 @@
 # Fail-open contract: each failure point logs to stderr and continues rather
 # than aborting the caller.
 #
+# NOTE: The Claude Code Stop hook does NOT pass argv and does NOT provide an
+# exit code. This script is designed to be called with NO arguments from that
+# context; it recovers the workdir from (in order):
+#   1. $CLOSEDLOOP_WORKDIR env var (exported by command-telemetry-init.sh)
+#   2. Sidecar pointer: $PWD/.closedloop-ai/telemetry/.last-cmd-state
+#   3. Default: $PWD/.closedloop-ai/telemetry/
+# When called directly (tests, debugging), a positional workdir override may
+# be passed as $1 and takes highest precedence.
+#
 # Usage:
-#   bash command-telemetry-complete.sh [exit_status] [workdir]
+#   bash command-telemetry-complete.sh [workdir]
 #
 # Arguments:
-#   $1  exit status of the command (optional, default 0)
-#   $2  workdir override (optional)
-#
-# Workdir precedence:
-#   $2 argument > $CLOSEDLOOP_WORKDIR env > .closedloop-ai/telemetry/ under PWD
+#   $1  workdir override (optional)
 
-# --- Argument handling ---
-
-_clc_exit_status="${1:-0}"
-# Validate that exit_status is a non-negative integer; fall back to 0
-if ! [[ "$_clc_exit_status" =~ ^[0-9]+$ ]]; then
-  echo "[command-telemetry-complete] WARNING: invalid exit_status '$_clc_exit_status'; defaulting to 0" >&2
-  _clc_exit_status=0
-fi
-
-# --- Workdir resolution (precedence: arg > env > project-default) ---
+# --- Workdir resolution (precedence: arg > env > sidecar > project-default) ---
 
 _clc_resolved_workdir=""
 
-if [[ -n "${2:-}" ]]; then
-  _clc_resolved_workdir="$2"
+if [[ -n "${1:-}" ]]; then
+  _clc_resolved_workdir="$1"
 elif [[ -n "${CLOSEDLOOP_WORKDIR:-}" ]]; then
   _clc_resolved_workdir="$CLOSEDLOOP_WORKDIR"
 else
-  _clc_resolved_workdir="${PWD}/.closedloop-ai/telemetry"
+  # Try sidecar pointer written by command-telemetry-init.sh
+  _clc_sidecar="${PWD}/.closedloop-ai/telemetry/.last-cmd-state"
+  if [[ -f "$_clc_sidecar" ]]; then
+    _clc_sidecar_val=$(cat "$_clc_sidecar" 2>/dev/null || true)
+    if [[ -n "$_clc_sidecar_val" ]]; then
+      _clc_resolved_workdir="$_clc_sidecar_val"
+    fi
+  fi
+  unset _clc_sidecar _clc_sidecar_val
+  if [[ -z "$_clc_resolved_workdir" ]]; then
+    _clc_resolved_workdir="${PWD}/.closedloop-ai/telemetry"
+  fi
 fi
 
 # --- Read .cmd-state.env ---
@@ -46,7 +53,7 @@ _clc_state_file="${_clc_resolved_workdir}/.cmd-state.env"
 
 if [[ ! -f "$_clc_state_file" ]]; then
   echo "[command-telemetry-complete] WARNING: state file not found: $_clc_state_file; skipping telemetry" >&2
-  unset _clc_exit_status _clc_resolved_workdir _clc_state_file
+  unset _clc_resolved_workdir _clc_state_file
   exit 0
 fi
 
@@ -95,12 +102,6 @@ else
   unset _clc_start_epoch
 fi
 
-# --- Clean up state file ---
-
-if ! rm -f "$_clc_state_file" 2>/dev/null; then
-  echo "[command-telemetry-complete] WARNING: could not remove state file: $_clc_state_file" >&2
-fi
-
 # --- Source telemetry helpers ---
 
 _clc_scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
@@ -108,7 +109,7 @@ _clc_helpers="${_clc_scripts_dir}/telemetry-helpers.sh"
 
 if [[ ! -f "$_clc_helpers" ]]; then
   echo "[command-telemetry-complete] WARNING: telemetry-helpers.sh not found at: $_clc_helpers; skipping event emit" >&2
-  unset _clc_exit_status _clc_resolved_workdir _clc_state_file _clc_cmd_start _clc_run_id
+  unset _clc_resolved_workdir _clc_state_file _clc_cmd_start _clc_run_id
   unset _clc_command _clc_end_epoch _clc_duration_s _clc_scripts_dir _clc_helpers
   exit 0
 fi
@@ -116,7 +117,7 @@ fi
 # shellcheck source=telemetry-helpers.sh
 if ! source "$_clc_helpers" 2>/dev/null; then
   echo "[command-telemetry-complete] WARNING: failed to source telemetry-helpers.sh; skipping event emit" >&2
-  unset _clc_exit_status _clc_resolved_workdir _clc_state_file _clc_cmd_start _clc_run_id
+  unset _clc_resolved_workdir _clc_state_file _clc_cmd_start _clc_run_id
   unset _clc_command _clc_end_epoch _clc_duration_s _clc_scripts_dir _clc_helpers
   exit 0
 fi
@@ -137,9 +138,8 @@ _clc_event_json=$(jq -n -c \
   --arg run_id "$_clc_run_id_value" \
   --arg command "${CLOSEDLOOP_COMMAND}" \
   --argjson duration_s "$_clc_duration_s" \
-  --argjson exit_status "$_clc_exit_status" \
   --arg ended_at "$_clc_ended_at" \
-  '{event:$event,run_id:$run_id,command:$command,duration_s:$duration_s,exit_status:$exit_status,ended_at:$ended_at}' \
+  '{event:$event,run_id:$run_id,command:$command,duration_s:$duration_s,ended_at:$ended_at}' \
   2>/dev/null || true)
 
 if [[ -z "$_clc_event_json" ]]; then
@@ -150,8 +150,14 @@ else
   fi
 fi
 
+# --- Clean up state file (after emit so state is preserved if helpers are missing) ---
+
+if ! rm -f "$_clc_state_file" 2>/dev/null; then
+  echo "[command-telemetry-complete] WARNING: could not remove state file: $_clc_state_file" >&2
+fi
+
 # --- Cleanup local vars ---
 
-unset _clc_exit_status _clc_resolved_workdir _clc_state_file _clc_cmd_start _clc_run_id
+unset _clc_resolved_workdir _clc_state_file _clc_cmd_start _clc_run_id
 unset _clc_command _clc_end_epoch _clc_duration_s _clc_scripts_dir _clc_helpers
 unset _clc_run_id_value _clc_ended_at _clc_event_json
