@@ -2,7 +2,14 @@
 description: Process pending learnings from a ClosedLoop run into org-patterns.toon
 argument-hint: [working-directory]
 skills: self-learning:toon-format
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-complete.sh\""
 ---
+
+!`source "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-init.sh" process_learnings`
 
 # Process Learnings Command
 

@@ -1,6 +1,13 @@
 ---
 description: Pushes local org-patterns to the shared organization repository
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-complete.sh\""
 ---
+
+!`source "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-init.sh" push_learnings`
 
 # Push Learnings Command
 

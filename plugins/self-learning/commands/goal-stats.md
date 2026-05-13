@@ -1,6 +1,13 @@
 ---
 description: Analyzes goal performance across runs, showing pass rates, pattern effectiveness, and improvement trends
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-complete.sh\""
 ---
+
+!`source "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-init.sh" goal_stats`
 
 # Goal Stats Command
 

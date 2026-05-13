@@ -1,9 +1,16 @@
 ---
 description: Run comprehensive code review — locally or on GitHub PRs with inline comments
 argument-hint: "[scope] [--github] [--hygiene-only] [--base <ref>] [--since-last-review] [--full-review]"
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: bash "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-complete.sh"
 ---
 
 # Comprehensive Code Review
+
+!`source "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-init.sh" code_review`
 
 Run a multi-agent code review with partitioned deep review, deterministic hygiene checks, model routing, and validated findings. Supports two modes:
 

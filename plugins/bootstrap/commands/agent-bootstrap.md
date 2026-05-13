@@ -1,3 +1,14 @@
+---
+description: Analyze codebase and generate project-specific domain expert agents
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-complete.sh\""
+---
+
+!`source "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-init.sh" agent_bootstrap`
+
 # Agent Bootstrap Command
 
 Analyzes a codebase and automatically generates a custom suite of **project-specific domain expert agents** tailored to the project.

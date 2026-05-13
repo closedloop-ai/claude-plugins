@@ -100,3 +100,13 @@ jobs:
           python-version: "3.13"
       - run: uv sync --frozen --group dev
       - run: uv run pytest plugins/
+
+  drift-guard:
+    name: Telemetry Drift Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync shared telemetry
+        run: bash scripts/sync-shared-telemetry.sh
+      - name: Fail if copies drifted from canonical source
+        run: git diff --exit-code

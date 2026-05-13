@@ -1,6 +1,13 @@
 ---
 description: Manual command to invoke the pruning script for cleaning up old learnings
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-complete.sh\""
 ---
+
+!`source "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-init.sh" prune_learnings`
 
 # Prune Learnings Command
 

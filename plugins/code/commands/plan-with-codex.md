@@ -5,9 +5,16 @@ allowed-tools: Bash, Read, Write, Glob, Grep, TodoWrite, Task, AskUserQuestion, 
 skills: code:codex-review
 effort: max
 model: opus
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: bash "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-complete.sh"
 ---
 
 # Debate Loop -- Claude + Codex Plan Refinement
+
+!`source "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-init.sh" plan_with_codex`
 
 You orchestrate iterative plan refinement: Claude (via `code:plan-agent`) creates a plan, Codex reviews it, you coordinate revisions until Codex approves or max rounds are reached.
 

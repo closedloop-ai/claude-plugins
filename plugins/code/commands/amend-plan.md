@@ -2,9 +2,16 @@
 description: Plan Amend - Discuss and apply amendments to a plan.json implementation plan
 argument-hint: --workdir [path] --message "<text>" [--state-file [path]]
 skills: code:plan-editing-conventions, code:extract-plan-md
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: bash "$CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-complete.sh"
 ---
 
 # Experimental Plan Amend Command
+
+!`source "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-init.sh" amend_plan "$(echo "$ARGUMENTS" | awk '{for(i=1;i<=NF;i++) if($i=="--workdir") print $(i+1)}')"`
 
 Discuss and apply amendments to a plan.json implementation plan through natural conversation.
 

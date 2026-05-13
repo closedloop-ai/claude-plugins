@@ -1,4 +1,9 @@
 #!/bin/bash
+
+# AUTO-GENERATED — DO NOT EDIT.
+# Source: plugins/code/scripts/record_run.sh
+# Run scripts/sync-shared-telemetry.sh to update.
+
 # record_run.sh - Append a run event to perf.jsonl once per Loop.
 #
 # Emits exactly one `run` event containing command, repo, branch, and start

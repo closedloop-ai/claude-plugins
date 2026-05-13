@@ -1,6 +1,13 @@
 ---
 description: Pulls shared organization patterns into local org-patterns.toon
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-complete.sh\""
 ---
+
+!`source "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-init.sh" pull_learnings`
 
 # Pull Learnings Command
 

@@ -28,6 +28,10 @@ def run_bash(
     failure_secret: str | None = FAILURE_SECRET,
 ) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "CLOSEDLOOP_WORKDIR": str(workdir)}
+    # Remove vars that would be inherited from the outer test-runner process and
+    # interfere with tests that assert on the default-fallback behaviour.
+    env.pop("CLOSEDLOOP_COMMAND", None)
+    env.pop("LAST_CLAUDE_COMMAND", None)
     if failure_secret is not None:
         env["CLOSEDLOOP_USER_VISIBLE_FAILURE_SECRET"] = failure_secret
     return subprocess.run(

@@ -1,6 +1,13 @@
 ---
 description: Exports pending ClosedLoop learnings to global location with deduplication
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-complete.sh\""
 ---
+
+!`source "${CLAUDE_PLUGIN_ROOT}/scripts/command-telemetry-init.sh" export_closedloop_learnings`
 
 # Export ClosedLoop Learnings Command
 
