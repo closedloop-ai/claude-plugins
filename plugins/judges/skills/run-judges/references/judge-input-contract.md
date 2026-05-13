@@ -2,13 +2,20 @@
 
 This document defines the canonical contract for `$CLOSEDLOOP_WORKDIR/judge-input.json`.
 
-All judge runs (plan/code) must construct this envelope before launching judge agents.
+All judge runs (plan/code/prd/feature) must construct this envelope before launching judge agents.
 
 ## Required Path
 
 - Output file: `$CLOSEDLOOP_WORKDIR/judge-input.json`
-- Producer: orchestrator (for example, `run-judges`)
+- Producer: `run-judges`, via `skills/run-judges/scripts/judge_input_mapping.py`
 - Consumer: all judge agents
+
+## Runtime Path Contract
+
+- Primary artifacts live under `$CLOSEDLOOP_WORKDIR`; Code uses `$CLOSEDLOOP_WORKDIR/.closedloop-ai/context/code-context.json` as its primary artifact.
+- Supporting artifacts live under `$CLOSEDLOOP_WORKDIR/.closedloop-ai/context`.
+- Attachments live under `$CLOSEDLOOP_WORKDIR/.closedloop-ai/work/attachments`.
+- The producer validates the generated envelope against `schemas/judge-input.schema.json` before any judge agent is launched.
 
 ## Required Fields
 

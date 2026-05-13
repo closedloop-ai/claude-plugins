@@ -33,6 +33,17 @@ The judge input contract is maintained in:
 
 This keeps orchestration flow readable while preserving a single source of truth for contract fields and semantics.
 
+`run-judges` is the producer chokepoint for `judge-input.json`. After mode-specific context preparation and before launching any judge agent, invoke the deterministic mapper:
+
+```bash
+uv run "${CLAUDE_PLUGIN_ROOT}/skills/run-judges/scripts/judge_input_mapping.py" \
+  --workdir "$CLOSEDLOOP_WORKDIR" \
+  --artifact-type "$ARTIFACT_TYPE" \
+  --schema "${CLAUDE_PLUGIN_ROOT}/schemas/judge-input.schema.json"
+```
+
+The mapper builds from the runtime workdir contract: primary artifacts under `<runDir>`, supporting context under `<runDir>/.closedloop-ai/context`, and attachments under `<runDir>/.closedloop-ai/work/attachments`. It validates the generated envelope against `schemas/judge-input.schema.json` before judge launch. If mapping fails, emit a clear warning and use the documented one-run legacy fallback paths (`prd.md`, `plan.md`, or existing compatibility artifacts) only for that run.
+
 ## Task Context
 
 You are orchestrating quality evaluation for a ClosedLoop artifact (implementation plan, code, or PRD). Your responsibilities:
@@ -55,15 +66,15 @@ You are orchestrating quality evaluation for a ClosedLoop artifact (implementati
 
 **For PRD artifacts (--artifact-type prd):**
 1. Check `$CLOSEDLOOP_WORKDIR/prd.md` exists (graceful exit if missing)
-2. Build `judge-input.json` with evaluation_type: "prd" and primary_artifact pointing to prd.md
+2. Build and schema-validate `judge-input.json` by invoking `scripts/judge_input_mapping.py`
 3. Launch the 5 PRD judges in 2 sequential batches (3 + 2, max 4 concurrent per batch)
 4. Aggregate all 5 CaseScores into a valid EvaluationReport
 5. Write the report to `$CLOSEDLOOP_WORKDIR/prd-judges.json`
 6. Validate output structure and completeness
 
 **For Feature artifacts (--artifact-type feature):**
-1. Check `$CLOSEDLOOP_WORKDIR/prd.md` exists (graceful exit code 0 if missing)
-2. Build `judge-input.json` with `evaluation_type="feature"` and `primary_artifact` pointing to `$CLOSEDLOOP_WORKDIR/prd.md`
+1. Check `$CLOSEDLOOP_WORKDIR/feature.md` exists, or `$CLOSEDLOOP_WORKDIR/prd.md` exists for legacy Feature inputs (graceful exit code 0 if both are missing)
+2. Build and schema-validate `judge-input.json` by invoking `scripts/judge_input_mapping.py`
 3. Launch 3 judges in 1 batch (feature-completeness-judge + prd-testability-judge + prd-dependency-judge)
 4. Aggregate 3 CaseScores into a valid EvaluationReport
 5. Write the report to `$CLOSEDLOOP_WORKDIR/feature-judges.json`
@@ -389,12 +400,10 @@ After validating `prd.md` and `plan.json`, resolve supporting context for plan j
    - Compatibility mode: `plan.json` + `prd.md` may be used for this run only.
 
 8. **Build plan-mode `judge-input.json`**
-   - Set `evaluation_type` = `plan`.
-   - Set `task` to plan quality evaluation objective (16-plan-judge workflow).
-   - Set `primary_artifact` to `plan-context.json` in normal mode.
-   - In compatibility mode, set primary to `plan.json` and include `prd.md` as supporting.
-   - Include `investigation-log.md` as supporting artifact when available.
-   - Set `source_of_truth` ordering from primary to secondary artifacts.
+   - Invoke `scripts/judge_input_mapping.py` with `--artifact-type plan`.
+   - The mapper sets `evaluation_type`, `task`, `primary_artifact`, `supporting_artifacts`, `source_of_truth`, `fallback_mode`, and metadata from the runtime workdir contract.
+   - In compatibility mode, allow the mapper to produce a schema-valid fallback envelope for existing plan compatibility artifacts and include `prd.md` as supporting evidence when available.
+   - If the mapper exits non-zero, log the error and use the one-run legacy fallback only if `prd.md` plus `plan.md` or the existing compatibility artifact is readable.
 
 **For code artifacts (--artifact-type code):**
 ```bash
@@ -407,27 +416,25 @@ fi
 
 # Launch context-manager-for-judges agent to prepare compressed context
 # This agent reads code artifacts (git diff, changed-files.json, etc.)
-# and produces code-context.json with token-budgeted compression
+# and produces .closedloop-ai/context/code-context.json with token-budgeted compression
 
 # investigation-log.md is optional secondary context for code judging
 if [ ! -f "$CLOSEDLOOP_WORKDIR/investigation-log.md" ]; then
-  echo "WARNING: investigation-log.md unavailable. Continuing code judges with code-context.json only."
+  echo "WARNING: investigation-log.md unavailable. Continuing code judges with canonical code context only."
 fi
 
-# Verify code-context.json exists after context manager completes
-if [ ! -f "$CLOSEDLOOP_WORKDIR/code-context.json" ]; then
-  echo "ERROR: Context preparation failed - code-context.json not found"
+# Verify canonical code context exists after context manager completes. The root
+# code-context.json path is fallback-only for old runs.
+if [ ! -f "$CLOSEDLOOP_WORKDIR/.closedloop-ai/context/code-context.json" ] && [ ! -f "$CLOSEDLOOP_WORKDIR/code-context.json" ]; then
+  echo "ERROR: Context preparation failed - .closedloop-ai/context/code-context.json not found"
   # Abort with error CaseScore for all judges
   # Generate error report with final_status=3, justification="Context preparation failed"
   exit 1
 fi
 
-# Build code-mode judge-input.json
-# - evaluation_type: "code"
-# - task: code quality evaluation objective (11-code-judge workflow)
-# - primary_artifact: code-context.json
-# - supporting_artifacts: investigation-log.md (optional), plus any other run artifacts
-# - source_of_truth: ["code_context", ...]
+# Build and validate code-mode judge-input.json with scripts/judge_input_mapping.py.
+# The mapper prefers .closedloop-ai/context/code-context.json as primary and
+# preserves root code-context.json as a one-run legacy fallback when needed.
 ```
 
 **For PRD artifacts (--artifact-type prd):**
@@ -441,41 +448,35 @@ if [ ! -f "$CLOSEDLOOP_WORKDIR/prd.md" ]; then
   exit 0  # Graceful exit — do not fail parent workflow
 fi
 
-# Build prd-mode judge-input.json
-# - evaluation_type: "prd"
-# - task: PRD quality evaluation objective (prd-auditor + 4 critics)
-# - primary_artifact: $CLOSEDLOOP_WORKDIR/prd.md
-# - supporting_artifacts: [] (none required)
-# - source_of_truth: ["prd"]
+# Build and validate prd-mode judge-input.json with scripts/judge_input_mapping.py.
+# The mapper sets primary_artifact to primary_prd and includes mapped context,
+# prompt, repo metadata, prior summaries, and attachments in source_of_truth order.
 ```
 
 **PRD context prep notes:**
 - Missing `prd.md` results in a WARNING and graceful exit (code 0), not an error
-- No context manager is launched; `judge-input.json` is built directly with `primary_artifact` pointing to `$CLOSEDLOOP_WORKDIR/prd.md`
+- No context manager is launched; `judge-input.json` is built by `scripts/judge_input_mapping.py` and validated against `schemas/judge-input.schema.json`
 - Performance: emit sub_step=0 (context_prep, skipped=true) perf event immediately, then proceed to sub_step=1 (batch_1) and sub_step=2 (batch_2)
 
 **For Feature artifacts (--artifact-type feature):**
 
-Feature mode does NOT use context-manager-for-judges. Context preparation is lightweight: verify `prd.md` exists, then build judge-input.json directly from it.
+Feature mode does NOT use context-manager-for-judges. Context preparation is lightweight: verify `feature.md` exists, or `prd.md` exists for legacy Feature inputs, then build judge-input.json from the mapper.
 
 ```bash
-# Feature mode context prep: check prd.md exists
-if [ ! -f "$CLOSEDLOOP_WORKDIR/prd.md" ]; then
-  echo "WARNING: $CLOSEDLOOP_WORKDIR/prd.md not found. Skipping Feature judges."
+# Feature mode context prep: check feature.md or legacy prd.md exists
+if [ ! -f "$CLOSEDLOOP_WORKDIR/feature.md" ] && [ ! -f "$CLOSEDLOOP_WORKDIR/prd.md" ]; then
+  echo "WARNING: neither $CLOSEDLOOP_WORKDIR/feature.md nor legacy $CLOSEDLOOP_WORKDIR/prd.md found. Skipping Feature judges."
   exit 0  # Graceful exit — do not fail parent workflow
 fi
 
-# Build feature-mode judge-input.json
-# - evaluation_type: "feature"
-# - task: Feature quality evaluation objective (3-feature-judge workflow)
-# - primary_artifact: $CLOSEDLOOP_WORKDIR/prd.md
-# - supporting_artifacts: [] (none required)
-# - source_of_truth: ["prd"]
+# Build and validate feature-mode judge-input.json with scripts/judge_input_mapping.py.
+# The mapper prefers feature.md and marks fallback_mode.active=true when it must
+# use the legacy prd.md Feature path.
 ```
 
 **Feature context prep notes:**
-- Missing `prd.md` results in a WARNING and graceful exit (code 0), not an error
-- No context manager is launched; `judge-input.json` is built directly with `evaluation_type="feature"` and `primary_artifact` pointing to `$CLOSEDLOOP_WORKDIR/prd.md`
+- Missing both `feature.md` and legacy `prd.md` results in a WARNING and graceful exit (code 0), not an error
+- No context manager is launched; `judge-input.json` is built by `scripts/judge_input_mapping.py` with `evaluation_type="feature"`
 - Performance: emit sub_step=0 (context_prep, skipped=true) perf event immediately, then proceed to sub_step=1 (batch_1), sub_step=2 (aggregate), sub_step=3 (validate)
 - Preamble: use `feature_preamble.md` for all 3 feature judges
 
@@ -528,7 +529,7 @@ The run-judges skill supports three artifact types with different judge configur
 - **Output**: `prd-judges.json`
 - **Report ID**: `{RUN_ID}-prd-judges`
 - **Validation**: `--category prd` (5 judges expected)
-- **Canonical input**: `$CLOSEDLOOP_WORKDIR/prd.md`
+- **Canonical input**: `$CLOSEDLOOP_WORKDIR/judge-input.json` produced by `scripts/judge_input_mapping.py`, with `primary_prd` normally pointing to `$CLOSEDLOOP_WORKDIR/prd.md`
 
 ### Feature Artifacts (--artifact-type feature)
 - **Judges**: 3 total (feature-completeness-judge, prd-testability-judge, prd-dependency-judge)
@@ -536,7 +537,7 @@ The run-judges skill supports three artifact types with different judge configur
 - **Output**: `feature-judges.json`
 - **Report ID**: `{RUN_ID}-feature-judges`
 - **Validation**: `--category feature` (3 judges expected)
-- **Canonical input**: `$CLOSEDLOOP_WORKDIR/prd.md`
+- **Canonical input**: `$CLOSEDLOOP_WORKDIR/judge-input.json` produced by `scripts/judge_input_mapping.py`, with `primary_feature` normally pointing to `feature.md` and legacy fallback to `prd.md`
 - **Preamble**: use `feature_preamble.md` (Feature-shaped contract; do NOT substitute `prd_preamble.md`)
 
 **Feature Mode Execution:**
@@ -693,7 +694,7 @@ Apply your {judge_name} criteria to assess code quality.
 ```
 WORKDIR=$CLOSEDLOOP_WORKDIR. Read $CLOSEDLOOP_WORKDIR/judge-input.json first.
 Evaluate according to `task` and `source_of_truth` ordering.
-Treat the envelope's `primary_artifact` ($CLOSEDLOOP_WORKDIR/prd.md) as the authoritative PRD document.
+Treat the envelope's `primary_artifact` as the authoritative PRD document and load supporting descriptors as source-of-truth evidence.
 Apply your {judge_name} criteria to assess PRD quality.
 ```
 
@@ -701,7 +702,7 @@ Apply your {judge_name} criteria to assess PRD quality.
 ```
 WORKDIR=$CLOSEDLOOP_WORKDIR. Read $CLOSEDLOOP_WORKDIR/judge-input.json first.
 Evaluate according to `task` and `source_of_truth` ordering.
-Treat the envelope's `primary_artifact` ($CLOSEDLOOP_WORKDIR/prd.md) as the authoritative Feature document.
+Treat the envelope's `primary_artifact` as the authoritative Feature document and load supporting descriptors as source-of-truth evidence.
 Apply your {judge_name} criteria to assess Feature quality.
 ```
 
@@ -1158,7 +1159,7 @@ Before marking this task complete, verify:
 
 **For code artifacts (--artifact-type code):**
 - [ ] **Context preparation** - context-manager-for-judges agent launched successfully
-- [ ] **Context validation** - code-context.json exists at `$CLOSEDLOOP_WORKDIR`
+- [ ] **Context validation** - canonical `.closedloop-ai/context/code-context.json` exists at `$CLOSEDLOOP_WORKDIR`, or root `code-context.json` fallback is explicitly used for an old run
 - [ ] **Judge input contract** - `judge-input.json` exists with required fields
 - [ ] **Investigation context resolution** - `investigation-log.md` reused or generated best-effort; missing file does not block code judging
 - [ ] **Preamble injection** - common_input_preamble.md + code_preamble.md prepended to all judge prompts
@@ -1171,7 +1172,7 @@ Before marking this task complete, verify:
 **For PRD artifacts (--artifact-type prd):**
 - [ ] **prd.md existence check** - `$CLOSEDLOOP_WORKDIR/prd.md` found, or graceful exit with WARNING (code 0)
 - [ ] **No context manager** - context-manager-for-judges is NOT launched for prd mode
-- [ ] **Judge input contract** - `judge-input.json` written with `evaluation_type="prd"` and `primary_artifact=$CLOSEDLOOP_WORKDIR/prd.md`
+- [ ] **Judge input contract** - `scripts/judge_input_mapping.py` wrote schema-valid `judge-input.json` with `evaluation_type="prd"` and `primary_artifact.id="primary_prd"`
 - [ ] **Parallel execution** - 5 PRD judges launched in 2 sequential batches: batch_1 (sub_step=1, 3 judges) and batch_2 (sub_step=2, 2 judges), max 4 concurrent per batch
 - [ ] **Result aggregation** - Valid EvaluationReport with 5 CaseScore entries (sub_step=3)
 - [ ] **File output** - `prd-judges.json` written to `$CLOSEDLOOP_WORKDIR`
@@ -1179,9 +1180,9 @@ Before marking this task complete, verify:
 - [ ] **Validation passed** - Script exits with code 0 using `--category prd` (sub_step=4)
 
 **For Feature artifacts (--artifact-type feature):**
-- [ ] **prd.md existence check** - `$CLOSEDLOOP_WORKDIR/prd.md` found, or emit sub_step=0 (skipped=true) perf event, emit WARNING, and graceful exit with WARNING (code 0)
+- [ ] **Feature input existence check** - `$CLOSEDLOOP_WORKDIR/feature.md` or legacy `$CLOSEDLOOP_WORKDIR/prd.md` found, or emit sub_step=0 (skipped=true) perf event, emit WARNING, and graceful exit with WARNING (code 0)
 - [ ] **No context manager** - context-manager-for-judges is NOT launched for feature mode
-- [ ] **Judge input contract** - `judge-input.json` written with `evaluation_type="feature"` and `primary_artifact=$CLOSEDLOOP_WORKDIR/prd.md`
+- [ ] **Judge input contract** - `scripts/judge_input_mapping.py` wrote schema-valid `judge-input.json` with `evaluation_type="feature"` and `primary_artifact.id="primary_feature"`
 - [ ] **Preamble** - feature_preamble.md used for all 3 feature judges (Feature-shaped contract; do NOT substitute prd_preamble.md)
 - [ ] **Parallel execution** - 3 feature judges launched in 1 batch (sub_step=1): feature-completeness-judge + prd-testability-judge + prd-dependency-judge
 - [ ] **Result aggregation** - Valid EvaluationReport with 3 CaseScore entries (sub_step=2)
@@ -1207,13 +1208,13 @@ Before marking this task complete, verify:
 | "report_id should end with '-code-judges'" | Incorrect ID format for code | Use pattern: `{RUN_ID}-code-judges` for code artifacts |
 | "Judge {name} has no metrics" | Empty metrics array | Each CaseScore must have ≥1 MetricStatistics entry |
 | "Context preparation failed" | context-manager-for-judges failed | Check context-manager agent output; verify artifact files exist |
-| "judge-input.json missing" | Orchestrator did not generate envelope | Build `$CLOSEDLOOP_WORKDIR/judge-input.json` before launching judges |
-| "judge-input schema invalid" | Missing required envelope fields | Ensure required fields: `evaluation_type`, `task`, `primary_artifact`, `supporting_artifacts`, `source_of_truth`, `fallback_mode`, `metadata` |
+| "judge-input.json missing" | Orchestrator did not generate envelope | Run `scripts/judge_input_mapping.py` before launching judges |
+| "judge-input schema invalid" | Missing required envelope fields | Re-run `scripts/judge_input_mapping.py`; it validates required fields: `evaluation_type`, `task`, `primary_artifact`, `supporting_artifacts`, `source_of_truth`, `fallback_mode`, `metadata` |
 | "plan-context.json not found" | plan context manager did not produce output | Run `@judges:context-manager-for-judges` with `artifact_type=plan`; if still missing, activate one-run compatibility fallback to `plan.json` + `prd.md` |
 | "Preamble file not found" | Missing common or artifact preamble .md file | Verify both `skills/artifact-type-tailored-context/preambles/common_input_preamble.md` and `skills/artifact-type-tailored-context/preambles/{artifact_type}_preamble.md` exist |
 | "pre-explorer unavailable" | `@code:pre-explorer` not installed/resolvable | Log warning and use internal fallback investigation to create `investigation-log.md` |
 | "investigation-log.md missing after fallback" | Both pre-explorer and internal fallback failed | Log warning and continue; do not block context preparation |
-| "investigation-log.md missing in code mode" | pre-explorer unavailable or generation failed during code preflight | Log warning and continue with `code-context.json` only (non-blocking) |
+| "investigation-log.md missing in code mode" | pre-explorer unavailable or generation failed during code preflight | Log warning and continue with `.closedloop-ai/context/code-context.json` only (non-blocking), using root `code-context.json` only as legacy fallback |
 | "Invalid --artifact-type value" | Unsupported artifact type | Use only 'plan', 'code', 'prd', or 'feature' |
 | "prd.md not found" | PRD document missing from workdir | Emit WARNING and exit gracefully (code 0); do not fail the parent workflow |
 | "report_id should end with '-prd-judges'" | Incorrect ID format for prd | Use pattern: `{RUN_ID}-prd-judges` for PRD artifacts |
@@ -1275,7 +1276,7 @@ This is the standard plan mode flow; orchestrators must support context-manager 
 When `--artifact-type prd` is specified:
 - Check `$CLOSEDLOOP_WORKDIR/prd.md` exists; emit WARNING and exit gracefully (code 0) if missing
 - Do NOT launch context-manager-for-judges
-- Build `judge-input.json` with `evaluation_type="prd"` and `primary_artifact=$CLOSEDLOOP_WORKDIR/prd.md`
+- Build and schema-validate `judge-input.json` with `scripts/judge_input_mapping.py --artifact-type prd`
 - Launch the 5 PRD judges in 2 sequential batches (sub_step=1: feature-completeness-judge + prd-auditor + prd-scope-judge; sub_step=2: prd-dependency-judge + prd-testability-judge) to respect the 4-concurrent-agent Task limit
 - Aggregate all 5 CaseScores (sub_step=3) and write to `prd-judges.json`
 - Validate with `--category prd` (sub_step=4)
@@ -1283,9 +1284,9 @@ When `--artifact-type prd` is specified:
 ### Feature Mode Execution Flow
 
 When `--artifact-type feature` is specified:
-- Check `$CLOSEDLOOP_WORKDIR/prd.md` exists; emit sub_step=0 (context_prep, skipped=true) perf event, emit WARNING, and exit gracefully (code 0) if missing
+- Check `$CLOSEDLOOP_WORKDIR/feature.md` exists, or legacy `$CLOSEDLOOP_WORKDIR/prd.md` exists; emit sub_step=0 (context_prep, skipped=true) perf event, emit WARNING, and exit gracefully (code 0) if both are missing
 - Do NOT launch context-manager-for-judges
-- Build `judge-input.json` with `evaluation_type="feature"` and `primary_artifact=$CLOSEDLOOP_WORKDIR/prd.md`
+- Build and schema-validate `judge-input.json` with `scripts/judge_input_mapping.py --artifact-type feature`
 - Use `feature_preamble.md` for all 3 feature judges (Feature-shaped contract; do NOT substitute `prd_preamble.md`)
 - Launch the 3 feature judges in 1 batch (sub_step=1: feature-completeness-judge + prd-testability-judge + prd-dependency-judge) to respect the 4-concurrent-agent Task limit
 - Aggregate all 3 CaseScores (sub_step=2) and write to `feature-judges.json`

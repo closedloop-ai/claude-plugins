@@ -27,8 +27,8 @@ graph TD
     PlanInput --> CommonPlan["common_input_preamble.md (shared contract preamble)"]
     CommonPlan --> PlanPreamble["plan_preamble.md (artifact-specific preamble)"]
     PlanPreamble --> PlanBatches[Plan judge batches]
-    CtxMgr -->|code mode| CodeJSON["code-context.json"]
-    CodeJSON --> CodeInput["judge-input.json (primary = code-context.json)"]
+    CtxMgr -->|code mode| CodeJSON[".closedloop-ai/context/code-context.json"]
+    CodeJSON --> CodeInput["judge-input.json (primary = .closedloop-ai/context/code-context.json)"]
     CodeInput --> CommonCode["common_input_preamble.md (shared contract preamble)"]
     CommonCode --> CodePreamble["code_preamble.md (artifact-specific preamble)"]
     CodePreamble --> CodeBatches[Code judge batches]
@@ -66,7 +66,7 @@ The `artifact-type-tailored-context` skill compresses individual artifact files 
 - Collect plan/code evaluation artifacts from `$CLOSEDLOOP_WORKDIR`
 - Allocate and enforce a 30,000-token budget across artifacts
 - Invoke `judges:artifact-type-tailored-context` per artifact
-- Write `plan-context.json` or `code-context.json` with compaction metadata
+- Write `plan-context.json` or `.closedloop-ai/context/code-context.json` with compaction metadata
 
 ### brownfield-accuracy-judge
 
@@ -259,7 +259,7 @@ Orchestrates parallel judge agent execution, aggregates `CaseScore` results, and
 - Writes `$CLOSEDLOOP_WORKDIR/plan-judges.json`
 
 **Code mode** (`--artifact-type code`):
-- Launches `context-manager-for-judges` agent to produce `code-context.json`
+- Launches `context-manager-for-judges` agent to produce canonical `.closedloop-ai/context/code-context.json`
 - Builds `judge-input.json` with code evaluation task and artifact mapping
 - Reuses `$CLOSEDLOOP_WORKDIR/investigation-log.md` as secondary context when available (best-effort generation if missing)
 - Prepends `common_input_preamble.md` + `code_preamble.md` to each judge prompt
@@ -341,7 +341,7 @@ Checks for a cached plan evaluation result before launching the plan-evaluator a
 ```
 
 3. The skill resolves `investigation-log.md` as best-effort supporting context (reuse if present; attempt generation when missing; continue if unavailable).
-4. The skill runs `context-manager-for-judges` first to produce `code-context.json`, then builds `judge-input.json` and launches 11 judges.
+4. The skill runs `context-manager-for-judges` first to produce canonical `.closedloop-ai/context/code-context.json`, then builds `judge-input.json` and launches 11 judges. Root `code-context.json` is a legacy fallback only when the canonical file is absent.
 5. Results are written to `$CLOSEDLOOP_WORKDIR/code-judges.json`.
 
 ### Evaluating a Feature Artifact

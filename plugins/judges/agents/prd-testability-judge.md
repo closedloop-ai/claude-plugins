@@ -23,7 +23,9 @@ Wrap all analytical thinking in `<thinking>` tags before producing your final JS
 
 ## Step 1: Locate and Read the PRD
 
-Read the PRD from `$CLOSEDLOOP_WORKDIR/prd.md`. If the file is absent or unreadable, output a CaseScore JSON with `final_status: 3` (error) and a note in the justification.
+Read `$CLOSEDLOOP_WORKDIR/judge-input.json` first. Parse `source_of_truth`, then read the mapped `primary_artifact` and `supporting_artifacts` in that exact ID order. Treat the primary artifact as the PRD or Feature document under evaluation and supporting descriptors as source-of-truth requirement evidence. Use legacy `$CLOSEDLOOP_WORKDIR/prd.md` only when `judge-input.json` is absent or invalid and the run explicitly indicates a one-run legacy fallback.
+
+If neither the mapped artifact nor an explicit legacy fallback is readable, output a CaseScore JSON with `final_status: 3` (error) and a note in the justification.
 
 ## Step 2: Extract Acceptance Criteria and User Stories
 

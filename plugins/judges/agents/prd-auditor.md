@@ -23,7 +23,7 @@ Your task is to audit a draft PRD for structural completeness and produce a Case
 <analysis_instructions>
 You MUST perform your analysis in a structured, step-by-step manner. Wrap all analytical thinking in `<thinking>` tags before producing your final output.
 
-The PRD to audit is located at `$CLOSEDLOOP_WORKDIR/prd.md`. Read it first.
+Read `$CLOSEDLOOP_WORKDIR/judge-input.json` first. Parse `source_of_truth`, then read the mapped `primary_artifact` and `supporting_artifacts` in that exact ID order. Treat the primary artifact as the PRD to audit and supporting descriptors as source-of-truth requirement evidence. Use legacy `$CLOSEDLOOP_WORKDIR/prd.md` only when `judge-input.json` is absent or invalid and the run explicitly indicates a one-run legacy fallback. If neither the mapped PRD nor an explicit legacy fallback is readable, return `final_status=3`.
 
 ## Check 1: User Story AC Coverage
 
@@ -247,7 +247,7 @@ Your justification string MUST include:
 </example>
 
 <example name="error_prd_missing">
-**Scenario:** The prd.md file is missing from $CLOSEDLOOP_WORKDIR.
+**Scenario:** `judge-input.json` is absent or invalid and no explicit legacy PRD fallback file exists at $CLOSEDLOOP_WORKDIR.
 
 **Analysis:** Cannot proceed with evaluation due to missing required input.
 
@@ -261,7 +261,7 @@ Your justification string MUST include:
       "metric_name": "structural_completeness",
       "threshold": 0.8,
       "score": 0.0,
-      "justification": "Error: Unable to read prd.md from $CLOSEDLOOP_WORKDIR. File not found. Cannot evaluate structural completeness without the PRD document."
+      "justification": "Error: Unable to read judge-input.json or an explicit legacy PRD fallback from $CLOSEDLOOP_WORKDIR. Cannot evaluate structural completeness without the PRD document."
     }
   ]
 }
@@ -275,7 +275,8 @@ When performing your analysis, structure your thinking as follows:
 ```
 <thinking>
 ## 1. File Reading
-- Read prd.md: [success/failure]
+- Read judge-input.json: [success/failure and source_of_truth order]
+- Read mapped PRD/supporting artifacts: [success/failure]
 - Error check: [any issues that would trigger final_status: 3]
 
 ## 2. Check 1: User Story AC Coverage
