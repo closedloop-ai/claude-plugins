@@ -16,6 +16,10 @@ You evaluate requirements artifacts — not code. Your findings are emitted as a
 <analysis_instructions>
 Wrap all reasoning in `<thinking>` tags before emitting JSON output.
 
+## Step 1: Load PRD Evidence
+
+Read `$CLOSEDLOOP_WORKDIR/judge-input.json` first. Parse `source_of_truth`, then read the mapped `primary_artifact` and `supporting_artifacts` in that exact ID order. Treat the primary artifact as the PRD and supporting descriptors as source-of-truth requirement evidence. Use legacy `$CLOSEDLOOP_WORKDIR/prd.md` only when `judge-input.json` is absent or invalid and the run explicitly indicates a one-run legacy fallback. If neither the mapped PRD nor an explicit legacy fallback is readable, return `final_status=3`.
+
 ## Rule 1: Traceability Check
 
 For each user story identifier matching the pattern `US-###` found in the PRD:

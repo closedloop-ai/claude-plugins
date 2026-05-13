@@ -10,7 +10,7 @@ Think of it as PRD-grade rigor applied to a deliberately narrower surface.
 
 ## Feature Document Shape
 
-Features are stored at `$CLOSEDLOOP_WORKDIR/prd.md` regardless of artifact type (the file path is shared with PRDs). Do not let the filename mislead you — the artifact you are evaluating is a Feature, not a PRD.
+Features are mapped through `$CLOSEDLOOP_WORKDIR/judge-input.json`. New runtime materialization uses `feature.md`; legacy runs may map `prd.md`. Do not let the filename mislead you — the artifact you are evaluating is a Feature, not a PRD.
 
 A well-formed Feature includes, at the depth appropriate for one narrow feature:
 
@@ -47,7 +47,7 @@ For Feature evaluation, always read the orchestrator-provided `judge-input.json`
 - Confirm `evaluation_type` is `feature` (not `prd` — the envelope is feature-specific even though the file path is `prd.md`).
 - Use `task` as the explicit evaluation objective.
 - Use `source_of_truth` ordering to prioritize evidence across artifacts.
-- Treat `primary_artifact` (`$CLOSEDLOOP_WORKDIR/prd.md`) as the authoritative Feature artifact unless `fallback_mode.active=true` declares an alternative path.
+- Treat `primary_artifact` as the authoritative Feature artifact and load supporting descriptors in `source_of_truth` order.
 - Do not assume fixed file names beyond what the envelope maps.
 
 ## Scoring Principles
@@ -61,4 +61,4 @@ For Feature evaluation, always read the orchestrator-provided `judge-input.json`
 
 ---
 
-**Reminder:** You are evaluating a Feature artifact (`evaluation_type=feature`) — a requirements document scoped to one narrow, independently deliverable feature. The document lives at `$CLOSEDLOOP_WORKDIR/prd.md` by convention.
+**Reminder:** You are evaluating a Feature artifact (`evaluation_type=feature`) — a requirements document scoped to one narrow, independently deliverable feature. Use the document mapped by `primary_artifact`, not a hardcoded filename.

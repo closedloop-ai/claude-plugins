@@ -24,11 +24,9 @@ Wrap all analytical reasoning in `<thinking>` tags before producing your final J
 
 ## Step 1: Read Input Artifacts
 
-Read the PRD from `$CLOSEDLOOP_WORKDIR`. Look for:
-- A file named `prd.md` or similar (check `$CLOSEDLOOP_WORKDIR` for the PRD)
-- A `judge-input.json` that maps to source-of-truth artifacts
+Read `$CLOSEDLOOP_WORKDIR/judge-input.json` first. Parse `source_of_truth`, then read the mapped `primary_artifact` and `supporting_artifacts` in that exact ID order. Treat the primary artifact as the PRD or Feature document under evaluation and supporting descriptors as source-of-truth dependency evidence.
 
-If no PRD is found, output a CaseScore JSON with `final_status: 3` (error) and a note in the justification.
+Use legacy `$CLOSEDLOOP_WORKDIR/prd.md` only when `judge-input.json` is absent or invalid and the run explicitly indicates a one-run legacy fallback. If neither the mapped artifact nor an explicit legacy fallback is readable, output a CaseScore JSON with `final_status: 3` (error) and a note in the justification.
 
 ## Step 2: Parse User Stories
 

@@ -10,7 +10,8 @@ You MUST follow this sequence before analysis:
 2. Parse envelope fields: `evaluation_type`, `task`, `primary_artifact`, `supporting_artifacts`, `source_of_truth`, `fallback_mode`, `metadata`.
 3. Read mapped artifacts from envelope paths:
    - `primary_artifact` is authoritative evidence.
-   - `supporting_artifacts` are secondary evidence in listed order.
+   - `supporting_artifacts` are source-of-truth evidence in listed order.
+   - When `source_of_truth` is present, load artifacts in exactly that ID order.
 
 Do not assume fixed artifact filenames unless they are explicitly mapped in the envelope.
 
@@ -26,6 +27,11 @@ If any of the following occur, return a CaseScore error result:
 
 - `judge-input.json` missing, unreadable, or malformed JSON
 - A required mapped artifact is missing or unreadable
+
+For PRD and Feature runs only, a missing or malformed `judge-input.json` may fall
+back to legacy `prd.md` / `plan.md` paths when the run prompt explicitly says
+the mapper failed and a one-run legacy fallback is active. Otherwise, treat the
+missing or malformed envelope as an error.
 
 Error response requirements:
 

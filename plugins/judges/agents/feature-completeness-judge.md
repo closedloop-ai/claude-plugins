@@ -24,9 +24,11 @@ Wrap all analytical thinking in `<thinking>` tags before producing your final JS
 
 ## Step 1: Locate and Read the Feature Document
 
-Read the Feature from `$CLOSEDLOOP_WORKDIR/prd.md`. If the file is absent or unreadable, output a CaseScore JSON with `final_status: 3` (error) and a note in the justification.
+Read `$CLOSEDLOOP_WORKDIR/judge-input.json` first. Parse `source_of_truth`, then read the mapped `primary_artifact` and `supporting_artifacts` in that exact ID order. Treat the primary artifact as the Feature document and supporting descriptors as source-of-truth evidence for completeness. Use legacy `$CLOSEDLOOP_WORKDIR/prd.md` only when `judge-input.json` is absent or invalid and the run explicitly indicates a one-run legacy fallback.
 
-Note: Features are stored at the standard PRD artifact path (`prd.md`) regardless of their maturity level. The document may range from a single sentence to a multi-section document.
+If neither the mapped Feature artifact nor an explicit legacy fallback is readable, output a CaseScore JSON with `final_status: 3` (error) and a note in the justification.
+
+Note: Feature documents may range from a single sentence to a multi-section document. Their runtime filename is not authoritative; the envelope mapping is.
 
 ## Step 2: Apply the Five Analysis Checks
 
@@ -292,7 +294,7 @@ Your justification string MUST include:
 </example>
 
 <example name="error_missing_file">
-**Scenario:** The prd.md file does not exist at $CLOSEDLOOP_WORKDIR.
+**Scenario:** `judge-input.json` is absent or invalid and no explicit legacy Feature fallback file exists at $CLOSEDLOOP_WORKDIR.
 
 **Analysis:** Cannot proceed with evaluation due to missing required input.
 
@@ -306,7 +308,7 @@ Your justification string MUST include:
       "metric_name": "feature_completeness",
       "threshold": 0.8,
       "score": 0.0,
-      "justification": "Error: Unable to read prd.md from $CLOSEDLOOP_WORKDIR. File not found. Cannot evaluate Feature completeness without the Feature document."
+      "justification": "Error: Unable to read judge-input.json or an explicit legacy Feature fallback from $CLOSEDLOOP_WORKDIR. Cannot evaluate Feature completeness without the Feature document."
     }
   ]
 }
@@ -320,7 +322,8 @@ When performing your analysis, structure your thinking as follows:
 ```
 <thinking>
 ## 1. File Reading
-- Read prd.md: [success/failure]
+- Read judge-input.json: [success/failure and source_of_truth order]
+- Read mapped Feature/supporting artifacts: [success/failure]
 - Error check: [any issues that would trigger final_status: 3]
 - Document length: [approximate word count or line count]
 - Document structure: [list of sections/headings found, if any]
