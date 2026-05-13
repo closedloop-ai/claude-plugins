@@ -29,9 +29,9 @@ If any of the following occur, return a CaseScore error result:
 - A required mapped artifact is missing or unreadable
 
 For PRD and Feature runs only, a missing or malformed `judge-input.json` may fall
-back to legacy `prd.md` / `plan.md` paths when the run prompt explicitly says
-the mapper failed and a one-run legacy fallback is active. Otherwise, treat the
-missing or malformed envelope as an error.
+back to legacy `prd.md` paths when the run prompt explicitly says the mapper
+failed and a one-run legacy fallback is active. Otherwise, treat the missing or
+malformed envelope as an error.
 
 Error response requirements:
 
