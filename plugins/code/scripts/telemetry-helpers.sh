@@ -47,8 +47,23 @@ emit_perf_event() {
     return 0
   fi
   local perf_file="${CLOSEDLOOP_WORKDIR:-.}/perf.jsonl"
-  json_line=$(echo "$json_line" | jq -c --arg command "${CLOSEDLOOP_COMMAND:-interactive}" '. + {command:$command}')
-  echo "$json_line" >> "$perf_file"
+  # Defense-in-depth: the input guard above only proves $json_line was
+  # non-empty BEFORE jq ran. If jq fails or returns empty for any reason
+  # (malformed JSON, jq invocation error, etc.), an unguarded echo would
+  # append a blank line to perf.jsonl — the exact corruption the input
+  # guard is meant to prevent. Guard the jq output explicitly so a bad
+  # input from a caller cannot produce a blank line downstream.
+  # (thadeusb PR #91 review #3243335329)
+  local enriched=""
+  # `|| true` tolerates jq failure under `set -e` callers (run-loop.sh).
+  # The post-jq empty check below converts any failure into a dropped event
+  # with a stderr warning, preserving the fail-open contract.
+  enriched=$(echo "$json_line" | jq -c --arg command "${CLOSEDLOOP_COMMAND:-interactive}" '. + {command:$command}' 2>/dev/null || true)
+  if [[ -z "$enriched" ]]; then
+    echo "[emit_perf_event] WARNING: jq returned empty output; dropping event. Input: $json_line" >&2
+    return 0
+  fi
+  echo "$enriched" >> "$perf_file"
 }
 
 # Internal: emit a pipeline_step perf event with all fields.

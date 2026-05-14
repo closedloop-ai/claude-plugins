@@ -238,6 +238,39 @@ test_emit_perf_event_output_is_valid_json() {
   teardown_tmpdir "$tmpdir"
 }
 
+test_emit_perf_event_drops_event_when_jq_output_empty() {
+  # Regression for thadeusb PR #91 review #3243335329: the input-guard only
+  # protects against empty input. If jq itself fails or returns empty for
+  # any reason (malformed JSON, jq invocation error), the function used to
+  # write a blank line to perf.jsonl — the corruption the guard exists to
+  # prevent. Verify the post-jq guard drops the event and leaves no
+  # blank-line residue.
+  echo "--- emit_perf_event: malformed JSON input does not produce blank line ---"
+  local tmpdir
+  tmpdir=$(setup_tmpdir)
+
+  (
+    export CLOSEDLOOP_WORKDIR="$tmpdir"
+    export CLOSEDLOOP_COMMAND="code"
+    source "$HELPERS"
+    # Malformed JSON: jq will fail to parse it. The function should detect
+    # the empty post-jq output and return without appending.
+    emit_perf_event '{not valid json' 2>/dev/null
+  )
+
+  # perf.jsonl should not have been created, OR if it was created it must
+  # contain zero lines (no blank-line residue).
+  if [[ -f "$tmpdir/perf.jsonl" ]]; then
+    local lines
+    lines=$(wc -l < "$tmpdir/perf.jsonl" | tr -d ' ')
+    assert_equals "malformed input produces no blank line in perf.jsonl" "0" "$lines"
+  else
+    assert_pass "malformed input does not create perf.jsonl"
+  fi
+
+  teardown_tmpdir "$tmpdir"
+}
+
 # ---------------------------------------------------------------------------
 # Tests: run_timed_step
 # ---------------------------------------------------------------------------
@@ -521,6 +554,7 @@ test_emit_perf_event_defaults_command_to_interactive
 test_emit_perf_event_empty_input_guard
 test_emit_perf_event_empty_input_returns_zero
 test_emit_perf_event_output_is_valid_json
+test_emit_perf_event_drops_event_when_jq_output_empty
 echo ""
 
 echo "== run_timed_step =="
