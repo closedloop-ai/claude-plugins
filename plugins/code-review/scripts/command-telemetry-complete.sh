@@ -14,6 +14,19 @@
 # Fail-open contract: each failure point logs to stderr and continues rather
 # than aborting the caller.
 #
+# SEMANTICS — `command_complete` is BEST-EFFORT, not authoritative:
+#   - The Stop hook does not receive command args, exit status, or an
+#     invocation id, so this script cannot deterministically pair a Stop
+#     event with the originating slash command.
+#   - State is keyed on resolved workdir (singleton .cmd-state.env per
+#     workdir). Concurrent slash commands in the same workdir share state
+#     and the last init wins; earlier runs lose their pairing.
+#   - Downstream consumers (Datadog dashboards, etc.) should derive
+#     success/failure and authoritative timing from `run` events alone,
+#     and treat `command_complete` as opportunistic aggregate timing only.
+#   - Per-run state keying (see follow-up FEA) is required before this
+#     event can support SLO-grade queries.
+#
 # NOTE: The Claude Code Stop hook does NOT pass argv and does NOT provide an
 # exit code. This script is designed to be called with NO arguments from that
 # context; it recovers the workdir from (in order):

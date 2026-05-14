@@ -14,6 +14,17 @@
 # Usage:
 #   bash record_run.sh [WORKDIR]
 # WORKDIR defaults to $CLOSEDLOOP_WORKDIR.
+#
+# CLOSEDLOOP_REPO / CLOSEDLOOP_BRANCH — platform-supplied attribution overrides
+#   When set, these take precedence over the in-repo git query (`git -C
+#   "$WORKDIR" remote get-url origin` / `git -C "$WORKDIR" rev-parse
+#   --abbrev-ref HEAD`). Intended for use by CI runners and orchestrators
+#   that know the authoritative repo/branch independently of the local
+#   working tree — e.g. when WORKDIR is a fresh checkout, a worktree, or
+#   outside the project tree entirely. Setting these in interactive shells
+#   risks poisoning telemetry with stale values; consumers (Datadog, etc.)
+#   trust whatever this script writes, so they should only be set by the
+#   layer that owns the run's identity.
 
 # Fail open: any unexpected error exits 0 so the caller loop is unaffected.
 trap 'exit 0' ERR

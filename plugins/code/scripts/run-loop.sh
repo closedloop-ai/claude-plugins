@@ -46,14 +46,20 @@ if [[ -f "$SCRIPTS_DIR/telemetry-helpers.sh" ]]; then
   # shellcheck source=telemetry-helpers.sh
   if ! source "$SCRIPTS_DIR/telemetry-helpers.sh" 2>/dev/null; then
     echo "[run-loop] WARNING: failed to source telemetry-helpers.sh; perf events disabled" >&2
+    # Stubs must match real signatures from telemetry-helpers.sh:
+    #   emit_perf_event <json>            — no-op (drop event)
+    #   run_timed_step <num> <name> <cmd> — execute <cmd> while discarding
+    #                                       the two leading metadata args;
+    #                                       return cmd's exit code
+    #   emit_skipped_step <num> <name>    — no-op
     emit_perf_event() { :; }
-    run_timed_step() { "$@"; }
+    run_timed_step() { shift 2; "$@"; }
     emit_skipped_step() { :; }
   fi
 else
   echo "[run-loop] WARNING: telemetry-helpers.sh not found at $SCRIPTS_DIR; perf events disabled" >&2
   emit_perf_event() { :; }
-  run_timed_step() { "$@"; }
+  run_timed_step() { shift 2; "$@"; }
   emit_skipped_step() { :; }
 fi
 
