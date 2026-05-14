@@ -1,6 +1,6 @@
 ---
 description: "Cancel active ClosedLoop Loop"
-allowed-tools: ["Bash(test -f .closedloop-ai/closedloop-loop.local.md:*)", "Bash(rm .closedloop-ai/closedloop-loop.local.md)", "Read(.closedloop-ai/closedloop-loop.local.md)", "Bash(source $CLAUDE_PLUGIN_ROOT/scripts/command-telemetry-init.sh:*)"]
+allowed-tools: ["Bash(test -f .closedloop-ai/closedloop-loop.local.md:*)", "Bash(rm .closedloop-ai/closedloop-loop.local.md)", "Read(.closedloop-ai/closedloop-loop.local.md)", "Bash(source */command-telemetry-init.sh:*)"]
 hide-from-slash-command-tool: "true"
 hooks:
   Stop:
