@@ -80,3 +80,15 @@ All commits MUST follow the conventions in `CONTRIBUTING.md`. Specifically:
 ### Branching
 
 `feat/*`, `fix/*`, `docs/*`, `refactor/*` from `main`.
+
+## Learned Patterns
+
+### Testing
+- **[mistake]**: Extract test helpers (data factories, env setup, assertion helpers) into shared modules (`conftest.py`, `test_helpers.sh`) when used by 2+ test files — never inline logic that a helper already provides. (context: tests|duplication|helpers)
+- **[mistake]**: When adding a test alongside existing sibling tests, match their assertion coverage (cleanup checks, side-effect assertions) and env-var isolation (clear ambient env vars that could leak into assertions). (context: tests|isolation|assertions)
+
+### Code Quality
+- **[mistake]**: When modifying behavior, audit adjacent comments and docstrings for accuracy — remove or update references to non-existent files, incomplete field lists, or scope descriptions narrower than actual behavior. (context: comments|docstrings|accuracy)
+
+### Documentation & Versioning
+- **[mistake]**: Never reference code, APIs, or schema fields that don't exist in the codebase or documented spec. Before writing CHANGELOG "Fixed" or "Replaces" entries, verify the prior implementation exists via grep. Before adding manifest fields, verify they're in the documented schema. (context: changelog|hallucination|verification)
