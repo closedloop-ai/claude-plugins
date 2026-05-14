@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Performance instrumentation helpers for run-loop.sh
-# Sourced by run-loop.sh — do not execute directly.
+# Shared telemetry helpers — sourced by run-loop.sh and command-telemetry-complete.sh.
+# Also copied into the bootstrap, code-review, and self-learning plugins via
+# scripts/sync-shared-telemetry.sh. Do not execute directly.
 
 # ---------------------------------------------------------------------------
 # Canonical command-name mapping table

@@ -9,6 +9,10 @@
 #   5. Fail-open              — script exits 0 when state file is missing
 #   6. No-argv Stop hook path — workdir recovered from CLOSEDLOOP_WORKDIR env
 #   7. No-argv sidecar path   — workdir recovered from .last-cmd-state sidecar pointer
+#   8. Sidecar > stale env    — when ambient env points to dir A and sidecar
+#                                points to dir B (init.sh resolved an explicit
+#                                --workdir override), complete.sh must trust
+#                                the freshly-written sidecar, not the stale env.
 #
 # Usage:
 #   bash plugins/code/scripts/tests/test_command_telemetry_complete.sh
@@ -380,6 +384,61 @@ echo "Test 7: no-argv invocation via sidecar pointer (Stop hook fallback path)"
     fi
 
     rm -rf "$tmpdir"
+}
+
+# ------------------------------------------------------------------
+# Test 8: Sidecar > stale env precedence — when ambient CLOSEDLOOP_WORKDIR
+#         points to dir A but the freshly-written sidecar points to dir B
+#         (because init.sh resolved an explicit --workdir override),
+#         complete.sh must trust the sidecar. Pre-fix behavior preferred
+#         env, which read the wrong state file (or missed it entirely) and
+#         orphaned the real .cmd-state.env. Regression test for #3242456804.
+# ------------------------------------------------------------------
+echo "Test 8: sidecar wins over stale ambient CLOSEDLOOP_WORKDIR"
+{
+    read -r tmpdir_a workdir_a <<< "$(setup_temp_workdir)"
+    read -r tmpdir_b workdir_b <<< "$(setup_temp_workdir)"
+
+    # Only workdir_b (the "sidecar-pointed" one) has a real state file.
+    # workdir_a (the "stale ambient env") is empty — if complete.sh follows
+    # the env, it will hit "state file not found" and emit nothing.
+    start_epoch=$(( $(date +%s) - 1 ))
+    cmd_start=$(_iso_from_epoch "$start_epoch")
+    write_state_file "$workdir_b" "$cmd_start" "run-sidecar-wins-$$" "sidecar_wins_test"
+
+    # Sidecar pointer at the run cwd points to workdir_b (init.sh's truth).
+    pwd_dir=$(mktemp -d)
+    sidecar_dir="$pwd_dir/.closedloop-ai/telemetry"
+    mkdir -p "$sidecar_dir"
+    printf '%s\n' "$workdir_b" > "$sidecar_dir/.last-cmd-state"
+
+    actual_exit=0
+    (
+        cd "$pwd_dir" || exit 1
+        # Stale ambient env points to workdir_a (pre-init value).
+        CLOSEDLOOP_WORKDIR="$workdir_a" bash "$COMPLETE_SCRIPT" 2>/dev/null
+    ) ; actual_exit=$?
+
+    assert_exit_zero "sidecar wins: script exits 0" "$actual_exit"
+
+    # The event must land in workdir_b (sidecar target), NOT workdir_a (env).
+    perf_b="$workdir_b/perf.jsonl"
+    perf_a="$workdir_a/perf.jsonl"
+    if [[ -f "$perf_b" ]] && [[ -s "$perf_b" ]]; then
+        last_event=$(tail -1 "$perf_b")
+        assert_field_equals "sidecar wins: event landed in sidecar dir" "$last_event" "command" "sidecar_wins_test"
+    else
+        fail "sidecar wins: event landed in sidecar dir" "perf.jsonl absent/empty at workdir_b ($workdir_b)"
+    fi
+
+    if [[ ! -f "$perf_a" ]] || [[ ! -s "$perf_a" ]]; then
+        pass "sidecar wins: no event leaked to env-pointed dir"
+    else
+        fail "sidecar wins: no event leaked to env-pointed dir" \
+             "unexpected event at workdir_a: $(cat "$perf_a")"
+    fi
+
+    rm -rf "$tmpdir_a" "$tmpdir_b" "$pwd_dir"
 }
 
 # ---- Summary -------------------------------------------------------------

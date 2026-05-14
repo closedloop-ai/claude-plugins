@@ -38,8 +38,24 @@ unset CLOSEDLOOP_USER_VISIBLE_FAILURE_SECRET
 # Learning system paths
 LOCK_FILE=".learnings/.lock"
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=telemetry-helpers.sh
-source "$SCRIPTS_DIR/telemetry-helpers.sh"
+# Source telemetry helpers when available; fall back to no-op stubs so a
+# partial install or broken helpers file does not abort the loop under
+# `set -euo pipefail`. Telemetry is fail-open by design throughout this
+# pipeline (PLN-561); the loop's correctness must not depend on it.
+if [[ -f "$SCRIPTS_DIR/telemetry-helpers.sh" ]]; then
+  # shellcheck source=telemetry-helpers.sh
+  if ! source "$SCRIPTS_DIR/telemetry-helpers.sh" 2>/dev/null; then
+    echo "[run-loop] WARNING: failed to source telemetry-helpers.sh; perf events disabled" >&2
+    emit_perf_event() { :; }
+    run_timed_step() { "$@"; }
+    emit_skipped_step() { :; }
+  fi
+else
+  echo "[run-loop] WARNING: telemetry-helpers.sh not found at $SCRIPTS_DIR; perf events disabled" >&2
+  emit_perf_event() { :; }
+  run_timed_step() { "$@"; }
+  emit_skipped_step() { :; }
+fi
 
 # Run identification
 RUN_ID=""

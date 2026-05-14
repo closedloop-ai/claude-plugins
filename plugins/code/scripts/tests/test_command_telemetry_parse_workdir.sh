@@ -109,6 +109,15 @@ exit_code=0
 ARGUMENTS='--workdir' bash "$PARSE_SCRIPT" >/dev/null 2>&1 || exit_code=$?
 assert_eq "Test 11: script exits 0 on edge case" "0" "$exit_code"
 
+# Test 12: env-prefix invocation pattern matches what amend-plan.md /
+# process-learnings.md use inline:
+#   "$(ARGUMENTS=\"$ARGUMENTS\" bash .../parse-workdir.sh)"
+# Verifies that setting ARGUMENTS via the bash `VAR=val cmd` prefix
+# propagates to the parser without `export`. Regression for the
+# inline-bash threading fix (shafty023 #3242457307).
+result=$(unset ARGUMENTS; ARGUMENTS='--workdir /tmp/env-prefix' bash "$PARSE_SCRIPT")
+assert_eq "Test 12: env-prefix invocation threads ARGUMENTS to parser" "/tmp/env-prefix" "$result"
+
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 [[ "$FAIL_COUNT" -eq 0 ]] || exit 1

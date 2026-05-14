@@ -66,6 +66,15 @@ assert_file_line_count() {
   local description="$1"
   local path="$2"
   local expected="$3"
+  # Existence guard: without this, `wc -l < <missing>` fails under
+  # `set -euo pipefail` and aborts the entire test runner before the
+  # summary at the bottom of the file runs. The preceding
+  # assert_file_exists call returns 0 on failure so it does not
+  # prevent the crash on its own.
+  if [[ ! -f "$path" ]]; then
+    assert_fail "$description" "file not found: $path"
+    return 0
+  fi
   local actual
   actual=$(wc -l < "$path" | tr -d ' ')
   if [[ "$actual" == "$expected" ]]; then

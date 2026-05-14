@@ -17,8 +17,13 @@
 # NOTE: The Claude Code Stop hook does NOT pass argv and does NOT provide an
 # exit code. This script is designed to be called with NO arguments from that
 # context; it recovers the workdir from (in order):
-#   1. $CLOSEDLOOP_WORKDIR env var (exported by command-telemetry-init.sh)
-#   2. Sidecar pointer: $PWD/.closedloop-ai/telemetry/.last-cmd-state
+#   1. Sidecar pointer: $PWD/.closedloop-ai/telemetry/.last-cmd-state
+#      (the freshest init-written value; preferred over env because the
+#       inline-bash `source` does NOT propagate exports back to the Stop
+#       hook subprocess, so $CLOSEDLOOP_WORKDIR seen here is the AMBIENT
+#       value from before the command ran — potentially stale when the
+#       user supplied an explicit --workdir override)
+#   2. $CLOSEDLOOP_WORKDIR env var (ambient fallback)
 #   3. Default: $PWD/.closedloop-ai/telemetry/
 # When called directly (tests, debugging), a positional workdir override may
 # be passed as $1 and takes highest precedence.
@@ -29,16 +34,17 @@
 # Arguments:
 #   $1  workdir override (optional)
 
-# --- Workdir resolution (precedence: arg > env > sidecar > project-default) ---
+# --- Workdir resolution (precedence: arg > sidecar > env > project-default) ---
 
 _clc_resolved_workdir=""
 
 if [[ -n "${1:-}" ]]; then
   _clc_resolved_workdir="$1"
-elif [[ -n "${CLOSEDLOOP_WORKDIR:-}" ]]; then
-  _clc_resolved_workdir="$CLOSEDLOOP_WORKDIR"
 else
-  # Try sidecar pointer written by command-telemetry-init.sh
+  # Sidecar pointer (written atomically by the most recent command-telemetry-init.sh).
+  # Preferred over env: init.sh may have resolved a different workdir than the
+  # ambient $CLOSEDLOOP_WORKDIR (e.g. when the user supplied --workdir <path>),
+  # and the export from init.sh's subshell does not propagate to the Stop hook.
   _clc_sidecar="${PWD}/.closedloop-ai/telemetry/.last-cmd-state"
   if [[ -f "$_clc_sidecar" ]]; then
     _clc_sidecar_val=$(cat "$_clc_sidecar" 2>/dev/null || true)
@@ -47,6 +53,12 @@ else
     fi
   fi
   unset _clc_sidecar _clc_sidecar_val
+
+  # Ambient env fallback (e.g. when init.sh didn't run or the sidecar write failed).
+  if [[ -z "$_clc_resolved_workdir" ]] && [[ -n "${CLOSEDLOOP_WORKDIR:-}" ]]; then
+    _clc_resolved_workdir="$CLOSEDLOOP_WORKDIR"
+  fi
+
   if [[ -z "$_clc_resolved_workdir" ]]; then
     _clc_resolved_workdir="${PWD}/.closedloop-ai/telemetry"
   fi
@@ -131,7 +143,7 @@ fi
 
 # emit_perf_event reads CLOSEDLOOP_WORKDIR and CLOSEDLOOP_COMMAND from the environment
 export CLOSEDLOOP_WORKDIR="${_clc_resolved_workdir}"
-export CLOSEDLOOP_COMMAND="${_clc_command:-${CLOSEDLOOP_COMMAND:-unknown}}"
+export CLOSEDLOOP_COMMAND="${_clc_command:-${CLOSEDLOOP_COMMAND:-interactive}}"
 
 # --- Emit command_complete event ---
 

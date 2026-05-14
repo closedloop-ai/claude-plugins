@@ -178,6 +178,11 @@ T2=$(mktemp -d)
 (
   set +euo pipefail 2>/dev/null
   unset CLOSEDLOOP_WORKDIR CLOSEDLOOP_COMMAND CLOSEDLOOP_RUN_ID
+  # cd to tmpdir so the sidecar pointer init.sh writes at
+  # ${PWD}/.closedloop-ai/telemetry/.last-cmd-state lands under the
+  # test's own temp directory rather than polluting the test runner's
+  # CWD (typically the repo root).
+  cd "$T2"
 
   STUB_DIR=$(mktemp -d)
   cp "$INIT_SCRIPT" "${STUB_DIR}/command-telemetry-init.sh"
@@ -219,6 +224,7 @@ T3_OUT=$(mktemp)
 (
   set +euo pipefail
   unset CLOSEDLOOP_WORKDIR CLOSEDLOOP_COMMAND CLOSEDLOOP_RUN_ID
+  cd "$T3"  # contain sidecar pollution to tmpdir (see Test 2 comment)
 
   STUB_DIR=$(mktemp -d)
   cp "$INIT_SCRIPT" "${STUB_DIR}/command-telemetry-init.sh"
@@ -254,6 +260,7 @@ T3C_OUT=$(mktemp)
 (
   set +euo pipefail
   unset CLOSEDLOOP_WORKDIR CLOSEDLOOP_COMMAND CLOSEDLOOP_RUN_ID
+  cd "$T3C"  # contain sidecar pollution to tmpdir (see Test 2 comment)
 
   STUB_DIR=$(mktemp -d)
   # Patch the init script: replace `command -v uuidgen` with a failing check
@@ -341,6 +348,7 @@ T4C_OUT=$(mktemp)
 (
   set +euo pipefail
   unset CLOSEDLOOP_WORKDIR CLOSEDLOOP_COMMAND CLOSEDLOOP_RUN_ID
+  cd "$T4C"  # contain sidecar pollution to tmpdir (see Test 2 comment)
 
   # Copy init script to a temp dir with no record_run.sh beside it
   STUB_DIR=$(mktemp -d)
@@ -363,6 +371,7 @@ T4D_OUT=$(mktemp)
 (
   set +euo pipefail
   unset CLOSEDLOOP_WORKDIR CLOSEDLOOP_COMMAND CLOSEDLOOP_RUN_ID
+  cd "$T4D"  # contain sidecar pollution to tmpdir (see Test 2 comment)
 
   STUB_DIR=$(mktemp -d)
   cp "$INIT_SCRIPT" "${STUB_DIR}/command-telemetry-init.sh"
