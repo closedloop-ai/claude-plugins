@@ -1147,6 +1147,7 @@ LEARNING SYSTEM:
   - CLOSEDLOOP_RUN_ID: Unique run identifier
   - CLOSEDLOOP_ITERATION: Current iteration number
   - CLOSEDLOOP_ACTIVE_GOAL: Active goal from goal.yaml (if set)
+  - CLOSEDLOOP_CONTEXT_LIMIT: Token context limit hint for subagents (if set by caller)
 
 EXAMPLES:
   # Start a new loop
@@ -1600,6 +1601,11 @@ main() {
   export CLOSEDLOOP_WORKDIR="$effective_workdir"
   export CLOSEDLOOP_RUN_ID="$RUN_ID"
   export CLOSEDLOOP_COMMAND="$(resolve_closedloop_command "${CLOSEDLOOP_COMMAND:-}" "$PROMPT_NAME")"
+  # Forward caller-provided context limit to all subagents and skills.
+  # If not set by the caller, leave unset so downstream code can apply its own default.
+  if [[ -n "${CLOSEDLOOP_CONTEXT_LIMIT:-}" ]]; then
+    export CLOSEDLOOP_CONTEXT_LIMIT
+  fi
 
   # Load goal configuration
   load_goal_config "$effective_workdir"

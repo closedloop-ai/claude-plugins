@@ -25,6 +25,9 @@ except ImportError:
     sys.exit(1)
 
 
+SKIP_SENTINEL = "Skipped:"
+
+
 class MetricStatistics(BaseModel):
     """A single metric evaluation result."""
     model_config = ConfigDict(strict=True)
@@ -41,7 +44,8 @@ class CaseScore(BaseModel):
 
     type: Optional[str] = Field(default="case_score")
     case_id: str
-    final_status: int  # 1=pass, 2=fail, 3=error
+    final_status: int  # 1=pass, 2=fail, 3=error/skipped
+    justification: Optional[str] = None  # Top-level justification, used for skipped judges
     metrics: List[MetricStatistics]
     error_reason: Optional[str] = Field(default=None, description="Agent-reported error context (e.g., tool errors, parse failures). Conventionally set when final_status=3; aggregation excludes scores by final_status=3, so this field is informational.")
 
@@ -52,6 +56,19 @@ class CaseScore(BaseModel):
         if v not in (1, 2, 3):
             raise ValueError(f"final_status must be 1 (pass), 2 (fail), or 3 (error), got {v}")
         return v
+
+    def is_skipped(self) -> bool:
+        """Return True if this judge was skipped.
+
+        A judge is considered skipped when final_status=3 and its justification
+        (either the top-level field or any metric's justification) contains 'Skipped:'.
+        Skipped judges are treated as valid entries but exempt from the metrics check.
+        """
+        if self.final_status != 3:
+            return False
+        if self.justification is not None and SKIP_SENTINEL in self.justification:
+            return True
+        return any(SKIP_SENTINEL in m.justification for m in self.metrics)
 
 
 def compute_average_excluding_errors(scores: List[CaseScore]) -> Optional[float]:
@@ -192,7 +209,7 @@ def validate_report(report_path: Path, category: str = "plan") -> tuple[bool, st
         errors.append(f"report_id should end with one of {valid_suffixes}, got: {report.report_id}")
 
     for case in report.stats:
-        if not case.metrics:
+        if not case.metrics and not case.is_skipped():
             errors.append(f"Judge {case.case_id} has no metrics")
 
     if errors:

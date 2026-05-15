@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from validate_judge_report import (  # type: ignore[import-not-found]
     DEFAULT_FILENAMES,
     JUDGE_REGISTRY,
+    SKIP_SENTINEL,
     VALID_SUFFIXES,
     CaseScore,
     MetricStatistics,
@@ -61,6 +62,39 @@ def create_evaluation_report(report_id: str, judge_ids: list[str]) -> dict:
         "timestamp": "2025-02-11T12:00:00Z",
         "stats": [create_valid_casescore(judge_id) for judge_id in judge_ids],
     }
+
+
+def _make_skipped_casescore(case_id: str, via: str = "top_level") -> dict:
+    """Create a CaseScore dict representing a skipped judge.
+
+    Args:
+        case_id: The judge case_id
+        via: Where to place the SKIP_SENTINEL justification:
+             'top_level' - in the CaseScore.justification field (empty metrics)
+             'metric'    - in a metric's justification field
+    """
+    if via == "top_level":
+        return {
+            "type": "case_score",
+            "case_id": case_id,
+            "final_status": 3,
+            "justification": f"{SKIP_SENTINEL} judge not applicable for this run",
+            "metrics": [],
+        }
+    else:
+        return {
+            "type": "case_score",
+            "case_id": case_id,
+            "final_status": 3,
+            "metrics": [
+                {
+                    "metric_name": "skip_reason",
+                    "threshold": None,
+                    "score": 0.0,
+                    "justification": f"{SKIP_SENTINEL} judge not applicable for this run",
+                }
+            ],
+        }
 
 
 class TestBackwardCompatibility:
@@ -1019,3 +1053,198 @@ class TestCaseScoreErrorReason:
         # Errored judge-c is excluded. Average over (0.4, 0.6, 1.0) = 2.0/3.
         result = compute_average_excluding_errors(scores)
         assert result == pytest.approx(2.0 / 3.0)
+
+
+class TestSkippedJudges:
+    """Tests for skipped judge tolerance (final_status=3 with 'Skipped:' justification)."""
+
+    def test_is_skipped_returns_true_for_status3_with_top_level_justification(self) -> None:
+        """CaseScore.is_skipped() returns True for final_status=3 with top-level 'Skipped:' justification."""
+        case = CaseScore(
+            case_id="test-judge",
+            final_status=3,
+            justification="Skipped: not applicable",
+            metrics=[],
+        )
+        assert case.is_skipped() is True
+
+    def test_is_skipped_returns_true_for_status3_with_metric_justification(self) -> None:
+        """CaseScore.is_skipped() returns True for final_status=3 with metric-level 'Skipped:' justification."""
+        case = CaseScore(
+            case_id="test-judge",
+            final_status=3,
+            metrics=[
+                MetricStatistics(
+                    metric_name="skip_reason",
+                    threshold=None,
+                    score=0.0,
+                    justification="Skipped: not applicable",
+                )
+            ],
+        )
+        assert case.is_skipped() is True
+
+    def test_is_skipped_returns_false_for_status1(self) -> None:
+        """CaseScore.is_skipped() returns False when final_status is not 3."""
+        case = CaseScore(
+            case_id="test-judge",
+            final_status=1,
+            justification="Skipped: not applicable",
+            metrics=[],
+        )
+        assert case.is_skipped() is False
+
+    def test_is_skipped_returns_false_for_status3_without_skipped_text(self) -> None:
+        """CaseScore.is_skipped() returns False for final_status=3 without 'Skipped:' text."""
+        case = CaseScore(
+            case_id="test-judge",
+            final_status=3,
+            justification="Error: something went wrong",
+            metrics=[],
+        )
+        assert case.is_skipped() is False
+
+    def test_is_skipped_returns_false_for_status3_with_no_justification(self) -> None:
+        """CaseScore.is_skipped() returns False for final_status=3 with no justification text."""
+        case = CaseScore(
+            case_id="test-judge",
+            final_status=3,
+            metrics=[],
+        )
+        assert case.is_skipped() is False
+
+    def test_skipped_judge_via_top_level_justification_passes_validation(self, tmp_path: Path) -> None:
+        """Report with a skipped judge (top-level justification, empty metrics) passes validation."""
+        plan_judges = sorted(JUDGE_REGISTRY["plan"])
+        # Build report: all judges normal except the first, which is skipped
+        stats = []
+        for i, judge_id in enumerate(plan_judges):
+            if i == 0:
+                stats.append(_make_skipped_casescore(judge_id, via="top_level"))
+            else:
+                stats.append(create_valid_casescore(judge_id))
+
+        report = {
+            "report_id": "run-20250211-plan-judges",
+            "timestamp": "2025-02-11T12:00:00Z",
+            "stats": stats,
+        }
+
+        report_path = tmp_path / "plan-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="plan")
+        assert valid is True, f"Expected valid report with skipped judge, got: {message}"
+
+    def test_skipped_judge_via_metric_justification_passes_validation(self, tmp_path: Path) -> None:
+        """Report with a skipped judge (justification in metric) passes validation."""
+        plan_judges = sorted(JUDGE_REGISTRY["plan"])
+        stats = []
+        for i, judge_id in enumerate(plan_judges):
+            if i == 0:
+                stats.append(_make_skipped_casescore(judge_id, via="metric"))
+            else:
+                stats.append(create_valid_casescore(judge_id))
+
+        report = {
+            "report_id": "run-20250211-plan-judges",
+            "timestamp": "2025-02-11T12:00:00Z",
+            "stats": stats,
+        }
+
+        report_path = tmp_path / "plan-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="plan")
+        assert valid is True, f"Expected valid report with skipped judge via metric, got: {message}"
+
+    def test_multiple_skipped_judges_pass_validation(self, tmp_path: Path) -> None:
+        """Report with multiple skipped judges (all have case_ids) passes validation."""
+        plan_judges = sorted(JUDGE_REGISTRY["plan"])
+        stats = []
+        for i, judge_id in enumerate(plan_judges):
+            if i < 3:
+                stats.append(_make_skipped_casescore(judge_id, via="top_level"))
+            else:
+                stats.append(create_valid_casescore(judge_id))
+
+        report = {
+            "report_id": "run-20250211-plan-judges",
+            "timestamp": "2025-02-11T12:00:00Z",
+            "stats": stats,
+        }
+
+        report_path = tmp_path / "plan-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="plan")
+        assert valid is True, f"Expected valid report with multiple skipped judges, got: {message}"
+
+    def test_skipped_judge_still_requires_case_id_in_report(self, tmp_path: Path) -> None:
+        """Missing case_id is still an error even when other judges are skipped."""
+        plan_judges = sorted(JUDGE_REGISTRY["plan"])
+        # Omit the first judge entirely (missing from report)
+        stats = [_make_skipped_casescore(plan_judges[1], via="top_level")]
+        for judge_id in plan_judges[2:]:
+            stats.append(create_valid_casescore(judge_id))
+
+        report = {
+            "report_id": "run-20250211-plan-judges",
+            "timestamp": "2025-02-11T12:00:00Z",
+            "stats": stats,
+        }
+
+        report_path = tmp_path / "plan-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="plan")
+        assert valid is False, "Missing case_id should still fail validation"
+        assert "Missing expected judges" in message
+        assert plan_judges[0] in message
+
+    def test_status3_without_skipped_text_still_requires_metrics(self, tmp_path: Path) -> None:
+        """A judge with final_status=3 but no 'Skipped:' text still requires metrics."""
+        plan_judges = sorted(JUDGE_REGISTRY["plan"])
+        stats = []
+        for i, judge_id in enumerate(plan_judges):
+            if i == 0:
+                # status=3, no "Skipped:" in justification, empty metrics -> should still error
+                stats.append({
+                    "type": "case_score",
+                    "case_id": judge_id,
+                    "final_status": 3,
+                    "justification": "Error: something failed unexpectedly",
+                    "metrics": [],
+                })
+            else:
+                stats.append(create_valid_casescore(judge_id))
+
+        report = {
+            "report_id": "run-20250211-plan-judges",
+            "timestamp": "2025-02-11T12:00:00Z",
+            "stats": stats,
+        }
+
+        report_path = tmp_path / "plan-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="plan")
+        assert valid is False, "status=3 without 'Skipped:' and empty metrics should fail"
+        assert "has no metrics" in message
+
+    def test_all_judges_skipped_passes_validation(self, tmp_path: Path) -> None:
+        """Report where every judge is skipped (128K mode) passes validation."""
+        plan_judges = sorted(JUDGE_REGISTRY["plan"])
+        stats = [_make_skipped_casescore(judge_id, via="top_level") for judge_id in plan_judges]
+
+        report = {
+            "report_id": "run-20250211-plan-judges",
+            "timestamp": "2025-02-11T12:00:00Z",
+            "stats": stats,
+        }
+
+        report_path = tmp_path / "plan-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="plan")
+        assert valid is True, f"Expected valid report with all judges skipped (128K mode), got: {message}"

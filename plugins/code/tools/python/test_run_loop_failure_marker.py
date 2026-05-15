@@ -20,6 +20,15 @@ def run_bash(
     failure_secret: str | None = FAILURE_SECRET,
 ) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "CLOSEDLOOP_WORKDIR": str(workdir)}
+    # Strip variables that run-loop.sh reads as fallbacks so tests are not
+    # affected by whatever the developer's shell happens to have set.
+    # LAST_CLAUDE_COMMAND is reset to "" at source time (run-loop.sh line 46),
+    # but CLOSEDLOOP_COMMAND is not touched at source time, so an ambient
+    # CLOSEDLOOP_COMMAND=interactive (e.g. from a running Loop session) would
+    # leak into write_runs_log_entry's fallback chain and flip `plan_execute`
+    # tests to `interactive`.
+    env.pop("CLOSEDLOOP_COMMAND", None)
+    env.pop("LAST_CLAUDE_COMMAND", None)
     if failure_secret is not None:
         env["CLOSEDLOOP_USER_VISIBLE_FAILURE_SECRET"] = failure_secret
     return subprocess.run(

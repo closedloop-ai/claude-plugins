@@ -13,6 +13,7 @@ You are responsible for preparing compacted context bundles for judge evaluation
 ## Environment
 
 - `CLOSEDLOOP_WORKDIR` - The working directory containing artifacts to be evaluated
+- `CLOSEDLOOP_CONTEXT_LIMIT` - Optional. The model's context window size in tokens. When set, the token budget is computed dynamically as `min(30000, context_limit - 98000)` where 98,000 tokens is the estimated overhead for system prompt, skill scaffolding, judge prompt, and output reservation. When unset, the budget defaults to 30,000 tokens for backward compatibility.
 
 ## Input Parameters
 
@@ -43,28 +44,64 @@ You will receive:
 
 ## Token Budget Allocation
 
-**Total Budget:** 30,000 tokens (fixed)
+**Total Budget:** Dynamically computed (see Step 0). When `CLOSEDLOOP_CONTEXT_LIMIT` is set, budget = `min(30000, CLOSEDLOOP_CONTEXT_LIMIT - 98000)` where 98,000 tokens covers estimated overhead (system prompt, skill scaffolding, judge prompt, and output reservation). When `CLOSEDLOOP_CONTEXT_LIMIT` is unset, budget = 30,000 tokens (backward-compatible default).
 
 ### Plan Type Budgets
 
-| Artifact | Percentage | Tokens |
-|----------|------------|--------|
-| `plan.json` | 50% | 15,000 |
-| `prd.md` | 35% | 10,500 |
-| `investigation-log.md` | 15% | 4,500 |
+Absolute token values below assume the default 30,000-token budget. When the budget is computed dynamically, multiply percentages by the computed `TOKEN_BUDGET`.
+
+| Artifact | Percentage | Tokens (at 30K default) |
+|----------|------------|-------------------------|
+| `plan.json` | 50% | `TOKEN_BUDGET * 0.50` |
+| `prd.md` | 35% | `TOKEN_BUDGET * 0.35` |
+| `investigation-log.md` | 15% | `TOKEN_BUDGET * 0.15` |
 
 ### Code Type Budgets
 
-| Artifact | Percentage | Tokens |
-|----------|------------|--------|
-| `git_diff` | 40% | 12,000 |
-| `changed-files.json` | 10% | 3,000 |
-| `plan.json` | 20% | 6,000 |
-| `investigation-log.md` | 10% | 3,000 |
-| `build-result.json` | 10% | 3,000 |
-| `outcomes.log` | 10% | 3,000 |
+Absolute token values below assume the default 30,000-token budget. When the budget is computed dynamically, multiply percentages by the computed `TOKEN_BUDGET`.
+
+| Artifact | Percentage | Tokens (at 30K default) |
+|----------|------------|-------------------------|
+| `git_diff` | 40% | `TOKEN_BUDGET * 0.40` |
+| `changed-files.json` | 10% | `TOKEN_BUDGET * 0.10` |
+| `plan.json` | 20% | `TOKEN_BUDGET * 0.20` |
+| `investigation-log.md` | 10% | `TOKEN_BUDGET * 0.10` |
+| `build-result.json` | 10% | `TOKEN_BUDGET * 0.10` |
+| `outcomes.log` | 10% | `TOKEN_BUDGET * 0.10` |
 
 ## Process
+
+### Step 0: Compute Token Budget
+
+Before any artifact collection, determine the token budget for this run:
+
+```bash
+ESTIMATED_OVERHEAD=98000
+
+if [[ -n "$CLOSEDLOOP_CONTEXT_LIMIT" ]]; then
+  DYNAMIC_BUDGET=$(( CLOSEDLOOP_CONTEXT_LIMIT - ESTIMATED_OVERHEAD ))
+  if (( DYNAMIC_BUDGET < 0 )); then
+    DYNAMIC_BUDGET=0
+  fi
+  if (( DYNAMIC_BUDGET > 30000 )); then
+    DYNAMIC_BUDGET=30000
+  fi
+  TOKEN_BUDGET=$DYNAMIC_BUDGET
+  # 128K mode is active when the context window is smaller than 200,000 tokens
+  if (( CLOSEDLOOP_CONTEXT_LIMIT < 200000 )); then
+    CONTEXT_128K_MODE=true
+  else
+    CONTEXT_128K_MODE=false
+  fi
+  echo "Dynamic token budget: $TOKEN_BUDGET (context_limit=$CLOSEDLOOP_CONTEXT_LIMIT, overhead=$ESTIMATED_OVERHEAD, 128k_mode=$CONTEXT_128K_MODE)"
+else
+  TOKEN_BUDGET=30000
+  CONTEXT_128K_MODE=false
+  echo "Token budget: $TOKEN_BUDGET (CLOSEDLOOP_CONTEXT_LIMIT not set, using default, 128k_mode=$CONTEXT_128K_MODE)"
+fi
+```
+
+Use `TOKEN_BUDGET` for all subsequent artifact budget allocations. Compute per-artifact budgets by multiplying `TOKEN_BUDGET` by the artifact's percentage (e.g., `plan.json` in plan mode = `TOKEN_BUDGET * 0.50`).
 
 ### Step 1: Detect Multi-Repository Mode
 
@@ -150,16 +187,16 @@ The skill returns JSON:
 ### Step 5: Aggregate and Enforce Budget Ceiling
 
 1. Sum all `compacted_tokens` from compressed artifacts
-2. If total exceeds 30,000 tokens:
+2. If total exceeds `TOKEN_BUDGET` (computed in Step 0):
    - Apply proportional reduction across all artifacts
-   - Calculate reduction factor: `factor = 30000 / total_compacted_tokens`
+   - Calculate reduction factor: `factor = TOKEN_BUDGET / total_compacted_tokens`
    - Recompute budgets: `new_budget = artifact_budget * factor`
    - Re-invoke compression skill with reduced budgets
    - Log budget ceiling enforcement in metadata
 
 ### Step 6: Build Output JSON
 
-Construct the final context bundle:
+Construct the final context bundle using `TOKEN_BUDGET` and `CONTEXT_128K_MODE` computed in Step 0:
 
 **Single Repository:**
 ```json
@@ -177,11 +214,15 @@ Construct the final context bundle:
     }
   ],
   "metadata": {
+    "token_budget": 30000,
+    "context_128k_mode": false,
     "skipped_artifacts": [],
     "warnings": []
   }
 }
 ```
+
+`token_budget` is the numeric token budget computed in Step 0 (e.g., 30000 for the default, or a smaller value when `CLOSEDLOOP_CONTEXT_LIMIT` is set and constrains the budget). `context_128k_mode` is `true` when `CLOSEDLOOP_CONTEXT_LIMIT` is set and its value is less than 200000 (indicating a 128K or smaller context window), otherwise `false`.
 
 **Multi-Repository:**
 ```json
@@ -204,6 +245,8 @@ Construct the final context bundle:
     }
   ],
   "metadata": {
+    "token_budget": 30000,
+    "context_128k_mode": false,
     "num_repos": 2,
     "per_repo_budget": 15000,
     "skipped_artifacts": [],
@@ -212,11 +255,14 @@ Construct the final context bundle:
 }
 ```
 
+`token_budget` and `context_128k_mode` carry the same semantics as in single-repository mode.
+
 ### Step 7: Validate and Write Output
 
 1. Validate JSON schema:
    - Required fields: `artifact_type`, `total_tokens`, `artifacts` OR `repos`
    - Each artifact has: `name`, `raw_tokens`, `compacted_tokens`, `truncated`, `content`
+   - `metadata` must include: `token_budget` (integer, computed in Step 0), `context_128k_mode` (boolean), `skipped_artifacts` (array), `warnings` (array)
 2. Write to output file:
    - Plan type: `$CLOSEDLOOP_WORKDIR/plan-context.json`
    - Code type: `$CLOSEDLOOP_WORKDIR/code-context.json`
@@ -248,8 +294,8 @@ If `git diff` command fails or `.start-sha` doesn't exist:
 
 ### Budget Overflow
 
-If total compacted tokens exceed 30K:
-1. Log: `"Budget ceiling enforced: reduced from {original} to 30000 tokens"`
+If total compacted tokens exceed `TOKEN_BUDGET` (computed in Step 0):
+1. Log: `"Budget ceiling enforced: reduced from {original} to {TOKEN_BUDGET} tokens"`
 2. Set `budget_ceiling_enforced: true`
 3. Apply proportional reduction and re-compress
 4. If reduction factor < 0.5 (too aggressive), warn: `"Severe compression applied - judges may have insufficient context"`
@@ -275,7 +321,9 @@ When complete, output:
 CONTEXT_PREPARATION_COMPLETE
 
 Artifact Type: {plan|code}
-Total Tokens: {compacted_tokens} / 30,000
+Total Tokens: {compacted_tokens} / {TOKEN_BUDGET}
+Token Budget: {TOKEN_BUDGET}
+128K Mode: {true|false}
 Budget Ceiling Enforced: {true|false}
 Artifacts Processed: {count}
 Artifacts Skipped: {count}
@@ -305,7 +353,7 @@ Then emit:
 1. **Always use absolute paths** when reading/writing files: `$CLOSEDLOOP_WORKDIR/<relative_path>`
 2. **Handle missing files gracefully** - don't fail the entire process
 3. **Use `investigation-log.md` as prior-discovery context** when present, but keep implementation evidence (`git_diff`, build/test artifacts) primary in code mode
-4. **Enforce 30K token ceiling strictly** - judges cannot process more
+4. **Enforce `TOKEN_BUDGET` ceiling strictly** - judges cannot process more (TOKEN_BUDGET is computed in Step 0 from `CLOSEDLOOP_CONTEXT_LIMIT`, or defaults to 30,000)
 5. **Multi-repo concatenation** - ensure each repo's artifacts are clearly prefixed
 6. **Validate output JSON** before writing - catch schema errors early
 7. **Git diff is computed**, not read - use Bash tool with proper SHA handling

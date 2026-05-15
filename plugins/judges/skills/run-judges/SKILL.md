@@ -562,11 +562,129 @@ The run-judges skill supports three artifact types with different judge configur
 
 ---
 
+### Step 0.5: Pre-Execution Context Budget Check
+
+**When to run:** After context preparation (Step 0 / Prerequisites Check) completes and before launching any judge batch.
+
+**Purpose:** In 128K context mode the available context window is significantly smaller than the standard 200K window. If a judge's estimated prompt (preamble + `judge-input.json` content) would exceed the remaining available context, launching that judge is likely to fail or produce a truncated/unusable result. Judges that cannot fit must be skipped and recorded as error CaseScores so the overall workflow still produces a complete report.
+
+#### Sub-step A: Detect 128K Mode
+
+**For plan and code artifact types** (context-manager produces a context file):
+
+```bash
+CONTEXT_FILE="$CLOSEDLOOP_WORKDIR/plan-context.json"   # or code-context.json
+# Read metadata from context file
+CONTEXT_128K_MODE=$(jq -r '.metadata.context_128k_mode // false' "$CONTEXT_FILE")
+CONTEXT_TOKEN_BUDGET=$(jq -r '.metadata.token_budget // 30000' "$CONTEXT_FILE")
+echo "128K mode: $CONTEXT_128K_MODE, token_budget from context manager: $CONTEXT_TOKEN_BUDGET"
+```
+
+If `$CONTEXT_FILE` does not exist (context manager produced no output), default `CONTEXT_128K_MODE=false` and skip the budget check entirely — proceed to judge execution as normal.
+
+**For PRD and feature artifact types** (no context manager runs):
+
+```bash
+# Derive 128K mode directly from CLOSEDLOOP_CONTEXT_LIMIT (mirrors context-manager logic)
+ESTIMATED_OVERHEAD=98000
+if [[ -n "$CLOSEDLOOP_CONTEXT_LIMIT" ]] && (( CLOSEDLOOP_CONTEXT_LIMIT < 200000 )); then
+  CONTEXT_128K_MODE=true
+  DYNAMIC_BUDGET=$(( CLOSEDLOOP_CONTEXT_LIMIT - ESTIMATED_OVERHEAD ))
+  if (( DYNAMIC_BUDGET < 0 )); then DYNAMIC_BUDGET=0; fi
+  if (( DYNAMIC_BUDGET > 30000 )); then DYNAMIC_BUDGET=30000; fi
+  CONTEXT_TOKEN_BUDGET=$DYNAMIC_BUDGET
+else
+  CONTEXT_128K_MODE=false
+  CONTEXT_TOKEN_BUDGET=30000
+fi
+echo "128K mode: $CONTEXT_128K_MODE, estimated token_budget: $CONTEXT_TOKEN_BUDGET"
+```
+
+#### Sub-step B: Estimate Per-Judge Prompt Size
+
+**Only execute Sub-step B and C when `CONTEXT_128K_MODE=true`.** When `CONTEXT_128K_MODE=false`, skip the budget check entirely and proceed to Step 1 without any filtering.
+
+When 128K mode is active, estimate the token footprint for a typical judge prompt:
+
+```bash
+# Estimate preamble token count (common_input_preamble.md + artifact_preamble.md)
+PREAMBLE_CHARS=$(wc -c < "$COMMON_PREAMBLE_PATH")
+ARTIFACT_PREAMBLE_CHARS=$(wc -c < "$ARTIFACT_PREAMBLE_PATH")
+TOTAL_PREAMBLE_CHARS=$(( PREAMBLE_CHARS + ARTIFACT_PREAMBLE_CHARS ))
+
+# Estimate judge-input.json token count
+JUDGE_INPUT_CHARS=$(wc -c < "$CLOSEDLOOP_WORKDIR/judge-input.json")
+
+# Token estimate: characters / 4 (conservative heuristic)
+PREAMBLE_TOKENS=$(( TOTAL_PREAMBLE_CHARS / 4 ))
+JUDGE_INPUT_TOKENS=$(( JUDGE_INPUT_CHARS / 4 ))
+
+# Total estimated prompt tokens for each judge
+JUDGE_PROMPT_TOKENS=$(( PREAMBLE_TOKENS + JUDGE_INPUT_TOKENS ))
+
+echo "Estimated judge prompt size: ${JUDGE_PROMPT_TOKENS} tokens (preamble=${PREAMBLE_TOKENS}, judge-input=${JUDGE_INPUT_TOKENS})"
+echo "Available context budget: ${CONTEXT_TOKEN_BUDGET} tokens"
+```
+
+Use `wc -c` (byte count) as a quick proxy for character count; the `/4` heuristic is the same fallback used by `context-manager-for-judges` when `count_tokens.py` is unavailable. This estimate is intentionally conservative.
+
+The per-judge prompt size is treated as **uniform across all judges in a run** because all judges in a given artifact-type mode read the same preamble files and the same `judge-input.json`. A single estimate is computed once and reused for each judge in the batch loop.
+
+#### Sub-step C: Filter Judges by Context Budget
+
+Compare the estimated prompt tokens to `CONTEXT_TOKEN_BUDGET`:
+
+```bash
+# Reserve a safety margin for system overhead and model output
+SAFETY_MARGIN=8000
+AVAILABLE_FOR_JUDGE=$(( CONTEXT_TOKEN_BUDGET - SAFETY_MARGIN ))
+
+if (( JUDGE_PROMPT_TOKENS > AVAILABLE_FOR_JUDGE )); then
+  echo "WARNING: 128K context mode — estimated judge prompt (${JUDGE_PROMPT_TOKENS} tokens) exceeds available budget (${AVAILABLE_FOR_JUDGE} tokens). All judges will be skipped."
+  SKIP_ALL_JUDGES=true
+else
+  echo "Context budget sufficient: ${JUDGE_PROMPT_TOKENS} tokens fits within ${AVAILABLE_FOR_JUDGE} token budget."
+  SKIP_ALL_JUDGES=false
+fi
+```
+
+Since prompt size is uniform across judges, either all judges fit or none fit for a given run. The `SKIP_ALL_JUDGES` flag controls whether each batch is executed or replaced with error CaseScores in the steps that follow.
+
+#### Sub-step D: Record Skipped Judges as Error CaseScores
+
+For each judge that is skipped due to the context budget constraint, immediately construct and record an error CaseScore **before** writing the final aggregated report. Do this for every judge in every batch that would have been launched:
+
+```json
+{
+  "type": "case_score",
+  "case_id": "{judge-name}",
+  "final_status": 3,
+  "metrics": [
+    {
+      "metric_name": "{primary_metric_name}_score",
+      "threshold": 0.8,
+      "score": 0.0,
+      "justification": "Skipped: artifact exceeded context budget after compression"
+    }
+  ]
+}
+```
+
+Substitute `{judge-name}` with the actual agent identifier (e.g., `dry-judge`, `ssot-judge`) and `{primary_metric_name}` with the judge's primary metric name (e.g., `dry_score`, `ssot_score`). The justification string is fixed — do not include token counts or other dynamic text.
+
+These error CaseScores are collected into the `skipped_case_scores` list and merged into the final `stats` array during aggregation (Step 2), replacing the would-be results for those judges. This ensures the EvaluationReport always contains the expected number of CaseScore entries (16 for plan, 11 for code, 5 for prd, 3 for feature) and passes validation.
+
+**If `SKIP_ALL_JUDGES=false`**, proceed to Step 1 normally — no judges are filtered and no extra CaseScores are generated.
+
+---
+
 ### Step 1: Launch Judge Agents in Parallel
 
 **Performance:** For each batch/phase, run "start of phase" Bash before launching the batch and "end of phase" Bash after the batch completes. Plan: batch_1=sub_step 1, batch_2=sub_step 2, batch_3=sub_step 3, batch_4=sub_step 4. Code: batch_1=sub_step 1, batch_2=sub_step 2, batch_3=sub_step 3. PRD: batch_1=sub_step 1, batch_2=sub_step 2. Feature: batch_1=sub_step 1.
 
 **Constraint:** The Task tool supports maximum 4 concurrent agents per batch.
+
+**If `SKIP_ALL_JUDGES=true`** (set in Step 0.5), do not launch any Task agents for any batch. Instead, use the skipped CaseScores collected in Step 0.5 Sub-step D for all judges. Still emit the start-of-phase and end-of-phase perf events for each batch (with `skipped=true`) so telemetry is consistent.
 
 **Action:** Launch judges in sequential batches based on artifact type.
 
@@ -747,6 +865,12 @@ Each judge returns a **CaseScore** JSON object:
 
 <error_handling>
 
+There are two distinct paths that produce a `final_status=3` CaseScore: **judge execution failure** and **judge skipping due to context budget**. These are separate cases with different justification strings and must not be confused.
+
+---
+
+**Path 1 — Judge Execution Failure**
+
 **CRITICAL REQUIREMENT:** If a judge Task call fails, you MUST construct an error CaseScore.
 
 **Error CaseScore Template:**
@@ -789,10 +913,37 @@ Each judge returns a **CaseScore** JSON object:
 - If SOME judges have `final_status=3`, `compute_average_excluding_errors` returns the average of `MetricStatistics.score` across only the non-errored judges (return type `Optional[float]`). Callers rendering this for humans should annotate the value as "avg of N/M judges" by separately computing N (non-errored CaseScore count) and M (total CaseScore count) from the input list — the function itself does not return the annotation.
 - If ALL judges have `final_status=3`, or no non-errored judge contributes any metric, `compute_average_excluding_errors` returns `None` — no meaningful average can be computed.
 
+---
+
+**Path 2 — Judge Skipped (Context Budget Exceeded)**
+
+When `SKIP_ALL_JUDGES=true` is set in Step 0.5 (128K context mode active and the estimated judge prompt exceeds the available budget), judges are not launched. Instead, each skipped judge is recorded as a `final_status=3` CaseScore with the following fixed justification string:
+
+**Skipped CaseScore Template:**
+```json
+{
+  "type": "case_score",
+  "case_id": "{judge-name}",
+  "final_status": 3,
+  "metrics": [
+    {
+      "metric_name": "{metric}_score",
+      "threshold": 0.8,
+      "score": 0.0,
+      "justification": "Skipped: artifact exceeded context budget after compression"
+    }
+  ]
+}
+```
+
+The justification string MUST be exactly `"Skipped: artifact exceeded context budget after compression"` — do not include token counts or other dynamic text. This fixed string allows downstream consumers to distinguish skipped judges from runtime failures.
+
+---
+
 **Continue-on-failure semantics:**
-- Even if ALL judges fail, you MUST aggregate error CaseScores
+- Even if ALL judges fail or are skipped, you MUST aggregate error CaseScores
 - Always produce a complete report with 16 CaseScore entries (plan), 11 CaseScore entries (code), 5 CaseScore entries (prd), or 3 CaseScore entries (feature)
-- Never abort the workflow due to judge failures
+- Never abort the workflow due to judge failures or skips
 
 </error_handling>
 
@@ -1145,6 +1296,7 @@ Before marking this task complete, verify:
 
 **For all artifact types:**
 - [ ] **Agents snapshot** - `agents-snapshot/manifest.json` exists in `$CLOSEDLOOP_WORKDIR` (created if missing, skipped if present)
+- [ ] **Context budget check** - Step 0.5 executed: 128K mode detected from context file metadata (plan/code) or `CLOSEDLOOP_CONTEXT_LIMIT` (prd/feature); when inactive (`CONTEXT_128K_MODE=false`) budget check is skipped; when active, per-judge prompt size estimated and compared to available budget
 
 **For plan artifacts (default):**
 - [ ] **Input validation** - prd.md and plan.json exist (or graceful skip)
@@ -1152,8 +1304,9 @@ Before marking this task complete, verify:
 - [ ] **Plan context validation** - `plan-context.json` exists, or compatibility mode explicitly activated
 - [ ] **Judge input contract** - `judge-input.json` exists with required fields
 - [ ] **Investigation context resolution** - `investigation-log.md` reused, generated via pre-explorer, or best-effort generated internally
-- [ ] **Parallel execution** - All 16 judges launched in 4 batches (max 4 per batch)
-- [ ] **Result aggregation** - Valid EvaluationReport with 16 CaseScore entries
+- [ ] **128K budget filter** - When `CONTEXT_128K_MODE=true` in `plan-context.json` metadata, judges whose estimated prompt exceeds available budget are skipped and recorded as `final_status=3` CaseScores with budget-exceeded justification
+- [ ] **Parallel execution** - All 16 judges launched in 4 batches (max 4 per batch), or replaced with error CaseScores when SKIP_ALL_JUDGES=true
+- [ ] **Result aggregation** - Valid EvaluationReport with 16 CaseScore entries (including any skip CaseScores)
 - [ ] **File output** - `plan-judges.json` written to `$CLOSEDLOOP_WORKDIR`
 - [ ] **Validation passed** - Script exits with code 0 using `--category plan`
 
@@ -1163,8 +1316,9 @@ Before marking this task complete, verify:
 - [ ] **Judge input contract** - `judge-input.json` exists with required fields
 - [ ] **Investigation context resolution** - `investigation-log.md` reused or generated best-effort; missing file does not block code judging
 - [ ] **Preamble injection** - common_input_preamble.md + code_preamble.md prepended to all judge prompts
-- [ ] **Parallel execution** - All 11 judges launched in 3 batches (max 4 per batch)
-- [ ] **Result aggregation** - Valid EvaluationReport with 11 CaseScore entries
+- [ ] **128K budget filter** - When `CONTEXT_128K_MODE=true` in `code-context.json` metadata, judges whose estimated prompt exceeds available budget are skipped and recorded as `final_status=3` CaseScores with budget-exceeded justification
+- [ ] **Parallel execution** - All 11 judges launched in 3 batches (max 4 per batch), or replaced with error CaseScores when SKIP_ALL_JUDGES=true
+- [ ] **Result aggregation** - Valid EvaluationReport with 11 CaseScore entries (including any skip CaseScores)
 - [ ] **File output** - `code-judges.json` written to `$CLOSEDLOOP_WORKDIR`
 - [ ] **Report ID format** - report_id ends with '-code-judges'
 - [ ] **Validation passed** - Script exits with code 0 using `--category code`
@@ -1173,8 +1327,9 @@ Before marking this task complete, verify:
 - [ ] **prd.md existence check** - `$CLOSEDLOOP_WORKDIR/prd.md` found, or graceful exit with WARNING (code 0)
 - [ ] **No context manager** - context-manager-for-judges is NOT launched for prd mode
 - [ ] **Judge input contract** - `scripts/judge_input_mapping.py` wrote schema-valid `judge-input.json` with `evaluation_type="prd"` and `primary_artifact.id="primary_prd"`
-- [ ] **Parallel execution** - 5 PRD judges launched in 2 sequential batches: batch_1 (sub_step=1, 3 judges) and batch_2 (sub_step=2, 2 judges), max 4 concurrent per batch
-- [ ] **Result aggregation** - Valid EvaluationReport with 5 CaseScore entries (sub_step=3)
+- [ ] **128K budget filter** - When `CLOSEDLOOP_CONTEXT_LIMIT` is set and < 200000, derive budget from `CLOSEDLOOP_CONTEXT_LIMIT - 98000`; if estimated judge prompt exceeds available budget, skip judges and record `final_status=3` CaseScores with budget-exceeded justification
+- [ ] **Parallel execution** - 5 PRD judges launched in 2 sequential batches: batch_1 (sub_step=1, 3 judges) and batch_2 (sub_step=2, 2 judges), max 4 concurrent per batch; or replaced with error CaseScores when SKIP_ALL_JUDGES=true
+- [ ] **Result aggregation** - Valid EvaluationReport with 5 CaseScore entries (sub_step=3, including any skip CaseScores)
 - [ ] **File output** - `prd-judges.json` written to `$CLOSEDLOOP_WORKDIR`
 - [ ] **Report ID format** - report_id ends with '-prd-judges'
 - [ ] **Validation passed** - Script exits with code 0 using `--category prd` (sub_step=4)
@@ -1184,8 +1339,9 @@ Before marking this task complete, verify:
 - [ ] **No context manager** - context-manager-for-judges is NOT launched for feature mode
 - [ ] **Judge input contract** - `scripts/judge_input_mapping.py` wrote schema-valid `judge-input.json` with `evaluation_type="feature"` and `primary_artifact.id="primary_feature"`
 - [ ] **Preamble** - feature_preamble.md used for all 3 feature judges (Feature-shaped contract; do NOT substitute prd_preamble.md)
-- [ ] **Parallel execution** - 3 feature judges launched in 1 batch (sub_step=1): feature-completeness-judge + prd-testability-judge + prd-dependency-judge
-- [ ] **Result aggregation** - Valid EvaluationReport with 3 CaseScore entries (sub_step=2)
+- [ ] **128K budget filter** - When `CLOSEDLOOP_CONTEXT_LIMIT` is set and < 200000, derive budget from `CLOSEDLOOP_CONTEXT_LIMIT - 98000`; if estimated judge prompt exceeds available budget, skip judges and record `final_status=3` CaseScores with budget-exceeded justification
+- [ ] **Parallel execution** - 3 feature judges launched in 1 batch (sub_step=1): feature-completeness-judge + prd-testability-judge + prd-dependency-judge; or replaced with error CaseScores when SKIP_ALL_JUDGES=true
+- [ ] **Result aggregation** - Valid EvaluationReport with 3 CaseScore entries (sub_step=2, including any skip CaseScores)
 - [ ] **File output** - `feature-judges.json` written to `$CLOSEDLOOP_WORKDIR`
 - [ ] **Report ID format** - report_id ends with '-feature-judges'
 - [ ] **Validation passed** - Script exits with code 0 using `--category feature` (sub_step=3)
@@ -1221,6 +1377,8 @@ Before marking this task complete, verify:
 | "report_id should end with '-feature-judges'" | Incorrect ID format for feature | Use pattern: `{RUN_ID}-feature-judges` for Feature artifacts |
 | "feature_preamble.md not found" | feature_preamble.md missing from preambles directory | Verify `skills/artifact-type-tailored-context/preambles/feature_preamble.md` exists; do NOT fall back to prd_preamble.md (it injects contradictory contract instructions for feature mode) |
 | "Missing expected judges (feature)" | Incomplete batch execution for feature mode | Verify batch_1 launched all 3 judges: feature-completeness-judge, prd-testability-judge, prd-dependency-judge |
+| "All judges skipped due to 128K context budget" | CONTEXT_128K_MODE=true and estimated prompt exceeds available budget | Use a model with 200K+ context window, or reduce artifact size so context manager produces a smaller judge-input.json; all skipped judges produce final_status=3 CaseScores automatically |
+| "context_128k_mode not found in context file" | Context file exists but metadata field is absent (older context-manager version) | Treat as CONTEXT_128K_MODE=false and proceed normally; the field was added in a later version |
 
 </troubleshooting>
 
@@ -1248,6 +1406,16 @@ If context-manager-for-judges agent exceeds 5 minutes:
 If context-manager-for-judges agent exceeds 5 minutes in plan mode:
 - Attempt one emergency compatibility fallback to raw `plan.json` + `prd.md`
 - If fallback files are unavailable, abort plan judge execution and emit clear error
+
+### Context Budget Exceeded (128K Mode)
+
+When `CONTEXT_128K_MODE=true` (detected in Step 0.5) and the estimated judge prompt size exceeds the available context budget:
+- **Do not launch** any judge Task agents for that batch (or any batch, since prompt size is uniform)
+- Generate error CaseScores for every affected judge with `final_status=3`
+- Justification MUST be exactly `"Skipped: artifact exceeded context budget after compression"` — no dynamic text (see Path 2 template above)
+- Collect all skip CaseScores and merge them into the final EvaluationReport during aggregation (Step 2)
+- The report must still contain the full expected number of CaseScore entries (16/11/5/3) to pass validation
+- This is not a fatal error — workflow continues to aggregation and validation normally
 
 ### Individual Judge Failures
 
