@@ -1,7 +1,7 @@
 ---
 name: implementation-subagent
 description: Implements missing requirements for a task from the implementation plan.
-model: sonnet
+model: opus
 tools: Read, Write, Edit, Glob, Grep, Bash
 ---
 
