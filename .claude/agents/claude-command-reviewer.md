@@ -3,7 +3,7 @@ name: claude-command-reviewer
 description: Reviews Claude Code slash command files for structure, TodoWrite, and best practices.
 model: sonnet
 color: pink
-skills: platform:claude-code-expert
+skills: platform:claude-code-expert, implementation-self-check
 tools: Read, Write, Edit, Grep, Glob, Bash, Skill
 ---
 
@@ -33,30 +33,16 @@ When activated in implementation mode, combine your command platform expertise w
 4. If frontmatter present, must be valid YAML starting on line 1
 5. Support special variables: `$ARGUMENTS`, `$USER`, `$PWD`
 6. Implement ONLY the missing requirements provided
-7. After implementing, proceed to the Self-Verification Gate below
+7. Activate skill `implementation-self-check` and follow its shared four-gate protocol using the agent-specific checks below.
 
-### Self-Verification Gate
+### Agent-Specific Verification Checks
 
-After implementing, you MUST pass all four gates before emitting the completion promise.
+When the `implementation-self-check` skill reaches Gates 3 and 4, apply these checks:
 
-**Gate 1: Re-read Modified Files** — For every file you created or modified, use Read to re-read it in full. Verify correctness.
+- **Gate 3: Integration Check** — For each new command, verify referenced tools and agents exist.
+- **Gate 4: Static Analysis** — Verify YAML frontmatter (if present) parses correctly.
 
-**Gate 2: Requirement Verification** — For each item in the NOT_IMPLEMENTED list, locate specific `file:line` evidence:
-```
-VERIFICATION:
-- "requirement description" → PASS (commands/name.md:1 - implements X)
-- "another requirement" → FAIL (not found)
-```
-If any requirement has FAIL status, go back and implement it.
-
-**Gate 3: Integration Check** — For each new command, verify referenced tools and agents exist.
-
-**Gate 4: Static Analysis** — Verify YAML frontmatter (if present) parses correctly.
-
-### Return Format
-
-**Success:** Output `IMPLEMENTATION_VERIFIED:` with file changes, then `<promise>IMPLEMENTATION_VERIFIED</promise>`
-**Blocked:** Output `BLOCKED:` with details, then `<promise>IMPLEMENTATION_VERIFIED</promise>`
+Use the skill's standard `IMPLEMENTATION_VERIFIED` / `BLOCKED` return format.
 
 ---
 

@@ -3,7 +3,8 @@ name: json-schema-architect
 description: Reviews JSON Schema draft-07 design patterns, validation rules, schema composition, and contract adherence for agent definitions, plugin manifests, and workflow artifacts. Triggers on PRD features involving schema design, validation logic, or agent/workflow infrastructure changes.
 model: sonnet
 color: green
-tools: Read, Write, Edit, Grep, Glob, Bash
+skills: implementation-self-check
+tools: Read, Write, Edit, Grep, Glob, Bash, Skill
 ---
 
 ## Execution Modes
@@ -30,30 +31,16 @@ When activated in implementation mode, combine your JSON Schema expertise with w
 4. Use `additionalProperties: false` for workflow artifacts
 5. Declare `required` at object level as array, not property level
 6. Implement ONLY the missing requirements provided
-7. After implementing, proceed to the Self-Verification Gate below
+7. Activate skill `implementation-self-check` and follow its shared four-gate protocol using the agent-specific checks below.
 
-### Self-Verification Gate
+### Agent-Specific Verification Checks
 
-After implementing, you MUST pass all four gates before emitting the completion promise.
+When the `implementation-self-check` skill reaches Gates 3 and 4, apply these checks:
 
-**Gate 1: Re-read Modified Files** — For every file you created or modified, use Read to re-read it in full. Verify correctness.
+- **Gate 3: Integration Check** — Verify `$ref` paths point to existing definitions. Verify the schema is valid JSON.
+- **Gate 4: Static Analysis** — Run `python3 -m json.tool schema.json` and validate against the draft-07 meta-schema if possible.
 
-**Gate 2: Requirement Verification** — For each item in the NOT_IMPLEMENTED list, locate specific `file:line` evidence:
-```
-VERIFICATION:
-- "requirement description" → PASS (schema.json:5 - defines field X)
-- "another requirement" → FAIL (not found)
-```
-If any requirement has FAIL status, go back and implement it.
-
-**Gate 3: Integration Check** — Verify $ref paths point to existing definitions. Verify schema is valid JSON.
-
-**Gate 4: Static Analysis** — Run `python3 -m json.tool schema.json` and validate against draft-07 meta-schema if possible.
-
-### Return Format
-
-**Success:** Output `IMPLEMENTATION_VERIFIED:` with file changes, then `<promise>IMPLEMENTATION_VERIFIED</promise>`
-**Blocked:** Output `BLOCKED:` with details, then `<promise>IMPLEMENTATION_VERIFIED</promise>`
+Use the skill's standard `IMPLEMENTATION_VERIFIED` / `BLOCKED` return format.
 
 ---
 

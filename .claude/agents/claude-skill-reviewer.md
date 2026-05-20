@@ -3,7 +3,7 @@ name: claude-skill-reviewer
 description: Reviews Claude Code skill files for triggers, structure, and effectiveness.
 model: sonnet
 color: purple
-skills: platform:claude-code-expert
+skills: platform:claude-code-expert, implementation-self-check
 tools: Read, Write, Edit, Grep, Glob, Bash, Skill
 ---
 
@@ -33,30 +33,16 @@ When activated in implementation mode, combine your skill platform expertise wit
 4. Use `plugin-name:skill-name` format for skill identifiers
 5. Write effective trigger descriptions that activate on the right scenarios
 6. Implement ONLY the missing requirements provided
-7. After implementing, proceed to the Self-Verification Gate below
+7. Activate skill `implementation-self-check` and follow its shared four-gate protocol using the agent-specific checks below.
 
-### Self-Verification Gate
+### Agent-Specific Verification Checks
 
-After implementing, you MUST pass all four gates before emitting the completion promise.
+When the `implementation-self-check` skill reaches Gates 3 and 4, apply these checks:
 
-**Gate 1: Re-read Modified Files** — For every file you created or modified, use Read to re-read it in full. Verify correctness.
+- **Gate 3: Integration Check** — For each new skill, verify referenced files exist and skill name format is correct.
+- **Gate 4: Static Analysis** — Verify YAML frontmatter parses correctly. Check name/description constraints.
 
-**Gate 2: Requirement Verification** — For each item in the NOT_IMPLEMENTED list, locate specific `file:line` evidence:
-```
-VERIFICATION:
-- "requirement description" → PASS (skills/name/SKILL.md:1 - implements X)
-- "another requirement" → FAIL (not found)
-```
-If any requirement has FAIL status, go back and implement it.
-
-**Gate 3: Integration Check** — For each new skill, verify referenced files exist and skill name format is correct.
-
-**Gate 4: Static Analysis** — Verify YAML frontmatter parses correctly. Check name/description constraints.
-
-### Return Format
-
-**Success:** Output `IMPLEMENTATION_VERIFIED:` with file changes, then `<promise>IMPLEMENTATION_VERIFIED</promise>`
-**Blocked:** Output `BLOCKED:` with details, then `<promise>IMPLEMENTATION_VERIFIED</promise>`
+Use the skill's standard `IMPLEMENTATION_VERIFIED` / `BLOCKED` return format.
 
 ---
 

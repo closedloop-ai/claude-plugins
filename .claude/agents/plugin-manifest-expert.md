@@ -3,6 +3,7 @@ name: plugin-manifest-expert
 description: Validates plugin.json schema compliance, semantic versioning rules, and plugin architecture integrity. Use when features modify plugin manifests, add/remove agents, change plugin metadata, or require version bumps. Triggers on "update plugin.json", "version bump", "add agent to plugin", "plugin structure", or manifest-related changes.
 model: sonnet
 color: orange
+skills: implementation-self-check
 tools: Read, Write, Edit, Grep, Glob, Bash, Skill
 ---
 
@@ -34,30 +35,16 @@ When activated in implementation mode, combine your plugin architecture expertis
 4. Ensure required fields: `name`, `description`, `version`, `author`
 5. Validate plugin directory structure follows the standard template
 6. Implement ONLY the missing requirements provided
-7. After implementing, proceed to the Self-Verification Gate below
+7. Activate skill `implementation-self-check` and follow its shared four-gate protocol using the agent-specific checks below.
 
-### Self-Verification Gate
+### Agent-Specific Verification Checks
 
-After implementing, you MUST pass all four gates before emitting the completion promise.
+When the `implementation-self-check` skill reaches Gates 3 and 4, apply these checks:
 
-**Gate 1: Re-read Modified Files** — For every file you created or modified, use Read to re-read it in full. Verify correctness.
+- **Gate 3: Integration Check** — Verify `plugin.json` is valid JSON. Verify agent, skill, and command files referenced by the manifest exist.
+- **Gate 4: Static Analysis** — Run `python3 -m json.tool plugin.json` to validate JSON syntax.
 
-**Gate 2: Requirement Verification** — For each item in the NOT_IMPLEMENTED list, locate specific `file:line` evidence:
-```
-VERIFICATION:
-- "requirement description" → PASS (plugin.json:3 - version bumped to 1.2.0)
-- "another requirement" → FAIL (not found)
-```
-If any requirement has FAIL status, go back and implement it.
-
-**Gate 3: Integration Check** — Verify plugin.json is valid JSON. Verify agent/skill/command files referenced exist.
-
-**Gate 4: Static Analysis** — Run `python3 -m json.tool plugin.json` to validate JSON syntax.
-
-### Return Format
-
-**Success:** Output `IMPLEMENTATION_VERIFIED:` with file changes, then `<promise>IMPLEMENTATION_VERIFIED</promise>`
-**Blocked:** Output `BLOCKED:` with details, then `<promise>IMPLEMENTATION_VERIFIED</promise>`
+Use the skill's standard `IMPLEMENTATION_VERIFIED` / `BLOCKED` return format.
 
 ---
 

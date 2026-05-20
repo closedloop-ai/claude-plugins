@@ -211,7 +211,9 @@ Here are the key phases you must complete:
 Discover all available specialist agents that could handle implementation tasks. Run this Bash command and store the output in working memory as `available_agents`:
 
 ```bash
-echo "=== Repo-level agents ===" && for f in .claude/agents/*.md; do name=$(head -10 "$f" 2>/dev/null | grep '^name:' | head -1 | sed 's/^name: *//'); desc=$(head -10 "$f" 2>/dev/null | grep '^description:' | head -1 | sed 's/^description: *//'); tools=$(head -10 "$f" 2>/dev/null | grep '^tools:' | head -1 | sed 's/^tools: *//'); [ -n "$name" ] && echo "  @$name | $desc | tools: $tools"; done 2>/dev/null; echo "=== Plugin agents ===" && echo "  @code:implementation-subagent | Generalist implementation agent (fallback)"
+python3 "${CLAUDE_PLUGIN_ROOT}/tools/python/discover_available_agents.py" \
+  --workspace "$PWD" \
+  --plugin-root "$CLAUDE_PLUGIN_ROOT"
 ```
 
 This produces a list like:
@@ -221,8 +223,12 @@ This produces a list like:
   @python-script-reviewer | Reviews Python scripts... | tools: Read, Write, Edit, Grep, Glob, Bash, Skill
   ...
 === Plugin agents ===
-  @code:implementation-subagent | Generalist implementation agent (fallback)
+  @bootstrap:agent-prompt-generator | Generates bootstrap agent prompts... | tools: inherited
+  @code:implementation-subagent | Implements missing requirements for a task from the implementation plan. | tools: Read, Write, Edit, Glob, Grep, Bash
+  ...
 ```
+
+The discovery script scans repo agents from `.claude/agents/`, local plugin agents from `plugins/*/agents/` when working in this monorepo, and installed plugin agents from `~/.claude/plugins/cache/`.
 
 **Agent selection (per-task, LLM-decided):**
 
@@ -231,7 +237,7 @@ For each task, after verification identifies NOT_IMPLEMENTED requirements, choos
 1. Consider the task description, the `files:` list, and the `missing:` requirements from verification output
 2. Review `available_agents` in working memory — pick the agent whose description is the **best domain match** for this task
 3. An agent is eligible for implementation only if its tools include **Write or Edit** (read-only agents cannot implement)
-4. If no specialist is a clear match, use `@code:implementation-subagent` (the generalist fallback)
+4. If no specialist is a clear match, use the broadest write-capable agent from `available_agents`; if `@code:implementation-subagent` is present, prefer it as the generalist fallback
 5. Prefer specificity: a domain specialist that fits the task well will outperform the generalist
 
 - For each task in `pending_tasks`:
