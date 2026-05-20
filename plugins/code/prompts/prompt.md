@@ -205,16 +205,46 @@ Here are the key phases you must complete:
 
 - Activate `code:plan-validate` skill (runs Python script against $CLOSEDLOOP_WORKDIR) — semantic check is unnecessary here since the plan hasn't changed since Phase 2.7
 - If `pending_tasks` is empty, all tasks are done → proceed to Phase 4
+
+**Dynamic agent discovery (once at phase start):**
+
+Discover all available specialist agents that could handle implementation tasks. Run this Bash command and store the output in working memory as `available_agents`:
+
+```bash
+echo "=== Repo-level agents ===" && for f in .claude/agents/*.md; do name=$(head -10 "$f" 2>/dev/null | grep '^name:' | head -1 | sed 's/^name: *//'); desc=$(head -10 "$f" 2>/dev/null | grep '^description:' | head -1 | sed 's/^description: *//'); tools=$(head -10 "$f" 2>/dev/null | grep '^tools:' | head -1 | sed 's/^tools: *//'); [ -n "$name" ] && echo "  @$name | $desc | tools: $tools"; done 2>/dev/null; echo "=== Plugin agents ===" && echo "  @code:implementation-subagent | Generalist implementation agent (fallback)"
+```
+
+This produces a list like:
+```
+=== Repo-level agents ===
+  @agent-definition-expert | Reviews Claude Code agents... | tools: Read, Write, Edit, Grep, Glob, Bash, Skill
+  @python-script-reviewer | Reviews Python scripts... | tools: Read, Write, Edit, Grep, Glob, Bash, Skill
+  ...
+=== Plugin agents ===
+  @code:implementation-subagent | Generalist implementation agent (fallback)
+```
+
+**Agent selection (per-task, LLM-decided):**
+
+For each task, after verification identifies NOT_IMPLEMENTED requirements, choose the best agent:
+
+1. Consider the task description, the `files:` list, and the `missing:` requirements from verification output
+2. Review `available_agents` in working memory — pick the agent whose description is the **best domain match** for this task
+3. An agent is eligible for implementation only if its tools include **Write or Edit** (read-only agents cannot implement)
+4. If no specialist is a clear match, use `@code:implementation-subagent` (the generalist fallback)
+5. Prefer specificity: a domain specialist that fits the task well will outperform the generalist
+
 - For each task in `pending_tasks`:
   1. **Update state.json** with task-level tracking (see State Tracking section above)
   2. Launch @code:verification-subagent with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. Verify task T-X.Y: {task description}"
   3. Process based on result:
      - **VERIFIED**: Proceed to step 4
-     - **NOT_IMPLEMENTED**: Parse the `missing:` and `files:` sections from the verification output. Launch @code:implementation-subagent with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. Implement task T-X.Y: {task description}. Missing requirements: {missing list}. Relevant source files already identified: {files list}"
-       - After implementation-subagent returns, check its output:
+     - **NOT_IMPLEMENTED**: Parse the `missing:` and `files:` sections from the verification output. Select the best implementation agent using the **agent selection** logic above. Launch the selected agent with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. Implement task T-X.Y: {task description}. Missing requirements: {missing list}. Relevant source files already identified: {files list}"
+       - Log: "Selected agent: {agent name} for task T-X.Y (reason: {brief rationale})"
+       - After implementation agent returns, check its output:
          - If output contains `IMPLEMENTATION_VERIFIED` or `BLOCKED`: proceed to step 4
-         - If output does NOT contain either (max iterations exhausted): log warning "implementation-subagent did not verify T-X.Y", do NOT mark `[x]`, continue to next task
-  4. After task is verified/implemented (and implementation-subagent output passed the check above), launch a **haiku subagent** (description: `"plan-editor"`) to mark `- [x]` in the plan. Prompt: "In $CLOSEDLOOP_WORKDIR/plan.json, update the content field to change task T-X.Y from '- [ ]' to '- [x]', and move the task from pendingTasks to completedTasks array. Then write the updated `content` field value to $CLOSEDLOOP_WORKDIR/plan.md"
+         - If output does NOT contain either (max iterations exhausted): log warning "implementation agent did not verify T-X.Y", do NOT mark `[x]`, continue to next task
+  4. After task is verified/implemented (and implementation agent output passed the check above), launch a **haiku subagent** (description: `"plan-editor"`) to mark `- [x]` in the plan. Prompt: "In $CLOSEDLOOP_WORKDIR/plan.json, update the content field to change task T-X.Y from '- [ ]' to '- [x]', and move the task from pendingTasks to completedTasks array. Then write the updated `content` field value to $CLOSEDLOOP_WORKDIR/plan.md"
 - Do NOT fix errors outside the implementation loop — the subagent self-verifies (up to 4 attempts). Let Phase 5 catch remaining issues.
 - **Optional:** For complex tasks, use `code:iterative-retrieval` skill when launching implementation/verification subagents to refine incomplete responses.
 - After processing all tasks, re-activate `code:plan-validate` skill to confirm no `pending_tasks` remain
@@ -270,8 +300,8 @@ If `decisionTablePath` is `""` (Phase 2.7 generation failed or pointer not writt
    - If `MISALIGNED` (first line of output is `MISALIGNED`):
      - Extract the `<drift_rows>...</drift_rows>` JSON block from the verifier output. Parse the JSON array. **If the block is missing, the JSON is malformed, or any row has an unknown `kind` value not in `{code_drift, test_drift, plan_ambiguity}`, treat as a verifier parse failure**: set `dt_last_failure_reason = "unparseable"`, increment `dt_parse_failures` by 1, log a warning, do NOT route any drift rows, and immediately loop back to step 1. Do NOT increment `dt_attempt` here -- Step 1 owns all increments.
      - If the block is parseable, set `dt_last_failure_reason = "drift"`. For each JSON object in the `drift_rows` array, increment `dt_drift_kind_counts[kind]` by 1 and `dt_fixes_attempted` by 1, then route by the `kind` field:
-       - `code_drift`: launch @code:implementation-subagent with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. Implement missing behavioral requirement. Area: {row.area}. Missing: {row.description}. Source file hint: {row.source_file}."
-       - `test_drift`: launch @test-engineer with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. Write tests for missing scenario. Area: {row.area}. Missing test scenario: {row.description}. Source file hint: {row.source_file}. Write the test in the appropriate test file for this area." If `row.source_file` points to a non-test file (indicating production code changes are also needed), also launch @code:implementation-subagent with the production-code requirement.
+       - `code_drift`: Using `available_agents` from Phase 3 working memory (re-run discovery if not present), select the best agent for `row.source_file` and `row.area` using the same **agent selection** logic from Phase 3. Launch the selected agent with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. Implement missing behavioral requirement. Area: {row.area}. Missing: {row.description}. Source file hint: {row.source_file}."
+       - `test_drift`: launch @test-engineer with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. Write tests for missing scenario. Area: {row.area}. Missing test scenario: {row.description}. Source file hint: {row.source_file}. Write the test in the appropriate test file for this area." If `row.source_file` points to a non-test file (indicating production code changes are also needed), select the best agent from `available_agents` for the production-code file and launch it with the production-code requirement.
        - `plan_ambiguity`: set `dt_any_clarifications = true`. Launch a haiku subagent (description: `"plan-editor"`) to append a `Plan Clarifications` note to the decision-table artifact at "$CLOSEDLOOP_WORKDIR/$decisionTablePath" for the following ambiguity: {row.description}. Area: {row.area}. The haiku must NOT modify the `Current Code` or `Intended Change` sections — append only. Quote all paths in shell commands.
      - After all row handlers complete, loop back to step 1.
 
