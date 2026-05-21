@@ -9,76 +9,21 @@ corresponding Codex-side artifact. Naming conventions:
 
 No exemptions: any missing destination fails the test.
 Reverse coverage (orphan Codex artifacts) is intentionally out of scope.
+
+Discovery helpers and the Plugin enum live in `helpers.py` so the semantic
+coverage suite shares them.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import StrEnum
-from pathlib import Path
-
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-class Plugin(StrEnum):
-    BOOTSTRAP = "bootstrap"
-    CODE = "code"
-    CODE_REVIEW = "code-review"
-    JUDGES = "judges"
-    PLATFORM = "platform"
-    SELF_LEARNING = "self-learning"
-
-
-@dataclass(frozen=True)
-class ClaudeArtifacts:
-    agents: frozenset[str]
-    skills: frozenset[str]
-    commands: frozenset[str]
-
-
-@dataclass(frozen=True)
-class CodexArtifacts:
-    agents: frozenset[str]
-    skills: frozenset[str]
-
-
-def _stems(directory: Path, suffix: str) -> frozenset[str]:
-    if not directory.is_dir():
-        return frozenset()
-    return frozenset(p.stem for p in directory.glob(f"*{suffix}"))
-
-
-def _subdir_names(directory: Path) -> frozenset[str]:
-    if not directory.is_dir():
-        return frozenset()
-    return frozenset(p.name for p in directory.iterdir() if p.is_dir())
-
-
-def claude_artifacts(plugin: Plugin) -> ClaudeArtifacts:
-    root = REPO_ROOT / "plugins" / plugin.value
-    return ClaudeArtifacts(
-        agents=_stems(root / "agents", ".md"),
-        skills=_subdir_names(root / "skills"),
-        commands=_stems(root / "commands", ".md"),
-    )
-
-
-def codex_artifacts(plugin: Plugin) -> CodexArtifacts:
-    root = REPO_ROOT / "codex" / plugin.value
-    return CodexArtifacts(
-        agents=_stems(root / ".codex" / "agents", ".toml"),
-        skills=_subdir_names(root / ".agents" / "skills"),
-    )
-
-
-def expected_codex_skill_names(claude: ClaudeArtifacts) -> frozenset[str]:
-    """Skills + commands both land in Codex's skills/ tree.
-
-    Commands are prefixed with `cmd-` to disambiguate from native skills.
-    """
-    return claude.skills | frozenset(f"cmd-{c}" for c in claude.commands)
+from helpers import (
+    Plugin,
+    claude_artifacts,
+    codex_artifacts,
+    expected_codex_skill_names,
+)
 
 
 @pytest.mark.parametrize("plugin", list(Plugin), ids=lambda p: p.value)
