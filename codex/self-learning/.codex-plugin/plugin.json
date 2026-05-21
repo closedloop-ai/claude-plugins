@@ -1,0 +1,6 @@
+{
+  "name": "self-learning",
+  "version": "1.0.0",
+  "description": "Self-learning plugin",
+  "skills": "./.agents/skills/"
+}

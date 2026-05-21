@@ -1,0 +1,6 @@
+{
+  "name": "code",
+  "version": "1.0.0",
+  "description": "Code and planning framework plugin",
+  "skills": "./.agents/skills/"
+}

@@ -1,7 +1,8 @@
 ---
-description: Plan Amend - Discuss and apply amendments to a plan.json implementation plan
+description: 'Command: amend-plan (imported from Claude Code)'
 argument-hint: '--workdir [path] --message "<text>" [--state-file [path]]'
-skills: code:plan-editing-conventions, code:extract-plan-md
+skills: 'code:plan-editing-conventions, code:extract-plan-md'
+name: cmd-amend-plan
 ---
 
 # Experimental Plan Amend Command

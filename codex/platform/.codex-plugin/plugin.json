@@ -1,0 +1,6 @@
+{
+  "name": "platform",
+  "version": "1.0.0",
+  "description": "ClosedLoop Platform plugin",
+  "skills": "./.agents/skills/"
+}

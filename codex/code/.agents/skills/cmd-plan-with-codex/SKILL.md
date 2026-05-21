@@ -1,10 +1,11 @@
 ---
-description: "Iterative plan refinement debate between Claude and Codex"
-argument-hint: "--max-rounds N --plan-file PATH --codex-model MODEL <prompt>"
-allowed-tools: Bash, Read, Write, Glob, Grep, TodoWrite, Task, AskUserQuestion, SendMessage
-skills: code:codex-review
+description: 'Command: plan-with-codex (imported from Claude Code)'
+argument-hint: '--max-rounds N --plan-file PATH --codex-model MODEL <prompt>'
+allowed-tools: 'Bash, Read, Write, Glob, Grep, TodoWrite, Task, AskUserQuestion, SendMessage'
+skills: 'code:codex-review'
 effort: max
 model: opus
+name: cmd-plan-with-codex
 ---
 
 # Debate Loop -- Claude + Codex Plan Refinement

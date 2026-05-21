@@ -1,7 +1,10 @@
 ---
-description: "Begin coding session"
-argument-hint: "[working-directory] [--prompt <name>] [--prd <requirements-file>] [--plan <plan-file>]"
-allowed-tools: Bash, Edit, Write, Task, TodoWrite, SendMessage
+description: 'Command: code (imported from Claude Code)'
+argument-hint: >-
+  [working-directory] [--prompt <name>] [--prd <requirements-file>] [--plan
+  <plan-file>]
+allowed-tools: 'Bash, Edit, Write, Task, TodoWrite, SendMessage'
+name: cmd-code
 ---
 
 # Bootstrap ClosedLoop

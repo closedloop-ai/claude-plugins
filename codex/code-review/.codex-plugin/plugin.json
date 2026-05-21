@@ -1,0 +1,6 @@
+{
+  "name": "code-review",
+  "version": "1.0.0",
+  "description": "Code review plugin",
+  "skills": "./.agents/skills/"
+}

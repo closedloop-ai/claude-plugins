@@ -1,0 +1,6 @@
+{
+  "name": "judges",
+  "version": "1.0.0",
+  "description": "LLM Judges plugin",
+  "skills": "./.agents/skills/"
+}

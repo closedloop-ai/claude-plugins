@@ -1,7 +1,8 @@
 ---
-description: Process pending learnings from a ClosedLoop run into org-patterns.toon
-argument-hint: "[working-directory]"
-skills: self-learning:toon-format
+description: 'Command: process-learnings (imported from Claude Code)'
+argument-hint: '[working-directory]'
+skills: 'self-learning:toon-format'
+name: cmd-process-learnings
 ---
 
 # Process Learnings Command
