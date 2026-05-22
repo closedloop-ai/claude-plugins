@@ -89,6 +89,13 @@ All commits MUST follow the conventions in `CONTRIBUTING.md`. Specifically:
 
 ### Code Quality
 - **[mistake]**: When modifying behavior, audit adjacent comments and docstrings for accuracy — remove or update references to non-existent files, incomplete field lists, or scope descriptions narrower than actual behavior. (context: comments|docstrings|accuracy)
+- **[mistake]**: Before adding helper logic, grep for adjacent helpers with the same responsibility and delegate instead of duplicating membership checks or fixture factories. (context: duplication|helpers|tests|shell)
+
+### Orchestration & State
+- **[mistake]**: When changing run-loop or self-learning resume/rate-limit logic, preserve persisted state contracts: iteration rows, session IDs, success counts, and terminal statuses. (context: run-loop|resume|state|rate-limit)
+
+### Correctness & Data Invariants
+- **[mistake]**: Guard boundary data before narrowing filters or status checks; failed reads, malformed entries, and defaulted fields can invert success/failure handling. (context: invariants|filters|error-handling)
 
 ### Documentation & Versioning
-- **[mistake]**: Never reference code, APIs, or schema fields that don't exist in the codebase or documented spec. Before writing CHANGELOG "Fixed" or "Replaces" entries, verify the prior implementation exists via grep. Before adding manifest fields, verify they're in the documented schema. (context: changelog|hallucination|verification)
+- **[mistake]**: Never hand-write CHANGELOG entries for plugin changes; when reviewing generated release notes, verify the version heading matches `plugin.json` and every `Fixed`/`Replaces` claim maps to behavior that existed before the PR. (context: changelog|versioning|hallucination|verification)
