@@ -48,6 +48,63 @@ Useful flags:
 
 Interactive mode (TUI wizard): run `acplugin` with no args.
 
+## Installing the Codex Marketplace
+
+The converted plugins can be installed through a Codex marketplace. A
+marketplace is a Git repository, local directory, or `marketplace.json` URL that
+indexes one or more Codex plugins.
+
+To install all plugins from a published marketplace repository:
+
+```bash
+npx codex-marketplace add closedloop-ai/claude-plugins --plugins
+```
+
+Choose the install scope explicitly when you do not want the interactive prompt:
+
+```bash
+# Install for the current project only.
+npx codex-marketplace add closedloop-ai/claude-plugins --plugins --project
+
+# Install for the current user.
+npx codex-marketplace add closedloop-ai/claude-plugins --plugins --global
+```
+
+To install from a local checkout while testing marketplace changes:
+
+```bash
+npx codex-marketplace add ./codex --plugins --project
+```
+
+The marketplace registry for this conversion lives at
+`codex/.agents/plugins/marketplace.json`. Keep each marketplace entry's
+`source.path` aligned with the directory layout you publish. If the published
+repo keeps converted plugins directly under `codex/<plugin>`, point entries at
+`./<plugin>` from the marketplace root. If it keeps them under
+`plugins/<plugin>`, point entries at `./plugins/<plugin>`.
+
+## Installing Individual Plugins
+
+Use the singular `--plugin` flag when installing one plugin directly instead of
+the whole marketplace:
+
+```bash
+npx codex-marketplace add closedloop-ai/claude-plugins/codex/code --plugin
+npx codex-marketplace add closedloop-ai/claude-plugins/codex/code-review --plugin
+npx codex-marketplace add closedloop-ai/claude-plugins/codex/platform --plugin
+```
+
+Local plugin installs use the same shape:
+
+```bash
+npx codex-marketplace add ./codex/code --plugin --project
+npx codex-marketplace add ./codex/code-review --plugin --project
+```
+
+Use `--plugins` only when the target contains a marketplace or plugin
+collection. Use `--plugin` when the target directory is the plugin itself and
+contains `.codex-plugin/plugin.json`.
+
 ## Mapping Rules
 
 The conversion is deterministic. Every Claude artifact lands at a predictable
