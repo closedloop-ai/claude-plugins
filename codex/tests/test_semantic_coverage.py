@@ -47,7 +47,9 @@ def _all_codex_agent_paths() -> list[Path]:
         path
         for plugin in Plugin
         for path in sorted(
-            (REPO_ROOT / "codex" / plugin.value / ".codex" / "agents").glob("*.toml")
+            (REPO_ROOT / "codex" / "plugins" / plugin.value / ".codex" / "agents").glob(
+                "*.toml"
+            )
         )
     ]
 
@@ -55,7 +57,7 @@ def _all_codex_agent_paths() -> list[Path]:
 def _all_codex_skill_paths() -> list[Path]:
     out: list[Path] = []
     for plugin in Plugin:
-        skills_dir = REPO_ROOT / "codex" / plugin.value / ".agents" / "skills"
+        skills_dir = REPO_ROOT / "codex" / "plugins" / plugin.value / ".agents" / "skills"
         if not skills_dir.is_dir():
             continue
         for skill_dir in sorted(skills_dir.iterdir()):
@@ -67,7 +69,7 @@ def _all_codex_skill_paths() -> list[Path]:
 
 def _all_codex_manifest_paths() -> list[Path]:
     return [
-        REPO_ROOT / "codex" / plugin.value / ".codex-plugin" / "plugin.json"
+        REPO_ROOT / "codex" / "plugins" / plugin.value / ".codex-plugin" / "plugin.json"
         for plugin in Plugin
     ]
 

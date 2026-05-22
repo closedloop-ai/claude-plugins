@@ -8,7 +8,7 @@
       "name": "bootstrap",
       "source": {
         "source": "local",
-        "path": "./bootstrap"
+        "path": "./plugins/bootstrap"
       },
       "policy": {
         "installation": "AVAILABLE",
@@ -19,7 +19,7 @@
       "name": "code",
       "source": {
         "source": "local",
-        "path": "./code"
+        "path": "./plugins/code"
       },
       "policy": {
         "installation": "AVAILABLE",
@@ -30,7 +30,7 @@
       "name": "code-review",
       "source": {
         "source": "local",
-        "path": "./code-review"
+        "path": "./plugins/code-review"
       },
       "policy": {
         "installation": "AVAILABLE",
@@ -41,7 +41,7 @@
       "name": "judges",
       "source": {
         "source": "local",
-        "path": "./judges"
+        "path": "./plugins/judges"
       },
       "policy": {
         "installation": "AVAILABLE",
@@ -52,7 +52,7 @@
       "name": "platform",
       "source": {
         "source": "local",
-        "path": "./platform"
+        "path": "./plugins/platform"
       },
       "policy": {
         "installation": "AVAILABLE",
@@ -63,7 +63,7 @@
       "name": "self-learning",
       "source": {
         "source": "local",
-        "path": "./self-learning"
+        "path": "./plugins/self-learning"
       },
       "policy": {
         "installation": "AVAILABLE",

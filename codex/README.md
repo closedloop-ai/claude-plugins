@@ -13,7 +13,7 @@ Do not hand-edit files in `codex/` — they will be overwritten on the next run.
 | Side | Format | Location |
 |---|---|---|
 | Claude Code | Markdown + YAML frontmatter | `plugins/<plugin>/` |
-| Codex CLI | TOML agents + Markdown skills | `codex/<plugin>/` |
+| Codex CLI | TOML agents + Markdown skills | `codex/plugins/<plugin>/` |
 
 ## Conversion Tool
 
@@ -32,9 +32,9 @@ npx @disdjj/acplugin convert . --to codex
 From the repo root:
 
 ```bash
-# All plugins, no prompts, output into codex/
+# All plugins, no prompts, output into codex/plugins/
 for p in bootstrap code code-review judges platform self-learning; do
-  npx @disdjj/acplugin convert "plugins/$p" --to codex -o "codex/$p"
+  npx @disdjj/acplugin convert "plugins/$p" --to codex -o "codex/plugins/$p"
 done
 ```
 
@@ -50,31 +50,31 @@ Interactive mode (TUI wizard): run `acplugin` with no args.
 
 ## Installing the Codex Marketplace
 
-The converted plugins can be installed through a Codex marketplace. The current
-`codex-marketplace` CLI expects GitHub repository identifiers, not local
-filesystem paths.
+The converted plugins can be installed through a Codex marketplace. The
+`codex-marketplace` CLI installs from GitHub repository identifiers or GitHub
+tree URLs; it does not install from local filesystem paths like `./codex`.
 
 To install all plugins from this repo's Codex marketplace:
 
 ```bash
-npx codex-marketplace add closedloop-ai/claude-plugins/codex --plugins
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex --plugins
 ```
 
 Choose the install scope explicitly when you do not want the interactive prompt:
 
 ```bash
 # Install for the current project only.
-npx codex-marketplace add closedloop-ai/claude-plugins/codex --plugins --project
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex --plugins --project
 
 # Install for the current user.
-npx codex-marketplace add closedloop-ai/claude-plugins/codex --plugins --global
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex --plugins --global
 ```
 
 The marketplace registry for this conversion lives at
 `codex/.agents/plugins/marketplace.json`. Keep each marketplace entry's
 `source.path` aligned with the directory layout you publish. This repo keeps
-converted plugins directly under `codex/<plugin>`, so entries point at
-`./<plugin>` from the marketplace root.
+converted plugins under `codex/plugins/<plugin>`, so entries point at
+`./plugins/<plugin>` from the marketplace root.
 
 ## Installing Individual Plugins
 
@@ -82,16 +82,16 @@ Use the singular `--plugin` flag when installing one plugin directly instead of
 the whole marketplace:
 
 ```bash
-npx codex-marketplace add closedloop-ai/claude-plugins/codex/code --plugin
-npx codex-marketplace add closedloop-ai/claude-plugins/codex/code-review --plugin
-npx codex-marketplace add closedloop-ai/claude-plugins/codex/platform --plugin
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex/plugins/code --plugin
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex/plugins/code-review --plugin
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex/plugins/platform --plugin
 ```
 
 Scoped individual installs use the same shape:
 
 ```bash
-npx codex-marketplace add closedloop-ai/claude-plugins/codex/code --plugin --project
-npx codex-marketplace add closedloop-ai/claude-plugins/codex/code-review --plugin --project
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex/plugins/code --plugin --project
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex/plugins/code-review --plugin --project
 ```
 
 Use `--plugins` only when the target contains a marketplace or plugin
@@ -106,12 +106,12 @@ are also enforced by `codex/tests/test_conversion_coverage.py`.
 
 | Claude source | Codex destination | Notes |
 |---|---|---|
-| `plugins/<p>/agents/<name>.md` | `codex/<p>/.codex/agents/<name>.toml` | YAML frontmatter → TOML keys; body → `developer_instructions` |
-| `plugins/<p>/skills/<name>/SKILL.md` | `codex/<p>/.agents/skills/<name>/SKILL.md` | Aux files under `references/`, `scripts/`, `assets/` keep their relative paths |
-| `plugins/<p>/commands/<name>.md` | `codex/<p>/.agents/skills/cmd-<name>/SKILL.md` | Commands become skills with a mandatory `cmd-` prefix |
-| `plugins/<p>/.claude-plugin/plugin.json` | `codex/<p>/.codex-plugin/plugin.json` | Manifest is rewritten for Codex's plugin loader |
-| Instructions + hooks | `codex/<p>/AGENTS.md` | Hooks are appended under a `# Hooks (from Claude Code)` section |
-| MCP server config | `codex/<p>/.codex/config.toml` | Merged from `plugins/<p>/.mcp.json` |
+| `plugins/<p>/agents/<name>.md` | `codex/plugins/<p>/.codex/agents/<name>.toml` | YAML frontmatter → TOML keys; body → `developer_instructions` |
+| `plugins/<p>/skills/<name>/SKILL.md` | `codex/plugins/<p>/.agents/skills/<name>/SKILL.md` | Aux files under `references/`, `scripts/`, `assets/` keep their relative paths |
+| `plugins/<p>/commands/<name>.md` | `codex/plugins/<p>/.agents/skills/cmd-<name>/SKILL.md` | Commands become skills with a mandatory `cmd-` prefix |
+| `plugins/<p>/.claude-plugin/plugin.json` | `codex/plugins/<p>/.codex-plugin/plugin.json` | Manifest is rewritten for Codex's plugin loader |
+| Instructions + hooks | `codex/plugins/<p>/AGENTS.md` | Hooks are appended under a `# Hooks (from Claude Code)` section |
+| MCP server config | `codex/plugins/<p>/.codex/config.toml` | Merged from `plugins/<p>/.mcp.json` |
 
 ### Agent frontmatter translation
 
@@ -151,14 +151,15 @@ codex/
 ├── README.md                          ← you are here
 ├── tests/
 │   └── test_conversion_coverage.py    ← CI-enforced structural checks
-├── <plugin>/
-│   ├── .codex-plugin/plugin.json      ← Codex plugin manifest
-│   ├── .codex/
-│   │   ├── agents/*.toml              ← converted agents
-│   │   └── config.toml                ← MCP servers (when applicable)
-│   ├── .agents/
-│   │   └── skills/<name>/SKILL.md     ← skills + cmd-* (converted commands)
-│   └── AGENTS.md                      ← instructions + hooks
+├── plugins/
+│   └── <plugin>/
+│       ├── .codex-plugin/plugin.json  ← Codex plugin manifest
+│       ├── .codex/
+│       │   ├── agents/*.toml          ← converted agents
+│       │   └── config.toml            ← MCP servers (when applicable)
+│       ├── .agents/
+│       │   └── skills/<name>/SKILL.md ← skills + cmd-* (converted commands)
+│       └── AGENTS.md                  ← instructions + hooks
 └── .agents/plugins/marketplace.json   ← cross-plugin registry
 ```
 

@@ -79,7 +79,7 @@ def claude_artifacts(plugin: Plugin) -> ClaudeArtifacts:
 
 
 def codex_artifacts(plugin: Plugin) -> CodexArtifacts:
-    root = REPO_ROOT / "codex" / plugin.value
+    root = REPO_ROOT / "codex" / "plugins" / plugin.value
     return CodexArtifacts(
         agents=_stems(root / ".codex" / "agents", ".toml"),
         skills=_subdir_names(root / ".agents" / "skills"),
@@ -105,7 +105,7 @@ def codex_skill_universe() -> frozenset[str]:
     """
     universe: set[str] = set()
     for plugin in Plugin:
-        skills_dir = REPO_ROOT / "codex" / plugin.value / ".agents" / "skills"
+        skills_dir = REPO_ROOT / "codex" / "plugins" / plugin.value / ".agents" / "skills"
         if not skills_dir.is_dir():
             continue
         for d in skills_dir.iterdir():
@@ -169,7 +169,15 @@ def _claude_agent_path(plugin: Plugin, name: str) -> Path:
 
 
 def _codex_agent_path(plugin: Plugin, name: str) -> Path:
-    return REPO_ROOT / "codex" / plugin.value / ".codex" / "agents" / f"{name}.toml"
+    return (
+        REPO_ROOT
+        / "codex"
+        / "plugins"
+        / plugin.value
+        / ".codex"
+        / "agents"
+        / f"{name}.toml"
+    )
 
 
 def _claude_skill_path(plugin: Plugin, name: str) -> Path:
@@ -177,7 +185,16 @@ def _claude_skill_path(plugin: Plugin, name: str) -> Path:
 
 
 def _codex_skill_path(plugin: Plugin, name: str) -> Path:
-    return REPO_ROOT / "codex" / plugin.value / ".agents" / "skills" / name / "SKILL.md"
+    return (
+        REPO_ROOT
+        / "codex"
+        / "plugins"
+        / plugin.value
+        / ".agents"
+        / "skills"
+        / name
+        / "SKILL.md"
+    )
 
 
 def _claude_command_path(plugin: Plugin, name: str) -> Path:
