@@ -53,28 +53,37 @@ Interactive mode (TUI wizard): run `acplugin` with no args.
 The converted plugins can be installed through a Codex marketplace. The
 `codex-marketplace` CLI installs from GitHub repository identifiers or GitHub
 tree URLs; it does not install from local filesystem paths like `./codex`.
+For this repository, the installable Codex marketplace is published from the
+`codex/` subtree to the `codex-marketplace` branch, where the marketplace root
+contains the required top-level `plugins/` directory.
 
 To install all plugins from this repo's Codex marketplace:
 
 ```bash
-npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex --plugins
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/codex-marketplace/plugins --plugins
 ```
 
 Choose the install scope explicitly when you do not want the interactive prompt:
 
 ```bash
 # Install for the current project only.
-npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex --plugins --project
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/codex-marketplace/plugins --plugins --project
 
 # Install for the current user.
-npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex --plugins --global
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/codex-marketplace/plugins --plugins --global
 ```
+
+Use `--global` when installing from this repository checkout itself. A
+project-scoped install writes plugin sources into `./plugins/<plugin>`, which
+would collide with this repo's Claude Code source plugins. Use `--project` from
+another project that wants to consume these Codex plugins.
 
 The marketplace registry for this conversion lives at
 `codex/.agents/plugins/marketplace.json`. Keep each marketplace entry's
 `source.path` aligned with the directory layout you publish. This repo keeps
 converted plugins under `codex/plugins/<plugin>`, so entries point at
-`./plugins/<plugin>` from the marketplace root.
+`./plugins/<plugin>` from the marketplace root on the `codex-marketplace`
+branch.
 
 ## Installing Individual Plugins
 
@@ -82,16 +91,16 @@ Use the singular `--plugin` flag when installing one plugin directly instead of
 the whole marketplace:
 
 ```bash
-npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex/plugins/code --plugin
-npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex/plugins/code-review --plugin
-npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex/plugins/platform --plugin
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/codex-marketplace/plugins/code --plugin
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/codex-marketplace/plugins/code-review --plugin
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/codex-marketplace/plugins/platform --plugin
 ```
 
 Scoped individual installs use the same shape:
 
 ```bash
-npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex/plugins/code --plugin --project
-npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/codex/plugins/code-review --plugin --project
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/codex-marketplace/plugins/code --plugin --project
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/codex-marketplace/plugins/code-review --plugin --project
 ```
 
 Use `--plugins` only when the target contains a marketplace or plugin
