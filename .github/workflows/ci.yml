@@ -99,4 +99,4 @@ jobs:
         with:
           python-version: "3.13"
       - run: uv sync --frozen --group dev
-      - run: uv run pytest plugins/ codex/
+      - run: uv run pytest plugins/ tests/

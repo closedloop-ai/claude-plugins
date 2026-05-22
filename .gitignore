@@ -11,6 +11,8 @@ __pycache__/
 .ruff_cache/
 .venv/
 .codex/
+!plugins/*/.codex/
+!plugins/*/.codex/**
 
 # Tests
 **/route-knowledge.json

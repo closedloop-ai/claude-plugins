@@ -71,6 +71,56 @@ claude /code:code --prd requirements.md
 claude /code-review:start
 ```
 
+## Codex Marketplace
+
+This repository uses a unified plugin layout: each root `plugins/<plugin>`
+directory contains the Claude Code source artifacts and the generated Codex
+plugin artifacts side by side.
+
+```text
+plugins/code/
+├── .claude-plugin/plugin.json   # Claude Code manifest
+├── .codex-plugin/plugin.json    # Codex manifest
+├── agents/ commands/ skills/    # Claude Code source of truth
+├── .codex/                      # Generated Codex agents/config
+├── .agents/                     # Generated Codex skills
+└── AGENTS.md                    # Generated Codex instructions
+```
+
+The Codex artifacts were generated from the Claude Code plugins with
+[`@disdjj/acplugin`](https://github.com/closedloop-ai/acplugin). To regenerate
+them, write the conversion output to a temporary directory first, then copy the
+Codex-only artifacts into each plugin directory:
+
+```bash
+for p in bootstrap code code-review judges platform self-learning; do
+  npx @disdjj/acplugin convert "plugins/$p" --to codex -o "/tmp/closedloop-codex/$p"
+  cp -R "/tmp/closedloop-codex/$p/.codex-plugin" "plugins/$p/"
+  cp -R "/tmp/closedloop-codex/$p/.agents" "plugins/$p/"
+  [ -d "/tmp/closedloop-codex/$p/.codex" ] && cp -R "/tmp/closedloop-codex/$p/.codex" "plugins/$p/"
+  [ -f "/tmp/closedloop-codex/$p/AGENTS.md" ] && cp "/tmp/closedloop-codex/$p/AGENTS.md" "plugins/$p/"
+done
+```
+
+`codex-marketplace` installs from GitHub tree URLs. Use slash-free branch names
+for developer validation because branch names containing `/` can be mis-parsed
+as part of the tree path.
+
+Install from the current developer branch:
+
+```bash
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/codex-marketplace-unified/plugins --plugins --project
+```
+
+Install from `main` after the implementation has been reviewed and merged:
+
+```bash
+npx codex-marketplace add https://github.com/closedloop-ai/claude-plugins/tree/main/plugins --plugins --project
+```
+
+Use `--global` instead of `--project` when installing into your user profile
+rather than a consuming project.
+
 <details>
 <summary><strong>Development setup</strong></summary>
 
