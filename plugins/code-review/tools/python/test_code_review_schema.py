@@ -26,109 +26,12 @@ from code_review_schema import (
     validate_finding,
     validate_result_envelope,
 )
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-def _minimal_diff_finding(**overrides) -> dict:
-    base = {
-        "schema_version": SCHEMA_VERSION,
-        "id": "bha_p0_f0",
-        "reviewer": "bha_p0",
-        "reviewer_trigger": {"type": "partition", "evidence": "p0"},
-        "source": "agent",
-        "emitted_at": "2026-01-01T00:00:00Z",
-        "finding_scope": "diff",
-        "file": "src/foo.py",
-        "line": 42,
-        "system_marker": None,
-        "category": "Correctness",
-        "severity": "HIGH",
-        "priority": 1,
-        "confidence": 0.9,
-        "issue": "Null pointer access",
-        "explanation": "Variable `x` may be None.",
-        "recommendation": "Add a None check before accessing `.bar`.",
-        "code_snippet": "x.bar",
-    }
-    base.update(overrides)
-    return base
-
-
-def _minimal_system_finding(**overrides) -> dict:
-    base = _minimal_diff_finding(
-        id="coverage-verifier_f0",
-        reviewer="coverage-verifier",
-        source="coverage-verifier",
-        reviewer_trigger={"type": "always", "evidence": None},
-        finding_scope="system",
-        file=None,
-        line=None,
-        system_marker="budget-exceeded",
-        category="Coverage",
-        severity="MEDIUM",
-        priority=2,
-        confidence=1.0,
-        code_snippet="",
-    )
-    base.update(overrides)
-    return base
-
-
-def _minimal_pr_metadata_finding(**overrides) -> dict:
-    base = _minimal_diff_finding(
-        id="injection-detector_f0",
-        reviewer="injection-detector",
-        source="injection-detector",
-        reviewer_trigger={"type": "always", "evidence": None},
-        finding_scope="pr_metadata",
-        file=None,
-        line=None,
-        system_marker="pr_description",
-        category="Security",
-        code_snippet="<redacted>",
-    )
-    base.update(overrides)
-    return base
-
-
-def _minimal_envelope(**overrides) -> dict:
-    base = {
-        "schema_version": SCHEMA_VERSION,
-        "review_id": "00000000-0000-4000-8000-000000000000",
-        "pr_number": None,
-        "head_sha": None,
-        "diff_tip": "abc1234",
-        "review_branch": "main",
-        "base_ref": "main",
-        "diff_scope": "main..HEAD",
-        "mode": "local",
-        "intent": "mixed",
-        "verified": [],
-        "justified": [],
-        "rejected": [],
-        "coverage_plan": {
-            "required": [],
-            "best_effort": [],
-            "deferred_for_budget": [],
-            "budget": {
-                "total_cap": 20,
-                "required_count": 0,
-                "best_effort_count": 0,
-                "bha_partitions": 1,
-            },
-        },
-        "coverage_gaps": [],
-        "verdict": "APPROVED",
-        "verdict_reason": "no findings",
-        "stats": {},
-        "telemetry": {},
-    }
-    base.update(overrides)
-    return base
+from conftest import (
+    minimal_diff_finding as _minimal_diff_finding,
+    minimal_envelope as _minimal_envelope,
+    minimal_pr_metadata_finding as _minimal_pr_metadata_finding,
+    minimal_system_finding as _minimal_system_finding,
+)
 
 
 # ---------------------------------------------------------------------------

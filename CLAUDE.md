@@ -56,7 +56,7 @@ Token-Oriented Object Notation — ~40% token reduction vs JSON, used for `org-p
 
 ### Python Tools
 
-Standalone scripts with no cross-tool imports within a plugin. Each lives in `plugins/<name>/tools/python/`. Tests are co-located (`test_*.py`).
+Tool scripts in `plugins/<name>/tools/python/` are standalone CLIs — they do not import each other. The one exception is a **shared schema/library module** that defines wire-format contracts (e.g. `plugins/code-review/tools/python/code_review_schema.py`): tool scripts within the same plugin may import canonical types, constants, and validators from such a module. The shared module itself must not call into any tool script. Tests are co-located (`test_*.py`); shared test factories belong in `conftest.py`.
 
 ## Conventions
 

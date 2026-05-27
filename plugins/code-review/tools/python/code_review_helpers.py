@@ -3270,6 +3270,7 @@ def cmd_classify_intent(args: argparse.Namespace) -> int:
 
 
 _AGENT_FILENAME_RE = re.compile(r"^agent_(.+)\.json$")
+_REVIEWER_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 
 def _reviewer_from_agent_path(path: Path) -> str:
@@ -3279,6 +3280,20 @@ def _reviewer_from_agent_path(path: Path) -> str:
     """
     match = _AGENT_FILENAME_RE.match(path.name)
     return match.group(1) if match else path.stem
+
+
+def _coerce_reviewer_id(raw: Any, fallback: str) -> str:
+    """Return a canonical reviewer id; fall back when ``raw`` is missing or malformed.
+
+    LLM-emitted findings can carry any string in the ``reviewer`` field
+    (e.g. ``"Bug Hunter A"``), which would fail ``make_finding_id``'s
+    ``^[a-z][a-z0-9_-]*$`` regex and bubble a ValueError up to the outer
+    handler — silently dropping every finding in the affected agent file.
+    Falling back to the filename-derived id preserves the findings.
+    """
+    if isinstance(raw, str) and _REVIEWER_ID_RE.match(raw):
+        return raw
+    return fallback
 
 
 def cmd_collect_findings(args: argparse.Namespace) -> int:
@@ -3305,23 +3320,37 @@ def cmd_collect_findings(args: argparse.Namespace) -> int:
             file_findings = data.get("findings", [])
             if not isinstance(file_findings, list):
                 raise ValueError(f"findings is not a list in {agent_file}")
-            reviewer = _reviewer_from_agent_path(agent_file)
-            for idx, raw in enumerate(file_findings):
-                if not isinstance(raw, dict):
-                    continue
-                # Use finding-stated reviewer when present; otherwise the file's.
-                emitted_reviewer = raw.get("reviewer") or reviewer
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(f"Warning: skipping malformed agent file {agent_file}: {exc}", file=sys.stderr)
+            continue
+
+        reviewer = _reviewer_from_agent_path(agent_file)
+        for idx, raw in enumerate(file_findings):
+            if not isinstance(raw, dict):
+                continue
+            # Coerce reviewer to a canonical id; fall back to the filename
+            # when the LLM emitted a non-canonical string like "Bug Hunter A".
+            # normalize_legacy_finding uses setdefault for reviewer, so we
+            # must overwrite the dict directly to ensure the canonical value
+            # propagates into make_finding_id.
+            raw_normalized = dict(raw)
+            raw_normalized["reviewer"] = _coerce_reviewer_id(raw.get("reviewer"), reviewer)
+            try:
                 promoted = normalize_legacy_finding(
-                    raw,
-                    reviewer=emitted_reviewer,
+                    raw_normalized,
+                    reviewer=raw_normalized["reviewer"],
                     source="agent",
                     index=idx,
                     emitted_at=now_iso,
                 )
-                findings.append(promoted)
-            agent_files.append(str(agent_file))
-        except (OSError, json.JSONDecodeError, ValueError) as exc:
-            print(f"Warning: skipping malformed agent file {agent_file}: {exc}", file=sys.stderr)
+            except (ValueError, TypeError) as exc:
+                print(
+                    f"Warning: skipping malformed finding {idx} in {agent_file}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
+            findings.append(promoted)
+        agent_files.append(str(agent_file))
 
     # Read hygiene.json if provided
     hygiene_included = False
@@ -3402,20 +3431,17 @@ def _compute_canonical_verdict(
         if gap.get("required", False) or str(gap.get("severity", "")) == "BLOCKING":
             return "CHANGES_REQUESTED", _short(f"coverage gap: {gap.get('issue', '')}")
 
-    # Rule 2: BLOCKING or Premise P0 → CHANGES_REQUESTED (Premise P0 preserved
-    # from legacy verdict behavior; plan 02 will refine the Premise precedence).
+    # Rule 2: BLOCKING (any scope) or Premise P0 → CHANGES_REQUESTED. Iterating
+    # `verified` checks every finding regardless of finding_scope, so this loop
+    # catches diff, system, and pr_metadata BLOCKINGs in one pass.
+    # Premise P0 precedence is preserved from legacy verdict behavior; plan 02
+    # will refine it.
     for finding in verified:
         sev = str(finding.get("severity", ""))
         if sev == "BLOCKING":
             return "CHANGES_REQUESTED", _short(str(finding.get("issue", "")))
         if str(finding.get("category", "")) == "Premise" and finding.get("priority") == 0:
             return "CHANGES_REQUESTED", _short(str(finding.get("issue", "")))
-
-    # System-scoped BLOCKING findings also fall under rule 2.
-    for finding in verified:
-        if (finding.get("finding_scope") or "diff") != "diff":
-            if str(finding.get("severity", "")) == "BLOCKING":
-                return "CHANGES_REQUESTED", _short(str(finding.get("issue", "")))
 
     # Rule 3: HIGH → NEEDS_ATTENTION
     for finding in verified:
