@@ -3817,7 +3817,11 @@ def _build_run_plan_stages(
             "args": ["--diff-data", f"{cr_dir}/diff_data.json"],
             "stdout": f"{cr_dir}/partitions.json",
             "expected_outputs": [f"{cr_dir}/partitions.json"],
-            "depends_on": ["stage_16_arbitrate_budget"],
+            # Actual data dependency is diff_data.json (stage_05_parse_diff).
+            # stage_16_arbitrate_budget is plan-05-gated and disabled in Phase
+            # A; depending on a disabled stage would make this foundation
+            # stage unreachable for any orchestrator that walks `depends_on`.
+            "depends_on": ["stage_05_parse_diff"],
             "on_failure": "abort",
             "enabled": True,
         },
@@ -4394,20 +4398,34 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
 
     # Promote findings to canonical schema (defensive — collect-findings
     # should already have done this, but legacy producers may bypass it).
+    # Mirror cmd_collect_findings: coerce non-canonical reviewer strings
+    # (e.g. "Bug Hunter A") so make_finding_id doesn't ValueError, and
+    # skip individually malformed findings rather than aborting the run.
     now_iso = datetime.now(timezone.utc).isoformat()
     canonical_findings: list[dict[str, Any]] = []
     for idx, raw in enumerate(validated):
         if not isinstance(raw, dict):
             continue
-        canonical_findings.append(
-            normalize_legacy_finding(
-                raw,
-                reviewer=raw.get("reviewer", "unknown"),
-                source=raw.get("source", "agent"),
-                index=idx,
-                emitted_at=raw.get("emitted_at") or now_iso,
-            ),
+        raw_normalized = dict(raw)
+        raw_normalized["reviewer"] = _coerce_reviewer_id(
+            raw.get("reviewer"), "unknown",
         )
+        try:
+            canonical_findings.append(
+                normalize_legacy_finding(
+                    raw_normalized,
+                    reviewer=raw_normalized["reviewer"],
+                    source=raw.get("source", "agent"),
+                    index=idx,
+                    emitted_at=raw.get("emitted_at") or now_iso,
+                ),
+            )
+        except (ValueError, TypeError) as exc:
+            print(
+                f"Warning: skipping malformed finding {idx} in validate_output: {exc}",
+                file=sys.stderr,
+            )
+            continue
 
     # Partition by index to avoid dict-equality membership tests; legacy
     # findings normalized in-place may not have stable ids yet.

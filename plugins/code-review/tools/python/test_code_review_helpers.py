@@ -5206,6 +5206,34 @@ class TestFinalizeResult:
         assert envelope["diff_scope"] == "main..HEAD"
         assert envelope["base_ref"] == "main"
 
+    def test_non_canonical_reviewer_string_does_not_crash(self, tmp_path: Path) -> None:
+        """A finding with a non-canonical reviewer string must not crash finalize.
+
+        Mirrors the cmd_collect_findings guard: if validate_output carries a
+        legacy finding with ``reviewer="Bug Hunter A"`` and no pre-assigned
+        ``id``, ``make_finding_id`` would raise ValueError. cmd_finalize_result
+        must coerce the reviewer + try/except so the rest of the envelope
+        still finalizes.
+        """
+        bad_finding = {
+            "severity": "HIGH",
+            "priority": 1,
+            "category": "Correctness",
+            "issue": "Race condition",
+            "reviewer": "Bug Hunter A",  # spaces + uppercase → non-canonical
+            "finding_scope": "diff",
+            "file": "src/app.ts",
+            "line": 10,
+            "code_snippet": "race()",
+            "confidence": 0.9,
+        }
+        result = self._run_finalize(tmp_path, [bad_finding])
+        # Coerced to fallback "unknown" reviewer; finding still lands.
+        assert result["verdict"] == "NEEDS_ATTENTION"
+        envelope = json.loads((tmp_path / "review_result.json").read_text())
+        assert len(envelope["verified"]) == 1
+        assert envelope["verified"][0]["reviewer"] == "unknown"
+
 
 class TestVerdictReadsEnvelope:
     """cmd_verdict prefers review_result.json when provided."""
@@ -5590,6 +5618,28 @@ class TestPrepareRun:
         # Sanity-check the dependency chain so it flips together with plan 05.
         for stage_id in ("stage_14_resolve_coverage", "stage_15_coverage_critic"):
             assert by_id[stage_id]["enabled"] is False, stage_id
+
+    def test_enabled_stages_do_not_depend_on_disabled_stages(
+        self, tmp_path: Path,
+    ) -> None:
+        """No enabled stage may declare a dependency on a disabled stage.
+
+        A dependency-aware orchestrator that walks `depends_on` would either
+        skip or block on an enabled stage whose sole prerequisite is disabled.
+        This guards against regressions like stage_17_partition (foundation,
+        always-on) pointing at stage_16_arbitrate_budget (plan-05-gated).
+        """
+        _, plan = self._run(tmp_path)
+        by_id = {s["id"]: s for s in plan["stages"]}
+        for stage in plan["stages"]:
+            if not stage.get("enabled"):
+                continue
+            for dep_id in stage.get("depends_on", []) or []:
+                dep = by_id.get(dep_id)
+                assert dep is not None, f"{stage['id']} depends on unknown {dep_id}"
+                assert dep.get("enabled") is True, (
+                    f"enabled stage {stage['id']} depends on disabled {dep_id}"
+                )
 
     def test_enabled_helper_stages_include_all_required_argparse_args(
         self, tmp_path: Path,
