@@ -3503,12 +3503,16 @@ def cmd_verdict(args: argparse.Namespace) -> int:
 
         validated: list[dict[str, Any]] = validate_output.get("validated", [])
         # Split coverage findings out (mirrors finalize-result's bucketing).
-        coverage_gaps = [
-            f for f in validated
+        # Partition by index so we avoid dict-equality membership tests —
+        # canonical finding ids would also work but legacy findings may lack
+        # them at this fallback path.
+        coverage_indices: set[int] = {
+            i for i, f in enumerate(validated)
             if str(f.get("category", "")) == "Coverage"
             and (f.get("finding_scope") or "diff") == "system"
-        ]
-        verified = [f for f in validated if f not in coverage_gaps]
+        }
+        coverage_gaps = [f for i, f in enumerate(validated) if i in coverage_indices]
+        verified = [f for i, f in enumerate(validated) if i not in coverage_indices]
         canonical_verdict, reason = _compute_canonical_verdict(verified, coverage_gaps)
 
     legacy_verdict = _CANONICAL_TO_LEGACY_VERDICT.get(canonical_verdict, "approve")
@@ -3799,7 +3803,12 @@ def _build_run_plan_stages(
             "expected_outputs": [f"{cr_dir}/coverage_plan.json", f"{cr_dir}/coverage_gaps.json"],
             "depends_on": ["stage_15_coverage_critic"],
             "on_failure": "abort",
-            "enabled": True,
+            # Gated on plan 05 — its `--coverage-plan` input is the output of
+            # stage_14_resolve_coverage, which is disabled until plan 05 ships
+            # (resolve-coverage + coverage-critic). The subcommand itself is
+            # foundation-owned and the helper is callable today; this stage
+            # flips to True together with stages 11/14/15 when plan 05 lands.
+            "enabled": False,
         },
         {
             "id": "stage_17_partition",
@@ -4040,8 +4049,13 @@ def cmd_prepare_run(args: argparse.Namespace) -> int:
     """Emit ``run_plan.json`` describing the full review pipeline.
 
     PLN-719 Section 6. The output is consumed by the orchestrator (a future
-    rewrite of start.md will walk this declarative plan). Determinism: same
-    inputs produce byte-identical output.
+    rewrite of start.md will walk this declarative plan).
+
+    Determinism: same inputs produce byte-identical output **except for the
+    ``review_id`` field**, which is a fresh ``uuid.uuid4()`` per invocation.
+    Compare via a JSON pop of ``review_id`` before diffing or hashing —
+    every other field, including the entire ``stages`` and
+    ``validation_gates`` arrays, is deterministic.
     """
     cr_dir = args.cr_dir
     mode = args.mode
@@ -4395,12 +4409,15 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
             ),
         )
 
-    coverage_gaps = [
-        f for f in canonical_findings
+    # Partition by index to avoid dict-equality membership tests; legacy
+    # findings normalized in-place may not have stable ids yet.
+    coverage_indices: set[int] = {
+        i for i, f in enumerate(canonical_findings)
         if str(f.get("category", "")) == "Coverage"
         and (f.get("finding_scope") or "diff") == "system"
-    ]
-    verified = [f for f in canonical_findings if f not in coverage_gaps]
+    }
+    coverage_gaps = [f for i, f in enumerate(canonical_findings) if i in coverage_indices]
+    verified = [f for i, f in enumerate(canonical_findings) if i not in coverage_indices]
 
     # Pull additional coverage gaps emitted by arbitrate-budget, if any.
     extra_gaps_doc = _read_optional_json(cr_dir / "coverage_gaps.json", None)
@@ -4479,6 +4496,21 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
         indent=2,
     )
     sys.stdout.write("\n")
+
+    # Surface validation errors so the orchestrator can honor stage_25's
+    # on_failure: "abort" rather than silently flowing an invalid envelope
+    # into verdict / present. The file is still written above so operators
+    # can inspect it; the non-zero exit + stderr give them a clear signal.
+    if errors:
+        print(
+            f"Error: review_result.json failed schema validation "
+            f"({len(errors)} error(s)):",
+            file=sys.stderr,
+        )
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
+
     return 0
 
 

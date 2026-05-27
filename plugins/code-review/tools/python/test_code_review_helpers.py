@@ -5565,15 +5565,31 @@ class TestPrepareRun:
         assert by_id["stage_23_verify_findings"]["enabled"] is False
 
     def test_foundation_stages_enabled(self, tmp_path: Path) -> None:
-        """Foundation-owned stages must be enabled."""
+        """Foundation-owned stages whose inputs always exist must be enabled."""
         _, plan = self._run(tmp_path)
         by_id = {s["id"]: s for s in plan["stages"]}
         for stage_id in (
             "stage_01_setup", "stage_05_parse_diff", "stage_06_extract_patches",
-            "stage_12_hygiene", "stage_16_arbitrate_budget", "stage_17_partition",
+            "stage_12_hygiene", "stage_17_partition",
             "stage_22_validate", "stage_25_finalize_result", "stage_28_verdict",
         ):
             assert by_id[stage_id]["enabled"] is True, stage_id
+
+    def test_arbitrate_budget_gated_on_plan_05(self, tmp_path: Path) -> None:
+        """stage_16_arbitrate_budget is disabled until plan 05 ships.
+
+        Its `--coverage-plan` input is `coverage_plan_initial.json`, the
+        output of stage_14_resolve_coverage (plan 05). Enabling stage_16
+        before plan 05 would cause arbitrate-budget to error on a missing
+        input file. The subcommand itself is foundation-owned and callable
+        today; only the orchestrated stage is gated.
+        """
+        _, plan = self._run(tmp_path)
+        by_id = {s["id"]: s for s in plan["stages"]}
+        assert by_id["stage_16_arbitrate_budget"]["enabled"] is False
+        # Sanity-check the dependency chain so it flips together with plan 05.
+        for stage_id in ("stage_14_resolve_coverage", "stage_15_coverage_critic"):
+            assert by_id[stage_id]["enabled"] is False, stage_id
 
     def test_enabled_helper_stages_include_all_required_argparse_args(
         self, tmp_path: Path,
