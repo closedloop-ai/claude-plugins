@@ -4573,30 +4573,37 @@ class TestSetupCrDir:
 
 
 class TestExtractPatches:
-    def test_creates_partition_and_full_files(self, tmp_path: Path) -> None:
+    """PLN-719 Phase 5: extract-patches produces only patches_all.txt.
+
+    Per-partition patches are now emitted by the ``partition`` subcommand
+    (see TestPartitionPatches below).
+    """
+
+    def _ns(self, tmp_path: Path, diff_scope: str = "main...HEAD") -> Any:
         import argparse
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(exist_ok=True)
+        diff_data_file = tmp_path / "diff_data.json"
+        return argparse.Namespace(
+            diff_scope=diff_scope,
+            diff_data=str(diff_data_file),
+            cr_dir=str(cr_dir),
+            workdir=None,
+            batch_size=50,
+        ), cr_dir, diff_data_file
+
+    def test_writes_full_patch_only(self, tmp_path: Path) -> None:
         import io
         import sys as _sys
         from unittest.mock import patch as mock_patch
 
         from code_review_helpers import cmd_extract_patches
 
-        cr_dir = tmp_path / "cr"
-        cr_dir.mkdir()
-
-        partitions_data = {"partitions": [
-            {"id": 0, "files": [{"file": "a.ts"}]},
-            {"id": 1, "files": [{"file": "b.ts"}]},
-        ]}
-        partitions_file = tmp_path / "partitions.json"
-        partitions_file.write_text(json.dumps(partitions_data))
-
-        diff_data = {"files_to_review": ["a.ts", "b.ts", "c.ts"]}
-        diff_data_file = tmp_path / "diff_data.json"
-        diff_data_file.write_text(json.dumps(diff_data))
+        ns, cr_dir, diff_data_file = self._ns(tmp_path)
+        diff_data_file.write_text(json.dumps({"files_to_review": ["a.ts", "b.ts"]}))
 
         def mock_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
-            # Write something to stdout if it was redirected
             stdout = kwargs.get("stdout")
             if stdout and hasattr(stdout, "write"):
                 stdout.write(f"diff output for {' '.join(cmd)}\n")
@@ -4606,41 +4613,26 @@ class TestExtractPatches:
         _sys.stdout = io.StringIO()
         try:
             with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
-                ns = argparse.Namespace(
-                    partitions_file=str(partitions_file), diff_scope="main...HEAD",
-                    diff_data=str(diff_data_file), cr_dir=str(cr_dir),
-                    workdir=None, batch_size=50,
-                )
                 cmd_extract_patches(ns)
                 _sys.stdout.seek(0)
                 result = json.load(_sys.stdout)
         finally:
             _sys.stdout = old_stdout
 
-        assert "patches_p0.txt" in result["partition_patches"]
-        assert "patches_p1.txt" in result["partition_patches"]
-        assert result["full_patch"] == "patches_all.txt"
-        assert (cr_dir / "patches_p0.txt").exists()
+        assert result == {"full_patch": "patches_all.txt"}
         assert (cr_dir / "patches_all.txt").exists()
+        # extract-patches no longer touches per-partition files at all.
+        assert not list(cr_dir.glob("patches_p*.txt"))
 
     def test_strips_pathspec_from_scope(self, tmp_path: Path) -> None:
-        import argparse
         import io
         import sys as _sys
         from unittest.mock import patch as mock_patch
 
         from code_review_helpers import cmd_extract_patches
 
-        cr_dir = tmp_path / "cr"
-        cr_dir.mkdir()
-
-        partitions_data = {"partitions": [{"id": 0, "files": [{"file": "a.ts"}]}]}
-        partitions_file = tmp_path / "partitions.json"
-        partitions_file.write_text(json.dumps(partitions_data))
-
-        diff_data = {"files_to_review": ["a.ts"]}
-        diff_data_file = tmp_path / "diff_data.json"
-        diff_data_file.write_text(json.dumps(diff_data))
+        ns, _, diff_data_file = self._ns(tmp_path, diff_scope="main...HEAD -- a.ts b.ts")
+        diff_data_file.write_text(json.dumps({"files_to_review": ["a.ts"]}))
 
         captured_cmds: list[list[str]] = []
 
@@ -4655,36 +4647,22 @@ class TestExtractPatches:
         _sys.stdout = io.StringIO()
         try:
             with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
-                ns = argparse.Namespace(
-                    partitions_file=str(partitions_file),
-                    diff_scope="main...HEAD -- a.ts b.ts",  # pathspec embedded
-                    diff_data=str(diff_data_file), cr_dir=str(cr_dir),
-                    workdir=None, batch_size=50,
-                )
                 cmd_extract_patches(ns)
         finally:
             _sys.stdout = old_stdout
 
-        # Verify no double -- in any command
         for cmd in captured_cmds:
-            separator_count = cmd.count("--")
-            assert separator_count <= 1, f"Double pathspec separator in: {cmd}"
+            assert cmd.count("--") <= 1, f"Double pathspec separator in: {cmd}"
 
-    def test_full_diff_uses_diff_data_not_partitions(self, tmp_path: Path) -> None:
-        import argparse
+    def test_full_diff_uses_all_files_from_diff_data(self, tmp_path: Path) -> None:
         import io
         import sys as _sys
         from unittest.mock import patch as mock_patch
 
         from code_review_helpers import cmd_extract_patches
 
-        cr_dir = tmp_path / "cr"
-        cr_dir.mkdir()
-
-        # Partitions only have 1 file (uncached), but diff_data has 3 (full set)
-        partitions_data = {"partitions": [{"id": 0, "files": [{"file": "a.ts"}]}]}
-        (tmp_path / "partitions.json").write_text(json.dumps(partitions_data))
-        (tmp_path / "diff_data.json").write_text(json.dumps({"files_to_review": ["a.ts", "b.ts", "c.ts"]}))
+        ns, _, diff_data_file = self._ns(tmp_path)
+        diff_data_file.write_text(json.dumps({"files_to_review": ["a.ts", "b.ts", "c.ts"]}))
 
         captured_cmds: list[list[str]] = []
 
@@ -4699,37 +4677,24 @@ class TestExtractPatches:
         _sys.stdout = io.StringIO()
         try:
             with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
-                ns = argparse.Namespace(
-                    partitions_file=str(tmp_path / "partitions.json"), diff_scope="main...HEAD",
-                    diff_data=str(tmp_path / "diff_data.json"), cr_dir=str(cr_dir),
-                    workdir=None, batch_size=50,
-                )
                 cmd_extract_patches(ns)
         finally:
             _sys.stdout = old_stdout
 
-        # The full-diff command (last one) should include all 3 files from diff_data
-        full_diff_cmd = captured_cmds[-1]
-        assert "a.ts" in full_diff_cmd
-        assert "b.ts" in full_diff_cmd
-        assert "c.ts" in full_diff_cmd
+        assert len(captured_cmds) == 1
+        for f in ("a.ts", "b.ts", "c.ts"):
+            assert f in captured_cmds[0]
 
     def test_batches_large_diffs(self, tmp_path: Path) -> None:
-        import argparse
         import io
         import sys as _sys
         from unittest.mock import patch as mock_patch
 
         from code_review_helpers import cmd_extract_patches
 
-        cr_dir = tmp_path / "cr"
-        cr_dir.mkdir()
-
-        # 250 files -- above the 200 threshold
+        ns, _, diff_data_file = self._ns(tmp_path)
         all_files = [f"f{i}.ts" for i in range(250)]
-        partitions_data = {"partitions": [{"id": 0, "files": [{"file": all_files[0]}]}]}
-        (tmp_path / "partitions.json").write_text(json.dumps(partitions_data))
-        (tmp_path / "diff_data.json").write_text(json.dumps({"files_to_review": all_files}))
+        diff_data_file.write_text(json.dumps({"files_to_review": all_files}))
 
         captured_cmds: list[list[str]] = []
 
@@ -4744,61 +4709,126 @@ class TestExtractPatches:
         _sys.stdout = io.StringIO()
         try:
             with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
-                ns = argparse.Namespace(
-                    partitions_file=str(tmp_path / "partitions.json"), diff_scope="main...HEAD",
-                    diff_data=str(tmp_path / "diff_data.json"), cr_dir=str(cr_dir),
-                    workdir=None, batch_size=50,
-                )
                 cmd_extract_patches(ns)
         finally:
             _sys.stdout = old_stdout
 
-        # 1 partition cmd + 5 batched full-diff cmds (250 / 50 = 5)
-        full_diff_cmds = [c for c in captured_cmds if "patches_p" not in " ".join(str(x) for x in c)]
-        # Should be multiple batches (>1 command for the full diff)
-        assert len(full_diff_cmds) >= 5
+        # 250 files / 50 batch_size = 5 git diff invocations.
+        assert len(captured_cmds) == 5
 
-    def test_extract_patches_no_partitions_file(self, tmp_path: Path) -> None:
+
+class TestPartitionPatches:
+    """PLN-719 Phase 5: partition writes patches_p<N>.txt for each partition
+    when both --diff-scope and --cr-dir are supplied."""
+
+    def _run(self, tmp_path: Path, *, with_patches: bool) -> tuple[dict[str, Any], list[list[str]]]:
         import argparse
         import io
         import sys as _sys
         from unittest.mock import patch as mock_patch
 
-        from code_review_helpers import cmd_extract_patches
+        from code_review_helpers import cmd_partition
 
-        cr_dir = tmp_path / "cr"
-        cr_dir.mkdir()
+        diff_data = _make_diff_data(
+            files=["a.ts", "b.ts", "c.ts"],
+            loc={
+                "a.ts": {"added": 60, "removed": 10},
+                "b.ts": {"added": 50, "removed": 5},
+                "c.ts": {"added": 30, "removed": 5},
+            },
+        )
 
-        diff_data = {"files_to_review": ["a.ts", "b.ts"]}
-        diff_data_file = tmp_path / "diff_data.json"
-        diff_data_file.write_text(json.dumps(diff_data))
+        captured_cmds: list[list[str]] = []
 
         def mock_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+            captured_cmds.append(cmd)
             stdout = kwargs.get("stdout")
             if stdout and hasattr(stdout, "write"):
-                stdout.write(f"diff output for {' '.join(cmd)}\n")
+                stdout.write("")
             return subprocess.CompletedProcess(args=cmd, returncode=0)
 
+        old_stdin = _sys.stdin
         old_stdout = _sys.stdout
+        _sys.stdin = io.StringIO(json.dumps(diff_data))
         _sys.stdout = io.StringIO()
         try:
+            kwargs: dict[str, Any] = dict(
+                loc_budget=400, max_files=20, max_bha_agents=DEFAULT_MAX_BHA_AGENTS,
+                diff_data=None, workdir=None,
+            )
+            if with_patches:
+                kwargs["diff_scope"] = "main...HEAD"
+                kwargs["cr_dir"] = str(tmp_path)
+            else:
+                kwargs["diff_scope"] = None
+                kwargs["cr_dir"] = None
+            ns = argparse.Namespace(**kwargs)
             with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
-                ns = argparse.Namespace(
-                    partitions_file=None, diff_scope="main...HEAD",
-                    diff_data=str(diff_data_file), cr_dir=str(cr_dir),
-                    workdir=None, batch_size=50,
-                )
-                cmd_extract_patches(ns)
-                _sys.stdout.seek(0)
-                result = json.load(_sys.stdout)
+                cmd_partition(ns)
+            _sys.stdout.seek(0)
+            return json.load(_sys.stdout), captured_cmds
         finally:
+            _sys.stdin = old_stdin
             _sys.stdout = old_stdout
 
-        assert result["partition_patches"] == []
-        assert result["full_patch"] == "patches_all.txt"
-        assert (cr_dir / "patches_all.txt").exists()
-        # No partition patch files should exist
-        assert not list(cr_dir.glob("patches_p*.txt"))
+    def test_partition_writes_per_partition_patches(self, tmp_path: Path) -> None:
+        result, captured = self._run(tmp_path, with_patches=True)
+        # All files fit in one partition.
+        assert len(result["partitions"]) == 1
+        assert result["partition_patches"] == ["patches_p0.txt"]
+        assert (tmp_path / "patches_p0.txt").exists()
+        # One git diff invocation per partition.
+        assert len(captured) == 1
+        assert captured[0][:2] == ["git", "diff"]
+        for f in ("a.ts", "b.ts", "c.ts"):
+            assert f in captured[0]
+
+    def test_partition_skips_patches_without_diff_scope(self, tmp_path: Path) -> None:
+        result, captured = self._run(tmp_path, with_patches=False)
+        # Backward compatible: no diff_scope → no patch generation.
+        assert "partition_patches" not in result
+        assert captured == []
+        assert not list(tmp_path.glob("patches_p*.txt"))
+
+    def test_partition_strips_pathspec_from_diff_scope(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+        from unittest.mock import patch as mock_patch
+
+        from code_review_helpers import cmd_partition
+
+        diff_data = _make_diff_data(
+            files=["a.ts"], loc={"a.ts": {"added": 10, "removed": 0}},
+        )
+        captured_cmds: list[list[str]] = []
+
+        def mock_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+            captured_cmds.append(cmd)
+            stdout = kwargs.get("stdout")
+            if stdout and hasattr(stdout, "write"):
+                stdout.write("")
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+        old_stdin = _sys.stdin
+        old_stdout = _sys.stdout
+        _sys.stdin = io.StringIO(json.dumps(diff_data))
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(
+                loc_budget=400, max_files=20, max_bha_agents=DEFAULT_MAX_BHA_AGENTS,
+                diff_data=None, workdir=None,
+                diff_scope="main...HEAD -- a.ts",  # pathspec embedded
+                cr_dir=str(tmp_path),
+            )
+            with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
+                cmd_partition(ns)
+        finally:
+            _sys.stdin = old_stdin
+            _sys.stdout = old_stdout
+
+        for cmd in captured_cmds:
+            assert cmd.count("--") <= 1, f"Double pathspec separator in: {cmd}"
 
 
 # ---------------------------------------------------------------------------

@@ -74,9 +74,10 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 - If `PR_AUTO_DETECTED` is true, print `"Auto-detected PR #<PR_NUMBER> for branch <REVIEW_BRANCH>."`
 - See: [Auto Incremental Mode](#auto-incremental-mode-phase-4--local-only)
 
-### Task 5: Get diff data + fetch intent (GitHub: also get PR metadata)
+### Task 5: Get diff data + extract patches + fetch intent (GitHub: also get PR metadata)
 - GitHub mode: follow PR Metadata section from `github-review.md`
 - Run Bash: `python3 <HELPERS> parse-diff --scope=<DIFF_SCOPE> > <CR_DIR>/diff_data.json`
+- Run Bash: `python3 <HELPERS> extract-patches --diff-scope=<DIFF_SCOPE> --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>` (PLN-719 Phase 5: produces `patches_all.txt` right after `parse-diff`; per-partition patches are emitted later by `partition`)
 - Run Bash: `python3 <HELPERS> fetch-intent --scope-kind <SCOPE_KIND> --cr-dir <CR_DIR> [--pr-number <N>] [--base-ref <BASE_REF>] [--diff-tip <DIFF_TIP>]`
 - Run Bash: `python3 <HELPERS> classify-intent --intent-context <CR_DIR>/intent_context.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/intent.json`
 - Read `<CR_DIR>/intent.json` for `INTENT` value
@@ -100,19 +101,17 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 - **If HYGIENE_ONLY**: if `CACHE_DIR` is set and `CACHE_STATUS_MESSAGE` is non-empty, print `CACHE_STATUS_MESSAGE`. Then present hygiene findings and EXIT — skip all remaining tasks
 - See: [Step 2.5](#step-25-deterministic-hygiene-checks)
 
-### Task 8: Route models + partition + extract patches
+### Task 8: Route models + partition
 - Mark todo "Assess scope and route models" as `in_progress`
 - Run Bash: `python3 <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .closedloop-ai/settings/critic-gates.json --intent <INTENT> > <CR_DIR>/route.json`
 - Read `<CR_DIR>/route.json` for `models`, `domain_critics`, `max_bha_agents`, `fast_path`
 - **If `fast_path` is false (standard flow):**
   - Print `CACHE_STATUS_MESSAGE` if non-empty
-  - Run Bash: `python3 <HELPERS> partition --diff-data <CR_DIR>/diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json` (use `uncached_diff_data.json` when caching is active)
-  - Run Bash: `python3 <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope=<DIFF_SCOPE> --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>`
+  - Run Bash: `python3 <HELPERS> partition --diff-data <CR_DIR>/diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> --diff-scope=<DIFF_SCOPE> --cr-dir <CR_DIR> > <CR_DIR>/partitions.json` (PLN-719 Phase 5: partition now also writes `patches_p<N>.txt` for each partition. Use `uncached_diff_data.json` for `--diff-data` when caching is active.)
 - **If `fast_path` is true:**
   - Print `"Fast path selected: 1 reviewer (<MODEL>)."` where `<MODEL>` = `route.json -> models.fast_path_reviewer`
   - If `CACHE_DIR` is set, print `"BHA Cache: bypassed in fast-path mode."` and delete `<CR_DIR>/agent_cached_bha.json` if it exists
-  - Skip partition entirely (no `partitions.json` created)
-  - Run Bash: `python3 <HELPERS> extract-patches --diff-scope=<DIFF_SCOPE> --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>` (no `--partitions-file` -- only `patches_all.txt` is created)
+  - Skip partition entirely (no `partitions.json` or `patches_p<N>.txt` created; reviewers consume `patches_all.txt` already produced in Task 5)
   - Update TodoWrite: replace "Spawn reviewer agents in parallel" with "Run fast-path review"
 - Mark todo as `completed`
 - See: [Step 3](#step-3-assess-scope-and-route-models), [Step 4A](#step-4a-spawn-reviewer-agents-fast_path--false), [Step 4B](#step-4b-fast-path-single-agent-review-fast_path--true)
@@ -371,6 +370,16 @@ Read `<CR_DIR>/diff_data.json` with the Read tool and extract only the lightweig
 
 Use these values for `total_loc` and file count reporting. The full diff data (including `patch_lines` and `changed_ranges`) remains in `<CR_DIR>/diff_data.json` for downstream scripts.
 
+### Extract Full-Diff Patch (Both Modes)
+
+Immediately after `parse-diff`, materialize the full-diff patch file so every downstream stage (hygiene, route, partition, BHB/Auditor/Premise reviewers) has it on disk:
+
+```bash
+python3 <HELPERS> extract-patches --diff-scope=<DIFF_SCOPE> --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>
+```
+
+This produces `patches_all.txt` only. Per-partition patches (`patches_p<N>.txt`) are written later by the `partition` subcommand (PLN-719 Phase 5).
+
 Mark todo as `completed`.
 
 ### Fetch Intent Context + Classify Intent (for Premise Reviewer)
@@ -579,15 +588,14 @@ The script performs greedy bin-packing (sorted by LOC descending), splits oversi
 
 When constructing agent prompts, read each entry's `file` field for the path. Do NOT run ad-hoc Python one-liners against `partitions.json` — use the Read tool, then map `entry["file"]` directly into the prompt template.
 
-### Pre-Extract Patches to Disk (CRITICAL -- eliminates sub-agent Bash dependency)
+### Per-Partition Patches on Disk (CRITICAL -- eliminates sub-agent Bash dependency)
 
-After partitioning, extract patches to disk files so agents can Read them without needing Bash permissions. Run this BEFORE spawning any agents:
+PLN-719 Phase 5 splits patch materialization across two stages so the full diff is available immediately after `parse-diff` and per-partition patches are produced together with the partition assignment:
 
-```bash
-python3 <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope=<DIFF_SCOPE> --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>
-```
+- `patches_all.txt` — produced by **Task 5** (`extract-patches`, right after `parse-diff`). Always present before any agents spawn.
+- `patches_p{N}.txt` — produced by **Task 8** (`partition`, when both `--diff-scope` and `--cr-dir` are passed). One file per partition.
 
-This creates `patches_p{N}.txt` (one per partition) and `patches_all.txt` (full diff from all files in `diff_data.json`). When caching is active, partitions contain only uncached files, but `patches_all.txt` includes ALL files since BHB/Auditor/Premise review the full diff.
+When caching is active, the partition call uses `uncached_diff_data.json` so partitions contain only uncached files, but `patches_all.txt` (from Task 5) still includes ALL files since BHB/Auditor/Premise review the full diff.
 
 If a partition file entry has `line_range`, include that range in `<files_assigned>` for the agent and treat it as a hard scope fence.
 

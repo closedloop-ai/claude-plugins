@@ -697,6 +697,41 @@ def cmd_hygiene(args: argparse.Namespace) -> int:
 # Subcommand: partition
 # ---------------------------------------------------------------------------
 
+
+def _write_per_partition_patches(
+    partitions: list[dict[str, Any]],
+    diff_scope: str,
+    cr_dir: Path,
+    workdir: str | None = None,
+) -> list[str]:
+    """Write ``patches_p<N>.txt`` for each partition and return their filenames.
+
+    PLN-719 Phase 5 makes the ``partition`` helper the canonical producer of
+    per-partition patch files (previously emitted by ``extract-patches``).
+    Strips any embedded pathspec (``-- file1 file2``) from ``diff_scope`` since
+    we always supply our own explicit file list.
+    """
+    run_kwargs: dict[str, Any] = {"capture_output": False, "text": True, "check": False}
+    if workdir:
+        run_kwargs["cwd"] = workdir
+
+    range_scope = diff_scope.split(" -- ")[0] if " -- " in diff_scope else diff_scope
+    range_parts = range_scope.split()
+
+    written: list[str] = []
+    for part in partitions:
+        part_id = part["id"]
+        files_in_part = [entry["file"] for entry in part.get("files", [])]
+        patch_name = f"patches_p{part_id}.txt"
+        patch_path = cr_dir / patch_name
+
+        cmd = ["git", "diff"] + range_parts + ["--"] + files_in_part
+        with open(patch_path, "w") as out:
+            subprocess.run(cmd, stdout=out, stderr=subprocess.DEVNULL, **run_kwargs)
+        written.append(patch_name)
+    return written
+
+
 def cmd_partition(args: argparse.Namespace) -> int:
     """Execute partition subcommand."""
     diff_data_path: str | None = getattr(args, "diff_data", None)
@@ -929,11 +964,27 @@ def cmd_partition(args: argparse.Namespace) -> int:
     for idx, part in enumerate(partitions):
         part["id"] = idx
 
-    json.dump(
-        {"partitions": partitions, "test_file_paths": test_file_paths, "force_merged_count": force_merged_count},
-        sys.stdout,
-        indent=2,
-    )
+    # PLN-719 Phase 5: partition is now the canonical producer of
+    # patches_p<N>.txt. Materialize per-partition patches when both
+    # --diff-scope and --cr-dir are provided.
+    diff_scope: str | None = getattr(args, "diff_scope", None)
+    cr_dir_arg: str | None = getattr(args, "cr_dir", None)
+    workdir: str | None = getattr(args, "workdir", None)
+    partition_patches: list[str] = []
+    if diff_scope and cr_dir_arg:
+        partition_patches = _write_per_partition_patches(
+            partitions, diff_scope, Path(cr_dir_arg), workdir,
+        )
+
+    output: dict[str, Any] = {
+        "partitions": partitions,
+        "test_file_paths": test_file_paths,
+        "force_merged_count": force_merged_count,
+    }
+    if partition_patches:
+        output["partition_patches"] = partition_patches
+
+    json.dump(output, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
 
@@ -3814,9 +3865,20 @@ def _build_run_plan_stages(
             "id": "stage_17_partition",
             "kind": "helper",
             "subcommand": "partition",
-            "args": ["--diff-data", f"{cr_dir}/diff_data.json"],
+            "args": [
+                "--diff-data", f"{cr_dir}/diff_data.json",
+                "--diff-scope", "<DIFF_SCOPE>",
+                "--cr-dir", cr_dir,
+            ],
             "stdout": f"{cr_dir}/partitions.json",
-            "expected_outputs": [f"{cr_dir}/partitions.json"],
+            # PLN-719 Phase 5: partition is the canonical producer of
+            # patches_p<N>.txt (previously emitted by extract-patches). The
+            # exact count is determined at runtime, so the glob pattern is
+            # an expected output template.
+            "expected_outputs": [
+                f"{cr_dir}/partitions.json",
+                f"{cr_dir}/patches_p<N>.txt",
+            ],
             # Actual data dependency is diff_data.json (stage_05_parse_diff).
             # stage_16_arbitrate_budget is plan-05-gated and disabled in Phase
             # A; depending on a disabled stage would make this foundation
@@ -4569,23 +4631,19 @@ _EXTRACT_PATCHES_BATCH_THRESHOLD = 200
 
 
 def cmd_extract_patches(args: argparse.Namespace) -> int:
-    """Extract git diff patches to disk files for each partition and full diff."""
-    partitions_file = args.partitions_file
+    """Materialize ``patches_all.txt`` from the full diff.
+
+    PLN-719 Phase 5 relocates this stage to run right after ``parse-diff``,
+    well before partitioning. It now produces only the full-diff artifact;
+    per-partition patches (``patches_p<N>.txt``) are emitted by the
+    ``partition`` subcommand.
+    """
     diff_scope: str = args.diff_scope
     cr_dir = Path(args.cr_dir)
     diff_data_path: str = args.diff_data
     workdir: str | None = getattr(args, "workdir", None)
     batch_size: int = getattr(args, "batch_size", _EXTRACT_PATCHES_BATCH_SIZE)
 
-    # Read partitions for per-partition patches
-    if partitions_file is not None:
-        with open(partitions_file) as f:
-            pdata = json.load(f)
-        partitions: list[dict[str, Any]] = pdata.get("partitions", [])
-    else:
-        partitions = []
-
-    # Read full diff_data for patches_all.txt (includes cached files too)
     with open(diff_data_path) as f:
         diff_data = json.load(f)
     all_files: list[str] = diff_data.get("files_to_review", [])
@@ -4598,25 +4656,10 @@ def cmd_extract_patches(args: argparse.Namespace) -> int:
     range_scope = diff_scope.split(" -- ")[0] if " -- " in diff_scope else diff_scope
     range_parts = range_scope.split()
 
-    # Per-partition patches
-    partition_patches: list[str] = []
-    for part in partitions:
-        part_id = part["id"]
-        files_in_part = [entry["file"] for entry in part.get("files", [])]
-        patch_name = f"patches_p{part_id}.txt"
-        patch_path = cr_dir / patch_name
-
-        cmd = ["git", "diff"] + range_parts + ["--"] + files_in_part
-        with open(patch_path, "w") as out:
-            subprocess.run(cmd, stdout=out, stderr=subprocess.DEVNULL, **run_kwargs)
-        partition_patches.append(patch_name)
-
-    # Full diff (for BHB, Auditor, Premise, Domain Critic)
     full_patch_name = "patches_all.txt"
     full_patch_path = cr_dir / full_patch_name
 
     if len(all_files) > _EXTRACT_PATCHES_BATCH_THRESHOLD:
-        # Batch extraction
         first_batch = True
         for i in range(0, len(all_files), batch_size):
             batch_files = all_files[i : i + batch_size]
@@ -4632,11 +4675,7 @@ def cmd_extract_patches(args: argparse.Namespace) -> int:
         with open(full_patch_path, "w") as out:
             subprocess.run(cmd, stdout=out, stderr=subprocess.DEVNULL, **run_kwargs)
 
-    json.dump(
-        {"partition_patches": partition_patches, "full_patch": full_patch_name},
-        sys.stdout,
-        indent=2,
-    )
+    json.dump({"full_patch": full_patch_name}, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
 
@@ -4666,6 +4705,13 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_part.add_argument("--loc-budget", type=int, default=400, help="LOC budget per partition")
     p_part.add_argument("--max-files", type=int, default=20, help="Max files per partition")
     p_part.add_argument("--max-bha-agents", type=int, default=DEFAULT_MAX_BHA_AGENTS, help="Max BHA agent partitions (cap enforcement)")
+    # PLN-719 Phase 5: partition is the canonical producer of patches_p<N>.txt.
+    # When both --diff-scope and --cr-dir are supplied, partition writes them
+    # alongside partitions.json. Optional for backward compat with callers
+    # that only want the partition assignment.
+    p_part.add_argument("--diff-scope", default=None, help="Git diff scope for per-partition patch generation")
+    p_part.add_argument("--cr-dir", default=None, help="Directory to write patches_p<N>.txt into")
+    p_part.add_argument("--workdir", default=None, help="Git working directory")
     p_part.set_defaults(func=cmd_partition)
 
     # route
@@ -4874,7 +4920,8 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
 
     # extract-patches
     p_ep = subparsers.add_parser("extract-patches", help="Extract git diff patches to disk files")
-    p_ep.add_argument("--partitions-file", default=None, help="Path to partitions.json")
+    # PLN-719 Phase 5: --partitions-file removed; per-partition patches are
+    # emitted by the partition subcommand.
     p_ep.add_argument("--diff-scope", required=True, help="Git diff scope string")
     p_ep.add_argument("--diff-data", required=True, help="Path to full diff_data.json (for patches_all.txt)")
     p_ep.add_argument("--cr-dir", required=True, help="Output directory for patch files")
