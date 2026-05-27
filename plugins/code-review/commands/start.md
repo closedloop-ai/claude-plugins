@@ -133,6 +133,11 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 - Mark todo as `completed`
 - See: [Step 5](#step-5-collect-normalize-and-validate-findings), [Step 5.5 (fast_path == false AND CACHE_DIR set)](#step-55-bha-cache-update-fast_path--false-and-cache_dir-set)
 
+### Task 10b: Finalize canonical result envelope (PLN-719)
+- Run Bash: `python3 <HELPERS> finalize-result --cr-dir <CR_DIR> --validate-output <CR_DIR>/validate_output.json --mode <MODE>`
+- Produces `<CR_DIR>/review_result.json` (canonical envelope; the terminal artifact of the run). Additive — does not replace `validate_output.json`, which Phase B will retire alongside `run-loop.sh` and `/fix` updates.
+- If `finalize-result` exits non-zero, proceed anyway — Task 13 falls back to `validate_output.json`.
+
 ### Task 11: Present results
 - **GitHub mode**: follow Steps 6 and 8 in `github-review.md` — write findings JSON, threads JSON, and summary.md to `.closedloop-ai/`
 - **Local mode**: present findings by severity in terminal — see [Local Mode: Present Results](#local-mode-present-results)
@@ -144,7 +149,8 @@ Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e
 - See: [Review Footer](#review-footer-final-output)
 
 ### Task 13: PR verdict tag
-- Run Bash: `python3 <HELPERS> verdict --validate-output <CR_DIR>/validate_output.json > <CR_DIR>/verdict.json`
+- Run Bash: `python3 <HELPERS> verdict --review-result <CR_DIR>/review_result.json --validate-output <CR_DIR>/validate_output.json > <CR_DIR>/verdict.json`
+- When `review_result.json` is present (canonical envelope from Task 10b), `verdict` reads its canonical verdict and maps to the legacy `<pr_verdict>` tag. Falls back to `validate_output.json` if the envelope is missing.
 - Read `<CR_DIR>/verdict.json` and print the `tag` value as the last line of output
 - See: [PR Verdict](#pr-verdict)
 
@@ -1249,10 +1255,10 @@ Print a markdown horizontal rule (`---`) followed by the `footer_line` value fro
 
 ## PR Verdict
 
-Run the verdict helper to compute the deterministic verdict:
+Run the verdict helper to compute the deterministic verdict. Pass both the canonical envelope (preferred, from Task 10b) and the legacy validate output (fallback):
 
 ```bash
-python3 <HELPERS> verdict --validate-output <CR_DIR>/validate_output.json > <CR_DIR>/verdict.json
+python3 <HELPERS> verdict --review-result <CR_DIR>/review_result.json --validate-output <CR_DIR>/validate_output.json > <CR_DIR>/verdict.json
 ```
 
 Read `<CR_DIR>/verdict.json` and print the `tag` value as the absolute last line of output. This tag is parsed by the ClosedLoop UI to render a verdict banner.

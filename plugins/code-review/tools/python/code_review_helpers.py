@@ -3426,25 +3426,31 @@ def _compute_canonical_verdict(
     def _short(text: str) -> str:
         return text[:_VERDICT_REASON_MAX]
 
-    # Rule 1: required coverage gap → CHANGES_REQUESTED
+    # Rule 1: required coverage gap → CHANGES_REQUESTED.
+    # A required reviewer that couldn't run blocks the PR regardless of severity.
     for gap in coverage_gaps:
-        if gap.get("required", False) or str(gap.get("severity", "")) == "BLOCKING":
+        if gap.get("required", False):
             return "CHANGES_REQUESTED", _short(f"coverage gap: {gap.get('issue', '')}")
 
-    # Rule 2: BLOCKING (any scope) or Premise P0 → CHANGES_REQUESTED. Iterating
-    # `verified` checks every finding regardless of finding_scope, so this loop
-    # catches diff, system, and pr_metadata BLOCKINGs in one pass.
+    # Rules 2-3 evaluate severity across both buckets — plan section 5 says
+    # "Any BLOCKING finding (verified or system-scoped)" and likewise for HIGH.
+    # Coverage gaps are system-scoped findings; including them here is what
+    # prevents a non-required HIGH coverage gap from falling through to
+    # APPROVED.
+    all_findings = verified + coverage_gaps
+
+    # Rule 2: BLOCKING (any scope) or Premise P0 → CHANGES_REQUESTED.
     # Premise P0 precedence is preserved from legacy verdict behavior; plan 02
     # will refine it.
-    for finding in verified:
+    for finding in all_findings:
         sev = str(finding.get("severity", ""))
         if sev == "BLOCKING":
             return "CHANGES_REQUESTED", _short(str(finding.get("issue", "")))
         if str(finding.get("category", "")) == "Premise" and finding.get("priority") == 0:
             return "CHANGES_REQUESTED", _short(str(finding.get("issue", "")))
 
-    # Rule 3: HIGH → NEEDS_ATTENTION
-    for finding in verified:
+    # Rule 3: HIGH (any scope) → NEEDS_ATTENTION
+    for finding in all_findings:
         if str(finding.get("severity", "")) == "HIGH":
             return "NEEDS_ATTENTION", _short(str(finding.get("issue", "")))
 
@@ -3536,16 +3542,42 @@ def _build_run_plan_stages(
 ) -> list[dict[str, Any]]:
     """Return the canonical 30-stage pipeline (PLN-719 Section 7).
 
-    Stages that depend on plans 01/05/06 are present but marked
-    ``enabled: false`` until those plans land. The orchestrator must skip
-    disabled stages and resolve their outputs to empty placeholders.
+    Args lists use angle-bracket placeholders for values the orchestrator
+    must resolve at runtime (see the token table below). Every required
+    argparse argument is included so the orchestrator can substitute and
+    invoke each helper directly.
+
+    ``stdout`` points to a file the orchestrator must redirect the helper's
+    stdout to (the legacy ``> validate_output.json`` redirection). When
+    ``stdout`` is None, the helper writes its primary output directly to
+    disk.
+
+    Runtime placeholder tokens:
+      <PLUGIN_ROOT>  -- $CLAUDE_PLUGIN_ROOT
+      <DIFF_SCOPE>   -- scope.json.diff_scope (from resolve-scope)
+      <BASE_REF>     -- scope.json.base_ref
+      <DIFF_TIP>     -- scope.json.diff_tip
+      <SCOPE_KIND>   -- scope.json.scope_kind
+      <CACHE_DIR>    -- cache_config.json.cache_dir (from finalize-cache)
+      <PROMPT_HASH>  -- hashes.json.prompt_hash (from compute-hashes)
+      <CONTEXT_KEY>  -- hashes.json.context_key
+      <MODEL_ID>     -- orchestrator-chosen model (e.g. "opus")
+      <START_TIME>   -- setup.json.start_time (epoch seconds)
+      <STATE_KEY>    -- "<review_branch>:<base_ref>"
+
+    Stages that depend on plans 01/03/05/06 are present but marked
+    ``enabled: false`` until those plans land. Their args include the
+    best-known shape so when those plans wire them on, only ``enabled``
+    needs to flip.
     """
+    pr_arg = str(pr_number) if pr_number else ""
     return [
         {
             "id": "stage_01_setup",
             "kind": "helper",
             "subcommand": "setup",
             "args": ["--mode", mode, "--cr-dir-prefix", ".closedloop-ai/code-review/cr-"],
+            "stdout": f"{cr_dir}/setup.json",
             "expected_outputs": [f"{cr_dir}/setup.json"],
             "depends_on": [],
             "on_failure": "abort",
@@ -3555,7 +3587,8 @@ def _build_run_plan_stages(
             "id": "stage_02_prep_assets",
             "kind": "helper",
             "subcommand": "prep-assets",
-            "args": ["--cr-dir", cr_dir],
+            "args": ["--plugin-root", "<PLUGIN_ROOT>", "--cr-dir", cr_dir],
+            "stdout": None,
             "expected_outputs": [f"{cr_dir}/shared_prompt.txt", f"{cr_dir}/bha_suffix.txt"],
             "depends_on": ["stage_01_setup"],
             "on_failure": "abort",
@@ -3565,7 +3598,13 @@ def _build_run_plan_stages(
             "id": "stage_03_resolve_scope",
             "kind": "helper",
             "subcommand": "resolve-scope",
-            "args": [],
+            "args": [
+                "--mode", mode,
+                "--pr-number", pr_arg,
+                "--scope-args", flags.get("scope_args", "") or "",
+                "--base-ref-override", flags.get("base_ref_override", "") or "",
+            ],
+            "stdout": f"{cr_dir}/scope.json",
             "expected_outputs": [f"{cr_dir}/scope.json"],
             "depends_on": ["stage_02_prep_assets"],
             "on_failure": "abort",
@@ -3575,7 +3614,12 @@ def _build_run_plan_stages(
             "id": "stage_04_finalize_cache",
             "kind": "helper",
             "subcommand": "finalize-cache",
-            "args": ["--cr-dir", cr_dir],
+            "args": [
+                "--setup-json", f"{cr_dir}/setup.json",
+                "--mode", mode,
+                "--pr-number", pr_arg,
+            ],
+            "stdout": f"{cr_dir}/cache_config.json",
             "expected_outputs": [f"{cr_dir}/cache_config.json"],
             "depends_on": ["stage_03_resolve_scope"],
             "on_failure": "continue",
@@ -3585,7 +3629,8 @@ def _build_run_plan_stages(
             "id": "stage_05_parse_diff",
             "kind": "helper",
             "subcommand": "parse-diff",
-            "args": ["--scope=<DIFF_SCOPE>"],
+            "args": ["--scope", "<DIFF_SCOPE>"],
+            "stdout": f"{cr_dir}/diff_data.json",
             "expected_outputs": [f"{cr_dir}/diff_data.json"],
             "depends_on": ["stage_03_resolve_scope"],
             "on_failure": "abort",
@@ -3596,10 +3641,11 @@ def _build_run_plan_stages(
             "kind": "helper",
             "subcommand": "extract-patches",
             "args": [
-                "--diff-scope=<DIFF_SCOPE>",
+                "--diff-scope", "<DIFF_SCOPE>",
                 "--diff-data", f"{cr_dir}/diff_data.json",
                 "--cr-dir", cr_dir,
             ],
+            "stdout": None,
             "expected_outputs": [f"{cr_dir}/patches_all.txt"],
             "depends_on": ["stage_05_parse_diff"],
             "on_failure": "abort",
@@ -3609,9 +3655,19 @@ def _build_run_plan_stages(
             "id": "stage_07_auto_incremental",
             "kind": "helper",
             "subcommand": "auto-incremental",
-            "args": ["--cr-dir", cr_dir],
+            "args": [
+                "--cache-dir", "<CACHE_DIR>",
+                "--key", "<STATE_KEY>",
+                "--diff-tip", "<DIFF_TIP>",
+                "--base-ref", "<BASE_REF>",
+                "--original-scope", "<DIFF_SCOPE>",
+                "--full-review", "true" if flags.get("full_review") else "false",
+                "--since-last-review", "true" if flags.get("since_last_review") else "false",
+                "--mode", mode,
+            ],
+            "stdout": f"{cr_dir}/auto_incremental.json",
             "expected_outputs": [f"{cr_dir}/auto_incremental.json"],
-            "depends_on": ["stage_05_parse_diff"],
+            "depends_on": ["stage_04_finalize_cache", "stage_05_parse_diff"],
             "on_failure": "continue",
             "enabled": True,
         },
@@ -3619,7 +3675,13 @@ def _build_run_plan_stages(
             "id": "stage_08_fetch_intent",
             "kind": "helper",
             "subcommand": "fetch-intent",
-            "args": ["--cr-dir", cr_dir],
+            "args": [
+                "--scope-kind", "<SCOPE_KIND>",
+                "--pr-number", pr_arg,
+                "--base-ref", "<BASE_REF>",
+                "--diff-tip", "<DIFF_TIP>",
+            ],
+            "stdout": f"{cr_dir}/intent_context.json",
             "expected_outputs": [f"{cr_dir}/intent_context.json"],
             "depends_on": ["stage_03_resolve_scope"],
             "on_failure": "continue",
@@ -3629,7 +3691,11 @@ def _build_run_plan_stages(
             "id": "stage_09_detect_injection",
             "kind": "helper",
             "subcommand": "detect-injection",
-            "args": ["--cr-dir", cr_dir],
+            "args": [
+                "--cr-dir", cr_dir,
+                "--intent-context", f"{cr_dir}/intent_context.json",
+            ],
+            "stdout": f"{cr_dir}/injection_report.json",
             "expected_outputs": [f"{cr_dir}/injection_report.json"],
             "depends_on": ["stage_08_fetch_intent"],
             "on_failure": "continue",
@@ -3639,9 +3705,13 @@ def _build_run_plan_stages(
             "id": "stage_10_classify_intent",
             "kind": "helper",
             "subcommand": "classify-intent",
-            "args": ["--cr-dir", cr_dir],
+            "args": [
+                "--intent-context", f"{cr_dir}/intent_context.json",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+            ],
+            "stdout": f"{cr_dir}/intent.json",
             "expected_outputs": [f"{cr_dir}/intent.json"],
-            "depends_on": ["stage_08_fetch_intent"],
+            "depends_on": ["stage_08_fetch_intent", "stage_05_parse_diff"],
             "on_failure": "continue",
             "enabled": True,
         },
@@ -3649,7 +3719,13 @@ def _build_run_plan_stages(
             "id": "stage_11_extract_signals",
             "kind": "helper",
             "subcommand": "extract-signals",
-            "args": ["--cr-dir", cr_dir],
+            "args": [
+                "--cr-dir", cr_dir,
+                "--diff-data", f"{cr_dir}/diff_data.json",
+                "--patches", f"{cr_dir}/patches_all.txt",
+                "--intent", f"{cr_dir}/intent.json",
+            ],
+            "stdout": f"{cr_dir}/signals.json",
             "expected_outputs": [f"{cr_dir}/signals.json"],
             "depends_on": ["stage_06_extract_patches", "stage_10_classify_intent"],
             "on_failure": "continue_with_coverage_gap",
@@ -3660,6 +3736,7 @@ def _build_run_plan_stages(
             "kind": "helper",
             "subcommand": "hygiene",
             "args": ["--diff-data", f"{cr_dir}/diff_data.json"],
+            "stdout": f"{cr_dir}/hygiene.json",
             "expected_outputs": [f"{cr_dir}/hygiene.json"],
             "depends_on": ["stage_05_parse_diff"],
             "on_failure": "continue",
@@ -3669,7 +3746,11 @@ def _build_run_plan_stages(
             "id": "stage_13_validate_companions",
             "kind": "helper",
             "subcommand": "validate-companions",
-            "args": ["--cr-dir", cr_dir],
+            "args": [
+                "--cr-dir", cr_dir,
+                "--diff-data", f"{cr_dir}/diff_data.json",
+            ],
+            "stdout": f"{cr_dir}/companion_findings.json",
             "expected_outputs": [f"{cr_dir}/companion_findings.json"],
             "depends_on": ["stage_05_parse_diff"],
             "on_failure": "continue",
@@ -3679,7 +3760,12 @@ def _build_run_plan_stages(
             "id": "stage_14_resolve_coverage",
             "kind": "helper",
             "subcommand": "resolve-coverage",
-            "args": ["--cr-dir", cr_dir],
+            "args": [
+                "--cr-dir", cr_dir,
+                "--signals", f"{cr_dir}/signals.json",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+            ],
+            "stdout": f"{cr_dir}/coverage_plan_initial.json",
             "expected_outputs": [f"{cr_dir}/coverage_plan_initial.json"],
             "depends_on": ["stage_11_extract_signals"],
             "on_failure": "abort",
@@ -3689,7 +3775,12 @@ def _build_run_plan_stages(
             "id": "stage_15_coverage_critic",
             "kind": "helper",
             "subcommand": "coverage-critic",
-            "args": ["--cr-dir", cr_dir],
+            "args": [
+                "--cr-dir", cr_dir,
+                "--coverage-plan", f"{cr_dir}/coverage_plan_initial.json",
+                "--signals", f"{cr_dir}/signals.json",
+            ],
+            "stdout": f"{cr_dir}/coverage_critic.json",
             "expected_outputs": [f"{cr_dir}/coverage_critic.json"],
             "depends_on": ["stage_14_resolve_coverage"],
             "on_failure": "continue",
@@ -3704,6 +3795,7 @@ def _build_run_plan_stages(
                 "--diff-data", f"{cr_dir}/diff_data.json",
                 "--output", f"{cr_dir}/coverage_plan.json",
             ],
+            "stdout": None,
             "expected_outputs": [f"{cr_dir}/coverage_plan.json", f"{cr_dir}/coverage_gaps.json"],
             "depends_on": ["stage_15_coverage_critic"],
             "on_failure": "abort",
@@ -3714,6 +3806,7 @@ def _build_run_plan_stages(
             "kind": "helper",
             "subcommand": "partition",
             "args": ["--diff-data", f"{cr_dir}/diff_data.json"],
+            "stdout": f"{cr_dir}/partitions.json",
             "expected_outputs": [f"{cr_dir}/partitions.json"],
             "depends_on": ["stage_16_arbitrate_budget"],
             "on_failure": "abort",
@@ -3723,9 +3816,15 @@ def _build_run_plan_stages(
             "id": "stage_18_compute_hashes",
             "kind": "helper",
             "subcommand": "compute-hashes",
-            "args": ["--cr-dir", cr_dir],
+            "args": [
+                "--shared-prompt", f"{cr_dir}/shared_prompt.txt",
+                "--bha-suffix", f"{cr_dir}/bha_suffix.txt",
+                "--diff-tip", "<DIFF_TIP>",
+                "--base-ref", "<BASE_REF>",
+            ],
+            "stdout": f"{cr_dir}/hashes.json",
             "expected_outputs": [f"{cr_dir}/hashes.json"],
-            "depends_on": ["stage_17_partition"],
+            "depends_on": ["stage_17_partition", "stage_02_prep_assets"],
             "on_failure": "abort",
             "enabled": True,
         },
@@ -3733,9 +3832,18 @@ def _build_run_plan_stages(
             "id": "stage_19_cache_check",
             "kind": "helper",
             "subcommand": "cache-check",
-            "args": ["--cr-dir", cr_dir],
+            "args": [
+                "--cache-dir", "<CACHE_DIR>",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+                "--prompt-hash", "<PROMPT_HASH>",
+                "--model-id", "<MODEL_ID>",
+                "--schema-version", str(SCHEMA_VERSION),
+                "--output-dir", cr_dir,
+                "--context-key", "<CONTEXT_KEY>",
+            ],
+            "stdout": None,
             "expected_outputs": [f"{cr_dir}/cache_result.json"],
-            "depends_on": ["stage_18_compute_hashes"],
+            "depends_on": ["stage_18_compute_hashes", "stage_04_finalize_cache"],
             "on_failure": "continue",
             "enabled": True,
         },
@@ -3756,6 +3864,7 @@ def _build_run_plan_stages(
                 "--cr-dir", cr_dir,
                 "--hygiene", f"{cr_dir}/hygiene.json",
             ],
+            "stdout": None,
             "expected_outputs": [f"{cr_dir}/findings.json"],
             "depends_on": ["stage_20_spawn_reviewers"],
             "on_failure": "abort",
@@ -3769,6 +3878,7 @@ def _build_run_plan_stages(
                 "--findings", f"{cr_dir}/findings.json",
                 "--diff-data", f"{cr_dir}/diff_data.json",
             ],
+            "stdout": f"{cr_dir}/findings_validated.json",
             "expected_outputs": [f"{cr_dir}/findings_validated.json"],
             "depends_on": ["stage_21_collect_findings"],
             "on_failure": "abort",
@@ -3787,7 +3897,11 @@ def _build_run_plan_stages(
             "id": "stage_24_verify_coverage",
             "kind": "helper",
             "subcommand": "verify-coverage",
-            "args": ["--cr-dir", cr_dir],
+            "args": [
+                "--cr-dir", cr_dir,
+                "--coverage-plan", f"{cr_dir}/coverage_plan.json",
+            ],
+            "stdout": f"{cr_dir}/coverage_verification.json",
             "expected_outputs": [f"{cr_dir}/coverage_verification.json"],
             "depends_on": ["stage_23_verify_findings"],
             "on_failure": "continue",
@@ -3801,7 +3915,10 @@ def _build_run_plan_stages(
                 "--cr-dir", cr_dir,
                 "--validate-output", f"{cr_dir}/findings_validated.json",
                 "--mode", mode,
+                "--diff-tip", "<DIFF_TIP>",
+                "--pr-number", pr_arg,
             ],
+            "stdout": None,
             "expected_outputs": [f"{cr_dir}/review_result.json"],
             "depends_on": ["stage_22_validate"],
             "on_failure": "abort",
@@ -3811,7 +3928,16 @@ def _build_run_plan_stages(
             "id": "stage_26_cache_update",
             "kind": "helper",
             "subcommand": "cache-update",
-            "args": ["--cr-dir", cr_dir],
+            "args": [
+                "--cache-dir", "<CACHE_DIR>",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+                "--bha-dir", cr_dir,
+                "--prompt-hash", "<PROMPT_HASH>",
+                "--model-id", "<MODEL_ID>",
+                "--schema-version", str(SCHEMA_VERSION),
+                "--context-key", "<CONTEXT_KEY>",
+            ],
+            "stdout": None,
             "expected_outputs": [],
             "depends_on": ["stage_25_finalize_result"],
             "on_failure": "continue",
@@ -3821,7 +3947,12 @@ def _build_run_plan_stages(
             "id": "stage_27_review_state_write",
             "kind": "helper",
             "subcommand": "review-state-write",
-            "args": ["--cr-dir", cr_dir],
+            "args": [
+                "--cache-dir", "<CACHE_DIR>",
+                "--key", "<STATE_KEY>",
+                "--ref", "<DIFF_TIP>",
+            ],
+            "stdout": None,
             "expected_outputs": [],
             "depends_on": ["stage_25_finalize_result"],
             "on_failure": "continue",
@@ -3835,7 +3966,8 @@ def _build_run_plan_stages(
                 "--review-result", f"{cr_dir}/review_result.json",
                 "--validate-output", f"{cr_dir}/findings_validated.json",
             ],
-            "expected_outputs": [],
+            "stdout": f"{cr_dir}/verdict.json",
+            "expected_outputs": [f"{cr_dir}/verdict.json"],
             "depends_on": ["stage_25_finalize_result"],
             "on_failure": "abort",
             "enabled": True,
@@ -3845,6 +3977,7 @@ def _build_run_plan_stages(
             "kind": "present",
             "subcommand": None,
             "args": [],
+            "stdout": None,
             "expected_outputs": [],
             "depends_on": ["stage_28_verdict"],
             "on_failure": "continue",
@@ -3854,7 +3987,11 @@ def _build_run_plan_stages(
             "id": "stage_30_footer",
             "kind": "helper",
             "subcommand": "footer",
-            "args": ["--cr-dir", cr_dir],
+            "args": [
+                "--start-time", "<START_TIME>",
+                "--cr-dir", cr_dir,
+            ],
+            "stdout": None,
             "expected_outputs": [],
             "depends_on": ["stage_29_present"],
             "on_failure": "continue",

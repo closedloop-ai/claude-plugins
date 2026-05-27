@@ -5164,6 +5164,37 @@ class TestFinalizeResult:
         assert envelope["verified"] == []
         assert len(envelope["coverage_gaps"]) == 1
 
+    def test_non_required_high_coverage_gap_yields_needs_attention(self, tmp_path: Path) -> None:
+        """A non-required HIGH coverage gap must hit rule 3, not fall through to APPROVED.
+
+        PLN-719 Section 5 rule 3: "Any HIGH finding (verified or system-scoped)
+        → NEEDS_ATTENTION". Coverage gaps are system-scoped.
+        """
+        gap = minimal_system_finding(
+            severity="HIGH",
+            priority=1,
+            issue="best-effort reviewer skipped",
+            # required omitted → defaults False
+        )
+        result = self._run_finalize(tmp_path, [gap])
+        assert result["verdict"] == "NEEDS_ATTENTION"
+
+    def test_blocking_coverage_gap_yields_changes_requested(self, tmp_path: Path) -> None:
+        """A BLOCKING coverage gap (even non-required) → CHANGES_REQUESTED via rule 2."""
+        gap = minimal_system_finding(
+            severity="BLOCKING",
+            priority=0,
+            issue="critical reviewer crashed",
+        )
+        result = self._run_finalize(tmp_path, [gap])
+        assert result["verdict"] == "CHANGES_REQUESTED"
+
+    def test_medium_coverage_gap_falls_through_to_approved(self, tmp_path: Path) -> None:
+        """MEDIUM non-required coverage gap → APPROVED (plan section 5: no MEDIUM gate)."""
+        gap = minimal_system_finding(severity="MEDIUM", priority=2)
+        result = self._run_finalize(tmp_path, [gap])
+        assert result["verdict"] == "APPROVED"
+
     def test_envelope_includes_scope_and_intent(self, tmp_path: Path) -> None:
         self._run_finalize(
             tmp_path, [],
@@ -5543,6 +5574,82 @@ class TestPrepareRun:
             "stage_22_validate", "stage_25_finalize_result", "stage_28_verdict",
         ):
             assert by_id[stage_id]["enabled"] is True, stage_id
+
+    def test_enabled_helper_stages_include_all_required_argparse_args(
+        self, tmp_path: Path,
+    ) -> None:
+        """Every enabled helper stage must satisfy its argparse `required=True` args.
+
+        Either the args list provides the flag directly or it carries a
+        runtime placeholder (``<TOKEN>``) for the orchestrator to substitute.
+        Prevents the regression where prep-assets shipped without
+        --plugin-root and several stages had only --cr-dir.
+        """
+        _, plan = self._run(tmp_path)
+
+        # subcommand → required argparse flags. Derived from
+        # _register_subparsers in code_review_helpers.py.
+        required_flags = {
+            "setup": ["--mode"],
+            "prep-assets": ["--plugin-root", "--cr-dir"],
+            "resolve-scope": ["--mode"],
+            "finalize-cache": ["--setup-json", "--mode"],
+            "parse-diff": ["--scope"],
+            "extract-patches": ["--diff-scope", "--diff-data", "--cr-dir"],
+            "auto-incremental": ["--key", "--diff-tip", "--original-scope", "--mode"],
+            "fetch-intent": ["--scope-kind"],
+            "classify-intent": ["--intent-context"],
+            "hygiene": [],  # --diff-data optional
+            "arbitrate-budget": ["--coverage-plan", "--diff-data"],
+            "partition": [],  # --diff-data optional
+            "compute-hashes": ["--shared-prompt", "--bha-suffix", "--diff-tip", "--base-ref"],
+            "cache-check": [
+                "--cache-dir", "--diff-data", "--prompt-hash",
+                "--model-id", "--schema-version", "--output-dir",
+            ],
+            "collect-findings": ["--cr-dir"],
+            "validate": ["--findings", "--diff-data"],
+            "finalize-result": ["--cr-dir", "--validate-output"],
+            "cache-update": [
+                "--cache-dir", "--diff-data", "--bha-dir",
+                "--prompt-hash", "--model-id", "--schema-version",
+            ],
+            "review-state-write": ["--cache-dir", "--key"],
+            "verdict": ["--validate-output"],
+            "footer": ["--start-time"],
+        }
+
+        for stage in plan["stages"]:
+            if stage["kind"] != "helper" or not stage["enabled"]:
+                continue
+            sub = stage["subcommand"]
+            if sub not in required_flags:
+                continue  # disabled / future stages
+            args = stage["args"]
+            for flag in required_flags[sub]:
+                assert flag in args, (
+                    f"stage {stage['id']!r} (subcommand={sub!r}) is enabled "
+                    f"but missing required argparse flag {flag!r}; "
+                    f"args={args}"
+                )
+
+    def test_runtime_placeholders_present_for_orchestrator(
+        self, tmp_path: Path,
+    ) -> None:
+        """Stages with values the orchestrator must resolve carry <TOKEN> placeholders."""
+        _, plan = self._run(tmp_path)
+        by_id = {s["id"]: s for s in plan["stages"]}
+
+        # prep-assets needs PLUGIN_ROOT from runtime env.
+        assert "<PLUGIN_ROOT>" in by_id["stage_02_prep_assets"]["args"]
+        # parse-diff needs DIFF_SCOPE from scope.json.
+        assert "<DIFF_SCOPE>" in by_id["stage_05_parse_diff"]["args"]
+        # cache-check needs CACHE_DIR, PROMPT_HASH, MODEL_ID, CONTEXT_KEY at runtime.
+        cc_args = by_id["stage_19_cache_check"]["args"]
+        for token in ("<CACHE_DIR>", "<PROMPT_HASH>", "<MODEL_ID>", "<CONTEXT_KEY>"):
+            assert token in cc_args, f"cache-check missing {token}"
+        # footer needs START_TIME from setup.json.
+        assert "<START_TIME>" in by_id["stage_30_footer"]["args"]
 
     def test_validation_gates_present(self, tmp_path: Path) -> None:
         _, plan = self._run(tmp_path)
