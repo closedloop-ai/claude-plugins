@@ -4786,3 +4786,685 @@ class TestExtractPatches:
         assert (cr_dir / "patches_all.txt").exists()
         # No partition patch files should exist
         assert not list(cr_dir.glob("patches_p*.txt"))
+
+
+# ---------------------------------------------------------------------------
+# Canonical schema integration (PLN-719 Phase 1)
+# ---------------------------------------------------------------------------
+
+class TestCanonicalSchemaIntegration:
+    """Tests for canonical schema fields produced by hygiene, collect-findings,
+    and consumed by validate (PLN-719 Foundation, Phase 1)."""
+
+    def test_hygiene_emits_canonical_fields(self, tmp_path: Path) -> None:
+        """cmd_hygiene must emit findings with canonical schema fields."""
+        import argparse
+        import io
+        import sys as _sys
+
+        diff_data = {
+            "file_statuses": {".github/workflows/foo.yml": "added"},
+            "changed_ranges": {".github/workflows/foo.yml": {"added": [[1, 5]], "removed": []}},
+            "patch_lines": {
+                ".github/workflows/foo.yml": {
+                    "added_lines": {
+                        "2": 'runs-on: ubuntu-latest\nworking-directory: /home/runner/work/repo',
+                    },
+                },
+            },
+        }
+        diff_path = tmp_path / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(diff_data=str(diff_path), workdir=None)
+            cmd_hygiene(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        if result["findings"]:
+            f0 = result["findings"][0]
+            # Canonical schema fields
+            assert f0["schema_version"] == 1
+            assert f0["finding_scope"] == "diff"
+            assert f0["system_marker"] is None
+            assert f0["source"] == "hygiene"
+            assert f0["reviewer"] == "hygiene"
+            assert f0["reviewer_trigger"]["type"] == "always"
+            assert f0["emitted_at"]
+            assert f0["id"].startswith("hygiene_f")
+            assert "evidence" in f0
+
+    def test_collect_findings_assigns_deterministic_ids(self, tmp_path: Path) -> None:
+        """cmd_collect_findings must assign <reviewer>_f<index> ids when missing."""
+        import argparse
+        import io
+        import sys as _sys
+
+        (tmp_path / "agent_bha_p0.json").write_text(json.dumps({
+            "findings": [
+                {"file": "a.ts", "severity": "HIGH", "line": 1, "category": "Correctness",
+                 "issue": "x", "priority": 1, "confidence": 0.9},
+                {"file": "a.ts", "severity": "MEDIUM", "line": 2, "category": "Correctness",
+                 "issue": "y", "priority": 2, "confidence": 0.8},
+            ],
+        }))
+        (tmp_path / "agent_premise.json").write_text(json.dumps({
+            "findings": [
+                {"file": "b.ts", "severity": "MEDIUM", "line": 1, "category": "Premise",
+                 "issue": "z", "priority": 2, "confidence": 0.7},
+            ],
+        }))
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(cr_dir=str(tmp_path), output="findings.json", hygiene=None)
+            cmd_collect_findings(ns)
+        finally:
+            _sys.stdout = old_stdout
+
+        merged = json.loads((tmp_path / "findings.json").read_text())
+        ids = [f["id"] for f in merged]
+        assert "bha_p0_f0" in ids
+        assert "bha_p0_f1" in ids
+        assert "premise_f0" in ids
+        # All findings must have schema_version + finding_scope
+        for f in merged:
+            assert f["schema_version"] == 1
+            assert f["finding_scope"] == "diff"
+
+    def test_collect_findings_preserves_existing_ids(self, tmp_path: Path) -> None:
+        """If an agent already emitted an id, collect-findings must not overwrite it."""
+        import argparse
+        import io
+        import sys as _sys
+
+        (tmp_path / "agent_bha_p0.json").write_text(json.dumps({
+            "findings": [
+                {"id": "premise_f99", "file": "a.ts", "severity": "HIGH", "line": 1,
+                 "category": "Correctness", "issue": "x", "priority": 1, "confidence": 0.9,
+                 "reviewer": "premise"},
+            ],
+        }))
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(cr_dir=str(tmp_path), output="findings.json", hygiene=None)
+            cmd_collect_findings(ns)
+        finally:
+            _sys.stdout = old_stdout
+
+        merged = json.loads((tmp_path / "findings.json").read_text())
+        assert merged[0]["id"] == "premise_f99"
+        assert merged[0]["reviewer"] == "premise"
+
+    def test_validate_passes_through_system_scoped_finding(self, tmp_path: Path) -> None:
+        """A system-scoped finding bypasses file/line checks."""
+        import argparse
+        import io
+        import sys as _sys
+
+        diff_data = _make_diff_data(files=["src/app.ts"])
+        findings = [{
+            "id": "coverage-verifier_f0",
+            "reviewer": "coverage-verifier",
+            "source": "coverage-verifier",
+            "schema_version": 1,
+            "finding_scope": "system",
+            "file": None,
+            "line": None,
+            "system_marker": "budget-exceeded",
+            "severity": "MEDIUM",
+            "category": "Coverage",
+            "issue": "Required reviewer dropped",
+            "priority": 2,
+            "confidence": 1.0,
+        }]
+        findings_path = tmp_path / "findings.json"
+        findings_path.write_text(json.dumps(findings))
+        diff_path = tmp_path / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(findings=str(findings_path), diff_data=str(diff_path))
+            cmd_validate(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert len(result["validated"]) == 1
+        assert result["validated"][0]["finding_scope"] == "system"
+        assert result["validated"][0]["system_marker"] == "budget-exceeded"
+
+    def test_validate_passes_through_pr_metadata_finding(self, tmp_path: Path) -> None:
+        """A pr_metadata-scoped finding (injection) bypasses file/line checks."""
+        import argparse
+        import io
+        import sys as _sys
+
+        diff_data = _make_diff_data(files=["src/app.ts"])
+        findings = [{
+            "id": "injection-detector_f0",
+            "reviewer": "injection-detector",
+            "source": "injection-detector",
+            "schema_version": 1,
+            "finding_scope": "pr_metadata",
+            "file": None,
+            "line": None,
+            "system_marker": "pr_description",
+            "severity": "HIGH",
+            "category": "Security",
+            "issue": "Prompt injection in PR body",
+            "priority": 1,
+            "confidence": 1.0,
+        }]
+        findings_path = tmp_path / "findings.json"
+        findings_path.write_text(json.dumps(findings))
+        diff_path = tmp_path / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(findings=str(findings_path), diff_data=str(diff_path))
+            cmd_validate(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert len(result["validated"]) == 1
+        assert result["validated"][0]["finding_scope"] == "pr_metadata"
+
+    def test_validate_rejects_invalid_system_marker(self, tmp_path: Path) -> None:
+        """A system-scoped finding with an unknown marker is discarded."""
+        import argparse
+        import io
+        import sys as _sys
+
+        diff_data = _make_diff_data(files=["src/app.ts"])
+        findings = [{
+            "id": "bogus_f0",
+            "reviewer": "bogus",
+            "source": "agent",
+            "schema_version": 1,
+            "finding_scope": "system",
+            "file": None,
+            "system_marker": "made-up-marker",
+            "severity": "HIGH",
+            "category": "Coverage",
+            "issue": "x",
+            "priority": 1,
+            "confidence": 0.9,
+        }]
+        findings_path = tmp_path / "findings.json"
+        findings_path.write_text(json.dumps(findings))
+        diff_path = tmp_path / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(findings=str(findings_path), diff_data=str(diff_path))
+            cmd_validate(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert len(result["validated"]) == 0
+        assert len(result["discarded"]) == 1
+
+    def test_validate_dedups_system_findings_by_marker_and_category(self, tmp_path: Path) -> None:
+        """Two system findings with the same (system_marker, category) merge."""
+        import argparse
+        import io
+        import sys as _sys
+
+        diff_data = _make_diff_data(files=["src/app.ts"])
+        base = {
+            "id": "coverage-verifier_f0",
+            "reviewer": "coverage-verifier",
+            "source": "coverage-verifier",
+            "schema_version": 1,
+            "finding_scope": "system",
+            "file": None,
+            "system_marker": "budget-exceeded",
+            "severity": "MEDIUM",
+            "category": "Coverage",
+            "issue": "first",
+            "priority": 2,
+            "confidence": 1.0,
+        }
+        dup = dict(base, id="coverage-verifier_f1", severity="HIGH", priority=1, issue="second")
+        findings_path = tmp_path / "findings.json"
+        findings_path.write_text(json.dumps([base, dup]))
+        diff_path = tmp_path / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(findings=str(findings_path), diff_data=str(diff_path))
+            cmd_validate(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert len(result["validated"]) == 1
+        # Upgraded to HIGH
+        assert result["validated"][0]["severity"] == "HIGH"
+
+
+# ---------------------------------------------------------------------------
+# Result envelope (PLN-719 Phase 2)
+# ---------------------------------------------------------------------------
+
+class TestFinalizeResult:
+    """Tests for cmd_finalize_result + verdict consuming review_result.json."""
+
+    def _run_finalize(
+        self,
+        cr_dir: Path,
+        validated: list[dict[str, Any]],
+        *,
+        mode: str = "local",
+        diff_tip: str = "abc1234",
+        scope: dict[str, Any] | None = None,
+        intent: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        import argparse
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_finalize_result
+
+        validate_path = cr_dir / "findings_validated.json"
+        validate_path.write_text(json.dumps({"validated": validated, "discarded": [], "stats": {}}))
+        if scope is not None:
+            (cr_dir / "scope.json").write_text(json.dumps(scope))
+        if intent is not None:
+            (cr_dir / "intent.json").write_text(json.dumps(intent))
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(
+                cr_dir=str(cr_dir),
+                validate_output=str(validate_path),
+                mode=mode,
+                diff_tip=diff_tip,
+                pr_number=None,
+            )
+            cmd_finalize_result(ns)
+            _sys.stdout.seek(0)
+            return json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+    def test_writes_envelope_with_no_findings(self, tmp_path: Path) -> None:
+        result = self._run_finalize(tmp_path, [])
+        assert result["verdict"] == "APPROVED"
+        envelope = json.loads((tmp_path / "review_result.json").read_text())
+        assert envelope["schema_version"] == 1
+        assert envelope["verdict"] == "APPROVED"
+        assert envelope["verified"] == []
+        assert envelope["coverage_gaps"] == []
+        assert envelope["mode"] == "local"
+
+    def test_envelope_passes_schema_validation(self, tmp_path: Path) -> None:
+        result = self._run_finalize(tmp_path, [])
+        assert result["validation_errors"] == []
+
+    def test_high_finding_yields_needs_attention(self, tmp_path: Path) -> None:
+        finding = {
+            "id": "bha_p0_f0",
+            "reviewer": "bha_p0",
+            "source": "agent",
+            "file": "src/app.ts",
+            "line": 10,
+            "severity": "HIGH",
+            "category": "Correctness",
+            "issue": "Race condition",
+            "priority": 1,
+            "confidence": 0.9,
+            "code_snippet": "race()",
+        }
+        result = self._run_finalize(tmp_path, [finding])
+        assert result["verdict"] == "NEEDS_ATTENTION"
+        envelope = json.loads((tmp_path / "review_result.json").read_text())
+        assert len(envelope["verified"]) == 1
+        assert envelope["verified"][0]["id"] == "bha_p0_f0"
+
+    def test_blocking_finding_yields_changes_requested(self, tmp_path: Path) -> None:
+        finding = {
+            "id": "bha_p0_f0",
+            "reviewer": "bha_p0",
+            "source": "agent",
+            "file": "src/app.ts",
+            "line": 10,
+            "severity": "BLOCKING",
+            "category": "Security",
+            "issue": "Auth bypass",
+            "priority": 0,
+            "confidence": 0.95,
+            "code_snippet": "auth = True",
+        }
+        result = self._run_finalize(tmp_path, [finding])
+        assert result["verdict"] == "CHANGES_REQUESTED"
+
+    def test_coverage_gap_buckets_separately(self, tmp_path: Path) -> None:
+        gap = {
+            "id": "coverage-verifier_f0",
+            "reviewer": "coverage-verifier",
+            "source": "coverage-verifier",
+            "schema_version": 1,
+            "finding_scope": "system",
+            "file": None,
+            "system_marker": "budget-exceeded",
+            "severity": "MEDIUM",
+            "category": "Coverage",
+            "issue": "Required reviewer dropped",
+            "priority": 2,
+            "confidence": 1.0,
+            "code_snippet": "",
+            "required": True,
+        }
+        result = self._run_finalize(tmp_path, [gap])
+        # Required coverage gap → CHANGES_REQUESTED via rule 1
+        assert result["verdict"] == "CHANGES_REQUESTED"
+        envelope = json.loads((tmp_path / "review_result.json").read_text())
+        assert envelope["verified"] == []
+        assert len(envelope["coverage_gaps"]) == 1
+
+    def test_envelope_includes_scope_and_intent(self, tmp_path: Path) -> None:
+        self._run_finalize(
+            tmp_path, [],
+            scope={"diff_scope": "main..HEAD", "base_ref": "main", "pr_number": 42},
+            intent={"intent": "feature"},
+        )
+        envelope = json.loads((tmp_path / "review_result.json").read_text())
+        assert envelope["intent"] == "feature"
+        assert envelope["diff_scope"] == "main..HEAD"
+        assert envelope["base_ref"] == "main"
+
+
+class TestVerdictReadsEnvelope:
+    """cmd_verdict prefers review_result.json when provided."""
+
+    def test_reads_canonical_verdict_from_envelope(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_verdict
+
+        envelope_path = tmp_path / "review_result.json"
+        envelope = {
+            "schema_version": 1,
+            "review_id": "00000000-0000-4000-8000-000000000000",
+            "diff_tip": "abc",
+            "mode": "local",
+            "intent": "mixed",
+            "verified": [],
+            "justified": [],
+            "rejected": [],
+            "coverage_plan": {
+                "required": [], "best_effort": [], "deferred_for_budget": [],
+                "budget": {"total_cap": 20, "required_count": 0, "best_effort_count": 0, "bha_partitions": 0},
+            },
+            "coverage_gaps": [],
+            "verdict": "CHANGES_REQUESTED",
+            "verdict_reason": "Auth bypass",
+        }
+        envelope_path.write_text(json.dumps(envelope))
+
+        # legacy fallback file (should be ignored when envelope present)
+        legacy_path = tmp_path / "validate_output.json"
+        legacy_path.write_text(json.dumps({"validated": []}))
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(
+                validate_output=str(legacy_path),
+                review_result=str(envelope_path),
+            )
+            cmd_verdict(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert result["canonical_verdict"] == "CHANGES_REQUESTED"
+        assert result["verdict"] == "decline"  # legacy tag mapping
+        assert "Auth bypass" in result["reason"]
+
+    def test_falls_back_to_validate_output(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_verdict
+
+        legacy_path = tmp_path / "validate_output.json"
+        legacy_path.write_text(json.dumps({"validated": [
+            {"severity": "HIGH", "issue": "race", "priority": 1, "category": "Correctness"},
+        ]}))
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(
+                validate_output=str(legacy_path),
+                review_result=None,
+            )
+            cmd_verdict(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        # Legacy fallback produces canonical NEEDS_ATTENTION + legacy needs_attention.
+        assert result["canonical_verdict"] == "NEEDS_ATTENTION"
+        assert result["verdict"] == "needs_attention"
+
+
+# ---------------------------------------------------------------------------
+# Budget arbitration (PLN-719 Phase 3)
+# ---------------------------------------------------------------------------
+
+class TestArbitrateBudget:
+    """Tests for cmd_arbitrate_budget (PLN-719 Section 5)."""
+
+    def _run(
+        self,
+        tmp_path: Path,
+        coverage_plan_in: dict[str, Any],
+        diff_data: dict[str, Any],
+        *,
+        cap: int = 20,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        import argparse
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_arbitrate_budget
+
+        cp_path = tmp_path / "coverage_plan_initial.json"
+        cp_path.write_text(json.dumps(coverage_plan_in))
+        dd_path = tmp_path / "diff_data.json"
+        dd_path.write_text(json.dumps(diff_data))
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(
+                coverage_plan=str(cp_path),
+                diff_data=str(dd_path),
+                cap=cap,
+                output=None,
+            )
+            cmd_arbitrate_budget(ns)
+            _sys.stdout.seek(0)
+            summary = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        final_plan = json.loads((tmp_path / "coverage_plan.json").read_text())
+        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())
+        return summary, final_plan, gaps
+
+    def test_simple_fits_under_cap(self, tmp_path: Path) -> None:
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = {
+            "required": [{"reviewer": "premise", "priority": 0}],
+            "best_effort": [
+                {"reviewer": "test_quality", "priority": 1},
+                {"reviewer": "impact", "priority": 2},
+            ],
+        }
+        summary, plan, gaps = self._run(tmp_path, plan_in, diff, cap=20)
+        assert summary["required_count"] == 1
+        assert summary["best_effort_count"] == 2
+        assert summary["dropped_required_count"] == 0
+        assert summary["bha_partitions"] >= 1
+        assert plan["budget"]["total_cap"] == 20
+        assert gaps["findings"] == []
+
+    def test_required_overflow_drops_lowest(self, tmp_path: Path) -> None:
+        diff = _make_diff_data(files=["src/app.ts"])
+        # 25 required reviewers, cap=20 → 5 should be dropped.
+        plan_in = {
+            "required": [{"reviewer": f"r{i}", "priority": 0} for i in range(25)],
+            "best_effort": [],
+        }
+        summary, plan, gaps = self._run(tmp_path, plan_in, diff, cap=20)
+        # cap=20, bha_floor=1 → keep_count=19; 25-19=6 dropped.
+        assert summary["dropped_required_count"] == 6
+        assert len(plan["required"]) == 19
+        assert len(gaps["findings"]) == 6
+        for gap in gaps["findings"]:
+            assert gap["system_marker"] == "budget-exceeded"
+            assert gap["category"] == "Coverage"
+            assert gap["severity"] == "HIGH"
+            assert gap["finding_scope"] == "system"
+
+    def test_best_effort_pruned_by_priority(self, tmp_path: Path) -> None:
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = {
+            "required": [{"reviewer": f"r{i}", "priority": 0} for i in range(15)],
+            "best_effort": [
+                {"reviewer": "low", "priority": 2},   # should be dropped first
+                {"reviewer": "high", "priority": 1},  # should be kept
+            ],
+        }
+        # cap=17 → after required(15) + bha_floor(1), best_effort gets remaining(=1)
+        summary, plan, gaps = self._run(tmp_path, plan_in, diff, cap=17)
+        assert summary["best_effort_count"] == 1
+        # The kept one should be the higher-priority "high" (lower priority value).
+        assert plan["best_effort"][0]["reviewer"] == "high"
+        assert len(plan["deferred_for_budget"]) == 1
+        assert plan["deferred_for_budget"][0]["reviewer"] == "low"
+
+    def test_docs_only_waives_bha_floor(self, tmp_path: Path) -> None:
+        diff = _make_diff_data(files=["docs/x.md", "docs/y.md"])
+        plan_in = {"required": [], "best_effort": []}
+        summary, plan, gaps = self._run(tmp_path, plan_in, diff, cap=20)
+        assert summary["docs_only"] is True
+        assert plan["budget"]["bha_partitions"] == 0
+
+    def test_required_with_bha_floor(self, tmp_path: Path) -> None:
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = {
+            "required": [{"reviewer": "premise", "priority": 0}],
+            "best_effort": [],
+        }
+        summary, plan, gaps = self._run(tmp_path, plan_in, diff, cap=20)
+        # 1 required + bha_floor=1 → bha_partitions >= 1.
+        assert plan["budget"]["bha_partitions"] >= 1
+
+    def test_invalid_cap_returns_error(self, tmp_path: Path) -> None:
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = {"required": [], "best_effort": []}
+
+        import argparse
+        from code_review_helpers import cmd_arbitrate_budget
+
+        cp = tmp_path / "cp.json"
+        cp.write_text(json.dumps(plan_in))
+        dd = tmp_path / "dd.json"
+        dd.write_text(json.dumps(diff))
+
+        ns = argparse.Namespace(
+            coverage_plan=str(cp), diff_data=str(dd), cap=0, output=None,
+        )
+        rc = cmd_arbitrate_budget(ns)
+        assert rc == 1
+
+
+class TestArbitrateBudgetVerdict:
+    """End-to-end: arbitrate-budget → finalize-result → CHANGES_REQUESTED."""
+
+    def test_budget_overflow_blocks_via_verdict(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_arbitrate_budget, cmd_finalize_result
+
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = {
+            "required": [{"reviewer": f"r{i}", "priority": 0} for i in range(25)],
+            "best_effort": [],
+        }
+        cp = tmp_path / "coverage_plan_initial.json"
+        cp.write_text(json.dumps(plan_in))
+        dd = tmp_path / "diff_data.json"
+        dd.write_text(json.dumps(diff))
+
+        # arbitrate-budget
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(
+                coverage_plan=str(cp), diff_data=str(dd), cap=20, output=None,
+            )
+            cmd_arbitrate_budget(ns)
+        finally:
+            _sys.stdout = old_stdout
+
+        # validate stub
+        validate_path = tmp_path / "findings_validated.json"
+        validate_path.write_text(json.dumps({"validated": [], "discarded": [], "stats": {}}))
+
+        # finalize-result
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(
+                cr_dir=str(tmp_path),
+                validate_output=str(validate_path),
+                mode="local",
+                diff_tip="abc",
+                pr_number=None,
+            )
+            cmd_finalize_result(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        # Required overflow → CHANGES_REQUESTED via verdict rule 1.
+        assert result["verdict"] == "CHANGES_REQUESTED"
+        assert result["coverage_gaps_count"] >= 1
