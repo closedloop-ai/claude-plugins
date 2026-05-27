@@ -2767,29 +2767,47 @@ def cmd_setup(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def compute_canonical_prompt_hash(
+    parts: list[bytes],
+    schema_version: int = SCHEMA_VERSION,
+) -> str:
+    """Return the canonical prompt_hash (PLN-719 Section 9).
+
+    ``parts`` is a list of byte-string components joined with a NUL separator
+    in stable order; schema_version is appended so a MAJOR schema bump
+    invalidates every cache namespace at once.
+    """
+    sep = b"\0"
+    payload = sep.join(parts) + sep + str(int(schema_version)).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def cmd_compute_hashes(args: argparse.Namespace) -> int:
-    """Compute prompt hash and context key for cache operations."""
+    """Compute prompt hash and context key for cache operations.
+
+    The prompt hash now folds the canonical schema_version per PLN-719
+    Section 9: any MAJOR schema bump invalidates all caches automatically.
+    """
     shared_prompt: str = args.shared_prompt
     bha_suffix: str = args.bha_suffix
     diff_tip: str = args.diff_tip
     base_ref: str = args.base_ref
 
-    # Read both files and hash together
-    content = b""
+    # Read both prompt files.
     try:
         with open(shared_prompt, "rb") as f:
-            content += f.read()
+            shared_bytes = f.read()
     except OSError as exc:
         print(f"Error: cannot read shared prompt: {exc}", file=sys.stderr)
         return 1
     try:
         with open(bha_suffix, "rb") as f:
-            content += f.read()
+            bha_bytes = f.read()
     except OSError as exc:
         print(f"Error: cannot read BHA suffix: {exc}", file=sys.stderr)
         return 1
 
-    prompt_hash = hashlib.sha256(content).hexdigest()
+    prompt_hash = compute_canonical_prompt_hash([shared_bytes, bha_bytes])
 
     # Compute context key via git merge-base
     context_key = ""
@@ -2799,7 +2817,11 @@ def cmd_compute_hashes(args: argparse.Namespace) -> int:
         pass
 
     json.dump(
-        {"prompt_hash": prompt_hash, "context_key": context_key},
+        {
+            "prompt_hash": prompt_hash,
+            "context_key": context_key,
+            "schema_version": SCHEMA_VERSION,
+        },
         sys.stdout,
         indent=2,
     )
@@ -3467,6 +3489,444 @@ def cmd_verdict(args: argparse.Namespace) -> int:
             "canonical_verdict": canonical_verdict,
             "reason": reason,
             "tag": tag,
+        },
+        sys.stdout,
+        indent=2,
+    )
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: prepare-run (PLN-719 Phase 4)
+# ---------------------------------------------------------------------------
+
+
+def _build_run_plan_stages(
+    cr_dir: str,
+    mode: str,
+    pr_number: int | None,
+    flags: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return the canonical 30-stage pipeline (PLN-719 Section 7).
+
+    Stages that depend on plans 01/05/06 are present but marked
+    ``enabled: false`` until those plans land. The orchestrator must skip
+    disabled stages and resolve their outputs to empty placeholders.
+    """
+    return [
+        {
+            "id": "stage_01_setup",
+            "kind": "helper",
+            "subcommand": "setup",
+            "args": ["--mode", mode, "--cr-dir-prefix", ".closedloop-ai/code-review/cr-"],
+            "expected_outputs": [f"{cr_dir}/setup.json"],
+            "depends_on": [],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_02_prep_assets",
+            "kind": "helper",
+            "subcommand": "prep-assets",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [f"{cr_dir}/shared_prompt.txt", f"{cr_dir}/bha_suffix.txt"],
+            "depends_on": ["stage_01_setup"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_03_resolve_scope",
+            "kind": "helper",
+            "subcommand": "resolve-scope",
+            "args": [],
+            "expected_outputs": [f"{cr_dir}/scope.json"],
+            "depends_on": ["stage_02_prep_assets"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_04_finalize_cache",
+            "kind": "helper",
+            "subcommand": "finalize-cache",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [f"{cr_dir}/cache_config.json"],
+            "depends_on": ["stage_03_resolve_scope"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_05_parse_diff",
+            "kind": "helper",
+            "subcommand": "parse-diff",
+            "args": ["--scope=<DIFF_SCOPE>"],
+            "expected_outputs": [f"{cr_dir}/diff_data.json"],
+            "depends_on": ["stage_03_resolve_scope"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_06_extract_patches",
+            "kind": "helper",
+            "subcommand": "extract-patches",
+            "args": [
+                "--diff-scope=<DIFF_SCOPE>",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+                "--cr-dir", cr_dir,
+            ],
+            "expected_outputs": [f"{cr_dir}/patches_all.txt"],
+            "depends_on": ["stage_05_parse_diff"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_07_auto_incremental",
+            "kind": "helper",
+            "subcommand": "auto-incremental",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [f"{cr_dir}/auto_incremental.json"],
+            "depends_on": ["stage_05_parse_diff"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_08_fetch_intent",
+            "kind": "helper",
+            "subcommand": "fetch-intent",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [f"{cr_dir}/intent_context.json"],
+            "depends_on": ["stage_03_resolve_scope"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_09_detect_injection",
+            "kind": "helper",
+            "subcommand": "detect-injection",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [f"{cr_dir}/injection_report.json"],
+            "depends_on": ["stage_08_fetch_intent"],
+            "on_failure": "continue",
+            "enabled": False,  # plan 01
+        },
+        {
+            "id": "stage_10_classify_intent",
+            "kind": "helper",
+            "subcommand": "classify-intent",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [f"{cr_dir}/intent.json"],
+            "depends_on": ["stage_08_fetch_intent"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_11_extract_signals",
+            "kind": "helper",
+            "subcommand": "extract-signals",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [f"{cr_dir}/signals.json"],
+            "depends_on": ["stage_06_extract_patches", "stage_10_classify_intent"],
+            "on_failure": "continue_with_coverage_gap",
+            "enabled": False,  # plan 05
+        },
+        {
+            "id": "stage_12_hygiene",
+            "kind": "helper",
+            "subcommand": "hygiene",
+            "args": ["--diff-data", f"{cr_dir}/diff_data.json"],
+            "expected_outputs": [f"{cr_dir}/hygiene.json"],
+            "depends_on": ["stage_05_parse_diff"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_13_validate_companions",
+            "kind": "helper",
+            "subcommand": "validate-companions",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [f"{cr_dir}/companion_findings.json"],
+            "depends_on": ["stage_05_parse_diff"],
+            "on_failure": "continue",
+            "enabled": False,  # plan 06
+        },
+        {
+            "id": "stage_14_resolve_coverage",
+            "kind": "helper",
+            "subcommand": "resolve-coverage",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [f"{cr_dir}/coverage_plan_initial.json"],
+            "depends_on": ["stage_11_extract_signals"],
+            "on_failure": "abort",
+            "enabled": False,  # plan 05
+        },
+        {
+            "id": "stage_15_coverage_critic",
+            "kind": "helper",
+            "subcommand": "coverage-critic",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [f"{cr_dir}/coverage_critic.json"],
+            "depends_on": ["stage_14_resolve_coverage"],
+            "on_failure": "continue",
+            "enabled": False,  # plan 05
+        },
+        {
+            "id": "stage_16_arbitrate_budget",
+            "kind": "helper",
+            "subcommand": "arbitrate-budget",
+            "args": [
+                "--coverage-plan", f"{cr_dir}/coverage_plan_initial.json",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+                "--output", f"{cr_dir}/coverage_plan.json",
+            ],
+            "expected_outputs": [f"{cr_dir}/coverage_plan.json", f"{cr_dir}/coverage_gaps.json"],
+            "depends_on": ["stage_15_coverage_critic"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_17_partition",
+            "kind": "helper",
+            "subcommand": "partition",
+            "args": ["--diff-data", f"{cr_dir}/diff_data.json"],
+            "expected_outputs": [f"{cr_dir}/partitions.json"],
+            "depends_on": ["stage_16_arbitrate_budget"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_18_compute_hashes",
+            "kind": "helper",
+            "subcommand": "compute-hashes",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [f"{cr_dir}/hashes.json"],
+            "depends_on": ["stage_17_partition"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_19_cache_check",
+            "kind": "helper",
+            "subcommand": "cache-check",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [f"{cr_dir}/cache_result.json"],
+            "depends_on": ["stage_18_compute_hashes"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_20_spawn_reviewers",
+            "kind": "agent_fleet",
+            "agent_specs": [],  # populated by orchestrator from coverage_plan + partitions
+            "expected_outputs": [f"{cr_dir}/agent_*.json"],
+            "depends_on": ["stage_19_cache_check"],
+            "on_failure": "continue_with_coverage_gap",
+            "enabled": True,
+        },
+        {
+            "id": "stage_21_collect_findings",
+            "kind": "helper",
+            "subcommand": "collect-findings",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--hygiene", f"{cr_dir}/hygiene.json",
+            ],
+            "expected_outputs": [f"{cr_dir}/findings.json"],
+            "depends_on": ["stage_20_spawn_reviewers"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_22_validate",
+            "kind": "helper",
+            "subcommand": "validate",
+            "args": [
+                "--findings", f"{cr_dir}/findings.json",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+            ],
+            "expected_outputs": [f"{cr_dir}/findings_validated.json"],
+            "depends_on": ["stage_21_collect_findings"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_23_verify_findings",
+            "kind": "agent_fleet",
+            "agent_specs": [],  # populated per-finding by orchestrator
+            "expected_outputs": [f"{cr_dir}/findings_verified.json"],
+            "depends_on": ["stage_22_validate"],
+            "on_failure": "continue",
+            "enabled": False,  # plan 03
+        },
+        {
+            "id": "stage_24_verify_coverage",
+            "kind": "helper",
+            "subcommand": "verify-coverage",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [f"{cr_dir}/coverage_verification.json"],
+            "depends_on": ["stage_23_verify_findings"],
+            "on_failure": "continue",
+            "enabled": False,  # plan 05
+        },
+        {
+            "id": "stage_25_finalize_result",
+            "kind": "helper",
+            "subcommand": "finalize-result",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--validate-output", f"{cr_dir}/findings_validated.json",
+                "--mode", mode,
+            ],
+            "expected_outputs": [f"{cr_dir}/review_result.json"],
+            "depends_on": ["stage_22_validate"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_26_cache_update",
+            "kind": "helper",
+            "subcommand": "cache-update",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [],
+            "depends_on": ["stage_25_finalize_result"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_27_review_state_write",
+            "kind": "helper",
+            "subcommand": "review-state-write",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [],
+            "depends_on": ["stage_25_finalize_result"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_28_verdict",
+            "kind": "helper",
+            "subcommand": "verdict",
+            "args": [
+                "--review-result", f"{cr_dir}/review_result.json",
+                "--validate-output", f"{cr_dir}/findings_validated.json",
+            ],
+            "expected_outputs": [],
+            "depends_on": ["stage_25_finalize_result"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_29_present",
+            "kind": "present",
+            "subcommand": None,
+            "args": [],
+            "expected_outputs": [],
+            "depends_on": ["stage_28_verdict"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_30_footer",
+            "kind": "helper",
+            "subcommand": "footer",
+            "args": ["--cr-dir", cr_dir],
+            "expected_outputs": [],
+            "depends_on": ["stage_29_present"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+    ]
+
+
+def _build_validation_gates(cr_dir: str) -> list[dict[str, Any]]:
+    """Return canonical inter-stage validation gates."""
+    return [
+        {
+            "after_stage": "stage_05_parse_diff",
+            "gate": "expected_outputs_present",
+            "outputs": [f"{cr_dir}/diff_data.json"],
+            "on_failure_action": "abort",
+        },
+        {
+            "after_stage": "stage_16_arbitrate_budget",
+            "gate": "coverage_plan_well_formed",
+            "outputs": [f"{cr_dir}/coverage_plan.json"],
+            "on_failure_action": "abort",
+        },
+        {
+            "after_stage": "stage_20_spawn_reviewers",
+            "gate": "all_required_outputs_present",
+            "outputs": [f"{cr_dir}/agent_*.json"],
+            "on_failure_action": "emit_coverage_gap",
+        },
+        {
+            "after_stage": "stage_22_validate",
+            "gate": "validated_output_well_formed",
+            "outputs": [f"{cr_dir}/findings_validated.json"],
+            "on_failure_action": "abort",
+        },
+        {
+            "after_stage": "stage_25_finalize_result",
+            "gate": "review_result_well_formed",
+            "outputs": [f"{cr_dir}/review_result.json"],
+            "on_failure_action": "abort",
+        },
+    ]
+
+
+def cmd_prepare_run(args: argparse.Namespace) -> int:
+    """Emit ``run_plan.json`` describing the full review pipeline.
+
+    PLN-719 Section 6. The output is consumed by the orchestrator (a future
+    rewrite of start.md will walk this declarative plan). Determinism: same
+    inputs produce byte-identical output.
+    """
+    cr_dir = args.cr_dir
+    mode = args.mode
+
+    # Coerce string-bool flags into actual bools.
+    def _flag(name: str) -> bool:
+        val = getattr(args, name, None)
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.strip().lower() in ("true", "1", "yes")
+        return False
+
+    flags = {
+        "hygiene_only": _flag("hygiene_only"),
+        "since_last_review": _flag("since_last_review"),
+        "full_review": _flag("full_review"),
+        "base_ref_override": args.base_ref_override or "",
+        "scope_args": args.scope_args or "",
+        "pr_number": args.pr_number,
+    }
+
+    run_plan: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "review_id": str(uuid.uuid4()),
+        "cr_dir": cr_dir,
+        "mode": mode,
+        "flags": flags,
+        "scope": {},  # populated by stage_03_resolve_scope at runtime
+        "stages": _build_run_plan_stages(cr_dir, mode, args.pr_number, flags),
+        "validation_gates": _build_validation_gates(cr_dir),
+        "telemetry": {
+            "expected_total_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+        },
+    }
+
+    output_path = Path(args.output) if args.output else Path(cr_dir) / "run_plan.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        json.dump(run_plan, f, indent=2)
+
+    json.dump(
+        {
+            "run_plan": str(output_path),
+            "stage_count": len(run_plan["stages"]),
+            "enabled_stage_count": sum(1 for s in run_plan["stages"] if s["enabled"]),
+            "review_id": run_plan["review_id"],
         },
         sys.stdout,
         indent=2,
@@ -4176,6 +4636,22 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_ab.add_argument("--cap", type=int, default=BUDGET_TOTAL_CAP_DEFAULT, help="Total reviewer cap")
     p_ab.add_argument("--output", default=None, help="Output path (default: coverage_plan.json next to input)")
     p_ab.set_defaults(func=cmd_arbitrate_budget)
+
+    # prepare-run (PLN-719 Phase 4)
+    p_pr = subparsers.add_parser(
+        "prepare-run",
+        help="Emit run_plan.json describing the full review pipeline",
+    )
+    p_pr.add_argument("--cr-dir", required=True, help="CR_DIR for the review session")
+    p_pr.add_argument("--mode", required=True, choices=["local", "github"], help="Run mode")
+    p_pr.add_argument("--hygiene-only", default="false", help="Run hygiene-only review")
+    p_pr.add_argument("--since-last-review", default="false", help="Limit scope to commits since last review")
+    p_pr.add_argument("--full-review", default="false", help="Force a full re-review")
+    p_pr.add_argument("--base-ref-override", default="", help="Override base ref for scope resolution")
+    p_pr.add_argument("--scope-args", default="", help="Free-form scope args passed to resolve-scope")
+    p_pr.add_argument("--pr-number", type=int, default=None, help="PR number for github mode")
+    p_pr.add_argument("--output", default=None, help="Output path (default: <cr-dir>/run_plan.json)")
+    p_pr.set_defaults(func=cmd_prepare_run)
 
     # prep-assets
     p_pa = subparsers.add_parser("prep-assets", help="Copy prompt assets from plugin to CR_DIR")

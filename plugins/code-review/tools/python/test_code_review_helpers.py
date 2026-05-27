@@ -3606,16 +3606,21 @@ class TestSetup:
 
 class TestComputeHashes:
     def test_computes_hash_and_context_key(self, tmp_path: Path, capsys: Any) -> None:
+        """PLN-719 Section 9: prompt_hash now folds in schema_version."""
         import argparse
         import hashlib
+
+        from code_review_schema import SCHEMA_VERSION
 
         shared_prompt = tmp_path / "shared_prompt.txt"
         shared_prompt.write_bytes(b"shared prompt content")
         bha_suffix = tmp_path / "bha_suffix.txt"
         bha_suffix.write_bytes(b"bha suffix content")
 
+        # Canonical prompt_hash: NUL-joined parts + NUL + schema_version.
         expected_hash = hashlib.sha256(
-            b"shared prompt content" + b"bha suffix content"
+            b"shared prompt content" + b"\0" + b"bha suffix content"
+            + b"\0" + str(SCHEMA_VERSION).encode("utf-8"),
         ).hexdigest()
 
         with patch(
@@ -3634,6 +3639,7 @@ class TestComputeHashes:
         data = json.loads(captured.out.strip())
         assert data["prompt_hash"] == expected_hash
         assert data["context_key"] == "abc123"
+        assert data["schema_version"] == SCHEMA_VERSION
 
     def test_merge_base_failure(self, tmp_path: Path, capsys: Any) -> None:
         import argparse
@@ -5468,3 +5474,177 @@ class TestArbitrateBudgetVerdict:
         # Required overflow → CHANGES_REQUESTED via verdict rule 1.
         assert result["verdict"] == "CHANGES_REQUESTED"
         assert result["coverage_gaps_count"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Run-plan generation (PLN-719 Phase 4)
+# ---------------------------------------------------------------------------
+
+class TestPrepareRun:
+    """Tests for cmd_prepare_run (PLN-719 Section 6)."""
+
+    def _run(
+        self,
+        tmp_path: Path,
+        *,
+        mode: str = "local",
+        hygiene_only: str = "false",
+        since_last_review: str = "false",
+        full_review: str = "false",
+        base_ref_override: str = "",
+        scope_args: str = "",
+        pr_number: int | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        import argparse
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_prepare_run
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(
+                cr_dir=str(tmp_path),
+                mode=mode,
+                hygiene_only=hygiene_only,
+                since_last_review=since_last_review,
+                full_review=full_review,
+                base_ref_override=base_ref_override,
+                scope_args=scope_args,
+                pr_number=pr_number,
+                output=None,
+            )
+            cmd_prepare_run(ns)
+            _sys.stdout.seek(0)
+            summary = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        run_plan = json.loads((tmp_path / "run_plan.json").read_text())
+        return summary, run_plan
+
+    def test_emits_thirty_stages(self, tmp_path: Path) -> None:
+        summary, plan = self._run(tmp_path)
+        assert summary["stage_count"] == 30
+        assert len(plan["stages"]) == 30
+        # Ordered stage ids
+        ids = [s["id"] for s in plan["stages"]]
+        assert ids[0] == "stage_01_setup"
+        assert ids[-1] == "stage_30_footer"
+
+    def test_extract_patches_runs_after_parse_diff(self, tmp_path: Path) -> None:
+        """PLN-719 Section 7: extract-patches MOVED to right after parse-diff."""
+        _, plan = self._run(tmp_path)
+        ids = [s["id"] for s in plan["stages"]]
+        parse_idx = ids.index("stage_05_parse_diff")
+        extract_idx = ids.index("stage_06_extract_patches")
+        assert extract_idx == parse_idx + 1
+        # extract-patches depends on parse-diff
+        extract_stage = plan["stages"][extract_idx]
+        assert "stage_05_parse_diff" in extract_stage["depends_on"]
+
+    def test_arbitrate_budget_between_coverage_critic_and_partition(self, tmp_path: Path) -> None:
+        _, plan = self._run(tmp_path)
+        ids = [s["id"] for s in plan["stages"]]
+        coverage_critic_idx = ids.index("stage_15_coverage_critic")
+        arbitrate_idx = ids.index("stage_16_arbitrate_budget")
+        partition_idx = ids.index("stage_17_partition")
+        assert coverage_critic_idx < arbitrate_idx < partition_idx
+
+    def test_finalize_result_before_cache_update(self, tmp_path: Path) -> None:
+        _, plan = self._run(tmp_path)
+        ids = [s["id"] for s in plan["stages"]]
+        finalize_idx = ids.index("stage_25_finalize_result")
+        cache_update_idx = ids.index("stage_26_cache_update")
+        present_idx = ids.index("stage_29_present")
+        assert finalize_idx < cache_update_idx < present_idx
+
+    def test_plan_dependent_stages_disabled(self, tmp_path: Path) -> None:
+        """Stages from plans 01/03/05/06 must be enabled=false in Phase A."""
+        _, plan = self._run(tmp_path)
+        by_id = {s["id"]: s for s in plan["stages"]}
+        # plan 01
+        assert by_id["stage_09_detect_injection"]["enabled"] is False
+        # plan 05
+        assert by_id["stage_11_extract_signals"]["enabled"] is False
+        assert by_id["stage_14_resolve_coverage"]["enabled"] is False
+        # plan 06
+        assert by_id["stage_13_validate_companions"]["enabled"] is False
+        # plan 03
+        assert by_id["stage_23_verify_findings"]["enabled"] is False
+
+    def test_foundation_stages_enabled(self, tmp_path: Path) -> None:
+        """Foundation-owned stages must be enabled."""
+        _, plan = self._run(tmp_path)
+        by_id = {s["id"]: s for s in plan["stages"]}
+        for stage_id in (
+            "stage_01_setup", "stage_05_parse_diff", "stage_06_extract_patches",
+            "stage_12_hygiene", "stage_16_arbitrate_budget", "stage_17_partition",
+            "stage_22_validate", "stage_25_finalize_result", "stage_28_verdict",
+        ):
+            assert by_id[stage_id]["enabled"] is True, stage_id
+
+    def test_validation_gates_present(self, tmp_path: Path) -> None:
+        _, plan = self._run(tmp_path)
+        assert len(plan["validation_gates"]) >= 5
+        # Critical gates anchored at finalize-result + verifier output
+        gate_anchors = [g["after_stage"] for g in plan["validation_gates"]]
+        assert "stage_25_finalize_result" in gate_anchors
+        assert "stage_05_parse_diff" in gate_anchors
+
+    def test_flags_propagate(self, tmp_path: Path) -> None:
+        _, plan = self._run(
+            tmp_path, hygiene_only="true", since_last_review="true",
+            base_ref_override="origin/main", pr_number=42,
+        )
+        assert plan["flags"]["hygiene_only"] is True
+        assert plan["flags"]["since_last_review"] is True
+        assert plan["flags"]["base_ref_override"] == "origin/main"
+        assert plan["flags"]["pr_number"] == 42
+
+    def test_run_plan_is_deterministic_except_review_id(self, tmp_path: Path) -> None:
+        """Same inputs -> same run_plan.json (modulo review_id uuid)."""
+        _, plan1 = self._run(tmp_path)
+        _, plan2 = self._run(tmp_path)
+        # Wipe review_id (uuid is the only non-deterministic field).
+        plan1.pop("review_id")
+        plan2.pop("review_id")
+        assert plan1 == plan2
+
+    def test_envelope_schema_version_matches(self, tmp_path: Path) -> None:
+        _, plan = self._run(tmp_path)
+        from code_review_schema import SCHEMA_VERSION
+        assert plan["schema_version"] == SCHEMA_VERSION
+
+
+# ---------------------------------------------------------------------------
+# Canonical prompt_hash (PLN-719 Phase 7)
+# ---------------------------------------------------------------------------
+
+
+class TestCanonicalPromptHash:
+    def test_schema_version_changes_hash(self) -> None:
+        """Different schema_version → different prompt_hash."""
+        from code_review_helpers import compute_canonical_prompt_hash
+
+        parts = [b"shared", b"bha"]
+        h1 = compute_canonical_prompt_hash(parts, schema_version=1)
+        h2 = compute_canonical_prompt_hash(parts, schema_version=2)
+        assert h1 != h2
+
+    def test_order_matters(self) -> None:
+        """Parts in different order produce different hashes."""
+        from code_review_helpers import compute_canonical_prompt_hash
+
+        a = compute_canonical_prompt_hash([b"x", b"y"])
+        b = compute_canonical_prompt_hash([b"y", b"x"])
+        assert a != b
+
+    def test_separator_prevents_collision(self) -> None:
+        """`ab` + `c` must hash differently than `a` + `bc`."""
+        from code_review_helpers import compute_canonical_prompt_hash
+
+        a = compute_canonical_prompt_hash([b"ab", b"c"])
+        b = compute_canonical_prompt_hash([b"a", b"bc"])
+        assert a != b

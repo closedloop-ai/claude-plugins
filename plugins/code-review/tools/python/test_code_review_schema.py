@@ -507,3 +507,55 @@ def test_envelope_round_trip():
     serialized = json.dumps(env)
     deserialized = json.loads(serialized)
     assert validate_result_envelope(deserialized) == []
+
+
+# ---------------------------------------------------------------------------
+# Determinism tiers (PLN-719 Phase 6)
+# ---------------------------------------------------------------------------
+
+
+def test_determinism_tiers_enum():
+    from code_review_schema import (
+        DETERMINISM_TIERS,
+        DETERMINISM_TIER_DETERMINISTIC,
+        DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE,
+        DETERMINISM_TIER_LLM_DRIVEN,
+    )
+    assert DETERMINISM_TIERS == frozenset({
+        DETERMINISM_TIER_DETERMINISTIC,
+        DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE,
+        DETERMINISM_TIER_LLM_DRIVEN,
+    })
+
+
+def test_deterministic_stages():
+    from code_review_schema import is_deterministic_stage, stage_determinism_tier
+    # Foundation-owned stages must be deterministic.
+    for sub in ("parse-diff", "extract-patches", "hygiene", "validate",
+                "arbitrate-budget", "finalize-result", "verdict", "partition"):
+        assert is_deterministic_stage(sub), f"{sub} must be deterministic"
+        assert stage_determinism_tier(sub) == "deterministic"
+
+
+def test_llm_or_cacheable_stages():
+    from code_review_schema import (
+        is_deterministic_stage, stage_determinism_tier,
+        DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE, DETERMINISM_TIER_LLM_DRIVEN,
+    )
+    # Plan 05 extract-signals must not block required reviewers (cacheable).
+    assert stage_determinism_tier("extract-signals") == DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE
+    assert stage_determinism_tier("coverage-critic") == DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE
+    # Plan 03 verifier
+    assert stage_determinism_tier("verify-findings") == DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE
+    # Plan 01 detect-injection is LLM-driven (raw text input is adversarial).
+    assert stage_determinism_tier("detect-injection") == DETERMINISM_TIER_LLM_DRIVEN
+    # None of the cacheable / llm-driven stages are deterministic.
+    assert not is_deterministic_stage("extract-signals")
+    assert not is_deterministic_stage("detect-injection")
+
+
+def test_signal_extraction_failed_marker_exists():
+    """The system_marker for fail-closed signal extraction is in the canonical enum."""
+    from code_review_schema import is_valid_system_marker, system_marker_scope
+    assert is_valid_system_marker("signal-extraction-failed")
+    assert system_marker_scope("signal-extraction-failed") == "system"

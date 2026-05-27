@@ -16,7 +16,8 @@ A multi-agent code review plugin for Claude Code that performs deep, partitioned
 
 ```
 plugins/code-review/
-  .claude-plugin/plugin.json         Plugin manifest
+  .claude-plugin/plugin.json         Plugin manifest (version 2.0.0)
+  SCHEMA.md                          Canonical Finding + ResultEnvelope schema (PLN-719)
   commands/
     start.md                         Main /start command (orchestrator)
   prompts/
@@ -24,9 +25,34 @@ plugins/code-review/
   tools/
     prompts/shared_prompt.txt        Shared reviewer constraints injected into every agent prompt
     prompts/bha_suffix.txt           Bug Hunter A reviewer persona and focus areas
-    python/code_review_helpers.py    Deterministic helper CLI (parse-diff, hygiene, partition, route, validate, cache, etc.)
+    python/code_review_schema.py     Canonical Finding + ResultEnvelope schema + validators (PLN-719)
+    python/test_code_review_schema.py  Schema tests + round-trips
+    python/code_review_helpers.py    Deterministic helper CLI (parse-diff, hygiene, partition, route, validate, cache, finalize-result, arbitrate-budget, prepare-run, etc.)
     python/test_code_review_helpers.py   Unit tests for the helper CLI
 ```
+
+### Foundation (PLN-719, schema_version 1)
+
+Starting in version 2.0.0, every reviewer, helper, and consumer conforms to a
+canonical schema documented in [SCHEMA.md](SCHEMA.md). Key contracts:
+
+- **`review_result.json`** (canonical envelope) is the terminal artifact of every
+  run. Findings bucket into `verified[] | justified[] | rejected[] | pending_verification[]`;
+  coverage gaps live in `coverage_gaps[]` with `finding_scope: "system"`.
+- **Three finding scopes** — `diff` / `system` / `pr_metadata` — make non-code-line
+  findings (coverage gaps, prompt-injection signals) first-class.
+- **`arbitrate-budget`** is the single owner of "which reviewers run, against what cap"
+  (default cap=20, BHA floor=1 waived for docs-only PRs, required overflow
+  fails closed and emits coverage gaps).
+- **`prepare-run`** emits a declarative `run_plan.json` describing the 30-stage
+  pipeline. (The orchestrator rewrite over this plan is a follow-up.)
+- **Canonical `prompt_hash`** folds in `schema_version`: a MAJOR schema bump
+  invalidates every cache namespace at once.
+
+The legacy `validate_output.json` is still emitted alongside `review_result.json`
+during Phase A so existing consumers keep working. Phase B will delete the
+legacy file in lockstep with the `code` plugin's `run-loop.sh` and the `/fix`
+skill.
 
 ### Component Roles
 
@@ -141,6 +167,9 @@ The helper script is a multi-subcommand Python CLI. The orchestrator invokes it 
 | `verdict` | Computes the PR verdict (APPROVED / NEEDS_ATTENTION / CHANGES_REQUESTED) from validated findings |
 | `prep-assets` | Copies prompt assets from the plugin root into the session CR_DIR |
 | `extract-patches` | Extracts git diff patches to per-file disk files for reviewer agents to read |
+| `finalize-result` | Consolidates validated findings + coverage state + verdict into the canonical `review_result.json` envelope (PLN-719) |
+| `arbitrate-budget` | Applies the canonical reviewer cap policy; emits coverage gaps for required reviewers that overflow (PLN-719) |
+| `prepare-run` | Emits a declarative `run_plan.json` describing the 30-stage pipeline (PLN-719) |
 
 ## GitHub CI Mode
 

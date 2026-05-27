@@ -109,6 +109,77 @@ REASONING_CERTIFICATE_KINDS: frozenset[str] = frozenset({
 
 
 # ---------------------------------------------------------------------------
+# Determinism tiers (PLN-719 Section 8)
+# ---------------------------------------------------------------------------
+#
+# Required-coverage policy follows from these tiers:
+#   - deterministic        : same inputs → same outputs, no model involved.
+#                            Required reviewers may depend on these.
+#   - reproducible_via_cache : same inputs → same outputs *if cache hit*;
+#                              otherwise LLM-driven. Required reviewers may
+#                              use these only as additive evidence.
+#   - llm_driven           : same inputs may produce different outputs.
+#                            Required-reviewer selection cannot depend on
+#                            llm_driven outputs.
+DETERMINISM_TIER_DETERMINISTIC = "deterministic"
+DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE = "reproducible_via_cache"
+DETERMINISM_TIER_LLM_DRIVEN = "llm_driven"
+
+DETERMINISM_TIERS: frozenset[str] = frozenset({
+    DETERMINISM_TIER_DETERMINISTIC,
+    DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE,
+    DETERMINISM_TIER_LLM_DRIVEN,
+})
+
+# Pipeline stage → determinism tier. Foundation owns this mapping; plan 05's
+# signal taxonomy and plan 03's verifier add additional entries when they ship.
+STAGE_DETERMINISM_TIERS: dict[str, str] = {
+    "setup": DETERMINISM_TIER_DETERMINISTIC,
+    "prep-assets": DETERMINISM_TIER_DETERMINISTIC,
+    "resolve-scope": DETERMINISM_TIER_DETERMINISTIC,
+    "finalize-cache": DETERMINISM_TIER_DETERMINISTIC,
+    "parse-diff": DETERMINISM_TIER_DETERMINISTIC,
+    "extract-patches": DETERMINISM_TIER_DETERMINISTIC,
+    "auto-incremental": DETERMINISM_TIER_DETERMINISTIC,
+    "fetch-intent": DETERMINISM_TIER_DETERMINISTIC,
+    "classify-intent": DETERMINISM_TIER_DETERMINISTIC,
+    "hygiene": DETERMINISM_TIER_DETERMINISTIC,
+    "validate-companions": DETERMINISM_TIER_DETERMINISTIC,
+    "arbitrate-budget": DETERMINISM_TIER_DETERMINISTIC,
+    "partition": DETERMINISM_TIER_DETERMINISTIC,
+    "compute-hashes": DETERMINISM_TIER_DETERMINISTIC,
+    "cache-check": DETERMINISM_TIER_DETERMINISTIC,
+    "collect-findings": DETERMINISM_TIER_DETERMINISTIC,
+    "validate": DETERMINISM_TIER_DETERMINISTIC,
+    "finalize-result": DETERMINISM_TIER_DETERMINISTIC,
+    "cache-update": DETERMINISM_TIER_DETERMINISTIC,
+    "review-state-write": DETERMINISM_TIER_DETERMINISTIC,
+    "verdict": DETERMINISM_TIER_DETERMINISTIC,
+    "footer": DETERMINISM_TIER_DETERMINISTIC,
+    # Plan 05's LLM-extracted signals.
+    "extract-signals": DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE,
+    "coverage-critic": DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE,
+    # Plan 03 verifier.
+    "verify-findings": DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE,
+    "verify-coverage": DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE,
+    # Plan 01 injection detection — LLM-driven on raw text.
+    "detect-injection": DETERMINISM_TIER_LLM_DRIVEN,
+    # All reviewer agents (bha/bhb/auditor/premise/test_quality/impact) are
+    # LLM-driven; tracked by agent_id rather than by subcommand.
+}
+
+
+def stage_determinism_tier(subcommand: str) -> str | None:
+    """Return the determinism tier for a known pipeline subcommand, or None."""
+    return STAGE_DETERMINISM_TIERS.get(subcommand)
+
+
+def is_deterministic_stage(subcommand: str) -> bool:
+    """True iff the stage is in the deterministic tier."""
+    return stage_determinism_tier(subcommand) == DETERMINISM_TIER_DETERMINISTIC
+
+
+# ---------------------------------------------------------------------------
 # system_marker canonical enum (section 3 of the plan)
 # ---------------------------------------------------------------------------
 
