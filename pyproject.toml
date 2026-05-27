@@ -11,7 +11,26 @@ pythonVersion = "3.11"
 extraPaths = [
   "plugins/code/tools/python",
   "plugins/code/skills/plan-validate/scripts",
+  "plugins/code-review/tools/python",
 ]
+
+# Per-plugin execution environments isolate import resolution so each plugin's
+# conftest.py and same-directory modules resolve correctly without colliding
+# with other plugins' identically-named files (e.g. conftest.py).
+[[tool.pyright.executionEnvironments]]
+root = "plugins/code-review/tools/python"
+extraPaths = ["plugins/code-review/tools/python"]
+
+[[tool.pyright.executionEnvironments]]
+root = "plugins/code/tools/python"
+extraPaths = [
+  "plugins/code/tools/python",
+  "plugins/code/skills/plan-validate/scripts",
+]
+
+[[tool.pyright.executionEnvironments]]
+root = "plugins/code/skills/plan-validate/scripts"
+extraPaths = ["plugins/code/skills/plan-validate/scripts"]
 
 # Dev/CI dependencies are managed by uv (PEP 735 dependency groups).
 # uv.lock is the source of truth — full transitive resolution + sha256

@@ -30,18 +30,28 @@ Extract **CR_DIR** (positional) from `$ARGUMENTS`.
 
 <constraints>
 - CR_DIR missing: auto-discover via `ls -td .closedloop-ai/code-review/cr-* | head -1`. No directories found → error "No code review session found. Run a code review first." → exit.
-- `CR_DIR/validate_output.json` missing → error "No validate_output.json found in CR_DIR. Run a code review first." → exit.
+- Prefer `CR_DIR/review_result.json` (canonical envelope, PLN-719). Fall back to `CR_DIR/validate_output.json` (legacy). Neither present → error "No code review output found in CR_DIR. Run a code review first." → exit.
 </constraints>
 
 ### Load Findings
 
-Read `CR_DIR/validate_output.json`. Each entry in the `validated` array:
+If `CR_DIR/review_result.json` exists (canonical envelope), read it. Findings live in:
+- `verified[]` — CONFIRMED + DOWNGRADE + TENTATIVE (after verifier ran, plan 03)
+- `coverage_gaps[]` — system-scoped coverage findings (treat any with `severity: "BLOCKING"` or `"HIGH"` as actionable)
+- Before the verifier ships (Phase A): all validated findings are in `verified[]`.
+
+Otherwise fall back to `CR_DIR/validate_output.json` and read the `validated[]` array.
+
+A finding entry looks like:
 ```json
-{"file": "path/to/file.ts", "line": 42, "severity": "HIGH", "category": "Correctness", "issue": "[P1] Brief title", "explanation": "...", "recommendation": "...", "code_snippet": "...", "priority": 1, "confidence": 0.9}
+{"id": "bha_p0_f3", "file": "path/to/file.ts", "line": 42, "severity": "HIGH", "category": "Correctness", "issue": "[P1] Brief title", "explanation": "...", "recommendation": "...", "code_snippet": "...", "priority": 1, "confidence": 0.9, "finding_scope": "diff", "system_marker": null}
 ```
 
 Filter to `severity` = `"BLOCKING"` or `"HIGH"`. Log skipped MEDIUM count.
-No BLOCKING/HIGH findings → print "No actionable findings. Review complete." → mark all todos completed → exit.
+
+System-scoped findings (`finding_scope: "system"`) — e.g. coverage gaps with `system_marker: "budget-exceeded"` or `coverage:<reviewer>` — cannot be auto-fixed in code; surface them in the summary as "manual surface" items and skip the verify/fix loop for them.
+
+No actionable BLOCKING/HIGH findings → print "No actionable findings. Review complete." → mark all todos completed → exit.
 
 ---
 

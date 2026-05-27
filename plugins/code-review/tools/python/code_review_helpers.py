@@ -22,11 +22,21 @@ import re
 import shutil
 import subprocess
 import sys
+import uuid
 from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from code_review_schema import (
+    SCHEMA_VERSION,
+    is_valid_system_marker,
+    make_finding_id,
+    normalize_legacy_finding,
+    system_marker_scope,
+    validate_result_envelope,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -659,7 +669,26 @@ def cmd_hygiene(args: argparse.Namespace) -> int:
         # Check 4: Sensitive files
         findings.extend(_check_sensitive_files(filepath, status, changed_ranges))
 
-    json.dump({"findings": findings}, sys.stdout, indent=2)
+    # Promote to canonical schema (PLN-719 Foundation Section 1).
+    now_iso = datetime.now(timezone.utc).isoformat()
+    canonical: list[dict[str, Any]] = []
+    for idx, raw in enumerate(findings):
+        promoted = normalize_legacy_finding(
+            raw,
+            reviewer="hygiene",
+            source="hygiene",
+            index=idx,
+            emitted_at=now_iso,
+        )
+        promoted["reviewer_trigger"] = {"type": "always", "evidence": "deterministic-hygiene"}
+        # code_snippet defaults to the added line content if available.
+        if not promoted.get("code_snippet"):
+            file_patch = patch_lines.get(promoted.get("file", ""), {})
+            line_str = str(promoted.get("line", ""))
+            promoted["code_snippet"] = file_patch.get("added_lines", {}).get(line_str, "")
+        canonical.append(promoted)
+
+    json.dump({"findings": canonical}, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
 
@@ -1091,18 +1120,46 @@ def _filter_scope_and_range(
     changed_ranges: dict[str, dict[str, list[list[int]]]],
     discarded: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Phases 2-4: Filter by file scope, line range, and confidence."""
+    """Phases 2-4: Filter by file scope, line range, and confidence.
+
+    Honors ``finding_scope`` (PLN-719 Section 3):
+      - ``diff`` (default): file-in-diff + line-in-changed-range checks apply.
+      - ``system`` / ``pr_metadata``: file/line checks bypassed; finding must
+        carry a canonical ``system_marker``.
+
+    Low-confidence findings (P2/P3 with confidence < threshold) are discarded
+    regardless of scope.
+    """
     result: list[dict[str, Any]] = []
 
     for finding in findings:
+        # Default to diff scope when missing (legacy compat).
+        scope = finding.get("finding_scope") or "diff"
+        priority = int(finding.get("priority", 2))
+        confidence = float(finding.get("confidence", 1.0))
+
+        if scope in ("system", "pr_metadata"):
+            marker = finding.get("system_marker")
+            if not marker or not is_valid_system_marker(marker):
+                discarded.append({"finding": finding, "reason": "DISCARD_INVALID_SYSTEM_MARKER"})
+                continue
+            expected_scope = system_marker_scope(marker)
+            if expected_scope != scope:
+                discarded.append({"finding": finding, "reason": "DISCARD_MARKER_SCOPE_MISMATCH"})
+                continue
+            if priority > 1 and confidence < CONFIDENCE_DISCARD_THRESHOLD:
+                discarded.append({"finding": finding, "reason": "DISCARD_LOW_CONFIDENCE"})
+                continue
+            result.append(finding)
+            continue
+
+        # diff scope (default): apply file + line filters.
         filepath = str(finding.get("file", ""))
         if filepath not in files_to_review:
             discarded.append({"finding": finding, "reason": "DISCARD_FILE_NOT_CHANGED"})
             continue
 
         line = int(finding.get("line", 0))
-        priority = int(finding.get("priority", 2))
-        confidence = float(finding.get("confidence", 1.0))
 
         file_ranges = changed_ranges.get(filepath, {})
         added = file_ranges.get("added", [])
@@ -1126,18 +1183,45 @@ def _merge_duplicates(
     findings: list[dict[str, Any]],
     discarded: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Phases 5-6: Duplicate merge + root-cause dedup."""
+    """Phases 5-6: Duplicate merge + root-cause dedup.
+
+    Diff-scoped findings dedup by (file, line, category|recommendation).
+    System/pr_metadata findings dedup by (system_marker, category).
+    """
     merged: list[dict[str, Any]] = []
 
     for finding in findings:
+        scope = finding.get("finding_scope") or "diff"
+        category = str(finding.get("category", ""))
+        sev = str(finding.get("severity", "MEDIUM"))
+
+        if scope in ("system", "pr_metadata"):
+            marker = str(finding.get("system_marker", ""))
+            is_dup = False
+            for existing in merged:
+                if (existing.get("finding_scope") or "diff") != scope:
+                    continue
+                if str(existing.get("system_marker", "")) != marker:
+                    continue
+                if str(existing.get("category", "")) != category:
+                    continue
+                _upgrade_severity(existing, sev, finding.get("priority", 2))
+                is_dup = True
+                discarded.append({"finding": finding, "reason": "DISCARD_DUPLICATE"})
+                break
+            if not is_dup:
+                merged.append(finding)
+            continue
+
+        # diff scope (default)
         filepath = str(finding.get("file", ""))
         line = int(finding.get("line", 0))
-        category = str(finding.get("category", ""))
         recommendation = str(finding.get("recommendation", ""))
-        sev = str(finding.get("severity", "MEDIUM"))
 
         is_dup = False
         for existing in merged:
+            if (existing.get("finding_scope") or "diff") != "diff":
+                continue
             ex_file = str(existing.get("file", ""))
             if ex_file != filepath:
                 continue
@@ -1156,9 +1240,13 @@ def _merge_duplicates(
         if not is_dup:
             merged.append(finding)
 
-    # Root-cause dedup via Jaccard similarity
+    # Root-cause dedup via Jaccard similarity (diff-scoped findings only).
     final: list[dict[str, Any]] = []
     for finding in merged:
+        if (finding.get("finding_scope") or "diff") != "diff":
+            final.append(finding)
+            continue
+
         issue = str(finding.get("issue", ""))
         filepath = str(finding.get("file", ""))
         line = int(finding.get("line", 0))
@@ -1166,6 +1254,8 @@ def _merge_duplicates(
 
         is_root_dup = False
         for existing in final:
+            if (existing.get("finding_scope") or "diff") != "diff":
+                continue
             ex_file = str(existing.get("file", ""))
             ex_line = int(existing.get("line", 0))
             if ex_file == filepath and abs(ex_line - line) <= LINE_TOLERANCE:
@@ -1187,9 +1277,10 @@ def _group_cross_file(
 ) -> list[dict[str, Any]]:
     """Cross-file root-cause grouping.
 
-    Groups findings across different files that share the same category
-    and similar issue text (Jaccard > threshold). Keeps the highest-severity
-    finding as primary and attaches others as ``other_locations``.
+    Groups diff-scoped findings across different files that share the same
+    category and similar issue text (Jaccard > threshold). Keeps the
+    highest-severity finding as primary and attaches others as
+    ``other_locations``. Non-diff findings pass through untouched.
     """
     absorbed: set[int] = set()
     result: list[dict[str, Any]] = []
@@ -1198,15 +1289,22 @@ def _group_cross_file(
         if i in absorbed:
             continue
 
+        # Skip cross-file grouping for system/pr_metadata findings.
+        if (finding.get("finding_scope") or "diff") != "diff":
+            result.append(finding)
+            continue
+
         category = str(finding.get("category", ""))
         issue = str(finding.get("issue", ""))
 
-        # Collect cross-file siblings
+        # Collect cross-file siblings (diff-scoped only)
         siblings: list[tuple[int, dict[str, Any]]] = []
         for j in range(i + 1, len(findings)):
             if j in absorbed:
                 continue
             other = findings[j]
+            if (other.get("finding_scope") or "diff") != "diff":
+                continue
             if str(other.get("category", "")) != category:
                 continue
             if _jaccard_similarity(issue, str(other.get("issue", ""))) > JACCARD_DEDUP_THRESHOLD:
@@ -2669,29 +2767,47 @@ def cmd_setup(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def compute_canonical_prompt_hash(
+    parts: list[bytes],
+    schema_version: int = SCHEMA_VERSION,
+) -> str:
+    """Return the canonical prompt_hash (PLN-719 Section 9).
+
+    ``parts`` is a list of byte-string components joined with a NUL separator
+    in stable order; schema_version is appended so a MAJOR schema bump
+    invalidates every cache namespace at once.
+    """
+    sep = b"\0"
+    payload = sep.join(parts) + sep + str(int(schema_version)).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def cmd_compute_hashes(args: argparse.Namespace) -> int:
-    """Compute prompt hash and context key for cache operations."""
+    """Compute prompt hash and context key for cache operations.
+
+    The prompt hash now folds the canonical schema_version per PLN-719
+    Section 9: any MAJOR schema bump invalidates all caches automatically.
+    """
     shared_prompt: str = args.shared_prompt
     bha_suffix: str = args.bha_suffix
     diff_tip: str = args.diff_tip
     base_ref: str = args.base_ref
 
-    # Read both files and hash together
-    content = b""
+    # Read both prompt files.
     try:
         with open(shared_prompt, "rb") as f:
-            content += f.read()
+            shared_bytes = f.read()
     except OSError as exc:
         print(f"Error: cannot read shared prompt: {exc}", file=sys.stderr)
         return 1
     try:
         with open(bha_suffix, "rb") as f:
-            content += f.read()
+            bha_bytes = f.read()
     except OSError as exc:
         print(f"Error: cannot read BHA suffix: {exc}", file=sys.stderr)
         return 1
 
-    prompt_hash = hashlib.sha256(content).hexdigest()
+    prompt_hash = compute_canonical_prompt_hash([shared_bytes, bha_bytes])
 
     # Compute context key via git merge-base
     context_key = ""
@@ -2701,7 +2817,11 @@ def cmd_compute_hashes(args: argparse.Namespace) -> int:
         pass
 
     json.dump(
-        {"prompt_hash": prompt_hash, "context_key": context_key},
+        {
+            "prompt_hash": prompt_hash,
+            "context_key": context_key,
+            "schema_version": SCHEMA_VERSION,
+        },
         sys.stdout,
         indent=2,
     )
@@ -3149,14 +3269,48 @@ def cmd_classify_intent(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+_AGENT_FILENAME_RE = re.compile(r"^agent_(.+)\.json$")
+_REVIEWER_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
+
+
+def _reviewer_from_agent_path(path: Path) -> str:
+    """Derive reviewer id from `agent_<reviewer_id>.json` filename.
+
+    Falls back to the raw stem if the pattern does not match.
+    """
+    match = _AGENT_FILENAME_RE.match(path.name)
+    return match.group(1) if match else path.stem
+
+
+def _coerce_reviewer_id(raw: Any, fallback: str) -> str:
+    """Return a canonical reviewer id; fall back when ``raw`` is missing or malformed.
+
+    LLM-emitted findings can carry any string in the ``reviewer`` field
+    (e.g. ``"Bug Hunter A"``), which would fail ``make_finding_id``'s
+    ``^[a-z][a-z0-9_-]*$`` regex and bubble a ValueError up to the outer
+    handler — silently dropping every finding in the affected agent file.
+    Falling back to the filename-derived id preserves the findings.
+    """
+    if isinstance(raw, str) and _REVIEWER_ID_RE.match(raw):
+        return raw
+    return fallback
+
+
 def cmd_collect_findings(args: argparse.Namespace) -> int:
-    """Merge agent findings and hygiene findings into a single JSON file."""
+    """Merge agent findings and hygiene findings into a single JSON file.
+
+    Findings without an ``id`` are assigned a deterministic one of the form
+    ``<reviewer_id>_f<index>`` (PLN-719 Section 4). Reviewer id is derived
+    from the source ``agent_<id>.json`` filename when not present in the
+    finding itself.
+    """
     cr_dir = Path(args.cr_dir)
     output_filename: str = args.output
     hygiene_path: str | None = getattr(args, "hygiene", None)
 
-    findings: list[Any] = []
+    findings: list[dict[str, Any]] = []
     agent_files: list[str] = []
+    now_iso = datetime.now(timezone.utc).isoformat()
 
     # Glob agent_*.json files in cr_dir
     for agent_file in sorted(cr_dir.glob("agent_*.json")):
@@ -3166,10 +3320,37 @@ def cmd_collect_findings(args: argparse.Namespace) -> int:
             file_findings = data.get("findings", [])
             if not isinstance(file_findings, list):
                 raise ValueError(f"findings is not a list in {agent_file}")
-            findings.extend(file_findings)
-            agent_files.append(str(agent_file))
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             print(f"Warning: skipping malformed agent file {agent_file}: {exc}", file=sys.stderr)
+            continue
+
+        reviewer = _reviewer_from_agent_path(agent_file)
+        for idx, raw in enumerate(file_findings):
+            if not isinstance(raw, dict):
+                continue
+            # Coerce reviewer to a canonical id; fall back to the filename
+            # when the LLM emitted a non-canonical string like "Bug Hunter A".
+            # normalize_legacy_finding uses setdefault for reviewer, so we
+            # must overwrite the dict directly to ensure the canonical value
+            # propagates into make_finding_id.
+            raw_normalized = dict(raw)
+            raw_normalized["reviewer"] = _coerce_reviewer_id(raw.get("reviewer"), reviewer)
+            try:
+                promoted = normalize_legacy_finding(
+                    raw_normalized,
+                    reviewer=raw_normalized["reviewer"],
+                    source="agent",
+                    index=idx,
+                    emitted_at=now_iso,
+                )
+            except (ValueError, TypeError) as exc:
+                print(
+                    f"Warning: skipping malformed finding {idx} in {agent_file}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
+            findings.append(promoted)
+        agent_files.append(str(agent_file))
 
     # Read hygiene.json if provided
     hygiene_included = False
@@ -3179,7 +3360,20 @@ def cmd_collect_findings(args: argparse.Namespace) -> int:
                 hygiene_data = json.load(f)
             hygiene_findings = hygiene_data.get("findings", [])
             if isinstance(hygiene_findings, list):
-                findings.extend(hygiene_findings)
+                # Hygiene findings are already canonical (cmd_hygiene normalizes),
+                # but pass through normalize_legacy_finding to fill any gaps.
+                for idx, raw in enumerate(hygiene_findings):
+                    if not isinstance(raw, dict):
+                        continue
+                    findings.append(
+                        normalize_legacy_finding(
+                            raw,
+                            reviewer=raw.get("reviewer", "hygiene"),
+                            source=raw.get("source", "hygiene"),
+                            index=idx,
+                            emitted_at=now_iso,
+                        ),
+                    )
                 hygiene_included = True
         except (OSError, json.JSONDecodeError):
             pass  # hygiene file missing or malformed -- skip silently
@@ -3208,53 +3402,1133 @@ def cmd_collect_findings(args: argparse.Namespace) -> int:
 
 _VERDICT_REASON_MAX = 80
 
+# Mapping between canonical envelope verdicts (PLN-719) and legacy tag verdicts
+# used by `<pr_verdict>` consumers (run-loop.sh, github-review presenter).
+_CANONICAL_TO_LEGACY_VERDICT: dict[str, str] = {
+    "APPROVED": "approve",
+    "NEEDS_ATTENTION": "needs_attention",
+    "CHANGES_REQUESTED": "decline",
+}
+
+
+def _compute_canonical_verdict(
+    verified: list[dict[str, Any]],
+    coverage_gaps: list[dict[str, Any]],
+) -> tuple[str, str]:
+    """Apply canonical verdict precedence rules (PLN-719 Section 5).
+
+    Returns (canonical_verdict, reason). Rules 4-6 (Premise cumulative MEDIUM,
+    Impact analysis count, TENTATIVE) gate on plan 02/03/06 features and are
+    inert until those plans land — included here so behavior matches when they
+    do, but no-op in Phase A.
+    """
+
+    def _short(text: str) -> str:
+        return text[:_VERDICT_REASON_MAX]
+
+    # Rule 1: required coverage gap → CHANGES_REQUESTED.
+    # A required reviewer that couldn't run blocks the PR regardless of severity.
+    for gap in coverage_gaps:
+        if gap.get("required", False):
+            return "CHANGES_REQUESTED", _short(f"coverage gap: {gap.get('issue', '')}")
+
+    # Rules 2-3 evaluate severity across both buckets — plan section 5 says
+    # "Any BLOCKING finding (verified or system-scoped)" and likewise for HIGH.
+    # Coverage gaps are system-scoped findings; including them here is what
+    # prevents a non-required HIGH coverage gap from falling through to
+    # APPROVED.
+    all_findings = verified + coverage_gaps
+
+    # Rule 2: BLOCKING (any scope) or Premise P0 → CHANGES_REQUESTED.
+    # Premise P0 precedence is preserved from legacy verdict behavior; plan 02
+    # will refine it.
+    for finding in all_findings:
+        sev = str(finding.get("severity", ""))
+        if sev == "BLOCKING":
+            return "CHANGES_REQUESTED", _short(str(finding.get("issue", "")))
+        if str(finding.get("category", "")) == "Premise" and finding.get("priority") == 0:
+            return "CHANGES_REQUESTED", _short(str(finding.get("issue", "")))
+
+    # Rule 3: HIGH (any scope) → NEEDS_ATTENTION
+    for finding in all_findings:
+        if str(finding.get("severity", "")) == "HIGH":
+            return "NEEDS_ATTENTION", _short(str(finding.get("issue", "")))
+
+    # Rules 4-6 (plan 02 cumulative Premise MEDIUM, plan 06 Impact count,
+    # plan 03 TENTATIVE) — no-op in Phase A; placeholder in code so plans
+    # 02/03/06 only need to update the canonical computation, not the verdict
+    # subcommand wiring.
+
+    return "APPROVED", ""
+
+
+def _read_optional_json(path: Path, default: Any) -> Any:
+    """Read a JSON file, returning ``default`` if missing or malformed."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return default
+
 
 def cmd_verdict(args: argparse.Namespace) -> int:
-    """Compute PR verdict from validated findings."""
+    """Compute PR verdict.
+
+    Reads ``review_result.json`` when available (canonical Phase 2 envelope);
+    falls back to legacy ``validate_output.json`` otherwise. Emits the legacy
+    ``<pr_verdict>`` tag in the same shape used today so existing consumers
+    (run-loop.sh, the github presenter) keep working through Phase A.
+    """
     validate_output_path: str = args.validate_output
+    review_result_path: str | None = getattr(args, "review_result", None)
 
-    try:
-        with open(validate_output_path) as f:
-            validate_output = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"Error reading validate output: {exc}", file=sys.stderr)
-        return 1
-
-    validated: list[dict[str, Any]] = validate_output.get("validated", [])
-
-    verdict = "approve"
+    canonical_verdict: str | None = None
     reason = ""
 
-    # Priority 1: BLOCKING findings or Premise P0 -> decline
-    for finding in validated:
-        severity = str(finding.get("severity", ""))
-        category = str(finding.get("category", ""))
-        priority = finding.get("priority", 2)
-        if severity == "BLOCKING" or (category == "Premise" and priority == 0):
-            verdict = "decline"
-            issue = str(finding.get("issue", ""))
-            reason = issue[:_VERDICT_REASON_MAX]
-            break
+    # Prefer review_result.json when present.
+    if review_result_path and Path(review_result_path).is_file():
+        envelope = _read_optional_json(Path(review_result_path), None)
+        if isinstance(envelope, dict):
+            canonical_verdict = envelope.get("verdict")
+            reason = str(envelope.get("verdict_reason", ""))[:_VERDICT_REASON_MAX]
 
-    # Priority 2: HIGH findings -> needs_attention (only if not already decline)
-    if verdict != "decline":
-        for finding in validated:
-            severity = str(finding.get("severity", ""))
-            if severity == "HIGH":
-                verdict = "needs_attention"
-                issue = str(finding.get("issue", ""))
-                reason = issue[:_VERDICT_REASON_MAX]
-                break
+    # Fallback: re-derive from validate_output.json (legacy path).
+    if canonical_verdict is None:
+        try:
+            with open(validate_output_path) as f:
+                validate_output = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"Error reading validate output: {exc}", file=sys.stderr)
+            return 1
 
-    tag_payload = json.dumps({"verdict": verdict, "reason": reason})
+        validated: list[dict[str, Any]] = validate_output.get("validated", [])
+        # Split coverage findings out (mirrors finalize-result's bucketing).
+        # Partition by index so we avoid dict-equality membership tests —
+        # canonical finding ids would also work but legacy findings may lack
+        # them at this fallback path.
+        coverage_indices: set[int] = {
+            i for i, f in enumerate(validated)
+            if str(f.get("category", "")) == "Coverage"
+            and (f.get("finding_scope") or "diff") == "system"
+        }
+        coverage_gaps = [f for i, f in enumerate(validated) if i in coverage_indices]
+        verified = [f for i, f in enumerate(validated) if i not in coverage_indices]
+        canonical_verdict, reason = _compute_canonical_verdict(verified, coverage_gaps)
+
+    legacy_verdict = _CANONICAL_TO_LEGACY_VERDICT.get(canonical_verdict, "approve")
+    tag_payload = json.dumps({"verdict": legacy_verdict, "reason": reason})
     tag = f"<pr_verdict>{tag_payload}</pr_verdict>"
 
     json.dump(
-        {"verdict": verdict, "reason": reason, "tag": tag},
+        {
+            "verdict": legacy_verdict,
+            "canonical_verdict": canonical_verdict,
+            "reason": reason,
+            "tag": tag,
+        },
         sys.stdout,
         indent=2,
     )
     sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: prepare-run (PLN-719 Phase 4)
+# ---------------------------------------------------------------------------
+
+
+def _build_run_plan_stages(
+    cr_dir: str,
+    mode: str,
+    pr_number: int | None,
+    flags: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return the canonical 30-stage pipeline (PLN-719 Section 7).
+
+    Args lists use angle-bracket placeholders for values the orchestrator
+    must resolve at runtime (see the token table below). Every required
+    argparse argument is included so the orchestrator can substitute and
+    invoke each helper directly.
+
+    ``stdout`` points to a file the orchestrator must redirect the helper's
+    stdout to (the legacy ``> validate_output.json`` redirection). When
+    ``stdout`` is None, the helper writes its primary output directly to
+    disk.
+
+    Runtime placeholder tokens:
+      <PLUGIN_ROOT>  -- $CLAUDE_PLUGIN_ROOT
+      <DIFF_SCOPE>   -- scope.json.diff_scope (from resolve-scope)
+      <BASE_REF>     -- scope.json.base_ref
+      <DIFF_TIP>     -- scope.json.diff_tip
+      <SCOPE_KIND>   -- scope.json.scope_kind
+      <CACHE_DIR>    -- cache_config.json.cache_dir (from finalize-cache)
+      <PROMPT_HASH>  -- hashes.json.prompt_hash (from compute-hashes)
+      <CONTEXT_KEY>  -- hashes.json.context_key
+      <MODEL_ID>     -- orchestrator-chosen model (e.g. "opus")
+      <START_TIME>   -- setup.json.start_time (epoch seconds)
+      <STATE_KEY>    -- "<review_branch>:<base_ref>"
+
+    Stages that depend on plans 01/03/05/06 are present but marked
+    ``enabled: false`` until those plans land. Their args include the
+    best-known shape so when those plans wire them on, only ``enabled``
+    needs to flip.
+    """
+    pr_arg = str(pr_number) if pr_number else ""
+    return [
+        {
+            "id": "stage_01_setup",
+            "kind": "helper",
+            "subcommand": "setup",
+            "args": ["--mode", mode, "--cr-dir-prefix", ".closedloop-ai/code-review/cr-"],
+            "stdout": f"{cr_dir}/setup.json",
+            "expected_outputs": [f"{cr_dir}/setup.json"],
+            "depends_on": [],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_02_prep_assets",
+            "kind": "helper",
+            "subcommand": "prep-assets",
+            "args": ["--plugin-root", "<PLUGIN_ROOT>", "--cr-dir", cr_dir],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/shared_prompt.txt", f"{cr_dir}/bha_suffix.txt"],
+            "depends_on": ["stage_01_setup"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_03_resolve_scope",
+            "kind": "helper",
+            "subcommand": "resolve-scope",
+            "args": [
+                "--mode", mode,
+                "--pr-number", pr_arg,
+                "--scope-args", flags.get("scope_args", "") or "",
+                "--base-ref-override", flags.get("base_ref_override", "") or "",
+            ],
+            "stdout": f"{cr_dir}/scope.json",
+            "expected_outputs": [f"{cr_dir}/scope.json"],
+            "depends_on": ["stage_02_prep_assets"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_04_finalize_cache",
+            "kind": "helper",
+            "subcommand": "finalize-cache",
+            "args": [
+                "--setup-json", f"{cr_dir}/setup.json",
+                "--mode", mode,
+                "--pr-number", pr_arg,
+            ],
+            "stdout": f"{cr_dir}/cache_config.json",
+            "expected_outputs": [f"{cr_dir}/cache_config.json"],
+            "depends_on": ["stage_03_resolve_scope"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_05_parse_diff",
+            "kind": "helper",
+            "subcommand": "parse-diff",
+            "args": ["--scope", "<DIFF_SCOPE>"],
+            "stdout": f"{cr_dir}/diff_data.json",
+            "expected_outputs": [f"{cr_dir}/diff_data.json"],
+            "depends_on": ["stage_03_resolve_scope"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_06_extract_patches",
+            "kind": "helper",
+            "subcommand": "extract-patches",
+            "args": [
+                "--diff-scope", "<DIFF_SCOPE>",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+                "--cr-dir", cr_dir,
+            ],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/patches_all.txt"],
+            "depends_on": ["stage_05_parse_diff"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_07_auto_incremental",
+            "kind": "helper",
+            "subcommand": "auto-incremental",
+            "args": [
+                "--cache-dir", "<CACHE_DIR>",
+                "--key", "<STATE_KEY>",
+                "--diff-tip", "<DIFF_TIP>",
+                "--base-ref", "<BASE_REF>",
+                "--original-scope", "<DIFF_SCOPE>",
+                "--full-review", "true" if flags.get("full_review") else "false",
+                "--since-last-review", "true" if flags.get("since_last_review") else "false",
+                "--mode", mode,
+            ],
+            "stdout": f"{cr_dir}/auto_incremental.json",
+            "expected_outputs": [f"{cr_dir}/auto_incremental.json"],
+            "depends_on": ["stage_04_finalize_cache", "stage_05_parse_diff"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_08_fetch_intent",
+            "kind": "helper",
+            "subcommand": "fetch-intent",
+            "args": [
+                "--scope-kind", "<SCOPE_KIND>",
+                "--pr-number", pr_arg,
+                "--base-ref", "<BASE_REF>",
+                "--diff-tip", "<DIFF_TIP>",
+            ],
+            "stdout": f"{cr_dir}/intent_context.json",
+            "expected_outputs": [f"{cr_dir}/intent_context.json"],
+            "depends_on": ["stage_03_resolve_scope"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_09_detect_injection",
+            "kind": "helper",
+            "subcommand": "detect-injection",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--intent-context", f"{cr_dir}/intent_context.json",
+            ],
+            "stdout": f"{cr_dir}/injection_report.json",
+            "expected_outputs": [f"{cr_dir}/injection_report.json"],
+            "depends_on": ["stage_08_fetch_intent"],
+            "on_failure": "continue",
+            "enabled": False,  # plan 01
+        },
+        {
+            "id": "stage_10_classify_intent",
+            "kind": "helper",
+            "subcommand": "classify-intent",
+            "args": [
+                "--intent-context", f"{cr_dir}/intent_context.json",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+            ],
+            "stdout": f"{cr_dir}/intent.json",
+            "expected_outputs": [f"{cr_dir}/intent.json"],
+            "depends_on": ["stage_08_fetch_intent", "stage_05_parse_diff"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_11_extract_signals",
+            "kind": "helper",
+            "subcommand": "extract-signals",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--diff-data", f"{cr_dir}/diff_data.json",
+                "--patches", f"{cr_dir}/patches_all.txt",
+                "--intent", f"{cr_dir}/intent.json",
+            ],
+            "stdout": f"{cr_dir}/signals.json",
+            "expected_outputs": [f"{cr_dir}/signals.json"],
+            "depends_on": ["stage_06_extract_patches", "stage_10_classify_intent"],
+            "on_failure": "continue_with_coverage_gap",
+            "enabled": False,  # plan 05
+        },
+        {
+            "id": "stage_12_hygiene",
+            "kind": "helper",
+            "subcommand": "hygiene",
+            "args": ["--diff-data", f"{cr_dir}/diff_data.json"],
+            "stdout": f"{cr_dir}/hygiene.json",
+            "expected_outputs": [f"{cr_dir}/hygiene.json"],
+            "depends_on": ["stage_05_parse_diff"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_13_validate_companions",
+            "kind": "helper",
+            "subcommand": "validate-companions",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--diff-data", f"{cr_dir}/diff_data.json",
+            ],
+            "stdout": f"{cr_dir}/companion_findings.json",
+            "expected_outputs": [f"{cr_dir}/companion_findings.json"],
+            "depends_on": ["stage_05_parse_diff"],
+            "on_failure": "continue",
+            "enabled": False,  # plan 06
+        },
+        {
+            "id": "stage_14_resolve_coverage",
+            "kind": "helper",
+            "subcommand": "resolve-coverage",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--signals", f"{cr_dir}/signals.json",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+            ],
+            "stdout": f"{cr_dir}/coverage_plan_initial.json",
+            "expected_outputs": [f"{cr_dir}/coverage_plan_initial.json"],
+            "depends_on": ["stage_11_extract_signals"],
+            "on_failure": "abort",
+            "enabled": False,  # plan 05
+        },
+        {
+            "id": "stage_15_coverage_critic",
+            "kind": "helper",
+            "subcommand": "coverage-critic",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--coverage-plan", f"{cr_dir}/coverage_plan_initial.json",
+                "--signals", f"{cr_dir}/signals.json",
+            ],
+            "stdout": f"{cr_dir}/coverage_critic.json",
+            "expected_outputs": [f"{cr_dir}/coverage_critic.json"],
+            "depends_on": ["stage_14_resolve_coverage"],
+            "on_failure": "continue",
+            "enabled": False,  # plan 05
+        },
+        {
+            "id": "stage_16_arbitrate_budget",
+            "kind": "helper",
+            "subcommand": "arbitrate-budget",
+            "args": [
+                "--coverage-plan", f"{cr_dir}/coverage_plan_initial.json",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+                "--output", f"{cr_dir}/coverage_plan.json",
+            ],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/coverage_plan.json", f"{cr_dir}/coverage_gaps.json"],
+            "depends_on": ["stage_15_coverage_critic"],
+            "on_failure": "abort",
+            # Gated on plan 05 — its `--coverage-plan` input is the output of
+            # stage_14_resolve_coverage, which is disabled until plan 05 ships
+            # (resolve-coverage + coverage-critic). The subcommand itself is
+            # foundation-owned and the helper is callable today; this stage
+            # flips to True together with stages 11/14/15 when plan 05 lands.
+            "enabled": False,
+        },
+        {
+            "id": "stage_17_partition",
+            "kind": "helper",
+            "subcommand": "partition",
+            "args": ["--diff-data", f"{cr_dir}/diff_data.json"],
+            "stdout": f"{cr_dir}/partitions.json",
+            "expected_outputs": [f"{cr_dir}/partitions.json"],
+            # Actual data dependency is diff_data.json (stage_05_parse_diff).
+            # stage_16_arbitrate_budget is plan-05-gated and disabled in Phase
+            # A; depending on a disabled stage would make this foundation
+            # stage unreachable for any orchestrator that walks `depends_on`.
+            "depends_on": ["stage_05_parse_diff"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_18_compute_hashes",
+            "kind": "helper",
+            "subcommand": "compute-hashes",
+            "args": [
+                "--shared-prompt", f"{cr_dir}/shared_prompt.txt",
+                "--bha-suffix", f"{cr_dir}/bha_suffix.txt",
+                "--diff-tip", "<DIFF_TIP>",
+                "--base-ref", "<BASE_REF>",
+            ],
+            "stdout": f"{cr_dir}/hashes.json",
+            "expected_outputs": [f"{cr_dir}/hashes.json"],
+            "depends_on": ["stage_17_partition", "stage_02_prep_assets"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_19_cache_check",
+            "kind": "helper",
+            "subcommand": "cache-check",
+            "args": [
+                "--cache-dir", "<CACHE_DIR>",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+                "--prompt-hash", "<PROMPT_HASH>",
+                "--model-id", "<MODEL_ID>",
+                "--schema-version", str(SCHEMA_VERSION),
+                "--output-dir", cr_dir,
+                "--context-key", "<CONTEXT_KEY>",
+            ],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/cache_result.json"],
+            "depends_on": ["stage_18_compute_hashes", "stage_04_finalize_cache"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_20_spawn_reviewers",
+            "kind": "agent_fleet",
+            "agent_specs": [],  # populated by orchestrator from coverage_plan + partitions
+            "expected_outputs": [f"{cr_dir}/agent_*.json"],
+            "depends_on": ["stage_19_cache_check"],
+            "on_failure": "continue_with_coverage_gap",
+            "enabled": True,
+        },
+        {
+            "id": "stage_21_collect_findings",
+            "kind": "helper",
+            "subcommand": "collect-findings",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--hygiene", f"{cr_dir}/hygiene.json",
+            ],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/findings.json"],
+            "depends_on": ["stage_20_spawn_reviewers"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_22_validate",
+            "kind": "helper",
+            "subcommand": "validate",
+            "args": [
+                "--findings", f"{cr_dir}/findings.json",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+            ],
+            "stdout": f"{cr_dir}/findings_validated.json",
+            "expected_outputs": [f"{cr_dir}/findings_validated.json"],
+            "depends_on": ["stage_21_collect_findings"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_23_verify_findings",
+            "kind": "agent_fleet",
+            "agent_specs": [],  # populated per-finding by orchestrator
+            "expected_outputs": [f"{cr_dir}/findings_verified.json"],
+            "depends_on": ["stage_22_validate"],
+            "on_failure": "continue",
+            "enabled": False,  # plan 03
+        },
+        {
+            "id": "stage_24_verify_coverage",
+            "kind": "helper",
+            "subcommand": "verify-coverage",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--coverage-plan", f"{cr_dir}/coverage_plan.json",
+            ],
+            "stdout": f"{cr_dir}/coverage_verification.json",
+            "expected_outputs": [f"{cr_dir}/coverage_verification.json"],
+            "depends_on": ["stage_23_verify_findings"],
+            "on_failure": "continue",
+            "enabled": False,  # plan 05
+        },
+        {
+            "id": "stage_25_finalize_result",
+            "kind": "helper",
+            "subcommand": "finalize-result",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--validate-output", f"{cr_dir}/findings_validated.json",
+                "--mode", mode,
+                "--diff-tip", "<DIFF_TIP>",
+                "--pr-number", pr_arg,
+            ],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/review_result.json"],
+            "depends_on": ["stage_22_validate"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_26_cache_update",
+            "kind": "helper",
+            "subcommand": "cache-update",
+            "args": [
+                "--cache-dir", "<CACHE_DIR>",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+                "--bha-dir", cr_dir,
+                "--prompt-hash", "<PROMPT_HASH>",
+                "--model-id", "<MODEL_ID>",
+                "--schema-version", str(SCHEMA_VERSION),
+                "--context-key", "<CONTEXT_KEY>",
+            ],
+            "stdout": None,
+            "expected_outputs": [],
+            "depends_on": ["stage_25_finalize_result"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_27_review_state_write",
+            "kind": "helper",
+            "subcommand": "review-state-write",
+            "args": [
+                "--cache-dir", "<CACHE_DIR>",
+                "--key", "<STATE_KEY>",
+                "--ref", "<DIFF_TIP>",
+            ],
+            "stdout": None,
+            "expected_outputs": [],
+            "depends_on": ["stage_25_finalize_result"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_28_verdict",
+            "kind": "helper",
+            "subcommand": "verdict",
+            "args": [
+                "--review-result", f"{cr_dir}/review_result.json",
+                "--validate-output", f"{cr_dir}/findings_validated.json",
+            ],
+            "stdout": f"{cr_dir}/verdict.json",
+            "expected_outputs": [f"{cr_dir}/verdict.json"],
+            "depends_on": ["stage_25_finalize_result"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_29_present",
+            "kind": "present",
+            "subcommand": None,
+            "args": [],
+            "stdout": None,
+            "expected_outputs": [],
+            "depends_on": ["stage_28_verdict"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
+            "id": "stage_30_footer",
+            "kind": "helper",
+            "subcommand": "footer",
+            "args": [
+                "--start-time", "<START_TIME>",
+                "--cr-dir", cr_dir,
+            ],
+            "stdout": None,
+            "expected_outputs": [],
+            "depends_on": ["stage_29_present"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+    ]
+
+
+def _build_validation_gates(cr_dir: str) -> list[dict[str, Any]]:
+    """Return canonical inter-stage validation gates."""
+    return [
+        {
+            "after_stage": "stage_05_parse_diff",
+            "gate": "expected_outputs_present",
+            "outputs": [f"{cr_dir}/diff_data.json"],
+            "on_failure_action": "abort",
+        },
+        {
+            "after_stage": "stage_16_arbitrate_budget",
+            "gate": "coverage_plan_well_formed",
+            "outputs": [f"{cr_dir}/coverage_plan.json"],
+            "on_failure_action": "abort",
+        },
+        {
+            "after_stage": "stage_20_spawn_reviewers",
+            "gate": "all_required_outputs_present",
+            "outputs": [f"{cr_dir}/agent_*.json"],
+            "on_failure_action": "emit_coverage_gap",
+        },
+        {
+            "after_stage": "stage_22_validate",
+            "gate": "validated_output_well_formed",
+            "outputs": [f"{cr_dir}/findings_validated.json"],
+            "on_failure_action": "abort",
+        },
+        {
+            "after_stage": "stage_25_finalize_result",
+            "gate": "review_result_well_formed",
+            "outputs": [f"{cr_dir}/review_result.json"],
+            "on_failure_action": "abort",
+        },
+    ]
+
+
+def cmd_prepare_run(args: argparse.Namespace) -> int:
+    """Emit ``run_plan.json`` describing the full review pipeline.
+
+    PLN-719 Section 6. The output is consumed by the orchestrator (a future
+    rewrite of start.md will walk this declarative plan).
+
+    Determinism: same inputs produce byte-identical output **except for the
+    ``review_id`` field**, which is a fresh ``uuid.uuid4()`` per invocation.
+    Compare via a JSON pop of ``review_id`` before diffing or hashing —
+    every other field, including the entire ``stages`` and
+    ``validation_gates`` arrays, is deterministic.
+    """
+    cr_dir = args.cr_dir
+    mode = args.mode
+
+    # Coerce string-bool flags into actual bools.
+    def _flag(name: str) -> bool:
+        val = getattr(args, name, None)
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.strip().lower() in ("true", "1", "yes")
+        return False
+
+    flags = {
+        "hygiene_only": _flag("hygiene_only"),
+        "since_last_review": _flag("since_last_review"),
+        "full_review": _flag("full_review"),
+        "base_ref_override": args.base_ref_override or "",
+        "scope_args": args.scope_args or "",
+        "pr_number": args.pr_number,
+    }
+
+    run_plan: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "review_id": str(uuid.uuid4()),
+        "cr_dir": cr_dir,
+        "mode": mode,
+        "flags": flags,
+        "scope": {},  # populated by stage_03_resolve_scope at runtime
+        "stages": _build_run_plan_stages(cr_dir, mode, args.pr_number, flags),
+        "validation_gates": _build_validation_gates(cr_dir),
+        "telemetry": {
+            "expected_total_duration_ms": 0,
+            "estimated_cost_usd": 0.0,
+        },
+    }
+
+    output_path = Path(args.output) if args.output else Path(cr_dir) / "run_plan.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        json.dump(run_plan, f, indent=2)
+
+    json.dump(
+        {
+            "run_plan": str(output_path),
+            "stage_count": len(run_plan["stages"]),
+            "enabled_stage_count": sum(1 for s in run_plan["stages"] if s["enabled"]),
+            "review_id": run_plan["review_id"],
+        },
+        sys.stdout,
+        indent=2,
+    )
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: arbitrate-budget (PLN-719 Phase 3)
+# ---------------------------------------------------------------------------
+
+# Hard cap on total agent fleet size (foundation Section 5).
+BUDGET_TOTAL_CAP_DEFAULT = 20
+BUDGET_BHA_FLOOR_DEFAULT = 1
+
+
+def _is_docs_only(diff_data: dict[str, Any]) -> bool:
+    """Return True when every file in the diff has a docs/markdown extension."""
+    files = diff_data.get("files_to_review") or []
+    if not files:
+        return False
+    return all(_is_skip_ext(f) for f in files)
+
+
+def _max_bha_partitions_by_loc(diff_data: dict[str, Any]) -> int:
+    """Cap BHA partitions by changed-LOC budget (mirrors partition heuristics)."""
+    total_loc = int(diff_data.get("total_loc") or 0)
+    if total_loc <= 0:
+        return 1
+    by_budget = max(1, (total_loc + REBALANCE_LOC_BUDGET - 1) // REBALANCE_LOC_BUDGET)
+    return min(by_budget, DEFAULT_MAX_BHA_AGENTS)
+
+
+def _make_coverage_gap_finding(
+    reviewer_entry: dict[str, Any],
+    *,
+    reason: str,
+    index: int,
+    emitted_at: str,
+) -> dict[str, Any]:
+    """Build a canonical system-scoped coverage-gap finding for a dropped reviewer."""
+    reviewer_name = str(reviewer_entry.get("reviewer") or reviewer_entry.get("name") or "unknown")
+    marker = (
+        "budget-exceeded"
+        if reason == "budget_exceeded"
+        else f"coverage:{reviewer_name}"
+    )
+    return normalize_legacy_finding(
+        {
+            "id": make_finding_id("coverage-verifier", index),
+            "reviewer": "coverage-verifier",
+            "source": "coverage-verifier",
+            "schema_version": SCHEMA_VERSION,
+            "finding_scope": "system",
+            "file": None,
+            "line": None,
+            "system_marker": marker,
+            "category": "Coverage",
+            "severity": "HIGH",
+            "priority": 1,
+            "confidence": 1.0,
+            "issue": f"Required reviewer dropped: {reviewer_name}",
+            "explanation": (
+                f"The required reviewer {reviewer_name!r} was dropped because "
+                f"{reason.replace('_', ' ')} (cap reached). The PR is blocked "
+                "until this reviewer can run."
+            ),
+            "recommendation": (
+                "Raise --cap, reduce the number of required reviewers, or "
+                "narrow the diff scope so the required reviewer can fit."
+            ),
+            "code_snippet": "",
+            "required": True,
+        },
+        reviewer="coverage-verifier",
+        source="coverage-verifier",
+        index=index,
+        emitted_at=emitted_at,
+    )
+
+
+def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
+    """Apply budget arbitration to a coverage plan (PLN-719 Section 5).
+
+    Reads a coverage_plan_initial.json (or any JSON object with ``required``
+    and ``best_effort`` arrays) plus diff_data.json and produces the final
+    coverage_plan.json. Emits coverage-gap findings for required reviewers
+    that exceed the cap.
+    """
+    coverage_plan_in = _read_optional_json(Path(args.coverage_plan), None)
+    if not isinstance(coverage_plan_in, dict):
+        print(f"Error: --coverage-plan {args.coverage_plan} not found or malformed", file=sys.stderr)
+        return 1
+
+    diff_data = _read_optional_json(Path(args.diff_data), {}) or {}
+    cap: int = int(args.cap)
+    if cap <= 0:
+        print(f"Error: --cap must be > 0, got {cap}", file=sys.stderr)
+        return 1
+
+    required: list[dict[str, Any]] = list(coverage_plan_in.get("required", []) or [])
+    best_effort: list[dict[str, Any]] = list(coverage_plan_in.get("best_effort", []) or [])
+    deprecation_warnings: list[str] = list(coverage_plan_in.get("deprecation_warnings", []) or [])
+
+    bha_floor = 0 if _is_docs_only(diff_data) else BUDGET_BHA_FLOOR_DEFAULT
+    max_bha = _max_bha_partitions_by_loc(diff_data)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    coverage_gaps: list[dict[str, Any]] = []
+    dropped_required: list[dict[str, Any]] = []
+
+    # Step 1: handle required overflow (fail-closed).
+    if len(required) + bha_floor > cap:
+        keep_count = max(0, cap - bha_floor)
+        dropped_required = required[keep_count:]
+        required = required[:keep_count]
+        for idx, entry in enumerate(dropped_required):
+            coverage_gaps.append(
+                _make_coverage_gap_finding(
+                    entry,
+                    reason="budget_exceeded",
+                    index=idx,
+                    emitted_at=now_iso,
+                ),
+            )
+
+    # Step 2: prune best-effort (lowest priority first).
+    best_effort_sorted = sorted(
+        best_effort,
+        key=lambda e: int(e.get("priority", 2)),
+    )
+    target_bha = max(bha_floor, 1) if not _is_docs_only(diff_data) else 0
+    remaining = max(0, cap - len(required) - target_bha)
+    if len(best_effort_sorted) > remaining:
+        deferred_for_budget = best_effort_sorted[remaining:]
+        best_effort_final = best_effort_sorted[:remaining]
+    else:
+        deferred_for_budget = []
+        best_effort_final = best_effort_sorted
+
+    # Step 3: compute final BHA partition count.
+    if _is_docs_only(diff_data):
+        bha_partitions = 0
+    else:
+        leftover = max(0, cap - len(required) - len(best_effort_final))
+        bha_partitions = max(bha_floor, min(leftover, max_bha))
+
+    final_plan: dict[str, Any] = {
+        "required": required,
+        "best_effort": best_effort_final,
+        "deferred_for_budget": deferred_for_budget,
+        "deprecation_warnings": deprecation_warnings,
+        "budget": {
+            "total_cap": cap,
+            "required_count": len(required),
+            "best_effort_count": len(best_effort_final),
+            "bha_partitions": bha_partitions,
+        },
+        "dropped_required": dropped_required,
+    }
+
+    output_path = Path(args.output) if args.output else Path(args.coverage_plan).with_name("coverage_plan.json")
+    with open(output_path, "w") as f:
+        json.dump(final_plan, f, indent=2)
+
+    gaps_path = output_path.with_name("coverage_gaps.json")
+    with open(gaps_path, "w") as f:
+        json.dump({"findings": coverage_gaps}, f, indent=2)
+
+    json.dump(
+        {
+            "coverage_plan": str(output_path),
+            "coverage_gaps": str(gaps_path),
+            "required_count": len(required),
+            "best_effort_count": len(best_effort_final),
+            "deferred_count": len(deferred_for_budget),
+            "dropped_required_count": len(dropped_required),
+            "bha_partitions": bha_partitions,
+            "docs_only": _is_docs_only(diff_data),
+        },
+        sys.stdout,
+        indent=2,
+    )
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: finalize-result (PLN-719 Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def _empty_coverage_plan() -> dict[str, Any]:
+    """Stub coverage plan used until plan 05 fills it in."""
+    return {
+        "required": [],
+        "best_effort": [],
+        "deferred_for_budget": [],
+        "deprecation_warnings": [],
+        "budget": {
+            "total_cap": 20,
+            "required_count": 0,
+            "best_effort_count": 0,
+            "bha_partitions": 0,
+        },
+    }
+
+
+def _stats_from_findings(
+    verified: list[dict[str, Any]],
+    rejected: list[dict[str, Any]],
+    justified: list[dict[str, Any]],
+    coverage_gaps: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compute the ``stats`` block of the result envelope."""
+    by_severity: dict[str, int] = {"BLOCKING": 0, "HIGH": 0, "MEDIUM": 0}
+    by_category: dict[str, int] = {}
+    by_reviewer: dict[str, dict[str, int]] = {}
+    by_scope: dict[str, int] = {"diff": 0, "system": 0, "pr_metadata": 0}
+
+    def _bump(finding: dict[str, Any], bucket: str) -> None:
+        sev = str(finding.get("severity", "MEDIUM"))
+        if sev in by_severity:
+            by_severity[sev] += 1
+        cat = str(finding.get("category", "Unknown"))
+        by_category[cat] = by_category.get(cat, 0) + 1
+        reviewer = str(finding.get("reviewer", "unknown"))
+        entry = by_reviewer.setdefault(
+            reviewer, {"verified": 0, "rejected": 0, "tentative": 0, "justified": 0},
+        )
+        if bucket in entry:
+            entry[bucket] += 1
+        scope = str(finding.get("finding_scope") or "diff")
+        if scope in by_scope:
+            by_scope[scope] += 1
+
+    for f in verified:
+        _bump(f, "verified")
+    for f in rejected:
+        _bump(f, "rejected")
+    for f in justified:
+        _bump(f, "justified")
+    for f in coverage_gaps:
+        _bump(f, "verified")
+
+    return {
+        "by_severity": by_severity,
+        "by_category": by_category,
+        "by_reviewer": by_reviewer,
+        "by_finding_scope": by_scope,
+        "verification": {
+            "verified_count": len(verified),
+            "rejected_count": len(rejected),
+            "tentative_count": 0,
+            "downgrade_count": 0,
+            "justified_valid_count": len(justified),
+            "justified_invalid_count": 0,
+            "skipped_count": 0,
+            "false_positive_rate": 0.0,
+        },
+        "premise_cumulative_medium_count": sum(
+            1 for f in verified
+            if str(f.get("category", "")) == "Premise"
+            and str(f.get("severity", "")) == "MEDIUM"
+        ),
+        "agent_failures": [],
+    }
+
+
+def cmd_finalize_result(args: argparse.Namespace) -> int:
+    """Consolidate findings + coverage state + verdict into review_result.json.
+
+    PLN-719 Phase 2. In Phase A all validated diff/pr_metadata findings land
+    in ``verified[]`` (no verifier yet); coverage-scoped findings land in
+    ``coverage_gaps[]``. Plan 03 (verifier) will reshuffle into
+    ``verified/justified/rejected/pending_verification`` buckets.
+    """
+    cr_dir = Path(args.cr_dir)
+    validate_output_path = Path(args.validate_output)
+
+    validate_output = _read_optional_json(validate_output_path, None)
+    if not isinstance(validate_output, dict):
+        print(f"Error: validate_output not found or malformed at {validate_output_path}", file=sys.stderr)
+        return 1
+
+    validated: list[dict[str, Any]] = validate_output.get("validated", []) or []
+
+    # Promote findings to canonical schema (defensive — collect-findings
+    # should already have done this, but legacy producers may bypass it).
+    # Mirror cmd_collect_findings: coerce non-canonical reviewer strings
+    # (e.g. "Bug Hunter A") so make_finding_id doesn't ValueError, and
+    # skip individually malformed findings rather than aborting the run.
+    now_iso = datetime.now(timezone.utc).isoformat()
+    canonical_findings: list[dict[str, Any]] = []
+    for idx, raw in enumerate(validated):
+        if not isinstance(raw, dict):
+            continue
+        raw_normalized = dict(raw)
+        raw_normalized["reviewer"] = _coerce_reviewer_id(
+            raw.get("reviewer"), "unknown",
+        )
+        try:
+            canonical_findings.append(
+                normalize_legacy_finding(
+                    raw_normalized,
+                    reviewer=raw_normalized["reviewer"],
+                    source=raw.get("source", "agent"),
+                    index=idx,
+                    emitted_at=raw.get("emitted_at") or now_iso,
+                ),
+            )
+        except (ValueError, TypeError) as exc:
+            print(
+                f"Warning: skipping malformed finding {idx} in validate_output: {exc}",
+                file=sys.stderr,
+            )
+            continue
+
+    # Partition by index to avoid dict-equality membership tests; legacy
+    # findings normalized in-place may not have stable ids yet.
+    coverage_indices: set[int] = {
+        i for i, f in enumerate(canonical_findings)
+        if str(f.get("category", "")) == "Coverage"
+        and (f.get("finding_scope") or "diff") == "system"
+    }
+    coverage_gaps = [f for i, f in enumerate(canonical_findings) if i in coverage_indices]
+    verified = [f for i, f in enumerate(canonical_findings) if i not in coverage_indices]
+
+    # Pull additional coverage gaps emitted by arbitrate-budget, if any.
+    extra_gaps_doc = _read_optional_json(cr_dir / "coverage_gaps.json", None)
+    if isinstance(extra_gaps_doc, dict):
+        for entry in extra_gaps_doc.get("findings", []) or []:
+            if isinstance(entry, dict):
+                coverage_gaps.append(entry)
+
+    canonical_verdict, reason = _compute_canonical_verdict(verified, coverage_gaps)
+
+    # Pull optional run-context inputs.
+    setup_data = _read_optional_json(cr_dir / "setup.json", {}) or {}
+    scope_data = _read_optional_json(cr_dir / "scope.json", {}) or {}
+    intent_data = _read_optional_json(cr_dir / "intent.json", {}) or {}
+    coverage_plan = _read_optional_json(cr_dir / "coverage_plan.json", None)
+    if not isinstance(coverage_plan, dict):
+        coverage_plan = _empty_coverage_plan()
+
+    mode = args.mode or setup_data.get("mode") or "local"
+    diff_tip = (
+        args.diff_tip
+        or scope_data.get("diff_tip")
+        or setup_data.get("head_sha")
+        or "unknown"
+    )
+
+    envelope: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "review_id": str(uuid.uuid4()),
+        "pr_number": args.pr_number if args.pr_number else scope_data.get("pr_number"),
+        "head_sha": setup_data.get("head_sha") or scope_data.get("head_sha"),
+        "diff_tip": str(diff_tip),
+        "review_branch": setup_data.get("current_branch") or scope_data.get("review_branch"),
+        "base_ref": scope_data.get("base_ref"),
+        "diff_scope": scope_data.get("diff_scope"),
+        "mode": mode,
+        "intent": intent_data.get("intent", "mixed"),
+        "verified": verified,
+        "justified": [],
+        "rejected": [],
+        "pending_verification": [],
+        "coverage_plan": coverage_plan,
+        "coverage_gaps": coverage_gaps,
+        "verdict": canonical_verdict,
+        "verdict_reason": reason,
+        "stats": _stats_from_findings(verified, [], [], coverage_gaps),
+        "telemetry": {
+            "duration_ms": 0,
+            "duration_by_stage_ms": {},
+            "estimated_cost_usd": 0.0,
+            "tokens": {
+                "input_uncached": 0,
+                "input_cached": 0,
+                "output": 0,
+                "by_model": {},
+            },
+            "schema_versions_seen": {"finding": SCHEMA_VERSION, "result": SCHEMA_VERSION},
+        },
+    }
+
+    errors = validate_result_envelope(envelope)
+
+    output_path = cr_dir / "review_result.json"
+    with open(output_path, "w") as f:
+        json.dump(envelope, f, indent=2)
+
+    json.dump(
+        {
+            "review_result": str(output_path),
+            "verdict": canonical_verdict,
+            "verified_count": len(verified),
+            "coverage_gaps_count": len(coverage_gaps),
+            "validation_errors": errors,
+        },
+        sys.stdout,
+        indent=2,
+    )
+    sys.stdout.write("\n")
+
+    # Surface validation errors so the orchestrator can honor stage_25's
+    # on_failure: "abort" rather than silently flowing an invalid envelope
+    # into verdict / present. The file is still written above so operators
+    # can inspect it; the non-zero exit + stderr give them a clear signal.
+    if errors:
+        print(
+            f"Error: review_result.json failed schema validation "
+            f"({len(errors)} error(s)):",
+            file=sys.stderr,
+        )
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
+
     return 0
 
 
@@ -3546,8 +4820,51 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
 
     # verdict
     p_v = subparsers.add_parser("verdict", help="Compute PR verdict from validated findings")
-    p_v.add_argument("--validate-output", required=True, help="Path to validate_output.json")
+    p_v.add_argument("--validate-output", required=True, help="Path to validate_output.json (legacy fallback)")
+    p_v.add_argument(
+        "--review-result", default=None,
+        help="Path to review_result.json (canonical envelope; preferred when present)",
+    )
     p_v.set_defaults(func=cmd_verdict)
+
+    # finalize-result (PLN-719 Phase 2)
+    p_fr = subparsers.add_parser(
+        "finalize-result",
+        help="Build the canonical review_result.json envelope from validated findings",
+    )
+    p_fr.add_argument("--cr-dir", required=True, help="CR_DIR for the review session")
+    p_fr.add_argument("--validate-output", required=True, help="Path to validate_output.json")
+    p_fr.add_argument("--mode", default=None, choices=["local", "github"], help="Run mode")
+    p_fr.add_argument("--diff-tip", default=None, help="Diff tip sha (falls back to scope.json/setup.json)")
+    p_fr.add_argument("--pr-number", type=int, default=None, help="PR number for github mode")
+    p_fr.set_defaults(func=cmd_finalize_result)
+
+    # arbitrate-budget (PLN-719 Phase 3)
+    p_ab = subparsers.add_parser(
+        "arbitrate-budget",
+        help="Apply budget arbitration to coverage_plan_initial.json -> coverage_plan.json",
+    )
+    p_ab.add_argument("--coverage-plan", required=True, help="Path to coverage_plan_initial.json")
+    p_ab.add_argument("--diff-data", required=True, help="Path to diff_data.json")
+    p_ab.add_argument("--cap", type=int, default=BUDGET_TOTAL_CAP_DEFAULT, help="Total reviewer cap")
+    p_ab.add_argument("--output", default=None, help="Output path (default: coverage_plan.json next to input)")
+    p_ab.set_defaults(func=cmd_arbitrate_budget)
+
+    # prepare-run (PLN-719 Phase 4)
+    p_pr = subparsers.add_parser(
+        "prepare-run",
+        help="Emit run_plan.json describing the full review pipeline",
+    )
+    p_pr.add_argument("--cr-dir", required=True, help="CR_DIR for the review session")
+    p_pr.add_argument("--mode", required=True, choices=["local", "github"], help="Run mode")
+    p_pr.add_argument("--hygiene-only", default="false", help="Run hygiene-only review")
+    p_pr.add_argument("--since-last-review", default="false", help="Limit scope to commits since last review")
+    p_pr.add_argument("--full-review", default="false", help="Force a full re-review")
+    p_pr.add_argument("--base-ref-override", default="", help="Override base ref for scope resolution")
+    p_pr.add_argument("--scope-args", default="", help="Free-form scope args passed to resolve-scope")
+    p_pr.add_argument("--pr-number", type=int, default=None, help="PR number for github mode")
+    p_pr.add_argument("--output", default=None, help="Output path (default: <cr-dir>/run_plan.json)")
+    p_pr.set_defaults(func=cmd_prepare_run)
 
     # prep-assets
     p_pa = subparsers.add_parser("prep-assets", help="Copy prompt assets from plugin to CR_DIR")
