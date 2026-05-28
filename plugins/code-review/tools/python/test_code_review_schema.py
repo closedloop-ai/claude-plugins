@@ -496,6 +496,41 @@ def test_signal_extraction_failed_marker_exists():
 
 
 # ---------------------------------------------------------------------------
+# Cache namespaces + TTLs (PLN-719 Phase 7 / Section 9)
+# ---------------------------------------------------------------------------
+
+
+def test_cache_ttl_days_matches_pln719_section_9():
+    """The canonical TTLs from PLN-719 Section 9.
+
+    BHA: 30d, signals: 7d, coverage_critic: 7d, verifications: 30d,
+    overrides: 90d. Any drift between this test and the plan is a
+    documentation/schema bug.
+    """
+    from code_review_schema import CACHE_TTL_DAYS
+    assert CACHE_TTL_DAYS == {
+        "bha": 30,
+        "signals": 7,
+        "coverage_critic": 7,
+        "verifications": 30,
+        "overrides": 90,
+    }
+
+
+def test_cache_ttl_days_covers_every_namespace():
+    """Every namespace in CACHE_NAMESPACES has a declared TTL."""
+    from code_review_schema import CACHE_NAMESPACES, CACHE_TTL_DAYS
+    assert set(CACHE_TTL_DAYS) == set(CACHE_NAMESPACES)
+
+
+def test_cache_ttl_days_helper():
+    from code_review_schema import cache_ttl_days
+    assert cache_ttl_days("bha") == 30
+    assert cache_ttl_days("overrides") == 90
+    assert cache_ttl_days("future-namespace") is None
+
+
+# ---------------------------------------------------------------------------
 # Telemetry (PLN-719 Phase 9)
 # ---------------------------------------------------------------------------
 

@@ -25,12 +25,14 @@ import sys
 import uuid
 from collections.abc import Generator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from code_review_schema import (
+    CACHE_NAMESPACE_BHA,
     SCHEMA_VERSION,
+    cache_ttl_days,
     empty_telemetry,
     is_valid_system_marker,
     make_finding_id,
@@ -1518,6 +1520,38 @@ def _entry_matches(
     )
 
 
+def _is_entry_fresh(
+    entry: dict[str, Any],
+    namespace: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Return True iff ``entry["cached_at"]`` is within the namespace TTL.
+
+    PLN-719 Phase 7 — sweep-on-read TTL enforcement. The canonical TTLs
+    live in ``code_review_schema.CACHE_TTL_DAYS``; unknown namespaces or
+    missing/malformed ``cached_at`` timestamps count as fresh (callers
+    handle their own corruption fallback).
+    """
+    ttl = cache_ttl_days(namespace)
+    if ttl is None:
+        return True
+    cached_at_raw = entry.get("cached_at")
+    if not isinstance(cached_at_raw, str):
+        return True
+    try:
+        # fromisoformat tolerates the trailing "Z" used by datetime.isoformat()
+        # only on Python 3.11+; normalize manually for safety.
+        normalized = cached_at_raw.replace("Z", "+00:00")
+        cached_at = datetime.fromisoformat(normalized)
+    except ValueError:
+        return True
+    if cached_at.tzinfo is None:
+        cached_at = cached_at.replace(tzinfo=timezone.utc)
+    current = now if now is not None else datetime.now(timezone.utc)
+    return (current - cached_at) <= timedelta(days=ttl)
+
+
 # ---------------------------------------------------------------------------
 # V2 Cache helpers (content-addressed, cross-PR)
 # ---------------------------------------------------------------------------
@@ -1882,8 +1916,11 @@ def _cmd_cache_check_v1(  # noqa: PLR0913
         patch_hash = _compute_patch_hash(filepath, file_patch)
         entry = manifest.get(filepath)
 
-        if entry and isinstance(entry, dict) and _entry_matches(
-            entry, schema_version, model_id, prompt_hash, patch_hash
+        if (
+            entry
+            and isinstance(entry, dict)
+            and _entry_matches(entry, schema_version, model_id, prompt_hash, patch_hash)
+            and _is_entry_fresh(entry, CACHE_NAMESPACE_BHA)
         ):
             cached_files.append(filepath)
             cached_findings.extend(entry.get("findings", []))
@@ -1940,8 +1977,11 @@ def _cmd_cache_check_v2(  # noqa: PLR0913
                 slots = manifest.get(filepath, {})
                 entry = slots.get(composite) if isinstance(slots, dict) else None
 
-                if entry and isinstance(entry, dict) and _entry_matches_v2(
-                    entry, model_id, prompt_hash, patch_hash, context_key,
+                if (
+                    entry
+                    and isinstance(entry, dict)
+                    and _entry_matches_v2(entry, model_id, prompt_hash, patch_hash, context_key)
+                    and _is_entry_fresh(entry, CACHE_NAMESPACE_BHA)
                 ):
                     cached_files.append(filepath)
                     cached_findings.extend(entry.get("findings", []))
@@ -4452,6 +4492,29 @@ def _stats_from_findings(
     }
 
 
+def _extract_bha_cache_hit_rate(cr_dir: Path) -> float | None:
+    """Return the BHA cache hit rate (0.0-1.0) from cache_result.json, or None.
+
+    PLN-719 Phase 7 wires the first ``cache_hit_rate`` namespace producer.
+    ``cache_result.json`` records ``stats.hit_rate_pct`` (0-100) per cache-check;
+    we normalize to the canonical [0, 1] domain that ``validate_telemetry``
+    enforces. Missing or malformed files degrade silently to None so legacy
+    runs (e.g. ``--hygiene-only`` without a cache-check) don't crash finalize.
+    """
+    doc = _read_optional_json(cr_dir / "cache_result.json", None)
+    if not isinstance(doc, dict):
+        return None
+    stats = doc.get("stats")
+    if not isinstance(stats, dict):
+        return None
+    pct = stats.get("hit_rate_pct")
+    if not isinstance(pct, (int, float)) or isinstance(pct, bool):
+        return None
+    if pct < 0 or pct > 100:
+        return None
+    return round(pct / 100.0, 4)
+
+
 def _build_telemetry_block(cr_dir: Path) -> dict[str, Any]:
     """Assemble the canonical telemetry block for the result envelope.
 
@@ -4459,12 +4522,17 @@ def _build_telemetry_block(cr_dir: Path) -> dict[str, Any]:
     when present, so the orchestrator (or any helper that wraps a stage) can
     record per-run metrics by writing partial telemetry. Always forces the
     ``schema_versions_seen`` block to this run's canonical schema version so
-    it cannot be silently spoofed by a stale upstream file.
+    it cannot be silently spoofed by a stale upstream file. PLN-719 Phase 7:
+    populate ``cache_hit_rate["bha"]`` from ``cache_result.json`` when a
+    cache-check ran for this review.
     """
     base = empty_telemetry()
     overlay_raw = _read_optional_json(cr_dir / "telemetry.json", None)
     overlay = overlay_raw if isinstance(overlay_raw, dict) else {}
     block = merge_telemetry(base, overlay)
+    bha_rate = _extract_bha_cache_hit_rate(cr_dir)
+    if bha_rate is not None:
+        block["cache_hit_rate"][CACHE_NAMESPACE_BHA] = bha_rate
     block["schema_versions_seen"] = {
         "finding": SCHEMA_VERSION,
         "result": SCHEMA_VERSION,

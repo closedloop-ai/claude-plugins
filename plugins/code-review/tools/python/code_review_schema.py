@@ -203,6 +203,22 @@ CACHE_NAMESPACES: frozenset[str] = frozenset({
     CACHE_NAMESPACE_OVERRIDES,
 })
 
+# Per-namespace TTL in days (PLN-719 Section 9). Entries older than the
+# TTL are treated as a cache miss on read. Sweep-on-read is the canonical
+# enforcement point; explicit GC remains as a separate cleanup pass.
+CACHE_TTL_DAYS: dict[str, int] = {
+    CACHE_NAMESPACE_BHA: 30,
+    CACHE_NAMESPACE_SIGNALS: 7,
+    CACHE_NAMESPACE_COVERAGE_CRITIC: 7,
+    CACHE_NAMESPACE_VERIFICATIONS: 30,
+    CACHE_NAMESPACE_OVERRIDES: 90,
+}
+
+
+def cache_ttl_days(namespace: str) -> int | None:
+    """Return the canonical TTL in days for a cache namespace, or None if unknown."""
+    return CACHE_TTL_DAYS.get(namespace)
+
 
 # ---------------------------------------------------------------------------
 # Telemetry (PLN-719 Phase 9 / Section 11)
