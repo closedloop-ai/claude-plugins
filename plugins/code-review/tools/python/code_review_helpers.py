@@ -2343,8 +2343,12 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
             skipped_no_inline += 1
             continue
 
-        path = finding.get("file", "")
-        line = int(finding.get("line", 0))
+        path = finding.get("file") or ""
+        # Schema permits ``line: int | None`` for system + pr_metadata scopes.
+        # ``dict.get("line", 0)`` returns ``None`` (not the default) when the
+        # key exists with a null value, and ``int(None)`` would crash.
+        line_raw = finding.get("line")
+        line = int(line_raw) if isinstance(line_raw, int) else 0
 
         if not path or not line:
             failed += 1
@@ -4166,8 +4170,8 @@ def _build_validation_gates(cr_dir: str) -> list[dict[str, Any]]:
 def cmd_prepare_run(args: argparse.Namespace) -> int:
     """Emit ``run_plan.json`` describing the full review pipeline.
 
-    PLN-719 Section 6. The output is consumed by the orchestrator (a future
-    rewrite of start.md will walk this declarative plan).
+    PLN-719 Section 6. The output is consumed by the ``/start`` orchestrator,
+    which walks the plan stage-by-stage (Phase 4b).
 
     Determinism: same inputs produce byte-identical output **except for the
     ``review_id`` field**, which is a fresh ``uuid.uuid4()`` per invocation.

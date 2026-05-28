@@ -2317,6 +2317,40 @@ class TestCmdPostComments:
         assert rc == 0
         assert mock_run.call_count == 3
 
+    def test_null_line_does_not_crash(self, tmp_path: Path) -> None:
+        """PLN-719: schema permits ``line: int | None`` for system + pr_metadata
+        scopes. cmd_post_comments must skip those rather than crash on
+        ``int(None)`` (latent bug flagged in PR #100 review)."""
+        findings = [
+            {"file": "system", "line": None, "severity": "MEDIUM", "category": "Coverage", "issue": "no inline location"},
+            {"file": "a.ts", "line": 10, "severity": "HIGH", "category": "Bug", "issue": "inline ok"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="[]", stderr=""
+            )
+            rc = self._run(path)
+        # Must succeed; the null-line finding is skipped, the inline finding posts.
+        assert rc == 0
+        # 1 GET + 1 POST (null-line finding counted in `failed`, not posted)
+        assert mock_run.call_count == 2
+
+    def test_missing_line_key_does_not_crash(self, tmp_path: Path) -> None:
+        """A finding lacking the ``line`` key entirely also skips cleanly."""
+        findings = [
+            {"file": "a.ts", "severity": "MEDIUM", "category": "Hygiene", "issue": "file-level"},
+            {"file": "b.ts", "line": 20, "severity": "HIGH", "category": "Bug", "issue": "inline ok"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="[]", stderr=""
+            )
+            rc = self._run(path)
+        assert rc == 0
+        assert mock_run.call_count == 2
+
     def test_inline_false_skipped(self, tmp_path: Path) -> None:
         findings = [
             {"file": "a.ts", "line": 10, "severity": "HIGH", "category": "Bug", "issue": "bad", "inline": False},
@@ -6025,6 +6059,56 @@ class TestPrepareRun:
         _, plan = self._run(tmp_path)
         from code_review_schema import SCHEMA_VERSION
         assert plan["schema_version"] == SCHEMA_VERSION
+
+    def test_stage_kind_is_documented_enum(self, tmp_path: Path) -> None:
+        """PLN-719 Phase 4b walker dispatches by ``kind``; new kinds must
+        be added to start.md's walker contract before they appear here."""
+        _, plan = self._run(tmp_path)
+        documented_kinds = {"helper", "agent_fleet", "present"}
+        for stage in plan["stages"]:
+            assert stage["kind"] in documented_kinds, (
+                f"stage {stage['id']!r} has undocumented kind {stage['kind']!r}; "
+                f"walker only handles {sorted(documented_kinds)}"
+            )
+
+    def test_on_failure_is_documented_enum(self, tmp_path: Path) -> None:
+        """The /start walker honors abort | continue | continue_with_coverage_gap.
+        Adding a new on_failure semantic requires a corresponding walker update."""
+        _, plan = self._run(tmp_path)
+        documented = {"abort", "continue", "continue_with_coverage_gap"}
+        for stage in plan["stages"]:
+            assert stage["on_failure"] in documented, (
+                f"stage {stage['id']!r} on_failure {stage['on_failure']!r} "
+                f"not handled by walker; documented: {sorted(documented)}"
+            )
+
+    def test_every_documented_runtime_token_is_resolvable(
+        self, tmp_path: Path,
+    ) -> None:
+        """The placeholder tokens documented in start.md's walker contract
+        must each be produced by at least one stage's args so the walker
+        actually has substitution work to do for them. New tokens here
+        require a corresponding row in the start.md placeholder table.
+        """
+        _, plan = self._run(tmp_path)
+        all_args = " ".join(
+            arg for stage in plan["stages"]
+            if stage["kind"] == "helper"
+            for arg in stage.get("args", []) or []
+        )
+        # Tokens documented in start.md's Walker Contract placeholder table
+        # whose source is a stage-produced artifact (PLUGIN_ROOT and
+        # START_TIME come from stage 0, not from any stage's args).
+        for token in (
+            "<DIFF_SCOPE>", "<BASE_REF>", "<DIFF_TIP>", "<SCOPE_KIND>",
+            "<CACHE_DIR>", "<PROMPT_HASH>", "<CONTEXT_KEY>", "<MODEL_ID>",
+            "<STATE_KEY>",
+        ):
+            assert token in all_args, (
+                f"runtime token {token} documented in start.md's walker "
+                f"but no helper stage references it; either remove from "
+                f"the doc or add the consuming stage"
+            )
 
 
 # ---------------------------------------------------------------------------

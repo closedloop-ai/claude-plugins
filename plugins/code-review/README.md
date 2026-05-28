@@ -16,7 +16,7 @@ A multi-agent code review plugin for Claude Code that performs deep, partitioned
 
 ```
 plugins/code-review/
-  .claude-plugin/plugin.json         Plugin manifest (version 2.4.0)
+  .claude-plugin/plugin.json         Plugin manifest (version 2.5.0)
   SCHEMA.md                          Canonical Finding + ResultEnvelope schema (PLN-719); §12 documents the golden fixture harness
   commands/
     start.md                         Main /start command (orchestrator)

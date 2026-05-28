@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.5.0
+
+#### Changed
+- PLN-719 Phase 4b (Declarative orchestrator): `/start` no longer follows a 14-task prose workflow. It now invokes `prepare-run` first to emit `<CR_DIR>/run_plan.json` and then walks the 30-stage declarative plan stage-by-stage. Each helper stage is dispatched by `subcommand` after runtime placeholder substitution (`<DIFF_SCOPE>`, `<CACHE_DIR>`, `<PROMPT_HASH>`, `<CONTEXT_KEY>`, `<MODEL_ID>`, `<STATE_KEY>`, etc.); `agent_fleet` stages dispatch to the per-stage prompt templates kept in `start.md`; the `present` stage dispatches to the rendering format. Three branching gates remain outside the run plan because they are runtime-driven: Gate A (hygiene-only short-circuit after `stage_12_hygiene`), Gate B (`route` + `fast_path` decision between `stage_19_cache_check` and `stage_17_partition`), Gate C (skip `stage_26_cache_update` when `fast_path` is true or `CACHE_DIR` is empty). The `start.md` file drops from 1278 → 846 lines (34% reduction) without changing review behavior; the deletions are the prose-driven helper invocations that are now derived from `run_plan.json`.
+- `cmd_prepare_run` docstring updated: the consumer is no longer "a future rewrite of start.md" — it is the live `/start` walker.
+
+#### Added
+- Three contract tests in `TestPrepareRun` lock in the walker dispatch surface so future plan changes can't silently break the orchestrator: `test_stage_kind_is_documented_enum` (kind ∈ {helper, agent_fleet, present}), `test_on_failure_is_documented_enum` (on_failure ∈ {abort, continue, continue_with_coverage_gap}), `test_every_documented_runtime_token_is_resolvable` (every runtime token in the start.md placeholder table is referenced by at least one helper stage's args).
+
+#### Fixed
+- `cmd_post_comments` no longer crashes on findings whose `line` field is `null`. The schema permits `line: int | None` for `finding_scope` of `"system"` and `"pr_metadata"`, but the previous code wrote `int(finding.get("line", 0))` — `dict.get("line", 0)` returns `None` (not the default) when the key exists with a null value, so `int(None)` raised `TypeError` and the whole `post-comments` invocation aborted. The latent bug was flagged in PR #100 review and never addressed. Findings with null or missing `line` are now counted under `failed` (no inline anchor) instead of crashing the run. Adds two regression tests: `test_null_line_does_not_crash` and `test_missing_line_key_does_not_crash`.
+
 ### code-review v2.4.0
 
 #### Added
