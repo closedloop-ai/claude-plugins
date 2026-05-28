@@ -161,9 +161,11 @@ Walk `STAGES` in array order. For each stage:
 | `<DIFF_TIP>`       | `<CR_DIR>/scope.json` → `diff_tip`                              |
 | `<SCOPE_KIND>`     | `<CR_DIR>/scope.json` → `scope_kind`                            |
 | `<CACHE_DIR>`      | `<CR_DIR>/cache_config.json` → `cache_dir` (empty when no cache)|
+| `<GLOBAL_CACHE>`   | `<CR_DIR>/setup.json` → `global_cache` (string "0" or "1")      |
 | `<PROMPT_HASH>`    | `<CR_DIR>/hashes.json` → `prompt_hash`                          |
 | `<CONTEXT_KEY>`    | `<CR_DIR>/hashes.json` → `context_key`                          |
 | `<MODEL_ID>`       | `"opus"` (BHA's default; the orchestrator-chosen reviewer model)|
+| `<INTENT>`         | `<CR_DIR>/intent.json` → `intent` (one of feature/fix/refactor/mixed) |
 | `<START_TIME>`     | `CR_START_TIME` from stage 0                                    |
 | `<STATE_KEY>`      | `"<review_branch>:<base_ref>"` from `<CR_DIR>/scope.json`       |
 
@@ -210,7 +212,7 @@ If `FLAGS.hygiene_only` is true (or the equivalent `--hygiene-only` was passed):
 python3 <HELPERS> route \
   --diff-data <CR_DIR>/diff_data.json \
   --critic-gates .closedloop-ai/settings/critic-gates.json \
-  --intent <INTENT_FROM_INTENT_JSON> \
+  --intent <INTENT> \
   > <CR_DIR>/route.json
 ```
 

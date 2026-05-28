@@ -3670,6 +3670,7 @@ def _build_run_plan_stages(
       <DIFF_TIP>     -- scope.json.diff_tip
       <SCOPE_KIND>   -- scope.json.scope_kind
       <CACHE_DIR>    -- cache_config.json.cache_dir (from finalize-cache)
+      <GLOBAL_CACHE> -- setup.json.global_cache (0 or 1)
       <PROMPT_HASH>  -- hashes.json.prompt_hash (from compute-hashes)
       <CONTEXT_KEY>  -- hashes.json.context_key
       <MODEL_ID>     -- orchestrator-chosen model (e.g. "opus")
@@ -3711,6 +3712,7 @@ def _build_run_plan_stages(
             "subcommand": "resolve-scope",
             "args": [
                 "--mode", mode,
+                "--setup-json", f"{cr_dir}/setup.json",
                 "--pr-number", pr_arg,
                 "--scope-args", flags.get("scope_args", "") or "",
                 "--base-ref-override", flags.get("base_ref_override", "") or "",
@@ -3788,6 +3790,7 @@ def _build_run_plan_stages(
             "subcommand": "fetch-intent",
             "args": [
                 "--scope-kind", "<SCOPE_KIND>",
+                "--cr-dir", cr_dir,
                 "--pr-number", pr_arg,
                 "--base-ref", "<BASE_REF>",
                 "--diff-tip", "<DIFF_TIP>",
@@ -3970,6 +3973,7 @@ def _build_run_plan_stages(
                 "--model-id", "<MODEL_ID>",
                 "--schema-version", str(SCHEMA_VERSION),
                 "--output-dir", cr_dir,
+                "--global-cache", "<GLOBAL_CACHE>",
                 "--context-key", "<CONTEXT_KEY>",
             ],
             "stdout": None,
@@ -4066,6 +4070,8 @@ def _build_run_plan_stages(
                 "--prompt-hash", "<PROMPT_HASH>",
                 "--model-id", "<MODEL_ID>",
                 "--schema-version", str(SCHEMA_VERSION),
+                "--partitions-file", f"{cr_dir}/partitions.json",
+                "--global-cache", "<GLOBAL_CACHE>",
                 "--context-key", "<CONTEXT_KEY>",
             ],
             "stdout": None,

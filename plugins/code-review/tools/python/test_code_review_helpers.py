@@ -5955,58 +5955,52 @@ class TestPrepareRun:
     def test_enabled_helper_stages_include_all_required_argparse_args(
         self, tmp_path: Path,
     ) -> None:
-        """Every enabled helper stage must satisfy its argparse `required=True` args.
+        """Every enabled helper stage must satisfy its argparse ``required=True`` args.
 
-        Either the args list provides the flag directly or it carries a
-        runtime placeholder (``<TOKEN>``) for the orchestrator to substitute.
-        Prevents the regression where prep-assets shipped without
-        --plugin-root and several stages had only --cr-dir.
+        The set of required flags is derived from argparse itself by
+        building the parser and introspecting each subparser's actions —
+        NOT from a hand-maintained mapping. Hand-maintained mappings can
+        and did drift from the source of truth (the original version of
+        this test missed ``resolve-scope --setup-json`` and
+        ``fetch-intent --cr-dir``, both of which are ``required=True``,
+        which let the v2.5.0 walker ship a run plan that would crash
+        argparse before any review reached the agents).
         """
+        import argparse as _argparse
+
+        from code_review_helpers import _register_subparsers
+
+        parser = _argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command", required=True)
+        _register_subparsers(subparsers)
+        # argparse stores subparsers under the private ``choices`` mapping
+        # of the subparsers action.
+        sub_choices: dict[str, _argparse.ArgumentParser] = subparsers.choices  # type: ignore[attr-defined]
+
         _, plan = self._run(tmp_path)
-
-        # subcommand → required argparse flags. Derived from
-        # _register_subparsers in code_review_helpers.py.
-        required_flags = {
-            "setup": ["--mode"],
-            "prep-assets": ["--plugin-root", "--cr-dir"],
-            "resolve-scope": ["--mode"],
-            "finalize-cache": ["--setup-json", "--mode"],
-            "parse-diff": ["--scope"],
-            "extract-patches": ["--diff-scope", "--diff-data", "--cr-dir"],
-            "auto-incremental": ["--key", "--diff-tip", "--original-scope", "--mode"],
-            "fetch-intent": ["--scope-kind"],
-            "classify-intent": ["--intent-context"],
-            "hygiene": [],  # --diff-data optional
-            "arbitrate-budget": ["--coverage-plan", "--diff-data"],
-            "partition": [],  # --diff-data optional
-            "compute-hashes": ["--shared-prompt", "--bha-suffix", "--diff-tip", "--base-ref"],
-            "cache-check": [
-                "--cache-dir", "--diff-data", "--prompt-hash",
-                "--model-id", "--schema-version", "--output-dir",
-            ],
-            "collect-findings": ["--cr-dir"],
-            "validate": ["--findings", "--diff-data"],
-            "finalize-result": ["--cr-dir", "--validate-output"],
-            "cache-update": [
-                "--cache-dir", "--diff-data", "--bha-dir",
-                "--prompt-hash", "--model-id", "--schema-version",
-            ],
-            "review-state-write": ["--cache-dir", "--key"],
-            "verdict": ["--validate-output"],
-            "footer": ["--start-time"],
-        }
-
         for stage in plan["stages"]:
             if stage["kind"] != "helper" or not stage["enabled"]:
                 continue
             sub = stage["subcommand"]
-            if sub not in required_flags:
-                continue  # disabled / future stages
+            sp = sub_choices.get(sub)
+            assert sp is not None, (
+                f"stage {stage['id']!r} references unknown subcommand {sub!r}"
+            )
             args = stage["args"]
-            for flag in required_flags[sub]:
-                assert flag in args, (
+            for action in sp._actions:  # type: ignore[attr-defined]
+                # Skip positionals and help; we only care about required
+                # named flags. argparse's `_SubParsersAction` instances
+                # have `required` but no option_strings — they aren't
+                # what we're checking here either.
+                if not getattr(action, "required", False):
+                    continue
+                option_strings = getattr(action, "option_strings", None) or []
+                if not option_strings:
+                    continue  # positional / required subparser slot
+                # Any of the action's flag aliases satisfies the requirement.
+                assert any(opt in args for opt in option_strings), (
                     f"stage {stage['id']!r} (subcommand={sub!r}) is enabled "
-                    f"but missing required argparse flag {flag!r}; "
+                    f"but missing required argparse flag(s) {option_strings!r}; "
                     f"args={args}"
                 )
 
