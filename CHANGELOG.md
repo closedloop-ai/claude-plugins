@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.4.0
+
+#### Added
+- PLN-719 Phase 8 (Golden Fixture Harness): a parametrized pytest harness at `tools/python/test_golden_fixtures.py` + supporting `golden_fixture_harness.py` that pins the post-collection contract end-to-end. Each fixture lives at `tools/python/fixtures/<name>/` with `config.yaml`, `inputs/` (canned upstream artifacts: `setup.json`, `scope.json`, `intent.json`, `diff_data.json`, one or more `agent_*.json`, optionally `hygiene.json` + `coverage_plan.json`), and `expected/review_result.json`. The runner stages inputs into a tmp `cr_dir`, runs `collect-findings` → `validate` → `finalize-result`, normalizes non-deterministic fields (`review_id` uuid, `emitted_at` timestamps, the wall-clock telemetry block), and diffs against `expected/`. Every fixture also doubles as a schema round-trip check — `validate_result_envelope` runs on the produced envelope and fails the test on any errors (PLN-719 Section 10 acceptance: "every fixture round-trips emit → write → read → validate").
+- `--update-golden` pytest CLI option (registered in `tools/python/conftest.py`) rewrites every fixture's `expected/review_result.json` through the same normalization path the assertion uses, so a subsequent no-flag run sees byte-identical output. Intended workflow: update via flag, review the diff in the commit, ship.
+- Three fixtures shipped end-to-end: `golden_minimal_correctness` (single HIGH Correctness finding, verdict NEEDS_ATTENTION), `golden_all_categories` (four findings spanning Correctness / Code Quality / Security / TestQuality; verifies the post-PR-#103 CATEGORIES enum flows through finalize's `by_category` stats), `golden_schema_v1_round_trip` (single Security finding with every optional schema field populated — `evidence[]`, `reasoning_certificate`, `other_locations`, `subcategory` — the maximal v1 envelope shape).
+- Six deferred fixtures with reserved directories + `README.md` placeholders: `golden_premise_justified` / `golden_premise_rejected` (plan 02), `golden_impact_with_callsites` (plan 06), `golden_coverage_gap` (plans 03 + 05), `golden_injection_quarantine` (plan 01), `golden_budget_exceeded` (arbitrate-budget integration). Skipped via a `_DEFERRED_FIXTURES` map in the test module until their dependent plans land.
+- `test_prepare_run_produces_byte_identical_output_modulo_review_id` pins PLN-719 Section 6 determinism: two `prepare-run` invocations differ only in `review_id`. Any drift in stage args, validation gates, or telemetry projections fails the test.
+- SCHEMA.md §12 documents the harness contract: fixture layout, the `--update-golden` workflow, Phase 8 vs deferred scope, and the note that Phase 4b will extend the harness to walk `run_plan.json` end-to-end through a declarative stage runner.
+
 ### code-review v2.3.0
 
 #### Added
