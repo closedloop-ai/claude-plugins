@@ -37,7 +37,7 @@ shape. Producers may emit dicts directly; the Python convenience type lives in
   "system_marker": "<from the canonical enum (Section 3); null when finding_scope == 'diff'>",
 
   // ── Classification ────────────────────────────────────────
-  "category": "Correctness | Hygiene | Repo Hygiene | Premise | ImpactAnalysis | TestQuality | Coverage | InjectionAttempt | CompanionChange | Security",
+  "category": "Correctness | Code Quality | Hygiene | Repo Hygiene | Premise | ImpactAnalysis | TestQuality | Coverage | InjectionAttempt | CompanionChange | Security",
   "subcategory": "<category-specific; nullable>",
 
   // ── Severity ──────────────────────────────────────────────
@@ -386,6 +386,61 @@ Consumers must tolerate unknown additive fields. The validator emits a
 `system_marker: "schema-version"` MEDIUM finding when reading a version higher
 than its understood max (proceed but flag; not BLOCKING, because rolling
 deployments mean a newer producer may emit before consumers update).
+
+---
+
+## 11. Telemetry (PLN-719 Phase 9 / Section 11)
+
+The `telemetry` block on `review_result.json` is the single per-run metrics
+surface. `finalize-result` always emits one — starting from the canonical
+zero-valued factory (`empty_telemetry()`) and deep-merging any
+`<cr_dir>/telemetry.json` written by the orchestrator (or any helper that
+wraps a stage). The block is validated by `validate_telemetry`; unknown
+keys are permitted (forward-compat) but the canonical keys below must be
+present and typed correctly.
+
+| Field                    | Type                              | Notes |
+| ------------------------ | --------------------------------- | ----- |
+| `duration_ms`            | `number ≥ 0`                      | Total wall-clock for the run. |
+| `duration_by_stage_ms`   | `{string: number ≥ 0}`            | Keys are stage ids (e.g. `stage_05_parse_diff`) or reviewer agent ids. |
+| `estimated_cost_usd`     | `number ≥ 0`                      | Aggregate cost across all model calls. |
+| `tokens.input_uncached`  | `integer ≥ 0`                     | Tokens billed without cache hit. |
+| `tokens.input_cached`    | `integer ≥ 0`                     | Tokens served by prompt cache. |
+| `tokens.output`          | `integer ≥ 0`                     | Tokens emitted by all models. |
+| `tokens.by_model`        | `{string: integer ≥ 0 \| object}` | Per-model totals or `{input, output, ...}` breakdown. |
+| `cache_hit_rate`         | `{string: number in [0, 1]}`      | Keys are cache namespaces (`bha`, `signals`, `coverage_critic`, `verifications`, `overrides`). |
+| `agent_failures`         | `integer ≥ 0`                     | Count of reviewer agents that errored. |
+| `schema_versions_seen`   | `{string: integer}`               | Always overwritten by `finalize-result` to the current run's `SCHEMA_VERSION`; cannot be spoofed by upstream. |
+| `findings_counts`        | `object` (optional)               | Free-form per-severity / per-category breakdown. |
+| `verification_stats`     | `object` (optional)               | Verifier outcomes (populated by plan 03). |
+| `coverage_stats`         | `object` (optional)               | Coverage plan outcomes (populated by plan 05). |
+
+Stage producers populate timings and tokens by writing
+`<cr_dir>/telemetry.json` before `finalize-result` runs:
+
+```json
+{
+  "duration_ms": 12340,
+  "duration_by_stage_ms": {
+    "stage_05_parse_diff": 18,
+    "stage_06_extract_patches": 22
+  },
+  "tokens": {"input_uncached": 4200, "output": 980},
+  "cache_hit_rate": {"bha": 0.62}
+}
+```
+
+The deep-merge in `merge_telemetry` recurses one level **only for keys in
+the explicit whitelist** `TELEMETRY_DEEP_MERGE_KEYS = {duration_by_stage_ms,
+tokens, cache_hit_rate, schema_versions_seen, findings_counts,
+verification_stats, coverage_stats}`. Callers can populate `tokens.output`
+without overriding the whole `tokens` block. Every other key — including
+dict-typed fields not on the whitelist — is overwritten wholesale by the
+overlay. Future schema additions whose merge semantics matter must opt
+into the whitelist explicitly; the default for new dict-typed fields is
+replace, which is the safe default for blocks where partial overrides
+could corrupt the document. Cross-run aggregation is deferred to a future
+analytics layer; the per-run schema is forward-compatible.
 
 ---
 

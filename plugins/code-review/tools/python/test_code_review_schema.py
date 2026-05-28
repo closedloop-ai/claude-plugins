@@ -58,6 +58,37 @@ def test_categories_include_canonical_and_legacy_alias():
     assert "Coverage" in CATEGORIES
 
 
+def test_categories_include_code_quality():
+    """Code Quality is the canonical category for DRY/maintainability findings.
+
+    The shared reviewer prompt (tools/prompts/shared_prompt.txt) documents
+    ``"category": "Code Quality"`` as the example category for MEDIUM-tier
+    DRY violations; if the enum drops it, finalize-result rejects the
+    envelope and verdict silently falls back to validate_output.json.
+    """
+    assert "Code Quality" in CATEGORIES
+
+
+def test_code_quality_finding_passes_validation():
+    """A reviewer-emitted Code Quality finding must validate end-to-end."""
+    f = _minimal_diff_finding(
+        category="Code Quality",
+        severity="MEDIUM",
+        priority=2,
+        issue="EditableDescription duplicates EditableTitle",
+    )
+    assert validate_finding(f) == []
+
+
+def test_code_quality_finding_in_envelope_passes_validation():
+    """A Code Quality finding bucketed into verified[] must not reject the envelope."""
+    f = _minimal_diff_finding(
+        category="Code Quality", severity="MEDIUM", priority=2,
+    )
+    env = _minimal_envelope(verified=[f])
+    assert validate_result_envelope(env) == []
+
+
 def test_sources():
     assert "agent" in SOURCES
     assert "hygiene" in SOURCES
@@ -462,3 +493,206 @@ def test_signal_extraction_failed_marker_exists():
     from code_review_schema import is_valid_system_marker, system_marker_scope
     assert is_valid_system_marker("signal-extraction-failed")
     assert system_marker_scope("signal-extraction-failed") == "system"
+
+
+# ---------------------------------------------------------------------------
+# Telemetry (PLN-719 Phase 9)
+# ---------------------------------------------------------------------------
+
+
+def test_empty_telemetry_passes_validation():
+    """The zero-valued factory must be valid by construction."""
+    from code_review_schema import empty_telemetry, validate_telemetry
+    assert validate_telemetry(empty_telemetry()) == []
+
+
+def test_empty_telemetry_includes_all_canonical_keys():
+    """Every required key listed in SCHEMA.md Section 11 is present."""
+    from code_review_schema import empty_telemetry
+    t = empty_telemetry()
+    for key in (
+        "duration_ms", "duration_by_stage_ms", "estimated_cost_usd",
+        "tokens", "cache_hit_rate", "agent_failures", "schema_versions_seen",
+    ):
+        assert key in t, f"empty_telemetry missing canonical key {key!r}"
+    assert set(t["tokens"].keys()) == {
+        "input_uncached", "input_cached", "output", "by_model",
+    }
+
+
+def test_validate_telemetry_rejects_non_dict():
+    from code_review_schema import validate_telemetry
+    assert validate_telemetry([]) == ["telemetry must be an object"]
+    assert validate_telemetry(None) == ["telemetry must be an object"]
+
+
+def test_validate_telemetry_flags_negative_duration():
+    from code_review_schema import empty_telemetry, validate_telemetry
+    t = empty_telemetry()
+    t["duration_ms"] = -1
+    errors = validate_telemetry(t)
+    assert any("duration_ms" in e for e in errors)
+
+
+def test_validate_telemetry_flags_non_int_tokens():
+    from code_review_schema import empty_telemetry, validate_telemetry
+    t = empty_telemetry()
+    t["tokens"]["input_uncached"] = 1.5
+    errors = validate_telemetry(t)
+    assert any("input_uncached" in e for e in errors)
+
+
+def test_validate_telemetry_accepts_by_model_dict_or_int():
+    from code_review_schema import empty_telemetry, validate_telemetry
+    t = empty_telemetry()
+    t["tokens"]["by_model"] = {
+        "opus": 1200,
+        "sonnet": {"input": 500, "output": 800, "cache_hit": 100},
+    }
+    assert validate_telemetry(t) == []
+
+
+def test_by_model_negative_value_message_points_at_value_not_key():
+    """A negative sub-value error must name the value, not blame the key.
+
+    Regression for the merged-check error message that read "must be a
+    non-negative integer keyed by string" even when the key was already
+    a valid string. Now value failures cite the value; key failures cite
+    the key.
+    """
+    from code_review_schema import empty_telemetry, validate_telemetry
+    t = empty_telemetry()
+    t["tokens"]["by_model"] = {"claude": {"output": -1}}
+    errors = validate_telemetry(t)
+    assert len(errors) == 1
+    err = errors[0]
+    assert "by_model['claude']['output']" in err
+    assert "must be a non-negative integer" in err
+    # Must NOT misattribute to a key-type problem.
+    assert "keyed by string" not in err
+    assert "sub-keys must be strings" not in err
+
+
+def test_by_model_non_string_subkey_message_points_at_key():
+    """A non-string sub-key error must cite the bad sub-key value."""
+    from code_review_schema import empty_telemetry, validate_telemetry
+    t = empty_telemetry()
+    t["tokens"]["by_model"] = {"claude": {42: 100}}
+    errors = validate_telemetry(t)
+    assert len(errors) == 1
+    err = errors[0]
+    assert "by_model['claude']" in err
+    assert "sub-keys must be strings" in err
+    assert "42" in err  # the offending key surfaces in the message
+
+
+def test_validate_telemetry_flags_cache_hit_rate_out_of_range():
+    from code_review_schema import empty_telemetry, validate_telemetry
+    t = empty_telemetry()
+    t["cache_hit_rate"] = {"bha": 1.5}
+    errors = validate_telemetry(t)
+    assert any("cache_hit_rate" in e and "[0, 1]" in e for e in errors)
+
+
+def test_validate_telemetry_accepts_known_namespaces():
+    from code_review_schema import CACHE_NAMESPACES, empty_telemetry, validate_telemetry
+    t = empty_telemetry()
+    t["cache_hit_rate"] = dict.fromkeys(CACHE_NAMESPACES, 0.5)
+    assert validate_telemetry(t) == []
+
+
+def test_validate_telemetry_accepts_unknown_keys():
+    """Forward-compat: extra keys are permitted."""
+    from code_review_schema import empty_telemetry, validate_telemetry
+    t = empty_telemetry()
+    t["future_metric"] = {"some": "thing"}
+    assert validate_telemetry(t) == []
+
+
+def test_validate_result_envelope_includes_telemetry_errors():
+    """A malformed telemetry block must surface through envelope validation."""
+    from code_review_schema import validate_result_envelope
+    env = _minimal_envelope()
+    env["telemetry"]["duration_ms"] = -42
+    errors = validate_result_envelope(env)
+    assert any("telemetry.duration_ms" in e for e in errors)
+
+
+def test_merge_telemetry_deep_merges_known_objects():
+    from code_review_schema import empty_telemetry, merge_telemetry
+    base = empty_telemetry()
+    overlay = {
+        "duration_ms": 1234,
+        "duration_by_stage_ms": {"stage_05_parse_diff": 18},
+        "tokens": {"input_uncached": 4200, "output": 980},
+        "cache_hit_rate": {"bha": 0.62},
+    }
+    merged = merge_telemetry(base, overlay)
+    assert merged["duration_ms"] == 1234
+    assert merged["duration_by_stage_ms"] == {"stage_05_parse_diff": 18}
+    # tokens.input_uncached is set, but tokens.input_cached survives from base.
+    assert merged["tokens"]["input_uncached"] == 4200
+    assert merged["tokens"]["input_cached"] == 0
+    assert merged["tokens"]["output"] == 980
+    assert merged["cache_hit_rate"] == {"bha": 0.62}
+
+
+def test_telemetry_deep_merge_keys_match_empty_telemetry_dict_fields():
+    """The whitelist must enumerate every dict-typed field in empty_telemetry().
+
+    Any divergence is a documentation/contract bug: either a new dict
+    field shipped without considering merge semantics, or a key was
+    added/removed from the whitelist without updating the factory.
+    """
+    from code_review_schema import TELEMETRY_DEEP_MERGE_KEYS, empty_telemetry
+    base = empty_telemetry()
+    dict_fields = {k for k, v in base.items() if isinstance(v, dict)}
+    assert dict_fields == TELEMETRY_DEEP_MERGE_KEYS, (
+        f"empty_telemetry() dict fields {sorted(dict_fields)} != "
+        f"TELEMETRY_DEEP_MERGE_KEYS {sorted(TELEMETRY_DEEP_MERGE_KEYS)} — "
+        "update one to match the other."
+    )
+
+
+def test_merge_telemetry_replaces_unknown_dict_keys_wholesale():
+    """A dict-typed key not in TELEMETRY_DEEP_MERGE_KEYS is overwritten.
+
+    This is the regression for the merge_telemetry behavior gap: previously
+    any dict-in-both-base-and-overlay key got one-level merge regardless of
+    whether the schema intended it. Now non-whitelisted dict keys take the
+    overlay's value verbatim, which is the safe default for forward-compat
+    fields (e.g. a versioned config block where partial overrides could
+    corrupt the document).
+    """
+    from code_review_schema import empty_telemetry, merge_telemetry
+    base = empty_telemetry()
+    base["future_config"] = {"version": 1, "flags": {"a": True, "b": False}}
+    overlay = {"future_config": {"version": 2}}
+    merged = merge_telemetry(base, overlay)
+    # The whole future_config block is replaced; "flags" does NOT survive.
+    assert merged["future_config"] == {"version": 2}
+    assert "flags" not in merged["future_config"]
+
+
+def test_merge_telemetry_overlay_dict_replaces_scalar_base():
+    """A scalar base + dict overlay still results in straight overwrite."""
+    from code_review_schema import empty_telemetry, merge_telemetry
+    base = empty_telemetry()
+    # duration_ms is a number in the canonical schema; an overlay that
+    # supplies a dict here is malformed, but merge must not crash.
+    overlay = {"duration_ms": {"unexpected": "shape"}}
+    merged = merge_telemetry(base, overlay)
+    assert merged["duration_ms"] == {"unexpected": "shape"}
+
+
+def test_telemetry_json_schema_declares_required_keys():
+    """The exported JSON Schema lists telemetry as a typed object with required keys."""
+    from code_review_schema import result_envelope_json_schema
+    schema = result_envelope_json_schema()
+    tele = schema["properties"]["telemetry"]
+    assert tele["type"] == "object"
+    for key in (
+        "duration_ms", "duration_by_stage_ms", "estimated_cost_usd",
+        "tokens", "cache_hit_rate", "agent_failures", "schema_versions_seen",
+    ):
+        assert key in tele["required"], f"telemetry JSON Schema missing required {key!r}"

@@ -4,6 +4,24 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.2.0
+
+#### Added
+- PLN-719 Phase 9 (telemetry): canonical `Telemetry` schema on `code_review_schema.py` with `empty_telemetry()` factory, `validate_telemetry()` validator, and `merge_telemetry(base, overlay)` deep-merger. The deep-merge is gated on an explicit `TELEMETRY_DEEP_MERGE_KEYS` whitelist (`duration_by_stage_ms`, `tokens`, `cache_hit_rate`, `schema_versions_seen`, `findings_counts`, `verification_stats`, `coverage_stats`); every other key — including dict-typed fields not on the whitelist — is overwritten wholesale by the overlay, so callers can populate `tokens.input_uncached` without overriding the whole `tokens` block while future schema additions get safe replace-semantics by default. Required keys: `duration_ms`, `duration_by_stage_ms`, `estimated_cost_usd`, `tokens.{input_uncached,input_cached,output,by_model}`, `cache_hit_rate`, `agent_failures`, `schema_versions_seen`. Optional: `findings_counts`, `verification_stats`, `coverage_stats`. Unknown keys permitted for forward-compat.
+- Canonical cache namespace constants (`CACHE_NAMESPACES = {bha, signals, coverage_critic, verifications, overrides}`) matching PLN-719 §9 — used as the keyspace for `cache_hit_rate` and as forward-looking constants for plans 03/05.
+- `_build_telemetry_block(cr_dir)` helper in `code_review_helpers.py` reads optional `<cr_dir>/telemetry.json`, deep-merges over the zero-valued base, and always overwrites `schema_versions_seen` so an upstream file cannot spoof the version stamp.
+- SCHEMA.md Section 11 documents the telemetry contract: field table, producer recipe (write `<cr_dir>/telemetry.json` before `finalize-result`), deep-merge semantics, forward-compat policy.
+- 16 new schema + finalize-result integration tests (`test_empty_telemetry_*`, `test_validate_telemetry_*`, `test_merge_telemetry_*`, `test_telemetry_json_schema_*`, `test_telemetry_defaults_when_no_telemetry_json`, `test_telemetry_json_is_deep_merged_into_envelope`, `test_telemetry_schema_versions_seen_cannot_be_spoofed`, `test_malformed_telemetry_json_is_ignored`).
+
+#### Changed
+- `result_envelope_json_schema()` declares `telemetry` as a typed object with required keys + nested types (was: open `{type: "object"}`). `validate_result_envelope()` now recurses into `validate_telemetry()` when the block is present.
+- `cmd_finalize_result` uses `_build_telemetry_block(cr_dir)` instead of an inline stub. Existing finalize-result output continues to validate without any orchestrator changes — the actual per-stage timestamps + cache hit/miss plumbing land in Phase 4b/7.
+- `validate_result_envelope()` refactored into focused per-section helpers (`_validate_envelope_scalars`, `_validate_envelope_buckets`, `_validate_coverage_plan`, `_validate_envelope_findings`) to reduce cognitive complexity. Same coverage; flatter call graph.
+- `conftest.minimal_envelope()` now seeds the envelope with `empty_telemetry()` so existing tests stay valid by construction under the strict validator.
+
+#### Fixed
+- `"Code Quality"` is now in the canonical `CATEGORIES` enum. The shared reviewer prompt at `tools/prompts/shared_prompt.txt` documents it as the example category for MEDIUM-tier DRY/maintainability findings, but the schema enum at `code_review_schema.py` omitted it. Reviewer-emitted Code Quality findings caused `finalize-result` to reject the canonical envelope; verdict fell back to `validate_output.json` as designed, but the envelope path silently dropped those findings. `SCHEMA.md` Section 1 (category enum line) is updated to match. Adds three regression tests (`test_categories_include_code_quality`, `test_code_quality_finding_passes_validation`, `test_code_quality_finding_in_envelope_passes_validation`).
+
 ### code-review v2.1.0
 
 #### Changed

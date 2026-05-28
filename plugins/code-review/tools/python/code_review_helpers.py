@@ -31,8 +31,10 @@ from typing import Any
 
 from code_review_schema import (
     SCHEMA_VERSION,
+    empty_telemetry,
     is_valid_system_marker,
     make_finding_id,
+    merge_telemetry,
     normalize_legacy_finding,
     system_marker_scope,
     validate_result_envelope,
@@ -4450,6 +4452,26 @@ def _stats_from_findings(
     }
 
 
+def _build_telemetry_block(cr_dir: Path) -> dict[str, Any]:
+    """Assemble the canonical telemetry block for the result envelope.
+
+    Starts from ``empty_telemetry()`` and deep-merges ``<cr_dir>/telemetry.json``
+    when present, so the orchestrator (or any helper that wraps a stage) can
+    record per-run metrics by writing partial telemetry. Always forces the
+    ``schema_versions_seen`` block to this run's canonical schema version so
+    it cannot be silently spoofed by a stale upstream file.
+    """
+    base = empty_telemetry()
+    overlay_raw = _read_optional_json(cr_dir / "telemetry.json", None)
+    overlay = overlay_raw if isinstance(overlay_raw, dict) else {}
+    block = merge_telemetry(base, overlay)
+    block["schema_versions_seen"] = {
+        "finding": SCHEMA_VERSION,
+        "result": SCHEMA_VERSION,
+    }
+    return block
+
+
 def cmd_finalize_result(args: argparse.Namespace) -> int:
     """Consolidate findings + coverage state + verdict into review_result.json.
 
@@ -4554,18 +4576,12 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
         "verdict": canonical_verdict,
         "verdict_reason": reason,
         "stats": _stats_from_findings(verified, [], [], coverage_gaps),
-        "telemetry": {
-            "duration_ms": 0,
-            "duration_by_stage_ms": {},
-            "estimated_cost_usd": 0.0,
-            "tokens": {
-                "input_uncached": 0,
-                "input_cached": 0,
-                "output": 0,
-                "by_model": {},
-            },
-            "schema_versions_seen": {"finding": SCHEMA_VERSION, "result": SCHEMA_VERSION},
-        },
+        # PLN-719 Phase 9: telemetry is sourced from the canonical zero-valued
+        # factory and deep-merged with optional <cr_dir>/telemetry.json, which
+        # the orchestrator (or any upstream stage) may populate with timings,
+        # token usage, and cache hit rates. finalize-result always overwrites
+        # schema_versions_seen so it reflects this run's schema version.
+        "telemetry": _build_telemetry_block(cr_dir),
     }
 
     errors = validate_result_envelope(envelope)

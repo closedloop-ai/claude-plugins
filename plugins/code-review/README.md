@@ -16,7 +16,7 @@ A multi-agent code review plugin for Claude Code that performs deep, partitioned
 
 ```
 plugins/code-review/
-  .claude-plugin/plugin.json         Plugin manifest (version 2.1.0)
+  .claude-plugin/plugin.json         Plugin manifest (version 2.2.0)
   SCHEMA.md                          Canonical Finding + ResultEnvelope schema (PLN-719)
   commands/
     start.md                         Main /start command (orchestrator)
@@ -169,7 +169,7 @@ The helper script is a multi-subcommand Python CLI. The orchestrator invokes it 
 | `verdict` | Computes the PR verdict (APPROVED / NEEDS_ATTENTION / CHANGES_REQUESTED) from validated findings |
 | `prep-assets` | Copies prompt assets from the plugin root into the session CR_DIR |
 | `extract-patches` | Materializes the full-diff `patches_all.txt` immediately after `parse-diff`; per-partition patches are now produced by `partition` (PLN-719 Phase 5) |
-| `finalize-result` | Consolidates validated findings + coverage state + verdict into the canonical `review_result.json` envelope (PLN-719) |
+| `finalize-result` | Consolidates validated findings + coverage state + verdict into the canonical `review_result.json` envelope; deep-merges `<cr_dir>/telemetry.json` into the canonical `telemetry` block (PLN-719 Phase 9) |
 | `arbitrate-budget` | Applies the canonical reviewer cap policy; emits coverage gaps for required reviewers that overflow (PLN-719) |
 | `prepare-run` | Emits a declarative `run_plan.json` describing the 30-stage pipeline (PLN-719) |
 
