@@ -37,7 +37,7 @@ shape. Producers may emit dicts directly; the Python convenience type lives in
   "system_marker": "<from the canonical enum (Section 3); null when finding_scope == 'diff'>",
 
   // ── Classification ────────────────────────────────────────
-  "category": "Correctness | Hygiene | Repo Hygiene | Premise | ImpactAnalysis | TestQuality | Coverage | InjectionAttempt | CompanionChange | Security",
+  "category": "Correctness | Code Quality | Hygiene | Repo Hygiene | Premise | ImpactAnalysis | TestQuality | Coverage | InjectionAttempt | CompanionChange | Security",
   "subcategory": "<category-specific; nullable>",
 
   // ── Severity ──────────────────────────────────────────────
