@@ -7,3 +7,5 @@ description: "Maximal v1 finding shape — every optional field populated for ro
 mode: github
 diff_tip: "deadbeef"
 expected_verdict: NEEDS_ATTENTION
+expected_verified_count: 1
+expected_coverage_gap_count: 0

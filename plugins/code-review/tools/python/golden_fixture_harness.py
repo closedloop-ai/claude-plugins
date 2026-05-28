@@ -79,6 +79,38 @@ class GoldenFixture:
                 shutil.copy(src, cr_dir / src.name)
 
 
+def run_with_stdout_capture(
+    fn: Any, ns: argparse.Namespace, *, stdout_to: Path | None = None,
+) -> str:
+    """Invoke ``fn(ns)`` while suppressing stdout.
+
+    When ``stdout_to`` is provided, the suppressed stdout is redirected
+    into that file path. Otherwise it is captured to an in-memory buffer
+    and returned as a string (empty string when redirected to a file).
+
+    Both the post-collection pipeline and the prepare-run test helpers
+    need to invoke an ``argparse.Namespace``-style CLI command while
+    diverting its stdout output; centralizing the pattern here keeps the
+    two callers from drifting (CLAUDE.md learned pattern about extracting
+    test helpers when used by 2+ files).
+    """
+    old = sys.stdout
+    captured = ""
+    if stdout_to is not None:
+        sys.stdout = stdout_to.open("w")
+    else:
+        sys.stdout = io.StringIO()
+    try:
+        fn(ns)
+        if stdout_to is None:
+            captured = sys.stdout.getvalue()  # type: ignore[union-attr]
+    finally:
+        if stdout_to is not None:
+            sys.stdout.close()
+        sys.stdout = old
+    return captured
+
+
 def normalize_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     """Replace non-deterministic fields with fixed placeholders.
 
@@ -121,32 +153,18 @@ def run_post_collection_pipeline(cr_dir: Path, fixture: GoldenFixture) -> dict[s
     # collect-findings prints summary to stdout but writes findings.json
     # via the `output` argument. validate writes its JSON envelope to
     # stdout, so we redirect stdout into `validated_path` for that one.
-    def _run(fn: Any, ns: argparse.Namespace, stdout_to: Path | None = None) -> None:
-        old = sys.stdout
-        if stdout_to is not None:
-            sys.stdout = stdout_to.open("w")
-        else:
-            sys.stdout = io.StringIO()
-        try:
-            fn(ns)
-        finally:
-            if stdout_to is not None:
-                sys.stdout.close()
-            sys.stdout = old
-
     collect_ns = argparse.Namespace(
         cr_dir=str(cr_dir),
         output="findings.json",
         hygiene=str(hygiene_path) if hygiene_path.exists() else None,
     )
-    _run(cmd_collect_findings, collect_ns)
+    run_with_stdout_capture(cmd_collect_findings, collect_ns)
 
     validate_ns = argparse.Namespace(
         findings=str(findings_path),
         diff_data=str(diff_data_path),
-        scope_kind=fixture.config.get("scope_kind"),
     )
-    _run(cmd_validate, validate_ns, stdout_to=validated_path)
+    run_with_stdout_capture(cmd_validate, validate_ns, stdout_to=validated_path)
 
     finalize_ns = argparse.Namespace(
         cr_dir=str(cr_dir),
@@ -155,7 +173,7 @@ def run_post_collection_pipeline(cr_dir: Path, fixture: GoldenFixture) -> dict[s
         diff_tip=fixture.config.get("diff_tip", "abc1234"),
         pr_number=fixture.config.get("pr_number"),
     )
-    _run(cmd_finalize_result, finalize_ns)
+    run_with_stdout_capture(cmd_finalize_result, finalize_ns)
 
     with (cr_dir / _REVIEW_RESULT_FILENAME).open() as f:
         envelope: dict[str, Any] = json.load(f)
@@ -179,7 +197,12 @@ def diff_envelope_against_expected(
 ) -> list[str]:
     """Return a list of mismatch lines comparing actual vs expected envelope.
 
-    Both sides are normalized first (review_id, emitted_at, telemetry).
+    The ``actual`` envelope is normalized (``review_id``, ``emitted_at``,
+    ``telemetry`` stripped) before comparison; the expected file is
+    compared as-is. ``update_expected`` writes pre-normalized JSON, so
+    hand-editing an expected file with a real UUID will produce a diff
+    rather than being silently scrubbed at read time.
+
     The diff is structural: missing keys, type mismatches, value mismatches
     are reported with dotted paths so failures are easy to read.
     """

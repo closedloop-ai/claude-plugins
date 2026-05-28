@@ -22,7 +22,7 @@
   "pending_verification": [],
   "pr_number": null,
   "rejected": [],
-  "review_branch": "main",
+  "review_branch": "feature/x",
   "review_id": "00000000-0000-4000-8000-000000000000",
   "schema_version": 1,
   "stats": {

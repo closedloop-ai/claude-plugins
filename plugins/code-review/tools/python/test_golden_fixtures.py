@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import invoke_prepare_run
 from golden_fixture_harness import (
     GoldenFixture,
     diff_envelope_against_expected,
@@ -43,6 +44,41 @@ def _discover_fixtures() -> list[Path]:
     return sorted(p for p in _FIXTURES_ROOT.glob("golden_*") if p.is_dir())
 
 
+def _assert_config_expectations(
+    fixture: GoldenFixture, envelope: dict,
+) -> None:
+    """Assert envelope matches the ``expected_*`` keys from ``config.yaml``.
+
+    These keys (``expected_verdict``, ``expected_verified_count``,
+    ``expected_coverage_gap_count``) document the fixture's intent in a
+    machine-checkable way. A fixture authored with an intentionally wrong
+    ``expected_verdict`` will fail this check even if its
+    ``expected/review_result.json`` happens to match the (also-wrong)
+    produced envelope, giving us a second independent oracle on top of
+    the byte-for-byte expected/ diff.
+    """
+    expected_verdict = fixture.config.get("expected_verdict")
+    if expected_verdict is not None:
+        assert envelope["verdict"] == expected_verdict, (
+            f"fixture {fixture.name!r}: verdict {envelope['verdict']!r} "
+            f"does not match config expected_verdict {expected_verdict!r}"
+        )
+    expected_verified_count = fixture.config.get("expected_verified_count")
+    if expected_verified_count is not None:
+        actual = len(envelope.get("verified", []))
+        assert actual == expected_verified_count, (
+            f"fixture {fixture.name!r}: verified count {actual} "
+            f"does not match config expected_verified_count {expected_verified_count}"
+        )
+    expected_coverage_gap_count = fixture.config.get("expected_coverage_gap_count")
+    if expected_coverage_gap_count is not None:
+        actual = len(envelope.get("coverage_gaps", []))
+        assert actual == expected_coverage_gap_count, (
+            f"fixture {fixture.name!r}: coverage_gaps count {actual} "
+            f"does not match config expected_coverage_gap_count {expected_coverage_gap_count}"
+        )
+
+
 @pytest.mark.parametrize(
     "fixture_path", _discover_fixtures(), ids=lambda p: p.name,
 )
@@ -56,6 +92,10 @@ def test_golden_fixture(
 
     fixture = GoldenFixture.load(fixture_path)
     envelope = run_post_collection_pipeline(tmp_path, fixture)
+
+    # Config-level expectations are checked even in --update-golden so the
+    # rewriter never silently pins a verdict that contradicts config intent.
+    _assert_config_expectations(fixture, envelope)
 
     if update_golden:
         update_expected(fixture, envelope)
@@ -95,36 +135,8 @@ def test_prepare_run_produces_byte_identical_output_modulo_review_id(
     document byte-by-byte. Any drift in stage args, validation gates,
     telemetry projections, or flag normalization fails the test.
     """
-    import argparse
-    import io
-    import json as _json
-    import sys as _sys
-
-    from code_review_helpers import cmd_prepare_run
-
-    def _invoke(output_path: Path) -> dict[str, object]:
-        ns = argparse.Namespace(
-            cr_dir=str(tmp_path / "cr"),
-            mode="local",
-            output=str(output_path),
-            pr_number=None,
-            hygiene_only=False,
-            since_last_review=False,
-            full_review=False,
-            base_ref_override="",
-            scope_args="",
-        )
-        old = _sys.stdout
-        _sys.stdout = io.StringIO()
-        try:
-            cmd_prepare_run(ns)
-        finally:
-            _sys.stdout = old
-        with output_path.open() as f:
-            return _json.load(f)
-
-    a = _invoke(tmp_path / "plan_a.json")
-    b = _invoke(tmp_path / "plan_b.json")
+    _, a = invoke_prepare_run(tmp_path / "cr", output=tmp_path / "plan_a.json")
+    _, b = invoke_prepare_run(tmp_path / "cr", output=tmp_path / "plan_b.json")
 
     # review_id is the only deliberately non-deterministic field.
     assert a.pop("review_id") != b.pop("review_id"), (

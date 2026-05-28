@@ -468,7 +468,7 @@ lives at `tools/python/fixtures/<name>/`:
 
 | Path                  | Role                                                    |
 | --------------------- | ------------------------------------------------------- |
-| `config.yaml`         | Description, mode, diff_tip, expected_verdict.          |
+| `config.yaml`         | Description, mode, diff_tip, and config-level oracles (`expected_verdict`, `expected_verified_count`, `expected_coverage_gap_count`). Each `expected_*` key, when present, drives a hard assertion against the produced envelope. |
 | `inputs/`             | Canned upstream artifacts (`setup.json`, `scope.json`, `intent.json`, `diff_data.json`, one or more `agent_*.json`, optionally `hygiene.json` and `coverage_plan.json`). |
 | `expected/review_result.json` | Normalized envelope diffed byte-by-byte.        |
 
@@ -478,7 +478,9 @@ post-collection pipeline (`collect-findings` → `validate` →
 uuid, `emitted_at` timestamps, telemetry block), and diffs against
 `expected/`. Every fixture also doubles as a schema round-trip check —
 the harness re-runs `validate_result_envelope` on the produced envelope
-and fails the test on any errors.
+and fails the test on any errors. The config-level oracles run even in
+`--update-golden` mode, so a fixture whose `config.yaml` contradicts
+its envelope cannot be silently pinned by the rewriter.
 
 To update an `expected/` artifact after an intentional contract change:
 

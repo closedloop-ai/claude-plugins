@@ -13,6 +13,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Six deferred fixtures with reserved directories + `README.md` placeholders: `golden_premise_justified` / `golden_premise_rejected` (plan 02), `golden_impact_with_callsites` (plan 06), `golden_coverage_gap` (plans 03 + 05), `golden_injection_quarantine` (plan 01), `golden_budget_exceeded` (arbitrate-budget integration). Skipped via a `_DEFERRED_FIXTURES` map in the test module until their dependent plans land.
 - `test_prepare_run_produces_byte_identical_output_modulo_review_id` pins PLN-719 Section 6 determinism: two `prepare-run` invocations differ only in `review_id`. Any drift in stage args, validation gates, or telemetry projections fails the test.
 - SCHEMA.md §12 documents the harness contract: fixture layout, the `--update-golden` workflow, Phase 8 vs deferred scope, and the note that Phase 4b will extend the harness to walk `run_plan.json` end-to-end through a declarative stage runner.
+- `expected_verdict`, `expected_verified_count`, `expected_coverage_gap_count` keys in fixture `config.yaml` drive hard assertions against the produced envelope, run even in `--update-golden` mode so the rewriter cannot silently pin a verdict that contradicts config intent. SCHEMA.md §12 documents this contract.
+
+#### Changed
+- Hoisted `run_with_stdout_capture(fn, ns, *, stdout_to=None)` to module level in `golden_fixture_harness.py` (was inline) and added `invoke_prepare_run(cr_dir, *, output=None, ...)` to `tools/python/conftest.py`. Both centralize the `argparse.Namespace` + stdout-capture pattern previously duplicated across `test_code_review_helpers.py::TestPrepareRun._run` and `test_golden_fixtures.py::_invoke`; both callers now delegate.
+
+#### Fixed
+- `setup.json.current_branch` aligned with `scope.json.review_branch` (`"feature/x"`) in `golden_minimal_correctness` and `golden_all_categories`. The prior `"main"` value contradicted `diff_scope` because `cmd_finalize_result` resolves `setup.current_branch` before falling back to `scope.review_branch`.
+- `golden_all_categories/config.yaml` header comment + `description` no longer claim "every CATEGORIES value"; the fixture covers a representative 4-category subset, not all 11. Remaining categories belong to the deferred fixtures.
+- `diff_envelope_against_expected` docstring corrected to state only `actual` is normalized; the expected file is compared as-is (already written through `update_expected`'s normalization path).
+- Removed dead `scope_kind=fixture.config.get("scope_kind")` from `validate_ns` construction in `golden_fixture_harness.py`. `cmd_validate` reads only `--findings` and `--diff-data`.
 
 ### code-review v2.3.0
 
