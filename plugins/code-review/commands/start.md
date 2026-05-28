@@ -44,9 +44,11 @@ The walk is hybrid:
 - **Agent fleet stages** (`stage_20_spawn_reviewers`, `stage_23_verify_findings`) — spawn parallel sub-agent Tasks using the per-agent prompt templates in this file.
 - **Present stage** (`stage_29_present`) — render results using the format in this file.
 
-Two branching gates live outside the run plan because they are runtime decisions:
-1. After `stage_12_hygiene`, if `flags.hygiene_only` is true: present hygiene findings and short-circuit to footer + verdict.
-2. Between `stage_19_cache_check` and `stage_20_spawn_reviewers`, invoke `route` (model routing) to compute `fast_path`. `fast_path == true` skips `stage_17_partition` (already produced by walker before route) and drives a single fast-path reviewer in `stage_20`.
+Four runtime gates modify walker default behavior (they are runtime-driven and either replace the default walk or add a condition on top of a plan stage):
+1. **Gate A** — after `stage_12_hygiene`, if `flags.hygiene_only` is true: present hygiene findings and **EXIT** (no further stages, no verdict, no footer).
+2. **Gate B** — after `stage_19_cache_check`, invoke `route` (model routing) to compute `fast_path` and `max_bha_agents`. `fast_path == true` skips `stage_17_partition` entirely and drives a single fast-path reviewer in `stage_20`.
+3. **Gate C** — before `stage_26_cache_update`, skip if `fast_path == true` OR `CACHE_DIR` is empty.
+4. **Gate D** — before `stage_27_review_state_write`, skip unless `MODE == "local"`, `CACHE_DIR` is set, AND all reviewer agents succeeded.
 
 Read this entire file before starting. The agent templates and present format are referenced by stage id below.
 
@@ -189,7 +191,7 @@ If a token's source file does not exist yet (a prior stage that produces it was 
 
 ## Branching Gates
 
-Two decisions live outside the run plan because they are runtime-driven.
+Four runtime gates modify walker default behavior. Each is documented below with the exact stage boundary it fires at.
 
 ### Gate A — After `stage_12_hygiene`: Hygiene-only early exit
 
@@ -199,14 +201,13 @@ If `FLAGS.hygiene_only` is true (or the equivalent `--hygiene-only` was passed):
 2. Mark "Present hygiene findings" `in_progress`.
 3. Parse `<CR_DIR>/hygiene.json` and render using the "Hygiene Findings" format below.
 4. If MODE=github, write hygiene findings to `.closedloop-ai/code-review-summary.md` and `.closedloop-ai/code-review-findings.json`; the workflow handles posting.
-5. Jump to **Gate D** (footer + verdict). Skip all subsequent stages (route, partition, agents, validate, finalize).
+5. **EXIT.** Do not run any remaining stages — not route, partition, agents, validate, finalize, cache-update, review-state-write, verdict, or footer. Hygiene-only runs do not emit a `<pr_verdict>` tag (there is no findings_validated.json or review_result.json for verdict to read; invoking it would crash the walker via `on_failure: abort`). This matches the pre-Phase-4b orchestrator behavior.
 
 ### Gate B — After `stage_19_cache_check`: Route + fast_path decision
 
-`route` (model selection) is not a canonical PLN-719 stage but the orchestrator needs `fast_path` and `max_bha_agents` before `stage_17_partition` actually runs. Two adjustments:
+`route` (model selection) is not a canonical PLN-719 stage but the orchestrator needs `fast_path` and `max_bha_agents` before `stage_17_partition` actually runs. The run plan's array order places `stage_17_partition` after `stage_19_cache_check` (the stage id is a stable label; the execution order follows array position). So this gate fires between the two adjacent stages — the walker simply pauses after cache-check, invokes `route`, then resumes with partition.
 
-1. **Re-order at this gate.** `stage_17_partition` in `STAGES` lists `depends_on: ["stage_05_parse_diff"]` so it is technically free to run after parse-diff; the walker defers it past `stage_19_cache_check` so `route` can constrain it.
-2. Run `route`:
+Run `route`:
 
 ```bash
 python3 <HELPERS> route \
@@ -231,9 +232,15 @@ Skip `stage_26_cache_update` when `FAST_PATH == true` OR `CACHE_DIR` is empty. T
 
 When the stage does run, the walker adds `--exclude-test-partitions` to its args (test-only partitions reviewed by Sonnet must not poison the Opus cache).
 
-### Gate D — After `stage_28_verdict`: Footer
+### Gate D — Before `stage_27_review_state_write`: Runtime conditions
 
-Already declared in the plan (`stage_30_footer`) — the walker just executes it normally. When entering via the hygiene-only short-circuit (Gate A), call `stage_28_verdict` and `stage_30_footer` directly and skip the intermediate stages.
+Skip `stage_27_review_state_write` unless **all** of these hold:
+
+- `MODE == "local"` — review state is only meaningful for repeated local runs against the same branch; GitHub CI runs don't need it.
+- `CACHE_DIR` is non-empty — review state is stored in the cache directory.
+- Every reviewer agent succeeded (no failed/skipped partitions, no recovery retries that exhausted). On any agent failure, skip — the next `--since-last-review` run cannot rely on partial state.
+
+These conditions mirror the cache-update gate (Gate C) and the pre-Phase-4b "Review State Write" prose. The walker honors `on_failure: continue` for this stage, so a skipped run never aborts the pipeline.
 
 ---
 
@@ -246,13 +253,13 @@ These notes annotate the run-plan stages with anything not obvious from the plan
 - **stage_03_resolve_scope**: writes `<CR_DIR>/scope.json` with `diff_scope`, `base_ref`, `head_ref`, `review_branch`, `diff_tip`, `pr_number`, `path_filter`, `scope_kind`, `pr_auto_detected`. After this stage, run `finalize-cache` to populate `<CR_DIR>/cache_config.json`. The walker uses these for token resolution downstream.
 - **stage_07_auto_incremental**: writes `<CR_DIR>/auto_incremental.json` with optional `diff_scope` (override) and `review_mode_line`. If `diff_scope` is non-null, update the cached `<DIFF_SCOPE>` token. Print `review_mode_line` (always) and, if `pr_auto_detected` was true in `scope.json`, print `"Auto-detected PR #<PR_NUMBER> for branch <REVIEW_BRANCH>."`.
 - **stage_12_hygiene**: writes `<CR_DIR>/hygiene.json` with hygiene findings. Triggers **Gate A** (hygiene-only exit) immediately after.
-- **stage_17_partition**: deferred past `stage_19_cache_check` so route can supply `--max-bha-agents` (see Gate B). Reads `partitions.json` afterward; entries shape `{id, files, total_loc, is_test_only}` with `files[].file` (NOT `path`), `files[].loc`, `files[].is_test`, optional `files[].line_range`.
+- **stage_17_partition**: positioned in the run plan array after `stage_19_cache_check` so Gate B's `route` invocation runs first and supplies `--max-bha-agents`. The stage id retains its `_17_` prefix as a stable label (stage ids are not strict ordinals; execution order follows array position). Reads `partitions.json` afterward; entries shape `{id, files, total_loc, is_test_only}` with `files[].file` (NOT `path`), `files[].loc`, `files[].is_test`, optional `files[].line_range`.
 - **stage_19_cache_check**: writes `<CR_DIR>/cache_result.json` (stats), `<CR_DIR>/agent_cached_bha.json` (cached BHA findings, glob-compatible with `agent_*`), `<CR_DIR>/uncached_diff_data.json` (filtered diff_data for uncached files). Do NOT print the cache status here — it is printed in Gate A (hygiene exit) or Gate B (after route).
 - **stage_20_spawn_reviewers**: agent_fleet stage. Dispatch to the "Reviewer Fleet" section below.
 - **stage_22_validate**: writes `<CR_DIR>/findings_validated.json` via `> <CR_DIR>/findings_validated.json` redirection. Phase B will retire this file; it remains during the transition.
 - **stage_25_finalize_result**: writes `<CR_DIR>/review_result.json` (the canonical envelope). If it exits non-zero, the walker logs the failure and `stage_28_verdict` falls back to `findings_validated.json`.
 - **stage_26_cache_update**: gated by **Gate C**.
-- **stage_27_review_state_write**: walker only runs this when MODE=local, `CACHE_DIR` is set, and all reviewer agents succeeded (no failed/skipped partitions). On any agent failure, skip — the next run cannot rely on partial state.
+- **stage_27_review_state_write**: gated by **Gate D**.
 - **stage_29_present**: present stage. Dispatch to "Local Mode: Present Results" or the GitHub steps in `github-review.md`.
 
 ---
@@ -694,7 +701,7 @@ Reached only when `flags.hygiene_only == true`. Parse `<CR_DIR>/hygiene.json` an
 
 If MODE=github, write the hygiene findings to `.closedloop-ai/code-review-summary.md` (same summary file path) and `.closedloop-ai/code-review-findings.json` (findings only contain hygiene items). No inline comments are posted for hygiene-only runs unless findings exist.
 
-Mark "Present hygiene findings" `completed`. Skip to **Gate D**: `stage_28_verdict` and `stage_30_footer`. Do NOT run intermediate stages.
+Mark "Present hygiene findings" `completed` and **EXIT**. Do NOT run footer or verdict — both depend on artifacts (`findings_validated.json`, `review_result.json`) that hygiene-only never produces, and `stage_28_verdict.on_failure == "abort"` would crash the walker.
 
 ---
 

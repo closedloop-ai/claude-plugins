@@ -2347,8 +2347,15 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
         # Schema permits ``line: int | None`` for system + pr_metadata scopes.
         # ``dict.get("line", 0)`` returns ``None`` (not the default) when the
         # key exists with a null value, and ``int(None)`` would crash.
+        # Also explicitly reject bool — ``bool`` is a subclass of ``int`` in
+        # Python, so ``isinstance(True, int)`` is True; a malformed
+        # ``"line": true`` would otherwise post to line 1.
         line_raw = finding.get("line")
-        line = int(line_raw) if isinstance(line_raw, int) else 0
+        line = (
+            int(line_raw)
+            if isinstance(line_raw, int) and not isinstance(line_raw, bool)
+            else 0
+        )
 
         if not path or not line:
             failed += 1
@@ -3921,32 +3928,6 @@ def _build_run_plan_stages(
             "enabled": False,
         },
         {
-            "id": "stage_17_partition",
-            "kind": "helper",
-            "subcommand": "partition",
-            "args": [
-                "--diff-data", f"{cr_dir}/diff_data.json",
-                "--diff-scope", "<DIFF_SCOPE>",
-                "--cr-dir", cr_dir,
-            ],
-            "stdout": f"{cr_dir}/partitions.json",
-            # PLN-719 Phase 5: partition is the canonical producer of
-            # patches_p<N>.txt (previously emitted by extract-patches). The
-            # exact count is determined at runtime, so the glob pattern is
-            # an expected output template.
-            "expected_outputs": [
-                f"{cr_dir}/partitions.json",
-                f"{cr_dir}/patches_p<N>.txt",
-            ],
-            # Actual data dependency is diff_data.json (stage_05_parse_diff).
-            # stage_16_arbitrate_budget is plan-05-gated and disabled in Phase
-            # A; depending on a disabled stage would make this foundation
-            # stage unreachable for any orchestrator that walks `depends_on`.
-            "depends_on": ["stage_05_parse_diff"],
-            "on_failure": "abort",
-            "enabled": True,
-        },
-        {
             "id": "stage_18_compute_hashes",
             "kind": "helper",
             "subcommand": "compute-hashes",
@@ -3958,7 +3939,13 @@ def _build_run_plan_stages(
             ],
             "stdout": f"{cr_dir}/hashes.json",
             "expected_outputs": [f"{cr_dir}/hashes.json"],
-            "depends_on": ["stage_17_partition", "stage_02_prep_assets"],
+            # Real deps: prep_assets writes shared_prompt + bha_suffix;
+            # resolve-scope produces diff-tip + base-ref (substituted via
+            # tokens at walker dispatch). compute-hashes does NOT consume
+            # partition output despite the original plan listing
+            # stage_17_partition here — that dep was spurious and was
+            # removed to unblock partition's reordering past cache-check.
+            "depends_on": ["stage_02_prep_assets", "stage_03_resolve_scope"],
             "on_failure": "abort",
             "enabled": True,
         },
@@ -3982,12 +3969,42 @@ def _build_run_plan_stages(
             "on_failure": "continue",
             "enabled": True,
         },
+        # stage_17_partition is positioned here (after cache-check) so
+        # Gate B's runtime route invocation can supply --max-bha-agents
+        # before partition runs. The stage id retains its _17_ prefix as
+        # a stable label; execution order follows array position, not the
+        # numeric suffix.
+        {
+            "id": "stage_17_partition",
+            "kind": "helper",
+            "subcommand": "partition",
+            "args": [
+                "--diff-data", f"{cr_dir}/diff_data.json",
+                "--diff-scope", "<DIFF_SCOPE>",
+                "--cr-dir", cr_dir,
+            ],
+            "stdout": f"{cr_dir}/partitions.json",
+            # PLN-719 Phase 5: partition is the canonical producer of
+            # patches_p<N>.txt (previously emitted by extract-patches). The
+            # exact count is determined at runtime, so the glob pattern is
+            # an expected output template.
+            "expected_outputs": [
+                f"{cr_dir}/partitions.json",
+                f"{cr_dir}/patches_p<N>.txt",
+            ],
+            # Real data dep is diff_data.json (stage_05_parse_diff);
+            # stage_19_cache_check is also a positional prerequisite
+            # because Gate B's route invocation runs between them.
+            "depends_on": ["stage_05_parse_diff", "stage_19_cache_check"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
         {
             "id": "stage_20_spawn_reviewers",
             "kind": "agent_fleet",
             "agent_specs": [],  # populated by orchestrator from coverage_plan + partitions
-            "expected_outputs": [f"{cr_dir}/agent_*.json"],
-            "depends_on": ["stage_19_cache_check"],
+            "expected_outputs": [f"{cr_dir}/agent_*.json", f"{cr_dir}/partitions.json"],
+            "depends_on": ["stage_17_partition"],
             "on_failure": "continue_with_coverage_gap",
             "enabled": True,
         },

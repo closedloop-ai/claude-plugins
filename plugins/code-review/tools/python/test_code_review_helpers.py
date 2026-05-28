@@ -2336,6 +2336,25 @@ class TestCmdPostComments:
         # 1 GET + 1 POST (null-line finding counted in `failed`, not posted)
         assert mock_run.call_count == 2
 
+    def test_bool_line_does_not_post(self, tmp_path: Path) -> None:
+        """`bool` is a subclass of `int` in Python, so a naive `isinstance(x, int)`
+        guard lets `True`/`False` slip through. A finding with `"line": true`
+        must be skipped (not posted to line 1)."""
+        findings = [
+            {"file": "a.ts", "line": True, "severity": "HIGH", "category": "Bug", "issue": "bool slip"},
+            {"file": "b.ts", "line": False, "severity": "HIGH", "category": "Bug", "issue": "bool slip"},
+            {"file": "c.ts", "line": 5, "severity": "HIGH", "category": "Bug", "issue": "real inline"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="[]", stderr=""
+            )
+            rc = self._run(path)
+        assert rc == 0
+        # 1 GET + 1 POST (only c.ts:5 is a valid inline). True/False both skip.
+        assert mock_run.call_count == 2
+
     def test_missing_line_key_does_not_crash(self, tmp_path: Path) -> None:
         """A finding lacking the ``line`` key entirely also skips cleanly."""
         findings = [
