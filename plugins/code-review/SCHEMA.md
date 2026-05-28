@@ -461,6 +461,51 @@ analytics layer; the per-run schema is forward-compatible.
 
 ---
 
+## 12. Golden fixture harness (PLN-719 Phase 8 / Section 10)
+
+The harness pins the post-collection contract end-to-end. Each fixture
+lives at `tools/python/fixtures/<name>/`:
+
+| Path                  | Role                                                    |
+| --------------------- | ------------------------------------------------------- |
+| `config.yaml`         | Description, mode, diff_tip, and config-level oracles (`expected_verdict`, `expected_verified_count`, `expected_coverage_gap_count`). Each `expected_*` key, when present, drives a hard assertion against the produced envelope. |
+| `inputs/`             | Canned upstream artifacts (`setup.json`, `scope.json`, `intent.json`, `diff_data.json`, one or more `agent_*.json`, optionally `hygiene.json` and `coverage_plan.json`). |
+| `expected/review_result.json` | Normalized envelope diffed byte-by-byte.        |
+
+The runner stages `inputs/` into a tmp `cr_dir`, runs the canonical
+post-collection pipeline (`collect-findings` → `validate` →
+`finalize-result`), normalizes non-deterministic fields (`review_id`
+uuid, `emitted_at` timestamps, telemetry block), and diffs against
+`expected/`. Every fixture also doubles as a schema round-trip check —
+the harness re-runs `validate_result_envelope` on the produced envelope
+and fails the test on any errors. The config-level oracles run even in
+`--update-golden` mode, so a fixture whose `config.yaml` contradicts
+its envelope cannot be silently pinned by the rewriter.
+
+To update an `expected/` artifact after an intentional contract change:
+
+```bash
+pytest plugins/code-review/tools/python/test_golden_fixtures.py --update-golden
+```
+
+The flag rewrites every fixture's `expected/review_result.json` through
+the same normalization path the assertion uses, so a subsequent
+no-flag run sees byte-identical output. Updates are reviewed in the
+commit diff, not auto-merged.
+
+**Phase 8 ships 3 fixtures end-to-end**
+(`golden_minimal_correctness`, `golden_all_categories`,
+`golden_schema_v1_round_trip`) plus a byte-identical determinism test
+for `prepare-run`. The 6 fixtures requiring plans 01/02/03/05/06
+(`golden_premise_*`, `golden_impact_with_callsites`,
+`golden_coverage_gap`, `golden_injection_quarantine`,
+`golden_budget_exceeded`) have reserved directories with READMEs and
+are skipped via a `_DEFERRED_FIXTURES` map in the test module until
+their dependent plans land. Phase 4b will extend the harness to walk
+`run_plan.json` end-to-end through a declarative stage runner.
+
+---
+
 ## References
 
 - [PLN-719: Foundation plan](https://app.closedloop.ai/closedloop-ai/implementation-plans/PLN-719)

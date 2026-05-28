@@ -12,6 +12,7 @@ from typing import Any
 from unittest.mock import patch
 
 from conftest import (
+    invoke_prepare_run,
     minimal_diff_finding,
     minimal_envelope,
     minimal_pr_metadata_finding,
@@ -5807,34 +5808,16 @@ class TestPrepareRun:
         scope_args: str = "",
         pr_number: int | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        import argparse
-        import io
-        import sys as _sys
-
-        from code_review_helpers import cmd_prepare_run
-
-        old_stdout = _sys.stdout
-        _sys.stdout = io.StringIO()
-        try:
-            ns = argparse.Namespace(
-                cr_dir=str(tmp_path),
-                mode=mode,
-                hygiene_only=hygiene_only,
-                since_last_review=since_last_review,
-                full_review=full_review,
-                base_ref_override=base_ref_override,
-                scope_args=scope_args,
-                pr_number=pr_number,
-                output=None,
-            )
-            cmd_prepare_run(ns)
-            _sys.stdout.seek(0)
-            summary = json.load(_sys.stdout)
-        finally:
-            _sys.stdout = old_stdout
-
-        run_plan = json.loads((tmp_path / "run_plan.json").read_text())
-        return summary, run_plan
+        return invoke_prepare_run(
+            tmp_path,
+            mode=mode,
+            hygiene_only=hygiene_only,
+            since_last_review=since_last_review,
+            full_review=full_review,
+            base_ref_override=base_ref_override,
+            scope_args=scope_args,
+            pr_number=pr_number,
+        )
 
     def test_emits_thirty_stages(self, tmp_path: Path) -> None:
         summary, plan = self._run(tmp_path)
