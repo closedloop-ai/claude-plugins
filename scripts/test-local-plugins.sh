@@ -35,7 +35,7 @@
 #   1 — at least one check failed
 #   2 — environment problem (missing jq, python3, no installed plugins, etc.)
 
-set -uo pipefail
+set -euo pipefail
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Config
@@ -92,13 +92,19 @@ usage() {
   exit 0
 }
 
+need_value() {
+  local flag="$1"
+  local value="${2:-}"
+  [ -n "$value" ] || die "$flag requires a value"
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --plugin)  ONLY_PLUGIN="$2"; shift 2 ;;
-    --base)    BASE_BRANCH="$2"; shift 2 ;;
-    --owner)   OWNER="$2"; shift 2 ;;
+    --plugin)  need_value "$1" "${2:-}"; ONLY_PLUGIN="$2"; shift 2 ;;
+    --base)    need_value "$1" "${2:-}"; BASE_BRANCH="$2"; shift 2 ;;
+    --owner)   need_value "$1" "${2:-}"; OWNER="$2"; shift 2 ;;
     --revert)  REVERT_MODE=1; shift ;;
-    --repo-root) REPO_ROOT_OVERRIDE="$2"; shift 2 ;;
+    --repo-root) need_value "$1" "${2:-}"; REPO_ROOT_OVERRIDE="$2"; shift 2 ;;
     --verbose|-v) VERBOSE=1; shift ;;
     -h|--help) usage ;;
     *)         echo "Unknown arg: $1" >&2; exit 2 ;;
@@ -127,12 +133,15 @@ require_cmd python3
 require_cmd git
 
 [ -f "$INSTALLED_JSON" ] || die "No installed plugins file at $INSTALLED_JSON. Is the marketplace installed?"
+jq -e '.plugins and (.plugins | type == "object")' "$INSTALLED_JSON" >/dev/null \
+  || die "Installed plugins file is malformed: $INSTALLED_JSON"
 [ -d "$REPO_ROOT/plugins" ] || die "No plugins/ directory at $REPO_ROOT — run from the closedloop-ai monorepo root or pass through scripts/"
 
 mkdir -p "$TMP_BASE"
 # Preserve TMP_BASE on failure: fail() messages reference log files inside it,
 # and removing the dir before the user reads them defeats the report. Clean
 # up only on a fully green run.
+# shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap.
 cleanup_tmp_base() {
   if [ "$FAIL_COUNT" -eq 0 ]; then
     rm -rf "$TMP_BASE"
@@ -141,6 +150,7 @@ cleanup_tmp_base() {
   fi
 }
 trap cleanup_tmp_base EXIT
+trap 'FAIL_COUNT=$((FAIL_COUNT+1)); exit 130' INT TERM
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Core helpers
@@ -237,10 +247,11 @@ revert_cache() {
     if [ -L "$install_path" ]; then
       warn "[$plugin] symlink at $install_path has no sidecar — refusing to remove (would orphan the cache)"
       warn "[$plugin] inspect manually: ls -la $install_path"
+      return 1
     else
       info "[$plugin] no sidecar and no symlink — nothing to revert"
+      return 0
     fi
-    return 1
   fi
 
   local kind value
@@ -290,9 +301,17 @@ verify_symlink_target() {
   local plugin="$1" install_path="$2"
   local local_path="$REPO_ROOT/plugins/$plugin"
   local actual_target
-  actual_target=$(readlink "$install_path" 2>/dev/null || echo "")
+  if [ ! -e "$install_path" ] && [ ! -L "$install_path" ]; then
+    fail "[$plugin] symlink path $install_path does not exist"
+    return 1
+  fi
+  if [ ! -L "$install_path" ]; then
+    fail "[$plugin] expected $install_path to be a symlink"
+    return 1
+  fi
+  actual_target=$(readlink "$install_path")
   if [ "$actual_target" != "$local_path" ]; then
-    fail "[$plugin] symlink at $install_path does not point to $local_path (points to: ${actual_target:-<not a symlink>})"
+    fail "[$plugin] symlink at $install_path does not point to $local_path (points to: ${actual_target:-<empty target>})"
     return 1
   fi
   local local_pj="$local_path/.claude-plugin/plugin.json"
@@ -333,6 +352,10 @@ run_plugin_tests() {
       pys+=("$f")
     done < <(find "$pdir/tools/python" -maxdepth 1 -name 'test_*.py' -print0 2>/dev/null)
     if [ "${#pys[@]}" -gt 0 ]; then
+      if ! python3 -m pytest --version >/dev/null 2>&1; then
+        skip "[$plugin] pytest tools/python (${#pys[@]} file(s)) — pytest is not installed"
+        return
+      fi
       if (cd "$REPO_ROOT" && python3 -m pytest -q "$pdir/tools/python" \
             >"$TMP_BASE/$plugin-pytest.log" 2>&1); then
         pass "[$plugin] pytest tools/python (${#pys[@]} file(s))"
@@ -360,7 +383,7 @@ classify_command() {
   fi
   # Orchestrator: explicit orchestrator role markers, agent/subagent delegation,
   # or Task( invocations in the command body.
-  if grep -qiE '\*\*you are the orchestrator\*\*|^You orchestrate|^# .*[Oo]rchestrator|delegate to|subagent|Task\(|SendMessage' "$cmd_file" 2>/dev/null; then
+  if grep -qE '\*\*[Yy]ou are the orchestrator\*\*|^[Yy]ou orchestrate|^# .*[Oo]rchestrator|[Dd]elegate to|Task\(|SendMessage' "$cmd_file" 2>/dev/null; then
     echo orchestrator
     return
   fi
@@ -390,14 +413,16 @@ smoke_test_command() {
     bootstrap)
       local bootstrap_line
       # Extract the inside of !`...` from the first matching line.
+      # shellcheck disable=SC2016 # The sed expression matches literal backticks.
       bootstrap_line=$(grep -E '^\s*!`\s*bash' "$cmd_file" | head -1 | sed 's/^[^`]*`[[:space:]]*//; s/`.*$//')
       if [ -z "$bootstrap_line" ]; then
         info "[$plugin] /$plugin:$cmd_name — bootstrap line not parseable, skipping run"
         return
       fi
       local resolved
-      resolved=$(echo "$bootstrap_line" | sed "s|\${CLAUDE_PLUGIN_ROOT}|$install_path|g; s|\$CLAUDE_PLUGIN_ROOT|$install_path|g")
-      # Drop $ARGUMENTS and trailing args we can't supply meaningfully
+      resolved="$bootstrap_line"
+      # Drop argument placeholders and trailing args we can't supply meaningfully.
+      resolved="${resolved//\$\{ARGUMENTS\}/}"
       resolved="${resolved//\$ARGUMENTS/}"
       local wd="$TMP_BASE/wd-$plugin-$cmd_name"
       mkdir -p "$wd"
@@ -452,12 +477,10 @@ run_synthetic_hook_tests() {
   export CLOSEDLOOP_RUN_ID="run-test-$$"
   export CLOSEDLOOP_COMMAND="/$plugin:test-harness"
   export CLOSEDLOOP_ITERATION=1
-  # NOTE: the closedloop perf hooks were originally gated behind
-  # CLOSEDLOOP_PERF_V2=1, but that gate was removed (see commit be6e758,
-  # "fix(code): emit tool/skill/spawn events unconditionally") because the
-  # desktop ships claude-plugins bundled and end users had no way to set it.
-  # Do NOT export CLOSEDLOOP_PERF_V2=1 here — it's dead-letter env. If the
-  # gate is ever reintroduced, this block must be updated.
+  # The closedloop perf hooks used to require CLOSEDLOOP_PERF_V2=1. The gate
+  # was removed because desktop plugin users cannot reliably set that env var.
+  # Keep it unset here so the synthetic run catches accidental gate regressions.
+  unset CLOSEDLOOP_PERF_V2
 
   # Test cases: tool_name, special_field (used to differentiate Skill payload variants)
   # Skill_alt exercises the post-hook's tool_input.command fallback path.
@@ -528,7 +551,7 @@ run_synthetic_hook_tests() {
             "$hwd/work/perf.jsonl" >/dev/null 2>&1; then
         pass "[$plugin] post-hook skill_name fallback (tool_input.command) works"
       else
-        warn "[$plugin] post-hook skill_name fallback (tool_input.command) not exercised in output"
+        fail "[$plugin] post-hook skill_name fallback (tool_input.command) not exercised in output"
       fi
     fi
   else
@@ -578,8 +601,8 @@ test_plugin() {
   local installed_ver="${entry##*|}"
   info "[$plugin] installed v$installed_ver at $install_path"
 
-  redirect_cache_to_local "$plugin" "$install_path" || return
-  verify_symlink_target "$plugin" "$install_path" || return
+  redirect_cache_to_local "$plugin" "$install_path" || return 0
+  verify_symlink_target "$plugin" "$install_path" || return 0
 
   run_plugin_tests "$plugin"
 
@@ -603,7 +626,7 @@ revert_plugin() {
   section "Revert: $plugin"
   local entry; entry=$(lookup_installed "$plugin")
   [ -n "$entry" ] || { skip "[$plugin] not installed; nothing to revert"; return; }
-  revert_cache "$plugin" "${entry%%|*}"
+  revert_cache "$plugin" "${entry%%|*}" || fail "[$plugin] revert did not complete"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────

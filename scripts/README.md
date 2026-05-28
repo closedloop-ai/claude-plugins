@@ -17,7 +17,7 @@ Smoke-test harness for plugin changes on the current branch — without manually
 For every plugin changed on the current branch vs. the diff base (default: `origin/main`, with a best-effort `git fetch` first to avoid stale local mains):
 
 1. **Redirects the marketplace cache to local source.** Backs up `~/.claude/plugins/cache/<owner>/<plugin>/<version>` to a `.bak-test-local-plugins` sibling and replaces it with a symlink to `plugins/<plugin>` so all `${CLAUDE_PLUGIN_ROOT}/...` paths in slash-commands and scripts resolve to local files. A sidecar `.test-local-plugins.prev` records prior state (`dir|<backup-path>` or `link|<old-target>`) so `--revert` restores cleanly even when the original was already a symlink to a different worktree.
-2. **Runs the plugin's own test suites** if present: `hooks/tests/*.sh` and `pytest tools/python/`.
+2. **Runs the plugin's own test suites** if present: `hooks/tests/*.sh` and `pytest tools/python/`. If Python tests exist but `pytest` is unavailable, the Python test step is skipped with an explicit message.
 3. **Smoke-tests each slash command** in `commands/`. Bootstrap commands (those whose body kicks off via a `!`-bash directive) get their bootstrap script executed against a tmp workdir; orchestrator commands (those that take over the running session as an orchestrator) and file-level commands (e.g. `/code:cancel-code`) are flagged as deferred to a fresh Claude Code session.
 4. **If the plugin ships pre/post-tool-use hooks following the closedloop perf-event contract** — i.e. writes per-tool-call sentinels to `$WORKDIR/.tool-calls/<id>` and emits `tool` / `skill` / `spawn` events to `$WORKDIR/perf.jsonl` — runs synthetic hook payloads (`Bash`, `Skill` via `tool_input.skill`, `Skill` via `tool_input.command` fallback, `Agent`, and a failed `Read`) and dumps the emitted events. Asserts the fallback skill_name path fired and that all sentinels in `.tool-calls/` are cleaned up after the post-hook ran.
 
@@ -38,6 +38,7 @@ The discovery + symlink + synthetic-payload steps are deterministic — no LLM r
 1. **Hook scripts register at Claude Code session startup.** Even after the script symlinks the cache to local, any new hooks added by the branch will not register in your already-running Claude Code session. The synthetic-payload tests cover the hook script's emission logic; full hook-registration verification needs a fresh session.
 2. **The cache stays redirected after the script exits.** This is intentional — the redirect needs to persist so you can restart Claude Code and get a session that loads the local hooks. The script prints a loud banner at the end of every run listing exactly which marketplace paths point at local source, plus the exact `--revert` command to restore them. Don't forget to revert when you're done.
 3. **Don't run state-mutating commands in the worktree's own cwd.** The script uses `/tmp/test-local-plugins-$$/` for synthetic test workspaces.
+4. **Interrupted and failed runs preserve their temp directory.** The log paths printed in failures remain inspectable after `Ctrl+C`, `SIGTERM`, or a failed check.
 
 ### Usage
 
@@ -77,6 +78,7 @@ scripts/test-local-plugins.sh --revert
 
 - `bash` 4+ (or `bash` 3.2 with the array idioms used here — tested on macOS default `bash`).
 - `jq`, `python3`, `git` on `PATH`.
+- `pytest` on `PATH` via `python3 -m pytest` to run plugin Python tests; otherwise those tests are skipped. Install each plugin's `tools/python/requirements.txt` before running this harness when its tests need runtime dependencies.
 - `~/.claude/plugins/installed_plugins.json` (i.e. the closedloop-ai marketplace must be installed at least once).
 - A git checkout of the closedloop-ai monorepo, with `plugins/` at the repo root.
 
