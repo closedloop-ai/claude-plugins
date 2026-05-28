@@ -16,7 +16,7 @@ A multi-agent code review plugin for Claude Code that performs deep, partitioned
 
 ```
 plugins/code-review/
-  .claude-plugin/plugin.json         Plugin manifest (version 2.2.0)
+  .claude-plugin/plugin.json         Plugin manifest (version 2.3.0)
   SCHEMA.md                          Canonical Finding + ResultEnvelope schema (PLN-719)
   commands/
     start.md                         Main /start command (orchestrator)
@@ -152,7 +152,7 @@ The helper script is a multi-subcommand Python CLI. The orchestrator invokes it 
 | `route` | Computes risk scores and emits model routing decisions per partition |
 | `validate` | Normalizes severity, filters low-confidence findings, deduplicates via Jaccard similarity, validates line numbers |
 | `compute-hashes` | Computes `PROMPT_HASH` and `CONTEXT_KEY` from shared prompt and diff tip |
-| `cache-check` | Checks the content-addressed cache for a prior result matching the current context key |
+| `cache-check` | Checks the content-addressed cache for a prior result matching the current context key; enforces per-namespace TTL sweep-on-read so stale entries count as a miss (PLN-719 Phase 7) |
 | `cache-update` | Writes validated findings to the cache after a successful run |
 | `auto-incremental` | Evaluates whether the diff scope can be narrowed to commits since the last successful review |
 | `finalize-cache` | Resolves the final cache directory path after scope and PR number are known |
@@ -169,7 +169,7 @@ The helper script is a multi-subcommand Python CLI. The orchestrator invokes it 
 | `verdict` | Computes the PR verdict (APPROVED / NEEDS_ATTENTION / CHANGES_REQUESTED) from validated findings |
 | `prep-assets` | Copies prompt assets from the plugin root into the session CR_DIR |
 | `extract-patches` | Materializes the full-diff `patches_all.txt` immediately after `parse-diff`; per-partition patches are now produced by `partition` (PLN-719 Phase 5) |
-| `finalize-result` | Consolidates validated findings + coverage state + verdict into the canonical `review_result.json` envelope; deep-merges `<cr_dir>/telemetry.json` into the canonical `telemetry` block (PLN-719 Phase 9) |
+| `finalize-result` | Consolidates validated findings + coverage state + verdict into the canonical `review_result.json` envelope; deep-merges `<cr_dir>/telemetry.json` into the canonical `telemetry` block and populates `telemetry.cache_hit_rate["bha"]` from `cache_result.json` (PLN-719 Phase 7/9) |
 | `arbitrate-budget` | Applies the canonical reviewer cap policy; emits coverage gaps for required reviewers that overflow (PLN-719) |
 | `prepare-run` | Emits a declarative `run_plan.json` describing the 30-stage pipeline (PLN-719) |
 

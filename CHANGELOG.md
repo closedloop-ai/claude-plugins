@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.3.0
+
+#### Added
+- PLN-719 Phase 7 (Cache uniformity): `CACHE_TTL_DAYS` constant on `code_review_schema.py` declares the per-namespace TTLs from PLN-719 §9 (`bha`=30d, `signals`=7d, `coverage_critic`=7d, `verifications`=30d, `overrides`=90d), plus a `cache_ttl_days(namespace)` lookup helper that returns `None` for unknown namespaces. The whitelist is pinned to the canonical 5 cache namespaces via a new `test_cache_ttl_days_covers_every_namespace` regression test.
+- `_is_entry_fresh(entry, namespace, *, now=None)` helper in `code_review_helpers.py` enforces **sweep-on-read** TTL eviction. Stale `cached_at` → cache miss → next review regenerates fresh findings. Missing/malformed `cached_at` values and unknown namespaces count as fresh (caller handles its own corruption fallback). Wired into both the v1 and v2 cache-check paths after `_entry_matches`, so existing miss reasons (schema_version, model_id, prompt_hash, patch_hash) short-circuit before the TTL check.
+- `_extract_bha_cache_hit_rate(cr_dir)` reads `<cr_dir>/cache_result.json` (written by `cache-check`) and normalizes `stats.hit_rate_pct` (0–100) into the canonical `[0, 1]` range enforced by `validate_telemetry`. `_build_telemetry_block` populates `telemetry.cache_hit_rate["bha"]` when a cache_result.json exists — this is the first end-to-end producer for the `cache_hit_rate` field that Phase 9 declared. Hygiene-only and no-cache runs leave the field empty (legal under the open-additionalProperties schema).
+- 13 new tests covering: `_is_entry_fresh` unit semantics (within/past TTL, missing/malformed timestamps, unknown namespaces), end-to-end TTL eviction for both v1 and v2 cache-check paths, `telemetry.cache_hit_rate["bha"]` population (present when cache_result.json exists; absent otherwise; defensively dropped when `hit_rate_pct` is out of `[0, 100]`), and schema-level whitelist coverage tests.
+
+#### Changed
+- Cache test fixtures: hardcoded `cached_at: "2026-01-01T..."` timestamps replaced with a module-level `_FRESH_CACHED_AT` constant computed at collection time, so hit-expecting tests stay within the BHA 30-day TTL window indefinitely. Added a `_stale_cached_at(days_ago=N)` helper for the new eviction tests. Miss-expecting tests are unchanged — they short-circuit on `_entry_matches` before the TTL check.
+- SCHEMA.md §9: gains a paragraph documenting sweep-on-read TTL enforcement and Phase 7's BHA-only end-to-end status; notes that the canonical per-file path layout (`<CACHE_DIR>/bha/<file_hash>.json`) is a future migration — the current implementation still uses a single `<CACHE_DIR>/manifest.json` with per-file entries sharing the same key inputs and invalidation contract.
+
 ### code-review v2.2.0
 
 #### Added
