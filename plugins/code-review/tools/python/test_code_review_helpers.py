@@ -4721,7 +4721,23 @@ class TestPartitionPatches:
     """PLN-719 Phase 5: partition writes patches_p<N>.txt for each partition
     when both --diff-scope and --cr-dir are supplied."""
 
-    def _run(self, tmp_path: Path, *, with_patches: bool) -> tuple[dict[str, Any], list[list[str]]]:
+    _DEFAULT_DIFF_DATA: dict[str, Any] = _make_diff_data(
+        files=["a.ts", "b.ts", "c.ts"],
+        loc={
+            "a.ts": {"added": 60, "removed": 10},
+            "b.ts": {"added": 50, "removed": 5},
+            "c.ts": {"added": 30, "removed": 5},
+        },
+    )
+
+    def _run(
+        self,
+        tmp_path: Path,
+        *,
+        with_patches: bool,
+        diff_scope: str = "main...HEAD",
+        diff_data: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], list[list[str]]]:
         import argparse
         import io
         import sys as _sys
@@ -4729,14 +4745,7 @@ class TestPartitionPatches:
 
         from code_review_helpers import cmd_partition
 
-        diff_data = _make_diff_data(
-            files=["a.ts", "b.ts", "c.ts"],
-            loc={
-                "a.ts": {"added": 60, "removed": 10},
-                "b.ts": {"added": 50, "removed": 5},
-                "c.ts": {"added": 30, "removed": 5},
-            },
-        )
+        diff_data = diff_data if diff_data is not None else self._DEFAULT_DIFF_DATA
 
         captured_cmds: list[list[str]] = []
 
@@ -4757,7 +4766,7 @@ class TestPartitionPatches:
                 diff_data=None, workdir=None,
             )
             if with_patches:
-                kwargs["diff_scope"] = "main...HEAD"
+                kwargs["diff_scope"] = diff_scope
                 kwargs["cr_dir"] = str(tmp_path)
             else:
                 kwargs["diff_scope"] = None
@@ -4791,44 +4800,53 @@ class TestPartitionPatches:
         assert not list(tmp_path.glob("patches_p*.txt"))
 
     def test_partition_strips_pathspec_from_diff_scope(self, tmp_path: Path) -> None:
-        import argparse
-        import io
-        import sys as _sys
-        from unittest.mock import patch as mock_patch
-
-        from code_review_helpers import cmd_partition
-
-        diff_data = _make_diff_data(
+        single_file = _make_diff_data(
             files=["a.ts"], loc={"a.ts": {"added": 10, "removed": 0}},
         )
+        _, captured = self._run(
+            tmp_path,
+            with_patches=True,
+            diff_scope="main...HEAD -- a.ts",  # pathspec embedded
+            diff_data=single_file,
+        )
+        # Match sibling assertion coverage: ensure the mock was exercised
+        # before inspecting command contents (otherwise the for-loop below
+        # passes vacuously when no git diff is captured).
+        assert len(captured) == 1, "expected exactly one git diff invocation"
+        for cmd in captured:
+            assert cmd.count("--") <= 1, f"Double pathspec separator in: {cmd}"
+
+    def test_write_per_partition_patches_empty_files_writes_empty_patch(
+        self, tmp_path: Path,
+    ) -> None:
+        """A partition with an empty ``files`` list must not invoke git diff.
+
+        Without the guard, ``git diff <range> --`` (no pathspec) is an
+        unrestricted diff that silently folds the entire change into the
+        partition's patch. The guard writes an empty patch and skips the
+        subprocess call instead.
+        """
+        from unittest.mock import patch as mock_patch
+
+        from code_review_helpers import _write_per_partition_patches
+
         captured_cmds: list[list[str]] = []
 
         def mock_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
             captured_cmds.append(cmd)
-            stdout = kwargs.get("stdout")
-            if stdout and hasattr(stdout, "write"):
-                stdout.write("")
             return subprocess.CompletedProcess(args=cmd, returncode=0)
 
-        old_stdin = _sys.stdin
-        old_stdout = _sys.stdout
-        _sys.stdin = io.StringIO(json.dumps(diff_data))
-        _sys.stdout = io.StringIO()
-        try:
-            ns = argparse.Namespace(
-                loc_budget=400, max_files=20, max_bha_agents=DEFAULT_MAX_BHA_AGENTS,
-                diff_data=None, workdir=None,
-                diff_scope="main...HEAD -- a.ts",  # pathspec embedded
-                cr_dir=str(tmp_path),
+        partitions = [{"id": 0, "files": []}, {"id": 1, "files": [{"file": "a.ts"}]}]
+        with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
+            written = _write_per_partition_patches(
+                partitions, "main...HEAD", tmp_path,
             )
-            with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
-                cmd_partition(ns)
-        finally:
-            _sys.stdin = old_stdin
-            _sys.stdout = old_stdout
 
-        for cmd in captured_cmds:
-            assert cmd.count("--") <= 1, f"Double pathspec separator in: {cmd}"
+        assert written == ["patches_p0.txt", "patches_p1.txt"]
+        assert (tmp_path / "patches_p0.txt").read_text() == ""
+        # Only the non-empty partition invokes git.
+        assert len(captured_cmds) == 1
+        assert "a.ts" in captured_cmds[0]
 
 
 # ---------------------------------------------------------------------------

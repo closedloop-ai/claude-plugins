@@ -725,6 +725,16 @@ def _write_per_partition_patches(
         patch_name = f"patches_p{part_id}.txt"
         patch_path = cr_dir / patch_name
 
+        # Guard against empty files lists: `git diff <range> --` with no
+        # pathspec is an unrestricted diff of every changed file, which would
+        # silently fold the entire diff into this partition's patch. Mirror
+        # the guard previously used in cmd_extract_patches: when a partition
+        # somehow has no files, write an empty patch and skip the git call.
+        if not files_in_part:
+            patch_path.write_text("")
+            written.append(patch_name)
+            continue
+
         cmd = ["git", "diff"] + range_parts + ["--"] + files_in_part
         with open(patch_path, "w") as out:
             subprocess.run(cmd, stdout=out, stderr=subprocess.DEVNULL, **run_kwargs)
