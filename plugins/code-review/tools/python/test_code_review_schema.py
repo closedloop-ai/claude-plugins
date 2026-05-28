@@ -552,6 +552,40 @@ def test_validate_telemetry_accepts_by_model_dict_or_int():
     assert validate_telemetry(t) == []
 
 
+def test_by_model_negative_value_message_points_at_value_not_key():
+    """A negative sub-value error must name the value, not blame the key.
+
+    Regression for the merged-check error message that read "must be a
+    non-negative integer keyed by string" even when the key was already
+    a valid string. Now value failures cite the value; key failures cite
+    the key.
+    """
+    from code_review_schema import empty_telemetry, validate_telemetry
+    t = empty_telemetry()
+    t["tokens"]["by_model"] = {"claude": {"output": -1}}
+    errors = validate_telemetry(t)
+    assert len(errors) == 1
+    err = errors[0]
+    assert "by_model['claude']['output']" in err
+    assert "must be a non-negative integer" in err
+    # Must NOT misattribute to a key-type problem.
+    assert "keyed by string" not in err
+    assert "sub-keys must be strings" not in err
+
+
+def test_by_model_non_string_subkey_message_points_at_key():
+    """A non-string sub-key error must cite the bad sub-key value."""
+    from code_review_schema import empty_telemetry, validate_telemetry
+    t = empty_telemetry()
+    t["tokens"]["by_model"] = {"claude": {42: 100}}
+    errors = validate_telemetry(t)
+    assert len(errors) == 1
+    err = errors[0]
+    assert "by_model['claude']" in err
+    assert "sub-keys must be strings" in err
+    assert "42" in err  # the offending key surfaces in the message
+
+
 def test_validate_telemetry_flags_cache_hit_rate_out_of_range():
     from code_review_schema import empty_telemetry, validate_telemetry
     t = empty_telemetry()

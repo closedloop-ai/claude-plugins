@@ -276,12 +276,22 @@ def _validate_tokens_by_model(by_model: Any) -> list[str]:
             out.append("telemetry.tokens.by_model keys must be strings")
             break
         if isinstance(mv, dict):
-            out.extend(
-                f"telemetry.tokens.by_model[{mk!r}][{sk!r}] must be "
-                "a non-negative integer keyed by string"
-                for sk, sv in mv.items()
-                if not isinstance(sk, str) or not _is_nonneg_int(sv)
-            )
+            # Check key-type and value-type independently so the error
+            # message points at the actual violation. A merged check
+            # conflates "non-string sub-key" with "negative integer value"
+            # and produces a misleading "keyed by string" suffix for value
+            # failures whose sub-key is already a valid string.
+            for sk, sv in mv.items():
+                if not isinstance(sk, str):
+                    out.append(
+                        f"telemetry.tokens.by_model[{mk!r}] sub-keys must "
+                        f"be strings (got {sk!r})",
+                    )
+                elif not _is_nonneg_int(sv):
+                    out.append(
+                        f"telemetry.tokens.by_model[{mk!r}][{sk!r}] must "
+                        "be a non-negative integer",
+                    )
         elif not _is_nonneg_int(mv):
             out.append(
                 f"telemetry.tokens.by_model[{mk!r}] must be a non-negative "
