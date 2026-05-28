@@ -415,18 +415,25 @@ def merge_telemetry(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, 
     without overriding the whole ``tokens`` block. Every other key —
     including dict-typed fields not on the whitelist — is overwritten
     wholesale by ``overlay``.
+
+    Whitelisted keys preserve their type invariant: if ``overlay`` supplies a
+    non-dict (e.g. ``{"cache_hit_rate": null}``) for a whitelisted key, the
+    overlay is **ignored for that key** and the base dict value survives.
+    Otherwise a malformed overlay could corrupt the field's type and trip
+    downstream writers that assume the whitelist contract holds (e.g.
+    ``block["cache_hit_rate"][NAMESPACE] = rate`` in finalize-result).
     """
     out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in base.items()}
     for k, v in overlay.items():
-        if (
-            k in TELEMETRY_DEEP_MERGE_KEYS
-            and isinstance(v, dict)
-            and isinstance(out.get(k), dict)
-        ):
-            merged = dict(out[k])
-            for sk, sv in v.items():
-                merged[sk] = sv
-            out[k] = merged
+        if k in TELEMETRY_DEEP_MERGE_KEYS:
+            if isinstance(v, dict) and isinstance(out.get(k), dict):
+                merged = dict(out[k])
+                for sk, sv in v.items():
+                    merged[sk] = sv
+                out[k] = merged
+            # Non-dict overlay for a whitelisted key: keep the base value
+            # so the type invariant survives. validate_telemetry on the
+            # final envelope still catches the malformed input upstream.
         else:
             out[k] = v
     return out

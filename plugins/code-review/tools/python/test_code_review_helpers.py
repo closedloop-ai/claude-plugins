@@ -5492,6 +5492,42 @@ class TestFinalizeResult:
         t = json.loads((tmp_path / "review_result.json").read_text())["telemetry"]
         assert "bha" not in t["cache_hit_rate"]
 
+    def test_null_cache_hit_rate_overlay_does_not_crash_finalize(self, tmp_path: Path) -> None:
+        """Regression for a TypeError when telemetry.json declares cache_hit_rate=null.
+
+        Reported by reviewer (PR #104): a producer writing
+        ``{"cache_hit_rate": null}`` to telemetry.json combined with a
+        valid cache_result.json would crash finalize-result with
+        ``'NoneType' object does not support item assignment``. The fix
+        is at the merge layer (whitelist keys preserve their type
+        invariant), but this test pins the end-to-end behavior.
+        """
+        (tmp_path / "telemetry.json").write_text(json.dumps({
+            "cache_hit_rate": None,
+        }))
+        (tmp_path / "cache_result.json").write_text(json.dumps({
+            "stats": {"hit_rate_pct": 50.0},
+        }))
+        # Must not raise.
+        self._run_finalize(tmp_path, [])
+        t = json.loads((tmp_path / "review_result.json").read_text())["telemetry"]
+        # cache_hit_rate is still a dict (the malformed null was discarded)
+        # and the BHA producer's value lands cleanly.
+        assert isinstance(t["cache_hit_rate"], dict)
+        assert t["cache_hit_rate"]["bha"] == 0.5
+
+    def test_scalar_tokens_overlay_does_not_corrupt_tokens_block(self, tmp_path: Path) -> None:
+        """Same invariant: a non-dict overlay for tokens leaves the base intact."""
+        (tmp_path / "telemetry.json").write_text(json.dumps({
+            "tokens": "garbage",
+        }))
+        self._run_finalize(tmp_path, [])
+        t = json.loads((tmp_path / "review_result.json").read_text())["telemetry"]
+        assert isinstance(t["tokens"], dict)
+        # All canonical token sub-keys still present from the zero-valued base.
+        for key in ("input_uncached", "input_cached", "output", "by_model"):
+            assert key in t["tokens"]
+
 
 class TestVerdictReadsEnvelope:
     """cmd_verdict prefers review_result.json when provided."""
