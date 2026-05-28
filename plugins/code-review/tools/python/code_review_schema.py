@@ -45,9 +45,14 @@ PRIORITIES: frozenset[int] = frozenset({0, 1, 2})
 
 # Categories — section 1 of the plan. Includes legacy "Repo Hygiene" as an
 # accepted alias so the hygiene helper can keep its historical category
-# string until plan 04 / Phase D rewrites it.
+# string until plan 04 / Phase D rewrites it. "Code Quality" is the
+# canonical category for DRY/maintainability/style findings (MEDIUM-tier
+# duplication, smell, or convention violations) — already documented as
+# the example category in the shared reviewer prompt (shared_prompt.txt)
+# for MEDIUM DRY findings.
 CATEGORIES: frozenset[str] = frozenset({
     "Correctness",
+    "Code Quality",
     "Hygiene",
     "Repo Hygiene",
     "Premise",

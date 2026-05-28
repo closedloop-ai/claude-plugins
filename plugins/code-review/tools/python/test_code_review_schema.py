@@ -58,6 +58,37 @@ def test_categories_include_canonical_and_legacy_alias():
     assert "Coverage" in CATEGORIES
 
 
+def test_categories_include_code_quality():
+    """Code Quality is the canonical category for DRY/maintainability findings.
+
+    The shared reviewer prompt (tools/prompts/shared_prompt.txt) documents
+    ``"category": "Code Quality"`` as the example category for MEDIUM-tier
+    DRY violations; if the enum drops it, finalize-result rejects the
+    envelope and verdict silently falls back to validate_output.json.
+    """
+    assert "Code Quality" in CATEGORIES
+
+
+def test_code_quality_finding_passes_validation():
+    """A reviewer-emitted Code Quality finding must validate end-to-end."""
+    f = _minimal_diff_finding(
+        category="Code Quality",
+        severity="MEDIUM",
+        priority=2,
+        issue="EditableDescription duplicates EditableTitle",
+    )
+    assert validate_finding(f) == []
+
+
+def test_code_quality_finding_in_envelope_passes_validation():
+    """A Code Quality finding bucketed into verified[] must not reject the envelope."""
+    f = _minimal_diff_finding(
+        category="Code Quality", severity="MEDIUM", priority=2,
+    )
+    env = _minimal_envelope(verified=[f])
+    assert validate_result_envelope(env) == []
+
+
 def test_sources():
     assert "agent" in SOURCES
     assert "hygiene" in SOURCES

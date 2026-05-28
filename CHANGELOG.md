@@ -19,6 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `validate_result_envelope()` refactored into focused per-section helpers (`_validate_envelope_scalars`, `_validate_envelope_buckets`, `_validate_coverage_plan`, `_validate_envelope_findings`) to reduce cognitive complexity. Same coverage; flatter call graph.
 - `conftest.minimal_envelope()` now seeds the envelope with `empty_telemetry()` so existing tests stay valid by construction under the strict validator.
 
+#### Fixed
+- `"Code Quality"` is now in the canonical `CATEGORIES` enum. The shared reviewer prompt at `tools/prompts/shared_prompt.txt` documents it as the example category for MEDIUM-tier DRY/maintainability findings, but the schema enum at `code_review_schema.py` omitted it. Reviewer-emitted Code Quality findings caused `finalize-result` to reject the canonical envelope; verdict fell back to `validate_output.json` as designed, but the envelope path silently dropped those findings. `SCHEMA.md` Section 1 (category enum line) is updated to match. Adds three regression tests (`test_categories_include_code_quality`, `test_code_quality_finding_passes_validation`, `test_code_quality_finding_in_envelope_passes_validation`).
+
 ### code-review v2.1.0
 
 #### Changed
