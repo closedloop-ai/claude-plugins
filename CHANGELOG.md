@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.1.1
+
+#### Fixed
+- `"Code Quality"` is now in the canonical `CATEGORIES` enum. The shared reviewer prompt at `tools/prompts/shared_prompt.txt` documents it as the example category for MEDIUM-tier DRY/maintainability findings, but the schema enum at `code_review_schema.py` omitted it. Reviewer-emitted Code Quality findings caused `finalize-result` to reject the canonical envelope; verdict fell back to `validate_output.json` as designed, but the envelope path silently dropped those findings. `SCHEMA.md` Section 1 (category enum line) is updated to match. Adds three regression tests (`test_categories_include_code_quality`, `test_code_quality_finding_passes_validation`, `test_code_quality_finding_in_envelope_passes_validation`).
+
 ### code-review v2.1.0
 
 #### Changed
