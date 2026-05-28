@@ -4126,6 +4126,7 @@ def _build_run_plan_stages(
             "subcommand": "footer",
             "args": [
                 "--start-time", "<START_TIME>",
+                "--cache-result", f"{cr_dir}/cache_result.json",
                 "--cr-dir", cr_dir,
             ],
             "stdout": None,

@@ -35,6 +35,10 @@ This file contains posting constraints, PR metadata resolution, and output steps
 
 ---
 
+## Prerequisites
+
+This command requires the **`code` plugin** to be enabled in the same session. Every reviewer fleet spawn uses `subagent_type: "code:code-review-worker"` — without the `code` plugin, the Task tool falls back to either `general-purpose` (potentially blocked by the session's `permissions.allow` list, causing silent Read/Write/Grep/Glob denials) or `code:code-reviewer` (a 130+ line system prompt that bloats orchestrator context by ~50K+ tokens). If you see "code:code-review-worker agent type was not registered in this session", enable the `code` plugin before running this command. The `judges` plugin is also a runtime dependency of the broader code-review pipeline (e.g. for plan-03 verification when that plan ships).
+
 ## Execution Model (PLN-719 Phase 4b)
 
 The review pipeline is driven by a **declarative run plan** emitted by the `prepare-run` helper. The plan is the single source of truth for stage ordering, helper invocations, and on-failure semantics — this command's job is to walk it.
@@ -826,7 +830,7 @@ Follow Steps 6 and 8 in `github-review.md` (loaded in stage 0c for GitHub mode).
 
 ## Review Footer (stage_30_footer)
 
-The footer prints elapsed time, cache stats, and token usage. Stage 30's helper is `footer`; the walker calls it with the args declared in the run plan. The walker appends `--cache-result <CR_DIR>/cache_result.json` only if `CACHE_DIR` is set AND `FAST_PATH == false` (the footer shows `"Cache: disabled"` as the existing fallback when the flag is absent).
+The footer prints elapsed time, cache stats, and token usage. Stage 30's helper is `footer`; the walker calls it with the args declared in the run plan. The plan includes `--cache-result <CR_DIR>/cache_result.json` unconditionally — when cache was inactive or fast-path bypassed it, the file simply does not exist and the helper falls back to `"Cache: disabled"` via its existing OSError handling.
 
 Read `<CR_DIR>/footer.json` for `footer_line` and print:
 
