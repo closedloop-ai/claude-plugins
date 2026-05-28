@@ -4,6 +4,20 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.12.0
+
+#### Removed
+- `code-review-worker` agent. The agent's only consumer was the `code-review` plugin's `/start` command (6 references), and the agent's definition was a 24-line generic worker (`tools: Read, Write, Grep, Glob`) with no logic specific to the `code` plugin's orchestration. Moved into `code-review/agents/code-review-worker.md` so the code-review plugin is self-contained and runs without requiring the `code` plugin to be enabled. External callers referencing `code:code-review-worker` should update to `code-review:code-review-worker`. The `code-reviewer` and `code-review-guidelines` agents remain in the `code` plugin (they're consumed by the `/code-review` command and the broader `code` workflow).
+
+### code-review v2.6.0
+
+#### Added
+- `agents/code-review-worker.md` — the background worker agent every reviewer fleet spawn uses (BHA, BHB, Auditor, Domain Critic, Premise, Fast Path, recovery retries). Previously lived in the `code` plugin as `code:code-review-worker` and was a hard runtime dependency. Now ships with this plugin as `code-review:code-review-worker`, making `code-review` standalone — it no longer requires the `code` plugin (or any other plugin) to be enabled in the same session.
+
+#### Changed
+- All 6 `subagent_type: "code:code-review-worker"` references in `commands/start.md` updated to `code-review:code-review-worker`. The `## Prerequisites` section added in v2.5.0 (warning users about the `code` plugin requirement) is removed — there is no prerequisite anymore. The agent-type warning block in the Reviewer Fleet section is reworded to describe the now-local worker.
+- `docs/dependencies.md` and `CLAUDE.md` updated to reflect that `code-review` is standalone. The previously-documented `code-review → judges` dependency (a `test_validate_judge_report.py` import) was already stale — the test file no longer exists — and is removed from the dependency map.
+
 ### code-review v2.5.0
 
 #### Changed

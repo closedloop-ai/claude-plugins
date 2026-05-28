@@ -35,10 +35,6 @@ This file contains posting constraints, PR metadata resolution, and output steps
 
 ---
 
-## Prerequisites
-
-This command requires the **`code` plugin** to be enabled in the same session. Every reviewer fleet spawn uses `subagent_type: "code:code-review-worker"` — without the `code` plugin, the Task tool falls back to either `general-purpose` (potentially blocked by the session's `permissions.allow` list, causing silent Read/Write/Grep/Glob denials) or `code:code-reviewer` (a 130+ line system prompt that bloats orchestrator context by ~50K+ tokens). If you see "code:code-review-worker agent type was not registered in this session", enable the `code` plugin before running this command. The `judges` plugin is also a runtime dependency of the broader code-review pipeline (e.g. for plan-03 verification when that plan ships).
-
 ## Execution Model (PLN-719 Phase 4b)
 
 The review pipeline is driven by a **declarative run plan** emitted by the `prepare-run` helper. The plan is the single source of truth for stage ordering, helper invocations, and on-failure semantics — this command's job is to walk it.
@@ -277,7 +273,7 @@ Context-heavy operations that cause "Prompt is too long" failures:
 - **Do NOT** capture `git diff` output into shell variables — pipe directly to files on disk.
 - Only the summary fields (file list, statuses, LOC counts) should be in orchestrator context — patches and findings stay on disk.
 
-**Agent type (CRITICAL — prevents context overflow AND permission issues):** ALL agents spawned by this command MUST use `subagent_type: "code:code-review-worker"` in the Task tool call. This agent has `tools: Read, Write, Grep, Glob` in its definition, which grants background sub-agents file access permissions regardless of the user's `settings.json` allowlist. Do NOT use `subagent_type: "general-purpose"` — background agents with that type inherit only the session's `permissions.allow` list, which often lacks bare Read/Write/Grep/Glob, causing silent permission denials. Do NOT omit `subagent_type` — Claude Code will auto-select `code:code-reviewer`, whose 130+ line system prompt and additional file loads bloat context by ~50K+ tokens.
+**Agent type (CRITICAL — prevents context overflow AND permission issues):** ALL agents spawned by this command MUST use `subagent_type: "code-review:code-review-worker"` in the Task tool call. This agent ships with the code-review plugin and declares `tools: Read, Write, Grep, Glob`, which grants background sub-agents file access permissions regardless of the user's `settings.json` allowlist. Do NOT use `subagent_type: "general-purpose"` — background agents with that type inherit only the session's `permissions.allow` list, which often lacks bare Read/Write/Grep/Glob, causing silent permission denials. Do NOT omit `subagent_type` — without an explicit type Claude Code auto-selects an unrelated agent whose larger system prompt and additional file loads bloat context.
 
 ### Standard Flow (FAST_PATH == false)
 
@@ -410,7 +406,7 @@ Use Grep and Glob to verify claims. Do NOT flag issues without searching first.
 
 **Domain Critics** (from `critic-gates.json`, if selected by route):
 
-All domain critics use `subagent_type: "code:code-review-worker"` and `model: "sonnet"`. For each selected critic:
+All domain critics use `subagent_type: "code-review:code-review-worker"` and `model: "sonnet"`. For each selected critic:
 
 ```
 You are a domain expert reviewer: {critic_name}.
@@ -419,7 +415,7 @@ Read the repository CLAUDE.md for project context.
 Return findings in the standard JSON format.
 ```
 
-**Guard:** If `critic-gates.json` references a critic name that doesn't map to a known subagent type, use `subagent_type: "code:code-review-worker"`.
+**Guard:** If `critic-gates.json` references a critic name that doesn't map to a known subagent type, use `subagent_type: "code-review:code-review-worker"`.
 
 **Premise Reviewer** (always runs, model per `route.json -> models.premise_reviewer`, `AGENT_ID: "premise"`):
 ```
@@ -513,7 +509,7 @@ Call all `TaskOutput` calls in a **single message** (parallel) so they resolve t
 If any agent failed (context overflow, subscription limits, timeout) or its output file is missing:
 
 1. **Log the failure**: Record which agent failed and why (e.g., `"Bug Hunter A partition 2: context overflow"`).
-2. **If failed agent is BHA (partitioned)**: halve the failed partition (LOC budget ÷ 2) and re-spawn with `model: "haiku"` and `subagent_type: "code:code-review-worker"`. The re-spawned agent writes to a new output file.
+2. **If failed agent is BHA (partitioned)**: halve the failed partition (LOC budget ÷ 2) and re-spawn with `model: "haiku"` and `subagent_type: "code-review:code-review-worker"`. The re-spawned agent writes to a new output file.
 3. **If failed agent is non-partitioned (BHB / Unified Auditor / Domain Critic)**: re-spawn the same role once with `model: "haiku"` and the same file assignment.
 4. **Second failure → skip with warning**: if the recovery attempt fails, log a warning (`"⚠️ {agent_name} skipped — {N} files not reviewed due to agent failures"`) and continue. Do NOT fall back to reviewing in the main conversation — this would load patches into the orchestrator's context and recreate the overflow problem on large PRs. Skipped scope must be listed in the output for manual follow-up.
 5. **Continue collecting**: do not block the pipeline on a single agent failure. The walker's `on_failure: continue_with_coverage_gap` for `stage_20` ensures the run completes even if some partitions are unreviewed.
@@ -525,7 +521,7 @@ Mark "Run fast-path review" `in_progress`.
 The fast-path spawns a single agent that performs all review passes in one run. Use the per-agent prompt wrapper above unchanged (`mode: standalone`, `<output_file>`, `<patches_file>`, `<files_assigned>`), with the fast-path-specific suffix below.
 
 **Fast-Path Agent settings:**
-- `subagent_type`: `"code:code-review-worker"`
+- `subagent_type`: `"code-review:code-review-worker"`
 - `model`: from `route.json -> models.fast_path_reviewer` (NOT hardcoded)
 - `run_in_background`: `true`
 - `AGENT_ID`: `"fast"`

@@ -203,8 +203,8 @@ Processes pending learning JSON files from `.learnings/pending/`. Classifies eac
 **`amend-extractor`** (model: sonnet)
 Extracts actionable plan amendments from unstructured input (meeting notes, Slack threads, email). Returns structured JSON with `extracted_changes`, `unclear_items`, and `no_action_items`. Used by the `amend-plan` command when input cannot be classified as a directive, question, or confirmation.
 
-**`code-review-worker`** / **`code-review-guidelines`**
-Supporting agents for the code review workflow. `code-review-guidelines` provides language-specific review patterns and edge case guidance. `code-review-worker` handles individual file review tasks within the reviewer workflow.
+**`code-review-guidelines`**
+Provides language-specific review patterns and edge case guidance for the `code-reviewer` agent.
 
 **`plan-agent`** (model: opus)
 Software architect agent for creating and revising implementation plans. Explores the codebase, designs a plan grounded in existing patterns, and writes it directly to a specified file on disk. Used by the `plan-with-codex` command; resumed across debate rounds via `SendMessage` to apply Codex feedback without losing architectural context.

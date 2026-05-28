@@ -40,7 +40,7 @@ Always use `plugin-name:skill-name` format (e.g., `self-learning:learning-qualit
 
 ### The `code` Plugin is the Hub
 
-`code` depends on both `judges` and `self-learning`. `judges` depends back on `code` (circular). `code-review` depends on `code` and `judges`. `bootstrap` depends on `code`. `platform` and `self-learning` are standalone. See `docs/dependencies.md` for the full dependency map.
+`code` depends on both `judges` and `self-learning`. `judges` depends back on `code` (circular). `bootstrap` depends on `code`. `code-review`, `platform`, and `self-learning` are standalone. See `docs/dependencies.md` for the full dependency map.
 
 ### Closed Loop (run-loop.sh)
 
