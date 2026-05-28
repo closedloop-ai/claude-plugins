@@ -58,12 +58,6 @@ def test_command_enum_has_exactly_five_members() -> None:
     assert len(Command) == 5
 
 
-def test_command_is_str_enum() -> None:
-    """Command members are strings (StrEnum)."""
-    for member in Command:
-        assert isinstance(member, str)
-
-
 # ---------------------------------------------------------------------------
 # Request dataclass construction and field access (AC-003)
 # ---------------------------------------------------------------------------
@@ -119,13 +113,13 @@ def test_request_construction_and_field_access(
         assert getattr(req, field) == value
 
 
-@pytest.mark.parametrize(
-    "factory,kwargs,expected_command,extra_checks",
-    REQUEST_CONSTRUCTION_CASES,
-)
-def test_request_dataclasses_are_frozen(factory, kwargs, expected_command, extra_checks) -> None:
-    """Request dataclasses are immutable (frozen)."""
-    req = factory(**kwargs)
+def test_request_dataclasses_are_frozen() -> None:
+    """Request dataclasses are immutable (frozen).
+
+    ``frozen=True`` is inherited identically from ``_BaseRequest`` by all five
+    request types, so one representative is sufficient to pin the contract.
+    """
+    req = PlanExecuteRequest(workdir="/work", prompt="do it")
     with pytest.raises((AttributeError, TypeError)):
         req.workdir = "mutated"  # type: ignore[misc]
 

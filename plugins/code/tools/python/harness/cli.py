@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import NoReturn
 
 from harness.registry import get_adapter
 from harness.types import (
@@ -80,20 +81,45 @@ def _dispatch(adapter_name: str, method_name: str, payload: dict[str, object]) -
     )
 
 
+def _error_exit(msg: str) -> NoReturn:
+    """Print a one-line error to stderr and exit non-zero.
+
+    Mirrors the ``error_exit`` idiom used by sibling code-plugin tool scripts
+    (e.g. ``count_tokens.py``) so shell callers get a clean message instead of
+    a raw Python traceback. Defined locally because the no-cross-import rule for
+    tool scripts forbids importing that helper directly.
+    """
+    print(f"Error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
 def main() -> None:
     """CLI entry point: reads stdin JSON, writes stdout JSON."""
     if len(sys.argv) != 3:
-        print(
-            "Usage: python -m harness.cli <adapter_name> <method_name>",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        _error_exit("Usage: python -m harness.cli <adapter_name> <method_name>")
 
     adapter_name = sys.argv[1]
     method_name = sys.argv[2]
 
-    payload = json.loads(sys.stdin.read())
-    result = _dispatch(adapter_name, method_name, payload)
+    raw_stdin = sys.stdin.read()
+    if not raw_stdin.strip():
+        _error_exit("No JSON request provided on stdin.")
+
+    try:
+        payload = json.loads(raw_stdin)
+    except json.JSONDecodeError as exc:
+        _error_exit(f"Invalid JSON request on stdin: {exc}")
+
+    if not isinstance(payload, dict):
+        _error_exit("JSON request must be a JSON object.")
+
+    try:
+        result = _dispatch(adapter_name, method_name, payload)
+    except (KeyError, ValueError, TypeError) as exc:
+        # KeyError stringifies with surrounding quotes; unwrap to the bare message.
+        message = exc.args[0] if exc.args else str(exc)
+        _error_exit(str(message))
+
     print(json.dumps(result))
 
 
