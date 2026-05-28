@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.1.0
+
+#### Changed
+- PLN-719 Phase 5 (pipeline reordering): `extract-patches` moves from after-partition to immediately after `parse-diff`. In its new position it produces only `patches_all.txt`, making the full diff available on disk before every downstream stage (hygiene, route, partition, BHB/Auditor/Premise reviewers, plus the plan-05-gated extract-signals + coverage chain). The `--partitions-file` flag is removed from `cmd_extract_patches`.
+- `partition` becomes the canonical producer of `patches_p<N>.txt`. New optional `--diff-scope`, `--cr-dir`, `--workdir` arguments trigger the per-partition `git diff`; when both `--diff-scope` and `--cr-dir` are supplied, partition emits `patches_p0.txt`, `patches_p1.txt`, … alongside `partitions.json`. Without them the call stays a pure partition-assignment helper, preserving backward compat for callers that only want the assignment.
+- `prepare-run` (run_plan.json generator): `stage_17_partition` now passes `--diff-scope` and `--cr-dir`, and its `expected_outputs` list includes `patches_p<N>.txt` alongside `partitions.json`. `stage_06_extract_patches` already matched the new contract.
+- `/start` command rewires Task 5 to call `extract-patches` right after `parse-diff` and Task 8 to call `partition` with the new patch-generation args. The "Pre-Extract Patches to Disk" section is renamed and explicitly documents the two-stage materialization.
+
 ### code-review v2.0.0
 
 #### Added

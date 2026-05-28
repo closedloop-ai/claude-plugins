@@ -16,7 +16,7 @@ A multi-agent code review plugin for Claude Code that performs deep, partitioned
 
 ```
 plugins/code-review/
-  .claude-plugin/plugin.json         Plugin manifest (version 2.0.0)
+  .claude-plugin/plugin.json         Plugin manifest (version 2.1.0)
   SCHEMA.md                          Canonical Finding + ResultEnvelope schema (PLN-719)
   commands/
     start.md                         Main /start command (orchestrator)
@@ -125,17 +125,19 @@ The orchestrator executes these steps in order:
 1. **Parse flags and detect mode** — resolves `MODE` (local/github), `HYGIENE_ONLY`, `BASE_REF_OVERRIDE`, `SINCE_LAST_REVIEW`, `FULL_REVIEW`
 2. **Session setup** — resolves the helpers path, creates a session-scoped working directory (`.closedloop-ai/code-review/cr-<random>/`), and runs `setup` subcommand to capture `start_time`, `repo_name`, and `global_cache`
 3. **Parse scope and get diff data** — runs `parse-diff` subcommand to execute all git diff commands and produce a structured JSON blob with file statuses, LOC counts, changed line ranges, and patch content
-4. **Compute prompt hash and cache check** (if caching is active) — hashes the shared prompt and reviewer suffix, then checks the content-addressed cache for a prior result on this exact diff tip
-5. **Deterministic hygiene checks** — pattern-match for CI artifacts, sensitive files (`.env`, `.pem`), and path leakage; if `--hygiene-only`, stop here
-6. **Risk scoring and model routing** — scores each file by risk factors (LOC, file type, complexity); routes high-risk partitions to stronger models
-7. **File partitioning** — bin-packs files into agent-sized partitions balanced by LOC
-8. **Patch pre-extraction** — extracts diff patches to disk so reviewer agents can read them without Bash access
+4. **Materialize full-diff patches** — runs `extract-patches` immediately after `parse-diff` to write the consolidated `patches_all.txt` so downstream stages (and reviewer agents) can read the diff without Bash access
+5. **Compute prompt hash and cache check** (if caching is active) — hashes the shared prompt and reviewer suffix, then checks the content-addressed cache for a prior result on this exact diff tip
+6. **Deterministic hygiene checks** — pattern-match for CI artifacts, sensitive files (`.env`, `.pem`), and path leakage; if `--hygiene-only`, stop here
+7. **Risk scoring and model routing** — scores each file by risk factors (LOC, file type, complexity); routes high-risk partitions to stronger models
+8. **File partitioning and per-partition patches** — bin-packs files into agent-sized partitions balanced by LOC; when invoked with `--diff-scope` and `--cr-dir`, `partition` also writes the per-partition `patches_p<N>.txt` files alongside `partitions.json`
 9. **Spawn reviewer agents in parallel** — launches one `code:code-review-worker` sub-agent per partition; all run concurrently with `run_in_background: true`
 10. **Collect and validate findings** — collects all agent outputs, merges with hygiene findings, runs the `validate` subcommand (normalize severity, filter low-confidence, deduplicate, validate line numbers)
 11. **Cache update** (if caching is active) — writes validated findings to the cache for future incremental runs
 12. **Present results** — local mode: prints findings by severity in the terminal; GitHub mode: writes `.closedloop-ai/code-review-findings.json`, `.closedloop-ai/code-review-threads.json`, and `.closedloop-ai/code-review-summary.md` for the CI workflow to post
 13. **Review state write** — persists the current diff tip so future `--since-last-review` runs can narrow the scope
 14. **Footer** — prints elapsed time, token usage stats, and a deterministic `<pr_verdict>` tag
+
+(Step numbers in this list are illustrative; the canonical 30-stage ordering lives in `prepare-run`'s `run_plan.json`.)
 
 ## Helper CLI (`code_review_helpers.py`)
 
@@ -146,7 +148,7 @@ The helper script is a multi-subcommand Python CLI. The orchestrator invokes it 
 | `setup` | Emits start time, repo name, branch, and global cache flag as JSON |
 | `parse-diff` | Runs git diff commands and produces structured JSON with file statuses, LOC, ranges, and patch lines |
 | `hygiene` | Pattern-matches diff data for CI artifacts, sensitive files, and path leakage; emits findings JSON |
-| `partition` | Bin-packs files into agent-sized partitions balanced by LOC |
+| `partition` | Bin-packs files into agent-sized partitions balanced by LOC; when `--diff-scope` and `--cr-dir` are passed it also writes per-partition `patches_p<N>.txt` files alongside `partitions.json` (PLN-719 Phase 5) |
 | `route` | Computes risk scores and emits model routing decisions per partition |
 | `validate` | Normalizes severity, filters low-confidence findings, deduplicates via Jaccard similarity, validates line numbers |
 | `compute-hashes` | Computes `PROMPT_HASH` and `CONTEXT_KEY` from shared prompt and diff tip |
@@ -166,7 +168,7 @@ The helper script is a multi-subcommand Python CLI. The orchestrator invokes it 
 | `collect-findings` | Merges agent findings with hygiene findings into a single list |
 | `verdict` | Computes the PR verdict (APPROVED / NEEDS_ATTENTION / CHANGES_REQUESTED) from validated findings |
 | `prep-assets` | Copies prompt assets from the plugin root into the session CR_DIR |
-| `extract-patches` | Extracts git diff patches to per-file disk files for reviewer agents to read |
+| `extract-patches` | Materializes the full-diff `patches_all.txt` immediately after `parse-diff`; per-partition patches are now produced by `partition` (PLN-719 Phase 5) |
 | `finalize-result` | Consolidates validated findings + coverage state + verdict into the canonical `review_result.json` envelope (PLN-719) |
 | `arbitrate-budget` | Applies the canonical reviewer cap policy; emits coverage gaps for required reviewers that overflow (PLN-719) |
 | `prepare-run` | Emits a declarative `run_plan.json` describing the 30-stage pipeline (PLN-719) |
