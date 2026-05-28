@@ -430,9 +430,16 @@ Stage producers populate timings and tokens by writing
 }
 ```
 
-The deep-merge in `merge_telemetry` recurses one level for known nested
-objects (e.g. `tokens`), so callers can populate sub-fields without
-overriding the whole block. Cross-run aggregation is deferred to a future
+The deep-merge in `merge_telemetry` recurses one level **only for keys in
+the explicit whitelist** `TELEMETRY_DEEP_MERGE_KEYS = {duration_by_stage_ms,
+tokens, cache_hit_rate, schema_versions_seen, findings_counts,
+verification_stats, coverage_stats}`. Callers can populate `tokens.output`
+without overriding the whole `tokens` block. Every other key — including
+dict-typed fields not on the whitelist — is overwritten wholesale by the
+overlay. Future schema additions whose merge semantics matter must opt
+into the whitelist explicitly; the default for new dict-typed fields is
+replace, which is the safe default for blocks where partial overrides
+could corrupt the document. Cross-run aggregation is deferred to a future
 analytics layer; the per-run schema is forward-compatible.
 
 ---

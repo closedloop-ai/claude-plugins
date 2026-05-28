@@ -370,18 +370,43 @@ def validate_telemetry(telemetry: Any) -> list[str]:
     return errors
 
 
+# Telemetry keys whose dict value is one-level-merged when overlay supplies
+# a dict. Every other key — whether dict-valued or scalar — is overwritten
+# wholesale. The whitelist is the canonical contract: future schema fields
+# whose merge semantics matter must opt in explicitly. A new dict-typed
+# field that is NOT in this set will receive replace-semantics by default,
+# which is the safe default for fields whose merge behavior hasn't been
+# considered (e.g. a versioned-config block where partial overrides could
+# corrupt the document).
+TELEMETRY_DEEP_MERGE_KEYS: frozenset[str] = frozenset({
+    "duration_by_stage_ms",
+    "tokens",
+    "cache_hit_rate",
+    "schema_versions_seen",
+    "findings_counts",
+    "verification_stats",
+    "coverage_stats",
+})
+
+
 def merge_telemetry(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
-    """Deep-merge ``overlay`` into ``base`` for telemetry fields.
+    """Merge ``overlay`` into ``base`` for telemetry fields.
 
     Used by finalize-result: ``base`` is ``empty_telemetry()``, ``overlay`` is
     the contents of ``<cr_dir>/telemetry.json`` written by the orchestrator
-    (or any upstream stage). For known nested objects we recurse one level
-    so callers can populate ``tokens.input_uncached`` without overriding the
-    whole ``tokens`` block; everything else is a straight overwrite.
+    (or any upstream stage). For keys in ``TELEMETRY_DEEP_MERGE_KEYS`` we
+    recurse one level so callers can populate ``tokens.input_uncached``
+    without overriding the whole ``tokens`` block. Every other key —
+    including dict-typed fields not on the whitelist — is overwritten
+    wholesale by ``overlay``.
     """
     out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in base.items()}
     for k, v in overlay.items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
+        if (
+            k in TELEMETRY_DEEP_MERGE_KEYS
+            and isinstance(v, dict)
+            and isinstance(out.get(k), dict)
+        ):
             merged = dict(out[k])
             for sk, sv in v.items():
                 merged[sk] = sv

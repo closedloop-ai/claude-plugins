@@ -637,6 +637,54 @@ def test_merge_telemetry_deep_merges_known_objects():
     assert merged["cache_hit_rate"] == {"bha": 0.62}
 
 
+def test_telemetry_deep_merge_keys_match_empty_telemetry_dict_fields():
+    """The whitelist must enumerate every dict-typed field in empty_telemetry().
+
+    Any divergence is a documentation/contract bug: either a new dict
+    field shipped without considering merge semantics, or a key was
+    added/removed from the whitelist without updating the factory.
+    """
+    from code_review_schema import TELEMETRY_DEEP_MERGE_KEYS, empty_telemetry
+    base = empty_telemetry()
+    dict_fields = {k for k, v in base.items() if isinstance(v, dict)}
+    assert dict_fields == TELEMETRY_DEEP_MERGE_KEYS, (
+        f"empty_telemetry() dict fields {sorted(dict_fields)} != "
+        f"TELEMETRY_DEEP_MERGE_KEYS {sorted(TELEMETRY_DEEP_MERGE_KEYS)} — "
+        "update one to match the other."
+    )
+
+
+def test_merge_telemetry_replaces_unknown_dict_keys_wholesale():
+    """A dict-typed key not in TELEMETRY_DEEP_MERGE_KEYS is overwritten.
+
+    This is the regression for the merge_telemetry behavior gap: previously
+    any dict-in-both-base-and-overlay key got one-level merge regardless of
+    whether the schema intended it. Now non-whitelisted dict keys take the
+    overlay's value verbatim, which is the safe default for forward-compat
+    fields (e.g. a versioned config block where partial overrides could
+    corrupt the document).
+    """
+    from code_review_schema import empty_telemetry, merge_telemetry
+    base = empty_telemetry()
+    base["future_config"] = {"version": 1, "flags": {"a": True, "b": False}}
+    overlay = {"future_config": {"version": 2}}
+    merged = merge_telemetry(base, overlay)
+    # The whole future_config block is replaced; "flags" does NOT survive.
+    assert merged["future_config"] == {"version": 2}
+    assert "flags" not in merged["future_config"]
+
+
+def test_merge_telemetry_overlay_dict_replaces_scalar_base():
+    """A scalar base + dict overlay still results in straight overwrite."""
+    from code_review_schema import empty_telemetry, merge_telemetry
+    base = empty_telemetry()
+    # duration_ms is a number in the canonical schema; an overlay that
+    # supplies a dict here is malformed, but merge must not crash.
+    overlay = {"duration_ms": {"unexpected": "shape"}}
+    merged = merge_telemetry(base, overlay)
+    assert merged["duration_ms"] == {"unexpected": "shape"}
+
+
 def test_telemetry_json_schema_declares_required_keys():
     """The exported JSON Schema lists telemetry as a typed object with required keys."""
     from code_review_schema import result_envelope_json_schema
