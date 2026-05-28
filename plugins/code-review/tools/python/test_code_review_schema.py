@@ -496,6 +496,41 @@ def test_signal_extraction_failed_marker_exists():
 
 
 # ---------------------------------------------------------------------------
+# Cache namespaces + TTLs (PLN-719 Phase 7 / Section 9)
+# ---------------------------------------------------------------------------
+
+
+def test_cache_ttl_days_matches_pln719_section_9():
+    """The canonical TTLs from PLN-719 Section 9.
+
+    BHA: 30d, signals: 7d, coverage_critic: 7d, verifications: 30d,
+    overrides: 90d. Any drift between this test and the plan is a
+    documentation/schema bug.
+    """
+    from code_review_schema import CACHE_TTL_DAYS
+    assert CACHE_TTL_DAYS == {
+        "bha": 30,
+        "signals": 7,
+        "coverage_critic": 7,
+        "verifications": 30,
+        "overrides": 90,
+    }
+
+
+def test_cache_ttl_days_covers_every_namespace():
+    """Every namespace in CACHE_NAMESPACES has a declared TTL."""
+    from code_review_schema import CACHE_NAMESPACES, CACHE_TTL_DAYS
+    assert set(CACHE_TTL_DAYS) == set(CACHE_NAMESPACES)
+
+
+def test_cache_ttl_days_helper():
+    from code_review_schema import cache_ttl_days
+    assert cache_ttl_days("bha") == 30
+    assert cache_ttl_days("overrides") == 90
+    assert cache_ttl_days("future-namespace") is None
+
+
+# ---------------------------------------------------------------------------
 # Telemetry (PLN-719 Phase 9)
 # ---------------------------------------------------------------------------
 
@@ -683,6 +718,55 @@ def test_merge_telemetry_overlay_dict_replaces_scalar_base():
     overlay = {"duration_ms": {"unexpected": "shape"}}
     merged = merge_telemetry(base, overlay)
     assert merged["duration_ms"] == {"unexpected": "shape"}
+
+
+def test_merge_telemetry_preserves_whitelisted_dict_on_null_overlay():
+    """Overlay supplying null for a whitelisted dict field is ignored.
+
+    Regression for a finalize-result crash: when telemetry.json contains
+    ``{"cache_hit_rate": null}`` (a producer signaling "no data"), the
+    previous merge logic overwrote the base dict with None. The next
+    writer in finalize-result then did
+    ``block["cache_hit_rate"][NAMESPACE] = rate`` and crashed with
+    ``TypeError: 'NoneType' object does not support item assignment``.
+    Now the whitelist contract is preserved: the base dict survives.
+    """
+    from code_review_schema import empty_telemetry, merge_telemetry
+    base = empty_telemetry()
+    # Seed the base with a value so we can verify it survives.
+    base["cache_hit_rate"] = {"signals": 0.5}
+    merged = merge_telemetry(base, {"cache_hit_rate": None})
+    assert merged["cache_hit_rate"] == {"signals": 0.5}
+
+
+def test_merge_telemetry_preserves_whitelisted_dict_on_scalar_overlay():
+    """Same invariant for other scalar shapes (int, str, list)."""
+    from code_review_schema import empty_telemetry, merge_telemetry
+    base = empty_telemetry()
+    base["tokens"] = {
+        "input_uncached": 100, "input_cached": 0, "output": 0, "by_model": {},
+    }
+    for malformed in (0, "garbage", [1, 2, 3], False):
+        merged = merge_telemetry(base, {"tokens": malformed})
+        assert isinstance(merged["tokens"], dict), (
+            f"tokens type invariant broken by overlay value {malformed!r}"
+        )
+        assert merged["tokens"]["input_uncached"] == 100
+
+
+def test_merge_telemetry_non_whitelisted_key_still_replaces_on_non_dict():
+    """The whitelist guard is scoped to whitelisted keys.
+
+    Non-whitelisted keys retain wholesale-replace semantics for any value,
+    including non-dict overlays — they don't have a type invariant to
+    preserve.
+    """
+    from code_review_schema import empty_telemetry, merge_telemetry
+    base = empty_telemetry()
+    base["future_config"] = {"version": 1}
+    # Non-whitelisted key + non-dict overlay → replace.
+    merged = merge_telemetry(base, {"future_config": None})
+    assert merged["future_config"] is None
 
 
 def test_telemetry_json_schema_declares_required_keys():

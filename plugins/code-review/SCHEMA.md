@@ -372,6 +372,23 @@ A MAJOR `schema_version` bump invalidates every cache namespace at once.
 | Verification        | `<CACHE_DIR>/verifications/<finding_id>.json`     | finding_id + file_content_hash + verifier_model + verifier_prompt_hash | 30 d |
 | Overrides           | `<CACHE_DIR>/overrides/<finding_id>.json`         | finding_id (file content change invalidates)                  | 90 d   |
 
+TTLs are declared in `code_review_schema.CACHE_TTL_DAYS` and enforced
+**sweep-on-read** by `_is_entry_fresh(entry, namespace)` in the
+helpers. Stale entries count as a cache miss; the next review
+regenerates fresh findings.
+
+Phase 7 ships the BHA producer end-to-end (canonical `prompt_hash`,
+TTL enforcement on read, `telemetry.cache_hit_rate["bha"]` populated
+from `cache_result.json` by `finalize-result`). The other four
+namespaces have their key inputs, paths, and TTLs declared but ship
+real producers with plans 03 (verifications, overrides) and 05
+(signals, coverage_critic).
+
+The canonical on-disk file layout `<CACHE_DIR>/bha/<file_hash>.json`
+(per-file caches) is a future migration; the current implementation
+uses a single `<CACHE_DIR>/manifest.json` with per-file entries, which
+shares the same key inputs and invalidation contract.
+
 ---
 
 ## 10. Schema migration policy (PLN-719 Section 12)

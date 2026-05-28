@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -81,6 +82,18 @@ from code_review_helpers import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+# A `cached_at` timestamp always within the BHA cache TTL (30 days).
+# PLN-719 Phase 7 added sweep-on-read TTL eviction; fixtures that want a hit
+# must use a fresh timestamp. Tests that want eviction behavior should use
+# an explicitly-stale timestamp via ``_stale_cached_at()``.
+_FRESH_CACHED_AT = datetime.now(timezone.utc).isoformat()
+
+
+def _stale_cached_at(days_ago: int = 365) -> str:
+    """Return an ISO timestamp ``days_ago`` days in the past (default: 1 year)."""
+    return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
 
 
 def _make_diff_data(
@@ -1740,7 +1753,7 @@ class TestCmdCacheCheck:
                 "prompt_hash": "abc123",
                 "patch_hash": patch_hash,
                 "findings": [{"file": "a.ts", "line": 5, "severity": "HIGH", "issue": "bug"}],
-                "cached_at": "2026-01-01T00:00:00Z",
+                "cached_at": _FRESH_CACHED_AT,
             }
         }
         _write_manifest(cache_dir, manifest)
@@ -1772,7 +1785,7 @@ class TestCmdCacheCheck:
                 "prompt_hash": "abc123",
                 "patch_hash": patch_hash_a,
                 "findings": [],
-                "cached_at": "2026-01-01T00:00:00Z",
+                "cached_at": _FRESH_CACHED_AT,
             }
         }
         _write_manifest(cache_dir, manifest)
@@ -1797,7 +1810,7 @@ class TestCmdCacheCheck:
                 "prompt_hash": "abc123",
                 "patch_hash": "stale_hash",
                 "findings": [],
-                "cached_at": "2026-01-01T00:00:00Z",
+                "cached_at": _FRESH_CACHED_AT,
             }
         }
         _write_manifest(cache_dir, manifest)
@@ -1821,7 +1834,7 @@ class TestCmdCacheCheck:
                 "prompt_hash": "old_prompt_hash",
                 "patch_hash": patch_hash,
                 "findings": [],
-                "cached_at": "2026-01-01T00:00:00Z",
+                "cached_at": _FRESH_CACHED_AT,
             }
         }
         _write_manifest(cache_dir, manifest)
@@ -1844,7 +1857,7 @@ class TestCmdCacheCheck:
                 "prompt_hash": "abc123",
                 "patch_hash": patch_hash,
                 "findings": [],
-                "cached_at": "2026-01-01T00:00:00Z",
+                "cached_at": _FRESH_CACHED_AT,
             }
         }
         _write_manifest(cache_dir, manifest)
@@ -1867,7 +1880,7 @@ class TestCmdCacheCheck:
                 "prompt_hash": "abc123",
                 "patch_hash": patch_hash,
                 "findings": [],
-                "cached_at": "2026-01-01T00:00:00Z",
+                "cached_at": _FRESH_CACHED_AT,
             }
         }
         _write_manifest(cache_dir, manifest)
@@ -1906,7 +1919,7 @@ class TestCmdCacheCheck:
                 "prompt_hash": "abc123",
                 "patch_hash": patch_hash_a,
                 "findings": [],
-                "cached_at": "2026-01-01T00:00:00Z",
+                "cached_at": _FRESH_CACHED_AT,
             }
         }
         _write_manifest(cache_dir, manifest)
@@ -1926,6 +1939,111 @@ class TestCmdCacheCheck:
         assert result["stats"]["total_files"] == 0
         assert result["stats"]["cached"] == 0
         assert result["stats"]["uncached"] == 0
+
+
+class TestCacheTtlEviction:
+    """PLN-719 Phase 7: entries older than the BHA TTL (30d) miss on read.
+
+    Schema-version and prompt-hash mismatch short-circuit before the TTL
+    check, but otherwise-valid stale entries must be treated as a miss so
+    the next review regenerates fresh findings.
+    """
+
+    def test_stale_entry_within_ttl_hits(self, tmp_path: Path) -> None:
+        from code_review_helpers import _is_entry_fresh, CACHE_NAMESPACE_BHA
+
+        # 29 days old: under the 30-day BHA TTL.
+        entry = {"cached_at": _stale_cached_at(days_ago=29)}
+        assert _is_entry_fresh(entry, CACHE_NAMESPACE_BHA) is True
+
+    def test_stale_entry_past_ttl_misses(self, tmp_path: Path) -> None:
+        from code_review_helpers import _is_entry_fresh, CACHE_NAMESPACE_BHA
+
+        # 31 days old: past the 30-day BHA TTL.
+        entry = {"cached_at": _stale_cached_at(days_ago=31)}
+        assert _is_entry_fresh(entry, CACHE_NAMESPACE_BHA) is False
+
+    def test_missing_cached_at_treated_as_fresh(self, tmp_path: Path) -> None:
+        """Missing or malformed timestamps don't crash; caller handles other fields."""
+        from code_review_helpers import _is_entry_fresh, CACHE_NAMESPACE_BHA
+
+        assert _is_entry_fresh({}, CACHE_NAMESPACE_BHA) is True
+        assert _is_entry_fresh({"cached_at": "not-a-date"}, CACHE_NAMESPACE_BHA) is True
+        assert _is_entry_fresh({"cached_at": 42}, CACHE_NAMESPACE_BHA) is True
+
+    def test_unknown_namespace_skips_ttl_check(self, tmp_path: Path) -> None:
+        from code_review_helpers import _is_entry_fresh
+
+        entry = {"cached_at": _stale_cached_at(days_ago=365 * 10)}
+        assert _is_entry_fresh(entry, "future-namespace") is True
+
+    def test_v1_cache_check_evicts_stale_entry(self, tmp_path: Path) -> None:
+        """End-to-end: a stale-but-otherwise-matching entry produces a miss."""
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        out = tmp_path / "out"
+        out.mkdir()
+        diff_data = _make_cache_diff_data(files=["a.ts"])
+        patch_hash = _compute_patch_hash("a.ts", diff_data["patch_lines"]["a.ts"])
+
+        manifest = {
+            "a.ts": {
+                "schema_version": 1,
+                "model_id": "opus",
+                "prompt_hash": "abc123",
+                "patch_hash": patch_hash,
+                "findings": [{"file": "a.ts", "line": 1, "issue": "stale"}],
+                "cached_at": _stale_cached_at(days_ago=45),
+            }
+        }
+        _write_manifest(cache_dir, manifest)
+
+        result = TestCmdCacheCheck()._run_cache_check(cache_dir, diff_data, out)
+        assert result["stats"]["cached"] == 0
+        assert result["stats"]["uncached"] == 1
+
+    def test_v2_cache_check_evicts_stale_entry(self, tmp_path: Path) -> None:
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        out = tmp_path / "out"
+        out.mkdir()
+        diff_data = _make_cache_diff_data(files=["a.ts"])
+        patch_hash = _compute_patch_hash("a.ts", diff_data["patch_lines"]["a.ts"])
+        composite = _compute_composite_key("opus", "abc123", patch_hash, "ctx")
+
+        stale = _stale_cached_at(days_ago=45)
+        v2_manifest = {
+            "a.ts": {
+                composite: {
+                    "schema_version": CACHE_SCHEMA_VERSION_V2,
+                    "model_id": "opus",
+                    "prompt_hash": "abc123",
+                    "patch_hash": patch_hash,
+                    "context_key": "ctx",
+                    "findings": [],
+                    "cached_at": stale,
+                    "last_hit_at": stale,
+                    "hit_count": 0,
+                }
+            }
+        }
+        _write_manifest(cache_dir, v2_manifest)
+
+        ns_kwargs = dict(
+            cache_dir=str(cache_dir),
+            diff_data=str(out / "diff_data.json"),
+            prompt_hash="abc123",
+            model_id="opus",
+            schema_version=CACHE_SCHEMA_VERSION_V2,
+            output_dir=str(out),
+            global_cache=1,
+            context_key="ctx",
+        )
+        (out / "diff_data.json").write_text(json.dumps(diff_data))
+        import argparse
+        cmd_cache_check(argparse.Namespace(**ns_kwargs))
+        result = json.loads((out / "cache_result.json").read_text())
+        assert result["stats"]["cached"] == 0
 
 
 class TestCmdCacheUpdate:
@@ -2351,7 +2469,7 @@ class TestMigrateV1EntryToV2:
             "prompt_hash": "ph",
             "patch_hash": "pah",
             "findings": [{"file": "a.ts", "line": 1}],
-            "cached_at": "2026-01-01T00:00:00+00:00",
+            "cached_at": _FRESH_CACHED_AT,
         }
         result = _migrate_v1_entry_to_v2("a.ts", v1)
         assert isinstance(result, dict)
@@ -2365,21 +2483,21 @@ class TestMigrateV1EntryToV2:
 
     def test_hit_count_init_zero(self) -> None:
         v1 = {"schema_version": 1, "model_id": "opus", "prompt_hash": "ph",
-               "patch_hash": "pah", "findings": [], "cached_at": "2026-01-01T00:00:00+00:00"}
+               "patch_hash": "pah", "findings": [], "cached_at": _FRESH_CACHED_AT}
         result = _migrate_v1_entry_to_v2("a.ts", v1)
         entry = next(iter(result.values()))
         assert entry["hit_count"] == 0
 
     def test_context_key_defaults_to_empty(self) -> None:
         v1 = {"schema_version": 1, "model_id": "opus", "prompt_hash": "ph",
-               "patch_hash": "pah", "findings": [], "cached_at": "2026-01-01T00:00:00+00:00"}
+               "patch_hash": "pah", "findings": [], "cached_at": _FRESH_CACHED_AT}
         result = _migrate_v1_entry_to_v2("a.ts", v1)
         entry = next(iter(result.values()))
         assert entry["context_key"] == ""
 
     def test_composite_key_is_valid(self) -> None:
         v1 = {"schema_version": 1, "model_id": "opus", "prompt_hash": "ph",
-               "patch_hash": "pah", "findings": [], "cached_at": "2026-01-01T00:00:00+00:00"}
+               "patch_hash": "pah", "findings": [], "cached_at": _FRESH_CACHED_AT}
         result = _migrate_v1_entry_to_v2("a.ts", v1)
         key = next(iter(result.keys()))
         assert len(key) == 64
@@ -2416,7 +2534,7 @@ class TestLoadManifestV2:
                 "prompt_hash": "ph",
                 "patch_hash": "pah",
                 "findings": [],
-                "cached_at": "2026-01-01T00:00:00+00:00",
+                "cached_at": _FRESH_CACHED_AT,
             }
         }
         (tmp_path / CACHE_MANIFEST_FILENAME).write_text(json.dumps(v1))
@@ -2440,7 +2558,7 @@ class TestLoadManifestV2:
                     "patch_hash": "pah",
                     "context_key": "ctx",
                     "findings": [],
-                    "cached_at": "2026-01-01T00:00:00+00:00",
+                    "cached_at": _FRESH_CACHED_AT,
                     "last_hit_at": "2026-01-01T00:00:00+00:00",
                     "hit_count": 0,
                 }
@@ -2461,7 +2579,7 @@ class TestLoadManifestV2:
                 "prompt_hash": "ph",
                 "patch_hash": "pah",
                 "findings": [],
-                "cached_at": "2026-01-01T00:00:00+00:00",
+                "cached_at": _FRESH_CACHED_AT,
             },
             "b.ts": {
                 composite: {
@@ -2471,7 +2589,7 @@ class TestLoadManifestV2:
                     "patch_hash": "pah",
                     "context_key": "ctx",
                     "findings": [],
-                    "cached_at": "2026-01-01T00:00:00+00:00",
+                    "cached_at": _FRESH_CACHED_AT,
                     "last_hit_at": "2026-01-01T00:00:00+00:00",
                     "hit_count": 0,
                 }
@@ -2702,7 +2820,7 @@ class TestCmdCacheCheckV2:
                     "patch_hash": patch_hash,
                     "context_key": "ctx123",
                     "findings": [{"file": "a.ts", "line": 5, "severity": "HIGH"}],
-                    "cached_at": "2026-01-01T00:00:00+00:00",
+                    "cached_at": _FRESH_CACHED_AT,
                     "last_hit_at": "2026-01-01T00:00:00+00:00",
                     "hit_count": 1,
                 }
@@ -2733,7 +2851,7 @@ class TestCmdCacheCheckV2:
                     "patch_hash": patch_hash,
                     "context_key": "old_ctx",
                     "findings": [],
-                    "cached_at": "2026-01-01T00:00:00+00:00",
+                    "cached_at": _FRESH_CACHED_AT,
                     "last_hit_at": "2026-01-01T00:00:00+00:00",
                     "hit_count": 0,
                 }
@@ -2760,7 +2878,7 @@ class TestCmdCacheCheckV2:
                 "prompt_hash": "abc123",
                 "patch_hash": _compute_patch_hash("a.ts", diff_data["patch_lines"]["a.ts"]),
                 "findings": [],
-                "cached_at": "2026-01-01T00:00:00+00:00",
+                "cached_at": _FRESH_CACHED_AT,
             }
         }
         _write_manifest(cache_dir, v1_manifest)
@@ -2785,7 +2903,7 @@ class TestCmdCacheCheckV2:
                 "prompt_hash": "abc123",
                 "patch_hash": patch_hash,
                 "findings": [{"file": "a.ts", "line": 1}],
-                "cached_at": "2026-01-01T00:00:00+00:00",
+                "cached_at": _FRESH_CACHED_AT,
             }
         }
         _write_manifest(cache_dir, v1_manifest)
@@ -2842,7 +2960,9 @@ class TestCmdCacheCheckV2:
         patch_hash = _compute_patch_hash("a.ts", diff_data["patch_lines"]["a.ts"])
         composite = _compute_composite_key("opus", "abc123", patch_hash, "ctx123")
 
-        old_hit = "2026-01-01T00:00:00+00:00"
+        # Pre-existing entry seeded fresh enough to remain within TTL but
+        # still serve as a baseline for verifying last_hit_at updates.
+        prior_hit = _FRESH_CACHED_AT
         v2_manifest = {
             "a.ts": {
                 composite: {
@@ -2852,8 +2972,8 @@ class TestCmdCacheCheckV2:
                     "patch_hash": patch_hash,
                     "context_key": "ctx123",
                     "findings": [],
-                    "cached_at": old_hit,
-                    "last_hit_at": old_hit,
+                    "cached_at": prior_hit,
+                    "last_hit_at": prior_hit,
                     "hit_count": 1,
                 }
             }
@@ -2884,7 +3004,7 @@ class TestCmdCacheCheckV2:
                     "patch_hash": patch_hash_a,
                     "context_key": "ctx123",
                     "findings": [],
-                    "cached_at": "2026-01-01T00:00:00+00:00",
+                    "cached_at": _FRESH_CACHED_AT,
                     "last_hit_at": "2026-01-01T00:00:00+00:00",
                     "hit_count": 0,
                 }
@@ -3237,7 +3357,7 @@ class TestGitHubNonRegression:
                     "model_id": "opus", "prompt_hash": "ph",
                     "patch_hash": patch_hash, "context_key": "ctx",
                     "findings": [{"file": "a.ts", "line": 1, "severity": "HIGH"}],
-                    "cached_at": "2026-01-01T00:00:00+00:00",
+                    "cached_at": _FRESH_CACHED_AT,
                     "last_hit_at": "2026-01-01T00:00:00+00:00", "hit_count": 0,
                 }
             }
@@ -3296,7 +3416,7 @@ class TestGitHubNonRegression:
                 "schema_version": 1, "model_id": "opus",
                 "prompt_hash": "ph", "patch_hash": patch_hash,
                 "findings": [{"file": "a.ts", "line": 1}],
-                "cached_at": "2026-01-01T00:00:00+00:00",
+                "cached_at": _FRESH_CACHED_AT,
             }
         }
         _write_manifest(cache_dir, v1)
@@ -5341,6 +5461,72 @@ class TestFinalizeResult:
         t = json.loads((tmp_path / "review_result.json").read_text())["telemetry"]
         assert t["duration_ms"] == 0
         assert t["schema_versions_seen"]["result"] == SCHEMA_VERSION
+
+    def test_cache_hit_rate_bha_populated_from_cache_result(self, tmp_path: Path) -> None:
+        """PLN-719 Phase 7: BHA cache_hit_rate is sourced from cache_result.json.
+
+        finalize-result reads ``stats.hit_rate_pct`` (0-100) and normalizes
+        to the canonical [0, 1] domain enforced by validate_telemetry.
+        """
+        (tmp_path / "cache_result.json").write_text(json.dumps({
+            "cached_files": ["a.ts", "b.ts"],
+            "uncached_files": ["c.ts"],
+            "stats": {"total_files": 3, "cached": 2, "uncached": 1, "hit_rate_pct": 66.7},
+        }))
+        self._run_finalize(tmp_path, [])
+        t = json.loads((tmp_path / "review_result.json").read_text())["telemetry"]
+        assert t["cache_hit_rate"]["bha"] == 0.667
+
+    def test_cache_hit_rate_bha_absent_when_no_cache_result(self, tmp_path: Path) -> None:
+        """Without cache_result.json, cache_hit_rate stays empty (legacy / hygiene-only runs)."""
+        self._run_finalize(tmp_path, [])
+        t = json.loads((tmp_path / "review_result.json").read_text())["telemetry"]
+        assert t["cache_hit_rate"] == {}
+
+    def test_cache_hit_rate_bha_ignored_when_out_of_range(self, tmp_path: Path) -> None:
+        """Defensive: a malformed hit_rate_pct (>100) is dropped, not clamped."""
+        (tmp_path / "cache_result.json").write_text(json.dumps({
+            "stats": {"hit_rate_pct": 150.0},
+        }))
+        self._run_finalize(tmp_path, [])
+        t = json.loads((tmp_path / "review_result.json").read_text())["telemetry"]
+        assert "bha" not in t["cache_hit_rate"]
+
+    def test_null_cache_hit_rate_overlay_does_not_crash_finalize(self, tmp_path: Path) -> None:
+        """Regression for a TypeError when telemetry.json declares cache_hit_rate=null.
+
+        Reported by reviewer (PR #104): a producer writing
+        ``{"cache_hit_rate": null}`` to telemetry.json combined with a
+        valid cache_result.json would crash finalize-result with
+        ``'NoneType' object does not support item assignment``. The fix
+        is at the merge layer (whitelist keys preserve their type
+        invariant), but this test pins the end-to-end behavior.
+        """
+        (tmp_path / "telemetry.json").write_text(json.dumps({
+            "cache_hit_rate": None,
+        }))
+        (tmp_path / "cache_result.json").write_text(json.dumps({
+            "stats": {"hit_rate_pct": 50.0},
+        }))
+        # Must not raise.
+        self._run_finalize(tmp_path, [])
+        t = json.loads((tmp_path / "review_result.json").read_text())["telemetry"]
+        # cache_hit_rate is still a dict (the malformed null was discarded)
+        # and the BHA producer's value lands cleanly.
+        assert isinstance(t["cache_hit_rate"], dict)
+        assert t["cache_hit_rate"]["bha"] == 0.5
+
+    def test_scalar_tokens_overlay_does_not_corrupt_tokens_block(self, tmp_path: Path) -> None:
+        """Same invariant: a non-dict overlay for tokens leaves the base intact."""
+        (tmp_path / "telemetry.json").write_text(json.dumps({
+            "tokens": "garbage",
+        }))
+        self._run_finalize(tmp_path, [])
+        t = json.loads((tmp_path / "review_result.json").read_text())["telemetry"]
+        assert isinstance(t["tokens"], dict)
+        # All canonical token sub-keys still present from the zero-valued base.
+        for key in ("input_uncached", "input_cached", "output", "by_model"):
+            assert key in t["tokens"]
 
 
 class TestVerdictReadsEnvelope:
