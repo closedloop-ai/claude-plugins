@@ -180,6 +180,203 @@ def is_deterministic_stage(subcommand: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Cache namespaces (PLN-719 Section 9)
+# ---------------------------------------------------------------------------
+# Five canonical namespaces. Each namespace has an independent prompt_hash
+# domain and an independent hit-rate metric in telemetry.cache_hit_rate.
+CACHE_NAMESPACE_BHA = "bha"
+CACHE_NAMESPACE_SIGNALS = "signals"
+CACHE_NAMESPACE_COVERAGE_CRITIC = "coverage_critic"
+CACHE_NAMESPACE_VERIFICATIONS = "verifications"
+CACHE_NAMESPACE_OVERRIDES = "overrides"
+
+CACHE_NAMESPACES: frozenset[str] = frozenset({
+    CACHE_NAMESPACE_BHA,
+    CACHE_NAMESPACE_SIGNALS,
+    CACHE_NAMESPACE_COVERAGE_CRITIC,
+    CACHE_NAMESPACE_VERIFICATIONS,
+    CACHE_NAMESPACE_OVERRIDES,
+})
+
+
+# ---------------------------------------------------------------------------
+# Telemetry (PLN-719 Phase 9 / Section 11)
+# ---------------------------------------------------------------------------
+# The telemetry block is the single per-run metrics surface, embedded in
+# `review_result.json.telemetry`. The schema is forward-compatible: producers
+# may add new fields, but the canonical keys below must be present with
+# correct types. The orchestrator (or any helper that wraps a stage) is the
+# expected producer; finalize-result aggregates everything into the envelope.
+
+
+def empty_telemetry() -> dict[str, Any]:
+    """Return a zero-valued telemetry block conforming to the canonical schema.
+
+    Used as the base by finalize-result; any ``<cr_dir>/telemetry.json``
+    produced by upstream stages is deep-merged over these defaults.
+    """
+    return {
+        "duration_ms": 0,
+        "duration_by_stage_ms": {},
+        "estimated_cost_usd": 0.0,
+        "tokens": {
+            "input_uncached": 0,
+            "input_cached": 0,
+            "output": 0,
+            "by_model": {},
+        },
+        "cache_hit_rate": {},
+        "agent_failures": 0,
+        "schema_versions_seen": {
+            "finding": SCHEMA_VERSION,
+            "result": SCHEMA_VERSION,
+        },
+        "findings_counts": {},
+        "verification_stats": {},
+        "coverage_stats": {},
+    }
+
+
+def _is_nonneg_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
+
+
+def _is_nonneg_int(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def _validate_nonneg_number_map(
+    field: str, value: Any, *, value_kind: str = "number",
+) -> list[str]:
+    """Validate ``{str: non-negative number}`` and return prefixed errors."""
+    if not isinstance(value, dict):
+        return [f"telemetry.{field} must be an object"]
+    out: list[str] = []
+    checker = _is_nonneg_number if value_kind == "number" else _is_nonneg_int
+    for k, v in value.items():
+        if not isinstance(k, str):
+            out.append(f"telemetry.{field} keys must be strings")
+            break
+        if not checker(v):
+            out.append(f"telemetry.{field}[{k!r}] must be a non-negative {value_kind}")
+    return out
+
+
+def _validate_tokens_by_model(by_model: Any) -> list[str]:
+    if not isinstance(by_model, dict):
+        return ["telemetry.tokens.by_model must be an object"]
+    out: list[str] = []
+    for mk, mv in by_model.items():
+        if not isinstance(mk, str):
+            out.append("telemetry.tokens.by_model keys must be strings")
+            break
+        if isinstance(mv, dict):
+            out.extend(
+                f"telemetry.tokens.by_model[{mk!r}][{sk!r}] must be "
+                "a non-negative integer keyed by string"
+                for sk, sv in mv.items()
+                if not isinstance(sk, str) or not _is_nonneg_int(sv)
+            )
+        elif not _is_nonneg_int(mv):
+            out.append(
+                f"telemetry.tokens.by_model[{mk!r}] must be a non-negative "
+                "integer or per-key object",
+            )
+    return out
+
+
+def _validate_tokens(tokens: Any) -> list[str]:
+    if not isinstance(tokens, dict):
+        return ["telemetry.tokens must be an object"]
+    out = [
+        f"telemetry.tokens.{key} must be a non-negative integer"
+        for key in ("input_uncached", "input_cached", "output")
+        if not _is_nonneg_int(tokens.get(key))
+    ]
+    out.extend(_validate_tokens_by_model(tokens.get("by_model")))
+    return out
+
+
+def _validate_cache_hit_rate(value: Any) -> list[str]:
+    if not isinstance(value, dict):
+        return ["telemetry.cache_hit_rate must be an object"]
+    out: list[str] = []
+    for ns, rate in value.items():
+        if not isinstance(ns, str):
+            out.append("telemetry.cache_hit_rate keys must be strings")
+            break
+        if not isinstance(rate, (int, float)) or isinstance(rate, bool):
+            out.append(f"telemetry.cache_hit_rate[{ns!r}] must be a number in [0, 1]")
+        elif rate < 0 or rate > 1:
+            out.append(f"telemetry.cache_hit_rate[{ns!r}] must be in [0, 1]")
+    return out
+
+
+def _validate_schema_versions_seen(value: Any) -> list[str]:
+    if not isinstance(value, dict):
+        return ["telemetry.schema_versions_seen must be an object"]
+    return [
+        f"telemetry.schema_versions_seen[{k!r}] must be int keyed by string"
+        for k, v in value.items()
+        if not isinstance(k, str) or not isinstance(v, int) or isinstance(v, bool)
+    ]
+
+
+def validate_telemetry(telemetry: Any) -> list[str]:
+    """Return list of validation errors for a telemetry block.
+
+    The required keys mirror ``empty_telemetry()`` so any envelope produced
+    by ``finalize-result`` is valid by construction. Unknown keys are
+    permitted (forward-compat); known keys must have the correct type and
+    non-negative numeric values where applicable.
+    """
+    if not isinstance(telemetry, dict):
+        return ["telemetry must be an object"]
+
+    errors: list[str] = []
+
+    if not _is_nonneg_number(telemetry.get("duration_ms")):
+        errors.append("telemetry.duration_ms must be a non-negative number")
+    errors.extend(_validate_nonneg_number_map(
+        "duration_by_stage_ms", telemetry.get("duration_by_stage_ms"),
+    ))
+    if not _is_nonneg_number(telemetry.get("estimated_cost_usd")):
+        errors.append("telemetry.estimated_cost_usd must be a non-negative number")
+    errors.extend(_validate_tokens(telemetry.get("tokens")))
+    errors.extend(_validate_cache_hit_rate(telemetry.get("cache_hit_rate")))
+    if not _is_nonneg_int(telemetry.get("agent_failures")):
+        errors.append("telemetry.agent_failures must be a non-negative integer")
+    errors.extend(_validate_schema_versions_seen(telemetry.get("schema_versions_seen")))
+
+    for opt in ("findings_counts", "verification_stats", "coverage_stats"):
+        if opt in telemetry and not isinstance(telemetry[opt], dict):
+            errors.append(f"telemetry.{opt} must be an object when present")
+
+    return errors
+
+
+def merge_telemetry(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Deep-merge ``overlay`` into ``base`` for telemetry fields.
+
+    Used by finalize-result: ``base`` is ``empty_telemetry()``, ``overlay`` is
+    the contents of ``<cr_dir>/telemetry.json`` written by the orchestrator
+    (or any upstream stage). For known nested objects we recurse one level
+    so callers can populate ``tokens.input_uncached`` without overriding the
+    whole ``tokens`` block; everything else is a straight overwrite.
+    """
+    out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in base.items()}
+    for k, v in overlay.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            merged = dict(out[k])
+            for sk, sv in v.items():
+                merged[sk] = sv
+            out[k] = merged
+        else:
+            out[k] = v
+    return out
+
+
+# ---------------------------------------------------------------------------
 # system_marker canonical enum (section 3 of the plan)
 # ---------------------------------------------------------------------------
 
@@ -500,73 +697,81 @@ def validate_finding(finding: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _validate_envelope_scalars(envelope: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    if not isinstance(envelope.get("schema_version"), int):
+        out.append("envelope schema_version must be int")
+    if not envelope.get("review_id"):
+        out.append("missing review_id")
+    if not envelope.get("diff_tip"):
+        out.append("missing diff_tip")
+    mode = envelope.get("mode")
+    if mode not in ("local", "github"):
+        out.append(f"mode {mode!r} must be 'local' or 'github'")
+    intent = envelope.get("intent")
+    if intent not in ("feature", "fix", "refactor", "mixed"):
+        out.append(f"intent {intent!r} must be one of feature|fix|refactor|mixed")
+    verdict = envelope.get("verdict")
+    if verdict not in VERDICTS:
+        out.append(f"verdict {verdict!r} not in {sorted(VERDICTS)}")
+    return out
+
+
+def _validate_envelope_buckets(envelope: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    for bucket in ("verified", "justified", "rejected"):
+        if bucket not in envelope:
+            out.append(f"missing findings bucket {bucket!r}")
+        elif not isinstance(envelope[bucket], list):
+            out.append(f"{bucket} must be a list")
+    pv = envelope.get("pending_verification")
+    if "pending_verification" in envelope and not isinstance(pv, list):
+        out.append("pending_verification must be a list when present")
+    return out
+
+
+def _validate_coverage_plan(cp: Any) -> list[str]:
+    if not isinstance(cp, dict):
+        return ["coverage_plan must be an object"]
+    out: list[str] = []
+    for key in ("required", "best_effort", "deferred_for_budget"):
+        if key not in cp:
+            out.append(f"coverage_plan missing {key!r}")
+        elif not isinstance(cp[key], list):
+            out.append(f"coverage_plan.{key} must be a list")
+    if "budget" not in cp or not isinstance(cp["budget"], dict):
+        out.append("coverage_plan.budget must be an object")
+    return out
+
+
+def _validate_envelope_findings(envelope: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    for bucket in ("verified", "justified", "rejected", "pending_verification"):
+        for i, finding in enumerate(envelope.get(bucket, []) or []):
+            out.extend(f"{bucket}[{i}]: {err}" for err in validate_finding(finding))
+    for i, finding in enumerate(envelope.get("coverage_gaps", []) or []):
+        out.extend(f"coverage_gaps[{i}]: {err}" for err in validate_finding(finding))
+    return out
+
+
 def validate_result_envelope(envelope: dict[str, Any]) -> list[str]:
     """Return list of validation errors for a review_result envelope dict."""
     errors: list[str] = []
-
-    def _err(msg: str) -> None:
-        errors.append(msg)
-
-    sv = envelope.get("schema_version")
-    if not isinstance(sv, int):
-        _err("envelope schema_version must be int")
-
-    if not envelope.get("review_id"):
-        _err("missing review_id")
-    if not envelope.get("diff_tip"):
-        _err("missing diff_tip")
-
-    mode = envelope.get("mode")
-    if mode not in ("local", "github"):
-        _err(f"mode {mode!r} must be 'local' or 'github'")
-
-    intent = envelope.get("intent")
-    if intent not in ("feature", "fix", "refactor", "mixed"):
-        _err(f"intent {intent!r} must be one of feature|fix|refactor|mixed")
-
-    verdict = envelope.get("verdict")
-    if verdict not in VERDICTS:
-        _err(f"verdict {verdict!r} not in {sorted(VERDICTS)}")
-
-    # Findings buckets must be lists (presence of pending_verification optional)
-    for bucket in ("verified", "justified", "rejected"):
-        if bucket not in envelope:
-            _err(f"missing findings bucket {bucket!r}")
-        elif not isinstance(envelope[bucket], list):
-            _err(f"{bucket} must be a list")
-
-    if "pending_verification" in envelope and not isinstance(
-        envelope["pending_verification"], list,
-    ):
-        _err("pending_verification must be a list when present")
-
-    # coverage_plan + coverage_gaps
-    cp = envelope.get("coverage_plan")
-    if not isinstance(cp, dict):
-        _err("coverage_plan must be an object")
-    else:
-        for key in ("required", "best_effort", "deferred_for_budget"):
-            if key not in cp:
-                _err(f"coverage_plan missing {key!r}")
-            elif not isinstance(cp[key], list):
-                _err(f"coverage_plan.{key} must be a list")
-        if "budget" not in cp or not isinstance(cp["budget"], dict):
-            _err("coverage_plan.budget must be an object")
-
+    errors.extend(_validate_envelope_scalars(envelope))
+    errors.extend(_validate_envelope_buckets(envelope))
+    errors.extend(_validate_coverage_plan(envelope.get("coverage_plan")))
     if "coverage_gaps" not in envelope:
-        _err("missing coverage_gaps")
+        errors.append("missing coverage_gaps")
     elif not isinstance(envelope["coverage_gaps"], list):
-        _err("coverage_gaps must be a list")
+        errors.append("coverage_gaps must be a list")
+    errors.extend(_validate_envelope_findings(envelope))
 
-    # Validate each finding in each bucket
-    for bucket in ("verified", "justified", "rejected", "pending_verification"):
-        for i, finding in enumerate(envelope.get(bucket, []) or []):
-            for err in validate_finding(finding):
-                _err(f"{bucket}[{i}]: {err}")
-
-    for i, finding in enumerate(envelope.get("coverage_gaps", []) or []):
-        for err in validate_finding(finding):
-            _err(f"coverage_gaps[{i}]: {err}")
+    # Telemetry block (PLN-719 Phase 9). When absent, treat as the zero-valued
+    # default — finalize-result always emits one, but legacy envelopes might
+    # not. When present, the block must conform to the canonical telemetry
+    # schema (required keys + correct types).
+    if "telemetry" in envelope:
+        errors.extend(validate_telemetry(envelope["telemetry"]))
 
     return errors
 
@@ -727,6 +932,46 @@ def result_envelope_json_schema() -> dict[str, Any]:
             "verdict": {"enum": sorted(VERDICTS)},
             "verdict_reason": {"type": "string"},
             "stats": {"type": "object"},
-            "telemetry": {"type": "object"},
+            "telemetry": {
+                "type": "object",
+                "required": [
+                    "duration_ms", "duration_by_stage_ms",
+                    "estimated_cost_usd", "tokens",
+                    "cache_hit_rate", "agent_failures",
+                    "schema_versions_seen",
+                ],
+                "properties": {
+                    "duration_ms": {"type": "number", "minimum": 0},
+                    "duration_by_stage_ms": {
+                        "type": "object",
+                        "additionalProperties": {"type": "number", "minimum": 0},
+                    },
+                    "estimated_cost_usd": {"type": "number", "minimum": 0},
+                    "tokens": {
+                        "type": "object",
+                        "required": ["input_uncached", "input_cached", "output", "by_model"],
+                        "properties": {
+                            "input_uncached": {"type": "integer", "minimum": 0},
+                            "input_cached": {"type": "integer", "minimum": 0},
+                            "output": {"type": "integer", "minimum": 0},
+                            "by_model": {"type": "object"},
+                        },
+                    },
+                    "cache_hit_rate": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "number", "minimum": 0, "maximum": 1,
+                        },
+                    },
+                    "agent_failures": {"type": "integer", "minimum": 0},
+                    "schema_versions_seen": {
+                        "type": "object",
+                        "additionalProperties": {"type": "integer"},
+                    },
+                    "findings_counts": {"type": "object"},
+                    "verification_stats": {"type": "object"},
+                    "coverage_stats": {"type": "object"},
+                },
+            },
         },
     }

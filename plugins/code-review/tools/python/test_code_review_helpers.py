@@ -5282,6 +5282,66 @@ class TestFinalizeResult:
         assert len(envelope["verified"]) == 1
         assert envelope["verified"][0]["reviewer"] == "unknown"
 
+    def test_telemetry_defaults_when_no_telemetry_json(self, tmp_path: Path) -> None:
+        """Without <cr_dir>/telemetry.json, finalize emits the zero-valued block."""
+        from code_review_schema import SCHEMA_VERSION
+        self._run_finalize(tmp_path, [])
+        env = json.loads((tmp_path / "review_result.json").read_text())
+        t = env["telemetry"]
+        assert t["duration_ms"] == 0
+        assert t["duration_by_stage_ms"] == {}
+        assert t["tokens"] == {
+            "input_uncached": 0, "input_cached": 0, "output": 0, "by_model": {},
+        }
+        assert t["cache_hit_rate"] == {}
+        assert t["agent_failures"] == 0
+        # finalize-result owns schema_versions_seen; cannot be spoofed.
+        assert t["schema_versions_seen"]["result"] == SCHEMA_VERSION
+
+    def test_telemetry_json_is_deep_merged_into_envelope(self, tmp_path: Path) -> None:
+        """<cr_dir>/telemetry.json fields land in the envelope's telemetry block."""
+        (tmp_path / "telemetry.json").write_text(json.dumps({
+            "duration_ms": 12340,
+            "duration_by_stage_ms": {
+                "stage_05_parse_diff": 18,
+                "stage_06_extract_patches": 22,
+            },
+            "tokens": {"input_uncached": 4200, "output": 980},
+            "cache_hit_rate": {"bha": 0.62},
+            "agent_failures": 1,
+        }))
+        self._run_finalize(tmp_path, [])
+        t = json.loads((tmp_path / "review_result.json").read_text())["telemetry"]
+        assert t["duration_ms"] == 12340
+        assert t["duration_by_stage_ms"]["stage_05_parse_diff"] == 18
+        assert t["tokens"]["input_uncached"] == 4200
+        # Deep merge: input_cached survives from the zero-valued base.
+        assert t["tokens"]["input_cached"] == 0
+        assert t["tokens"]["output"] == 980
+        assert t["cache_hit_rate"]["bha"] == 0.62
+        assert t["agent_failures"] == 1
+
+    def test_telemetry_schema_versions_seen_cannot_be_spoofed(self, tmp_path: Path) -> None:
+        """finalize-result always overwrites schema_versions_seen with the canonical value."""
+        from code_review_schema import SCHEMA_VERSION
+        (tmp_path / "telemetry.json").write_text(json.dumps({
+            "schema_versions_seen": {"finding": 999, "result": 999},
+        }))
+        self._run_finalize(tmp_path, [])
+        t = json.loads((tmp_path / "review_result.json").read_text())["telemetry"]
+        assert t["schema_versions_seen"] == {
+            "finding": SCHEMA_VERSION, "result": SCHEMA_VERSION,
+        }
+
+    def test_malformed_telemetry_json_is_ignored(self, tmp_path: Path) -> None:
+        """A non-dict telemetry.json overlay degrades gracefully to the base block."""
+        from code_review_schema import SCHEMA_VERSION
+        (tmp_path / "telemetry.json").write_text("[]")  # array, not object
+        self._run_finalize(tmp_path, [])
+        t = json.loads((tmp_path / "review_result.json").read_text())["telemetry"]
+        assert t["duration_ms"] == 0
+        assert t["schema_versions_seen"]["result"] == SCHEMA_VERSION
+
 
 class TestVerdictReadsEnvelope:
     """cmd_verdict prefers review_result.json when provided."""

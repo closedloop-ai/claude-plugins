@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from code_review_schema import SCHEMA_VERSION
+from code_review_schema import SCHEMA_VERSION, empty_telemetry
 
 
 def minimal_diff_finding(**overrides: Any) -> dict[str, Any]:
@@ -131,7 +131,10 @@ def minimal_envelope(**overrides: Any) -> dict[str, Any]:
         "verdict": "APPROVED",
         "verdict_reason": "no findings",
         "stats": {},
-        "telemetry": {},
+        # PLN-719 Phase 9: telemetry must conform to the canonical zero-valued
+        # schema. Use the factory so tests stay valid by construction; tests
+        # that exercise the validator can override with malformed values.
+        "telemetry": empty_telemetry(),
     }
     base.update(overrides)
     return base
