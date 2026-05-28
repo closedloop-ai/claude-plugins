@@ -1,0 +1,15 @@
+{
+  "files_to_review": ["src/auth.ts"],
+  "file_statuses": {"src/auth.ts": "modified"},
+  "file_loc": {"src/auth.ts": {"added": 12, "removed": 4}},
+  "total_loc": 16,
+  "changed_ranges": {
+    "src/auth.ts": {"added": [[10, 25]], "removed": [[30, 33]]}
+  },
+  "patch_lines": {
+    "src/auth.ts": {
+      "added_lines": {"15": "  if (!token) return null;"},
+      "removed_lines": {}
+    }
+  }
+}

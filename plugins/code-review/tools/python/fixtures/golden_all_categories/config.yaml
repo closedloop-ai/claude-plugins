@@ -1,0 +1,8 @@
+# PLN-719 Section 10 fixture: every CATEGORIES value at MEDIUM/HIGH severity.
+# Exercises validate's category-enum gate (post Code Quality fix from
+# PR #103) and confirms by_category stats partition every canonical
+# category, including Code Quality.
+description: "One finding per canonical category from a single BHA agent."
+mode: local
+diff_tip: "abc1234"
+expected_verdict: NEEDS_ATTENTION

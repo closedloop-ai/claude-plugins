@@ -1,0 +1,24 @@
+{
+  "files_to_review": ["src/app.ts", "src/util.ts", "tests/app.test.ts"],
+  "file_statuses": {
+    "src/app.ts": "modified",
+    "src/util.ts": "modified",
+    "tests/app.test.ts": "modified"
+  },
+  "file_loc": {
+    "src/app.ts": {"added": 30, "removed": 5},
+    "src/util.ts": {"added": 15, "removed": 2},
+    "tests/app.test.ts": {"added": 8, "removed": 0}
+  },
+  "total_loc": 60,
+  "changed_ranges": {
+    "src/app.ts": {"added": [[1, 80]], "removed": []},
+    "src/util.ts": {"added": [[1, 50]], "removed": []},
+    "tests/app.test.ts": {"added": [[1, 30]], "removed": []}
+  },
+  "patch_lines": {
+    "src/app.ts": {"added_lines": {}, "removed_lines": {}},
+    "src/util.ts": {"added_lines": {}, "removed_lines": {}},
+    "tests/app.test.ts": {"added_lines": {}, "removed_lines": {}}
+  }
+}

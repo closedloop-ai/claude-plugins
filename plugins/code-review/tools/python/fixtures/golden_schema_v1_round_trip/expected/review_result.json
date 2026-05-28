@@ -1,0 +1,126 @@
+{
+  "base_ref": "main",
+  "coverage_gaps": [],
+  "coverage_plan": {
+    "best_effort": [],
+    "budget": {
+      "best_effort_count": 0,
+      "bha_partitions": 0,
+      "required_count": 0,
+      "total_cap": 20
+    },
+    "deferred_for_budget": [],
+    "deprecation_warnings": [],
+    "required": []
+  },
+  "diff_scope": "main..HEAD",
+  "diff_tip": "deadbeef",
+  "head_sha": "deadbeef",
+  "intent": "feature",
+  "justified": [],
+  "mode": "github",
+  "pending_verification": [],
+  "pr_number": 42,
+  "rejected": [],
+  "review_branch": "feature/x",
+  "review_id": "00000000-0000-4000-8000-000000000000",
+  "schema_version": 1,
+  "stats": {
+    "agent_failures": [],
+    "by_category": {
+      "Security": 1
+    },
+    "by_finding_scope": {
+      "diff": 1,
+      "pr_metadata": 0,
+      "system": 0
+    },
+    "by_reviewer": {
+      "bha_p0": {
+        "justified": 0,
+        "rejected": 0,
+        "tentative": 0,
+        "verified": 1
+      }
+    },
+    "by_severity": {
+      "BLOCKING": 0,
+      "HIGH": 1,
+      "MEDIUM": 0
+    },
+    "premise_cumulative_medium_count": 0,
+    "verification": {
+      "downgrade_count": 0,
+      "false_positive_rate": 0.0,
+      "justified_invalid_count": 0,
+      "justified_valid_count": 0,
+      "rejected_count": 0,
+      "skipped_count": 0,
+      "tentative_count": 0,
+      "verified_count": 1
+    }
+  },
+  "verdict": "NEEDS_ATTENTION",
+  "verdict_reason": "[P1] Missing token validation before session lookup",
+  "verified": [
+    {
+      "category": "Security",
+      "code_snippet": "if (!token) return null;",
+      "confidence": 0.92,
+      "emitted_at": "2026-01-01T00:00:00+00:00",
+      "evidence": [
+        {
+          "claim": "sessionStore.lookup is invoked on the unverified token",
+          "file": "src/auth.ts",
+          "line": 22,
+          "snippet_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+      ],
+      "evidence_checks": [],
+      "explanation": "Line 15 returns null when token is empty, but does not validate the token signature before calling sessionStore.lookup() on line 22. An attacker-controlled token will reach the lookup unchecked.",
+      "external_impact": [],
+      "file": "src/auth.ts",
+      "finding_scope": "diff",
+      "grep_query_used": null,
+      "human_review_recommended": false,
+      "id": "bha_p0_f0",
+      "issue": "[P1] Missing token validation before session lookup",
+      "justification": null,
+      "justified": false,
+      "line": 15,
+      "other_locations": [
+        {
+          "file": "src/auth.ts",
+          "issue": "sessionStore.lookup on unverified token",
+          "line": 22
+        }
+      ],
+      "priority": 1,
+      "reasoning_certificate": {
+        "fields": {
+          "files_reviewed": 1,
+          "partition_id": "p0"
+        },
+        "kind": "bha"
+      },
+      "recommendation": "Verify token signature via verifyJWT(token) before line 22.",
+      "rejection_class": null,
+      "reviewer": "bha_p0",
+      "reviewer_trigger": {
+        "evidence": "p0",
+        "type": "partition"
+      },
+      "schema_version": 1,
+      "severity": "HIGH",
+      "source": "agent",
+      "subcategory": "auth_bypass",
+      "system_marker": null,
+      "verification_duration_ms": null,
+      "verifier_confidence": null,
+      "verifier_model": null,
+      "verifier_reasoning": null,
+      "verifier_severity": null,
+      "verifier_verdict": null
+    }
+  ]
+}

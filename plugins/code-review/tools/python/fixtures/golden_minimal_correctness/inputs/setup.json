@@ -1,0 +1,8 @@
+{
+  "mode": "local",
+  "cr_dir": ".closedloop-ai/code-review/cr-fixture",
+  "start_time": "2026-01-01T00:00:00+00:00",
+  "repo_name": "claude-plugins",
+  "current_branch": "main",
+  "head_sha": "abc1234"
+}

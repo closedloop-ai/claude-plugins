@@ -7,7 +7,32 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from code_review_schema import SCHEMA_VERSION, empty_telemetry
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register code-review-specific CLI options.
+
+    PLN-719 Phase 8 — ``--update-golden`` regenerates the
+    ``expected/`` artifacts for every golden fixture instead of asserting
+    on them. The new expected files are written through the same
+    normalization pipeline the assertion path uses, so a subsequent
+    pytest run without the flag will see byte-identical expected output.
+    """
+    parser.addoption(
+        "--update-golden",
+        action="store_true",
+        default=False,
+        help="Rewrite expected/ artifacts for every golden fixture instead of asserting.",
+    )
+
+
+@pytest.fixture
+def update_golden(request: pytest.FixtureRequest) -> bool:
+    """Whether the current test session was launched with ``--update-golden``."""
+    return bool(request.config.getoption("--update-golden"))
 
 
 def minimal_diff_finding(**overrides: Any) -> dict[str, Any]:

@@ -1,0 +1,107 @@
+{
+  "base_ref": "main",
+  "coverage_gaps": [],
+  "coverage_plan": {
+    "best_effort": [],
+    "budget": {
+      "best_effort_count": 0,
+      "bha_partitions": 0,
+      "required_count": 0,
+      "total_cap": 20
+    },
+    "deferred_for_budget": [],
+    "deprecation_warnings": [],
+    "required": []
+  },
+  "diff_scope": "main..HEAD",
+  "diff_tip": "abc1234",
+  "head_sha": "abc1234",
+  "intent": "fix",
+  "justified": [],
+  "mode": "local",
+  "pending_verification": [],
+  "pr_number": null,
+  "rejected": [],
+  "review_branch": "main",
+  "review_id": "00000000-0000-4000-8000-000000000000",
+  "schema_version": 1,
+  "stats": {
+    "agent_failures": [],
+    "by_category": {
+      "Correctness": 1
+    },
+    "by_finding_scope": {
+      "diff": 1,
+      "pr_metadata": 0,
+      "system": 0
+    },
+    "by_reviewer": {
+      "bha_p0": {
+        "justified": 0,
+        "rejected": 0,
+        "tentative": 0,
+        "verified": 1
+      }
+    },
+    "by_severity": {
+      "BLOCKING": 0,
+      "HIGH": 1,
+      "MEDIUM": 0
+    },
+    "premise_cumulative_medium_count": 0,
+    "verification": {
+      "downgrade_count": 0,
+      "false_positive_rate": 0.0,
+      "justified_invalid_count": 0,
+      "justified_valid_count": 0,
+      "rejected_count": 0,
+      "skipped_count": 0,
+      "tentative_count": 0,
+      "verified_count": 1
+    }
+  },
+  "verdict": "NEEDS_ATTENTION",
+  "verdict_reason": "[P1] Null pointer access on user.id",
+  "verified": [
+    {
+      "category": "Correctness",
+      "code_snippet": "user = data.user",
+      "confidence": 0.9,
+      "emitted_at": "2026-01-01T00:00:00+00:00",
+      "evidence": [],
+      "evidence_checks": [],
+      "explanation": "data.user may be null when the upstream API fails; the next read of user.id crashes.",
+      "external_impact": [],
+      "file": "src/app.ts",
+      "finding_scope": "diff",
+      "grep_query_used": null,
+      "human_review_recommended": false,
+      "id": "bha_p0_f0",
+      "issue": "[P1] Null pointer access on user.id",
+      "justification": null,
+      "justified": false,
+      "line": 42,
+      "other_locations": [],
+      "priority": 1,
+      "reasoning_certificate": null,
+      "recommendation": "Guard with `if (!data.user) return;` before line 42.",
+      "rejection_class": null,
+      "reviewer": "bha_p0",
+      "reviewer_trigger": {
+        "evidence": "p0",
+        "type": "partition"
+      },
+      "schema_version": 1,
+      "severity": "HIGH",
+      "source": "agent",
+      "subcategory": null,
+      "system_marker": null,
+      "verification_duration_ms": null,
+      "verifier_confidence": null,
+      "verifier_model": null,
+      "verifier_reasoning": null,
+      "verifier_severity": null,
+      "verifier_verdict": null
+    }
+  ]
+}

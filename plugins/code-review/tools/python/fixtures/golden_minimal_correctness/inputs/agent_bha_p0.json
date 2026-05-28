@@ -1,0 +1,25 @@
+{
+  "findings": [
+    {
+      "schema_version": 1,
+      "id": "bha_p0_f0",
+      "reviewer": "bha_p0",
+      "reviewer_trigger": {"type": "partition", "evidence": "p0"},
+      "source": "agent",
+      "emitted_at": "2026-01-01T00:00:00+00:00",
+      "finding_scope": "diff",
+      "file": "src/app.ts",
+      "line": 42,
+      "system_marker": null,
+      "category": "Correctness",
+      "subcategory": null,
+      "severity": "HIGH",
+      "priority": 1,
+      "confidence": 0.9,
+      "issue": "[P1] Null pointer access on user.id",
+      "explanation": "data.user may be null when the upstream API fails; the next read of user.id crashes.",
+      "recommendation": "Guard with `if (!data.user) return;` before line 42.",
+      "code_snippet": "user = data.user"
+    }
+  ]
+}

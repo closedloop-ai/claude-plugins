@@ -1,0 +1,40 @@
+{
+  "findings": [
+    {
+      "schema_version": 1,
+      "id": "bha_p0_f0",
+      "reviewer": "bha_p0",
+      "reviewer_trigger": {"type": "partition", "evidence": "p0"},
+      "source": "agent",
+      "emitted_at": "2026-01-01T00:00:00+00:00",
+      "finding_scope": "diff",
+      "file": "src/auth.ts",
+      "line": 15,
+      "system_marker": null,
+      "category": "Security",
+      "subcategory": "auth_bypass",
+      "severity": "HIGH",
+      "priority": 1,
+      "confidence": 0.92,
+      "issue": "[P1] Missing token validation before session lookup",
+      "explanation": "Line 15 returns null when token is empty, but does not validate the token signature before calling sessionStore.lookup() on line 22. An attacker-controlled token will reach the lookup unchecked.",
+      "recommendation": "Verify token signature via verifyJWT(token) before line 22.",
+      "code_snippet": "if (!token) return null;",
+      "evidence": [
+        {
+          "file": "src/auth.ts",
+          "line": 22,
+          "claim": "sessionStore.lookup is invoked on the unverified token",
+          "snippet_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+      ],
+      "reasoning_certificate": {
+        "kind": "bha",
+        "fields": {"partition_id": "p0", "files_reviewed": 1}
+      },
+      "other_locations": [
+        {"file": "src/auth.ts", "line": 22, "issue": "sessionStore.lookup on unverified token"}
+      ]
+    }
+  ]
+}
