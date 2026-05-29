@@ -1288,6 +1288,40 @@ class TestDetectInjectionAuditLog:
         ]
         assert len(lines) == 2
 
+    def test_sweep_handles_non_dict_json_lines(self, tmp_path: Path) -> None:
+        """Pre-existing JSONL lines that are valid JSON but not objects
+        (a list, string, number, or null) must NOT crash the sweep.
+
+        Caught in PR #109 review (bha_p1): the docstring claimed "malformed
+        pre-existing lines are dropped silently" but ``obj.get("timestamp")``
+        raised AttributeError on a non-dict ``obj`` (list/str/number/null are
+        valid JSON yet have no ``.get``), and the inner except tuple did not
+        catch it. The audit-log feature stayed broken until the file was
+        manually removed. Fix: an explicit ``isinstance(obj, dict)`` guard
+        before the ``.get`` call.
+        """
+        log_path = tmp_path / ".closedloop-ai" / "injection-log.jsonl"
+        log_path.parent.mkdir(parents=True)
+        # Mix of pathological non-dict JSON values an attacker (or a
+        # truncated/corrupted log line) might surface.
+        log_path.write_text(
+            "[1, 2, 3]\n"
+            "\"some string\"\n"
+            "42\n"
+            "null\n",
+        )
+        _make_intent_context(tmp_path, body="hello")
+        rc, _ = _run_detect_injection(tmp_path)
+        assert rc == 0  # would have been a SystemExit/uncaught traceback before the fix
+        lines = [
+            line for line in log_path.read_text().splitlines() if line.strip()
+        ]
+        # All four bad lines dropped; only the fresh run remains.
+        assert len(lines) == 1
+        fresh = json.loads(lines[0])
+        assert isinstance(fresh, dict)
+        assert "timestamp" in fresh
+
     def test_sweeps_entries_older_than_ttl(self, tmp_path: Path) -> None:
         """Pre-seed the log with a >90-day-old entry; running detect-injection
         again should drop it on read."""
@@ -1342,24 +1376,11 @@ class TestDetectInjectionResilience:
     def test_malformed_intent_context_returns_empty_report(
         self, tmp_path: Path,
     ) -> None:
-        intent_path = tmp_path / "intent_context.json"
-        intent_path.write_text("not valid json {{{")
-        ns = argparse.Namespace(
-            cr_dir=str(tmp_path),
-            intent_context=str(intent_path),
-        )
-        import io
-        captured = io.StringIO()
-        orig_stdout = sys.stdout
-        sys.stdout = captured
-        orig_cwd = os.getcwd()
-        os.chdir(tmp_path)
-        try:
-            rc = cmd_detect_injection(ns)
-        finally:
-            sys.stdout = orig_stdout
-            os.chdir(orig_cwd)
+        (tmp_path / "intent_context.json").write_text("not valid json {{{")
+        rc, report = _run_detect_injection(tmp_path)
         assert rc == 0
+        assert report["score"] == 0
+        assert report["severity"] == "none"
 
 
 class TestClassifyIntentQuarantine:

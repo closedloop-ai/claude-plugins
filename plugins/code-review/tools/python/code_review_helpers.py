@@ -3611,6 +3611,14 @@ def _append_injection_audit_log(
                     continue
                 try:
                     obj = json.loads(stripped)
+                    # Valid JSON values include lists, strings, numbers, and
+                    # null in addition to objects — calling .get on any of
+                    # those would raise AttributeError (caught by the outer
+                    # OSError except otherwise; we'd then drop the whole
+                    # sweep + lose the legitimate fresh entries below).
+                    # Treat non-dict lines the same way as malformed JSON.
+                    if not isinstance(obj, dict):
+                        continue
                     ts_str = str(obj.get("timestamp", ""))
                     ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                     if ts >= cutoff:
@@ -3702,8 +3710,12 @@ def cmd_detect_injection(args: argparse.Namespace) -> int:
 
     # Quarantine: rewrite intent_context.json on severity ≥ Medium so
     # downstream readers (cmd_classify_intent, Premise prompt assembly) see
-    # the quarantine flag and redacted content. Preserve the original
-    # title/commits if they were clean — only redact what triggered.
+    # the quarantine flag and redacted content. Selective redaction:
+    # title and commits are preserved when their per-section score is 0
+    # (clean → keep verbatim). body is *always* redacted on quarantine —
+    # it's the highest-risk surface (longest free-form attacker-controlled
+    # text) and even a clean-scoring body could carry sub-threshold signals
+    # the catalogue missed.
     quarantined = total_score >= _INJECTION_SCORE_MEDIUM
     if quarantined:
         quarantined_ctx = {
