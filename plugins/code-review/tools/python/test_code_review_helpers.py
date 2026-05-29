@@ -6810,6 +6810,26 @@ class TestPrepareRun:
             "envelope is built from the bucket-split output"
         )
 
+    def test_pln_721_premise_prompt_folds_into_compute_hashes(
+        self, tmp_path: Path,
+    ) -> None:
+        """PLN-721 contract: stage_18 passes --premise-prompt to compute-
+        hashes so editing premise_prompt.txt busts the prompt hash on the
+        same contract as verifier_prompt.txt. Without this, the BHA + the
+        verifications/ cache would serve stale results after a premise
+        prompt rev — same shape of bug PR #111 review HIGH #3 surfaced
+        for the verifier (PLN-722 v2.8.1)."""
+        _, plan = self._run(tmp_path)
+        by_id = {s["id"]: s for s in plan["stages"]}
+        stage_18 = by_id["stage_18_compute_hashes"]
+        assert "--premise-prompt" in stage_18["args"], (
+            "stage_18_compute_hashes must pass --premise-prompt so the "
+            "prompt hash invalidates on premise_prompt.txt edits"
+        )
+        # Ensure the value following --premise-prompt points at CR_DIR
+        idx = stage_18["args"].index("--premise-prompt")
+        assert stage_18["args"][idx + 1].endswith("premise_prompt.txt")
+
     def test_foundation_stages_enabled(self, tmp_path: Path) -> None:
         """Foundation-owned stages whose inputs always exist must be enabled."""
         _, plan = self._run(tmp_path)
@@ -8516,3 +8536,45 @@ class TestFinalizeResultPrefersVerified:
         assert summary["force_human_review"] is True
         # NEEDS_ATTENTION (rule 2.5) — even MEDIUM alone normally would be APPROVED
         assert envelope["verdict"] == "NEEDS_ATTENTION"
+
+    def test_justified_bucket_flows_to_envelope(self, tmp_path: Path) -> None:
+        """PLN-721: a justified[] entry in findings_verified.json propagates
+        to envelope.justified[] and is excluded from envelope.verified[].
+        The verdict stays APPROVED — JUSTIFIED-VALID findings do not
+        trigger any of the precedence rules."""
+        validated = [
+            _make_validated_finding("premise_f0", severity="MEDIUM"),
+        ]
+        verified_doc = {
+            "verified": [],
+            "rejected": [],
+            "pending_verification": [],
+            "justified": [validated[0]],
+            "force_human_review": False,
+            "stats": {},
+        }
+        _, summary, envelope = self._run(tmp_path, validated, verified_doc)
+        assert summary["justified_count"] == 1
+        assert len(envelope["justified"]) == 1
+        assert envelope["verified"] == []
+        assert envelope["verdict"] == "APPROVED"
+
+    def test_legacy_findings_verified_without_justified_key(
+        self, tmp_path: Path,
+    ) -> None:
+        """Back-compat: a findings_verified.json file produced by PLN-722
+        v2.8.0/v2.8.1 (no justified[] key) still finalizes — the loader
+        defaults the bucket to []."""
+        validated = [_make_validated_finding("bha_p0_f0", severity="MEDIUM")]
+        verified_doc = {
+            "verified": [validated[0]],
+            "rejected": [],
+            "pending_verification": [],
+            # NB: no "justified" key — pre-PLN-721 shape
+            "force_human_review": False,
+            "stats": {},
+        }
+        _, summary, envelope = self._run(tmp_path, validated, verified_doc)
+        assert summary["justified_count"] == 0
+        assert envelope["justified"] == []
+        assert len(envelope["verified"]) == 1
