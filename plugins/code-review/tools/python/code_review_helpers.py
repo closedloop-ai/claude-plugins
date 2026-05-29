@@ -3388,9 +3388,20 @@ _INJECTION_PATTERN_DEFS: list[tuple[str, int, str, int]] = [
         re.IGNORECASE,
     ),
     (
+        # `act as <anything>` would match benign PR wording like "act as
+        # a thin wrapper" or "act as the source of truth" and contribute
+        # 40 toward quarantine. The other branches are specific enough
+        # already; narrow only `act as` to require a model/agent/role
+        # noun (the actual injection vector). The persona list mirrors
+        # the canonical adversarial-persona vocabulary — extend on real
+        # false-negative evidence from the audit log.
         "role_reversal", 40,
-        r"\b(?:you\s+are\s+now|act\s+as|pretend\s+to\s+be|roleplay\s+as|"
-        r"from\s+now\s+on\s+you\s+are)\s+\S",
+        r"\b(?:you\s+are\s+now|pretend\s+to\s+be|roleplay\s+as|"
+        r"from\s+now\s+on\s+you\s+are)\s+\S"
+        r"|\bact\s+as\s+(?:an?\s+|the\s+)?"
+        r"(?:AI|LLM|model|assistant|chatbot|agent|expert|"
+        r"admin|root|sysop|sudoer|developer|maintainer|reviewer|"
+        r"approver|owner|operator|moderator|user|hacker|attacker)\b",
         re.IGNORECASE,
     ),
     (
@@ -3457,6 +3468,19 @@ _INJECTION_SCORE_LOW = 1
 _INJECTION_SCORE_MEDIUM = 30
 _INJECTION_SCORE_HIGH = 70
 
+# Per-class cap on how many matches contribute to the score. Classes
+# where *presence* is signal but count is not proportionally more
+# dangerous get capped to 1: e.g. GitHub's default PR template ships
+# three instructional `<!-- ... -->` blocks past 50 chars; without a
+# cap, leaving them in would push 3 × 25 = 75 past _INJECTION_SCORE_HIGH
+# and quarantine + BLOCK a benign PR. Classes absent from this map
+# accumulate unbounded (the default), which is correct for patterns
+# where repetition genuinely amplifies the threat (e.g. multiple
+# `<system>` forgery tokens, multiple "ignore previous instructions").
+_INJECTION_CLASS_MAX_MATCHES: dict[str, int] = {
+    "html_comment_exfil": 1,
+}
+
 # Confidence weighting: a match within the first N chars or following ":"
 # counts as imperative-to-model context (full weight). Quote-prefixed lines
 # (">") get halved — those are citations, not commands.
@@ -3465,8 +3489,11 @@ _INJECTION_BURIED_DOWNWEIGHT = 0.75
 _INJECTION_QUOTE_DOWNWEIGHT = 0.5
 _INJECTION_COLON_LOOKBACK = 80
 
-# Audit log: append-only JSONL with 90-day TTL (sweep on read, matching the
-# pattern from PLN-719 Phase 7's cache TTL).
+# Audit log: JSONL with 90-day TTL, swept on every write. Implementation
+# is read-modify-write — not atomic append — so concurrent runs in the
+# same workdir can clobber entries. The log is observational (not a
+# source of truth, never read by the pipeline) and concurrent reviews
+# in one workdir are rare in practice, so the clobber risk is accepted.
 _INJECTION_AUDIT_LOG = Path(".closedloop-ai/injection-log.jsonl")
 _INJECTION_AUDIT_TTL_DAYS = 90
 
@@ -3525,7 +3552,12 @@ def _score_text_for_injection(
     score = 0.0
     matches: list[dict[str, Any]] = []
     for name, weight, pat in _INJECTION_PATTERNS:
+        cap = _INJECTION_CLASS_MAX_MATCHES.get(name)
+        counted = 0
         for m in pat.finditer(text):
+            if cap is not None and counted >= cap:
+                break
+            counted += 1
             start = m.start()
             in_head = start < _INJECTION_IMPERATIVE_HEAD_CHARS
             after_colon = (
@@ -3593,11 +3625,20 @@ def _make_injection_finding(
 def _append_injection_audit_log(
     log_path: Path, entry: dict[str, Any],
 ) -> None:
-    """Append a JSONL entry to the audit log and sweep entries > 90 days old.
+    """Add one JSONL entry to the audit log, sweeping entries > 90 days old.
 
-    Sweep-on-read mirrors the cache TTL approach from PLN-719 Phase 7.
-    Malformed pre-existing lines (missing timestamp, bad JSON) are dropped
-    silently — the audit log is observational, not a source of truth.
+    Implementation is **read-modify-write, not atomic append**: the function
+    loads existing lines, filters out entries older than 90 days, appends the
+    new entry to the in-memory list, and rewrites the whole file. Two
+    concurrent calls in the same workdir can therefore clobber each other's
+    new entries. This is accepted because the log is observational (never
+    read by the review pipeline — only by operators triaging) and concurrent
+    reviews against the same workdir are rare.
+
+    The sweep runs on every write (not on read — there is no reader); this
+    keeps the file from growing unbounded without requiring a separate
+    maintenance command. Malformed pre-existing lines (missing timestamp,
+    bad JSON, non-dict JSON values) are dropped silently.
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     cutoff = datetime.now(timezone.utc) - timedelta(days=_INJECTION_AUDIT_TTL_DAYS)
