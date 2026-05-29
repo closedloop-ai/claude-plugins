@@ -194,15 +194,16 @@ INVALID_SUBCODES = [
 @pytest.mark.parametrize("subcode", VALID_SUBCODES)
 def test_terminal_failure_valid_subcode_accepted(subcode: str) -> None:
     """TerminalFailure constructs successfully with a valid subcode."""
-    tf = TerminalFailure(status="error", subcode=subcode, message="msg")
+    tf = TerminalFailure(status="RUNNER_ERROR", subcode=subcode, message="msg")
     assert tf.subcode == subcode
 
 
 @pytest.mark.parametrize("subcode", INVALID_SUBCODES)
 def test_terminal_failure_invalid_subcode_rejected(subcode: str) -> None:
     """TerminalFailure raises ValueError for invalid subcodes before construction completes."""
+    # status + message are valid so the subcode is the sole rejection reason.
     with pytest.raises(ValueError, match="subcode"):
-        TerminalFailure(status="error", subcode=subcode, message="msg")
+        TerminalFailure(status="RUNNER_ERROR", subcode=subcode, message="msg")
 
 
 def test_terminal_failure_field_access() -> None:
@@ -211,6 +212,38 @@ def test_terminal_failure_field_access() -> None:
     assert tf.status == "RUNNER_ERROR"
     assert tf.subcode == "XYZ_FAILURE"
     assert tf.message == "Loop failed."
+
+
+# Mirrors the ``case "$code"`` allowlist in run-loop.sh:70-77.
+VALID_STATUSES = ["RUNNER_ERROR", "PRE_RUN_VALIDATION_FAILED", "PLAN_STATE_UNAVAILABLE"]
+INVALID_STATUSES = ["", "EXIT", "TIMEOUT", "error", "runner_error", "RUNNER ERROR"]
+
+
+@pytest.mark.parametrize("status", VALID_STATUSES)
+def test_terminal_failure_valid_status_accepted(status: str) -> None:
+    """TerminalFailure accepts every status in the run-loop.sh allowlist."""
+    tf = TerminalFailure(status=status, subcode="NON_ZERO_EXIT", message="msg")
+    assert tf.status == status
+
+
+@pytest.mark.parametrize("status", INVALID_STATUSES)
+def test_terminal_failure_invalid_status_rejected(status: str) -> None:
+    """TerminalFailure rejects any status outside the run-loop.sh allowlist."""
+    with pytest.raises(ValueError, match="status"):
+        TerminalFailure(status=status, subcode="NON_ZERO_EXIT", message="msg")
+
+
+def test_terminal_failure_max_length_message_accepted() -> None:
+    """A 1000-char message (the boundary) is accepted."""
+    tf = TerminalFailure(status="RUNNER_ERROR", subcode="NON_ZERO_EXIT", message="x" * 1000)
+    assert len(tf.message) == 1000
+
+
+@pytest.mark.parametrize("message", ["", "x" * 1001])
+def test_terminal_failure_invalid_message_rejected(message: str) -> None:
+    """TerminalFailure rejects empty and over-1000-char messages (run-loop.sh:84-87)."""
+    with pytest.raises(ValueError, match="message"):
+        TerminalFailure(status="RUNNER_ERROR", subcode="NON_ZERO_EXIT", message=message)
 
 
 # ---------------------------------------------------------------------------
@@ -302,8 +335,8 @@ def test_turn_result_json_round_trip(original: TurnResult) -> None:
 
 TERMINAL_FAILURE_ROUND_TRIP_CASES = [
     TerminalFailure(status="RUNNER_ERROR", subcode="XYZ_FAILURE", message="Loop failed."),
-    TerminalFailure(status="TIMEOUT", subcode="TIM", message="Timed out after 60s."),
-    TerminalFailure(status="EXIT", subcode="NON_ZERO_EXIT", message="Process exited 1."),
+    TerminalFailure(status="PLAN_STATE_UNAVAILABLE", subcode="TIM", message="Timed out after 60s."),
+    TerminalFailure(status="PRE_RUN_VALIDATION_FAILED", subcode="NON_ZERO_EXIT", message="Process exited 1."),
 ]
 
 

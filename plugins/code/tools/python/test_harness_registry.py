@@ -155,7 +155,7 @@ def test_register_overwrites_existing_entry(FakeAdapter) -> None:
             return TurnResult(result_text=raw_output, is_error=False)
 
         def classify_terminal_failure(self, raw_output, stderr, exit_code) -> TerminalFailure:
-            return TerminalFailure(status="EXIT", subcode="NON_ZERO_EXIT", message=stderr)
+            return TerminalFailure(status="RUNNER_ERROR", subcode="NON_ZERO_EXIT", message=stderr or "fail")
 
     register(FakeAdapter)
     register(ReplacementAdapter)
@@ -185,7 +185,7 @@ def test_register_as_class_decorator(FakeAdapter) -> None:
             return TurnResult(result_text=raw_output, is_error=False)
 
         def classify_terminal_failure(self, raw_output, stderr, exit_code) -> TerminalFailure:
-            return TerminalFailure(status="EXIT", subcode="NON_ZERO_EXIT", message=stderr)
+            return TerminalFailure(status="RUNNER_ERROR", subcode="NON_ZERO_EXIT", message=stderr or "fail")
 
     assert get_adapter("decorated") is DecoratedAdapter
 

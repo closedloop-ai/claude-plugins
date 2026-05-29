@@ -64,7 +64,11 @@ class _FakeAdapterClass(HarnessAdapter):
         stderr: str,
         exit_code: int,
     ) -> TerminalFailure:
-        return TerminalFailure(status="EXIT", subcode="NON_ZERO_EXIT", message=stderr)
+        return TerminalFailure(
+            status="RUNNER_ERROR",
+            subcode="NON_ZERO_EXIT",
+            message=stderr or "fake harness failure",
+        )
 
 
 class _AnotherFakeAdapterClass(HarnessAdapter):
@@ -99,7 +103,11 @@ class _AnotherFakeAdapterClass(HarnessAdapter):
         stderr: str,
         exit_code: int,
     ) -> TerminalFailure:
-        return TerminalFailure(status="EXIT", subcode="NON_ZERO_EXIT", message=stderr)
+        return TerminalFailure(
+            status="RUNNER_ERROR",
+            subcode="NON_ZERO_EXIT",
+            message=stderr or "fake harness failure",
+        )
 
 
 @pytest.fixture()

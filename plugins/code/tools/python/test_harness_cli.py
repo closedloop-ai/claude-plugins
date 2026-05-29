@@ -57,7 +57,7 @@ class _SubprocessFakeAdapter(HarnessAdapter):
         return TurnResult(result_text=raw_output, is_error=False)
 
     def classify_terminal_failure(self, raw_output, stderr, exit_code) -> TerminalFailure:
-        return TerminalFailure(status="EXIT", subcode="NON_ZERO_EXIT", message=stderr)
+        return TerminalFailure(status="RUNNER_ERROR", subcode="NON_ZERO_EXIT", message=stderr or "fail")
 
 register(_SubprocessFakeAdapter)
 

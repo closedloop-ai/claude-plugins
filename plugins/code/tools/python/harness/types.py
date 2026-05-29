@@ -104,13 +104,29 @@ class TurnResult:
 
 _SUBCODE_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
 
+# Mirrors every constraint enforced by ``write_loop_user_visible_failure()`` in
+# run-loop.sh:55-87. Kept in sync with that function (the authoritative source):
+# the ``status`` allowlist matches its ``case "$code"`` block, and the message
+# length matches its 1-1000 char guard.
+_STATUS_ALLOWLIST = frozenset(
+    {"RUNNER_ERROR", "PRE_RUN_VALIDATION_FAILED", "PLAN_STATE_UNAVAILABLE"}
+)
+_MAX_MESSAGE_LEN = 1000
+
 
 @dataclass(frozen=True)
 class TerminalFailure:
     """Terminal failure returned by an adapter method.
 
-    ``subcode`` must match ``^[A-Z][A-Z0-9_]{2,63}$`` (the same constraint
-    enforced by ``write_loop_user_visible_failure()`` in run-loop.sh line 79).
+    Validates all three constraints enforced by
+    ``write_loop_user_visible_failure()`` in run-loop.sh:55-87, so a misbuilt
+    failure fails fast at construction instead of being rejected downstream when
+    bash writes the user-visible marker:
+
+    - ``status`` must be one of ``RUNNER_ERROR``, ``PRE_RUN_VALIDATION_FAILED``,
+      ``PLAN_STATE_UNAVAILABLE`` (the bash ``code`` allowlist).
+    - ``subcode`` must match ``^[A-Z][A-Z0-9_]{2,63}$``.
+    - ``message`` must be 1-1000 characters (non-empty, not over-long).
     """
 
     status: str
@@ -118,10 +134,21 @@ class TerminalFailure:
     message: str
 
     def __post_init__(self) -> None:
+        if self.status not in _STATUS_ALLOWLIST:
+            allowed = ", ".join(sorted(_STATUS_ALLOWLIST))
+            raise ValueError(
+                f"TerminalFailure.status {self.status!r} is not allowed. "
+                f"Must be one of: {allowed}"
+            )
         if not _SUBCODE_RE.match(self.subcode):
             raise ValueError(
                 f"TerminalFailure.subcode {self.subcode!r} does not match "
                 r"^[A-Z][A-Z0-9_]{2,63}$"
+            )
+        if not 1 <= len(self.message) <= _MAX_MESSAGE_LEN:
+            raise ValueError(
+                f"TerminalFailure.message must be 1-{_MAX_MESSAGE_LEN} characters "
+                f"(got {len(self.message)})"
             )
 
 
