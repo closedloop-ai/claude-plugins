@@ -104,7 +104,11 @@ FIXTURE_SUCCESS_NO_TERMINAL_FAILURE: str = (
 # ---------------------------------------------------------------------------
 # Golden snapshot constants — state-file mutations (AC-003, T-3.1)
 #
-# Each YAML constant holds the raw text of the golden state-file fixture.
+# Each YAML constant holds the raw text of the golden state-file fixture as
+# produced by build_state_file() below — a deterministic, test-only builder.
+# These are NOT samples of the real create_state_file() wire format (see the
+# build_state_file() docstring); they exist to pin the mutation helpers
+# (update_iteration / update_successful_iterations) against a stable baseline.
 # Non-deterministic fields (run_id, started_at, workdir) use the placeholder
 # tokens GOLDEN_RUN_ID / GOLDEN_TIMESTAMP / GOLDEN_SESSION_ID so callers
 # can substitute real values before comparison.
@@ -426,9 +430,18 @@ def build_state_file(
 ) -> str:
     """Return a YAML-frontmatter state file as a string.
 
-    The format mirrors the state files written by create_state_file() in
-    run-loop.sh.  Non-deterministic fields (run_id, started_at) are provided
-    with deterministic defaults so callers can pin them for golden-snapshot
+    This is a test-only, deterministic builder; it is NOT a faithful sample of
+    the real persisted-state wire format. It deliberately differs from
+    create_state_file() in run-loop.sh: the real writer emits ``active: true``
+    first, includes a ``prd_file:`` field, quotes several values, and uses a
+    different field order. This builder omits ``active``/``prd_file``, leaves
+    most values unquoted, and reorders fields. The golden snapshots derived
+    from it therefore exercise the in-test mutation helpers
+    (update_iteration / update_successful_iterations) against a stable baseline
+    — they do not lock down the real create_state_file() contract.
+
+    Non-deterministic fields (run_id, started_at) are provided with
+    deterministic defaults so callers can pin them for golden-snapshot
     comparisons; pass explicit values to override.
 
     Args:
@@ -489,7 +502,10 @@ def write_state_file(path: Path, **kwargs: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Signed-marker helper (mirrors signed_marker() in test_run_loop_failure_marker.py)
+# Signed-marker helper — single source of truth for the HMAC signing logic.
+# Other test files (e.g. test_run_loop_failure_marker.py) import this rather
+# than redefining it, so there is only one implementation to keep in sync with
+# the bash signer in run-loop.sh.
 # ---------------------------------------------------------------------------
 
 

@@ -1,4 +1,4 @@
 GOLDEN_RUN_ID|GOLDEN_TIMESTAMP|reduce-failures|1|in_progress|plan_execute|GOLDEN_SESSION_ID
 GOLDEN_RUN_ID|GOLDEN_TIMESTAMP|reduce-failures|2|spurious_complete|plan_execute|GOLDEN_SESSION_ID
 GOLDEN_RUN_ID|GOLDEN_TIMESTAMP|reduce-failures|3|in_progress|plan_execute|GOLDEN_SESSION_ID
-GOLDEN_RUN_ID|GOLDEN_TIMESTAMP|reduce-failures|5|max_iterations|plan_execute|GOLDEN_SESSION_ID|2
+GOLDEN_RUN_ID|GOLDEN_TIMESTAMP|reduce-failures|5|max_iterations|plan_execute|GOLDEN_SESSION_ID|3

@@ -1,5 +1,3 @@
-import hashlib
-import hmac
 import json
 import os
 import subprocess
@@ -7,19 +5,13 @@ from pathlib import Path
 
 import pytest
 
+# signed_marker() and FAILURE_SECRET are defined once in the centralized mock
+# suite (test_loop_contract_mocks) and imported here so the HMAC signing logic
+# has a single source of truth shared with the bash signer in run-loop.sh.
+from test_loop_contract_mocks import FAILURE_SECRET, signed_marker
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 RUN_LOOP = REPO_ROOT / "plugins" / "code" / "scripts" / "run-loop.sh"
-FAILURE_SECRET = "test-loop-failure-secret"
-
-
-def signed_marker(payload: dict) -> dict:
-    canonical = json.dumps(payload, separators=(",", ":"))
-    signature = hmac.new(
-        FAILURE_SECRET.encode(),
-        canonical.encode(),
-        hashlib.sha256,
-    ).hexdigest()
-    return {**payload, "signature": f"sha256={signature}"}
 
 
 def run_bash(

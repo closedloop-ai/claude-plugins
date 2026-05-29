@@ -313,8 +313,9 @@ def _run_full_sequence(
       3. Iteration 3 success: write iter-3 runs.log entry, update_iteration(4),
          update_successful_iterations(3).
       4. Iteration 4 max-iterations: update_iteration(5), write iter-4 runs.log
-         entry with 8th field = "2" (the successful_iterations at that point,
-         but max_iterations fixture uses value 2 per the golden fixture).
+         entry with 8th field = "3" (the live successful_iterations at that
+         point — three successful iterations have completed, and run-loop.sh
+         emits that same persisted value as the 8th runs.log field).
     """
     state_path = _state_file_path(tmp_path)
     state_path.write_text(
@@ -392,7 +393,7 @@ def _run_full_sequence(
         iteration=5,
         status="max_iterations",
         session_id=session_id,
-        success_count="2",
+        success_count="3",
     )
 
 
@@ -607,12 +608,12 @@ cases = [
             iteration=5,
             status="max_iterations",
             session_id=session_id,
-            success_count="2",
+            success_count="3",
         ),
         "expected": None,
         "validator": (
             lambda ctx: _assert_runs_log_has_nth_field(
-                ctx, field_index=7, expected_value="2"
+                ctx, field_index=7, expected_value="3"
             )
         ),
         "dependencies": ["GOLDEN_RUNS_LOG_ITER4_MAX_ITERATIONS"],
