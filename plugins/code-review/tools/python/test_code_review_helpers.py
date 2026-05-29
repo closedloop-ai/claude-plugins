@@ -2370,6 +2370,49 @@ class TestCmdPostComments:
         assert rc == 0
         assert mock_run.call_count == 2
 
+    def test_string_line_is_coerced_to_int(self, tmp_path: Path) -> None:
+        """The original ``int(finding.get("line", 0))`` coerced legacy
+        reviewers' ``"line": "42"`` strings to ``42`` cleanly. PR #107's
+        first cut of the null-line fix tightened that to
+        ``isinstance(line_raw, int)``, which dropped string-valued lines
+        into ``failed`` (regression flagged in PR #107 review). The
+        ``try/except (TypeError, ValueError) around int(line_raw)`` shape
+        keeps the original string coercion while still rejecting ``None``
+        and ``bool``.
+        """
+        findings = [
+            {"file": "a.ts", "line": "42", "severity": "HIGH", "category": "Bug", "issue": "string-typed line should still post"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="[]", stderr=""
+            )
+            rc = self._run(path)
+        assert rc == 0
+        # 1 GET + 1 POST — string "42" must coerce to 42 and post inline.
+        assert mock_run.call_count == 2
+
+    def test_garbage_string_line_does_not_crash(self, tmp_path: Path) -> None:
+        """A non-numeric string ``"line": "abc"`` would have crashed the
+        original ``int(finding.get("line", 0))`` with ValueError. The
+        try/except shape handles it gracefully — the finding is counted
+        under ``failed`` without aborting the run.
+        """
+        findings = [
+            {"file": "a.ts", "line": "not-a-number", "severity": "HIGH", "category": "Bug", "issue": "garbage line"},
+            {"file": "b.ts", "line": 10, "severity": "HIGH", "category": "Bug", "issue": "real inline"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="[]", stderr=""
+            )
+            rc = self._run(path)
+        assert rc == 0
+        # 1 GET + 1 POST (garbage skipped, b.ts:10 posts)
+        assert mock_run.call_count == 2
+
     def test_inline_false_skipped(self, tmp_path: Path) -> None:
         findings = [
             {"file": "a.ts", "line": 10, "severity": "HIGH", "category": "Bug", "issue": "bad", "inline": False},
@@ -6217,33 +6260,99 @@ class TestPrepareRun:
             "validator should accept it as a first-class category"
         )
 
-    def test_every_documented_runtime_token_is_resolvable(
+    def test_runtime_tokens_in_start_md_match_helper_stage_args(
         self, tmp_path: Path,
     ) -> None:
-        """The placeholder tokens documented in start.md's walker contract
-        must each be produced by at least one stage's args so the walker
-        actually has substitution work to do for them. New tokens here
-        require a corresponding row in the start.md placeholder table.
+        """Bidirectional sync between start.md's Walker Contract placeholder
+        table and the tokens that helper stage args actually reference.
+
+        Parses the token table out of start.md directly (rather than
+        carrying a hand-maintained list that drifts — flagged in PR #107
+        review). The Walker Contract documents some tokens whose values
+        are NOT consumed by helper stage args (``<PLUGIN_ROOT>`` is
+        resolved by the walker for the helper invocation itself,
+        ``<START_TIME>`` is set by stage 0, ``<INTENT>`` is consumed by
+        the ``route`` gate not a helper stage) — those are listed in
+        ``GATE_OR_WALKER_TOKENS`` below and explicitly excluded from the
+        helper-arg-references check.
+
+        Drift in either direction fails the test:
+        - A token added to start.md but never consumed by any helper
+          stage (and not in the allowlist) → fail.
+        - A new ``<TOKEN>`` placeholder appearing in helper stage args
+          but missing from start.md's table → fail.
         """
+        from pathlib import Path as _Path
+        import re as _re
+
+        start_md = (
+            _Path(__file__).parent.parent.parent / "commands" / "start.md"
+        ).read_text()
+
+        # The Walker Contract table has the shape:
+        #   | `<TOKEN_NAME>`  | source description |
+        # Parse rows where the first cell is a backticked angle-bracket
+        # token name. Restrict to a small window after the "Resolve
+        # placeholder tokens" header so unrelated tables (e.g. fleet
+        # config tables) don't pollute the set.
+        contract_window = start_md.split(
+            "Resolve placeholder tokens", 1,
+        )[1].split("4. **Dispatch by", 1)[0]
+        token_re = _re.compile(r"\|\s*`(<[A-Z_]+>)`")
+        documented_tokens: set[str] = set(token_re.findall(contract_window))
+        assert documented_tokens, (
+            "Could not parse any tokens out of start.md's Walker Contract "
+            "placeholder table — section heading or table format changed; "
+            "update the parser."
+        )
+
+        # Tokens documented in the contract but NOT referenced by any
+        # helper stage args by design.
+        GATE_OR_WALKER_TOKENS: set[str] = {
+            "<PLUGIN_ROOT>",  # walker resolves for the python -m invocation
+            "<START_TIME>",   # set by stage 0, passed to stage_30_footer
+            "<INTENT>",       # consumed by the route gate, not helper args
+        }
+
         _, plan = self._run(tmp_path)
-        all_args = " ".join(
-            arg for stage in plan["stages"]
+        helper_args = [
+            arg
+            for stage in plan["stages"]
             if stage["kind"] == "helper"
             for arg in stage.get("args", []) or []
+        ]
+        # Tokens that any helper stage actually references.
+        arg_re = _re.compile(r"<[A-Z_]+>")
+        referenced_tokens: set[str] = {
+            t for arg in helper_args for t in arg_re.findall(arg)
+        }
+
+        # Direction 1: every documented (non-allowlisted) token must be
+        # referenced by at least one helper stage's args. Catches tokens
+        # added to the doc without a consuming stage.
+        expected_in_args = documented_tokens - GATE_OR_WALKER_TOKENS
+        # START_TIME is referenced by stage_30_footer's args, but it's
+        # also in GATE_OR_WALKER_TOKENS for the inverse check. That's
+        # fine — its presence in args is allowed (not required).
+        unreferenced = expected_in_args - referenced_tokens
+        assert not unreferenced, (
+            f"start.md's Walker Contract documents these tokens but no "
+            f"helper stage's args reference them: {sorted(unreferenced)}. "
+            f"Either add a consuming stage or move the token to the "
+            f"GATE_OR_WALKER_TOKENS allowlist with a comment explaining "
+            f"why it's gate/walker-only."
         )
-        # Tokens documented in start.md's Walker Contract placeholder table
-        # whose source is a stage-produced artifact (PLUGIN_ROOT and
-        # START_TIME come from stage 0, not from any stage's args).
-        for token in (
-            "<DIFF_SCOPE>", "<BASE_REF>", "<DIFF_TIP>", "<SCOPE_KIND>",
-            "<CACHE_DIR>", "<PROMPT_HASH>", "<CONTEXT_KEY>", "<MODEL_ID>",
-            "<STATE_KEY>",
-        ):
-            assert token in all_args, (
-                f"runtime token {token} documented in start.md's walker "
-                f"but no helper stage references it; either remove from "
-                f"the doc or add the consuming stage"
-            )
+
+        # Direction 2: every token in helper stage args must be in the
+        # documented set. Catches new placeholders silently added to the
+        # plan without a corresponding doc entry.
+        undocumented = referenced_tokens - documented_tokens
+        assert not undocumented, (
+            f"helper stage args reference these <TOKEN> placeholders that "
+            f"are NOT in start.md's Walker Contract table: "
+            f"{sorted(undocumented)}. Add a row to the placeholder table "
+            f"or remove the token from the plan."
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -2344,18 +2344,25 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
             continue
 
         path = finding.get("file") or ""
-        # Schema permits ``line: int | None`` for system + pr_metadata scopes.
-        # ``dict.get("line", 0)`` returns ``None`` (not the default) when the
-        # key exists with a null value, and ``int(None)`` would crash.
-        # Also explicitly reject bool — ``bool`` is a subclass of ``int`` in
-        # Python, so ``isinstance(True, int)`` is True; a malformed
-        # ``"line": true`` would otherwise post to line 1.
+        # Schema permits ``line: int | None`` for system + pr_metadata scopes;
+        # legacy reviewers also sometimes emit ``"42"`` as a string. The
+        # previous ``int(finding.get("line", 0))`` coerced strings cleanly
+        # but crashed on ``None``; tightening to ``isinstance(int)`` fixed
+        # the crash but silently dropped string-valued lines into ``failed``
+        # (regression flagged in PR #107 review). The split below keeps both
+        # behaviors: reject ``bool`` first (``bool`` is a subclass of ``int``
+        # in Python — ``isinstance(True, int)`` is True — so unguarded
+        # ``int(True)`` posts to line 1), then try ``int(line_raw)`` which
+        # handles ints, numeric strings, and falls through to ``0`` on
+        # ``None``/non-numeric values via the typed exception catch.
         line_raw = finding.get("line")
-        line = (
-            int(line_raw)
-            if isinstance(line_raw, int) and not isinstance(line_raw, bool)
-            else 0
-        )
+        if isinstance(line_raw, bool):
+            line = 0
+        else:
+            try:
+                line = int(line_raw) if line_raw is not None else 0
+            except (TypeError, ValueError):
+                line = 0
 
         if not path or not line:
             failed += 1

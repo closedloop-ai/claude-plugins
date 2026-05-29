@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.6.4
+
+#### Fixed
+- `cmd_post_comments` line-handling regression caught in PR #107 review. The previous `isinstance(line_raw, int) and not isinstance(line_raw, bool)` guard fixed the null-line crash but silently dropped legacy reviewers' string-typed lines (e.g. `"line": "42"`) into the `failed` bucket — the original `int(finding.get("line", 0))` would have coerced them. New shape: explicit `bool` check (still rejects `True`/`False`), then `int(line_raw)` wrapped in `try/except (TypeError, ValueError)`. This preserves the bool guard, fixes the null crash, and restores string coercion. Two new regression tests: `test_string_line_is_coerced_to_int` (locks in the string → int path) and `test_garbage_string_line_does_not_crash` (non-numeric strings degrade gracefully to `failed` rather than crashing on `ValueError`).
+- `test_every_documented_runtime_token_is_resolvable` was a hardcoded subset that had already drifted (PR #107 added `<GLOBAL_CACHE>` and `<INTENT>` to start.md's table but never added them to the test's list). The test name claimed "every documented" but the hardcoded list couldn't catch a new token getting added to start.md or removed from it. Replaced with `test_runtime_tokens_in_start_md_match_helper_stage_args`, which parses start.md's Walker Contract placeholder table directly with a regex and enforces sync in both directions: every documented token must be referenced by at least one helper stage's args (or appear in the `GATE_OR_WALKER_TOKENS` allowlist for `<PLUGIN_ROOT>`/`<START_TIME>`/`<INTENT>`, which are walker- or gate-consumed by design), and every `<TOKEN>` placeholder in helper stage args must appear in the documented table. Drift in either direction now fails the test.
+
 ### code-review v2.6.3
 
 #### Fixed
