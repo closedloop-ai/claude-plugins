@@ -92,13 +92,15 @@ The remaining `$ARGUMENTS` (after flag removal) is `SCOPE_ARGS`. Detect `PR_NUMB
 echo "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py"
 ```
 
-Track that resolved path as `HELPERS` and `PLUGIN_ROOT = ${CLAUDE_PLUGIN_ROOT}`. Then create a session-scoped `CR_DIR` and emit the run plan:
+Track that resolved path as `HELPERS` and `PLUGIN_ROOT = ${CLAUDE_PLUGIN_ROOT}`. Then create a session-scoped `CR_DIR` and emit the run plan.
+
+**Do NOT redirect `setup`'s stdout to a file with `>`.** `setup` creates the `cr_dir` directory as a side effect AND prints its result JSON to stdout. A shell-style redirect would try to open `<CR_DIR>/setup.json` for writing before `cr_dir` exists, racing on directory creation. Capture stdout in-memory instead:
 
 ```bash
 python3 <HELPERS> setup --mode <MODE> --cr-dir-prefix .closedloop-ai/code-review/cr-
 ```
 
-Read stdout JSON. Extract `cr_dir` → `CR_DIR`, `start_time` → `CR_START_TIME`, `repo_name` → `REPO_NAME`, `current_branch` → `CURRENT_BRANCH`, `global_cache` → `GLOBAL_CACHE`. Write the JSON to `<CR_DIR>/setup.json` for downstream helpers.
+Read stdout JSON. Extract `cr_dir` → `CR_DIR`, `start_time` → `CR_START_TIME`, `repo_name` → `REPO_NAME`, `current_branch` → `CURRENT_BRANCH`, `global_cache` → `GLOBAL_CACHE`. **Then** (now that `CR_DIR` exists on disk because `setup` created it) write the captured JSON to `<CR_DIR>/setup.json` for downstream helpers — use the Write tool, not a shell redirect.
 
 ```bash
 python3 <HELPERS> prepare-run \
@@ -148,6 +150,8 @@ If MODE=github, also Read `${CLAUDE_PLUGIN_ROOT}/prompts/github-review.md` now.
 ---
 
 ## Walker Contract
+
+**Reading `<CR_DIR>/*.json` artifacts.** The walker reads run-plan output JSON to resolve placeholder tokens (`<DIFF_SCOPE>`, `<CACHE_DIR>`, etc.). If your session has a hook that intercepts the `Read` tool on generated artifacts (e.g. a code-discovery gate that demands codebase-memory-mcp lookups), fall back to `cat` via `Bash` — these are pipeline artifacts, not source code.
 
 Walk `STAGES` in array order. For each stage:
 
@@ -248,10 +252,11 @@ These conditions mirror the cache-update gate (Gate C) and the pre-Phase-4b "Rev
 
 These notes annotate the run-plan stages with anything not obvious from the plan itself. Stages not listed here have no special handling beyond the walker contract.
 
-- **stage_01_setup**: already executed in stage 0. Walker no-op.
+- **stage_01_setup**: already executed in stage 0b (which captured stdout and wrote `setup.json` itself). The walker treats this as a no-op; the run plan's `stdout` field is `None` for this stage because no shell redirect is correct here.
 - **stage_02_prep_assets**: copies `shared_prompt.txt` and `bha_suffix.txt` from `<PLUGIN_ROOT>/tools/prompts/` to `<CR_DIR>`. Both cache and non-cache paths use these assets.
 - **stage_03_resolve_scope**: writes `<CR_DIR>/scope.json` with `diff_scope`, `base_ref`, `head_ref`, `review_branch`, `diff_tip`, `pr_number`, `path_filter`, `scope_kind`, `pr_auto_detected`. After this stage, run `finalize-cache` to populate `<CR_DIR>/cache_config.json`. The walker uses these for token resolution downstream.
-- **stage_07_auto_incremental**: writes `<CR_DIR>/auto_incremental.json` with optional `diff_scope` (override) and `review_mode_line`. If `diff_scope` is non-null, update the cached `<DIFF_SCOPE>` token. Print `review_mode_line` (always) and, if `pr_auto_detected` was true in `scope.json`, print `"Auto-detected PR #<PR_NUMBER> for branch <REVIEW_BRANCH>."`.
+- **stage_07_auto_incremental**: runs **before** `stage_05_parse_diff` (its array position is between `stage_04_finalize_cache` and `stage_05_parse_diff`). This ordering matters: any `diff_scope` override must be applied to the cached `<DIFF_SCOPE>` token BEFORE parse-diff and extract-patches materialize `diff_data.json` and `patches_all.txt`, otherwise downstream stages see full-PR diff data alongside a narrowed token. The stage retains its `_07_` id as a stable label; execution order follows array position. Writes `<CR_DIR>/auto_incremental.json` with optional `diff_scope` (override) and `review_mode_line`. If `diff_scope` is non-null, update the cached `<DIFF_SCOPE>` token. Print `review_mode_line` (always) and, if `pr_auto_detected` was true in `scope.json`, print `"Auto-detected PR #<PR_NUMBER> for branch <REVIEW_BRANCH>."`.
+- **stage_08_fetch_intent**: the helper writes `intent_context.json` into `cr_dir` itself; its stdout is a small `{path, source}` summary that the walker discards. The run plan's `stdout` field is `None` here because redirecting stdout to `intent_context.json` would corrupt the file by overwriting the helper's structured payload with the summary.
 - **stage_12_hygiene**: writes `<CR_DIR>/hygiene.json` with hygiene findings. Triggers **Gate A** (hygiene-only exit) immediately after.
 - **stage_17_partition**: positioned in the run plan array after `stage_19_cache_check` so Gate B's `route` invocation runs first and supplies `--max-bha-agents`. The stage id retains its `_17_` prefix as a stable label (stage ids are not strict ordinals; execution order follows array position). Reads `partitions.json` afterward; entries shape `{id, files, total_loc, is_test_only}` with `files[].file` (NOT `path`), `files[].loc`, `files[].is_test`, optional `files[].line_range`.
 - **stage_19_cache_check**: writes `<CR_DIR>/cache_result.json` (stats), `<CR_DIR>/agent_cached_bha.json` (cached BHA findings, glob-compatible with `agent_*`), `<CR_DIR>/uncached_diff_data.json` (filtered diff_data for uncached files). Do NOT print the cache status here — it is printed in Gate A (hygiene exit) or Gate B (after route).

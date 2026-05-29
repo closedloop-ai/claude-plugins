@@ -6095,6 +6095,71 @@ class TestPrepareRun:
                 f"not handled by walker; documented: {sorted(documented)}"
             )
 
+    def test_enabled_helper_stages_parse_via_argparse_after_token_substitution(
+        self, tmp_path: Path,
+    ) -> None:
+        """Every enabled helper stage's args list must successfully ``parse_args``.
+
+        The introspection test above catches missing ``required=True`` flags
+        but does not validate that the *values* passed satisfy each flag's
+        type/choices. This test substitutes realistic dummy values for every
+        runtime placeholder token and then runs the resulting list through
+        the real argparse parser — catching the class of bug where
+        ``stage_03_resolve_scope`` emitted ``--pr-number ""``, which argparse
+        rejected with ``invalid int value: ''`` because the flag is
+        ``type=int``. The placeholder token registry below mirrors the
+        runtime substitutions documented in start.md's Walker Contract.
+        """
+        import argparse as _argparse
+
+        from code_review_helpers import _register_subparsers
+
+        parser = _argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command", required=True)
+        _register_subparsers(subparsers)
+        sub_choices: dict[str, _argparse.ArgumentParser] = subparsers.choices  # type: ignore[attr-defined]
+
+        # Realistic non-empty substitutions for every documented token. The
+        # values are picked so they satisfy argparse type/choice constraints
+        # (e.g. <SCOPE_KIND> must be a valid choice; <START_TIME> must be a
+        # float-parseable string).
+        token_values = {
+            "<PLUGIN_ROOT>": "/tmp/plugin-root",
+            "<DIFF_SCOPE>": "main..HEAD",
+            "<BASE_REF>": "main",
+            "<DIFF_TIP>": "abc1234",
+            "<SCOPE_KIND>": "branch",
+            "<CACHE_DIR>": "/tmp/cache",
+            "<GLOBAL_CACHE>": "1",
+            "<PROMPT_HASH>": "0" * 64,
+            "<CONTEXT_KEY>": "0" * 64,
+            "<MODEL_ID>": "opus",
+            "<INTENT>": "fix",
+            "<START_TIME>": "1700000000",
+            "<STATE_KEY>": "feature/x:main",
+        }
+
+        _, plan = self._run(tmp_path)
+        for stage in plan["stages"]:
+            if stage["kind"] != "helper" or not stage["enabled"]:
+                continue
+            sub = stage["subcommand"]
+            sp = sub_choices.get(sub)
+            assert sp is not None, (
+                f"stage {stage['id']!r} references unknown subcommand {sub!r}"
+            )
+            resolved: list[str] = [
+                str(token_values.get(arg, arg)) for arg in stage["args"]
+            ]
+            try:
+                sp.parse_args(resolved)
+            except SystemExit as exc:  # argparse calls sys.exit on errors
+                raise AssertionError(
+                    f"stage {stage['id']!r} (subcommand={sub!r}) failed "
+                    f"argparse validation after token substitution. "
+                    f"resolved args={resolved!r}. argparse exit code={exc.code!r}"
+                ) from None
+
     def test_every_documented_runtime_token_is_resolvable(
         self, tmp_path: Path,
     ) -> None:
