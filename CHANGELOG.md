@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.9.2
+
+#### Fixed
+- **Rule 4 (cumulative Premise MEDIUM) no longer excludes `JUSTIFIED-INVALID` findings (PR #113 review, thadeusb).** v2.9.0 and v2.9.1 treated `JUSTIFIED-VALID` and `JUSTIFIED-INVALID` symmetrically — both excluded from the gate's count. That was backwards: `JUSTIFIED-VALID` means the verifier *accepted* the author's defense and the finding is dismissed (correctly excluded — lives in `justified[]`, not `verified[]`); `JUSTIFIED-INVALID` means the verifier *refused* the defense and the original concern survives, so it must count toward the gate the same way a plain `CONFIRMED` would. As shipped in v2.9.0/v2.9.1, three MEDIUM Premise findings the author tried to wave off — and the verifier then refused — would not trip the cumulative gate, while three plain MEDIUM findings would. `_count_gateable_premise_medium` now excludes only `JUSTIFIED-VALID`; the docstring spells out the asymmetry. The previous `test_justified_invalid_excluded_from_count` is renamed to `test_justified_invalid_counts_concern_survived` and asserts `NEEDS_ATTENTION`; new `test_valid_vs_invalid_are_asymmetric` pins the per-helper count delta directly. The shared-counter telemetry invariant still holds (Rule 4 and `premise_cumulative_medium_count` agree on the new policy).
+
 ### code-review v2.9.1
 
 #### Fixed

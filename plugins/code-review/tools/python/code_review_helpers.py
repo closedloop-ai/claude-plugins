@@ -4934,10 +4934,18 @@ def _count_gateable_premise_medium(verified: list[dict[str, Any]]) -> int:
       - Only ``verified[]`` findings (``justified[]`` is bucketed
         elsewhere; ``rejected[]`` is dropped from the verdict; and
         ``coverage_gaps`` never carry ``category=Premise``).
-      - Exclude ``verifier_verdict in {JUSTIFIED-VALID, JUSTIFIED-INVALID}``
-        (defensive — they should be routed away from ``verified[]`` by
-        ``cmd_verify_consolidate``; excluding here preserves the plan's
-        intent if a legacy/cached entry leaks).
+      - JUSTIFIED-VALID vs JUSTIFIED-INVALID are **asymmetric**
+        (thadeusb on PR #113):
+          * ``JUSTIFIED-VALID`` = author defense was audited and
+            accepted; the finding is dismissed and lives in
+            ``justified[]``, NOT ``verified[]``. Excluded defensively
+            in case a legacy/cached entry leaks into ``verified[]`` —
+            its concern was waived.
+          * ``JUSTIFIED-INVALID`` = author defense was audited and
+            REFUSED; the original concern survived. It belongs in the
+            count the same way a plain CONFIRMED MEDIUM does. The
+            reserved-but-unemitted enum value also lands here if a
+            future code path produces one in ``verified[]``.
       - Severity is read post-DOWNGRADE — ``_merge_verifier_fields``
         rewrites ``severity`` from ``verifier_severity`` for valid
         downgrades, so a DOWNGRADE from HIGH → MEDIUM correctly counts.
@@ -4948,9 +4956,7 @@ def _count_gateable_premise_medium(verified: list[dict[str, Any]]) -> int:
             continue
         if str(finding.get("severity", "")) != "MEDIUM":
             continue
-        if finding.get("verifier_verdict") in (
-            "JUSTIFIED-VALID", "JUSTIFIED-INVALID",
-        ):
+        if finding.get("verifier_verdict") == "JUSTIFIED-VALID":
             continue
         count += 1
     return count

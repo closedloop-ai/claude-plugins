@@ -8413,14 +8413,34 @@ class TestCumulativePremiseMediumGate:
         )
         assert v == "APPROVED"
 
-    def test_justified_invalid_excluded_from_count(self) -> None:
-        v, _ = _compute_canonical_verdict(
+    def test_justified_invalid_counts_concern_survived(self) -> None:
+        """PR #113 review (thadeusb): JUSTIFIED-INVALID is the verifier
+        REFUSING the author's defense — the original concern survives, so
+        it must count toward the cumulative gate the same way a plain
+        CONFIRMED MEDIUM does. Excluding it (v2.9.0/v2.9.1 behavior) was
+        backwards: the author's failed wave-off shouldn't be the thing
+        that prevents the gate from firing."""
+        v, r = _compute_canonical_verdict(
             [self._premise_med(),
              self._premise_med(),
              self._premise_med(verifier_verdict="JUSTIFIED-INVALID")],
             [],
         )
-        assert v == "APPROVED"
+        assert v == "NEEDS_ATTENTION"
+        assert "3 MEDIUM Premise" in r
+
+    def test_valid_vs_invalid_are_asymmetric(self) -> None:
+        """Pin the asymmetry directly: same shape, only the JUSTIFIED-*
+        verdict differs, opposite gate outcomes."""
+        from code_review_helpers import _count_gateable_premise_medium
+        with_valid = [self._premise_med()] * 2 + [
+            self._premise_med(verifier_verdict="JUSTIFIED-VALID")
+        ]
+        with_invalid = [self._premise_med()] * 2 + [
+            self._premise_med(verifier_verdict="JUSTIFIED-INVALID")
+        ]
+        assert _count_gateable_premise_medium(with_valid) == 2
+        assert _count_gateable_premise_medium(with_invalid) == 3
 
     def test_downgrade_to_medium_counts(self) -> None:
         """A DOWNGRADE from HIGH → MEDIUM (severity already rewritten by
