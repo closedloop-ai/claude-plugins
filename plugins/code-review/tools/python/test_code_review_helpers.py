@@ -826,6 +826,44 @@ class TestPartitionPostProcessing:
             _sys.stdin = old_stdin
             _sys.stdout = old_stdout
 
+    def test_partitions_json_is_top_level_dict_not_list(self) -> None:
+        """Pin the top-level shape of partitions.json so the prose in
+        ``start.md`` § Reviewer Fleet stays accurate.
+
+        The walker's per-stage notes tell operators that ``partitions.json``
+        is a top-level dict with keys ``partitions`` / ``test_file_paths`` /
+        ``force_merged_count`` (so ``data["partitions"][N]`` is the right
+        access pattern, NOT ``data[N]``). A real /start run hit a
+        ``KeyError: 0`` when the operator's ad-hoc Python one-liner indexed
+        the file as if it were a bare list — the prose warned against
+        Python but did nothing to ensure the shape stayed dict-shaped if a
+        future change ever inverted it. This test is the structural
+        backstop: if anyone restructures ``cmd_partition`` to emit a bare
+        list, the prose at ``start.md`` line ~328 becomes wrong and this
+        test fails first, surfacing the docs gap before a real /start
+        crash does.
+        """
+        data = _make_diff_data(
+            files=["a.ts"],
+            loc={"a.ts": {"added": 10, "removed": 0}},
+        )
+        result = self._run_partition(data)
+        assert isinstance(result, dict), (
+            f"partitions.json must be a top-level dict (the start.md walker "
+            f"prose says `data['partitions'][N]`, which only works if the "
+            f"top level is a dict). Got: {type(result).__name__}"
+        )
+        assert "partitions" in result and isinstance(result["partitions"], list), (
+            "partitions.json must contain a 'partitions' key whose value is a list"
+        )
+        assert "test_file_paths" in result and isinstance(
+            result["test_file_paths"], list,
+        ), "partitions.json must contain a 'test_file_paths' list"
+        assert "force_merged_count" in result, (
+            "partitions.json must include 'force_merged_count' (consumed by the "
+            "stage_17 telemetry)"
+        )
+
     def test_trivial_partition_merged(self) -> None:
         data = _make_diff_data(
             files=["a.ts", "b.ts", "c.ts"],

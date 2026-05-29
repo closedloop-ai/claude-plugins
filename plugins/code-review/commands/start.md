@@ -324,7 +324,22 @@ The orchestrator assigns each agent a unique `AGENT_ID` (e.g., `bha_p0`, `bhb`, 
 
 **Important:** When constructing agent prompts, substitute the resolved `CR_DIR` path (e.g., `.closedloop-ai/code-review/cr-38291`) into `{CR_DIR}` — agents run in separate processes and do not have access to the orchestrator's shell variables.
 
-**Placeholder source mapping** (read from the partition entry — do NOT run ad-hoc Python one-liners against `partitions.json`):
+**Reading `partitions.json` (read the file once with `cat` or `Read`, then map keys; do NOT reach for `python -c "json.load(...)[0]"`).**
+
+The shape is a **top-level dict**, not a list:
+
+```
+{
+  "partitions": [ {id, files: [...], total_loc, is_test_only}, ... ],
+  "test_file_paths": ["test/foo.ts", ...],
+  "force_merged_count": 0,
+  "partition_patches": { "p0": "...patch text...", ... }   // optional
+}
+```
+
+So `data["partitions"]` is the list. `data[0]` is a `KeyError`. If you do reach for Python anyway, use `data["partitions"][N]["files"]` — never `data[N]`. (A regression test in `TestPartitionPostProcessing` pins this top-level shape so the prose above can't silently drift away from reality.)
+
+**Placeholder source mapping** (each key resolves from the partition entry):
 - `{filepath_N}` ← `partition["files"][N]["file"]` (key is `file`, NOT `path`)
 - `{loc_N}` ← `partition["files"][N]["loc"]`
 - `{status_N}` ← `diff_data["file_statuses"][filepath]` (added/modified/removed)

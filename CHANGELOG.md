@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.6.5
+
+#### Fixed
+- `start.md` § Reviewer Fleet — the prose at line ~328 previously said only "do NOT run ad-hoc Python one-liners against `partitions.json`". Real `/start` runs showed the walker model ignoring that directive, indexing `data[0]` against the top-level dict, and crashing with `KeyError: 0`. The same systemic pattern that drove the rest of the PLN-719 follow-ups — prose alone doesn't beat the model's default behavior. Sharpened the section to (a) prescribe the canonical access path (`cat` / `Read`, then key-mapping; `python` is allowed *if* it indexes `data["partitions"][N]` not `data[N]`) and (b) inline the actual top-level shape so even an ignored directive lands on the right indexing. A new contract test `test_partitions_json_is_top_level_dict_not_list` in `TestPartitionPostProcessing` pins `cmd_partition`'s output as a top-level dict with `partitions` / `test_file_paths` / `force_merged_count` keys, so if anyone restructures the producer the prose breaks first instead of a real /start crash surfacing it.
+
 ### code-review v2.6.4
 
 #### Fixed
