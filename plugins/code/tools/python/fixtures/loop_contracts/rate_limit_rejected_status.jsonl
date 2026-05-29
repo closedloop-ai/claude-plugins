@@ -1,0 +1,2 @@
+{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour","resetsAt":1778266200},"uuid":"aaa00000-0000-0000-0000-000000000001","session_id":"c80d0b89-7efe-403c-8e7d-000000000001"}
+{"type":"result","subtype":"error","is_error":true,"result":"","session_id":"c80d0b89-7efe-403c-8e7d-000000000001"}
