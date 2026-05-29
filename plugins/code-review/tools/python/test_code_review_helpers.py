@@ -860,15 +860,23 @@ class TestPartitionPostProcessing:
             f"prose says `data['partitions'][N]`, which only works if the "
             f"top level is a dict). Got: {type(result).__name__}"
         )
-        assert "partitions" in result and isinstance(result["partitions"], list), (
-            "partitions.json must contain a 'partitions' key whose value is a list"
+        # Exact-key set, not just membership: if a future change adds a new
+        # top-level key, the start.md shape hint goes stale silently and a
+        # model that trusts the doc hits KeyError at runtime. Pinning the set
+        # forces the docs update to happen in the same commit. This fixture
+        # never triggers ``partition_patches`` (no cr_dir/workdir on the ns
+        # in ``_run_partition``), so the three-key set is the full surface.
+        assert set(result.keys()) == {
+            "partitions", "test_file_paths", "force_merged_count",
+        }, (
+            f"partitions.json top-level keys drifted from the start.md shape "
+            f"hint. Got: {sorted(result.keys())}"
         )
-        assert "test_file_paths" in result and isinstance(
-            result["test_file_paths"], list,
-        ), "partitions.json must contain a 'test_file_paths' list"
-        assert "force_merged_count" in result, (
-            "partitions.json must include 'force_merged_count' (consumed by the "
-            "stage_17 telemetry)"
+        assert isinstance(result["partitions"], list), (
+            "partitions.json 'partitions' value must be a list"
+        )
+        assert isinstance(result["test_file_paths"], list), (
+            "partitions.json 'test_file_paths' value must be a list"
         )
 
     def test_trivial_partition_merged(self) -> None:

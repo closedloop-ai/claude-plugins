@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.7.2
+
+#### Fixed
+- `start.md` § Reviewer Fleet — removed the fabricated `partition_patches: { "p0": "...patch text...", ... }` line from the inlined `partitions.json` shape hint. `cmd_partition` writes `partition_patches` as a list of patch filenames (e.g. `["patches_p0.txt", ...]`) emitted by `_write_per_partition_patches`, not a dict keyed by partition id, and it's only present when `--cr-dir` is set. The PR #110 hint that was meant to keep the walker model from guessing wrong instead invented a fourth key with a fabricated shape — a model trusting it would hit a fresh `KeyError` on `data["partition_patches"]["p0"]`. Surfaced by thadeusb in post-merge review of PR #110.
+- `test_partitions_json_is_top_level_dict_not_list` now asserts the **exact** top-level key set (`partitions` / `test_file_paths` / `force_merged_count`) instead of just per-key membership. The previous shape (`assert "x" in result` × 3) couldn't catch a new key being added to the inlined shape hint that the producer never writes — which is exactly how the fabricated `partition_patches` dict slipped past the contract test in PR #110. The test harness `_run_partition` constructs the `argparse.Namespace` without `cr_dir`/`workdir`, so the optional `partition_patches` is never produced in this fixture and exact-set equality on the three core keys is safe. Surfaced by thadeusb in post-merge review of PR #110.
+
 ### code-review v2.7.1
 
 #### Fixed

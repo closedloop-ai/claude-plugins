@@ -333,8 +333,7 @@ The shape is a **top-level dict**, not a list:
 {
   "partitions": [ {id, files: [...], total_loc, is_test_only}, ... ],
   "test_file_paths": ["test/foo.ts", ...],
-  "force_merged_count": 0,
-  "partition_patches": { "p0": "...patch text...", ... }   // optional
+  "force_merged_count": 0
 }
 ```
 
