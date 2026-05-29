@@ -8442,6 +8442,40 @@ class TestCumulativePremiseMediumGate:
         assert v == "NEEDS_ATTENTION"
         assert "uncertain" in r.lower()
 
+    @pytest.mark.parametrize(
+        "verdicts",
+        [
+            ["CONFIRMED", "CONFIRMED", "CONFIRMED"],
+            ["CONFIRMED", "CONFIRMED", "JUSTIFIED-VALID"],
+            ["CONFIRMED", "JUSTIFIED-INVALID", "DOWNGRADE"],
+            ["DOWNGRADE", "DOWNGRADE", "DOWNGRADE", "CONFIRMED"],
+            ["JUSTIFIED-VALID", "JUSTIFIED-INVALID", "JUSTIFIED-VALID"],
+        ],
+    )
+    def test_telemetry_count_matches_rule_4_count(
+        self, verdicts: list[str],
+    ) -> None:
+        """PLN-721 v2.9.1: the count Rule 4 fires on MUST match the value
+        telemetry surfaces as `premise_cumulative_medium_count`. The v2.9.0
+        review caught these counts diverging because JUSTIFIED-* findings
+        were excluded from the gate but not the telemetry. Both sites now
+        delegate to `_count_gateable_premise_medium`; this test pins that
+        they stay aligned across the JUSTIFIED-VALID / JUSTIFIED-INVALID /
+        DOWNGRADE shapes that triggered the divergence.
+        """
+        from code_review_helpers import (
+            _count_gateable_premise_medium,
+            _stats_from_findings,
+        )
+        verified = [self._premise_med(verifier_verdict=v) for v in verdicts]
+        gate_count = _count_gateable_premise_medium(verified)
+        stats = _stats_from_findings(verified, [], [], [])
+        assert stats["premise_cumulative_medium_count"] == gate_count, (
+            f"telemetry/gate divergence for verdicts {verdicts}: "
+            f"stat={stats['premise_cumulative_medium_count']}, "
+            f"gate={gate_count}"
+        )
+
 
 class TestFinalizeResultPrefersVerified:
     """cmd_finalize_result should prefer findings_verified.json when present

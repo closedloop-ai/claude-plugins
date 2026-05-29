@@ -1854,6 +1854,38 @@ _VERDICT_THRESHOLD_KEYS: tuple[str, ...] = (
 )
 
 
+def _load_optional_settings_dict(
+    path: Path | None, defaults: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Open an optional operator-authored settings JSON file.
+
+    Shared frame for ``_load_verdict_thresholds`` and
+    ``_load_verification_gates`` (the v2.9.0 review surfaced their
+    structural duplication). Returns:
+
+      - ``(None, fresh_defaults)`` when ``path`` is None, missing, or
+        the file does not contain a top-level JSON object — caller
+        returns ``fresh_defaults`` directly.
+      - ``(data, fresh_defaults)`` otherwise — caller layers per-key
+        validation on top by reading from ``data`` and overwriting
+        ``fresh_defaults`` entries when the value is accepted.
+
+    ``fresh_defaults`` is a per-call shallow copy with list values
+    deep-copied so callers may mutate it without affecting future
+    invocations.
+    """
+    fresh: dict[str, Any] = {
+        k: (list(v) if isinstance(v, list) else v)
+        for k, v in defaults.items()
+    }
+    if path is None:
+        return None, fresh
+    data = _read_optional_json(path, None)
+    if not isinstance(data, dict):
+        return None, fresh
+    return data, fresh
+
+
 def _load_verdict_thresholds(path: Path | None) -> dict[str, int]:
     """Read verdict-thresholds.json. Absent or malformed → built-in defaults.
 
@@ -1863,15 +1895,12 @@ def _load_verdict_thresholds(path: Path | None) -> dict[str, int]:
     pipeline on a typo or a "0" that would disable the gate entirely
     (use a very large number for that).
     """
-    defaults: dict[str, int] = {
+    defaults: dict[str, Any] = {
         "premise_cumulative_medium": _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
     }
-    if path is None:
-        return dict(defaults)
-    data = _read_optional_json(path, None)
-    if not isinstance(data, dict):
-        return dict(defaults)
-    out = dict(defaults)
+    data, out = _load_optional_settings_dict(path, defaults)
+    if data is None:
+        return out
     for key in _VERDICT_THRESHOLD_KEYS:
         raw = data.get(key)
         if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1:
@@ -1957,13 +1986,14 @@ def _load_verification_gates(path: Path | None) -> dict[str, list[str]]:
     Non-string list entries are dropped silently — the file is operator-
     authored and should not crash the pipeline on a typo.
     """
-    empty: dict[str, list[str]] = {k: [] for k in _VERIFICATION_GATE_KEYS}
-    if path is None:
-        return empty
-    data = _read_optional_json(path, None)
-    if not isinstance(data, dict):
-        return empty
-    out: dict[str, list[str]] = {k: [] for k in _VERIFICATION_GATE_KEYS}
+    defaults: dict[str, Any] = {k: [] for k in _VERIFICATION_GATE_KEYS}
+    data, out_any = _load_optional_settings_dict(path, defaults)
+    # The shared helper returns dict[str, Any]; this loader's contract
+    # is dict[str, list[str]] and per-key validation below preserves
+    # that invariant.
+    out: dict[str, list[str]] = out_any  # type: ignore[assignment]
+    if data is None:
+        return out
     for key in _VERIFICATION_GATE_KEYS:
         raw = data.get(key, [])
         if isinstance(raw, list):
@@ -2008,16 +2038,21 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
 
       {
         "verified": [...],                # CONFIRMED + DOWNGRADE + TENTATIVE
+                                          #   + JUSTIFIED-INVALID (reserved;
+                                          #   not currently emitted)
                                           #   + tier-skipped findings (no
                                           #   verification needed)
         "rejected": [...],                # REJECTED (with verifier fields)
         "pending_verification": [...],    # deferred + missing verifier outputs
+        "justified": [...],               # PLN-721 — JUSTIFIED-VALID findings
+                                          #   (author defense audited + passed)
         "force_human_review": bool,       # any finding on a mandatory_human_
                                           #   review_paths match
         "stats": {
             "verified_count": int,
             "rejected_count": int,
             "pending_count": int,
+            "justified_count": int,       # PLN-721 — len(justified)
             "escalated_sensitive_path": int,
             "escalated_mandatory_review": int,
         }
@@ -4887,6 +4922,40 @@ _CANONICAL_TO_LEGACY_VERDICT: dict[str, str] = {
 }
 
 
+def _count_gateable_premise_medium(verified: list[dict[str, Any]]) -> int:
+    """Return the count Rule 4's Premise-MEDIUM gate fires on.
+
+    Shared between ``_compute_canonical_verdict`` (Rule 4) and
+    ``_stats_from_findings`` (telemetry's
+    ``premise_cumulative_medium_count``) so the value the gate triggers
+    on always matches the value the operator-facing telemetry reports.
+    Counting policy:
+
+      - Only ``verified[]`` findings (``justified[]`` is bucketed
+        elsewhere; ``rejected[]`` is dropped from the verdict; and
+        ``coverage_gaps`` never carry ``category=Premise``).
+      - Exclude ``verifier_verdict in {JUSTIFIED-VALID, JUSTIFIED-INVALID}``
+        (defensive — they should be routed away from ``verified[]`` by
+        ``cmd_verify_consolidate``; excluding here preserves the plan's
+        intent if a legacy/cached entry leaks).
+      - Severity is read post-DOWNGRADE — ``_merge_verifier_fields``
+        rewrites ``severity`` from ``verifier_severity`` for valid
+        downgrades, so a DOWNGRADE from HIGH → MEDIUM correctly counts.
+    """
+    count = 0
+    for finding in verified:
+        if str(finding.get("category", "")) != "Premise":
+            continue
+        if str(finding.get("severity", "")) != "MEDIUM":
+            continue
+        if finding.get("verifier_verdict") in (
+            "JUSTIFIED-VALID", "JUSTIFIED-INVALID",
+        ):
+            continue
+        count += 1
+    return count
+
+
 def _compute_canonical_verdict(
     verified: list[dict[str, Any]],
     coverage_gaps: list[dict[str, Any]],
@@ -4962,37 +5031,18 @@ def _compute_canonical_verdict(
                 f"verifier uncertain: {finding.get('issue', '')}",
             )
 
-    # Rule 4 (PLN-721): cumulative Premise MEDIUM gate. The plan calls
-    # this "the patch is structurally wrong, even if no single line is
-    # dangerous" signal. Counting policy:
-    #   - Only verified[] findings (justified[] is bucketed elsewhere and
-    #     never reaches here; rejected[] is dropped from the verdict; and
-    #     coverage_gaps don't carry category=Premise).
-    #   - Exclude any finding whose verifier_verdict is JUSTIFIED-VALID or
-    #     JUSTIFIED-INVALID (defensive — they should be routed away from
-    #     verified[] by cmd_verify_consolidate, but if a legacy path leaks
-    #     a JUSTIFIED-VALID into verified[], excluding it preserves the
-    #     plan's intent: the author defended it; the verifier signed off).
-    #   - Severity is read post-DOWNGRADE (`_merge_verifier_fields` already
-    #     rewrites `severity` from `verifier_severity` for valid downgrades),
-    #     so a DOWNGRADE from HIGH → MEDIUM correctly counts here.
+    # Rule 4 (PLN-721): cumulative Premise MEDIUM gate. The counting
+    # policy is documented on ``_count_gateable_premise_medium`` — this
+    # site MUST use that helper so the value the gate fires on matches
+    # the value telemetry reports in ``premise_cumulative_medium_count``
+    # (the v2.9.0 review surfaced that divergence as a real bug).
     premise_medium_threshold = int(
         thresholds.get(
             "premise_cumulative_medium",
             _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
         ),
     )
-    premise_medium_count = 0
-    for finding in verified:
-        if str(finding.get("category", "")) != "Premise":
-            continue
-        if str(finding.get("severity", "")) != "MEDIUM":
-            continue
-        if finding.get("verifier_verdict") in (
-            "JUSTIFIED-VALID", "JUSTIFIED-INVALID",
-        ):
-            continue
-        premise_medium_count += 1
+    premise_medium_count = _count_gateable_premise_medium(verified)
     if premise_medium_count >= premise_medium_threshold:
         return "NEEDS_ATTENTION", _short(
             f"{premise_medium_count} MEDIUM Premise findings "
@@ -6068,11 +6118,10 @@ def _stats_from_findings(
             "skipped_count": 0,
             "false_positive_rate": 0.0,
         },
-        "premise_cumulative_medium_count": sum(
-            1 for f in verified
-            if str(f.get("category", "")) == "Premise"
-            and str(f.get("severity", "")) == "MEDIUM"
-        ),
+        # PLN-721 v2.9.1: must match the count Rule 4 actually fires on
+        # — _count_gateable_premise_medium is the single source of truth
+        # for that policy (excludes JUSTIFIED-VALID / JUSTIFIED-INVALID).
+        "premise_cumulative_medium_count": _count_gateable_premise_medium(verified),
         "agent_failures": [],
     }
 
