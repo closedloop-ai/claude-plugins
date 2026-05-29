@@ -4003,7 +4003,12 @@ def _build_run_plan_stages(
             "id": "stage_20_spawn_reviewers",
             "kind": "agent_fleet",
             "agent_specs": [],  # populated by orchestrator from coverage_plan + partitions
-            "expected_outputs": [f"{cr_dir}/agent_*.json", f"{cr_dir}/partitions.json"],
+            # Only agent_*.json is produced here; partitions.json is an INPUT
+            # (produced by stage_17_partition) and belongs in depends_on, not
+            # expected_outputs. Including it here would mask total-agent-failure
+            # via the walker's "at-least-one-exists" check, since partitions.json
+            # already exists from the prior stage.
+            "expected_outputs": [f"{cr_dir}/agent_*.json"],
             "depends_on": ["stage_17_partition"],
             "on_failure": "continue_with_coverage_gap",
             "enabled": True,
