@@ -1,0 +1,12 @@
+---
+iteration: 2
+successful_iterations: 2
+max_iterations: 4
+run_id: GOLDEN_RUN_ID
+command: "plan_execute"
+workdir: /test/workdir
+start_sha: abc1234
+self_learning: false
+completion_promise: COMPLETE
+started_at: 2026-01-01T00:00:00Z
+---
