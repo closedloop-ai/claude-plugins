@@ -248,6 +248,30 @@ These conditions mirror the cache-update gate (Gate C) and the pre-Phase-4b "Rev
 
 ---
 
+## Operator Settings
+
+Two optional operator-authored config files live under `.closedloop-ai/settings/`. Both are absent by default; the pipeline uses built-in defaults until they exist.
+
+### `.closedloop-ai/settings/verdict-thresholds.json` (PLN-721)
+
+Override the verdict-precedence thresholds without forking the plugin:
+
+```json
+{
+  "premise_cumulative_medium": 3
+}
+```
+
+| Key | Default | Effect |
+|-----|---------|--------|
+| `premise_cumulative_medium` | `3` | Number of MEDIUM Premise findings on a single PR that flip the verdict to `NEEDS_ATTENTION` (Rule 4 in `_compute_canonical_verdict`). JUSTIFIED-VALID findings (routed to `justified[]`) and JUSTIFIED-INVALID findings (kept in `verified[]` with the verifier flag) are excluded from the count. Set higher to relax the gate; raise above any realistic finding count to disable. |
+
+Unknown keys are ignored. Non-integer or `< 1` values fall back to the default — the file is operator-authored and should not crash the pipeline on a typo.
+
+### `.closedloop-ai/settings/verification-gates.json` (PLN-722)
+
+Operator-authored glob lists for path-level verifier escalation. See **stage_24a_verify_consolidate** below for the rule definitions (`sensitive_paths`, `tentative_on_paths`, `mandatory_human_review_paths`).
+
 ## Per-Stage Notes
 
 These notes annotate the run-plan stages with anything not obvious from the plan itself. Stages not listed here have no special handling beyond the walker contract.
@@ -265,8 +289,8 @@ These notes annotate the run-plan stages with anything not obvious from the plan
 - **stage_22_validate**: writes `<CR_DIR>/findings_validated.json` via `> <CR_DIR>/findings_validated.json` redirection. Phase B will retire this file; it remains during the transition.
 - **stage_22b_verify_prepare** (PLN-722): tier-selects findings for verification per the canonical table — BLOCKING/HIGH always; MEDIUM with confidence < 0.85 yes; MEDIUM with confidence ≥ 0.85 no; LOW (P3) no; `category: "Hygiene"` no; `source: "injection-detector"` no; `category: "Premise"` always (strict adversarial framing). Ranks the eligible set by `severity_weight × confidence`, caps at `VERIFY_MAX_VERIFICATIONS = 50`, and writes (a) `<CR_DIR>/verify_manifest.json` with `to_verify[]` + `skipped_no_verification[]` + `deferred_budget[]` + `cache_hits[]`, and (b) `<CR_DIR>/verifier_inputs/<finding_id>.json` per eligible finding. When `--cache-dir` is set, fresh verifier outputs from a prior run for the same `(finding_id, code_snippet_hash, model, prompt_hash)` tuple are pre-materialized at `agent_verifier_<finding_id>.json` and skipped from `to_verify[]` (logged under `cache_hits[]`). `on_failure: continue` is intentional — verify-prepare failure degrades to "no verifier this run", not a pipeline abort.
 - **stage_23_verify_findings** (PLN-722): agent_fleet stage. Dispatch to the "Verifier Fleet" section below. Each spawned agent reads its `verifier_inputs/<finding_id>.json` (containing the finding + the `verifier_prompt_path` + the canonical `output_path`) and emits one verdict file at `<CR_DIR>/agent_verifier_<finding_id>.json`. `on_failure: continue` so a single agent crash never aborts review.
-- **stage_24a_verify_consolidate** (PLN-722): merges all `agent_verifier_*.json` outputs back into the validated set, applies sensitive-path escalation from `.closedloop-ai/settings/verification-gates.json` (rules: REJECTED on `sensitive_paths` + BLOCKING/HIGH → TENTATIVE with severity capped at HIGH; any finding on `tentative_on_paths` → TENTATIVE; any finding on `mandatory_human_review_paths` → TENTATIVE + `force_human_review: true`), and writes `<CR_DIR>/findings_verified.json` with the bucket-split shape `{verified[], rejected[], pending_verification[], force_human_review}`. When `--cache-dir` is set, fresh verifier outputs are written back to the `verifications/` namespace (30-day TTL) for re-use on subsequent runs. Missing fleet outputs degrade to `pending_verification[]`; `on_failure: continue`.
-- **stage_25_finalize_result**: writes `<CR_DIR>/review_result.json` (the canonical envelope) BEFORE running schema validation. PLN-722: prefers `<CR_DIR>/findings_verified.json` (verify-consolidate output) when present and honors its `force_human_review` flag in the verdict computation; falls back to `findings_validated.json` (everything to `verified[]`) when verify-consolidate didn't run. A non-zero exit signals reviewer-emitted category/field drift (e.g. a category not in the canonical enum) but does not block the pipeline — `on_failure: continue` lets `stage_28_verdict` read the structurally complete envelope. Surface the stderr text in the present step so operators can correct prompts/schema; do not abort.
+- **stage_24a_verify_consolidate** (PLN-722, extended in PLN-721): merges all `agent_verifier_*.json` outputs back into the validated set, applies sensitive-path escalation from `.closedloop-ai/settings/verification-gates.json` (rules: REJECTED on `sensitive_paths` + BLOCKING/HIGH → TENTATIVE with severity capped at HIGH; any finding on `tentative_on_paths` → TENTATIVE; any finding on `mandatory_human_review_paths` → TENTATIVE + `force_human_review: true`), routes JUSTIFIED-VALID verdicts to a new `justified[]` bucket and JUSTIFIED-INVALID verdicts back into `verified[]` (the audited justification was refuted; the original concern stands), and writes `<CR_DIR>/findings_verified.json` with the bucket-split shape `{verified[], rejected[], pending_verification[], justified[], force_human_review}`. `tentative_on_paths` lifts JUSTIFIED-VALID/INVALID to TENTATIVE on the same operator-policy contract as the other verdicts. When `--cache-dir` is set, fresh verifier outputs are written back to the `verifications/` namespace (30-day TTL) for re-use on subsequent runs. Missing fleet outputs degrade to `pending_verification[]`; `on_failure: continue`.
+- **stage_25_finalize_result** (PLN-722 + PLN-721): writes `<CR_DIR>/review_result.json` (the canonical envelope) BEFORE running schema validation. PLN-722: prefers `<CR_DIR>/findings_verified.json` (verify-consolidate output) when present and honors its `force_human_review` flag in the verdict computation; falls back to `findings_validated.json` (everything to `verified[]`) when verify-consolidate didn't run. PLN-721: pipes the consolidate `justified[]` bucket into the envelope, and loads operator-overridable thresholds from `.closedloop-ai/settings/verdict-thresholds.json` (defaults to `premise_cumulative_medium=3`; absent/malformed → built-in default) so `_compute_canonical_verdict` Rule 4 can fire (≥ 3 MEDIUM Premise findings in `verified[]` → NEEDS_ATTENTION). A non-zero exit signals reviewer-emitted category/field drift (e.g. a category not in the canonical enum) but does not block the pipeline — `on_failure: continue` lets `stage_28_verdict` read the structurally complete envelope. Surface the stderr text in the present step so operators can correct prompts/schema; do not abort.
 - **stage_26_cache_update**: gated by **Gate C**.
 - **stage_27_review_state_write**: gated by **Gate D**.
 - **stage_29_present**: present stage. Dispatch to "Local Mode: Present Results" or the GitHub steps in `github-review.md`.
@@ -301,7 +325,7 @@ Mark "Spawn reviewer agents in parallel" `in_progress`.
 | **Bug Hunter B**   | 1 total          | Sonnet                               | No           | Cross-file: DRY, API contracts, pattern consistency, imports           |
 | **Unified Auditor**| 1 total          | Sonnet                               | No           | CLAUDE.md rules + architectural conventions                            |
 | **Domain Critic**  | 0-1              | Sonnet                               | No           | From `critic-gates.json` (capped at 1)                                 |
-| **Premise Reviewer**| 1 total         | Per `route.json -> models.premise_reviewer` | No    | Questions whether changes were necessary at all                        |
+| **Premise Reviewer**| 1 total         | Per `route.json -> models.premise_reviewer` | No    | Four subcategories: `necessity`, `cohesion`, `workaround`, `complexity` |
 
 `partition`'s `--max-bha-agents` flag enforces the cap; the orchestrator spawns one BHA agent per partition entry.
 
@@ -460,75 +484,35 @@ the evidence is from source-file diffs; otherwise cap severity at HIGH.
 If `quarantine == false` (or the field is absent), proceed with the standard prompt below.
 
 **Premise Reviewer** (always runs, model per `route.json -> models.premise_reviewer`, `AGENT_ID: "premise"`):
+
+PLN-721 moved the Premise Reviewer's prompt into a per-run asset (`{CR_DIR}/premise_prompt.txt`) on the same contract as `verifier_prompt.txt` — `prep-assets` copies it from the plugin tree at run start, and editing it busts the prompt-hash so cache entries built against the old prompt are invalidated. The orchestrator prompt below tells the Premise agent to Read the asset, then layers on the per-run wiring (patches, intent context, the QUARANTINE preamble when triggered).
+
 ```
-You are the Premise Reviewer — you question whether the changes in this diff were necessary at all.
+You are the Premise Reviewer.
 
-FIRST, Read {CR_DIR}/intent_context.json to understand the author's stated motivation (PR title/body
-or commit messages). If the file has empty fields, infer intent from the diff content instead.
+FIRST, Read {CR_DIR}/premise_prompt.txt — this is your full prompt. It
+defines the four subcategories (necessity / cohesion / workaround /
+complexity), the required reasoning_certificate shape per subcategory,
+the Justification Escape Hatch, MEDIUM allowance with the cumulative
+gate, and the output format.
 
-Then Read the patches file and use Read, Grep, and Glob to investigate the EXISTING codebase.
-Your job is to find evidence that contradicts the stated motivation for these changes.
+THEN read these run-specific inputs (the asset references them):
+- {CR_DIR}/intent_context.json — author's stated motivation
+- {CR_DIR}/patches_all.txt     — full diff (path in <patches_file> above)
+- The repository CLAUDE.md      — project context
 
-Focus areas — flag ONLY when you have concrete proof:
-- Non-existent bug "fix": The author claims to fix a bug, but the original code was correct.
-  Verify the bug can actually trigger: trace the input source — is the "untrusted" input
-  actually self-authored config, a constant, or data the process itself writes? For security
-  claims specifically, evaluate the threat model: if an attacker must already have write access
-  to the input source, the vulnerability doesn't exist. Also flag internal contradictions where
-  the fix undermines its own premise (e.g., sanitizing "untrusted" input then passing it to
-  os.path.expandvars() — which re-introduces the exact exposure it claimed to prevent).
-- Redundant workaround: The problem the code works around is already handled by the framework,
-  library, or upstream code — verify by reading the relevant source
-- Phantom dead-code removal: Code was removed as "unused" but is still imported, referenced,
-  or dynamically invoked elsewhere — verify with Grep
-- Duplicate abstraction: A new helper/utility/wrapper was added, but an existing one with
-  equivalent functionality already exists — cite the existing implementation
-- Unnecessary perf optimization: The code adds caching, memoization, or batching for a path
-  that is not a bottleneck (e.g., called once at startup, processes <100 items)
-- Regressive fix: A change removes or restricts intentional behavior in the name of safety
-  or correctness, but the removed behavior was necessary for the feature to work. Check
-  whether the original code's behavior (e.g., shell pipelines, environment expansion, broad
-  permissions) was documented or relied upon by callers — if so, the fix introduces a
-  functional regression that outweighs any theoretical benefit.
+If the QUARANTINE preamble appears above this prompt, follow its
+instructions verbatim and skip the line in premise_prompt.txt that tells
+you to Read intent_context.json (the file is redacted in quarantine
+mode; infer intent from the diff only).
 
-REASONING PROTOCOL -- complete for each potential finding:
-Before reporting that a change's premise is wrong, explicitly check the alternative:
+Your <files_assigned> is the full diff scope (no partitioning).
 
-AUTHOR'S CLAIM: [What the author says this change does, from intent_context.json or diff]
-COUNTER-EVIDENCE: [Specific codebase evidence that contradicts the claim -- cite file:line]
-ALTERNATIVE CHECK: If the change IS justified, what evidence would support it?
-  - Searched for: [what you looked for to validate the author's premise]
-  - Found: [what you found -- cite file:line, or "no supporting evidence found"]
-CONCLUSION: [PREMISE REFUTED -- counter-evidence outweighs] or [PREMISE SUPPORTED -- discard finding]
+Write findings to <output_file> in the JSON shape documented in
+premise_prompt.txt. Respond ONLY with:
+  DONE findings={count} file={output_file_path}
 
-Only report findings where CONCLUSION = PREMISE REFUTED.
-
-Do NOT flag: correctness issues, style violations, DRY problems, CLAUDE.md compliance,
-naming conventions, or missing tests. Other agents cover those areas.
-
-IMPORTANT — Overrides to shared prompt constraints for the "Premise" category:
-The shared prompt requires findings to be "Introduced in this changeset" (constraint 3) and
-"The original author would likely fix it if aware" (constraint 4). For Premise findings,
-replace these with:
-  3. The changeset's stated motivation is contradicted by evidence you found in the codebase
-  4. The change is net-negative: it adds complexity, removes working code, or introduces risk
-     for a problem that does not exist
-All other shared prompt constraints (file in scope, discrete and actionable, concrete evidence)
-still apply.
-
-Severity rules (MANDATORY):
-- Use ONLY priority 0 (BLOCKING) or priority 1 (HIGH). Never use priority 2 or 3.
-  Premise findings are inherently about overall intent, not specific lines — P2+ findings
-  would be discarded by the line-range validation gate.
-- Confidence must be >= 0.7. If you are not confident the premise is wrong, do not report it.
-- category MUST be "Premise" for every finding.
-- For the `line` field, use the first added line in the primary file's changed range.
-- The `recommendation` field must state the actionable outcome plainly — e.g., "Revert this
-  change; the original code was correct" or "Decline — the security threat model is fictional
-  and the fix breaks shell pipeline support." Do not leave the reader to infer whether the PR
-  should be accepted or rejected.
-
-Use Read, Grep, and Glob for codebase context. Do NOT use Bash.
+Use Read, Grep, and Glob. Do NOT use Bash.
 ```
 
 ### Spawn + Collection Contract (standard flow)
@@ -624,72 +608,27 @@ Use Grep and Glob to verify claims. Do NOT flag issues without searching first.
 Standard severity/priority rules apply for all pass 2 findings.
 
 === PASS 3: Premise Reviewer ===
-You are the Premise Reviewer — you question whether the changes in this diff were necessary at all.
+Read {CR_DIR}/premise_prompt.txt — that asset is your complete Premise
+prompt. It documents the four subcategories (necessity / cohesion /
+workaround / complexity), the required reasoning_certificate shape per
+subcategory, the Justification Escape Hatch, the MEDIUM allowance with
+the cumulative-gate context, and the output format.
 
-FIRST, Read {CR_DIR}/intent_context.json to understand the author's stated motivation (PR title/body
-or commit messages). If the file has empty fields, infer intent from the diff content instead.
+Additional Fast Path wiring (these override the asset only where
+explicit):
+- Emit Premise findings only in this pass 3 block — passes 1 and 2 cover
+  other categories.
+- Read {CR_DIR}/intent_context.json for the author's stated motivation
+  (the asset references this). If the QUARANTINE preamble appears above,
+  follow it verbatim instead.
+- {DOMAIN_CRITIC_PASS}
 
-Then Read the patches file and use Read, Grep, and Glob to investigate the EXISTING codebase.
-Your job is to find evidence that contradicts the stated motivation for these changes.
+The asset's other constraints (severity tiers, certificate fields,
+output JSON shape) apply in full — do NOT restate them here. Findings
+without a populated certificate matching `subcategory` will be rejected
+by the validator.
 
-Focus areas — flag ONLY when you have concrete proof:
-- Non-existent bug "fix": The author claims to fix a bug, but the original code was correct.
-  Verify the bug can actually trigger: trace the input source — is the "untrusted" input
-  actually self-authored config, a constant, or data the process itself writes? For security
-  claims specifically, evaluate the threat model: if an attacker must already have write access
-  to the input source, the vulnerability doesn't exist. Also flag internal contradictions where
-  the fix undermines its own premise (e.g., sanitizing "untrusted" input then passing it to
-  os.path.expandvars() — which re-introduces the exact exposure it claimed to prevent).
-- Redundant workaround: The problem the code works around is already handled by the framework,
-  library, or upstream code — verify by reading the relevant source
-- Phantom dead-code removal: Code was removed as "unused" but is still imported, referenced,
-  or dynamically invoked elsewhere — verify with Grep
-- Duplicate abstraction: A new helper/utility/wrapper was added, but an existing one with
-  equivalent functionality already exists — cite the existing implementation
-- Unnecessary perf optimization: The code adds caching, memoization, or batching for a path
-  that is not a bottleneck (e.g., called once at startup, processes <100 items)
-- Regressive fix: A change removes or restricts intentional behavior in the name of safety
-  or correctness, but the removed behavior was necessary for the feature to work. Check
-  whether the original code's behavior (e.g., shell pipelines, environment expansion, broad
-  permissions) was documented or relied upon by callers — if so, the fix introduces a
-  functional regression that outweighs any theoretical benefit.
-
-REASONING PROTOCOL -- complete for each potential finding:
-Before reporting that a change's premise is wrong, explicitly check the alternative:
-
-AUTHOR'S CLAIM: [What the author says this change does, from intent_context.json or diff]
-COUNTER-EVIDENCE: [Specific codebase evidence that contradicts the claim -- cite file:line]
-ALTERNATIVE CHECK: If the change IS justified, what evidence would support it?
-  - Searched for: [what you looked for to validate the author's premise]
-  - Found: [what you found -- cite file:line, or "no supporting evidence found"]
-CONCLUSION: [PREMISE REFUTED -- counter-evidence outweighs] or [PREMISE SUPPORTED -- discard finding]
-
-Only report findings where CONCLUSION = PREMISE REFUTED.
-
-Do NOT flag: correctness issues, style violations, DRY problems, CLAUDE.md compliance,
-naming conventions, or missing tests. Other agents cover those areas.
-
-IMPORTANT — The following constraints apply ONLY to findings emitted in this pass 3:
-- Overrides to shared prompt constraints for the "Premise" category:
-  The shared prompt requires findings to be "Introduced in this changeset" (constraint 3) and
-  "The original author would likely fix it if aware" (constraint 4). For Premise findings,
-  replace these with:
-    3. The changeset's stated motivation is contradicted by evidence you found in the codebase
-    4. The change is net-negative: it adds complexity, removes working code, or introduces risk
-       for a problem that does not exist
-  All other shared prompt constraints (file in scope, discrete and actionable, concrete evidence)
-  still apply.
-- Use ONLY priority 0 (BLOCKING) or priority 1 (HIGH). Never use priority 2 or 3.
-- Confidence must be >= 0.7. If you are not confident the premise is wrong, do not report it.
-- category MUST be "Premise" for every finding in this pass.
-- For the `line` field, use the first added line in the primary file's changed range.
-- The `recommendation` field must state the actionable outcome plainly.
-
-These Premise constraints do NOT apply to findings from passes 1 and 2.
-
-{DOMAIN_CRITIC_PASS}
-
-Use Read, Grep, and Glob for codebase context. Do NOT use Bash.
+Use Read, Grep, and Glob. Do NOT use Bash.
 ```
 
 **Domain critic pass injection:** If `route.json -> domain_critics` is non-empty, replace `{DOMAIN_CRITIC_PASS}` with:
@@ -867,6 +806,38 @@ Then continue with:
 ## MEDIUM ([count])
 
 [List all medium priority issues — same format]
+
+---
+
+## Justified Findings (PLN-721)
+
+Read `<CR_DIR>/review_result.json` → `justified[]`. If empty, omit the section. If non-empty, render below with collapsible details so the reviewer can audit the justification audit. Cap at 20 displayed; if more, append a pointer line to `review_result.json.justified[]`.
+
+For each justified finding:
+
+```markdown
+### [{ORIGINAL_SEVERITY} justified] {FILE}:{LINE} — {ISSUE_HEAD}
+**Finding ID:** `{ID}`
+**Original reviewer:** {REVIEWER}
+**Subcategory:** `{SUBCATEGORY}` (Premise findings only)
+**Verifier verdict:** JUSTIFIED-VALID
+**Verifier confidence:** {VERIFIER_CONFIDENCE}
+
+**Original concern:** [verbatim from finding.issue]
+
+**Author's justification:**
+> [verbatim from finding.justification.text]
+>
+> — cited at `{finding.justification.source}` by `{finding.justification.claimed_by_reviewer}`
+
+**Verifier reasoning:** [verbatim from finding.verifier_reasoning — explains why J1 + J2 both passed]
+```
+
+After all justified findings (or the cap), print:
+
+```
+ℹ️ {N} finding(s) were emitted by reviewers but absorbed by author justification comments the verifier independently validated. Inspect each; if you disagree with a dismissal, the original concern is preserved in review_result.json.justified[].
+```
 
 ---
 

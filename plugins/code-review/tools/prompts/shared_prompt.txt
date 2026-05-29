@@ -180,6 +180,22 @@ The JSON format:
   ]
 }
 
+OPTIONAL canonical fields (the validator preserves these through the
+pipeline; you may emit them when relevant, otherwise omit):
+  - "subcategory": string — only the Premise reviewer uses this today
+    (necessity | cohesion | workaround | complexity). Other reviewers
+    may set it for finer-grained labels.
+  - "reasoning_certificate": object — Premise findings MUST emit this
+    with a shape matching their subcategory (premise_prompt.txt
+    documents the required fields). Other reviewers may emit one too
+    (kinds: impact, test_quality, sibling_pattern, bha, bhb, auditor)
+    but it is not required.
+  - "justified": bool (default false) and "justification": object —
+    set together when the author left an inline comment defending the
+    code that addresses the specific concern. The verifier independently
+    audits these (JUSTIFIED-VALID / JUSTIFIED-INVALID); do NOT discard a
+    finding because the author defended it.
+
 If you find NO issues, write: {"findings": []}
 
 After writing the file, respond with ONLY a one-line summary:

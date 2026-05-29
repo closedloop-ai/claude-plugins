@@ -4583,6 +4583,84 @@ class TestComputeHashes:
         actual = json.loads(capsys.readouterr().out.strip())["prompt_hash"]
         assert actual == expected
 
+    def test_premise_prompt_changes_hash(
+        self, tmp_path: Path, capsys: Any,
+    ) -> None:
+        """PLN-721: editing ``premise_prompt.txt`` must bust the prompt
+        hash on the same contract as verifier_prompt. Without this, the
+        BHA cache + verifications/ cache would serve stale results after
+        a premise prompt rev — the same shape of bug PR #111 review HIGH
+        #3 surfaced for the verifier.
+        """
+        import argparse
+
+        shared_prompt = tmp_path / "shared_prompt.txt"
+        shared_prompt.write_bytes(b"shared")
+        bha_suffix = tmp_path / "bha_suffix.txt"
+        bha_suffix.write_bytes(b"bha")
+        verifier_prompt = tmp_path / "verifier_prompt.txt"
+        verifier_prompt.write_bytes(b"verifier")
+        premise_prompt = tmp_path / "premise_prompt.txt"
+        premise_prompt.write_bytes(b"premise v1")
+        premise_prompt_v2 = tmp_path / "premise_prompt_v2.txt"
+        premise_prompt_v2.write_bytes(b"premise v2 - changed instructions")
+
+        def _hash_with(premise_path: str | None) -> str:
+            with patch("code_review_helpers._run_git", return_value=""):
+                ns = argparse.Namespace(
+                    shared_prompt=str(shared_prompt),
+                    bha_suffix=str(bha_suffix),
+                    verifier_prompt=str(verifier_prompt),
+                    premise_prompt=premise_path,
+                    diff_tip="HEAD", base_ref="main",
+                )
+                assert cmd_compute_hashes(ns) == 0
+            return json.loads(capsys.readouterr().out.strip())["prompt_hash"]
+
+        h_v1 = _hash_with(str(premise_prompt))
+        h_v2 = _hash_with(str(premise_prompt_v2))
+        assert h_v1 != h_v2, (
+            "Editing premise_prompt.txt must produce a different prompt_hash "
+            "so the BHA + verifications caches invalidate."
+        )
+
+    def test_omitting_premise_prompt_matches_pre_pln_721_hash(
+        self, tmp_path: Path, capsys: Any,
+    ) -> None:
+        """Back-compat: a pre-PLN-721 caller (no ``--premise-prompt``) must
+        produce the same hash as v2.8.1 byte-identically so existing
+        cache entries stay valid across the upgrade. Without this, the
+        v2.9.0 rollout would force every cache namespace to miss on the
+        first run after upgrade.
+        """
+        import argparse
+        import hashlib
+        from code_review_schema import SCHEMA_VERSION
+
+        shared_prompt = tmp_path / "shared_prompt.txt"
+        shared_prompt.write_bytes(b"S")
+        bha_suffix = tmp_path / "bha_suffix.txt"
+        bha_suffix.write_bytes(b"B")
+        verifier_prompt = tmp_path / "verifier_prompt.txt"
+        verifier_prompt.write_bytes(b"V")
+
+        # v2.8.1 hash shape: shared || \0 || bha || \0 || verifier || \0 || schema_version
+        expected = hashlib.sha256(
+            b"S" + b"\0" + b"B" + b"\0" + b"V" + b"\0" + str(SCHEMA_VERSION).encode(),
+        ).hexdigest()
+
+        with patch("code_review_helpers._run_git", return_value=""):
+            ns = argparse.Namespace(
+                shared_prompt=str(shared_prompt),
+                bha_suffix=str(bha_suffix),
+                verifier_prompt=str(verifier_prompt),
+                premise_prompt=None,
+                diff_tip="HEAD", base_ref="main",
+            )
+            assert cmd_compute_hashes(ns) == 0
+        actual = json.loads(capsys.readouterr().out.strip())["prompt_hash"]
+        assert actual == expected
+
 
 # ---------------------------------------------------------------------------
 # Auto-incremental subcommand
@@ -5325,6 +5403,7 @@ class TestPrepAssets:
         (prompts_dir / "shared_prompt.txt").write_text("shared prompt content")
         (prompts_dir / "bha_suffix.txt").write_text("bha suffix content")
         (prompts_dir / "verifier_prompt.txt").write_text("verifier prompt content")
+        (prompts_dir / "premise_prompt.txt").write_text("premise prompt content")
 
         cr_dir = tmp_path / "cr"
         cr_dir.mkdir()
@@ -5342,13 +5421,16 @@ class TestPrepAssets:
         assert (cr_dir / "shared_prompt.txt").exists()
         assert (cr_dir / "bha_suffix.txt").exists()
         assert (cr_dir / "verifier_prompt.txt").exists()
+        assert (cr_dir / "premise_prompt.txt").exists()
         assert "shared_prompt" in result
         assert "bha_suffix" in result
         assert "verifier_prompt" in result
+        assert "premise_prompt" in result
         # Output paths should point to actual files in cr_dir
         assert result["shared_prompt"] == str(cr_dir / "shared_prompt.txt")
         assert result["bha_suffix"] == str(cr_dir / "bha_suffix.txt")
         assert result["verifier_prompt"] == str(cr_dir / "verifier_prompt.txt")
+        assert result["premise_prompt"] == str(cr_dir / "premise_prompt.txt")
 
 
 # ---------------------------------------------------------------------------
@@ -7956,6 +8038,103 @@ class TestVerifyConsolidate:
         assert out["verified"][0]["verifier_verdict"] == "TENTATIVE"
         assert out["force_human_review"] is False
 
+    def test_justified_valid_routes_to_justified_bucket(
+        self, tmp_path: Path,
+    ) -> None:
+        """PLN-721: JUSTIFIED-VALID verdicts land in the new justified[]
+        bucket, NOT verified[] or rejected[]. They are the author's
+        defense holding up under independent audit."""
+        findings = [_make_validated_finding("premise_f0", severity="MEDIUM")]
+        manifest = {
+            "to_verify": [{"finding_id": "premise_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        verdicts = {
+            "premise_f0": {
+                "verifier_verdict": "JUSTIFIED-VALID",
+                "verifier_confidence": 0.9,
+                "verifier_reasoning": "justification addresses the concern",
+                "evidence_checks": [],
+                "rejection_class": None,
+            },
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs=verdicts,
+        )
+        assert out["verified"] == []
+        assert out["rejected"] == []
+        assert len(out["justified"]) == 1
+        assert out["justified"][0]["verifier_verdict"] == "JUSTIFIED-VALID"
+        assert out["stats"]["justified_count"] == 1
+
+    def test_justified_invalid_routes_to_verified_bucket(
+        self, tmp_path: Path,
+    ) -> None:
+        """PLN-721: JUSTIFIED-INVALID verdicts land in verified[] — the
+        justification audit failed, so the original concern stands and
+        downstream verdict rules treat it like any other verified MEDIUM."""
+        findings = [_make_validated_finding("premise_f0", severity="MEDIUM")]
+        manifest = {
+            "to_verify": [{"finding_id": "premise_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        verdicts = {
+            "premise_f0": {
+                "verifier_verdict": "JUSTIFIED-INVALID",
+                "verifier_confidence": 0.85,
+                "verifier_reasoning": "justification is generic, does not address concern",
+                "evidence_checks": [],
+                "rejection_class": "evidence_contradicted",
+            },
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs=verdicts,
+        )
+        assert len(out["verified"]) == 1
+        assert out["verified"][0]["verifier_verdict"] == "JUSTIFIED-INVALID"
+        assert out["justified"] == []
+        assert out["rejected"] == []
+
+    def test_tentative_on_paths_lifts_justified_valid(
+        self, tmp_path: Path,
+    ) -> None:
+        """PLN-721: operator's `tentative_on_paths` policy outranks the
+        author's justification. A JUSTIFIED-VALID on an always-tentative
+        path lifts to TENTATIVE and lands in verified[] (not justified[])
+        so Rule 3.5 fires and the verdict becomes NEEDS_ATTENTION."""
+        findings = [
+            _make_validated_finding(
+                "premise_f0", severity="MEDIUM", file="lib/auth/handler.ts",
+            ),
+        ]
+        manifest = {
+            "to_verify": [{"finding_id": "premise_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        verdicts = {
+            "premise_f0": {
+                "verifier_verdict": "JUSTIFIED-VALID",
+                "verifier_confidence": 0.9,
+                "verifier_reasoning": "looks fine",
+                "evidence_checks": [],
+                "rejection_class": None,
+            },
+        }
+        gates = {
+            "sensitive_paths": [],
+            "tentative_on_paths": ["lib/auth/**"],
+            "mandatory_human_review_paths": [],
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs=verdicts,
+            gates=gates,
+        )
+        # Verdict re-stamped to TENTATIVE, and the finding lands in
+        # verified[] for Rule 3.5 to escalate downstream.
+        assert len(out["verified"]) == 1
+        assert out["verified"][0]["verifier_verdict"] == "TENTATIVE"
+        assert out["justified"] == []
+
     def test_cache_writeback_on_fresh_verdict(self, tmp_path: Path) -> None:
         finding = _make_validated_finding("bha_p0_f0", severity="HIGH")
         manifest = {
@@ -8078,6 +8257,170 @@ class TestCanonicalVerdictPLN722:
             [],
         )
         assert v == "APPROVED"
+
+
+class TestLoadVerdictThresholds:
+    """PLN-721: operator-overridable verdict thresholds."""
+
+    def test_none_path_returns_default(self) -> None:
+        from code_review_helpers import _load_verdict_thresholds
+        out = _load_verdict_thresholds(None)
+        assert out == {"premise_cumulative_medium": 3}
+
+    def test_missing_file_returns_default(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_verdict_thresholds
+        out = _load_verdict_thresholds(tmp_path / "missing.json")
+        assert out["premise_cumulative_medium"] == 3
+
+    def test_valid_override(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_verdict_thresholds
+        p = tmp_path / "verdict-thresholds.json"
+        p.write_text(json.dumps({"premise_cumulative_medium": 5}))
+        out = _load_verdict_thresholds(p)
+        assert out["premise_cumulative_medium"] == 5
+
+    def test_malformed_json_falls_back_to_default(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_verdict_thresholds
+        p = tmp_path / "verdict-thresholds.json"
+        p.write_text("not json {")
+        out = _load_verdict_thresholds(p)
+        assert out["premise_cumulative_medium"] == 3
+
+    def test_non_int_value_falls_back_to_default(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_verdict_thresholds
+        p = tmp_path / "verdict-thresholds.json"
+        p.write_text(json.dumps({"premise_cumulative_medium": "three"}))
+        out = _load_verdict_thresholds(p)
+        assert out["premise_cumulative_medium"] == 3
+
+    def test_zero_or_negative_falls_back_to_default(self, tmp_path: Path) -> None:
+        """A 0 or negative threshold would silently disable the gate. The
+        operator must use a very large number (e.g. 9999) to disable, not
+        0/-1 — the loader rejects values < 1 and falls back to the default
+        so a typo doesn't silently switch off Rule 4."""
+        from code_review_helpers import _load_verdict_thresholds
+        p = tmp_path / "verdict-thresholds.json"
+        p.write_text(json.dumps({"premise_cumulative_medium": 0}))
+        assert _load_verdict_thresholds(p)["premise_cumulative_medium"] == 3
+        p.write_text(json.dumps({"premise_cumulative_medium": -1}))
+        assert _load_verdict_thresholds(p)["premise_cumulative_medium"] == 3
+
+    def test_bool_rejected_as_threshold(self, tmp_path: Path) -> None:
+        """Python's `True` is `int(True) == 1` — the loader must explicitly
+        reject bools so a stray `true` in the JSON doesn't set the gate to 1.
+        """
+        from code_review_helpers import _load_verdict_thresholds
+        p = tmp_path / "verdict-thresholds.json"
+        p.write_text(json.dumps({"premise_cumulative_medium": True}))
+        out = _load_verdict_thresholds(p)
+        assert out["premise_cumulative_medium"] == 3
+
+
+class TestCumulativePremiseMediumGate:
+    """PLN-721 Rule 4: cumulative Premise MEDIUM gate."""
+
+    @staticmethod
+    def _premise_med(verifier_verdict: str | None = "CONFIRMED") -> dict[str, Any]:
+        return {
+            "category": "Premise",
+            "severity": "MEDIUM",
+            "verifier_verdict": verifier_verdict,
+            "issue": "premise med",
+        }
+
+    def test_two_medium_premise_approved(self) -> None:
+        v, _ = _compute_canonical_verdict(
+            [self._premise_med(), self._premise_med()], [],
+        )
+        assert v == "APPROVED"
+
+    def test_three_medium_premise_triggers_needs_attention(self) -> None:
+        v, r = _compute_canonical_verdict(
+            [self._premise_med(), self._premise_med(), self._premise_med()], [],
+        )
+        assert v == "NEEDS_ATTENTION"
+        assert "3 MEDIUM Premise" in r
+        assert "threshold 3" in r
+
+    def test_four_medium_premise_still_needs_attention(self) -> None:
+        v, _ = _compute_canonical_verdict(
+            [self._premise_med()] * 4, [],
+        )
+        assert v == "NEEDS_ATTENTION"
+
+    def test_custom_threshold_raises_bar(self) -> None:
+        # Operator override: premise_cumulative_medium = 5 ⇒ 3 is no longer enough
+        v, _ = _compute_canonical_verdict(
+            [self._premise_med()] * 3, [],
+            thresholds={"premise_cumulative_medium": 5},
+        )
+        assert v == "APPROVED"
+        # but 5 fires the gate
+        v, _ = _compute_canonical_verdict(
+            [self._premise_med()] * 5, [],
+            thresholds={"premise_cumulative_medium": 5},
+        )
+        assert v == "NEEDS_ATTENTION"
+
+    def test_non_premise_medium_does_not_count(self) -> None:
+        # A pile of MEDIUM CodeQuality findings doesn't trigger Rule 4.
+        v, _ = _compute_canonical_verdict(
+            [{"category": "Code Quality", "severity": "MEDIUM",
+              "verifier_verdict": "CONFIRMED", "issue": "dry"}] * 5,
+            [],
+        )
+        assert v == "APPROVED"
+
+    def test_high_blocking_premise_does_not_count_toward_rule_4(self) -> None:
+        # Rule 3 (HIGH) short-circuits before Rule 4 ever runs.
+        v, _ = _compute_canonical_verdict(
+            [{"category": "Premise", "severity": "HIGH",
+              "verifier_verdict": "CONFIRMED", "issue": "high prem"},
+             self._premise_med(), self._premise_med()],
+            [],
+        )
+        assert v == "NEEDS_ATTENTION"  # caused by HIGH, not the cumulative gate
+
+    def test_justified_valid_excluded_from_count(self) -> None:
+        """Defensive: if a JUSTIFIED-VALID finding leaks into verified[]
+        (it shouldn't — cmd_verify_consolidate routes it to justified[]),
+        the gate must still ignore it."""
+        v, _ = _compute_canonical_verdict(
+            [self._premise_med(),
+             self._premise_med(),
+             self._premise_med(verifier_verdict="JUSTIFIED-VALID")],
+            [],
+        )
+        assert v == "APPROVED"
+
+    def test_justified_invalid_excluded_from_count(self) -> None:
+        v, _ = _compute_canonical_verdict(
+            [self._premise_med(),
+             self._premise_med(),
+             self._premise_med(verifier_verdict="JUSTIFIED-INVALID")],
+            [],
+        )
+        assert v == "APPROVED"
+
+    def test_downgrade_to_medium_counts(self) -> None:
+        """A DOWNGRADE from HIGH → MEDIUM (severity already rewritten by
+        _merge_verifier_fields) counts toward Rule 4."""
+        v, _ = _compute_canonical_verdict(
+            [self._premise_med(verifier_verdict="DOWNGRADE")] * 3, [],
+        )
+        assert v == "NEEDS_ATTENTION"
+
+    def test_tentative_rule_35_wins_over_rule_4_counting(self) -> None:
+        """If any Premise finding is TENTATIVE, Rule 3.5 short-circuits
+        first and Rule 4 never runs. The verdict is still NEEDS_ATTENTION
+        but for the verifier-uncertainty reason."""
+        v, r = _compute_canonical_verdict(
+            [self._premise_med(verifier_verdict="TENTATIVE"),
+             self._premise_med(), self._premise_med()],
+            [],
+        )
+        assert v == "NEEDS_ATTENTION"
+        assert "uncertain" in r.lower()
 
 
 class TestFinalizeResultPrefersVerified:

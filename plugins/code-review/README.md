@@ -207,6 +207,28 @@ This file-based handoff ensures that Claude never directly calls GitHub mutation
 
 Each finding includes: file path, line number, severity, category, issue title, explanation, recommendation, code snippet, priority (0-3), and confidence (0.0-1.0). Findings with confidence below 0.5 are discarded during validation.
 
+## Configuration
+
+Operator-tunable knobs live under `.closedloop-ai/settings/`. All files are optional; absent or malformed entries fall back to built-in defaults.
+
+### `verdict-thresholds.json` (PLN-721)
+
+Tunes the verdict-precedence gates. Currently supports one key:
+
+```json
+{
+  "premise_cumulative_medium": 3
+}
+```
+
+| Key | Default | Effect |
+|---|---|---|
+| `premise_cumulative_medium` | `3` | Trigger `NEEDS_ATTENTION` when at least N MEDIUM Premise findings survive verification on the same PR, even if no individual finding is HIGH. Set to a very large number (e.g. `999`) to disable. Values below 1 are ignored. |
+
+### `verification-gates.json` (PLN-722)
+
+Sensitive-path policy. See `start.md` for the full glob syntax and the three supported keys (`sensitive_paths`, `tentative_on_paths`, `mandatory_human_review_paths`).
+
 ## Reviewer Agent Constraints
 
 Reviewer agents (spawned as `code-review:code-review-worker` sub-agents) operate under strict constraints defined in `shared_prompt.txt`:
