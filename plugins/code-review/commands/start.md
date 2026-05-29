@@ -263,7 +263,10 @@ These notes annotate the run-plan stages with anything not obvious from the plan
 - **stage_19_cache_check**: writes `<CR_DIR>/cache_result.json` (stats), `<CR_DIR>/agent_cached_bha.json` (cached BHA findings, glob-compatible with `agent_*`), `<CR_DIR>/uncached_diff_data.json` (filtered diff_data for uncached files). Do NOT print the cache status here — it is printed in Gate A (hygiene exit) or Gate B (after route).
 - **stage_20_spawn_reviewers**: agent_fleet stage. Dispatch to the "Reviewer Fleet" section below.
 - **stage_22_validate**: writes `<CR_DIR>/findings_validated.json` via `> <CR_DIR>/findings_validated.json` redirection. Phase B will retire this file; it remains during the transition.
-- **stage_25_finalize_result**: writes `<CR_DIR>/review_result.json` (the canonical envelope) BEFORE running schema validation. A non-zero exit signals reviewer-emitted category/field drift (e.g. a category not in the canonical enum) but does not block the pipeline — `on_failure: continue` lets `stage_28_verdict` read the structurally complete envelope. Surface the stderr text in the present step so operators can correct prompts/schema; do not abort.
+- **stage_22b_verify_prepare** (PLN-722): tier-selects findings for verification per the canonical table — BLOCKING/HIGH always; MEDIUM with confidence < 0.85 yes; MEDIUM with confidence ≥ 0.85 no; LOW (P3) no; `category: "Hygiene"` no; `source: "injection-detector"` no; `category: "Premise"` always (strict adversarial framing). Ranks the eligible set by `severity_weight × confidence`, caps at `MAX_VERIFICATIONS = 50`, and writes (a) `<CR_DIR>/verify_manifest.json` with `to_verify[]` + `skipped_no_verification[]` + `deferred_budget[]` + `cache_hits[]`, and (b) `<CR_DIR>/verifier_inputs/<finding_id>.json` per eligible finding. When `--cache-dir` is set, fresh verifier outputs from a prior run for the same `(finding_id, code_snippet_hash, model, prompt_hash)` tuple are pre-materialized at `agent_verifier_<finding_id>.json` and skipped from `to_verify[]` (logged under `cache_hits[]`). `on_failure: continue` is intentional — verify-prepare failure degrades to "no verifier this run", not a pipeline abort.
+- **stage_23_verify_findings** (PLN-722): agent_fleet stage. Dispatch to the "Verifier Fleet" section below. Each spawned agent reads its `verifier_inputs/<finding_id>.json` (containing the finding + the `verifier_prompt_path` + the canonical `output_path`) and emits one verdict file at `<CR_DIR>/agent_verifier_<finding_id>.json`. `on_failure: continue` so a single agent crash never aborts review.
+- **stage_24a_verify_consolidate** (PLN-722): merges all `agent_verifier_*.json` outputs back into the validated set, applies sensitive-path escalation from `.closedloop-ai/settings/verification-gates.json` (rules: REJECTED on `sensitive_paths` + BLOCKING/HIGH → TENTATIVE with severity capped at HIGH; any finding on `tentative_on_paths` → TENTATIVE; any finding on `mandatory_human_review_paths` → TENTATIVE + `force_human_review: true`), and writes `<CR_DIR>/findings_verified.json` with the bucket-split shape `{verified[], rejected[], pending_verification[], force_human_review}`. When `--cache-dir` is set, fresh verifier outputs are written back to the `verifications/` namespace (30-day TTL) for re-use on subsequent runs. Missing fleet outputs degrade to `pending_verification[]`; `on_failure: continue`.
+- **stage_25_finalize_result**: writes `<CR_DIR>/review_result.json` (the canonical envelope) BEFORE running schema validation. PLN-722: prefers `<CR_DIR>/findings_verified.json` (verify-consolidate output) when present and honors its `force_human_review` flag in the verdict computation; falls back to `findings_validated.json` (everything to `verified[]`) when verify-consolidate didn't run. A non-zero exit signals reviewer-emitted category/field drift (e.g. a category not in the canonical enum) but does not block the pipeline — `on_failure: continue` lets `stage_28_verdict` read the structurally complete envelope. Surface the stderr text in the present step so operators can correct prompts/schema; do not abort.
 - **stage_26_cache_update**: gated by **Gate C**.
 - **stage_27_review_state_write**: gated by **Gate D**.
 - **stage_29_present**: present stage. Dispatch to "Local Mode: Present Results" or the GitHub steps in `github-review.md`.
@@ -709,6 +712,64 @@ If `domain_critics` is empty, remove the `{DOMAIN_CRITIC_PASS}` placeholder enti
 
 ---
 
+## Verifier Fleet (stage_23_verify_findings)
+
+This stage runs when the walker reaches `stage_23`. It implements PLN-722's finding-verification pass: each eligible finding gets an independent second opinion from a verifier agent prompted to *falsify* (not confirm) the original claim. Findings that survive land in `verified[]`; findings rejected with positive evidence land in `rejected[]` and surface in the "Dismissed Findings" section so humans can falsify the dismissal.
+
+### Inputs
+
+`stage_22b_verify_prepare` already wrote `<CR_DIR>/verify_manifest.json` and one input file per eligible finding at `<CR_DIR>/verifier_inputs/<finding_id>.json`. Read the manifest:
+
+```
+{
+  "to_verify": [{"finding_id", "model", "input_path", "output_path", ...}, ...],
+  "skipped_no_verification": [...],
+  "deferred_budget": [...],
+  "cache_hits": [...]
+}
+```
+
+`cache_hits[]` entries have already been materialized at their `output_path`; do NOT respawn them. Only entries in `to_verify[]` need fleet dispatch.
+
+### Spawn contract
+
+For each entry in `verify_manifest.json.to_verify[]`:
+
+1. Spawn one background `Task` with `subagent_type: "code-review:code-review-worker"`. The agent's tool allowlist (`Read`, `Write`, `Grep`, `Glob`) is identical to the Reviewer Fleet's — no permission changes needed.
+2. Prompt template:
+   ```
+   You are the FINDING VERIFIER. Read your prompt at:
+     {VERIFIER_PROMPT_PATH}
+
+   Your input file is at:
+     {INPUT_PATH}
+
+   Read it for the finding to verify, the canonical output path, and the
+   per-output JSON shape. Write your verdict JSON to the output path the
+   input file specifies. Do not write anywhere else.
+   ```
+   Substitute the resolved paths from the manifest entry (the verifier prompt is at `<CR_DIR>/verifier_prompt.txt`, copied by `stage_02_prep_assets`).
+3. Set `model` to the entry's `model` field (currently uniform `sonnet`; future revisions may split by original-reviewer model for cross-model independence).
+
+### Collection contract
+
+- Call `TaskOutput` (block: true) for every spawned verifier agent before letting the walker proceed past `stage_23`.
+- A missing `agent_verifier_<finding_id>.json` is NOT a fatal error — `cmd_verify_consolidate` tags it as `pending_verification[]` so operators see what didn't get verified.
+- Do NOT retry verifier agents in the walker. If a verifier fails, the finding's downstream handling already covers the gap (pending) — and verifier retries would burn tokens on a finding already flagged for human review.
+- `stage_23.on_failure == "continue"`: a fleet-wide failure does NOT abort the pipeline; `verify-consolidate` and `finalize-result` produce a usable envelope even when zero verifier outputs land on disk.
+
+### Cache hits (skip spawn)
+
+Entries in `verify_manifest.json.cache_hits[]` are already on disk at `agent_verifier_<finding_id>.json`. Skip them. They flow into `verify-consolidate` the same way fresh fleet outputs do.
+
+### What you do NOT do
+
+- Do not read finding source files in the orchestrator (verifier agents read files via Read/Grep themselves).
+- Do not parse `agent_verifier_*.json` in the orchestrator — `cmd_verify_consolidate` (stage_24a) reads them.
+- Do not regenerate `verify_manifest.json` in the walker — `cmd_verify_prepare` (stage_22b) is the only writer.
+
+---
+
 ## Hygiene Findings (Gate A presentation)
 
 Reached only when `flags.hygiene_only == true`. Parse `<CR_DIR>/hygiene.json` and present:
@@ -806,6 +867,44 @@ Then continue with:
 ## MEDIUM ([count])
 
 [List all medium priority issues — same format]
+
+---
+
+## Dismissed Findings (PLN-722)
+
+Read `<CR_DIR>/review_result.json` → `rejected[]`. If empty, omit the section. If non-empty, render verbose-by-design (humans must evaluate, not skim) and sort BLOCKING dismissals first, MEDIUM last. Cap at 20 displayed; if more, append a pointer line to `review_result.json` for the full list.
+
+For each rejected finding:
+
+```markdown
+### [{ORIGINAL_SEVERITY} dismissed] {FILE}:{LINE} — {ISSUE_HEAD}
+**Finding ID:** `{ID}`
+**Original reviewer:** {REVIEWER}
+**Verifier verdict:** REJECTED (rejection_class: `{REJECTION_CLASS}`)
+**Verifier confidence:** {VERIFIER_CONFIDENCE}
+
+**Original issue:** [verbatim from finding.issue]
+
+**Verifier reasoning:** [verbatim from finding.verifier_reasoning — usually 1-3 paragraphs]
+
+**Evidence checks:**
+- ✓ {check.claim} — verified at {check.source}
+- ✗ {check.claim} — {check.actual_read} ({check.source})
+
+(If `finding.verifier_verdict == "TENTATIVE"` because of a sensitive-path escalation rather than a true REJECTED → TENTATIVE rewrite, that finding belongs in the primary BLOCKING/HIGH/MEDIUM sections above with a `[verifier uncertain — sensitive path]` annotation, NOT here.)
+```
+
+After all rejected findings (or the cap), print:
+
+```
+ℹ️ {N} finding(s) were emitted by reviewers but disproved by the verifier with cited evidence. Inspect each; if you disagree with a dismissal, the original finding is preserved in review_result.json.rejected[].
+```
+
+If `review_result.json.pending_verification[]` is non-empty, append a one-line note:
+
+```
+⚠️ {M} finding(s) were eligible for verification but no verifier output landed on disk (agent timeout, --no-verify, or budget overflow). Treat them as unverified and re-review by reading review_result.json.pending_verification[].
+```
 
 ---
 

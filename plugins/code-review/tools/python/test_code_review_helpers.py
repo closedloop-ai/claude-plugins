@@ -84,6 +84,18 @@ from code_review_helpers import (
     cmd_setup,
     cmd_validate,
     cmd_verdict,
+    cmd_verify_consolidate,
+    cmd_verify_prepare,
+)
+from code_review_helpers import (
+    VERIFY_MAX_VERIFICATIONS,
+    _compute_canonical_verdict,
+    _glob_to_regex,
+    _load_verification_gates,
+    _matches_any_glob,
+    _needs_verification,
+    _verification_cache_key,
+    _verification_priority,
 )
 
 
@@ -5240,6 +5252,7 @@ class TestPrepAssets:
         prompts_dir.mkdir(parents=True)
         (prompts_dir / "shared_prompt.txt").write_text("shared prompt content")
         (prompts_dir / "bha_suffix.txt").write_text("bha suffix content")
+        (prompts_dir / "verifier_prompt.txt").write_text("verifier prompt content")
 
         cr_dir = tmp_path / "cr"
         cr_dir.mkdir()
@@ -5256,11 +5269,14 @@ class TestPrepAssets:
 
         assert (cr_dir / "shared_prompt.txt").exists()
         assert (cr_dir / "bha_suffix.txt").exists()
+        assert (cr_dir / "verifier_prompt.txt").exists()
         assert "shared_prompt" in result
         assert "bha_suffix" in result
+        assert "verifier_prompt" in result
         # Output paths should point to actual files in cr_dir
         assert result["shared_prompt"] == str(cr_dir / "shared_prompt.txt")
         assert result["bha_suffix"] == str(cr_dir / "bha_suffix.txt")
+        assert result["verifier_prompt"] == str(cr_dir / "verifier_prompt.txt")
 
 
 # ---------------------------------------------------------------------------
@@ -6509,14 +6525,33 @@ class TestPrepareRun:
             pr_number=pr_number,
         )
 
-    def test_emits_thirty_stages(self, tmp_path: Path) -> None:
+    def test_emits_thirty_two_stages(self, tmp_path: Path) -> None:
+        """PLN-722 v2.8.0 added two helper-wrapper stages around the
+        verifier fleet (``stage_22b_verify_prepare`` and
+        ``stage_24a_verify_consolidate``), bringing the total from 30 to
+        32. The ``_<NN>_`` prefix is a stable label, not a strict ordinal;
+        the lettered suffixes (``_22b_``, ``_24a_``) mark stages inserted
+        between original ordinals.
+        """
         summary, plan = self._run(tmp_path)
-        assert summary["stage_count"] == 30
-        assert len(plan["stages"]) == 30
+        assert summary["stage_count"] == 32
+        assert len(plan["stages"]) == 32
         # Ordered stage ids
         ids = [s["id"] for s in plan["stages"]]
         assert ids[0] == "stage_01_setup"
         assert ids[-1] == "stage_30_footer"
+        # Verifier wrapper insertion points
+        assert "stage_22b_verify_prepare" in ids
+        assert "stage_24a_verify_consolidate" in ids
+        prep_idx = ids.index("stage_22b_verify_prepare")
+        fleet_idx = ids.index("stage_23_verify_findings")
+        cons_idx = ids.index("stage_24a_verify_consolidate")
+        finalize_idx = ids.index("stage_25_finalize_result")
+        assert prep_idx < fleet_idx < cons_idx < finalize_idx, (
+            f"verifier stages must appear in order prep → fleet → consolidate "
+            f"→ finalize; got prep={prep_idx} fleet={fleet_idx} "
+            f"cons={cons_idx} finalize={finalize_idx}"
+        )
 
     def test_extract_patches_runs_after_parse_diff(self, tmp_path: Path) -> None:
         """PLN-719 Section 7: extract-patches MOVED to right after parse-diff."""
@@ -6549,22 +6584,77 @@ class TestPrepareRun:
         """Stages from still-deferred plans must remain enabled=false.
 
         Plan 01 (PLN-720, detect-injection) was flipped to enabled in v2.7.0
-        and now has its own contract test (test_stage_09_detect_injection_
-        enabled_with_pinned_args). The remaining deferred stages must stay
-        off until their plans land:
-          - plan 03 (PLN-722): stage_23_verify_findings
+        and plan 03 (PLN-722, verify-findings + verify-prepare + verify-
+        consolidate) was flipped in v2.8.0; both have their own contract
+        tests. The remaining deferred stages must stay off until their
+        plans land:
           - plan 05 (PLN-725): stage_11_extract_signals, stage_14_resolve_coverage
           - plan 06 (PLN-726): stage_13_validate_companions
+          - plan 05 coverage verifier: stage_24_verify_coverage
         """
         _, plan = self._run(tmp_path)
         by_id = {s["id"]: s for s in plan["stages"]}
         # plan 05
         assert by_id["stage_11_extract_signals"]["enabled"] is False
         assert by_id["stage_14_resolve_coverage"]["enabled"] is False
+        assert by_id["stage_24_verify_coverage"]["enabled"] is False
         # plan 06
         assert by_id["stage_13_validate_companions"]["enabled"] is False
-        # plan 03
-        assert by_id["stage_23_verify_findings"]["enabled"] is False
+
+    def test_pln_722_verify_pipeline_enabled_with_pinned_args(
+        self, tmp_path: Path,
+    ) -> None:
+        """PLN-722 v2.8.0 contract: the three verify stages are enabled and
+        wired together with the right helpers and dependencies.
+
+        Walks the run plan and asserts:
+          * stage_22b_verify_prepare: helper, ``verify-prepare`` subcommand,
+            depends on stage_22, on_failure=continue, enabled
+          * stage_23_verify_findings: agent_fleet, depends on stage_22b,
+            emits ``agent_verifier_*.json``, on_failure=continue, enabled
+          * stage_24a_verify_consolidate: helper, ``verify-consolidate``,
+            depends on stage_23, emits ``findings_verified.json``,
+            on_failure=continue, enabled
+          * stage_25_finalize_result.depends_on includes stage_24a so the
+            envelope-builder always runs after the verifier wrapper.
+        """
+        _, plan = self._run(tmp_path)
+        by_id = {s["id"]: s for s in plan["stages"]}
+
+        prep = by_id["stage_22b_verify_prepare"]
+        assert prep["enabled"] is True
+        assert prep["kind"] == "helper"
+        assert prep["subcommand"] == "verify-prepare"
+        assert prep["on_failure"] == "continue"
+        assert "stage_22_validate" in prep["depends_on"]
+        assert any("--cr-dir" == a for a in prep["args"])
+        assert any("--findings" == a for a in prep["args"])
+
+        fleet = by_id["stage_23_verify_findings"]
+        assert fleet["enabled"] is True
+        assert fleet["kind"] == "agent_fleet"
+        assert fleet["on_failure"] == "continue"
+        assert "stage_22b_verify_prepare" in fleet["depends_on"]
+        assert any("agent_verifier_" in p for p in fleet["expected_outputs"]), (
+            "verifier fleet must declare agent_verifier_*.json output glob, "
+            "not findings_verified.json (that's stage_24a's output)"
+        )
+
+        consolidate = by_id["stage_24a_verify_consolidate"]
+        assert consolidate["enabled"] is True
+        assert consolidate["kind"] == "helper"
+        assert consolidate["subcommand"] == "verify-consolidate"
+        assert consolidate["on_failure"] == "continue"
+        assert "stage_23_verify_findings" in consolidate["depends_on"]
+        assert any(
+            "findings_verified.json" in p for p in consolidate["expected_outputs"]
+        )
+
+        finalize = by_id["stage_25_finalize_result"]
+        assert "stage_24a_verify_consolidate" in finalize["depends_on"], (
+            "finalize-result must depend on verify-consolidate so the "
+            "envelope is built from the bucket-split output"
+        )
 
     def test_foundation_stages_enabled(self, tmp_path: Path) -> None:
         """Foundation-owned stages whose inputs always exist must be enabled."""
@@ -7029,3 +7119,842 @@ class TestCanonicalPromptHash:
         a = compute_canonical_prompt_hash([b"ab", b"c"])
         b = compute_canonical_prompt_hash([b"a", b"bc"])
         assert a != b
+
+
+# ---------------------------------------------------------------------------
+# PLN-722: Finding-Verification Pass
+# ---------------------------------------------------------------------------
+
+
+def _make_validated_finding(
+    fid: str,
+    *,
+    file: str = "src/app.ts",
+    line: int = 10,
+    severity: str = "HIGH",
+    confidence: float = 0.8,
+    category: str = "Correctness",
+    source: str = "agent",
+    issue: str = "test issue",
+    code_snippet: str = "const x = req.body.name;",
+    evidence: list[dict[str, Any]] | None = None,
+    reasoning_certificate: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Shape-only validated-finding factory for verify-* tests."""
+    return {
+        "id": fid,
+        "reviewer": fid.split("_")[0],
+        "reviewer_trigger": {"type": "core", "evidence": None},
+        "source": source,
+        "emitted_at": "2026-05-29T16:00:00+00:00",
+        "finding_scope": "diff",
+        "file": file,
+        "line": line,
+        "system_marker": None,
+        "category": category,
+        "severity": severity,
+        "priority": {"BLOCKING": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}.get(severity, 2),
+        "confidence": confidence,
+        "issue": issue,
+        "explanation": "explanation",
+        "recommendation": "fix it",
+        "code_snippet": code_snippet,
+        "evidence": evidence or [],
+        "reasoning_certificate": reasoning_certificate,
+        "schema_version": 1,
+    }
+
+
+def _write_validated_input(
+    tmp_path: Path, findings: list[dict[str, Any]],
+) -> Path:
+    path = tmp_path / "findings_validated.json"
+    path.write_text(json.dumps({"validated": findings}))
+    return path
+
+
+def _run_verify_prepare(
+    tmp_path: Path,
+    findings: list[dict[str, Any]],
+    *,
+    cache_dir: Path | None = None,
+    prompt_hash: str = "",
+) -> tuple[int, dict[str, Any]]:
+    import io
+    import sys as _sys
+
+    findings_path = _write_validated_input(tmp_path, findings)
+    cr_dir = tmp_path / "cr"
+    cr_dir.mkdir(exist_ok=True)
+    # The verifier_prompt.txt placeholder is referenced in the per-finding
+    # input files; create a stub so the path the test inspects exists.
+    (cr_dir / "verifier_prompt.txt").write_text("verifier prompt stub")
+
+    old_stdout = _sys.stdout
+    _sys.stdout = io.StringIO()
+    try:
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            findings=str(findings_path),
+            cache_dir=str(cache_dir) if cache_dir else None,
+            prompt_hash=prompt_hash,
+        )
+        rc = cmd_verify_prepare(ns)
+        _sys.stdout.seek(0)
+        manifest = json.load(_sys.stdout)
+        return rc, manifest
+    finally:
+        _sys.stdout = old_stdout
+
+
+def _run_verify_consolidate(
+    tmp_path: Path,
+    findings: list[dict[str, Any]],
+    *,
+    manifest: dict[str, Any] | None = None,
+    verifier_outputs: dict[str, dict[str, Any]] | None = None,
+    gates: dict[str, list[str]] | None = None,
+    cache_dir: Path | None = None,
+    prompt_hash: str = "",
+) -> tuple[int, dict[str, Any]]:
+    import io
+    import sys as _sys
+
+    findings_path = _write_validated_input(tmp_path, findings)
+    cr_dir = tmp_path / "cr"
+    cr_dir.mkdir(exist_ok=True)
+
+    manifest_path = cr_dir / "verify_manifest.json"
+    if manifest is not None:
+        manifest_path.write_text(json.dumps(manifest))
+
+    for fid, verdict_data in (verifier_outputs or {}).items():
+        (cr_dir / f"agent_verifier_{fid}.json").write_text(
+            json.dumps(verdict_data),
+        )
+
+    gates_path: str | None = None
+    if gates is not None:
+        gpath = tmp_path / "verification-gates.json"
+        gpath.write_text(json.dumps(gates))
+        gates_path = str(gpath)
+
+    old_stdout = _sys.stdout
+    _sys.stdout = io.StringIO()
+    try:
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            validated=str(findings_path),
+            manifest=str(manifest_path) if manifest is not None else None,
+            gates=gates_path,
+            cache_dir=str(cache_dir) if cache_dir else None,
+            prompt_hash=prompt_hash,
+        )
+        rc = cmd_verify_consolidate(ns)
+        _sys.stdout.seek(0)
+        consolidated = json.load(_sys.stdout)
+        return rc, consolidated
+    finally:
+        _sys.stdout = old_stdout
+
+
+class TestValidatePreservesNewFields:
+    """Schema-preservation regressions for PLN-722 fields through validate.
+
+    The validate path passes finding dicts through ``normalize_legacy_finding``
+    which uses setdefault for every new schema field. These tests pin the
+    contract: a producer that emits ``evidence[]`` / ``reasoning_certificate``
+    must see those fields land untouched in ``findings_validated.json`` so
+    the verifier (PLN-722 stage_23) has the structured-evidence chain to
+    falsify against.
+    """
+
+    def _run(
+        self, findings: list[dict[str, Any]], tmp_path: Path,
+    ) -> dict[str, Any]:
+        import io
+        import sys as _sys
+
+        findings_path = tmp_path / "findings.json"
+        findings_path.write_text(json.dumps(findings))
+        diff_data = _make_diff_data(
+            files=["src/app.ts"],
+            ranges={"src/app.ts": {"added": [[10, 20]], "removed": []}},
+        )
+        diff_path = tmp_path / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(
+                findings=str(findings_path),
+                diff_data=str(diff_path),
+            )
+            cmd_validate(ns)
+            _sys.stdout.seek(0)
+            return json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+    def test_evidence_array_preserved(self, tmp_path: Path) -> None:
+        evidence = [
+            {"file": "src/auth.ts", "line": 47, "claim": "guard exists",
+             "snippet_hash": "abc123"},
+            {"file": "src/types.ts", "line": 12, "claim": "type is nullable"},
+        ]
+        finding = _make_validated_finding(
+            "bha_p0_f0", evidence=evidence,
+        )
+        result = self._run([finding], tmp_path)
+        assert len(result["validated"]) == 1
+        assert result["validated"][0]["evidence"] == evidence
+
+    def test_reasoning_certificate_preserved(self, tmp_path: Path) -> None:
+        cert = {
+            "kind": "necessity",
+            "fields": {
+                "authors_claim": "fixes the data-loss bug",
+                "counter_evidence": "auth.ts:47 already guards this",
+                "alternative_check": {
+                    "searched_for": "callers of save()",
+                    "found": "no callers pass null",
+                },
+                "conclusion": "PREMISE REFUTED",
+            },
+        }
+        finding = _make_validated_finding(
+            "premise_f0", category="Premise", reasoning_certificate=cert,
+        )
+        result = self._run([finding], tmp_path)
+        assert result["validated"][0]["reasoning_certificate"] == cert
+
+    def test_legacy_finding_without_new_fields_passes_through(
+        self, tmp_path: Path,
+    ) -> None:
+        """validate does NOT call normalize_legacy_finding (collect-findings
+        and finalize-result do); validate's contract is that finding dicts
+        pass through with no field-level mutation. A legacy producer that
+        emits no verifier_* fields produces a validated entry that simply
+        doesn't have those keys yet — finalize-result will add the
+        setdefaults later. This test pins that no-mutation contract so a
+        future refactor doesn't silently start stripping or rewriting
+        fields validate has no business touching."""
+        finding = {
+            "file": "src/app.ts",
+            "line": 15,
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "thing",
+            "priority": 2,
+            "confidence": 0.7,
+        }
+        result = self._run([finding], tmp_path)
+        out = result["validated"][0]
+        # All input fields preserved verbatim
+        for key, value in finding.items():
+            assert out[key] == value
+        # validate is allowed to add severity-normalization warnings to
+        # the envelope-level non_standard_values dict, but the finding
+        # dict itself is not mutated with verifier defaults at this stage.
+
+
+class TestVerifyTierTable:
+    """``_needs_verification`` implements PLN-722 §What gets verified."""
+
+    @pytest.mark.parametrize(
+        "severity, confidence, expected",
+        [
+            ("BLOCKING", 0.9, True),
+            ("HIGH", 0.7, True),
+            ("MEDIUM", 0.5, True),       # < 0.85
+            ("MEDIUM", 0.84, True),      # boundary: still < 0.85
+            ("MEDIUM", 0.85, False),     # boundary: cliff
+            ("MEDIUM", 0.95, False),     # ≥ 0.85
+            ("LOW", 0.95, False),
+            ("", 0.9, False),            # unknown severity → skip
+        ],
+    )
+    def test_severity_tier(
+        self, severity: str, confidence: float, expected: bool,
+    ) -> None:
+        f = {"severity": severity, "confidence": confidence,
+             "category": "Correctness", "source": "agent"}
+        assert _needs_verification(f) is expected
+
+    def test_hygiene_never_verified(self) -> None:
+        f = {"severity": "BLOCKING", "confidence": 0.99,
+             "category": "Hygiene", "source": "hygiene"}
+        assert _needs_verification(f) is False
+
+    def test_injection_detector_never_verified(self) -> None:
+        f = {"severity": "BLOCKING", "confidence": 0.99,
+             "category": "InjectionAttempt", "source": "injection-detector"}
+        assert _needs_verification(f) is False
+
+    def test_premise_always_verified(self) -> None:
+        # Even at MEDIUM with high confidence, Premise gets the strict
+        # adversarial re-check.
+        f = {"severity": "MEDIUM", "confidence": 0.95,
+             "category": "Premise", "source": "agent"}
+        assert _needs_verification(f) is True
+
+    def test_priority_ranking_higher_severity_first(self) -> None:
+        blocking_lo = {"severity": "BLOCKING", "confidence": 0.5}
+        medium_hi = {"severity": "MEDIUM", "confidence": 0.84}
+        # 1.0 * 0.5 = 0.5  vs  0.4 * 0.84 = 0.336
+        assert _verification_priority(blocking_lo) > _verification_priority(medium_hi)
+
+    def test_priority_handles_missing_confidence(self) -> None:
+        f = {"severity": "HIGH"}
+        # Should not raise, should produce 0.0 (no confidence → no risk score)
+        assert _verification_priority(f) == 0.0
+
+    def test_priority_handles_string_confidence(self) -> None:
+        f = {"severity": "HIGH", "confidence": "not-a-number"}
+        assert _verification_priority(f) == 0.0
+
+
+class TestVerifyPrepare:
+    """End-to-end ``cmd_verify_prepare`` contract."""
+
+    def test_empty_input_produces_empty_manifest(self, tmp_path: Path) -> None:
+        rc, manifest = _run_verify_prepare(tmp_path, [])
+        assert rc == 0
+        assert manifest["to_verify"] == []
+        assert manifest["skipped_no_verification"] == []
+        assert manifest["deferred_budget"] == []
+        assert manifest["cache_hits"] == []
+        assert manifest["max_verifications"] == VERIFY_MAX_VERIFICATIONS
+
+    def test_tier_routing_splits_eligible_and_skipped(
+        self, tmp_path: Path,
+    ) -> None:
+        findings = [
+            _make_validated_finding("bha_p0_f0", severity="BLOCKING"),
+            _make_validated_finding("bhb_f0", severity="MEDIUM", confidence=0.5),
+            _make_validated_finding("hygiene_f0", category="Hygiene"),
+            _make_validated_finding(
+                "injection_f0", source="injection-detector",
+                category="InjectionAttempt", severity="BLOCKING",
+            ),
+            _make_validated_finding(
+                "premise_f0", category="Premise", severity="MEDIUM",
+                confidence=0.99,
+            ),
+            _make_validated_finding("low_f0", severity="LOW"),
+            _make_validated_finding(
+                "medium_hi_f0", severity="MEDIUM", confidence=0.95,
+            ),
+        ]
+        _, manifest = _run_verify_prepare(tmp_path, findings)
+        to_verify_ids = {e["finding_id"] for e in manifest["to_verify"]}
+        skipped = set(manifest["skipped_no_verification"])
+        assert to_verify_ids == {"bha_p0_f0", "bhb_f0", "premise_f0"}
+        assert skipped == {"hygiene_f0", "injection_f0", "low_f0", "medium_hi_f0"}
+
+    def test_max_verifications_cap_keeps_highest_priority(
+        self, tmp_path: Path,
+    ) -> None:
+        # 60 BLOCKING confidence-1.0 findings — first 50 should be retained
+        # (sorted by priority then finding_id). The 10 with lowest IDs get
+        # deferred (since all priorities are equal, secondary sort by id).
+        findings = [
+            _make_validated_finding(
+                f"bha_p0_f{i:03d}", severity="BLOCKING", confidence=1.0,
+            )
+            for i in range(60)
+        ]
+        _, manifest = _run_verify_prepare(tmp_path, findings)
+        assert len(manifest["to_verify"]) == VERIFY_MAX_VERIFICATIONS
+        assert len(manifest["deferred_budget"]) == 10
+        assert manifest["total_eligible"] == 60
+
+    def test_per_finding_input_files_written(self, tmp_path: Path) -> None:
+        findings = [_make_validated_finding("bha_p0_f0")]
+        _, manifest = _run_verify_prepare(tmp_path, findings)
+        entry = manifest["to_verify"][0]
+        input_path = Path(entry["input_path"])
+        assert input_path.exists()
+        payload = json.loads(input_path.read_text())
+        assert payload["finding"]["id"] == "bha_p0_f0"
+        assert payload["output_path"].endswith("agent_verifier_bha_p0_f0.json")
+        assert payload["verifier_prompt_path"].endswith("verifier_prompt.txt")
+
+    def test_manifest_persisted_to_disk(self, tmp_path: Path) -> None:
+        findings = [_make_validated_finding("bha_p0_f0")]
+        _, stdout_manifest = _run_verify_prepare(tmp_path, findings)
+        on_disk = json.loads((tmp_path / "cr" / "verify_manifest.json").read_text())
+        assert on_disk["to_verify"] == stdout_manifest["to_verify"]
+
+    def test_cache_hit_skips_spawn_and_materializes_verdict(
+        self, tmp_path: Path,
+    ) -> None:
+        finding = _make_validated_finding("bha_p0_f0")
+        cache_dir = tmp_path / "cache"
+        prompt_hash = "phash_v1"
+
+        # Pre-seed the cache with a fresh-by-TTL CONFIRMED verdict.
+        from code_review_helpers import _write_cached_verification
+        verdict = {
+            "verifier_verdict": "CONFIRMED",
+            "verifier_confidence": 0.9,
+            "verifier_reasoning": "checked, real bug",
+            "evidence_checks": [],
+            "rejection_class": None,
+        }
+        _write_cached_verification(
+            cache_dir, finding, "sonnet", prompt_hash, verdict,
+        )
+
+        _, manifest = _run_verify_prepare(
+            tmp_path, [finding],
+            cache_dir=cache_dir, prompt_hash=prompt_hash,
+        )
+        assert manifest["to_verify"] == []
+        assert manifest["cache_hits"] == ["bha_p0_f0"]
+        # And the verdict was materialized at the canonical output path.
+        materialized = json.loads(
+            (tmp_path / "cr" / "agent_verifier_bha_p0_f0.json").read_text(),
+        )
+        assert materialized["verifier_verdict"] == "CONFIRMED"
+
+
+class TestVerifyConsolidate:
+    """End-to-end ``cmd_verify_consolidate`` bucket-split contract."""
+
+    def test_no_manifest_degrades_to_all_verified(self, tmp_path: Path) -> None:
+        findings = [
+            _make_validated_finding("bha_p0_f0", severity="MEDIUM"),
+            _make_validated_finding("bhb_f0", severity="HIGH"),
+        ]
+        rc, out = _run_verify_consolidate(tmp_path, findings, manifest=None)
+        assert rc == 0
+        assert len(out["verified"]) == 2
+        assert out["rejected"] == []
+        assert out["pending_verification"] == []
+
+    def test_confirmed_lands_in_verified_bucket(self, tmp_path: Path) -> None:
+        findings = [_make_validated_finding("bha_p0_f0", severity="HIGH")]
+        manifest = {
+            "to_verify": [{"finding_id": "bha_p0_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        verdicts = {
+            "bha_p0_f0": {
+                "verifier_verdict": "CONFIRMED",
+                "verifier_confidence": 0.9,
+                "verifier_reasoning": "real",
+                "evidence_checks": [],
+                "rejection_class": None,
+            },
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs=verdicts,
+        )
+        assert len(out["verified"]) == 1
+        assert out["verified"][0]["verifier_verdict"] == "CONFIRMED"
+        assert out["rejected"] == []
+
+    def test_rejected_lands_in_rejected_bucket(self, tmp_path: Path) -> None:
+        findings = [_make_validated_finding("bha_p0_f0", severity="HIGH")]
+        manifest = {
+            "to_verify": [{"finding_id": "bha_p0_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        verdicts = {
+            "bha_p0_f0": {
+                "verifier_verdict": "REJECTED",
+                "verifier_confidence": 0.85,
+                "verifier_reasoning": "guard at auth.ts:47",
+                "evidence_checks": [
+                    {"claim": "no guard", "verified": False,
+                     "actual_read": "if (!user) throw"},
+                ],
+                "rejection_class": "guard_exists",
+            },
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs=verdicts,
+        )
+        assert out["verified"] == []
+        assert len(out["rejected"]) == 1
+        assert out["rejected"][0]["rejection_class"] == "guard_exists"
+
+    def test_tentative_lands_in_verified_with_verdict_preserved(
+        self, tmp_path: Path,
+    ) -> None:
+        findings = [_make_validated_finding("bha_p0_f0", severity="MEDIUM")]
+        manifest = {
+            "to_verify": [{"finding_id": "bha_p0_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        verdicts = {
+            "bha_p0_f0": {
+                "verifier_verdict": "TENTATIVE",
+                "verifier_confidence": 0.5,
+                "verifier_reasoning": "ambiguous",
+                "evidence_checks": [],
+                "rejection_class": None,
+            },
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs=verdicts,
+        )
+        assert len(out["verified"]) == 1
+        assert out["verified"][0]["verifier_verdict"] == "TENTATIVE"
+
+    def test_missing_verifier_output_goes_to_pending(
+        self, tmp_path: Path,
+    ) -> None:
+        findings = [_make_validated_finding("bha_p0_f0", severity="HIGH")]
+        manifest = {
+            "to_verify": [{"finding_id": "bha_p0_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        # No verifier output on disk → pending bucket
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs={},
+        )
+        assert out["verified"] == []
+        assert out["rejected"] == []
+        assert len(out["pending_verification"]) == 1
+        assert "did not produce" in out["pending_verification"][0]["verifier_reasoning"]
+
+    def test_deferred_budget_findings_go_to_pending(
+        self, tmp_path: Path,
+    ) -> None:
+        findings = [_make_validated_finding("bha_p0_f0", severity="HIGH")]
+        manifest = {
+            "to_verify": [],
+            "skipped_no_verification": [],
+            "deferred_budget": ["bha_p0_f0"],
+            "cache_hits": [],
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs={},
+        )
+        assert len(out["pending_verification"]) == 1
+        assert "MAX_VERIFICATIONS" in out["pending_verification"][0]["verifier_reasoning"]
+
+    def test_sensitive_path_escalates_rejected_blocking_to_tentative(
+        self, tmp_path: Path,
+    ) -> None:
+        findings = [
+            _make_validated_finding(
+                "bha_p0_f0", severity="BLOCKING", file="lib/auth/handler.ts",
+            ),
+        ]
+        manifest = {
+            "to_verify": [{"finding_id": "bha_p0_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        verdicts = {
+            "bha_p0_f0": {
+                "verifier_verdict": "REJECTED",
+                "verifier_confidence": 0.8,
+                "verifier_reasoning": "guard exists",
+                "evidence_checks": [],
+                "rejection_class": "guard_exists",
+            },
+        }
+        gates = {
+            "sensitive_paths": ["lib/auth/**"],
+            "tentative_on_paths": [],
+            "mandatory_human_review_paths": [],
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs=verdicts,
+            gates=gates,
+        )
+        assert out["rejected"] == []
+        assert len(out["verified"]) == 1
+        # Escalated to TENTATIVE
+        assert out["verified"][0]["verifier_verdict"] == "TENTATIVE"
+        # BLOCKING → severity capped at HIGH
+        assert out["verified"][0]["verifier_severity"] == "HIGH"
+        assert out["stats"]["escalated_sensitive_path"] == 1
+
+    def test_mandatory_human_review_forces_force_human_review(
+        self, tmp_path: Path,
+    ) -> None:
+        findings = [
+            _make_validated_finding(
+                "bha_p0_f0", severity="MEDIUM", file="config/credentials.json",
+            ),
+        ]
+        manifest = {
+            "to_verify": [{"finding_id": "bha_p0_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        verdicts = {
+            "bha_p0_f0": {
+                "verifier_verdict": "CONFIRMED",
+                "verifier_confidence": 0.9,
+                "verifier_reasoning": "real",
+                "evidence_checks": [],
+                "rejection_class": None,
+            },
+        }
+        gates = {
+            "sensitive_paths": [],
+            "tentative_on_paths": [],
+            "mandatory_human_review_paths": ["**/credentials.*"],
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs=verdicts,
+            gates=gates,
+        )
+        assert out["force_human_review"] is True
+        assert out["verified"][0]["verifier_verdict"] == "TENTATIVE"
+        assert out["verified"][0]["human_review_recommended"] is True
+        assert out["stats"]["escalated_mandatory_review"] == 1
+
+    def test_tentative_on_paths_softens_verdict(self, tmp_path: Path) -> None:
+        findings = [
+            _make_validated_finding(
+                "bha_p0_f0", severity="MEDIUM", file="src/api/users.ts",
+            ),
+        ]
+        manifest = {
+            "to_verify": [{"finding_id": "bha_p0_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        verdicts = {
+            "bha_p0_f0": {
+                "verifier_verdict": "CONFIRMED",
+                "verifier_confidence": 0.9,
+                "verifier_reasoning": "real",
+                "evidence_checks": [],
+                "rejection_class": None,
+            },
+        }
+        gates = {
+            "sensitive_paths": [],
+            "tentative_on_paths": ["src/api/**"],
+            "mandatory_human_review_paths": [],
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs=verdicts,
+            gates=gates,
+        )
+        assert out["verified"][0]["verifier_verdict"] == "TENTATIVE"
+        assert out["force_human_review"] is False
+
+    def test_cache_writeback_on_fresh_verdict(self, tmp_path: Path) -> None:
+        finding = _make_validated_finding("bha_p0_f0", severity="HIGH")
+        manifest = {
+            "to_verify": [{"finding_id": "bha_p0_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        verdicts = {
+            "bha_p0_f0": {
+                "verifier_verdict": "CONFIRMED",
+                "verifier_confidence": 0.9,
+                "verifier_reasoning": "real",
+                "evidence_checks": [],
+                "rejection_class": None,
+            },
+        }
+        cache_dir = tmp_path / "cache"
+        _, _ = _run_verify_consolidate(
+            tmp_path, [finding], manifest=manifest, verifier_outputs=verdicts,
+            cache_dir=cache_dir, prompt_hash="phash_v1",
+        )
+        # Cache entry must exist now under the canonical key path
+        key = _verification_cache_key(finding, "sonnet", "phash_v1")
+        cache_file = cache_dir / "verifications" / f"{key}.json"
+        assert cache_file.exists()
+        cached = json.loads(cache_file.read_text())
+        assert cached["verdict"]["verifier_verdict"] == "CONFIRMED"
+        assert cached["verifier_model"] == "sonnet"
+        assert cached["verifier_prompt_hash"] == "phash_v1"
+
+
+class TestVerificationGates:
+    """``_load_verification_gates`` + ``_glob_to_regex`` patterns."""
+
+    def test_absent_file_returns_empty_gates(self, tmp_path: Path) -> None:
+        gates = _load_verification_gates(tmp_path / "missing.json")
+        assert gates == {
+            "sensitive_paths": [],
+            "tentative_on_paths": [],
+            "mandatory_human_review_paths": [],
+        }
+
+    def test_malformed_json_returns_empty_gates(self, tmp_path: Path) -> None:
+        path = tmp_path / "gates.json"
+        path.write_text("not json {{{{")
+        gates = _load_verification_gates(path)
+        assert gates["sensitive_paths"] == []
+
+    def test_non_string_entries_dropped(self, tmp_path: Path) -> None:
+        path = tmp_path / "gates.json"
+        path.write_text(json.dumps({
+            "sensitive_paths": ["lib/auth/**", 42, None, "billing/**"],
+        }))
+        gates = _load_verification_gates(path)
+        assert gates["sensitive_paths"] == ["lib/auth/**", "billing/**"]
+
+    def test_none_path_returns_empty(self) -> None:
+        gates = _load_verification_gates(None)
+        assert gates["sensitive_paths"] == []
+
+    @pytest.mark.parametrize(
+        "pattern, path, expected",
+        [
+            ("lib/auth/**", "lib/auth/handler.ts", True),
+            ("lib/auth/**", "lib/auth/deep/nested/file.ts", True),
+            ("lib/auth/**", "lib/billing/handler.ts", False),
+            ("**/migrations/**", "apps/api/migrations/0001.sql", True),
+            ("**/migrations/**", "src/main.ts", False),
+            ("**/credentials.*", "config/credentials.json", True),
+            ("**/credentials.*", "config/credentials.yaml", True),
+            ("**/credentials.*", "config/credential.json", False),
+            ("billing/**", "billing/service.ts", True),
+            ("billing/**", "src/billing.ts", False),
+            ("src/api/*.ts", "src/api/users.ts", True),
+            ("src/api/*.ts", "src/api/nested/users.ts", False),
+        ],
+    )
+    def test_glob_patterns(
+        self, pattern: str, path: str, expected: bool,
+    ) -> None:
+        assert bool(_glob_to_regex(pattern).match(path)) is expected
+
+    def test_matches_any_glob_skips_none_path(self) -> None:
+        # System-scoped findings without a file path should never match
+        # a path glob (they aren't anchored to any file).
+        assert _matches_any_glob(None, ["**/*"]) is False
+        assert _matches_any_glob("", ["**/*"]) is False
+
+
+class TestCanonicalVerdictPLN722:
+    """Three-state verdict semantics added by PLN-722."""
+
+    def test_blocking_still_wins_over_force_human_review(self) -> None:
+        v, _ = _compute_canonical_verdict(
+            [{"severity": "BLOCKING", "issue": "rce"}], [],
+            force_human_review=True,
+        )
+        assert v == "CHANGES_REQUESTED"
+
+    def test_force_human_review_beats_high(self) -> None:
+        v, r = _compute_canonical_verdict(
+            [{"severity": "HIGH", "issue": "leak"}], [],
+            force_human_review=True,
+        )
+        assert v == "NEEDS_ATTENTION"
+        assert "mandatory human review" in r.lower()
+
+    def test_tentative_at_medium_promotes_to_needs_attention(self) -> None:
+        v, r = _compute_canonical_verdict(
+            [{"severity": "MEDIUM", "verifier_verdict": "TENTATIVE",
+              "issue": "maybe race"}],
+            [],
+        )
+        assert v == "NEEDS_ATTENTION"
+        assert "uncertain" in r.lower()
+
+    def test_confirmed_medium_alone_is_approved(self) -> None:
+        v, _ = _compute_canonical_verdict(
+            [{"severity": "MEDIUM", "verifier_verdict": "CONFIRMED",
+              "issue": "real"}],
+            [],
+        )
+        assert v == "APPROVED"
+
+
+class TestFinalizeResultPrefersVerified:
+    """cmd_finalize_result should prefer findings_verified.json when present
+    and fall back to findings_validated.json otherwise (PLN-722)."""
+
+    def _run(
+        self,
+        tmp_path: Path,
+        validated: list[dict[str, Any]],
+        verified_doc: dict[str, Any] | None,
+    ) -> tuple[int, dict[str, Any], dict[str, Any]]:
+        import io
+        import sys as _sys
+        from code_review_helpers import cmd_finalize_result
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(exist_ok=True)
+        # setup.json so mode / head_sha resolve
+        (cr_dir / "setup.json").write_text(json.dumps({
+            "head_sha": "abc", "current_branch": "feat/x",
+        }))
+        validated_path = cr_dir / "findings_validated.json"
+        validated_path.write_text(json.dumps({"validated": validated}))
+        if verified_doc is not None:
+            (cr_dir / "findings_verified.json").write_text(
+                json.dumps(verified_doc),
+            )
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(
+                cr_dir=str(cr_dir),
+                validate_output=str(validated_path),
+                mode="local",
+                diff_tip="abc",
+                pr_number=None,
+            )
+            rc = cmd_finalize_result(ns)
+            _sys.stdout.seek(0)
+            summary = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+        envelope = json.loads((cr_dir / "review_result.json").read_text())
+        return rc, summary, envelope
+
+    def test_falls_back_to_validated_when_no_verified_file(
+        self, tmp_path: Path,
+    ) -> None:
+        validated = [_make_validated_finding("bha_p0_f0", severity="MEDIUM")]
+        rc, summary, envelope = self._run(tmp_path, validated, None)
+        assert rc == 0
+        assert summary["used_verifier"] is False
+        assert len(envelope["verified"]) == 1
+        assert envelope["rejected"] == []
+        assert envelope["pending_verification"] == []
+
+    def test_uses_verified_buckets_when_present(self, tmp_path: Path) -> None:
+        validated = [
+            _make_validated_finding("bha_p0_f0"),
+            _make_validated_finding("bhb_f0"),
+        ]
+        verified_doc = {
+            "verified": [validated[0]],
+            "rejected": [validated[1]],
+            "pending_verification": [],
+            "force_human_review": False,
+            "stats": {},
+        }
+        rc, summary, envelope = self._run(tmp_path, validated, verified_doc)
+        assert rc == 0
+        assert summary["used_verifier"] is True
+        assert len(envelope["verified"]) == 1
+        assert len(envelope["rejected"]) == 1
+        assert envelope["verified"][0]["id"] == "bha_p0_f0"
+        assert envelope["rejected"][0]["id"] == "bhb_f0"
+
+    def test_force_human_review_propagates_to_verdict(
+        self, tmp_path: Path,
+    ) -> None:
+        validated = [
+            _make_validated_finding("bha_p0_f0", severity="MEDIUM"),
+        ]
+        verified_doc = {
+            "verified": [validated[0]],
+            "rejected": [],
+            "pending_verification": [],
+            "force_human_review": True,
+            "stats": {},
+        }
+        _, summary, envelope = self._run(tmp_path, validated, verified_doc)
+        assert summary["force_human_review"] is True
+        # NEEDS_ATTENTION (rule 2.5) — even MEDIUM alone normally would be APPROVED
+        assert envelope["verdict"] == "NEEDS_ATTENTION"

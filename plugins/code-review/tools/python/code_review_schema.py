@@ -165,6 +165,11 @@ STAGE_DETERMINISM_TIERS: dict[str, str] = {
     "cache-check": DETERMINISM_TIER_DETERMINISTIC,
     "collect-findings": DETERMINISM_TIER_DETERMINISTIC,
     "validate": DETERMINISM_TIER_DETERMINISTIC,
+    # PLN-722 wrappers around the LLM-driven verify-findings fleet.
+    # The pre/post helpers do tier-selection and bucket-merging — both
+    # pure functions over their JSON inputs.
+    "verify-prepare": DETERMINISM_TIER_DETERMINISTIC,
+    "verify-consolidate": DETERMINISM_TIER_DETERMINISTIC,
     "finalize-result": DETERMINISM_TIER_DETERMINISTIC,
     "cache-update": DETERMINISM_TIER_DETERMINISTIC,
     "review-state-write": DETERMINISM_TIER_DETERMINISTIC,

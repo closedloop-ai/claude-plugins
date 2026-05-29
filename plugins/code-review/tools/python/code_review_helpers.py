@@ -31,7 +31,9 @@ from typing import Any
 
 from code_review_schema import (
     CACHE_NAMESPACE_BHA,
+    CACHE_NAMESPACE_VERIFICATIONS,
     SCHEMA_VERSION,
+    VERIFIER_VERDICTS,
     cache_ttl_days,
     empty_telemetry,
     is_valid_system_marker,
@@ -1465,6 +1467,718 @@ def cmd_validate(args: argparse.Namespace) -> int:
     )
     sys.stdout.write("\n")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommands: verify-prepare / verify-consolidate (PLN-722)
+# ---------------------------------------------------------------------------
+#
+# Pipeline placement (foundation stage_23_verify_findings is an agent_fleet
+# stage; the two helpers below wrap it):
+#
+#   stage_22  cmd_validate              → findings_validated.json
+#   stage_22b cmd_verify_prepare        → verify_manifest.json + per-finding inputs
+#   stage_23  Verifier Fleet (agents)   → agent_verifier_<finding_id>.json
+#   stage_24a cmd_verify_consolidate    → findings_verified.json (bucket-split)
+#   stage_25  cmd_finalize_result       → review_result.json envelope
+#
+# "What gets verified" tier table (PLN-722 §Architecture):
+#
+#   | Tier                          | Verified? |
+#   | BLOCKING / HIGH               | Always    |
+#   | MEDIUM, confidence < 0.85     | Yes       |
+#   | MEDIUM, confidence ≥ 0.85     | No        |
+#   | LOW (P3)                      | No        |
+#   | category=Hygiene              | No (deterministic producer) |
+#   | source=injection-detector     | No (deterministic producer) |
+#   | category=Premise              | Always (strict adversarial framing) |
+#
+# MAX_VERIFICATIONS = 50 (PLN-722: 50 × Sonnet ≈ $2/PR at current pricing).
+# Overflow ranks by (severity_weight × confidence) and tags the bottom of
+# the list as "deferred for verification budget" — they're surfaced in
+# pending_verification[] so operators can re-run via /start --verify-deferred
+# in plan 03 follow-up work.
+
+VERIFY_MAX_VERIFICATIONS = 50
+
+# Severity → weight for ranking when MAX_VERIFICATIONS is exceeded. Higher
+# = more likely to retain a verification slot.
+_VERIFY_SEVERITY_WEIGHT: dict[str, float] = {
+    "BLOCKING": 1.0,
+    "HIGH": 0.7,
+    "MEDIUM": 0.4,
+    "LOW": 0.1,
+}
+
+# Verifier model selection (PLN-722 §Model selection). v1 routes everything
+# to Sonnet — cost-bounded for the common case (BHB/Auditor/critics) and
+# cross-model-independent for Opus-produced BHA findings. Future revisions
+# may split this back out per original-reviewer model; the routing lives
+# in _select_verifier_model so callers don't need to know the policy.
+_VERIFY_MODEL_DEFAULT = "sonnet"
+
+
+def _verification_cache_key(
+    finding: dict[str, Any], model: str, prompt_hash: str,
+) -> str:
+    """Cache key for the verifications namespace.
+
+    Per PLN-722 §Cache integration: keyed by ``(finding_id,
+    file_content_hash, verifier_model, verifier_prompt_hash)``. We use the
+    finding's ``code_snippet`` field as the file-content proxy — when the
+    code at the cited location changes, the reviewer re-emits a different
+    snippet, so the key flips and the cached verdict is invalidated.
+    Coarse but correct: false-misses (re-pay verifier cost) are tolerable;
+    false-hits (re-use a stale verdict) would be a correctness bug.
+    """
+    fid = str(finding.get("id", ""))
+    snippet = str(finding.get("code_snippet", ""))
+    payload = (
+        fid + "\0"
+        + hashlib.sha256(snippet.encode("utf-8", "replace")).hexdigest() + "\0"
+        + model + "\0"
+        + (prompt_hash or "")
+    )
+    return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()
+
+
+def _verifications_cache_path(cache_dir: Path, key: str) -> Path:
+    """Per PLN-719 namespace layout: ``<cache_dir>/verifications/<key>.json``."""
+    return cache_dir / CACHE_NAMESPACE_VERIFICATIONS / f"{key}.json"
+
+
+def _read_cached_verification(
+    cache_dir: Path | None, finding: dict[str, Any],
+    model: str, prompt_hash: str,
+) -> dict[str, Any] | None:
+    """Return the cached verifier output for ``finding`` or None.
+
+    Lazy TTL: entries older than ``cache_ttl_days('verifications')`` (30)
+    are treated as a cache miss and silently swept. The cache is purely
+    a cost optimization — missing or malformed entries never block the
+    pipeline.
+    """
+    if cache_dir is None:
+        return None
+    key = _verification_cache_key(finding, model, prompt_hash)
+    path = _verifications_cache_path(cache_dir, key)
+    if not path.exists():
+        return None
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    # TTL check: cached_at must be present and within the window. Missing
+    # cached_at → treat as miss (legacy entry); explicit `None` (e.g. a
+    # corrupted write) → miss.
+    cached_at = data.get("cached_at")
+    ttl = cache_ttl_days(CACHE_NAMESPACE_VERIFICATIONS) or 30
+    try:
+        ts = datetime.fromisoformat(str(cached_at).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return None
+    if datetime.now(timezone.utc) - ts > timedelta(days=ttl):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return None
+    verdict_data = data.get("verdict")
+    if not isinstance(verdict_data, dict):
+        return None
+    return verdict_data
+
+
+def _write_cached_verification(
+    cache_dir: Path | None, finding: dict[str, Any],
+    model: str, prompt_hash: str, verdict_data: dict[str, Any],
+) -> None:
+    """Persist a fresh verifier output under the verifications namespace.
+
+    Best-effort: any OSError silently drops the write (the cache is an
+    optimization, not a source of truth). Atomic via tmp + rename to
+    avoid partial files leaking across runs.
+    """
+    if cache_dir is None:
+        return
+    if not isinstance(verdict_data, dict):
+        return
+    verdict_only = verdict_data.get("verifier_verdict")
+    if verdict_only not in VERIFIER_VERDICTS:
+        return
+    key = _verification_cache_key(finding, model, prompt_hash)
+    path = _verifications_cache_path(cache_dir, key)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp, "w") as fh:
+            json.dump(
+                {
+                    "cached_at": datetime.now(timezone.utc).isoformat(),
+                    "key": key,
+                    "finding_id": finding.get("id"),
+                    "verifier_model": model,
+                    "verifier_prompt_hash": prompt_hash,
+                    "verdict": verdict_data,
+                },
+                fh,
+                indent=2,
+            )
+        os.replace(str(tmp), str(path))
+    except OSError:
+        pass
+
+
+def _verification_priority(finding: dict[str, Any]) -> float:
+    """Risk score for verification-budget ranking: severity_weight × confidence."""
+    sw = _VERIFY_SEVERITY_WEIGHT.get(str(finding.get("severity", "")), 0.0)
+    try:
+        conf = float(finding.get("confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    return sw * conf
+
+
+def _needs_verification(finding: dict[str, Any]) -> bool:
+    """Apply the PLN-722 'What gets verified' tier table to one finding."""
+    category = str(finding.get("category", ""))
+    source = str(finding.get("source", ""))
+    severity = str(finding.get("severity", ""))
+    try:
+        confidence = float(finding.get("confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    # Deterministic producers — never verified (the verifier would be
+    # second-guessing a regex catalogue or a static check).
+    if category == "Hygiene":
+        return False
+    if source == "injection-detector":
+        return False
+
+    # Premise: always verified with the strict adversarial framing in
+    # verifier_prompt.txt — the verdict precedence already gives Premise
+    # a high blast radius (cumulative MEDIUM gate in PLN-721), so every
+    # Premise finding needs an independent second opinion.
+    if category == "Premise":
+        return True
+
+    if severity in ("BLOCKING", "HIGH"):
+        return True
+
+    if severity == "MEDIUM":
+        return confidence < 0.85
+
+    # LOW (P3) and anything unrecognized: skip verification.
+    return False
+
+
+def _select_verifier_model(finding: dict[str, Any]) -> str:
+    """Pick the verifier model for a finding (currently uniform)."""
+    # finding is intentionally unused — the function is the single
+    # routing seam for when v2 splits Opus-cross-verification back out.
+    del finding
+    return _VERIFY_MODEL_DEFAULT
+
+
+def cmd_verify_prepare(args: argparse.Namespace) -> int:
+    """Tier-select findings for verification and emit per-finding inputs.
+
+    PLN-722 stage_22b. Reads ``findings_validated.json`` (or any input
+    shaped as ``{"validated": [...]}`` / ``{"findings": [...]}`` / bare
+    list), applies the "What gets verified" tier rules, ranks the eligible
+    set by ``severity_weight × confidence``, caps at
+    ``VERIFY_MAX_VERIFICATIONS``, and writes:
+
+      - ``<cr_dir>/verify_manifest.json`` (also printed to stdout):
+        ``{
+            "to_verify": [{"finding_id", "model", "input_path", ...}, ...],
+            "skipped_no_verification": [...],
+            "deferred_budget": [...],
+            "max_verifications": int,
+            "total_eligible": int,
+            "verifier_prompt_path": str
+          }``
+
+      - ``<cr_dir>/verifier_inputs/<finding_id>.json`` per eligible finding,
+        containing the canonical finding + the path the verifier should
+        write its verdict to (``<cr_dir>/agent_verifier_<finding_id>.json``).
+
+    Always exits 0; an empty validated set produces an empty manifest. The
+    walker's Verifier Fleet section spawns one ``code:code-review-worker``
+    Task per ``to_verify`` entry; each agent reads its input file and
+    writes its verdict to the canonical output path.
+    """
+    cr_dir = Path(args.cr_dir)
+    findings_path = Path(args.findings)
+    cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
+    prompt_hash = str(getattr(args, "prompt_hash", "") or "")
+
+    data = _read_optional_json(findings_path, {})
+    if isinstance(data, dict):
+        raw = data.get("validated") or data.get("findings") or []
+    elif isinstance(data, list):
+        raw = data
+    else:
+        raw = []
+
+    findings: list[dict[str, Any]] = [
+        f for f in raw if isinstance(f, dict) and f.get("id")
+    ]
+    finding_by_id: dict[str, dict[str, Any]] = {
+        str(f["id"]): f for f in findings
+    }
+
+    eligible: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    for f in findings:
+        fid = str(f["id"])
+        if _needs_verification(f):
+            eligible.append({
+                "finding_id": fid,
+                "model": _select_verifier_model(f),
+                "severity": f.get("severity"),
+                "confidence": f.get("confidence"),
+                "category": f.get("category"),
+                "_priority_score": _verification_priority(f),
+            })
+        else:
+            skipped.append(fid)
+
+    # Rank by priority; stable secondary sort by finding_id so a tie
+    # doesn't make the cutoff non-deterministic across runs (cache
+    # invalidation cares about ordering).
+    eligible.sort(key=lambda e: (-e["_priority_score"], e["finding_id"]))
+
+    deferred: list[str] = []
+    if len(eligible) > VERIFY_MAX_VERIFICATIONS:
+        deferred = [e["finding_id"] for e in eligible[VERIFY_MAX_VERIFICATIONS:]]
+        eligible = eligible[:VERIFY_MAX_VERIFICATIONS]
+
+    inputs_dir = cr_dir / "verifier_inputs"
+    inputs_dir.mkdir(parents=True, exist_ok=True)
+    verifier_prompt_path = cr_dir / "verifier_prompt.txt"
+
+    to_verify: list[dict[str, Any]] = []
+    cache_hits: list[str] = []
+    for entry in eligible:
+        fid = entry["finding_id"]
+        finding = finding_by_id[fid]
+        output_path = cr_dir / f"agent_verifier_{fid}.json"
+
+        # Cache check — if we have a fresh verdict for this exact
+        # (finding_id, snippet_hash, model, prompt_hash) tuple, materialize
+        # the cached verdict at the canonical output path and skip
+        # spawning the agent. cmd_verify_consolidate reads the same file
+        # regardless of source.
+        cached = _read_cached_verification(
+            cache_dir, finding, entry["model"], prompt_hash,
+        )
+        if cached is not None:
+            try:
+                with open(output_path, "w") as fh:
+                    json.dump(cached, fh, indent=2)
+                cache_hits.append(fid)
+                continue
+            except OSError:
+                # Fall through to spawn if materializing the cache hit
+                # fails; the verifier will re-derive and the write-back
+                # in verify-consolidate will refresh the entry.
+                pass
+
+        input_path = inputs_dir / f"{fid}.json"
+        with open(input_path, "w") as fh:
+            json.dump(
+                {
+                    "finding": finding,
+                    "verifier_prompt_path": str(verifier_prompt_path),
+                    "output_path": str(output_path),
+                },
+                fh,
+                indent=2,
+            )
+        to_verify.append({
+            "finding_id": fid,
+            "model": entry["model"],
+            "severity": entry["severity"],
+            "confidence": entry["confidence"],
+            "category": entry["category"],
+            "input_path": str(input_path),
+            "output_path": str(output_path),
+        })
+
+    manifest = {
+        "to_verify": to_verify,
+        "skipped_no_verification": skipped,
+        "deferred_budget": deferred,
+        "cache_hits": cache_hits,
+        "max_verifications": VERIFY_MAX_VERIFICATIONS,
+        "total_eligible": len(to_verify) + len(deferred) + len(cache_hits),
+        "verifier_prompt_path": str(verifier_prompt_path),
+    }
+
+    # Always also persist the manifest at a deterministic path so the
+    # walker can read it without parsing stdout. cmd_validate emits via
+    # stdout-redirect; we mirror the pattern.
+    manifest_path = cr_dir / "verify_manifest.json"
+    with open(manifest_path, "w") as fh:
+        json.dump(manifest, fh, indent=2)
+        fh.write("\n")
+
+    json.dump(manifest, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+# Sensitive-path config (PLN-722 §Sensitive-path escalation). Absent file
+# = no escalation; bootstrap does NOT auto-generate per `00-discovery.md`.
+_VERIFICATION_GATES_DEFAULT_PATH = Path(".closedloop-ai/settings/verification-gates.json")
+
+_VERIFICATION_GATE_KEYS: tuple[str, ...] = (
+    "sensitive_paths",         # REJECTED + BLOCKING/HIGH → TENTATIVE
+    "tentative_on_paths",      # any finding → TENTATIVE
+    "mandatory_human_review_paths",  # any finding → TENTATIVE + force NEEDS_ATTENTION
+)
+
+
+def _glob_to_regex(pattern: str) -> re.Pattern[str]:
+    """Translate a glob with ``**`` support to a compiled regex.
+
+    Supports the three patterns used by ``verification-gates.json`` per
+    PLN-722's documented examples (``lib/auth/**``, ``**/migrations/**``,
+    ``**/credentials.*``):
+
+      * ``**/`` at the start  → optional path prefix (any depth)
+      * ``/**`` at the end    → optional path suffix (any depth)
+      * ``**`` in the middle  → any characters across segments
+      * ``*``                 → any chars except ``/``
+      * ``?``                 → single char except ``/``
+      * literal ``.``         → escaped
+
+    The matching is forward-slash-only (we never feed Windows-style paths
+    into this — the producers all use POSIX paths inside the repo).
+    """
+    parts: list[str] = []
+    i = 0
+    n = len(pattern)
+    while i < n:
+        ch = pattern[i]
+        # Handle `**/` as optional prefix at start of segment.
+        if pattern[i:i + 3] == "**/":
+            parts.append("(?:.*/)?")
+            i += 3
+        # Handle trailing `/**` as optional suffix.
+        elif pattern[i:i + 3] == "/**" and i + 3 == n:
+            parts.append("(?:/.*)?")
+            i += 3
+        elif pattern[i:i + 2] == "**":
+            parts.append(".*")
+            i += 2
+        elif ch == "*":
+            parts.append("[^/]*")
+            i += 1
+        elif ch == "?":
+            parts.append("[^/]")
+            i += 1
+        else:
+            parts.append(re.escape(ch))
+            i += 1
+    return re.compile("^" + "".join(parts) + "$")
+
+
+def _matches_any_glob(path: str | None, patterns: list[str]) -> bool:
+    if not path:
+        return False
+    for pat in patterns:
+        if not isinstance(pat, str) or not pat:
+            continue
+        if _glob_to_regex(pat).match(path):
+            return True
+    return False
+
+
+def _load_verification_gates(path: Path | None) -> dict[str, list[str]]:
+    """Read verification-gates.json. Absent or malformed → empty gates.
+
+    Returns a dict with the three canonical keys present, each mapped to
+    a list of glob patterns (possibly empty). Unknown keys are ignored.
+    Non-string list entries are dropped silently — the file is operator-
+    authored and should not crash the pipeline on a typo.
+    """
+    empty: dict[str, list[str]] = {k: [] for k in _VERIFICATION_GATE_KEYS}
+    if path is None:
+        return empty
+    data = _read_optional_json(path, None)
+    if not isinstance(data, dict):
+        return empty
+    out: dict[str, list[str]] = {k: [] for k in _VERIFICATION_GATE_KEYS}
+    for key in _VERIFICATION_GATE_KEYS:
+        raw = data.get(key, [])
+        if isinstance(raw, list):
+            out[key] = [p for p in raw if isinstance(p, str) and p]
+    return out
+
+
+def _agent_verifier_output_path(cr_dir: Path, finding_id: str) -> Path:
+    return cr_dir / f"agent_verifier_{finding_id}.json"
+
+
+def _read_verifier_output(path: Path) -> dict[str, Any] | None:
+    """Read one agent_verifier_<id>.json. Returns None on missing/malformed.
+
+    Tolerates the agent emitting the verdict at the top level or wrapped
+    in a ``{"finding": {...}}`` envelope (mirroring how some reviewer
+    agents emit ``{"findings": [...]}``).
+    """
+    data = _read_optional_json(path, None)
+    if not isinstance(data, dict):
+        return None
+    if "verifier_verdict" in data:
+        return data
+    inner = data.get("finding")
+    if isinstance(inner, dict) and "verifier_verdict" in inner:
+        return inner
+    return None
+
+
+def cmd_verify_consolidate(args: argparse.Namespace) -> int:
+    """Merge verifier outputs with the validated set + bucket-split.
+
+    PLN-722 stage_24a. Reads:
+
+      - ``findings_validated.json`` (the originals)
+      - ``verify_manifest.json`` (which IDs went to verification, which
+        were skipped, which deferred)
+      - ``agent_verifier_<id>.json`` for each ``to_verify`` entry
+      - ``verification-gates.json`` (sensitive-path config; optional)
+
+    Produces ``findings_verified.json`` with bucket-split shape:
+
+      {
+        "verified": [...],                # CONFIRMED + DOWNGRADE + TENTATIVE
+                                          #   + tier-skipped findings (no
+                                          #   verification needed)
+        "rejected": [...],                # REJECTED (with verifier fields)
+        "pending_verification": [...],    # deferred + missing verifier outputs
+        "force_human_review": bool,       # any finding on a mandatory_human_
+                                          #   review_paths match
+        "stats": {
+            "verified_count": int,
+            "rejected_count": int,
+            "pending_count": int,
+            "escalated_sensitive_path": int,
+            "escalated_mandatory_review": int,
+        }
+      }
+
+    Sensitive-path escalations (applied BEFORE bucketing):
+      * REJECTED + BLOCKING/HIGH severity + sensitive_paths match
+          → TENTATIVE (capped at HIGH per plan).
+      * Any finding on tentative_on_paths
+          → TENTATIVE (verdict stays as recorded if already non-rejected,
+          but the finding lands in verified[] with a TENTATIVE flag so the
+          presenter renders it under "[verifier uncertain]").
+      * Any finding on mandatory_human_review_paths
+          → TENTATIVE + force_human_review True (drives verdict precedence
+          to NEEDS_ATTENTION downstream).
+
+    Always exits 0; missing inputs degrade to "everything pending_verification"
+    so the pipeline never aborts on a verifier crash.
+    """
+    cr_dir = Path(args.cr_dir)
+    validated_path = Path(args.validated)
+    manifest_path = Path(args.manifest) if getattr(args, "manifest", None) else (
+        cr_dir / "verify_manifest.json"
+    )
+    gates_path = Path(args.gates) if getattr(args, "gates", None) else (
+        _VERIFICATION_GATES_DEFAULT_PATH
+    )
+    cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
+    prompt_hash = str(getattr(args, "prompt_hash", "") or "")
+
+    validated_data = _read_optional_json(validated_path, {})
+    if isinstance(validated_data, dict):
+        validated = validated_data.get("validated") or validated_data.get("findings") or []
+    elif isinstance(validated_data, list):
+        validated = validated_data
+    else:
+        validated = []
+
+    manifest = _read_optional_json(manifest_path, {})
+    to_verify_ids: set[str] = set()
+    skipped_ids: set[str] = set()
+    deferred_ids: set[str] = set()
+    cache_hit_ids: set[str] = set()
+    to_verify_models: dict[str, str] = {}
+    if isinstance(manifest, dict):
+        for e in manifest.get("to_verify", []):
+            if not isinstance(e, dict) or not e.get("finding_id"):
+                continue
+            fid = str(e["finding_id"])
+            to_verify_ids.add(fid)
+            if isinstance(e.get("model"), str):
+                to_verify_models[fid] = e["model"]
+        skipped_ids = {
+            str(fid) for fid in manifest.get("skipped_no_verification", [])
+            if isinstance(fid, str)
+        }
+        deferred_ids = {
+            str(fid) for fid in manifest.get("deferred_budget", [])
+            if isinstance(fid, str)
+        }
+        cache_hit_ids = {
+            str(fid) for fid in manifest.get("cache_hits", [])
+            if isinstance(fid, str)
+        }
+
+    gates = _load_verification_gates(gates_path)
+
+    verified: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    escalated_sensitive = 0
+    escalated_mandatory = 0
+    force_human_review = False
+
+    for raw in validated:
+        if not isinstance(raw, dict):
+            continue
+        finding = dict(raw)  # shallow copy
+        fid = str(finding.get("id", ""))
+        if not fid:
+            # Unkeyed finding — straight to verified[] without a verifier
+            # round-trip. Anchors validate's discard policy: anything that
+            # makes it past validate is real even if upstream forgot an id.
+            verified.append(finding)
+            continue
+
+        file_path = finding.get("file") if isinstance(finding.get("file"), str) else None
+
+        if fid in to_verify_ids or fid in cache_hit_ids:
+            output_path = _agent_verifier_output_path(cr_dir, fid)
+            verdict_data = _read_verifier_output(output_path)
+            if verdict_data is None:
+                # Agent didn't emit. Tag as pending so operators know to
+                # re-run; do NOT silently drop and do NOT auto-confirm.
+                finding["verifier_verdict"] = None
+                finding["verifier_reasoning"] = (
+                    "Verifier agent did not produce an output file; finding "
+                    "deferred for re-verification."
+                )
+                pending.append(finding)
+                continue
+            _merge_verifier_fields(finding, verdict_data)
+            # Cache write-back for fresh verdicts (skip cache hits — those
+            # came FROM the cache, no point overwriting with the same data).
+            if fid in to_verify_ids and fid not in cache_hit_ids:
+                model = to_verify_models.get(fid, _VERIFY_MODEL_DEFAULT)
+                _write_cached_verification(
+                    cache_dir, finding, model, prompt_hash, verdict_data,
+                )
+        elif fid in deferred_ids:
+            finding["verifier_verdict"] = None
+            finding["verifier_reasoning"] = (
+                "Deferred for verification budget (MAX_VERIFICATIONS exceeded)."
+            )
+            pending.append(finding)
+            continue
+        elif fid in skipped_ids:
+            # Tier-skipped: verifier_verdict stays None. Land in verified[].
+            pass
+        # else: not in any manifest list → treat as skipped (legacy/no manifest)
+
+        # Sensitive-path escalation
+        if _matches_any_glob(file_path, gates["mandatory_human_review_paths"]):
+            finding["verifier_verdict"] = "TENTATIVE"
+            finding["human_review_recommended"] = True
+            escalated_mandatory += 1
+            force_human_review = True
+            verified.append(finding)
+            continue
+        if (
+            finding.get("verifier_verdict") == "REJECTED"
+            and str(finding.get("severity", "")) in ("BLOCKING", "HIGH")
+            and _matches_any_glob(file_path, gates["sensitive_paths"])
+        ):
+            finding["verifier_verdict"] = "TENTATIVE"
+            # Cap severity at HIGH per plan (BLOCKING TENTATIVE would
+            # otherwise produce an aggressively-asserted "we don't know
+            # if this is real" verdict).
+            if str(finding.get("severity", "")) == "BLOCKING":
+                finding["verifier_severity"] = "HIGH"
+            finding["rejection_class"] = None
+            escalated_sensitive += 1
+            verified.append(finding)
+            continue
+        if _matches_any_glob(file_path, gates["tentative_on_paths"]):
+            if finding.get("verifier_verdict") in (None, "CONFIRMED", "DOWNGRADE"):
+                finding["verifier_verdict"] = "TENTATIVE"
+            verified.append(finding)
+            continue
+
+        # No escalation — bucket by verdict.
+        if finding.get("verifier_verdict") == "REJECTED":
+            rejected.append(finding)
+        else:
+            verified.append(finding)
+
+    output = {
+        "verified": verified,
+        "rejected": rejected,
+        "pending_verification": pending,
+        "force_human_review": force_human_review,
+        "stats": {
+            "verified_count": len(verified),
+            "rejected_count": len(rejected),
+            "pending_count": len(pending),
+            "escalated_sensitive_path": escalated_sensitive,
+            "escalated_mandatory_review": escalated_mandatory,
+        },
+    }
+
+    consolidated_path = cr_dir / "findings_verified.json"
+    with open(consolidated_path, "w") as fh:
+        json.dump(output, fh, indent=2)
+        fh.write("\n")
+
+    json.dump(output, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def _merge_verifier_fields(
+    finding: dict[str, Any], verdict_data: dict[str, Any],
+) -> None:
+    """Merge verifier output fields into the original finding in place.
+
+    Only canonical verifier_* fields are merged; the verifier never
+    overwrites the original finding's issue / explanation / recommendation
+    (those stay author-of-record for downstream presentation).
+    """
+    if "verifier_verdict" in verdict_data:
+        verdict = verdict_data["verifier_verdict"]
+        if verdict in VERIFIER_VERDICTS:
+            finding["verifier_verdict"] = verdict
+    for key in (
+        "verifier_severity",
+        "verifier_confidence",
+        "verifier_reasoning",
+        "verifier_model",
+        "verification_duration_ms",
+        "rejection_class",
+    ):
+        if key in verdict_data:
+            finding[key] = verdict_data[key]
+    checks = verdict_data.get("evidence_checks")
+    if isinstance(checks, list):
+        finding["evidence_checks"] = checks
 
 
 # ---------------------------------------------------------------------------
@@ -4032,13 +4746,16 @@ _CANONICAL_TO_LEGACY_VERDICT: dict[str, str] = {
 def _compute_canonical_verdict(
     verified: list[dict[str, Any]],
     coverage_gaps: list[dict[str, Any]],
+    *,
+    force_human_review: bool = False,
 ) -> tuple[str, str]:
     """Apply canonical verdict precedence rules (PLN-719 Section 5).
 
-    Returns (canonical_verdict, reason). Rules 4-6 (Premise cumulative MEDIUM,
-    Impact analysis count, TENTATIVE) gate on plan 02/03/06 features and are
-    inert until those plans land — included here so behavior matches when they
-    do, but no-op in Phase A.
+    Returns (canonical_verdict, reason). PLN-722 added two rules: the
+    ``force_human_review`` short-circuit (rule 2.5 — mandatory_human_review_
+    paths) and the TENTATIVE → NEEDS_ATTENTION fall-through (rule 3.5).
+    Rules 4-6 (Premise cumulative MEDIUM, Impact analysis count) gate on
+    plans 02/06 and are inert until those plans land.
     """
 
     def _short(text: str) -> str:
@@ -4067,15 +4784,34 @@ def _compute_canonical_verdict(
         if str(finding.get("category", "")) == "Premise" and finding.get("priority") == 0:
             return "CHANGES_REQUESTED", _short(str(finding.get("issue", "")))
 
+    # Rule 2.5 (PLN-722): mandatory_human_review_paths force NEEDS_ATTENTION.
+    # Sits between BLOCKING and HIGH so BLOCKING still wins, but HIGH does
+    # NOT escalate a force-review-path PR past NEEDS_ATTENTION — the
+    # operator policy is "a human triages this PR", not "this PR is
+    # automatically rejected".
+    if force_human_review:
+        return "NEEDS_ATTENTION", _short(
+            "mandatory human review path touched; verifier escalated to TENTATIVE",
+        )
+
     # Rule 3: HIGH (any scope) → NEEDS_ATTENTION
     for finding in all_findings:
         if str(finding.get("severity", "")) == "HIGH":
             return "NEEDS_ATTENTION", _short(str(finding.get("issue", "")))
 
-    # Rules 4-6 (plan 02 cumulative Premise MEDIUM, plan 06 Impact count,
-    # plan 03 TENTATIVE) — no-op in Phase A; placeholder in code so plans
-    # 02/03/06 only need to update the canonical computation, not the verdict
-    # subcommand wiring.
+    # Rule 3.5 (PLN-722): any TENTATIVE verifier verdict → NEEDS_ATTENTION.
+    # The verifier could not confirm or disprove the underlying claim; the
+    # plan calls this out explicitly: "TENTATIVE counts toward NEEDS_ATTENTION
+    # (not CHANGES_REQUESTED)". Treat it as a signal to the human reviewer,
+    # not a silent approval.
+    for finding in verified:
+        if finding.get("verifier_verdict") == "TENTATIVE":
+            return "NEEDS_ATTENTION", _short(
+                f"verifier uncertain: {finding.get('issue', '')}",
+            )
+
+    # Rules 4-6 (plan 02 cumulative Premise MEDIUM, plan 06 Impact count)
+    # remain placeholder until those plans land.
 
     return "APPROVED", ""
 
@@ -4573,13 +5309,66 @@ def _build_run_plan_stages(
             "enabled": True,
         },
         {
+            # PLN-722 wrapper around the verifier fleet — tier-selects
+            # eligible findings ("What gets verified" table in the plan),
+            # ranks by severity_weight × confidence, writes per-finding
+            # input files plus verify_manifest.json that the Verifier Fleet
+            # walker section reads to know which finding_ids to spawn.
+            "id": "stage_22b_verify_prepare",
+            "kind": "helper",
+            "subcommand": "verify-prepare",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--findings", f"{cr_dir}/findings_validated.json",
+                "--cache-dir", "<CACHE_DIR>",
+                "--prompt-hash", "<PROMPT_HASH>",
+            ],
+            "stdout": f"{cr_dir}/verify_manifest.json",
+            "expected_outputs": [f"{cr_dir}/verify_manifest.json"],
+            "depends_on": ["stage_22_validate"],
+            # If verify-prepare fails the verifier doesn't run, but
+            # verify-consolidate degrades to "everything verified[]" and
+            # finalize-result still produces a usable envelope. Continue
+            # rather than abort so a verifier infrastructure bug never
+            # kills a review.
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
             "id": "stage_23_verify_findings",
             "kind": "agent_fleet",
-            "agent_specs": [],  # populated per-finding by orchestrator
-            "expected_outputs": [f"{cr_dir}/findings_verified.json"],
-            "depends_on": ["stage_22_validate"],
+            "agent_specs": [],  # populated per-finding by orchestrator from verify_manifest.json
+            # The fleet emits agent_verifier_<finding_id>.json per finding;
+            # findings_verified.json (the bucket-split envelope-input) is
+            # produced by stage_24a_verify_consolidate, not here.
+            "expected_outputs": [f"{cr_dir}/agent_verifier_*.json"],
+            "depends_on": ["stage_22b_verify_prepare"],
             "on_failure": "continue",
-            "enabled": False,  # plan 03
+            "enabled": True,
+        },
+        {
+            # PLN-722 wrapper that merges the per-finding verifier outputs
+            # back into the validated set, applies sensitive-path escalation
+            # from verification-gates.json, and writes the bucket-split
+            # envelope-input that stage_25_finalize_result reads.
+            "id": "stage_24a_verify_consolidate",
+            "kind": "helper",
+            "subcommand": "verify-consolidate",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--validated", f"{cr_dir}/findings_validated.json",
+                "--manifest", f"{cr_dir}/verify_manifest.json",
+                "--cache-dir", "<CACHE_DIR>",
+                "--prompt-hash", "<PROMPT_HASH>",
+            ],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/findings_verified.json"],
+            "depends_on": ["stage_23_verify_findings"],
+            # Missing fleet outputs degrade to "pending_verification[] for
+            # the missing ids"; finalize-result handles either bucket
+            # shape, so continue rather than abort.
+            "on_failure": "continue",
+            "enabled": True,
         },
         {
             "id": "stage_24_verify_coverage",
@@ -4608,7 +5397,7 @@ def _build_run_plan_stages(
             ],
             "stdout": None,
             "expected_outputs": [f"{cr_dir}/review_result.json"],
-            "depends_on": ["stage_22_validate"],
+            "depends_on": ["stage_24a_verify_consolidate"],
             # `cmd_finalize_result` writes review_result.json BEFORE running
             # schema validation (see code_review_helpers.py:cmd_finalize_result),
             # so a non-zero exit signals validation errors to the operator
@@ -5119,10 +5908,19 @@ def _build_telemetry_block(cr_dir: Path) -> dict[str, Any]:
 def cmd_finalize_result(args: argparse.Namespace) -> int:
     """Consolidate findings + coverage state + verdict into review_result.json.
 
-    PLN-719 Phase 2. In Phase A all validated diff/pr_metadata findings land
-    in ``verified[]`` (no verifier yet); coverage-scoped findings land in
-    ``coverage_gaps[]``. Plan 03 (verifier) will reshuffle into
-    ``verified/justified/rejected/pending_verification`` buckets.
+    PLN-719 Phase 2 + PLN-722. Prefers the bucket-split output of
+    ``cmd_verify_consolidate`` (``<cr_dir>/findings_verified.json``) when
+    present — that file carries ``verified[]`` / ``rejected[]`` /
+    ``pending_verification[]`` already shaped for the envelope, plus the
+    ``force_human_review`` flag from sensitive-path escalation. Falls back
+    to ``findings_validated.json`` when verify-consolidate didn't run
+    (stage_23 disabled, ``--no-verify``, or a pre-PLN-722 cache hit) —
+    everything lands in ``verified[]`` exactly as Phase A behaved.
+
+    Coverage-scoped findings (``category=Coverage`` + ``finding_scope=system``)
+    are routed to ``coverage_gaps[]`` after the verifier bucketing, since
+    coverage routing is verifier-independent and applies to both source
+    paths uniformly.
     """
     cr_dir = Path(args.cr_dir)
     validate_output_path = Path(args.validate_output)
@@ -5132,7 +5930,24 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
         print(f"Error: validate_output not found or malformed at {validate_output_path}", file=sys.stderr)
         return 1
 
-    validated: list[dict[str, Any]] = validate_output.get("validated", []) or []
+    # Prefer the verify-consolidate output when present (PLN-722).
+    consolidated_path = cr_dir / "findings_verified.json"
+    consolidated = _read_optional_json(consolidated_path, None)
+    using_verifier = (
+        isinstance(consolidated, dict)
+        and isinstance(consolidated.get("verified"), list)
+    )
+
+    if using_verifier:
+        raw_verified: list[dict[str, Any]] = consolidated.get("verified", []) or []
+        raw_rejected: list[dict[str, Any]] = consolidated.get("rejected", []) or []
+        raw_pending: list[dict[str, Any]] = consolidated.get("pending_verification", []) or []
+        force_human_review = bool(consolidated.get("force_human_review", False))
+    else:
+        raw_verified = validate_output.get("validated", []) or []
+        raw_rejected = []
+        raw_pending = []
+        force_human_review = False
 
     # Promote findings to canonical schema (defensive — collect-findings
     # should already have done this, but legacy producers may bypass it).
@@ -5140,40 +5955,54 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
     # (e.g. "Bug Hunter A") so make_finding_id doesn't ValueError, and
     # skip individually malformed findings rather than aborting the run.
     now_iso = datetime.now(timezone.utc).isoformat()
-    canonical_findings: list[dict[str, Any]] = []
-    for idx, raw in enumerate(validated):
-        if not isinstance(raw, dict):
-            continue
-        raw_normalized = dict(raw)
-        raw_normalized["reviewer"] = _coerce_reviewer_id(
-            raw.get("reviewer"), "unknown",
-        )
-        try:
-            canonical_findings.append(
-                normalize_legacy_finding(
-                    raw_normalized,
-                    reviewer=raw_normalized["reviewer"],
-                    source=raw.get("source", "agent"),
-                    index=idx,
-                    emitted_at=raw.get("emitted_at") or now_iso,
-                ),
+
+    def _normalize_bucket(
+        bucket: list[dict[str, Any]], label: str,
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for idx, raw in enumerate(bucket):
+            if not isinstance(raw, dict):
+                continue
+            raw_normalized = dict(raw)
+            raw_normalized["reviewer"] = _coerce_reviewer_id(
+                raw.get("reviewer"), "unknown",
             )
-        except (ValueError, TypeError) as exc:
-            print(
-                f"Warning: skipping malformed finding {idx} in validate_output: {exc}",
-                file=sys.stderr,
-            )
-            continue
+            try:
+                out.append(
+                    normalize_legacy_finding(
+                        raw_normalized,
+                        reviewer=raw_normalized["reviewer"],
+                        source=raw.get("source", "agent"),
+                        index=idx,
+                        emitted_at=raw.get("emitted_at") or now_iso,
+                    ),
+                )
+            except (ValueError, TypeError) as exc:
+                print(
+                    f"Warning: skipping malformed finding {idx} in {label}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
+        return out
+
+    canonical_verified = _normalize_bucket(raw_verified, "verified")
+    canonical_rejected = _normalize_bucket(raw_rejected, "rejected")
+    canonical_pending = _normalize_bucket(raw_pending, "pending_verification")
 
     # Partition by index to avoid dict-equality membership tests; legacy
-    # findings normalized in-place may not have stable ids yet.
+    # findings normalized in-place may not have stable ids yet. Coverage
+    # routing applies only to verified[] — the verifier never sees Coverage
+    # gaps (they bypass the tier table by category) so rejected and pending
+    # buckets can't carry Coverage findings.
     coverage_indices: set[int] = {
-        i for i, f in enumerate(canonical_findings)
+        i for i, f in enumerate(canonical_verified)
         if str(f.get("category", "")) == "Coverage"
         and (f.get("finding_scope") or "diff") == "system"
     }
-    coverage_gaps = [f for i, f in enumerate(canonical_findings) if i in coverage_indices]
-    verified = [f for i, f in enumerate(canonical_findings) if i not in coverage_indices]
+    coverage_gaps = [f for i, f in enumerate(canonical_verified) if i in coverage_indices]
+    verified = [f for i, f in enumerate(canonical_verified) if i not in coverage_indices]
+    rejected = canonical_rejected
+    pending = canonical_pending
 
     # Pull additional coverage gaps emitted by arbitrate-budget, if any.
     extra_gaps_doc = _read_optional_json(cr_dir / "coverage_gaps.json", None)
@@ -5182,7 +6011,9 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
             if isinstance(entry, dict):
                 coverage_gaps.append(entry)
 
-    canonical_verdict, reason = _compute_canonical_verdict(verified, coverage_gaps)
+    canonical_verdict, reason = _compute_canonical_verdict(
+        verified, coverage_gaps, force_human_review=force_human_review,
+    )
 
     # Pull optional run-context inputs.
     setup_data = _read_optional_json(cr_dir / "setup.json", {}) or {}
@@ -5213,13 +6044,13 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
         "intent": intent_data.get("intent", "mixed"),
         "verified": verified,
         "justified": [],
-        "rejected": [],
-        "pending_verification": [],
+        "rejected": rejected,
+        "pending_verification": pending,
         "coverage_plan": coverage_plan,
         "coverage_gaps": coverage_gaps,
         "verdict": canonical_verdict,
         "verdict_reason": reason,
-        "stats": _stats_from_findings(verified, [], [], coverage_gaps),
+        "stats": _stats_from_findings(verified, rejected, [], coverage_gaps),
         # PLN-719 Phase 9: telemetry is sourced from the canonical zero-valued
         # factory and deep-merged with optional <cr_dir>/telemetry.json, which
         # the orchestrator (or any upstream stage) may populate with timings,
@@ -5239,7 +6070,11 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
             "review_result": str(output_path),
             "verdict": canonical_verdict,
             "verified_count": len(verified),
+            "rejected_count": len(rejected),
+            "pending_verification_count": len(pending),
             "coverage_gaps_count": len(coverage_gaps),
+            "force_human_review": force_human_review,
+            "used_verifier": using_verifier,
             "validation_errors": errors,
         },
         sys.stdout,
@@ -5270,21 +6105,34 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
 
 
 def cmd_prep_assets(args: argparse.Namespace) -> int:
-    """Copy prompt assets from plugin to CR_DIR."""
+    """Copy prompt assets from plugin to CR_DIR.
+
+    PLN-722 added ``verifier_prompt.txt`` to the per-run asset set. The
+    Verifier Fleet (stage_23) reads it from CR_DIR rather than from the
+    plugin root so verify-* runs after a plugin upgrade still use the
+    prompt that the prompt-hash was computed against.
+    """
     plugin_root = Path(args.plugin_root)
     cr_dir = Path(args.cr_dir)
 
     shared_src = plugin_root / "tools" / "prompts" / "shared_prompt.txt"
     bha_src = plugin_root / "tools" / "prompts" / "bha_suffix.txt"
+    verifier_src = plugin_root / "tools" / "prompts" / "verifier_prompt.txt"
 
     shared_dst = cr_dir / "shared_prompt.txt"
     bha_dst = cr_dir / "bha_suffix.txt"
+    verifier_dst = cr_dir / "verifier_prompt.txt"
 
     shutil.copy2(shared_src, shared_dst)
     shutil.copy2(bha_src, bha_dst)
+    shutil.copy2(verifier_src, verifier_dst)
 
     json.dump(
-        {"shared_prompt": str(shared_dst), "bha_suffix": str(bha_dst)},
+        {
+            "shared_prompt": str(shared_dst),
+            "bha_suffix": str(bha_dst),
+            "verifier_prompt": str(verifier_dst),
+        },
         sys.stdout,
         indent=2,
     )
@@ -5397,6 +6245,55 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_val.add_argument("--findings", required=True, help="Path to findings JSON file")
     p_val.add_argument("--diff-data", required=True, help="Path to diff data JSON file")
     p_val.set_defaults(func=cmd_validate)
+
+    # verify-prepare (PLN-722)
+    p_vp = subparsers.add_parser(
+        "verify-prepare",
+        help="Tier-select findings for verification and emit per-finding inputs",
+    )
+    p_vp.add_argument("--cr-dir", required=True, help="CR_DIR path")
+    p_vp.add_argument(
+        "--findings", required=True,
+        help="Path to findings_validated.json (or any {validated|findings: [...]} JSON)",
+    )
+    p_vp.add_argument(
+        "--cache-dir", default=None,
+        help="Optional cache directory; when set, fresh (finding_id, snippet_hash, "
+        "model, prompt_hash) tuples are served from the verifications/ namespace.",
+    )
+    p_vp.add_argument(
+        "--prompt-hash", default="",
+        help="Verifier prompt hash; part of the cache key so prompt revs invalidate cache.",
+    )
+    p_vp.set_defaults(func=cmd_verify_prepare)
+
+    # verify-consolidate (PLN-722)
+    p_vc = subparsers.add_parser(
+        "verify-consolidate",
+        help="Merge verifier outputs with validated set + bucket-split (verified/rejected/pending)",
+    )
+    p_vc.add_argument("--cr-dir", required=True, help="CR_DIR path")
+    p_vc.add_argument(
+        "--validated", required=True,
+        help="Path to findings_validated.json",
+    )
+    p_vc.add_argument(
+        "--manifest", default=None,
+        help="Path to verify_manifest.json (defaults to <cr-dir>/verify_manifest.json)",
+    )
+    p_vc.add_argument(
+        "--gates", default=None,
+        help="Path to verification-gates.json (defaults to .closedloop-ai/settings/verification-gates.json)",
+    )
+    p_vc.add_argument(
+        "--cache-dir", default=None,
+        help="Optional cache directory; fresh verifier outputs are written back here.",
+    )
+    p_vc.add_argument(
+        "--prompt-hash", default="",
+        help="Verifier prompt hash for cache write-back keys.",
+    )
+    p_vc.set_defaults(func=cmd_verify_consolidate)
 
     # cache-check
     p_cc = subparsers.add_parser("cache-check", help="Check BHA cache for previously reviewed files")
