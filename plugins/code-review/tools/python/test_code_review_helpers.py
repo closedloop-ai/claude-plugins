@@ -2317,6 +2317,102 @@ class TestCmdPostComments:
         assert rc == 0
         assert mock_run.call_count == 3
 
+    def test_null_line_does_not_crash(self, tmp_path: Path) -> None:
+        """PLN-719: schema permits ``line: int | None`` for system + pr_metadata
+        scopes. cmd_post_comments must skip those rather than crash on
+        ``int(None)`` (latent bug flagged in PR #100 review)."""
+        findings = [
+            {"file": "system", "line": None, "severity": "MEDIUM", "category": "Coverage", "issue": "no inline location"},
+            {"file": "a.ts", "line": 10, "severity": "HIGH", "category": "Bug", "issue": "inline ok"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="[]", stderr=""
+            )
+            rc = self._run(path)
+        # Must succeed; the null-line finding is skipped, the inline finding posts.
+        assert rc == 0
+        # 1 GET + 1 POST (null-line finding counted in `failed`, not posted)
+        assert mock_run.call_count == 2
+
+    def test_bool_line_does_not_post(self, tmp_path: Path) -> None:
+        """`bool` is a subclass of `int` in Python, so a naive `isinstance(x, int)`
+        guard lets `True`/`False` slip through. A finding with `"line": true`
+        must be skipped (not posted to line 1)."""
+        findings = [
+            {"file": "a.ts", "line": True, "severity": "HIGH", "category": "Bug", "issue": "bool slip"},
+            {"file": "b.ts", "line": False, "severity": "HIGH", "category": "Bug", "issue": "bool slip"},
+            {"file": "c.ts", "line": 5, "severity": "HIGH", "category": "Bug", "issue": "real inline"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="[]", stderr=""
+            )
+            rc = self._run(path)
+        assert rc == 0
+        # 1 GET + 1 POST (only c.ts:5 is a valid inline). True/False both skip.
+        assert mock_run.call_count == 2
+
+    def test_missing_line_key_does_not_crash(self, tmp_path: Path) -> None:
+        """A finding lacking the ``line`` key entirely also skips cleanly."""
+        findings = [
+            {"file": "a.ts", "severity": "MEDIUM", "category": "Hygiene", "issue": "file-level"},
+            {"file": "b.ts", "line": 20, "severity": "HIGH", "category": "Bug", "issue": "inline ok"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="[]", stderr=""
+            )
+            rc = self._run(path)
+        assert rc == 0
+        assert mock_run.call_count == 2
+
+    def test_string_line_is_coerced_to_int(self, tmp_path: Path) -> None:
+        """The original ``int(finding.get("line", 0))`` coerced legacy
+        reviewers' ``"line": "42"`` strings to ``42`` cleanly. PR #107's
+        first cut of the null-line fix tightened that to
+        ``isinstance(line_raw, int)``, which dropped string-valued lines
+        into ``failed`` (regression flagged in PR #107 review). The
+        ``try/except (TypeError, ValueError) around int(line_raw)`` shape
+        keeps the original string coercion while still rejecting ``None``
+        and ``bool``.
+        """
+        findings = [
+            {"file": "a.ts", "line": "42", "severity": "HIGH", "category": "Bug", "issue": "string-typed line should still post"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="[]", stderr=""
+            )
+            rc = self._run(path)
+        assert rc == 0
+        # 1 GET + 1 POST — string "42" must coerce to 42 and post inline.
+        assert mock_run.call_count == 2
+
+    def test_garbage_string_line_does_not_crash(self, tmp_path: Path) -> None:
+        """A non-numeric string ``"line": "abc"`` would have crashed the
+        original ``int(finding.get("line", 0))`` with ValueError. The
+        try/except shape handles it gracefully — the finding is counted
+        under ``failed`` without aborting the run.
+        """
+        findings = [
+            {"file": "a.ts", "line": "not-a-number", "severity": "HIGH", "category": "Bug", "issue": "garbage line"},
+            {"file": "b.ts", "line": 10, "severity": "HIGH", "category": "Bug", "issue": "real inline"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="[]", stderr=""
+            )
+            rc = self._run(path)
+        assert rc == 0
+        # 1 GET + 1 POST (garbage skipped, b.ts:10 posts)
+        assert mock_run.call_count == 2
+
     def test_inline_false_skipped(self, tmp_path: Path) -> None:
         findings = [
             {"file": "a.ts", "line": 10, "severity": "HIGH", "category": "Bug", "issue": "bad", "inline": False},
@@ -5921,58 +6017,52 @@ class TestPrepareRun:
     def test_enabled_helper_stages_include_all_required_argparse_args(
         self, tmp_path: Path,
     ) -> None:
-        """Every enabled helper stage must satisfy its argparse `required=True` args.
+        """Every enabled helper stage must satisfy its argparse ``required=True`` args.
 
-        Either the args list provides the flag directly or it carries a
-        runtime placeholder (``<TOKEN>``) for the orchestrator to substitute.
-        Prevents the regression where prep-assets shipped without
-        --plugin-root and several stages had only --cr-dir.
+        The set of required flags is derived from argparse itself by
+        building the parser and introspecting each subparser's actions —
+        NOT from a hand-maintained mapping. Hand-maintained mappings can
+        and did drift from the source of truth (the original version of
+        this test missed ``resolve-scope --setup-json`` and
+        ``fetch-intent --cr-dir``, both of which are ``required=True``,
+        which let the v2.5.0 walker ship a run plan that would crash
+        argparse before any review reached the agents).
         """
+        import argparse as _argparse
+
+        from code_review_helpers import _register_subparsers
+
+        parser = _argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command", required=True)
+        _register_subparsers(subparsers)
+        # argparse stores subparsers under the private ``choices`` mapping
+        # of the subparsers action.
+        sub_choices: dict[str, _argparse.ArgumentParser] = subparsers.choices  # type: ignore[attr-defined]
+
         _, plan = self._run(tmp_path)
-
-        # subcommand → required argparse flags. Derived from
-        # _register_subparsers in code_review_helpers.py.
-        required_flags = {
-            "setup": ["--mode"],
-            "prep-assets": ["--plugin-root", "--cr-dir"],
-            "resolve-scope": ["--mode"],
-            "finalize-cache": ["--setup-json", "--mode"],
-            "parse-diff": ["--scope"],
-            "extract-patches": ["--diff-scope", "--diff-data", "--cr-dir"],
-            "auto-incremental": ["--key", "--diff-tip", "--original-scope", "--mode"],
-            "fetch-intent": ["--scope-kind"],
-            "classify-intent": ["--intent-context"],
-            "hygiene": [],  # --diff-data optional
-            "arbitrate-budget": ["--coverage-plan", "--diff-data"],
-            "partition": [],  # --diff-data optional
-            "compute-hashes": ["--shared-prompt", "--bha-suffix", "--diff-tip", "--base-ref"],
-            "cache-check": [
-                "--cache-dir", "--diff-data", "--prompt-hash",
-                "--model-id", "--schema-version", "--output-dir",
-            ],
-            "collect-findings": ["--cr-dir"],
-            "validate": ["--findings", "--diff-data"],
-            "finalize-result": ["--cr-dir", "--validate-output"],
-            "cache-update": [
-                "--cache-dir", "--diff-data", "--bha-dir",
-                "--prompt-hash", "--model-id", "--schema-version",
-            ],
-            "review-state-write": ["--cache-dir", "--key"],
-            "verdict": ["--validate-output"],
-            "footer": ["--start-time"],
-        }
-
         for stage in plan["stages"]:
             if stage["kind"] != "helper" or not stage["enabled"]:
                 continue
             sub = stage["subcommand"]
-            if sub not in required_flags:
-                continue  # disabled / future stages
+            sp = sub_choices.get(sub)
+            assert sp is not None, (
+                f"stage {stage['id']!r} references unknown subcommand {sub!r}"
+            )
             args = stage["args"]
-            for flag in required_flags[sub]:
-                assert flag in args, (
+            for action in sp._actions:  # type: ignore[attr-defined]
+                # Skip positionals and help; we only care about required
+                # named flags. argparse's `_SubParsersAction` instances
+                # have `required` but no option_strings — they aren't
+                # what we're checking here either.
+                if not getattr(action, "required", False):
+                    continue
+                option_strings = getattr(action, "option_strings", None) or []
+                if not option_strings:
+                    continue  # positional / required subparser slot
+                # Any of the action's flag aliases satisfies the requirement.
+                assert any(opt in args for opt in option_strings), (
                     f"stage {stage['id']!r} (subcommand={sub!r}) is enabled "
-                    f"but missing required argparse flag {flag!r}; "
+                    f"but missing required argparse flag(s) {option_strings!r}; "
                     f"args={args}"
                 )
 
@@ -6025,6 +6115,244 @@ class TestPrepareRun:
         _, plan = self._run(tmp_path)
         from code_review_schema import SCHEMA_VERSION
         assert plan["schema_version"] == SCHEMA_VERSION
+
+    def test_stage_kind_is_documented_enum(self, tmp_path: Path) -> None:
+        """PLN-719 Phase 4b walker dispatches by ``kind``; new kinds must
+        be added to start.md's walker contract before they appear here."""
+        _, plan = self._run(tmp_path)
+        documented_kinds = {"helper", "agent_fleet", "present"}
+        for stage in plan["stages"]:
+            assert stage["kind"] in documented_kinds, (
+                f"stage {stage['id']!r} has undocumented kind {stage['kind']!r}; "
+                f"walker only handles {sorted(documented_kinds)}"
+            )
+
+    def test_on_failure_is_documented_enum(self, tmp_path: Path) -> None:
+        """The /start walker honors abort | continue | continue_with_coverage_gap.
+        Adding a new on_failure semantic requires a corresponding walker update."""
+        _, plan = self._run(tmp_path)
+        documented = {"abort", "continue", "continue_with_coverage_gap"}
+        for stage in plan["stages"]:
+            assert stage["on_failure"] in documented, (
+                f"stage {stage['id']!r} on_failure {stage['on_failure']!r} "
+                f"not handled by walker; documented: {sorted(documented)}"
+            )
+
+    def test_enabled_helper_stages_parse_via_argparse_after_token_substitution(
+        self, tmp_path: Path,
+    ) -> None:
+        """Every enabled helper stage's args list must successfully ``parse_args``.
+
+        The introspection test above catches missing ``required=True`` flags
+        but does not validate that the *values* passed satisfy each flag's
+        type/choices. This test substitutes realistic dummy values for every
+        runtime placeholder token and then runs the resulting list through
+        the real argparse parser — catching the class of bug where
+        ``stage_03_resolve_scope`` emitted ``--pr-number ""``, which argparse
+        rejected with ``invalid int value: ''`` because the flag is
+        ``type=int``. The placeholder token registry below mirrors the
+        runtime substitutions documented in start.md's Walker Contract.
+        """
+        import argparse as _argparse
+
+        from code_review_helpers import _register_subparsers
+
+        parser = _argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command", required=True)
+        _register_subparsers(subparsers)
+        sub_choices: dict[str, _argparse.ArgumentParser] = subparsers.choices  # type: ignore[attr-defined]
+
+        # Realistic non-empty substitutions for every documented token. The
+        # values are picked so they satisfy argparse type/choice constraints
+        # (e.g. <SCOPE_KIND> must be a valid choice; <START_TIME> must be a
+        # float-parseable string).
+        token_values = {
+            "<PLUGIN_ROOT>": "/tmp/plugin-root",
+            "<DIFF_SCOPE>": "main..HEAD",
+            "<BASE_REF>": "main",
+            "<DIFF_TIP>": "abc1234",
+            "<SCOPE_KIND>": "branch",
+            "<CACHE_DIR>": "/tmp/cache",
+            "<GLOBAL_CACHE>": "1",
+            "<PROMPT_HASH>": "0" * 64,
+            "<CONTEXT_KEY>": "0" * 64,
+            "<MODEL_ID>": "opus",
+            "<INTENT>": "fix",
+            "<START_TIME>": "1700000000",
+            "<STATE_KEY>": "feature/x:main",
+        }
+
+        _, plan = self._run(tmp_path)
+        for stage in plan["stages"]:
+            if stage["kind"] != "helper" or not stage["enabled"]:
+                continue
+            sub = stage["subcommand"]
+            sp = sub_choices.get(sub)
+            assert sp is not None, (
+                f"stage {stage['id']!r} references unknown subcommand {sub!r}"
+            )
+            resolved: list[str] = [
+                str(token_values.get(arg, arg)) for arg in stage["args"]
+            ]
+            try:
+                sp.parse_args(resolved)
+            except SystemExit as exc:  # argparse calls sys.exit on errors
+                raise AssertionError(
+                    f"stage {stage['id']!r} (subcommand={sub!r}) failed "
+                    f"argparse validation after token substitution. "
+                    f"resolved args={resolved!r}. argparse exit code={exc.code!r}"
+                ) from None
+
+    def test_stage_25_finalize_result_on_failure_is_continue(
+        self, tmp_path: Path,
+    ) -> None:
+        """``cmd_finalize_result`` writes review_result.json *before* schema
+        validation runs, so a non-zero exit (reviewer category drift, missing
+        field) leaves a structurally complete envelope on disk for the
+        downstream verdict stage to consume. The walker must NOT abort here,
+        or one reviewer emitting an unrecognized category would kill the
+        whole pipeline. Guard against accidentally reverting to ``abort``.
+        """
+        _, plan = self._run(tmp_path)
+        stage = next(s for s in plan["stages"] if s["id"] == "stage_25_finalize_result")
+        assert stage["on_failure"] == "continue", (
+            f"stage_25_finalize_result.on_failure must be 'continue' so a "
+            f"validation error (e.g. reviewer-emitted category not in the "
+            f"canonical enum) doesn't abort the pipeline; cmd_finalize_result "
+            f"writes review_result.json before validating, and stage_28_verdict "
+            f"can read it. Got: {stage['on_failure']!r}"
+        )
+
+    def test_stage_30_footer_stdout_redirects_to_footer_json(
+        self, tmp_path: Path,
+    ) -> None:
+        """start.md's per-stage prose tells the walker to read
+        ``<CR_DIR>/footer.json`` after stage_30. ``cmd_footer`` writes its
+        ``{"footer_line": ...}`` JSON to stdout, so the run plan must
+        redirect stdout to that file or the walker reads a non-existent file
+        and conflates it with a helper failure.
+        """
+        _, plan = self._run(tmp_path)
+        stage = next(s for s in plan["stages"] if s["id"] == "stage_30_footer")
+        assert stage["stdout"] == f"{tmp_path}/footer.json", (
+            f"stage_30_footer.stdout must redirect to {tmp_path}/footer.json "
+            f"so the walker can read the file as documented in start.md "
+            f"§ Review Footer. Got: {stage['stdout']!r}"
+        )
+        assert f"{tmp_path}/footer.json" in stage["expected_outputs"], (
+            "footer.json must appear in expected_outputs so the gate "
+            "system can confirm it was produced"
+        )
+
+    def test_documentation_is_valid_category(self) -> None:
+        """Reviewers naturally emit ``category: "Documentation"`` for
+        README/docstring/comment findings. Schema validation rejecting that
+        category would force every doc finding through finalize-result's
+        error path. Adding it to the canonical enum aligns with the
+        shared_prompt convention of letting reviewers pick the obvious
+        category name without coercion.
+        """
+        from code_review_schema import CATEGORIES
+
+        assert "Documentation" in CATEGORIES, (
+            "'Documentation' must be in CATEGORIES — reviewers emit this "
+            "category for README/docstring/comment findings and the schema "
+            "validator should accept it as a first-class category"
+        )
+
+    def test_runtime_tokens_in_start_md_match_helper_stage_args(
+        self, tmp_path: Path,
+    ) -> None:
+        """Bidirectional sync between start.md's Walker Contract placeholder
+        table and the tokens that helper stage args actually reference.
+
+        Parses the token table out of start.md directly (rather than
+        carrying a hand-maintained list that drifts — flagged in PR #107
+        review). The Walker Contract documents some tokens whose values
+        are NOT consumed by helper stage args (``<PLUGIN_ROOT>`` is
+        resolved by the walker for the helper invocation itself,
+        ``<START_TIME>`` is set by stage 0, ``<INTENT>`` is consumed by
+        the ``route`` gate not a helper stage) — those are listed in
+        ``GATE_OR_WALKER_TOKENS`` below and explicitly excluded from the
+        helper-arg-references check.
+
+        Drift in either direction fails the test:
+        - A token added to start.md but never consumed by any helper
+          stage (and not in the allowlist) → fail.
+        - A new ``<TOKEN>`` placeholder appearing in helper stage args
+          but missing from start.md's table → fail.
+        """
+        from pathlib import Path as _Path
+        import re as _re
+
+        start_md = (
+            _Path(__file__).parent.parent.parent / "commands" / "start.md"
+        ).read_text()
+
+        # The Walker Contract table has the shape:
+        #   | `<TOKEN_NAME>`  | source description |
+        # Parse rows where the first cell is a backticked angle-bracket
+        # token name. Restrict to a small window after the "Resolve
+        # placeholder tokens" header so unrelated tables (e.g. fleet
+        # config tables) don't pollute the set.
+        contract_window = start_md.split(
+            "Resolve placeholder tokens", 1,
+        )[1].split("4. **Dispatch by", 1)[0]
+        token_re = _re.compile(r"\|\s*`(<[A-Z_]+>)`")
+        documented_tokens: set[str] = set(token_re.findall(contract_window))
+        assert documented_tokens, (
+            "Could not parse any tokens out of start.md's Walker Contract "
+            "placeholder table — section heading or table format changed; "
+            "update the parser."
+        )
+
+        # Tokens documented in the contract but NOT referenced by any
+        # helper stage args by design.
+        GATE_OR_WALKER_TOKENS: set[str] = {
+            "<PLUGIN_ROOT>",  # walker resolves for the python -m invocation
+            "<START_TIME>",   # set by stage 0, passed to stage_30_footer
+            "<INTENT>",       # consumed by the route gate, not helper args
+        }
+
+        _, plan = self._run(tmp_path)
+        helper_args = [
+            arg
+            for stage in plan["stages"]
+            if stage["kind"] == "helper"
+            for arg in stage.get("args", []) or []
+        ]
+        # Tokens that any helper stage actually references.
+        arg_re = _re.compile(r"<[A-Z_]+>")
+        referenced_tokens: set[str] = {
+            t for arg in helper_args for t in arg_re.findall(arg)
+        }
+
+        # Direction 1: every documented (non-allowlisted) token must be
+        # referenced by at least one helper stage's args. Catches tokens
+        # added to the doc without a consuming stage.
+        expected_in_args = documented_tokens - GATE_OR_WALKER_TOKENS
+        # START_TIME is referenced by stage_30_footer's args, but it's
+        # also in GATE_OR_WALKER_TOKENS for the inverse check. That's
+        # fine — its presence in args is allowed (not required).
+        unreferenced = expected_in_args - referenced_tokens
+        assert not unreferenced, (
+            f"start.md's Walker Contract documents these tokens but no "
+            f"helper stage's args reference them: {sorted(unreferenced)}. "
+            f"Either add a consuming stage or move the token to the "
+            f"GATE_OR_WALKER_TOKENS allowlist with a comment explaining "
+            f"why it's gate/walker-only."
+        )
+
+        # Direction 2: every token in helper stage args must be in the
+        # documented set. Catches new placeholders silently added to the
+        # plan without a corresponding doc entry.
+        undocumented = referenced_tokens - documented_tokens
+        assert not undocumented, (
+            f"helper stage args reference these <TOKEN> placeholders that "
+            f"are NOT in start.md's Walker Contract table: "
+            f"{sorted(undocumented)}. Add a row to the placeholder table "
+            f"or remove the token from the plan."
+        )
 
 
 # ---------------------------------------------------------------------------

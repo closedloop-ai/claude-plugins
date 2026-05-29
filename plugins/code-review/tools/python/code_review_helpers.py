@@ -2343,8 +2343,26 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
             skipped_no_inline += 1
             continue
 
-        path = finding.get("file", "")
-        line = int(finding.get("line", 0))
+        path = finding.get("file") or ""
+        # Schema permits ``line: int | None`` for system + pr_metadata scopes;
+        # legacy reviewers also sometimes emit ``"42"`` as a string. The
+        # previous ``int(finding.get("line", 0))`` coerced strings cleanly
+        # but crashed on ``None``; tightening to ``isinstance(int)`` fixed
+        # the crash but silently dropped string-valued lines into ``failed``
+        # (regression flagged in PR #107 review). The split below keeps both
+        # behaviors: reject ``bool`` first (``bool`` is a subclass of ``int``
+        # in Python — ``isinstance(True, int)`` is True — so unguarded
+        # ``int(True)`` posts to line 1), then try ``int(line_raw)`` which
+        # handles ints, numeric strings, and falls through to ``0`` on
+        # ``None``/non-numeric values via the typed exception catch.
+        line_raw = finding.get("line")
+        if isinstance(line_raw, bool):
+            line = 0
+        else:
+            try:
+                line = int(line_raw) if line_raw is not None else 0
+            except (TypeError, ValueError):
+                line = 0
 
         if not path or not line:
             failed += 1
@@ -3666,6 +3684,7 @@ def _build_run_plan_stages(
       <DIFF_TIP>     -- scope.json.diff_tip
       <SCOPE_KIND>   -- scope.json.scope_kind
       <CACHE_DIR>    -- cache_config.json.cache_dir (from finalize-cache)
+      <GLOBAL_CACHE> -- setup.json.global_cache (0 or 1)
       <PROMPT_HASH>  -- hashes.json.prompt_hash (from compute-hashes)
       <CONTEXT_KEY>  -- hashes.json.context_key
       <MODEL_ID>     -- orchestrator-chosen model (e.g. "opus")
@@ -3677,14 +3696,26 @@ def _build_run_plan_stages(
     best-known shape so when those plans wire them on, only ``enabled``
     needs to flip.
     """
-    pr_arg = str(pr_number) if pr_number else ""
+    # Conditional --pr-number: argparse declares ``--pr-number`` as
+    # ``type=int``, which rejects empty strings with
+    # ``invalid int value: ''``. When no PR is active, omit the flag
+    # entirely so the helpers' argparse defaults (None) apply.
+    pr_flag: list[str] = ["--pr-number", str(pr_number)] if pr_number else []
+
     return [
         {
             "id": "stage_01_setup",
             "kind": "helper",
             "subcommand": "setup",
             "args": ["--mode", mode, "--cr-dir-prefix", ".closedloop-ai/code-review/cr-"],
-            "stdout": f"{cr_dir}/setup.json",
+            # The walker handles setup specially in stage 0b: it runs
+            # setup, captures stdout in-memory, parses ``cr_dir``, then
+            # writes setup.json into the newly-created cr_dir itself. A
+            # shell-style ``> <cr_dir>/setup.json`` redirect cannot work
+            # because cr_dir does not exist until setup runs. The stdout
+            # field is ``None`` here so a walker that reaches this stage
+            # via the run plan treats it as already-completed.
+            "stdout": None,
             "expected_outputs": [f"{cr_dir}/setup.json"],
             "depends_on": [],
             "on_failure": "abort",
@@ -3707,7 +3738,8 @@ def _build_run_plan_stages(
             "subcommand": "resolve-scope",
             "args": [
                 "--mode", mode,
-                "--pr-number", pr_arg,
+                "--setup-json", f"{cr_dir}/setup.json",
+                *pr_flag,
                 "--scope-args", flags.get("scope_args", "") or "",
                 "--base-ref-override", flags.get("base_ref_override", "") or "",
             ],
@@ -3724,11 +3756,41 @@ def _build_run_plan_stages(
             "args": [
                 "--setup-json", f"{cr_dir}/setup.json",
                 "--mode", mode,
-                "--pr-number", pr_arg,
+                *pr_flag,
             ],
             "stdout": f"{cr_dir}/cache_config.json",
             "expected_outputs": [f"{cr_dir}/cache_config.json"],
             "depends_on": ["stage_03_resolve_scope"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        # stage_07_auto_incremental must run BEFORE parse-diff so that any
+        # diff_scope override it emits is applied to the cached <DIFF_SCOPE>
+        # token before parse-diff and extract-patches materialize diff_data
+        # and patch files. The stage id retains its _07_ prefix as a stable
+        # label; execution order follows array position.
+        {
+            "id": "stage_07_auto_incremental",
+            "kind": "helper",
+            "subcommand": "auto-incremental",
+            "args": [
+                "--cache-dir", "<CACHE_DIR>",
+                "--key", "<STATE_KEY>",
+                "--diff-tip", "<DIFF_TIP>",
+                "--base-ref", "<BASE_REF>",
+                "--original-scope", "<DIFF_SCOPE>",
+                "--full-review", "true" if flags.get("full_review") else "false",
+                "--since-last-review", "true" if flags.get("since_last_review") else "false",
+                "--mode", mode,
+            ],
+            "stdout": f"{cr_dir}/auto_incremental.json",
+            "expected_outputs": [f"{cr_dir}/auto_incremental.json"],
+            # auto-incremental does NOT consume diff_data.json (its inputs
+            # are cache state + git refs). The previous run-plan listed
+            # stage_05_parse_diff as a dep, which both wrongly suggested
+            # data dependence AND forced auto-incremental's position past
+            # parse-diff — making any scope override useless.
+            "depends_on": ["stage_04_finalize_cache"],
             "on_failure": "continue",
             "enabled": True,
         },
@@ -3739,7 +3801,7 @@ def _build_run_plan_stages(
             "args": ["--scope", "<DIFF_SCOPE>"],
             "stdout": f"{cr_dir}/diff_data.json",
             "expected_outputs": [f"{cr_dir}/diff_data.json"],
-            "depends_on": ["stage_03_resolve_scope"],
+            "depends_on": ["stage_03_resolve_scope", "stage_07_auto_incremental"],
             "on_failure": "abort",
             "enabled": True,
         },
@@ -3759,36 +3821,22 @@ def _build_run_plan_stages(
             "enabled": True,
         },
         {
-            "id": "stage_07_auto_incremental",
-            "kind": "helper",
-            "subcommand": "auto-incremental",
-            "args": [
-                "--cache-dir", "<CACHE_DIR>",
-                "--key", "<STATE_KEY>",
-                "--diff-tip", "<DIFF_TIP>",
-                "--base-ref", "<BASE_REF>",
-                "--original-scope", "<DIFF_SCOPE>",
-                "--full-review", "true" if flags.get("full_review") else "false",
-                "--since-last-review", "true" if flags.get("since_last_review") else "false",
-                "--mode", mode,
-            ],
-            "stdout": f"{cr_dir}/auto_incremental.json",
-            "expected_outputs": [f"{cr_dir}/auto_incremental.json"],
-            "depends_on": ["stage_04_finalize_cache", "stage_05_parse_diff"],
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        {
             "id": "stage_08_fetch_intent",
             "kind": "helper",
             "subcommand": "fetch-intent",
             "args": [
                 "--scope-kind", "<SCOPE_KIND>",
-                "--pr-number", pr_arg,
+                "--cr-dir", cr_dir,
+                *pr_flag,
                 "--base-ref", "<BASE_REF>",
                 "--diff-tip", "<DIFF_TIP>",
             ],
-            "stdout": f"{cr_dir}/intent_context.json",
+            # cmd_fetch_intent writes intent_context.json into cr_dir
+            # itself; the stdout output is a small {path, source} summary.
+            # Redirecting stdout into intent_context.json would corrupt
+            # the file by overwriting the helper's structured payload
+            # with the summary line.
+            "stdout": None,
             "expected_outputs": [f"{cr_dir}/intent_context.json"],
             "depends_on": ["stage_03_resolve_scope"],
             "on_failure": "continue",
@@ -3914,6 +3962,53 @@ def _build_run_plan_stages(
             "enabled": False,
         },
         {
+            "id": "stage_18_compute_hashes",
+            "kind": "helper",
+            "subcommand": "compute-hashes",
+            "args": [
+                "--shared-prompt", f"{cr_dir}/shared_prompt.txt",
+                "--bha-suffix", f"{cr_dir}/bha_suffix.txt",
+                "--diff-tip", "<DIFF_TIP>",
+                "--base-ref", "<BASE_REF>",
+            ],
+            "stdout": f"{cr_dir}/hashes.json",
+            "expected_outputs": [f"{cr_dir}/hashes.json"],
+            # Real deps: prep_assets writes shared_prompt + bha_suffix;
+            # resolve-scope produces diff-tip + base-ref (substituted via
+            # tokens at walker dispatch). compute-hashes does NOT consume
+            # partition output despite the original plan listing
+            # stage_17_partition here — that dep was spurious and was
+            # removed to unblock partition's reordering past cache-check.
+            "depends_on": ["stage_02_prep_assets", "stage_03_resolve_scope"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_19_cache_check",
+            "kind": "helper",
+            "subcommand": "cache-check",
+            "args": [
+                "--cache-dir", "<CACHE_DIR>",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+                "--prompt-hash", "<PROMPT_HASH>",
+                "--model-id", "<MODEL_ID>",
+                "--schema-version", str(SCHEMA_VERSION),
+                "--output-dir", cr_dir,
+                "--global-cache", "<GLOBAL_CACHE>",
+                "--context-key", "<CONTEXT_KEY>",
+            ],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/cache_result.json"],
+            "depends_on": ["stage_18_compute_hashes", "stage_04_finalize_cache"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        # stage_17_partition is positioned here (after cache-check) so
+        # Gate B's runtime route invocation can supply --max-bha-agents
+        # before partition runs. The stage id retains its _17_ prefix as
+        # a stable label; execution order follows array position, not the
+        # numeric suffix.
+        {
             "id": "stage_17_partition",
             "kind": "helper",
             "subcommand": "partition",
@@ -3931,55 +4026,24 @@ def _build_run_plan_stages(
                 f"{cr_dir}/partitions.json",
                 f"{cr_dir}/patches_p<N>.txt",
             ],
-            # Actual data dependency is diff_data.json (stage_05_parse_diff).
-            # stage_16_arbitrate_budget is plan-05-gated and disabled in Phase
-            # A; depending on a disabled stage would make this foundation
-            # stage unreachable for any orchestrator that walks `depends_on`.
-            "depends_on": ["stage_05_parse_diff"],
+            # Real data dep is diff_data.json (stage_05_parse_diff);
+            # stage_19_cache_check is also a positional prerequisite
+            # because Gate B's route invocation runs between them.
+            "depends_on": ["stage_05_parse_diff", "stage_19_cache_check"],
             "on_failure": "abort",
-            "enabled": True,
-        },
-        {
-            "id": "stage_18_compute_hashes",
-            "kind": "helper",
-            "subcommand": "compute-hashes",
-            "args": [
-                "--shared-prompt", f"{cr_dir}/shared_prompt.txt",
-                "--bha-suffix", f"{cr_dir}/bha_suffix.txt",
-                "--diff-tip", "<DIFF_TIP>",
-                "--base-ref", "<BASE_REF>",
-            ],
-            "stdout": f"{cr_dir}/hashes.json",
-            "expected_outputs": [f"{cr_dir}/hashes.json"],
-            "depends_on": ["stage_17_partition", "stage_02_prep_assets"],
-            "on_failure": "abort",
-            "enabled": True,
-        },
-        {
-            "id": "stage_19_cache_check",
-            "kind": "helper",
-            "subcommand": "cache-check",
-            "args": [
-                "--cache-dir", "<CACHE_DIR>",
-                "--diff-data", f"{cr_dir}/diff_data.json",
-                "--prompt-hash", "<PROMPT_HASH>",
-                "--model-id", "<MODEL_ID>",
-                "--schema-version", str(SCHEMA_VERSION),
-                "--output-dir", cr_dir,
-                "--context-key", "<CONTEXT_KEY>",
-            ],
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/cache_result.json"],
-            "depends_on": ["stage_18_compute_hashes", "stage_04_finalize_cache"],
-            "on_failure": "continue",
             "enabled": True,
         },
         {
             "id": "stage_20_spawn_reviewers",
             "kind": "agent_fleet",
             "agent_specs": [],  # populated by orchestrator from coverage_plan + partitions
+            # Only agent_*.json is produced here; partitions.json is an INPUT
+            # (produced by stage_17_partition) and belongs in depends_on, not
+            # expected_outputs. Including it here would mask total-agent-failure
+            # via the walker's "at-least-one-exists" check, since partitions.json
+            # already exists from the prior stage.
             "expected_outputs": [f"{cr_dir}/agent_*.json"],
-            "depends_on": ["stage_19_cache_check"],
+            "depends_on": ["stage_17_partition"],
             "on_failure": "continue_with_coverage_gap",
             "enabled": True,
         },
@@ -4043,12 +4107,19 @@ def _build_run_plan_stages(
                 "--validate-output", f"{cr_dir}/findings_validated.json",
                 "--mode", mode,
                 "--diff-tip", "<DIFF_TIP>",
-                "--pr-number", pr_arg,
+                *pr_flag,
             ],
             "stdout": None,
             "expected_outputs": [f"{cr_dir}/review_result.json"],
             "depends_on": ["stage_22_validate"],
-            "on_failure": "abort",
+            # `cmd_finalize_result` writes review_result.json BEFORE running
+            # schema validation (see code_review_helpers.py:cmd_finalize_result),
+            # so a non-zero exit signals validation errors to the operator
+            # without preventing stage_28_verdict from reading a structurally
+            # complete envelope. Use "continue" so reviewer-emitted category
+            # drift (e.g. "Documentation" before we added it to CATEGORIES)
+            # doesn't kill the pipeline; the stderr signal is preserved.
+            "on_failure": "continue",
             "enabled": True,
         },
         {
@@ -4062,6 +4133,8 @@ def _build_run_plan_stages(
                 "--prompt-hash", "<PROMPT_HASH>",
                 "--model-id", "<MODEL_ID>",
                 "--schema-version", str(SCHEMA_VERSION),
+                "--partitions-file", f"{cr_dir}/partitions.json",
+                "--global-cache", "<GLOBAL_CACHE>",
                 "--context-key", "<CONTEXT_KEY>",
             ],
             "stdout": None,
@@ -4116,10 +4189,16 @@ def _build_run_plan_stages(
             "subcommand": "footer",
             "args": [
                 "--start-time", "<START_TIME>",
+                "--cache-result", f"{cr_dir}/cache_result.json",
                 "--cr-dir", cr_dir,
             ],
-            "stdout": None,
-            "expected_outputs": [],
+            # cmd_footer writes its JSON payload ({"footer_line": "..."}) to
+            # stdout. The per-stage prose in start.md tells the walker to read
+            # <CR_DIR>/footer.json, so the plan must redirect stdout to that
+            # file. Leaving this as None caused the walker to read a missing
+            # file and conflate that with helper non-zero exit.
+            "stdout": f"{cr_dir}/footer.json",
+            "expected_outputs": [f"{cr_dir}/footer.json"],
             "depends_on": ["stage_29_present"],
             "on_failure": "continue",
             "enabled": True,
@@ -4166,8 +4245,8 @@ def _build_validation_gates(cr_dir: str) -> list[dict[str, Any]]:
 def cmd_prepare_run(args: argparse.Namespace) -> int:
     """Emit ``run_plan.json`` describing the full review pipeline.
 
-    PLN-719 Section 6. The output is consumed by the orchestrator (a future
-    rewrite of start.md will walk this declarative plan).
+    PLN-719 Section 6. The output is consumed by the ``/start`` orchestrator,
+    which walks the plan stage-by-stage (Phase 4b).
 
     Determinism: same inputs produce byte-identical output **except for the
     ``review_id`` field**, which is a fresh ``uuid.uuid4()`` per invocation.
