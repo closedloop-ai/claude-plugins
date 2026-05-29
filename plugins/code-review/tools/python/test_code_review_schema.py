@@ -541,6 +541,54 @@ def test_envelope_round_trip():
     assert validate_result_envelope(deserialized) == []
 
 
+def test_verifier_verdicts_include_re_asserted():
+    """PLN-773: RE_ASSERTED is a canonical verdict — overridden findings live
+    in verified[] with this verdict so they're visible in the envelope and
+    distinguishable from CONFIRMED."""
+    from code_review_schema import VERIFIER_VERDICTS
+    assert "RE_ASSERTED" in VERIFIER_VERDICTS
+
+
+def test_envelope_accepts_re_asserted_verifier_verdict():
+    """A finding with verifier_verdict='RE_ASSERTED' in verified[] passes
+    schema validation. The override flow promotes from rejected[] back to
+    verified[] with this verdict; the envelope validator must allow it."""
+    finding = _minimal_diff_finding()
+    finding["verifier_verdict"] = "RE_ASSERTED"
+    env = _minimal_envelope(verified=[finding])
+    assert validate_result_envelope(env) == []
+
+
+def test_envelope_accepts_pln773_telemetry_sub_blocks():
+    """PLN-773: stats gains optional sub-blocks for justification metrics,
+    by_subcategory partitioning, and per-reviewer FP rate. The envelope
+    `stats` field accepts arbitrary keys so these are additive."""
+    env = _minimal_envelope()
+    env["stats"] = {
+        "justification": {
+            "rate": 0.18,
+            "rejection_rate": 0.40,
+            "total_premise": 11,
+            "justified_emitted": 2,
+            "justified_valid": 1,
+            "justified_invalid": 1,
+            "threshold_alert": False,
+        },
+        "by_subcategory": {
+            "necessity": 2, "cohesion": 1, "workaround": 0, "complexity": 1,
+        },
+        "verification": {
+            "by_reviewer": {
+                "bug_hunter_a": {
+                    "verified": 12, "rejected": 3,
+                    "fp_rate": 0.20, "re_asserted": 0,
+                },
+            },
+        },
+    }
+    assert validate_result_envelope(env) == []
+
+
 # ---------------------------------------------------------------------------
 # Determinism tiers (PLN-719 Phase 6)
 # ---------------------------------------------------------------------------

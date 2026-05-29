@@ -7708,6 +7708,675 @@ class TestVerifyPrepare:
         assert materialized["verifier_verdict"] == "CONFIRMED"
 
 
+class TestOverrideCache:
+    """PLN-773 Phase 3 — overrides/ cache namespace + content-hash invalidation."""
+
+    @staticmethod
+    def _write_target_file(
+        repo_root: Path, rel: str, content: str = "x" * 60,
+    ) -> None:
+        full = repo_root / rel
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content)
+
+    def _cr_dir(self, tmp_path: Path) -> Path:
+        # cr_dir at .closedloop-ai/code-review/cr-<N> so _file_content_hash's
+        # three-parent walk reaches the repo root tmp_path.
+        cr = tmp_path / ".closedloop-ai" / "code-review" / "cr-x"
+        cr.mkdir(parents=True, exist_ok=True)
+        return cr
+
+    def test_file_content_hash_returns_empty_for_missing_file(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _file_content_hash
+        cr = self._cr_dir(tmp_path)
+        assert _file_content_hash(cr, "does/not/exist.py", 5) == ""
+
+    def test_file_content_hash_returns_empty_for_system_scope(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _file_content_hash
+        cr = self._cr_dir(tmp_path)
+        assert _file_content_hash(cr, None, None) == ""
+        assert _file_content_hash(cr, "x.py", None) == ""
+
+    def test_file_content_hash_stable_across_calls(self, tmp_path: Path) -> None:
+        from code_review_helpers import _file_content_hash
+        cr = self._cr_dir(tmp_path)
+        self._write_target_file(tmp_path, "src/x.py", "line1\nline2\nline3\n")
+        h1 = _file_content_hash(cr, "src/x.py", 2)
+        h2 = _file_content_hash(cr, "src/x.py", 2)
+        assert h1 != ""
+        assert h1 == h2
+
+    def test_file_content_hash_changes_on_edit(self, tmp_path: Path) -> None:
+        from code_review_helpers import _file_content_hash
+        cr = self._cr_dir(tmp_path)
+        self._write_target_file(tmp_path, "src/x.py", "line1\nline2\nline3\n")
+        h1 = _file_content_hash(cr, "src/x.py", 2)
+        self._write_target_file(tmp_path, "src/x.py", "line1\nEDITED\nline3\n")
+        h2 = _file_content_hash(cr, "src/x.py", 2)
+        assert h1 != h2
+
+    def test_load_override_returns_none_when_missing(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _load_override
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        assert _load_override(cache, "bha_p0_f0") is None
+
+    def test_load_override_returns_none_for_malformed_json(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_OVERRIDES, _load_override,
+        )
+        cache = tmp_path / "cache"
+        (cache / CACHE_NAMESPACE_OVERRIDES).mkdir(parents=True)
+        (cache / CACHE_NAMESPACE_OVERRIDES / "bha_p0_f0.json").write_text("{")
+        assert _load_override(cache, "bha_p0_f0") is None
+
+    def test_write_override_roundtrip(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_override, _write_override
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        payload = {
+            "finding_id": "bha_p0_f0",
+            "file": "src/x.py",
+            "line": 5,
+            "file_content_hash": "abc",
+            "override": "RE_ASSERT",
+            "reason": "operator says fine",
+            "verified_against": "REJECTED",
+            "asserted_at": "2026-05-29T22:00:00+00:00",
+            "asserted_by": "kris.wong@closedloop.ai",
+        }
+        path = _write_override(cache, payload)
+        assert path is not None and path.exists()
+        loaded = _load_override(cache, "bha_p0_f0")
+        assert loaded == payload
+
+    def test_override_is_valid_when_hash_matches(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            _file_content_hash, _override_is_valid, _write_override,
+        )
+        cr = self._cr_dir(tmp_path)
+        self._write_target_file(tmp_path, "src/x.py", "a\nb\nc\nd\ne\n")
+        finding = {"file": "src/x.py", "line": 3}
+        stored_hash = _file_content_hash(cr, "src/x.py", 3)
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        _write_override(cache, {
+            "finding_id": "bha_p0_f0",
+            "file_content_hash": stored_hash,
+        })
+        from code_review_helpers import _load_override
+        override = _load_override(cache, "bha_p0_f0")
+        assert override is not None
+        assert _override_is_valid(override, finding, cr) is True
+
+    def test_override_invalid_on_hash_drift(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            _file_content_hash, _load_override,
+            _override_is_valid, _write_override,
+        )
+        cr = self._cr_dir(tmp_path)
+        self._write_target_file(tmp_path, "src/x.py", "a\nb\nc\nd\ne\n")
+        finding = {"file": "src/x.py", "line": 3}
+        stored_hash = _file_content_hash(cr, "src/x.py", 3)
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        _write_override(cache, {
+            "finding_id": "bha_p0_f0",
+            "file_content_hash": stored_hash,
+        })
+        # Edit the file — override should now be invalid.
+        self._write_target_file(tmp_path, "src/x.py", "a\nb\nEDITED\nd\ne\n")
+        override = _load_override(cache, "bha_p0_f0")
+        assert override is not None
+        assert _override_is_valid(override, finding, cr) is False
+
+    def test_verify_prepare_short_circuits_on_valid_override(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _file_content_hash, _write_override
+        cr = self._cr_dir(tmp_path)
+        self._write_target_file(tmp_path, "src/x.py", "a\nb\nc\nd\ne\n")
+        finding = _make_validated_finding(
+            "bha_p0_f0", severity="HIGH", confidence=0.9,
+        )
+        finding["file"] = "src/x.py"
+        finding["line"] = 3
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        _write_override(cache, {
+            "finding_id": "bha_p0_f0",
+            "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
+            "override": "RE_ASSERT",
+            "asserted_at": "2026-05-29T22:00:00+00:00",
+        })
+        # _run_verify_prepare uses its own cr layout; bypass it and call
+        # cmd_verify_prepare directly with the cr we set up above.
+        findings_path = _write_validated_input(tmp_path, [finding])
+        (cr / "verifier_prompt.txt").write_text("stub")
+        ns = argparse.Namespace(
+            cr_dir=str(cr),
+            findings=str(findings_path),
+            cache_dir=str(cache),
+            prompt_hash="phash",
+        )
+        import io
+        import sys as _sys
+        old = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            cmd_verify_prepare(ns)
+            _sys.stdout.seek(0)
+            manifest = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old
+        assert manifest["override_hits"] == ["bha_p0_f0"]
+        assert manifest["override_invalidated"] == []
+        assert manifest["to_verify"] == []
+        # The synthetic verifier output landed on disk as RE_ASSERTED.
+        out = json.loads(
+            (cr / "agent_verifier_bha_p0_f0.json").read_text(),
+        )
+        assert out["verifier_verdict"] == "RE_ASSERTED"
+
+    def test_verify_prepare_falls_through_on_hash_drift(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _file_content_hash, _write_override
+        cr = self._cr_dir(tmp_path)
+        self._write_target_file(tmp_path, "src/x.py", "a\nb\nc\nd\ne\n")
+        finding = _make_validated_finding(
+            "bha_p0_f0", severity="HIGH", confidence=0.9,
+        )
+        finding["file"] = "src/x.py"
+        finding["line"] = 3
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        # Store an override with the CURRENT hash...
+        _write_override(cache, {
+            "finding_id": "bha_p0_f0",
+            "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
+        })
+        # ...then edit the file so the hash drifts.
+        self._write_target_file(tmp_path, "src/x.py", "a\nb\nEDITED\nd\ne\n")
+        findings_path = _write_validated_input(tmp_path, [finding])
+        (cr / "verifier_prompt.txt").write_text("stub")
+        ns = argparse.Namespace(
+            cr_dir=str(cr),
+            findings=str(findings_path),
+            cache_dir=str(cache),
+            prompt_hash="phash",
+        )
+        import io
+        import sys as _sys
+        old = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            cmd_verify_prepare(ns)
+            _sys.stdout.seek(0)
+            manifest = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old
+        assert manifest["override_invalidated"] == ["bha_p0_f0"]
+        assert manifest["override_hits"] == []
+        # Fell through to normal verification.
+        assert len(manifest["to_verify"]) == 1
+
+
+class TestPendingLearningsAppend:
+    """PLN-773 Phase 6 — jsonl writer with fcntl.flock."""
+
+    def test_appends_single_line(self, tmp_path: Path) -> None:
+        from code_review_helpers import _pending_learnings_append
+        path = tmp_path / "events.jsonl"
+        assert _pending_learnings_append(path, {"k": 1}) is True
+        lines = path.read_text().splitlines()
+        assert len(lines) == 1
+        assert json.loads(lines[0]) == {"k": 1}
+
+    def test_appends_multiple_calls(self, tmp_path: Path) -> None:
+        from code_review_helpers import _pending_learnings_append
+        path = tmp_path / "events.jsonl"
+        for i in range(5):
+            _pending_learnings_append(path, {"i": i})
+        lines = path.read_text().splitlines()
+        assert len(lines) == 5
+        assert [json.loads(line)["i"] for line in lines] == list(range(5))
+
+    def test_creates_parent_directory(self, tmp_path: Path) -> None:
+        from code_review_helpers import _pending_learnings_append
+        path = tmp_path / "deep" / "nested" / "events.jsonl"
+        assert _pending_learnings_append(path, {"k": 1}) is True
+        assert path.exists()
+
+    def test_concurrent_writers_each_produce_one_line(
+        self, tmp_path: Path,
+    ) -> None:
+        """fcntl.flock serializes appends — N concurrent writers each
+        produce exactly one well-formed JSON line, no corruption, no
+        interleaving."""
+        import threading
+        from code_review_helpers import _pending_learnings_append
+
+        path = tmp_path / "events.jsonl"
+        N = 10
+        threads = [
+            threading.Thread(
+                target=_pending_learnings_append,
+                args=(path, {"thread_id": i, "payload": "x" * 200}),
+            )
+            for i in range(N)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        lines = path.read_text().splitlines()
+        assert len(lines) == N
+        # Every line parses as valid JSON (no corruption from interleaving).
+        thread_ids = sorted(json.loads(line)["thread_id"] for line in lines)
+        assert thread_ids == list(range(N))
+
+    def test_consolidate_writes_justification_invalid_event(
+        self, tmp_path: Path,
+    ) -> None:
+        """End-to-end: JUSTIFIED-INVALID through cmd_verify_consolidate
+        appends one event to premise-justifications.jsonl (the autouse
+        fixture redirects the base dir to tmp_path)."""
+        from code_review_helpers import (
+            _PENDING_LEARNINGS_DIR, _PENDING_LEARNINGS_PREMISE,
+        )
+        finding = _make_validated_finding("premise_f0", category="Premise")
+        finding["subcategory"] = "cohesion"
+        finding["justification"] = {
+            "text": "// intentional",
+            "source": "code_comment:src/x.py:1",
+            "addresses_specific_concern": True,
+            "claimed_by_reviewer": "premise",
+        }
+        verifier_output = {
+            "finding_id": "premise_f0",
+            "verifier_verdict": "JUSTIFIED-INVALID",
+            "verifier_reasoning": "generic disclaimer; does not address concern",
+        }
+        rc, _ = _run_verify_consolidate(
+            tmp_path, [finding],
+            manifest={
+                "to_verify": [{"finding_id": "premise_f0", "model": "sonnet"}],
+                "skipped_no_verification": [],
+                "deferred_budget": [],
+                "cache_hits": [],
+            },
+            verifier_outputs={"premise_f0": verifier_output},
+        )
+        assert rc == 0
+        jsonl = _PENDING_LEARNINGS_DIR / _PENDING_LEARNINGS_PREMISE
+        assert jsonl.exists()
+        lines = jsonl.read_text().splitlines()
+        assert len(lines) == 1
+        event = json.loads(lines[0])
+        assert event["finding_id"] == "premise_f0"
+        assert event["subcategory"] == "cohesion"
+        assert event["justification_text"] == "// intentional"
+
+
+class TestReviewDismissed:
+    """PLN-773 Phase 5 — --review-dismissed haiku second-opinion fleet."""
+
+    def _setup_cr(self, tmp_path: Path) -> Path:
+        cr = tmp_path / ".closedloop-ai" / "code-review" / "cr-x"
+        cr.mkdir(parents=True, exist_ok=True)
+        (cr / "verifier_prompt.txt").write_text("stub")
+        return cr
+
+    def _run_prepare(
+        self, tmp_path: Path, envelope: dict[str, Any],
+    ) -> tuple[int, dict[str, Any] | None, Path]:
+        import io
+        import sys as _sys
+        from code_review_helpers import cmd_review_dismissed_prepare
+
+        cr = self._setup_cr(tmp_path)
+        prior = cr / "review_result.json"
+        prior.write_text(json.dumps(envelope))
+        ns = argparse.Namespace(cr_dir=str(cr), prior_result=str(prior))
+        old = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            rc = cmd_review_dismissed_prepare(ns)
+            _sys.stdout.seek(0)
+            try:
+                manifest = json.load(_sys.stdout)
+            except json.JSONDecodeError:
+                manifest = None
+            return rc, manifest, cr
+        finally:
+            _sys.stdout = old
+
+    def _run_consolidate(
+        self, cr: Path, cache: Path,
+        verifier_outputs: dict[str, dict[str, Any]],
+    ) -> tuple[int, dict[str, Any] | None]:
+        import io
+        import sys as _sys
+        from code_review_helpers import cmd_review_dismissed_consolidate
+
+        for fid, out in verifier_outputs.items():
+            (cr / f"agent_verifier_dismissed_{fid}.json").write_text(
+                json.dumps(out),
+            )
+        ns = argparse.Namespace(
+            cr_dir=str(cr),
+            cache_dir=str(cache),
+            manifest=None,
+        )
+        old = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            rc = cmd_review_dismissed_consolidate(ns)
+            _sys.stdout.seek(0)
+            try:
+                diff = json.load(_sys.stdout)
+            except json.JSONDecodeError:
+                diff = None
+            return rc, diff
+        finally:
+            _sys.stdout = old
+
+    def test_prepare_emits_haiku_manifest_from_rejected(
+        self, tmp_path: Path,
+    ) -> None:
+        env = {
+            "verified": [], "justified": [], "pending_verification": [],
+            "rejected": [
+                {"id": "f1", "file": "src/x.py", "line": 3,
+                 "verifier_verdict": "REJECTED", "severity": "HIGH"},
+                {"id": "f2", "file": "src/y.py", "line": 5,
+                 "verifier_verdict": "REJECTED", "severity": "MEDIUM"},
+            ],
+        }
+        rc, manifest, cr = self._run_prepare(tmp_path, env)
+        assert rc == 0
+        assert manifest is not None
+        assert manifest["model"] == "haiku"
+        assert len(manifest["to_verify"]) == 2
+        assert all(e["model"] == "haiku" for e in manifest["to_verify"])
+        # Per-finding inputs written.
+        for fid in ("f1", "f2"):
+            assert (cr / "review_dismissed_inputs" / f"{fid}.json").exists()
+
+    def test_consolidate_promotes_non_rejected(self, tmp_path: Path) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "x.py").write_text("a\nb\nc\nd\ne\n")
+        env = {
+            "verified": [], "justified": [], "pending_verification": [],
+            "rejected": [
+                {"id": "f1", "file": "src/x.py", "line": 3,
+                 "verifier_verdict": "REJECTED"},
+            ],
+        }
+        rc, _, cr = self._run_prepare(tmp_path, env)
+        assert rc == 0
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        # Haiku verifier disagrees: returns CONFIRMED → must be promoted.
+        rc, diff = self._run_consolidate(cr, cache, {
+            "f1": {
+                "finding_id": "f1",
+                "verifier_verdict": "CONFIRMED",
+                "verifier_confidence": 0.82,
+                "verifier_reasoning": "guard is missing",
+            },
+        })
+        assert rc == 0
+        assert diff is not None
+        assert diff["stats"]["promoted"] == 1
+        assert diff["stats"]["no_change"] == 0
+        assert diff["diff"][0]["action"] == "promoted"
+        # Override file written.
+        from code_review_helpers import _load_override
+        override = _load_override(cache, "f1")
+        assert override is not None
+        assert override["override"] == "REVIEW_DISMISSED"
+        assert override["verified_against"] == "REJECTED"
+
+    def test_consolidate_no_change_when_still_rejected(
+        self, tmp_path: Path,
+    ) -> None:
+        env = {
+            "verified": [], "justified": [], "pending_verification": [],
+            "rejected": [
+                {"id": "f1", "file": "src/x.py", "line": 3,
+                 "verifier_verdict": "REJECTED"},
+            ],
+        }
+        rc, _, cr = self._run_prepare(tmp_path, env)
+        assert rc == 0
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        rc, diff = self._run_consolidate(cr, cache, {
+            "f1": {
+                "finding_id": "f1",
+                "verifier_verdict": "REJECTED",
+                "rejection_class": "evidence_not_found",
+            },
+        })
+        assert rc == 0
+        assert diff is not None
+        assert diff["stats"]["promoted"] == 0
+        assert diff["stats"]["no_change"] == 1
+        assert diff["diff"][0]["action"] == "no_change"
+        # No override written.
+        from code_review_helpers import _load_override
+        assert _load_override(cache, "f1") is None
+
+    def test_consolidate_missing_output(self, tmp_path: Path) -> None:
+        env = {
+            "verified": [], "justified": [], "pending_verification": [],
+            "rejected": [
+                {"id": "f1", "file": "src/x.py", "line": 3,
+                 "verifier_verdict": "REJECTED"},
+            ],
+        }
+        rc, _, cr = self._run_prepare(tmp_path, env)
+        assert rc == 0
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        # No agent output written — must be flagged, not silently promoted.
+        rc, diff = self._run_consolidate(cr, cache, {})
+        assert rc == 0
+        assert diff is not None
+        assert diff["stats"]["missing_output"] == 1
+        assert diff["diff"][0]["action"] == "missing_output"
+
+
+class TestNoVerifyBypass:
+    """PLN-773 Phase 4 — `--no-verify` emergency-bypass flag."""
+
+    def _run(
+        self, tmp_path: Path, findings: list[dict[str, Any]],
+        *, no_verify: bool = True, reason: str = "release in 5 minutes",
+    ) -> tuple[int, dict[str, Any] | None]:
+        import io
+        import sys as _sys
+        findings_path = _write_validated_input(tmp_path, findings)
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(exist_ok=True)
+        (cr_dir / "verifier_prompt.txt").write_text("stub")
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            findings=str(findings_path),
+            cache_dir=None,
+            prompt_hash="",
+            no_verify=no_verify,
+            no_verify_reason=reason,
+        )
+        old = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            rc = cmd_verify_prepare(ns)
+            _sys.stdout.seek(0)
+            try:
+                manifest = json.load(_sys.stdout)
+            except json.JSONDecodeError:
+                manifest = None
+            return rc, manifest
+        finally:
+            _sys.stdout = old
+
+    def test_requires_explicit_reason(self, tmp_path: Path) -> None:
+        rc, _ = self._run(tmp_path, [
+            _make_validated_finding("bha_p0_f0", severity="HIGH"),
+        ], reason="")
+        assert rc == 2  # validation error
+
+    def test_routes_all_findings_to_skipped(self, tmp_path: Path) -> None:
+        findings = [
+            _make_validated_finding("bha_p0_f0", severity="BLOCKING"),
+            _make_validated_finding("bhb_f0", severity="MEDIUM", confidence=0.5),
+            _make_validated_finding("premise_f0", category="Premise",
+                                    severity="MEDIUM", confidence=0.99),
+        ]
+        rc, manifest = self._run(tmp_path, findings)
+        assert rc == 0
+        assert manifest is not None
+        assert manifest["to_verify"] == []
+        assert set(manifest["skipped_no_verification"]) == {
+            "bha_p0_f0", "bhb_f0", "premise_f0",
+        }
+        assert manifest["no_verify"] is True
+        assert manifest["no_verify_reason"] == "release in 5 minutes"
+
+    def test_no_verify_false_disables_audit_fields(self, tmp_path: Path) -> None:
+        """When --no-verify is NOT passed, the manifest still has the audit
+        fields but both are empty/false — so downstream consumers can key
+        on no_verify without a missing-key check."""
+        rc, manifest = self._run(tmp_path, [
+            _make_validated_finding("bha_p0_f0", severity="BLOCKING"),
+        ], no_verify=False, reason="")
+        assert rc == 0
+        assert manifest is not None
+        assert manifest["no_verify"] is False
+        assert manifest["no_verify_reason"] == ""
+
+
+class TestReAssert:
+    """PLN-773 Phase 4 — `cmd_re_assert` subcommand."""
+
+    def _make_envelope(self, **buckets: list[dict[str, Any]]) -> dict[str, Any]:
+        env = {
+            "verified": [], "justified": [], "rejected": [],
+            "pending_verification": [],
+        }
+        env.update(buckets)
+        return env
+
+    def _run(
+        self, tmp_path: Path, envelope: dict[str, Any],
+        finding_ids: str, *, reason: str = "", cache_dir: Path | None = None,
+    ) -> tuple[int, dict[str, Any] | None]:
+        import io
+        import sys as _sys
+        from code_review_helpers import cmd_re_assert
+
+        cr_dir = tmp_path / ".closedloop-ai" / "code-review" / "cr-x"
+        cr_dir.mkdir(parents=True, exist_ok=True)
+        prior_path = cr_dir / "review_result.json"
+        prior_path.write_text(json.dumps(envelope))
+        cache = cache_dir or (tmp_path / "cache")
+        cache.mkdir(exist_ok=True)
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            cache_dir=str(cache),
+            finding_ids=finding_ids,
+            prior_result=str(prior_path),
+            reason=reason,
+            asserted_by="kris.wong@closedloop.ai",
+        )
+        old = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            rc = cmd_re_assert(ns)
+            _sys.stdout.seek(0)
+            try:
+                summary = json.load(_sys.stdout)
+            except json.JSONDecodeError:
+                summary = None
+            return rc, summary
+        finally:
+            _sys.stdout = old
+
+    def test_promotes_from_rejected(self, tmp_path: Path) -> None:
+        # Set up a target file so file_content_hash returns a real hash.
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "x.py").write_text("a\nb\nc\nd\ne\n")
+        env = self._make_envelope(rejected=[
+            {"id": "bha_p0_f0", "file": "src/x.py", "line": 3,
+             "verifier_verdict": "REJECTED"},
+        ])
+        rc, summary = self._run(tmp_path, env, "bha_p0_f0", reason="my call")
+        assert rc == 0
+        assert summary is not None
+        assert summary["re_asserted"] == [
+            {"finding_id": "bha_p0_f0", "prior_bucket": "rejected"},
+        ]
+        assert summary["not_found"] == []
+        assert summary["already_verified"] == []
+
+        from code_review_helpers import _load_override
+        override = _load_override(tmp_path / "cache", "bha_p0_f0")
+        assert override is not None
+        assert override["override"] == "RE_ASSERT"
+        assert override["reason"] == "my call"
+        assert override["verified_against"] == "REJECTED"
+
+    def test_no_op_when_already_verified(self, tmp_path: Path) -> None:
+        env = self._make_envelope(verified=[
+            {"id": "bha_p0_f0", "file": "src/x.py", "line": 1},
+        ])
+        rc, summary = self._run(tmp_path, env, "bha_p0_f0")
+        assert rc == 0
+        assert summary is not None
+        assert summary["already_verified"] == ["bha_p0_f0"]
+        # No override file written.
+        from code_review_helpers import _load_override
+        assert _load_override(tmp_path / "cache", "bha_p0_f0") is None
+
+    def test_not_found_when_id_absent(self, tmp_path: Path) -> None:
+        env = self._make_envelope()  # all buckets empty
+        rc, summary = self._run(tmp_path, env, "ghost_id")
+        assert rc == 0
+        assert summary is not None
+        assert summary["not_found"] == ["ghost_id"]
+
+    def test_empty_finding_ids_errors(self, tmp_path: Path) -> None:
+        rc, _ = self._run(tmp_path, self._make_envelope(), "")
+        assert rc == 2
+
+    def test_promotes_multiple_ids_at_once(self, tmp_path: Path) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "x.py").write_text("a\nb\nc\nd\ne\n")
+        env = self._make_envelope(
+            rejected=[{"id": "f1", "file": "src/x.py", "line": 3,
+                       "verifier_verdict": "REJECTED"}],
+            pending_verification=[
+                {"id": "f2", "file": "src/x.py", "line": 4,
+                 "verifier_verdict": None},
+            ],
+        )
+        rc, summary = self._run(tmp_path, env, "f1, f2")
+        assert rc == 0
+        assert summary is not None
+        assert {e["finding_id"] for e in summary["re_asserted"]} == {"f1", "f2"}
+
+
 class TestVerifyConsolidate:
     """End-to-end ``cmd_verify_consolidate`` bucket-split contract."""
 
@@ -8285,7 +8954,12 @@ class TestLoadVerdictThresholds:
     def test_none_path_returns_default(self) -> None:
         from code_review_helpers import _load_verdict_thresholds
         out = _load_verdict_thresholds(None)
-        assert out == {"premise_cumulative_medium": 3}
+        # PLN-773 added justification_rate_alert (default 0.30) alongside
+        # the original premise_cumulative_medium (default 3).
+        assert out == {
+            "premise_cumulative_medium": 3,
+            "justification_rate_alert": 0.30,
+        }
 
     def test_missing_file_returns_default(self, tmp_path: Path) -> None:
         from code_review_helpers import _load_verdict_thresholds
@@ -8334,6 +9008,179 @@ class TestLoadVerdictThresholds:
         p.write_text(json.dumps({"premise_cumulative_medium": True}))
         out = _load_verdict_thresholds(p)
         assert out["premise_cumulative_medium"] == 3
+
+
+class TestPremiseTelemetryStats:
+    """PLN-773 Phase 2 — Premise justification + by_subcategory telemetry."""
+
+    @staticmethod
+    def _premise(severity: str = "MEDIUM", subcategory: str = "cohesion",
+                 verdict: str | None = "CONFIRMED") -> dict[str, Any]:
+        return {
+            "category": "Premise",
+            "subcategory": subcategory,
+            "severity": severity,
+            "verifier_verdict": verdict,
+            "issue": "premise",
+            "reviewer": "premise",
+        }
+
+    def test_justification_stats_empty_inputs_nan_safe(self) -> None:
+        from code_review_helpers import _justification_stats
+        out = _justification_stats([], [], rate_alert_threshold=0.30)
+        assert out["rate"] == 0.0
+        assert out["rejection_rate"] == 0.0
+        assert out["total_premise"] == 0
+        assert out["threshold_alert"] is False
+
+    def test_justification_stats_no_justified_findings(self) -> None:
+        from code_review_helpers import _justification_stats
+        # 3 Premise CONFIRMED, no justified — rate is 0
+        verified = [self._premise() for _ in range(3)]
+        out = _justification_stats(verified, [], rate_alert_threshold=0.30)
+        assert out["total_premise"] == 3
+        assert out["justified_emitted"] == 0
+        assert out["rate"] == 0.0
+        assert out["rejection_rate"] == 0.0
+        assert out["threshold_alert"] is False
+
+    def test_justification_rate_crosses_threshold(self) -> None:
+        from code_review_helpers import _justification_stats
+        # 2 Premise CONFIRMED in verified, 1 Premise JUSTIFIED-VALID in justified
+        # → rate = 1/3 = 0.33 > 0.30 → alert fires
+        verified = [self._premise(), self._premise()]
+        justified = [self._premise(verdict="JUSTIFIED-VALID")]
+        out = _justification_stats(
+            verified, justified, rate_alert_threshold=0.30,
+        )
+        assert out["total_premise"] == 3
+        assert out["justified_emitted"] == 1
+        assert out["justified_valid"] == 1
+        assert out["justified_invalid"] == 0
+        assert out["rate"] == pytest.approx(1 / 3)
+        assert out["threshold_alert"] is True
+
+    def test_justified_invalid_in_verified_counts_for_emitted(self) -> None:
+        from code_review_helpers import _justification_stats
+        verified = [
+            self._premise(),  # CONFIRMED
+            self._premise(verdict="JUSTIFIED-INVALID"),
+        ]
+        justified = [self._premise(verdict="JUSTIFIED-VALID")]
+        out = _justification_stats(
+            verified, justified, rate_alert_threshold=0.30,
+        )
+        # total_premise = 2 (verified) + 1 (justified) = 3
+        # emitted = 1 (invalid) + 1 (valid) = 2
+        # rejection_rate = 1 / 2 = 0.5
+        assert out["total_premise"] == 3
+        assert out["justified_emitted"] == 2
+        assert out["rejection_rate"] == 0.5
+
+    def test_by_subcategory_partitions_only_premise(self) -> None:
+        from code_review_helpers import _by_subcategory_stats
+        verified = [
+            self._premise(subcategory="necessity"),
+            self._premise(subcategory="cohesion"),
+            self._premise(subcategory="cohesion"),
+            # Non-Premise — must not appear in any bucket
+            {"category": "Correctness", "severity": "HIGH",
+             "subcategory": "cohesion", "issue": "x"},
+        ]
+        out = _by_subcategory_stats(verified)
+        assert out == {
+            "necessity": 1, "cohesion": 2, "workaround": 0, "complexity": 0,
+        }
+
+    def test_by_subcategory_drops_non_canonical_keys(self) -> None:
+        """A reviewer typo (e.g. 'duplicaiton') does NOT create a new bucket."""
+        from code_review_helpers import _by_subcategory_stats
+        verified = [
+            self._premise(subcategory="cohesion"),
+            self._premise(subcategory="duplicaiton"),  # typo
+        ]
+        out = _by_subcategory_stats(verified)
+        assert "duplicaiton" not in out
+        assert out["cohesion"] == 1
+
+    def test_verification_by_reviewer_fp_rate(self) -> None:
+        from code_review_helpers import _verification_by_reviewer
+        verified = [
+            {"reviewer": "bug_hunter_a", "verifier_verdict": "CONFIRMED"},
+            {"reviewer": "bug_hunter_a", "verifier_verdict": "CONFIRMED"},
+            {"reviewer": "premise", "verifier_verdict": "CONFIRMED"},
+        ]
+        rejected = [
+            {"reviewer": "bug_hunter_a", "verifier_verdict": "REJECTED"},
+        ]
+        out = _verification_by_reviewer(verified, rejected)
+        # bug_hunter_a: 2 verified + 1 rejected → 1/3 FP rate
+        assert out["bug_hunter_a"]["verified"] == 2
+        assert out["bug_hunter_a"]["rejected"] == 1
+        assert out["bug_hunter_a"]["fp_rate"] == pytest.approx(1 / 3)
+        # premise: only verified → 0.0 FP rate (NaN-safe)
+        assert out["premise"]["fp_rate"] == 0.0
+
+    def test_verification_by_reviewer_counts_re_asserted(self) -> None:
+        from code_review_helpers import _verification_by_reviewer
+        verified = [
+            {"reviewer": "premise", "verifier_verdict": "RE_ASSERTED"},
+            {"reviewer": "premise", "verifier_verdict": "CONFIRMED"},
+        ]
+        out = _verification_by_reviewer(verified, [])
+        assert out["premise"]["re_asserted"] == 1
+        assert out["premise"]["verified"] == 2  # both still in verified[]
+
+    def test_stats_block_includes_pln773_sub_blocks(self) -> None:
+        """End-to-end: _stats_from_findings produces all PLN-773 keys."""
+        from code_review_helpers import _stats_from_findings
+        verified = [self._premise(subcategory="necessity")]
+        justified = [self._premise(
+            subcategory="cohesion", verdict="JUSTIFIED-VALID",
+        )]
+        stats = _stats_from_findings(verified, [], justified, [])
+        assert "by_subcategory" in stats
+        assert "justification" in stats
+        assert "by_reviewer" in stats["verification"]
+
+
+class TestLoadVerdictThresholdsJustificationRate:
+    """PLN-773: justification_rate_alert key in verdict-thresholds.json."""
+
+    def test_default_is_point_three(self) -> None:
+        from code_review_helpers import _load_verdict_thresholds
+        out = _load_verdict_thresholds(None)
+        assert out["justification_rate_alert"] == 0.30
+
+    def test_valid_float_override(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_verdict_thresholds
+        p = tmp_path / "vt.json"
+        p.write_text(json.dumps({"justification_rate_alert": 0.5}))
+        out = _load_verdict_thresholds(p)
+        assert out["justification_rate_alert"] == 0.5
+
+    def test_out_of_range_falls_back_to_default(self, tmp_path: Path) -> None:
+        """1.5 is outside [0.0, 1.0] — fall back to default."""
+        from code_review_helpers import _load_verdict_thresholds
+        p = tmp_path / "vt.json"
+        p.write_text(json.dumps({"justification_rate_alert": 1.5}))
+        out = _load_verdict_thresholds(p)
+        assert out["justification_rate_alert"] == 0.30
+
+    def test_negative_falls_back_to_default(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_verdict_thresholds
+        p = tmp_path / "vt.json"
+        p.write_text(json.dumps({"justification_rate_alert": -0.1}))
+        out = _load_verdict_thresholds(p)
+        assert out["justification_rate_alert"] == 0.30
+
+    def test_bool_rejected(self, tmp_path: Path) -> None:
+        """A bool sneaks through int isinstance() — explicit reject."""
+        from code_review_helpers import _load_verdict_thresholds
+        p = tmp_path / "vt.json"
+        p.write_text(json.dumps({"justification_rate_alert": True}))
+        out = _load_verdict_thresholds(p)
+        assert out["justification_rate_alert"] == 0.30
 
 
 class TestCumulativePremiseMediumGate:

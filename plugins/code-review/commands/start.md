@@ -879,6 +879,63 @@ If `review_result.json.pending_verification[]` is non-empty, append a one-line n
 
 ---
 
+## Verifier Stats (PLN-773)
+
+Read `<CR_DIR>/review_result.json` → `stats.verification` and `stats.justification`. Render the footer below verbose-by-design — operators read the per-reviewer FP rate and the justification rate to detect over-rejection (reviewer hallucinating) and escape-hatch abuse (authors gaming the gate) respectively.
+
+```
+=== Verifier Stats ===
+Findings verified: {stats.verification.verified_count}
+  - CONFIRMED + DOWNGRADE: {verified_count - tentative - re_asserted}
+  - TENTATIVE:             {tentative_count}
+  - RE_ASSERTED:           sum over by_reviewer[].re_asserted
+Findings dismissed: {stats.verification.rejected_count}
+Findings justified: {stats.justification.justified_emitted}
+  - JUSTIFIED-VALID:   {stats.justification.justified_valid}
+  - JUSTIFIED-INVALID: {stats.justification.justified_invalid}
+Reviewers (FP rate / overrides):
+  {reviewer}: {fp_rate:.2f} / {re_asserted}{ "  ⚠ override" if re_asserted > 0 else "" }
+Justification rate: {stats.justification.rate:.2f} (threshold {threshold} — {ALERT|OK})
+Premise MEDIUM cumulative: {stats.premise_cumulative_medium_count} (gate threshold {premise_cumulative_medium})
+```
+
+If the verify-prepare manifest carried `no_verify: true` (read `<CR_DIR>/verify_manifest.json`), prepend the audit banner BEFORE the Verifier Stats section:
+
+```
+⚠️ --no-verify was passed; finding verification was bypassed entirely.
+   Reason: "{no_verify_reason}"
+   {N} findings reached verdict without verifier audit.
+```
+
+If the verify-prepare manifest carried `override_hits` (operator `--re-assert` honored) or `override_invalidated` (override rejected on file-content drift), echo a one-line summary:
+
+```
+ℹ️ Overrides: {len(override_hits)} honored / {len(override_invalidated)} invalidated (content drift).
+```
+
+### Operator flags affecting the presenter (PLN-773)
+
+- **`--justified-only`** — when present, render ONLY the Justified Findings section above. Suppress BLOCKING / HIGH / MEDIUM / Dismissed sections so the operator can audit justification usage without scrolling past every finding.
+- **`--re-assert <id>[,<id>...]`** — write operator overrides for the listed finding IDs via `code_review_helpers.py re-assert --cr-dir <CR_DIR> --cache-dir <CACHE_DIR> --finding-ids <ids> [--reason '<why>']`. Promotes from `rejected[]` / `pending_verification[]` back into `verified[]` on the next run. Persists across runs via `<CACHE_DIR>/overrides/<finding_id>.json` keyed on file-content hash — content drift auto-invalidates the override.
+- **`--review-dismissed`** — fetch a second opinion (haiku verifier) on prior `rejected[]`. Run `review-dismissed-prepare` to build the manifest, dispatch a haiku-verifier fleet against the per-finding inputs, then run `review-dismissed-consolidate` to auto-promote any non-REJECTED verdict via the same override file format (`override: "REVIEW_DISMISSED"`). Side-by-side diff lands at `<CR_DIR>/review_dismissed_diff.json`.
+- **`--no-verify`** — emergency bypass. **Requires `--no-verify-reason='<why>'`** so the bypass is captured in the audit log. The verifier is skipped entirely; every eligible finding lands in `verified[]` with `verifier_verdict: null`. Mutually exclusive with `--re-assert` / `--review-dismissed`.
+
+### Mutual exclusion enforcement
+
+The orchestrator MUST reject `--no-verify` combined with `--re-assert` or `--review-dismissed` at flag-parse time with a clear error message — emergency bypass is an explicit operator decision; combining it with overrides muddles the audit trail. `cmd_verify_prepare`'s own `--no-verify-reason` check is the second line of defense.
+
+### Override precedence in stage_22b
+
+When `cmd_verify_prepare` runs with a `--cache-dir`, the precedence is:
+
+1. **`<CACHE_DIR>/overrides/<finding_id>.json`** — operator override. If the file exists and the cited file's content hash still matches, synthesize a `RE_ASSERTED` verdict and skip both the verifications/ cache and the agent spawn.
+2. **`<CACHE_DIR>/verifications/<finding_id>.json`** — cached verifier verdict for the `(finding_id, snippet_hash, model, prompt_hash)` tuple. Materialize at the canonical output path and skip the agent spawn.
+3. **Agent spawn** — fall through; the orchestrator dispatches a verifier agent for this finding.
+
+Hash drift on an override (file content changed since the override was written) → override invalidated silently (logged in `manifest.override_invalidated[]`); verifier runs normally.
+
+---
+
 ## Validation Summary
 
 - **Total findings from agents:** X

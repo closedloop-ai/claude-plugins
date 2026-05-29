@@ -38,6 +38,23 @@ def update_golden(request: pytest.FixtureRequest) -> bool:
     return bool(request.config.getoption("--update-golden"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_pending_learnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PLN-773 Phase 6: pending-learnings writes use a module-level base
+    dir constant. Tests must not write to the real repo's
+    `.closedloop-ai/pending-learnings/` directory, so this autouse fixture
+    redirects the base to a per-test tmp_path. Tests that explicitly want
+    to inspect the jsonl can read from `tmp_path / "pending-learnings"`.
+    """
+    import code_review_helpers
+    monkeypatch.setattr(
+        code_review_helpers, "_PENDING_LEARNINGS_DIR",
+        tmp_path / "pending-learnings",
+    )
+
+
 def invoke_prepare_run(
     cr_dir: Path,
     *,

@@ -106,6 +106,11 @@ VERIFIER_VERDICTS: frozenset[str] = frozenset({
     "REJECTED",
     "JUSTIFIED-VALID",
     "JUSTIFIED-INVALID",
+    # PLN-773 v2.10.0: operator override (--re-assert / --review-dismissed).
+    # A finding with verifier_verdict=RE_ASSERTED lives in verified[] and was
+    # promoted there by an operator override, bypassing fresh verification.
+    # The override is keyed on file-content hash so content drift invalidates.
+    "RE_ASSERTED",
 })
 
 REASONING_CERTIFICATE_KINDS: frozenset[str] = frozenset({
