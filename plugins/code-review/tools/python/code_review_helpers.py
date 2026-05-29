@@ -3354,6 +3354,493 @@ def _classify_intent(
     return "mixed"
 
 
+# ---------------------------------------------------------------------------
+# Subcommand: detect-injection (PLN-720)
+# ---------------------------------------------------------------------------
+
+# Pattern catalogue: deterministic regex for the 9 prompt-injection classes
+# documented in PLN-720 §Detection pattern catalogue. Each pattern carries a
+# weight; matches in a single section accumulate; the section total maps
+# through _injection_severity() into the severity tier.
+
+# Zero-width and BOM characters used by exfiltration / steganography attacks.
+# Built from chr() so the source is grep-friendly (literal zero-width chars
+# would be invisible in editor + diff views).
+_ZW_CHARS = "".join(chr(c) for c in (
+    0x200B,  # ZERO WIDTH SPACE
+    0x200C,  # ZERO WIDTH NON-JOINER
+    0x200D,  # ZERO WIDTH JOINER
+    0x200E,  # LEFT-TO-RIGHT MARK
+    0x200F,  # RIGHT-TO-LEFT MARK
+    0xFEFF,  # ZERO WIDTH NO-BREAK SPACE (BOM)
+))
+_ENCODED_PAYLOAD_PATTERN = (
+    r"[A-Za-z0-9+/]{60,}={0,2}"        # long base64-ish run
+    r"|(?:[0-9a-fA-F]{2}\s*){40,}"     # long hex run
+    "|[" + _ZW_CHARS + "]{3,}"          # 3+ zero-width / BOM chars
+)
+
+_INJECTION_PATTERN_DEFS: list[tuple[str, int, str, int]] = [
+    (
+        "instruction_override", 50,
+        r"\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:prior|previous|above|earlier)\s+"
+        r"(?:instructions|directives|prompts|messages|context|rules)\b",
+        re.IGNORECASE,
+    ),
+    (
+        # `act as <anything>` would match benign PR wording like "act as
+        # a thin wrapper" or "act as the source of truth" and contribute
+        # 40 toward quarantine. The other branches are specific enough
+        # already; narrow only `act as` to require a model/agent/role
+        # noun (the actual injection vector). The persona list mirrors
+        # the canonical adversarial-persona vocabulary — extend on real
+        # false-negative evidence from the audit log.
+        "role_reversal", 40,
+        r"\b(?:you\s+are\s+now|pretend\s+to\s+be|roleplay\s+as|"
+        r"from\s+now\s+on\s+you\s+are)\s+\S"
+        r"|\bact\s+as\s+(?:an?\s+|the\s+)?"
+        r"(?:AI|LLM|model|assistant|chatbot|agent|expert|"
+        r"admin|root|sysop|sudoer|developer|maintainer|reviewer|"
+        r"approver|owner|operator|moderator|user|hacker|attacker)\b",
+        re.IGNORECASE,
+    ),
+    (
+        "system_prompt_forgery", 50,
+        r"(?:<system>|<\|im_start\|>|<\|im_end\|>|\[INST\]|\[/INST\])",
+        0,
+    ),
+    (
+        "directive_injection", 30,
+        r"\bthe\s+(?:user|developer|maintainer|reviewer|admin)\s+"
+        r"(?:wants|needs|requires|asks|requests)\s+you\s+to\b",
+        re.IGNORECASE,
+    ),
+    (
+        "output_coercion", 35,
+        r"\b(?:emit|return|output|produce|provide|generate)\s+"
+        r"(?:no|empty|zero|0)\s+findings\b"
+        r"|\breturn\s+an?\s+empty\s+(?:array|list)\b"
+        r"|\bapprove\s+(?:all|every)\s+(?:findings|changes|PRs|pull\s+requests)\b",
+        re.IGNORECASE,
+    ),
+    (
+        "tool_coercion", 30,
+        r"\bdo\s+not\s+use\s+(?:Read|Grep|Write|Bash|Edit|Glob)\b"
+        r"|\bskip\s+(?:verification|validation|review|the\s+\w+\s+pass)\b",
+        re.IGNORECASE,
+    ),
+    (
+        "encoded_payload", 25,
+        _ENCODED_PAYLOAD_PATTERN,
+        0,
+    ),
+    (
+        "unicode_tag_chars", 40,
+        r"[\U000E0000-\U000E007F]",        # Unicode tag character range
+        0,
+    ),
+    (
+        "html_comment_exfil", 25,
+        r"<!--[^>]{50,}-->",               # long HTML comment
+        0,
+    ),
+]
+
+# Compile once at module load.
+_INJECTION_PATTERNS: list[tuple[str, int, re.Pattern[str]]] = [
+    (name, weight, re.compile(pat, flags))
+    for name, weight, pat, flags in _INJECTION_PATTERN_DEFS
+]
+
+# Literal forgery delimiters stripped from raw content before scoring. An
+# adversary embedding a real `<system>` tag in PR body would have its
+# system_prompt_forgery match counted AND the literal removed before the
+# wrapper sees it.
+_INJECTION_STRIP_TOKENS: tuple[str, ...] = (
+    "<untrusted_input>", "</untrusted_input>",
+    "<system>", "</system>",
+    "<|im_start|>", "<|im_end|>",
+    "[INST]", "[/INST]",
+)
+
+# Severity thresholds (PLN-720 §Detection pattern catalogue).
+_INJECTION_SCORE_LOW = 1
+_INJECTION_SCORE_MEDIUM = 30
+_INJECTION_SCORE_HIGH = 70
+
+# Per-class cap on how many matches contribute to the score. Classes
+# where *presence* is signal but count is not proportionally more
+# dangerous get capped to 1: e.g. GitHub's default PR template ships
+# three instructional `<!-- ... -->` blocks past 50 chars; without a
+# cap, leaving them in would push 3 × 25 = 75 past _INJECTION_SCORE_HIGH
+# and quarantine + BLOCK a benign PR. Classes absent from this map
+# accumulate unbounded (the default), which is correct for patterns
+# where repetition genuinely amplifies the threat (e.g. multiple
+# `<system>` forgery tokens, multiple "ignore previous instructions").
+_INJECTION_CLASS_MAX_MATCHES: dict[str, int] = {
+    "html_comment_exfil": 1,
+}
+
+# Confidence weighting: a match within the first N chars or following ":"
+# counts as imperative-to-model context (full weight). Quote-prefixed lines
+# (">") get halved — those are citations, not commands.
+_INJECTION_IMPERATIVE_HEAD_CHARS = 500
+_INJECTION_BURIED_DOWNWEIGHT = 0.75
+_INJECTION_QUOTE_DOWNWEIGHT = 0.5
+_INJECTION_COLON_LOOKBACK = 80
+
+# Audit log: JSONL with 90-day TTL, swept on every write. Implementation
+# is read-modify-write — not atomic append — so concurrent runs in the
+# same workdir can clobber entries. The log is observational (not a
+# source of truth, never read by the pipeline) and concurrent reviews
+# in one workdir are rare in practice, so the clobber risk is accepted.
+_INJECTION_AUDIT_LOG = Path(".closedloop-ai/injection-log.jsonl")
+_INJECTION_AUDIT_TTL_DAYS = 90
+
+
+def _strip_injection_tokens(text: str) -> tuple[str, list[str]]:
+    """Strip literal forgery tokens. Returns (cleaned_text, removed_tokens)."""
+    removed: list[str] = []
+    out = text
+    for token in _INJECTION_STRIP_TOKENS:
+        if token in out:
+            removed.append(token)
+            out = out.replace(token, "")
+    return out, removed
+
+
+def _injection_severity(score: int) -> str:
+    """Map a numeric score to one of: none, low, medium, high."""
+    if score >= _INJECTION_SCORE_HIGH:
+        return "high"
+    if score >= _INJECTION_SCORE_MEDIUM:
+        return "medium"
+    if score >= _INJECTION_SCORE_LOW:
+        return "low"
+    return "none"
+
+
+def _quote_line_ranges(text: str) -> list[tuple[int, int]]:
+    """Return [(start, end), ...] character ranges for lines beginning with `>`."""
+    ranges: list[tuple[int, int]] = []
+    offset = 0
+    for line in text.split("\n"):
+        if line.startswith(">"):
+            ranges.append((offset, offset + len(line)))
+        offset += len(line) + 1
+    return ranges
+
+
+def _score_text_for_injection(
+    text: str, source_label: str,
+) -> tuple[float, list[dict[str, Any]]]:
+    """Score one untrusted-content string against the pattern catalogue.
+
+    Returns (score, matches). Each match dict carries pattern name, source
+    label, character offset, raw weight, and applied weight (after position
+    downweighting). Designed so the report payload is self-explanatory for
+    operators triaging false positives.
+    """
+    if not text:
+        return 0.0, []
+
+    quote_ranges = _quote_line_ranges(text)
+
+    def _in_quote(pos: int) -> bool:
+        return any(start <= pos < end for start, end in quote_ranges)
+
+    score = 0.0
+    matches: list[dict[str, Any]] = []
+    for name, weight, pat in _INJECTION_PATTERNS:
+        cap = _INJECTION_CLASS_MAX_MATCHES.get(name)
+        counted = 0
+        for m in pat.finditer(text):
+            if cap is not None and counted >= cap:
+                break
+            counted += 1
+            start = m.start()
+            in_head = start < _INJECTION_IMPERATIVE_HEAD_CHARS
+            after_colon = (
+                start > 0
+                and ":" in text[max(0, start - _INJECTION_COLON_LOOKBACK):start]
+            )
+            imperative = in_head or after_colon
+            effective = float(weight)
+            if _in_quote(start):
+                effective *= _INJECTION_QUOTE_DOWNWEIGHT
+            elif not imperative:
+                effective *= _INJECTION_BURIED_DOWNWEIGHT
+            score += effective
+            matches.append({
+                "pattern": name,
+                "source": source_label,
+                "offset": start,
+                "weight": weight,
+                "applied_weight": round(effective, 2),
+            })
+    return score, matches
+
+
+def _make_injection_finding(
+    score: int, matches: list[dict[str, Any]],
+    system_marker: str, emitted_at: str,
+) -> dict[str, Any]:
+    """Build a canonical InjectionAttempt Finding (severity ≥ High only).
+
+    The finding flows through cmd_collect_findings via the standard
+    agent_*.json glob, so it lands in review_result.envelope.verified[]
+    without any special-case routing.
+    """
+    pattern_names = sorted({m["pattern"] for m in matches})
+    return {
+        "id": make_finding_id("injection-detector", 0),
+        "reviewer": "injection-detector",
+        "source": "injection-detector",
+        "finding_scope": "pr_metadata",
+        "category": "InjectionAttempt",
+        "severity": "BLOCKING",
+        "priority": 0,
+        "file": None,
+        "line": None,
+        "system_marker": system_marker,
+        "issue": (
+            f"[P0] Prompt-injection signals detected in {system_marker} "
+            f"(score: {score})"
+        ),
+        "explanation": (
+            f"Detected {len(matches)} match(es) across pattern classes: "
+            f"{', '.join(pattern_names)}. Score: {score} "
+            f"(≥{_INJECTION_SCORE_HIGH} = High)."
+        ),
+        "recommendation": (
+            "Maintainer review required. Inspect the flagged content for "
+            "prompt-injection payloads before re-running review."
+        ),
+        "emitted_at": emitted_at,
+        "confidence": 1.0,
+        "schema_version": SCHEMA_VERSION,
+    }
+
+
+def _append_injection_audit_log(
+    log_path: Path, entry: dict[str, Any],
+) -> None:
+    """Add one JSONL entry to the audit log, sweeping entries > 90 days old.
+
+    Implementation is **read-modify-write, not atomic append**: the function
+    loads existing lines, filters out entries older than 90 days, appends the
+    new entry to the in-memory list, and rewrites the whole file. Two
+    concurrent calls in the same workdir can therefore clobber each other's
+    new entries. This is accepted because the log is observational (never
+    read by the review pipeline — only by operators triaging) and concurrent
+    reviews against the same workdir are rare.
+
+    The sweep runs on every write (not on read — there is no reader); this
+    keeps the file from growing unbounded without requiring a separate
+    maintenance command. Malformed pre-existing lines (missing timestamp,
+    bad JSON, non-dict JSON values) are dropped silently.
+    """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_INJECTION_AUDIT_TTL_DAYS)
+
+    kept: list[str] = []
+    if log_path.exists():
+        try:
+            for line in log_path.read_text().splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    obj = json.loads(stripped)
+                    # Valid JSON values include lists, strings, numbers, and
+                    # null in addition to objects — calling .get on any of
+                    # those would raise AttributeError (caught by the outer
+                    # OSError except otherwise; we'd then drop the whole
+                    # sweep + lose the legitimate fresh entries below).
+                    # Treat non-dict lines the same way as malformed JSON.
+                    if not isinstance(obj, dict):
+                        continue
+                    ts_str = str(obj.get("timestamp", ""))
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if ts >= cutoff:
+                        kept.append(stripped)
+                except (ValueError, KeyError, TypeError):
+                    continue
+        except OSError:
+            pass
+
+    kept.append(json.dumps(entry, separators=(",", ":")))
+    log_path.write_text("\n".join(kept) + "\n")
+
+
+def cmd_detect_injection(args: argparse.Namespace) -> int:
+    """Detect prompt-injection patterns in PR-author-controlled content.
+
+    PLN-720. Reads ``intent_context.json`` (title / body / commits) and scores
+    each section against the canonical 9-class regex catalogue. Emits an
+    ``injection_report.json`` payload to stdout (the walker redirects to
+    ``<CR_DIR>/injection_report.json`` per the run-plan stub at
+    ``stage_09_detect_injection``).
+
+    Side effects on severity ≥ Medium: rewrites ``intent_context.json`` in
+    place with ``quarantine: true`` + redacted content. Side effects on
+    severity ≥ High: writes a canonical InjectionAttempt finding to
+    ``<CR_DIR>/agent_injection-detector.json`` so cmd_collect_findings picks
+    it up via the standard ``agent_*.json`` glob (no schema-specific routing
+    needed).
+
+    Always appends one JSONL entry to ``.closedloop-ai/injection-log.jsonl``
+    for audit. ``on_failure: "continue"`` is pinned by the run-plan stub —
+    a detector crash must NEVER abort the review pipeline.
+    """
+    cr_dir = Path(args.cr_dir)
+    intent_context_path = Path(args.intent_context)
+
+    # Read intent_context.json; degrade to empty on missing/malformed input
+    # rather than aborting (on_failure: continue contract).
+    try:
+        with open(intent_context_path) as f:
+            ctx = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        empty_report = {
+            "score": 0,
+            "severity": "none",
+            "matches": [],
+            "redacted_excerpts": [],
+            "quarantine": False,
+            "intent_context_path": str(intent_context_path),
+        }
+        json.dump(empty_report, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
+    title = str(ctx.get("title", ""))
+    body = str(ctx.get("body", ""))
+    commits = str(ctx.get("commits", ""))
+
+    # Score the RAW content so the forgery pattern class sees the literal
+    # `<system>` / `<|im_start|>` / `[INST]` tokens before they're stripped.
+    # The stripped copy (below) is only used to report what was removed and
+    # would be handed to the downstream wrapper in a follow-up phase.
+    title_score, title_matches = _score_text_for_injection(title, "pr_title")
+    body_score, body_matches = _score_text_for_injection(body, "pr_description")
+    commits_score, commits_matches = _score_text_for_injection(commits, "commits")
+
+    _, title_stripped = _strip_injection_tokens(title)
+    _, body_stripped = _strip_injection_tokens(body)
+    _, commits_stripped = _strip_injection_tokens(commits)
+
+    total_score = int(round(title_score + body_score + commits_score))
+    severity = _injection_severity(total_score)
+    all_matches = title_matches + body_matches + commits_matches
+
+    redacted_excerpts: list[dict[str, Any]] = []
+    stripped_tokens = title_stripped + body_stripped + commits_stripped
+    if stripped_tokens:
+        redacted_excerpts.append(
+            {"reason": "literal-forgery-tokens", "tokens": stripped_tokens},
+        )
+
+    # The PR description is the canonical anchor for the metadata finding.
+    # cmd_fetch_intent doesn't carry commit shas into the blob, so even when
+    # the trigger is a commit message we fall back to pr_description (which
+    # is a fixed canonical marker, not a templated one needing a suffix).
+    system_marker = "pr_description"
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Quarantine: rewrite intent_context.json on severity ≥ Medium so
+    # downstream readers (cmd_classify_intent, Premise prompt assembly) see
+    # the quarantine flag and redacted content. Selective redaction:
+    # title and commits are preserved when their per-section score is 0
+    # (clean → keep verbatim). body is *always* redacted on quarantine —
+    # it's the highest-risk surface (longest free-form attacker-controlled
+    # text) and even a clean-scoring body could carry sub-threshold signals
+    # the catalogue missed.
+    quarantined = total_score >= _INJECTION_SCORE_MEDIUM
+    if quarantined:
+        quarantined_ctx = {
+            "title": (
+                f"[REDACTED — injection detected (score: {total_score}, "
+                f"severity: {severity})]"
+                if title_score > 0 else title
+            ),
+            "body": (
+                f"[REDACTED — injection detected (score: {total_score}, "
+                f"severity: {severity})]"
+            ),
+            "commits": (
+                "[REDACTED — quarantined alongside body]"
+                if commits_score > 0 else commits
+            ),
+            "quarantine": True,
+            "injection_score": total_score,
+            "injection_severity": severity,
+        }
+        try:
+            with open(intent_context_path, "w") as f:
+                json.dump(quarantined_ctx, f, indent=2)
+                f.write("\n")
+        except OSError as exc:
+            print(
+                f"Warning: could not rewrite intent_context.json: {exc}",
+                file=sys.stderr,
+            )
+
+    # BLOCKING finding on severity ≥ High. Naming it `agent_<reviewer>.json`
+    # makes cmd_collect_findings pick it up via the standard glob — no new
+    # merge path required.
+    if total_score >= _INJECTION_SCORE_HIGH:
+        finding = _make_injection_finding(
+            total_score, all_matches, system_marker, now_iso,
+        )
+        agent_file = cr_dir / "agent_injection-detector.json"
+        try:
+            with open(agent_file, "w") as f:
+                json.dump({"findings": [finding]}, f, indent=2)
+        except OSError as exc:
+            print(
+                f"Warning: could not write injection finding: {exc}",
+                file=sys.stderr,
+            )
+
+    # Audit log. Log only pattern class names (not payload content) to avoid
+    # log-injection re-amplification.
+    audit_entry = {
+        "timestamp": now_iso,
+        "score": total_score,
+        "severity": severity,
+        "matches": sorted({m["pattern"] for m in all_matches}),
+        "quarantined": quarantined,
+        "stripped_token_count": len(stripped_tokens),
+        "intent_context_path": str(intent_context_path),
+    }
+    try:
+        _append_injection_audit_log(
+            Path.cwd() / _INJECTION_AUDIT_LOG, audit_entry,
+        )
+    except OSError as exc:
+        print(f"Warning: could not append audit log: {exc}", file=sys.stderr)
+
+    # Stdout: the report payload (walker redirects to injection_report.json).
+    report = {
+        "score": total_score,
+        "severity": severity,
+        "matches": all_matches,
+        "redacted_excerpts": redacted_excerpts,
+        "quarantine": quarantined,
+        "intent_context_path": str(intent_context_path),
+    }
+    json.dump(report, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: classify-intent
+# ---------------------------------------------------------------------------
+
+
 def cmd_classify_intent(args: argparse.Namespace) -> int:
     """Classify diff intent for model routing."""
     intent_context_path: str = args.intent_context
@@ -3365,6 +3852,16 @@ def cmd_classify_intent(args: argparse.Namespace) -> int:
     except (OSError, json.JSONDecodeError) as exc:
         print(f"Error reading intent context: {exc}", file=sys.stderr)
         return 1
+
+    # PLN-720 quarantine guard: if detect-injection redacted the context,
+    # skip the LLM-classification path and route deterministically. The
+    # redacted body has no signal worth classifying — falling through to
+    # _classify_intent would surface "mixed" anyway, but the explicit
+    # short-circuit makes the path auditable.
+    if ctx.get("quarantine") is True:
+        json.dump({"intent": "mixed", "source": "quarantine"}, sys.stdout)
+        sys.stdout.write("\n")
+        return 0
 
     title = str(ctx.get("title", ""))
     body = str(ctx.get("body", ""))
@@ -3854,7 +4351,7 @@ def _build_run_plan_stages(
             "expected_outputs": [f"{cr_dir}/injection_report.json"],
             "depends_on": ["stage_08_fetch_intent"],
             "on_failure": "continue",
-            "enabled": False,  # plan 01
+            "enabled": True,  # PLN-720
         },
         {
             "id": "stage_10_classify_intent",
@@ -5029,6 +5526,18 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_ci.add_argument("--intent-context", required=True, help="Path to intent_context.json")
     p_ci.add_argument("--diff-data", default=None, help="Path to diff_data.json for file statuses")
     p_ci.set_defaults(func=cmd_classify_intent)
+
+    # detect-injection (PLN-720)
+    p_di = subparsers.add_parser(
+        "detect-injection",
+        help="Score intent_context.json for prompt-injection signals; quarantine on Medium+",
+    )
+    p_di.add_argument("--cr-dir", required=True, help="CR session directory")
+    p_di.add_argument(
+        "--intent-context", required=True,
+        help="Path to intent_context.json (written by fetch-intent)",
+    )
+    p_di.set_defaults(func=cmd_detect_injection)
 
     # collect-findings
     p_cf = subparsers.add_parser("collect-findings", help="Merge agent + hygiene findings")
