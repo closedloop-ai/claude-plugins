@@ -1842,9 +1842,17 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
 _VERIFICATION_GATES_DEFAULT_PATH = Path(".closedloop-ai/settings/verification-gates.json")
 
 _VERIFICATION_GATE_KEYS: tuple[str, ...] = (
-    "sensitive_paths",         # REJECTED + BLOCKING/HIGH → TENTATIVE
-    "tentative_on_paths",      # any finding → TENTATIVE
-    "mandatory_human_review_paths",  # any finding → TENTATIVE + force NEEDS_ATTENTION
+    # REJECTED on this path + BLOCKING/HIGH severity → TENTATIVE
+    # (severity capped at HIGH; rejection_class cleared).
+    "sensitive_paths",
+    # Any verdict on this path → TENTATIVE (rejection_class cleared if
+    # the lift came from REJECTED so the finding stops claiming both
+    # "disproved" and "legitimate" simultaneously).
+    "tentative_on_paths",
+    # Any verdict on this path → TENTATIVE + force_human_review=True,
+    # which propagates to NEEDS_ATTENTION via _compute_canonical_verdict
+    # rule 2.5.
+    "mandatory_human_review_paths",
 )
 
 
@@ -2108,17 +2116,37 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
             and _matches_any_glob(file_path, gates["sensitive_paths"])
         ):
             finding["verifier_verdict"] = "TENTATIVE"
-            # Cap severity at HIGH per plan (BLOCKING TENTATIVE would
-            # otherwise produce an aggressively-asserted "we don't know
-            # if this is real" verdict).
+            # Cap severity at HIGH per plan. Both fields must change:
+            # _compute_canonical_verdict reads `severity` (not
+            # `verifier_severity`) for the BLOCKING short-circuit, so
+            # leaving `severity = "BLOCKING"` would route this finding
+            # to CHANGES_REQUESTED via Rule 2 — stronger than any
+            # REJECTED-then-escalated finding should ever produce, and
+            # also dead-code-ing the HIGH cap. We mirror the change on
+            # `verifier_severity` so any future reader that does prefer
+            # the verifier field sees the same value.
             if str(finding.get("severity", "")) == "BLOCKING":
+                finding["severity"] = "HIGH"
                 finding["verifier_severity"] = "HIGH"
             finding["rejection_class"] = None
             escalated_sensitive += 1
             verified.append(finding)
             continue
         if _matches_any_glob(file_path, gates["tentative_on_paths"]):
-            if finding.get("verifier_verdict") in (None, "CONFIRMED", "DOWNGRADE"):
+            # `tentative_on_paths` applies to ALL verdicts, including
+            # REJECTED — a REJECTED finding on a path the operator has
+            # flagged for "always-tentative" treatment must be lifted out
+            # of the rejected bucket; otherwise it lands in verified[]
+            # with verifier_verdict="REJECTED" + rejection_class intact
+            # ("simultaneously disproved and in the legitimate bucket"),
+            # never surfacing in the Dismissed Findings presenter section
+            # despite being marked REJECTED. Mirror the sensitive_paths
+            # escalation: clear rejection_class on the lift.
+            if finding.get("verifier_verdict") in (
+                None, "CONFIRMED", "DOWNGRADE", "REJECTED",
+            ):
+                if finding.get("verifier_verdict") == "REJECTED":
+                    finding["rejection_class"] = None
                 finding["verifier_verdict"] = "TENTATIVE"
             verified.append(finding)
             continue
@@ -3620,15 +3648,25 @@ def compute_canonical_prompt_hash(
 def cmd_compute_hashes(args: argparse.Namespace) -> int:
     """Compute prompt hash and context key for cache operations.
 
-    The prompt hash now folds the canonical schema_version per PLN-719
-    Section 9: any MAJOR schema bump invalidates all caches automatically.
+    The prompt hash folds the canonical schema_version per PLN-719
+    Section 9 (any MAJOR schema bump invalidates all caches) and — since
+    PLN-722 v2.8.1 — the verifier prompt bytes, so editing
+    ``verifier_prompt.txt`` busts every cache namespace that keys on
+    ``<PROMPT_HASH>`` (BHA cache and the new ``verifications/`` namespace).
+    Coarse but correct: a verifier-prompt rev rarely happens, and the
+    over-invalidation cost (re-pay the BHA reviewer pass) is bounded by
+    how often the verifier prompt actually changes. The alternative
+    (separate verifier-specific hash) splits the cache-key contract
+    across two CLI flags without preventing the bug PLN-722 v2.8.0 v1
+    shipped — stale verifier verdicts surviving a prompt edit.
     """
     shared_prompt: str = args.shared_prompt
     bha_suffix: str = args.bha_suffix
+    verifier_prompt: str | None = getattr(args, "verifier_prompt", None)
     diff_tip: str = args.diff_tip
     base_ref: str = args.base_ref
 
-    # Read both prompt files.
+    # Read all three prompt files.
     try:
         with open(shared_prompt, "rb") as f:
             shared_bytes = f.read()
@@ -3641,8 +3679,23 @@ def cmd_compute_hashes(args: argparse.Namespace) -> int:
     except OSError as exc:
         print(f"Error: cannot read BHA suffix: {exc}", file=sys.stderr)
         return 1
+    # verifier_prompt.txt is optional for backward compatibility with
+    # pre-PLN-722 callers; new callers (stage_18 wiring) always pass it.
+    # When absent, the prompt hash matches v2.8.0 exactly so existing
+    # cache entries stay valid through the upgrade.
+    verifier_bytes: bytes | None = None
+    if verifier_prompt:
+        try:
+            with open(verifier_prompt, "rb") as f:
+                verifier_bytes = f.read()
+        except OSError as exc:
+            print(f"Error: cannot read verifier prompt: {exc}", file=sys.stderr)
+            return 1
 
-    prompt_hash = compute_canonical_prompt_hash([shared_bytes, bha_bytes])
+    hash_parts = [shared_bytes, bha_bytes]
+    if verifier_bytes is not None:
+        hash_parts.append(verifier_bytes)
+    prompt_hash = compute_canonical_prompt_hash(hash_parts)
 
     # Compute context key via git merge-base
     context_key = ""
@@ -5201,6 +5254,15 @@ def _build_run_plan_stages(
             "args": [
                 "--shared-prompt", f"{cr_dir}/shared_prompt.txt",
                 "--bha-suffix", f"{cr_dir}/bha_suffix.txt",
+                # PLN-722 v2.8.1: fold the verifier prompt into <PROMPT_HASH>
+                # so verifier prompt edits bust both the BHA cache and the
+                # verifications/ cache. The reviewer feedback on v2.8.0
+                # surfaced that without this arg, `verifier_prompt_hash` in
+                # the verifications/ cache key was sourced from a hash that
+                # didn't actually include the verifier prompt bytes — the
+                # CHANGELOG's "prompt rev invalidates everything globally"
+                # promise was broken.
+                "--verifier-prompt", f"{cr_dir}/verifier_prompt.txt",
                 "--diff-tip", "<DIFF_TIP>",
                 "--base-ref", "<BASE_REF>",
             ],
@@ -5914,7 +5976,8 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
     ``pending_verification[]`` already shaped for the envelope, plus the
     ``force_human_review`` flag from sensitive-path escalation. Falls back
     to ``findings_validated.json`` when verify-consolidate didn't run
-    (stage_23 disabled, ``--no-verify``, or a pre-PLN-722 cache hit) —
+    (stage_23 disabled, verify-prepare/consolidate infrastructure failure,
+    or a pre-PLN-722 cache hit) —
     everything lands in ``verified[]`` exactly as Phase A behaved.
 
     Coverage-scoped findings (``category=Coverage`` + ``finding_scope=system``)
@@ -6387,6 +6450,14 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_ch = subparsers.add_parser("compute-hashes", help="Compute prompt hash and context key")
     p_ch.add_argument("--shared-prompt", required=True, help="Path to shared_prompt.txt")
     p_ch.add_argument("--bha-suffix", required=True, help="Path to bha_suffix.txt")
+    # PLN-722 v2.8.1: optional for back-compat with pre-PLN-722 callers
+    # (when absent, the hash matches v2.8.0 byte-identically). New
+    # callers must pass it so verifier prompt revs invalidate caches.
+    p_ch.add_argument(
+        "--verifier-prompt", default=None,
+        help="Path to verifier_prompt.txt. When provided, folds into prompt_hash "
+             "so cache keys invalidate on verifier prompt edits.",
+    )
     p_ch.add_argument("--diff-tip", required=True, help="Git ref for diff tip (e.g. HEAD, origin/branch)")
     p_ch.add_argument("--base-ref", required=True, help="Base ref name (e.g. main)")
     p_ch.set_defaults(func=cmd_compute_hashes)

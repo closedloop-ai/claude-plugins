@@ -4511,6 +4511,78 @@ class TestComputeHashes:
         rc = cmd_compute_hashes(ns)
         assert rc == 1
 
+    def test_verifier_prompt_changes_hash(
+        self, tmp_path: Path, capsys: Any,
+    ) -> None:
+        """PR #111 review HIGH #3: editing ``verifier_prompt.txt`` must
+        bust the prompt hash, otherwise the verifications/ cache key (whose
+        ``verifier_prompt_hash`` component is sourced from ``<PROMPT_HASH>``)
+        would serve stale verdicts after a verifier prompt rev. PLN-722
+        v2.8.0 shipped without this fold; v2.8.1 adds it via a new
+        ``--verifier-prompt`` flag on ``cmd_compute_hashes``.
+        """
+        import argparse
+
+        shared_prompt = tmp_path / "shared_prompt.txt"
+        shared_prompt.write_bytes(b"shared")
+        bha_suffix = tmp_path / "bha_suffix.txt"
+        bha_suffix.write_bytes(b"bha")
+        verifier_prompt = tmp_path / "verifier_prompt.txt"
+        verifier_prompt.write_bytes(b"verifier v1")
+        verifier_prompt_v2 = tmp_path / "verifier_prompt_v2.txt"
+        verifier_prompt_v2.write_bytes(b"verifier v2 - changed instructions")
+
+        def _hash_with(verifier_path: str | None) -> str:
+            with patch("code_review_helpers._run_git", return_value=""):
+                ns = argparse.Namespace(
+                    shared_prompt=str(shared_prompt),
+                    bha_suffix=str(bha_suffix),
+                    verifier_prompt=verifier_path,
+                    diff_tip="HEAD", base_ref="main",
+                )
+                assert cmd_compute_hashes(ns) == 0
+            return json.loads(capsys.readouterr().out.strip())["prompt_hash"]
+
+        h_v1 = _hash_with(str(verifier_prompt))
+        h_v2 = _hash_with(str(verifier_prompt_v2))
+        assert h_v1 != h_v2, (
+            "Editing verifier_prompt.txt must produce a different prompt_hash "
+            "so the verifications/ cache invalidates."
+        )
+
+    def test_omitting_verifier_prompt_matches_pre_v2_8_1_hash(
+        self, tmp_path: Path, capsys: Any,
+    ) -> None:
+        """Back-compat: a pre-v2.8.1 caller (no ``--verifier-prompt`` flag)
+        produces the same hash as v2.8.0 byte-identically, so existing
+        cache entries stay valid across the upgrade. Without this
+        property, v2.8.1 would force every cache namespace to miss on
+        the first run."""
+        import argparse
+        import hashlib
+        from code_review_schema import SCHEMA_VERSION
+
+        shared_prompt = tmp_path / "shared_prompt.txt"
+        shared_prompt.write_bytes(b"S")
+        bha_suffix = tmp_path / "bha_suffix.txt"
+        bha_suffix.write_bytes(b"B")
+
+        # v2.8.0 hash shape: shared || \0 || bha || \0 || schema_version
+        expected = hashlib.sha256(
+            b"S" + b"\0" + b"B" + b"\0" + str(SCHEMA_VERSION).encode(),
+        ).hexdigest()
+
+        with patch("code_review_helpers._run_git", return_value=""):
+            ns = argparse.Namespace(
+                shared_prompt=str(shared_prompt),
+                bha_suffix=str(bha_suffix),
+                verifier_prompt=None,
+                diff_tip="HEAD", base_ref="main",
+            )
+            assert cmd_compute_hashes(ns) == 0
+        actual = json.loads(capsys.readouterr().out.strip())["prompt_hash"]
+        assert actual == expected
+
 
 # ---------------------------------------------------------------------------
 # Auto-incremental subcommand
@@ -7140,29 +7212,32 @@ def _make_validated_finding(
     evidence: list[dict[str, Any]] | None = None,
     reasoning_certificate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Shape-only validated-finding factory for verify-* tests."""
-    return {
-        "id": fid,
-        "reviewer": fid.split("_")[0],
-        "reviewer_trigger": {"type": "core", "evidence": None},
-        "source": source,
-        "emitted_at": "2026-05-29T16:00:00+00:00",
-        "finding_scope": "diff",
-        "file": file,
-        "line": line,
-        "system_marker": None,
-        "category": category,
-        "severity": severity,
-        "priority": {"BLOCKING": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}.get(severity, 2),
-        "confidence": confidence,
-        "issue": issue,
-        "explanation": "explanation",
-        "recommendation": "fix it",
-        "code_snippet": code_snippet,
-        "evidence": evidence or [],
-        "reasoning_certificate": reasoning_certificate,
-        "schema_version": 1,
-    }
+    """Shape-only validated-finding factory for verify-* tests.
+
+    Thin wrapper over ``conftest.minimal_diff_finding`` per CLAUDE.md
+    "delegate instead of duplicating" — only the PLN-722-specific fields
+    (``evidence``, ``reasoning_certificate``, parametrized severity /
+    confidence / category / source) are overridden here.
+    """
+    return minimal_diff_finding(
+        id=fid,
+        reviewer=fid.split("_")[0],
+        reviewer_trigger={"type": "core", "evidence": None},
+        source=source,
+        emitted_at="2026-05-29T16:00:00+00:00",
+        file=file,
+        line=line,
+        category=category,
+        severity=severity,
+        priority={"BLOCKING": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}.get(severity, 2),
+        confidence=confidence,
+        issue=issue,
+        explanation="explanation",
+        recommendation="fix it",
+        code_snippet=code_snippet,
+        evidence=evidence or [],
+        reasoning_certificate=reasoning_certificate,
+    )
 
 
 def _write_validated_input(
@@ -7457,8 +7532,11 @@ class TestVerifyPrepare:
         self, tmp_path: Path,
     ) -> None:
         # 60 BLOCKING confidence-1.0 findings — first 50 should be retained
-        # (sorted by priority then finding_id). The 10 with lowest IDs get
-        # deferred (since all priorities are equal, secondary sort by id).
+        # (sorted by priority then finding_id). The sort key is
+        # ``(-priority_score, finding_id)`` — ASCENDING on finding_id when
+        # priorities tie, so the 10 with the HIGHEST IDs (f050–f059) get
+        # deferred and the 50 with the LOWEST IDs (f000–f049) are kept.
+        # PR #111 review surfaced this — the v2.8.0 comment had it backwards.
         findings = [
             _make_validated_finding(
                 f"bha_p0_f{i:03d}", severity="BLOCKING", confidence=1.0,
@@ -7469,6 +7547,14 @@ class TestVerifyPrepare:
         assert len(manifest["to_verify"]) == VERIFY_MAX_VERIFICATIONS
         assert len(manifest["deferred_budget"]) == 10
         assert manifest["total_eligible"] == 60
+        # Pin the retained/deferred ID set so a future change to the
+        # secondary sort key (e.g. descending by id, or random
+        # tie-breaking) breaks this test loudly instead of silently
+        # changing which findings get verified vs deferred.
+        retained_ids = {e["finding_id"] for e in manifest["to_verify"]}
+        deferred_ids = set(manifest["deferred_budget"])
+        assert retained_ids == {f"bha_p0_f{i:03d}" for i in range(50)}
+        assert deferred_ids == {f"bha_p0_f{i:03d}" for i in range(50, 60)}
 
     def test_per_finding_input_files_written(self, tmp_path: Path) -> None:
         findings = [_make_validated_finding("bha_p0_f0")]
@@ -7671,9 +7757,68 @@ class TestVerifyConsolidate:
         assert len(out["verified"]) == 1
         # Escalated to TENTATIVE
         assert out["verified"][0]["verifier_verdict"] == "TENTATIVE"
-        # BLOCKING → severity capped at HIGH
+        # BLOCKING → severity capped at HIGH on BOTH canonical fields.
+        # PR #111 review surfaced that v2.8.0 only lowered verifier_severity,
+        # leaving severity="BLOCKING" which routed downstream verdicts to
+        # CHANGES_REQUESTED via Rule 2 — much stronger than a REJECTED-then-
+        # escalated finding should ever produce.
+        assert out["verified"][0]["severity"] == "HIGH"
         assert out["verified"][0]["verifier_severity"] == "HIGH"
         assert out["stats"]["escalated_sensitive_path"] == 1
+        # Verdict-level assertion: the escalated finding must NOT
+        # short-circuit the canonical verdict to CHANGES_REQUESTED via
+        # Rule 2. It either rides Rule 3 (HIGH → NEEDS_ATTENTION) or
+        # Rule 3.5 (TENTATIVE → NEEDS_ATTENTION) — both produce
+        # NEEDS_ATTENTION, which is the right semantic for "we couldn't
+        # confirm but the path is sensitive".
+        verdict, _ = _compute_canonical_verdict(out["verified"], [])
+        assert verdict == "NEEDS_ATTENTION"
+
+    def test_rejected_on_tentative_on_paths_lifts_to_verified(
+        self, tmp_path: Path,
+    ) -> None:
+        """PR #111 review HIGH #2: ``tentative_on_paths`` applies to ALL
+        verdicts, including REJECTED. A REJECTED finding on such a path
+        must be lifted out of the rejected bucket — with
+        ``rejection_class`` cleared — so it doesn't simultaneously claim
+        "disproved" (verifier_verdict + rejection_class) and "legitimate"
+        (lives in verified[]).
+        """
+        findings = [
+            _make_validated_finding(
+                "bha_p0_f0", severity="MEDIUM", file="src/api/users.ts",
+            ),
+        ]
+        manifest = {
+            "to_verify": [{"finding_id": "bha_p0_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        verdicts = {
+            "bha_p0_f0": {
+                "verifier_verdict": "REJECTED",
+                "verifier_confidence": 0.85,
+                "verifier_reasoning": "guard at upstream",
+                "evidence_checks": [],
+                "rejection_class": "guard_exists",
+            },
+        }
+        gates = {
+            "sensitive_paths": [],
+            "tentative_on_paths": ["src/api/**"],
+            "mandatory_human_review_paths": [],
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs=verdicts,
+            gates=gates,
+        )
+        # Lifted from rejected → verified[]
+        assert out["rejected"] == []
+        assert len(out["verified"]) == 1
+        # Verdict downgraded to TENTATIVE
+        assert out["verified"][0]["verifier_verdict"] == "TENTATIVE"
+        # rejection_class cleared so the finding doesn't claim
+        # "disproved" while living in the legitimate bucket
+        assert out["verified"][0]["rejection_class"] is None
 
     def test_mandatory_human_review_forces_force_human_review(
         self, tmp_path: Path,
