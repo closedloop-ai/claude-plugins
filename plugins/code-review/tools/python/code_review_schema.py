@@ -41,7 +41,12 @@ FINDING_SCOPES: frozenset[str] = frozenset({"diff", "system", "pr_metadata"})
 
 SEVERITIES: frozenset[str] = frozenset({"BLOCKING", "HIGH", "MEDIUM"})
 
-PRIORITIES: frozenset[int] = frozenset({0, 1, 2})
+# Priorities — 0/1/2/3 mirror the P0/P1/P2/P3 tiers documented in the
+# shared reviewer prompt (tools/prompts/shared_prompt.txt §"SEVERITY +
+# PRIORITY"): P0 BLOCKING, P1 HIGH, P2 MEDIUM bugs/DRY, P3 MEDIUM
+# suggestions. The schema must accept every tier the prompt teaches —
+# excluding P3 forced reviewers to misclassify nice-to-haves as P2.
+PRIORITIES: frozenset[int] = frozenset({0, 1, 2, 3})
 
 # Categories — section 1 of the plan. Includes legacy "Repo Hygiene" as an
 # accepted alias so the hygiene helper can keep its historical category
@@ -49,10 +54,14 @@ PRIORITIES: frozenset[int] = frozenset({0, 1, 2})
 # canonical category for DRY/maintainability/style findings (MEDIUM-tier
 # duplication, smell, or convention violations) — already documented as
 # the example category in the shared reviewer prompt (shared_prompt.txt)
-# for MEDIUM DRY findings.
+# for MEDIUM DRY findings. "Documentation" covers README/docstring/comment
+# accuracy and completeness findings — reviewers naturally emit this for
+# stale, missing, or misleading docs and we accept it as a first-class
+# category rather than coercing it under "Code Quality".
 CATEGORIES: frozenset[str] = frozenset({
     "Correctness",
     "Code Quality",
+    "Documentation",
     "Hygiene",
     "Repo Hygiene",
     "Premise",
@@ -156,6 +165,11 @@ STAGE_DETERMINISM_TIERS: dict[str, str] = {
     "cache-check": DETERMINISM_TIER_DETERMINISTIC,
     "collect-findings": DETERMINISM_TIER_DETERMINISTIC,
     "validate": DETERMINISM_TIER_DETERMINISTIC,
+    # PLN-722 wrappers around the LLM-driven verify-findings fleet.
+    # The pre/post helpers do tier-selection and bucket-merging — both
+    # pure functions over their JSON inputs.
+    "verify-prepare": DETERMINISM_TIER_DETERMINISTIC,
+    "verify-consolidate": DETERMINISM_TIER_DETERMINISTIC,
     "finalize-result": DETERMINISM_TIER_DETERMINISTIC,
     "cache-update": DETERMINISM_TIER_DETERMINISTIC,
     "review-state-write": DETERMINISM_TIER_DETERMINISTIC,

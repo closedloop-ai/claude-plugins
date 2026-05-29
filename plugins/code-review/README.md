@@ -16,8 +16,10 @@ A multi-agent code review plugin for Claude Code that performs deep, partitioned
 
 ```
 plugins/code-review/
-  .claude-plugin/plugin.json         Plugin manifest (version 2.4.0)
+  .claude-plugin/plugin.json         Plugin manifest (version 2.6.0)
   SCHEMA.md                          Canonical Finding + ResultEnvelope schema (PLN-719); §12 documents the golden fixture harness
+  agents/
+    code-review-worker.md            Background worker agent used by every reviewer fleet spawn (Read, Write, Grep, Glob; permissions-stable across sessions)
   commands/
     start.md                         Main /start command (orchestrator)
   prompts/
@@ -133,7 +135,7 @@ The orchestrator executes these steps in order:
 6. **Deterministic hygiene checks** — pattern-match for CI artifacts, sensitive files (`.env`, `.pem`), and path leakage; if `--hygiene-only`, stop here
 7. **Risk scoring and model routing** — scores each file by risk factors (LOC, file type, complexity); routes high-risk partitions to stronger models
 8. **File partitioning and per-partition patches** — bin-packs files into agent-sized partitions balanced by LOC; when invoked with `--diff-scope` and `--cr-dir`, `partition` also writes the per-partition `patches_p<N>.txt` files alongside `partitions.json`
-9. **Spawn reviewer agents in parallel** — launches one `code:code-review-worker` sub-agent per partition; all run concurrently with `run_in_background: true`
+9. **Spawn reviewer agents in parallel** — launches one `code-review:code-review-worker` sub-agent per partition; all run concurrently with `run_in_background: true`
 10. **Collect and validate findings** — collects all agent outputs, merges with hygiene findings, runs the `validate` subcommand (normalize severity, filter low-confidence, deduplicate, validate line numbers)
 11. **Cache update** (if caching is active) — writes validated findings to the cache for future incremental runs
 12. **Present results** — local mode: prints findings by severity in the terminal; GitHub mode: writes `.closedloop-ai/code-review-findings.json`, `.closedloop-ai/code-review-threads.json`, and `.closedloop-ai/code-review-summary.md` for the CI workflow to post
@@ -205,9 +207,31 @@ This file-based handoff ensures that Claude never directly calls GitHub mutation
 
 Each finding includes: file path, line number, severity, category, issue title, explanation, recommendation, code snippet, priority (0-3), and confidence (0.0-1.0). Findings with confidence below 0.5 are discarded during validation.
 
+## Configuration
+
+Operator-tunable knobs live under `.closedloop-ai/settings/`. All files are optional; absent or malformed entries fall back to built-in defaults.
+
+### `verdict-thresholds.json` (PLN-721)
+
+Tunes the verdict-precedence gates. Currently supports one key:
+
+```json
+{
+  "premise_cumulative_medium": 3
+}
+```
+
+| Key | Default | Effect |
+|---|---|---|
+| `premise_cumulative_medium` | `3` | Trigger `NEEDS_ATTENTION` when at least N MEDIUM Premise findings survive verification on the same PR, even if no individual finding is HIGH. Set to a very large number (e.g. `999`) to disable. Values below 1 are ignored. |
+
+### `verification-gates.json` (PLN-722)
+
+Sensitive-path policy. See `start.md` for the full glob syntax and the three supported keys (`sensitive_paths`, `tentative_on_paths`, `mandatory_human_review_paths`).
+
 ## Reviewer Agent Constraints
 
-Reviewer agents (spawned as `code:code-review-worker` sub-agents) operate under strict constraints defined in `shared_prompt.txt`:
+Reviewer agents (spawned as `code-review:code-review-worker` sub-agents) operate under strict constraints defined in `shared_prompt.txt`:
 
 - May only report findings for files explicitly assigned to their partition
 - May only flag issues on lines present in the diff (added or modified lines)

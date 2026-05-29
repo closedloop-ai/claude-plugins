@@ -89,6 +89,104 @@ def test_code_quality_finding_in_envelope_passes_validation():
     assert validate_result_envelope(env) == []
 
 
+def test_priorities_include_p3():
+    """The shared reviewer prompt (tools/prompts/shared_prompt.txt §"SEVERITY
+    + PRIORITY") explicitly teaches a P3 tier ("MEDIUM (P3): Suggestions,
+    nice-to-haves"). Excluding ``3`` from PRIORITIES would force every
+    reviewer following the documented tiers to misclassify nice-to-haves as
+    P2 or have their findings rejected by finalize-result's validator. The
+    schema must accept every priority the prompt teaches.
+    """
+    from code_review_schema import PRIORITIES
+
+    assert PRIORITIES == frozenset({0, 1, 2, 3}), (
+        f"PRIORITIES must mirror the P0/P1/P2/P3 tiers in shared_prompt.txt; "
+        f"got {sorted(PRIORITIES)}"
+    )
+
+
+def test_p3_finding_passes_validation():
+    """A reviewer emitting ``priority: 3`` (matching the prompt's P3 tier)
+    must validate end-to-end and land in the verified[] bucket of the
+    envelope without producing schema errors."""
+    f = _minimal_diff_finding(
+        category="Code Quality",
+        severity="MEDIUM",
+        priority=3,
+        issue="Consider extracting this into a hook for clarity",
+    )
+    assert validate_finding(f) == []
+    env = _minimal_envelope(verified=[f])
+    assert validate_result_envelope(env) == []
+
+
+def test_shared_prompt_enumerates_every_canonical_category():
+    """The shared reviewer prompt must explicitly enumerate every canonical
+    CATEGORIES value in its <output_format> section so reviewers pick from
+    the documented list instead of inventing categories like "Code Style" or
+    "API Validation" that the schema validator rejects. This guards against
+    schema ↔ prompt drift in both directions:
+
+    - If a category is added to CATEGORIES without updating the prompt,
+      reviewers won't know it exists.
+    - If a category is removed from CATEGORIES without updating the prompt,
+      reviewers will keep emitting it and trigger validation errors.
+    """
+    from pathlib import Path
+
+    prompt_path = (
+        Path(__file__).parent.parent / "prompts" / "shared_prompt.txt"
+    )
+    prompt_text = prompt_path.read_text()
+
+    # The category list appears in the <output_format> section as a bulleted
+    # list. We only assert each canonical category appears in the file at
+    # least once — exact formatting drift (bullet markers, alignment) is
+    # tolerated.
+    missing = [c for c in CATEGORIES if c not in prompt_text]
+    assert not missing, (
+        f"shared_prompt.txt does not enumerate these canonical CATEGORIES: "
+        f"{missing}. Reviewers see the prompt but not code_review_schema.py, "
+        f"so any category missing from the prompt becomes invented output "
+        f"that finalize-result rejects. Add the missing entries to the "
+        f"<output_format> section's category list."
+    )
+
+    # And conversely: every category mentioned in the prompt's category
+    # list must be in CATEGORIES (catches typos and reviewer-invented
+    # categories from being smuggled into the prompt without schema
+    # support).
+    import re
+
+    # Match lines like '  - Correctness        — ...' or '  - "Code Quality" ...'
+    bullet_pattern = re.compile(
+        r"^\s*-\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)?)\b", re.MULTILINE,
+    )
+    in_output_format = prompt_text.split("<output_format>", 1)[1].split(
+        "</output_format>", 1,
+    )[0]
+    bullet_categories = set(bullet_pattern.findall(in_output_format))
+
+    # Filter to candidates that look like enum entries (capitalized words).
+    # The bullets in the category list start with a capitalized category
+    # name followed by an em-dash description.
+    extra = bullet_categories - CATEGORIES
+    # Filter out matches that are not actually in the canonical category
+    # list block (e.g. "Add" from "Add detailed documentation"). We accept
+    # the test if every non-canonical capitalized token is well-known prose.
+    PROSE_ALLOWLIST = {
+        "Brief", "Add", "Read", "Use", "Write", "Cite",
+        "Standard", "Severity", "DRY", "Output", "Match",
+    }
+    extra = {e for e in extra if e not in PROSE_ALLOWLIST}
+    assert not extra, (
+        f"shared_prompt.txt mentions these capitalized category-like tokens "
+        f"in <output_format> that are NOT in CATEGORIES: {sorted(extra)}. "
+        f"Either add them to CATEGORIES or rewrite the prompt so reviewers "
+        f"don't read them as valid categories."
+    )
+
+
 def test_sources():
     assert "agent" in SOURCES
     assert "hygiene" in SOURCES

@@ -1,11 +1,18 @@
 # golden_injection_quarantine
 
-**Status:** deferred — pending plan 01 (detect-injection).
+PLN-720 end-to-end pipeline fixture.
 
-PLN-719 Section 10 listed this fixture but its expected envelope depends
-on outputs from plan 01 (detect-injection), which has not shipped yet. The directory is
-reserved so the future PR just drops `config.yaml`, `inputs/`, and
-`expected/` alongside the existing siblings.
+Simulates a PR whose description triggered the prompt-injection detector
+at severity High (score ≥ 70). The pre-baked inputs reflect the
+post-detect-injection state:
 
-The test parametrization in `test_golden_fixtures.py` skips this
-fixture via the `_DEFERRED_FIXTURES` map until inputs land.
+- `intent_context.json` — post-quarantine: `body` redacted, `quarantine: true`
+- `intent.json` — classifier output reflects the quarantine short-circuit
+  (`intent: "mixed"`, `source: "quarantine"`)
+- `agent_injection-detector.json` — the canonical BLOCKING `InjectionAttempt`
+  finding emitted by detect-injection when severity ≥ High
+
+The expected envelope shows the finding landed in `verified[]` via the
+standard collect → validate → finalize-result pipeline (no special-case
+routing), with verdict `CHANGES_REQUESTED` per canonical precedence
+(rule 2: any BLOCKING → CHANGES_REQUESTED).

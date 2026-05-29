@@ -31,7 +31,10 @@ from typing import Any
 
 from code_review_schema import (
     CACHE_NAMESPACE_BHA,
+    CACHE_NAMESPACE_VERIFICATIONS,
     SCHEMA_VERSION,
+    SEVERITIES,
+    VERIFIER_VERDICTS,
     cache_ttl_days,
     empty_telemetry,
     is_valid_system_marker,
@@ -1468,6 +1471,855 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommands: verify-prepare / verify-consolidate (PLN-722)
+# ---------------------------------------------------------------------------
+#
+# Pipeline placement (foundation stage_23_verify_findings is an agent_fleet
+# stage; the two helpers below wrap it):
+#
+#   stage_22  cmd_validate              → findings_validated.json
+#   stage_22b cmd_verify_prepare        → verify_manifest.json + per-finding inputs
+#   stage_23  Verifier Fleet (agents)   → agent_verifier_<finding_id>.json
+#   stage_24a cmd_verify_consolidate    → findings_verified.json (bucket-split)
+#   stage_25  cmd_finalize_result       → review_result.json envelope
+#
+# "What gets verified" tier table (PLN-722 §Architecture):
+#
+#   | Tier                          | Verified? |
+#   | BLOCKING / HIGH               | Always    |
+#   | MEDIUM, confidence < 0.85     | Yes       |
+#   | MEDIUM, confidence ≥ 0.85     | No        |
+#   | LOW (P3)                      | No        |
+#   | category=Hygiene              | No (deterministic producer) |
+#   | source=injection-detector     | No (deterministic producer) |
+#   | category=Premise              | Always (strict adversarial framing) |
+#
+# MAX_VERIFICATIONS = 50 (PLN-722: 50 × Sonnet ≈ $2/PR at current pricing).
+# Overflow ranks by (severity_weight × confidence) and tags the bottom of
+# the list as "deferred for verification budget" — they're surfaced in
+# pending_verification[] so operators can re-run via /start --verify-deferred
+# in plan 03 follow-up work.
+
+VERIFY_MAX_VERIFICATIONS = 50
+
+# Severity → weight for ranking when MAX_VERIFICATIONS is exceeded. Higher
+# = more likely to retain a verification slot.
+_VERIFY_SEVERITY_WEIGHT: dict[str, float] = {
+    "BLOCKING": 1.0,
+    "HIGH": 0.7,
+    "MEDIUM": 0.4,
+    "LOW": 0.1,
+}
+
+# Verifier model selection (PLN-722 §Model selection). v1 routes everything
+# to Sonnet — cost-bounded for the common case (BHB/Auditor/critics) and
+# cross-model-independent for Opus-produced BHA findings. Future revisions
+# may split this back out per original-reviewer model; the routing lives
+# in _select_verifier_model so callers don't need to know the policy.
+_VERIFY_MODEL_DEFAULT = "sonnet"
+
+
+def _verification_cache_key(
+    finding: dict[str, Any], model: str, prompt_hash: str,
+) -> str:
+    """Cache key for the verifications namespace.
+
+    Per PLN-722 §Cache integration: keyed by ``(finding_id,
+    file_content_hash, verifier_model, verifier_prompt_hash)``. We use the
+    finding's ``code_snippet`` field as the file-content proxy — when the
+    code at the cited location changes, the reviewer re-emits a different
+    snippet, so the key flips and the cached verdict is invalidated.
+    Coarse but correct: false-misses (re-pay verifier cost) are tolerable;
+    false-hits (re-use a stale verdict) would be a correctness bug.
+    """
+    fid = str(finding.get("id", ""))
+    snippet = str(finding.get("code_snippet", ""))
+    payload = (
+        fid + "\0"
+        + hashlib.sha256(snippet.encode("utf-8", "replace")).hexdigest() + "\0"
+        + model + "\0"
+        + (prompt_hash or "")
+    )
+    return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()
+
+
+def _verifications_cache_path(cache_dir: Path, key: str) -> Path:
+    """Per PLN-719 namespace layout: ``<cache_dir>/verifications/<key>.json``."""
+    return cache_dir / CACHE_NAMESPACE_VERIFICATIONS / f"{key}.json"
+
+
+def _read_cached_verification(
+    cache_dir: Path | None, finding: dict[str, Any],
+    model: str, prompt_hash: str,
+) -> dict[str, Any] | None:
+    """Return the cached verifier output for ``finding`` or None.
+
+    Lazy TTL: entries older than ``cache_ttl_days('verifications')`` (30)
+    are treated as a cache miss and silently swept. The cache is purely
+    a cost optimization — missing or malformed entries never block the
+    pipeline.
+    """
+    if cache_dir is None:
+        return None
+    key = _verification_cache_key(finding, model, prompt_hash)
+    path = _verifications_cache_path(cache_dir, key)
+    if not path.exists():
+        return None
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    # TTL check: cached_at must be present and within the window. Missing
+    # cached_at → treat as miss (legacy entry); explicit `None` (e.g. a
+    # corrupted write) → miss.
+    cached_at = data.get("cached_at")
+    ttl = cache_ttl_days(CACHE_NAMESPACE_VERIFICATIONS) or 30
+    try:
+        ts = datetime.fromisoformat(str(cached_at).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return None
+    if datetime.now(timezone.utc) - ts > timedelta(days=ttl):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return None
+    verdict_data = data.get("verdict")
+    if not isinstance(verdict_data, dict):
+        return None
+    return verdict_data
+
+
+def _write_cached_verification(
+    cache_dir: Path | None, finding: dict[str, Any],
+    model: str, prompt_hash: str, verdict_data: dict[str, Any],
+) -> None:
+    """Persist a fresh verifier output under the verifications namespace.
+
+    Best-effort: any OSError silently drops the write (the cache is an
+    optimization, not a source of truth). Atomic via tmp + rename to
+    avoid partial files leaking across runs.
+    """
+    if cache_dir is None:
+        return
+    if not isinstance(verdict_data, dict):
+        return
+    verdict_only = verdict_data.get("verifier_verdict")
+    if verdict_only not in VERIFIER_VERDICTS:
+        return
+    key = _verification_cache_key(finding, model, prompt_hash)
+    path = _verifications_cache_path(cache_dir, key)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp, "w") as fh:
+            json.dump(
+                {
+                    "cached_at": datetime.now(timezone.utc).isoformat(),
+                    "key": key,
+                    "finding_id": finding.get("id"),
+                    "verifier_model": model,
+                    "verifier_prompt_hash": prompt_hash,
+                    "verdict": verdict_data,
+                },
+                fh,
+                indent=2,
+            )
+        os.replace(str(tmp), str(path))
+    except OSError:
+        pass
+
+
+def _verification_priority(finding: dict[str, Any]) -> float:
+    """Risk score for verification-budget ranking: severity_weight × confidence."""
+    sw = _VERIFY_SEVERITY_WEIGHT.get(str(finding.get("severity", "")), 0.0)
+    try:
+        conf = float(finding.get("confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    return sw * conf
+
+
+def _needs_verification(finding: dict[str, Any]) -> bool:
+    """Apply the PLN-722 'What gets verified' tier table to one finding."""
+    category = str(finding.get("category", ""))
+    source = str(finding.get("source", ""))
+    severity = str(finding.get("severity", ""))
+    try:
+        confidence = float(finding.get("confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    # Deterministic producers — never verified (the verifier would be
+    # second-guessing a regex catalogue or a static check).
+    if category == "Hygiene":
+        return False
+    if source == "injection-detector":
+        return False
+
+    # Premise: always verified with the strict adversarial framing in
+    # verifier_prompt.txt — the verdict precedence already gives Premise
+    # a high blast radius (cumulative MEDIUM gate in PLN-721), so every
+    # Premise finding needs an independent second opinion.
+    if category == "Premise":
+        return True
+
+    if severity in ("BLOCKING", "HIGH"):
+        return True
+
+    if severity == "MEDIUM":
+        return confidence < 0.85
+
+    # LOW (P3) and anything unrecognized: skip verification.
+    return False
+
+
+def _select_verifier_model(finding: dict[str, Any]) -> str:
+    """Pick the verifier model for a finding (currently uniform)."""
+    # finding is intentionally unused — the function is the single
+    # routing seam for when v2 splits Opus-cross-verification back out.
+    del finding
+    return _VERIFY_MODEL_DEFAULT
+
+
+def cmd_verify_prepare(args: argparse.Namespace) -> int:
+    """Tier-select findings for verification and emit per-finding inputs.
+
+    PLN-722 stage_22b. Reads ``findings_validated.json`` (or any input
+    shaped as ``{"validated": [...]}`` / ``{"findings": [...]}`` / bare
+    list), applies the "What gets verified" tier rules, ranks the eligible
+    set by ``severity_weight × confidence``, caps at
+    ``VERIFY_MAX_VERIFICATIONS``, and writes:
+
+      - ``<cr_dir>/verify_manifest.json`` (also printed to stdout):
+        ``{
+            "to_verify": [{"finding_id", "model", "input_path", ...}, ...],
+            "skipped_no_verification": [...],
+            "deferred_budget": [...],
+            "max_verifications": int,
+            "total_eligible": int,
+            "verifier_prompt_path": str
+          }``
+
+      - ``<cr_dir>/verifier_inputs/<finding_id>.json`` per eligible finding,
+        containing the canonical finding + the path the verifier should
+        write its verdict to (``<cr_dir>/agent_verifier_<finding_id>.json``).
+
+    Always exits 0; an empty validated set produces an empty manifest. The
+    walker's Verifier Fleet section spawns one ``code:code-review-worker``
+    Task per ``to_verify`` entry; each agent reads its input file and
+    writes its verdict to the canonical output path.
+    """
+    cr_dir = Path(args.cr_dir)
+    findings_path = Path(args.findings)
+    cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
+    prompt_hash = str(getattr(args, "prompt_hash", "") or "")
+
+    data = _read_optional_json(findings_path, {})
+    if isinstance(data, dict):
+        raw = data.get("validated") or data.get("findings") or []
+    elif isinstance(data, list):
+        raw = data
+    else:
+        raw = []
+
+    findings: list[dict[str, Any]] = [
+        f for f in raw if isinstance(f, dict) and f.get("id")
+    ]
+    finding_by_id: dict[str, dict[str, Any]] = {
+        str(f["id"]): f for f in findings
+    }
+
+    eligible: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    for f in findings:
+        fid = str(f["id"])
+        if _needs_verification(f):
+            eligible.append({
+                "finding_id": fid,
+                "model": _select_verifier_model(f),
+                "severity": f.get("severity"),
+                "confidence": f.get("confidence"),
+                "category": f.get("category"),
+                "_priority_score": _verification_priority(f),
+            })
+        else:
+            skipped.append(fid)
+
+    # Rank by priority; stable secondary sort by finding_id so a tie
+    # doesn't make the cutoff non-deterministic across runs (cache
+    # invalidation cares about ordering).
+    eligible.sort(key=lambda e: (-e["_priority_score"], e["finding_id"]))
+
+    deferred: list[str] = []
+    if len(eligible) > VERIFY_MAX_VERIFICATIONS:
+        deferred = [e["finding_id"] for e in eligible[VERIFY_MAX_VERIFICATIONS:]]
+        eligible = eligible[:VERIFY_MAX_VERIFICATIONS]
+
+    inputs_dir = cr_dir / "verifier_inputs"
+    inputs_dir.mkdir(parents=True, exist_ok=True)
+    verifier_prompt_path = cr_dir / "verifier_prompt.txt"
+
+    to_verify: list[dict[str, Any]] = []
+    cache_hits: list[str] = []
+    for entry in eligible:
+        fid = entry["finding_id"]
+        finding = finding_by_id[fid]
+        output_path = cr_dir / f"agent_verifier_{fid}.json"
+
+        # Cache check — if we have a fresh verdict for this exact
+        # (finding_id, snippet_hash, model, prompt_hash) tuple, materialize
+        # the cached verdict at the canonical output path and skip
+        # spawning the agent. cmd_verify_consolidate reads the same file
+        # regardless of source.
+        cached = _read_cached_verification(
+            cache_dir, finding, entry["model"], prompt_hash,
+        )
+        if cached is not None:
+            try:
+                with open(output_path, "w") as fh:
+                    json.dump(cached, fh, indent=2)
+                cache_hits.append(fid)
+                continue
+            except OSError:
+                # Fall through to spawn if materializing the cache hit
+                # fails; the verifier will re-derive and the write-back
+                # in verify-consolidate will refresh the entry.
+                pass
+
+        input_path = inputs_dir / f"{fid}.json"
+        with open(input_path, "w") as fh:
+            json.dump(
+                {
+                    "finding": finding,
+                    "verifier_prompt_path": str(verifier_prompt_path),
+                    "output_path": str(output_path),
+                },
+                fh,
+                indent=2,
+            )
+        to_verify.append({
+            "finding_id": fid,
+            "model": entry["model"],
+            "severity": entry["severity"],
+            "confidence": entry["confidence"],
+            "category": entry["category"],
+            "input_path": str(input_path),
+            "output_path": str(output_path),
+        })
+
+    manifest = {
+        "to_verify": to_verify,
+        "skipped_no_verification": skipped,
+        "deferred_budget": deferred,
+        "cache_hits": cache_hits,
+        "max_verifications": VERIFY_MAX_VERIFICATIONS,
+        "total_eligible": len(to_verify) + len(deferred) + len(cache_hits),
+        "verifier_prompt_path": str(verifier_prompt_path),
+    }
+
+    # Always also persist the manifest at a deterministic path so the
+    # walker can read it without parsing stdout. cmd_validate emits via
+    # stdout-redirect; we mirror the pattern.
+    manifest_path = cr_dir / "verify_manifest.json"
+    with open(manifest_path, "w") as fh:
+        json.dump(manifest, fh, indent=2)
+        fh.write("\n")
+
+    json.dump(manifest, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+# Sensitive-path config (PLN-722 §Sensitive-path escalation). Absent file
+# = no escalation; bootstrap does NOT auto-generate per `00-discovery.md`.
+_VERIFICATION_GATES_DEFAULT_PATH = Path(".closedloop-ai/settings/verification-gates.json")
+
+# PLN-721 Phase 4: Premise cumulative-MEDIUM verdict gate. Operator-overridable
+# via ``.closedloop-ai/settings/verdict-thresholds.json``; absent/malformed →
+# the default fires at 3 (matches the plan's design intent: "a single MEDIUM
+# does not block; three MEDIUM Premise findings on the same PR signal the
+# patch is structurally wrong even when no individual line is dangerous").
+_VERDICT_THRESHOLDS_DEFAULT_PATH = Path(".closedloop-ai/settings/verdict-thresholds.json")
+_VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT = 3
+_VERDICT_THRESHOLD_KEYS: tuple[str, ...] = (
+    "premise_cumulative_medium",
+)
+
+
+def _load_optional_settings_dict(
+    path: Path | None, defaults: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Open an optional operator-authored settings JSON file.
+
+    Shared frame for ``_load_verdict_thresholds`` and
+    ``_load_verification_gates`` (the v2.9.0 review surfaced their
+    structural duplication). Returns:
+
+      - ``(None, fresh_defaults)`` when ``path`` is None, missing, or
+        the file does not contain a top-level JSON object — caller
+        returns ``fresh_defaults`` directly.
+      - ``(data, fresh_defaults)`` otherwise — caller layers per-key
+        validation on top by reading from ``data`` and overwriting
+        ``fresh_defaults`` entries when the value is accepted.
+
+    ``fresh_defaults`` is a per-call shallow copy with list values
+    deep-copied so callers may mutate it without affecting future
+    invocations.
+    """
+    fresh: dict[str, Any] = {
+        k: (list(v) if isinstance(v, list) else v)
+        for k, v in defaults.items()
+    }
+    if path is None:
+        return None, fresh
+    data = _read_optional_json(path, None)
+    if not isinstance(data, dict):
+        return None, fresh
+    return data, fresh
+
+
+def _load_verdict_thresholds(path: Path | None) -> dict[str, int]:
+    """Read verdict-thresholds.json. Absent or malformed → built-in defaults.
+
+    Returns a dict with the canonical keys present, each mapped to an int.
+    Unknown keys are ignored. Non-int / negative entries fall back to the
+    default — the file is operator-authored and should not crash the
+    pipeline on a typo or a "0" that would disable the gate entirely
+    (use a very large number for that).
+    """
+    defaults: dict[str, Any] = {
+        "premise_cumulative_medium": _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
+    }
+    data, out = _load_optional_settings_dict(path, defaults)
+    if data is None:
+        return out
+    for key in _VERDICT_THRESHOLD_KEYS:
+        raw = data.get(key)
+        if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1:
+            out[key] = raw
+    return out
+
+_VERIFICATION_GATE_KEYS: tuple[str, ...] = (
+    # REJECTED on this path + BLOCKING/HIGH severity → TENTATIVE
+    # (severity capped at HIGH; rejection_class cleared).
+    "sensitive_paths",
+    # Any verdict on this path → TENTATIVE (rejection_class cleared if
+    # the lift came from REJECTED so the finding stops claiming both
+    # "disproved" and "legitimate" simultaneously).
+    "tentative_on_paths",
+    # Any verdict on this path → TENTATIVE + force_human_review=True,
+    # which propagates to NEEDS_ATTENTION via _compute_canonical_verdict
+    # rule 2.5.
+    "mandatory_human_review_paths",
+)
+
+
+def _glob_to_regex(pattern: str) -> re.Pattern[str]:
+    """Translate a glob with ``**`` support to a compiled regex.
+
+    Supports the three patterns used by ``verification-gates.json`` per
+    PLN-722's documented examples (``lib/auth/**``, ``**/migrations/**``,
+    ``**/credentials.*``):
+
+      * ``**/`` at the start  → optional path prefix (any depth)
+      * ``/**`` at the end    → optional path suffix (any depth)
+      * ``**`` in the middle  → any characters across segments
+      * ``*``                 → any chars except ``/``
+      * ``?``                 → single char except ``/``
+      * literal ``.``         → escaped
+
+    The matching is forward-slash-only (we never feed Windows-style paths
+    into this — the producers all use POSIX paths inside the repo).
+    """
+    parts: list[str] = []
+    i = 0
+    n = len(pattern)
+    while i < n:
+        ch = pattern[i]
+        # Handle `**/` as optional prefix at start of segment.
+        if pattern[i:i + 3] == "**/":
+            parts.append("(?:.*/)?")
+            i += 3
+        # Handle trailing `/**` as optional suffix.
+        elif pattern[i:i + 3] == "/**" and i + 3 == n:
+            parts.append("(?:/.*)?")
+            i += 3
+        elif pattern[i:i + 2] == "**":
+            parts.append(".*")
+            i += 2
+        elif ch == "*":
+            parts.append("[^/]*")
+            i += 1
+        elif ch == "?":
+            parts.append("[^/]")
+            i += 1
+        else:
+            parts.append(re.escape(ch))
+            i += 1
+    return re.compile("^" + "".join(parts) + "$")
+
+
+def _matches_any_glob(path: str | None, patterns: list[str]) -> bool:
+    if not path:
+        return False
+    for pat in patterns:
+        if not isinstance(pat, str) or not pat:
+            continue
+        if _glob_to_regex(pat).match(path):
+            return True
+    return False
+
+
+def _load_verification_gates(path: Path | None) -> dict[str, list[str]]:
+    """Read verification-gates.json. Absent or malformed → empty gates.
+
+    Returns a dict with the three canonical keys present, each mapped to
+    a list of glob patterns (possibly empty). Unknown keys are ignored.
+    Non-string list entries are dropped silently — the file is operator-
+    authored and should not crash the pipeline on a typo.
+    """
+    defaults: dict[str, Any] = {k: [] for k in _VERIFICATION_GATE_KEYS}
+    data, out_any = _load_optional_settings_dict(path, defaults)
+    # The shared helper returns dict[str, Any]; this loader's contract
+    # is dict[str, list[str]] and per-key validation below preserves
+    # that invariant.
+    out: dict[str, list[str]] = out_any  # type: ignore[assignment]
+    if data is None:
+        return out
+    for key in _VERIFICATION_GATE_KEYS:
+        raw = data.get(key, [])
+        if isinstance(raw, list):
+            out[key] = [p for p in raw if isinstance(p, str) and p]
+    return out
+
+
+def _agent_verifier_output_path(cr_dir: Path, finding_id: str) -> Path:
+    return cr_dir / f"agent_verifier_{finding_id}.json"
+
+
+def _read_verifier_output(path: Path) -> dict[str, Any] | None:
+    """Read one agent_verifier_<id>.json. Returns None on missing/malformed.
+
+    Tolerates the agent emitting the verdict at the top level or wrapped
+    in a ``{"finding": {...}}`` envelope (mirroring how some reviewer
+    agents emit ``{"findings": [...]}``).
+    """
+    data = _read_optional_json(path, None)
+    if not isinstance(data, dict):
+        return None
+    if "verifier_verdict" in data:
+        return data
+    inner = data.get("finding")
+    if isinstance(inner, dict) and "verifier_verdict" in inner:
+        return inner
+    return None
+
+
+def cmd_verify_consolidate(args: argparse.Namespace) -> int:
+    """Merge verifier outputs with the validated set + bucket-split.
+
+    PLN-722 stage_24a. Reads:
+
+      - ``findings_validated.json`` (the originals)
+      - ``verify_manifest.json`` (which IDs went to verification, which
+        were skipped, which deferred)
+      - ``agent_verifier_<id>.json`` for each ``to_verify`` entry
+      - ``verification-gates.json`` (sensitive-path config; optional)
+
+    Produces ``findings_verified.json`` with bucket-split shape:
+
+      {
+        "verified": [...],                # CONFIRMED + DOWNGRADE + TENTATIVE
+                                          #   + JUSTIFIED-INVALID (reserved;
+                                          #   not currently emitted)
+                                          #   + tier-skipped findings (no
+                                          #   verification needed)
+        "rejected": [...],                # REJECTED (with verifier fields)
+        "pending_verification": [...],    # deferred + missing verifier outputs
+        "justified": [...],               # PLN-721 — JUSTIFIED-VALID findings
+                                          #   (author defense audited + passed)
+        "force_human_review": bool,       # any finding on a mandatory_human_
+                                          #   review_paths match
+        "stats": {
+            "verified_count": int,
+            "rejected_count": int,
+            "pending_count": int,
+            "justified_count": int,       # PLN-721 — len(justified)
+            "escalated_sensitive_path": int,
+            "escalated_mandatory_review": int,
+        }
+      }
+
+    Sensitive-path escalations (applied BEFORE bucketing):
+      * REJECTED + BLOCKING/HIGH severity + sensitive_paths match
+          → TENTATIVE (capped at HIGH per plan).
+      * Any finding on tentative_on_paths
+          → TENTATIVE (verdict stays as recorded if already non-rejected,
+          but the finding lands in verified[] with a TENTATIVE flag so the
+          presenter renders it under "[verifier uncertain]").
+      * Any finding on mandatory_human_review_paths
+          → TENTATIVE + force_human_review True (drives verdict precedence
+          to NEEDS_ATTENTION downstream).
+
+    Always exits 0; missing inputs degrade to "everything pending_verification"
+    so the pipeline never aborts on a verifier crash.
+    """
+    cr_dir = Path(args.cr_dir)
+    validated_path = Path(args.validated)
+    manifest_path = Path(args.manifest) if getattr(args, "manifest", None) else (
+        cr_dir / "verify_manifest.json"
+    )
+    gates_path = Path(args.gates) if getattr(args, "gates", None) else (
+        _VERIFICATION_GATES_DEFAULT_PATH
+    )
+    cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
+    prompt_hash = str(getattr(args, "prompt_hash", "") or "")
+
+    validated_data = _read_optional_json(validated_path, {})
+    if isinstance(validated_data, dict):
+        validated = validated_data.get("validated") or validated_data.get("findings") or []
+    elif isinstance(validated_data, list):
+        validated = validated_data
+    else:
+        validated = []
+
+    manifest = _read_optional_json(manifest_path, {})
+    to_verify_ids: set[str] = set()
+    skipped_ids: set[str] = set()
+    deferred_ids: set[str] = set()
+    cache_hit_ids: set[str] = set()
+    to_verify_models: dict[str, str] = {}
+    if isinstance(manifest, dict):
+        for e in manifest.get("to_verify", []):
+            if not isinstance(e, dict) or not e.get("finding_id"):
+                continue
+            fid = str(e["finding_id"])
+            to_verify_ids.add(fid)
+            if isinstance(e.get("model"), str):
+                to_verify_models[fid] = e["model"]
+        skipped_ids = {
+            str(fid) for fid in manifest.get("skipped_no_verification", [])
+            if isinstance(fid, str)
+        }
+        deferred_ids = {
+            str(fid) for fid in manifest.get("deferred_budget", [])
+            if isinstance(fid, str)
+        }
+        cache_hit_ids = {
+            str(fid) for fid in manifest.get("cache_hits", [])
+            if isinstance(fid, str)
+        }
+
+    gates = _load_verification_gates(gates_path)
+
+    verified: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    # PLN-721: JUSTIFIED-VALID verdicts land here. The bucket exists at the
+    # consolidate boundary so finalize-result can route them to the canonical
+    # envelope's justified[] surface without re-deriving from verifier_verdict.
+    justified: list[dict[str, Any]] = []
+    escalated_sensitive = 0
+    escalated_mandatory = 0
+    force_human_review = False
+
+    for raw in validated:
+        if not isinstance(raw, dict):
+            continue
+        finding = dict(raw)  # shallow copy
+        fid = str(finding.get("id", ""))
+        if not fid:
+            # Unkeyed finding — straight to verified[] without a verifier
+            # round-trip. Anchors validate's discard policy: anything that
+            # makes it past validate is real even if upstream forgot an id.
+            verified.append(finding)
+            continue
+
+        file_path = finding.get("file") if isinstance(finding.get("file"), str) else None
+
+        if fid in to_verify_ids or fid in cache_hit_ids:
+            output_path = _agent_verifier_output_path(cr_dir, fid)
+            verdict_data = _read_verifier_output(output_path)
+            if verdict_data is None:
+                # Agent didn't emit. Tag as pending so operators know to
+                # re-run; do NOT silently drop and do NOT auto-confirm.
+                finding["verifier_verdict"] = None
+                finding["verifier_reasoning"] = (
+                    "Verifier agent did not produce an output file; finding "
+                    "deferred for re-verification."
+                )
+                pending.append(finding)
+                continue
+            _merge_verifier_fields(finding, verdict_data)
+            # Cache write-back for fresh verdicts (skip cache hits — those
+            # came FROM the cache, no point overwriting with the same data).
+            if fid in to_verify_ids and fid not in cache_hit_ids:
+                model = to_verify_models.get(fid, _VERIFY_MODEL_DEFAULT)
+                _write_cached_verification(
+                    cache_dir, finding, model, prompt_hash, verdict_data,
+                )
+        elif fid in deferred_ids:
+            finding["verifier_verdict"] = None
+            finding["verifier_reasoning"] = (
+                "Deferred for verification budget (MAX_VERIFICATIONS exceeded)."
+            )
+            pending.append(finding)
+            continue
+        elif fid in skipped_ids:
+            # Tier-skipped: verifier_verdict stays None. Land in verified[].
+            pass
+        # else: not in any manifest list → treat as skipped (legacy/no manifest)
+
+        # Sensitive-path escalation
+        if _matches_any_glob(file_path, gates["mandatory_human_review_paths"]):
+            finding["verifier_verdict"] = "TENTATIVE"
+            finding["human_review_recommended"] = True
+            escalated_mandatory += 1
+            force_human_review = True
+            verified.append(finding)
+            continue
+        if (
+            finding.get("verifier_verdict") == "REJECTED"
+            and str(finding.get("severity", "")) in ("BLOCKING", "HIGH")
+            and _matches_any_glob(file_path, gates["sensitive_paths"])
+        ):
+            finding["verifier_verdict"] = "TENTATIVE"
+            # Cap severity at HIGH per plan. Both fields must change:
+            # _compute_canonical_verdict reads `severity` (not
+            # `verifier_severity`) for the BLOCKING short-circuit, so
+            # leaving `severity = "BLOCKING"` would route this finding
+            # to CHANGES_REQUESTED via Rule 2 — stronger than any
+            # REJECTED-then-escalated finding should ever produce, and
+            # also dead-code-ing the HIGH cap. We mirror the change on
+            # `verifier_severity` so any future reader that does prefer
+            # the verifier field sees the same value.
+            if str(finding.get("severity", "")) == "BLOCKING":
+                finding["severity"] = "HIGH"
+                finding["verifier_severity"] = "HIGH"
+            finding["rejection_class"] = None
+            escalated_sensitive += 1
+            verified.append(finding)
+            continue
+        if _matches_any_glob(file_path, gates["tentative_on_paths"]):
+            # `tentative_on_paths` applies to ALL verdicts, including
+            # REJECTED — a REJECTED finding on a path the operator has
+            # flagged for "always-tentative" treatment must be lifted out
+            # of the rejected bucket; otherwise it lands in verified[]
+            # with verifier_verdict="REJECTED" + rejection_class intact
+            # ("simultaneously disproved and in the legitimate bucket"),
+            # never surfacing in the Dismissed Findings presenter section
+            # despite being marked REJECTED. Mirror the sensitive_paths
+            # escalation: clear rejection_class on the lift.
+            # PLN-721: JUSTIFIED-VALID / JUSTIFIED-INVALID participate on
+            # the same contract — the operator's "always-tentative" tag
+            # outranks the author's justification. JUSTIFIED-VALID lifts
+            # out of justified[] back into verified[] (with TENTATIVE
+            # verdict) so Rule 3.5 escalates to NEEDS_ATTENTION; the
+            # human will re-judge the justification.
+            if finding.get("verifier_verdict") in (
+                None, "CONFIRMED", "DOWNGRADE", "REJECTED",
+                "JUSTIFIED-VALID", "JUSTIFIED-INVALID",
+            ):
+                if finding.get("verifier_verdict") == "REJECTED":
+                    finding["rejection_class"] = None
+                finding["verifier_verdict"] = "TENTATIVE"
+            verified.append(finding)
+            continue
+
+        # No escalation — bucket by verdict.
+        # PLN-721: JUSTIFIED-VALID lands in justified[] (the author's
+        # defense is valid; the finding is dismissed by the justification);
+        # JUSTIFIED-INVALID lands in verified[] (the justification was
+        # audited and refuted, so the original finding stands).
+        verdict = finding.get("verifier_verdict")
+        if verdict == "REJECTED":
+            rejected.append(finding)
+        elif verdict == "JUSTIFIED-VALID":
+            justified.append(finding)
+        else:
+            verified.append(finding)
+
+    output = {
+        "verified": verified,
+        "rejected": rejected,
+        "pending_verification": pending,
+        # PLN-721: justified[] bucket exposed at the consolidate boundary
+        # so cmd_finalize_result can route directly into the envelope's
+        # justified[] surface without re-deriving from verifier_verdict.
+        "justified": justified,
+        "force_human_review": force_human_review,
+        "stats": {
+            "verified_count": len(verified),
+            "rejected_count": len(rejected),
+            "pending_count": len(pending),
+            "justified_count": len(justified),
+            "escalated_sensitive_path": escalated_sensitive,
+            "escalated_mandatory_review": escalated_mandatory,
+        },
+    }
+
+    consolidated_path = cr_dir / "findings_verified.json"
+    with open(consolidated_path, "w") as fh:
+        json.dump(output, fh, indent=2)
+        fh.write("\n")
+
+    json.dump(output, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def _merge_verifier_fields(
+    finding: dict[str, Any], verdict_data: dict[str, Any],
+) -> None:
+    """Merge verifier output fields into the original finding in place.
+
+    Only canonical verifier_* fields are merged; the verifier never
+    overwrites the original finding's issue / explanation / recommendation
+    (those stay author-of-record for downstream presentation).
+
+    Severity reconciliation on DOWNGRADE: per ``verifier_prompt.txt``
+    ("the finding still counts toward verdict — at the corrected
+    severity"), a DOWNGRADE verdict with a valid ``verifier_severity``
+    also rewrites the canonical ``severity`` field, so downstream
+    ``_compute_canonical_verdict`` (which reads ``severity`` in Rules 2
+    and 3) sees the corrected tier. Without this rewrite a verifier
+    that knocks BLOCKING down to MEDIUM is inert at the verdict layer —
+    Rule 2 still short-circuits on the unrewritten BLOCKING. PR #111
+    review HIGH #1 surfaced the same bug for the sensitive-path cap;
+    DOWNGRADE has the identical shape.
+    """
+    if "verifier_verdict" in verdict_data:
+        verdict = verdict_data["verifier_verdict"]
+        if verdict in VERIFIER_VERDICTS:
+            finding["verifier_verdict"] = verdict
+            if verdict == "DOWNGRADE":
+                vs = verdict_data.get("verifier_severity")
+                if isinstance(vs, str) and vs in SEVERITIES:
+                    finding["severity"] = vs
+    for key in (
+        "verifier_severity",
+        "verifier_confidence",
+        "verifier_reasoning",
+        "verifier_model",
+        "verification_duration_ms",
+        "rejection_class",
+    ):
+        if key in verdict_data:
+            finding[key] = verdict_data[key]
+    checks = verdict_data.get("evidence_checks")
+    if isinstance(checks, list):
+        finding["evidence_checks"] = checks
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: cache-check / cache-update
 # ---------------------------------------------------------------------------
 
@@ -2343,8 +3195,26 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
             skipped_no_inline += 1
             continue
 
-        path = finding.get("file", "")
-        line = int(finding.get("line", 0))
+        path = finding.get("file") or ""
+        # Schema permits ``line: int | None`` for system + pr_metadata scopes;
+        # legacy reviewers also sometimes emit ``"42"`` as a string. The
+        # previous ``int(finding.get("line", 0))`` coerced strings cleanly
+        # but crashed on ``None``; tightening to ``isinstance(int)`` fixed
+        # the crash but silently dropped string-valued lines into ``failed``
+        # (regression flagged in PR #107 review). The split below keeps both
+        # behaviors: reject ``bool`` first (``bool`` is a subclass of ``int``
+        # in Python — ``isinstance(True, int)`` is True — so unguarded
+        # ``int(True)`` posts to line 1), then try ``int(line_raw)`` which
+        # handles ints, numeric strings, and falls through to ``0`` on
+        # ``None``/non-numeric values via the typed exception catch.
+        line_raw = finding.get("line")
+        if isinstance(line_raw, bool):
+            line = 0
+        else:
+            try:
+                line = int(line_raw) if line_raw is not None else 0
+            except (TypeError, ValueError):
+                line = 0
 
         if not path or not line:
             failed += 1
@@ -2888,15 +3758,28 @@ def compute_canonical_prompt_hash(
 def cmd_compute_hashes(args: argparse.Namespace) -> int:
     """Compute prompt hash and context key for cache operations.
 
-    The prompt hash now folds the canonical schema_version per PLN-719
-    Section 9: any MAJOR schema bump invalidates all caches automatically.
+    The prompt hash folds the canonical schema_version per PLN-719
+    Section 9 (any MAJOR schema bump invalidates all caches) and — since
+    PLN-722 v2.8.1 — the verifier prompt bytes, so editing
+    ``verifier_prompt.txt`` busts every cache namespace that keys on
+    ``<PROMPT_HASH>`` (BHA cache and the new ``verifications/`` namespace).
+    PLN-721 extends the same contract to ``premise_prompt.txt``: editing
+    the Premise Reviewer prompt invalidates the same cache namespaces.
+    Coarse but correct: prompt revs are rare, and the over-invalidation
+    cost (re-pay the BHA reviewer pass) is bounded by how often the
+    prompts actually change. The alternative (separate per-asset hash)
+    splits the cache-key contract across N CLI flags without preventing
+    the bug PLN-722 v2.8.0 v1 shipped — stale verifier verdicts
+    surviving a prompt edit.
     """
     shared_prompt: str = args.shared_prompt
     bha_suffix: str = args.bha_suffix
+    verifier_prompt: str | None = getattr(args, "verifier_prompt", None)
+    premise_prompt: str | None = getattr(args, "premise_prompt", None)
     diff_tip: str = args.diff_tip
     base_ref: str = args.base_ref
 
-    # Read both prompt files.
+    # Read all prompt files.
     try:
         with open(shared_prompt, "rb") as f:
             shared_bytes = f.read()
@@ -2909,8 +3792,36 @@ def cmd_compute_hashes(args: argparse.Namespace) -> int:
     except OSError as exc:
         print(f"Error: cannot read BHA suffix: {exc}", file=sys.stderr)
         return 1
+    # verifier_prompt.txt is optional for backward compatibility with
+    # pre-PLN-722 callers; new callers (stage_18 wiring) always pass it.
+    # When absent, the prompt hash matches v2.8.0 exactly so existing
+    # cache entries stay valid through the upgrade.
+    verifier_bytes: bytes | None = None
+    if verifier_prompt:
+        try:
+            with open(verifier_prompt, "rb") as f:
+                verifier_bytes = f.read()
+        except OSError as exc:
+            print(f"Error: cannot read verifier prompt: {exc}", file=sys.stderr)
+            return 1
+    # premise_prompt.txt is optional with the same back-compat contract
+    # as verifier_prompt — when absent (pre-PLN-721 callers) the hash
+    # matches v2.8.1 exactly.
+    premise_bytes: bytes | None = None
+    if premise_prompt:
+        try:
+            with open(premise_prompt, "rb") as f:
+                premise_bytes = f.read()
+        except OSError as exc:
+            print(f"Error: cannot read premise prompt: {exc}", file=sys.stderr)
+            return 1
 
-    prompt_hash = compute_canonical_prompt_hash([shared_bytes, bha_bytes])
+    hash_parts = [shared_bytes, bha_bytes]
+    if verifier_bytes is not None:
+        hash_parts.append(verifier_bytes)
+    if premise_bytes is not None:
+        hash_parts.append(premise_bytes)
+    prompt_hash = compute_canonical_prompt_hash(hash_parts)
 
     # Compute context key via git merge-base
     context_key = ""
@@ -3336,6 +4247,493 @@ def _classify_intent(
     return "mixed"
 
 
+# ---------------------------------------------------------------------------
+# Subcommand: detect-injection (PLN-720)
+# ---------------------------------------------------------------------------
+
+# Pattern catalogue: deterministic regex for the 9 prompt-injection classes
+# documented in PLN-720 §Detection pattern catalogue. Each pattern carries a
+# weight; matches in a single section accumulate; the section total maps
+# through _injection_severity() into the severity tier.
+
+# Zero-width and BOM characters used by exfiltration / steganography attacks.
+# Built from chr() so the source is grep-friendly (literal zero-width chars
+# would be invisible in editor + diff views).
+_ZW_CHARS = "".join(chr(c) for c in (
+    0x200B,  # ZERO WIDTH SPACE
+    0x200C,  # ZERO WIDTH NON-JOINER
+    0x200D,  # ZERO WIDTH JOINER
+    0x200E,  # LEFT-TO-RIGHT MARK
+    0x200F,  # RIGHT-TO-LEFT MARK
+    0xFEFF,  # ZERO WIDTH NO-BREAK SPACE (BOM)
+))
+_ENCODED_PAYLOAD_PATTERN = (
+    r"[A-Za-z0-9+/]{60,}={0,2}"        # long base64-ish run
+    r"|(?:[0-9a-fA-F]{2}\s*){40,}"     # long hex run
+    "|[" + _ZW_CHARS + "]{3,}"          # 3+ zero-width / BOM chars
+)
+
+_INJECTION_PATTERN_DEFS: list[tuple[str, int, str, int]] = [
+    (
+        "instruction_override", 50,
+        r"\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:prior|previous|above|earlier)\s+"
+        r"(?:instructions|directives|prompts|messages|context|rules)\b",
+        re.IGNORECASE,
+    ),
+    (
+        # `act as <anything>` would match benign PR wording like "act as
+        # a thin wrapper" or "act as the source of truth" and contribute
+        # 40 toward quarantine. The other branches are specific enough
+        # already; narrow only `act as` to require a model/agent/role
+        # noun (the actual injection vector). The persona list mirrors
+        # the canonical adversarial-persona vocabulary — extend on real
+        # false-negative evidence from the audit log.
+        "role_reversal", 40,
+        r"\b(?:you\s+are\s+now|pretend\s+to\s+be|roleplay\s+as|"
+        r"from\s+now\s+on\s+you\s+are)\s+\S"
+        r"|\bact\s+as\s+(?:an?\s+|the\s+)?"
+        r"(?:AI|LLM|model|assistant|chatbot|agent|expert|"
+        r"admin|root|sysop|sudoer|developer|maintainer|reviewer|"
+        r"approver|owner|operator|moderator|user|hacker|attacker)\b",
+        re.IGNORECASE,
+    ),
+    (
+        "system_prompt_forgery", 50,
+        r"(?:<system>|<\|im_start\|>|<\|im_end\|>|\[INST\]|\[/INST\])",
+        0,
+    ),
+    (
+        "directive_injection", 30,
+        r"\bthe\s+(?:user|developer|maintainer|reviewer|admin)\s+"
+        r"(?:wants|needs|requires|asks|requests)\s+you\s+to\b",
+        re.IGNORECASE,
+    ),
+    (
+        "output_coercion", 35,
+        r"\b(?:emit|return|output|produce|provide|generate)\s+"
+        r"(?:no|empty|zero|0)\s+findings\b"
+        r"|\breturn\s+an?\s+empty\s+(?:array|list)\b"
+        r"|\bapprove\s+(?:all|every)\s+(?:findings|changes|PRs|pull\s+requests)\b",
+        re.IGNORECASE,
+    ),
+    (
+        "tool_coercion", 30,
+        r"\bdo\s+not\s+use\s+(?:Read|Grep|Write|Bash|Edit|Glob)\b"
+        r"|\bskip\s+(?:verification|validation|review|the\s+\w+\s+pass)\b",
+        re.IGNORECASE,
+    ),
+    (
+        "encoded_payload", 25,
+        _ENCODED_PAYLOAD_PATTERN,
+        0,
+    ),
+    (
+        "unicode_tag_chars", 40,
+        r"[\U000E0000-\U000E007F]",        # Unicode tag character range
+        0,
+    ),
+    (
+        "html_comment_exfil", 25,
+        r"<!--[^>]{50,}-->",               # long HTML comment
+        0,
+    ),
+]
+
+# Compile once at module load.
+_INJECTION_PATTERNS: list[tuple[str, int, re.Pattern[str]]] = [
+    (name, weight, re.compile(pat, flags))
+    for name, weight, pat, flags in _INJECTION_PATTERN_DEFS
+]
+
+# Literal forgery delimiters stripped from raw content before scoring. An
+# adversary embedding a real `<system>` tag in PR body would have its
+# system_prompt_forgery match counted AND the literal removed before the
+# wrapper sees it.
+_INJECTION_STRIP_TOKENS: tuple[str, ...] = (
+    "<untrusted_input>", "</untrusted_input>",
+    "<system>", "</system>",
+    "<|im_start|>", "<|im_end|>",
+    "[INST]", "[/INST]",
+)
+
+# Severity thresholds (PLN-720 §Detection pattern catalogue).
+_INJECTION_SCORE_LOW = 1
+_INJECTION_SCORE_MEDIUM = 30
+_INJECTION_SCORE_HIGH = 70
+
+# Per-class cap on how many matches contribute to the score. Classes
+# where *presence* is signal but count is not proportionally more
+# dangerous get capped to 1: e.g. GitHub's default PR template ships
+# three instructional `<!-- ... -->` blocks past 50 chars; without a
+# cap, leaving them in would push 3 × 25 = 75 past _INJECTION_SCORE_HIGH
+# and quarantine + BLOCK a benign PR. Classes absent from this map
+# accumulate unbounded (the default), which is correct for patterns
+# where repetition genuinely amplifies the threat (e.g. multiple
+# `<system>` forgery tokens, multiple "ignore previous instructions").
+_INJECTION_CLASS_MAX_MATCHES: dict[str, int] = {
+    "html_comment_exfil": 1,
+}
+
+# Confidence weighting: a match within the first N chars or following ":"
+# counts as imperative-to-model context (full weight). Quote-prefixed lines
+# (">") get halved — those are citations, not commands.
+_INJECTION_IMPERATIVE_HEAD_CHARS = 500
+_INJECTION_BURIED_DOWNWEIGHT = 0.75
+_INJECTION_QUOTE_DOWNWEIGHT = 0.5
+_INJECTION_COLON_LOOKBACK = 80
+
+# Audit log: JSONL with 90-day TTL, swept on every write. Implementation
+# is read-modify-write — not atomic append — so concurrent runs in the
+# same workdir can clobber entries. The log is observational (not a
+# source of truth, never read by the pipeline) and concurrent reviews
+# in one workdir are rare in practice, so the clobber risk is accepted.
+_INJECTION_AUDIT_LOG = Path(".closedloop-ai/injection-log.jsonl")
+_INJECTION_AUDIT_TTL_DAYS = 90
+
+
+def _strip_injection_tokens(text: str) -> tuple[str, list[str]]:
+    """Strip literal forgery tokens. Returns (cleaned_text, removed_tokens)."""
+    removed: list[str] = []
+    out = text
+    for token in _INJECTION_STRIP_TOKENS:
+        if token in out:
+            removed.append(token)
+            out = out.replace(token, "")
+    return out, removed
+
+
+def _injection_severity(score: int) -> str:
+    """Map a numeric score to one of: none, low, medium, high."""
+    if score >= _INJECTION_SCORE_HIGH:
+        return "high"
+    if score >= _INJECTION_SCORE_MEDIUM:
+        return "medium"
+    if score >= _INJECTION_SCORE_LOW:
+        return "low"
+    return "none"
+
+
+def _quote_line_ranges(text: str) -> list[tuple[int, int]]:
+    """Return [(start, end), ...] character ranges for lines beginning with `>`."""
+    ranges: list[tuple[int, int]] = []
+    offset = 0
+    for line in text.split("\n"):
+        if line.startswith(">"):
+            ranges.append((offset, offset + len(line)))
+        offset += len(line) + 1
+    return ranges
+
+
+def _score_text_for_injection(
+    text: str, source_label: str,
+) -> tuple[float, list[dict[str, Any]]]:
+    """Score one untrusted-content string against the pattern catalogue.
+
+    Returns (score, matches). Each match dict carries pattern name, source
+    label, character offset, raw weight, and applied weight (after position
+    downweighting). Designed so the report payload is self-explanatory for
+    operators triaging false positives.
+    """
+    if not text:
+        return 0.0, []
+
+    quote_ranges = _quote_line_ranges(text)
+
+    def _in_quote(pos: int) -> bool:
+        return any(start <= pos < end for start, end in quote_ranges)
+
+    score = 0.0
+    matches: list[dict[str, Any]] = []
+    for name, weight, pat in _INJECTION_PATTERNS:
+        cap = _INJECTION_CLASS_MAX_MATCHES.get(name)
+        counted = 0
+        for m in pat.finditer(text):
+            if cap is not None and counted >= cap:
+                break
+            counted += 1
+            start = m.start()
+            in_head = start < _INJECTION_IMPERATIVE_HEAD_CHARS
+            after_colon = (
+                start > 0
+                and ":" in text[max(0, start - _INJECTION_COLON_LOOKBACK):start]
+            )
+            imperative = in_head or after_colon
+            effective = float(weight)
+            if _in_quote(start):
+                effective *= _INJECTION_QUOTE_DOWNWEIGHT
+            elif not imperative:
+                effective *= _INJECTION_BURIED_DOWNWEIGHT
+            score += effective
+            matches.append({
+                "pattern": name,
+                "source": source_label,
+                "offset": start,
+                "weight": weight,
+                "applied_weight": round(effective, 2),
+            })
+    return score, matches
+
+
+def _make_injection_finding(
+    score: int, matches: list[dict[str, Any]],
+    system_marker: str, emitted_at: str,
+) -> dict[str, Any]:
+    """Build a canonical InjectionAttempt Finding (severity ≥ High only).
+
+    The finding flows through cmd_collect_findings via the standard
+    agent_*.json glob, so it lands in review_result.envelope.verified[]
+    without any special-case routing.
+    """
+    pattern_names = sorted({m["pattern"] for m in matches})
+    return {
+        "id": make_finding_id("injection-detector", 0),
+        "reviewer": "injection-detector",
+        "source": "injection-detector",
+        "finding_scope": "pr_metadata",
+        "category": "InjectionAttempt",
+        "severity": "BLOCKING",
+        "priority": 0,
+        "file": None,
+        "line": None,
+        "system_marker": system_marker,
+        "issue": (
+            f"[P0] Prompt-injection signals detected in {system_marker} "
+            f"(score: {score})"
+        ),
+        "explanation": (
+            f"Detected {len(matches)} match(es) across pattern classes: "
+            f"{', '.join(pattern_names)}. Score: {score} "
+            f"(≥{_INJECTION_SCORE_HIGH} = High)."
+        ),
+        "recommendation": (
+            "Maintainer review required. Inspect the flagged content for "
+            "prompt-injection payloads before re-running review."
+        ),
+        "emitted_at": emitted_at,
+        "confidence": 1.0,
+        "schema_version": SCHEMA_VERSION,
+    }
+
+
+def _append_injection_audit_log(
+    log_path: Path, entry: dict[str, Any],
+) -> None:
+    """Add one JSONL entry to the audit log, sweeping entries > 90 days old.
+
+    Implementation is **read-modify-write, not atomic append**: the function
+    loads existing lines, filters out entries older than 90 days, appends the
+    new entry to the in-memory list, and rewrites the whole file. Two
+    concurrent calls in the same workdir can therefore clobber each other's
+    new entries. This is accepted because the log is observational (never
+    read by the review pipeline — only by operators triaging) and concurrent
+    reviews against the same workdir are rare.
+
+    The sweep runs on every write (not on read — there is no reader); this
+    keeps the file from growing unbounded without requiring a separate
+    maintenance command. Malformed pre-existing lines (missing timestamp,
+    bad JSON, non-dict JSON values) are dropped silently.
+    """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_INJECTION_AUDIT_TTL_DAYS)
+
+    kept: list[str] = []
+    if log_path.exists():
+        try:
+            for line in log_path.read_text().splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    obj = json.loads(stripped)
+                    # Valid JSON values include lists, strings, numbers, and
+                    # null in addition to objects — calling .get on any of
+                    # those would raise AttributeError (caught by the outer
+                    # OSError except otherwise; we'd then drop the whole
+                    # sweep + lose the legitimate fresh entries below).
+                    # Treat non-dict lines the same way as malformed JSON.
+                    if not isinstance(obj, dict):
+                        continue
+                    ts_str = str(obj.get("timestamp", ""))
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if ts >= cutoff:
+                        kept.append(stripped)
+                except (ValueError, KeyError, TypeError):
+                    continue
+        except OSError:
+            pass
+
+    kept.append(json.dumps(entry, separators=(",", ":")))
+    log_path.write_text("\n".join(kept) + "\n")
+
+
+def cmd_detect_injection(args: argparse.Namespace) -> int:
+    """Detect prompt-injection patterns in PR-author-controlled content.
+
+    PLN-720. Reads ``intent_context.json`` (title / body / commits) and scores
+    each section against the canonical 9-class regex catalogue. Emits an
+    ``injection_report.json`` payload to stdout (the walker redirects to
+    ``<CR_DIR>/injection_report.json`` per the run-plan stub at
+    ``stage_09_detect_injection``).
+
+    Side effects on severity ≥ Medium: rewrites ``intent_context.json`` in
+    place with ``quarantine: true`` + redacted content. Side effects on
+    severity ≥ High: writes a canonical InjectionAttempt finding to
+    ``<CR_DIR>/agent_injection-detector.json`` so cmd_collect_findings picks
+    it up via the standard ``agent_*.json`` glob (no schema-specific routing
+    needed).
+
+    Always appends one JSONL entry to ``.closedloop-ai/injection-log.jsonl``
+    for audit. ``on_failure: "continue"`` is pinned by the run-plan stub —
+    a detector crash must NEVER abort the review pipeline.
+    """
+    cr_dir = Path(args.cr_dir)
+    intent_context_path = Path(args.intent_context)
+
+    # Read intent_context.json; degrade to empty on missing/malformed input
+    # rather than aborting (on_failure: continue contract).
+    try:
+        with open(intent_context_path) as f:
+            ctx = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        empty_report = {
+            "score": 0,
+            "severity": "none",
+            "matches": [],
+            "redacted_excerpts": [],
+            "quarantine": False,
+            "intent_context_path": str(intent_context_path),
+        }
+        json.dump(empty_report, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
+    title = str(ctx.get("title", ""))
+    body = str(ctx.get("body", ""))
+    commits = str(ctx.get("commits", ""))
+
+    # Score the RAW content so the forgery pattern class sees the literal
+    # `<system>` / `<|im_start|>` / `[INST]` tokens before they're stripped.
+    # The stripped copy (below) is only used to report what was removed and
+    # would be handed to the downstream wrapper in a follow-up phase.
+    title_score, title_matches = _score_text_for_injection(title, "pr_title")
+    body_score, body_matches = _score_text_for_injection(body, "pr_description")
+    commits_score, commits_matches = _score_text_for_injection(commits, "commits")
+
+    _, title_stripped = _strip_injection_tokens(title)
+    _, body_stripped = _strip_injection_tokens(body)
+    _, commits_stripped = _strip_injection_tokens(commits)
+
+    total_score = int(round(title_score + body_score + commits_score))
+    severity = _injection_severity(total_score)
+    all_matches = title_matches + body_matches + commits_matches
+
+    redacted_excerpts: list[dict[str, Any]] = []
+    stripped_tokens = title_stripped + body_stripped + commits_stripped
+    if stripped_tokens:
+        redacted_excerpts.append(
+            {"reason": "literal-forgery-tokens", "tokens": stripped_tokens},
+        )
+
+    # The PR description is the canonical anchor for the metadata finding.
+    # cmd_fetch_intent doesn't carry commit shas into the blob, so even when
+    # the trigger is a commit message we fall back to pr_description (which
+    # is a fixed canonical marker, not a templated one needing a suffix).
+    system_marker = "pr_description"
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Quarantine: rewrite intent_context.json on severity ≥ Medium so
+    # downstream readers (cmd_classify_intent, Premise prompt assembly) see
+    # the quarantine flag and redacted content. Selective redaction:
+    # title and commits are preserved when their per-section score is 0
+    # (clean → keep verbatim). body is *always* redacted on quarantine —
+    # it's the highest-risk surface (longest free-form attacker-controlled
+    # text) and even a clean-scoring body could carry sub-threshold signals
+    # the catalogue missed.
+    quarantined = total_score >= _INJECTION_SCORE_MEDIUM
+    if quarantined:
+        quarantined_ctx = {
+            "title": (
+                f"[REDACTED — injection detected (score: {total_score}, "
+                f"severity: {severity})]"
+                if title_score > 0 else title
+            ),
+            "body": (
+                f"[REDACTED — injection detected (score: {total_score}, "
+                f"severity: {severity})]"
+            ),
+            "commits": (
+                "[REDACTED — quarantined alongside body]"
+                if commits_score > 0 else commits
+            ),
+            "quarantine": True,
+            "injection_score": total_score,
+            "injection_severity": severity,
+        }
+        try:
+            with open(intent_context_path, "w") as f:
+                json.dump(quarantined_ctx, f, indent=2)
+                f.write("\n")
+        except OSError as exc:
+            print(
+                f"Warning: could not rewrite intent_context.json: {exc}",
+                file=sys.stderr,
+            )
+
+    # BLOCKING finding on severity ≥ High. Naming it `agent_<reviewer>.json`
+    # makes cmd_collect_findings pick it up via the standard glob — no new
+    # merge path required.
+    if total_score >= _INJECTION_SCORE_HIGH:
+        finding = _make_injection_finding(
+            total_score, all_matches, system_marker, now_iso,
+        )
+        agent_file = cr_dir / "agent_injection-detector.json"
+        try:
+            with open(agent_file, "w") as f:
+                json.dump({"findings": [finding]}, f, indent=2)
+        except OSError as exc:
+            print(
+                f"Warning: could not write injection finding: {exc}",
+                file=sys.stderr,
+            )
+
+    # Audit log. Log only pattern class names (not payload content) to avoid
+    # log-injection re-amplification.
+    audit_entry = {
+        "timestamp": now_iso,
+        "score": total_score,
+        "severity": severity,
+        "matches": sorted({m["pattern"] for m in all_matches}),
+        "quarantined": quarantined,
+        "stripped_token_count": len(stripped_tokens),
+        "intent_context_path": str(intent_context_path),
+    }
+    try:
+        _append_injection_audit_log(
+            Path.cwd() / _INJECTION_AUDIT_LOG, audit_entry,
+        )
+    except OSError as exc:
+        print(f"Warning: could not append audit log: {exc}", file=sys.stderr)
+
+    # Stdout: the report payload (walker redirects to injection_report.json).
+    report = {
+        "score": total_score,
+        "severity": severity,
+        "matches": all_matches,
+        "redacted_excerpts": redacted_excerpts,
+        "quarantine": quarantined,
+        "intent_context_path": str(intent_context_path),
+    }
+    json.dump(report, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: classify-intent
+# ---------------------------------------------------------------------------
+
+
 def cmd_classify_intent(args: argparse.Namespace) -> int:
     """Classify diff intent for model routing."""
     intent_context_path: str = args.intent_context
@@ -3347,6 +4745,16 @@ def cmd_classify_intent(args: argparse.Namespace) -> int:
     except (OSError, json.JSONDecodeError) as exc:
         print(f"Error reading intent context: {exc}", file=sys.stderr)
         return 1
+
+    # PLN-720 quarantine guard: if detect-injection redacted the context,
+    # skip the LLM-classification path and route deterministically. The
+    # redacted body has no signal worth classifying — falling through to
+    # _classify_intent would surface "mixed" anyway, but the explicit
+    # short-circuit makes the path auditable.
+    if ctx.get("quarantine") is True:
+        json.dump({"intent": "mixed", "source": "quarantine"}, sys.stdout)
+        sys.stdout.write("\n")
+        return 0
 
     title = str(ctx.get("title", ""))
     body = str(ctx.get("body", ""))
@@ -3514,17 +4922,68 @@ _CANONICAL_TO_LEGACY_VERDICT: dict[str, str] = {
 }
 
 
+def _count_gateable_premise_medium(verified: list[dict[str, Any]]) -> int:
+    """Return the count Rule 4's Premise-MEDIUM gate fires on.
+
+    Shared between ``_compute_canonical_verdict`` (Rule 4) and
+    ``_stats_from_findings`` (telemetry's
+    ``premise_cumulative_medium_count``) so the value the gate triggers
+    on always matches the value the operator-facing telemetry reports.
+    Counting policy:
+
+      - Only ``verified[]`` findings (``justified[]`` is bucketed
+        elsewhere; ``rejected[]`` is dropped from the verdict; and
+        ``coverage_gaps`` never carry ``category=Premise``).
+      - JUSTIFIED-VALID vs JUSTIFIED-INVALID are **asymmetric**
+        (thadeusb on PR #113):
+          * ``JUSTIFIED-VALID`` = author defense was audited and
+            accepted; the finding is dismissed and lives in
+            ``justified[]``, NOT ``verified[]``. Excluded defensively
+            in case a legacy/cached entry leaks into ``verified[]`` —
+            its concern was waived.
+          * ``JUSTIFIED-INVALID`` = author defense was audited and
+            REFUSED; the original concern survived. It belongs in the
+            count the same way a plain CONFIRMED MEDIUM does. The
+            reserved-but-unemitted enum value also lands here if a
+            future code path produces one in ``verified[]``.
+      - Severity is read post-DOWNGRADE — ``_merge_verifier_fields``
+        rewrites ``severity`` from ``verifier_severity`` for valid
+        downgrades, so a DOWNGRADE from HIGH → MEDIUM correctly counts.
+    """
+    count = 0
+    for finding in verified:
+        if str(finding.get("category", "")) != "Premise":
+            continue
+        if str(finding.get("severity", "")) != "MEDIUM":
+            continue
+        if finding.get("verifier_verdict") == "JUSTIFIED-VALID":
+            continue
+        count += 1
+    return count
+
+
 def _compute_canonical_verdict(
     verified: list[dict[str, Any]],
     coverage_gaps: list[dict[str, Any]],
+    *,
+    force_human_review: bool = False,
+    thresholds: dict[str, int] | None = None,
 ) -> tuple[str, str]:
     """Apply canonical verdict precedence rules (PLN-719 Section 5).
 
-    Returns (canonical_verdict, reason). Rules 4-6 (Premise cumulative MEDIUM,
-    Impact analysis count, TENTATIVE) gate on plan 02/03/06 features and are
-    inert until those plans land — included here so behavior matches when they
-    do, but no-op in Phase A.
+    Returns (canonical_verdict, reason). PLN-722 added two rules: the
+    ``force_human_review`` short-circuit (rule 2.5 — mandatory_human_review_
+    paths) and the TENTATIVE → NEEDS_ATTENTION fall-through (rule 3.5).
+    PLN-721 fills in Rule 4: cumulative Premise MEDIUM gate. Rule 6
+    (Impact analysis count) is still placeholder until plan 06 lands.
+
+    ``thresholds`` (PLN-721): optional dict from ``_load_verdict_thresholds``;
+    callers that do not pass it get the built-in default (3) so existing
+    test fixtures and back-compat callers keep working.
     """
+    thresholds = thresholds or {
+        "premise_cumulative_medium": _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
+    }
 
     def _short(text: str) -> str:
         return text[:_VERDICT_REASON_MAX]
@@ -3552,15 +5011,51 @@ def _compute_canonical_verdict(
         if str(finding.get("category", "")) == "Premise" and finding.get("priority") == 0:
             return "CHANGES_REQUESTED", _short(str(finding.get("issue", "")))
 
+    # Rule 2.5 (PLN-722): mandatory_human_review_paths force NEEDS_ATTENTION.
+    # Sits between BLOCKING and HIGH so BLOCKING still wins, but HIGH does
+    # NOT escalate a force-review-path PR past NEEDS_ATTENTION — the
+    # operator policy is "a human triages this PR", not "this PR is
+    # automatically rejected".
+    if force_human_review:
+        return "NEEDS_ATTENTION", _short(
+            "mandatory human review path touched; verifier escalated to TENTATIVE",
+        )
+
     # Rule 3: HIGH (any scope) → NEEDS_ATTENTION
     for finding in all_findings:
         if str(finding.get("severity", "")) == "HIGH":
             return "NEEDS_ATTENTION", _short(str(finding.get("issue", "")))
 
-    # Rules 4-6 (plan 02 cumulative Premise MEDIUM, plan 06 Impact count,
-    # plan 03 TENTATIVE) — no-op in Phase A; placeholder in code so plans
-    # 02/03/06 only need to update the canonical computation, not the verdict
-    # subcommand wiring.
+    # Rule 3.5 (PLN-722): any TENTATIVE verifier verdict → NEEDS_ATTENTION.
+    # The verifier could not confirm or disprove the underlying claim; the
+    # plan calls this out explicitly: "TENTATIVE counts toward NEEDS_ATTENTION
+    # (not CHANGES_REQUESTED)". Treat it as a signal to the human reviewer,
+    # not a silent approval.
+    for finding in verified:
+        if finding.get("verifier_verdict") == "TENTATIVE":
+            return "NEEDS_ATTENTION", _short(
+                f"verifier uncertain: {finding.get('issue', '')}",
+            )
+
+    # Rule 4 (PLN-721): cumulative Premise MEDIUM gate. The counting
+    # policy is documented on ``_count_gateable_premise_medium`` — this
+    # site MUST use that helper so the value the gate fires on matches
+    # the value telemetry reports in ``premise_cumulative_medium_count``
+    # (the v2.9.0 review surfaced that divergence as a real bug).
+    premise_medium_threshold = int(
+        thresholds.get(
+            "premise_cumulative_medium",
+            _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
+        ),
+    )
+    premise_medium_count = _count_gateable_premise_medium(verified)
+    if premise_medium_count >= premise_medium_threshold:
+        return "NEEDS_ATTENTION", _short(
+            f"{premise_medium_count} MEDIUM Premise findings "
+            f"(threshold {premise_medium_threshold})",
+        )
+
+    # Rule 6 (plan 06 Impact count) remains placeholder until that plan lands.
 
     return "APPROVED", ""
 
@@ -3616,7 +5111,18 @@ def cmd_verdict(args: argparse.Namespace) -> int:
         }
         coverage_gaps = [f for i, f in enumerate(validated) if i in coverage_indices]
         verified = [f for i, f in enumerate(validated) if i not in coverage_indices]
-        canonical_verdict, reason = _compute_canonical_verdict(verified, coverage_gaps)
+        # PLN-721: cmd_verdict fallback path. Use the same operator-
+        # overridable thresholds as cmd_finalize_result so the gate
+        # behaves consistently across both entry points.
+        thresholds_arg = getattr(args, "thresholds", None)
+        thresholds_path = (
+            Path(thresholds_arg) if thresholds_arg
+            else _VERDICT_THRESHOLDS_DEFAULT_PATH
+        )
+        thresholds = _load_verdict_thresholds(thresholds_path)
+        canonical_verdict, reason = _compute_canonical_verdict(
+            verified, coverage_gaps, thresholds=thresholds,
+        )
 
     legacy_verdict = _CANONICAL_TO_LEGACY_VERDICT.get(canonical_verdict, "approve")
     tag_payload = json.dumps({"verdict": legacy_verdict, "reason": reason})
@@ -3666,6 +5172,7 @@ def _build_run_plan_stages(
       <DIFF_TIP>     -- scope.json.diff_tip
       <SCOPE_KIND>   -- scope.json.scope_kind
       <CACHE_DIR>    -- cache_config.json.cache_dir (from finalize-cache)
+      <GLOBAL_CACHE> -- setup.json.global_cache (0 or 1)
       <PROMPT_HASH>  -- hashes.json.prompt_hash (from compute-hashes)
       <CONTEXT_KEY>  -- hashes.json.context_key
       <MODEL_ID>     -- orchestrator-chosen model (e.g. "opus")
@@ -3677,14 +5184,26 @@ def _build_run_plan_stages(
     best-known shape so when those plans wire them on, only ``enabled``
     needs to flip.
     """
-    pr_arg = str(pr_number) if pr_number else ""
+    # Conditional --pr-number: argparse declares ``--pr-number`` as
+    # ``type=int``, which rejects empty strings with
+    # ``invalid int value: ''``. When no PR is active, omit the flag
+    # entirely so the helpers' argparse defaults (None) apply.
+    pr_flag: list[str] = ["--pr-number", str(pr_number)] if pr_number else []
+
     return [
         {
             "id": "stage_01_setup",
             "kind": "helper",
             "subcommand": "setup",
             "args": ["--mode", mode, "--cr-dir-prefix", ".closedloop-ai/code-review/cr-"],
-            "stdout": f"{cr_dir}/setup.json",
+            # The walker handles setup specially in stage 0b: it runs
+            # setup, captures stdout in-memory, parses ``cr_dir``, then
+            # writes setup.json into the newly-created cr_dir itself. A
+            # shell-style ``> <cr_dir>/setup.json`` redirect cannot work
+            # because cr_dir does not exist until setup runs. The stdout
+            # field is ``None`` here so a walker that reaches this stage
+            # via the run plan treats it as already-completed.
+            "stdout": None,
             "expected_outputs": [f"{cr_dir}/setup.json"],
             "depends_on": [],
             "on_failure": "abort",
@@ -3707,7 +5226,8 @@ def _build_run_plan_stages(
             "subcommand": "resolve-scope",
             "args": [
                 "--mode", mode,
-                "--pr-number", pr_arg,
+                "--setup-json", f"{cr_dir}/setup.json",
+                *pr_flag,
                 "--scope-args", flags.get("scope_args", "") or "",
                 "--base-ref-override", flags.get("base_ref_override", "") or "",
             ],
@@ -3724,11 +5244,41 @@ def _build_run_plan_stages(
             "args": [
                 "--setup-json", f"{cr_dir}/setup.json",
                 "--mode", mode,
-                "--pr-number", pr_arg,
+                *pr_flag,
             ],
             "stdout": f"{cr_dir}/cache_config.json",
             "expected_outputs": [f"{cr_dir}/cache_config.json"],
             "depends_on": ["stage_03_resolve_scope"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        # stage_07_auto_incremental must run BEFORE parse-diff so that any
+        # diff_scope override it emits is applied to the cached <DIFF_SCOPE>
+        # token before parse-diff and extract-patches materialize diff_data
+        # and patch files. The stage id retains its _07_ prefix as a stable
+        # label; execution order follows array position.
+        {
+            "id": "stage_07_auto_incremental",
+            "kind": "helper",
+            "subcommand": "auto-incremental",
+            "args": [
+                "--cache-dir", "<CACHE_DIR>",
+                "--key", "<STATE_KEY>",
+                "--diff-tip", "<DIFF_TIP>",
+                "--base-ref", "<BASE_REF>",
+                "--original-scope", "<DIFF_SCOPE>",
+                "--full-review", "true" if flags.get("full_review") else "false",
+                "--since-last-review", "true" if flags.get("since_last_review") else "false",
+                "--mode", mode,
+            ],
+            "stdout": f"{cr_dir}/auto_incremental.json",
+            "expected_outputs": [f"{cr_dir}/auto_incremental.json"],
+            # auto-incremental does NOT consume diff_data.json (its inputs
+            # are cache state + git refs). The previous run-plan listed
+            # stage_05_parse_diff as a dep, which both wrongly suggested
+            # data dependence AND forced auto-incremental's position past
+            # parse-diff — making any scope override useless.
+            "depends_on": ["stage_04_finalize_cache"],
             "on_failure": "continue",
             "enabled": True,
         },
@@ -3739,7 +5289,7 @@ def _build_run_plan_stages(
             "args": ["--scope", "<DIFF_SCOPE>"],
             "stdout": f"{cr_dir}/diff_data.json",
             "expected_outputs": [f"{cr_dir}/diff_data.json"],
-            "depends_on": ["stage_03_resolve_scope"],
+            "depends_on": ["stage_03_resolve_scope", "stage_07_auto_incremental"],
             "on_failure": "abort",
             "enabled": True,
         },
@@ -3759,36 +5309,22 @@ def _build_run_plan_stages(
             "enabled": True,
         },
         {
-            "id": "stage_07_auto_incremental",
-            "kind": "helper",
-            "subcommand": "auto-incremental",
-            "args": [
-                "--cache-dir", "<CACHE_DIR>",
-                "--key", "<STATE_KEY>",
-                "--diff-tip", "<DIFF_TIP>",
-                "--base-ref", "<BASE_REF>",
-                "--original-scope", "<DIFF_SCOPE>",
-                "--full-review", "true" if flags.get("full_review") else "false",
-                "--since-last-review", "true" if flags.get("since_last_review") else "false",
-                "--mode", mode,
-            ],
-            "stdout": f"{cr_dir}/auto_incremental.json",
-            "expected_outputs": [f"{cr_dir}/auto_incremental.json"],
-            "depends_on": ["stage_04_finalize_cache", "stage_05_parse_diff"],
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        {
             "id": "stage_08_fetch_intent",
             "kind": "helper",
             "subcommand": "fetch-intent",
             "args": [
                 "--scope-kind", "<SCOPE_KIND>",
-                "--pr-number", pr_arg,
+                "--cr-dir", cr_dir,
+                *pr_flag,
                 "--base-ref", "<BASE_REF>",
                 "--diff-tip", "<DIFF_TIP>",
             ],
-            "stdout": f"{cr_dir}/intent_context.json",
+            # cmd_fetch_intent writes intent_context.json into cr_dir
+            # itself; the stdout output is a small {path, source} summary.
+            # Redirecting stdout into intent_context.json would corrupt
+            # the file by overwriting the helper's structured payload
+            # with the summary line.
+            "stdout": None,
             "expected_outputs": [f"{cr_dir}/intent_context.json"],
             "depends_on": ["stage_03_resolve_scope"],
             "on_failure": "continue",
@@ -3806,7 +5342,7 @@ def _build_run_plan_stages(
             "expected_outputs": [f"{cr_dir}/injection_report.json"],
             "depends_on": ["stage_08_fetch_intent"],
             "on_failure": "continue",
-            "enabled": False,  # plan 01
+            "enabled": True,  # PLN-720
         },
         {
             "id": "stage_10_classify_intent",
@@ -3914,6 +5450,67 @@ def _build_run_plan_stages(
             "enabled": False,
         },
         {
+            "id": "stage_18_compute_hashes",
+            "kind": "helper",
+            "subcommand": "compute-hashes",
+            "args": [
+                "--shared-prompt", f"{cr_dir}/shared_prompt.txt",
+                "--bha-suffix", f"{cr_dir}/bha_suffix.txt",
+                # PLN-722 v2.8.1: fold the verifier prompt into <PROMPT_HASH>
+                # so verifier prompt edits bust both the BHA cache and the
+                # verifications/ cache. The reviewer feedback on v2.8.0
+                # surfaced that without this arg, `verifier_prompt_hash` in
+                # the verifications/ cache key was sourced from a hash that
+                # didn't actually include the verifier prompt bytes — the
+                # CHANGELOG's "prompt rev invalidates everything globally"
+                # promise was broken.
+                "--verifier-prompt", f"{cr_dir}/verifier_prompt.txt",
+                # PLN-721: fold the premise prompt into <PROMPT_HASH>
+                # on the same contract as the verifier prompt — editing
+                # premise_prompt.txt busts both the BHA cache and the
+                # verifications/ cache.
+                "--premise-prompt", f"{cr_dir}/premise_prompt.txt",
+                "--diff-tip", "<DIFF_TIP>",
+                "--base-ref", "<BASE_REF>",
+            ],
+            "stdout": f"{cr_dir}/hashes.json",
+            "expected_outputs": [f"{cr_dir}/hashes.json"],
+            # Real deps: prep_assets writes shared_prompt + bha_suffix;
+            # resolve-scope produces diff-tip + base-ref (substituted via
+            # tokens at walker dispatch). compute-hashes does NOT consume
+            # partition output despite the original plan listing
+            # stage_17_partition here — that dep was spurious and was
+            # removed to unblock partition's reordering past cache-check.
+            "depends_on": ["stage_02_prep_assets", "stage_03_resolve_scope"],
+            "on_failure": "abort",
+            "enabled": True,
+        },
+        {
+            "id": "stage_19_cache_check",
+            "kind": "helper",
+            "subcommand": "cache-check",
+            "args": [
+                "--cache-dir", "<CACHE_DIR>",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+                "--prompt-hash", "<PROMPT_HASH>",
+                "--model-id", "<MODEL_ID>",
+                "--schema-version", str(SCHEMA_VERSION),
+                "--output-dir", cr_dir,
+                "--global-cache", "<GLOBAL_CACHE>",
+                "--context-key", "<CONTEXT_KEY>",
+            ],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/cache_result.json"],
+            "depends_on": ["stage_18_compute_hashes", "stage_04_finalize_cache"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        # stage_17_partition is positioned here (after cache-check) so
+        # Gate B's runtime route invocation can supply --max-bha-agents
+        # before partition runs. The stage id retains its _17_ prefix as
+        # a stable label; execution order follows array position, not the
+        # numeric suffix.
+        {
             "id": "stage_17_partition",
             "kind": "helper",
             "subcommand": "partition",
@@ -3931,55 +5528,24 @@ def _build_run_plan_stages(
                 f"{cr_dir}/partitions.json",
                 f"{cr_dir}/patches_p<N>.txt",
             ],
-            # Actual data dependency is diff_data.json (stage_05_parse_diff).
-            # stage_16_arbitrate_budget is plan-05-gated and disabled in Phase
-            # A; depending on a disabled stage would make this foundation
-            # stage unreachable for any orchestrator that walks `depends_on`.
-            "depends_on": ["stage_05_parse_diff"],
+            # Real data dep is diff_data.json (stage_05_parse_diff);
+            # stage_19_cache_check is also a positional prerequisite
+            # because Gate B's route invocation runs between them.
+            "depends_on": ["stage_05_parse_diff", "stage_19_cache_check"],
             "on_failure": "abort",
-            "enabled": True,
-        },
-        {
-            "id": "stage_18_compute_hashes",
-            "kind": "helper",
-            "subcommand": "compute-hashes",
-            "args": [
-                "--shared-prompt", f"{cr_dir}/shared_prompt.txt",
-                "--bha-suffix", f"{cr_dir}/bha_suffix.txt",
-                "--diff-tip", "<DIFF_TIP>",
-                "--base-ref", "<BASE_REF>",
-            ],
-            "stdout": f"{cr_dir}/hashes.json",
-            "expected_outputs": [f"{cr_dir}/hashes.json"],
-            "depends_on": ["stage_17_partition", "stage_02_prep_assets"],
-            "on_failure": "abort",
-            "enabled": True,
-        },
-        {
-            "id": "stage_19_cache_check",
-            "kind": "helper",
-            "subcommand": "cache-check",
-            "args": [
-                "--cache-dir", "<CACHE_DIR>",
-                "--diff-data", f"{cr_dir}/diff_data.json",
-                "--prompt-hash", "<PROMPT_HASH>",
-                "--model-id", "<MODEL_ID>",
-                "--schema-version", str(SCHEMA_VERSION),
-                "--output-dir", cr_dir,
-                "--context-key", "<CONTEXT_KEY>",
-            ],
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/cache_result.json"],
-            "depends_on": ["stage_18_compute_hashes", "stage_04_finalize_cache"],
-            "on_failure": "continue",
             "enabled": True,
         },
         {
             "id": "stage_20_spawn_reviewers",
             "kind": "agent_fleet",
             "agent_specs": [],  # populated by orchestrator from coverage_plan + partitions
+            # Only agent_*.json is produced here; partitions.json is an INPUT
+            # (produced by stage_17_partition) and belongs in depends_on, not
+            # expected_outputs. Including it here would mask total-agent-failure
+            # via the walker's "at-least-one-exists" check, since partitions.json
+            # already exists from the prior stage.
             "expected_outputs": [f"{cr_dir}/agent_*.json"],
-            "depends_on": ["stage_19_cache_check"],
+            "depends_on": ["stage_17_partition"],
             "on_failure": "continue_with_coverage_gap",
             "enabled": True,
         },
@@ -4012,13 +5578,66 @@ def _build_run_plan_stages(
             "enabled": True,
         },
         {
+            # PLN-722 wrapper around the verifier fleet — tier-selects
+            # eligible findings ("What gets verified" table in the plan),
+            # ranks by severity_weight × confidence, writes per-finding
+            # input files plus verify_manifest.json that the Verifier Fleet
+            # walker section reads to know which finding_ids to spawn.
+            "id": "stage_22b_verify_prepare",
+            "kind": "helper",
+            "subcommand": "verify-prepare",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--findings", f"{cr_dir}/findings_validated.json",
+                "--cache-dir", "<CACHE_DIR>",
+                "--prompt-hash", "<PROMPT_HASH>",
+            ],
+            "stdout": f"{cr_dir}/verify_manifest.json",
+            "expected_outputs": [f"{cr_dir}/verify_manifest.json"],
+            "depends_on": ["stage_22_validate"],
+            # If verify-prepare fails the verifier doesn't run, but
+            # verify-consolidate degrades to "everything verified[]" and
+            # finalize-result still produces a usable envelope. Continue
+            # rather than abort so a verifier infrastructure bug never
+            # kills a review.
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
             "id": "stage_23_verify_findings",
             "kind": "agent_fleet",
-            "agent_specs": [],  # populated per-finding by orchestrator
-            "expected_outputs": [f"{cr_dir}/findings_verified.json"],
-            "depends_on": ["stage_22_validate"],
+            "agent_specs": [],  # populated per-finding by orchestrator from verify_manifest.json
+            # The fleet emits agent_verifier_<finding_id>.json per finding;
+            # findings_verified.json (the bucket-split envelope-input) is
+            # produced by stage_24a_verify_consolidate, not here.
+            "expected_outputs": [f"{cr_dir}/agent_verifier_*.json"],
+            "depends_on": ["stage_22b_verify_prepare"],
             "on_failure": "continue",
-            "enabled": False,  # plan 03
+            "enabled": True,
+        },
+        {
+            # PLN-722 wrapper that merges the per-finding verifier outputs
+            # back into the validated set, applies sensitive-path escalation
+            # from verification-gates.json, and writes the bucket-split
+            # envelope-input that stage_25_finalize_result reads.
+            "id": "stage_24a_verify_consolidate",
+            "kind": "helper",
+            "subcommand": "verify-consolidate",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--validated", f"{cr_dir}/findings_validated.json",
+                "--manifest", f"{cr_dir}/verify_manifest.json",
+                "--cache-dir", "<CACHE_DIR>",
+                "--prompt-hash", "<PROMPT_HASH>",
+            ],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/findings_verified.json"],
+            "depends_on": ["stage_23_verify_findings"],
+            # Missing fleet outputs degrade to "pending_verification[] for
+            # the missing ids"; finalize-result handles either bucket
+            # shape, so continue rather than abort.
+            "on_failure": "continue",
+            "enabled": True,
         },
         {
             "id": "stage_24_verify_coverage",
@@ -4043,12 +5662,19 @@ def _build_run_plan_stages(
                 "--validate-output", f"{cr_dir}/findings_validated.json",
                 "--mode", mode,
                 "--diff-tip", "<DIFF_TIP>",
-                "--pr-number", pr_arg,
+                *pr_flag,
             ],
             "stdout": None,
             "expected_outputs": [f"{cr_dir}/review_result.json"],
-            "depends_on": ["stage_22_validate"],
-            "on_failure": "abort",
+            "depends_on": ["stage_24a_verify_consolidate"],
+            # `cmd_finalize_result` writes review_result.json BEFORE running
+            # schema validation (see code_review_helpers.py:cmd_finalize_result),
+            # so a non-zero exit signals validation errors to the operator
+            # without preventing stage_28_verdict from reading a structurally
+            # complete envelope. Use "continue" so reviewer-emitted category
+            # drift (e.g. "Documentation" before we added it to CATEGORIES)
+            # doesn't kill the pipeline; the stderr signal is preserved.
+            "on_failure": "continue",
             "enabled": True,
         },
         {
@@ -4062,6 +5688,8 @@ def _build_run_plan_stages(
                 "--prompt-hash", "<PROMPT_HASH>",
                 "--model-id", "<MODEL_ID>",
                 "--schema-version", str(SCHEMA_VERSION),
+                "--partitions-file", f"{cr_dir}/partitions.json",
+                "--global-cache", "<GLOBAL_CACHE>",
                 "--context-key", "<CONTEXT_KEY>",
             ],
             "stdout": None,
@@ -4116,10 +5744,16 @@ def _build_run_plan_stages(
             "subcommand": "footer",
             "args": [
                 "--start-time", "<START_TIME>",
+                "--cache-result", f"{cr_dir}/cache_result.json",
                 "--cr-dir", cr_dir,
             ],
-            "stdout": None,
-            "expected_outputs": [],
+            # cmd_footer writes its JSON payload ({"footer_line": "..."}) to
+            # stdout. The per-stage prose in start.md tells the walker to read
+            # <CR_DIR>/footer.json, so the plan must redirect stdout to that
+            # file. Leaving this as None caused the walker to read a missing
+            # file and conflate that with helper non-zero exit.
+            "stdout": f"{cr_dir}/footer.json",
+            "expected_outputs": [f"{cr_dir}/footer.json"],
             "depends_on": ["stage_29_present"],
             "on_failure": "continue",
             "enabled": True,
@@ -4166,8 +5800,8 @@ def _build_validation_gates(cr_dir: str) -> list[dict[str, Any]]:
 def cmd_prepare_run(args: argparse.Namespace) -> int:
     """Emit ``run_plan.json`` describing the full review pipeline.
 
-    PLN-719 Section 6. The output is consumed by the orchestrator (a future
-    rewrite of start.md will walk this declarative plan).
+    PLN-719 Section 6. The output is consumed by the ``/start`` orchestrator,
+    which walks the plan stage-by-stage (Phase 4b).
 
     Determinism: same inputs produce byte-identical output **except for the
     ``review_id`` field**, which is a fresh ``uuid.uuid4()`` per invocation.
@@ -4479,15 +6113,21 @@ def _stats_from_findings(
             "tentative_count": 0,
             "downgrade_count": 0,
             "justified_valid_count": len(justified),
-            "justified_invalid_count": 0,
+            # PLN-721: JUSTIFIED-INVALID lands in verified[] (the
+            # justification was audited and refuted, original finding
+            # stands). Count them here so telemetry surfaces the audit
+            # outcome without needing a separate JUSTIFIED-INVALID bucket.
+            "justified_invalid_count": sum(
+                1 for f in verified
+                if f.get("verifier_verdict") == "JUSTIFIED-INVALID"
+            ),
             "skipped_count": 0,
             "false_positive_rate": 0.0,
         },
-        "premise_cumulative_medium_count": sum(
-            1 for f in verified
-            if str(f.get("category", "")) == "Premise"
-            and str(f.get("severity", "")) == "MEDIUM"
-        ),
+        # PLN-721 v2.9.1: must match the count Rule 4 actually fires on
+        # — _count_gateable_premise_medium is the single source of truth
+        # for that policy (excludes JUSTIFIED-VALID / JUSTIFIED-INVALID).
+        "premise_cumulative_medium_count": _count_gateable_premise_medium(verified),
         "agent_failures": [],
     }
 
@@ -4543,10 +6183,20 @@ def _build_telemetry_block(cr_dir: Path) -> dict[str, Any]:
 def cmd_finalize_result(args: argparse.Namespace) -> int:
     """Consolidate findings + coverage state + verdict into review_result.json.
 
-    PLN-719 Phase 2. In Phase A all validated diff/pr_metadata findings land
-    in ``verified[]`` (no verifier yet); coverage-scoped findings land in
-    ``coverage_gaps[]``. Plan 03 (verifier) will reshuffle into
-    ``verified/justified/rejected/pending_verification`` buckets.
+    PLN-719 Phase 2 + PLN-722. Prefers the bucket-split output of
+    ``cmd_verify_consolidate`` (``<cr_dir>/findings_verified.json``) when
+    present — that file carries ``verified[]`` / ``rejected[]`` /
+    ``pending_verification[]`` already shaped for the envelope, plus the
+    ``force_human_review`` flag from sensitive-path escalation. Falls back
+    to ``findings_validated.json`` when verify-consolidate didn't run
+    (stage_23 disabled, verify-prepare/consolidate infrastructure failure,
+    or a pre-PLN-722 cache hit) —
+    everything lands in ``verified[]`` exactly as Phase A behaved.
+
+    Coverage-scoped findings (``category=Coverage`` + ``finding_scope=system``)
+    are routed to ``coverage_gaps[]`` after the verifier bucketing, since
+    coverage routing is verifier-independent and applies to both source
+    paths uniformly.
     """
     cr_dir = Path(args.cr_dir)
     validate_output_path = Path(args.validate_output)
@@ -4556,7 +6206,30 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
         print(f"Error: validate_output not found or malformed at {validate_output_path}", file=sys.stderr)
         return 1
 
-    validated: list[dict[str, Any]] = validate_output.get("validated", []) or []
+    # Prefer the verify-consolidate output when present (PLN-722).
+    consolidated_path = cr_dir / "findings_verified.json"
+    consolidated = _read_optional_json(consolidated_path, None)
+    using_verifier = (
+        isinstance(consolidated, dict)
+        and isinstance(consolidated.get("verified"), list)
+    )
+
+    if using_verifier:
+        raw_verified: list[dict[str, Any]] = consolidated.get("verified", []) or []
+        raw_rejected: list[dict[str, Any]] = consolidated.get("rejected", []) or []
+        raw_pending: list[dict[str, Any]] = consolidated.get("pending_verification", []) or []
+        # PLN-721: justified[] bucket from cmd_verify_consolidate. Defensive
+        # default to [] so legacy findings_verified.json files (PLN-722
+        # v2.8.0/v2.8.1, before the bucket was emitted) keep finalizing
+        # without keying on a missing field.
+        raw_justified: list[dict[str, Any]] = consolidated.get("justified", []) or []
+        force_human_review = bool(consolidated.get("force_human_review", False))
+    else:
+        raw_verified = validate_output.get("validated", []) or []
+        raw_rejected = []
+        raw_pending = []
+        raw_justified = []
+        force_human_review = False
 
     # Promote findings to canonical schema (defensive — collect-findings
     # should already have done this, but legacy producers may bypass it).
@@ -4564,40 +6237,56 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
     # (e.g. "Bug Hunter A") so make_finding_id doesn't ValueError, and
     # skip individually malformed findings rather than aborting the run.
     now_iso = datetime.now(timezone.utc).isoformat()
-    canonical_findings: list[dict[str, Any]] = []
-    for idx, raw in enumerate(validated):
-        if not isinstance(raw, dict):
-            continue
-        raw_normalized = dict(raw)
-        raw_normalized["reviewer"] = _coerce_reviewer_id(
-            raw.get("reviewer"), "unknown",
-        )
-        try:
-            canonical_findings.append(
-                normalize_legacy_finding(
-                    raw_normalized,
-                    reviewer=raw_normalized["reviewer"],
-                    source=raw.get("source", "agent"),
-                    index=idx,
-                    emitted_at=raw.get("emitted_at") or now_iso,
-                ),
+
+    def _normalize_bucket(
+        bucket: list[dict[str, Any]], label: str,
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for idx, raw in enumerate(bucket):
+            if not isinstance(raw, dict):
+                continue
+            raw_normalized = dict(raw)
+            raw_normalized["reviewer"] = _coerce_reviewer_id(
+                raw.get("reviewer"), "unknown",
             )
-        except (ValueError, TypeError) as exc:
-            print(
-                f"Warning: skipping malformed finding {idx} in validate_output: {exc}",
-                file=sys.stderr,
-            )
-            continue
+            try:
+                out.append(
+                    normalize_legacy_finding(
+                        raw_normalized,
+                        reviewer=raw_normalized["reviewer"],
+                        source=raw.get("source", "agent"),
+                        index=idx,
+                        emitted_at=raw.get("emitted_at") or now_iso,
+                    ),
+                )
+            except (ValueError, TypeError) as exc:
+                print(
+                    f"Warning: skipping malformed finding {idx} in {label}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
+        return out
+
+    canonical_verified = _normalize_bucket(raw_verified, "verified")
+    canonical_rejected = _normalize_bucket(raw_rejected, "rejected")
+    canonical_pending = _normalize_bucket(raw_pending, "pending_verification")
+    canonical_justified = _normalize_bucket(raw_justified, "justified")
 
     # Partition by index to avoid dict-equality membership tests; legacy
-    # findings normalized in-place may not have stable ids yet.
+    # findings normalized in-place may not have stable ids yet. Coverage
+    # routing applies only to verified[] — the verifier never sees Coverage
+    # gaps (they bypass the tier table by category) so rejected and pending
+    # buckets can't carry Coverage findings.
     coverage_indices: set[int] = {
-        i for i, f in enumerate(canonical_findings)
+        i for i, f in enumerate(canonical_verified)
         if str(f.get("category", "")) == "Coverage"
         and (f.get("finding_scope") or "diff") == "system"
     }
-    coverage_gaps = [f for i, f in enumerate(canonical_findings) if i in coverage_indices]
-    verified = [f for i, f in enumerate(canonical_findings) if i not in coverage_indices]
+    coverage_gaps = [f for i, f in enumerate(canonical_verified) if i in coverage_indices]
+    verified = [f for i, f in enumerate(canonical_verified) if i not in coverage_indices]
+    rejected = canonical_rejected
+    pending = canonical_pending
+    justified = canonical_justified
 
     # Pull additional coverage gaps emitted by arbitrate-budget, if any.
     extra_gaps_doc = _read_optional_json(cr_dir / "coverage_gaps.json", None)
@@ -4606,7 +6295,17 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
             if isinstance(entry, dict):
                 coverage_gaps.append(entry)
 
-    canonical_verdict, reason = _compute_canonical_verdict(verified, coverage_gaps)
+    # PLN-721: load operator-overridable thresholds (defaults bake in).
+    thresholds_path = (
+        Path(args.thresholds) if getattr(args, "thresholds", None)
+        else _VERDICT_THRESHOLDS_DEFAULT_PATH
+    )
+    thresholds = _load_verdict_thresholds(thresholds_path)
+    canonical_verdict, reason = _compute_canonical_verdict(
+        verified, coverage_gaps,
+        force_human_review=force_human_review,
+        thresholds=thresholds,
+    )
 
     # Pull optional run-context inputs.
     setup_data = _read_optional_json(cr_dir / "setup.json", {}) or {}
@@ -4636,14 +6335,14 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
         "mode": mode,
         "intent": intent_data.get("intent", "mixed"),
         "verified": verified,
-        "justified": [],
-        "rejected": [],
-        "pending_verification": [],
+        "justified": justified,
+        "rejected": rejected,
+        "pending_verification": pending,
         "coverage_plan": coverage_plan,
         "coverage_gaps": coverage_gaps,
         "verdict": canonical_verdict,
         "verdict_reason": reason,
-        "stats": _stats_from_findings(verified, [], [], coverage_gaps),
+        "stats": _stats_from_findings(verified, rejected, justified, coverage_gaps),
         # PLN-719 Phase 9: telemetry is sourced from the canonical zero-valued
         # factory and deep-merged with optional <cr_dir>/telemetry.json, which
         # the orchestrator (or any upstream stage) may populate with timings,
@@ -4663,7 +6362,12 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
             "review_result": str(output_path),
             "verdict": canonical_verdict,
             "verified_count": len(verified),
+            "rejected_count": len(rejected),
+            "pending_verification_count": len(pending),
+            "justified_count": len(justified),
             "coverage_gaps_count": len(coverage_gaps),
+            "force_human_review": force_human_review,
+            "used_verifier": using_verifier,
             "validation_errors": errors,
         },
         sys.stdout,
@@ -4694,21 +6398,40 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
 
 
 def cmd_prep_assets(args: argparse.Namespace) -> int:
-    """Copy prompt assets from plugin to CR_DIR."""
+    """Copy prompt assets from plugin to CR_DIR.
+
+    PLN-722 added ``verifier_prompt.txt`` to the per-run asset set. The
+    Verifier Fleet (stage_23) reads it from CR_DIR rather than from the
+    plugin root so verify-* runs after a plugin upgrade still use the
+    prompt that the prompt-hash was computed against. PLN-721 adds
+    ``premise_prompt.txt`` on the same contract — the Premise Reviewer
+    reads it from CR_DIR.
+    """
     plugin_root = Path(args.plugin_root)
     cr_dir = Path(args.cr_dir)
 
     shared_src = plugin_root / "tools" / "prompts" / "shared_prompt.txt"
     bha_src = plugin_root / "tools" / "prompts" / "bha_suffix.txt"
+    verifier_src = plugin_root / "tools" / "prompts" / "verifier_prompt.txt"
+    premise_src = plugin_root / "tools" / "prompts" / "premise_prompt.txt"
 
     shared_dst = cr_dir / "shared_prompt.txt"
     bha_dst = cr_dir / "bha_suffix.txt"
+    verifier_dst = cr_dir / "verifier_prompt.txt"
+    premise_dst = cr_dir / "premise_prompt.txt"
 
     shutil.copy2(shared_src, shared_dst)
     shutil.copy2(bha_src, bha_dst)
+    shutil.copy2(verifier_src, verifier_dst)
+    shutil.copy2(premise_src, premise_dst)
 
     json.dump(
-        {"shared_prompt": str(shared_dst), "bha_suffix": str(bha_dst)},
+        {
+            "shared_prompt": str(shared_dst),
+            "bha_suffix": str(bha_dst),
+            "verifier_prompt": str(verifier_dst),
+            "premise_prompt": str(premise_dst),
+        },
         sys.stdout,
         indent=2,
     )
@@ -4822,6 +6545,55 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_val.add_argument("--diff-data", required=True, help="Path to diff data JSON file")
     p_val.set_defaults(func=cmd_validate)
 
+    # verify-prepare (PLN-722)
+    p_vp = subparsers.add_parser(
+        "verify-prepare",
+        help="Tier-select findings for verification and emit per-finding inputs",
+    )
+    p_vp.add_argument("--cr-dir", required=True, help="CR_DIR path")
+    p_vp.add_argument(
+        "--findings", required=True,
+        help="Path to findings_validated.json (or any {validated|findings: [...]} JSON)",
+    )
+    p_vp.add_argument(
+        "--cache-dir", default=None,
+        help="Optional cache directory; when set, fresh (finding_id, snippet_hash, "
+        "model, prompt_hash) tuples are served from the verifications/ namespace.",
+    )
+    p_vp.add_argument(
+        "--prompt-hash", default="",
+        help="Verifier prompt hash; part of the cache key so prompt revs invalidate cache.",
+    )
+    p_vp.set_defaults(func=cmd_verify_prepare)
+
+    # verify-consolidate (PLN-722)
+    p_vc = subparsers.add_parser(
+        "verify-consolidate",
+        help="Merge verifier outputs with validated set + bucket-split (verified/rejected/pending)",
+    )
+    p_vc.add_argument("--cr-dir", required=True, help="CR_DIR path")
+    p_vc.add_argument(
+        "--validated", required=True,
+        help="Path to findings_validated.json",
+    )
+    p_vc.add_argument(
+        "--manifest", default=None,
+        help="Path to verify_manifest.json (defaults to <cr-dir>/verify_manifest.json)",
+    )
+    p_vc.add_argument(
+        "--gates", default=None,
+        help="Path to verification-gates.json (defaults to .closedloop-ai/settings/verification-gates.json)",
+    )
+    p_vc.add_argument(
+        "--cache-dir", default=None,
+        help="Optional cache directory; fresh verifier outputs are written back here.",
+    )
+    p_vc.add_argument(
+        "--prompt-hash", default="",
+        help="Verifier prompt hash for cache write-back keys.",
+    )
+    p_vc.set_defaults(func=cmd_verify_consolidate)
+
     # cache-check
     p_cc = subparsers.add_parser("cache-check", help="Check BHA cache for previously reviewed files")
     p_cc.add_argument("--cache-dir", required=True, help="Path to cache directory")
@@ -4914,6 +6686,22 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_ch = subparsers.add_parser("compute-hashes", help="Compute prompt hash and context key")
     p_ch.add_argument("--shared-prompt", required=True, help="Path to shared_prompt.txt")
     p_ch.add_argument("--bha-suffix", required=True, help="Path to bha_suffix.txt")
+    # PLN-722 v2.8.1: optional for back-compat with pre-PLN-722 callers
+    # (when absent, the hash matches v2.8.0 byte-identically). New
+    # callers must pass it so verifier prompt revs invalidate caches.
+    p_ch.add_argument(
+        "--verifier-prompt", default=None,
+        help="Path to verifier_prompt.txt. When provided, folds into prompt_hash "
+             "so cache keys invalidate on verifier prompt edits.",
+    )
+    # PLN-721: optional for back-compat with pre-PLN-721 callers
+    # (when absent, the hash matches v2.8.1 byte-identically). New
+    # callers must pass it so premise prompt revs invalidate caches.
+    p_ch.add_argument(
+        "--premise-prompt", default=None,
+        help="Path to premise_prompt.txt. When provided, folds into prompt_hash "
+             "so cache keys invalidate on premise prompt edits.",
+    )
     p_ch.add_argument("--diff-tip", required=True, help="Git ref for diff tip (e.g. HEAD, origin/branch)")
     p_ch.add_argument("--base-ref", required=True, help="Base ref name (e.g. main)")
     p_ch.set_defaults(func=cmd_compute_hashes)
@@ -4951,6 +6739,18 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_ci.add_argument("--diff-data", default=None, help="Path to diff_data.json for file statuses")
     p_ci.set_defaults(func=cmd_classify_intent)
 
+    # detect-injection (PLN-720)
+    p_di = subparsers.add_parser(
+        "detect-injection",
+        help="Score intent_context.json for prompt-injection signals; quarantine on Medium+",
+    )
+    p_di.add_argument("--cr-dir", required=True, help="CR session directory")
+    p_di.add_argument(
+        "--intent-context", required=True,
+        help="Path to intent_context.json (written by fetch-intent)",
+    )
+    p_di.set_defaults(func=cmd_detect_injection)
+
     # collect-findings
     p_cf = subparsers.add_parser("collect-findings", help="Merge agent + hygiene findings")
     p_cf.add_argument("--cr-dir", required=True, help="Directory containing agent_*.json files")
@@ -4965,6 +6765,13 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
         "--review-result", default=None,
         help="Path to review_result.json (canonical envelope; preferred when present)",
     )
+    # PLN-721: optional operator override for verdict thresholds (defaults
+    # to .closedloop-ai/settings/verdict-thresholds.json when absent).
+    p_v.add_argument(
+        "--thresholds", default=None,
+        help="Path to verdict-thresholds.json. Defaults to "
+             ".closedloop-ai/settings/verdict-thresholds.json (absent → built-in default 3).",
+    )
     p_v.set_defaults(func=cmd_verdict)
 
     # finalize-result (PLN-719 Phase 2)
@@ -4977,6 +6784,13 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_fr.add_argument("--mode", default=None, choices=["local", "github"], help="Run mode")
     p_fr.add_argument("--diff-tip", default=None, help="Diff tip sha (falls back to scope.json/setup.json)")
     p_fr.add_argument("--pr-number", type=int, default=None, help="PR number for github mode")
+    # PLN-721: optional operator override for verdict thresholds (defaults
+    # to .closedloop-ai/settings/verdict-thresholds.json when absent).
+    p_fr.add_argument(
+        "--thresholds", default=None,
+        help="Path to verdict-thresholds.json. Defaults to "
+             ".closedloop-ai/settings/verdict-thresholds.json (absent → built-in default 3).",
+    )
     p_fr.set_defaults(func=cmd_finalize_result)
 
     # arbitrate-budget (PLN-719 Phase 3)
