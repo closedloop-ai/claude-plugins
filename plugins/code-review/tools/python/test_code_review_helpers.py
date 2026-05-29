@@ -7667,6 +7667,76 @@ class TestVerifyConsolidate:
         assert len(out["rejected"]) == 1
         assert out["rejected"][0]["rejection_class"] == "guard_exists"
 
+    def test_downgrade_reconciles_canonical_severity(
+        self, tmp_path: Path,
+    ) -> None:
+        """PR #111 review HIGH #2 (same root cause as #1, broader scope):
+        a DOWNGRADE verdict with a ``verifier_severity`` must also
+        rewrite the canonical ``severity`` field so downstream
+        ``_compute_canonical_verdict`` (which reads ``severity``, not
+        ``verifier_severity``) sees the corrected tier. Without this,
+        the verifier's "still counts toward verdict, at the corrected
+        severity" promise is a no-op — Rule 2 short-circuits on the
+        unrewritten BLOCKING.
+        """
+        findings = [_make_validated_finding("bha_p0_f0", severity="BLOCKING")]
+        manifest = {
+            "to_verify": [{"finding_id": "bha_p0_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        verdicts = {
+            "bha_p0_f0": {
+                "verifier_verdict": "DOWNGRADE",
+                "verifier_severity": "MEDIUM",
+                "verifier_confidence": 0.9,
+                "verifier_reasoning": "real bug but only triggers in test fixtures",
+                "evidence_checks": [],
+                "rejection_class": None,
+            },
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs=verdicts,
+        )
+        assert len(out["verified"]) == 1
+        f = out["verified"][0]
+        assert f["verifier_verdict"] == "DOWNGRADE"
+        assert f["verifier_severity"] == "MEDIUM"
+        # Canonical severity rewritten so verdict reads the corrected tier
+        assert f["severity"] == "MEDIUM"
+        # Verdict-level assertion: DOWNGRADED finding must NOT short-
+        # circuit Rule 2 (BLOCKING) — the whole point of DOWNGRADE.
+        verdict, _ = _compute_canonical_verdict(out["verified"], [])
+        assert verdict == "APPROVED", (
+            f"DOWNGRADE to MEDIUM should approve (no MEDIUM rule); "
+            f"got {verdict!r}"
+        )
+
+    def test_downgrade_with_invalid_severity_does_not_rewrite(
+        self, tmp_path: Path,
+    ) -> None:
+        """Defense: a DOWNGRADE with an unknown verifier_severity (typo,
+        agent returning P3, etc.) must leave the canonical severity
+        untouched rather than corrupting it with garbage."""
+        findings = [_make_validated_finding("bha_p0_f0", severity="HIGH")]
+        manifest = {
+            "to_verify": [{"finding_id": "bha_p0_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        verdicts = {
+            "bha_p0_f0": {
+                "verifier_verdict": "DOWNGRADE",
+                "verifier_severity": "P3",  # not in SEVERITIES
+                "verifier_confidence": 0.8,
+                "verifier_reasoning": "downgrade",
+                "evidence_checks": [],
+                "rejection_class": None,
+            },
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs=verdicts,
+        )
+        assert out["verified"][0]["severity"] == "HIGH"  # untouched
+
     def test_tentative_lands_in_verified_with_verdict_preserved(
         self, tmp_path: Path,
     ) -> None:

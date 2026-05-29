@@ -33,6 +33,7 @@ from code_review_schema import (
     CACHE_NAMESPACE_BHA,
     CACHE_NAMESPACE_VERIFICATIONS,
     SCHEMA_VERSION,
+    SEVERITIES,
     VERIFIER_VERDICTS,
     cache_ttl_days,
     empty_telemetry,
@@ -2189,11 +2190,26 @@ def _merge_verifier_fields(
     Only canonical verifier_* fields are merged; the verifier never
     overwrites the original finding's issue / explanation / recommendation
     (those stay author-of-record for downstream presentation).
+
+    Severity reconciliation on DOWNGRADE: per ``verifier_prompt.txt``
+    ("the finding still counts toward verdict — at the corrected
+    severity"), a DOWNGRADE verdict with a valid ``verifier_severity``
+    also rewrites the canonical ``severity`` field, so downstream
+    ``_compute_canonical_verdict`` (which reads ``severity`` in Rules 2
+    and 3) sees the corrected tier. Without this rewrite a verifier
+    that knocks BLOCKING down to MEDIUM is inert at the verdict layer —
+    Rule 2 still short-circuits on the unrewritten BLOCKING. PR #111
+    review HIGH #1 surfaced the same bug for the sensitive-path cap;
+    DOWNGRADE has the identical shape.
     """
     if "verifier_verdict" in verdict_data:
         verdict = verdict_data["verifier_verdict"]
         if verdict in VERIFIER_VERDICTS:
             finding["verifier_verdict"] = verdict
+            if verdict == "DOWNGRADE":
+                vs = verdict_data.get("verifier_severity")
+                if isinstance(vs, str) and vs in SEVERITIES:
+                    finding["severity"] = vs
     for key in (
         "verifier_severity",
         "verifier_confidence",
