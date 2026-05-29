@@ -41,7 +41,12 @@ FINDING_SCOPES: frozenset[str] = frozenset({"diff", "system", "pr_metadata"})
 
 SEVERITIES: frozenset[str] = frozenset({"BLOCKING", "HIGH", "MEDIUM"})
 
-PRIORITIES: frozenset[int] = frozenset({0, 1, 2})
+# Priorities — 0/1/2/3 mirror the P0/P1/P2/P3 tiers documented in the
+# shared reviewer prompt (tools/prompts/shared_prompt.txt §"SEVERITY +
+# PRIORITY"): P0 BLOCKING, P1 HIGH, P2 MEDIUM bugs/DRY, P3 MEDIUM
+# suggestions. The schema must accept every tier the prompt teaches —
+# excluding P3 forced reviewers to misclassify nice-to-haves as P2.
+PRIORITIES: frozenset[int] = frozenset({0, 1, 2, 3})
 
 # Categories — section 1 of the plan. Includes legacy "Repo Hygiene" as an
 # accepted alias so the hygiene helper can keep its historical category

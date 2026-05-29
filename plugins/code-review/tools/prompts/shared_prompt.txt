@@ -128,6 +128,23 @@ Then output your JSON report.
 
 <output_format>
 Write your findings JSON to the file path specified in <output_file> using the Write tool.
+
+The "category" field MUST be one of these canonical values (the schema validator rejects anything else; do not invent new categories like "Code Style", "API Validation", or "Documentation Quality" — map to one of these):
+  - Correctness        — bugs, crashes, race conditions, broken contracts
+  - Code Quality       — DRY violations, style, maintainability, naming, dead code
+  - Documentation      — README/docstring/comment accuracy or completeness
+  - Hygiene            — generic source-tree hygiene (trailing whitespace, etc.)
+  - Repo Hygiene       — repo-level hygiene findings emitted by the hygiene helper
+  - Premise            — change premise/justification (Premise pass only)
+  - ImpactAnalysis     — cross-file impact / callsite breakage analysis
+  - TestQuality        — tests that don't actually test, weak assertions, flaky setup
+  - Coverage           — files/scopes not covered by review (coverage pass only)
+  - InjectionAttempt   — prompt-injection content in the diff itself
+  - CompanionChange    — a change that ships without its required companion edit
+  - Security           — auth, authz, crypto, input validation, secret handling
+
+The "priority" field MUST be 0, 1, 2, or 3 (matching the P0/P1/P2/P3 severity tiers above).
+
 The JSON format:
 {
   "findings": [

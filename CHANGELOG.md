@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.6.3
+
+#### Fixed
+- `PRIORITIES` enum now includes `3`. `shared_prompt.txt` §"SEVERITY + PRIORITY" explicitly teaches a `P3` tier ("MEDIUM (P3): Suggestions, nice-to-haves"), and reviewers (Bug Hunter B in particular) correctly emit `priority: 3` for nice-to-haves — but the schema rejected those findings because `PRIORITIES` was hard-coded to `{0, 1, 2}`. A pure prompt ↔ schema contradiction: the reviewer was doing exactly what the prompt said, and the schema killed the finding. New `test_priorities_include_p3` + `test_p3_finding_passes_validation` guard against future drift.
+- `shared_prompt.txt` `<output_format>` section now enumerates every canonical `CATEGORIES` value explicitly with a one-line description per category. Previously the prompt showed only `category: "Correctness"` as a single example, so reviewers naturally invented categories like "Code Style" (Auditor), "API Validation" (api-architect), or "Documentation Quality" — none of which were in the canonical enum. Reviewers now see the complete list and can map their findings to one of the 12 documented categories. The prompt also explicitly tells reviewers `priority` must be `0`, `1`, `2`, or `3` to prevent invented priority values.
+- `test_shared_prompt_enumerates_every_canonical_category` locks in the prompt ↔ schema sync in both directions: every entry in `CATEGORIES` must appear in `shared_prompt.txt`, and every capitalized category-like token in the prompt's `<output_format>` must be in `CATEGORIES`. If either side adds or removes a category without updating the other, the test fails — making schema/prompt drift structurally impossible. This addresses the broader class of contract gap (reviewer-emitted enum values) rather than just the two specific categories from this run.
+
 ### code-review v2.6.2
 
 #### Fixed
