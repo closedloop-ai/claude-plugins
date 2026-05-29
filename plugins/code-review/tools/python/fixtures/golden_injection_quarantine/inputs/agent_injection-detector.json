@@ -1,0 +1,22 @@
+{
+  "findings": [
+    {
+      "schema_version": 1,
+      "id": "injection-detector_f0",
+      "reviewer": "injection-detector",
+      "source": "injection-detector",
+      "emitted_at": "2026-01-01T00:00:00+00:00",
+      "finding_scope": "pr_metadata",
+      "file": null,
+      "line": null,
+      "system_marker": "pr_description",
+      "category": "InjectionAttempt",
+      "severity": "BLOCKING",
+      "priority": 0,
+      "confidence": 1.0,
+      "issue": "[P0] Prompt-injection signals detected in pr_description (score: 90)",
+      "explanation": "Detected 2 match(es) across pattern classes: instruction_override, role_reversal. Score: 90 (≥70 = High).",
+      "recommendation": "Maintainer review required. Inspect the flagged content for prompt-injection payloads before re-running review."
+    }
+  ]
+}

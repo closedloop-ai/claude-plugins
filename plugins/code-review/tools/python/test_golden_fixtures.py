@@ -24,16 +24,15 @@ from golden_fixture_harness import (
 _FIXTURES_ROOT = Path(__file__).parent / "fixtures"
 
 
-# Phase 8 ships 3 fixtures end-to-end. The other 6 fixtures in PLN-719
-# Section 10 require plans 01/02/03/05/06 outputs to be canonical before
-# their expected envelopes can be pinned; they ship as fixture skeletons
-# and the test parametrization skips them with a clear reason.
+# Phase 8 originally shipped 3 fixtures end-to-end + 6 deferred skeletons.
+# PLN-720 (plan 01) added a 4th end-to-end fixture: golden_injection_quarantine.
+# The remaining 5 fixtures depend on plans 02/03/05/06 outputs and stay
+# deferred until those plans land.
 _DEFERRED_FIXTURES: dict[str, str] = {
     "golden_premise_justified": "plan 02 (justification) not shipped",
     "golden_premise_rejected": "plan 02 (justification) not shipped",
     "golden_impact_with_callsites": "plan 06 (external impact) not shipped",
     "golden_coverage_gap": "plans 03 + 05 (verifier + coverage) not shipped",
-    "golden_injection_quarantine": "plan 01 (detect-injection) not shipped",
     "golden_budget_exceeded": "arbitrate-budget integration fixture pending",
 }
 

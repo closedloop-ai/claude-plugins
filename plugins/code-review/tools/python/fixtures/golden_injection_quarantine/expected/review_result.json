@@ -1,0 +1,107 @@
+{
+  "base_ref": "main",
+  "coverage_gaps": [],
+  "coverage_plan": {
+    "best_effort": [],
+    "budget": {
+      "best_effort_count": 0,
+      "bha_partitions": 0,
+      "required_count": 0,
+      "total_cap": 20
+    },
+    "deferred_for_budget": [],
+    "deprecation_warnings": [],
+    "required": []
+  },
+  "diff_scope": "main..HEAD",
+  "diff_tip": "abc1234",
+  "head_sha": "abc1234",
+  "intent": "mixed",
+  "justified": [],
+  "mode": "local",
+  "pending_verification": [],
+  "pr_number": null,
+  "rejected": [],
+  "review_branch": "feature/x",
+  "review_id": "00000000-0000-4000-8000-000000000000",
+  "schema_version": 1,
+  "stats": {
+    "agent_failures": [],
+    "by_category": {
+      "InjectionAttempt": 1
+    },
+    "by_finding_scope": {
+      "diff": 0,
+      "pr_metadata": 1,
+      "system": 0
+    },
+    "by_reviewer": {
+      "injection-detector": {
+        "justified": 0,
+        "rejected": 0,
+        "tentative": 0,
+        "verified": 1
+      }
+    },
+    "by_severity": {
+      "BLOCKING": 1,
+      "HIGH": 0,
+      "MEDIUM": 0
+    },
+    "premise_cumulative_medium_count": 0,
+    "verification": {
+      "downgrade_count": 0,
+      "false_positive_rate": 0.0,
+      "justified_invalid_count": 0,
+      "justified_valid_count": 0,
+      "rejected_count": 0,
+      "skipped_count": 0,
+      "tentative_count": 0,
+      "verified_count": 1
+    }
+  },
+  "verdict": "CHANGES_REQUESTED",
+  "verdict_reason": "[P0] Prompt-injection signals detected in pr_description (score: 90)",
+  "verified": [
+    {
+      "category": "InjectionAttempt",
+      "code_snippet": "",
+      "confidence": 1.0,
+      "emitted_at": "2026-01-01T00:00:00+00:00",
+      "evidence": [],
+      "evidence_checks": [],
+      "explanation": "Detected 2 match(es) across pattern classes: instruction_override, role_reversal. Score: 90 (\u226570 = High).",
+      "external_impact": [],
+      "file": null,
+      "finding_scope": "pr_metadata",
+      "grep_query_used": null,
+      "human_review_recommended": false,
+      "id": "injection-detector_f0",
+      "issue": "[P0] Prompt-injection signals detected in pr_description (score: 90)",
+      "justification": null,
+      "justified": false,
+      "line": null,
+      "other_locations": [],
+      "priority": 0,
+      "reasoning_certificate": null,
+      "recommendation": "Maintainer review required. Inspect the flagged content for prompt-injection payloads before re-running review.",
+      "rejection_class": null,
+      "reviewer": "injection-detector",
+      "reviewer_trigger": {
+        "evidence": null,
+        "type": "core"
+      },
+      "schema_version": 1,
+      "severity": "BLOCKING",
+      "source": "injection-detector",
+      "subcategory": null,
+      "system_marker": "pr_description",
+      "verification_duration_ms": null,
+      "verifier_confidence": null,
+      "verifier_model": null,
+      "verifier_reasoning": null,
+      "verifier_severity": null,
+      "verifier_verdict": null
+    }
+  ]
+}
