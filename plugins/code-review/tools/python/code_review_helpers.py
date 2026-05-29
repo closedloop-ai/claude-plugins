@@ -4105,7 +4105,14 @@ def _build_run_plan_stages(
             "stdout": None,
             "expected_outputs": [f"{cr_dir}/review_result.json"],
             "depends_on": ["stage_22_validate"],
-            "on_failure": "abort",
+            # `cmd_finalize_result` writes review_result.json BEFORE running
+            # schema validation (see code_review_helpers.py:cmd_finalize_result),
+            # so a non-zero exit signals validation errors to the operator
+            # without preventing stage_28_verdict from reading a structurally
+            # complete envelope. Use "continue" so reviewer-emitted category
+            # drift (e.g. "Documentation" before we added it to CATEGORIES)
+            # doesn't kill the pipeline; the stderr signal is preserved.
+            "on_failure": "continue",
             "enabled": True,
         },
         {
@@ -4178,8 +4185,13 @@ def _build_run_plan_stages(
                 "--cache-result", f"{cr_dir}/cache_result.json",
                 "--cr-dir", cr_dir,
             ],
-            "stdout": None,
-            "expected_outputs": [],
+            # cmd_footer writes its JSON payload ({"footer_line": "..."}) to
+            # stdout. The per-stage prose in start.md tells the walker to read
+            # <CR_DIR>/footer.json, so the plan must redirect stdout to that
+            # file. Leaving this as None caused the walker to read a missing
+            # file and conflate that with helper non-zero exit.
+            "stdout": f"{cr_dir}/footer.json",
+            "expected_outputs": [f"{cr_dir}/footer.json"],
             "depends_on": ["stage_29_present"],
             "on_failure": "continue",
             "enabled": True,

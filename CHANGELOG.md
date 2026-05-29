@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.6.2
+
+#### Fixed
+- `Documentation` added to the canonical `CATEGORIES` enum in `code_review_schema.py`. Reviewers naturally emit `category: "Documentation"` for README / docstring / comment findings, and the fast-path reviewer in particular produces this category on real runs. Previously such findings caused `cmd_finalize_result` to exit non-zero with `category 'Documentation' not in [...]`, which collided with `stage_25_finalize_result.on_failure: "abort"` and would have killed the pipeline. `Documentation` is now accepted alongside `Code Quality` rather than forcing reviewers to misclassify documentation findings. `SCHEMA.md` updated to list the new category in the finding schema.
+- `stage_25_finalize_result.on_failure` relaxed from `"abort"` to `"continue"`. `cmd_finalize_result` writes `review_result.json` BEFORE running schema validation (line 4717 — explicit), so a non-zero exit indicates reviewer category/field drift, not a missing envelope. `stage_28_verdict` can read the structurally complete envelope and produce a verdict; the stderr text remains for operators to correct prompts/schema. This resolves a long-standing prose ↔ plan contradiction in `start.md` (per-stage notes claimed verdict would "fall back to findings_validated.json" while the plan said `abort`). The corrected prose now matches the relaxed behavior.
+- `stage_30_footer.stdout` redirects to `<CR_DIR>/footer.json` (was `None`). `cmd_footer` writes its `{"footer_line": "..."}` JSON payload to stdout, and the `Review Footer` prose in `start.md` tells the walker to read `<CR_DIR>/footer.json` after the stage runs. With `stdout: None`, the file was never written; the walker read a missing file and reported the helper as exiting non-zero. The redirect now produces the file the prose expects, and `footer.json` is listed in `expected_outputs` so the gate system can confirm production.
+- Three contract tests added in `TestPrepareRun` lock in the fixes against regression: `test_documentation_is_valid_category` (schema enum), `test_stage_25_finalize_result_on_failure_is_continue` (run-plan vs reviewer drift), `test_stage_30_footer_stdout_redirects_to_footer_json` (run-plan vs prose).
+
 ### code v1.12.0
 
 #### Removed

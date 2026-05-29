@@ -262,7 +262,7 @@ These notes annotate the run-plan stages with anything not obvious from the plan
 - **stage_19_cache_check**: writes `<CR_DIR>/cache_result.json` (stats), `<CR_DIR>/agent_cached_bha.json` (cached BHA findings, glob-compatible with `agent_*`), `<CR_DIR>/uncached_diff_data.json` (filtered diff_data for uncached files). Do NOT print the cache status here — it is printed in Gate A (hygiene exit) or Gate B (after route).
 - **stage_20_spawn_reviewers**: agent_fleet stage. Dispatch to the "Reviewer Fleet" section below.
 - **stage_22_validate**: writes `<CR_DIR>/findings_validated.json` via `> <CR_DIR>/findings_validated.json` redirection. Phase B will retire this file; it remains during the transition.
-- **stage_25_finalize_result**: writes `<CR_DIR>/review_result.json` (the canonical envelope). If it exits non-zero, the walker logs the failure and `stage_28_verdict` falls back to `findings_validated.json`.
+- **stage_25_finalize_result**: writes `<CR_DIR>/review_result.json` (the canonical envelope) BEFORE running schema validation. A non-zero exit signals reviewer-emitted category/field drift (e.g. a category not in the canonical enum) but does not block the pipeline — `on_failure: continue` lets `stage_28_verdict` read the structurally complete envelope. Surface the stderr text in the present step so operators can correct prompts/schema; do not abort.
 - **stage_26_cache_update**: gated by **Gate C**.
 - **stage_27_review_state_write**: gated by **Gate D**.
 - **stage_29_present**: present stage. Dispatch to "Local Mode: Present Results" or the GitHub steps in `github-review.md`.

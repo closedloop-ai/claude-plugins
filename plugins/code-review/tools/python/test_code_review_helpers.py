@@ -6160,6 +6160,63 @@ class TestPrepareRun:
                     f"resolved args={resolved!r}. argparse exit code={exc.code!r}"
                 ) from None
 
+    def test_stage_25_finalize_result_on_failure_is_continue(
+        self, tmp_path: Path,
+    ) -> None:
+        """``cmd_finalize_result`` writes review_result.json *before* schema
+        validation runs, so a non-zero exit (reviewer category drift, missing
+        field) leaves a structurally complete envelope on disk for the
+        downstream verdict stage to consume. The walker must NOT abort here,
+        or one reviewer emitting an unrecognized category would kill the
+        whole pipeline. Guard against accidentally reverting to ``abort``.
+        """
+        _, plan = self._run(tmp_path)
+        stage = next(s for s in plan["stages"] if s["id"] == "stage_25_finalize_result")
+        assert stage["on_failure"] == "continue", (
+            f"stage_25_finalize_result.on_failure must be 'continue' so a "
+            f"validation error (e.g. reviewer-emitted category not in the "
+            f"canonical enum) doesn't abort the pipeline; cmd_finalize_result "
+            f"writes review_result.json before validating, and stage_28_verdict "
+            f"can read it. Got: {stage['on_failure']!r}"
+        )
+
+    def test_stage_30_footer_stdout_redirects_to_footer_json(
+        self, tmp_path: Path,
+    ) -> None:
+        """start.md's per-stage prose tells the walker to read
+        ``<CR_DIR>/footer.json`` after stage_30. ``cmd_footer`` writes its
+        ``{"footer_line": ...}`` JSON to stdout, so the run plan must
+        redirect stdout to that file or the walker reads a non-existent file
+        and conflates it with a helper failure.
+        """
+        _, plan = self._run(tmp_path)
+        stage = next(s for s in plan["stages"] if s["id"] == "stage_30_footer")
+        assert stage["stdout"] == f"{tmp_path}/footer.json", (
+            f"stage_30_footer.stdout must redirect to {tmp_path}/footer.json "
+            f"so the walker can read the file as documented in start.md "
+            f"§ Review Footer. Got: {stage['stdout']!r}"
+        )
+        assert f"{tmp_path}/footer.json" in stage["expected_outputs"], (
+            "footer.json must appear in expected_outputs so the gate "
+            "system can confirm it was produced"
+        )
+
+    def test_documentation_is_valid_category(self) -> None:
+        """Reviewers naturally emit ``category: "Documentation"`` for
+        README/docstring/comment findings. Schema validation rejecting that
+        category would force every doc finding through finalize-result's
+        error path. Adding it to the canonical enum aligns with the
+        shared_prompt convention of letting reviewers pick the obvious
+        category name without coercion.
+        """
+        from code_review_schema import CATEGORIES
+
+        assert "Documentation" in CATEGORIES, (
+            "'Documentation' must be in CATEGORIES — reviewers emit this "
+            "category for README/docstring/comment findings and the schema "
+            "validator should accept it as a first-class category"
+        )
+
     def test_every_documented_runtime_token_is_resolvable(
         self, tmp_path: Path,
     ) -> None:
