@@ -155,7 +155,7 @@ Write `.closedloop-ai/code-review-findings.json`:
 {"schema_version": 1, "pr_number": 123, "head_sha": "abc123...", "findings": [...]}
 ```
 
-The `findings` array contains the envelope's `verified[]` only (NOT `rejected[]` or `pending_verification[]` — those have separate files; see 6c). When no envelope exists (verifier disabled / shadow mode), fall back to the legacy validate output. The workflow's `post-comments` step handles formatting, dedup against existing comments, and error handling.
+The `findings` array contains the envelope's `verified[]` only (NOT `rejected[]`, `justified[]`, or `pending_verification[]` — those have separate files; see 6c and 6d). When no envelope exists (verifier disabled / shadow mode), fall back to the legacy validate output. The workflow's `post-comments` step handles formatting, dedup against existing comments, and error handling.
 
 ### 6c: Write Dismissed and Pending Findings (PLN-722)
 
@@ -211,6 +211,49 @@ If `envelope.force_human_review == true`, prepend a banner to `code-review-dismi
 
 ```markdown
 > 🚨 **Mandatory human review path touched.** One or more findings landed on a path configured in `verification-gates.json` → `mandatory_human_review_paths`. The verifier escalated them to TENTATIVE and the verdict is forced to `NEEDS_ATTENTION` regardless of severity.
+```
+
+### 6d: Write Justified Findings (PLN-721)
+
+Read `$CR_DIR/review_result.json` → `justified[]`. If absent or empty, skip this step — there are no justified findings to surface and the file is meaningless. Otherwise write `.closedloop-ai/code-review-justified.json` (the workflow posts these as a separate "ℹ️ N findings justified by author" PR comment with collapsible `<details>` blocks per finding):
+
+```json
+{
+  "schema_version": 1,
+  "pr_number": 123,
+  "head_sha": "abc123...",
+  "justified": [...envelope.justified...]
+}
+```
+
+Also write `.closedloop-ai/code-review-justified-summary.md` (skip when `justified[]` is empty):
+
+```markdown
+## Author-Justified Findings
+
+ℹ️ {N} finding(s) were emitted by reviewers but absorbed by author justification comments the verifier independently validated. They are NOT included in the inline comments above. If you disagree with a dismissal, see the full chain in `review_result.json.justified[]`.
+
+<details>
+<summary>{ORIGINAL_SEVERITY} justified: {FILE}:{LINE} — {ISSUE_HEAD}</summary>
+
+**Finding ID:** `{ID}`
+**Original reviewer:** {REVIEWER}
+**Subcategory:** `{SUBCATEGORY}` (Premise findings only)
+**Verifier verdict:** JUSTIFIED-VALID
+**Verifier confidence:** {VERIFIER_CONFIDENCE}
+
+**Original concern:** {ISSUE}
+
+**Author's justification:**
+> {JUSTIFICATION_TEXT}
+>
+> — cited at `{JUSTIFICATION_SOURCE}` by `{CLAIMED_BY_REVIEWER}`
+
+**Verifier reasoning:** {VERIFIER_REASONING}
+
+</details>
+
+<!-- repeat per justified -->
 ```
 
 Mark todo as `completed`.

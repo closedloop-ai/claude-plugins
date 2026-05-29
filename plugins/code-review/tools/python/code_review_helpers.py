@@ -1842,6 +1842,71 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
 # = no escalation; bootstrap does NOT auto-generate per `00-discovery.md`.
 _VERIFICATION_GATES_DEFAULT_PATH = Path(".closedloop-ai/settings/verification-gates.json")
 
+# PLN-721 Phase 4: Premise cumulative-MEDIUM verdict gate. Operator-overridable
+# via ``.closedloop-ai/settings/verdict-thresholds.json``; absent/malformed →
+# the default fires at 3 (matches the plan's design intent: "a single MEDIUM
+# does not block; three MEDIUM Premise findings on the same PR signal the
+# patch is structurally wrong even when no individual line is dangerous").
+_VERDICT_THRESHOLDS_DEFAULT_PATH = Path(".closedloop-ai/settings/verdict-thresholds.json")
+_VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT = 3
+_VERDICT_THRESHOLD_KEYS: tuple[str, ...] = (
+    "premise_cumulative_medium",
+)
+
+
+def _load_optional_settings_dict(
+    path: Path | None, defaults: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Open an optional operator-authored settings JSON file.
+
+    Shared frame for ``_load_verdict_thresholds`` and
+    ``_load_verification_gates`` (the v2.9.0 review surfaced their
+    structural duplication). Returns:
+
+      - ``(None, fresh_defaults)`` when ``path`` is None, missing, or
+        the file does not contain a top-level JSON object — caller
+        returns ``fresh_defaults`` directly.
+      - ``(data, fresh_defaults)`` otherwise — caller layers per-key
+        validation on top by reading from ``data`` and overwriting
+        ``fresh_defaults`` entries when the value is accepted.
+
+    ``fresh_defaults`` is a per-call shallow copy with list values
+    deep-copied so callers may mutate it without affecting future
+    invocations.
+    """
+    fresh: dict[str, Any] = {
+        k: (list(v) if isinstance(v, list) else v)
+        for k, v in defaults.items()
+    }
+    if path is None:
+        return None, fresh
+    data = _read_optional_json(path, None)
+    if not isinstance(data, dict):
+        return None, fresh
+    return data, fresh
+
+
+def _load_verdict_thresholds(path: Path | None) -> dict[str, int]:
+    """Read verdict-thresholds.json. Absent or malformed → built-in defaults.
+
+    Returns a dict with the canonical keys present, each mapped to an int.
+    Unknown keys are ignored. Non-int / negative entries fall back to the
+    default — the file is operator-authored and should not crash the
+    pipeline on a typo or a "0" that would disable the gate entirely
+    (use a very large number for that).
+    """
+    defaults: dict[str, Any] = {
+        "premise_cumulative_medium": _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
+    }
+    data, out = _load_optional_settings_dict(path, defaults)
+    if data is None:
+        return out
+    for key in _VERDICT_THRESHOLD_KEYS:
+        raw = data.get(key)
+        if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1:
+            out[key] = raw
+    return out
+
 _VERIFICATION_GATE_KEYS: tuple[str, ...] = (
     # REJECTED on this path + BLOCKING/HIGH severity → TENTATIVE
     # (severity capped at HIGH; rejection_class cleared).
@@ -1921,13 +1986,14 @@ def _load_verification_gates(path: Path | None) -> dict[str, list[str]]:
     Non-string list entries are dropped silently — the file is operator-
     authored and should not crash the pipeline on a typo.
     """
-    empty: dict[str, list[str]] = {k: [] for k in _VERIFICATION_GATE_KEYS}
-    if path is None:
-        return empty
-    data = _read_optional_json(path, None)
-    if not isinstance(data, dict):
-        return empty
-    out: dict[str, list[str]] = {k: [] for k in _VERIFICATION_GATE_KEYS}
+    defaults: dict[str, Any] = {k: [] for k in _VERIFICATION_GATE_KEYS}
+    data, out_any = _load_optional_settings_dict(path, defaults)
+    # The shared helper returns dict[str, Any]; this loader's contract
+    # is dict[str, list[str]] and per-key validation below preserves
+    # that invariant.
+    out: dict[str, list[str]] = out_any  # type: ignore[assignment]
+    if data is None:
+        return out
     for key in _VERIFICATION_GATE_KEYS:
         raw = data.get(key, [])
         if isinstance(raw, list):
@@ -1972,16 +2038,21 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
 
       {
         "verified": [...],                # CONFIRMED + DOWNGRADE + TENTATIVE
+                                          #   + JUSTIFIED-INVALID (reserved;
+                                          #   not currently emitted)
                                           #   + tier-skipped findings (no
                                           #   verification needed)
         "rejected": [...],                # REJECTED (with verifier fields)
         "pending_verification": [...],    # deferred + missing verifier outputs
+        "justified": [...],               # PLN-721 — JUSTIFIED-VALID findings
+                                          #   (author defense audited + passed)
         "force_human_review": bool,       # any finding on a mandatory_human_
                                           #   review_paths match
         "stats": {
             "verified_count": int,
             "rejected_count": int,
             "pending_count": int,
+            "justified_count": int,       # PLN-721 — len(justified)
             "escalated_sensitive_path": int,
             "escalated_mandatory_review": int,
         }
@@ -2052,6 +2123,10 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
     verified: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
+    # PLN-721: JUSTIFIED-VALID verdicts land here. The bucket exists at the
+    # consolidate boundary so finalize-result can route them to the canonical
+    # envelope's justified[] surface without re-deriving from verifier_verdict.
+    justified: list[dict[str, Any]] = []
     escalated_sensitive = 0
     escalated_mandatory = 0
     force_human_review = False
@@ -2143,8 +2218,15 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
             # never surfacing in the Dismissed Findings presenter section
             # despite being marked REJECTED. Mirror the sensitive_paths
             # escalation: clear rejection_class on the lift.
+            # PLN-721: JUSTIFIED-VALID / JUSTIFIED-INVALID participate on
+            # the same contract — the operator's "always-tentative" tag
+            # outranks the author's justification. JUSTIFIED-VALID lifts
+            # out of justified[] back into verified[] (with TENTATIVE
+            # verdict) so Rule 3.5 escalates to NEEDS_ATTENTION; the
+            # human will re-judge the justification.
             if finding.get("verifier_verdict") in (
                 None, "CONFIRMED", "DOWNGRADE", "REJECTED",
+                "JUSTIFIED-VALID", "JUSTIFIED-INVALID",
             ):
                 if finding.get("verifier_verdict") == "REJECTED":
                     finding["rejection_class"] = None
@@ -2153,8 +2235,15 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
             continue
 
         # No escalation — bucket by verdict.
-        if finding.get("verifier_verdict") == "REJECTED":
+        # PLN-721: JUSTIFIED-VALID lands in justified[] (the author's
+        # defense is valid; the finding is dismissed by the justification);
+        # JUSTIFIED-INVALID lands in verified[] (the justification was
+        # audited and refuted, so the original finding stands).
+        verdict = finding.get("verifier_verdict")
+        if verdict == "REJECTED":
             rejected.append(finding)
+        elif verdict == "JUSTIFIED-VALID":
+            justified.append(finding)
         else:
             verified.append(finding)
 
@@ -2162,11 +2251,16 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
         "verified": verified,
         "rejected": rejected,
         "pending_verification": pending,
+        # PLN-721: justified[] bucket exposed at the consolidate boundary
+        # so cmd_finalize_result can route directly into the envelope's
+        # justified[] surface without re-deriving from verifier_verdict.
+        "justified": justified,
         "force_human_review": force_human_review,
         "stats": {
             "verified_count": len(verified),
             "rejected_count": len(rejected),
             "pending_count": len(pending),
+            "justified_count": len(justified),
             "escalated_sensitive_path": escalated_sensitive,
             "escalated_mandatory_review": escalated_mandatory,
         },
@@ -3669,20 +3763,23 @@ def cmd_compute_hashes(args: argparse.Namespace) -> int:
     PLN-722 v2.8.1 — the verifier prompt bytes, so editing
     ``verifier_prompt.txt`` busts every cache namespace that keys on
     ``<PROMPT_HASH>`` (BHA cache and the new ``verifications/`` namespace).
-    Coarse but correct: a verifier-prompt rev rarely happens, and the
-    over-invalidation cost (re-pay the BHA reviewer pass) is bounded by
-    how often the verifier prompt actually changes. The alternative
-    (separate verifier-specific hash) splits the cache-key contract
-    across two CLI flags without preventing the bug PLN-722 v2.8.0 v1
-    shipped — stale verifier verdicts surviving a prompt edit.
+    PLN-721 extends the same contract to ``premise_prompt.txt``: editing
+    the Premise Reviewer prompt invalidates the same cache namespaces.
+    Coarse but correct: prompt revs are rare, and the over-invalidation
+    cost (re-pay the BHA reviewer pass) is bounded by how often the
+    prompts actually change. The alternative (separate per-asset hash)
+    splits the cache-key contract across N CLI flags without preventing
+    the bug PLN-722 v2.8.0 v1 shipped — stale verifier verdicts
+    surviving a prompt edit.
     """
     shared_prompt: str = args.shared_prompt
     bha_suffix: str = args.bha_suffix
     verifier_prompt: str | None = getattr(args, "verifier_prompt", None)
+    premise_prompt: str | None = getattr(args, "premise_prompt", None)
     diff_tip: str = args.diff_tip
     base_ref: str = args.base_ref
 
-    # Read all three prompt files.
+    # Read all prompt files.
     try:
         with open(shared_prompt, "rb") as f:
             shared_bytes = f.read()
@@ -3707,10 +3804,23 @@ def cmd_compute_hashes(args: argparse.Namespace) -> int:
         except OSError as exc:
             print(f"Error: cannot read verifier prompt: {exc}", file=sys.stderr)
             return 1
+    # premise_prompt.txt is optional with the same back-compat contract
+    # as verifier_prompt — when absent (pre-PLN-721 callers) the hash
+    # matches v2.8.1 exactly.
+    premise_bytes: bytes | None = None
+    if premise_prompt:
+        try:
+            with open(premise_prompt, "rb") as f:
+                premise_bytes = f.read()
+        except OSError as exc:
+            print(f"Error: cannot read premise prompt: {exc}", file=sys.stderr)
+            return 1
 
     hash_parts = [shared_bytes, bha_bytes]
     if verifier_bytes is not None:
         hash_parts.append(verifier_bytes)
+    if premise_bytes is not None:
+        hash_parts.append(premise_bytes)
     prompt_hash = compute_canonical_prompt_hash(hash_parts)
 
     # Compute context key via git merge-base
@@ -4812,20 +4922,68 @@ _CANONICAL_TO_LEGACY_VERDICT: dict[str, str] = {
 }
 
 
+def _count_gateable_premise_medium(verified: list[dict[str, Any]]) -> int:
+    """Return the count Rule 4's Premise-MEDIUM gate fires on.
+
+    Shared between ``_compute_canonical_verdict`` (Rule 4) and
+    ``_stats_from_findings`` (telemetry's
+    ``premise_cumulative_medium_count``) so the value the gate triggers
+    on always matches the value the operator-facing telemetry reports.
+    Counting policy:
+
+      - Only ``verified[]`` findings (``justified[]`` is bucketed
+        elsewhere; ``rejected[]`` is dropped from the verdict; and
+        ``coverage_gaps`` never carry ``category=Premise``).
+      - JUSTIFIED-VALID vs JUSTIFIED-INVALID are **asymmetric**
+        (thadeusb on PR #113):
+          * ``JUSTIFIED-VALID`` = author defense was audited and
+            accepted; the finding is dismissed and lives in
+            ``justified[]``, NOT ``verified[]``. Excluded defensively
+            in case a legacy/cached entry leaks into ``verified[]`` —
+            its concern was waived.
+          * ``JUSTIFIED-INVALID`` = author defense was audited and
+            REFUSED; the original concern survived. It belongs in the
+            count the same way a plain CONFIRMED MEDIUM does. The
+            reserved-but-unemitted enum value also lands here if a
+            future code path produces one in ``verified[]``.
+      - Severity is read post-DOWNGRADE — ``_merge_verifier_fields``
+        rewrites ``severity`` from ``verifier_severity`` for valid
+        downgrades, so a DOWNGRADE from HIGH → MEDIUM correctly counts.
+    """
+    count = 0
+    for finding in verified:
+        if str(finding.get("category", "")) != "Premise":
+            continue
+        if str(finding.get("severity", "")) != "MEDIUM":
+            continue
+        if finding.get("verifier_verdict") == "JUSTIFIED-VALID":
+            continue
+        count += 1
+    return count
+
+
 def _compute_canonical_verdict(
     verified: list[dict[str, Any]],
     coverage_gaps: list[dict[str, Any]],
     *,
     force_human_review: bool = False,
+    thresholds: dict[str, int] | None = None,
 ) -> tuple[str, str]:
     """Apply canonical verdict precedence rules (PLN-719 Section 5).
 
     Returns (canonical_verdict, reason). PLN-722 added two rules: the
     ``force_human_review`` short-circuit (rule 2.5 — mandatory_human_review_
     paths) and the TENTATIVE → NEEDS_ATTENTION fall-through (rule 3.5).
-    Rules 4-6 (Premise cumulative MEDIUM, Impact analysis count) gate on
-    plans 02/06 and are inert until those plans land.
+    PLN-721 fills in Rule 4: cumulative Premise MEDIUM gate. Rule 6
+    (Impact analysis count) is still placeholder until plan 06 lands.
+
+    ``thresholds`` (PLN-721): optional dict from ``_load_verdict_thresholds``;
+    callers that do not pass it get the built-in default (3) so existing
+    test fixtures and back-compat callers keep working.
     """
+    thresholds = thresholds or {
+        "premise_cumulative_medium": _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
+    }
 
     def _short(text: str) -> str:
         return text[:_VERDICT_REASON_MAX]
@@ -4879,8 +5037,25 @@ def _compute_canonical_verdict(
                 f"verifier uncertain: {finding.get('issue', '')}",
             )
 
-    # Rules 4-6 (plan 02 cumulative Premise MEDIUM, plan 06 Impact count)
-    # remain placeholder until those plans land.
+    # Rule 4 (PLN-721): cumulative Premise MEDIUM gate. The counting
+    # policy is documented on ``_count_gateable_premise_medium`` — this
+    # site MUST use that helper so the value the gate fires on matches
+    # the value telemetry reports in ``premise_cumulative_medium_count``
+    # (the v2.9.0 review surfaced that divergence as a real bug).
+    premise_medium_threshold = int(
+        thresholds.get(
+            "premise_cumulative_medium",
+            _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
+        ),
+    )
+    premise_medium_count = _count_gateable_premise_medium(verified)
+    if premise_medium_count >= premise_medium_threshold:
+        return "NEEDS_ATTENTION", _short(
+            f"{premise_medium_count} MEDIUM Premise findings "
+            f"(threshold {premise_medium_threshold})",
+        )
+
+    # Rule 6 (plan 06 Impact count) remains placeholder until that plan lands.
 
     return "APPROVED", ""
 
@@ -4936,7 +5111,18 @@ def cmd_verdict(args: argparse.Namespace) -> int:
         }
         coverage_gaps = [f for i, f in enumerate(validated) if i in coverage_indices]
         verified = [f for i, f in enumerate(validated) if i not in coverage_indices]
-        canonical_verdict, reason = _compute_canonical_verdict(verified, coverage_gaps)
+        # PLN-721: cmd_verdict fallback path. Use the same operator-
+        # overridable thresholds as cmd_finalize_result so the gate
+        # behaves consistently across both entry points.
+        thresholds_arg = getattr(args, "thresholds", None)
+        thresholds_path = (
+            Path(thresholds_arg) if thresholds_arg
+            else _VERDICT_THRESHOLDS_DEFAULT_PATH
+        )
+        thresholds = _load_verdict_thresholds(thresholds_path)
+        canonical_verdict, reason = _compute_canonical_verdict(
+            verified, coverage_gaps, thresholds=thresholds,
+        )
 
     legacy_verdict = _CANONICAL_TO_LEGACY_VERDICT.get(canonical_verdict, "approve")
     tag_payload = json.dumps({"verdict": legacy_verdict, "reason": reason})
@@ -5279,6 +5465,11 @@ def _build_run_plan_stages(
                 # CHANGELOG's "prompt rev invalidates everything globally"
                 # promise was broken.
                 "--verifier-prompt", f"{cr_dir}/verifier_prompt.txt",
+                # PLN-721: fold the premise prompt into <PROMPT_HASH>
+                # on the same contract as the verifier prompt — editing
+                # premise_prompt.txt busts both the BHA cache and the
+                # verifications/ cache.
+                "--premise-prompt", f"{cr_dir}/premise_prompt.txt",
                 "--diff-tip", "<DIFF_TIP>",
                 "--base-ref", "<BASE_REF>",
             ],
@@ -5922,15 +6113,21 @@ def _stats_from_findings(
             "tentative_count": 0,
             "downgrade_count": 0,
             "justified_valid_count": len(justified),
-            "justified_invalid_count": 0,
+            # PLN-721: JUSTIFIED-INVALID lands in verified[] (the
+            # justification was audited and refuted, original finding
+            # stands). Count them here so telemetry surfaces the audit
+            # outcome without needing a separate JUSTIFIED-INVALID bucket.
+            "justified_invalid_count": sum(
+                1 for f in verified
+                if f.get("verifier_verdict") == "JUSTIFIED-INVALID"
+            ),
             "skipped_count": 0,
             "false_positive_rate": 0.0,
         },
-        "premise_cumulative_medium_count": sum(
-            1 for f in verified
-            if str(f.get("category", "")) == "Premise"
-            and str(f.get("severity", "")) == "MEDIUM"
-        ),
+        # PLN-721 v2.9.1: must match the count Rule 4 actually fires on
+        # — _count_gateable_premise_medium is the single source of truth
+        # for that policy (excludes JUSTIFIED-VALID / JUSTIFIED-INVALID).
+        "premise_cumulative_medium_count": _count_gateable_premise_medium(verified),
         "agent_failures": [],
     }
 
@@ -6021,11 +6218,17 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
         raw_verified: list[dict[str, Any]] = consolidated.get("verified", []) or []
         raw_rejected: list[dict[str, Any]] = consolidated.get("rejected", []) or []
         raw_pending: list[dict[str, Any]] = consolidated.get("pending_verification", []) or []
+        # PLN-721: justified[] bucket from cmd_verify_consolidate. Defensive
+        # default to [] so legacy findings_verified.json files (PLN-722
+        # v2.8.0/v2.8.1, before the bucket was emitted) keep finalizing
+        # without keying on a missing field.
+        raw_justified: list[dict[str, Any]] = consolidated.get("justified", []) or []
         force_human_review = bool(consolidated.get("force_human_review", False))
     else:
         raw_verified = validate_output.get("validated", []) or []
         raw_rejected = []
         raw_pending = []
+        raw_justified = []
         force_human_review = False
 
     # Promote findings to canonical schema (defensive — collect-findings
@@ -6067,6 +6270,7 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
     canonical_verified = _normalize_bucket(raw_verified, "verified")
     canonical_rejected = _normalize_bucket(raw_rejected, "rejected")
     canonical_pending = _normalize_bucket(raw_pending, "pending_verification")
+    canonical_justified = _normalize_bucket(raw_justified, "justified")
 
     # Partition by index to avoid dict-equality membership tests; legacy
     # findings normalized in-place may not have stable ids yet. Coverage
@@ -6082,6 +6286,7 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
     verified = [f for i, f in enumerate(canonical_verified) if i not in coverage_indices]
     rejected = canonical_rejected
     pending = canonical_pending
+    justified = canonical_justified
 
     # Pull additional coverage gaps emitted by arbitrate-budget, if any.
     extra_gaps_doc = _read_optional_json(cr_dir / "coverage_gaps.json", None)
@@ -6090,8 +6295,16 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
             if isinstance(entry, dict):
                 coverage_gaps.append(entry)
 
+    # PLN-721: load operator-overridable thresholds (defaults bake in).
+    thresholds_path = (
+        Path(args.thresholds) if getattr(args, "thresholds", None)
+        else _VERDICT_THRESHOLDS_DEFAULT_PATH
+    )
+    thresholds = _load_verdict_thresholds(thresholds_path)
     canonical_verdict, reason = _compute_canonical_verdict(
-        verified, coverage_gaps, force_human_review=force_human_review,
+        verified, coverage_gaps,
+        force_human_review=force_human_review,
+        thresholds=thresholds,
     )
 
     # Pull optional run-context inputs.
@@ -6122,14 +6335,14 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
         "mode": mode,
         "intent": intent_data.get("intent", "mixed"),
         "verified": verified,
-        "justified": [],
+        "justified": justified,
         "rejected": rejected,
         "pending_verification": pending,
         "coverage_plan": coverage_plan,
         "coverage_gaps": coverage_gaps,
         "verdict": canonical_verdict,
         "verdict_reason": reason,
-        "stats": _stats_from_findings(verified, rejected, [], coverage_gaps),
+        "stats": _stats_from_findings(verified, rejected, justified, coverage_gaps),
         # PLN-719 Phase 9: telemetry is sourced from the canonical zero-valued
         # factory and deep-merged with optional <cr_dir>/telemetry.json, which
         # the orchestrator (or any upstream stage) may populate with timings,
@@ -6151,6 +6364,7 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
             "verified_count": len(verified),
             "rejected_count": len(rejected),
             "pending_verification_count": len(pending),
+            "justified_count": len(justified),
             "coverage_gaps_count": len(coverage_gaps),
             "force_human_review": force_human_review,
             "used_verifier": using_verifier,
@@ -6189,7 +6403,9 @@ def cmd_prep_assets(args: argparse.Namespace) -> int:
     PLN-722 added ``verifier_prompt.txt`` to the per-run asset set. The
     Verifier Fleet (stage_23) reads it from CR_DIR rather than from the
     plugin root so verify-* runs after a plugin upgrade still use the
-    prompt that the prompt-hash was computed against.
+    prompt that the prompt-hash was computed against. PLN-721 adds
+    ``premise_prompt.txt`` on the same contract — the Premise Reviewer
+    reads it from CR_DIR.
     """
     plugin_root = Path(args.plugin_root)
     cr_dir = Path(args.cr_dir)
@@ -6197,20 +6413,24 @@ def cmd_prep_assets(args: argparse.Namespace) -> int:
     shared_src = plugin_root / "tools" / "prompts" / "shared_prompt.txt"
     bha_src = plugin_root / "tools" / "prompts" / "bha_suffix.txt"
     verifier_src = plugin_root / "tools" / "prompts" / "verifier_prompt.txt"
+    premise_src = plugin_root / "tools" / "prompts" / "premise_prompt.txt"
 
     shared_dst = cr_dir / "shared_prompt.txt"
     bha_dst = cr_dir / "bha_suffix.txt"
     verifier_dst = cr_dir / "verifier_prompt.txt"
+    premise_dst = cr_dir / "premise_prompt.txt"
 
     shutil.copy2(shared_src, shared_dst)
     shutil.copy2(bha_src, bha_dst)
     shutil.copy2(verifier_src, verifier_dst)
+    shutil.copy2(premise_src, premise_dst)
 
     json.dump(
         {
             "shared_prompt": str(shared_dst),
             "bha_suffix": str(bha_dst),
             "verifier_prompt": str(verifier_dst),
+            "premise_prompt": str(premise_dst),
         },
         sys.stdout,
         indent=2,
@@ -6474,6 +6694,14 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
         help="Path to verifier_prompt.txt. When provided, folds into prompt_hash "
              "so cache keys invalidate on verifier prompt edits.",
     )
+    # PLN-721: optional for back-compat with pre-PLN-721 callers
+    # (when absent, the hash matches v2.8.1 byte-identically). New
+    # callers must pass it so premise prompt revs invalidate caches.
+    p_ch.add_argument(
+        "--premise-prompt", default=None,
+        help="Path to premise_prompt.txt. When provided, folds into prompt_hash "
+             "so cache keys invalidate on premise prompt edits.",
+    )
     p_ch.add_argument("--diff-tip", required=True, help="Git ref for diff tip (e.g. HEAD, origin/branch)")
     p_ch.add_argument("--base-ref", required=True, help="Base ref name (e.g. main)")
     p_ch.set_defaults(func=cmd_compute_hashes)
@@ -6537,6 +6765,13 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
         "--review-result", default=None,
         help="Path to review_result.json (canonical envelope; preferred when present)",
     )
+    # PLN-721: optional operator override for verdict thresholds (defaults
+    # to .closedloop-ai/settings/verdict-thresholds.json when absent).
+    p_v.add_argument(
+        "--thresholds", default=None,
+        help="Path to verdict-thresholds.json. Defaults to "
+             ".closedloop-ai/settings/verdict-thresholds.json (absent → built-in default 3).",
+    )
     p_v.set_defaults(func=cmd_verdict)
 
     # finalize-result (PLN-719 Phase 2)
@@ -6549,6 +6784,13 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_fr.add_argument("--mode", default=None, choices=["local", "github"], help="Run mode")
     p_fr.add_argument("--diff-tip", default=None, help="Diff tip sha (falls back to scope.json/setup.json)")
     p_fr.add_argument("--pr-number", type=int, default=None, help="PR number for github mode")
+    # PLN-721: optional operator override for verdict thresholds (defaults
+    # to .closedloop-ai/settings/verdict-thresholds.json when absent).
+    p_fr.add_argument(
+        "--thresholds", default=None,
+        help="Path to verdict-thresholds.json. Defaults to "
+             ".closedloop-ai/settings/verdict-thresholds.json (absent → built-in default 3).",
+    )
     p_fr.set_defaults(func=cmd_finalize_result)
 
     # arbitrate-budget (PLN-719 Phase 3)
