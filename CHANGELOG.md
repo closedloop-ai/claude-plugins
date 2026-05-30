@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.11.0
+
+#### Added
+- **New `code-review:present-local` skill.** Local-mode presenter content (Gate A hygiene-only early-exit format, BLOCKING/HIGH/MEDIUM section templates, Justified Findings (PLN-721), Dismissed Findings (PLN-722), Verifier Stats footer (PLN-773), operator-flag descriptions, override precedence rule, Validation Summary, final Summary) moved out of `commands/start.md` into `skills/present-local/SKILL.md`. The skill auto-loads at presentation time. Establishes the decomposition pattern for the rest of the start.md monolith (operator-flag skills, fast-path skill, agent-prompts skill — pending follow-up work).
+
+#### Changed
+- **`commands/start.md` reduced from 1014 → 754 lines (~26% smaller).** Pointer block at the former Local-Mode presenter location describes the two entry conditions (Gate A early-exit / standard stage_29_present) and delegates to the `code-review:present-local` skill. No behavior change for operators — the orchestrator still produces the same output, just by invoking the skill instead of inlining the rules.
+
 ### code-review v2.10.1
 
 #### Fixed
