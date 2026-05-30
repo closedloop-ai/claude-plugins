@@ -7356,13 +7356,24 @@ def _run_verify_prepare(
     *,
     cache_dir: Path | None = None,
     prompt_hash: str = "",
+    cr_dir: Path | None = None,
+    no_verify: bool = False,
+    no_verify_reason: str = "",
 ) -> tuple[int, dict[str, Any]]:
+    """Invoke ``cmd_verify_prepare`` with stdout captured into a dict.
+
+    PR #114 review fix — ``cr_dir``, ``no_verify``, and ``no_verify_reason``
+    were inlined per-test before; the helper now owns them so the
+    TestOverrideCache and TestNoVerifyBypass classes can stop duplicating
+    the stdout-capture + Namespace dance.
+    """
     import io
     import sys as _sys
 
     findings_path = _write_validated_input(tmp_path, findings)
-    cr_dir = tmp_path / "cr"
-    cr_dir.mkdir(exist_ok=True)
+    if cr_dir is None:
+        cr_dir = tmp_path / "cr"
+    cr_dir.mkdir(parents=True, exist_ok=True)
     # The verifier_prompt.txt placeholder is referenced in the per-finding
     # input files; create a stub so the path the test inspects exists.
     (cr_dir / "verifier_prompt.txt").write_text("verifier prompt stub")
@@ -7375,6 +7386,8 @@ def _run_verify_prepare(
             findings=str(findings_path),
             cache_dir=str(cache_dir) if cache_dir else None,
             prompt_hash=prompt_hash,
+            no_verify=no_verify,
+            no_verify_reason=no_verify_reason,
         )
         rc = cmd_verify_prepare(ns)
         _sys.stdout.seek(0)
@@ -7393,13 +7406,22 @@ def _run_verify_consolidate(
     gates: dict[str, list[str]] | None = None,
     cache_dir: Path | None = None,
     prompt_hash: str = "",
+    cr_dir: Path | None = None,
 ) -> tuple[int, dict[str, Any]]:
+    """Invoke ``cmd_verify_consolidate`` with stdout captured.
+
+    PR #114 review fix — ``cr_dir`` is now optional so end-to-end tests
+    that share a cr between prepare and consolidate can pass the same
+    path to both helpers. Default behaviour (``tmp_path / "cr"``) is
+    preserved for the existing single-phase callers.
+    """
     import io
     import sys as _sys
 
     findings_path = _write_validated_input(tmp_path, findings)
-    cr_dir = tmp_path / "cr"
-    cr_dir.mkdir(exist_ok=True)
+    if cr_dir is None:
+        cr_dir = tmp_path / "cr"
+    cr_dir.mkdir(parents=True, exist_ok=True)
 
     manifest_path = cr_dir / "verify_manifest.json"
     if manifest is not None:
@@ -7857,26 +7879,13 @@ class TestOverrideCache:
             "override": "RE_ASSERT",
             "asserted_at": "2026-05-29T22:00:00+00:00",
         })
-        # _run_verify_prepare uses its own cr layout; bypass it and call
-        # cmd_verify_prepare directly with the cr we set up above.
-        findings_path = _write_validated_input(tmp_path, [finding])
-        (cr / "verifier_prompt.txt").write_text("stub")
-        ns = argparse.Namespace(
-            cr_dir=str(cr),
-            findings=str(findings_path),
-            cache_dir=str(cache),
-            prompt_hash="phash",
+        # PR #114 review fix — delegate to the shared helper with an
+        # explicit cr_dir override so the per-test stdout/Namespace dance
+        # lives in one place.
+        _, manifest = _run_verify_prepare(
+            tmp_path, [finding],
+            cache_dir=cache, cr_dir=cr, prompt_hash="phash",
         )
-        import io
-        import sys as _sys
-        old = _sys.stdout
-        _sys.stdout = io.StringIO()
-        try:
-            cmd_verify_prepare(ns)
-            _sys.stdout.seek(0)
-            manifest = json.load(_sys.stdout)
-        finally:
-            _sys.stdout = old
         assert manifest["override_hits"] == ["bha_p0_f0"]
         assert manifest["override_invalidated"] == []
         assert manifest["to_verify"] == []
@@ -7906,24 +7915,10 @@ class TestOverrideCache:
         })
         # ...then edit the file so the hash drifts.
         self._write_target_file(tmp_path, "src/x.py", "a\nb\nEDITED\nd\ne\n")
-        findings_path = _write_validated_input(tmp_path, [finding])
-        (cr / "verifier_prompt.txt").write_text("stub")
-        ns = argparse.Namespace(
-            cr_dir=str(cr),
-            findings=str(findings_path),
-            cache_dir=str(cache),
-            prompt_hash="phash",
+        _, manifest = _run_verify_prepare(
+            tmp_path, [finding],
+            cache_dir=cache, cr_dir=cr, prompt_hash="phash",
         )
-        import io
-        import sys as _sys
-        old = _sys.stdout
-        _sys.stdout = io.StringIO()
-        try:
-            cmd_verify_prepare(ns)
-            _sys.stdout.seek(0)
-            manifest = json.load(_sys.stdout)
-        finally:
-            _sys.stdout = old
         assert manifest["override_invalidated"] == ["bha_p0_f0"]
         assert manifest["override_hits"] == []
         # Fell through to normal verification.
@@ -8204,32 +8199,18 @@ class TestNoVerifyBypass:
         self, tmp_path: Path, findings: list[dict[str, Any]],
         *, no_verify: bool = True, reason: str = "release in 5 minutes",
     ) -> tuple[int, dict[str, Any] | None]:
-        import io
-        import sys as _sys
-        findings_path = _write_validated_input(tmp_path, findings)
-        cr_dir = tmp_path / "cr"
-        cr_dir.mkdir(exist_ok=True)
-        (cr_dir / "verifier_prompt.txt").write_text("stub")
-        ns = argparse.Namespace(
-            cr_dir=str(cr_dir),
-            findings=str(findings_path),
-            cache_dir=None,
-            prompt_hash="",
-            no_verify=no_verify,
-            no_verify_reason=reason,
-        )
-        old = _sys.stdout
-        _sys.stdout = io.StringIO()
+        # PR #114 review fix — delegate to the shared helper so the
+        # Namespace shape lives in one place. ``rc == 2`` (validation
+        # error) raises JSONDecodeError inside the helper because
+        # cmd_verify_prepare emits no manifest; catch and return (rc, None).
         try:
-            rc = cmd_verify_prepare(ns)
-            _sys.stdout.seek(0)
-            try:
-                manifest = json.load(_sys.stdout)
-            except json.JSONDecodeError:
-                manifest = None
+            rc, manifest = _run_verify_prepare(
+                tmp_path, findings,
+                no_verify=no_verify, no_verify_reason=reason,
+            )
             return rc, manifest
-        finally:
-            _sys.stdout = old
+        except json.JSONDecodeError:
+            return 2, None
 
     def test_requires_explicit_reason(self, tmp_path: Path) -> None:
         rc, _ = self._run(tmp_path, [
@@ -9479,3 +9460,282 @@ class TestFinalizeResultPrefersVerified:
         assert summary["justified_count"] == 0
         assert envelope["justified"] == []
         assert len(envelope["verified"]) == 1
+
+
+class TestPR114ReviewFixes:
+    """Regression tests for the PR #114 review pass.
+
+    Covers four invariants the original PLN-773 unit tests missed:
+
+    1. Override fids must reach ``verified[]`` with ``verifier_verdict ==
+       "RE_ASSERTED"`` end-to-end (prepare → consolidate). The original
+       suite only verified prepare and consolidate in isolation; the
+       missing wire in ``cmd_verify_consolidate`` defaulted the verdict
+       to None on the integration path.
+    2. ``cmd_re_assert`` against a JUSTIFIED-VALID finding must be a
+       no-op, not silently re-route to ``verified[]``.
+    3. System-scoped findings (no file/line) must promote via the
+       ``SYSTEM_SCOPE`` sentinel rather than silently dropping at
+       promotion time.
+    4. Overrides older than ``CACHE_TTL_DAYS["overrides"]`` must be
+       dropped by ``_override_is_valid`` (TTL was declared but never
+       enforced).
+    """
+
+    @staticmethod
+    def _cr_dir(tmp_path: Path) -> Path:
+        cr = tmp_path / ".closedloop-ai" / "code-review" / "cr-x"
+        cr.mkdir(parents=True, exist_ok=True)
+        return cr
+
+    @staticmethod
+    def _write_target_file(repo_root: Path, rel: str, content: str) -> None:
+        full = repo_root / rel
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content)
+
+    def test_prepare_then_consolidate_routes_override_to_verified(
+        self, tmp_path: Path,
+    ) -> None:
+        """End-to-end: override → RE_ASSERTED in verified[].
+
+        Reproduces the bug @thadeusb caught in PR #114 review: prepare
+        records the fid in ``override_hits`` but consolidate only reads
+        ``agent_verifier_<fid>.json`` for fids in ``to_verify_ids`` or
+        ``cache_hit_ids``. Without the fix the override fid falls through
+        to the tier-skip branch with ``verifier_verdict=None``.
+        """
+        from code_review_helpers import _file_content_hash, _write_override
+
+        cr = self._cr_dir(tmp_path)
+        self._write_target_file(tmp_path, "src/x.py", "a\nb\nc\nd\ne\n")
+
+        finding = _make_validated_finding(
+            "bha_p0_f0", severity="HIGH", confidence=0.9,
+        )
+        finding["file"] = "src/x.py"
+        finding["line"] = 3
+
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        _write_override(cache, {
+            "finding_id": "bha_p0_f0",
+            "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
+            "override": "RE_ASSERT",
+            "asserted_at": "2026-05-29T22:00:00+00:00",
+        })
+
+        # Phase 1 — prepare. Should record the fid in override_hits and
+        # synthesize the RE_ASSERTED stub on disk.
+        _, manifest = _run_verify_prepare(
+            tmp_path, [finding],
+            cache_dir=cache, cr_dir=cr, prompt_hash="phash",
+        )
+        assert manifest["override_hits"] == ["bha_p0_f0"]
+        assert manifest["to_verify"] == []
+
+        # Phase 2 — consolidate. The fix routes override_hits through the
+        # same read-back path as cache_hits so the RE_ASSERTED stub is
+        # merged into the finding. Before the fix this asserted None.
+        # Critical: pass the SAME cr_dir prepare wrote into so consolidate
+        # finds verify_manifest.json and agent_verifier_<fid>.json.
+        _, envelope = _run_verify_consolidate(
+            tmp_path, [finding], manifest=manifest, cache_dir=cache,
+            prompt_hash="phash", cr_dir=cr,
+        )
+        assert len(envelope["verified"]) == 1
+        verified_finding = envelope["verified"][0]
+        assert verified_finding["verifier_verdict"] == "RE_ASSERTED"
+        assert envelope["rejected"] == []
+        assert envelope["pending_verification"] == []
+
+    def test_prepare_then_consolidate_writes_re_asserted_to_stats(
+        self, tmp_path: Path,
+    ) -> None:
+        """The per-reviewer ``re_asserted`` counter — the whole point of the
+        PR — must count this finding."""
+        from code_review_helpers import (
+            _file_content_hash, _stats_from_findings, _write_override,
+        )
+
+        cr = self._cr_dir(tmp_path)
+        self._write_target_file(tmp_path, "src/x.py", "a\nb\nc\nd\ne\n")
+        finding = _make_validated_finding(
+            "bha_p0_f0", severity="HIGH", confidence=0.9,
+        )
+        finding["file"] = "src/x.py"
+        finding["line"] = 3
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        _write_override(cache, {
+            "finding_id": "bha_p0_f0",
+            "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
+            "override": "RE_ASSERT",
+            "asserted_at": "2026-05-29T22:00:00+00:00",
+        })
+
+        _, manifest = _run_verify_prepare(
+            tmp_path, [finding],
+            cache_dir=cache, cr_dir=cr, prompt_hash="phash",
+        )
+        _, envelope = _run_verify_consolidate(
+            tmp_path, [finding], manifest=manifest, cache_dir=cache,
+            prompt_hash="phash", cr_dir=cr,
+        )
+        stats = _stats_from_findings(
+            envelope["verified"], envelope["rejected"],
+            envelope.get("pending_verification", []),
+            envelope.get("justified", []),
+        )
+        by_reviewer = stats["verification"]["by_reviewer"]
+        # by_reviewer is a dict keyed on reviewer name. The reviewer was
+        # extracted by `_make_validated_finding` from the fid "bha_p0_f0"
+        # → "bha".
+        assert "bha" in by_reviewer
+        assert by_reviewer["bha"]["re_asserted"] == 1
+
+    def test_already_dismissed_when_finding_is_justified(
+        self, tmp_path: Path,
+    ) -> None:
+        """Re-asserting a JUSTIFIED-VALID finding is a no-op (PR #114 MED)."""
+        from code_review_helpers import _load_override, cmd_re_assert
+
+        cr = self._cr_dir(tmp_path)
+        envelope = {
+            "verified": [], "rejected": [], "pending_verification": [],
+            "justified": [
+                {"id": "premise_f0", "file": "src/x.py", "line": 5,
+                 "category": "Premise",
+                 "verifier_verdict": "JUSTIFIED-VALID"},
+            ],
+        }
+        prior_path = cr / "review_result.json"
+        prior_path.write_text(json.dumps(envelope))
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        ns = argparse.Namespace(
+            cr_dir=str(cr),
+            cache_dir=str(cache),
+            finding_ids="premise_f0",
+            prior_result=str(prior_path),
+            reason="",
+            asserted_by="ops",
+        )
+        import io
+        import sys as _sys
+        old = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            rc = cmd_re_assert(ns)
+            _sys.stdout.seek(0)
+            summary = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old
+        assert rc == 0
+        assert summary["already_dismissed"] == ["premise_f0"]
+        assert summary["re_asserted"] == []
+        # And critically: no override file written. Re-asserting a
+        # justified finding must not silently promote it on the next run.
+        assert _load_override(cache, "premise_f0") is None
+
+    def test_system_scoped_re_assert_writes_sentinel_and_is_honored(
+        self, tmp_path: Path,
+    ) -> None:
+        """System-scoped findings (file=None/line=None) get the SYSTEM_SCOPE
+        sentinel at re-assert time and are honored on the next prepare
+        run (PR #114 HIGH)."""
+        from code_review_helpers import (
+            _OVERRIDE_SYSTEM_SCOPE_SENTINEL,
+            _load_override,
+            _override_is_valid,
+            cmd_re_assert,
+        )
+
+        cr = self._cr_dir(tmp_path)
+        envelope = {
+            "verified": [], "justified": [], "pending_verification": [],
+            "rejected": [
+                {"id": "auditor_f0", "file": None, "line": None,
+                 "verifier_verdict": "REJECTED"},
+            ],
+        }
+        prior_path = cr / "review_result.json"
+        prior_path.write_text(json.dumps(envelope))
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        ns = argparse.Namespace(
+            cr_dir=str(cr),
+            cache_dir=str(cache),
+            finding_ids="auditor_f0",
+            prior_result=str(prior_path),
+            reason="system-scope override",
+            asserted_by="ops",
+        )
+        import io
+        import sys as _sys
+        old = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            rc = cmd_re_assert(ns)
+        finally:
+            _sys.stdout = old
+        assert rc == 0
+        override = _load_override(cache, "auditor_f0")
+        assert override is not None
+        assert override["file_content_hash"] == _OVERRIDE_SYSTEM_SCOPE_SENTINEL
+        # _override_is_valid honors the sentinel for a system-scoped finding.
+        finding = {"id": "auditor_f0", "file": None, "line": None}
+        assert _override_is_valid(override, finding, cr) is True
+        # ...but refuses to honor it against a file-scoped finding (defensive).
+        file_scoped = {"id": "auditor_f0", "file": "src/x.py", "line": 5}
+        assert _override_is_valid(override, file_scoped, cr) is False
+
+    def test_override_invalidated_when_ttl_expired(
+        self, tmp_path: Path,
+    ) -> None:
+        """Overrides older than ``CACHE_TTL_DAYS["overrides"]`` (90 days)
+        are dropped (PR #114 MED)."""
+        from code_review_helpers import (
+            _file_content_hash, _override_is_valid, _write_override,
+        )
+
+        cr = self._cr_dir(tmp_path)
+        self._write_target_file(tmp_path, "src/x.py", "a\nb\nc\nd\ne\n")
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=120)).isoformat()
+        _write_override(cache, {
+            "finding_id": "bha_p0_f0",
+            "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
+            "asserted_at": old_ts,
+        })
+        from code_review_helpers import _load_override
+        override = _load_override(cache, "bha_p0_f0")
+        assert override is not None
+        finding = {"file": "src/x.py", "line": 3}
+        assert _override_is_valid(override, finding, cr) is False
+
+    def test_override_honored_when_ttl_within_bounds(
+        self, tmp_path: Path,
+    ) -> None:
+        """Within-TTL overrides still honor (negative control for the TTL
+        gate so it does not fire prematurely)."""
+        from code_review_helpers import (
+            _file_content_hash, _load_override,
+            _override_is_valid, _write_override,
+        )
+
+        cr = self._cr_dir(tmp_path)
+        self._write_target_file(tmp_path, "src/x.py", "a\nb\nc\nd\ne\n")
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        recent_ts = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        _write_override(cache, {
+            "finding_id": "bha_p0_f0",
+            "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
+            "asserted_at": recent_ts,
+        })
+        override = _load_override(cache, "bha_p0_f0")
+        assert override is not None
+        finding = {"file": "src/x.py", "line": 3}
+        assert _override_is_valid(override, finding, cr) is True

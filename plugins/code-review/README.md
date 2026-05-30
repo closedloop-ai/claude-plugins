@@ -241,7 +241,9 @@ When the verifier dismisses a finding the operator believes is real, three flags
 | `--review-dismissed` | Run a second opinion via the haiku verifier against the prior run's `rejected[]`. Any verdict that is NOT `REJECTED` auto-promotes via a `REVIEW_DISMISSED` override. Side-by-side diff lands at `<CR_DIR>/review_dismissed_diff.json`. |
 | `--no-verify` + `--no-verify-reason='<why>'` | Emergency bypass — verifier skipped entirely; every eligible finding lands in `verified[]` with `verifier_verdict: null`. Footer carries an explicit audit banner so the bypass is never silent. Mutually exclusive with `--re-assert` / `--review-dismissed`. |
 
-Overrides survive across runs while the file content matches. Edit the cited line and the override auto-invalidates on the next run; the verifier runs normally. `mandatory_human_review_paths` (verification-gates.json) outranks every override — the operator-policy invariant always wins.
+Overrides survive across runs while the file content matches and the 90-day TTL (`CACHE_TTL_DAYS["overrides"]`) has not expired. Edit the cited line and the override auto-invalidates on the next run; the verifier runs normally. `mandatory_human_review_paths` (verification-gates.json) outranks every override — the operator-policy invariant always wins.
+
+**Re-assert is best-effort against finding_id drift.** Finding IDs are assigned as `<reviewer>_f<index>` where `<index>` is the reviewer's emission position. Across re-runs the LLM may reorder or drop findings, so an override written against `bha_f3` on run N may map to a different finding (or no finding) on run N+1. The content-hash anchor prevents promoting an unrelated finding at a different line — but the common drift case is the override silently no-ops. Two mitigations: (1) re-assert and re-run immediately so the override is honored against the same emission set, and (2) inspect the verify-prepare manifest for `override_hits` / `override_invalidated` to confirm the override landed.
 
 The presenter (local mode `start.md`, GitHub mode `code-review-verifier-stats.md`) surfaces:
 

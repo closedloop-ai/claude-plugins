@@ -1608,6 +1608,13 @@ def _pending_learnings_append(
 # that would otherwise force the verifier to re-evaluate.
 _OVERRIDE_CONTEXT_LINES = 20
 
+# Sentinel value stored in ``file_content_hash`` for system-scoped findings
+# (no file/line). There is no file content to drift against, so the override
+# is always honored as long as the TTL has not expired. Without the
+# sentinel ``_file_content_hash`` would return "" and the override would
+# be silently dropped at promotion time (PR #114 review HIGH).
+_OVERRIDE_SYSTEM_SCOPE_SENTINEL = "SYSTEM_SCOPE"
+
 
 def _override_cache_path(cache_dir: Path, finding_id: str) -> Path:
     """``<cache_dir>/overrides/<finding_id>.json``."""
@@ -1677,6 +1684,41 @@ def _load_override(
     return data
 
 
+def _override_is_expired(override: dict[str, Any]) -> bool:
+    """True when the override is older than ``CACHE_TTL_DAYS["overrides"]``.
+
+    Added in the PR #114 review pass — the 90-day TTL was declared in
+    ``CACHE_TTL_DAYS`` but never enforced; both ``_load_override`` and
+    ``_override_is_valid`` only checked the content hash. Sweep-on-read
+    here keeps the override namespace consistent with verifications/ and
+    signals/ where TTL is the only freshness signal.
+
+    Returns False (allow honor) when ``asserted_at`` is missing or
+    unparseable — defensive: a missing timestamp predates this enforcement
+    and should not silently drop a still-valid operator override. Callers
+    that need a stricter contract should reject overrides that fail to
+    write ``asserted_at`` at write time, not at read time.
+    """
+    asserted_at = override.get("asserted_at")
+    if not isinstance(asserted_at, str) or not asserted_at:
+        return False
+    ttl_days = cache_ttl_days(CACHE_NAMESPACE_OVERRIDES)
+    if not ttl_days or ttl_days <= 0:
+        return False
+    try:
+        # ``cmd_re_assert`` writes ISO-8601 UTC timestamps via
+        # ``datetime.now(timezone.utc).isoformat()``. ``fromisoformat``
+        # in Python 3.11+ accepts the "+00:00" / "Z" suffixes.
+        normalized = asserted_at.replace("Z", "+00:00")
+        ts = datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - ts
+    return age.days > ttl_days
+
+
 def _override_is_valid(
     override: dict[str, Any], finding: dict[str, Any], cr_dir: Path,
 ) -> bool:
@@ -1686,12 +1728,30 @@ def _override_is_valid(
     against the hash stored at override-write time. Any drift → override
     auto-invalidated (caller logs the event and falls through to the
     standard verifier flow).
+
+    System-scoped findings (no file/line at re-assert time) bypass the
+    content-hash gate via the ``SYSTEM_SCOPE`` sentinel; there is no file
+    to drift against, so only the TTL gates the override.
+
+    TTL gate (PR #114 review) — overrides older than
+    ``CACHE_TTL_DAYS["overrides"]`` (90 days) are dropped. Both the
+    content-hash and system-scope paths run through it so stale operator
+    opinions cannot resurrect indefinitely after the underlying finding's
+    context has presumably moved on.
     """
     stored = str(override.get("file_content_hash", ""))
     if not stored:
         # Override has no hash anchor — refuse to honor it (defensive;
         # writers in Phase 4 always store the hash).
         return False
+    if _override_is_expired(override):
+        return False
+    if stored == _OVERRIDE_SYSTEM_SCOPE_SENTINEL:
+        # System-scoped override — honor regardless of file/line because
+        # there's nothing to drift. Defensive: still require the finding
+        # itself to lack file/line so a malformed override cannot promote
+        # a file-scoped finding it was never written against.
+        return not finding.get("file") and not finding.get("line")
     current = _file_content_hash(
         cr_dir, finding.get("file"), finding.get("line"),
     )
@@ -2389,6 +2449,7 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
     skipped_ids: set[str] = set()
     deferred_ids: set[str] = set()
     cache_hit_ids: set[str] = set()
+    override_hit_ids: set[str] = set()
     to_verify_models: dict[str, str] = {}
     if isinstance(manifest, dict):
         for e in manifest.get("to_verify", []):
@@ -2408,6 +2469,16 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
         }
         cache_hit_ids = {
             str(fid) for fid in manifest.get("cache_hits", [])
+            if isinstance(fid, str)
+        }
+        # PLN-773 PR #114 review fix — override hits must be routed through
+        # the same read-back path as cache hits so the synthesized
+        # RE_ASSERTED verifier output reaches verified[] with the verdict
+        # intact. Without this, override fids fell through as tier-skips
+        # (verifier_verdict=None) and the per-reviewer re_asserted telemetry
+        # was always 0 even when the footer reported N honored overrides.
+        override_hit_ids = {
+            str(fid) for fid in manifest.get("override_hits", [])
             if isinstance(fid, str)
         }
 
@@ -2438,7 +2509,7 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
 
         file_path = finding.get("file") if isinstance(finding.get("file"), str) else None
 
-        if fid in to_verify_ids or fid in cache_hit_ids:
+        if fid in to_verify_ids or fid in cache_hit_ids or fid in override_hit_ids:
             output_path = _agent_verifier_output_path(cr_dir, fid)
             verdict_data = _read_verifier_output(output_path)
             if verdict_data is None:
@@ -2452,9 +2523,16 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
                 pending.append(finding)
                 continue
             _merge_verifier_fields(finding, verdict_data)
-            # Cache write-back for fresh verdicts (skip cache hits — those
-            # came FROM the cache, no point overwriting with the same data).
-            if fid in to_verify_ids and fid not in cache_hit_ids:
+            # Cache write-back for fresh verdicts. Skip cache hits (came
+            # from cache) AND override hits (synthesized stub — never
+            # belongs in the verifications/ cache because it would
+            # corrupt the verifier-output cache namespace with operator
+            # opinion).
+            if (
+                fid in to_verify_ids
+                and fid not in cache_hit_ids
+                and fid not in override_hit_ids
+            ):
                 model = to_verify_models.get(fid, _VERIFY_MODEL_DEFAULT)
                 _write_cached_verification(
                     cache_dir, finding, model, prompt_hash, verdict_data,
@@ -5500,6 +5578,13 @@ def cmd_re_assert(args: argparse.Namespace) -> int:
     now_iso = datetime.now(timezone.utc).isoformat()
     re_asserted: list[dict[str, Any]] = []
     already_verified: list[str] = []
+    # PR #114 review fix — re-asserting a JUSTIFIED-VALID finding is
+    # operator-meaningless (the finding is already surfaced in justified[];
+    # writing a RE_ASSERT override would silently re-route it through
+    # verified[] on the next run, losing the justification record). Bucket
+    # it explicitly so the operator sees the no-op rather than getting a
+    # success summary that doesn't match observed behavior.
+    already_dismissed: list[str] = []
     not_found: list[str] = []
 
     for fid in finding_ids:
@@ -5512,13 +5597,28 @@ def cmd_re_assert(args: argparse.Namespace) -> int:
             # summary so the operator sees the no-op.
             already_verified.append(fid)
             continue
-        file_hash = _file_content_hash(
-            cr_dir, finding.get("file"), finding.get("line"),
-        )
+        if bucket == "justified":
+            # Already in justified[] — re-asserting would re-route to
+            # verified[] and erase the justification record. Report and
+            # skip; operator who really wants to re-assert can edit the
+            # envelope first.
+            already_dismissed.append(fid)
+            continue
+        # PR #114 review fix — system-scoped findings (no file/line)
+        # write the SYSTEM_SCOPE sentinel so ``_override_is_valid`` can
+        # honor them on the next run. Without the sentinel
+        # ``_file_content_hash`` returns "" and the override is dropped
+        # at promotion time, making cmd_re_assert silently no-op.
+        file_field = finding.get("file")
+        line_field = finding.get("line")
+        if not file_field or not line_field:
+            file_hash = _OVERRIDE_SYSTEM_SCOPE_SENTINEL
+        else:
+            file_hash = _file_content_hash(cr_dir, file_field, line_field)
         payload = {
             "finding_id": fid,
-            "file": finding.get("file"),
-            "line": finding.get("line"),
+            "file": file_field,
+            "line": line_field,
             "file_content_hash": file_hash,
             "override": "RE_ASSERT",
             "reason": reason,
@@ -5544,6 +5644,7 @@ def cmd_re_assert(args: argparse.Namespace) -> int:
     summary = {
         "re_asserted": re_asserted,
         "already_verified": already_verified,
+        "already_dismissed": already_dismissed,
         "not_found": not_found,
         "reason": reason,
     }

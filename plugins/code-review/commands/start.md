@@ -886,7 +886,7 @@ Read `<CR_DIR>/review_result.json` → `stats.verification` and `stats.justifica
 ```
 === Verifier Stats ===
 Findings verified: {stats.verification.verified_count}
-  - CONFIRMED + DOWNGRADE: {verified_count - tentative - re_asserted}
+  - CONFIRMED + DOWNGRADE: {verified_count - tentative_count - re_asserted}
   - TENTATIVE:             {tentative_count}
   - RE_ASSERTED:           sum over by_reviewer[].re_asserted
 Findings dismissed: {stats.verification.rejected_count}
