@@ -31,6 +31,7 @@ from typing import Any
 
 from code_review_schema import (
     CACHE_NAMESPACE_BHA,
+    CACHE_NAMESPACE_OVERRIDES,
     CACHE_NAMESPACE_VERIFICATIONS,
     SCHEMA_VERSION,
     SEVERITIES,
@@ -1548,6 +1549,283 @@ def _verifications_cache_path(cache_dir: Path, key: str) -> Path:
     return cache_dir / CACHE_NAMESPACE_VERIFICATIONS / f"{key}.json"
 
 
+# ---------------------------------------------------------------------------
+# PLN-773 Phase 6 — pending-learnings jsonl writer (with fcntl.flock)
+# ---------------------------------------------------------------------------
+
+_PENDING_LEARNINGS_DIR = Path(".closedloop-ai/pending-learnings")
+_PENDING_LEARNINGS_PREMISE = "premise-justifications.jsonl"
+_PENDING_LEARNINGS_OVERRIDES = "verifier-overrides.jsonl"
+
+
+def _pending_learnings_append(
+    path: Path, payload: dict[str, Any],
+) -> bool:
+    """Append one ``json.dumps(payload)`` line to a jsonl file under exclusive
+    ``fcntl.flock``. Concurrent writers each get exactly one line.
+
+    Fail-open: any I/O error returns False without raising so the caller
+    can continue. The pending-learnings stream is observational, not a
+    source of truth — a missed event is acceptable; a crashed pipeline
+    is not.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    try:
+        import fcntl
+    except ImportError:
+        # No flock (Windows, etc.) — best-effort append without locking.
+        try:
+            with open(path, "a") as fh:
+                fh.write(json.dumps(payload) + "\n")
+            return True
+        except OSError:
+            return False
+
+    try:
+        with open(lock_path, "w") as lock_fd:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            try:
+                with open(path, "a") as fh:
+                    fh.write(json.dumps(payload) + "\n")
+            finally:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        return True
+    except OSError:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# PLN-773 Phase 3 — operator override cache namespace
+# ---------------------------------------------------------------------------
+
+# Number of context lines on either side of the cited line that participate
+# in the file-content hash. Mirrors the verifier prompt's EXISTENCE-check
+# window (±20) so an override is invalidated by the same kind of change
+# that would otherwise force the verifier to re-evaluate.
+_OVERRIDE_CONTEXT_LINES = 20
+
+# Sentinel value stored in ``file_content_hash`` for system-scoped findings
+# (no file/line). There is no file content to drift against, so the override
+# is always honored as long as the TTL has not expired. Without the
+# sentinel ``_file_content_hash`` would return "" and the override would
+# be silently dropped at promotion time (PR #114 review HIGH).
+_OVERRIDE_SYSTEM_SCOPE_SENTINEL = "SYSTEM_SCOPE"
+
+
+def _override_cache_path(cache_dir: Path, finding_id: str) -> Path:
+    """``<cache_dir>/overrides/<finding_id>.json``."""
+    return cache_dir / CACHE_NAMESPACE_OVERRIDES / f"{finding_id}.json"
+
+
+def _file_content_hash(cr_dir: Path, file: str | None, line: int | None) -> str:
+    """SHA-256 of the cited file's content within ±20 lines of ``line``.
+
+    Returns "" for system-scoped findings (no file/line). Returns "" when
+    the file is unreadable or the line is out of range — callers treat
+    "" as "cannot match"; the override is auto-invalidated rather than
+    silently accepted.
+
+    The hash window matches the verifier's EXISTENCE-check window
+    (verifier_prompt.txt §1) so an override is invalidated by exactly the
+    kind of change that would force the verifier to re-evaluate.
+    """
+    if not file or not line:
+        return ""
+    # Resolve against cr_dir's parent (the repo root); cr_dir lives at
+    # ``.closedloop-ai/code-review/cr-<N>`` so the repo root is three
+    # levels up. Callers in tests pass an absolute path to a tmp_path
+    # so this resolution does not need to be perfect — the helper just
+    # needs to find the file given a relative path from repo root.
+    candidate = Path(file)
+    if not candidate.is_absolute():
+        # cr_dir → repo root is three parents above (.closedloop-ai/code-review/cr-*).
+        # Fall back to cwd if the structure doesn't match.
+        repo_root = cr_dir
+        for _ in range(3):
+            if repo_root.parent != repo_root:
+                repo_root = repo_root.parent
+        candidate = repo_root / file
+        if not candidate.exists():
+            candidate = Path.cwd() / file
+    try:
+        with open(candidate) as fh:
+            lines = fh.readlines()
+    except OSError:
+        return ""
+    if line < 1 or line > len(lines):
+        return ""
+    start = max(0, line - 1 - _OVERRIDE_CONTEXT_LINES)
+    end = min(len(lines), line + _OVERRIDE_CONTEXT_LINES)
+    window = "".join(lines[start:end])
+    return hashlib.sha256(window.encode("utf-8", "replace")).hexdigest()
+
+
+def _load_override(
+    cache_dir: Path | None, finding_id: str,
+) -> dict[str, Any] | None:
+    """Read ``<cache_dir>/overrides/<finding_id>.json`` or None.
+
+    Returns None on missing/malformed. The override flow (PLN-773 Phase 4)
+    writes these files; `cmd_verify_prepare` checks them BEFORE the
+    verifications/ cache so an override short-circuits verification.
+    """
+    if cache_dir is None:
+        return None
+    path = _override_cache_path(cache_dir, finding_id)
+    data = _read_optional_json(path, None)
+    if not isinstance(data, dict):
+        return None
+    if not data.get("finding_id"):
+        return None
+    return data
+
+
+def _override_is_expired(override: dict[str, Any]) -> bool:
+    """True when the override is older than ``CACHE_TTL_DAYS["overrides"]``.
+
+    Added in the PR #114 review pass — the 90-day TTL was declared in
+    ``CACHE_TTL_DAYS`` but never enforced; both ``_load_override`` and
+    ``_override_is_valid`` only checked the content hash. Sweep-on-read
+    here keeps the override namespace consistent with verifications/ and
+    signals/ where TTL is the only freshness signal.
+
+    Returns False (allow honor) when ``asserted_at`` is missing or
+    unparseable — defensive: a missing timestamp predates this enforcement
+    and should not silently drop a still-valid operator override. Callers
+    that need a stricter contract should reject overrides that fail to
+    write ``asserted_at`` at write time, not at read time.
+    """
+    asserted_at = override.get("asserted_at")
+    if not isinstance(asserted_at, str) or not asserted_at:
+        return False
+    ttl_days = cache_ttl_days(CACHE_NAMESPACE_OVERRIDES)
+    if not ttl_days or ttl_days <= 0:
+        return False
+    try:
+        # ``cmd_re_assert`` writes ISO-8601 UTC timestamps via
+        # ``datetime.now(timezone.utc).isoformat()``. ``fromisoformat``
+        # in Python 3.11+ accepts the "+00:00" / "Z" suffixes.
+        normalized = asserted_at.replace("Z", "+00:00")
+        ts = datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - ts
+    return age.days > ttl_days
+
+
+def _override_is_valid(
+    override: dict[str, Any], finding: dict[str, Any], cr_dir: Path,
+) -> bool:
+    """Override survives only while the cited file content matches.
+
+    Recomputes ``_file_content_hash`` against the file at HEAD and compares
+    against the hash stored at override-write time. Any drift → override
+    auto-invalidated (caller logs the event and falls through to the
+    standard verifier flow).
+
+    System-scoped findings (no file/line at re-assert time) bypass the
+    content-hash gate via the ``SYSTEM_SCOPE`` sentinel; there is no file
+    to drift against, so only the TTL gates the override.
+
+    TTL gate (PR #114 review) — overrides older than
+    ``CACHE_TTL_DAYS["overrides"]`` (90 days) are dropped. Both the
+    content-hash and system-scope paths run through it so stale operator
+    opinions cannot resurrect indefinitely after the underlying finding's
+    context has presumably moved on.
+    """
+    stored = str(override.get("file_content_hash", ""))
+    if not stored:
+        # Override has no hash anchor — refuse to honor it (defensive;
+        # writers in Phase 4 always store the hash).
+        return False
+    if _override_is_expired(override):
+        return False
+    if stored == _OVERRIDE_SYSTEM_SCOPE_SENTINEL:
+        # System-scoped override — honor regardless of file/line because
+        # there's nothing to drift. Defensive: still require the finding
+        # itself to lack file/line so a malformed override cannot promote
+        # a file-scoped finding it was never written against.
+        return not finding.get("file") and not finding.get("line")
+    current = _file_content_hash(
+        cr_dir, finding.get("file"), finding.get("line"),
+    )
+    return current != "" and current == stored
+
+
+def _write_override(
+    cache_dir: Path | None, payload: dict[str, Any],
+) -> Path | None:
+    """Atomically write ``<cache_dir>/overrides/<finding_id>.json``.
+
+    Returns the path on success, None when ``cache_dir`` is None or the
+    write fails. Atomic via tmp + ``os.replace`` so a crash mid-write
+    cannot leave a half-written override on disk.
+    """
+    if cache_dir is None:
+        return None
+    finding_id = str(payload.get("finding_id", ""))
+    if not finding_id:
+        return None
+    path = _override_cache_path(cache_dir, finding_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    try:
+        with open(tmp, "w") as fh:
+            json.dump(payload, fh, indent=2)
+        os.replace(tmp, path)
+    except OSError:
+        return None
+    return path
+
+
+def _synthesize_re_asserted_verifier_output(
+    finding: dict[str, Any], override: dict[str, Any], output_path: Path,
+) -> bool:
+    """Write a ``RE_ASSERTED`` verifier-output stub so verify-consolidate
+    treats the override as a fresh CONFIRMED-equivalent verdict.
+
+    The synthetic output mirrors the shape ``cmd_verify_consolidate``
+    expects from a real verifier agent so no branch in the consolidator
+    needs to special-case the override path. Returns True on success.
+    """
+    payload = {
+        "finding_id": finding.get("id"),
+        "verifier_verdict": "RE_ASSERTED",
+        "verifier_severity": None,
+        "verifier_confidence": 1.0,
+        "verifier_reasoning": (
+            f"Operator override ({override.get('override', 'RE_ASSERT')}). "
+            f"Asserted at {override.get('asserted_at', 'unknown')}. "
+            f"Reason: {override.get('reason') or 'not provided'}."
+        ),
+        "evidence_checks": [
+            {
+                "claim": "operator override on file:line",
+                "expected": "file content hash matches stored override",
+                "actual_read": override.get("file_content_hash", ""),
+                "verified": True,
+                "source": (
+                    f"{finding.get('file', '?')}:{finding.get('line', '?')}"
+                ),
+            },
+        ],
+        "rejection_class": None,
+    }
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w") as fh:
+            json.dump(payload, fh, indent=2)
+    except OSError:
+        return False
+    return True
+
+
 def _read_cached_verification(
     cache_dir: Path | None, finding: dict[str, Any],
     model: str, prompt_hash: str,
@@ -1721,6 +1999,19 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
     findings_path = Path(args.findings)
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
     prompt_hash = str(getattr(args, "prompt_hash", "") or "")
+    no_verify: bool = bool(getattr(args, "no_verify", False))
+    no_verify_reason: str = str(getattr(args, "no_verify_reason", "") or "")
+
+    # PLN-773 Phase 4: --no-verify requires an explicit reason so the
+    # emergency bypass is never silent. The audit banner downstream
+    # echoes the reason in the operator-facing footer.
+    if no_verify and not no_verify_reason.strip():
+        print(
+            "Error: --no-verify requires --no-verify-reason='<why>' so the "
+            "emergency bypass is captured in the audit trail.",
+            file=sys.stderr,
+        )
+        return 2
 
     data = _read_optional_json(findings_path, {})
     if isinstance(data, dict):
@@ -1739,19 +2030,29 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
 
     eligible: list[dict[str, Any]] = []
     skipped: list[str] = []
-    for f in findings:
-        fid = str(f["id"])
-        if _needs_verification(f):
-            eligible.append({
-                "finding_id": fid,
-                "model": _select_verifier_model(f),
-                "severity": f.get("severity"),
-                "confidence": f.get("confidence"),
-                "category": f.get("category"),
-                "_priority_score": _verification_priority(f),
-            })
-        else:
-            skipped.append(fid)
+    # PLN-773 Phase 4: --no-verify short-circuits the tier table — every
+    # finding lands in skipped_no_verification[] so cmd_verify_consolidate
+    # routes the whole set to verified[] with verifier_verdict=None.
+    # Sensitive-path rules in consolidate key on verifier_verdict and have
+    # nothing to escalate against a null verdict; the audit banner makes
+    # the bypass visible in the operator-facing footer.
+    if no_verify:
+        for f in findings:
+            skipped.append(str(f["id"]))
+    else:
+        for f in findings:
+            fid = str(f["id"])
+            if _needs_verification(f):
+                eligible.append({
+                    "finding_id": fid,
+                    "model": _select_verifier_model(f),
+                    "severity": f.get("severity"),
+                    "confidence": f.get("confidence"),
+                    "category": f.get("category"),
+                    "_priority_score": _verification_priority(f),
+                })
+            else:
+                skipped.append(fid)
 
     # Rank by priority; stable secondary sort by finding_id so a tie
     # doesn't make the cutoff non-deterministic across runs (cache
@@ -1769,10 +2070,30 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
 
     to_verify: list[dict[str, Any]] = []
     cache_hits: list[str] = []
+    override_hits: list[str] = []
+    override_invalidated: list[str] = []
     for entry in eligible:
         fid = entry["finding_id"]
         finding = finding_by_id[fid]
         output_path = cr_dir / f"agent_verifier_{fid}.json"
+
+        # PLN-773 Phase 3 — operator override has precedence over the
+        # verifications/ cache. Check overrides FIRST; if one exists and
+        # the file-content hash still matches, synthesize a RE_ASSERTED
+        # verifier output and skip both the cache check and the agent
+        # spawn entirely. Hash drift invalidates the override silently
+        # (logged on the manifest); the verifier then runs normally.
+        override = _load_override(cache_dir, fid)
+        if override is not None:
+            if _override_is_valid(override, finding, cr_dir):
+                if _synthesize_re_asserted_verifier_output(
+                    finding, override, output_path,
+                ):
+                    override_hits.append(fid)
+                    continue
+            else:
+                override_invalidated.append(fid)
+                # Fall through to standard verification.
 
         # Cache check — if we have a fresh verdict for this exact
         # (finding_id, snippet_hash, model, prompt_hash) tuple, materialize
@@ -1820,8 +2141,20 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
         "skipped_no_verification": skipped,
         "deferred_budget": deferred,
         "cache_hits": cache_hits,
+        # PLN-773 Phase 3 — operator override telemetry. ``override_hits``
+        # are findings whose verification was short-circuited by a stored
+        # override; ``override_invalidated`` are findings whose override
+        # was rejected on file-content drift and ran normal verification.
+        "override_hits": override_hits,
+        "override_invalidated": override_invalidated,
+        # PLN-773 Phase 4 — emergency-bypass flag. Downstream presenter
+        # surfaces this in the audit banner so the bypass is visible.
+        "no_verify": no_verify,
+        "no_verify_reason": no_verify_reason if no_verify else "",
         "max_verifications": VERIFY_MAX_VERIFICATIONS,
-        "total_eligible": len(to_verify) + len(deferred) + len(cache_hits),
+        "total_eligible": (
+            len(to_verify) + len(deferred) + len(cache_hits) + len(override_hits)
+        ),
         "verifier_prompt_path": str(verifier_prompt_path),
     }
 
@@ -1849,8 +2182,14 @@ _VERIFICATION_GATES_DEFAULT_PATH = Path(".closedloop-ai/settings/verification-ga
 # patch is structurally wrong even when no individual line is dangerous").
 _VERDICT_THRESHOLDS_DEFAULT_PATH = Path(".closedloop-ai/settings/verdict-thresholds.json")
 _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT = 3
+# PLN-773 v2.10.0: Premise justification rate alert. Fires when the share
+# of Premise findings carrying author justification crosses the threshold
+# — PLN-721 §Telemetry: "if > ~30%, authors likely gaming the hatch".
+# Operator-tunable via the same verdict-thresholds.json config.
+_VERDICT_JUSTIFICATION_RATE_ALERT_DEFAULT = 0.30
 _VERDICT_THRESHOLD_KEYS: tuple[str, ...] = (
     "premise_cumulative_medium",
+    "justification_rate_alert",
 )
 
 
@@ -1886,25 +2225,39 @@ def _load_optional_settings_dict(
     return data, fresh
 
 
-def _load_verdict_thresholds(path: Path | None) -> dict[str, int]:
+def _load_verdict_thresholds(path: Path | None) -> dict[str, Any]:
     """Read verdict-thresholds.json. Absent or malformed → built-in defaults.
 
-    Returns a dict with the canonical keys present, each mapped to an int.
-    Unknown keys are ignored. Non-int / negative entries fall back to the
-    default — the file is operator-authored and should not crash the
-    pipeline on a typo or a "0" that would disable the gate entirely
-    (use a very large number for that).
+    Returns a dict with the canonical keys present:
+
+      - ``premise_cumulative_medium`` (int, ≥ 1): MEDIUM Premise count
+        gate. Default 3.
+      - ``justification_rate_alert`` (float, [0.0, 1.0]): threshold above
+        which the justification-rate footer flips to ALERT. Default 0.30.
+
+    Unknown keys are ignored. Invalid entries (wrong type, out of range)
+    fall back to the default — the file is operator-authored and should
+    not crash the pipeline on a typo or a "0" that would disable a gate
+    entirely (use a very large number / 1.0 for that respectively).
     """
     defaults: dict[str, Any] = {
         "premise_cumulative_medium": _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
+        "justification_rate_alert": _VERDICT_JUSTIFICATION_RATE_ALERT_DEFAULT,
     }
     data, out = _load_optional_settings_dict(path, defaults)
     if data is None:
         return out
-    for key in _VERDICT_THRESHOLD_KEYS:
-        raw = data.get(key)
-        if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1:
-            out[key] = raw
+    # Per-key validation (each threshold has its own range constraints).
+    raw_pm = data.get("premise_cumulative_medium")
+    if isinstance(raw_pm, int) and not isinstance(raw_pm, bool) and raw_pm >= 1:
+        out["premise_cumulative_medium"] = raw_pm
+    raw_jr = data.get("justification_rate_alert")
+    if (
+        isinstance(raw_jr, (int, float))
+        and not isinstance(raw_jr, bool)
+        and 0.0 <= float(raw_jr) <= 1.0
+    ):
+        out["justification_rate_alert"] = float(raw_jr)
     return out
 
 _VERIFICATION_GATE_KEYS: tuple[str, ...] = (
@@ -2096,6 +2449,7 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
     skipped_ids: set[str] = set()
     deferred_ids: set[str] = set()
     cache_hit_ids: set[str] = set()
+    override_hit_ids: set[str] = set()
     to_verify_models: dict[str, str] = {}
     if isinstance(manifest, dict):
         for e in manifest.get("to_verify", []):
@@ -2115,6 +2469,16 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
         }
         cache_hit_ids = {
             str(fid) for fid in manifest.get("cache_hits", [])
+            if isinstance(fid, str)
+        }
+        # PLN-773 PR #114 review fix — override hits must be routed through
+        # the same read-back path as cache hits so the synthesized
+        # RE_ASSERTED verifier output reaches verified[] with the verdict
+        # intact. Without this, override fids fell through as tier-skips
+        # (verifier_verdict=None) and the per-reviewer re_asserted telemetry
+        # was always 0 even when the footer reported N honored overrides.
+        override_hit_ids = {
+            str(fid) for fid in manifest.get("override_hits", [])
             if isinstance(fid, str)
         }
 
@@ -2145,7 +2509,7 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
 
         file_path = finding.get("file") if isinstance(finding.get("file"), str) else None
 
-        if fid in to_verify_ids or fid in cache_hit_ids:
+        if fid in to_verify_ids or fid in cache_hit_ids or fid in override_hit_ids:
             output_path = _agent_verifier_output_path(cr_dir, fid)
             verdict_data = _read_verifier_output(output_path)
             if verdict_data is None:
@@ -2159,9 +2523,16 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
                 pending.append(finding)
                 continue
             _merge_verifier_fields(finding, verdict_data)
-            # Cache write-back for fresh verdicts (skip cache hits — those
-            # came FROM the cache, no point overwriting with the same data).
-            if fid in to_verify_ids and fid not in cache_hit_ids:
+            # Cache write-back for fresh verdicts. Skip cache hits (came
+            # from cache) AND override hits (synthesized stub — never
+            # belongs in the verifications/ cache because it would
+            # corrupt the verifier-output cache namespace with operator
+            # opinion).
+            if (
+                fid in to_verify_ids
+                and fid not in cache_hit_ids
+                and fid not in override_hit_ids
+            ):
                 model = to_verify_models.get(fid, _VERIFY_MODEL_DEFAULT)
                 _write_cached_verification(
                     cache_dir, finding, model, prompt_hash, verdict_data,
@@ -2246,6 +2617,30 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
             justified.append(finding)
         else:
             verified.append(finding)
+        # PLN-773 Phase 6: append a pending-learnings entry for every
+        # JUSTIFIED-INVALID outcome so self-learning:process-learnings
+        # can tune the verifier's J2 (responsiveness) threshold over
+        # time. Best-effort; failure does not affect the verdict path.
+        if verdict == "JUSTIFIED-INVALID":
+            justification = finding.get("justification") or {}
+            _pending_learnings_append(
+                _PENDING_LEARNINGS_DIR / _PENDING_LEARNINGS_PREMISE,
+                {
+                    "finding_id": finding.get("id"),
+                    "category": finding.get("category"),
+                    "subcategory": finding.get("subcategory"),
+                    "justification_text": (
+                        justification.get("text")
+                        if isinstance(justification, dict) else None
+                    ),
+                    "justification_source": (
+                        justification.get("source")
+                        if isinstance(justification, dict) else None
+                    ),
+                    "audit_reason": finding.get("verifier_reasoning"),
+                    "emitted_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
 
     output = {
         "verified": verified,
@@ -4908,6 +5303,357 @@ def cmd_collect_findings(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: review-dismissed-prepare / review-dismissed-consolidate
+# (PLN-773 Phase 5 — second-opinion fleet against prior rejected[])
+# ---------------------------------------------------------------------------
+
+# Fixed model for the dismissed-review second opinion. Different from the
+# default verifier (sonnet) so the second pass gives an independent vote
+# rather than the same model re-agreeing with itself.
+_REVIEW_DISMISSED_MODEL = "haiku"
+
+
+def cmd_review_dismissed_prepare(args: argparse.Namespace) -> int:
+    """Stage 1 of `--review-dismissed`: build a haiku-verifier manifest from
+    the prior run's ``rejected[]`` bucket.
+
+    Reads ``<CR_DIR>/review_result.json`` (or ``--prior-result`` if given),
+    writes per-finding input files at
+    ``<CR_DIR>/review_dismissed_inputs/<finding_id>.json``, and emits
+    ``<CR_DIR>/review_dismissed_manifest.json`` shaped like
+    ``cmd_verify_prepare``'s manifest (so the walker can re-use the same
+    fleet-dispatch loop, just keyed on the haiku model).
+    """
+    cr_dir = Path(args.cr_dir)
+    prior_path = (
+        Path(args.prior_result) if getattr(args, "prior_result", None)
+        else cr_dir / "review_result.json"
+    )
+    envelope = _read_optional_json(prior_path, None)
+    if not isinstance(envelope, dict):
+        print(
+            f"Error: prior review_result.json not found or malformed at "
+            f"{prior_path}",
+            file=sys.stderr,
+        )
+        return 1
+
+    rejected: list[dict[str, Any]] = [
+        f for f in envelope.get("rejected", []) or []
+        if isinstance(f, dict) and f.get("id")
+    ]
+
+    inputs_dir = cr_dir / "review_dismissed_inputs"
+    inputs_dir.mkdir(parents=True, exist_ok=True)
+    verifier_prompt_path = cr_dir / "verifier_prompt.txt"
+
+    to_verify: list[dict[str, Any]] = []
+    for finding in rejected:
+        fid = str(finding["id"])
+        input_path = inputs_dir / f"{fid}.json"
+        # Output target: distinct from the standard verifier's output so the
+        # two runs cannot clobber each other if the orchestrator chains them.
+        output_path = cr_dir / f"agent_verifier_dismissed_{fid}.json"
+        with open(input_path, "w") as fh:
+            json.dump(
+                {
+                    "finding": finding,
+                    "verifier_prompt_path": str(verifier_prompt_path),
+                    "output_path": str(output_path),
+                },
+                fh,
+                indent=2,
+            )
+        to_verify.append({
+            "finding_id": fid,
+            "model": _REVIEW_DISMISSED_MODEL,
+            "severity": finding.get("severity"),
+            "input_path": str(input_path),
+            "output_path": str(output_path),
+            "prior_verdict": finding.get("verifier_verdict", "REJECTED"),
+        })
+
+    manifest = {
+        "to_verify": to_verify,
+        "model": _REVIEW_DISMISSED_MODEL,
+        "prior_result": str(prior_path),
+        "verifier_prompt_path": str(verifier_prompt_path),
+    }
+    manifest_path = cr_dir / "review_dismissed_manifest.json"
+    with open(manifest_path, "w") as fh:
+        json.dump(manifest, fh, indent=2)
+        fh.write("\n")
+    json.dump(manifest, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def cmd_review_dismissed_consolidate(args: argparse.Namespace) -> int:
+    """Stage 2 of `--review-dismissed`: read haiku verifier outputs and
+    auto-promote any non-REJECTED verdict by writing an RE_ASSERT override.
+
+    Writes ``<CR_DIR>/review_dismissed_diff.json`` documenting the
+    side-by-side: ``{finding_id, prior_verdict, new_verdict, action}``
+    where ``action`` is ``"promoted"`` or ``"no_change"``. The operator
+    re-runs ``/start`` afterward; the new overrides are honored by
+    ``cmd_verify_prepare`` on that next run.
+    """
+    cr_dir = Path(args.cr_dir)
+    cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
+    manifest_path = (
+        Path(args.manifest) if getattr(args, "manifest", None)
+        else cr_dir / "review_dismissed_manifest.json"
+    )
+    if cache_dir is None:
+        print(
+            "Error: --cache-dir required so overrides persist across runs.",
+            file=sys.stderr,
+        )
+        return 2
+
+    manifest = _read_optional_json(manifest_path, None)
+    if not isinstance(manifest, dict):
+        print(
+            f"Error: manifest not found at {manifest_path}",
+            file=sys.stderr,
+        )
+        return 1
+
+    prior_path = manifest.get("prior_result")
+    prior_envelope = _read_optional_json(Path(prior_path), {}) if prior_path else {}
+    prior_findings_by_id: dict[str, dict[str, Any]] = {}
+    if isinstance(prior_envelope, dict):
+        for f in prior_envelope.get("rejected", []) or []:
+            if isinstance(f, dict) and f.get("id"):
+                prior_findings_by_id[str(f["id"])] = f
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    diff_entries: list[dict[str, Any]] = []
+    promoted = 0
+    no_change = 0
+    missing = 0
+
+    for entry in manifest.get("to_verify", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        fid = str(entry.get("finding_id", ""))
+        if not fid:
+            continue
+        prior_verdict = str(entry.get("prior_verdict", "REJECTED"))
+        output_path = (
+            Path(entry["output_path"]) if entry.get("output_path")
+            else cr_dir / f"agent_verifier_dismissed_{fid}.json"
+        )
+        agent_out = _read_verifier_output(output_path)
+        if agent_out is None:
+            missing += 1
+            diff_entries.append({
+                "finding_id": fid,
+                "prior_verdict": prior_verdict,
+                "new_verdict": None,
+                "action": "missing_output",
+            })
+            continue
+        new_verdict = str(agent_out.get("verifier_verdict", ""))
+        if new_verdict == "REJECTED":
+            no_change += 1
+            diff_entries.append({
+                "finding_id": fid,
+                "prior_verdict": prior_verdict,
+                "new_verdict": new_verdict,
+                "action": "no_change",
+            })
+            continue
+        # Non-REJECTED — auto-promote via override.
+        prior = prior_findings_by_id.get(fid, {})
+        file_hash = _file_content_hash(
+            cr_dir, prior.get("file"), prior.get("line"),
+        )
+        payload = {
+            "finding_id": fid,
+            "file": prior.get("file"),
+            "line": prior.get("line"),
+            "file_content_hash": file_hash,
+            "override": "REVIEW_DISMISSED",
+            "reason": (
+                f"Second-opinion haiku verifier: {prior_verdict} → {new_verdict}"
+            ),
+            "verified_against": prior_verdict,
+            "asserted_at": now_iso,
+            "asserted_by": "review-dismissed",
+        }
+        _write_override(cache_dir, payload)
+        promoted += 1
+        diff_entries.append({
+            "finding_id": fid,
+            "prior_verdict": prior_verdict,
+            "new_verdict": new_verdict,
+            "action": "promoted",
+        })
+
+    diff_doc = {
+        "diff": diff_entries,
+        "stats": {
+            "total": len(diff_entries),
+            "promoted": promoted,
+            "no_change": no_change,
+            "missing_output": missing,
+        },
+    }
+    diff_path = cr_dir / "review_dismissed_diff.json"
+    with open(diff_path, "w") as fh:
+        json.dump(diff_doc, fh, indent=2)
+        fh.write("\n")
+    json.dump(diff_doc, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: re-assert (PLN-773 Phase 4)
+# ---------------------------------------------------------------------------
+
+
+def _find_finding_in_envelope(
+    envelope: dict[str, Any], finding_id: str,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Locate ``finding_id`` in any envelope bucket.
+
+    Returns ``(bucket_name, finding)`` or ``(None, None)`` when not found.
+    The bucket name is the canonical envelope key (``rejected``,
+    ``pending_verification``, ``verified``, ``justified``) so the caller
+    can distinguish "promote from rejected" from "already verified".
+    """
+    for bucket in ("rejected", "pending_verification", "verified", "justified"):
+        for f in envelope.get(bucket, []) or []:
+            if isinstance(f, dict) and str(f.get("id", "")) == finding_id:
+                return bucket, f
+    return None, None
+
+
+def cmd_re_assert(args: argparse.Namespace) -> int:
+    """Write operator override files for one or more finding IDs.
+
+    PLN-773 Phase 4. Reads the prior ``review_result.json``, locates each
+    requested finding, computes its current file-content hash, and writes
+    ``<CACHE_DIR>/overrides/<finding_id>.json``. The next ``cmd_verify_prepare``
+    run honors the override and synthesizes a ``RE_ASSERTED`` verdict.
+
+    Stdout: a summary JSON object documenting which ids were re-asserted,
+    which were no-ops (already verified), and which were not found.
+    """
+    cr_dir = Path(args.cr_dir)
+    cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
+    prior_path = (
+        Path(args.prior_result) if getattr(args, "prior_result", None)
+        else cr_dir / "review_result.json"
+    )
+    reason = str(getattr(args, "reason", "") or "")
+    asserted_by = str(getattr(args, "asserted_by", "") or "operator")
+
+    raw_ids = str(getattr(args, "finding_ids", "") or "")
+    finding_ids = [s.strip() for s in raw_ids.split(",") if s.strip()]
+    if not finding_ids:
+        print(
+            "Error: --finding-ids must be a non-empty comma-separated list.",
+            file=sys.stderr,
+        )
+        return 2
+    if cache_dir is None:
+        print(
+            "Error: --cache-dir is required so overrides persist across runs.",
+            file=sys.stderr,
+        )
+        return 2
+
+    envelope = _read_optional_json(prior_path, None)
+    if not isinstance(envelope, dict):
+        print(
+            f"Error: prior review_result.json not found or malformed at "
+            f"{prior_path}",
+            file=sys.stderr,
+        )
+        return 1
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    re_asserted: list[dict[str, Any]] = []
+    already_verified: list[str] = []
+    # PR #114 review fix — re-asserting a JUSTIFIED-VALID finding is
+    # operator-meaningless (the finding is already surfaced in justified[];
+    # writing a RE_ASSERT override would silently re-route it through
+    # verified[] on the next run, losing the justification record). Bucket
+    # it explicitly so the operator sees the no-op rather than getting a
+    # success summary that doesn't match observed behavior.
+    already_dismissed: list[str] = []
+    not_found: list[str] = []
+
+    for fid in finding_ids:
+        bucket, finding = _find_finding_in_envelope(envelope, fid)
+        if finding is None:
+            not_found.append(fid)
+            continue
+        if bucket == "verified":
+            # Already in verified[] — no override needed; record for the
+            # summary so the operator sees the no-op.
+            already_verified.append(fid)
+            continue
+        if bucket == "justified":
+            # Already in justified[] — re-asserting would re-route to
+            # verified[] and erase the justification record. Report and
+            # skip; operator who really wants to re-assert can edit the
+            # envelope first.
+            already_dismissed.append(fid)
+            continue
+        # PR #114 review fix — system-scoped findings (no file/line)
+        # write the SYSTEM_SCOPE sentinel so ``_override_is_valid`` can
+        # honor them on the next run. Without the sentinel
+        # ``_file_content_hash`` returns "" and the override is dropped
+        # at promotion time, making cmd_re_assert silently no-op.
+        file_field = finding.get("file")
+        line_field = finding.get("line")
+        if not file_field or not line_field:
+            file_hash = _OVERRIDE_SYSTEM_SCOPE_SENTINEL
+        else:
+            file_hash = _file_content_hash(cr_dir, file_field, line_field)
+        payload = {
+            "finding_id": fid,
+            "file": file_field,
+            "line": line_field,
+            "file_content_hash": file_hash,
+            "override": "RE_ASSERT",
+            "reason": reason,
+            "verified_against": finding.get("verifier_verdict"),
+            "asserted_at": now_iso,
+            "asserted_by": asserted_by,
+        }
+        path = _write_override(cache_dir, payload)
+        if path is None:
+            print(
+                f"Warning: failed to write override for {fid}",
+                file=sys.stderr,
+            )
+            continue
+        re_asserted.append({"finding_id": fid, "prior_bucket": bucket})
+        # PLN-773 Phase 6: every re-assert is an event self-learning will
+        # consume to detect over-rejection patterns per reviewer.
+        _pending_learnings_append(
+            _PENDING_LEARNINGS_DIR / _PENDING_LEARNINGS_OVERRIDES,
+            dict(payload, prior_bucket=bucket),
+        )
+
+    summary = {
+        "re_asserted": re_asserted,
+        "already_verified": already_verified,
+        "already_dismissed": already_dismissed,
+        "not_found": not_found,
+        "reason": reason,
+    }
+    json.dump(summary, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: verdict
 # ---------------------------------------------------------------------------
 
@@ -6065,13 +6811,132 @@ def _empty_coverage_plan() -> dict[str, Any]:
     }
 
 
+_PLN773_PREMISE_SUBCATEGORIES: tuple[str, ...] = (
+    "necessity", "cohesion", "workaround", "complexity",
+)
+
+
+def _justification_stats(
+    verified: list[dict[str, Any]],
+    justified: list[dict[str, Any]],
+    *,
+    rate_alert_threshold: float,
+) -> dict[str, Any]:
+    """PLN-773 Phase 2 — Premise justification telemetry sub-block.
+
+    The denominator is total Premise findings across ``verified[]`` AND
+    ``justified[]`` (the JUSTIFIED-VALID bucket lives in ``justified[]``
+    after cmd_verify_consolidate routes; JUSTIFIED-INVALID stays in
+    ``verified[]``). NaN-safe: empty inputs return zeros, not divisions.
+    """
+    valid_count = sum(
+        1 for f in justified
+        if str(f.get("category", "")) == "Premise"
+    )
+    invalid_count = sum(
+        1 for f in verified
+        if str(f.get("category", "")) == "Premise"
+        and f.get("verifier_verdict") == "JUSTIFIED-INVALID"
+    )
+    premise_in_verified = sum(
+        1 for f in verified if str(f.get("category", "")) == "Premise"
+    )
+    total_premise = premise_in_verified + valid_count
+    emitted = valid_count + invalid_count
+    rate = (emitted / total_premise) if total_premise > 0 else 0.0
+    rejection_rate = (invalid_count / emitted) if emitted > 0 else 0.0
+    return {
+        "rate": rate,
+        "rejection_rate": rejection_rate,
+        "total_premise": total_premise,
+        "justified_emitted": emitted,
+        "justified_valid": valid_count,
+        "justified_invalid": invalid_count,
+        "threshold_alert": rate > rate_alert_threshold,
+    }
+
+
+def _by_subcategory_stats(verified: list[dict[str, Any]]) -> dict[str, int]:
+    """PLN-773 Phase 2 — Premise findings partitioned by subcategory.
+
+    Counts only ``category=Premise`` findings in ``verified[]``. Subcategories
+    are pinned to the canonical four (PLN-721) so a typo in a reviewer
+    output doesn't introduce spurious buckets; non-canonical subcategories
+    are silently ignored.
+    """
+    counts: dict[str, int] = {k: 0 for k in _PLN773_PREMISE_SUBCATEGORIES}
+    for f in verified:
+        if str(f.get("category", "")) != "Premise":
+            continue
+        sub = str(f.get("subcategory", ""))
+        if sub in counts:
+            counts[sub] += 1
+    return counts
+
+
+def _verification_by_reviewer(
+    verified: list[dict[str, Any]],
+    rejected: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """PLN-773 Phase 2 — per-reviewer verification outcomes + FP rate.
+
+    Each reviewer entry carries:
+      - ``verified`` / ``rejected`` counts (the inputs to the FP rate)
+      - ``fp_rate`` = rejected / (verified + rejected); 0.0 when no audited
+        findings exist for the reviewer (NaN-safe)
+      - ``re_asserted`` = how many of THIS reviewer's findings carry the
+        new ``RE_ASSERTED`` verdict (the inverse health metric — high
+        FP-rate AND high re-assert = reviewer is over-rejecting AND
+        operators are correcting back)
+    """
+    counts: dict[str, dict[str, int]] = {}
+
+    def _ensure(reviewer: str) -> dict[str, int]:
+        return counts.setdefault(
+            reviewer, {"verified": 0, "rejected": 0, "re_asserted": 0},
+        )
+
+    for f in verified:
+        entry = _ensure(str(f.get("reviewer", "unknown")))
+        entry["verified"] += 1
+        if f.get("verifier_verdict") == "RE_ASSERTED":
+            entry["re_asserted"] += 1
+    for f in rejected:
+        entry = _ensure(str(f.get("reviewer", "unknown")))
+        entry["rejected"] += 1
+
+    out: dict[str, dict[str, Any]] = {}
+    for reviewer, c in counts.items():
+        audited = c["verified"] + c["rejected"]
+        out[reviewer] = {
+            "verified": c["verified"],
+            "rejected": c["rejected"],
+            "re_asserted": c["re_asserted"],
+            "fp_rate": (c["rejected"] / audited) if audited > 0 else 0.0,
+        }
+    return out
+
+
 def _stats_from_findings(
     verified: list[dict[str, Any]],
     rejected: list[dict[str, Any]],
     justified: list[dict[str, Any]],
     coverage_gaps: list[dict[str, Any]],
+    *,
+    thresholds: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Compute the ``stats`` block of the result envelope."""
+    """Compute the ``stats`` block of the result envelope.
+
+    ``thresholds`` (PLN-773): optional dict from ``_load_verdict_thresholds``.
+    Callers that omit it get the built-in default for the
+    ``justification_rate_alert`` toggle (0.30). All existing call sites
+    keep working through the optional kwarg.
+    """
+    thresholds = thresholds or {
+        "premise_cumulative_medium": _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
+        "justification_rate_alert": _VERDICT_JUSTIFICATION_RATE_ALERT_DEFAULT,
+    }
+
     by_severity: dict[str, int] = {"BLOCKING": 0, "HIGH": 0, "MEDIUM": 0}
     by_category: dict[str, int] = {}
     by_reviewer: dict[str, dict[str, int]] = {}
@@ -6107,6 +6972,18 @@ def _stats_from_findings(
         "by_category": by_category,
         "by_reviewer": by_reviewer,
         "by_finding_scope": by_scope,
+        # PLN-773 Phase 2 — Premise telemetry sub-blocks (additive; the
+        # envelope schema accepts arbitrary stats keys).
+        "by_subcategory": _by_subcategory_stats(verified),
+        "justification": _justification_stats(
+            verified, justified,
+            rate_alert_threshold=float(
+                thresholds.get(
+                    "justification_rate_alert",
+                    _VERDICT_JUSTIFICATION_RATE_ALERT_DEFAULT,
+                ),
+            ),
+        ),
         "verification": {
             "verified_count": len(verified),
             "rejected_count": len(rejected),
@@ -6123,6 +7000,8 @@ def _stats_from_findings(
             ),
             "skipped_count": 0,
             "false_positive_rate": 0.0,
+            # PLN-773 Phase 2 — per-reviewer FP rate + override counter.
+            "by_reviewer": _verification_by_reviewer(verified, rejected),
         },
         # PLN-721 v2.9.1: must match the count Rule 4 actually fires on
         # — _count_gateable_premise_medium is the single source of truth
@@ -6342,7 +7221,10 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
         "coverage_gaps": coverage_gaps,
         "verdict": canonical_verdict,
         "verdict_reason": reason,
-        "stats": _stats_from_findings(verified, rejected, justified, coverage_gaps),
+        "stats": _stats_from_findings(
+            verified, rejected, justified, coverage_gaps,
+            thresholds=thresholds,
+        ),
         # PLN-719 Phase 9: telemetry is sourced from the canonical zero-valued
         # factory and deep-merged with optional <cr_dir>/telemetry.json, which
         # the orchestrator (or any upstream stage) may populate with timings,
@@ -6564,6 +7446,20 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
         "--prompt-hash", default="",
         help="Verifier prompt hash; part of the cache key so prompt revs invalidate cache.",
     )
+    # PLN-773 Phase 4: --no-verify emergency-bypass. Every finding lands
+    # in skipped_no_verification[]; consolidate routes them to verified[]
+    # with verifier_verdict=None. Requires --no-verify-reason for audit.
+    p_vp.add_argument(
+        "--no-verify", action="store_true",
+        help="PLN-773: emergency bypass — skip verification entirely. "
+             "Every eligible finding is treated as skipped_no_verification. "
+             "Requires --no-verify-reason.",
+    )
+    p_vp.add_argument(
+        "--no-verify-reason", default="",
+        help="PLN-773: reason for --no-verify, recorded in the manifest and "
+             "echoed in the operator-facing footer audit banner.",
+    )
     p_vp.set_defaults(func=cmd_verify_prepare)
 
     # verify-consolidate (PLN-722)
@@ -6593,6 +7489,63 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
         help="Verifier prompt hash for cache write-back keys.",
     )
     p_vc.set_defaults(func=cmd_verify_consolidate)
+
+    # re-assert (PLN-773 Phase 4)
+    p_ra = subparsers.add_parser(
+        "re-assert",
+        help="Write operator override files for one or more finding IDs",
+    )
+    p_ra.add_argument("--cr-dir", required=True, help="CR_DIR path")
+    p_ra.add_argument(
+        "--cache-dir", required=True,
+        help="Cache directory where overrides/<finding_id>.json files are written.",
+    )
+    p_ra.add_argument(
+        "--finding-ids", required=True,
+        help="Comma-separated list of finding IDs to re-assert.",
+    )
+    p_ra.add_argument(
+        "--prior-result", default=None,
+        help="Path to prior review_result.json. Defaults to <CR_DIR>/review_result.json.",
+    )
+    p_ra.add_argument(
+        "--reason", default="",
+        help="Optional operator-supplied reason for the re-assertion; "
+             "recorded in the override file and pending-learnings.",
+    )
+    p_ra.add_argument(
+        "--asserted-by", default="operator",
+        help="Identifier of the operator (defaults to 'operator').",
+    )
+    p_ra.set_defaults(func=cmd_re_assert)
+
+    # review-dismissed-prepare (PLN-773 Phase 5)
+    p_rdp = subparsers.add_parser(
+        "review-dismissed-prepare",
+        help="Build a haiku-verifier manifest from prior rejected[] for second-opinion run.",
+    )
+    p_rdp.add_argument("--cr-dir", required=True, help="CR_DIR path")
+    p_rdp.add_argument(
+        "--prior-result", default=None,
+        help="Path to prior review_result.json. Defaults to <CR_DIR>/review_result.json.",
+    )
+    p_rdp.set_defaults(func=cmd_review_dismissed_prepare)
+
+    # review-dismissed-consolidate (PLN-773 Phase 5)
+    p_rdc = subparsers.add_parser(
+        "review-dismissed-consolidate",
+        help="Read haiku verifier outputs; auto-promote non-REJECTED verdicts via overrides.",
+    )
+    p_rdc.add_argument("--cr-dir", required=True, help="CR_DIR path")
+    p_rdc.add_argument(
+        "--cache-dir", required=True,
+        help="Cache directory; auto-promotions write overrides/<finding_id>.json.",
+    )
+    p_rdc.add_argument(
+        "--manifest", default=None,
+        help="Path to review_dismissed_manifest.json (defaults to <CR_DIR>/review_dismissed_manifest.json).",
+    )
+    p_rdc.set_defaults(func=cmd_review_dismissed_consolidate)
 
     # cache-check
     p_cc = subparsers.add_parser("cache-check", help="Check BHA cache for previously reviewed files")

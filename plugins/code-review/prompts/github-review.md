@@ -258,6 +258,56 @@ Also write `.closedloop-ai/code-review-justified-summary.md` (skip when `justifi
 
 Mark todo as `completed`.
 
+### 6e: Write Verifier Stats (PLN-773)
+
+Read `$CR_DIR/review_result.json` → `stats.verification` and `stats.justification`. If neither block is present (very old envelope), skip this step. Otherwise write `.closedloop-ai/code-review-verifier-stats.md` (the workflow posts this as a collapsible `<details>` block in a single comment so the metrics are visible to PR reviewers without polluting inline review comments):
+
+```markdown
+## Verifier Stats
+
+<details>
+<summary>{verified_count} verified · {rejected_count} dismissed · {justified_emitted} justified</summary>
+
+**Verifier outcomes**
+- CONFIRMED + DOWNGRADE: {verified_count - tentative_count - re_asserted}
+- TENTATIVE: {tentative_count}
+- RE_ASSERTED: {sum over by_reviewer[].re_asserted}
+- REJECTED: {rejected_count}
+
+**Justification (PLN-721 escape hatch)**
+- Justified emitted: {justified_emitted} ({rate:.0%} of Premise total)
+- JUSTIFIED-VALID: {justified_valid}
+- JUSTIFIED-INVALID: {justified_invalid} (rejection rate {rejection_rate:.0%})
+- Threshold alert: {threshold_alert} (alerts when rate > {justification_rate_alert:.0%})
+
+**Per-reviewer FP rate** (rejected / audited)
+| Reviewer | Verified | Rejected | FP rate | Re-asserts |
+|---|---|---|---|---|
+| {reviewer} | {verified} | {rejected} | {fp_rate:.2f} | {re_asserted} {"⚠" if re_asserted > 0 else ""} |
+
+**Premise MEDIUM cumulative gate**
+- Current count: {premise_cumulative_medium_count}
+- Gate threshold: {premise_cumulative_medium}
+
+</details>
+```
+
+If `<CR_DIR>/verify_manifest.json` exists and has `no_verify: true`, prepend the audit banner BEFORE the collapsible block:
+
+```markdown
+> ⚠️ **`--no-verify` was used.** Verifier was bypassed entirely.
+> Reason: "{no_verify_reason}"
+> {N} findings reached verdict without verifier audit.
+```
+
+If the manifest carries `override_hits` or `override_invalidated`, append a one-liner inside the `<details>` block:
+
+```
+ℹ️ Operator overrides: {len(override_hits)} honored, {len(override_invalidated)} invalidated by file-content drift.
+```
+
+Mark todo as `completed`.
+
 ---
 
 ## Step 8: Write Summary
