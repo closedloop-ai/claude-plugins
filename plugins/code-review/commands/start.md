@@ -709,20 +709,45 @@ Entries in `verify_manifest.json.cache_hits[]` are already on disk at `agent_ver
 
 ---
 
-## Local-Mode Presenter (Gate A + stage_29_present)
+## Hygiene Findings Format (Gate A render target)
 
-All local-mode presentation rules live in the `code-review:present-local` skill.
+Gate A step 3 ("render using the Hygiene Findings format below") points here. Gate A fires in **both** `MODE=local` and `MODE=github` so this format stays inline in the orchestration spine rather than living in any mode-specific skill.
 
-Invoke that skill at one of two entry points:
+Parse `<CR_DIR>/hygiene.json` and render:
 
-- **Gate A early-exit** — `flags.hygiene_only == true` after `stage_12_hygiene`. The skill renders the Hygiene Check Results page and EXITS without footer/verdict.
-- **Standard stage_29_present** — `MODE=local`. The skill renders the full pipeline: validation summary, BLOCKING/HIGH/MEDIUM sections, Justified Findings (PLN-721), Dismissed Findings (PLN-722), Verifier Stats footer (PLN-773), operator-flag descriptions, override precedence rule (stage_22b context), Validation Summary, and final Summary.
+```markdown
+# Hygiene Check Results
 
-Decomposition rationale: this content was ~275 lines in `start.md` and is only needed at presentation time; extracting it as a skill keeps the orchestration spine lean and lets future presenter changes ship in isolation from the orchestration flow.
+**Scope:** [staged/branch/files]
+**Files Checked:** [count]
+**Mode:** Hygiene-only (no LLM review)
 
 ---
 
-<!-- replaced-by-skill: code-review:present-local — DO NOT add inline presenter content here -->
+## Repo Hygiene ([count])
+
+[List hygiene findings — one entry per finding, with **File**, **Issue**, **Recommendation**]
+
+---
+
+**Summary:** [count] hygiene issues found. No LLM-based review was performed.
+```
+
+Then mark "Present hygiene findings" `completed` and **EXIT**. Do NOT run footer or verdict — both depend on artifacts (`findings_validated.json`, `review_result.json`) that hygiene-only never produces, and `stage_28_verdict.on_failure == "abort"` would crash the walker. The GitHub-mode write (`.closedloop-ai/code-review-summary.md` + `.closedloop-ai/code-review-findings.json`) is owned by Gate A step 4 above; do NOT duplicate it here.
+
+---
+
+## Local-Mode Presenter (stage_29_present, MODE=local)
+
+When `MODE=local` AND `stage_29_present` is reached, invoke the `code-review:present-local` skill. The skill owns the full local-mode pipeline: validation summary, BLOCKING/HIGH/MEDIUM sections, Justified Findings (PLN-721), Dismissed Findings (PLN-722), Verifier Stats footer (PLN-773), operator-flag descriptions, override precedence rule (stage_22b context), Validation Summary, and final Summary.
+
+The skill is scoped to local mode only. Gate A hygiene presentation (mode-agnostic) stays above; the `MODE=github` presenter path uses `github-review.md` (see below).
+
+Decomposition rationale: ~270 lines of local-mode presentation content was extracted as a skill so the orchestration spine stays lean and future presenter changes ship in isolation from the orchestration flow.
+
+---
+
+<!-- replaced-by-skill: code-review:present-local — DO NOT add inline local-mode presenter content here -->
 
 ## GitHub Mode: Present (stage_29_present, MODE=github)
 

@@ -1,44 +1,13 @@
 ---
 name: present-local
-description: Render the operator-facing local-mode code review results at stage_29_present. Covers Gate A hygiene-only early-exit format, BLOCKING/HIGH/MEDIUM section templates, Justified Findings (PLN-721), Dismissed Findings (PLN-722), Verifier Stats footer (PLN-773), operator-flag descriptions, override precedence rule for stage_22b, Validation Summary, and final Summary. Invoke when MODE=local AND stage_29_present is reached, OR when Gate A early-exit (flags.hygiene_only==true) fires. Do NOT use for GitHub mode — see prompts/github-review.md.
+description: Render the operator-facing local-mode code review results at stage_29_present. Covers BLOCKING/HIGH/MEDIUM section templates, Justified Findings (PLN-721), Dismissed Findings (PLN-722), Verifier Stats footer (PLN-773), operator-flag descriptions, override precedence rule for stage_22b, Validation Summary, and final Summary. Invoke when MODE=local AND stage_29_present is reached. Do NOT use for GitHub mode — see prompts/github-review.md. Do NOT use for Gate A hygiene-only early-exit — that path is mode-agnostic and remains in start.md alongside the Gate A definition.
 ---
 
 # Local-Mode Code Review Presenter
 
-This skill is the canonical presenter for `/code-review` local mode. It is split out of `commands/start.md` so the orchestration spine stays lean; load it whenever the orchestrator reaches a presentation point in local mode.
+This skill is the canonical presenter for `/code-review` local mode at `stage_29_present`. It is split out of `commands/start.md` so the orchestration spine stays lean; the orchestrator invokes it when `MODE=local` and `stage_29_present` is reached.
 
-The two entry conditions:
-
-1. **Gate A early-exit** — `flags.hygiene_only == true` after `stage_12_hygiene`. Use the "Hygiene Findings (Gate A presentation)" section below and EXIT. Do NOT run footer or verdict.
-2. **Standard stage_29_present** — `MODE=local`. Use the "Local Mode: Present Results" section below for the full presentation pipeline.
-
----
-
-## Hygiene Findings (Gate A presentation)
-
-Reached only when `flags.hygiene_only == true`. Parse `<CR_DIR>/hygiene.json` and present:
-
-```markdown
-# Hygiene Check Results
-
-**Scope:** [staged/branch/files]
-**Files Checked:** [count]
-**Mode:** Hygiene-only (no LLM review)
-
----
-
-## Repo Hygiene ([count])
-
-[List hygiene findings — same format as Local Mode: Present Results hygiene section]
-
----
-
-**Summary:** [count] hygiene issues found. No LLM-based review was performed.
-```
-
-If MODE=github, write the hygiene findings to `.closedloop-ai/code-review-summary.md` (same summary file path) and `.closedloop-ai/code-review-findings.json` (findings only contain hygiene items). No inline comments are posted for hygiene-only runs unless findings exist.
-
-Mark "Present hygiene findings" `completed` and **EXIT**. Do NOT run footer or verdict — both depend on artifacts (`findings_validated.json`, `review_result.json`) that hygiene-only never produces, and `stage_28_verdict.on_failure == "abort"` would crash the walker.
+Gate A hygiene-only early-exit is **not** in this skill. That path is mode-agnostic (fires for both `MODE=local` and `MODE=github`) and the hygiene presentation lives in `start.md` adjacent to the Gate A definition — the orchestrator handles it inline, not via this skill.
 
 ---
 
@@ -252,7 +221,9 @@ Hash drift on an override (file content changed since the override was written) 
 - **Discarded — rejected by validation:** E
 - **Duplicates merged:** F
 - **Cross-file grouped:** G (findings with `other_locations`)
-- **Downgraded to MEDIUM:** H
+- **Downgraded to MEDIUM:** I
+
+(Placeholder `I` is intentional — `H` is reserved for "Hygiene findings" above. Reusing `H` here would conflate two distinct counts in the rendered Validation Summary.)
 
 ### Discarded Findings
 [List discarded findings grouped by discard reason — helps track agent accuracy]

@@ -7,10 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### code-review v2.11.0
 
 #### Added
-- **New `code-review:present-local` skill.** Local-mode presenter content (Gate A hygiene-only early-exit format, BLOCKING/HIGH/MEDIUM section templates, Justified Findings (PLN-721), Dismissed Findings (PLN-722), Verifier Stats footer (PLN-773), operator-flag descriptions, override precedence rule, Validation Summary, final Summary) moved out of `commands/start.md` into `skills/present-local/SKILL.md`. The skill auto-loads at presentation time. Establishes the decomposition pattern for the rest of the start.md monolith (operator-flag skills, fast-path skill, agent-prompts skill — pending follow-up work).
+- **New `code-review:present-local` skill.** Local-mode presenter content (BLOCKING/HIGH/MEDIUM section templates, Justified Findings (PLN-721), Dismissed Findings (PLN-722), Verifier Stats footer (PLN-773), operator-flag descriptions, override precedence rule, Validation Summary, final Summary) moved out of `commands/start.md` into `skills/present-local/SKILL.md`. The orchestrator explicitly invokes the skill at `stage_29_present` when `MODE=local`. Establishes the decomposition pattern for the rest of the start.md monolith (operator-flag skills, fast-path skill, agent-prompts skill — pending follow-up work).
 
 #### Changed
-- **`commands/start.md` reduced from 1014 → 754 lines (~26% smaller).** Pointer block at the former Local-Mode presenter location describes the two entry conditions (Gate A early-exit / standard stage_29_present) and delegates to the `code-review:present-local` skill. No behavior change for operators — the orchestrator still produces the same output, just by invoking the skill instead of inlining the rules.
+- **`commands/start.md` reduced from 1014 → ~775 lines (~24% smaller).** Pointer block at the former local-mode presenter location scopes the skill invocation to `MODE=local` only. The Gate A hygiene presentation format stays inline in start.md (mode-agnostic — fires in both `MODE=local` and `MODE=github`); only the local-mode `stage_29_present` pipeline is delegated to the skill. No behavior change for operators — the orchestrator still produces the same output.
 
 ### code-review v2.10.1
 
