@@ -4,6 +4,24 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.12.0
+
+#### Added
+- New `bha_unified_threshold_loc` operator knob in `.closedloop-ai/settings/code-review.json`. PRs with total changed LOC at or below the threshold (default 5000) get a single BHA partition; PRs above continue to bin-pack at `REBALANCE_LOC_BUDGET` (1200). Setting the value to `0` disables unified mode (always-partition). Invalid entries fall back to the default.
+- New `BHA_UNIFIED_THRESHOLD_LOC` constant + `_load_code_review_settings` helper in `code_review_helpers.py`.
+- New `_emit_partitions` helper in `code_review_helpers.py` shared between the unified-mode early-return path and the standard bin-pack path.
+- `partitions.json` top-level keys: `partition_mode` (`"unified"` | `"partitioned"`), `partition_count`, `total_changed_loc`, `unified_threshold_loc`.
+- `verify_manifest.json` keys: `partition_mode`, `partition_count`. `cmd_verify_prepare` reads `partitions.json` and propagates the two fields; absent/malformed → `partition_mode="unknown"`, `partition_count=0` (back-compatible with hygiene-only runs and pre-PLN-774 caches).
+- "Partition mode" line in local-mode Verifier Stats footer (`skills/present-local/SKILL.md`) and GitHub Step 6e (`prompts/github-review.md`). Both presenters omit the line when `verify_manifest.json` is absent.
+- `commands/start.md` `stage_17_partition` per-stage note documents the new partitions.json keys and threshold semantics.
+- README Configuration section documents the new `.closedloop-ai/settings/code-review.json` file and the `bha_unified_threshold_loc` knob.
+- 18 new tests under `TestUnifiedPartitionThreshold`, `TestLoadCodeReviewSettings`, `TestVerifyManifestPartitionPropagation`, and `TestPartitionAwareReviewerLabeling` covering: threshold inclusive boundary, above-threshold bin-pack, kill switch (0), empty-diff guard, partitions.json telemetry fields, settings loader (default / operator override / zero / negative / wrong-type / bool rejected), manifest propagation (unified / partitioned / missing→unknown), and the by-reviewer labeling contract.
+
+#### Changed
+- `TestPartition._run_partition` and `TestPartitionPostProcessing._run_partition` test helpers default `bha_unified_threshold_loc=0` so existing bin-pack tests preserve their semantics. The new `TestUnifiedPartitionThreshold` class flips the threshold on to exercise the unified-mode branch.
+- `TestUnifiedPartitionThreshold._run` delegates to `TestPartition._run_partition` rather than duplicating the stdin/stdout/Namespace fixture.
+- `test_partitions_json_is_top_level_dict_not_list` regression test now pins the expanded top-level key set so future drift surfaces in the same commit.
+
 ### code-review v2.11.1
 
 #### Fixed

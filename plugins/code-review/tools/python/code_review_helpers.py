@@ -111,6 +111,15 @@ DEFAULT_MAX_BHA_AGENTS = 5
 REBALANCE_LOC_BUDGET = 1200
 MIXED_PARTITION_SPLIT_THRESHOLD = 50
 
+# PLN-774: Conditional BHA partitioning threshold. PRs with total changed
+# LOC at or below this value get a single "unified" partition so cross-
+# region invariants stay visible to one reviewer's context; PRs above the
+# threshold fall back to the standard bin-pack (REBALANCE_LOC_BUDGET).
+# Operator-overridable via ``.closedloop-ai/settings/code-review.json``
+# with key ``bha_unified_threshold_loc``. Setting the value to 0 forces
+# the always-partition behavior (kill switch / regression escape hatch).
+BHA_UNIFIED_THRESHOLD_LOC = 5000
+
 # Fast-path routing thresholds
 FAST_PATH_MAX_LOC = 200
 
@@ -770,10 +779,72 @@ def cmd_partition(args: argparse.Namespace) -> int:
 
     file_entries.sort(key=lambda x: (-x["loc"], x["file"]))  # type: ignore[arg-type]
 
-    partitions: list[dict[str, Any]] = []
     test_file_paths: list[str] = [
         str(e["file"]) for e in file_entries if e["is_test"]
     ]
+
+    # PLN-774 — Conditional partitioning. If total LOC is at or below the
+    # configured threshold AND there is at least one file to review, emit
+    # a single "unified" partition containing all files. Skips bin-pack
+    # and the mixed-impl/test split — the whole point of unified mode is
+    # to keep cross-region invariants visible to a single reviewer's
+    # context.
+    #
+    # Threshold resolution order (highest precedence first):
+    #   1. ``args.bha_unified_threshold_loc`` — explicit Namespace
+    #      override (tests, future CLI flag).
+    #   2. ``.closedloop-ai/settings/code-review.json`` →
+    #      ``bha_unified_threshold_loc`` — operator-tunable settings file.
+    #   3. :data:`BHA_UNIFIED_THRESHOLD_LOC` (5000) — built-in default.
+    #
+    # Setting the threshold to 0 disables unified mode entirely (always
+    # partition; restores pre-PLN-774 behavior).
+    namespace_override = getattr(args, "bha_unified_threshold_loc", None)
+    if namespace_override is not None:
+        unified_threshold: int = int(namespace_override)
+    else:
+        settings_path = Path(
+            getattr(args, "settings", None) or _CODE_REVIEW_SETTINGS_DEFAULT_PATH,
+        )
+        code_review_settings = _load_code_review_settings(settings_path)
+        unified_threshold = int(
+            code_review_settings.get(
+                "bha_unified_threshold_loc", BHA_UNIFIED_THRESHOLD_LOC,
+            ),
+        )
+    total_changed_loc: int = sum(int(e["loc"]) for e in file_entries)
+    use_unified = (
+        unified_threshold > 0
+        and file_entries
+        and total_changed_loc <= unified_threshold
+    )
+
+    partitions: list[dict[str, Any]] = []
+
+    if use_unified:
+        # Single partition holding every file at hand. ``is_test_only``
+        # mirrors the standard-flow definition (all entries are test
+        # files); preserved so downstream gating (e.g. mandatory-human-
+        # review-paths) still has the signal it expects. Skip the entire
+        # bin-pack / mixed-split / force-merge / trivial-merge pipeline
+        # by jumping straight to the partition-patches materialization
+        # step. ``force_merged_count`` stays 0 (no merges happened);
+        # the cap-enforcement passes don't fire because there's only
+        # one partition.
+        is_test_only = all(e.get("is_test", False) for e in file_entries)
+        partitions.append({
+            "id": 0,
+            "files": file_entries,
+            "total_loc": total_changed_loc,
+            "is_test_only": is_test_only,
+        })
+        return _emit_partitions(
+            args, partitions, test_file_paths,
+            force_merged_count=0,
+            partition_mode="unified",
+            unified_threshold=unified_threshold,
+            total_changed_loc=total_changed_loc,
+        )
 
     current_files: list[dict[str, Any]] = []
     current_loc = 0
@@ -982,7 +1053,38 @@ def cmd_partition(args: argparse.Namespace) -> int:
     for idx, part in enumerate(partitions):
         part["id"] = idx
 
-    # PLN-719 Phase 5: partition is now the canonical producer of
+    return _emit_partitions(
+        args, partitions, test_file_paths,
+        force_merged_count=force_merged_count,
+        partition_mode="partitioned",
+        unified_threshold=unified_threshold,
+        total_changed_loc=total_changed_loc,
+    )
+
+
+def _emit_partitions(
+    args: argparse.Namespace,
+    partitions: list[dict[str, Any]],
+    test_file_paths: list[str],
+    *,
+    force_merged_count: int,
+    partition_mode: str,
+    unified_threshold: int,
+    total_changed_loc: int,
+) -> int:
+    """Materialize per-partition patches (when requested), build the
+    ``partitions.json`` output payload, and emit it to stdout.
+
+    PLN-774 — extracted from ``cmd_partition`` so the unified-mode
+    early-return path and the standard bin-pack path share one emission
+    step. ``partition_mode`` is "unified" when the early-return path
+    hit, "partitioned" otherwise. ``unified_threshold`` and
+    ``total_changed_loc`` are surfaced in the output so downstream
+    consumers (verify-prepare manifest propagation, presenters, replay
+    harness) can explain why the mode was chosen without re-reading
+    settings.
+    """
+    # PLN-719 Phase 5: partition is the canonical producer of
     # patches_p<N>.txt. Materialize per-partition patches when both
     # --diff-scope and --cr-dir are provided.
     diff_scope: str | None = getattr(args, "diff_scope", None)
@@ -998,6 +1100,14 @@ def cmd_partition(args: argparse.Namespace) -> int:
         "partitions": partitions,
         "test_file_paths": test_file_paths,
         "force_merged_count": force_merged_count,
+        # PLN-774 — partition-mode telemetry. Downstream consumers
+        # (cmd_verify_prepare, presenters, replay harness) read these
+        # to surface unified-vs-partitioned behavior per PR and to
+        # split BHA findings by partition when ``partitioned``.
+        "partition_mode": partition_mode,
+        "partition_count": len(partitions),
+        "total_changed_loc": total_changed_loc,
+        "unified_threshold_loc": unified_threshold,
     }
     if partition_patches:
         output["partition_patches"] = partition_patches
@@ -2001,6 +2111,25 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
     prompt_hash = str(getattr(args, "prompt_hash", "") or "")
     no_verify: bool = bool(getattr(args, "no_verify", False))
     no_verify_reason: str = str(getattr(args, "no_verify_reason", "") or "")
+    # PLN-774 — Read partitions.json (written by ``cmd_partition`` at
+    # stage_17) so the verify manifest can surface partition mode +
+    # count for downstream consumers (presenters, stats split).
+    # Defensive: absent file → unknown mode, partition_count=0; this is
+    # the legitimate state for hygiene-only runs or pre-PLN-774 caches.
+    partitions_meta = _read_optional_json(cr_dir / "partitions.json", None)
+    partition_mode = "unknown"
+    partition_count = 0
+    if isinstance(partitions_meta, dict):
+        raw_mode = partitions_meta.get("partition_mode")
+        if isinstance(raw_mode, str) and raw_mode in {"unified", "partitioned"}:
+            partition_mode = raw_mode
+        raw_count = partitions_meta.get("partition_count")
+        if isinstance(raw_count, int) and raw_count >= 0:
+            partition_count = raw_count
+        elif isinstance(partitions_meta.get("partitions"), list):
+            # Fallback for pre-PLN-774 caches that lack ``partition_count``
+            # but still have the ``partitions`` array.
+            partition_count = len(partitions_meta["partitions"])
 
     # PLN-773 Phase 4: --no-verify requires an explicit reason so the
     # emergency bypass is never silent. The audit banner downstream
@@ -2151,6 +2280,13 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
         # surfaces this in the audit banner so the bypass is visible.
         "no_verify": no_verify,
         "no_verify_reason": no_verify_reason if no_verify else "",
+        # PLN-774 — partition-mode telemetry propagated from
+        # partitions.json (stage_17). Surfaces in the presenter footers
+        # and drives the per-reviewer FP-rate split (BHA findings get
+        # bucketed by partition id only when ``partition_mode ==
+        # "partitioned"``).
+        "partition_mode": partition_mode,
+        "partition_count": partition_count,
         "max_verifications": VERIFY_MAX_VERIFICATIONS,
         "total_eligible": (
             len(to_verify) + len(deferred) + len(cache_hits) + len(override_hits)
@@ -2170,6 +2306,11 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
     sys.stdout.write("\n")
     return 0
 
+
+# PLN-774: Operator-tunable code-review behavior settings (currently the
+# BHA unified-partition threshold; future knobs land here too). Absent or
+# malformed file → built-in defaults.
+_CODE_REVIEW_SETTINGS_DEFAULT_PATH = Path(".closedloop-ai/settings/code-review.json")
 
 # Sensitive-path config (PLN-722 §Sensitive-path escalation). Absent file
 # = no escalation; bootstrap does NOT auto-generate per `00-discovery.md`.
@@ -2329,6 +2470,38 @@ def _matches_any_glob(path: str | None, patterns: list[str]) -> bool:
         if _glob_to_regex(pat).match(path):
             return True
     return False
+
+
+def _load_code_review_settings(path: Path | None) -> dict[str, Any]:
+    """Read ``code-review.json`` operator-tunable settings. Absent or
+    malformed → built-in defaults.
+
+    Returns a dict with the canonical keys present:
+
+      - ``bha_unified_threshold_loc`` (int, ≥ 0): PR total changed LOC at
+        or below this value gets a single "unified" BHA partition so
+        cross-region invariants stay visible to one reviewer. Default
+        :data:`BHA_UNIFIED_THRESHOLD_LOC` (5000). Setting the value to 0
+        forces the historical always-partition behavior (kill switch).
+
+    Unknown keys are ignored. Invalid entries (wrong type, negative)
+    fall back to the default — the file is operator-authored and should
+    not crash the pipeline on a typo.
+    """
+    defaults: dict[str, Any] = {
+        "bha_unified_threshold_loc": BHA_UNIFIED_THRESHOLD_LOC,
+    }
+    data, out = _load_optional_settings_dict(path, defaults)
+    if data is None:
+        return out
+    raw_threshold = data.get("bha_unified_threshold_loc")
+    if (
+        isinstance(raw_threshold, int)
+        and not isinstance(raw_threshold, bool)
+        and raw_threshold >= 0
+    ):
+        out["bha_unified_threshold_loc"] = raw_threshold
+    return out
 
 
 def _load_verification_gates(path: Path | None) -> dict[str, list[str]]:
@@ -6888,6 +7061,15 @@ def _verification_by_reviewer(
         new ``RE_ASSERTED`` verdict (the inverse health metric — high
         FP-rate AND high re-assert = reviewer is over-rejecting AND
         operators are correcting back)
+
+    Buckets key off the ``reviewer`` field already set by
+    ``cmd_collect_findings`` from the agent output filename
+    (``agent_bha_p0.json`` → ``reviewer='bha_p0'``). This means BHA is
+    naturally per-partition under partitioned mode (``bha_p0``,
+    ``bha_p1``, …) and a single ``bha_p0`` bucket under unified mode
+    (only one BHA partition exists). No partition-aware regex is needed
+    — the per-partition labeling falls out of the filename-derived
+    reviewer field.
     """
     counts: dict[str, dict[str, int]] = {}
 

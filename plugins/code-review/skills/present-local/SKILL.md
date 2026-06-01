@@ -176,7 +176,10 @@ Reviewers (FP rate / overrides):
   {reviewer}: {fp_rate:.2f} / {re_asserted}{ "  ⚠ override" if re_asserted > 0 else "" }
 Justification rate: {stats.justification.rate:.2f} (threshold {threshold} — {ALERT|OK})
 Premise MEDIUM cumulative: {stats.premise_cumulative_medium_count} (gate threshold {premise_cumulative_medium})
+Partition mode: {verify_manifest.partition_mode} ({verify_manifest.partition_count} partitions)
 ```
+
+Render the **Partition mode** line by reading `<CR_DIR>/verify_manifest.json` → `partition_mode` ("unified" | "partitioned" | "unknown") and `partition_count` (int). The Reviewers block above keys off the `reviewer` field which `cmd_collect_findings` derives from the agent filename (`agent_bha_p0.json` → `reviewer='bha_p0'`), so BHA naturally appears as one bucket per partition under partitioned mode and a single `bha_p0` bucket under unified mode (only one partition exists). Defensive: if `verify_manifest.json` is missing (pre-PLN-774 cache or hygiene-only run), omit this line — do NOT fabricate a value.
 
 If the verify-prepare manifest carried `no_verify: true` (read `<CR_DIR>/verify_manifest.json`), prepend the audit banner BEFORE the Verifier Stats section:
 
