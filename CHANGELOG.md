@@ -11,6 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - **`commands/start.md` reduced from 1014 → ~775 lines (~24% smaller).** Pointer block at the former local-mode presenter location scopes the skill invocation to `MODE=local` only. The Gate A hygiene presentation format stays inline in start.md (mode-agnostic — fires in both `MODE=local` and `MODE=github`); only the local-mode `stage_29_present` pipeline is delegated to the skill. No behavior change for operators — the orchestrator still produces the same output.
+- **GitHub-mode Validation Stats expanded to mirror local-mode parity.** `prompts/github-review.md` Step 8 previously surfaced only `Agent failures` and `Cross-file grouped` to PR reviewers; the local mode's full discard-reason breakdown (Total / Validated / Discarded by file/line/confidence/validation reason / Duplicates merged / Cross-file grouped / Downgraded to MEDIUM / Hygiene findings) is now also rendered in the GitHub Summary. Operators auditing reviewer accuracy from a PR no longer have to read local logs. Pre-PLN-722 runs (no `findings_validated.json`) fall back to the original two-line stats so back-compat holds.
+- **GitHub-mode `--no-verify` audit banner now also prepended to `code-review-summary.md`.** Previously the banner only landed in `code-review-verifier-stats.md` (Step 6e), which the workflow posts as a separate comment with collapsible `<details>`. A PR reviewer reading only the Summary comment could miss that the verifier was bypassed. Step 8 now duplicates the banner onto the Summary file so the audit signal rides the most-visible comment — same content as the verifier-stats banner; intentional duplication.
 
 ### code-review v2.10.1
 
