@@ -4,6 +4,22 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.13.0
+
+#### Added
+- New `companion-check` subcommand (`cmd_companion_check`) in `code_review_helpers.py` that runs deterministic companion-change rules against `diff_data.json` and emits `<cr-dir>/companion_findings.json`. Findings use `category="CompanionChange"`, `source="companion-validator"`, `reviewer="companion-validator"`, and canonical finding ids.
+- New `companion_rules.py` library module: JSON rule descriptor loader (validates required fields, `schema_version`, predicate binding; deterministic filename-sorted iteration) plus the `schema_to_orm` predicate. Predicate recognizes Alembic `op.add_column`, PostgreSQL `ALTER TABLE ... ADD COLUMN`, Django `migrations.AddField`, and Rails `add_column` patterns; resolves `snake_case` ↔ `camelCase` symbols across model files.
+- New rule registry directory `plugins/code-review/tools/companion_rules/` with `01_schema_to_orm.json` descriptor.
+- New `stage_05a_companion_check` slot in `_build_run_plan_stages` between `stage_05_parse_diff` and `stage_06_extract_patches`. Helper-kind, `on_failure: continue` (validator is additive). Distinct from the still-disabled PLN-726 `stage_13_validate_companions` (LLM-driven cross-file impact analyzer).
+- New `--companion-findings` flag on `cmd_collect_findings`; merges `companion_findings.json` alongside agent and hygiene sources via `normalize_legacy_finding`. `stage_21_collect_findings` now passes the flag and adds `stage_05a_companion_check` to `depends_on`. The collect summary gains a `companion_included` boolean.
+- `companion-check` registered as `DETERMINISM_TIER_DETERMINISTIC` in `STAGE_DETERMINISM_TIERS`.
+- 26 new tests across five classes: `TestCompanionRulesLoader` (loader contract), `TestSchemaToOrmPredicate` (positive/negative coverage for Alembic/PostgreSQL/Django/Rails patterns, camelCase resolution, multi-column emission), `TestCompanionCheckSubcommand` (output envelope, canonical ids, cr-dir auto-create, malformed rule pack returns 1), `TestCollectFindingsCompanionMerge` (three-source merge, missing-file safety, Namespace back-compat), `TestRunPlanCompanionStage` (stage presence, dependency, ordering, expected outputs, distinctness from PLN-726, stage_21 consumption).
+
+#### Changed
+- `cmd_collect_findings` docstring updated to "Merge agent, hygiene, and companion findings into a single JSON file."
+- `test_emits_thirty_two_stages` → `test_emits_thirty_three_stages`; stage-count contract bumped 32 → 33 to reflect the new `stage_05a_companion_check` slot.
+- `test_extract_patches_runs_after_parse_diff` loosened: no longer requires `extract_idx == parse_idx + 1`. Now asserts `parse_idx < extract_idx` AND that any intervening stage must be `kind="helper"` (preserves diff-data semantics while allowing other deterministic helpers to slot between).
+
 ### code-review v2.12.0
 
 #### Added
