@@ -4,6 +4,25 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.13.0
+
+#### Changed
+- **PLN-727 Phase 1: `/code-review:fix` restructured from uniform verify-and-edit flow into category-dispatch system.** Findings now route to one of four buckets based on `category`/`subcategory`: **auto-fix** (Correctness, Code Quality, Documentation, Security, safe Hygiene subcategories — `ci_artifacts` / `path_leakage` / `gitignore_drift`), **callsite-fix** (ImpactAnalysis — deferred until PLN-726 ships; surfaces as manual until then), **specialized-fix** (TestQuality — deferred until PLN-723 ships; surfaces as manual until then, with `bug-locking` / `test-deletion` permanently manual), and **manual-surface** (Premise — all four subcategories `necessity`/`cohesion`/`workaround`/`complexity`; `Hygiene/sensitive_files`; `InjectionAttempt`; `CompanionChange`; `Coverage` system-marker findings). Eliminates the v2.12.x safety regression where shipping Premise (PLN-721) made it possible for `/fix` to apply a Premise/Cohesion finding as a code edit; every Premise verdict now routes to a category-specific manual-action template instead.
+- **Source change: `/code-review:fix` reads `review_result.json` ONLY.** Legacy `validate_output.json` fallback removed per PRD-409 zero-release backward-compat policy. Missing file → clear error + exit.
+- **Default behavior in non-interactive contexts is now print-plan-and-exit.** Explicit `--apply` flag required for code modification; `--dry-run` for explicit no-op. Removes the prior auto-yes-after-5s timeout footgun. Interactive (TTY) prompts `Y/N` with no timeout.
+- **Mandatory `code_snippet`-drift check before any code-modifying fix.** For each auto-fix candidate, `/fix` greps the cited file at `line ±3` for the first line of `code_snippet`; no match → `STALE_FINDING` tag, skip the fix, surface in manual-action report with `code_snippet has drifted from cited location` note. Stops `/fix` from clobbering code at the cited line when the line has shifted, when the bug was already fixed, or when the line number is stale.
+- **Verification subagent (old Step 2 of `/fix`) skipped when `verifier_verdict` non-null.** PLN-722's verifier already audited the finding — re-verifying is redundant LLM spend. Findings still in `pending_verification[]` (verifier deferred / failed / `--no-verify` bypass) trigger the per-finding verification subagent as before.
+- **New flags**: `--include-medium`, `--include-tentative`, `--include-justified`, `--dry-run`, `--apply`, `--category-only <name>`, `--skip-verification`. `TENTATIVE` and `JUSTIFIED-VALID` are manual-surface only — they never opt into auto-fix.
+- **`run-loop.sh` updated to invoke `/code-review:fix $cr_dir --apply`.** Coordinated cross-plugin release — without the flag, the new default would have made post-loop fix sessions silently a no-op.
+
+#### Added
+- **13 new manual-action templates** under `plugins/code-review/skills/fix/templates/` — `premise_necessity.md`, `premise_cohesion.md`, `premise_workaround.md`, `premise_complexity.md`, `testquality_bug_locking.md`, `testquality_test_deletion.md`, `testquality_specialized.md` (catch-all for `missing-coverage`/`weak-assertion`/`mock-faithfulness`/`missing-edge-case` until PLN-723 ships), `impact_semantic_change.md` (catch-all for ImpactAnalysis until PLN-726 ships), `companion_change.md`, `coverage_gap.md`, `injection_attempt.md`, `hygiene_sensitive.md`, and `_generic.md` (fallback when no dedicated template matches). Each template provides operator action options tied to the finding's reasoning certificate fields plus a `re-assert` escape hatch.
+
+### code v1.12.3
+
+#### Changed
+- **`run-loop.sh` invokes `/code-review:fix $cr_dir --apply`** (was bare `/code-review:fix $cr_dir`). Required to preserve the auto-apply behavior of post-loop fix sessions under the new default-dry-run-in-non-interactive behavior shipped in `code-review` v2.13.0.
+
 ### code-review v2.12.1
 
 #### Changed

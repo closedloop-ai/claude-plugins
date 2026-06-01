@@ -1035,7 +1035,7 @@ run_post_loop_review() {
         --allowed-tools=Bash,Grep,Glob,Read,Write,Edit,Task,TodoWrite \
         --output-format stream-json \
         --verbose \
-        -p "/code-review:fix $cr_dir" 2>"$fix_stderr" \
+        -p "/code-review:fix $cr_dir --apply" 2>"$fix_stderr" \
         | { grep --line-buffered '^{' || true; } \
         | tee "$fix_output" \
         | tee -a "${workdir}/claude-output.jsonl" \
