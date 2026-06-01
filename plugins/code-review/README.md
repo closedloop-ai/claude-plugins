@@ -231,6 +231,16 @@ Tunes the verdict-precedence gates and the operator-facing telemetry alerts:
 
 Sensitive-path policy. See `start.md` for the full glob syntax and the three supported keys (`sensitive_paths`, `tentative_on_paths`, `mandatory_human_review_paths`).
 
+### `code-review.json` (PLN-774)
+
+Operator-tunable reviewer behavior. Currently exposes the BHA conditional-partitioning threshold; future knobs will land here too.
+
+| Key | Default | Behavior |
+|---|---|---|
+| `bha_unified_threshold_loc` | `5000` | PRs with total changed LOC at or below this value get a single "unified" BHA partition so cross-region invariants (declaration ↔ enforcement, definition ↔ reference) stay visible to one reviewer's context. PRs above the threshold fall back to the standard bin-pack (`REBALANCE_LOC_BUDGET=1200` LOC per partition). **Setting the value to `0` disables unified mode entirely (always-partition; restores pre-PLN-774 behavior — the regression escape hatch).** Invalid entries (wrong type, negative) silently fall back to the default. |
+
+The chosen mode + count surface in `partitions.json` (`partition_mode`, `partition_count`, `total_changed_loc`, `unified_threshold_loc`), propagate into `verify_manifest.json`, and render in both presenters (local-mode Verifier Stats footer and GitHub Step 6e). Under partitioned mode, `stats.verification.by_reviewer` splits BHA findings per partition (`bha_p0`, `bha_p1`, …) so an over-rejecting partition surfaces in the FP-rate column.
+
 ## Override Flow (PLN-773)
 
 When the verifier dismisses a finding the operator believes is real, three flags falsify the dismissal without editing code:

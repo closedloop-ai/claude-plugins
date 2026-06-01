@@ -285,9 +285,13 @@ Read `$CR_DIR/review_result.json` → `stats.verification` and `stats.justificat
 |---|---|---|---|---|
 | {reviewer} | {verified} | {rejected} | {fp_rate:.2f} | {re_asserted} {"⚠" if re_asserted > 0 else ""} |
 
+When `verify_manifest.json` reports `partition_mode == "partitioned"`, the BHA row(s) in the table above are split per partition (`bha_p0`, `bha_p1`, …) so an over-rejecting partition is visible per-bucket; under `unified` mode a single `bha` row reflects the whole PR.
+
 **Premise MEDIUM cumulative gate**
 - Current count: {premise_cumulative_medium_count}
 - Gate threshold: {premise_cumulative_medium}
+
+**Partition mode** ({verify_manifest.partition_mode}, {verify_manifest.partition_count} partitions) — read from `<CR_DIR>/verify_manifest.json`. Omit this line when the manifest file is absent (hygiene-only run or pre-PLN-774 cache).
 
 </details>
 ```

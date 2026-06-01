@@ -176,7 +176,10 @@ Reviewers (FP rate / overrides):
   {reviewer}: {fp_rate:.2f} / {re_asserted}{ "  ⚠ override" if re_asserted > 0 else "" }
 Justification rate: {stats.justification.rate:.2f} (threshold {threshold} — {ALERT|OK})
 Premise MEDIUM cumulative: {stats.premise_cumulative_medium_count} (gate threshold {premise_cumulative_medium})
+Partition mode: {verify_manifest.partition_mode} ({verify_manifest.partition_count} partitions)
 ```
+
+Render the **Partition mode** line by reading `<CR_DIR>/verify_manifest.json` → `partition_mode` ("unified" | "partitioned" | "unknown") and `partition_count` (int). When `partition_mode == "partitioned"`, BHA findings in the Reviewers block above are split per partition (`bha_p0`, `bha_p1`, …) so a high FP rate attributes to a specific partition; when `unified`, a single `bha` row reflects the whole PR. Defensive: if `verify_manifest.json` is missing (pre-PLN-774 cache or hygiene-only run), omit this line — do NOT fabricate a value.
 
 If the verify-prepare manifest carried `no_verify: true` (read `<CR_DIR>/verify_manifest.json`), prepend the audit banner BEFORE the Verifier Stats section:
 
