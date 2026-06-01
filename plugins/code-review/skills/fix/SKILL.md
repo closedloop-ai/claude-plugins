@@ -23,8 +23,9 @@ TodoWrite([
   {"content": "Parse arguments and load findings", "status": "in_progress", "activeForm": "Parsing arguments"},
   {"content": "Categorize findings and print dispatch plan", "status": "pending", "activeForm": "Categorizing findings"},
   {"content": "Apply fixes per dispatch bucket", "status": "pending", "activeForm": "Applying fixes"},
+  {"content": "Print manual-action report", "status": "pending", "activeForm": "Printing manual-action report"},
   {"content": "Run project verification", "status": "pending", "activeForm": "Running verification"},
-  {"content": "Print summary and manual-action report", "status": "pending", "activeForm": "Printing summary"}
+  {"content": "Print summary", "status": "pending", "activeForm": "Printing summary"}
 ])
 ```
 
@@ -60,7 +61,7 @@ Findings live in:
 | `envelope.verified[]` | CONFIRMED + DOWNGRADE + TENTATIVE + RE_ASSERTED + JUSTIFIED-INVALID | filter into dispatch |
 | `envelope.justified[]` | JUSTIFIED-VALID (author defended, verifier confirmed) | exclude unless `--include-justified` (manual-surface only) |
 | `envelope.rejected[]` | REJECTED by verifier | always exclude |
-| `envelope.pending_verification[]` | Verifier failed/skipped — no verdict | include if severity matches; treat as unverified (Step 3 runs for these) |
+| `envelope.pending_verification[]` | Verifier didn't run on this finding (verifier failed, was deferred past budget, or `--no-verify` bypass) | include if severity matches; always **manual-surface** with the `pending_verification.md` template — `/fix` does NOT re-implement the verifier |
 | `envelope.coverage_gaps[]` | System-scoped coverage findings | always include if severity matches; manual-surface bucket |
 
 ### Apply severity + verdict filter
@@ -73,6 +74,8 @@ include = (sev in {"BLOCKING", "HIGH"}) or (sev == "MEDIUM" and --include-medium
 ```
 
 Exclude if `verifier_verdict == "TENTATIVE"` unless `--include-tentative` (TENTATIVE → manual-surface only).
+
+**Trust the envelope's verdict state.** Findings in `verified[]` were already audited upstream by the verifier (PLN-722); `/fix` does not re-run a second verification pass on them — that was the v2.12.x design and is removed in this revision. Findings in `pending_verification[]` are routed to **manual-surface** with a `pending_verification.md` template so the operator can decide whether to re-run the review, `--re-assert`, or fix by hand; `/fix` does not have, and should not have, its own parallel implementation of the verifier.
 
 If `--category-only <name>` set, filter to that category only.
 
@@ -132,7 +135,7 @@ Interactive mode → Y/N prompt required.
 Non-interactive → requires --apply to modify code; --dry-run for explicit no-op.
 ```
 
-If `--dry-run` → render the manual-action report (Step 5) immediately, then exit 0.
+If `--dry-run` → render the manual-action report (Step 4) immediately, then exit 0.
 
 If non-interactive and no `--apply` → render manual-action report, print `"Non-interactive run without --apply — dispatch plan shown above; no fixes applied."`, exit 0.
 
@@ -140,47 +143,9 @@ Interactive mode: prompt `Proceed? [y/N]` with no timeout (the prior auto-yes-af
 
 ---
 
-## Step 3: Verify Unverified Findings (Skipped When `verifier_verdict` Populated)
+## Step 3: Dispatch and Apply Fixes
 
-For each finding routed to **auto-fix**:
-
-- If `finding.verifier_verdict` is non-null (CONFIRMED / DOWNGRADE / RE_ASSERTED / JUSTIFIED-INVALID) → skip verification. Plan-03's verifier already audited.
-- If `finding.verifier_verdict` is null (came from `pending_verification[]` because verifier was deferred / failed / skipped via `--no-verify`) → run the verification subagent below.
-
-For findings needing verification, launch `Agent` tool calls with `subagent_type: "general-purpose"`, `model: "sonnet"`, **in parallel**:
-
-```
-<context>
-Verify whether this code review finding is a real bug or a false positive.
-File: {file} | Line: {line} | Severity: {severity} | Category: {category}
-Issue: {issue}
-Explanation: {explanation}
-Code snippet: {code_snippet}
-Recommendation: {recommendation}
-</context>
-
-<instructions>
-Read the cited file and 50 lines of surrounding context. Reason through:
-1. PREMISE: What is this code supposed to do? (cite function/context)
-2. EVIDENCE: What concrete evidence proves or disproves the issue? (trace execution path, cite file:line)
-3. GUARD CHECK: Is there error handling or upstream logic that prevents this? (cite search result or "verified none exists at file:line")
-4. VERDICT: Real bug or false positive?
-
-If analysis concludes the issue is NOT a problem, verdict MUST be REJECTED.
-</instructions>
-
-<output_format>
-Output ONLY: {"verdict": "CONFIRMED"|"REJECTED", "reasoning": "...citing specific evidence..."}
-</output_format>
-```
-
-Drop REJECTED findings from the auto-fix bucket (do not surface — verifier-equivalent ad-hoc rejection).
-
----
-
-## Step 4: Dispatch and Apply Fixes
-
-### 4a. Auto-fix bucket
+### 3a. Auto-fix bucket
 
 Group surviving auto-fix findings by file. Apply **sequentially** within file (later fixes see earlier results); files run sequentially overall to keep the run-loop reproducible.
 
@@ -208,21 +173,21 @@ Read the file, apply the fix, confirm what changed.
 
 Record modified files for the Step 6 summary.
 
-### 4b. Callsite-fix bucket (DEFERRED — PLN-726)
+### 3b. Callsite-fix bucket (DEFERRED — PLN-726)
 
 ImpactAnalysis findings have an `external_impact[]` list of affected callsites in untouched files. The dedicated multi-file callsite update flow ships with PLN-726 (Cross-File Impact Analysis). Until then:
 
 - Every ImpactAnalysis finding routes to **manual-surface** with template `templates/impact_semantic_change.md`.
 - The manual-surface entry includes the anchor + every `external_impact[]` entry so the operator can apply the updates by hand.
 
-### 4c. Specialized-fix bucket (DEFERRED — PLN-723)
+### 3c. Specialized-fix bucket (DEFERRED — PLN-723)
 
 TestQuality findings need a `test-engineer` subagent that ships with PLN-723. Until then:
 
 - All TestQuality findings (including the four that would eventually auto-fix) route to **manual-surface** with template `templates/testquality_specialized.md`.
 - `bug-locking` and `test-deletion` keep their permanent manual-surface routing using `templates/testquality_bug_locking.md` and `templates/testquality_test_deletion.md`.
 
-### 4d. Manual-surface bucket
+### 3d. Manual-surface bucket
 
 For each finding in the manual-surface bucket, look up the template per the routing table:
 
@@ -240,17 +205,18 @@ For each finding in the manual-surface bucket, look up the template per the rout
 | `Coverage/*` | `templates/coverage_gap.md` |
 | `InjectionAttempt/*` | `templates/injection_attempt.md` |
 | `Hygiene/sensitive_files` | `templates/hygiene_sensitive.md` |
+| Any finding from `envelope.pending_verification[]` (verifier didn't run) | `templates/pending_verification.md` |
 | (no matching template — e.g., a future category) | `templates/_generic.md` |
 
 Read each template once (Read tool, path `<CLAUDE_PLUGIN_ROOT>/skills/fix/templates/<name>.md`), then substitute placeholders `{file}`, `{line}`, `{severity}`, `{category}`, `{subcategory}`, `{issue}`, `{explanation}`, `{recommendation}`, `{code_snippet}`, plus category-specific placeholders documented in each template. Missing placeholder data → leave the placeholder visible so the operator sees the gap (do not silently drop).
 
-Buffer each rendered entry for the Step 5 report.
+Buffer each rendered entry for the Step 4 report.
 
 ---
 
-## Step 5: Manual-Action Report
+## Step 4: Manual-Action Report
 
-After Step 4 completes (or immediately after Step 2 if `--dry-run` / non-interactive without `--apply`), print:
+After Step 3 completes (or immediately after Step 2 if `--dry-run` / non-interactive without `--apply`), print:
 
 ```markdown
 ## Manual Action Required
@@ -270,7 +236,7 @@ If the manual-surface bucket is empty, print `_No findings require manual action
 
 ---
 
-## Step 6: Run Project Verification
+## Step 5: Run Project Verification
 
 Skipped when `--skip-verification` set or when no auto-fix bucket entries succeeded (nothing changed).
 
@@ -282,12 +248,12 @@ Run all validation commands (test, lint, typecheck, build). Report VALIDATION_PA
 
 Do NOT run validation commands directly — `build-validator` discovers and runs them.
 
-- **PASSED** or **NO_VALIDATION** → proceed to Step 7
+- **PASSED** or **NO_VALIDATION** → proceed to Step 6
 - **FAILED** → launch `general-purpose` subagent (`model: "sonnet"`) to fix, re-run `build-validator`. Max 5 attempts. Warn and proceed on persistent failure.
 
 ---
 
-## Step 7: Summary
+## Step 6: Summary
 
 Print the structured summary:
 
@@ -310,7 +276,7 @@ Print the structured summary:
 (Omit the Deferred table if both counts are zero.)
 
 ### Manual action required (N)
-[short list — one line per finding pointing at file:line + category — full templates in Step 5 above]
+[short list — one line per finding pointing at file:line + category — full templates in Step 4 above]
 
 ### Verification
 | Status | Detail |
@@ -324,7 +290,7 @@ Print the structured summary:
 | Auto-fixed | N |
 | Manual surface | N |
 | Stale findings (drifted) | N |
-| Verification step 3 (subagent verify) | RUN n times / SKIPPED (verifier ran upstream) |
+| Pending-verification routes | N (findings without upstream verifier_verdict surfaced to operator) |
 | Total /fix duration | Hh Mm Ss |
 ```
 
