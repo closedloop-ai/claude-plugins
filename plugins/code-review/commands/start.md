@@ -42,7 +42,7 @@ The review pipeline is driven by a **declarative run plan** emitted by the `prep
 The walk is hybrid:
 - **Deterministic helper stages** (most of the plan) — invoke the named `code_review_helpers.py` subcommand with the plan's args after token substitution. No prose decisions.
 - **Agent fleet stages** (`stage_20_spawn_reviewers`, `stage_23_verify_findings`) — spawn parallel sub-agent Tasks using the per-agent prompt templates in this file.
-- **Present stage** (`stage_29_present`) — render results using the format in this file.
+- **Present stage** (`stage_29_present`) — invoke the `code-review:present-local` skill (MODE=local) or follow `github-review.md` (MODE=github).
 
 Four runtime gates modify walker default behavior (they are runtime-driven and either replace the default walk or add a condition on top of a plan stage):
 1. **Gate A** — after `stage_12_hygiene`, if `flags.hygiene_only` is true: present hygiene findings and **EXIT** (no further stages, no verdict, no footer).
@@ -180,7 +180,7 @@ If a token's source file does not exist yet (a prior stage that produces it was 
 4. **Dispatch by `stage.kind`.**
    - **`helper`**: invoke `python3 <HELPERS> <stage.subcommand> <resolved args>`. If `stage.stdout` is set, redirect stdout to that file (`> <stage.stdout>`). If `stage.expected_outputs` is non-empty after the call, confirm at least one of those paths exists.
    - **`agent_fleet`**: dispatch to the per-stage agent fleet section below (`stage_20` → "Reviewer Fleet"; `stage_23` → reserved for plan 03).
-   - **`present`**: dispatch to "Local Mode: Present Results" (MODE=local) or follow `github-review.md` Steps 6 and 8 (MODE=github).
+   - **`present`**: invoke the `code-review:present-local` skill (MODE=local) or follow `github-review.md` Steps 6 and 8 (MODE=github). Gate A hygiene-only early-exit uses the "Hygiene Findings Format (Gate A render target)" section below (mode-agnostic), NOT the skill.
 
 5. **Honor `on_failure`** when the dispatched call fails or `expected_outputs` is missing:
    - `abort` — stop the walk and surface the error.
@@ -203,7 +203,7 @@ If `FLAGS.hygiene_only` is true (or the equivalent `--hygiene-only` was passed):
 
 1. If `CACHE_DIR` is set and `cache_result.json` produced a non-empty `status_message`, print it.
 2. Mark "Present hygiene findings" `in_progress`.
-3. Parse `<CR_DIR>/hygiene.json` and render using the "Hygiene Findings" format below.
+3. Parse `<CR_DIR>/hygiene.json` and render using the "Hygiene Findings Format (Gate A render target)" section below.
 4. If MODE=github, write hygiene findings to `.closedloop-ai/code-review-summary.md` and `.closedloop-ai/code-review-findings.json`; the workflow handles posting.
 5. **EXIT.** Do not run any remaining stages — not route, partition, agents, validate, finalize, cache-update, review-state-write, verdict, or footer. Hygiene-only runs do not emit a `<pr_verdict>` tag (there is no findings_validated.json or review_result.json for verdict to read; invoking it would crash the walker via `on_failure: abort`). This matches the pre-Phase-4b orchestrator behavior.
 
@@ -293,7 +293,7 @@ These notes annotate the run-plan stages with anything not obvious from the plan
 - **stage_25_finalize_result** (PLN-722 + PLN-721): writes `<CR_DIR>/review_result.json` (the canonical envelope) BEFORE running schema validation. PLN-722: prefers `<CR_DIR>/findings_verified.json` (verify-consolidate output) when present and honors its `force_human_review` flag in the verdict computation; falls back to `findings_validated.json` (everything to `verified[]`) when verify-consolidate didn't run. PLN-721: pipes the consolidate `justified[]` bucket into the envelope, and loads operator-overridable thresholds from `.closedloop-ai/settings/verdict-thresholds.json` (defaults to `premise_cumulative_medium=3`; absent/malformed → built-in default) so `_compute_canonical_verdict` Rule 4 can fire (≥ 3 MEDIUM Premise findings in `verified[]` → NEEDS_ATTENTION). A non-zero exit signals reviewer-emitted category/field drift (e.g. a category not in the canonical enum) but does not block the pipeline — `on_failure: continue` lets `stage_28_verdict` read the structurally complete envelope. Surface the stderr text in the present step so operators can correct prompts/schema; do not abort.
 - **stage_26_cache_update**: gated by **Gate C**.
 - **stage_27_review_state_write**: gated by **Gate D**.
-- **stage_29_present**: present stage. Dispatch to "Local Mode: Present Results" or the GitHub steps in `github-review.md`.
+- **stage_29_present**: present stage. Invoke the `code-review:present-local` skill (MODE=local) or follow Steps 6 and 8 in `github-review.md` (MODE=github). The mode-agnostic Gate A hygiene-only early-exit fires before this stage and uses its own format section above.
 
 ---
 
