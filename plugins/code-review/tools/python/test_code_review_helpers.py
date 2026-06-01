@@ -9778,6 +9778,10 @@ class TestUnifiedPartitionThreshold:
     (default 5000). These tests cover the boundary, the kill switch
     (threshold=0), the new top-level telemetry fields on partitions.json,
     and the legacy bin-pack behavior under the kill switch.
+
+    Delegates to ``TestPartition._run_partition`` — the harness is
+    identical; only the ``bha_unified_threshold_loc`` default differs
+    (5000 here vs 0 in the bin-pack tests).
     """
 
     def _run(
@@ -9788,24 +9792,12 @@ class TestUnifiedPartitionThreshold:
         max_files: int = 20,
         bha_unified_threshold_loc: int = 5000,
     ) -> dict[str, Any]:
-        import io
-        import sys as _sys
-
-        old_stdin = _sys.stdin
-        old_stdout = _sys.stdout
-        _sys.stdin = io.StringIO(json.dumps(diff_data))
-        _sys.stdout = io.StringIO()
-        try:
-            ns = argparse.Namespace(
-                loc_budget=loc_budget, max_files=max_files,
-                bha_unified_threshold_loc=bha_unified_threshold_loc,
-            )
-            cmd_partition(ns)
-            _sys.stdout.seek(0)
-            return json.load(_sys.stdout)
-        finally:
-            _sys.stdin = old_stdin
-            _sys.stdout = old_stdout
+        return TestPartition()._run_partition(
+            diff_data,
+            loc_budget=loc_budget,
+            max_files=max_files,
+            bha_unified_threshold_loc=bha_unified_threshold_loc,
+        )
 
     def test_unified_mode_at_threshold_inclusive(self) -> None:
         # 4000 + 1000 = 5000 LOC exactly == threshold → unified mode.
@@ -9827,10 +9819,13 @@ class TestUnifiedPartitionThreshold:
         }
 
     def test_partitioned_mode_above_threshold(self) -> None:
-        # 3500 + 3500 = 7000 LOC > 5000 → fall through to standard bin-pack
-        # with two normally-sized files so the splitter actually emits >1
-        # partition (an oversized single file may collapse to a single
-        # hunk-split partition under small synthetic test ranges).
+        # 350 + 350 = 700 LOC > threshold (500) → fall through to
+        # standard bin-pack with two normally-sized files so the
+        # splitter actually emits >1 partition (an oversized single
+        # file may collapse to a single hunk-split partition under
+        # small synthetic test ranges). Uses a tiny threshold against
+        # small files rather than dwarfing the files, so the threshold
+        # comparison is pinned without fighting the bin-pack heuristic.
         data = _make_diff_data(
             files=["a.ts", "b.ts"],
             loc={
@@ -9842,9 +9837,6 @@ class TestUnifiedPartitionThreshold:
                 "b.ts": {"added": [[1, 350]], "removed": []},
             },
         )
-        # Adjust scenario: keep total > threshold by using a tiny
-        # threshold instead of dwarfing the files. This pins the threshold
-        # comparison without fighting the bin-pack heuristic.
         result = self._run(
             data, loc_budget=400, bha_unified_threshold_loc=500,
         )
@@ -10007,95 +9999,77 @@ class TestVerifyManifestPartitionPropagation:
         assert manifest["partition_count"] == 0
 
 
-class TestPartitionAwareReviewerSplit:
-    """PLN-774 — ``stats.verification.by_reviewer`` splits BHA findings
-    per partition when ``partition_mode == "partitioned"`` and stays
-    flattened otherwise."""
+class TestPartitionAwareReviewerLabeling:
+    """PLN-774 — ``stats.verification.by_reviewer`` labels reflect the
+    realistic ``cmd_collect_findings`` output where ``reviewer`` is
+    derived from the agent filename (``agent_bha_p0.json`` →
+    ``reviewer='bha_p0'``). This means BHA is per-partition under
+    partitioned mode and a single ``bha_p0`` bucket under unified mode
+    (only one partition exists) — no partition-aware split code path
+    needed; the labeling falls out of the filename convention.
+
+    These tests use realistic ``reviewer='bha_p<N>'`` fixtures to pin
+    that contract — earlier draft tests used hand-built mismatched
+    fixtures (``reviewer='bha'`` + ``id='bha_p0_f0'``) which gave
+    misleading results since the production pipeline never emits that
+    combination.
+    """
 
     @staticmethod
     def _finding(fid: str, reviewer: str, verdict: str) -> dict[str, Any]:
-        return {
-            "id": fid,
-            "reviewer": reviewer,
-            "verifier_verdict": verdict,
-        }
+        return {"id": fid, "reviewer": reviewer, "verifier_verdict": verdict}
 
-    def test_partitioned_mode_splits_bha_by_partition(self) -> None:
+    def test_partitioned_run_buckets_per_partition_naturally(self) -> None:
+        """Under partitioned mode, cmd_collect_findings sets
+        ``reviewer='bha_p<N>'`` directly; ``_verification_by_reviewer``
+        keys off it without any extra logic."""
         from code_review_helpers import _verification_by_reviewer
         verified = [
-            self._finding("bha_p0_f0", "bha", "CONFIRMED"),
-            self._finding("bha_p0_f1", "bha", "CONFIRMED"),
-            self._finding("bha_p2_f0", "bha", "CONFIRMED"),
+            self._finding("bha_p0_f0", "bha_p0", "CONFIRMED"),
+            self._finding("bha_p0_f1", "bha_p0", "CONFIRMED"),
+            self._finding("bha_p2_f0", "bha_p2", "CONFIRMED"),
         ]
-        rejected = [
-            self._finding("bha_p0_f2", "bha", "REJECTED"),
-        ]
-        out = _verification_by_reviewer(
-            verified, rejected, partition_mode="partitioned",
-        )
-        assert "bha_p0" in out
-        assert "bha_p2" in out
-        assert "bha" not in out  # NOT flattened under partitioned mode
-        # p0 had 2 verified + 1 rejected → fp_rate = 1/3
+        rejected = [self._finding("bha_p0_f2", "bha_p0", "REJECTED")]
+        out = _verification_by_reviewer(verified, rejected)
+        assert set(out.keys()) == {"bha_p0", "bha_p2"}
         assert out["bha_p0"]["verified"] == 2
         assert out["bha_p0"]["rejected"] == 1
         assert abs(out["bha_p0"]["fp_rate"] - (1 / 3)) < 1e-9
-        # p2 had 1 verified + 0 rejected → fp_rate = 0
         assert out["bha_p2"]["fp_rate"] == 0.0
 
-    def test_unified_mode_keeps_flattened_bha(self) -> None:
+    def test_unified_run_collapses_to_single_bha_p0_bucket(self) -> None:
+        """Under unified mode, the single BHA partition has id=0 so the
+        agent is still dispatched as ``agent_bha_p0.json``; only one
+        ``bha_p0`` bucket appears — no special-cased ``bha`` flat label
+        (the dispatch is unchanged by PLN-774)."""
         from code_review_helpers import _verification_by_reviewer
-        # Under unified mode, fids look like bha_f0 (no _p<N>_ infix).
         verified = [
-            self._finding("bha_f0", "bha", "CONFIRMED"),
-            self._finding("bha_f1", "bha", "CONFIRMED"),
+            self._finding("bha_p0_f0", "bha_p0", "CONFIRMED"),
+            self._finding("bha_p0_f1", "bha_p0", "CONFIRMED"),
         ]
-        rejected = [self._finding("bha_f2", "bha", "REJECTED")]
-        out = _verification_by_reviewer(
-            verified, rejected, partition_mode="unified",
-        )
-        assert "bha" in out
-        assert "bha_p0" not in out
-        assert out["bha"]["verified"] == 2
-        assert out["bha"]["rejected"] == 1
+        rejected = [self._finding("bha_p0_f2", "bha_p0", "REJECTED")]
+        out = _verification_by_reviewer(verified, rejected)
+        assert set(out.keys()) == {"bha_p0"}
+        assert out["bha_p0"]["verified"] == 2
 
-    def test_unknown_mode_default_keeps_flattened(self) -> None:
-        """Hygiene-only / pre-PLN-774 caches → ``partition_mode='unknown'``
-        → flattened to match historical behavior."""
-        from code_review_helpers import _verification_by_reviewer
-        verified = [self._finding("bha_p0_f0", "bha", "CONFIRMED")]
-        out = _verification_by_reviewer(verified, [])
-        # Default kwarg is "unknown" — must flatten.
-        assert "bha" in out
-        assert "bha_p0" not in out
-
-    def test_non_bha_reviewers_never_get_partition_split(self) -> None:
-        """Only BHA carries the ``_p<N>_f<M>`` id shape. BHB, Premise,
-        Auditor IDs lack the partition infix and must fall through to
-        their flat reviewer key regardless of partition_mode."""
+    def test_non_bha_reviewers_unchanged(self) -> None:
         from code_review_helpers import _verification_by_reviewer
         verified = [
             self._finding("bhb_f0", "bhb", "CONFIRMED"),
             self._finding("premise_f0", "premise", "CONFIRMED"),
             self._finding("auditor_f0", "auditor", "CONFIRMED"),
-            self._finding("bha_p0_f0", "bha", "CONFIRMED"),
+            self._finding("bha_p0_f0", "bha_p0", "CONFIRMED"),
         ]
-        out = _verification_by_reviewer(
-            verified, [], partition_mode="partitioned",
-        )
+        out = _verification_by_reviewer(verified, [])
         assert set(out.keys()) == {"bhb", "premise", "auditor", "bha_p0"}
 
     def test_re_asserted_counter_attributes_to_correct_partition(self) -> None:
-        """The inverse health metric must roll up per-partition under
-        partitioned mode so an over-rejecting partition can be seen."""
         from code_review_helpers import _verification_by_reviewer
         verified = [
-            self._finding("bha_p0_f0", "bha", "CONFIRMED"),
-            self._finding("bha_p1_f0", "bha", "RE_ASSERTED"),
-            self._finding("bha_p1_f1", "bha", "RE_ASSERTED"),
+            self._finding("bha_p0_f0", "bha_p0", "CONFIRMED"),
+            self._finding("bha_p1_f0", "bha_p1", "RE_ASSERTED"),
+            self._finding("bha_p1_f1", "bha_p1", "RE_ASSERTED"),
         ]
-        out = _verification_by_reviewer(
-            verified, [], partition_mode="partitioned",
-        )
+        out = _verification_by_reviewer(verified, [])
         assert out["bha_p0"]["re_asserted"] == 0
         assert out["bha_p1"]["re_asserted"] == 2

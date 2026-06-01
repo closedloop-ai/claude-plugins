@@ -179,7 +179,7 @@ Premise MEDIUM cumulative: {stats.premise_cumulative_medium_count} (gate thresho
 Partition mode: {verify_manifest.partition_mode} ({verify_manifest.partition_count} partitions)
 ```
 
-Render the **Partition mode** line by reading `<CR_DIR>/verify_manifest.json` → `partition_mode` ("unified" | "partitioned" | "unknown") and `partition_count` (int). When `partition_mode == "partitioned"`, BHA findings in the Reviewers block above are split per partition (`bha_p0`, `bha_p1`, …) so a high FP rate attributes to a specific partition; when `unified`, a single `bha` row reflects the whole PR. Defensive: if `verify_manifest.json` is missing (pre-PLN-774 cache or hygiene-only run), omit this line — do NOT fabricate a value.
+Render the **Partition mode** line by reading `<CR_DIR>/verify_manifest.json` → `partition_mode` ("unified" | "partitioned" | "unknown") and `partition_count` (int). The Reviewers block above keys off the `reviewer` field which `cmd_collect_findings` derives from the agent filename (`agent_bha_p0.json` → `reviewer='bha_p0'`), so BHA naturally appears as one bucket per partition under partitioned mode and a single `bha_p0` bucket under unified mode (only one partition exists). Defensive: if `verify_manifest.json` is missing (pre-PLN-774 cache or hygiene-only run), omit this line — do NOT fabricate a value.
 
 If the verify-prepare manifest carried `no_verify: true` (read `<CR_DIR>/verify_manifest.json`), prepend the audit banner BEFORE the Verifier Stats section:
 

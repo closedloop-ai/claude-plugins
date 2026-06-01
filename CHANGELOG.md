@@ -7,24 +7,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### code-review v2.12.0
 
 #### Added
-- **PLN-774 Phase 2+3 — Conditional BHA partitioning + partition_mode telemetry.** PRs with total changed LOC at or below the new `BHA_UNIFIED_THRESHOLD_LOC` (default 5000) get a single "unified" BHA partition so cross-region invariants (declaration ↔ enforcement, definition ↔ reference) stay visible to one reviewer's context. PRs above the threshold continue to use the existing bin-pack (`REBALANCE_LOC_BUDGET=1200` LOC per partition). The historical always-partition behavior had reviewers seeing ~1/6 of the code each, which is why PLN-773 missed the TTL-not-enforced and finding_id-stability bugs and PR #115 missed four stale walker dispatch references — three data points for the same bug class that this change directly targets.
-- **Operator settings file `.closedloop-ai/settings/code-review.json`.** New canonical home for code-review tunables. Currently exposes `bha_unified_threshold_loc` (int, ≥ 0). Setting the value to `0` disables unified mode (always-partition; regression escape hatch). Invalid entries silently fall back to the default.
-- **partitions.json telemetry fields.** `partition_mode` (`"unified"` | `"partitioned"`), `partition_count`, `total_changed_loc`, and `unified_threshold_loc` are now top-level fields so downstream consumers (verify-prepare propagation, presenters, replay harness) can explain unified-vs-partitioned behavior without re-reading settings.
-- **verify_manifest.json carries `partition_mode` + `partition_count`.** `cmd_verify_prepare` reads `partitions.json` and propagates the two fields; defensive — absent/malformed file → `partition_mode="unknown"`, `partition_count=0` (back-compatible with hygiene-only runs and pre-PLN-774 caches).
-- **`stats.verification.by_reviewer` splits BHA findings per partition under partitioned mode.** When `partition_mode == "partitioned"`, BHA findings are bucketed per partition (`bha_p0`, `bha_p1`, …) so the per-reviewer FP rate and re_asserted counters attribute over-rejection to a specific partition. Under unified mode (or unknown — back-compat), the existing flattened `bha` bucket is kept. Non-BHA reviewers (bhb, premise, auditor) never carry the `_p<N>_f<M>` id shape and always fall through to their flattened key.
-- **Presenter updates in both modes.** Local-mode Verifier Stats footer (`skills/present-local/SKILL.md`) gains a "Partition mode" line; GitHub-mode Step 6e (`prompts/github-review.md`) adds the same line inside the `<details>` block and a per-reviewer-table note explaining the BHA partition split. Both presenters omit the line when `verify_manifest.json` is absent (hygiene-only / pre-PLN-774 cache).
-- **`commands/start.md` stage_17 per-stage note** documents the new partitions.json shape, the threshold semantics, and how `_stats_from_findings` consumes `partition_mode`.
-- **README Configuration section** documents the new settings file + `bha_unified_threshold_loc` knob with the `0` kill-switch semantics explicit.
-- **19 new tests under `TestUnifiedPartitionThreshold`, `TestLoadCodeReviewSettings`, `TestVerifyManifestPartitionPropagation`, and `TestPartitionAwareReviewerSplit`** covering: threshold inclusive boundary, above-threshold bin-pack, kill switch (0), empty-diff guard, partitions.json telemetry fields, settings loader (default / override / zero / negative / wrong-type / bool rejected), manifest propagation (unified / partitioned / missing→unknown), and the by-reviewer split (partitioned splits / unified flattens / unknown flattens / non-BHA always flat / re_asserted attribution).
+- New `bha_unified_threshold_loc` operator knob in `.closedloop-ai/settings/code-review.json`. PRs with total changed LOC at or below the threshold (default 5000) get a single BHA partition; PRs above continue to bin-pack at `REBALANCE_LOC_BUDGET` (1200). Setting the value to `0` disables unified mode (always-partition). Invalid entries fall back to the default.
+- New `BHA_UNIFIED_THRESHOLD_LOC` constant + `_load_code_review_settings` helper in `code_review_helpers.py`.
+- New `_emit_partitions` helper in `code_review_helpers.py` shared between the unified-mode early-return path and the standard bin-pack path.
+- `partitions.json` top-level keys: `partition_mode` (`"unified"` | `"partitioned"`), `partition_count`, `total_changed_loc`, `unified_threshold_loc`.
+- `verify_manifest.json` keys: `partition_mode`, `partition_count`. `cmd_verify_prepare` reads `partitions.json` and propagates the two fields; absent/malformed → `partition_mode="unknown"`, `partition_count=0` (back-compatible with hygiene-only runs and pre-PLN-774 caches).
+- "Partition mode" line in local-mode Verifier Stats footer (`skills/present-local/SKILL.md`) and GitHub Step 6e (`prompts/github-review.md`). Both presenters omit the line when `verify_manifest.json` is absent.
+- `commands/start.md` `stage_17_partition` per-stage note documents the new partitions.json keys and threshold semantics.
+- README Configuration section documents the new `.closedloop-ai/settings/code-review.json` file and the `bha_unified_threshold_loc` knob.
+- 18 new tests under `TestUnifiedPartitionThreshold`, `TestLoadCodeReviewSettings`, `TestVerifyManifestPartitionPropagation`, and `TestPartitionAwareReviewerLabeling` covering: threshold inclusive boundary, above-threshold bin-pack, kill switch (0), empty-diff guard, partitions.json telemetry fields, settings loader (default / operator override / zero / negative / wrong-type / bool rejected), manifest propagation (unified / partitioned / missing→unknown), and the by-reviewer labeling contract.
 
 #### Changed
-- **Test helpers `TestPartition._run_partition` and `TestPartitionPostProcessing._run_partition` default `bha_unified_threshold_loc=0`.** Without this, all existing bin-pack tests would silently route to unified mode (every test LOC < 5000) and lose their original coverage. The new `TestUnifiedPartitionThreshold` class explicitly flips the threshold on to exercise the new branch.
-- **`partitions.json` top-level shape** expanded from `{partitions, test_file_paths, force_merged_count}` to also include the four PLN-774 telemetry fields. The existing `test_partitions_json_is_top_level_dict_not_list` regression test was updated to pin the expanded key set so future drift surfaces in the same commit.
-
-#### Notes
-- **Phase 1 (replay harness)** and **Phase 4 (backfill experiment)** follow in subsequent PRs.
-- **Phase 5 (ship-or-revert decision)** gates on Phase 4 data.
-- **Phase 6 (PR #114 co-validation matrix with PLN-768)** waits on PLN-768 shipping.
+- `TestPartition._run_partition` and `TestPartitionPostProcessing._run_partition` test helpers default `bha_unified_threshold_loc=0` so existing bin-pack tests preserve their semantics. The new `TestUnifiedPartitionThreshold` class flips the threshold on to exercise the unified-mode branch.
+- `TestUnifiedPartitionThreshold._run` delegates to `TestPartition._run_partition` rather than duplicating the stdin/stdout/Namespace fixture.
+- `test_partitions_json_is_top_level_dict_not_list` regression test now pins the expanded top-level key set so future drift surfaces in the same commit.
 
 ### code-review v2.11.1
 

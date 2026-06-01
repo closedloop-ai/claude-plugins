@@ -7047,43 +7047,9 @@ def _by_subcategory_stats(verified: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
-# PLN-774 — Match BHA finding ids like ``bha_p3_f7`` so the verification
-# by-reviewer split can emit a separate ``bha_p3`` bucket when the run
-# ran partitioned. Captures ``<reviewer>_p<index>`` as group 1; non-BHA
-# reviewers (bhb, premise, auditor) lack the ``_p<N>_`` infix and fall
-# through to the flattened ``reviewer`` field unchanged.
-_PARTITIONED_REVIEWER_ID_RE = re.compile(r"^([a-z][a-z0-9]*_p\d+)_f\d+$")
-
-
-def _partition_reviewer_key(
-    finding: dict[str, Any], partition_mode: str,
-) -> str:
-    """Derive the by-reviewer bucket key honoring partition mode.
-
-    PLN-774 — when ``partition_mode == "partitioned"`` the FP-rate
-    telemetry must split BHA's findings per partition (``bha_p0``,
-    ``bha_p1``, …) so operators can see which partition over-rejected.
-    When ``partition_mode == "unified"`` or "unknown" (legacy / hygiene-
-    only runs / pre-PLN-774 caches), the existing flattened
-    ``reviewer`` field is used so the surface stays back-compatible.
-
-    Non-BHA reviewers (bhb, premise, auditor) never have the ``_p<N>_f<M>``
-    id shape, so they fall through to the flattened key in every mode.
-    """
-    if partition_mode != "partitioned":
-        return str(finding.get("reviewer", "unknown"))
-    fid = str(finding.get("id", ""))
-    m = _PARTITIONED_REVIEWER_ID_RE.match(fid)
-    if m:
-        return m.group(1)
-    return str(finding.get("reviewer", "unknown"))
-
-
 def _verification_by_reviewer(
     verified: list[dict[str, Any]],
     rejected: list[dict[str, Any]],
-    *,
-    partition_mode: str = "unknown",
 ) -> dict[str, dict[str, Any]]:
     """PLN-773 Phase 2 — per-reviewer verification outcomes + FP rate.
 
@@ -7096,11 +7062,14 @@ def _verification_by_reviewer(
         FP-rate AND high re-assert = reviewer is over-rejecting AND
         operators are correcting back)
 
-    PLN-774 — when ``partition_mode == "partitioned"``, BHA findings are
-    bucketed per partition (``bha_p0``, ``bha_p1``, …) so the FP rate can
-    surface which specific partition over-rejected. Unified / unknown
-    modes keep the historical flattened ``bha`` bucket so the surface
-    stays back-compatible for hygiene-only runs and pre-PLN-774 caches.
+    Buckets key off the ``reviewer`` field already set by
+    ``cmd_collect_findings`` from the agent output filename
+    (``agent_bha_p0.json`` → ``reviewer='bha_p0'``). This means BHA is
+    naturally per-partition under partitioned mode (``bha_p0``,
+    ``bha_p1``, …) and a single ``bha_p0`` bucket under unified mode
+    (only one BHA partition exists). No partition-aware regex is needed
+    — the per-partition labeling falls out of the filename-derived
+    reviewer field.
     """
     counts: dict[str, dict[str, int]] = {}
 
@@ -7110,12 +7079,12 @@ def _verification_by_reviewer(
         )
 
     for f in verified:
-        entry = _ensure(_partition_reviewer_key(f, partition_mode))
+        entry = _ensure(str(f.get("reviewer", "unknown")))
         entry["verified"] += 1
         if f.get("verifier_verdict") == "RE_ASSERTED":
             entry["re_asserted"] += 1
     for f in rejected:
-        entry = _ensure(_partition_reviewer_key(f, partition_mode))
+        entry = _ensure(str(f.get("reviewer", "unknown")))
         entry["rejected"] += 1
 
     out: dict[str, dict[str, Any]] = {}
@@ -7137,7 +7106,6 @@ def _stats_from_findings(
     coverage_gaps: list[dict[str, Any]],
     *,
     thresholds: dict[str, Any] | None = None,
-    partition_mode: str = "unknown",
 ) -> dict[str, Any]:
     """Compute the ``stats`` block of the result envelope.
 
@@ -7145,13 +7113,6 @@ def _stats_from_findings(
     Callers that omit it get the built-in default for the
     ``justification_rate_alert`` toggle (0.30). All existing call sites
     keep working through the optional kwarg.
-
-    ``partition_mode`` (PLN-774): optional partition mode from
-    ``partitions.json`` ("unified" | "partitioned" | "unknown"). When
-    ``"partitioned"``, the inner ``verification.by_reviewer`` block
-    splits BHA findings by partition (``bha_p0``, ``bha_p1``, …) so the
-    FP-rate surface attributes over-rejection to a specific partition.
-    Other modes keep the historical flattened ``bha`` bucket.
     """
     thresholds = thresholds or {
         "premise_cumulative_medium": _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
@@ -7222,9 +7183,7 @@ def _stats_from_findings(
             "skipped_count": 0,
             "false_positive_rate": 0.0,
             # PLN-773 Phase 2 — per-reviewer FP rate + override counter.
-            "by_reviewer": _verification_by_reviewer(
-                verified, rejected, partition_mode=partition_mode,
-            ),
+            "by_reviewer": _verification_by_reviewer(verified, rejected),
         },
         # PLN-721 v2.9.1: must match the count Rule 4 actually fires on
         # — _count_gateable_premise_medium is the single source of truth
@@ -7302,18 +7261,6 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
     """
     cr_dir = Path(args.cr_dir)
     validate_output_path = Path(args.validate_output)
-
-    # PLN-774 — Read partition_mode from partitions.json (stage_17
-    # canonical output) so ``_stats_from_findings`` can split
-    # ``verification.by_reviewer`` per BHA partition when the run ran
-    # partitioned. Defensive: absent/malformed → "unknown" → no split
-    # (covers hygiene-only runs and pre-PLN-774 caches).
-    partitions_meta = _read_optional_json(cr_dir / "partitions.json", None)
-    partition_mode = "unknown"
-    if isinstance(partitions_meta, dict):
-        raw_mode = partitions_meta.get("partition_mode")
-        if isinstance(raw_mode, str) and raw_mode in {"unified", "partitioned"}:
-            partition_mode = raw_mode
 
     validate_output = _read_optional_json(validate_output_path, None)
     if not isinstance(validate_output, dict):
@@ -7459,7 +7406,6 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
         "stats": _stats_from_findings(
             verified, rejected, justified, coverage_gaps,
             thresholds=thresholds,
-            partition_mode=partition_mode,
         ),
         # PLN-719 Phase 9: telemetry is sourced from the canonical zero-valued
         # factory and deep-merged with optional <cr_dir>/telemetry.json, which

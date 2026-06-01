@@ -285,7 +285,7 @@ Read `$CR_DIR/review_result.json` → `stats.verification` and `stats.justificat
 |---|---|---|---|---|
 | {reviewer} | {verified} | {rejected} | {fp_rate:.2f} | {re_asserted} {"⚠" if re_asserted > 0 else ""} |
 
-When `verify_manifest.json` reports `partition_mode == "partitioned"`, the BHA row(s) in the table above are split per partition (`bha_p0`, `bha_p1`, …) so an over-rejecting partition is visible per-bucket; under `unified` mode a single `bha` row reflects the whole PR.
+The Reviewer column keys off the `reviewer` field, which `cmd_collect_findings` derives from the agent filename (`agent_bha_p0.json` → `reviewer='bha_p0'`). Under partitioned mode the table shows one BHA row per partition (`bha_p0`, `bha_p1`, …); under unified mode it shows a single `bha_p0` row because only one partition exists.
 
 **Premise MEDIUM cumulative gate**
 - Current count: {premise_cumulative_medium_count}
