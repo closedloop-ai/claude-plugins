@@ -4,6 +4,22 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.13.1
+
+#### Added
+- `/code-review:fix` now writes `<CR_DIR>/fix_result.json` summarizing bucket counts (`auto_fixed`, `manual_surface`, `stale_findings`, `pending_verification_routes`, `deferred_callsite`, `deferred_specialized`, `build_validator_status`, `manual_action_required`, `duration_seconds`). Lets non-interactive callers act on the outcome without parsing stdout.
+
+#### Changed
+- `/code-review:fix` exit-code contract is now three-valued: `0` (made automated progress or no findings), `1` (runtime error), `2` (manual action required — zero auto-fixes ran AND ≥1 manual-surface entry remains). Exit 2 is the new halt-the-loop signal for closed-loop callers.
+
+#### Fixed
+- Closed `run-loop.sh` review-fix cycle regression introduced in `code-review` v2.13.0: with the new dispatch model, manual-surface findings (Premise, `Hygiene/sensitive_files`, `InjectionAttempt`, `CompanionChange`, Coverage gaps, `ImpactAnalysis`, `TestQuality`, `pending_verification`) emit no code edits, so the previous always-exit-0 contract caused `run-loop.sh` to burn its full `POST_LOOP_REVIEW_CYCLES` budget re-detecting the same findings every cycle without making progress and without signalling that human action was pending. Exit 2 + `fix_result.json` give the harness an explicit halt signal.
+
+### code v1.12.4
+
+#### Fixed
+- `run-loop.sh` `post_loop_review_fix` now branches on `code-review:fix` exit code 2 and halts the review-fix cycle with a clear "manual action required — N finding(s)" log message, sourcing the count from `<CR_DIR>/fix_result.json`. Previously the loop continued re-running review+fix on manual-surface-only outcomes, wasting cycles. Requires `code-review` v2.13.1+; coordinated cross-plugin release.
+
 ### code-review v2.13.0
 
 #### Changed

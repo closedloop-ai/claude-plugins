@@ -294,16 +294,60 @@ Print the structured summary:
 | Total /fix duration | Hh Mm Ss |
 ```
 
+### Write the structured result file
+
+After printing the summary, write `<CR_DIR>/fix_result.json` so non-interactive callers (`run-loop.sh`, future automation) can act on the outcome without parsing stdout:
+
+```json
+{
+  "schema_version": 1,
+  "findings_received": N,
+  "auto_fixed": N,
+  "manual_surface": N,
+  "stale_findings": N,
+  "pending_verification_routes": N,
+  "deferred_callsite": N,
+  "deferred_specialized": N,
+  "build_validator_status": "PASSED" | "FAILED" | "NO_VALIDATION" | "SKIPPED",
+  "manual_action_required": <bool — see below>,
+  "duration_seconds": <int>
+}
+```
+
+`manual_action_required` is `true` when `auto_fixed == 0 AND manual_surface > 0` — i.e., this run made no automated progress and the remaining findings can only be resolved by an operator. This is the signal `run-loop.sh` reads to halt the review-fix cycle (see below).
+
+### Pick the exit code
+
+| Condition | Exit code |
+|---|---|
+| `manual_action_required == true` (no auto-fixes ran, ≥1 manual-surface entry) | **2** — "manual action required, no automated progress possible" |
+| `build_validator_status == "FAILED"` after auto-fixes | **1** — runtime error: validation regressed |
+| Everything else (including the all-auto-fixed-cleanly path and the no-findings path) | **0** |
+
+Exit 2 is the new "halt the loop" signal — distinct from exit 1 (runtime error) so harness callers can branch on it deliberately. Interactive users see the same dispatch plan and manual-action report either way; the exit code only affects programmatic consumers.
+
 Mark all todos `completed`.
 
 ---
 
 ## Notes for run-loop.sh and other callers
 
-The default mode is now **dry-run when no TTY**. `run-loop.sh` must invoke this skill with `--apply` to retain the previous auto-apply behavior:
+The default mode is **dry-run when no TTY**. `run-loop.sh` must invoke this skill with `--apply` to retain the auto-apply behavior:
 
 ```bash
 "$CLAUDE" -p "/code-review:fix $cr_dir --apply"
 ```
 
 `/code-review:fix $cr_dir` without `--apply` from a non-interactive context will print the dispatch plan + manual-action report and exit without modifying code — by design.
+
+### Closed-loop callers: read `fix_result.json` AND the exit code
+
+Automation that calls `/code-review:fix` in a loop (notably `plugins/code/scripts/run-loop.sh`'s `post_loop_review_fix`) must distinguish three cases:
+
+| Exit code | Meaning | Recommended caller action |
+|---|---|---|
+| 0 | Skill ran, made progress (auto-fixes applied) OR found nothing actionable | Continue the loop normally — the next review pass should see fewer findings or `verdict: approve` |
+| **2** | Skill ran, made NO automated progress, ≥1 manual-surface entry remains | **Halt the review-fix cycle.** Re-running the review will re-surface the same findings; no human is reading the manual-action report inside the loop. Log a clear message naming the manual-surface count and category breakdown (sourceable from `<CR_DIR>/fix_result.json`). |
+| 1 | Skill itself failed (Claude harness error, malformed envelope, etc.) | Retry per the caller's existing error policy |
+
+Without the exit-2 branch, a loop calling `/code-review:fix` will burn its full cycle budget re-detecting the same manual-surface findings every cycle, then exit as if no work was needed — leaving operators no signal that human action is pending.

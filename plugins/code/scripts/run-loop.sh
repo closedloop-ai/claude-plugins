@@ -1070,6 +1070,22 @@ run_post_loop_review() {
 
     rm -f "$fix_output" "$fix_stderr"
 
+    # Exit code contract (code-review:fix v2.13.1+):
+    #   0 — made automated progress (or no findings) → continue the cycle
+    #   2 — manual action required (no auto-fixes ran, manual-surface findings
+    #       remain) → halt the cycle; re-running will re-detect the same findings
+    #   1 (or other) — runtime error → retry per consecutive_failures policy
+    if [[ "$fix_exit" -eq 2 ]]; then
+      local manual_surface=0
+      if [[ -f "$cr_dir/fix_result.json" ]]; then
+        manual_surface=$(jq -r '.manual_surface // 0' "$cr_dir/fix_result.json" 2>/dev/null || echo 0)
+      fi
+      echo -e "${YELLOW}Fix surfaced $manual_surface finding(s) requiring human action — halting review cycle (no automated progress possible).${NC}"
+      echo -e "${YELLOW}See $cr_dir/fix_result.json and the /code-review:fix stdout for the manual-action report.${NC}"
+      log_progress "Post-loop fix cycle $cycle halted: manual action required ($manual_surface findings)"
+      return 0
+    fi
+
     if [[ "$fix_exit" -ne 0 ]]; then
       echo -e "${YELLOW}Warning: Fix subprocess failed (exit $fix_exit). Retrying on next cycle.${NC}"
       consecutive_failures=$((consecutive_failures + 1))
