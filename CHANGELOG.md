@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.11.1
+
+#### Fixed
+- **Unbalanced code fence in `skills/present-local/SKILL.md`.** A stray closing fence after the Summary section (inherited from the original inline `start.md` block) left an odd fence count, causing CommonMark parsers to swallow the **Consolidated Finding Format** template as code-block content. Removed the orphan fence; fences now pair cleanly.
+- **Template-vs-instruction ambiguity in the presenter.** Added a 3-line convention legend (`##` headers = report structure, fenced blocks = emit-verbatim card templates, `[bracketed]`/`{BRACED}` = instructions) and fenced the Repo Hygiene and BLOCKING finding-card templates so they match the style already used by the Justified/Dismissed/Verifier Stats sections.
+- **Severity-normalization warning relocated.** Moved the `normalization_warnings > 0` note from the top of the skill into the Validation Summary section, where its "append after the summary list" placement instruction is self-evident.
+
 ### code-review v2.11.0
 
 #### Added

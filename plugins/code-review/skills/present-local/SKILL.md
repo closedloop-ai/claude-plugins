@@ -15,10 +15,11 @@ Gate A hygiene-only early-exit is **not** in this skill. That path is mode-agnos
 
 Mark "Present findings by severity" `in_progress`.
 
-If `normalization_warnings > 0` in `findings_validated.json`, include after the validation summary:
-```
-⚠️ Severity normalization: N findings had non-standard severity values (mapped to MEDIUM).
-```
+Render the report below. Three text conventions run through this template, so it stays clear which lines you emit verbatim and which are directions to you:
+
+- **`##` section headers** (Repo Hygiene, BLOCKING, …) are the report's own structure — emit them as written, with the live `[count]` substituted.
+- **Fenced code blocks** are card/footer templates — instantiate one per finding (or per stat block), substituting the `{PLACEHOLDER}` and `[bracketed]` fields.
+- **`[bracketed]` and `{BRACED}` tokens** are instructions or substitution points, never literal output.
 
 Output in this format:
 
@@ -52,10 +53,12 @@ Then continue with:
 
 [List any hygiene findings from deterministic checks]
 
+```markdown
 ### Finding Title
 **File:** `path/file.ts:line`
 **Issue:** [description]
 **Recommendation:** [fix]
+```
 
 ---
 
@@ -63,11 +66,13 @@ Then continue with:
 
 [List all blocking issues]
 
+```markdown
 ### Issue Title
 **File:** `path/file.ts:line`
 **Reported by:** [agent(s)]
 **Issue:** [description]
 **Recommendation:** [fix]
+```
 
 ---
 
@@ -212,6 +217,12 @@ Hash drift on an override (file content changed since the override was written) 
 
 ## Validation Summary
 
+If `normalization_warnings > 0` in `findings_validated.json`, append this line directly after the summary list below:
+
+```
+⚠️ Severity normalization: N findings had non-standard severity values (mapped to MEDIUM).
+```
+
 - **Total findings from agents:** X
 - **Hygiene findings:** H
 - **Validated (confirmed):** A
@@ -239,7 +250,6 @@ Hash drift on an override (file content changed since the override was written) 
 | Medium | Z |
 
 **Recommendation:** [action based on findings]
-```
 
 **Consolidated Finding Format** (when multiple findings share root cause):
 
