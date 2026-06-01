@@ -711,6 +711,76 @@ def cmd_hygiene(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: companion-check (PLN-768)
+# ---------------------------------------------------------------------------
+
+# Default rule registry path relative to the plugin tools directory. Operators
+# can override via --rules-dir; production callers always pass an explicit path
+# resolved from CLAUDE_PLUGIN_ROOT.
+_COMPANION_RULES_DEFAULT_DIR = (
+    Path(__file__).resolve().parent.parent / "companion_rules"
+)
+
+
+def cmd_companion_check(args: argparse.Namespace) -> int:
+    """Run the deterministic companion-change rules against a parsed diff.
+
+    PLN-768 Phase 1. Loads JSON rule descriptors from ``--rules-dir``, invokes
+    each predicate against ``diff_data.json``, normalizes raw findings to the
+    canonical schema, and writes ``<cr-dir>/companion_findings.json``.
+
+    Output envelope mirrors hygiene.json: ``{"findings": [...]}``.
+    """
+    # Imported lazily so the helper module stays usable when rule scaffolding
+    # isn't present (e.g. minimal smoke tests of unrelated subcommands).
+    from companion_rules import evaluate_rules
+
+    cr_dir = Path(args.cr_dir)
+    cr_dir.mkdir(parents=True, exist_ok=True)
+    rules_dir = Path(args.rules_dir) if args.rules_dir else _COMPANION_RULES_DEFAULT_DIR
+
+    diff_data_path: str | None = getattr(args, "diff_data", None)
+    diff_data = json.load(open(diff_data_path)) if diff_data_path else json.load(sys.stdin)
+
+    try:
+        raw_findings, evaluated_rules = evaluate_rules(rules_dir, diff_data)
+    except ValueError as exc:
+        # Malformed descriptor: hard fail so a bad rule pack surfaces at
+        # the gate rather than producing silent zero-finding runs.
+        print(f"companion-check: rule load failed: {exc}", file=sys.stderr)
+        return 1
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    canonical: list[dict[str, Any]] = []
+    for idx, raw in enumerate(raw_findings):
+        promoted = normalize_legacy_finding(
+            raw,
+            reviewer="companion-validator",
+            source="companion-validator",
+            index=idx,
+            emitted_at=now_iso,
+        )
+        canonical.append(promoted)
+
+    output_path = cr_dir / "companion_findings.json"
+    with open(output_path, "w") as f:
+        json.dump({"findings": canonical}, f, indent=2)
+
+    json.dump(
+        {
+            "written": str(output_path),
+            "rules_evaluated": len(evaluated_rules),
+            "rule_ids": evaluated_rules,
+            "findings": len(canonical),
+        },
+        sys.stdout,
+        indent=2,
+    )
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: partition
 # ---------------------------------------------------------------------------
 
@@ -5376,7 +5446,7 @@ def _coerce_reviewer_id(raw: Any, fallback: str) -> str:
 
 
 def cmd_collect_findings(args: argparse.Namespace) -> int:
-    """Merge agent findings and hygiene findings into a single JSON file.
+    """Merge agent, hygiene, and companion findings into a single JSON file.
 
     Findings without an ``id`` are assigned a deterministic one of the form
     ``<reviewer_id>_f<index>`` (PLN-719 Section 4). Reviewer id is derived
@@ -5386,6 +5456,7 @@ def cmd_collect_findings(args: argparse.Namespace) -> int:
     cr_dir = Path(args.cr_dir)
     output_filename: str = args.output
     hygiene_path: str | None = getattr(args, "hygiene", None)
+    companion_path: str | None = getattr(args, "companion_findings", None)
 
     findings: list[dict[str, Any]] = []
     agent_files: list[str] = []
@@ -5457,6 +5528,31 @@ def cmd_collect_findings(args: argparse.Namespace) -> int:
         except (OSError, json.JSONDecodeError):
             pass  # hygiene file missing or malformed -- skip silently
 
+    # PLN-768: companion-validator findings (same merge shape as hygiene,
+    # since cmd_companion_check already emits canonical findings).
+    companion_included = False
+    if companion_path:
+        try:
+            with open(companion_path) as f:
+                companion_data = json.load(f)
+            companion_findings = companion_data.get("findings", [])
+            if isinstance(companion_findings, list):
+                for idx, raw in enumerate(companion_findings):
+                    if not isinstance(raw, dict):
+                        continue
+                    findings.append(
+                        normalize_legacy_finding(
+                            raw,
+                            reviewer=raw.get("reviewer", "companion-validator"),
+                            source=raw.get("source", "companion-validator"),
+                            index=idx,
+                            emitted_at=now_iso,
+                        ),
+                    )
+                companion_included = True
+        except (OSError, json.JSONDecodeError):
+            pass  # companion file missing or malformed -- skip silently
+
     # Write combined findings
     output_path = cr_dir / output_filename
     with open(output_path, "w") as f:
@@ -5467,6 +5563,7 @@ def cmd_collect_findings(args: argparse.Namespace) -> int:
             "total_findings": len(findings),
             "agent_files": agent_files,
             "hygiene_included": hygiene_included,
+            "companion_included": companion_included,
         },
         sys.stdout,
         indent=2,
@@ -6213,6 +6310,26 @@ def _build_run_plan_stages(
             "enabled": True,
         },
         {
+            # PLN-768: deterministic companion-change rules. Runs before
+            # any LLM reviewer so findings flow through the standard
+            # collect/validate/verify pipeline. `on_failure: continue`
+            # because the validator is additive — a rule-pack failure
+            # must never abort the LLM pipeline. Distinct from PLN-726's
+            # `stage_13_validate_companions` (LLM-driven cross-file impact).
+            "id": "stage_05a_companion_check",
+            "kind": "helper",
+            "subcommand": "companion-check",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--diff-data", f"{cr_dir}/diff_data.json",
+            ],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/companion_findings.json"],
+            "depends_on": ["stage_05_parse_diff"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
             "id": "stage_06_extract_patches",
             "kind": "helper",
             "subcommand": "extract-patches",
@@ -6475,10 +6592,11 @@ def _build_run_plan_stages(
             "args": [
                 "--cr-dir", cr_dir,
                 "--hygiene", f"{cr_dir}/hygiene.json",
+                "--companion-findings", f"{cr_dir}/companion_findings.json",
             ],
             "stdout": None,
             "expected_outputs": [f"{cr_dir}/findings.json"],
-            "depends_on": ["stage_20_spawn_reviewers"],
+            "depends_on": ["stage_20_spawn_reviewers", "stage_05a_companion_check"],
             "on_failure": "abort",
             "enabled": True,
         },
@@ -7580,6 +7698,22 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_hyg.add_argument("--workdir", default=None, help="Git working directory for check-ignore")
     p_hyg.set_defaults(func=cmd_hygiene)
 
+    # companion-check (PLN-768)
+    p_cmp = subparsers.add_parser(
+        "companion-check",
+        help="Run deterministic companion-change rules against a parsed diff",
+    )
+    p_cmp.add_argument("--cr-dir", required=True, help="CR session directory (output goes here)")
+    p_cmp.add_argument(
+        "--diff-data", default=None,
+        help="Path to diff_data.json (reads stdin if omitted)",
+    )
+    p_cmp.add_argument(
+        "--rules-dir", default=None,
+        help="Companion rule descriptor directory (defaults to plugin's tools/companion_rules/)",
+    )
+    p_cmp.set_defaults(func=cmd_companion_check)
+
     # partition
     p_part = subparsers.add_parser("partition", help="Bin-pack files into partitions")
     p_part.add_argument("--diff-data", default=None, help="Path to diff_data.json (reads stdin if omitted)")
@@ -7887,10 +8021,14 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_di.set_defaults(func=cmd_detect_injection)
 
     # collect-findings
-    p_cf = subparsers.add_parser("collect-findings", help="Merge agent + hygiene findings")
+    p_cf = subparsers.add_parser("collect-findings", help="Merge agent + hygiene + companion findings")
     p_cf.add_argument("--cr-dir", required=True, help="Directory containing agent_*.json files")
     p_cf.add_argument("--output", default="findings.json", help="Output filename (written to cr-dir)")
     p_cf.add_argument("--hygiene", default=None, help="Path to hygiene.json")
+    p_cf.add_argument(
+        "--companion-findings", default=None,
+        help="Path to companion_findings.json (PLN-768)",
+    )
     p_cf.set_defaults(func=cmd_collect_findings)
 
     # verdict

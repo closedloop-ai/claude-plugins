@@ -70,6 +70,7 @@ from code_review_helpers import (
     cmd_cache_update,
     cmd_classify_intent,
     cmd_collect_findings,
+    cmd_companion_check,
     cmd_compute_hashes,
     cmd_detect_injection,
     cmd_footer,
@@ -6703,17 +6704,18 @@ class TestPrepareRun:
             pr_number=pr_number,
         )
 
-    def test_emits_thirty_two_stages(self, tmp_path: Path) -> None:
-        """PLN-722 v2.8.0 added two helper-wrapper stages around the
-        verifier fleet (``stage_22b_verify_prepare`` and
-        ``stage_24a_verify_consolidate``), bringing the total from 30 to
-        32. The ``_<NN>_`` prefix is a stable label, not a strict ordinal;
-        the lettered suffixes (``_22b_``, ``_24a_``) mark stages inserted
-        between original ordinals.
+    def test_emits_thirty_three_stages(self, tmp_path: Path) -> None:
+        """PLN-768 v2.13.0 added ``stage_05a_companion_check`` between
+        parse-diff and extract-patches, bringing the total from 32 to 33.
+        PLN-722 v2.8.0 had added the two verifier-wrapper stages
+        (``stage_22b_verify_prepare`` and ``stage_24a_verify_consolidate``)
+        that took the count from 30 to 32. The ``_<NN>_`` prefix is a stable
+        label, not a strict ordinal; the lettered suffixes (``_05a_``,
+        ``_22b_``, ``_24a_``) mark stages inserted between original ordinals.
         """
         summary, plan = self._run(tmp_path)
-        assert summary["stage_count"] == 32
-        assert len(plan["stages"]) == 32
+        assert summary["stage_count"] == 33
+        assert len(plan["stages"]) == 33
         # Ordered stage ids
         ids = [s["id"] for s in plan["stages"]]
         assert ids[0] == "stage_01_setup"
@@ -6732,12 +6734,25 @@ class TestPrepareRun:
         )
 
     def test_extract_patches_runs_after_parse_diff(self, tmp_path: Path) -> None:
-        """PLN-719 Section 7: extract-patches MOVED to right after parse-diff."""
+        """PLN-719 Section 7: extract-patches MOVED to early position right after
+        parse-diff. PLN-768 (v2.13.0) slotted ``stage_05a_companion_check``
+        between them — any other early helper inserted between parse-diff
+        and extract-patches must still preserve (a) the ordering and (b)
+        the data dependency.
+        """
         _, plan = self._run(tmp_path)
         ids = [s["id"] for s in plan["stages"]]
         parse_idx = ids.index("stage_05_parse_diff")
         extract_idx = ids.index("stage_06_extract_patches")
-        assert extract_idx == parse_idx + 1
+        # extract-patches must come AFTER parse-diff. Allow other early
+        # deterministic helpers (e.g. companion-check) to slot between.
+        assert parse_idx < extract_idx
+        for intervening in ids[parse_idx + 1 : extract_idx]:
+            stage = next(s for s in plan["stages"] if s["id"] == intervening)
+            assert stage["kind"] == "helper", (
+                f"non-helper stage {intervening!r} between parse-diff and "
+                f"extract-patches would change diff-data semantics"
+            )
         # extract-patches depends on parse-diff
         extract_stage = plan["stages"][extract_idx]
         assert "stage_05_parse_diff" in extract_stage["depends_on"]
@@ -10073,3 +10088,490 @@ class TestPartitionAwareReviewerLabeling:
         out = _verification_by_reviewer(verified, [])
         assert out["bha_p0"]["re_asserted"] == 0
         assert out["bha_p1"]["re_asserted"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Companion-Change Validator (PLN-768 Phase 1)
+# ---------------------------------------------------------------------------
+
+
+def _run_companion_check(
+    tmp_path: Path,
+    diff_data: dict[str, Any],
+    rules_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Invoke cmd_companion_check via a Namespace, return parsed stdout summary.
+
+    Always points --rules-dir at the production registry unless overridden
+    so the most-realistic codepath (descriptor + predicate registration)
+    is exercised by default.
+    """
+    import argparse
+    import io
+    import sys as _sys
+
+    diff_data_path = tmp_path / "diff_data.json"
+    diff_data_path.write_text(json.dumps(diff_data))
+
+    default_rules = (
+        Path(__file__).resolve().parent.parent / "companion_rules"
+    )
+    ns = argparse.Namespace(
+        cr_dir=str(tmp_path),
+        diff_data=str(diff_data_path),
+        rules_dir=str(rules_dir) if rules_dir else str(default_rules),
+    )
+    old_stdout = _sys.stdout
+    _sys.stdout = io.StringIO()
+    try:
+        cmd_companion_check(ns)
+        _sys.stdout.seek(0)
+        return json.load(_sys.stdout)
+    finally:
+        _sys.stdout = old_stdout
+
+
+class TestCompanionRulesLoader:
+    """Loader contract: descriptors are discovered, validated, predicates bound."""
+
+    def test_load_default_rules_dir_finds_schema_to_orm(self) -> None:
+        from companion_rules import load_rules
+        default_rules = Path(__file__).resolve().parent.parent / "companion_rules"
+        descriptors = load_rules(default_rules)
+        ids = [d["id"] for d in descriptors]
+        assert "schema_to_orm" in ids
+
+    def test_missing_field_raises(self, tmp_path: Path) -> None:
+        from companion_rules import load_rules
+        (tmp_path / "bad.json").write_text(json.dumps({"id": "x"}))
+        with pytest.raises(ValueError, match="missing required fields"):
+            load_rules(tmp_path)
+
+    def test_malformed_json_raises(self, tmp_path: Path) -> None:
+        from companion_rules import load_rules
+        (tmp_path / "bad.json").write_text("not json{{{")
+        with pytest.raises(ValueError, match="Malformed JSON"):
+            load_rules(tmp_path)
+
+    def test_unknown_predicate_raises(self, tmp_path: Path) -> None:
+        from companion_rules import load_rules
+        bad_descriptor = {
+            "id": "x", "name": "x", "severity": "HIGH", "category": "CompanionChange",
+            "issue_template": "i", "recommendation_template": "r",
+            "predicate": "no_such_predicate", "schema_version": 1,
+        }
+        (tmp_path / "bad.json").write_text(json.dumps(bad_descriptor))
+        with pytest.raises(ValueError, match="unknown predicate"):
+            load_rules(tmp_path)
+
+    def test_unsupported_schema_version_raises(self, tmp_path: Path) -> None:
+        from companion_rules import load_rules
+        bad_descriptor = {
+            "id": "x", "name": "x", "severity": "HIGH", "category": "CompanionChange",
+            "issue_template": "i", "recommendation_template": "r",
+            "predicate": "schema_to_orm", "schema_version": 999,
+        }
+        (tmp_path / "bad.json").write_text(json.dumps(bad_descriptor))
+        with pytest.raises(ValueError, match="unsupported schema_version"):
+            load_rules(tmp_path)
+
+    def test_missing_dir_returns_empty(self, tmp_path: Path) -> None:
+        from companion_rules import load_rules
+        descriptors = load_rules(tmp_path / "does_not_exist")
+        assert descriptors == []
+
+    def test_descriptors_returned_in_sorted_filename_order(self, tmp_path: Path) -> None:
+        from companion_rules import load_rules
+        good = {
+            "name": "n", "severity": "HIGH", "category": "CompanionChange",
+            "issue_template": "i", "recommendation_template": "r",
+            "predicate": "schema_to_orm", "schema_version": 1,
+        }
+        (tmp_path / "02_b.json").write_text(json.dumps({**good, "id": "b"}))
+        (tmp_path / "01_a.json").write_text(json.dumps({**good, "id": "a"}))
+        descriptors = load_rules(tmp_path)
+        assert [d["id"] for d in descriptors] == ["a", "b"]
+
+
+class TestSchemaToOrmPredicate:
+    """Behavior contract for the schema_to_orm rule."""
+
+    @staticmethod
+    def _diff(
+        migration_added: dict[str, str] | None = None,
+        model_added: dict[str, str] | None = None,
+        migration_path: str = "app/migrations/0042_add_col.py",
+        model_path: str = "app/models/user.py",
+        model_status: str = "modified",
+    ) -> dict[str, Any]:
+        file_statuses: dict[str, str] = {}
+        patch_lines: dict[str, dict[str, dict[str, str]]] = {}
+        if migration_added is not None:
+            file_statuses[migration_path] = "added"
+            patch_lines[migration_path] = {"added_lines": migration_added}
+        if model_added is not None:
+            file_statuses[model_path] = model_status
+            patch_lines[model_path] = {"added_lines": model_added}
+        return {"file_statuses": file_statuses, "patch_lines": patch_lines}
+
+    def test_positive_alembic_add_column_no_model_update(self, tmp_path: Path) -> None:
+        diff = self._diff(
+            migration_added={
+                "10": "    op.add_column('users', sa.Column('email_verified_at', sa.DateTime()))",
+            },
+            model_added={"55": "    full_name = Column(String)"},
+        )
+        summary = _run_companion_check(tmp_path, diff)
+        findings = json.loads((tmp_path / "companion_findings.json").read_text())["findings"]
+        assert summary["findings"] == 1
+        assert findings[0]["category"] == "CompanionChange"
+        assert findings[0]["severity"] == "HIGH"
+        assert findings[0]["source"] == "companion-validator"
+        assert findings[0]["reviewer"] == "companion-validator"
+        assert "email_verified_at" in findings[0]["issue"]
+        assert findings[0]["subcategory"] == "schema_to_orm"
+
+    def test_negative_alembic_add_column_with_model_update(self, tmp_path: Path) -> None:
+        diff = self._diff(
+            migration_added={
+                "10": "    op.add_column('users', sa.Column('email_verified_at', sa.DateTime()))",
+            },
+            model_added={"55": "    email_verified_at = Column(DateTime, nullable=True)"},
+        )
+        summary = _run_companion_check(tmp_path, diff)
+        assert summary["findings"] == 0
+
+    def test_postgres_alter_table_add_column_pattern(self, tmp_path: Path) -> None:
+        diff = self._diff(
+            migration_added={"5": "ALTER TABLE users ADD COLUMN last_login TIMESTAMP;"},
+            model_added={"22": "name = Column(String)"},
+            migration_path="db/migrations/V003__add_last_login.sql",
+        )
+        summary = _run_companion_check(tmp_path, diff)
+        findings = json.loads((tmp_path / "companion_findings.json").read_text())["findings"]
+        assert summary["findings"] == 1
+        assert "last_login" in findings[0]["issue"]
+
+    def test_django_addfield_pattern(self, tmp_path: Path) -> None:
+        diff = self._diff(
+            migration_added={
+                "8": "        migrations.AddField(model_name='User', name='avatar_url', field=models.CharField(max_length=255))",
+            },
+            model_added={"40": "    username = models.CharField(max_length=64)"},
+        )
+        summary = _run_companion_check(tmp_path, diff)
+        findings = json.loads((tmp_path / "companion_findings.json").read_text())["findings"]
+        assert summary["findings"] == 1
+        assert "avatar_url" in findings[0]["issue"]
+
+    def test_rails_add_column_pattern(self, tmp_path: Path) -> None:
+        diff = self._diff(
+            migration_added={"3": "    add_column :users, :referral_code, :string"},
+            model_added={"12": "  validates :email, presence: true"},
+            migration_path="db/migrate/20260601_add_referral_code.rb",
+        )
+        summary = _run_companion_check(tmp_path, diff)
+        findings = json.loads((tmp_path / "companion_findings.json").read_text())["findings"]
+        assert summary["findings"] == 1
+        assert "referral_code" in findings[0]["issue"]
+
+    def test_camelcase_companion_resolves_snake_case_column(self, tmp_path: Path) -> None:
+        """Cross-language companion: snake_case in SQL, camelCase in TS ORM."""
+        diff = self._diff(
+            migration_added={"10": "    op.add_column('users', sa.Column('email_verified_at', sa.DateTime()))"},
+            model_added={"15": "  emailVerifiedAt!: Date | null;"},
+            model_path="app/models/User.ts",
+        )
+        summary = _run_companion_check(tmp_path, diff)
+        assert summary["findings"] == 0  # camelCase variant satisfies the rule
+
+    def test_non_migration_path_not_triggered(self, tmp_path: Path) -> None:
+        """ADD COLUMN mentioned in a non-migration file (e.g. docs) is ignored."""
+        diff = {
+            "file_statuses": {"docs/schema.md": "modified"},
+            "patch_lines": {
+                "docs/schema.md": {
+                    "added_lines": {"3": "Adding a column ADD COLUMN foo via migrations is fine."},
+                },
+            },
+        }
+        summary = _run_companion_check(tmp_path, diff)
+        assert summary["findings"] == 0
+
+    def test_no_diff_data_no_findings(self, tmp_path: Path) -> None:
+        summary = _run_companion_check(tmp_path, {"file_statuses": {}, "patch_lines": {}})
+        assert summary["findings"] == 0
+
+    def test_multiple_columns_one_finding_each(self, tmp_path: Path) -> None:
+        diff = self._diff(
+            migration_added={
+                "10": "    op.add_column('users', sa.Column('first_name', sa.String()))",
+                "11": "    op.add_column('users', sa.Column('last_name', sa.String()))",
+            },
+            model_added={"55": "    age = Column(Integer)"},
+        )
+        summary = _run_companion_check(tmp_path, diff)
+        findings = json.loads((tmp_path / "companion_findings.json").read_text())["findings"]
+        assert summary["findings"] == 2
+        issues = [f["issue"] for f in findings]
+        assert any("first_name" in i for i in issues)
+        assert any("last_name" in i for i in issues)
+
+
+class TestCompanionCheckSubcommand:
+    """Subcommand wiring + output envelope."""
+
+    def test_emits_companion_findings_json(self, tmp_path: Path) -> None:
+        diff = {
+            "file_statuses": {"app/migrations/0042.py": "added"},
+            "patch_lines": {
+                "app/migrations/0042.py": {
+                    "added_lines": {"10": "op.add_column('t', sa.Column('foo', sa.Integer()))"},
+                },
+            },
+        }
+        summary = _run_companion_check(tmp_path, diff)
+        assert summary["written"].endswith("/companion_findings.json")
+        assert (tmp_path / "companion_findings.json").is_file()
+        assert summary["rule_ids"] == ["schema_to_orm"]
+        assert summary["rules_evaluated"] == 1
+
+    def test_findings_have_canonical_ids(self, tmp_path: Path) -> None:
+        diff = {
+            "file_statuses": {"app/migrations/0042.py": "added"},
+            "patch_lines": {
+                "app/migrations/0042.py": {
+                    "added_lines": {"10": "op.add_column('t', sa.Column('a', sa.Integer()))"},
+                },
+            },
+        }
+        _run_companion_check(tmp_path, diff)
+        findings = json.loads((tmp_path / "companion_findings.json").read_text())["findings"]
+        assert findings[0]["id"] == "companion-validator_f0"
+        assert findings[0]["finding_scope"] == "diff"
+        assert findings[0]["reviewer_trigger"] == {"type": "always", "evidence": "schema_to_orm"}
+
+    def test_creates_cr_dir_when_missing(self, tmp_path: Path) -> None:
+        """--cr-dir is mkdir'd when absent so the helper can be invoked
+        before stage_01_setup in tests / ad-hoc usage."""
+        target = tmp_path / "fresh_cr"
+        # Place diff_data outside the cr_dir so cmd has work to do.
+        diff_data_path = tmp_path / "diff_data.json"
+        diff_data_path.write_text(json.dumps({"file_statuses": {}, "patch_lines": {}}))
+        import argparse
+        import io
+        import sys as _sys
+        default_rules = Path(__file__).resolve().parent.parent / "companion_rules"
+        ns = argparse.Namespace(
+            cr_dir=str(target),
+            diff_data=str(diff_data_path),
+            rules_dir=str(default_rules),
+        )
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            cmd_companion_check(ns)
+        finally:
+            _sys.stdout = old_stdout
+        assert target.is_dir()
+        assert (target / "companion_findings.json").is_file()
+
+    def test_malformed_rule_descriptor_returns_nonzero(self, tmp_path: Path) -> None:
+        """Bad rule pack must hard-fail (return 1), not produce a silent zero-finding
+        run. Operator surface: a typo'd descriptor should not look like 'no bugs'."""
+        bad_rules = tmp_path / "rules"
+        bad_rules.mkdir()
+        (bad_rules / "bad.json").write_text("not json{{{")
+        diff_data_path = tmp_path / "diff_data.json"
+        diff_data_path.write_text(json.dumps({"file_statuses": {}, "patch_lines": {}}))
+        import argparse
+        ns = argparse.Namespace(
+            cr_dir=str(tmp_path),
+            diff_data=str(diff_data_path),
+            rules_dir=str(bad_rules),
+        )
+        rc = cmd_companion_check(ns)
+        assert rc == 1
+
+
+class TestCollectFindingsCompanionMerge:
+    """Companion findings flow through cmd_collect_findings the same way hygiene does."""
+
+    def test_merges_companion_with_agents_and_hygiene(self, tmp_path: Path) -> None:
+        import argparse
+        import io
+        import sys as _sys
+
+        (tmp_path / "agent_bha_p0.json").write_text(
+            json.dumps({"findings": [{"file": "a.ts", "severity": "HIGH"}]}),
+        )
+        (tmp_path / "hygiene.json").write_text(
+            json.dumps({"findings": [{"file": "b.ts", "severity": "MEDIUM"}]}),
+        )
+        (tmp_path / "companion_findings.json").write_text(
+            json.dumps({
+                "findings": [{
+                    "id": "companion-validator_f0",
+                    "reviewer": "companion-validator",
+                    "source": "companion-validator",
+                    "file": "app/migrations/0042.py",
+                    "line": 10,
+                    "severity": "HIGH",
+                    "category": "CompanionChange",
+                    "issue": "missing companion",
+                }],
+            }),
+        )
+
+        ns = argparse.Namespace(
+            cr_dir=str(tmp_path),
+            output="findings.json",
+            hygiene=str(tmp_path / "hygiene.json"),
+            companion_findings=str(tmp_path / "companion_findings.json"),
+        )
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            cmd_collect_findings(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert result["total_findings"] == 3
+        assert result["companion_included"] is True
+        merged = json.loads((tmp_path / "findings.json").read_text())
+        sources = {f["source"] for f in merged}
+        assert sources == {"agent", "hygiene", "companion-validator"}
+
+    def test_companion_missing_does_not_abort(self, tmp_path: Path) -> None:
+        """The companion stage is on_failure=continue. If its output file
+        doesn't exist (e.g. a Phase 1 rule pack failure), collect must
+        still merge the agents + hygiene findings and report
+        companion_included=False — not raise."""
+        import argparse
+        import io
+        import sys as _sys
+        (tmp_path / "agent_bha_p0.json").write_text(
+            json.dumps({"findings": [{"file": "a.ts", "severity": "HIGH"}]}),
+        )
+        ns = argparse.Namespace(
+            cr_dir=str(tmp_path),
+            output="findings.json",
+            hygiene=None,
+            companion_findings=str(tmp_path / "nonexistent.json"),
+        )
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            cmd_collect_findings(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+        assert result["total_findings"] == 1
+        assert result["companion_included"] is False
+
+    def test_companion_arg_absent_back_compat(self, tmp_path: Path) -> None:
+        """Existing callers that built a Namespace without companion_findings
+        must keep working — companion is read via getattr with default None."""
+        import argparse
+        import io
+        import sys as _sys
+        (tmp_path / "agent_bha_p0.json").write_text(
+            json.dumps({"findings": [{"file": "a.ts"}]}),
+        )
+        ns = argparse.Namespace(
+            cr_dir=str(tmp_path),
+            output="findings.json",
+            hygiene=None,
+        )
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            cmd_collect_findings(ns)
+            _sys.stdout.seek(0)
+            result = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+        assert result["total_findings"] == 1
+        assert result["companion_included"] is False
+
+
+class TestRunPlanCompanionStage:
+    """Run-plan wiring: stage_05a present, correctly slotted, distinct from PLN-726."""
+
+    def _build(self, tmp_path: Path) -> dict[str, Any]:
+        summary, plan = invoke_prepare_run(  # noqa: F841
+            tmp_path,
+            mode="local",
+            hygiene_only="false",
+            since_last_review="false",
+            full_review="false",
+            base_ref_override="",
+            scope_args="",
+            pr_number=None,
+        )
+        return plan
+
+    def test_stage_05a_present_and_enabled(self, tmp_path: Path) -> None:
+        plan = self._build(tmp_path)
+        by_id = {s["id"]: s for s in plan["stages"]}
+        assert "stage_05a_companion_check" in by_id
+        stage = by_id["stage_05a_companion_check"]
+        assert stage["enabled"] is True
+        assert stage["kind"] == "helper"
+        assert stage["subcommand"] == "companion-check"
+        assert stage["on_failure"] == "continue"
+
+    def test_stage_05a_depends_on_parse_diff(self, tmp_path: Path) -> None:
+        plan = self._build(tmp_path)
+        by_id = {s["id"]: s for s in plan["stages"]}
+        assert "stage_05_parse_diff" in by_id["stage_05a_companion_check"]["depends_on"]
+
+    def test_stage_05a_runs_before_extract_patches(self, tmp_path: Path) -> None:
+        plan = self._build(tmp_path)
+        ids = [s["id"] for s in plan["stages"]]
+        parse_idx = ids.index("stage_05_parse_diff")
+        companion_idx = ids.index("stage_05a_companion_check")
+        extract_idx = ids.index("stage_06_extract_patches")
+        assert parse_idx < companion_idx < extract_idx
+
+    def test_stage_05a_emits_companion_findings_json(self, tmp_path: Path) -> None:
+        plan = self._build(tmp_path)
+        by_id = {s["id"]: s for s in plan["stages"]}
+        outputs = by_id["stage_05a_companion_check"]["expected_outputs"]
+        assert any(o.endswith("companion_findings.json") for o in outputs)
+
+    def test_stage_05a_distinct_from_pln726_validate_companions(self, tmp_path: Path) -> None:
+        """The PLN-726 placeholder (LLM-driven cross-file impact) lives at
+        stage_13_validate_companions and stays disabled. PLN-768's
+        deterministic stage is separate and enabled."""
+        plan = self._build(tmp_path)
+        by_id = {s["id"]: s for s in plan["stages"]}
+        assert by_id["stage_05a_companion_check"]["subcommand"] == "companion-check"
+        assert by_id["stage_05a_companion_check"]["enabled"] is True
+        assert by_id["stage_13_validate_companions"]["subcommand"] == "validate-companions"
+        assert by_id["stage_13_validate_companions"]["enabled"] is False
+
+    def test_stage_21_collect_findings_consumes_companion_findings(self, tmp_path: Path) -> None:
+        """The collect-findings stage must pass --companion-findings AND
+        depend on stage_05a so the file is guaranteed present (or absent
+        via on_failure=continue) before merge."""
+        plan = self._build(tmp_path)
+        by_id = {s["id"]: s for s in plan["stages"]}
+        collect = by_id["stage_21_collect_findings"]
+        assert "--companion-findings" in collect["args"]
+        assert any(a.endswith("/companion_findings.json") for a in collect["args"])
+        assert "stage_05a_companion_check" in collect["depends_on"]
+
+
+class TestCompanionCheckDeterminismTier:
+    """Schema registration check — companion-check must be tagged deterministic."""
+
+    def test_companion_check_registered_as_deterministic(self) -> None:
+        from code_review_schema import (
+            DETERMINISM_TIER_DETERMINISTIC,
+            stage_determinism_tier,
+        )
+        assert stage_determinism_tier("companion-check") == DETERMINISM_TIER_DETERMINISTIC

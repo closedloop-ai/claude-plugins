@@ -163,6 +163,9 @@ STAGE_DETERMINISM_TIERS: dict[str, str] = {
     "fetch-intent": DETERMINISM_TIER_DETERMINISTIC,
     "classify-intent": DETERMINISM_TIER_DETERMINISTIC,
     "hygiene": DETERMINISM_TIER_DETERMINISTIC,
+    # PLN-768: deterministic companion-change rules. Distinct from PLN-726's
+    # ``validate-companions`` (LLM-driven cross-file impact analyzer).
+    "companion-check": DETERMINISM_TIER_DETERMINISTIC,
     "validate-companions": DETERMINISM_TIER_DETERMINISTIC,
     "arbitrate-budget": DETERMINISM_TIER_DETERMINISTIC,
     "partition": DETERMINISM_TIER_DETERMINISTIC,

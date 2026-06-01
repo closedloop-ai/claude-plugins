@@ -1,0 +1,11 @@
+{
+  "id": "schema_to_orm",
+  "name": "Schema ↔ ORM symmetry",
+  "description": "Migration adds a column without a matching ORM model update.",
+  "severity": "HIGH",
+  "category": "CompanionChange",
+  "issue_template": "[P1] Migration adds column {symbol} without ORM model update",
+  "recommendation_template": "Update the corresponding model file to declare the {symbol} field; otherwise queries against this column will fail at runtime.",
+  "predicate": "schema_to_orm",
+  "schema_version": 1
+}
