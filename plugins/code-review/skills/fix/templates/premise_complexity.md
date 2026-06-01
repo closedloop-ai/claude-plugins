@@ -2,23 +2,21 @@
 
 **Issue:** {issue}
 
-**Stated motivation:** {reasoning_certificate.stated_motivation}
-**Delivered scope:** {reasoning_certificate.delivered_scope}
-**Complexity delta:** {reasoning_certificate.complexity_delta}
+**Use-site count vs justification threshold:**
+- **Observed use sites:** {reasoning_certificate.use_site_count}
+- **Threshold that would have justified this complexity:** {reasoning_certificate.justification_threshold}
+- **Grep pattern the reviewer used to count:** `{reasoning_certificate.grep_pattern_used}`
 
-**Why this is surfaced manually:** Complexity findings either say the change does **more** than its stated motivation justifies (over-complexity) or **less** (under-complexity). The auto-fix path for single-use-abstraction over-complexity is planned but not yet shipped — until then, every Premise/Complexity finding is surfaced for author decision.
+**Sites observed:**
+{reasoning_certificate.sites}
 
-**Your options (depending on direction):**
+**Why this is surfaced manually:** Complexity findings say the machinery introduced here (caching, batching, memoization, configuration surface, generic abstraction, …) cannot be justified by how many places actually use it. The auto-fix path for single-use abstractions is planned but not yet shipped — until then, every Premise/Complexity finding is surfaced for author decision.
 
-If **over-complexity** (delivered scope > stated motivation):
-1. **Simplify** — remove the abstraction layers / parameters the motivation does not require.
-2. **Expand the motivation** in the PR description with the additional goals.
-3. **Justify** with a code comment naming the second-call-site or near-future use case.
+**Your options:**
 
-If **under-complexity** (delivered scope < stated motivation):
-1. **Extend the change** to deliver the rest of the stated goals.
-2. **Scope as staged work** — add to PR description: `This PR delivers [scope]. Remaining goals: [issue or PR reference].`
-
-Either way, **re-assert** is available via `re-assert --cr-dir <CR_DIR> --finding-ids {id}`.
+1. **Simplify** — remove the abstraction layers / parameters / config surface the observed use-site count does not warrant. The reviewer's `grep_pattern_used` is the right starting point to re-check the call sites listed above.
+2. **Add the missing callers** — if you know of imminent use sites that bring the count above `{reasoning_certificate.justification_threshold}`, add them in this PR (the count is then provable, not promised).
+3. **Justify** with a code comment within 5 lines of `{file}:{line}` naming the second call site or near-future use case.
+4. **Re-assert** via `python3 <plugin>/tools/python/code_review_helpers.py re-assert --cr-dir <CR_DIR> --finding-ids {id} --reason '<why>'` if you believe the reviewer's count is wrong.
 
 **Original recommendation:** {recommendation}
