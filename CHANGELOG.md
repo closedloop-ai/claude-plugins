@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.12.1
+
+#### Changed
+- **Reviewer prompt scope reframed: the diff is now the trigger for review, not a hard boundary on what can be reported.** `shared_prompt.txt` FILE RESTRICTION block becomes a FILE SCOPE block; the seven-gate FLAG list collapses to six gates by deleting "The line exists in the diff (added or modified line)" and reframing the file-restriction gate to allow findings on unchanged files/lines that the diff demonstrably broke; the seventh-gate evidence requirement updates from "from the diff" to "from the changeset OR the code it affects".
+- `shared_prompt.txt` Do-NOT-flag bullet "Issues in files not listed in <files_assigned> — even if real" reframed to "Issues in entirely unrelated files not affected by this change — even if real". All four precision gates (pre-existing-bug filter, linter-catchable filter, general-quality-concerns filter, hypothetical-edge-case filter) are unchanged.
+- `shared_prompt.txt` example block: `<example name="bad-out-of-scope">` (which trained the model to "discard — even though the bug is real" when a real bug was found outside `<files_assigned>`) replaced with a contrasting pair: `<example name="good-finding-on-unchanged-line">` (a finding on an unchanged line that the diff demonstrably broke — emit) and `<example name="bad-finding-on-unrelated-file">` (a real bug in a file entirely unrelated to the PR — discard). The original example's "Another agent partition covers that file" framing is also factually wrong under PLN-774 unified mode.
+- `shared_prompt.txt` chain-of-thought reasoning sequence: deleted "Is the line in the diff (added or modified)? (If NO -> discard)" (the most damaging gate, because it ran every time the model considered a finding); reframed "Is the file in my <files_assigned> list?" to allow broken-but-unchanged files; added a new CAUSATION step that requires the model to cite the specific diff change that caused the finding when the finding line is not in the diff (the new precision control that replaces the deleted line-in-diff gate).
+- `premise_prompt.txt` knock-on phrasing: "All other shared prompt constraints (file in scope, discrete and actionable, concrete evidence cited from the diff) still apply" → "All other shared prompt constraints (file scope, discrete and actionable, concrete evidence cited from the changeset or the code it affects) still apply". Keeps the premise reviewer's inherited-constraints recap in sync with the new `shared_prompt.txt` wording.
+- `bha_suffix.txt` role identity: "You are Bug Hunter A — a diff-only reviewer focused on correctness" → "You are Bug Hunter A — a correctness reviewer triggered by this diff. The diff is your attention trigger, not a boundary on what you can report: surface bugs in unchanged code that the diff demonstrably broke. See the FILE SCOPE rules in the shared prompt above for the full contract." Removes the "diff-only reviewer" framing at the role-identity level. All BHA reasoning-certificate methodology (PREMISE / TRACE / DIVERGENCE / GUARD CHECK / CONCLUSION) is untouched.
+
 ### code-review v2.12.0
 
 #### Added

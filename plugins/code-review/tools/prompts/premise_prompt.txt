@@ -284,8 +284,9 @@ likely fix it if aware". For Premise findings, replace these with:
      code, or introduces risk for a problem that does not exist OR is
      not located where the patch lives.
 
-All other shared prompt constraints (file in scope, discrete and
-actionable, concrete evidence cited from the diff) still apply.
+All other shared prompt constraints (file scope, discrete and
+actionable, concrete evidence cited from the changeset or the code it
+affects) still apply.
 
 ## Output Format
 
