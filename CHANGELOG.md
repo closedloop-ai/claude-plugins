@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.12.2
+
+#### Fixed
+- **PLN-779 scope de-restriction now propagates to the prompt-template wrapper in `commands/start.md` (PR #118 post-merge review, thadeusb).** PLN-779 v2.12.1 edited `shared_prompt.txt` / `premise_prompt.txt` / `bha_suffix.txt` to reframe the diff as the trigger (not a hard boundary), but the orchestrator's per-agent template wrapper at `start.md:378` still emitted `Review ONLY the changed code. ... You may ONLY report findings for files in <files_assigned> below — no exceptions.` directly in every Task call. For partitioned BHA (`>5K LOC` PRs), `<files_assigned>` is a strict subset of the diff and the wrapper's "no exceptions" directly contradicted shared_prompt.txt's new "diff is the TRIGGER, findings on unchanged code the diff demonstrably broke are in scope" framing. Wrapper now defers to `shared_prompt.txt`'s FILE SCOPE rules and references the CAUSATION step explicitly. For unified-mode BHA (`≤5K LOC`) and BHB/Auditor/Premise/Domain/fast-path (which receive ALL diff files in `<files_assigned>`), wrapper semantics are unchanged in practice — the fix removes the textual contradiction that confused reviewers in partitioned mode.
+- **BHB suffix `start.md:423` and fast-path PASS 2 `start.md:576` "discard a bug in an unassigned file while exploring" directives reworded to align with shared_prompt.txt FILE SCOPE.** New wording: findings must concern code AFFECTED by this change — files in `<files_assigned>` including unchanged lines the diff demonstrably broke; bugs in entirely unrelated files (outside `<files_assigned>`) remain out of scope and should surface in a separate PR. Semantics identical to before for BHB and fast-path (their `<files_assigned>` is always the full PR file set), but the phrasing no longer fights the per-reviewer FILE SCOPE block.
+
 ### code-review v2.12.1
 
 #### Changed
