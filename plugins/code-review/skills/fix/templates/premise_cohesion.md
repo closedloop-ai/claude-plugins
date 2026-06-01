@@ -16,6 +16,6 @@
 
 1. **Refactor** `{file}:{line}` to match the prevailing pattern shown above. When `is_duplicate_abstraction` is `true`, the canonical fix is usually to delete the new abstraction and call the existing one from the cited example.
 2. **Justify the divergence** with a code comment within 5 lines of `{file}:{line}` explaining the reason (e.g., performance hot path, deliberate isolation, in-flight migration).
-3. **Re-assert** via `re-assert --cr-dir <CR_DIR> --finding-ids {id}` if the reviewer's prevailing-pattern analysis is wrong.
+3. **Re-assert** via `python3 <plugin>/tools/python/code_review_helpers.py re-assert --cr-dir <CR_DIR> --cache-dir <CACHE_DIR> --finding-ids {id}` if the reviewer's prevailing-pattern analysis is wrong. (Resolve `<CACHE_DIR>` from `<CR_DIR>/cache_config.json:cache_dir`.)
 
 **Original recommendation:** {recommendation}

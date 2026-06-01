@@ -66,7 +66,12 @@ Findings live in:
 
 ### Apply severity + verdict filter
 
-For each candidate finding (from `verified[]` + `pending_verification[]` + `coverage_gaps[]`):
+The candidate set is built per flag state:
+
+- **always included**: `envelope.verified[]`, `envelope.pending_verification[]`, `envelope.coverage_gaps[]`
+- **included only when `--include-justified` is set**: `envelope.justified[]` (rendered manual-surface only; a JUSTIFIED-VALID verdict means the author defended the finding and the verifier confirmed the defense, so it never opts into auto-fix even if the operator wants visibility)
+
+For each candidate finding:
 
 ```
 sev = finding.get("verifier_severity") or finding.get("severity")
@@ -95,11 +100,11 @@ For each surviving finding, look up its dispatch bucket using the table below. S
 | `Code Quality` | — | **auto-fix** | DRY / maintainability — auto-fix at anchor |
 | `Documentation` | — | **auto-fix** | Edit cited file:line |
 | `Security` | — | **auto-fix** | Same flow as Correctness |
-| `Hygiene` / `Repo Hygiene` | `ci_artifacts` | **auto-fix** | Delete or gitignore |
-| `Hygiene` / `Repo Hygiene` | `path_leakage` | **auto-fix** | Replace path with env var / config reference |
-| `Hygiene` / `Repo Hygiene` | `gitignore_drift` | **auto-fix** | Add gitignore entry |
-| `Hygiene` / `Repo Hygiene` | `sensitive_files` | **manual-surface** | Never auto-modify (.env, credentials, .pem) |
-| `Hygiene` / `Repo Hygiene` | (other / unset) | **auto-fix** | Treat as generic hygiene fix |
+| `Hygiene` / `Repo Hygiene` | `ci_artifacts` | **auto-fix** | Delete or gitignore. Only auto-fix when the producer emits this exact subcategory — see `_check_ci_artifacts` in `code_review_helpers.py`. |
+| `Hygiene` / `Repo Hygiene` | `path_leakage` | **auto-fix** | Replace path with env var / config reference. Only auto-fix when the producer emits this exact subcategory — see `_check_path_leakage`. |
+| `Hygiene` / `Repo Hygiene` | `gitignore_drift` | **auto-fix** | Add gitignore entry. Only auto-fix when the producer emits this exact subcategory — see `_check_gitignore_drift`. |
+| `Hygiene` / `Repo Hygiene` | `sensitive_files` | **manual-surface** | Never auto-modify (.env, credentials, .pem). Producer is `_check_sensitive_files`. |
+| `Hygiene` / `Repo Hygiene` | (other / unset / unrecognized) | **manual-surface** | **Fail-safe default**: any Hygiene finding without a recognized subcategory routes to manual-surface. Prevents a hygiene producer that forgets to set `subcategory` (or a future producer that emits a subcategory we haven't routed yet) from silently falling into auto-fix on a sensitive file. |
 | `Premise` | `necessity` | **manual-surface** | Auto-revert unsafe |
 | `Premise` | `cohesion` | **manual-surface** | Surface cited 5+ examples |
 | `Premise` | `workaround` | **manual-surface** | Surface root cause location |
@@ -149,10 +154,12 @@ Interactive mode: prompt `Proceed? [y/N]` with no timeout (the prior auto-yes-af
 
 Group surviving auto-fix findings by file. Apply **sequentially** within file (later fixes see earlier results); files run sequentially overall to keep the run-loop reproducible.
 
-For each finding, perform the mandatory drift check first:
+For each finding, perform the mandatory drift check first.
+
+**Empty-snippet guard (REQUIRED — applied before the grep).** If `finding.code_snippet` is empty or whitespace-only, the grep pattern below would degenerate to `grep -Fn ""` which matches every line of the file and produces a trivially-true drift check. Hygiene findings can land in this state because the producer is permitted to omit `code_snippet` (`code_review_schema.py` defaults it to `""` in `normalize_legacy_finding`). When the snippet is empty, **do NOT run the grep**: tag the finding `MISSING_SNIPPET`, route it to the manual-surface bucket with note `code_snippet is empty — drift check cannot anchor the fix safely`, and skip to the next finding.
 
 ```bash
-# Drift check (inline shell — no helper subcommand needed)
+# Drift check (only runs when code_snippet is non-empty)
 grep -Fn "<first non-empty line of finding.code_snippet>" "<finding.file>" | \
   awk -F: '$1 >= <line - 3> && $1 <= <line + 3>' | head -1
 ```

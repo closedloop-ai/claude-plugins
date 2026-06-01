@@ -24,7 +24,8 @@
 
 2. **Re-assert** if you've already convinced yourself the finding is real and want to skip a second verifier pass:
    ```
-   python3 <plugin>/tools/python/code_review_helpers.py re-assert --cr-dir <CR_DIR> --finding-ids {id} --reason '<why>'
+   python3 <plugin>/tools/python/code_review_helpers.py re-assert --cr-dir <CR_DIR> --cache-dir <CACHE_DIR> --finding-ids {id} --reason '<why>'
+   # Resolve <CACHE_DIR> from <CR_DIR>/cache_config.json:cache_dir
    ```
    This promotes the finding to `verified[]` with `verifier_verdict=RE_ASSERTED`, after which `/fix` will dispatch it to the appropriate auto-action bucket on the next run.
 

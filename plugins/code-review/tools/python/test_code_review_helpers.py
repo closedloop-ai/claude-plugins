@@ -484,6 +484,63 @@ class TestHygieneChecks:
         assert len(result["findings"]) >= 2
 
 
+class TestHygieneSubcategories:
+    """Pin the subcategory field on every hygiene producer.
+
+    The /code-review:fix skill (PLN-727) dispatches Hygiene findings via the
+    `subcategory` field — `sensitive_files` routes to manual-surface, the
+    other three route to auto-fix. If a producer forgets `subcategory`,
+    `normalize_legacy_finding` defaults it to None and the dispatch table's
+    "(other / unset / unrecognized)" row fires — which is the fail-safe
+    manual-surface bucket — but the targeted auto-fix paths for ci_artifacts /
+    path_leakage / gitignore_drift would silently be skipped. Pin all four
+    here so a future hygiene producer can't accidentally regress the contract.
+    """
+
+    def test_ci_artifacts_emits_subcategory(self) -> None:
+        findings = _check_ci_artifacts(
+            "src/app.ts",
+            {"10": "import from /home/runner/work/project"},
+        )
+        assert len(findings) == 1
+        assert findings[0]["subcategory"] == "ci_artifacts"
+        assert findings[0]["category"] == "Repo Hygiene"
+
+    def test_path_leakage_emits_subcategory(self) -> None:
+        findings = _check_path_leakage(
+            "src/config.ts",
+            {"5": 'const p = "/Users/john/projects"'},
+        )
+        assert len(findings) == 1
+        assert findings[0]["subcategory"] == "path_leakage"
+        assert findings[0]["category"] == "Repo Hygiene"
+
+    def test_gitignore_drift_emits_subcategory(self) -> None:
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr=""
+            )
+            findings = _check_gitignore_drift(".env.local", "added", None)
+        assert len(findings) == 1
+        assert findings[0]["subcategory"] == "gitignore_drift"
+        assert findings[0]["category"] == "Repo Hygiene"
+
+    def test_sensitive_files_emits_subcategory(self) -> None:
+        """The headline regression test: sensitive_files MUST emit its
+        subcategory or the /fix dispatch routes a committed .env to the
+        auto-fix bucket and spawns an agent to edit a secrets file. See
+        thadeusb's PR #120 finding for the full trace."""
+        ranges: dict[str, dict[str, list[list[int]]]] = {
+            ".env.production": {"added": [[1, 5]], "removed": []},
+        }
+        findings = _check_sensitive_files(
+            ".env.production", "added", ranges
+        )
+        assert len(findings) == 1
+        assert findings[0]["subcategory"] == "sensitive_files"
+        assert findings[0]["category"] == "Repo Hygiene"
+
+
 # ---------------------------------------------------------------------------
 # Partition
 # ---------------------------------------------------------------------------

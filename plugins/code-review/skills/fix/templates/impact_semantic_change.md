@@ -16,6 +16,6 @@
 **Your options:**
 1. **Update each callsite** listed above to match the new shape / behavior.
 2. **Document the behavioral change** if consumers can adapt — add a note to the PR description and (if applicable) a CHANGELOG entry.
-3. **Re-assert** via `re-assert --cr-dir <CR_DIR> --finding-ids {id}` if the impact analysis is overreaching.
+3. **Re-assert** via `python3 <plugin>/tools/python/code_review_helpers.py re-assert --cr-dir <CR_DIR> --cache-dir <CACHE_DIR> --finding-ids {id}` if the impact analysis is overreaching. (Resolve `<CACHE_DIR>` from `<CR_DIR>/cache_config.json:cache_dir`.)
 
 **Original recommendation:** {recommendation}

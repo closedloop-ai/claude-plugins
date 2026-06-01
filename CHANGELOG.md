@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.13.2
+
+#### Fixed
+- **Sensitive-file auto-edit regression (PR #120 review, thadeusb).** `/code-review:fix`'s Hygiene dispatch row for `subcategory == "sensitive_files"` never fired because `cmd_hygiene` did not populate the `subcategory` field on any of its producers. `normalize_legacy_finding` defaulted it to `None`, so committed `.env`/`.pem`/`.key` findings (rated HIGH by `_severity_for_hygiene_file`) fell through to the catch-all "(other / unset)" row, which routed to auto-fix. A sonnet agent could then be spawned to edit the secrets file at the cited line. All four `_check_*` hygiene producers now emit their corresponding `subcategory` (`ci_artifacts`, `path_leakage`, `gitignore_drift`, `sensitive_files`), and the Hygiene dispatch catch-all is flipped from auto-fix to manual-surface so any unrecognized subcategory fails safe.
+- **`code_snippet` drift-check no-op for Hygiene (PR #120 review, thadeusb).** Hygiene producers do not populate `code_snippet`; the schema permits empty values and `normalize_legacy_finding` defaults to `""`. The Step 3a drift check, `grep -Fn "<first line of code_snippet>"`, degenerated to `grep -Fn ""` which matches every line and trivially passed for the entire Hygiene auto-fix bucket. Stacked on the dispatch bug, nothing guarded a sensitive-file auto-edit. The drift check now applies an empty-snippet guard BEFORE the grep — empty/whitespace-only `code_snippet` tags the finding `MISSING_SNIPPET` and routes it to manual-surface.
+- **`--include-justified` flag was a no-op (PR #120 review, thadeusb).** The flag was documented in the args table but never wired into Step 1's candidate set (which read only `verified[] + pending_verification[] + coverage_gaps[]`). Step 1 now adds `envelope.justified[]` to the candidate set when `--include-justified` is set; JUSTIFIED-VALID findings render manual-surface only and never opt into auto-fix.
+- **Template `re-assert` command examples were missing the required `--cache-dir` flag (PR #120 review, thadeusb).** Following the example commands in any of the 9 templates that referenced `re-assert` produced an argparse error (`the following arguments are required: --cache-dir`). Every template's `re-assert` example now includes `--cache-dir <CACHE_DIR>` with the resolution hint `<CR_DIR>/cache_config.json:cache_dir`. (Note: `RE_ASSERTED` is a real verifier verdict shipped in PLN-773 v2.10.0 — `code_review_schema.py:113` — and `cmd_re_assert` is registered — `code_review_helpers.py:7702`. The original review comment claimed both don't exist; the templates were wrong in detail, not in existence.)
+
+#### Added
+- 4 regression tests under `TestHygieneSubcategories` in `test_code_review_helpers.py` pinning the `subcategory` field on each of `_check_ci_artifacts`, `_check_path_leakage`, `_check_gitignore_drift`, and `_check_sensitive_files`. The sensitive-files test carries an explicit reference to thadeusb's PR #120 trace so the contract documentation lives next to its enforcement.
+
 ### code-review v2.13.1
 
 #### Added

@@ -9,7 +9,7 @@
 
 **Your options:**
 1. **Apply the recommendation** by hand — see below.
-2. **Re-assert** via `re-assert --cr-dir <CR_DIR> --finding-ids {id}` if you believe the finding is incorrect.
+2. **Re-assert** via `python3 <plugin>/tools/python/code_review_helpers.py re-assert --cr-dir <CR_DIR> --cache-dir <CACHE_DIR> --finding-ids {id}` if you believe the finding is incorrect. (Resolve `<CACHE_DIR>` from `<CR_DIR>/cache_config.json:cache_dir`.)
 
 **Recommendation:** {recommendation}
 
