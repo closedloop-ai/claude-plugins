@@ -1,4 +1,4 @@
-### ⚠️  Pending Verification — `{file}:{line}`  ({severity}/{category}{subcategory})
+### ⚠️  Pending Verification — `{file}:{line}`  ({severity} / {category} / {subcategory})
 
 **Issue:** {issue}
 
