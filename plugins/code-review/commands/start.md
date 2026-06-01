@@ -42,7 +42,7 @@ The review pipeline is driven by a **declarative run plan** emitted by the `prep
 The walk is hybrid:
 - **Deterministic helper stages** (most of the plan) — invoke the named `code_review_helpers.py` subcommand with the plan's args after token substitution. No prose decisions.
 - **Agent fleet stages** (`stage_20_spawn_reviewers`, `stage_23_verify_findings`) — spawn parallel sub-agent Tasks using the per-agent prompt templates in this file.
-- **Present stage** (`stage_29_present`) — render results using the format in this file.
+- **Present stage** (`stage_29_present`) — invoke the `code-review:present-local` skill (MODE=local) or follow `github-review.md` (MODE=github).
 
 Four runtime gates modify walker default behavior (they are runtime-driven and either replace the default walk or add a condition on top of a plan stage):
 1. **Gate A** — after `stage_12_hygiene`, if `flags.hygiene_only` is true: present hygiene findings and **EXIT** (no further stages, no verdict, no footer).
@@ -180,7 +180,7 @@ If a token's source file does not exist yet (a prior stage that produces it was 
 4. **Dispatch by `stage.kind`.**
    - **`helper`**: invoke `python3 <HELPERS> <stage.subcommand> <resolved args>`. If `stage.stdout` is set, redirect stdout to that file (`> <stage.stdout>`). If `stage.expected_outputs` is non-empty after the call, confirm at least one of those paths exists.
    - **`agent_fleet`**: dispatch to the per-stage agent fleet section below (`stage_20` → "Reviewer Fleet"; `stage_23` → reserved for plan 03).
-   - **`present`**: dispatch to "Local Mode: Present Results" (MODE=local) or follow `github-review.md` Steps 6 and 8 (MODE=github).
+   - **`present`**: invoke the `code-review:present-local` skill (MODE=local) or follow `github-review.md` Steps 6 and 8 (MODE=github). Gate A hygiene-only early-exit uses the "Hygiene Findings Format (Gate A render target)" section below (mode-agnostic), NOT the skill.
 
 5. **Honor `on_failure`** when the dispatched call fails or `expected_outputs` is missing:
    - `abort` — stop the walk and surface the error.
@@ -203,7 +203,7 @@ If `FLAGS.hygiene_only` is true (or the equivalent `--hygiene-only` was passed):
 
 1. If `CACHE_DIR` is set and `cache_result.json` produced a non-empty `status_message`, print it.
 2. Mark "Present hygiene findings" `in_progress`.
-3. Parse `<CR_DIR>/hygiene.json` and render using the "Hygiene Findings" format below.
+3. Parse `<CR_DIR>/hygiene.json` and render using the "Hygiene Findings Format (Gate A render target)" section below.
 4. If MODE=github, write hygiene findings to `.closedloop-ai/code-review-summary.md` and `.closedloop-ai/code-review-findings.json`; the workflow handles posting.
 5. **EXIT.** Do not run any remaining stages — not route, partition, agents, validate, finalize, cache-update, review-state-write, verdict, or footer. Hygiene-only runs do not emit a `<pr_verdict>` tag (there is no findings_validated.json or review_result.json for verdict to read; invoking it would crash the walker via `on_failure: abort`). This matches the pre-Phase-4b orchestrator behavior.
 
@@ -293,7 +293,7 @@ These notes annotate the run-plan stages with anything not obvious from the plan
 - **stage_25_finalize_result** (PLN-722 + PLN-721): writes `<CR_DIR>/review_result.json` (the canonical envelope) BEFORE running schema validation. PLN-722: prefers `<CR_DIR>/findings_verified.json` (verify-consolidate output) when present and honors its `force_human_review` flag in the verdict computation; falls back to `findings_validated.json` (everything to `verified[]`) when verify-consolidate didn't run. PLN-721: pipes the consolidate `justified[]` bucket into the envelope, and loads operator-overridable thresholds from `.closedloop-ai/settings/verdict-thresholds.json` (defaults to `premise_cumulative_medium=3`; absent/malformed → built-in default) so `_compute_canonical_verdict` Rule 4 can fire (≥ 3 MEDIUM Premise findings in `verified[]` → NEEDS_ATTENTION). A non-zero exit signals reviewer-emitted category/field drift (e.g. a category not in the canonical enum) but does not block the pipeline — `on_failure: continue` lets `stage_28_verdict` read the structurally complete envelope. Surface the stderr text in the present step so operators can correct prompts/schema; do not abort.
 - **stage_26_cache_update**: gated by **Gate C**.
 - **stage_27_review_state_write**: gated by **Gate D**.
-- **stage_29_present**: present stage. Dispatch to "Local Mode: Present Results" or the GitHub steps in `github-review.md`.
+- **stage_29_present**: present stage. Invoke the `code-review:present-local` skill (MODE=local) or follow Steps 6 and 8 in `github-review.md` (MODE=github). The mode-agnostic Gate A hygiene-only early-exit fires before this stage and uses its own format section above.
 
 ---
 
@@ -709,9 +709,11 @@ Entries in `verify_manifest.json.cache_hits[]` are already on disk at `agent_ver
 
 ---
 
-## Hygiene Findings (Gate A presentation)
+## Hygiene Findings Format (Gate A render target)
 
-Reached only when `flags.hygiene_only == true`. Parse `<CR_DIR>/hygiene.json` and present:
+Gate A step 3 ("render using the Hygiene Findings format below") points here. Gate A fires in **both** `MODE=local` and `MODE=github` so this format stays inline in the orchestration spine rather than living in any mode-specific skill.
+
+Parse `<CR_DIR>/hygiene.json` and render:
 
 ```markdown
 # Hygiene Check Results
@@ -724,265 +726,28 @@ Reached only when `flags.hygiene_only == true`. Parse `<CR_DIR>/hygiene.json` an
 
 ## Repo Hygiene ([count])
 
-[List hygiene findings — same format as Local Mode: Present Results hygiene section]
+[List hygiene findings — one entry per finding, with **File**, **Issue**, **Recommendation**]
 
 ---
 
 **Summary:** [count] hygiene issues found. No LLM-based review was performed.
 ```
 
-If MODE=github, write the hygiene findings to `.closedloop-ai/code-review-summary.md` (same summary file path) and `.closedloop-ai/code-review-findings.json` (findings only contain hygiene items). No inline comments are posted for hygiene-only runs unless findings exist.
-
-Mark "Present hygiene findings" `completed` and **EXIT**. Do NOT run footer or verdict — both depend on artifacts (`findings_validated.json`, `review_result.json`) that hygiene-only never produces, and `stage_28_verdict.on_failure == "abort"` would crash the walker.
+Then mark "Present hygiene findings" `completed` and **EXIT**. Do NOT run footer or verdict — both depend on artifacts (`findings_validated.json`, `review_result.json`) that hygiene-only never produces, and `stage_28_verdict.on_failure == "abort"` would crash the walker. The GitHub-mode write (`.closedloop-ai/code-review-summary.md` + `.closedloop-ai/code-review-findings.json`) is owned by Gate A step 4 above; do NOT duplicate it here.
 
 ---
 
-## Local Mode: Present Results (stage_29_present, MODE=local)
+## Local-Mode Presenter (stage_29_present, MODE=local)
 
-Mark "Present findings by severity" `in_progress`.
+When `MODE=local` AND `stage_29_present` is reached, invoke the `code-review:present-local` skill. The skill owns the full local-mode pipeline: validation summary, BLOCKING/HIGH/MEDIUM sections, Justified Findings (PLN-721), Dismissed Findings (PLN-722), Verifier Stats footer (PLN-773), operator-flag descriptions, override precedence rule (stage_22b context), Validation Summary, and final Summary.
 
-If `normalization_warnings > 0` in `findings_validated.json`, include after the validation summary:
-```
-⚠️ Severity normalization: N findings had non-standard severity values (mapped to MEDIUM).
-```
+The skill is scoped to local mode only. Gate A hygiene presentation (mode-agnostic) stays above; the `MODE=github` presenter path uses `github-review.md` (see below).
 
-Output in this format:
-
-```markdown
-# Code Review Results
-
-**Scope:** [staged/branch/files]
-**Files Reviewed:** [count]
-```
-
-**Reviewers and Model Routing lines are conditional on `FAST_PATH`:**
-
-- **If `FAST_PATH == false`:**
-```markdown
-**Reviewers:** Bug Hunter A, Bug Hunter B, Unified Auditor, Premise Reviewer
-[+ domain specialist if triggered]
-**Model Routing:** [Small/Medium/Large] — [model assignments summary]
-```
-
-- **If `FAST_PATH == true`:**
-```markdown
-**Reviewers:** Fast Path Reviewer (single-agent mode)
-**Model Routing:** Fast path — <MODEL> single reviewer
-```
-
-Then continue with:
+Decomposition rationale: ~270 lines of local-mode presentation content was extracted as a skill so the orchestration spine stays lean and future presenter changes ship in isolation from the orchestration flow.
 
 ---
 
-## Repo Hygiene ([count])
-
-[List any hygiene findings from deterministic checks]
-
-### Finding Title
-**File:** `path/file.ts:line`
-**Issue:** [description]
-**Recommendation:** [fix]
-
----
-
-## BLOCKING ([count])
-
-[List all blocking issues]
-
-### Issue Title
-**File:** `path/file.ts:line`
-**Reported by:** [agent(s)]
-**Issue:** [description]
-**Recommendation:** [fix]
-
----
-
-## HIGH ([count])
-
-[List all high priority issues — same format]
-
----
-
-## MEDIUM ([count])
-
-[List all medium priority issues — same format]
-
----
-
-## Justified Findings (PLN-721)
-
-Read `<CR_DIR>/review_result.json` → `justified[]`. If empty, omit the section. If non-empty, render below with collapsible details so the reviewer can audit the justification audit. Cap at 20 displayed; if more, append a pointer line to `review_result.json.justified[]`.
-
-For each justified finding:
-
-```markdown
-### [{ORIGINAL_SEVERITY} justified] {FILE}:{LINE} — {ISSUE_HEAD}
-**Finding ID:** `{ID}`
-**Original reviewer:** {REVIEWER}
-**Subcategory:** `{SUBCATEGORY}` (Premise findings only)
-**Verifier verdict:** JUSTIFIED-VALID
-**Verifier confidence:** {VERIFIER_CONFIDENCE}
-
-**Original concern:** [verbatim from finding.issue]
-
-**Author's justification:**
-> [verbatim from finding.justification.text]
->
-> — cited at `{finding.justification.source}` by `{finding.justification.claimed_by_reviewer}`
-
-**Verifier reasoning:** [verbatim from finding.verifier_reasoning — explains why J1 + J2 both passed]
-```
-
-After all justified findings (or the cap), print:
-
-```
-ℹ️ {N} finding(s) were emitted by reviewers but absorbed by author justification comments the verifier independently validated. Inspect each; if you disagree with a dismissal, the original concern is preserved in review_result.json.justified[].
-```
-
----
-
-## Dismissed Findings (PLN-722)
-
-Read `<CR_DIR>/review_result.json` → `rejected[]`. If empty, omit the section. If non-empty, render verbose-by-design (humans must evaluate, not skim) and sort BLOCKING dismissals first, MEDIUM last. Cap at 20 displayed; if more, append a pointer line to `review_result.json` for the full list.
-
-For each rejected finding:
-
-```markdown
-### [{ORIGINAL_SEVERITY} dismissed] {FILE}:{LINE} — {ISSUE_HEAD}
-**Finding ID:** `{ID}`
-**Original reviewer:** {REVIEWER}
-**Verifier verdict:** REJECTED (rejection_class: `{REJECTION_CLASS}`)
-**Verifier confidence:** {VERIFIER_CONFIDENCE}
-
-**Original issue:** [verbatim from finding.issue]
-
-**Verifier reasoning:** [verbatim from finding.verifier_reasoning — usually 1-3 paragraphs]
-
-**Evidence checks:**
-- ✓ {check.claim} — verified at {check.source}
-- ✗ {check.claim} — {check.actual_read} ({check.source})
-
-(If `finding.verifier_verdict == "TENTATIVE"` because of a sensitive-path escalation rather than a true REJECTED → TENTATIVE rewrite, that finding belongs in the primary BLOCKING/HIGH/MEDIUM sections above with a `[verifier uncertain — sensitive path]` annotation, NOT here.)
-```
-
-After all rejected findings (or the cap), print:
-
-```
-ℹ️ {N} finding(s) were emitted by reviewers but disproved by the verifier with cited evidence. Inspect each; if you disagree with a dismissal, the original finding is preserved in review_result.json.rejected[].
-```
-
-If `review_result.json.pending_verification[]` is non-empty, append a one-line note:
-
-```
-⚠️ {M} finding(s) were eligible for verification but no verifier output landed on disk (agent timeout, --no-verify, or budget overflow). Treat them as unverified and re-review by reading review_result.json.pending_verification[].
-```
-
----
-
-## Verifier Stats (PLN-773)
-
-Read `<CR_DIR>/review_result.json` → `stats.verification` and `stats.justification`. Render the footer below verbose-by-design — operators read the per-reviewer FP rate and the justification rate to detect over-rejection (reviewer hallucinating) and escape-hatch abuse (authors gaming the gate) respectively.
-
-```
-=== Verifier Stats ===
-Findings verified: {stats.verification.verified_count}
-  - CONFIRMED + DOWNGRADE: {verified_count - tentative_count - re_asserted}
-  - TENTATIVE:             {tentative_count}
-  - RE_ASSERTED:           sum over by_reviewer[].re_asserted
-Findings dismissed: {stats.verification.rejected_count}
-Findings justified: {stats.justification.justified_emitted}
-  - JUSTIFIED-VALID:   {stats.justification.justified_valid}
-  - JUSTIFIED-INVALID: {stats.justification.justified_invalid}
-Reviewers (FP rate / overrides):
-  {reviewer}: {fp_rate:.2f} / {re_asserted}{ "  ⚠ override" if re_asserted > 0 else "" }
-Justification rate: {stats.justification.rate:.2f} (threshold {threshold} — {ALERT|OK})
-Premise MEDIUM cumulative: {stats.premise_cumulative_medium_count} (gate threshold {premise_cumulative_medium})
-```
-
-If the verify-prepare manifest carried `no_verify: true` (read `<CR_DIR>/verify_manifest.json`), prepend the audit banner BEFORE the Verifier Stats section:
-
-```
-⚠️ --no-verify was passed; finding verification was bypassed entirely.
-   Reason: "{no_verify_reason}"
-   {N} findings reached verdict without verifier audit.
-```
-
-If the verify-prepare manifest carried `override_hits` (operator `--re-assert` honored) or `override_invalidated` (override rejected on file-content drift), echo a one-line summary:
-
-```
-ℹ️ Overrides: {len(override_hits)} honored / {len(override_invalidated)} invalidated (content drift).
-```
-
-### Operator flags affecting the presenter (PLN-773)
-
-- **`--justified-only`** — when present, render ONLY the Justified Findings section above. Suppress BLOCKING / HIGH / MEDIUM / Dismissed sections so the operator can audit justification usage without scrolling past every finding.
-- **`--re-assert <id>[,<id>...]`** — write operator overrides for the listed finding IDs via `code_review_helpers.py re-assert --cr-dir <CR_DIR> --cache-dir <CACHE_DIR> --finding-ids <ids> [--reason '<why>']`. Promotes from `rejected[]` / `pending_verification[]` back into `verified[]` on the next run. Persists across runs via `<CACHE_DIR>/overrides/<finding_id>.json` keyed on file-content hash — content drift auto-invalidates the override.
-- **`--review-dismissed`** — fetch a second opinion (haiku verifier) on prior `rejected[]`. Run `review-dismissed-prepare` to build the manifest, dispatch a haiku-verifier fleet against the per-finding inputs, then run `review-dismissed-consolidate` to auto-promote any non-REJECTED verdict via the same override file format (`override: "REVIEW_DISMISSED"`). Side-by-side diff lands at `<CR_DIR>/review_dismissed_diff.json`.
-- **`--no-verify`** — emergency bypass. **Requires `--no-verify-reason='<why>'`** so the bypass is captured in the audit log. The verifier is skipped entirely; every eligible finding lands in `verified[]` with `verifier_verdict: null`. Mutually exclusive with `--re-assert` / `--review-dismissed`.
-
-### Mutual exclusion enforcement
-
-The orchestrator MUST reject `--no-verify` combined with `--re-assert` or `--review-dismissed` at flag-parse time with a clear error message — emergency bypass is an explicit operator decision; combining it with overrides muddles the audit trail. `cmd_verify_prepare`'s own `--no-verify-reason` check is the second line of defense.
-
-### Override precedence in stage_22b
-
-When `cmd_verify_prepare` runs with a `--cache-dir`, the precedence is:
-
-1. **`<CACHE_DIR>/overrides/<finding_id>.json`** — operator override. If the file exists and the cited file's content hash still matches, synthesize a `RE_ASSERTED` verdict and skip both the verifications/ cache and the agent spawn.
-2. **`<CACHE_DIR>/verifications/<finding_id>.json`** — cached verifier verdict for the `(finding_id, snippet_hash, model, prompt_hash)` tuple. Materialize at the canonical output path and skip the agent spawn.
-3. **Agent spawn** — fall through; the orchestrator dispatches a verifier agent for this finding.
-
-Hash drift on an override (file content changed since the override was written) → override invalidated silently (logged in `manifest.override_invalidated[]`); verifier runs normally.
-
----
-
-## Validation Summary
-
-- **Total findings from agents:** X
-- **Hygiene findings:** H
-- **Validated (confirmed):** A
-- **Discarded — file not changed:** B
-- **Discarded — line not changed:** C
-- **Discarded — low confidence:** D
-- **Discarded — rejected by validation:** E
-- **Duplicates merged:** F
-- **Cross-file grouped:** G (findings with `other_locations`)
-- **Downgraded to MEDIUM:** H
-
-### Discarded Findings
-[List discarded findings grouped by discard reason — helps track agent accuracy]
-
----
-
-## Summary
-
-| Severity | Count |
-|----------|-------|
-| Blocking | X |
-| High | Y |
-| Medium | Z |
-
-**Recommendation:** [action based on findings]
-```
-
-**Consolidated Finding Format** (when multiple findings share root cause):
-
-```markdown
-### Issue Title
-**File:** `path/file.ts:line`
-**Reported by:** [agent(s)]
-**Issue:** [description]
-
-**Other Locations** (N more):
-- `path/file.ts:87` — same pattern in `functionName()`
-- `path/file.ts:124` — same pattern in `otherFunction()`
-
-**Recommendation:** [fix]
-```
-
-Mark todo as `completed`.
-
----
+<!-- replaced-by-skill: code-review:present-local — DO NOT add inline local-mode presenter content here -->
 
 ## GitHub Mode: Present (stage_29_present, MODE=github)
 

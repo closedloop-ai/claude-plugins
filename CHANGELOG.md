@@ -4,6 +4,24 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.11.1
+
+#### Fixed
+- **Unbalanced code fence in `skills/present-local/SKILL.md`.** A stray closing fence after the Summary section (inherited from the original inline `start.md` block) left an odd fence count, causing CommonMark parsers to swallow the **Consolidated Finding Format** template as code-block content. Removed the orphan fence; fences now pair cleanly.
+- **Template-vs-instruction ambiguity in the presenter.** Added a 3-line convention legend (`##` headers = report structure, fenced blocks = emit-verbatim card templates, `[bracketed]`/`{BRACED}` = instructions) and fenced the Repo Hygiene and BLOCKING finding-card templates so they match the style already used by the Justified/Dismissed/Verifier Stats sections.
+- **Severity-normalization warning relocated.** Moved the `normalization_warnings > 0` note from the top of the skill into the Validation Summary section, where its "append after the summary list" placement instruction is self-evident.
+
+### code-review v2.11.0
+
+#### Added
+- **New `code-review:present-local` skill.** Local-mode presenter content (BLOCKING/HIGH/MEDIUM section templates, Justified Findings (PLN-721), Dismissed Findings (PLN-722), Verifier Stats footer (PLN-773), operator-flag descriptions, override precedence rule, Validation Summary, final Summary) moved out of `commands/start.md` into `skills/present-local/SKILL.md`. The orchestrator explicitly invokes the skill at `stage_29_present` when `MODE=local`. Establishes the decomposition pattern for the rest of the start.md monolith (operator-flag skills, fast-path skill, agent-prompts skill — pending follow-up work).
+
+#### Changed
+- **`commands/start.md` reduced from 1014 → ~775 lines (~24% smaller).** Pointer block at the former local-mode presenter location scopes the skill invocation to `MODE=local` only. The Gate A hygiene presentation format stays inline in start.md (mode-agnostic — fires in both `MODE=local` and `MODE=github`); only the local-mode `stage_29_present` pipeline is delegated to the skill. No behavior change for operators — the orchestrator still produces the same output.
+- **GitHub-mode Validation Stats expanded to mirror local-mode parity.** `prompts/github-review.md` Step 8 previously surfaced only `Agent failures` and `Cross-file grouped` to PR reviewers; the local mode's full discard-reason breakdown (Total / Validated / Discarded by file/line/confidence/validation reason / Duplicates merged / Cross-file grouped / Downgraded to MEDIUM / Hygiene findings) is now also rendered in the GitHub Summary. Operators auditing reviewer accuracy from a PR no longer have to read local logs. Pre-PLN-722 runs (no `findings_validated.json`) fall back to the original two-line stats so back-compat holds.
+- **Walker dispatch references updated to point at the new skill (PR #115 review, thadeusb).** The skill extraction renamed the headings the walker contract dispatches to, but four references in start.md still pointed at the old "Local Mode: Present Results" heading: the Execution Model bullet (~line 45), the `kind: present` dispatch rule (~line 183), Gate A step 3's "Hygiene Findings" format reference (~line 206), and the stage_29_present per-stage note (~line 296). An orchestrator following the walker contract literally would never have been told to invoke the new skill — "no behavior change" was not actually true. All four references now point at `code-review:present-local` or the exact new heading "Hygiene Findings Format (Gate A render target)".
+- **GitHub-mode `--no-verify` audit banner now also prepended to `code-review-summary.md`.** Previously the banner only landed in `code-review-verifier-stats.md` (Step 6e), which the workflow posts as a separate comment with collapsible `<details>`. A PR reviewer reading only the Summary comment could miss that the verifier was bypassed. Step 8 now duplicates the banner onto the Summary file so the audit signal rides the most-visible comment — same content as the verifier-stats banner; intentional duplication.
+
 ### code-review v2.10.1
 
 #### Fixed

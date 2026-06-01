@@ -336,6 +336,16 @@ cat > .closedloop-ai/code-review-summary.md << 'SUMMARY_EOF'
 SUMMARY_EOF
 ```
 
+**`--no-verify` audit banner.** If `<CR_DIR>/verify_manifest.json` exists and has `no_verify: true`, prepend the audit banner to the Summary file as well as the verifier-stats file (Step 6e). The banner must ride the Summary comment — that's the most-visible comment in the PR, and a verifier-bypassed review must not require the reader to scroll into the Verifier Stats `<details>` block to see that the verifier was skipped:
+
+```markdown
+> ⚠️ **`--no-verify` was used.** Verifier was bypassed entirely.
+> Reason: "{no_verify_reason}"
+> {N} findings reached verdict without verifier audit.
+```
+
+Prepend BEFORE the `## Code Review Summary` header so it is the first thing the reader sees. This duplicates the same banner posted via `code-review-verifier-stats.md` (Step 6e) — intentional; the audit signal must appear on both comments because a PR reviewer skimming only the Summary cannot be allowed to miss it.
+
 **Do NOT** post the summary to GitHub directly. Do NOT use `gh api` to create comments or `gh pr review` to submit a review. The workflow handles all GitHub posting after Claude exits.
 
 ### Summary Format
@@ -385,8 +395,21 @@ Then continue with the remaining summary content:
 
 ### Validation Stats
 
-- **Agent failures:** N partitions skipped
-- **Cross-file grouped:** M findings consolidated
+Mirrors the local-mode Validation Summary so PR reviewers can see the same accuracy-audit signal (which reviewer discarded how many findings for what reason) without having to read local logs. Read `<CR_DIR>/findings_validated.json` for the discard-reason counts; an absent file means a pre-PLN-722 run — emit only the two lines marked **(always)** below and skip the rest.
+
+- **Total findings from agents:** X
+- **Validated (confirmed):** A
+- **Discarded — file not changed:** B
+- **Discarded — line not changed:** C
+- **Discarded — low confidence:** D
+- **Discarded — rejected by validation:** E
+- **Duplicates merged:** F
+- **Cross-file grouped:** G *(always — `other_locations` count)*
+- **Downgraded to MEDIUM:** I
+- **Hygiene findings:** H
+- **Agent failures:** N partitions skipped *(always — even when findings_validated.json absent)*
+
+(Placeholder `I` is intentional — `H` is reserved for "Hygiene findings." Reusing `H` would conflate two distinct counts.)
 
 **Recommendation:** [Approve | Address blocking/high issues | Consider medium items]
 ```
