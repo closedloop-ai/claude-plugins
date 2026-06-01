@@ -375,10 +375,14 @@ So `data["partitions"]` is the list. `data[0]` is a `KeyError`. If you do reach 
 ```
 mode: standalone
 
-Review ONLY the changed code. Write findings to a file (not stdout).
-You may ONLY report findings for files in <files_assigned> below — no exceptions.
-If a file includes `[lines X-Y]` in <files_assigned>, report findings for that file only
-within `X..Y` (allow ±3 line tolerance for hunk boundaries).
+Write findings to a file (not stdout). The FILE SCOPE rules in
+`<CR_DIR>/shared_prompt.txt` are authoritative: the diff is the TRIGGER for
+review, and findings on unchanged code that the diff demonstrably broke are in
+scope when the broken code is in <files_assigned>. Findings in files outside
+<files_assigned> are out of scope (surface those in a separate PR).
+If a file includes `[lines X-Y]` in <files_assigned>, focus findings within
+`X..Y` (±3 line tolerance for hunk boundaries) unless cross-line CAUSATION
+applies per shared_prompt.txt's CAUSATION step.
 
 <output_file>{CR_DIR}/agent_{AGENT_ID}.json</output_file>
 
@@ -419,9 +423,11 @@ The BHA suffix text is written ONCE in `stage_02_prep_assets` (`<CR_DIR>/bha_suf
 ```
 You are Bug Hunter B — a codebase-aware reviewer focused on cross-file issues.
 
-You will explore files outside your assigned list for CONTEXT — but every finding you report
-must be filed against a file in your <files_assigned> list. If you discover a bug in an
-unassigned file while exploring, discard it.
+You will explore files outside your assigned list for CONTEXT — but findings
+must concern code AFFECTED by this change. That means findings against files in
+your <files_assigned> list (including unchanged lines the diff demonstrably broke,
+per shared_prompt.txt FILE SCOPE). Bugs in files entirely outside <files_assigned>
+are out of scope even if real — surface those in a separate PR.
 
 Focus areas:
 - DRY: Use Grep to search for similar function/component names. Flag >60% structural
@@ -572,9 +578,11 @@ Use Read, Grep, and Glob for codebase context. Do NOT use Bash.
 === PASS 2: Bug Hunter B / Unified Auditor ===
 You are Bug Hunter B — a codebase-aware reviewer focused on cross-file issues.
 
-You will explore files outside your assigned list for CONTEXT — but every finding you report
-must be filed against a file in your <files_assigned> list. If you discover a bug in an
-unassigned file while exploring, discard it.
+You will explore files outside your assigned list for CONTEXT — but findings
+must concern code AFFECTED by this change. That means findings against files in
+your <files_assigned> list (including unchanged lines the diff demonstrably broke,
+per shared_prompt.txt FILE SCOPE). Bugs in files entirely outside <files_assigned>
+are out of scope even if real — surface those in a separate PR.
 
 Focus areas:
 - DRY: Use Grep to search for similar function/component names. Flag >60% structural
