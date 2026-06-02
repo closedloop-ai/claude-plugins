@@ -187,9 +187,11 @@ If a token's source file does not exist yet (a prior stage that produces it was 
    - `continue` — log a warning and proceed to the next stage.
    - `continue_with_coverage_gap` — emit a `system_marker: "agent-failure"` finding (see "Agent Failure Recovery" below) and proceed.
 
-6. **Run gates.** After completing a stage, scan `GATES` for any entry whose `after_stage` matches the stage just finished. Each gate checks `outputs` exist and are well-formed; `on_failure_action` follows the same `abort | continue | emit_coverage_gap` semantics.
+6. **PLN-725 singleton agent dispatch.** When the stage just finished is `stage_11_extract_signals` or `stage_15_coverage_critic`, read the manifest it just wrote and run the protocol in the "PLN-725 Single-Agent Dispatch" section below before proceeding to the next stage. The manifest's `status` field decides whether an agent spawn is needed — `cache_hit` / `skipped` skips, `needs_agent` spawns. The downstream sibling stage (`stage_11b` / `stage_15b`) walks normally as the next array entry; its `cmd` no-ops on `cache_hit` / `skipped` manifests so the walker doesn't need to branch.
 
-7. **Branching gates** (see next section) fire at specific stage boundaries.
+7. **Run gates.** After completing a stage, scan `GATES` for any entry whose `after_stage` matches the stage just finished. Each gate checks `outputs` exist and are well-formed; `on_failure_action` follows the same `abort | continue | emit_coverage_gap` semantics.
+
+8. **Branching gates** (see next section) fire at specific stage boundaries.
 
 ---
 
@@ -282,6 +284,11 @@ These notes annotate the run-plan stages with anything not obvious from the plan
 - **stage_07_auto_incremental**: runs **before** `stage_05_parse_diff` (its array position is between `stage_04_finalize_cache` and `stage_05_parse_diff`). This ordering matters: any `diff_scope` override must be applied to the cached `<DIFF_SCOPE>` token BEFORE parse-diff and extract-patches materialize `diff_data.json` and `patches_all.txt`, otherwise downstream stages see full-PR diff data alongside a narrowed token. The stage retains its `_07_` id as a stable label; execution order follows array position. Writes `<CR_DIR>/auto_incremental.json` with optional `diff_scope` (override) and `review_mode_line`. If `diff_scope` is non-null, update the cached `<DIFF_SCOPE>` token. Print `review_mode_line` (always) and, if `pr_auto_detected` was true in `scope.json`, print `"Auto-detected PR #<PR_NUMBER> for branch <REVIEW_BRANCH>."`.
 - **stage_08_fetch_intent**: the helper writes `intent_context.json` into `cr_dir` itself; its stdout is a small `{path, source}` summary that the walker discards. The run plan's `stdout` field is `None` here because redirecting stdout to `intent_context.json` would corrupt the file by overwriting the helper's structured payload with the summary.
 - **stage_09_detect_injection** (PLN-720): scores PR title/body/commits against the canonical 9-pattern catalogue and writes `<CR_DIR>/injection_report.json`. On severity ≥ Medium (score ≥ 30), rewrites `<CR_DIR>/intent_context.json` in place with `quarantine: true` and redacted fields. On severity ≥ High (score ≥ 70), also writes `<CR_DIR>/agent_injection-detector.json` containing a canonical `InjectionAttempt` finding — the `agent_*.json` naming makes `cmd_collect_findings` pick it up via the standard glob with no extra wiring. Always appends one JSONL entry to `.closedloop-ai/injection-log.jsonl` (90-day TTL, swept on read). `on_failure: continue` is intentional — a detector crash must never abort the pipeline. The Premise dispatch below (Reviewer Fleet) prepends a quarantine preamble when `intent_context.json.quarantine == true`.
+- **stage_11_extract_signals** (PLN-725 Phase 1, wired in Phase 4): runs `extract-signals-prepare`. Writes `<CR_DIR>/extract_signals_manifest.json` describing the cache outcome. On `status: "cache_hit"`, prepare wrote `<CR_DIR>/extract_signals.json` itself — no agent runs, downstream `stage_11b` no-ops. On `status: "needs_agent"`, the walker invokes the "PLN-725 Single-Agent Dispatch" protocol with the manifest's `input_path`, `prompt_path`, and target `agent_extract_signals.json`. `on_failure: continue_with_coverage_gap` — a signal-extraction failure degrades to the fail-closed default signal set (every taxonomy signal at 0.5 confidence); the required-floor of coverage is unaffected because required rules cannot key solely on LLM signals.
+- **stage_11b_extract_signals_consolidate** (PLN-725 Phase 4): runs `extract-signals-consolidate` against `<CR_DIR>/agent_extract_signals.json`. Validates the agent output against the taxonomy contract and writes the canonical `<CR_DIR>/extract_signals.json`. No-ops when the prepare manifest's `status` is `"cache_hit"` so the walker can drive this unconditionally without inspecting prepare's status. Fail-closed on validation rejection — writes the default signal set + emits a `signal-extraction-failed` finding to `agent_signal-extraction-failed.json`.
+- **stage_14_resolve_coverage** (PLN-725 Phase 2, wired in Phase 4): runs `resolve-coverage` against `coverage` rules + `extract_signals.json` + diff data. Produces `<CR_DIR>/coverage_plan_initial.json` (the deterministic pre-critic plan). `depends_on: ["stage_11b_extract_signals_consolidate"]` so the signals input is guaranteed to exist. `on_failure: continue_with_coverage_gap` — Phase 4 wires this for telemetry; no downstream stage currently consumes the output.
+- **stage_15_coverage_critic** (PLN-725 Phase 3, wired in Phase 4): runs `coverage-critic-prepare`. Writes `<CR_DIR>/coverage_critic_manifest.json`. On `status: "cache_hit"` or `status: "skipped"` (the `--no-critic` flag, not wired in Phase 4), prepare wrote `<CR_DIR>/coverage_plan.json` itself — no agent runs, downstream `stage_15b` no-ops. On `status: "needs_agent"`, the walker invokes the "PLN-725 Single-Agent Dispatch" protocol with the manifest's paths and target `agent_coverage_critic.json`. `on_failure: continue` — coverage-critic failure surfaces as `critic_status: "fail_closed"` on the final plan; the deterministic floor from stage_14 still routes reviewers correctly.
+- **stage_15b_coverage_critic_consolidate** (PLN-725 Phase 4): runs `coverage-critic-consolidate` against `<CR_DIR>/agent_coverage_critic.json`. Validates the agent output against the AVAILABLE / additive-only / best-effort-only / evidence / dedup / 5-cap constraints and merges accepted additions into `<CR_DIR>/coverage_plan.json`. No-ops when the prepare manifest's `status` is `"cache_hit"` or `"skipped"`. Fail-closed on all-rejected — writes the initial plan unchanged + emits a `coverage-critic-failed` finding to `agent_coverage-critic-failed.json`.
 - **stage_12_hygiene**: writes `<CR_DIR>/hygiene.json` with hygiene findings. Triggers **Gate A** (hygiene-only exit) immediately after.
 - **stage_17_partition**: positioned in the run plan array after `stage_19_cache_check` so Gate B's `route` invocation runs first and supplies `--max-bha-agents`. The stage id retains its `_17_` prefix as a stable label (stage ids are not strict ordinals; execution order follows array position). Reads `partitions.json` afterward; entries shape `{id, files, total_loc, is_test_only}` with `files[].file` (NOT `path`), `files[].loc`, `files[].is_test`, optional `files[].line_range`. **PLN-774**: top-level keys also carry `partition_mode` (`"unified"` | `"partitioned"`), `partition_count`, `total_changed_loc`, and `unified_threshold_loc`. When total changed LOC ≤ `BHA_UNIFIED_THRESHOLD_LOC` (default 5000, settable via `.closedloop-ai/settings/code-review.json:bha_unified_threshold_loc`; `0` = always partition), the partitioner emits a single unified partition holding every file so cross-region invariants stay visible to one BHA reviewer's context. `cmd_verify_prepare` propagates `partition_mode` + `partition_count` into `verify_manifest.json` for the presenter footer. The `stats.verification.by_reviewer` block naturally labels BHA by partition via the filename-derived `reviewer` field (`agent_bha_p0.json` → `reviewer='bha_p0'`) — no extra split logic is needed; under unified mode only a single `bha_p0` bucket exists because there is only one partition.
 - **stage_19_cache_check**: writes `<CR_DIR>/cache_result.json` (stats), `<CR_DIR>/agent_cached_bha.json` (cached BHA findings, glob-compatible with `agent_*`), `<CR_DIR>/uncached_diff_data.json` (filtered diff_data for uncached files). Do NOT print the cache status here — it is printed in Gate A (hygiene exit) or Gate B (after route).
@@ -714,6 +721,81 @@ Entries in `verify_manifest.json.cache_hits[]` are already on disk at `agent_ver
 - Do not read finding source files in the orchestrator (verifier agents read files via Read/Grep themselves).
 - Do not parse `agent_verifier_*.json` in the orchestrator — `cmd_verify_consolidate` (stage_24a) reads them.
 - Do not regenerate `verify_manifest.json` in the walker — `cmd_verify_prepare` (stage_22b) is the only writer.
+
+---
+
+## PLN-725 Single-Agent Dispatch
+
+Walker contract step 6 points here. Two stages (`stage_11_extract_signals`, `stage_15_coverage_critic`) emit a manifest whose `status` field decides whether a singleton LLM agent must be spawned. This section codifies the dispatch — the same protocol applies to both stages with different paths.
+
+### When to dispatch
+
+After the prepare stage finishes, read its manifest:
+
+| Stage | Manifest path |
+|---|---|
+| `stage_11_extract_signals` | `<CR_DIR>/extract_signals_manifest.json` |
+| `stage_15_coverage_critic` | `<CR_DIR>/coverage_critic_manifest.json` |
+
+Parse `status`:
+
+| `status` | Action |
+|---|---|
+| `"cache_hit"` | **Skip dispatch.** Prepare already wrote the canonical output file (`extract_signals.json` / `coverage_plan.json`). The downstream sibling consolidate stage will no-op. |
+| `"skipped"` | **Skip dispatch.** Only emitted by `coverage-critic-prepare --no-critic`; prepare wrote `coverage_plan.json` with `critic_status: "skipped"`. The downstream sibling consolidate stage will no-op. |
+| `"needs_agent"` | **Spawn the singleton agent below.** |
+
+### Spawn contract
+
+For `status: "needs_agent"`, the manifest carries the inputs the agent needs:
+
+| Field | Use |
+|---|---|
+| `prompt_path` | The agent's system prompt path — pass as `{PROMPT_PATH}` below; the agent reads it itself. |
+| `input_path` | The bounded input bundle (taxonomy + diff summary + AVAILABLE list / etc.) — pass as `{INPUT_PATH}`; the agent reads it itself. |
+| `model` | Model tier for the dispatch (`haiku` for signal-extraction, `sonnet` for coverage-critic). |
+
+The manifest's `output_path` field is the **canonical sibling consolidate output** (`extract_signals.json` / `coverage_plan.json`), NOT where the agent writes. The agent's write target is fixed by convention:
+
+| Stage | Agent writes to |
+|---|---|
+| `stage_11_extract_signals` | `<CR_DIR>/agent_extract_signals.json` |
+| `stage_15_coverage_critic` | `<CR_DIR>/agent_coverage_critic.json` |
+
+These paths match the `--agent-output` arg the sibling stage's `args` declare, so the consolidate cmd finds the file with no walker substitution.
+
+Spawn one foreground `Task`:
+
+1. `subagent_type: "code-review:code-review-worker"` (same allowlist as the verifier fleet — Read, Write, Grep, Glob).
+2. `model` set to the manifest's `model` field.
+3. Prompt template:
+   ```
+   You are the PLN-725 SINGLE-AGENT DISPATCH ({STAGE_LABEL}). Your system
+   prompt is at:
+     {PROMPT_PATH}
+
+   Read it. Your input bundle is at:
+     {INPUT_PATH}
+
+   Read the bundle for the contract you are validating against. Write
+   your output JSON to:
+     {OUTPUT_PATH}
+
+   Do not write anywhere else. Do not read source files in the
+   repository unless the system prompt explicitly says so.
+   ```
+   Substitute the resolved paths from the manifest. `{STAGE_LABEL}` is `"signal-extraction"` for stage_11 and `"coverage-critic"` for stage_15.
+4. Block on the Task before advancing the walker to the sibling consolidate stage — `TaskOutput` with block-true.
+
+### Failure semantics
+
+- A missing `agent_*.json` output after the Task returns is NOT a fatal error. The sibling consolidate stage detects the missing file and fails closed — extract-signals emits the fail-closed default signal set + a `signal-extraction-failed` finding; coverage-critic leaves the initial plan as final + a `coverage-critic-failed` finding.
+- Do not retry the singleton agent in the walker. The fail-closed downstream handling is the canonical recovery path — retrying would burn tokens on a request that already failed.
+- Do not parse the agent output in the orchestrator. The sibling consolidate stage is the only reader; orchestrator parsing would duplicate the validation contract.
+
+### Cache hits and the `--no-critic` flag
+
+Both `"cache_hit"` and `"skipped"` mean prepare wrote the canonical output file itself. The walker advances to the sibling consolidate stage as normal; the sibling stage's `cmd` detects the manifest status, writes a one-line no-op JSON to stdout, and returns 0. No orchestrator-side branching needed.
 
 ---
 
