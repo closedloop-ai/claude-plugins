@@ -4,6 +4,39 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.13.2
+
+#### Added
+- PLN-727 Phase 1: restructured `/code-review:fix` skill from a uniform verify-and-edit flow into a category-dispatch system. Findings route to one of four buckets — `auto-fix`, `callsite-fix` (deferred to PLN-726), `specialized-fix` (deferred to PLN-723), or `manual-surface` — based on `category` / `subcategory`. Premise, `Hygiene/sensitive_files`, `InjectionAttempt`, `CompanionChange`, and `Coverage` findings route to manual-surface and never auto-apply.
+- 14 manual-action templates under `plugins/code-review/skills/fix/templates/`: `premise_necessity.md`, `premise_cohesion.md`, `premise_workaround.md`, `premise_complexity.md`, `testquality_bug_locking.md`, `testquality_test_deletion.md`, `testquality_specialized.md`, `impact_semantic_change.md`, `companion_change.md`, `coverage_gap.md`, `injection_attempt.md`, `hygiene_sensitive.md`, `pending_verification.md`, and `_generic.md` (fallback). Each substitutes placeholders from the finding's `reasoning_certificate` and offers a `re-assert` escape hatch with the correct `--cache-dir` argument.
+- `/code-review:fix` now writes `<CR_DIR>/fix_result.json` summarizing bucket counts (`auto_fixed`, `manual_surface`, `stale_findings`, `pending_verification_routes`, `deferred_callsite`, `deferred_specialized`, `build_validator_status`, `manual_action_required`, `duration_seconds`). Lets non-interactive callers act on the outcome without parsing stdout.
+- 4 regression tests under `TestHygieneSubcategories` in `test_code_review_helpers.py` pinning the `subcategory` field on each of `_check_ci_artifacts`, `_check_path_leakage`, `_check_gitignore_drift`, and `_check_sensitive_files`. The sensitive-files test carries an explicit reference to the PR #120 review thread that surfaced the regression so the contract documentation lives next to its enforcement.
+
+#### Changed
+- `/code-review:fix` source is now `<CR_DIR>/review_result.json` only. The legacy `validate_output.json` fallback is removed; the canonical envelope has shipped on every full review run since PLN-719 Foundation Phase B (`stage_25_finalize_result` writes it; see `code_review_helpers.py:1599` / `start.md:293`).
+- Removed the per-finding verification subagent from `/code-review:fix`. The skill now trusts `envelope.verified[]` as audited upstream by the verifier (PLN-722) and routes `envelope.pending_verification[]` entries to manual-surface with the `pending_verification.md` template.
+- Default behavior in non-interactive contexts is now print-plan-and-exit; explicit `--apply` required for code modification. Replaces the prior auto-yes-after-5s timeout.
+- Mandatory `code_snippet` drift check before any code-modifying fix. Mismatch tags the finding `STALE_FINDING` and routes it to manual-surface.
+- New `/code-review:fix` flags: `--include-medium`, `--include-tentative`, `--include-justified`, `--dry-run`, `--apply`, `--category-only <name>`, `--skip-verification`.
+- `/code-review:fix` exit-code contract is now three-valued: `0` (made automated progress or no findings), `1` (runtime error), `2` (manual action required — zero auto-fixes ran AND ≥1 manual-surface entry remains). Exit 2 is the new halt-the-loop signal for closed-loop callers.
+- `cmd_hygiene`'s four producers (`_check_ci_artifacts`, `_check_path_leakage`, `_check_gitignore_drift`, `_check_sensitive_files`) now emit the corresponding `subcategory` field. This is the contract `/code-review:fix`'s dispatch table reads to distinguish safe-auto-fix Hygiene from sensitive-file manual-surface.
+
+#### Fixed
+- **Sensitive-file auto-edit regression (PR #120 review, thadeusb).** The Hygiene dispatch row for `subcategory == "sensitive_files"` never fired because the hygiene producers did not populate `subcategory` — `normalize_legacy_finding` defaulted it to `None`, so committed `.env`/`.pem`/`.key` findings (rated HIGH by `_severity_for_hygiene_file`) fell through to the catch-all row, which routed to auto-fix. The fix has two halves: producers now emit `subcategory` (see Changed above), and the Hygiene dispatch catch-all is flipped from auto-fix to manual-surface so any unrecognized subcategory fails safe.
+- **`code_snippet` drift-check no-op for Hygiene (PR #120 review, thadeusb).** Hygiene producers do not populate `code_snippet`; the schema permits empty values and `normalize_legacy_finding` defaults to `""`. The drift check `grep -Fn "<first line of code_snippet>"` degenerated to `grep -Fn ""` which matches every line and trivially passed for the entire Hygiene auto-fix bucket. Stacked on the dispatch bug, nothing guarded a sensitive-file auto-edit. The drift check now applies an empty-snippet guard BEFORE the grep — empty/whitespace-only `code_snippet` tags the finding `MISSING_SNIPPET` and routes it to manual-surface.
+- **`--include-justified` flag was a no-op (PR #120 review, thadeusb).** The flag was documented in the args table but never wired into Step 1's candidate set. Step 1 now adds `envelope.justified[]` to the candidate set when `--include-justified` is set; JUSTIFIED-VALID findings render manual-surface only and never opt into auto-fix.
+- **Template `re-assert` command examples were missing the required `--cache-dir` flag (PR #120 review, thadeusb).** Following the example commands in any of the 9 templates that referenced `re-assert` produced an argparse error. Every template's `re-assert` example now includes `--cache-dir <CACHE_DIR>` with the resolution hint `<CR_DIR>/cache_config.json:cache_dir`.
+- **`pending_verification.md` header concatenated `{category}` and `{subcategory}` with no separator (PR #120 review, shafty023).** A finding with category `Correctness` and subcategory `null-deref` rendered as `HIGH/Correctnessnull-deref`. Header now uses ` / ` consistent with `_generic.md`.
+- **Closed-loop cycle regression for manual-surface-only outcomes.** With the new dispatch, manual-surface findings emit no code edits; the previous always-exit-0 contract caused `run-loop.sh` to burn its full `POST_LOOP_REVIEW_CYCLES` budget re-detecting the same findings every cycle without signalling that human action was pending. Exit 2 + `fix_result.json` give the harness an explicit halt signal (paired with `code` v1.12.4).
+
+### code v1.12.4
+
+#### Changed
+- `run-loop.sh` now invokes `/code-review:fix $cr_dir --apply`. Required to preserve auto-apply behavior under `code-review` v2.13.2's new default-dry-run-in-non-interactive policy.
+
+#### Fixed
+- `run-loop.sh` `post_loop_review_fix` now branches on `code-review:fix` exit code 2 and halts the review-fix cycle with a clear "manual action required — N finding(s)" log message, sourcing the count from `<CR_DIR>/fix_result.json`. Previously the loop continued re-running review+fix on manual-surface-only outcomes, wasting cycles. Requires `code-review` v2.13.2+; coordinated cross-plugin release.
+
 ### code-review v2.12.2
 
 #### Fixed
