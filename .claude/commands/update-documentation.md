@@ -99,6 +99,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 </examples>
 
+<examples id="derivability">
+
+<example type="disallowed">
+- **Case-sensitive migration patterns broke legacy semantics (PR #124, Bug Hunter B HIGH + thadeusb).** Legacy `route` matched `pattern.lower() in path.lower()`.
+</example>
+
+<example type="correct">
+- The migration legacy soft-compat now preserves case-insensitive substring semantics. The migration emits `ignore_case: True` on every migrated trigger, and `_trigger_fires` recompiles the regex with `re.IGNORECASE` when the flag is set.
+</example>
+
+<example type="rationale">
+The disallowed version references the reviewer ("Bug Hunter B"), the human ("thadeusb"), the severity tier ("HIGH"), and the PR-comment thread ("PR #124") — none of which are derivable from git diff + plugin.json + commit subjects. The correct version describes the same code change, plainly, from sources the workflow actually reads.
+</example>
+
+</examples>
+
 <examples id="duplicate-detection">
 
 <example type="duplicate">
@@ -123,6 +139,14 @@ Result: NOT duplicate (different aspects)
 4. **Date format** — YYYY-MM-DD (ISO 8601)
 5. **Version source** — Always read from plugin.json, never guess
 6. **README edits are minimal** — Only fix inaccurate sections, preserve correct prose and formatting
+7. **Derivability** — Every entry must be derivable from the documented source set: git diff (of the files changed), `plugin.json`, and commit subjects. The following are NOT in the source set and MUST NOT appear in entries:
+   - Reviewer identities — names of human reviewers, code-review subagents (e.g. `Bug Hunter A`, `Unified Auditor`, `Premise Reviewer`, `devops-architect`), or PR commenters
+   - Internal finding codes (e.g. `auditor_f0`, `bha_p0_f1`, `domain_0_f0`)
+   - Severity tier names (HIGH / MEDIUM / BLOCKING / etc.) unless the commit subject already contains them
+   - PR-comment thread context, agent verification verdicts, review meta-state
+   - Anything else that came from the conversation but not from `git`/`plugin.json`/commit subjects
+
+   If a fix originated from a code review, describe what the code does differently now — not who flagged it or how it was triaged. See the `derivability` examples in `<data>` for the disallowed-vs-correct phrasing pair.
 
 </constraints>
 
@@ -208,7 +232,7 @@ The file uses a flat newest-first structure. There is no `## [Unreleased]` or `#
 
 1. **Find or create** the plugin subsection `### {plugin} v{version}` at the top of the entry list (below the introductory paragraph, above all existing `### plugin v...` entries)
 2. **Find or create** the category `#### Added/Changed/Fixed/Removed` within the plugin subsection
-3. **Add entries** as bullet points under the appropriate category
+3. **Add entries** as bullet points under the appropriate category. Each entry must satisfy constraint 7 (Derivability) — if you find yourself reaching for a reviewer name, finding code, severity tier, or PR-thread context, drop it and describe the code change instead.
 
 If the version already exists as a `### {plugin} v{version}` heading further down (because that version already shipped), do **not** edit it retroactively — bump the plugin's `plugin.json` to a new version and create a fresh entry for that new version at the top.
 
