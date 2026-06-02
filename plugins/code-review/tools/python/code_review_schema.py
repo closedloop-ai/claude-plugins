@@ -534,6 +534,7 @@ SYSTEM_MARKERS_FIXED: frozenset[str] = frozenset({
     "agent-failure",
     "signal-extraction-failed",
     "coverage-critic-failed",
+    "coverage-verify-blocking",
     "schema-version",
     # pr_metadata category
     "pr_description",
@@ -552,6 +553,7 @@ SYSTEM_MARKER_SCOPES: dict[str, str] = {
     "agent-failure": "system",
     "signal-extraction-failed": "system",
     "coverage-critic-failed": "system",
+    "coverage-verify-blocking": "system",
     "schema-version": "system",
     "pr_description": "pr_metadata",
 }
