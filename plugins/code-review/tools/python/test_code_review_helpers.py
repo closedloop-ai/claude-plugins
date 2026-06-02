@@ -11852,6 +11852,70 @@ class TestCoverageCriticSourceAllowlist:
         assert "coverage-critic" in SOURCES
 
 
+class TestCoverageCriticSystemMarkerRegistration:
+    """The fail-closed finding's system_marker must pass validate_finding.
+
+    Mirrors signal-extraction-failed: registered in SYSTEM_MARKERS_FIXED and
+    mapped to "system" scope. Without this, validate_finding drops every
+    coverage-critic-failed finding and the operator-visible degradation
+    signal is silently lost downstream.
+    """
+
+    def test_fixed_set_contains_coverage_critic_failed(self) -> None:
+        from code_review_schema import SYSTEM_MARKERS_FIXED
+        assert "coverage-critic-failed" in SYSTEM_MARKERS_FIXED
+
+    def test_scope_is_system(self) -> None:
+        from code_review_schema import system_marker_scope
+        assert system_marker_scope("coverage-critic-failed") == "system"
+
+    def test_is_valid_system_marker_true(self) -> None:
+        from code_review_schema import is_valid_system_marker
+        assert is_valid_system_marker("coverage-critic-failed") is True
+
+    def test_emitted_finding_passes_validation_after_collect_pipeline(
+        self, tmp_path: Path,
+    ) -> None:
+        """End-to-end: the emitter writes a finding that — after the same
+        normalize + priority-fill steps cmd_collect_findings applies on
+        every agent_*.json — passes validate_finding cleanly. Locks the
+        writer/reader contract for the operator-visible degradation signal,
+        which the bug being fixed (unregistered system_marker) would
+        otherwise silently drop.
+        """
+        from code_review_helpers import (
+            _emit_coverage_critic_failed_finding,
+            _normalize_findings,
+        )
+        from code_review_schema import normalize_legacy_finding, validate_finding
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        now_iso = "2026-06-02T00:00:00+00:00"
+        _emit_coverage_critic_failed_finding(
+            cr_dir, ["err one", "err two"], now_iso,
+        )
+        path = cr_dir / "agent_coverage-critic-failed.json"
+        assert path.exists()
+        payload = json.loads(path.read_text())
+        findings = payload.get("findings", [])
+        assert findings, "emitter must write at least one finding"
+
+        normalized, _, _ = _normalize_findings(findings, discarded=[])
+        for idx, f in enumerate(normalized):
+            promoted = normalize_legacy_finding(
+                f,
+                reviewer="coverage-critic",
+                source="coverage-critic",
+                index=idx,
+                emitted_at=now_iso,
+            )
+            errs = validate_finding(promoted)
+            assert not errs, (
+                f"validate_finding rejected the emitted finding: {errs}"
+            )
+
+
 class TestCoverageCriticPromptHash:
     """Content-addressed prompt hash so prompt edits bust the cache key."""
 
@@ -12211,6 +12275,11 @@ class TestCoverageCriticPrepareCLI:
         # coverage_plan.json equals the initial plan + critic_additions=0
         final = json.loads((cr_dir / "coverage_plan.json").read_text())
         assert final["stats"]["critic_additions"] == 0
+        # critic_status must be present and distinguishable from
+        # "ok" / "fail_closed" so Phase 4 consumers can detect the
+        # skipped state without special-casing field absence.
+        assert final["critic_status"] == "skipped"
+        assert final["critic_errors"] == []
         # And no agent input bundle written.
         assert not (cr_dir / "coverage_critic_input.json").exists()
 

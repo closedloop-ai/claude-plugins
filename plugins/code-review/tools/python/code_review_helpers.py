@@ -6809,6 +6809,28 @@ def _coverage_plan_existing_reviewers(plan: dict[str, Any]) -> set[str]:
     return out
 
 
+def _load_available_reviewers(path: Path) -> list[str] | None:
+    """Parse ``available_reviewers.json`` into a list of reviewer names.
+
+    Accepts either a flat JSON list or ``{"available": [...]}``. Returns
+    ``None`` on read/parse error or unrecognized shape so both callers can
+    fail consistently rather than silently fall back to an empty list.
+    """
+    try:
+        with open(path) as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if isinstance(raw, list):
+        return [a for a in raw if isinstance(a, str) and a]
+    if isinstance(raw, dict):
+        inner = raw.get("available", [])
+        if isinstance(inner, list):
+            return [a for a in inner if isinstance(a, str) and a]
+        return None
+    return None
+
+
 def _build_coverage_critic_input(
     coverage_plan_initial: dict[str, Any],
     extract_signals: dict[str, Any] | None,
@@ -6998,8 +7020,13 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     if no_critic:
         # Short-circuit per Open Question 3 — write the initial plan
         # straight through as the final, no agent spawn needed.
+        # Stamp critic_status="skipped" so Phase 4 consumers can
+        # distinguish skipped from healthy-but-empty (ok) and
+        # fail_closed via the same field — see consolidate paths below.
         final = merge_critic_additions(plan_initial, [])
         final["generated_at"] = datetime.now(timezone.utc).isoformat()
+        final["critic_status"] = "skipped"
+        final["critic_errors"] = []
         try:
             with open(output_path, "w") as f:
                 json.dump(final, f, indent=2)
@@ -7038,20 +7065,12 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         print("Error: diff_data is not a JSON object", file=sys.stderr)
         return 1
 
-    try:
-        with open(available_path) as f:
-            available_raw = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"Error reading available_reviewers: {exc}", file=sys.stderr)
-        return 1
-    # Accept either a flat list or an object with an "available" key.
-    if isinstance(available_raw, list):
-        available_reviewers = [a for a in available_raw if isinstance(a, str) and a]
-    elif isinstance(available_raw, dict):
-        inner = available_raw.get("available", [])
-        available_reviewers = [a for a in (inner if isinstance(inner, list) else []) if isinstance(a, str) and a]
-    else:
-        print("Error: available_reviewers must be a list or {available: [...]}", file=sys.stderr)
+    available_reviewers = _load_available_reviewers(available_path)
+    if available_reviewers is None:
+        print(
+            "Error: available_reviewers must be a list or {available: [...]}",
+            file=sys.stderr,
+        )
         return 1
 
     # Subtract anything already in the initial plan so the critic
@@ -7182,19 +7201,13 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
     cache_key = str(manifest.get("cache_key") or "")
     model = str(manifest.get("model") or COVERAGE_CRITIC_MODEL_DEFAULT)
 
-    try:
-        with open(available_path) as f:
-            available_raw = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"Error reading available_reviewers: {exc}", file=sys.stderr)
+    available_reviewers = _load_available_reviewers(available_path)
+    if available_reviewers is None:
+        print(
+            "Error: available_reviewers must be a list or {available: [...]}",
+            file=sys.stderr,
+        )
         return 1
-    if isinstance(available_raw, list):
-        available_reviewers = [a for a in available_raw if isinstance(a, str) and a]
-    elif isinstance(available_raw, dict):
-        inner = available_raw.get("available", [])
-        available_reviewers = [a for a in (inner if isinstance(inner, list) else []) if isinstance(a, str) and a]
-    else:
-        available_reviewers = []
 
     existing_in_plan = _coverage_plan_existing_reviewers(plan_initial)
 

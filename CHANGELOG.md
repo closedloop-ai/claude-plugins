@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.16.1
+
+#### Fixed
+- The `coverage-critic-failed` system marker is now registered in `SYSTEM_MARKERS_FIXED` and `SYSTEM_MARKER_SCOPES` (mapped to the `system` scope). Without this registration, `is_valid_system_marker("coverage-critic-failed")` returned `False` and `validate_finding` silently discarded every fail-closed coverage-critic finding, dropping the operator-visible degradation signal that the rest of the Phase 3 fail-closed flow exists to surface. Mirrors the existing `signal-extraction-failed` registration.
+- `coverage-critic-prepare --no-critic` now stamps `critic_status: "skipped"` and `critic_errors: []` onto the final `coverage_plan.json`, matching the field shape produced by `coverage-critic-consolidate` (`ok` / `fail_closed`). Downstream consumers can now distinguish a skipped run from a healthy run with zero additions without special-casing field absence.
+- `available_reviewers.json` parsing is extracted to a shared `_load_available_reviewers` helper used by both `coverage-critic-prepare` and `coverage-critic-consolidate`. Previously the two callers had divergent error handling for unrecognized JSON shape — `prepare` returned an error, `consolidate` silently fell back to an empty list, which caused every LLM-proposed reviewer to be rejected as "not in available_reviewers" with no diagnostic. Both callers now fail consistently with a clear error.
+
+#### Added
+- Regression tests pinning the `coverage-critic-failed` system-marker contract: `SYSTEM_MARKERS_FIXED` membership, `system_marker_scope` returns `"system"`, `is_valid_system_marker` returns `True`, and the emitted fail-closed finding passes `validate_finding` after the same normalize + priority-fill pipeline `cmd_collect_findings` applies on every `agent_*.json`. Also pins the `--no-critic` path's `critic_status: "skipped"` / `critic_errors: []` assertion.
+
 ### code-review v2.16.0
 
 #### Added
