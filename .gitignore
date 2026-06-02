@@ -18,6 +18,9 @@ __pycache__/
 # Token tracking session data
 .claude/.token-stats/
 
+# Claude Code session lock file (PID/sessionId/acquiredAt, regenerated per run)
+.claude/scheduled_tasks.lock
+
 # ClosedLoop session-level artifacts (cleaned up by SessionEnd hook)
 .claude/closedloop-loop.local.md
 .closedloop/
