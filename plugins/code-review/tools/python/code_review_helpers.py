@@ -32,6 +32,7 @@ from typing import Any
 from code_review_schema import (
     CACHE_NAMESPACE_BHA,
     CACHE_NAMESPACE_OVERRIDES,
+    CACHE_NAMESPACE_SIGNALS,
     CACHE_NAMESPACE_VERIFICATIONS,
     SCHEMA_VERSION,
     SEVERITIES,
@@ -5302,6 +5303,640 @@ def cmd_detect_injection(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# PLN-725 Phase 1 — Signal extraction (Stage 1 of deterministic coverage)
+# ---------------------------------------------------------------------------
+# Two-step LLM stage modelled on PLN-722's verifier:
+#   1. ``extract-signals-prepare`` — read diff_data.json + intent + taxonomy,
+#      compute the cache key, check the cache. On hit: write the final
+#      ``extract_signals.json`` immediately. On miss: write the agent input
+#      bundle (diff summary + taxonomy reference) and the manifest the
+#      orchestrator uses to spawn a single Haiku agent.
+#   2. ``extract-signals-consolidate`` — read the agent's output, validate it
+#      against the taxonomy / evidence / confidence-floor contract, write the
+#      final ``extract_signals.json``, and update the cache.
+#
+# Phase 1 ships the foundation only — Phase 4 wires these into ``start.md``.
+# Signal-extraction output is shadowed in Phase A (Rollout) and does not yet
+# affect routing.
+
+SIGNAL_CONFIDENCE_FLOOR = 0.7
+SIGNAL_CONFIDENCE_MAX = 1.0
+SIGNAL_FAIL_CLOSED_CONFIDENCE = 0.5
+SIGNAL_EXTRACTION_MODEL_DEFAULT = "haiku"
+SIGNAL_EXTRACTION_MARKER = "signal-extraction-failed"
+SIGNAL_TAXONOMY_FILENAME = "signal_taxonomy.json"
+SIGNAL_EXTRACTION_PROMPT_FILENAME = "signal_extraction_prompt.txt"
+
+# Cap on per-file excerpt size injected into the agent input. The taxonomy
+# is the agent's reference — the diff context is the evidence. We need
+# enough to ground signals without blowing the Haiku context budget.
+SIGNAL_EXCERPT_MAX_FILES = 25
+SIGNAL_EXCERPT_LINES_PER_FILE = 20
+
+# Deterministic file→language hint. Used only as a hint in the agent input;
+# language signals must still be confirmed by the LLM (e.g. a ``.ts`` file
+# that only renames a constant is not a meaningful TypeScript signal).
+_EXTENSION_LANGUAGE_HINTS: dict[str, str] = {
+    ".ts": "typescript", ".tsx": "typescript",
+    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+    ".py": "python",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".cs": "csharp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".swift": "swift",
+    ".kt": "kotlin", ".kts": "kotlin",
+    ".scala": "scala", ".sc": "scala",
+    ".sql": "sql",
+    ".sh": "shell", ".bash": "shell", ".zsh": "shell",
+}
+
+
+def _default_signal_taxonomy_path() -> Path:
+    """Canonical location of the v1 taxonomy alongside this module."""
+    return Path(__file__).resolve().parent / SIGNAL_TAXONOMY_FILENAME
+
+
+def _default_signal_extraction_prompt_path() -> Path:
+    """Canonical location of the signal-extraction prompt asset."""
+    return Path(__file__).resolve().parent.parent / "prompts" / SIGNAL_EXTRACTION_PROMPT_FILENAME
+
+
+def load_signal_taxonomy(path: Path | None = None) -> tuple[dict[str, Any], bytes]:
+    """Load and structurally validate the signal taxonomy.
+
+    Returns ``(taxonomy_dict, raw_bytes)``. ``raw_bytes`` is what the cache
+    key hashes — a content-addressed taxonomy fingerprint so any edit (new
+    signal, changed description, changed recommended floor) invalidates
+    every cached extraction.
+
+    Raises ``ValueError`` on a structurally invalid taxonomy. The taxonomy
+    is a checked-in asset; structural failure is a deploy-time bug, not a
+    runtime fault to swallow.
+    """
+    target = path or _default_signal_taxonomy_path()
+    raw = target.read_bytes()
+    data = json.loads(raw.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"taxonomy at {target} is not a JSON object")
+    signals = data.get("signals")
+    if not isinstance(signals, dict) or not signals:
+        raise ValueError(f"taxonomy at {target} has no 'signals' object")
+    for name, entry in signals.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"taxonomy {target}: empty signal name")
+        if not isinstance(entry, dict):
+            raise ValueError(f"taxonomy {target}: signal {name!r} entry not an object")
+        for key in ("category", "description", "recommended_min_confidence"):
+            if key not in entry:
+                raise ValueError(f"taxonomy {target}: signal {name!r} missing {key!r}")
+        rmc = entry["recommended_min_confidence"]
+        if not isinstance(rmc, (int, float)) or not (0.0 <= float(rmc) <= 1.0):
+            raise ValueError(
+                f"taxonomy {target}: signal {name!r} has invalid recommended_min_confidence",
+            )
+    return data, raw
+
+
+def _taxonomy_hash(raw_bytes: bytes) -> str:
+    return hashlib.sha256(raw_bytes).hexdigest()
+
+
+def signal_extraction_cache_key(
+    diff_tip: str, taxonomy_hash: str, prompt_hash: str,
+) -> str:
+    """Cache key for the ``signals`` namespace (PLN-725).
+
+    Mirrors the verifier's namespace contract: the tuple
+    ``(diff_tip, taxonomy_hash, prompt_hash)`` is the complete set of
+    inputs the extraction is a pure function of. Any change to the diff
+    head, the taxonomy file, or the prompt asset flips the key.
+    """
+    payload = (
+        (diff_tip or "") + "\0"
+        + (taxonomy_hash or "") + "\0"
+        + (prompt_hash or "")
+    )
+    return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()
+
+
+def _signal_cache_path(cache_dir: Path, key: str) -> Path:
+    """PLN-719 namespace layout: ``<cache_dir>/signals/<key>.json``."""
+    return cache_dir / CACHE_NAMESPACE_SIGNALS / f"{key}.json"
+
+
+def _read_cached_signals(cache_dir: Path | None, key: str) -> dict[str, Any] | None:
+    """Return cached extraction output if fresh, else None.
+
+    Mirrors the verifier cache TTL semantics: an entry older than the
+    namespace TTL is treated as a miss. Malformed JSON is also a miss
+    rather than a crash — the worst case is paying for one re-extraction.
+    """
+    if cache_dir is None:
+        return None
+    path = _signal_cache_path(cache_dir, key)
+    if not path.exists():
+        return None
+    try:
+        with open(path) as f:
+            entry = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(entry, dict):
+        return None
+    ttl = cache_ttl_days(CACHE_NAMESPACE_SIGNALS)
+    written_at = entry.get("written_at")
+    if ttl is not None and isinstance(written_at, str):
+        try:
+            ts = datetime.fromisoformat(written_at)
+            if datetime.now(timezone.utc) - ts > timedelta(days=ttl):
+                return None
+        except ValueError:
+            return None
+    return entry
+
+
+def _write_cached_signals(
+    cache_dir: Path | None, key: str, payload: dict[str, Any],
+) -> None:
+    """Persist a successful extraction to the ``signals`` cache namespace.
+
+    Fail-open: cache-write failure is logged but not fatal — the
+    extraction itself succeeded and downstream stages already have the
+    canonical file in ``cr_dir``.
+    """
+    if cache_dir is None:
+        return
+    path = _signal_cache_path(cache_dir, key)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = dict(payload)
+        entry["written_at"] = datetime.now(timezone.utc).isoformat()
+        with open(path, "w") as f:
+            json.dump(entry, f, indent=2)
+    except OSError as exc:
+        print(f"Warning: could not write signal cache entry: {exc}", file=sys.stderr)
+
+
+def _file_language_hint(path: str) -> str | None:
+    ext = Path(path).suffix.lower()
+    return _EXTENSION_LANGUAGE_HINTS.get(ext)
+
+
+def _build_signal_input(
+    diff_data: dict[str, Any],
+    intent_summary: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Render the bounded agent-input bundle from ``diff_data.json``.
+
+    The agent gets enough context to ground every taxonomy signal without
+    receiving the full diff. We send file metadata for every file (cheap)
+    plus per-file excerpts (added + removed lines) for the largest
+    ``SIGNAL_EXCERPT_MAX_FILES`` files; for each we cap excerpt size at
+    ``SIGNAL_EXCERPT_LINES_PER_FILE`` of each direction. Anything beyond
+    the cap is summarized as ``…(+N more added lines, +M more removed)``.
+    """
+    file_statuses: dict[str, str] = diff_data.get("file_statuses", {}) or {}
+    file_loc: dict[str, int] = diff_data.get("file_loc", {}) or {}
+    patch_lines: dict[str, dict[str, dict[str, str]]] = diff_data.get("patch_lines", {}) or {}
+
+    files: list[dict[str, Any]] = []
+    for path, status in sorted(file_statuses.items()):
+        pl = patch_lines.get(path, {}) or {}
+        added = pl.get("added_lines", {}) or {}
+        removed = pl.get("removed_lines", {}) or {}
+        files.append({
+            "path": path,
+            "status": status,
+            "lines_added": len(added),
+            "lines_removed": len(removed),
+            "loc": file_loc.get(path, 0),
+            "language_hint": _file_language_hint(path),
+        })
+
+    # Pick the top-N files by total churn for inline excerpts.
+    ranked = sorted(
+        files, key=lambda f: f["lines_added"] + f["lines_removed"], reverse=True,
+    )[:SIGNAL_EXCERPT_MAX_FILES]
+
+    excerpts: list[dict[str, Any]] = []
+    for entry in ranked:
+        path = entry["path"]
+        pl = patch_lines.get(path, {}) or {}
+        added = pl.get("added_lines", {}) or {}
+        removed = pl.get("removed_lines", {}) or {}
+
+        def _cap(d: dict[str, str]) -> tuple[list[dict[str, str]], int]:
+            items = sorted(d.items(), key=lambda kv: int(kv[0]) if kv[0].isdigit() else 0)
+            head = items[:SIGNAL_EXCERPT_LINES_PER_FILE]
+            overflow = max(0, len(items) - len(head))
+            return ([{"line": k, "content": v} for k, v in head], overflow)
+
+        added_sample, added_overflow = _cap(added)
+        removed_sample, removed_overflow = _cap(removed)
+        excerpts.append({
+            "path": path,
+            "added_sample": added_sample,
+            "added_overflow": added_overflow,
+            "removed_sample": removed_sample,
+            "removed_overflow": removed_overflow,
+        })
+
+    return {
+        "files": files,
+        "sample_diff_excerpts": excerpts,
+        "intent": intent_summary or {},
+        "change_classes": diff_data.get("change_classes", []) or [],
+    }
+
+
+def validate_signal_extraction_output(
+    raw: Any, taxonomy: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Validate LLM signal-extraction output against the taxonomy contract.
+
+    Returns ``(accepted_signals, errors)``. ``errors`` lists every reason a
+    signal was rejected; an empty ``accepted`` with non-empty ``errors``
+    means the whole extraction is unusable and the caller should fail
+    closed. The validator is strict by design — the failure modes here
+    (invented names, missing evidence, confidence below floor, duplicate
+    names) are exactly the contract violations the prompt enumerates.
+    """
+    errors: list[str] = []
+    if not isinstance(raw, dict):
+        return [], ["output is not a JSON object"]
+    signals = raw.get("signals")
+    if not isinstance(signals, list):
+        return [], ["'signals' is missing or not a list"]
+    valid_names = set(taxonomy.get("signals", {}).keys())
+    accepted: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for idx, entry in enumerate(signals):
+        if not isinstance(entry, dict):
+            errors.append(f"signals[{idx}] is not an object")
+            continue
+        name = entry.get("name")
+        evidence = entry.get("evidence")
+        confidence = entry.get("confidence")
+        if not isinstance(name, str) or name not in valid_names:
+            errors.append(f"signals[{idx}] has invalid name: {name!r}")
+            continue
+        if name in seen:
+            errors.append(f"signals[{idx}] duplicates name: {name!r}")
+            continue
+        if not isinstance(evidence, str) or not evidence.strip():
+            errors.append(f"signals[{idx}] ({name}) has empty evidence")
+            continue
+        if not isinstance(confidence, (int, float)):
+            errors.append(f"signals[{idx}] ({name}) has non-numeric confidence")
+            continue
+        conf = float(confidence)
+        if conf < SIGNAL_CONFIDENCE_FLOOR or conf > SIGNAL_CONFIDENCE_MAX:
+            errors.append(
+                f"signals[{idx}] ({name}) confidence {conf} outside "
+                f"[{SIGNAL_CONFIDENCE_FLOOR}, {SIGNAL_CONFIDENCE_MAX}]",
+            )
+            continue
+        seen.add(name)
+        accepted.append({"name": name, "evidence": evidence.strip(), "confidence": conf})
+    accepted.sort(key=lambda s: s["confidence"], reverse=True)
+    return accepted, errors
+
+
+def fail_closed_signal_set(taxonomy: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the fail-closed signal set: every taxonomy signal at 0.5.
+
+    Per PLN-725 §2: extraction failure → all LLM signals treated as
+    present at ``SIGNAL_FAIL_CLOSED_CONFIDENCE`` so coverage over-triggers
+    best-effort. The deterministic floor (required reviewers) is unaffected
+    because required rules cannot key solely on LLM signals.
+    """
+    return [
+        {
+            "name": name,
+            "evidence": "fail-closed default (extraction did not produce a valid result)",
+            "confidence": SIGNAL_FAIL_CLOSED_CONFIDENCE,
+        }
+        for name in sorted(taxonomy.get("signals", {}).keys())
+    ]
+
+
+def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
+    """PLN-725 Stage 1a: prep the signal-extraction agent input + check cache.
+
+    Reads ``diff_data.json`` and (optionally) an intent summary, computes
+    the ``(diff_tip, taxonomy_hash, prompt_hash)`` cache key, and either:
+
+      - **Cache hit** — writes the cached extraction directly to
+        ``<cr_dir>/extract_signals.json`` and emits a manifest with
+        ``status: "cache_hit"``. No agent spawn needed.
+      - **Cache miss** — writes the agent's input bundle to
+        ``<cr_dir>/extract_signals_input.json`` (and a snapshot of the
+        taxonomy alongside) and emits a manifest with
+        ``status: "needs_agent"``, ``input_path``, ``output_path``,
+        ``taxonomy_path``, ``prompt_path`` so the orchestrator can spawn
+        a single Haiku agent.
+
+    Always exits 0; structural failures (no diff_data, malformed
+    taxonomy) print to stderr and return 1.
+    """
+    cr_dir = Path(args.cr_dir)
+    diff_data_path = Path(args.diff_data)
+    cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
+    diff_tip = str(args.diff_tip)
+    prompt_hash = str(getattr(args, "prompt_hash", "") or "")
+    taxonomy_path = (
+        Path(args.taxonomy) if getattr(args, "taxonomy", None) else _default_signal_taxonomy_path()
+    )
+    prompt_path = (
+        Path(args.prompt) if getattr(args, "prompt", None) else _default_signal_extraction_prompt_path()
+    )
+    intent_path = Path(args.intent) if getattr(args, "intent", None) else None
+    model = str(getattr(args, "model", None) or SIGNAL_EXTRACTION_MODEL_DEFAULT)
+
+    try:
+        cr_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"Error: cannot create cr_dir: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        with open(diff_data_path) as f:
+            diff_data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error reading diff_data: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(diff_data, dict):
+        print("Error: diff_data is not a JSON object", file=sys.stderr)
+        return 1
+
+    try:
+        taxonomy, taxonomy_bytes = load_signal_taxonomy(taxonomy_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"Error loading taxonomy: {exc}", file=sys.stderr)
+        return 1
+
+    taxonomy_hash = _taxonomy_hash(taxonomy_bytes)
+    key = signal_extraction_cache_key(diff_tip, taxonomy_hash, prompt_hash)
+
+    output_path = cr_dir / "extract_signals.json"
+
+    cached = _read_cached_signals(cache_dir, key)
+    if cached is not None:
+        # Strip cache-only metadata before writing the canonical output.
+        canonical = {k: v for k, v in cached.items() if k != "written_at"}
+        try:
+            with open(output_path, "w") as f:
+                json.dump(canonical, f, indent=2)
+        except OSError as exc:
+            print(f"Error writing cached extraction: {exc}", file=sys.stderr)
+            return 1
+        manifest = {
+            "status": "cache_hit",
+            "cache_key": key,
+            "taxonomy_hash": taxonomy_hash,
+            "prompt_hash": prompt_hash,
+            "output_path": str(output_path),
+            "model": model,
+        }
+        manifest_path = cr_dir / "extract_signals_manifest.json"
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+        json.dump(manifest, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
+    intent_summary: dict[str, Any] | None = None
+    if intent_path is not None:
+        try:
+            with open(intent_path) as f:
+                intent_summary = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            intent_summary = None
+        if not isinstance(intent_summary, dict):
+            intent_summary = None
+
+    agent_input = _build_signal_input(diff_data, intent_summary)
+    input_path = cr_dir / "extract_signals_input.json"
+    with open(input_path, "w") as f:
+        json.dump(agent_input, f, indent=2)
+
+    # Snapshot the taxonomy into cr_dir so the agent reads a stable file
+    # for this run even if the canonical asset is edited mid-flight.
+    taxonomy_snapshot_path = cr_dir / "extract_signals_taxonomy.json"
+    taxonomy_snapshot_path.write_bytes(taxonomy_bytes)
+
+    manifest = {
+        "status": "needs_agent",
+        "cache_key": key,
+        "taxonomy_hash": taxonomy_hash,
+        "prompt_hash": prompt_hash,
+        "input_path": str(input_path),
+        "taxonomy_path": str(taxonomy_snapshot_path),
+        "prompt_path": str(prompt_path),
+        "output_path": str(output_path),
+        "model": model,
+    }
+    manifest_path = cr_dir / "extract_signals_manifest.json"
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+    json.dump(manifest, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def cmd_extract_signals_consolidate(args: argparse.Namespace) -> int:
+    """PLN-725 Stage 1b: validate the agent's signal output, write the canonical
+    ``extract_signals.json``, and update the cache.
+
+    Reads ``<agent_output>`` (typically ``<cr_dir>/agent_extract_signals.json``
+    written by the Haiku agent), validates against the taxonomy contract,
+    and:
+
+      - **All valid:** writes ``<cr_dir>/extract_signals.json`` with the
+        accepted signal list and ``status: "ok"``. Updates the cache.
+      - **All rejected (or read failure):** fails closed. Writes
+        ``extract_signals.json`` with the fail-closed signal set and a
+        ``status: "fail_closed"`` block listing every rejection reason.
+        Emits a ``system-marker`` MEDIUM finding to
+        ``<cr_dir>/agent_signal-extraction-failed.json`` so the verdict
+        layer can surface the operator-visible warning. Does **not**
+        cache fail-closed output.
+
+    Always exits 0 — a failed extraction is a routing degradation, not a
+    pipeline halt. Exits 1 only on structural problems (no cr_dir, no
+    taxonomy).
+    """
+    cr_dir = Path(args.cr_dir)
+    agent_output_path = Path(args.agent_output)
+    cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
+    taxonomy_path = (
+        Path(args.taxonomy) if getattr(args, "taxonomy", None) else _default_signal_taxonomy_path()
+    )
+    manifest_path = (
+        Path(args.manifest)
+        if getattr(args, "manifest", None)
+        else cr_dir / "extract_signals_manifest.json"
+    )
+
+    if not cr_dir.exists():
+        print(f"Error: cr_dir does not exist: {cr_dir}", file=sys.stderr)
+        return 1
+
+    try:
+        taxonomy, _taxonomy_bytes = load_signal_taxonomy(taxonomy_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"Error loading taxonomy: {exc}", file=sys.stderr)
+        return 1
+
+    manifest: dict[str, Any] = {}
+    if manifest_path.exists():
+        try:
+            with open(manifest_path) as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                manifest = loaded
+        except (OSError, json.JSONDecodeError):
+            manifest = {}
+
+    cache_key = str(manifest.get("cache_key") or "")
+    taxonomy_hash = str(manifest.get("taxonomy_hash") or "")
+    prompt_hash = str(manifest.get("prompt_hash") or "")
+    model = str(manifest.get("model") or SIGNAL_EXTRACTION_MODEL_DEFAULT)
+
+    raw_output: Any = None
+    read_error: str | None = None
+    try:
+        with open(agent_output_path) as f:
+            raw_output = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        read_error = f"agent output unreadable: {exc}"
+
+    output_path = cr_dir / "extract_signals.json"
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    if read_error is not None:
+        canonical = {
+            "status": "fail_closed",
+            "signals": fail_closed_signal_set(taxonomy),
+            "errors": [read_error],
+            "model": model,
+            "cache_key": cache_key,
+            "taxonomy_hash": taxonomy_hash,
+            "prompt_hash": prompt_hash,
+            "generated_at": now_iso,
+        }
+        _emit_signal_extraction_failed_finding(cr_dir, [read_error], now_iso)
+        with open(output_path, "w") as f:
+            json.dump(canonical, f, indent=2)
+        json.dump(
+            {"status": "fail_closed", "errors": [read_error], "output_path": str(output_path)},
+            sys.stdout, indent=2,
+        )
+        sys.stdout.write("\n")
+        return 0
+
+    accepted, errors = validate_signal_extraction_output(raw_output, taxonomy)
+
+    if not accepted and errors:
+        canonical = {
+            "status": "fail_closed",
+            "signals": fail_closed_signal_set(taxonomy),
+            "errors": errors,
+            "model": model,
+            "cache_key": cache_key,
+            "taxonomy_hash": taxonomy_hash,
+            "prompt_hash": prompt_hash,
+            "generated_at": now_iso,
+        }
+        _emit_signal_extraction_failed_finding(cr_dir, errors, now_iso)
+        with open(output_path, "w") as f:
+            json.dump(canonical, f, indent=2)
+        json.dump(
+            {"status": "fail_closed", "errors": errors, "output_path": str(output_path)},
+            sys.stdout, indent=2,
+        )
+        sys.stdout.write("\n")
+        return 0
+
+    canonical = {
+        "status": "ok",
+        "signals": accepted,
+        "errors": errors,  # Partial-rejection signal for observability.
+        "model": model,
+        "cache_key": cache_key,
+        "taxonomy_hash": taxonomy_hash,
+        "prompt_hash": prompt_hash,
+        "generated_at": now_iso,
+    }
+    with open(output_path, "w") as f:
+        json.dump(canonical, f, indent=2)
+    if cache_key:
+        _write_cached_signals(cache_dir, cache_key, canonical)
+    json.dump(
+        {
+            "status": "ok",
+            "signal_count": len(accepted),
+            "rejected": len(errors),
+            "output_path": str(output_path),
+        },
+        sys.stdout, indent=2,
+    )
+    sys.stdout.write("\n")
+    return 0
+
+
+def _emit_signal_extraction_failed_finding(
+    cr_dir: Path, errors: list[str], now_iso: str,
+) -> None:
+    """Write a MEDIUM system-marker finding for surfacing in the run summary.
+
+    Per PLN-725 §2: extraction failure must surface as an operator-visible
+    finding (so the failure is auditable, not silent) but must not halt
+    the pipeline (fail-closed coverage already protects required
+    reviewers). Fail-open on write error — telemetry is observational.
+    """
+    # Cap embedded error list so a chatty validator can't bloat the
+    # finding payload past sensible review-comment size.
+    error_summary = errors[:10]
+    if len(errors) > 10:
+        error_summary.append(f"… {len(errors) - 10} more")
+    finding = {
+        "reviewer": "signal-extractor",
+        "source": "signal-extractor",
+        "finding_scope": "system",
+        "system_marker": SIGNAL_EXTRACTION_MARKER,
+        "category": "Coverage",
+        "severity": "MEDIUM",
+        "file": None,
+        "line": None,
+        "issue": "Signal extraction failed; coverage is using fail-closed defaults.",
+        "explanation": (
+            "The signal-extraction stage produced no usable signals. Coverage "
+            "routing is using the fail-closed default (every taxonomy signal "
+            "present at 0.5 confidence) so best-effort reviewers over-trigger. "
+            "Required reviewers are unaffected because required rules cannot "
+            "key solely on LLM signals."
+        ),
+        "recommendation": (
+            "Re-run the review once the underlying issue is resolved. "
+            "Common causes: agent timeout, malformed agent output, taxonomy "
+            "mismatch after a recent edit."
+        ),
+        "confidence": 1.0,
+        "rationale_summary": "; ".join(error_summary)[:1000],
+        "emitted_at": now_iso,
+    }
+    try:
+        with open(cr_dir / "agent_signal-extraction-failed.json", "w") as f:
+            json.dump({"findings": [finding]}, f, indent=2)
+    except OSError as exc:
+        print(f"Warning: could not write signal-extraction-failed finding: {exc}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: classify-intent
 # ---------------------------------------------------------------------------
 
@@ -7675,6 +8310,65 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
         help="Verifier prompt hash for cache write-back keys.",
     )
     p_vc.set_defaults(func=cmd_verify_consolidate)
+
+    # extract-signals-prepare (PLN-725 Stage 1a)
+    p_esp = subparsers.add_parser(
+        "extract-signals-prepare",
+        help="Prepare signal-extraction agent input; serve from signals/ cache on hit.",
+    )
+    p_esp.add_argument("--cr-dir", required=True, help="CR_DIR path")
+    p_esp.add_argument("--diff-data", required=True, help="Path to diff_data.json")
+    p_esp.add_argument("--diff-tip", required=True, help="Diff tip SHA for cache key")
+    p_esp.add_argument(
+        "--prompt-hash", default="",
+        help="Canonical prompt hash for the signals/ namespace cache key.",
+    )
+    p_esp.add_argument(
+        "--cache-dir", default=None,
+        help="Optional cache directory; fresh (diff_tip, taxonomy_hash, prompt_hash) "
+        "tuples are served from the signals/ namespace.",
+    )
+    p_esp.add_argument(
+        "--taxonomy", default=None,
+        help="Path to signal_taxonomy.json (defaults to module-relative asset).",
+    )
+    p_esp.add_argument(
+        "--prompt", default=None,
+        help="Path to signal_extraction_prompt.txt (defaults to module-relative asset).",
+    )
+    p_esp.add_argument(
+        "--intent", default=None,
+        help="Optional intent context JSON (treated as untrusted hint in the agent input).",
+    )
+    p_esp.add_argument(
+        "--model", default=SIGNAL_EXTRACTION_MODEL_DEFAULT,
+        help="Model label recorded in the manifest (the orchestrator picks the actual agent).",
+    )
+    p_esp.set_defaults(func=cmd_extract_signals_prepare)
+
+    # extract-signals-consolidate (PLN-725 Stage 1b)
+    p_esc = subparsers.add_parser(
+        "extract-signals-consolidate",
+        help="Validate agent signal output; write extract_signals.json + cache on success.",
+    )
+    p_esc.add_argument("--cr-dir", required=True, help="CR_DIR path")
+    p_esc.add_argument(
+        "--agent-output", required=True,
+        help="Path to the agent's signal-extraction output JSON.",
+    )
+    p_esc.add_argument(
+        "--manifest", default=None,
+        help="Path to extract_signals_manifest.json (defaults to <cr-dir>/extract_signals_manifest.json).",
+    )
+    p_esc.add_argument(
+        "--taxonomy", default=None,
+        help="Path to signal_taxonomy.json (defaults to module-relative asset).",
+    )
+    p_esc.add_argument(
+        "--cache-dir", default=None,
+        help="Optional cache directory; successful extractions write back to signals/.",
+    )
+    p_esc.set_defaults(func=cmd_extract_signals_consolidate)
 
     # re-assert (PLN-773 Phase 4)
     p_ra = subparsers.add_parser(

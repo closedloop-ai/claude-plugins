@@ -10130,3 +10130,490 @@ class TestPartitionAwareReviewerLabeling:
         out = _verification_by_reviewer(verified, [])
         assert out["bha_p0"]["re_asserted"] == 0
         assert out["bha_p1"]["re_asserted"] == 2
+
+
+# ---------------------------------------------------------------------------
+# PLN-725 Phase 1 — Signal extraction taxonomy + validation + CLI
+# ---------------------------------------------------------------------------
+
+
+class TestSignalTaxonomy:
+    """Structural invariants for the v1 signal taxonomy asset."""
+
+    def test_loads_from_default_path(self) -> None:
+        from code_review_helpers import load_signal_taxonomy
+        taxonomy, raw = load_signal_taxonomy()
+        assert isinstance(taxonomy, dict)
+        assert "signals" in taxonomy
+        assert raw  # bytes for cache hashing
+
+    def test_has_at_least_v1_signal_count(self) -> None:
+        """v1 ships ~50 signals; pin a floor so accidental deletion fails CI."""
+        from code_review_helpers import load_signal_taxonomy
+        taxonomy, _ = load_signal_taxonomy()
+        assert len(taxonomy["signals"]) >= 45
+
+    def test_every_signal_entry_has_required_fields(self) -> None:
+        from code_review_helpers import load_signal_taxonomy
+        taxonomy, _ = load_signal_taxonomy()
+        for name, entry in taxonomy["signals"].items():
+            assert "category" in entry, f"{name} missing category"
+            assert "description" in entry, f"{name} missing description"
+            assert "recommended_min_confidence" in entry, (
+                f"{name} missing recommended_min_confidence"
+            )
+            rmc = entry["recommended_min_confidence"]
+            assert 0.0 <= float(rmc) <= 1.0, f"{name} rmc out of range"
+
+    def test_rejects_taxonomy_without_signals(self, tmp_path: Path) -> None:
+        from code_review_helpers import load_signal_taxonomy
+        bad = tmp_path / "bad_taxonomy.json"
+        bad.write_text(json.dumps({"schema_version": 1, "signals": {}}))
+        with pytest.raises(ValueError, match="no 'signals' object"):
+            load_signal_taxonomy(bad)
+
+    def test_rejects_signal_missing_required_field(self, tmp_path: Path) -> None:
+        from code_review_helpers import load_signal_taxonomy
+        bad = tmp_path / "bad_taxonomy.json"
+        bad.write_text(json.dumps({
+            "schema_version": 1,
+            "signals": {"foo": {"category": "language", "description": "x"}},  # no rmc
+        }))
+        with pytest.raises(ValueError, match="recommended_min_confidence"):
+            load_signal_taxonomy(bad)
+
+    def test_rejects_invalid_rmc(self, tmp_path: Path) -> None:
+        from code_review_helpers import load_signal_taxonomy
+        bad = tmp_path / "bad_taxonomy.json"
+        bad.write_text(json.dumps({
+            "schema_version": 1,
+            "signals": {"foo": {
+                "category": "language", "description": "x",
+                "recommended_min_confidence": 1.5,
+            }},
+        }))
+        with pytest.raises(ValueError, match="recommended_min_confidence"):
+            load_signal_taxonomy(bad)
+
+
+class TestSignalExtractionCacheKey:
+    """Cache key contract: tuple of (diff_tip, taxonomy_hash, prompt_hash)."""
+
+    def test_same_inputs_same_key(self) -> None:
+        from code_review_helpers import signal_extraction_cache_key
+        a = signal_extraction_cache_key("dt", "tax", "ph")
+        b = signal_extraction_cache_key("dt", "tax", "ph")
+        assert a == b
+
+    def test_diff_tip_flip_changes_key(self) -> None:
+        from code_review_helpers import signal_extraction_cache_key
+        a = signal_extraction_cache_key("dt1", "tax", "ph")
+        b = signal_extraction_cache_key("dt2", "tax", "ph")
+        assert a != b
+
+    def test_taxonomy_hash_flip_changes_key(self) -> None:
+        from code_review_helpers import signal_extraction_cache_key
+        a = signal_extraction_cache_key("dt", "tax1", "ph")
+        b = signal_extraction_cache_key("dt", "tax2", "ph")
+        assert a != b
+
+    def test_prompt_hash_flip_changes_key(self) -> None:
+        from code_review_helpers import signal_extraction_cache_key
+        a = signal_extraction_cache_key("dt", "tax", "ph1")
+        b = signal_extraction_cache_key("dt", "tax", "ph2")
+        assert a != b
+
+
+class TestSignalExtractionValidator:
+    """Per PLN-725 §2 contract enforced by validate_signal_extraction_output."""
+
+    def _taxonomy(self) -> dict[str, Any]:
+        from code_review_helpers import load_signal_taxonomy
+        t, _ = load_signal_taxonomy()
+        return t
+
+    def test_accepts_valid_signals_sorted_by_confidence(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "auth_touching", "evidence": "lib/auth.ts:5 — login", "confidence": 0.85},
+            {"name": "language_typescript", "evidence": "x.ts:1 — TS", "confidence": 0.95},
+        ]}, self._taxonomy())
+        assert errors == []
+        assert len(accepted) == 2
+        # Sorted by descending confidence.
+        assert accepted[0]["name"] == "language_typescript"
+        assert accepted[1]["name"] == "auth_touching"
+
+    def test_rejects_invented_signal_name(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "totally_made_up", "evidence": "x:1", "confidence": 0.9},
+        ]}, self._taxonomy())
+        assert accepted == []
+        assert any("totally_made_up" in e for e in errors)
+
+    def test_rejects_empty_evidence(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "language_typescript", "evidence": "   ", "confidence": 0.9},
+        ]}, self._taxonomy())
+        assert accepted == []
+        assert any("empty evidence" in e for e in errors)
+
+    def test_rejects_missing_evidence(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "language_typescript", "confidence": 0.9},
+        ]}, self._taxonomy())
+        assert accepted == []
+        assert errors
+
+    def test_rejects_confidence_below_floor(self) -> None:
+        from code_review_helpers import (
+            SIGNAL_CONFIDENCE_FLOOR,
+            validate_signal_extraction_output,
+        )
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "language_typescript", "evidence": "x:1 — y", "confidence": 0.6},
+        ]}, self._taxonomy())
+        assert accepted == []
+        assert any(str(SIGNAL_CONFIDENCE_FLOOR) in e for e in errors)
+
+    def test_rejects_confidence_above_one(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "language_typescript", "evidence": "x:1 — y", "confidence": 1.5},
+        ]}, self._taxonomy())
+        assert accepted == []
+        assert errors
+
+    def test_rejects_non_numeric_confidence(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "language_typescript", "evidence": "x:1 — y", "confidence": "high"},
+        ]}, self._taxonomy())
+        assert accepted == []
+        assert errors
+
+    def test_rejects_duplicate_signal_names(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "language_typescript", "evidence": "a:1 — y", "confidence": 0.95},
+            {"name": "language_typescript", "evidence": "b:2 — y", "confidence": 0.9},
+        ]}, self._taxonomy())
+        assert len(accepted) == 1
+        assert any("duplicates" in e for e in errors)
+
+    def test_rejects_non_object_output(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output(
+            "not a json object", self._taxonomy(),
+        )
+        assert accepted == []
+        assert errors
+
+    def test_rejects_missing_signals_list(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({}, self._taxonomy())
+        assert accepted == []
+        assert any("'signals'" in e for e in errors)
+
+
+class TestFailClosedSignalSet:
+    """Per PLN-725 §2: extraction failure → all signals at 0.5."""
+
+    def test_returns_every_taxonomy_signal_at_05(self) -> None:
+        from code_review_helpers import (
+            SIGNAL_FAIL_CLOSED_CONFIDENCE,
+            fail_closed_signal_set,
+            load_signal_taxonomy,
+        )
+        t, _ = load_signal_taxonomy()
+        fc = fail_closed_signal_set(t)
+        assert len(fc) == len(t["signals"])
+        assert {s["name"] for s in fc} == set(t["signals"].keys())
+        assert all(s["confidence"] == SIGNAL_FAIL_CLOSED_CONFIDENCE for s in fc)
+
+    def test_every_entry_has_evidence_string(self) -> None:
+        from code_review_helpers import fail_closed_signal_set, load_signal_taxonomy
+        t, _ = load_signal_taxonomy()
+        for entry in fail_closed_signal_set(t):
+            assert entry["evidence"]
+
+
+def _build_diff_data(tmp_path: Path) -> Path:
+    """Minimal diff_data.json fixture for extract-signals tests."""
+    diff_data = {
+        "file_statuses": {
+            "src/auth/login.ts": "M",
+            "package.json": "M",
+        },
+        "file_loc": {"src/auth/login.ts": 120, "package.json": 50},
+        "patch_lines": {
+            "src/auth/login.ts": {
+                "added_lines": {
+                    "10": "import { hashPassword } from './crypto';",
+                    "42": "const session = await issueToken(user);",
+                },
+                "removed_lines": {},
+            },
+            "package.json": {
+                "added_lines": {"15": '    "argon2": "^0.31.0",'},
+                "removed_lines": {},
+            },
+        },
+    }
+    path = tmp_path / "diff_data.json"
+    path.write_text(json.dumps(diff_data))
+    return path
+
+
+class TestExtractSignalsPrepare:
+    """End-to-end CLI: cache hit path, cache miss path, manifest contents."""
+
+    def test_cache_miss_writes_input_taxonomy_and_manifest(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import cmd_extract_signals_prepare
+        cr_dir = tmp_path / "cr"
+        cache_dir = tmp_path / "cache"
+        cr_dir.mkdir()
+        cache_dir.mkdir()
+        diff_path = _build_diff_data(tmp_path)
+
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(diff_path),
+            diff_tip="abcdef1234",
+            prompt_hash="ph0",
+            cache_dir=str(cache_dir),
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        rc = cmd_extract_signals_prepare(args)
+        assert rc == 0
+
+        manifest = json.loads((cr_dir / "extract_signals_manifest.json").read_text())
+        assert manifest["status"] == "needs_agent"
+        assert manifest["cache_key"]
+        assert manifest["taxonomy_hash"]
+        assert Path(manifest["input_path"]).exists()
+        assert Path(manifest["taxonomy_path"]).exists()
+        assert manifest["model"] == "haiku"
+
+        agent_input = json.loads((cr_dir / "extract_signals_input.json").read_text())
+        assert any(f["path"] == "src/auth/login.ts" for f in agent_input["files"])
+        # Language hint pre-populated deterministically.
+        ts_entry = next(f for f in agent_input["files"] if f["path"].endswith(".ts"))
+        assert ts_entry["language_hint"] == "typescript"
+
+    def test_cache_hit_serves_directly_without_agent(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_SIGNALS,
+            cmd_extract_signals_prepare,
+            load_signal_taxonomy,
+            signal_extraction_cache_key,
+        )
+        cr_dir = tmp_path / "cr"
+        cache_dir = tmp_path / "cache"
+        cr_dir.mkdir()
+        (cache_dir / CACHE_NAMESPACE_SIGNALS).mkdir(parents=True)
+        diff_path = _build_diff_data(tmp_path)
+
+        _, raw = load_signal_taxonomy()
+        import hashlib
+        taxonomy_hash = hashlib.sha256(raw).hexdigest()
+        key = signal_extraction_cache_key("abcdef1234", taxonomy_hash, "ph0")
+        cached_payload = {
+            "status": "ok",
+            "signals": [
+                {"name": "language_typescript", "evidence": "x.ts:1 — TS", "confidence": 0.95},
+            ],
+            "errors": [],
+            "model": "haiku",
+            "cache_key": key,
+            "taxonomy_hash": taxonomy_hash,
+            "prompt_hash": "ph0",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "written_at": datetime.now(timezone.utc).isoformat(),
+        }
+        (cache_dir / CACHE_NAMESPACE_SIGNALS / f"{key}.json").write_text(
+            json.dumps(cached_payload),
+        )
+
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(diff_path),
+            diff_tip="abcdef1234",
+            prompt_hash="ph0",
+            cache_dir=str(cache_dir),
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        rc = cmd_extract_signals_prepare(args)
+        assert rc == 0
+
+        manifest = json.loads((cr_dir / "extract_signals_manifest.json").read_text())
+        assert manifest["status"] == "cache_hit"
+        assert not (cr_dir / "extract_signals_input.json").exists()
+
+        output = json.loads((cr_dir / "extract_signals.json").read_text())
+        assert output["status"] == "ok"
+        assert output["signals"][0]["name"] == "language_typescript"
+        # Cache-only metadata is stripped from the canonical output.
+        assert "written_at" not in output
+
+
+class TestExtractSignalsConsolidate:
+    """Validator-driven consolidate behavior: ok path, fail-closed path, finding emission."""
+
+    def _prepare(self, tmp_path: Path) -> tuple[Path, Path, str, str]:
+        from code_review_helpers import cmd_extract_signals_prepare
+        cr_dir = tmp_path / "cr"
+        cache_dir = tmp_path / "cache"
+        cr_dir.mkdir()
+        cache_dir.mkdir()
+        diff_path = _build_diff_data(tmp_path)
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(diff_path),
+            diff_tip="abcdef1234",
+            prompt_hash="ph0",
+            cache_dir=str(cache_dir),
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        rc = cmd_extract_signals_prepare(args)
+        assert rc == 0
+        manifest = json.loads((cr_dir / "extract_signals_manifest.json").read_text())
+        return cr_dir, cache_dir, manifest["cache_key"], manifest["taxonomy_hash"]
+
+    def test_valid_agent_output_writes_ok_and_updates_cache(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_SIGNALS,
+            cmd_extract_signals_consolidate,
+        )
+        cr_dir, cache_dir, key, _ = self._prepare(tmp_path)
+        agent_path = cr_dir / "agent_extract_signals.json"
+        agent_path.write_text(json.dumps({"signals": [
+            {"name": "language_typescript", "evidence": "x.ts:1 — TS file", "confidence": 0.95},
+            {"name": "auth_touching", "evidence": "src/auth.ts:42 — login flow", "confidence": 0.85},
+        ]}))
+
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            agent_output=str(agent_path),
+            manifest=None,
+            taxonomy=None,
+            cache_dir=str(cache_dir),
+        )
+        rc = cmd_extract_signals_consolidate(args)
+        assert rc == 0
+
+        out = json.loads((cr_dir / "extract_signals.json").read_text())
+        assert out["status"] == "ok"
+        assert {s["name"] for s in out["signals"]} == {"language_typescript", "auth_touching"}
+        assert not (cr_dir / "agent_signal-extraction-failed.json").exists()
+
+        # Cache write-back.
+        cached_files = list((cache_dir / CACHE_NAMESPACE_SIGNALS).glob("*.json"))
+        assert len(cached_files) == 1
+        cached = json.loads(cached_files[0].read_text())
+        assert cached["cache_key"] == key
+
+    def test_all_invalid_falls_closed_and_emits_finding(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_SIGNALS,
+            SIGNAL_EXTRACTION_MARKER,
+            SIGNAL_FAIL_CLOSED_CONFIDENCE,
+            cmd_extract_signals_consolidate,
+        )
+        cr_dir, cache_dir, _, _ = self._prepare(tmp_path)
+        agent_path = cr_dir / "agent_extract_signals.json"
+        # Every entry violates the contract.
+        agent_path.write_text(json.dumps({"signals": [
+            {"name": "made_up_signal", "evidence": "x:1", "confidence": 0.9},
+            {"name": "language_typescript", "evidence": "", "confidence": 0.9},
+            {"name": "language_python", "evidence": "p.py:1 — py", "confidence": 0.1},
+        ]}))
+
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            agent_output=str(agent_path),
+            manifest=None,
+            taxonomy=None,
+            cache_dir=str(cache_dir),
+        )
+        rc = cmd_extract_signals_consolidate(args)
+        assert rc == 0
+
+        out = json.loads((cr_dir / "extract_signals.json").read_text())
+        assert out["status"] == "fail_closed"
+        # Every signal present at the fail-closed confidence.
+        assert all(s["confidence"] == SIGNAL_FAIL_CLOSED_CONFIDENCE for s in out["signals"])
+        assert len(out["errors"]) >= 3
+
+        # Fail-closed must NOT be cached (next run gets a fresh attempt).
+        cached_files = list((cache_dir / CACHE_NAMESPACE_SIGNALS).glob("*.json"))
+        assert cached_files == []
+
+        # Operator-visible finding emitted.
+        finding_file = cr_dir / "agent_signal-extraction-failed.json"
+        assert finding_file.exists()
+        finding = json.loads(finding_file.read_text())["findings"][0]
+        assert finding["system_marker"] == SIGNAL_EXTRACTION_MARKER
+        assert finding["severity"] == "MEDIUM"
+        assert finding["finding_scope"] == "system"
+
+    def test_unreadable_agent_output_falls_closed(self, tmp_path: Path) -> None:
+        from code_review_helpers import cmd_extract_signals_consolidate
+        cr_dir, cache_dir, _, _ = self._prepare(tmp_path)
+        # Point at a nonexistent file.
+        missing = cr_dir / "does_not_exist.json"
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            agent_output=str(missing),
+            manifest=None,
+            taxonomy=None,
+            cache_dir=str(cache_dir),
+        )
+        rc = cmd_extract_signals_consolidate(args)
+        assert rc == 0
+        out = json.loads((cr_dir / "extract_signals.json").read_text())
+        assert out["status"] == "fail_closed"
+        assert (cr_dir / "agent_signal-extraction-failed.json").exists()
+
+    def test_partial_validity_keeps_valid_signals_and_records_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import cmd_extract_signals_consolidate
+        cr_dir, cache_dir, _, _ = self._prepare(tmp_path)
+        agent_path = cr_dir / "agent_extract_signals.json"
+        agent_path.write_text(json.dumps({"signals": [
+            {"name": "language_typescript", "evidence": "x.ts:1 — TS", "confidence": 0.95},
+            {"name": "invented", "evidence": "y:1", "confidence": 0.9},
+        ]}))
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            agent_output=str(agent_path),
+            manifest=None,
+            taxonomy=None,
+            cache_dir=str(cache_dir),
+        )
+        rc = cmd_extract_signals_consolidate(args)
+        assert rc == 0
+        out = json.loads((cr_dir / "extract_signals.json").read_text())
+        # Mixed valid+invalid → ok with one signal kept; errors recorded for observability.
+        assert out["status"] == "ok"
+        assert [s["name"] for s in out["signals"]] == ["language_typescript"]
+        assert any("invented" in e for e in out["errors"])
+        # No fail-closed finding when at least one signal was accepted.
+        assert not (cr_dir / "agent_signal-extraction-failed.json").exists()
