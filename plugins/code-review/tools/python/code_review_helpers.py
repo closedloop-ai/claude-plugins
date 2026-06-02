@@ -7608,6 +7608,351 @@ def _emit_coverage_critic_failed_finding(
 
 
 # ---------------------------------------------------------------------------
+# PLN-725 Phase 6 — Coverage Verifier (deterministic post-LLM gate)
+# ---------------------------------------------------------------------------
+#
+# Stage_15c_verify_coverage runs immediately after stage_15b_coverage_critic_
+# consolidate writes coverage_plan.json. Its job is the deterministic check
+# the LLM critic stage cannot self-enforce: that the final plan honors the
+# closed-vocabulary, additive-only, best-effort-only-critic, evidence-required,
+# and 5-cap constraints documented in PLN-725 §"Coverage Critic Contract".
+#
+# Verdict shape (`coverage_verify.json`):
+#   {"verdict": "PASS", "violations": [], "checked_at": ...}
+#   {"verdict": "BLOCKING", "violations": [{"check": "...", "message": "..."}], ...}
+#
+# Phase 6 rollout: BLOCKING is encoded in the artifact and surfaces as a HIGH
+# system-marker finding, but exit code stays 0 and ``on_failure: continue``
+# so the walker doesn't halt — downstream stages (spawn_reviewers, arbitrate-
+# budget) don't yet read coverage_plan.json. Phase 7 will gate those stages
+# on a PASS verdict; until then the verifier is observational telemetry.
+
+COVERAGE_VERIFY_MARKER = "coverage-verify-blocking"
+
+
+def _critic_addition_count(plan: dict[str, Any]) -> int:
+    """Count entries in best_effort[] tagged ``source: "critic"``."""
+    count = 0
+    for entry in plan.get("best_effort", []) or []:
+        if isinstance(entry, dict) and entry.get("source") == "critic":
+            count += 1
+    return count
+
+
+def _plan_reviewer_buckets(
+    plan: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return ``(required_entries, best_effort_entries)`` from a plan dict.
+
+    Defensive: filters out non-dict entries silently so the verifier
+    doesn't crash on malformed inputs — shape violations are reported
+    separately via the ``shape`` check.
+    """
+    required = [e for e in (plan.get("required", []) or []) if isinstance(e, dict)]
+    best_effort = [e for e in (plan.get("best_effort", []) or []) if isinstance(e, dict)]
+    return required, best_effort
+
+
+def _reviewer_names(entries: list[dict[str, Any]]) -> list[str]:
+    names: list[str] = []
+    for entry in entries:
+        reviewer = entry.get("reviewer")
+        if isinstance(reviewer, str) and reviewer:
+            names.append(reviewer)
+    return names
+
+
+def verify_coverage_plan(
+    plan: dict[str, Any],
+    plan_initial: dict[str, Any],
+    available_reviewers: list[str] | None,
+) -> list[dict[str, str]]:
+    """Run all deterministic checks against the final coverage plan.
+
+    Returns a list of violation dicts ``{"check": str, "message": str}``.
+    Empty list means PASS. Pure function — no I/O.
+
+    Args:
+        plan: the final coverage_plan.json (post-consolidate)
+        plan_initial: the pre-critic coverage_plan_initial.json
+        available_reviewers: roster of allowed reviewers, or None when
+            the roster wasn't produced (no-roster skip path). When None
+            or empty, the closed-vocabulary check is bypassed — there's
+            no roster to enforce against.
+
+    Checks (each appends at most one violation per failure mode):
+      - shape: top-level is an object with required[] + best_effort[]
+      - additive: every initial reviewer survives in some bucket of final
+      - closed_vocabulary: every final reviewer is in roster (when roster)
+      - critic_best_effort_only: source="critic" entries never in required[]
+      - critic_evidence: every source="critic" entry has non-empty evidence
+      - critic_cap: critic_addition count <= COVERAGE_CRITIC_MAX_ADDITIONS
+      - no_duplicates: each reviewer appears at most once across both buckets
+    """
+    violations: list[dict[str, str]] = []
+
+    # shape
+    if not isinstance(plan.get("required"), list):
+        violations.append({
+            "check": "shape",
+            "message": "coverage_plan.required is missing or not a list",
+        })
+    if not isinstance(plan.get("best_effort"), list):
+        violations.append({
+            "check": "shape",
+            "message": "coverage_plan.best_effort is missing or not a list",
+        })
+    if violations:
+        return violations  # downstream checks assume shape is valid
+
+    required_final, best_effort_final = _plan_reviewer_buckets(plan)
+    required_initial, best_effort_initial = _plan_reviewer_buckets(plan_initial)
+    final_names = set(_reviewer_names(required_final)) | set(_reviewer_names(best_effort_final))
+
+    # additive
+    initial_names = set(_reviewer_names(required_initial)) | set(_reviewer_names(best_effort_initial))
+    dropped = sorted(initial_names - final_names)
+    if dropped:
+        violations.append({
+            "check": "additive",
+            "message": (
+                f"initial-plan reviewers missing from final plan: {dropped} "
+                f"(coverage critic may only ADD; deletions violate the contract)"
+            ),
+        })
+
+    # closed_vocabulary — only enforced when a roster is present and non-empty
+    if available_reviewers:
+        roster = set(available_reviewers)
+        unknown = sorted(final_names - roster)
+        if unknown:
+            violations.append({
+                "check": "closed_vocabulary",
+                "message": (
+                    f"reviewers not in AVAILABLE roster: {unknown}"
+                ),
+            })
+
+    # critic_best_effort_only
+    critic_in_required = sorted({
+        e.get("reviewer", "<missing>")
+        for e in required_final
+        if e.get("source") == "critic"
+    })
+    if critic_in_required:
+        violations.append({
+            "check": "critic_best_effort_only",
+            "message": (
+                f"source=critic entries in required[]: {critic_in_required} "
+                f"(critic additions are best-effort only)"
+            ),
+        })
+
+    # critic_evidence
+    missing_evidence = sorted({
+        e.get("reviewer", "<missing>")
+        for e in best_effort_final
+        if e.get("source") == "critic"
+        and not (isinstance(e.get("evidence"), str) and e.get("evidence", "").strip())
+    })
+    if missing_evidence:
+        violations.append({
+            "check": "critic_evidence",
+            "message": (
+                f"source=critic entries with empty evidence: {missing_evidence}"
+            ),
+        })
+
+    # critic_cap
+    addition_count = _critic_addition_count(plan)
+    if addition_count > COVERAGE_CRITIC_MAX_ADDITIONS:
+        violations.append({
+            "check": "critic_cap",
+            "message": (
+                f"critic additions ({addition_count}) exceed the "
+                f"{COVERAGE_CRITIC_MAX_ADDITIONS}-cap"
+            ),
+        })
+
+    # no_duplicates — across buckets
+    seen: set[str] = set()
+    dupes: list[str] = []
+    for name in _reviewer_names(required_final) + _reviewer_names(best_effort_final):
+        if name in seen and name not in dupes:
+            dupes.append(name)
+        seen.add(name)
+    if dupes:
+        violations.append({
+            "check": "no_duplicates",
+            "message": (
+                f"reviewers appearing more than once across required[]/best_effort[]: "
+                f"{sorted(dupes)}"
+            ),
+        })
+
+    return violations
+
+
+def _emit_coverage_verify_blocking_finding(
+    cr_dir: Path, violations: list[dict[str, str]], now_iso: str,
+) -> None:
+    """Write a HIGH system-marker finding when the verifier returns BLOCKING.
+
+    Surfaces violations to the operator so the failing check can be
+    diagnosed. Fail-open on write error — telemetry is observational
+    and a write failure shouldn't crash the stage.
+    """
+    summary = [f"{v['check']}: {v['message']}" for v in violations[:10]]
+    if len(violations) > 10:
+        summary.append(f"… {len(violations) - 10} more")
+    finding = {
+        "reviewer": "coverage-verify",
+        "source": "coverage-verify",
+        "finding_scope": "system",
+        "system_marker": COVERAGE_VERIFY_MARKER,
+        "category": "Coverage",
+        "severity": "HIGH",
+        "file": None,
+        "line": None,
+        "issue": (
+            "Coverage verifier returned BLOCKING; coverage_plan.json fails "
+            "the closed-vocabulary, additive-only, or best-effort-only contract."
+        ),
+        "explanation": (
+            "The verifier runs after the critic-consolidate step and "
+            "enforces invariants the LLM critic stage cannot self-check: "
+            "roster membership, initial-plan preservation, critic-bucket "
+            "placement, evidence presence, the 5-cap, and uniqueness. A "
+            "BLOCKING verdict means the plan should not drive downstream "
+            "reviewer spawning."
+        ),
+        "recommendation": (
+            "Re-run the review. If the failure persists, inspect "
+            "coverage_verify.json for the per-check violations; common "
+            "causes include roster drift (AVAILABLE list changed mid-run), "
+            "an unexpected critic schema bypass, or a deletion sneaking "
+            "into the merge."
+        ),
+        "confidence": 1.0,
+        "rationale_summary": "; ".join(summary)[:1000],
+        "emitted_at": now_iso,
+    }
+    try:
+        with open(cr_dir / "agent_coverage-verify-blocking.json", "w") as f:
+            json.dump({"findings": [finding]}, f, indent=2)
+    except OSError as exc:
+        print(
+            f"Warning: could not write coverage-verify-blocking finding: {exc}",
+            file=sys.stderr,
+        )
+
+
+def cmd_verify_coverage(args: argparse.Namespace) -> int:
+    """PLN-725 Stage 4: deterministic verifier for the final coverage plan.
+
+    Reads ``coverage_plan.json`` (final), ``coverage_plan_initial.json``
+    (pre-critic), and ``available_reviewers.json`` (roster, optional).
+    Computes a list of violations against the closed-vocabulary,
+    additive-only, best-effort-only-critic, evidence-required, 5-cap,
+    and no-duplicates contracts. Writes ``coverage_verify.json`` with
+    the verdict and violations, and on BLOCKING also emits an
+    ``agent_coverage-verify-blocking.json`` system finding.
+
+    Exit code is 0 on PASS, BLOCKING, AND on missing-input early-exit
+    (which is treated as PASS so the verifier is fully observational
+    in Phase 6 — Phase 7 will gate spawn_reviewers on PASS via the
+    artifact, not the exit code). Returns 1 only on a write failure to
+    ``coverage_verify.json`` itself.
+
+    Skip semantics: when ``coverage_plan.json`` has
+    ``critic_status: "skipped"`` (--no-critic, no-roster, or
+    no-candidates path), the verifier still runs the shape +
+    additivity + no-duplicates checks. The closed-vocabulary check is
+    bypassed when the roster file is absent or empty — there's no
+    roster to enforce against.
+    """
+    cr_dir = Path(args.cr_dir)
+    plan_path = Path(args.coverage_plan)
+    plan_initial_path = Path(args.coverage_plan_initial)
+    available_path = (
+        Path(args.available_reviewers)
+        if getattr(args, "available_reviewers", None)
+        else None
+    )
+    output_path = (
+        Path(args.output) if getattr(args, "output", None)
+        else cr_dir / "coverage_verify.json"
+    )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    def _write_verdict(verdict: str, violations: list[dict[str, str]]) -> int:
+        result = {
+            "verdict": verdict,
+            "violations": violations,
+            "checked_at": now_iso,
+        }
+        try:
+            with open(output_path, "w") as f:
+                json.dump(result, f, indent=2)
+        except OSError as exc:
+            print(f"Error writing coverage_verify: {exc}", file=sys.stderr)
+            return 1
+        if verdict == "BLOCKING":
+            _emit_coverage_verify_blocking_finding(cr_dir, violations, now_iso)
+        summary = {
+            "verdict": verdict,
+            "violation_count": len(violations),
+            "output_path": str(output_path),
+        }
+        json.dump(summary, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
+    # Missing inputs are not a verifier failure — they mean an upstream
+    # stage didn't produce its artifact (likely because a prior stage
+    # aborted). Treat as PASS with a single advisory violation so
+    # operators see why verification was vacuous, without blocking
+    # downstream observability.
+    try:
+        with open(plan_path) as f:
+            plan = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        return _write_verdict("PASS", [{
+            "check": "input",
+            "message": f"coverage_plan unreadable, verifier ran no checks: {exc}",
+        }])
+    if not isinstance(plan, dict):
+        return _write_verdict("BLOCKING", [{
+            "check": "shape",
+            "message": "coverage_plan is not a JSON object",
+        }])
+
+    try:
+        with open(plan_initial_path) as f:
+            plan_initial = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        return _write_verdict("PASS", [{
+            "check": "input",
+            "message": f"coverage_plan_initial unreadable: {exc}",
+        }])
+    if not isinstance(plan_initial, dict):
+        plan_initial = {}
+
+    available_reviewers: list[str] | None = None
+    if available_path is not None and available_path.exists():
+        loaded, _ = _load_available_reviewers(available_path)
+        # Roster read errors degrade to None (skip closed-vocabulary check)
+        # rather than emitting a violation — the verifier's job is to
+        # check the plan, not the roster file shape.
+        available_reviewers = loaded if loaded else None
+
+    violations = verify_coverage_plan(plan, plan_initial, available_reviewers)
+    verdict = "BLOCKING" if violations else "PASS"
+    return _write_verdict(verdict, violations)
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: classify-intent
 # ---------------------------------------------------------------------------
 
@@ -8814,6 +9159,37 @@ def _build_run_plan_stages(
             "enabled": True,  # PLN-725 Phase 4
         },
         {
+            # PLN-725 Phase 6: deterministic post-LLM verifier. Reads
+            # coverage_plan.json (final), coverage_plan_initial.json
+            # (pre-critic), and available_reviewers.json (roster).
+            # Validates the closed-vocabulary, additive-only, best-
+            # effort-only-critic, evidence-required, 5-cap, and no-
+            # duplicates contracts. Writes coverage_verify.json with
+            # verdict PASS|BLOCKING and per-check violations; on
+            # BLOCKING also emits a HIGH system finding so the run
+            # summary surfaces the failure.
+            #
+            # Phase 6 rollout: observational only. exit 0 on PASS AND
+            # BLOCKING; on_failure: continue. Phase 7 will gate
+            # stage_16/stage_20 on a PASS verdict by reading
+            # coverage_verify.json from those downstream stages —
+            # NOT by changing the verifier's exit code.
+            "id": "stage_15c_verify_coverage",
+            "kind": "helper",
+            "subcommand": "verify-coverage",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--coverage-plan", f"{cr_dir}/coverage_plan.json",
+                "--coverage-plan-initial", f"{cr_dir}/coverage_plan_initial.json",
+                "--available-reviewers", f"{cr_dir}/available_reviewers.json",
+            ],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/coverage_verify.json"],
+            "depends_on": ["stage_15b_coverage_critic_consolidate"],
+            "on_failure": "continue",
+            "enabled": True,  # PLN-725 Phase 6
+        },
+        {
             "id": "stage_16_arbitrate_budget",
             "kind": "helper",
             "subcommand": "arbitrate-budget",
@@ -8831,11 +9207,12 @@ def _build_run_plan_stages(
             ],
             "stdout": None,
             "expected_outputs": [f"{cr_dir}/coverage_plan.json", f"{cr_dir}/coverage_gaps.json"],
-            # PLN-725 Phase 4 depends_on rewire: stage_15b is the actual
-            # producer of coverage_plan.json. stage_16 will overwrite
-            # that same path with the budget-arbitrated version when
-            # Phase 7 enables it.
-            "depends_on": ["stage_15b_coverage_critic_consolidate"],
+            # PLN-725 Phase 6 depends_on rewire: stage_15c is the last
+            # stage to read coverage_plan.json before stage_16. When
+            # Phase 7 enables this stage and starts reading
+            # coverage_verify.json to gate on PASS, the dependency on
+            # stage_15c is what guarantees that artifact exists.
+            "depends_on": ["stage_15c_verify_coverage"],
             "on_failure": "abort",
             # Stays disabled in Phase 4 — arbitrate-budget integration
             # is Phase 7. stages 11/11b/14/15/15b run in dry-run mode
@@ -9035,20 +9412,13 @@ def _build_run_plan_stages(
             "on_failure": "continue",
             "enabled": True,
         },
-        {
-            "id": "stage_24_verify_coverage",
-            "kind": "helper",
-            "subcommand": "verify-coverage",
-            "args": [
-                "--cr-dir", cr_dir,
-                "--coverage-plan", f"{cr_dir}/coverage_plan.json",
-            ],
-            "stdout": f"{cr_dir}/coverage_verification.json",
-            "expected_outputs": [f"{cr_dir}/coverage_verification.json"],
-            "depends_on": ["stage_23_verify_findings"],
-            "on_failure": "continue",
-            "enabled": False,  # plan 05
-        },
+        # Note: PLN-725 Phase 6 (v2.19.0) shipped the coverage verifier as
+        # stage_15c_verify_coverage immediately after stage_15b_coverage_
+        # critic_consolidate — that's where coverage_plan.json is born, so
+        # verification belongs there, not after the findings verifier (which
+        # is a completely orthogonal pipeline). The legacy stage_24_verify_
+        # coverage placeholder that originally lived at this position was
+        # removed when stage_15c shipped.
         {
             "id": "stage_25_finalize_result",
             "kind": "helper",
@@ -10342,6 +10712,37 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
         help="Optional cache directory; successful runs write back to coverage_critic/",
     )
     p_ccc.set_defaults(func=cmd_coverage_critic_consolidate)
+
+    # verify-coverage (PLN-725 Phase 6)
+    p_vc = subparsers.add_parser(
+        "verify-coverage",
+        help=(
+            "Deterministic verifier for coverage_plan.json. Emits "
+            "coverage_verify.json with verdict PASS|BLOCKING and per-check "
+            "violations; emits a HIGH system finding on BLOCKING."
+        ),
+    )
+    p_vc.add_argument("--cr-dir", required=True, help="CR_DIR path")
+    p_vc.add_argument(
+        "--coverage-plan", required=True,
+        help="Path to final coverage_plan.json (post-consolidate)",
+    )
+    p_vc.add_argument(
+        "--coverage-plan-initial", required=True,
+        help="Path to pre-critic coverage_plan_initial.json",
+    )
+    p_vc.add_argument(
+        "--available-reviewers", default=None,
+        help=(
+            "Path to available_reviewers.json (roster). Closed-vocabulary "
+            "check is bypassed when the file is missing or empty."
+        ),
+    )
+    p_vc.add_argument(
+        "--output", default=None,
+        help="Output path (defaults to <cr-dir>/coverage_verify.json)",
+    )
+    p_vc.set_defaults(func=cmd_verify_coverage)
 
     # re-assert (PLN-773 Phase 4)
     p_ra = subparsers.add_parser(

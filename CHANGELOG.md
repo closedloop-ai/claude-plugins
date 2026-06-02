@@ -4,6 +4,23 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.19.0
+
+#### Added
+- `verify-coverage` subcommand and `stage_15c_verify_coverage` stage — a deterministic post-LLM verifier that runs immediately after `stage_15b_coverage_critic_consolidate` and validates the final `coverage_plan.json` against the closed-vocabulary, additive-only, best-effort-only-critic, evidence-required, 5-cap, and no-duplicates contracts. Emits `coverage_verify.json` with `verdict: "PASS" | "BLOCKING"` and a `violations[]` list keyed by check name. On `BLOCKING` also emits a HIGH system-marker finding to `agent_coverage-verify-blocking.json` so the run summary surfaces the failure. The closed-vocabulary check is bypassed when `available_reviewers.json` is missing or empty, preserving the no-roster skip semantics introduced in v2.18.0/v2.18.2. Missing-input cases degrade to `PASS` with an advisory `input` violation rather than vacuously blocking, so the verifier stays observational when an upstream stage didn't produce its artifact.
+- `coverage-verify-blocking` value added to `SYSTEM_MARKERS_FIXED` and mapped to `system` scope in `SYSTEM_MARKER_SCOPES`, so verifier-emitted findings pass schema validation alongside `coverage-critic-failed`.
+- New `verify_coverage_plan` pure function exposes the per-check contract independent of I/O, with unit tests covering each violation mode (shape, additive, closed_vocabulary, critic_best_effort_only, critic_evidence, critic_cap, no_duplicates) and the no-roster bypass paths.
+- New `TestPLN725Phase6VerifyCoverageCommand` end-to-end tests cover the artifact contents on PASS, the BLOCKING finding emission, the observational exit semantics (exit 0 on both verdicts), the missing-plan input-advisory fallback, and the empty/missing roster bypass.
+- New `TestPLN725Phase6StageGraph` tests pin `stage_15c_verify_coverage` shape, adjacency to `stage_15b`, the `--coverage-plan` / `--coverage-plan-initial` / `--available-reviewers` argument set, `enabled: True`, and `on_failure: continue`.
+
+#### Changed
+- `stage_16_arbitrate_budget.depends_on` re-anchored from `stage_15b_coverage_critic_consolidate` to `stage_15c_verify_coverage`. The producer chain still flows correctly (`stage_15c` itself depends on `stage_15b`), and when Phase 7 enables `stage_16` it can read `coverage_verify.json` from the same dependency edge without adding another.
+- `stage_15c_verify_coverage` ships observational in this version — `on_failure: continue` and exit code 0 on both PASS and BLOCKING. The verdict is encoded in the artifact and finding shape so downstream stages can gate on a PASS read without the verifier itself halting the walker.
+- `SCHEMA.md` updated to list `verify-coverage` under stage row 15c with output `coverage_verify.json` and remove the stale stage 24 placeholder row.
+
+#### Removed
+- Stale `stage_24_verify_coverage` placeholder removed from the run plan. Its original shape (no `--coverage-plan-initial` or `--available-reviewers` args, output `coverage_verification.json`, dependency on `stage_23_verify_findings`) targeted a different verifier surface than what ships in this version. Coverage verification now lives next to where `coverage_plan.json` is produced, not after the findings verifier.
+
 ### code-review v2.18.2
 
 #### Fixed

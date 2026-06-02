@@ -6769,11 +6769,15 @@ class TestPrepareRun:
             and stage_15b_coverage_critic_consolidate → 34
           - PLN-725 Phase 5 (v2.18.0) added
             stage_14a_load_available_reviewers → 35
+          - PLN-725 Phase 6 (v2.19.0) added stage_15c_verify_coverage AND
+            removed the stale stage_24_verify_coverage placeholder
+            (net 0; the verifier now lives next to where coverage_plan.json
+            is produced, not after findings verification) → 35
 
         The ``_<NN>_`` prefix is a stable label, not a strict ordinal;
         the lettered suffixes (``_11b_``, ``_14a_``, ``_15b_``,
-        ``_22b_``, ``_24a_``) mark stages inserted between original
-        ordinals.
+        ``_15c_``, ``_22b_``, ``_24a_``) mark stages inserted between
+        original ordinals.
         """
         summary, plan = self._run(tmp_path)
         assert summary["stage_count"] == 35
@@ -6841,18 +6845,23 @@ class TestPrepareRun:
             flipped on in v2.8.0.
           - PLN-725 Phase 4 (v2.17.0) flipped stages 11/11b/14/15/15b
             on; stage_16_arbitrate_budget stays off until Phase 7.
+          - PLN-725 Phase 6 (v2.19.0) flipped stage_15c_verify_coverage on
+            (observational; downstream consumers gate in Phase 7) and
+            removed the stale stage_24_verify_coverage placeholder.
 
         Remaining deferred stages until their plans ship:
           - stage_16_arbitrate_budget (PLN-725 Phase 7)
-          - stage_24_verify_coverage (PLN-725 coverage verifier — Phase 6)
           - stage_13_validate_companions (PLN-726)
         """
         _, plan = self._run(tmp_path)
         by_id = {s["id"]: s for s in plan["stages"]}
         # Still-deferred
         assert by_id["stage_16_arbitrate_budget"]["enabled"] is False
-        assert by_id["stage_24_verify_coverage"]["enabled"] is False
         assert by_id["stage_13_validate_companions"]["enabled"] is False
+        # The legacy stage_24_verify_coverage placeholder was removed in
+        # Phase 6 — verification now lives at stage_15c.
+        assert "stage_24_verify_coverage" not in by_id
+        assert "stage_15c_verify_coverage" in by_id
 
     def test_pln_722_verify_pipeline_enabled_with_pinned_args(
         self, tmp_path: Path,
@@ -6951,14 +6960,18 @@ class TestPrepareRun:
         flipping it on without spawn_reviewers consuming the output
         would just rewrite coverage_plan.json with no consumer. Phase 7
         wires both halves together.
+
+        Phase 6 (v2.19.0) re-anchors stage_16.depends_on to
+        stage_15c_verify_coverage so that when Phase 7 enables stage_16,
+        it can read coverage_verify.json from the same dependency chain.
         """
         _, plan = self._run(tmp_path)
         by_id = {s["id"]: s for s in plan["stages"]}
         assert by_id["stage_16_arbitrate_budget"]["enabled"] is False
-        # Sanity-check the depends_on chain still points where Phase 4
-        # rewired it (stage_15b's output is the input arbitrate-budget
-        # will read in Phase 7).
-        assert "stage_15b_coverage_critic_consolidate" in by_id[
+        # Phase 6 rewired stage_16 to depend on stage_15c (the verifier)
+        # rather than stage_15b directly; stage_15c itself depends on
+        # stage_15b, so the producer chain still flows correctly.
+        assert "stage_15c_verify_coverage" in by_id[
             "stage_16_arbitrate_budget"
         ]["depends_on"]
 
@@ -13004,9 +13017,16 @@ class TestPLN725Phase4StageGraph:
         assert "stage_11b_extract_signals_consolidate" in stage["depends_on"]
         assert "stage_11_extract_signals" not in stage["depends_on"]
 
-    def test_stage_16_depends_on_stage_15b_not_stage_15(self) -> None:
+    def test_stage_16_depends_on_post_consolidate_chain_not_stage_15(self) -> None:
+        # Phase 4 pinned stage_16 to stage_15b (the consolidate
+        # producer of coverage_plan.json). Phase 6 (v2.19.0) re-anchored
+        # it to stage_15c_verify_coverage so that, when Phase 7 enables
+        # stage_16, the verdict artifact lives on a transitive
+        # dependency — stage_15c → stage_15b — and stage_16 can read
+        # coverage_verify.json from the same chain without adding
+        # another edge.
         stage = self._stage("stage_16_arbitrate_budget")
-        assert "stage_15b_coverage_critic_consolidate" in stage["depends_on"]
+        assert "stage_15c_verify_coverage" in stage["depends_on"]
         assert "stage_15_coverage_critic" not in stage["depends_on"]
 
     # --- enablement --------------------------------------------------------
@@ -13419,6 +13439,425 @@ class TestPLN725Phase5StageGraph:
         # and the rest of the review still ships.
         stage = self._stage("stage_14a_load_available_reviewers")
         assert stage["on_failure"] == "continue_with_coverage_gap"
+
+
+class TestPLN725Phase6VerifyCoveragePure:
+    """Phase 6 ships a deterministic verifier (`verify_coverage_plan`)
+    that runs after coverage-critic-consolidate. These tests pin the
+    pure-function contract: shape, additive-only, closed-vocabulary,
+    critic-bucket placement, evidence, 5-cap, and uniqueness.
+    """
+
+    @staticmethod
+    def _plan(required: list[str] | None = None,
+              best_effort: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        return {
+            "required": [
+                {"reviewer": r, "trigger": {"type": "rule"}, "source": "rule"}
+                for r in (required or [])
+            ],
+            "best_effort": list(best_effort or []),
+            "stats": {},
+        }
+
+    @staticmethod
+    def _critic_addition(reviewer: str, evidence: str = "valid evidence") -> dict[str, Any]:
+        return {
+            "reviewer": reviewer,
+            "trigger": {"type": "critic_addition"},
+            "source": "critic",
+            "evidence": evidence,
+        }
+
+    def test_pass_when_plan_matches_initial_with_roster(self) -> None:
+        from code_review_helpers import verify_coverage_plan
+        initial = self._plan(required=["a"], best_effort=[
+            {"reviewer": "b", "trigger": {"type": "rule"}, "source": "rule"},
+        ])
+        final = self._plan(required=["a"], best_effort=[
+            {"reviewer": "b", "trigger": {"type": "rule"}, "source": "rule"},
+        ])
+        assert verify_coverage_plan(final, initial, ["a", "b"]) == []
+
+    def test_pass_when_critic_added_within_contract(self) -> None:
+        from code_review_helpers import verify_coverage_plan
+        initial = self._plan(required=["a"])
+        final = self._plan(required=["a"], best_effort=[
+            self._critic_addition("c"),
+        ])
+        assert verify_coverage_plan(final, initial, ["a", "c"]) == []
+
+    def test_blocking_when_initial_reviewer_dropped(self) -> None:
+        from code_review_helpers import verify_coverage_plan
+        initial = self._plan(required=["a", "b"])
+        final = self._plan(required=["a"])
+        violations = verify_coverage_plan(final, initial, ["a", "b"])
+        checks = {v["check"] for v in violations}
+        assert "additive" in checks
+        joined = " ".join(v["message"] for v in violations if v["check"] == "additive")
+        assert "'b'" in joined
+
+    def test_blocking_when_reviewer_not_in_roster(self) -> None:
+        from code_review_helpers import verify_coverage_plan
+        initial = self._plan(required=["a"])
+        final = self._plan(required=["a"], best_effort=[
+            self._critic_addition("hallucinated"),
+        ])
+        violations = verify_coverage_plan(final, initial, ["a"])
+        checks = {v["check"] for v in violations}
+        assert "closed_vocabulary" in checks
+
+    def test_closed_vocabulary_bypassed_when_roster_none(self) -> None:
+        # No roster file → can't enforce membership. Verifier must not
+        # invent violations from an absent contract.
+        from code_review_helpers import verify_coverage_plan
+        initial = self._plan(required=["a"])
+        final = self._plan(required=["a"], best_effort=[self._critic_addition("z")])
+        assert verify_coverage_plan(final, initial, None) == []
+
+    def test_closed_vocabulary_bypassed_when_roster_empty(self) -> None:
+        # Empty roster is the no-roster skip path — same semantics.
+        from code_review_helpers import verify_coverage_plan
+        initial = self._plan(required=["a"])
+        final = self._plan(required=["a"], best_effort=[self._critic_addition("z")])
+        assert verify_coverage_plan(final, initial, []) == []
+
+    def test_blocking_when_critic_in_required(self) -> None:
+        from code_review_helpers import verify_coverage_plan
+        initial = self._plan(required=["a"])
+        # Synthesize a contract violation that the prepare-step
+        # validator would normally have caught: a source=critic entry
+        # landed in required[]. Verifier must catch this independently
+        # because it's the LAST line of defense before downstream
+        # consumers read the plan.
+        final = {
+            "required": [
+                {"reviewer": "a", "trigger": {"type": "rule"}, "source": "rule"},
+                {
+                    "reviewer": "c",
+                    "trigger": {"type": "critic_addition"},
+                    "source": "critic",
+                    "evidence": "some evidence",
+                },
+            ],
+            "best_effort": [],
+            "stats": {},
+        }
+        violations = verify_coverage_plan(final, initial, ["a", "c"])
+        checks = {v["check"] for v in violations}
+        assert "critic_best_effort_only" in checks
+
+    def test_blocking_when_critic_missing_evidence(self) -> None:
+        from code_review_helpers import verify_coverage_plan
+        initial = self._plan(required=["a"])
+        final = self._plan(required=["a"], best_effort=[
+            self._critic_addition("c", evidence=""),
+        ])
+        violations = verify_coverage_plan(final, initial, ["a", "c"])
+        checks = {v["check"] for v in violations}
+        assert "critic_evidence" in checks
+
+    def test_blocking_when_critic_evidence_whitespace_only(self) -> None:
+        from code_review_helpers import verify_coverage_plan
+        initial = self._plan(required=["a"])
+        final = self._plan(required=["a"], best_effort=[
+            self._critic_addition("c", evidence="   \n\t  "),
+        ])
+        violations = verify_coverage_plan(final, initial, ["a", "c"])
+        checks = {v["check"] for v in violations}
+        assert "critic_evidence" in checks
+
+    def test_blocking_when_cap_exceeded(self) -> None:
+        # The prepare validator already truncates at 5; the verifier
+        # is the last line of defense for callers that bypass prepare
+        # (cache hit serving a corrupt artifact, manual editing, etc.).
+        from code_review_helpers import (
+            COVERAGE_CRITIC_MAX_ADDITIONS,
+            verify_coverage_plan,
+        )
+        initial = self._plan(required=["a"])
+        names = [f"r{i}" for i in range(COVERAGE_CRITIC_MAX_ADDITIONS + 1)]
+        final = self._plan(required=["a"], best_effort=[
+            self._critic_addition(n) for n in names
+        ])
+        violations = verify_coverage_plan(final, initial, ["a", *names])
+        checks = {v["check"] for v in violations}
+        assert "critic_cap" in checks
+
+    def test_blocking_when_reviewer_duplicated_across_buckets(self) -> None:
+        from code_review_helpers import verify_coverage_plan
+        initial = self._plan(required=["a"])
+        final = {
+            "required": [
+                {"reviewer": "a", "trigger": {"type": "rule"}, "source": "rule"},
+            ],
+            "best_effort": [
+                # Same reviewer present in both buckets is a contract
+                # break — downstream dispatch would spawn them twice.
+                {"reviewer": "a", "trigger": {"type": "rule"}, "source": "rule"},
+            ],
+            "stats": {},
+        }
+        violations = verify_coverage_plan(final, initial, ["a"])
+        checks = {v["check"] for v in violations}
+        assert "no_duplicates" in checks
+
+    def test_blocking_when_shape_invalid(self) -> None:
+        from code_review_helpers import verify_coverage_plan
+        # Missing required[] — should short-circuit at shape check.
+        violations = verify_coverage_plan(
+            {"best_effort": [], "stats": {}}, {}, None,
+        )
+        assert any(v["check"] == "shape" for v in violations)
+
+    def test_skipped_plan_with_empty_buckets_passes(self) -> None:
+        # critic_status: "skipped" produces an unchanged initial plan.
+        # If initial was empty and final is empty, additivity + shape +
+        # uniqueness all trivially pass.
+        from code_review_helpers import verify_coverage_plan
+        empty = {"required": [], "best_effort": [], "stats": {}}
+        assert verify_coverage_plan(empty, empty, None) == []
+
+
+class TestPLN725Phase6VerifyCoverageCommand:
+    """End-to-end coverage for `cmd_verify_coverage`: artifact writing,
+    finding emission on BLOCKING, observational exit semantics, and
+    missing-input degradation.
+    """
+
+    @staticmethod
+    def _write(path: Path, payload: Any) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload))
+
+    def _run(self, tmp_path: Path,
+             final: dict[str, Any] | None = None,
+             initial: dict[str, Any] | None = None,
+             roster: list[str] | None = None,
+             include_roster_file: bool = True) -> tuple[int, dict[str, Any], Path]:
+        """Stage CR_DIR inputs, run cmd_verify_coverage, return
+        ``(exit_code, coverage_verify_dict, cr_dir)``.
+        """
+        from code_review_helpers import cmd_verify_coverage
+        cr_dir = tmp_path / "cr_dir"
+        cr_dir.mkdir(exist_ok=True)
+        plan_path = cr_dir / "coverage_plan.json"
+        initial_path = cr_dir / "coverage_plan_initial.json"
+        roster_path = cr_dir / "available_reviewers.json"
+        if final is not None:
+            self._write(plan_path, final)
+        if initial is not None:
+            self._write(initial_path, initial)
+        if include_roster_file:
+            self._write(roster_path, {"available_reviewers": roster or []})
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            coverage_plan=str(plan_path),
+            coverage_plan_initial=str(initial_path),
+            available_reviewers=str(roster_path) if include_roster_file else None,
+            output=None,
+        )
+        rc = cmd_verify_coverage(ns)
+        result = json.loads((cr_dir / "coverage_verify.json").read_text())
+        return rc, result, cr_dir
+
+    def test_writes_pass_verdict_and_exits_zero(self, tmp_path: Path) -> None:
+        plan = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [],
+            "stats": {},
+        }
+        rc, result, _ = self._run(tmp_path, final=plan, initial=plan, roster=["a"])
+        assert rc == 0
+        assert result["verdict"] == "PASS"
+        assert result["violations"] == []
+        assert "checked_at" in result
+
+    def test_writes_blocking_verdict_with_violations_and_exits_zero(
+        self, tmp_path: Path,
+    ) -> None:
+        # Phase 6 is observational — BLOCKING is encoded in the
+        # artifact and a finding, but exit code must stay 0 so
+        # `on_failure: continue` is not effectively `abort`.
+        initial = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [],
+            "stats": {},
+        }
+        final = {
+            # initial reviewer "a" dropped — additivity violation
+            "required": [],
+            "best_effort": [],
+            "stats": {},
+        }
+        rc, result, cr_dir = self._run(
+            tmp_path, final=final, initial=initial, roster=["a"],
+        )
+        assert rc == 0
+        assert result["verdict"] == "BLOCKING"
+        assert len(result["violations"]) >= 1
+        assert any(v["check"] == "additive" for v in result["violations"])
+
+        # BLOCKING also emits a system finding for the run summary.
+        finding_path = cr_dir / "agent_coverage-verify-blocking.json"
+        assert finding_path.exists()
+        finding_doc = json.loads(finding_path.read_text())
+        assert len(finding_doc["findings"]) == 1
+        finding = finding_doc["findings"][0]
+        assert finding["system_marker"] == "coverage-verify-blocking"
+        assert finding["finding_scope"] == "system"
+        assert finding["severity"] == "HIGH"
+        assert finding["category"] == "Coverage"
+
+    def test_pass_verdict_does_not_emit_blocking_finding(self, tmp_path: Path) -> None:
+        plan = {"required": [], "best_effort": [], "stats": {}}
+        rc, _, cr_dir = self._run(tmp_path, final=plan, initial=plan, roster=[])
+        assert rc == 0
+        assert not (cr_dir / "agent_coverage-verify-blocking.json").exists()
+
+    def test_missing_plan_degrades_to_pass_with_input_advisory(
+        self, tmp_path: Path,
+    ) -> None:
+        # Missing coverage_plan.json (upstream stage aborted) must not
+        # cause the verifier to BLOCK on missing inputs — that would
+        # invert "fail-open observational" into "fail-closed blocking".
+        # Verdict stays PASS with an `input` advisory violation so
+        # operators see why verification was vacuous.
+        from code_review_helpers import cmd_verify_coverage
+        cr_dir = tmp_path / "cr_dir"
+        cr_dir.mkdir()
+        # Write only initial; deliberately omit final.
+        initial_path = cr_dir / "coverage_plan_initial.json"
+        self._write(initial_path, {"required": [], "best_effort": [], "stats": {}})
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            coverage_plan=str(cr_dir / "coverage_plan.json"),
+            coverage_plan_initial=str(initial_path),
+            available_reviewers=None,
+            output=None,
+        )
+        rc = cmd_verify_coverage(ns)
+        result = json.loads((cr_dir / "coverage_verify.json").read_text())
+        assert rc == 0
+        assert result["verdict"] == "PASS"
+        assert any(v["check"] == "input" for v in result["violations"])
+
+    def test_missing_roster_file_skips_closed_vocabulary_check(
+        self, tmp_path: Path,
+    ) -> None:
+        # When the roster file is absent (no .claude/agents in repo)
+        # the closed-vocabulary check must be bypassed, not enforce
+        # against an implicit empty roster. Otherwise the verifier
+        # would BLOCK every review in a project without agents,
+        # contradicting the Phase 5 no-roster skip semantics.
+        from code_review_helpers import cmd_verify_coverage
+        cr_dir = tmp_path / "cr_dir"
+        cr_dir.mkdir()
+        plan = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [],
+            "stats": {},
+        }
+        self._write(cr_dir / "coverage_plan.json", plan)
+        self._write(cr_dir / "coverage_plan_initial.json", plan)
+        # No available_reviewers.json on disk
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            coverage_plan=str(cr_dir / "coverage_plan.json"),
+            coverage_plan_initial=str(cr_dir / "coverage_plan_initial.json"),
+            available_reviewers=str(cr_dir / "available_reviewers.json"),
+            output=None,
+        )
+        rc = cmd_verify_coverage(ns)
+        result = json.loads((cr_dir / "coverage_verify.json").read_text())
+        assert rc == 0
+        assert result["verdict"] == "PASS"
+
+    def test_empty_roster_file_skips_closed_vocabulary_check(
+        self, tmp_path: Path,
+    ) -> None:
+        plan = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [],
+            "stats": {},
+        }
+        # Empty roster file on disk — same semantics as missing file.
+        rc, result, _ = self._run(
+            tmp_path, final=plan, initial=plan, roster=[],
+        )
+        assert rc == 0
+        assert result["verdict"] == "PASS"
+
+
+class TestPLN725Phase6StageGraph:
+    """Pin stage_15c_verify_coverage shape, position, dependencies, and
+    the stage_16 depends_on rewire — and the removal of the legacy
+    stage_24_verify_coverage placeholder.
+    """
+
+    def _stages(self) -> list[dict[str, Any]]:
+        from code_review_helpers import _build_run_plan_stages
+        return _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+
+    def _stage(self, stage_id: str) -> dict[str, Any]:
+        for s in self._stages():
+            if s["id"] == stage_id:
+                return s
+        raise AssertionError(f"{stage_id!r} missing from prepare-run manifest")
+
+    def test_stage_15c_exists_with_verify_coverage_subcommand(self) -> None:
+        stage = self._stage("stage_15c_verify_coverage")
+        assert stage["subcommand"] == "verify-coverage"
+        assert stage["kind"] == "helper"
+
+    def test_stage_15c_runs_immediately_after_stage_15b(self) -> None:
+        ids = [s["id"] for s in self._stages()]
+        b = ids.index("stage_15b_coverage_critic_consolidate")
+        c = ids.index("stage_15c_verify_coverage")
+        # Adjacency, not just precedence — keep the verifier tight
+        # against its producer so downstream code can rely on the
+        # invariant that nothing mutates coverage_plan.json between.
+        assert c == b + 1
+
+    def test_stage_15c_depends_on_stage_15b(self) -> None:
+        assert "stage_15b_coverage_critic_consolidate" in self._stage(
+            "stage_15c_verify_coverage"
+        )["depends_on"]
+
+    def test_stage_15c_expected_outputs_is_coverage_verify_json(self) -> None:
+        stage = self._stage("stage_15c_verify_coverage")
+        assert any(
+            p.endswith("/coverage_verify.json") for p in stage["expected_outputs"]
+        )
+
+    def test_stage_15c_passes_roster_and_initial_plan_args(self) -> None:
+        # All three inputs (final plan, initial plan, roster) must be
+        # passed — without them the verifier can't run the closed-
+        # vocabulary or additivity checks.
+        stage = self._stage("stage_15c_verify_coverage")
+        assert "--coverage-plan" in stage["args"]
+        assert "--coverage-plan-initial" in stage["args"]
+        assert "--available-reviewers" in stage["args"]
+
+    def test_stage_15c_enabled(self) -> None:
+        assert self._stage("stage_15c_verify_coverage")["enabled"] is True
+
+    def test_stage_15c_on_failure_is_continue(self) -> None:
+        # Phase 6 ships observational. Flipping to abort would break
+        # Phase 4/5 telemetry for any review that surfaces a violation.
+        assert self._stage("stage_15c_verify_coverage")["on_failure"] == "continue"
+
+    def test_stage_16_now_depends_on_stage_15c(self) -> None:
+        # Phase 6 re-anchors stage_16 to the verifier so that, when
+        # Phase 7 enables stage_16, the verdict artifact lives on a
+        # transitive dependency rather than needing a separate edge.
+        assert "stage_15c_verify_coverage" in self._stage(
+            "stage_16_arbitrate_budget"
+        )["depends_on"]
+
+    def test_legacy_stage_24_verify_coverage_removed(self) -> None:
+        ids = {s["id"] for s in self._stages()}
+        assert "stage_24_verify_coverage" not in ids
 
 
 class TestExtractSignalsConsolidateCacheHitNoOp:

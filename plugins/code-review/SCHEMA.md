@@ -318,6 +318,7 @@ in what order, against what cap." See PLN-719 Section 5.
 | 13 | validate-companions (plan 06)| `validate-companions`    | `companion_findings.json`                                     |
 | 14 | resolve-coverage (plan 05)   | `resolve-coverage`       | `coverage_plan_initial.json`                                  |
 | 15 | coverage-critic (plan 05)    | `coverage-critic`        | `coverage_critic.json`                                        |
+| 15c| verify-coverage (plan 05)    | `verify-coverage`        | `coverage_verify.json`                                        |
 | 16 | arbitrate-budget             | `arbitrate-budget`       | `coverage_plan.json`, `coverage_gaps.json`                    |
 | 17 | partition                    | `partition`              | `partitions.json`, `patches_p<N>.txt`                          |
 | 18 | compute-hashes               | `compute-hashes`         | `hashes.json`                                                 |
@@ -326,7 +327,6 @@ in what order, against what cap." See PLN-719 Section 5.
 | 21 | collect-findings             | `collect-findings`       | `findings.json` (with deterministic IDs)                       |
 | 22 | validate                     | `validate`               | `findings_validated.json`                                     |
 | 23 | verify-findings (plan 03)    | `verify-findings`        | `findings_verified.json`                                      |
-| 24 | verify-coverage (plan 05)    | `verify-coverage`        | `coverage_verification.json`                                  |
 | 25 | finalize-result              | `finalize-result`        | `review_result.json` (canonical envelope)                     |
 | 26 | cache-update                 | `cache-update`           | Cache manifest                                                |
 | 27 | review-state-write           | `review-state-write`     | Review state                                                  |
