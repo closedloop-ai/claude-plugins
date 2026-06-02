@@ -20,6 +20,7 @@ import os
 import random
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import uuid
@@ -6603,10 +6604,33 @@ def cmd_resolve_coverage(args: argparse.Namespace) -> int:
 DEFAULT_AGENTS_DIR = Path(".claude/agents")
 
 _FRONTMATTER_BOUNDARY = re.compile(r"^---\s*$", re.MULTILINE)
+# The value group accepts:
+#   bare scalar      — name: security-reviewer
+#   double-quoted    — name: "security-reviewer"
+#   single-quoted    — name: 'security-reviewer'
+# Trailing inline comments (`# primary`) are matched and discarded in
+# the post-process step below. The bare-scalar regex stays
+# conservative (must start with [A-Za-z0-9], YAML-safe chars only)
+# so a typo on a different key doesn't accidentally swallow content
+# from a later line.
 _FRONTMATTER_NAME = re.compile(
-    r"^name\s*:\s*([A-Za-z0-9][A-Za-z0-9_.-]*)\s*$",
-    re.MULTILINE,
+    r"""^name\s*:\s*
+        (?:
+            "(?P<dq>[^"\n]*)"
+          | '(?P<sq>[^'\n]*)'
+          | (?P<bare>[A-Za-z0-9][A-Za-z0-9_.-]*)
+        )
+        \s*(?:\#.*)?$
+    """,
+    re.MULTILINE | re.VERBOSE,
 )
+
+# Bounded read for an agent file: enough to cover even pathologically
+# long frontmatter, far less than what a `.md` symlinked to /dev/zero
+# would let the runner consume. The parser only ever reads the
+# frontmatter (between the first two ``---`` lines), so the prose body
+# can be truncated without affecting `name` extraction.
+_AGENT_FILE_READ_LIMIT_BYTES = 64 * 1024
 
 
 def _parse_agent_name(text: str) -> str | None:
@@ -6617,8 +6641,13 @@ def _parse_agent_name(text: str) -> str | None:
     fence at the start of the file; returns the value of the first
     ``name:`` line inside the fence. Returns ``None`` for missing
     frontmatter, missing/empty ``name``, or any unparseable shape.
-    The caller drops Nones from the roster — a malformed agent file
-    is observable in stderr telemetry but not a fatal pipeline halt.
+
+    Accepts the three YAML scalar forms operators actually write:
+    bare (``name: foo``), double-quoted (``name: "foo"``), and
+    single-quoted (``name: 'foo'``). Trailing inline comments
+    (``name: foo  # primary``) are stripped from any form. The caller
+    drops ``None`` from the roster — a malformed agent file is
+    observable in stderr telemetry but not a fatal pipeline halt.
     """
     if not text.startswith("---"):
         return None
@@ -6631,7 +6660,8 @@ def _parse_agent_name(text: str) -> str | None:
     match = _FRONTMATTER_NAME.search(frontmatter)
     if not match:
         return None
-    return match.group(1).strip() or None
+    value = match.group("dq") or match.group("sq") or match.group("bare") or ""
+    return value.strip() or None
 
 
 def _scan_agent_definitions(agents_dir: Path) -> tuple[list[str], list[str]]:
@@ -6653,10 +6683,50 @@ def _scan_agent_definitions(agents_dir: Path) -> tuple[list[str], list[str]]:
     if not agents_dir.is_dir():
         return [], [f"agents dir not found: {agents_dir}"]
     for path in sorted(agents_dir.glob("*.md")):
+        # Skip symlinks and non-regular files. The review pipeline runs
+        # against an untrusted repo checkout — a PR can add
+        # `.claude/agents/x.md` as a symlink to /dev/zero, a FIFO, or a
+        # multi-GB file and hang/OOM the runner before the no-roster
+        # fallback can degrade safely. Detect via lstat to avoid
+        # following the symlink itself.
         try:
-            text = path.read_text()
+            lst = path.lstat()
+        except OSError as exc:
+            warnings.append(f"{path.name}: lstat error {exc}")
+            continue
+        if stat.S_ISLNK(lst.st_mode) or not stat.S_ISREG(lst.st_mode):
+            warnings.append(f"{path.name}: skipping symlink/non-regular file")
+            continue
+        # Bound the read at _AGENT_FILE_READ_LIMIT_BYTES so a hostile
+        # `name`-less multi-GB file can't exhaust memory. Frontmatter
+        # is always near the top of the file; truncation cannot
+        # silently produce a wrong `name` because the parser requires
+        # the closing ``---`` boundary to be present.
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read(_AGENT_FILE_READ_LIMIT_BYTES + 1)
         except OSError as exc:
             warnings.append(f"{path.name}: read error {exc}")
+            continue
+        if len(raw) > _AGENT_FILE_READ_LIMIT_BYTES:
+            warnings.append(
+                f"{path.name}: oversized (> {_AGENT_FILE_READ_LIMIT_BYTES} bytes); "
+                "reading frontmatter prefix only",
+            )
+            raw = raw[:_AGENT_FILE_READ_LIMIT_BYTES]
+        # Decode with replacement so a non-UTF8 byte in the prose
+        # body (or invalid bytes in a hostile file) doesn't raise
+        # UnicodeDecodeError out of the loop. UnicodeDecodeError is a
+        # subclass of ValueError, NOT OSError, so the previous
+        # `read_text()` call would have aborted the entire scan on
+        # one bad file even though the docstring above promised
+        # per-file degradation.
+        try:
+            text = raw.decode("utf-8", errors="replace")
+        except ValueError as exc:
+            # Defensive — errors="replace" should never raise, but the
+            # surrounding contract is "no single file aborts the scan".
+            warnings.append(f"{path.name}: decode error {exc}")
             continue
         name = _parse_agent_name(text)
         if name is None:
@@ -7265,13 +7335,15 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
             plan_initial, output_path, manifest_path, model, reason="no-critic",
         )
 
-    # PLN-725 Phase 4 dry-run tolerance: the roster is produced by a
-    # not-yet-shipped Phase 5 stage (Agent-Definition Loading). When the
-    # file does not exist, fall back to the same skipped semantics —
-    # reachable by configuration rather than operator flag so Phase 4
-    # surveys the pipeline without Phase 5 wired. A present-but-malformed
-    # file still returns 1 below — that's an operator config error
-    # worth surfacing loudly.
+    # Safety net for the case where stage_14a_load_available_reviewers
+    # failed to write available_reviewers.json at all (write error on
+    # the roster file). Phase 5 (v2.18.0) ships stage_14a so the file
+    # is always produced under normal operation; the empty-roster and
+    # fully-subscribed-roster short-circuits below handle the "file
+    # present but the AVAILABLE set is empty" cases. This branch only
+    # fires when stage_14a's write was skipped or lost — a present-but-
+    # malformed file still returns 1 below — that's an operator config
+    # error worth surfacing loudly.
     if not available_path.exists():
         return _emit_skipped_coverage_plan(
             plan_initial, output_path, manifest_path, model, reason="no-roster",

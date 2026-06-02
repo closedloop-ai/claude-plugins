@@ -13183,6 +13183,246 @@ class TestPLN725Phase5PostMergeHardening:
         assert s10 < s12
 
 
+class TestPLN725Phase5LoaderHardening:
+    """v2.19.1 hardening for the agent-definition loader. The shipped
+    parser+scanner had three gaps post-merge:
+
+      1. The ``name`` regex only accepted unquoted bare scalars, so
+         valid YAML like ``name: "foo"``, ``name: 'foo'``, and
+         ``name: foo # comment`` was dropped — an agent silently
+         disappeared from the roster.
+      2. The scan followed symlinks and read each match to EOF, so a
+         PR that added ``.claude/agents/x.md`` as a symlink to
+         ``/dev/zero`` or a multi-GB file could hang or OOM the runner
+         before the no-roster fallback could degrade safely.
+      3. ``except OSError`` did not catch ``UnicodeDecodeError`` (a
+         ``ValueError`` subclass), so a single non-UTF8 file in
+         ``.claude/agents/`` aborted the entire scan even though the
+         docstring promised per-file warnings.
+
+    These regressions exercise each gap with one positive case
+    (still parses) and one negative case (used to break, now degrades).
+    """
+
+    @staticmethod
+    def _write_frontmatter(path: Path, frontmatter: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"---\n{frontmatter}\n---\nbody\n")
+
+    # --- parser: quoted scalars + inline comments -------------------------
+
+    def test_parse_agent_name_accepts_double_quoted(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        text = '---\nname: "security-reviewer"\nmodel: opus\n---\n'
+        assert _parse_agent_name(text) == "security-reviewer"
+
+    def test_parse_agent_name_accepts_single_quoted(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        text = "---\nname: 'security-reviewer'\nmodel: opus\n---\n"
+        assert _parse_agent_name(text) == "security-reviewer"
+
+    def test_parse_agent_name_strips_inline_comment_from_bare(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        text = "---\nname: security-reviewer  # primary\nmodel: opus\n---\n"
+        assert _parse_agent_name(text) == "security-reviewer"
+
+    def test_parse_agent_name_strips_inline_comment_from_quoted(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        text = '---\nname: "security-reviewer"  # primary\nmodel: opus\n---\n'
+        assert _parse_agent_name(text) == "security-reviewer"
+
+    def test_parse_agent_name_handles_quoted_dashes_underscores(self) -> None:
+        # Quoted forms intentionally accept the same char class as bare
+        # (YAML-safe identifiers); ensure the quoted parser doesn't
+        # truncate at the first dash/underscore.
+        from code_review_helpers import _parse_agent_name
+        for sample in (
+            '---\nname: "foo-bar_baz.qux"\n---\n',
+            "---\nname: 'foo-bar_baz.qux'\n---\n",
+            "---\nname: foo-bar_baz.qux\n---\n",
+        ):
+            assert _parse_agent_name(sample) == "foo-bar_baz.qux"
+
+    # --- scanner: symlink / oversized / non-UTF8 --------------------------
+
+    def test_scan_skips_symlinks(self, tmp_path: Path) -> None:
+        """Symlinked agent files must NOT be read — a PR could point a
+        symlink at ``/dev/zero`` and exhaust runner memory before the
+        no-roster fallback can fire.
+        """
+        from code_review_helpers import _scan_agent_definitions
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        # Seed a real agent so the scan returns something
+        self._write_frontmatter(agents_dir / "real.md", "name: real-reviewer")
+        # And a symlink pointing at an out-of-tree target
+        target = tmp_path / "elsewhere.md"
+        target.write_text("---\nname: should-not-load\n---\n")
+        symlink_path = agents_dir / "link.md"
+        os.symlink(target, symlink_path)
+
+        reviewers, warnings = _scan_agent_definitions(agents_dir)
+        # The legit agent loads; the symlink is skipped with a warning.
+        assert reviewers == ["real-reviewer"]
+        assert any("link.md" in w and "symlink" in w for w in warnings)
+
+    def test_scan_truncates_oversized_files_to_frontmatter_prefix(
+        self, tmp_path: Path,
+    ) -> None:
+        """An agent file larger than the read limit must still produce
+        a usable name extraction from its frontmatter prefix AND emit
+        a warning. Without the bounded read, a multi-GB hostile file
+        could OOM the runner.
+        """
+        from code_review_helpers import _AGENT_FILE_READ_LIMIT_BYTES, _scan_agent_definitions
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        # Frontmatter at the top, then padding past the limit.
+        head = "---\nname: huge-reviewer\nmodel: opus\n---\n"
+        padding = "x" * (_AGENT_FILE_READ_LIMIT_BYTES + 1024)
+        (agents_dir / "huge.md").write_text(head + padding)
+
+        reviewers, warnings = _scan_agent_definitions(agents_dir)
+        # Frontmatter was within the first _AGENT_FILE_READ_LIMIT_BYTES
+        # bytes so the name still parses; truncation surfaces as a
+        # warning so operators can repair the file later.
+        assert reviewers == ["huge-reviewer"]
+        assert any("oversized" in w for w in warnings)
+
+    def test_scan_skips_oversized_file_with_late_frontmatter(
+        self, tmp_path: Path,
+    ) -> None:
+        """If the closing ``---`` boundary lies past the read limit,
+        the parser sees an unclosed frontmatter and drops the agent
+        with a "no parseable name" warning — better than a partial
+        match against a truncated value.
+        """
+        from code_review_helpers import _AGENT_FILE_READ_LIMIT_BYTES, _scan_agent_definitions
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        head = "---\nname: late-name\n"
+        padding = "x" * (_AGENT_FILE_READ_LIMIT_BYTES + 1024)
+        tail = "\n---\nbody\n"
+        (agents_dir / "late.md").write_text(head + padding + tail)
+
+        reviewers, warnings = _scan_agent_definitions(agents_dir)
+        assert reviewers == []
+        assert any("oversized" in w for w in warnings)
+
+    def test_scan_does_not_abort_on_non_utf8_file(self, tmp_path: Path) -> None:
+        """The previous implementation called ``read_text()`` and only
+        caught ``OSError``. ``UnicodeDecodeError`` is a ``ValueError``
+        subclass, so a single non-UTF8 file aborted the whole scan and
+        left the roster empty even when other agents were present.
+        Now the scan decodes with ``errors="replace"`` and degrades
+        per-file, matching the docstring contract.
+        """
+        from code_review_helpers import _scan_agent_definitions
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        # Real agent first
+        self._write_frontmatter(agents_dir / "real.md", "name: real-reviewer")
+        # Non-UTF8 bytes (Latin-1 e-acute) outside the frontmatter
+        # range — could occur if an operator wrote the file with the
+        # wrong encoding. With errors="replace" we get U+FFFD in the
+        # prose body, no exception, parser still extracts the name.
+        bad_bytes = b"---\nname: latin1-reviewer\n---\nbody \xe9\n"
+        (agents_dir / "bad.md").write_bytes(bad_bytes)
+
+        reviewers, warnings = _scan_agent_definitions(agents_dir)
+        # Both agents load — the bad file's prose-body byte is
+        # repaired, frontmatter (ASCII) parses cleanly.
+        assert reviewers == ["latin1-reviewer", "real-reviewer"]
+        # Some unrelated tests check warnings == [] for clean dirs;
+        # for this one we explicitly don't care, but the scan must
+        # have COMPLETED — that's the regression. (Previously, the
+        # second iteration would never run because the first bad
+        # file raised UnicodeDecodeError out of the for-loop.)
+        _ = warnings
+
+
+class TestPLN725Phase5StageGraphDefaults:
+    """Pin the wire-level shape of stage_14a_load_available_reviewers
+    as defined in ``_build_run_plan_stages``. The earlier
+    ``TestPLN725Phase5LoadAvailableReviewers`` exercises the CLI with
+    an explicit ``--agents-dir`` and ``TestPLN725Phase5StageGraph``
+    pins the stage's id/position/deps. Neither covered the contract
+    the walker actually depends on: that the shipped stage runs
+    without ``--agents-dir`` and therefore falls back to
+    ``DEFAULT_AGENTS_DIR`` plus the runner cwd, then writes a roster
+    the critic's ``_load_available_reviewers`` can round-trip.
+    """
+
+    def _stage(self, stage_id: str) -> dict[str, Any]:
+        from code_review_helpers import _build_run_plan_stages
+        for s in _build_run_plan_stages("/tmp/cr_dir", "local", None, {}):
+            if s["id"] == stage_id:
+                return s
+        raise AssertionError(f"{stage_id!r} missing from prepare-run manifest")
+
+    def test_stage_14a_args_omit_agents_dir_flag(self) -> None:
+        """The walker invokes ``load-available-reviewers`` without
+        ``--agents-dir`` — the default ``.claude/agents`` path is what
+        gets resolved against the runner cwd. If a refactor adds the
+        flag here, the existing CLI tests (which pass an explicit
+        ``--agents-dir``) won't catch the divergence; this assertion
+        will.
+        """
+        stage = self._stage("stage_14a_load_available_reviewers")
+        assert "--agents-dir" not in stage["args"]
+
+    def test_stage_14a_default_path_round_trips_through_loader(
+        self, tmp_path: Path, monkeypatch: Any,
+    ) -> None:
+        """End-to-end: run cmd_load_available_reviewers without
+        ``--agents-dir`` from a fake repo cwd that contains
+        ``.claude/agents/*.md``, then assert the written
+        ``available_reviewers.json`` is the expected flat roster and
+        round-trips through ``_load_available_reviewers`` (the same
+        loader the critic uses). This is the regression closing the
+        gap shafty023 flagged on PR #129 post-merge: prior tests
+        passed ``agents_dir`` explicitly, so the actual walker path
+        (default + cwd) was untested.
+        """
+        from code_review_helpers import (
+            _load_available_reviewers,
+            cmd_load_available_reviewers,
+        )
+
+        # Build the directory layout the real walker sees: cwd is the
+        # repo root, .claude/agents/ holds the agent definitions, and
+        # CR_DIR is a sibling temp dir.
+        repo_root = tmp_path / "repo"
+        agents_dir = repo_root / ".claude" / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "alpha.md").write_text(
+            "---\nname: alpha-reviewer\nmodel: opus\n---\nbody\n",
+        )
+        (agents_dir / "beta.md").write_text(
+            '---\nname: "beta-reviewer"\nmodel: sonnet\n---\nbody\n',
+        )
+
+        cr_dir = tmp_path / "cr_dir"
+        cr_dir.mkdir()
+
+        # Run from the repo root so DEFAULT_AGENTS_DIR (a relative
+        # Path) resolves to the seeded agents_dir.
+        monkeypatch.chdir(repo_root)
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            agents_dir=None,  # walker contract: flag is OMITTED
+        )
+        rc = cmd_load_available_reviewers(ns)
+        assert rc == 0
+
+        roster_path = cr_dir / "available_reviewers.json"
+        assert roster_path.exists()
+        # Round-trip through the same loader the critic uses.
+        reviewers, err = _load_available_reviewers(roster_path)
+        assert err is None
+        assert reviewers == ["alpha-reviewer", "beta-reviewer"]
+
+
 class TestPLN725Phase5LoadAvailableReviewers:
     """Phase 5 produces the AVAILABLE roster the coverage-critic enforces
     against. This pins the helper (frontmatter parsing, scan dedup,

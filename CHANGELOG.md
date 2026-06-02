@@ -4,6 +4,20 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.19.1
+
+#### Fixed
+- `_parse_agent_name` now accepts all three YAML scalar forms operators actually write: bare (`name: foo`), double-quoted (`name: "foo"`), and single-quoted (`name: 'foo'`), and strips trailing inline comments (`name: foo  # primary`) from any form. Previously only unquoted bare scalars matched, so an agent file with `name: "security-reviewer"` or `name: security-reviewer # primary` silently dropped out of `available_reviewers.json` — the run could fall into `no-roster` or `no-candidates` even though the agent was configured. The regex now uses named alternation groups (`dq` / `sq` / `bare`) so the parser stays single-pass with no PyYAML dependency.
+- `_scan_agent_definitions` skips symlinks and non-regular files via an `lstat()` check before opening anything, and reads through a bounded `_AGENT_FILE_READ_LIMIT_BYTES` (64 KiB) prefix instead of slurping each match to EOF. A PR that adds `.claude/agents/x.md` as a symlink to `/dev/zero`, a FIFO, or a multi-GB file can no longer hang or OOM the review runner before the no-roster fallback degrades safely. Oversized files surface as a warning and have their frontmatter prefix parsed; if the closing `---` boundary lies past the limit the agent is dropped (no partial-match against a truncated value).
+- `_scan_agent_definitions` now decodes each agent file with `errors="replace"` instead of calling `Path.read_text()` and trusting the `except OSError` guard. `UnicodeDecodeError` is a `ValueError` subclass, not an `OSError` subclass — a single non-UTF8 file in `.claude/agents/` raised straight out of the for-loop and aborted the entire scan, contradicting the docstring's promise of per-file warnings.
+- The walker-facing `start.md` per-stage note for `stage_15_coverage_critic` now enumerates all three `status: "skipped"` reasons the prepare step emits: `"no-critic"` (operator flag), `"no-roster"` (empty roster after load), and `"no-candidates"` (roster fully subscribed in the initial plan). The previous parenthetical only mentioned `--no-critic`, leaving a walker-implementation reader assuming the singleton critic should be dispatched for the other two reasons.
+- The stale "not-yet-shipped Phase 5 stage" comment block above the `available_reviewers.json` exists() short-circuit in `cmd_coverage_critic_prepare` is replaced with prose that matches the current code path. Phase 5 (v2.18.0) ships `stage_14a`, so the exists() branch is now a safety net for the case where stage_14a's write was skipped or lost — not a dry-run tolerance for an absent stage.
+
+#### Added
+- `_AGENT_FILE_READ_LIMIT_BYTES` constant (64 KiB) exposes the bounded-read ceiling so tests and future tuning have a single source of truth.
+- `TestPLN725Phase5LoaderHardening` covers each parser/scanner gap with positive + negative regression cases: quoted-name parsing (`"foo"`, `'foo'`, dashes/underscores in quoted forms), inline-comment stripping from bare and quoted forms, symlink skipping, oversized files (frontmatter-in-prefix parses + warns; frontmatter-past-limit drops + warns), and non-UTF8 byte handling (scan completes across the bad file, doesn't abort the loop).
+- `TestPLN725Phase5StageGraphDefaults` pins the wire-level contract the walker actually relies on: `stage_14a_load_available_reviewers.args` must NOT contain `--agents-dir` (the default `.claude/agents` path is what gets resolved), and `cmd_load_available_reviewers` invoked without `--agents-dir` from a temp repo cwd round-trips through `_load_available_reviewers` to the expected roster. Prior tests passed an explicit `agents_dir`, so the default-path code path the walker actually exercises was untested.
+
 ### code-review v2.19.0
 
 #### Added
