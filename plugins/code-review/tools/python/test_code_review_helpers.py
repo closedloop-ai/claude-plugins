@@ -13252,16 +13252,18 @@ class TestPLN725Phase5LoaderHardening:
         assert _parse_agent_name(text) == "security-reviewer"
 
     def test_parse_agent_name_handles_quoted_dashes_underscores(self) -> None:
-        # Quoted forms intentionally accept the same char class as bare
-        # (YAML-safe identifiers); ensure the quoted parser doesn't
-        # truncate at the first dash/underscore.
+        # Quoted forms intentionally accept the same char class as bare;
+        # ensure the quoted parser doesn't truncate at the first dash
+        # or underscore. Grammar is locked to ``[a-z][a-z0-9_-]*`` (see
+        # ``_AGENT_NAME_RE``) so the test values use the same form that
+        # every actual project agent uses on disk.
         from code_review_helpers import _parse_agent_name
         for sample in (
-            '---\nname: "foo-bar_baz.qux"\n---\n',
-            "---\nname: 'foo-bar_baz.qux'\n---\n",
-            "---\nname: foo-bar_baz.qux\n---\n",
+            '---\nname: "foo-bar_baz_qux"\n---\n',
+            "---\nname: 'foo-bar_baz_qux'\n---\n",
+            "---\nname: foo-bar_baz_qux\n---\n",
         ):
-            assert _parse_agent_name(sample) == "foo-bar_baz.qux"
+            assert _parse_agent_name(sample) == "foo-bar_baz_qux"
 
     # --- scanner: symlink / oversized / non-UTF8 --------------------------
 
@@ -13359,6 +13361,121 @@ class TestPLN725Phase5LoaderHardening:
         # second iteration would never run because the first bad
         # file raised UnicodeDecodeError out of the for-loop.)
         _ = warnings
+
+
+class TestPLN725Phase5LoaderGrammarAndCaps:
+    """v2.20.1 hardening for the agent-definition loader. Three more
+    gaps surfaced on PR #130 post-merge review:
+
+      1. Quoted ``name:`` values bypassed the canonical reviewer-id
+         grammar. ``name: "../x"``, ``name: "bad reviewer"``, or any
+         multi-kilobyte string in quotes would land in
+         ``available_reviewers.json`` and could then be selected by
+         the critic (the closed-vocabulary check accepts it because
+         it came from the roster).
+      2. Per-file read was bounded, but aggregate scan size wasn't —
+         a PR could add hundreds of valid agent files to grow CPU,
+         memory, roster JSON, and downstream critic prompt size.
+      3. Reviewer-id length was unbounded.
+
+    Tests use the canonical grammar ``^[a-z][a-z0-9_-]{0,62}$`` (same
+    as ``make_finding_id``'s requirement so any name passing here
+    will also pass downstream).
+    """
+
+    @staticmethod
+    def _seed(agents_dir: Path, filename: str, name_value: str) -> None:
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / filename).write_text(
+            f"---\nname: {name_value}\n---\nbody\n",
+        )
+
+    # --- grammar ----------------------------------------------------------
+
+    def test_quoted_path_traversal_rejected(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        assert _parse_agent_name('---\nname: "../x"\n---\n') is None
+
+    def test_quoted_whitespace_rejected(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        assert _parse_agent_name('---\nname: "bad reviewer"\n---\n') is None
+
+    def test_quoted_uppercase_rejected(self) -> None:
+        # The collect-findings reviewer_id regex is lowercase-only
+        # (`^[a-z][a-z0-9_-]*$`), so accepting `name: "Foo"` here
+        # would smuggle a name that crashes downstream.
+        from code_review_helpers import _parse_agent_name
+        assert _parse_agent_name('---\nname: "FooBar"\n---\n') is None
+
+    def test_quoted_dot_rejected(self) -> None:
+        # Dots are valid in YAML scalars but not in the canonical
+        # reviewer-id grammar — every actual project agent uses
+        # lowercase-with-hyphens.
+        from code_review_helpers import _parse_agent_name
+        assert _parse_agent_name('---\nname: "foo.bar"\n---\n') is None
+
+    def test_quoted_exceeding_length_cap_rejected(self) -> None:
+        # 63 chars total = 1 leading + 62 tail, so a 64-char name fails.
+        from code_review_helpers import _parse_agent_name
+        too_long = "a" + "b" * 63  # 64 chars
+        sample = f'---\nname: "{too_long}"\n---\n'
+        assert _parse_agent_name(sample) is None
+
+    def test_quoted_at_length_cap_accepted(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        ok = "a" + "b" * 62  # 63 chars — at the cap
+        sample = f'---\nname: "{ok}"\n---\n'
+        assert _parse_agent_name(sample) == ok
+
+    def test_bare_uppercase_still_rejected(self) -> None:
+        # The bare-scalar regex was already case-sensitive but cited
+        # `[A-Za-z0-9]`; the post-validate step ensures uppercase is
+        # rejected even via the bare path, so there's no asymmetry
+        # between bare and quoted.
+        from code_review_helpers import _parse_agent_name
+        assert _parse_agent_name("---\nname: FooBar\n---\n") is None
+
+    # --- aggregate caps ---------------------------------------------------
+
+    def test_scan_caps_files_to_max(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            _AGENTS_DIR_MAX_FILES,
+            _scan_agent_definitions,
+        )
+        agents_dir = tmp_path / "agents"
+        # Seed one more than the cap to verify truncation.
+        total = _AGENTS_DIR_MAX_FILES + 5
+        for i in range(total):
+            self._seed(agents_dir, f"a{i:04d}.md", f"reviewer-{i:04d}")
+        reviewers, warnings = _scan_agent_definitions(agents_dir)
+        # Only the first _AGENTS_DIR_MAX_FILES are scanned (sort order
+        # = filename); resulting roster is bounded.
+        assert len(reviewers) == _AGENTS_DIR_MAX_FILES
+        assert any(
+            f"{_AGENTS_DIR_MAX_FILES}-file cap" in w for w in warnings
+        )
+
+    def test_scan_caps_roster_size(self, tmp_path: Path) -> None:
+        # File count under the file cap but enough VALID reviewers to
+        # exceed the roster size cap — exercises the second cap which
+        # fires inside the loop. We seed _ROSTER_MAX_ENTRIES + 5
+        # uniquely-named files; first _ROSTER_MAX_ENTRIES are accepted,
+        # the rest are skipped with a roster-cap warning. Caps are
+        # equal by design (_AGENTS_DIR_MAX_FILES == _ROSTER_MAX_ENTRIES);
+        # if they ever diverge this test pins the roster-side specifically.
+        from code_review_helpers import (
+            _AGENTS_DIR_MAX_FILES,
+            _ROSTER_MAX_ENTRIES,
+            _scan_agent_definitions,
+        )
+        agents_dir = tmp_path / "agents"
+        # Seed exactly _AGENTS_DIR_MAX_FILES files to avoid the file-cap
+        # warning, then sanity-check that the per-roster cap also bounds
+        # the resulting roster size.
+        for i in range(_AGENTS_DIR_MAX_FILES):
+            self._seed(agents_dir, f"a{i:04d}.md", f"reviewer-{i:04d}")
+        reviewers, _ = _scan_agent_definitions(agents_dir)
+        assert len(reviewers) <= _ROSTER_MAX_ENTRIES
 
 
 class TestPLN725Phase5StageGraphDefaults:
@@ -13921,6 +14038,105 @@ class TestPLN725Phase6VerifyCoveragePure:
         empty = {"required": [], "best_effort": [], "stats": {}}
         assert verify_coverage_plan(empty, empty, None) == []
 
+    # ----------------------------------------------------------------
+    # v2.20.1 hardening: shafty023 #2 (deeper shape) and #1 (bucket-
+    # aware additive) caught two ways the verifier could PASS a plan
+    # that downstream stages would either crash on or silently
+    # downgrade. Each new test corresponds to a concrete failure mode.
+    # ----------------------------------------------------------------
+
+    def test_shape_rejects_non_dict_bucket_entry(self) -> None:
+        from code_review_helpers import verify_coverage_plan
+        plan = {
+            "required": [{"reviewer": "a"}, "not-a-dict"],
+            "best_effort": [],
+            "stats": {},
+        }
+        violations = verify_coverage_plan(plan, plan, None)
+        assert any(v["check"] == "shape" for v in violations)
+        msg = " ".join(v["message"] for v in violations if v["check"] == "shape")
+        assert "[1]" in msg
+        assert "not an object" in msg
+
+    def test_shape_rejects_empty_reviewer_field(self) -> None:
+        from code_review_helpers import verify_coverage_plan
+        plan = {
+            "required": [{"reviewer": ""}],
+            "best_effort": [],
+            "stats": {},
+        }
+        violations = verify_coverage_plan(plan, plan, None)
+        assert any(v["check"] == "shape" for v in violations)
+
+    def test_shape_rejects_missing_reviewer_field(self) -> None:
+        from code_review_helpers import verify_coverage_plan
+        plan = {
+            "required": [{}],
+            "best_effort": [],
+            "stats": {},
+        }
+        violations = verify_coverage_plan(plan, plan, None)
+        # The previous shape check accepted ``[{}]`` because
+        # ``_plan_reviewer_buckets`` and ``_reviewer_names`` silently
+        # dropped non-dicts and empty reviewers. Now it must violate.
+        assert any(v["check"] == "shape" for v in violations)
+
+    def test_shape_failure_short_circuits_other_checks(self) -> None:
+        # Shape failure must NOT generate misleading downstream
+        # violations like "critic_evidence" on entries we already
+        # know are malformed.
+        from code_review_helpers import verify_coverage_plan
+        plan = {
+            "required": [{}],
+            "best_effort": [{"reviewer": "z", "source": "critic"}],  # missing evidence
+            "stats": {},
+        }
+        violations = verify_coverage_plan(plan, plan, None)
+        checks = {v["check"] for v in violations}
+        # Only shape, NOT critic_evidence — short-circuit prevents
+        # confusing the operator with cascading violations.
+        assert checks == {"shape"}
+
+    def test_additive_blocks_required_demoted_to_best_effort(self) -> None:
+        """Initial required reviewer moved to final best_effort is the
+        canonical "silent coverage downgrade" the bucket-insensitive
+        check missed (shafty023 #1). Phase 7 reads this artifact to
+        gate arbitration — a corrupted cached plan that demoted a
+        mandatory reviewer to best-effort would previously PASS.
+        """
+        from code_review_helpers import verify_coverage_plan
+        initial = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [],
+            "stats": {},
+        }
+        final = {
+            "required": [],  # demotion
+            "best_effort": [{"reviewer": "a", "source": "rule"}],
+            "stats": {},
+        }
+        violations = verify_coverage_plan(final, initial, None)
+        assert any(v["check"] == "additive" for v in violations)
+        msg = next(v["message"] for v in violations if v["check"] == "additive")
+        assert "required reviewers MUST stay required" in msg
+        assert "'a'" in msg
+
+    def test_additive_allows_best_effort_promoted_to_required(self) -> None:
+        # Promotion (best_effort → required) is additive — it
+        # increases coverage strength, doesn't decrease it.
+        from code_review_helpers import verify_coverage_plan
+        initial = {
+            "required": [],
+            "best_effort": [{"reviewer": "a", "source": "rule"}],
+            "stats": {},
+        }
+        final = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [],
+            "stats": {},
+        }
+        assert verify_coverage_plan(final, initial, None) == []
+
 
 class TestPLN725Phase6VerifyCoverageCommand:
     """End-to-end coverage for `cmd_verify_coverage`: artifact writing,
@@ -14027,14 +14243,24 @@ class TestPLN725Phase6VerifyCoverageCommand:
         assert rc == 0
         assert not (cr_dir / "agent_coverage-verify-blocking.json").exists()
 
-    def test_missing_plan_degrades_to_pass_with_input_advisory(
+    def test_missing_plan_blocks_with_input_violation(
         self, tmp_path: Path,
     ) -> None:
-        # Missing coverage_plan.json (upstream stage aborted) must not
-        # cause the verifier to BLOCK on missing inputs — that would
-        # invert "fail-open observational" into "fail-closed blocking".
-        # Verdict stays PASS with an `input` advisory violation so
-        # operators see why verification was vacuous.
+        """v2.20.1 semantic change: missing inputs now BLOCK.
+
+        Previously v2.19.0 returned PASS with an advisory ``input``
+        violation, on the rationale that the verifier should be
+        purely observational. But that made "no plan was verified"
+        indistinguishable from a real PASS in the artifact — and
+        Phase 7 (v2.20.0) reads the artifact to gate arbitration.
+        A silent PASS-on-missing-input would bypass the cap on every
+        upstream-aborted run.
+
+        Now: missing inputs return BLOCKING with the same ``input``
+        check name. Exit code stays 0 so the walker doesn't halt —
+        observational semantics are about the WALKER, the verdict is
+        about the ARTIFACT consumer.
+        """
         from code_review_helpers import cmd_verify_coverage
         cr_dir = tmp_path / "cr_dir"
         cr_dir.mkdir()
@@ -14051,8 +14277,10 @@ class TestPLN725Phase6VerifyCoverageCommand:
         rc = cmd_verify_coverage(ns)
         result = json.loads((cr_dir / "coverage_verify.json").read_text())
         assert rc == 0
-        assert result["verdict"] == "PASS"
+        assert result["verdict"] == "BLOCKING"
         assert any(v["check"] == "input" for v in result["violations"])
+        # BLOCKING also emits the canonical system finding.
+        assert (cr_dir / "agent_coverage-verify-blocking.json").exists()
 
     def test_missing_roster_file_skips_closed_vocabulary_check(
         self, tmp_path: Path,
@@ -14179,6 +14407,108 @@ class TestPLN725Phase6VerifyCoverageCommand:
         assert rc == 0
         assert result["verdict"] == "PASS"
         assert not (cr_dir / "agent_coverage-verify-blocking.json").exists()
+
+    # ----------------------------------------------------------------
+    # v2.20.1 hardening: shafty023 #4 (canonical source name) and #5
+    # (corrupted roster). End-to-end coverage so the schema-validation
+    # path and the roster-shape path are exercised through the same
+    # entry point downstream consumers use.
+    # ----------------------------------------------------------------
+
+    def test_blocking_finding_uses_canonical_coverage_verifier_source(
+        self, tmp_path: Path,
+    ) -> None:
+        """The emitted finding must use ``source: "coverage-verifier"``
+        (canonical, in ``SOURCES``) NOT ``coverage-verify``. The earlier
+        wrong value would cause stage_22 schema validation to drop the
+        finding exactly when the verifier needs to surface BLOCKING.
+        Reviewer field follows the same convention.
+        """
+        from code_review_schema import SOURCES
+        initial = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [],
+            "stats": {},
+        }
+        final = {
+            "required": [],  # additive violation → BLOCKING
+            "best_effort": [],
+            "stats": {},
+        }
+        rc, result, cr_dir = self._run(
+            tmp_path, final=final, initial=initial, roster=[],
+        )
+        assert rc == 0
+        assert result["verdict"] == "BLOCKING"
+        finding_doc = json.loads(
+            (cr_dir / "agent_coverage-verify-blocking.json").read_text(),
+        )
+        finding = finding_doc["findings"][0]
+        assert finding["source"] == "coverage-verifier"
+        assert finding["source"] in SOURCES
+        assert finding["reviewer"] == "coverage-verifier"
+
+    def test_unreadable_coverage_plan_initial_blocks(self, tmp_path: Path) -> None:
+        """v2.20.1 semantic change covers the initial plan too — not
+        just the final plan. Same rationale: silent PASS-on-missing
+        becomes a BLOCKING with the ``input`` check name so Phase 7's
+        gate cannot inherit a vacuous PASS.
+        """
+        from code_review_helpers import cmd_verify_coverage
+        cr_dir = tmp_path / "cr_dir"
+        cr_dir.mkdir()
+        # Write final but deliberately omit initial.
+        self._write(cr_dir / "coverage_plan.json", {
+            "required": [], "best_effort": [], "stats": {},
+        })
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            coverage_plan=str(cr_dir / "coverage_plan.json"),
+            coverage_plan_initial=str(cr_dir / "coverage_plan_initial.json"),
+            available_reviewers=None,
+            output=None,
+        )
+        rc = cmd_verify_coverage(ns)
+        result = json.loads((cr_dir / "coverage_verify.json").read_text())
+        assert rc == 0
+        assert result["verdict"] == "BLOCKING"
+        assert any(v["check"] == "input" for v in result["violations"])
+
+    def test_corrupted_roster_blocks_with_roster_check(self, tmp_path: Path) -> None:
+        """Present-but-malformed roster file must BLOCK with a
+        ``roster`` check, distinct from absent/empty (which still
+        PASS as no-roster). A corrupted ``available_reviewers.json``
+        previously was silently treated as absent, letting the
+        closed-vocabulary check be bypassed and the verdict come
+        back PASS on a plan that should have been gated.
+        """
+        from code_review_helpers import cmd_verify_coverage
+        cr_dir = tmp_path / "cr_dir"
+        cr_dir.mkdir()
+        plan = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [],
+            "stats": {},
+        }
+        self._write(cr_dir / "coverage_plan.json", plan)
+        self._write(cr_dir / "coverage_plan_initial.json", plan)
+        # Write a malformed roster — not a list, not a dict-with-available.
+        (cr_dir / "available_reviewers.json").write_text("[{this is broken")
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            coverage_plan=str(cr_dir / "coverage_plan.json"),
+            coverage_plan_initial=str(cr_dir / "coverage_plan_initial.json"),
+            available_reviewers=str(cr_dir / "available_reviewers.json"),
+            output=None,
+        )
+        rc = cmd_verify_coverage(ns)
+        result = json.loads((cr_dir / "coverage_verify.json").read_text())
+        assert rc == 0
+        assert result["verdict"] == "BLOCKING"
+        checks = {v["check"] for v in result["violations"]}
+        assert "roster" in checks
+        # BLOCKING also emits the system finding.
+        assert (cr_dir / "agent_coverage-verify-blocking.json").exists()
 
 
 class TestPLN725Phase6StageGraph:

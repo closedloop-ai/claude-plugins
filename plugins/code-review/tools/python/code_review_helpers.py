@@ -6612,7 +6612,10 @@ _FRONTMATTER_BOUNDARY = re.compile(r"^---\s*$", re.MULTILINE)
 # the post-process step below. The bare-scalar regex stays
 # conservative (must start with [A-Za-z0-9], YAML-safe chars only)
 # so a typo on a different key doesn't accidentally swallow content
-# from a later line.
+# from a later line. Quoted forms are matched more permissively but
+# the post-process step validates the unquoted value against
+# ``_REVIEWER_ID_RE`` so ``name: "../x"``, ``name: "bad reviewer"``,
+# and similarly malformed identifiers are rejected.
 _FRONTMATTER_NAME = re.compile(
     r"""^name\s*:\s*
         (?:
@@ -6625,12 +6628,43 @@ _FRONTMATTER_NAME = re.compile(
     re.MULTILINE | re.VERBOSE,
 )
 
+# Canonical agent-name grammar — used to validate ``name`` values
+# extracted from quoted YAML scalars before they enter the roster. The
+# bare scalar form is already constrained by the regex above, but
+# quoted forms could otherwise smuggle path traversal (``"../x"``),
+# whitespace (``"bad reviewer"``), or absurdly long strings into
+# ``available_reviewers.json`` — names the critic could then propose
+# and the closed-vocabulary check would accept because they came from
+# the roster. Length cap is set conservatively at 63 chars; every
+# actual project agent uses lowercase-with-hyphens well under this.
+#
+# The grammar mirrors ``_REVIEWER_ID_RE`` defined later for the
+# collect-findings stage (which validates against ``make_finding_id``'s
+# ``^[a-z][a-z0-9_-]*$`` requirement). Keeping the agent-name grammar
+# at the same level of strictness guarantees that any name added to
+# the roster will survive the downstream ``make_finding_id`` check —
+# without this alignment a name that passed here could still poison
+# the collect-findings stage. Named distinctly to avoid the module-
+# level collision the earlier draft hit.
+_AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
+
 # Bounded read for an agent file: enough to cover even pathologically
 # long frontmatter, far less than what a `.md` symlinked to /dev/zero
 # would let the runner consume. The parser only ever reads the
 # frontmatter (between the first two ``---`` lines), so the prose body
 # can be truncated without affecting `name` extraction.
 _AGENT_FILE_READ_LIMIT_BYTES = 64 * 1024
+
+# Aggregate caps for the agent-definition scan. Per-file read is
+# already bounded by _AGENT_FILE_READ_LIMIT_BYTES, but a hostile PR
+# could otherwise add hundreds of small valid agent files (or names
+# right up to the 63-char cap) to grow scan time, JSON-roster size,
+# and downstream critic prompt size — none of which are limited by
+# the per-file read alone. The caps deliberately apply at scan time
+# (not just post-load) so the work is bounded before any bytes are
+# read.
+_AGENTS_DIR_MAX_FILES = 200
+_ROSTER_MAX_ENTRIES = 200
 
 
 def _parse_agent_name(text: str) -> str | None:
@@ -6660,8 +6694,19 @@ def _parse_agent_name(text: str) -> str | None:
     match = _FRONTMATTER_NAME.search(frontmatter)
     if not match:
         return None
-    value = match.group("dq") or match.group("sq") or match.group("bare") or ""
-    return value.strip() or None
+    value = (match.group("dq") or match.group("sq") or match.group("bare") or "").strip()
+    if not value:
+        return None
+    # Validate the unquoted value against the canonical agent-name
+    # grammar — the regex above accepts arbitrary quoted strings so
+    # the YAML parser is permissive, but the roster has stricter
+    # requirements (it feeds the closed-vocabulary contract AND must
+    # satisfy the downstream ``make_finding_id`` schema). A rejection
+    # here surfaces as a per-file warning in the caller and the agent
+    # is dropped from the roster.
+    if not _AGENT_NAME_RE.match(value):
+        return None
+    return value
 
 
 def _scan_agent_definitions(agents_dir: Path) -> tuple[list[str], list[str]]:
@@ -6682,7 +6727,32 @@ def _scan_agent_definitions(agents_dir: Path) -> tuple[list[str], list[str]]:
     warnings: list[str] = []
     if not agents_dir.is_dir():
         return [], [f"agents dir not found: {agents_dir}"]
-    for path in sorted(agents_dir.glob("*.md")):
+    # Cap scanned files BEFORE reading any bytes. A hostile PR could add
+    # hundreds of small valid agent files; per-file read bounds prevent
+    # OOM on any single file but say nothing about aggregate scan time,
+    # roster-JSON size, or critic-input prompt size. Sort first so the
+    # cap is deterministic in filename order (lexicographically-first
+    # wins on collision).
+    all_paths = sorted(agents_dir.glob("*.md"))
+    if len(all_paths) > _AGENTS_DIR_MAX_FILES:
+        warnings.append(
+            f"agents dir exceeds {_AGENTS_DIR_MAX_FILES}-file cap "
+            f"({len(all_paths)} matches); scanning first "
+            f"{_AGENTS_DIR_MAX_FILES} files only",
+        )
+        all_paths = all_paths[:_AGENTS_DIR_MAX_FILES]
+    for path in all_paths:
+        # Roster-entry cap — independent from the file-count cap because
+        # even within the scanned files, duplicates and warnings reduce
+        # the roster size. Stop adding entries once the cap is reached;
+        # remaining files still get scanned for warning purposes so
+        # operators see why their roster is short.
+        if len(reviewers) >= _ROSTER_MAX_ENTRIES:
+            warnings.append(
+                f"roster size cap reached at {_ROSTER_MAX_ENTRIES} "
+                f"entries; skipping remaining {path.name} and beyond",
+            )
+            break
         # Skip symlinks and non-regular files. The review pipeline runs
         # against an untrusted repo checkout — a PR can add
         # `.claude/agents/x.md` as a symlink to /dev/zero, a FIFO, or a
@@ -7754,8 +7824,19 @@ def verify_coverage_plan(
 
     Checks (each appends at most one violation per failure mode):
       - shape: top-level is an object with required[] + best_effort[]
-      - additive: every initial reviewer survives in some bucket of final
-      - closed_vocabulary: every final reviewer is in roster (when roster)
+               (lists) AND every entry is a dict carrying a non-empty
+               ``reviewer`` string. Shape failures short-circuit all
+               other checks since they all assume valid entries.
+      - additive: bucket-aware. ``initial.required ⊆ final.required``
+               (promotion to required from best_effort is fine;
+               demotion to best_effort is NOT — that silently downgrades
+               mandatory coverage). ``initial.best_effort ⊆ final.required
+               ∪ final.best_effort`` (best-effort may stay or be
+               promoted, must not be deleted).
+      - closed_vocabulary: every source="critic" entry in best_effort
+               is in roster (when roster present and non-empty).
+               Core/rule reviewer labels are plugin-internal and NOT
+               roster-constrained (v2.19.2 scoping fix).
       - critic_best_effort_only: source="critic" entries never in required[]
       - critic_evidence: every source="critic" entry has non-empty evidence
       - critic_cap: critic_addition count <= COVERAGE_CRITIC_MAX_ADDITIONS
@@ -7763,7 +7844,13 @@ def verify_coverage_plan(
     """
     violations: list[dict[str, str]] = []
 
-    # shape
+    # shape — required[]/best_effort[] must be lists of {reviewer: <str>}
+    # dicts. The earlier version only checked that the buckets were
+    # lists; ``{"required": [{}], "best_effort": []}`` and
+    # ``{"required": [{"reviewer": ""}], ...}`` both PASSED. Since the
+    # verifier is the last guard before downstream spawning, malformed
+    # entries are caught here as a ``shape`` violation rather than
+    # silently dropped by ``_plan_reviewer_buckets`` and ``_reviewer_names``.
     if not isinstance(plan.get("required"), list):
         violations.append({
             "check": "shape",
@@ -7776,20 +7863,68 @@ def verify_coverage_plan(
         })
     if violations:
         return violations  # downstream checks assume shape is valid
+    for bucket_name in ("required", "best_effort"):
+        for idx, entry in enumerate(plan.get(bucket_name, []) or []):
+            if not isinstance(entry, dict):
+                violations.append({
+                    "check": "shape",
+                    "message": (
+                        f"coverage_plan.{bucket_name}[{idx}] is not an object"
+                    ),
+                })
+                continue
+            reviewer = entry.get("reviewer")
+            if not isinstance(reviewer, str) or not reviewer.strip():
+                violations.append({
+                    "check": "shape",
+                    "message": (
+                        f"coverage_plan.{bucket_name}[{idx}] missing or empty "
+                        f"'reviewer' field"
+                    ),
+                })
+    if violations:
+        # Shape violations short-circuit — additive / closed_vocabulary /
+        # critic_* checks all assume valid entries with string reviewer
+        # names. Running them on malformed input would generate misleading
+        # downstream violations that obscure the actual fault.
+        return violations
 
     required_final, best_effort_final = _plan_reviewer_buckets(plan)
     required_initial, best_effort_initial = _plan_reviewer_buckets(plan_initial)
     final_names = set(_reviewer_names(required_final)) | set(_reviewer_names(best_effort_final))
 
-    # additive
-    initial_names = set(_reviewer_names(required_initial)) | set(_reviewer_names(best_effort_initial))
-    dropped = sorted(initial_names - final_names)
-    if dropped:
+    # additive — bucket-aware. The earlier check unioned both buckets
+    # on each side, so an initial-required reviewer could move into
+    # final.best_effort[] and the contract considered it preserved. But
+    # the spawn_reviewers stage interprets ``required`` as "mandatory
+    # coverage" and ``best_effort`` as "if budget allows" — silently
+    # demoting a required reviewer downgrades coverage without any
+    # operator-visible signal. Enforce ``initial.required ⊆ final.required``
+    # as a separate check from ``initial.best_effort ⊆ final.(required ∪
+    # best_effort)``: promotion of an initial best-effort to required
+    # IS valid (still additive); demotion of an initial required is NOT.
+    required_initial_names = set(_reviewer_names(required_initial))
+    required_final_names = set(_reviewer_names(required_final))
+    demoted_or_dropped = sorted(required_initial_names - required_final_names)
+    if demoted_or_dropped:
         violations.append({
             "check": "additive",
             "message": (
-                f"initial-plan reviewers missing from final plan: {dropped} "
-                f"(coverage critic may only ADD; deletions violate the contract)"
+                f"initial required reviewers missing from final required[]: "
+                f"{demoted_or_dropped} (required reviewers MUST stay "
+                f"required; demotion to best_effort or deletion violates "
+                f"the additive-only contract)"
+            ),
+        })
+    best_effort_initial_names = set(_reviewer_names(best_effort_initial))
+    dropped_best_effort = sorted(best_effort_initial_names - final_names)
+    if dropped_best_effort:
+        violations.append({
+            "check": "additive",
+            "message": (
+                f"initial best-effort reviewers missing from final plan: "
+                f"{dropped_best_effort} (coverage critic may only ADD; "
+                f"deletions violate the contract)"
             ),
         })
 
@@ -7893,8 +8028,13 @@ def _emit_coverage_verify_blocking_finding(
     if len(violations) > 10:
         summary.append(f"… {len(violations) - 10} more")
     finding = {
-        "reviewer": "coverage-verify",
-        "source": "coverage-verify",
+        # ``coverage-verifier`` is the canonical source registered in
+        # ``code_review_schema.SOURCES``. Emitting ``coverage-verify``
+        # here would cause schema validation at stage_22 to reject the
+        # finding exactly when the verifier needs to surface a BLOCKING
+        # result, silently dropping it from the run summary.
+        "reviewer": "coverage-verifier",
+        "source": "coverage-verifier",
         "finding_scope": "system",
         "system_marker": COVERAGE_VERIFY_MARKER,
         "category": "Coverage",
@@ -7946,11 +8086,26 @@ def cmd_verify_coverage(args: argparse.Namespace) -> int:
     the verdict and violations, and on BLOCKING also emits an
     ``agent_coverage-verify-blocking.json`` system finding.
 
-    Exit code is 0 on PASS, BLOCKING, AND on missing-input early-exit
-    (which is treated as PASS so the verifier is fully observational
-    in Phase 6 — Phase 7 will gate spawn_reviewers on PASS via the
-    artifact, not the exit code). Returns 1 only on a write failure to
+    Exit code is 0 on PASS and BLOCKING (the walker is observational —
+    halting on BLOCKING would break the Phase 4/5 telemetry posture
+    for any review surfacing a violation). Phase 7 (v2.20.0) gates
+    ``stage_16_arbitrate_budget`` on the verdict by reading the
+    artifact, not the exit code. Returns 1 only on a write failure to
     ``coverage_verify.json`` itself.
+
+    Missing or unreadable verifier inputs (``coverage_plan.json``,
+    ``coverage_plan_initial.json``) BLOCK with an ``input`` check
+    (v2.20.1). The earlier behavior — PASS with an advisory ``input``
+    violation — made "no plan was verified" indistinguishable from a
+    real PASS in the artifact, and Phase 7's gate would have silently
+    bypassed the cap on every upstream-aborted run.
+
+    Roster semantics: missing file → no project agents configured
+    (closed-vocabulary check is bypassed; verdict reflects only the
+    other checks). Empty file or empty list → same. PRESENT but
+    invalid (unreadable, wrong shape) → BLOCK with a ``roster`` check
+    (v2.20.1) — distinguishable from absent so an operator config
+    error is surfaced.
 
     Skip semantics: when ``coverage_plan.json`` has
     ``critic_status: "skipped"`` (--no-critic, no-roster, or
@@ -7997,18 +8152,21 @@ def cmd_verify_coverage(args: argparse.Namespace) -> int:
         sys.stdout.write("\n")
         return 0
 
-    # Missing inputs are not a verifier failure — they mean an upstream
-    # stage didn't produce its artifact (likely because a prior stage
-    # aborted). Treat as PASS with a single advisory violation so
-    # operators see why verification was vacuous, without blocking
-    # downstream observability.
+    # Missing or unreadable verifier inputs now BLOCK. The earlier
+    # version treated them as PASS with an advisory ``input`` violation,
+    # but that made "no plan was verified" indistinguishable from a real
+    # PASS in the artifact downstream (Phase 7 arbitrate-budget will gate
+    # on the verdict — a silent PASS-on-missing-input would bypass the
+    # cap on every aborted-upstream run). Exit code stays 0 so the walker
+    # doesn't halt — observational semantics are about the WALKER, the
+    # verdict is about the ARTIFACT consumer.
     try:
         with open(plan_path) as f:
             plan = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
-        return _write_verdict("PASS", [{
+        return _write_verdict("BLOCKING", [{
             "check": "input",
-            "message": f"coverage_plan unreadable, verifier ran no checks: {exc}",
+            "message": f"coverage_plan unreadable: {exc}",
         }])
     if not isinstance(plan, dict):
         return _write_verdict("BLOCKING", [{
@@ -8020,19 +8178,33 @@ def cmd_verify_coverage(args: argparse.Namespace) -> int:
         with open(plan_initial_path) as f:
             plan_initial = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
-        return _write_verdict("PASS", [{
+        return _write_verdict("BLOCKING", [{
             "check": "input",
             "message": f"coverage_plan_initial unreadable: {exc}",
         }])
     if not isinstance(plan_initial, dict):
-        plan_initial = {}
+        return _write_verdict("BLOCKING", [{
+            "check": "input",
+            "message": "coverage_plan_initial is not a JSON object",
+        }])
 
     available_reviewers: list[str] | None = None
     if available_path is not None and available_path.exists():
-        loaded, _ = _load_available_reviewers(available_path)
-        # Roster read errors degrade to None (skip closed-vocabulary check)
-        # rather than emitting a violation — the verifier's job is to
-        # check the plan, not the roster file shape.
+        loaded, err = _load_available_reviewers(available_path)
+        if loaded is None:
+            # Present-but-malformed roster — distinct from missing/empty.
+            # Missing file → no project agents configured (no-roster
+            # semantics, closed-vocabulary check is bypassed). Empty file
+            # / empty list → same. But a PRESENT INVALID file is an
+            # operator config error: previously the read error was
+            # silently discarded and ``available_reviewers`` stayed
+            # None, causing the closed-vocabulary check to be skipped.
+            # That let a corrupted ``available_reviewers.json`` produce
+            # a misleading PASS on a plan that should have been gated.
+            return _write_verdict("BLOCKING", [{
+                "check": "roster",
+                "message": f"available_reviewers unparseable: {err}",
+            }])
         available_reviewers = loaded if loaded else None
 
     violations = verify_coverage_plan(plan, plan_initial, available_reviewers)
