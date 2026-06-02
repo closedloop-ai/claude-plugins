@@ -34,6 +34,10 @@ from code_review_schema import (
     CACHE_NAMESPACE_OVERRIDES,
     CACHE_NAMESPACE_SIGNALS,
     CACHE_NAMESPACE_VERIFICATIONS,
+    COVERAGE_CORE_REQUIRED,
+    COVERAGE_DETERMINISTIC_TRIGGERS,
+    COVERAGE_SCOPES,
+    COVERAGE_TRIGGER_TYPES,
     SCHEMA_VERSION,
     SEVERITIES,
     VERIFIER_VERDICTS,
@@ -5976,6 +5980,609 @@ def _emit_signal_extraction_failed_finding(
 
 
 # ---------------------------------------------------------------------------
+# PLN-725 Phase 2 — Coverage resolution (Stage 2 of deterministic coverage)
+# ---------------------------------------------------------------------------
+# Phase 2 ships:
+#   1. The ``coverage[]`` rule schema in ``critic-gates.json`` (constants
+#      live in ``code_review_schema.py``).
+#   2. ``resolve-coverage`` subcommand: deterministic resolver that reads
+#      diff_data + critic-gates + (optional) extract_signals.json,
+#      evaluates trigger rules, and emits ``coverage_plan_initial.json``.
+#   3. ``migrate-critic-gates`` subcommand: one-time rewriter that
+#      translates legacy ``moduleCritics[]`` substring rules into
+#      canonical ``coverage[]`` path_pattern rules.
+#
+# Phase 4 will wire ``resolve-coverage`` into ``start.md`` (replacing the
+# ``route`` subcommand's domain-critic selection). Phase 6 will gate the
+# verdict on missing required reviewers. Phase 2 alone changes no
+# orchestrator behaviour — both new subcommands are additive.
+
+# Canonical change_class → path glob patterns. Adding a class requires
+# an entry here AND in ``COVERAGE_CHANGE_CLASSES`` (schema module).
+CHANGE_CLASS_PATH_PATTERNS: dict[str, tuple[str, ...]] = {
+    "schema_change": (
+        "**/migrations/**",
+        "**/schema/**",
+        "**/*.sql",
+    ),
+    "infrastructure_change": (
+        "**/terraform/**",
+        "**/cloudformation/**",
+        "**/k8s/**",
+        "**/kubernetes/**",
+        "**/helm/**",
+        "**/*.tf",
+        "**/*.tfvars",
+    ),
+    "build_config_change": (
+        "**/webpack.config.*",
+        "**/vite.config.*",
+        "**/tsconfig*.json",
+        "**/babel.config.*",
+        "**/esbuild.config.*",
+        "**/Makefile",
+        "**/Dockerfile*",
+        "**/.github/workflows/**",
+    ),
+    "dependency_change": (
+        "**/package.json",
+        "**/package-lock.json",
+        "**/yarn.lock",
+        "**/pnpm-lock.yaml",
+        "**/requirements*.txt",
+        "**/Pipfile*",
+        "**/poetry.lock",
+        "**/pyproject.toml",
+        "**/Cargo.toml",
+        "**/Cargo.lock",
+        "**/go.mod",
+        "**/go.sum",
+        "**/Gemfile*",
+    ),
+}
+
+
+def classify_file_changes(files: list[str]) -> set[str]:
+    """Return the set of change_classes detected in the changed file list.
+
+    Pure function. Each ``COVERAGE_CHANGE_CLASSES`` entry is treated as
+    "any file matches any pattern" — first match wins per class. The
+    result is the set of classes that fire, suitable for the
+    ``change_class`` trigger evaluator.
+    """
+    detected: set[str] = set()
+    for change_class, patterns in CHANGE_CLASS_PATH_PATTERNS.items():
+        for pattern in patterns:
+            rx = _glob_to_regex(pattern)
+            if any(rx.search(f) for f in files):
+                detected.add(change_class)
+                break
+    return detected
+
+
+def signals_to_confidence_map(
+    extract_signals: dict[str, Any] | None,
+) -> dict[str, float]:
+    """Flatten ``extract_signals.json`` into ``{signal_name: confidence}``.
+
+    Used by ``_trigger_fires`` for the ``signal`` trigger type. Accepts
+    both the canonical output shape and a None for callers that ran
+    without signal extraction (no extract_signals.json on disk).
+    """
+    if not isinstance(extract_signals, dict):
+        return {}
+    raw = extract_signals.get("signals")
+    if not isinstance(raw, list):
+        return {}
+    out: dict[str, float] = {}
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        conf = entry.get("confidence")
+        if isinstance(name, str) and isinstance(conf, (int, float)):
+            # If the same name appears twice (shouldn't happen post-
+            # validation), keep the higher confidence.
+            prev = out.get(name, -1.0)
+            if float(conf) > prev:
+                out[name] = float(conf)
+    return out
+
+
+def _trigger_fires(
+    trigger: dict[str, Any],
+    files: list[str],
+    patch_lines: dict[str, dict[str, dict[str, str]]],
+    change_classes: set[str],
+    signals: dict[str, float],
+) -> bool:
+    """Evaluate a single trigger against the diff state. Pure function.
+
+    Returns True iff the trigger fires for this diff. Unknown trigger
+    types return False — the schema validates type membership at load
+    time, so this is defensive only.
+    """
+    ttype = trigger.get("type")
+    if ttype == "always":
+        return True
+    if ttype == "extension":
+        exts_raw = trigger.get("extensions", [])
+        if not isinstance(exts_raw, list):
+            return False
+        exts = {str(e).lower() for e in exts_raw}
+        min_files = int(trigger.get("min_files", 1) or 1)
+        count = sum(1 for f in files if Path(f).suffix.lower() in exts)
+        return count >= min_files
+    if ttype == "path_pattern":
+        patterns = trigger.get("patterns", [])
+        if not isinstance(patterns, list):
+            return False
+        for pat in patterns:
+            if not isinstance(pat, str) or not pat:
+                continue
+            rx = _glob_to_regex(pat)
+            if any(rx.search(f) for f in files):
+                return True
+        return False
+    if ttype == "content_signal":
+        pattern = trigger.get("pattern", "")
+        if not isinstance(pattern, str) or not pattern:
+            return False
+        try:
+            rx = re.compile(pattern)
+        except re.error:
+            return False
+        max_scan = trigger.get("max_scan_lines")
+        cap = int(max_scan) if isinstance(max_scan, int) and max_scan > 0 else None
+        scanned = 0
+        for pl in patch_lines.values():
+            added = pl.get("added_lines", {}) if isinstance(pl, dict) else {}
+            for line in added.values():
+                if cap is not None and scanned >= cap:
+                    return False
+                scanned += 1
+                if rx.search(str(line)):
+                    return True
+        return False
+    if ttype == "change_class":
+        cls = trigger.get("class")
+        return isinstance(cls, str) and cls in change_classes
+    if ttype == "signal":
+        name = trigger.get("name")
+        if not isinstance(name, str) or name not in signals:
+            return False
+        min_conf = float(trigger.get("min_confidence", 0.0) or 0.0)
+        return signals[name] >= min_conf
+    return False
+
+
+def migrate_legacy_module_critics(
+    module_critics: list[Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Translate legacy ``moduleCritics[]`` substring rules into
+    canonical ``coverage[]`` path_pattern rules.
+
+    Pure function. Each legacy entry becomes one ``coverage[]`` entry
+    per critic, scoped to ``both`` and ``required=False`` — preserving
+    the legacy semantics (best-effort, substring-match) inside the new
+    schema. Substrings are wrapped as ``**<sub>**`` globs so the
+    canonical resolver matches the substring anywhere in the path
+    (filename, directory, extension) — the same coverage the legacy
+    ``route`` had via ``"<sub>" in path.lower()``. The non-canonical
+    ``**foo**`` form translates to the regex ``^.*foo.*$`` per
+    ``_glob_to_regex``'s middle-``**`` rule, which is exactly the
+    substring-anywhere semantics we need.
+
+    Returns ``(migrated, warnings)``. The warning list always contains a
+    single ``[DEPRECATED]`` entry when at least one rule was migrated.
+    """
+    migrated: list[dict[str, Any]] = []
+    skipped = 0
+    for entry in module_critics:
+        if not isinstance(entry, dict):
+            skipped += 1
+            continue
+        patterns_raw = entry.get("patterns", [])
+        critics_raw = entry.get("critics", [])
+        if not isinstance(patterns_raw, list) or not isinstance(critics_raw, list):
+            skipped += 1
+            continue
+        patterns = [
+            f"**{p}**" for p in patterns_raw if isinstance(p, str) and p
+        ]
+        if not patterns:
+            skipped += 1
+            continue
+        for critic in critics_raw:
+            if not isinstance(critic, str) or not critic:
+                continue
+            migrated.append({
+                "reviewer": critic,
+                "triggers": [{"type": "path_pattern", "patterns": list(patterns)}],
+                "required": False,
+                "scope": "both",
+                "_migrated_from": "moduleCritics",
+            })
+    warnings: list[str] = []
+    if migrated:
+        warnings.append(
+            f"[DEPRECATED] {len(migrated)} entries migrated from "
+            f"moduleCritics[] to coverage[] as best-effort path_pattern "
+            f"rules; edit critic-gates.json to use the canonical "
+            f"coverage[] schema for finer-grained control."
+        )
+    if skipped:
+        warnings.append(
+            f"Skipped {skipped} malformed moduleCritics entries during migration.",
+        )
+    return migrated, warnings
+
+
+def _validate_coverage_rule(
+    rule: dict[str, Any], index: int,
+) -> tuple[bool, list[str]]:
+    """Structural validation of a coverage[] rule. Returns (ok, errors).
+
+    Catches the contract violations that would otherwise produce
+    silent-misroute behaviour: unknown trigger type, unknown scope,
+    required-with-only-llm-signals (downgraded by the resolver to
+    best-effort rather than rejected, but the warning is emitted here
+    too so callers can lint critic-gates.json at edit time).
+    """
+    errors: list[str] = []
+    reviewer = rule.get("reviewer")
+    if not isinstance(reviewer, str) or not reviewer:
+        errors.append(f"coverage[{index}] missing or invalid 'reviewer'")
+        return False, errors
+    triggers = rule.get("triggers")
+    if not isinstance(triggers, list) or not triggers:
+        errors.append(f"coverage[{index}] ({reviewer}) missing or empty 'triggers'")
+        return False, errors
+    for ti, t in enumerate(triggers):
+        if not isinstance(t, dict):
+            errors.append(
+                f"coverage[{index}].triggers[{ti}] ({reviewer}) is not an object",
+            )
+            continue
+        ttype = t.get("type")
+        if ttype not in COVERAGE_TRIGGER_TYPES:
+            errors.append(
+                f"coverage[{index}].triggers[{ti}] ({reviewer}) "
+                f"unknown trigger type: {ttype!r}",
+            )
+    scope = rule.get("scope", "code-review")
+    if scope not in COVERAGE_SCOPES:
+        errors.append(
+            f"coverage[{index}] ({reviewer}) unknown scope: {scope!r}",
+        )
+    return not errors, errors
+
+
+def resolve_coverage(
+    critic_gates: dict[str, Any],
+    diff_data: dict[str, Any],
+    extract_signals: dict[str, Any] | None = None,
+    scope_filter: str = "code-review",
+) -> dict[str, Any]:
+    """Pure resolver from rules + diff state → Coverage Plan.
+
+    Inputs:
+      - ``critic_gates``: parsed critic-gates.json. Reads both
+        ``coverage[]`` (canonical) and ``moduleCritics[]`` (legacy
+        soft-compat). The legacy entries are migrated on the fly via
+        ``migrate_legacy_module_critics`` so a file with only legacy
+        entries keeps working.
+      - ``diff_data``: parse-diff output. Uses ``files_to_review`` for
+        path/extension/change_class triggers and ``patch_lines`` for
+        content_signal triggers.
+      - ``extract_signals``: optional Phase 1 output. When omitted,
+        ``signal`` triggers cannot fire (the determinism enforcement
+        already prevents required rules from depending on them).
+      - ``scope_filter``: ``code-review`` (default) or ``plan-review``;
+        rules with ``scope: "both"`` always pass.
+
+    Returns a dict with ``required``, ``best_effort``, ``warnings``,
+    ``stats``. Always-add core reviewers (``COVERAGE_CORE_REQUIRED``)
+    appear in ``required`` regardless of rule matches.
+
+    Determinism enforcement: a rule with ``required: true`` whose
+    triggers are entirely LLM-driven (only ``signal`` triggers) is
+    downgraded to best-effort with a warning. This is the architectural
+    invariant from PLN-725 §1 — LLM signals can ADD but not solely
+    DRIVE required selection.
+    """
+    files = list(diff_data.get("files_to_review", []) or [])
+    patch_lines_raw = diff_data.get("patch_lines", {}) or {}
+    patch_lines: dict[str, dict[str, dict[str, str]]] = (
+        patch_lines_raw if isinstance(patch_lines_raw, dict) else {}
+    )
+    change_classes = classify_file_changes(files)
+    signals = signals_to_confidence_map(extract_signals)
+
+    # Compose rule list: canonical coverage[] + migrated moduleCritics[].
+    canonical = critic_gates.get("coverage", [])
+    canonical = canonical if isinstance(canonical, list) else []
+    legacy = critic_gates.get("moduleCritics", [])
+    legacy = legacy if isinstance(legacy, list) else []
+    migrated, migration_warnings = migrate_legacy_module_critics(legacy)
+    rules = list(canonical) + migrated
+
+    warnings: list[str] = list(migration_warnings)
+    required: list[dict[str, Any]] = []
+    best_effort: list[dict[str, Any]] = []
+    seen_required: set[str] = set()
+    seen_best_effort: set[str] = set()
+
+    # Always-add core required reviewers.
+    for core_name in COVERAGE_CORE_REQUIRED:
+        required.append({
+            "reviewer": core_name,
+            "trigger": {"type": "always"},
+            "source": "core",
+        })
+        seen_required.add(core_name)
+
+    rules_evaluated = 0
+    rules_matched = 0
+
+    for idx, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            continue
+        ok, rule_errors = _validate_coverage_rule(rule, idx)
+        if not ok:
+            warnings.extend(rule_errors)
+            continue
+
+        rule_scope = rule.get("scope", "code-review")
+        if rule_scope != "both" and rule_scope != scope_filter:
+            continue
+
+        reviewer = rule["reviewer"]
+        triggers = rule["triggers"]
+        required_flag = bool(rule.get("required", False))
+        rules_evaluated += 1
+
+        # Determinism enforcement: required rules need at least one
+        # deterministic trigger. A rule depending ONLY on LLM signals
+        # gets downgraded to best-effort with an audit warning.
+        if required_flag and not any(
+            isinstance(t, dict) and t.get("type") in COVERAGE_DETERMINISTIC_TRIGGERS
+            for t in triggers
+        ):
+            warnings.append(
+                f"Rule for reviewer '{reviewer}' was required=true but has only "
+                f"LLM-signal triggers; downgraded to best-effort. Required rules "
+                f"must include at least one deterministic trigger.",
+            )
+            required_flag = False
+
+        # OR semantics: first trigger that fires selects the reviewer.
+        matched_trigger: dict[str, Any] | None = None
+        for trigger in triggers:
+            if not isinstance(trigger, dict):
+                continue
+            if _trigger_fires(
+                trigger, files, patch_lines, change_classes, signals,
+            ):
+                matched_trigger = trigger
+                break
+        if matched_trigger is None:
+            continue
+        rules_matched += 1
+
+        entry: dict[str, Any] = {
+            "reviewer": reviewer,
+            "trigger": matched_trigger,
+            "source": "rule",
+        }
+        for opt in ("model_override", "priority"):
+            if opt in rule:
+                entry[opt] = rule[opt]
+
+        # Dedup by reviewer name. Required wins over best-effort: if a
+        # reviewer is already in required[], skip it here. A reviewer
+        # that lands in best-effort via one rule can be promoted to
+        # required by a later rule (we honour the strictest).
+        if required_flag:
+            if reviewer in seen_required:
+                continue
+            if reviewer in seen_best_effort:
+                # Promote: remove the best-effort entry, add to required.
+                best_effort = [
+                    e for e in best_effort if e["reviewer"] != reviewer
+                ]
+                seen_best_effort.discard(reviewer)
+            seen_required.add(reviewer)
+            required.append(entry)
+        else:
+            if reviewer in seen_required or reviewer in seen_best_effort:
+                continue
+            seen_best_effort.add(reviewer)
+            best_effort.append(entry)
+
+    return {
+        "required": required,
+        "best_effort": best_effort,
+        "warnings": warnings,
+        "stats": {
+            "required_count": len(required),
+            "best_effort_count": len(best_effort),
+            "rules_evaluated": rules_evaluated,
+            "rules_matched": rules_matched,
+            "detected_change_classes": sorted(change_classes),
+            "signal_count": len(signals),
+        },
+    }
+
+
+def cmd_resolve_coverage(args: argparse.Namespace) -> int:
+    """PLN-725 Stage 2: deterministic coverage resolver.
+
+    Reads diff_data + critic-gates + (optional) extract_signals.json,
+    runs ``resolve_coverage``, writes
+    ``<cr_dir>/coverage_plan_initial.json``, and emits a summary on
+    stdout. Always exits 0 on a structurally valid run; returns 1 on
+    file-read failure (which is the only condition the orchestrator
+    needs to halt on — empty results are valid).
+    """
+    cr_dir = Path(args.cr_dir)
+    diff_data_path = Path(args.diff_data)
+    critic_gates_path = (
+        Path(args.critic_gates) if getattr(args, "critic_gates", None) else None
+    )
+    extract_signals_path = (
+        Path(args.extract_signals) if getattr(args, "extract_signals", None) else None
+    )
+    scope_filter = str(getattr(args, "scope", None) or "code-review")
+    if scope_filter not in COVERAGE_SCOPES:
+        print(f"Error: invalid scope {scope_filter!r}", file=sys.stderr)
+        return 1
+
+    try:
+        cr_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"Error: cannot create cr_dir: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        with open(diff_data_path) as f:
+            diff_data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error reading diff_data: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(diff_data, dict):
+        print("Error: diff_data is not a JSON object", file=sys.stderr)
+        return 1
+
+    critic_gates: dict[str, Any] = dict(_EMPTY_CRITIC_GATES)
+    if critic_gates_path is not None and critic_gates_path.exists():
+        try:
+            with open(critic_gates_path) as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                critic_gates = loaded
+        except (OSError, json.JSONDecodeError) as exc:
+            print(
+                f"Warning: could not read critic-gates ({exc}); proceeding with empty",
+                file=sys.stderr,
+            )
+
+    extract_signals: dict[str, Any] | None = None
+    if extract_signals_path is not None and extract_signals_path.exists():
+        try:
+            with open(extract_signals_path) as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                extract_signals = loaded
+        except (OSError, json.JSONDecodeError):
+            extract_signals = None
+
+    plan = resolve_coverage(
+        critic_gates=critic_gates,
+        diff_data=diff_data,
+        extract_signals=extract_signals,
+        scope_filter=scope_filter,
+    )
+
+    output_path = cr_dir / "coverage_plan_initial.json"
+    output: dict[str, Any] = dict(plan)
+    output["generated_at"] = datetime.now(timezone.utc).isoformat()
+    output["scope"] = scope_filter
+    with open(output_path, "w") as f:
+        json.dump(output, f, indent=2)
+
+    summary = {
+        "output_path": str(output_path),
+        "required_count": plan["stats"]["required_count"],
+        "best_effort_count": plan["stats"]["best_effort_count"],
+        "rules_evaluated": plan["stats"]["rules_evaluated"],
+        "rules_matched": plan["stats"]["rules_matched"],
+        "warning_count": len(plan["warnings"]),
+    }
+    json.dump(summary, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def cmd_migrate_critic_gates(args: argparse.Namespace) -> int:
+    """PLN-725 Phase 2: one-time legacy-to-canonical critic-gates rewriter.
+
+    Reads ``<input>`` (defaults to .closedloop-ai/settings/critic-gates.json),
+    migrates ``moduleCritics[]`` into ``coverage[]`` via
+    ``migrate_legacy_module_critics``, preserves any existing ``coverage[]``
+    entries (canonical takes priority — migrated entries appended), and
+    writes the merged result to ``<output>`` (defaults to the input path
+    when --in-place is set). With --dry-run, prints the diff to stdout
+    without touching disk.
+    """
+    in_path = Path(args.input)
+    out_path = (
+        Path(args.output)
+        if getattr(args, "output", None)
+        else (in_path if getattr(args, "in_place", False) else None)
+    )
+    dry_run = bool(getattr(args, "dry_run", False))
+
+    try:
+        with open(in_path) as f:
+            current = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error reading {in_path}: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(current, dict):
+        print(f"Error: {in_path} is not a JSON object", file=sys.stderr)
+        return 1
+
+    legacy = current.get("moduleCritics", [])
+    legacy = legacy if isinstance(legacy, list) else []
+    migrated, warnings = migrate_legacy_module_critics(legacy)
+
+    existing_coverage = current.get("coverage", [])
+    existing_coverage = existing_coverage if isinstance(existing_coverage, list) else []
+
+    new_state = dict(current)
+    new_state["coverage"] = list(existing_coverage) + migrated
+    # Preserve moduleCritics on disk for one release as a back-out path;
+    # the resolver tolerates duplicate naming because dedup is by
+    # reviewer name across the composed rule list.
+    # Users can remove the legacy block manually once they've verified
+    # the migrated entries.
+
+    summary = {
+        "input": str(in_path),
+        "migrated_count": len(migrated),
+        "existing_coverage_count": len(existing_coverage),
+        "total_coverage_count": len(new_state["coverage"]),
+        "warnings": warnings,
+    }
+
+    if dry_run:
+        summary["dry_run"] = True
+        summary["preview"] = new_state["coverage"]
+        json.dump(summary, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
+    if out_path is None:
+        print(
+            "Error: must pass --output <path> or --in-place to write the migration",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        with open(out_path, "w") as f:
+            json.dump(new_state, f, indent=2)
+    except OSError as exc:
+        print(f"Error writing {out_path}: {exc}", file=sys.stderr)
+        return 1
+    summary["output"] = str(out_path)
+    json.dump(summary, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: classify-intent
 # ---------------------------------------------------------------------------
 
@@ -8408,6 +9015,53 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
         help="Optional cache directory; successful extractions write back to signals/.",
     )
     p_esc.set_defaults(func=cmd_extract_signals_consolidate)
+
+    # resolve-coverage (PLN-725 Stage 2)
+    p_rc = subparsers.add_parser(
+        "resolve-coverage",
+        help="Deterministic resolver: critic-gates + diff + signals -> coverage_plan_initial.json",
+    )
+    p_rc.add_argument("--cr-dir", required=True, help="CR_DIR path")
+    p_rc.add_argument(
+        "--diff-data", required=True, help="Path to diff_data.json",
+    )
+    p_rc.add_argument(
+        "--critic-gates", default=None,
+        help="Path to critic-gates.json (defaults to empty manifest when absent)",
+    )
+    p_rc.add_argument(
+        "--extract-signals", default=None,
+        help="Path to extract_signals.json (optional; absent → signal triggers cannot fire)",
+    )
+    p_rc.add_argument(
+        "--scope", default="code-review",
+        choices=sorted(COVERAGE_SCOPES),
+        help="Rule scope filter (default: code-review)",
+    )
+    p_rc.set_defaults(func=cmd_resolve_coverage)
+
+    # migrate-critic-gates (PLN-725 Phase 2)
+    p_mcg = subparsers.add_parser(
+        "migrate-critic-gates",
+        help="One-time rewriter: legacy moduleCritics[] -> canonical coverage[]",
+    )
+    p_mcg.add_argument(
+        "--input", required=True,
+        help="Path to legacy critic-gates.json",
+    )
+    p_mcg.add_argument(
+        "--output", default=None,
+        help="Output path (write migrated file here)",
+    )
+    p_mcg.add_argument(
+        "--in-place", action="store_true",
+        help="Rewrite --input in place; mutually exclusive with --output",
+    )
+    p_mcg.add_argument(
+        "--dry-run", action="store_true",
+        help="Print the proposed merged coverage[] to stdout without writing",
+    )
+    p_mcg.set_defaults(func=cmd_migrate_critic_gates)
 
     # re-assert (PLN-773 Phase 4)
     p_ra = subparsers.add_parser(

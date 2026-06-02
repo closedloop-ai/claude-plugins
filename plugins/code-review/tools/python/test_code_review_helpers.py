@@ -10903,3 +10903,610 @@ class TestPR121TaxonomyCommentNoDanglingReference:
         # The Phase 9 deferral wording is allowed; the previous bare
         # "(and bootstrap's mirror)" parenthetical is not.
         assert "(and bootstrap's mirror)" not in text
+
+
+# ---------------------------------------------------------------------------
+# PLN-725 Phase 2 — coverage[] schema + resolve-coverage + migrate-critic-gates
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyFileChanges:
+    """Deterministic file → change_class mapping (no LLM)."""
+
+    def test_detects_schema_change_from_migrations_dir(self) -> None:
+        from code_review_helpers import classify_file_changes
+        assert "schema_change" in classify_file_changes(["db/migrations/001_users.sql"])
+
+    def test_detects_schema_change_from_sql_extension(self) -> None:
+        from code_review_helpers import classify_file_changes
+        assert "schema_change" in classify_file_changes(["src/queries/select.sql"])
+
+    def test_detects_infrastructure_change_from_terraform(self) -> None:
+        from code_review_helpers import classify_file_changes
+        assert "infrastructure_change" in classify_file_changes(["infra/main.tf"])
+
+    def test_detects_build_config_change_from_tsconfig(self) -> None:
+        from code_review_helpers import classify_file_changes
+        assert "build_config_change" in classify_file_changes(["tsconfig.json"])
+
+    def test_detects_dependency_change_from_package_json(self) -> None:
+        from code_review_helpers import classify_file_changes
+        assert "dependency_change" in classify_file_changes(["package.json"])
+
+    def test_detects_multiple_classes(self) -> None:
+        from code_review_helpers import classify_file_changes
+        detected = classify_file_changes([
+            "db/migrations/001.sql", "package.json", "infra/main.tf",
+        ])
+        assert {"schema_change", "dependency_change", "infrastructure_change"} <= detected
+
+    def test_unrelated_files_classify_to_nothing(self) -> None:
+        from code_review_helpers import classify_file_changes
+        assert classify_file_changes(["src/foo.ts", "README.md"]) == set()
+
+
+class TestSignalsToConfidenceMap:
+    """Flattening Phase 1 output for the signal trigger evaluator."""
+
+    def test_extracts_name_confidence_pairs(self) -> None:
+        from code_review_helpers import signals_to_confidence_map
+        out = signals_to_confidence_map({"signals": [
+            {"name": "auth_touching", "evidence": "x", "confidence": 0.85},
+            {"name": "schema_change", "evidence": "y", "confidence": 0.95},
+        ]})
+        assert out == {"auth_touching": 0.85, "schema_change": 0.95}
+
+    def test_returns_empty_on_none(self) -> None:
+        from code_review_helpers import signals_to_confidence_map
+        assert signals_to_confidence_map(None) == {}
+
+    def test_returns_empty_on_malformed(self) -> None:
+        from code_review_helpers import signals_to_confidence_map
+        assert signals_to_confidence_map({"signals": "not a list"}) == {}
+
+    def test_higher_confidence_wins_on_duplicate(self) -> None:
+        from code_review_helpers import signals_to_confidence_map
+        out = signals_to_confidence_map({"signals": [
+            {"name": "x", "evidence": "a", "confidence": 0.7},
+            {"name": "x", "evidence": "b", "confidence": 0.9},
+        ]})
+        assert out == {"x": 0.9}
+
+
+class TestTriggerFires:
+    """Each trigger type's positive + negative path."""
+
+    def _empty(self) -> dict[str, Any]:
+        return {"patch_lines": {}, "change_classes": set(), "signals": {}}
+
+    def test_always_always_fires(self) -> None:
+        from code_review_helpers import _trigger_fires
+        assert _trigger_fires({"type": "always"}, [], {}, set(), {}) is True
+
+    def test_extension_fires_at_threshold(self) -> None:
+        from code_review_helpers import _trigger_fires
+        files = ["a.ts", "b.ts", "c.py"]
+        assert _trigger_fires(
+            {"type": "extension", "extensions": [".ts"], "min_files": 2},
+            files, {}, set(), {},
+        ) is True
+
+    def test_extension_misses_below_threshold(self) -> None:
+        from code_review_helpers import _trigger_fires
+        assert _trigger_fires(
+            {"type": "extension", "extensions": [".ts"], "min_files": 3},
+            ["a.ts", "b.ts"], {}, set(), {},
+        ) is False
+
+    def test_extension_case_insensitive(self) -> None:
+        from code_review_helpers import _trigger_fires
+        assert _trigger_fires(
+            {"type": "extension", "extensions": [".TS"]},
+            ["a.ts"], {}, set(), {},
+        ) is True
+
+    def test_path_pattern_fires_on_match(self) -> None:
+        from code_review_helpers import _trigger_fires
+        assert _trigger_fires(
+            {"type": "path_pattern", "patterns": ["lib/auth/**"]},
+            ["lib/auth/login.ts"], {}, set(), {},
+        ) is True
+
+    def test_path_pattern_no_match(self) -> None:
+        from code_review_helpers import _trigger_fires
+        assert _trigger_fires(
+            {"type": "path_pattern", "patterns": ["lib/auth/**"]},
+            ["src/utils/foo.ts"], {}, set(), {},
+        ) is False
+
+    def test_content_signal_fires_on_added_line_match(self) -> None:
+        from code_review_helpers import _trigger_fires
+        patch_lines = {
+            "src/auth.ts": {
+                "added_lines": {"10": "import bcrypt from 'bcrypt';"},
+                "removed_lines": {},
+            },
+        }
+        assert _trigger_fires(
+            {"type": "content_signal", "pattern": r"bcrypt|argon2|scrypt"},
+            [], patch_lines, set(), {},
+        ) is True
+
+    def test_content_signal_only_added_lines(self) -> None:
+        """Regression: content_signal must NOT match removed_lines content
+        (a removed crypto import is not a new dependency).
+        """
+        from code_review_helpers import _trigger_fires
+        patch_lines = {
+            "src/auth.ts": {
+                "added_lines": {},
+                "removed_lines": {"10": "import bcrypt from 'bcrypt';"},
+            },
+        }
+        assert _trigger_fires(
+            {"type": "content_signal", "pattern": r"bcrypt"},
+            [], patch_lines, set(), {},
+        ) is False
+
+    def test_content_signal_respects_max_scan_lines(self) -> None:
+        from code_review_helpers import _trigger_fires
+        patch_lines = {
+            "x.ts": {
+                "added_lines": {str(i): "noise" for i in range(100)},
+                "removed_lines": {},
+            },
+        }
+        patch_lines["x.ts"]["added_lines"]["999"] = "match_me"
+        # max_scan caps before the match line — should not fire.
+        assert _trigger_fires(
+            {"type": "content_signal", "pattern": "match_me", "max_scan_lines": 5},
+            [], patch_lines, set(), {},
+        ) is False
+
+    def test_content_signal_bad_regex_returns_false(self) -> None:
+        from code_review_helpers import _trigger_fires
+        assert _trigger_fires(
+            {"type": "content_signal", "pattern": "[invalid("},
+            [], {"f": {"added_lines": {"1": "x"}}}, set(), {},
+        ) is False
+
+    def test_change_class_fires_on_detected_class(self) -> None:
+        from code_review_helpers import _trigger_fires
+        assert _trigger_fires(
+            {"type": "change_class", "class": "schema_change"},
+            [], {}, {"schema_change"}, {},
+        ) is True
+
+    def test_change_class_no_match(self) -> None:
+        from code_review_helpers import _trigger_fires
+        assert _trigger_fires(
+            {"type": "change_class", "class": "infrastructure_change"},
+            [], {}, {"schema_change"}, {},
+        ) is False
+
+    def test_signal_fires_above_min_confidence(self) -> None:
+        from code_review_helpers import _trigger_fires
+        assert _trigger_fires(
+            {"type": "signal", "name": "auth_touching", "min_confidence": 0.8},
+            [], {}, set(), {"auth_touching": 0.85},
+        ) is True
+
+    def test_signal_misses_below_min_confidence(self) -> None:
+        from code_review_helpers import _trigger_fires
+        assert _trigger_fires(
+            {"type": "signal", "name": "auth_touching", "min_confidence": 0.9},
+            [], {}, set(), {"auth_touching": 0.85},
+        ) is False
+
+    def test_signal_misses_when_absent(self) -> None:
+        from code_review_helpers import _trigger_fires
+        assert _trigger_fires(
+            {"type": "signal", "name": "not_extracted"},
+            [], {}, set(), {"other": 0.95},
+        ) is False
+
+    def test_unknown_trigger_type_returns_false(self) -> None:
+        from code_review_helpers import _trigger_fires
+        assert _trigger_fires({"type": "lol"}, [], {}, set(), {}) is False
+
+
+class TestMigrateLegacyModuleCritics:
+    """Pure soft-compat translator."""
+
+    def test_one_entry_one_critic(self) -> None:
+        from code_review_helpers import migrate_legacy_module_critics
+        migrated, warnings = migrate_legacy_module_critics([
+            {"patterns": ["auth"], "critics": ["security-privacy"]},
+        ])
+        assert len(migrated) == 1
+        assert migrated[0]["reviewer"] == "security-privacy"
+        assert migrated[0]["required"] is False
+        assert migrated[0]["scope"] == "both"
+        assert migrated[0]["triggers"][0]["type"] == "path_pattern"
+        assert migrated[0]["triggers"][0]["patterns"] == ["**auth**"]
+        assert migrated[0]["_migrated_from"] == "moduleCritics"
+        assert any("DEPRECATED" in w for w in warnings)
+
+    def test_one_entry_multiple_critics_produces_one_rule_each(self) -> None:
+        from code_review_helpers import migrate_legacy_module_critics
+        migrated, _ = migrate_legacy_module_critics([
+            {"patterns": ["build"], "critics": ["devops-architect", "python-pro"]},
+        ])
+        assert {r["reviewer"] for r in migrated} == {"devops-architect", "python-pro"}
+
+    def test_empty_input_emits_no_warning(self) -> None:
+        from code_review_helpers import migrate_legacy_module_critics
+        migrated, warnings = migrate_legacy_module_critics([])
+        assert migrated == []
+        assert warnings == []
+
+    def test_malformed_entries_skipped_with_warning(self) -> None:
+        from code_review_helpers import migrate_legacy_module_critics
+        migrated, warnings = migrate_legacy_module_critics([
+            {"patterns": "not-a-list", "critics": ["x"]},
+            "not a dict",
+            {"patterns": [], "critics": ["x"]},
+        ])
+        assert migrated == []
+        assert any("Skipped" in w for w in warnings)
+
+
+class TestResolveCoverage:
+    """End-to-end pure resolver behavior."""
+
+    def _diff(self, files: list[str] | None = None) -> dict[str, Any]:
+        return {
+            "files_to_review": files or [],
+            "patch_lines": {},
+        }
+
+    def test_always_adds_core_required_reviewers(self) -> None:
+        from code_review_helpers import COVERAGE_CORE_REQUIRED, resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={}, diff_data=self._diff(), extract_signals=None,
+        )
+        required_names = [r["reviewer"] for r in plan["required"]]
+        for core in COVERAGE_CORE_REQUIRED:
+            assert core in required_names
+        # Core entries are labeled accordingly.
+        for entry in plan["required"]:
+            if entry["reviewer"] in COVERAGE_CORE_REQUIRED:
+                assert entry["source"] == "core"
+
+    def test_extension_rule_promotes_required(self) -> None:
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"coverage": [
+                {"reviewer": "ts-expert",
+                 "triggers": [{"type": "extension", "extensions": [".ts"]}],
+                 "required": True, "scope": "code-review"},
+            ]},
+            diff_data=self._diff(["src/foo.ts"]),
+        )
+        assert "ts-expert" in [r["reviewer"] for r in plan["required"]]
+        assert plan["best_effort"] == []
+
+    def test_signal_only_required_rule_downgraded_to_best_effort(self) -> None:
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"coverage": [
+                {"reviewer": "a11y-expert",
+                 "triggers": [{"type": "signal", "name": "accessibility_relevant"}],
+                 "required": True, "scope": "code-review"},
+            ]},
+            diff_data=self._diff(["src/Modal.tsx"]),
+            extract_signals={"signals": [
+                {"name": "accessibility_relevant", "evidence": "x", "confidence": 0.85},
+            ]},
+        )
+        assert "a11y-expert" in [r["reviewer"] for r in plan["best_effort"]]
+        assert "a11y-expert" not in [r["reviewer"] for r in plan["required"]]
+        assert any("LLM-signal" in w for w in plan["warnings"])
+
+    def test_mixed_deterministic_and_signal_can_be_required(self) -> None:
+        """A rule with both deterministic AND signal triggers stays
+        required. Determinism floor only blocks rules with ONLY signal
+        triggers.
+        """
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"coverage": [
+                {"reviewer": "auth-expert",
+                 "triggers": [
+                     {"type": "path_pattern", "patterns": ["lib/auth/**"]},
+                     {"type": "signal", "name": "auth_touching"},
+                 ],
+                 "required": True, "scope": "code-review"},
+            ]},
+            diff_data=self._diff(["lib/auth/login.ts"]),
+            extract_signals={"signals": [
+                {"name": "auth_touching", "evidence": "x", "confidence": 0.9},
+            ]},
+        )
+        assert "auth-expert" in [r["reviewer"] for r in plan["required"]]
+
+    def test_unmatched_rule_emits_nothing(self) -> None:
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"coverage": [
+                {"reviewer": "ts-expert",
+                 "triggers": [{"type": "extension", "extensions": [".ts"]}],
+                 "required": True, "scope": "code-review"},
+            ]},
+            diff_data=self._diff(["src/foo.py"]),
+        )
+        assert "ts-expert" not in [r["reviewer"] for r in plan["required"]]
+        assert "ts-expert" not in [r["reviewer"] for r in plan["best_effort"]]
+
+    def test_scope_filter_excludes_plan_review_only_rules(self) -> None:
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"coverage": [
+                {"reviewer": "plan-only",
+                 "triggers": [{"type": "always"}],
+                 "required": False, "scope": "plan-review"},
+            ]},
+            diff_data=self._diff(),
+            scope_filter="code-review",
+        )
+        assert "plan-only" not in [r["reviewer"] for r in plan["best_effort"]]
+
+    def test_both_scope_passes_either_filter(self) -> None:
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"coverage": [
+                {"reviewer": "both-scope",
+                 "triggers": [{"type": "always"}],
+                 "required": False, "scope": "both"},
+            ]},
+            diff_data=self._diff(),
+            scope_filter="code-review",
+        )
+        assert "both-scope" in [r["reviewer"] for r in plan["best_effort"]]
+
+    def test_dedup_required_wins_over_best_effort(self) -> None:
+        """A reviewer hit by both a best-effort rule (first) and a
+        required rule (second) ends up in required, not best_effort.
+        """
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"coverage": [
+                {"reviewer": "ts-expert",
+                 "triggers": [{"type": "extension", "extensions": [".ts"]}],
+                 "required": False, "scope": "both"},
+                {"reviewer": "ts-expert",
+                 "triggers": [{"type": "extension", "extensions": [".ts"]}],
+                 "required": True, "scope": "code-review"},
+            ]},
+            diff_data=self._diff(["a.ts"]),
+        )
+        assert "ts-expert" in [r["reviewer"] for r in plan["required"]]
+        assert "ts-expert" not in [r["reviewer"] for r in plan["best_effort"]]
+
+    def test_dedup_best_effort_does_not_duplicate(self) -> None:
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"coverage": [
+                {"reviewer": "ts-expert",
+                 "triggers": [{"type": "extension", "extensions": [".ts"]}],
+                 "required": False, "scope": "both"},
+                {"reviewer": "ts-expert",
+                 "triggers": [{"type": "always"}],
+                 "required": False, "scope": "both"},
+            ]},
+            diff_data=self._diff(["a.ts"]),
+        )
+        assert [r["reviewer"] for r in plan["best_effort"]].count("ts-expert") == 1
+
+    def test_legacy_modulecritics_soft_compat_resolves_to_best_effort(self) -> None:
+        """A critic-gates with ONLY moduleCritics[] still routes
+        reviewers (best-effort) via auto-migration at evaluate time.
+        """
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"moduleCritics": [
+                {"patterns": ["auth"], "critics": ["security-privacy"]},
+            ]},
+            diff_data=self._diff(["lib/auth/login.ts"]),
+        )
+        assert "security-privacy" in [r["reviewer"] for r in plan["best_effort"]]
+        assert any("DEPRECATED" in w for w in plan["warnings"])
+
+    def test_unknown_trigger_type_warns_and_skips(self) -> None:
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"coverage": [
+                {"reviewer": "broken",
+                 "triggers": [{"type": "made-up-trigger"}],
+                 "required": False, "scope": "both"},
+            ]},
+            diff_data=self._diff(["a.ts"]),
+        )
+        # Validator rejects the rule entirely; the reviewer is skipped.
+        assert "broken" not in [r["reviewer"] for r in plan["best_effort"]]
+        assert any("unknown trigger type" in w for w in plan["warnings"])
+
+    def test_signal_trigger_cannot_fire_without_extract_signals(self) -> None:
+        """If extract_signals.json was never produced, signal triggers
+        silently miss (the determinism enforcement already protects
+        required rules; best-effort rules just don't fire).
+        """
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"coverage": [
+                {"reviewer": "a11y-expert",
+                 "triggers": [{"type": "signal", "name": "accessibility_relevant"}],
+                 "required": False, "scope": "code-review"},
+            ]},
+            diff_data=self._diff(["src/Modal.tsx"]),
+            extract_signals=None,
+        )
+        assert "a11y-expert" not in [r["reviewer"] for r in plan["best_effort"]]
+
+    def test_stats_block_populated(self) -> None:
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"coverage": [
+                {"reviewer": "ts-expert",
+                 "triggers": [{"type": "extension", "extensions": [".ts"]}],
+                 "required": False, "scope": "both"},
+                {"reviewer": "py-expert",
+                 "triggers": [{"type": "extension", "extensions": [".py"]}],
+                 "required": False, "scope": "both"},
+            ]},
+            diff_data=self._diff(["a.ts"]),
+        )
+        s = plan["stats"]
+        assert s["required_count"] >= len(("bug_hunter_a", "bug_hunter_b"))
+        assert s["best_effort_count"] == 1
+        assert s["rules_evaluated"] == 2
+        assert s["rules_matched"] == 1
+
+
+class TestResolveCoverageCLI:
+    """End-to-end CLI: cmd_resolve_coverage writes coverage_plan_initial.json."""
+
+    def test_writes_plan_and_emits_summary(self, tmp_path: Path) -> None:
+        from code_review_helpers import cmd_resolve_coverage
+        cr_dir = tmp_path / "cr"
+        diff_path = tmp_path / "diff_data.json"
+        diff_path.write_text(json.dumps({
+            "files_to_review": ["src/login.ts"],
+            "patch_lines": {},
+        }))
+        gates_path = tmp_path / "critic-gates.json"
+        gates_path.write_text(json.dumps({"coverage": [
+            {"reviewer": "ts-expert",
+             "triggers": [{"type": "extension", "extensions": [".ts"]}],
+             "required": True, "scope": "code-review"},
+        ]}))
+
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(diff_path),
+            critic_gates=str(gates_path),
+            extract_signals=None,
+            scope="code-review",
+        )
+        rc = cmd_resolve_coverage(args)
+        assert rc == 0
+
+        plan = json.loads((cr_dir / "coverage_plan_initial.json").read_text())
+        assert plan["scope"] == "code-review"
+        assert "ts-expert" in [r["reviewer"] for r in plan["required"]]
+        assert "generated_at" in plan
+
+    def test_missing_diff_data_returns_1(self, tmp_path: Path) -> None:
+        from code_review_helpers import cmd_resolve_coverage
+        cr_dir = tmp_path / "cr"
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(tmp_path / "nope.json"),
+            critic_gates=None,
+            extract_signals=None,
+            scope="code-review",
+        )
+        assert cmd_resolve_coverage(args) == 1
+
+
+class TestMigrateCriticGatesCLI:
+    """One-time rewriter behavior: in-place, output path, dry-run."""
+
+    def _legacy(self) -> dict[str, Any]:
+        return {
+            "version": 1,
+            "defaults": {"reviewBudget": 8},
+            "moduleCritics": [
+                {"patterns": ["auth"], "critics": ["security-privacy"]},
+                {"patterns": ["build", "ci"], "critics": ["devops-architect"]},
+            ],
+        }
+
+    def test_in_place_rewrites_file(self, tmp_path: Path) -> None:
+        from code_review_helpers import cmd_migrate_critic_gates
+        path = tmp_path / "critic-gates.json"
+        path.write_text(json.dumps(self._legacy()))
+        args = argparse.Namespace(
+            input=str(path),
+            output=None,
+            in_place=True,
+            dry_run=False,
+        )
+        assert cmd_migrate_critic_gates(args) == 0
+        rewritten = json.loads(path.read_text())
+        # Legacy block preserved (for one-release back-out); coverage[] added.
+        assert "moduleCritics" in rewritten
+        assert isinstance(rewritten.get("coverage"), list)
+        critics = {r["reviewer"] for r in rewritten["coverage"]}
+        assert critics == {"security-privacy", "devops-architect"}
+
+    def test_dry_run_does_not_write(self, tmp_path: Path) -> None:
+        from code_review_helpers import cmd_migrate_critic_gates
+        path = tmp_path / "critic-gates.json"
+        path.write_text(json.dumps(self._legacy()))
+        original = path.read_text()
+        args = argparse.Namespace(
+            input=str(path),
+            output=None,
+            in_place=False,
+            dry_run=True,
+        )
+        assert cmd_migrate_critic_gates(args) == 0
+        assert path.read_text() == original
+
+    def test_explicit_output_path(self, tmp_path: Path) -> None:
+        from code_review_helpers import cmd_migrate_critic_gates
+        src = tmp_path / "input.json"
+        dst = tmp_path / "output.json"
+        src.write_text(json.dumps(self._legacy()))
+        args = argparse.Namespace(
+            input=str(src),
+            output=str(dst),
+            in_place=False,
+            dry_run=False,
+        )
+        assert cmd_migrate_critic_gates(args) == 0
+        assert dst.exists()
+        # Source untouched.
+        assert json.loads(src.read_text()) == self._legacy()
+
+    def test_no_output_and_no_in_place_returns_1(self, tmp_path: Path) -> None:
+        from code_review_helpers import cmd_migrate_critic_gates
+        path = tmp_path / "critic-gates.json"
+        path.write_text(json.dumps(self._legacy()))
+        args = argparse.Namespace(
+            input=str(path),
+            output=None,
+            in_place=False,
+            dry_run=False,
+        )
+        assert cmd_migrate_critic_gates(args) == 1
+
+    def test_preserves_existing_coverage_entries(self, tmp_path: Path) -> None:
+        """If critic-gates already has a coverage[] block, migration
+        appends the migrated entries; existing canonical entries are
+        not lost.
+        """
+        from code_review_helpers import cmd_migrate_critic_gates
+        path = tmp_path / "critic-gates.json"
+        path.write_text(json.dumps({
+            "version": 1,
+            "coverage": [
+                {"reviewer": "ts-expert",
+                 "triggers": [{"type": "extension", "extensions": [".ts"]}],
+                 "required": True, "scope": "code-review"},
+            ],
+            "moduleCritics": [
+                {"patterns": ["auth"], "critics": ["security-privacy"]},
+            ],
+        }))
+        args = argparse.Namespace(
+            input=str(path),
+            output=None,
+            in_place=True,
+            dry_run=False,
+        )
+        assert cmd_migrate_critic_gates(args) == 0
+        out = json.loads(path.read_text())
+        critics = {r["reviewer"] for r in out["coverage"]}
+        assert {"ts-expert", "security-privacy"} <= critics
