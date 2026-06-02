@@ -10976,9 +10976,6 @@ class TestSignalsToConfidenceMap:
 class TestTriggerFires:
     """Each trigger type's positive + negative path."""
 
-    def _empty(self) -> dict[str, Any]:
-        return {"patch_lines": {}, "change_classes": set(), "signals": {}}
-
     def test_always_always_fires(self) -> None:
         from code_review_helpers import _trigger_fires
         assert _trigger_fires({"type": "always"}, [], {}, set(), {}) is True
@@ -11122,8 +11119,12 @@ class TestMigrateLegacyModuleCritics:
         assert migrated[0]["reviewer"] == "security-privacy"
         assert migrated[0]["required"] is False
         assert migrated[0]["scope"] == "both"
-        assert migrated[0]["triggers"][0]["type"] == "path_pattern"
-        assert migrated[0]["triggers"][0]["patterns"] == ["**auth**"]
+        trigger = migrated[0]["triggers"][0]
+        assert trigger["type"] == "path_pattern"
+        assert trigger["patterns"] == ["**auth**"]
+        # PR #124 review (bhb_f0): legacy semantics were
+        # case-insensitive — migrated rule preserves that.
+        assert trigger["ignore_case"] is True
         assert migrated[0]["_migrated_from"] == "moduleCritics"
         assert any("DEPRECATED" in w for w in warnings)
 
@@ -11510,3 +11511,301 @@ class TestMigrateCriticGatesCLI:
         out = json.loads(path.read_text())
         critics = {r["reviewer"] for r in out["coverage"]}
         assert {"ts-expert", "security-privacy"} <= critics
+
+
+# ---------------------------------------------------------------------------
+# PR #124 review fixes (regression tests)
+# ---------------------------------------------------------------------------
+
+
+class TestPR124LegacyCaseInsensitivity:
+    """HIGH-1: migrated path_pattern triggers must match
+    case-insensitively to preserve the legacy ``"<sub>" in
+    path.lower()`` semantics. Without this, a moduleCritics pattern
+    'graphql' that used to match 'src/GraphQL/schema.ts' silently
+    drops off the coverage plan after migration.
+    """
+
+    def test_path_pattern_ignore_case_true_fires_against_mixed_case(self) -> None:
+        from code_review_helpers import _trigger_fires
+        assert _trigger_fires(
+            {"type": "path_pattern", "patterns": ["**graphql**"], "ignore_case": True},
+            ["src/GraphQL/schema.ts"], {}, set(), {},
+        ) is True
+
+    def test_path_pattern_default_is_case_sensitive(self) -> None:
+        from code_review_helpers import _trigger_fires
+        # Canonical rules without ignore_case keep their explicit case
+        # semantics — operators who write 'src/Foo' mean Foo, not foo.
+        assert _trigger_fires(
+            {"type": "path_pattern", "patterns": ["**Foo**"]},
+            ["src/foo/bar.ts"], {}, set(), {},
+        ) is False
+
+    def test_path_pattern_explicit_ignore_case_false_is_case_sensitive(self) -> None:
+        from code_review_helpers import _trigger_fires
+        assert _trigger_fires(
+            {"type": "path_pattern", "patterns": ["**Foo**"], "ignore_case": False},
+            ["src/foo/bar.ts"], {}, set(), {},
+        ) is False
+
+    def test_migrated_rule_routes_uppercase_path(self) -> None:
+        """End-to-end: a legacy ``moduleCritics`` entry resolves to
+        best-effort against a path whose case differs from the pattern.
+        """
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"moduleCritics": [
+                {"patterns": ["graphql"], "critics": ["security-privacy"]},
+            ]},
+            diff_data={"files_to_review": ["src/GraphQL/schema.ts"]},
+        )
+        assert "security-privacy" in [r["reviewer"] for r in plan["best_effort"]]
+
+
+class TestPR124PrepareRunStageAlignment:
+    """HIGH-2: the prepare-run pipeline manifest's PLN-725 stages must
+    invoke the actually-shipped CLI subcommands with their actually-
+    shipped flag names. Without this the orchestrator would crash with
+    'unrecognized arguments' the moment Phase 4 flips the enabled gate.
+    """
+
+    def _stages(self) -> list[dict[str, Any]]:
+        from code_review_helpers import _build_run_plan_stages
+        return _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+
+    def _stage(self, stage_id: str) -> dict[str, Any]:
+        for s in self._stages():
+            if s["id"] == stage_id:
+                return s
+        raise AssertionError(f"stage {stage_id!r} missing from prepare-run manifest")
+
+    def test_stage_11_uses_real_subcommand_name(self) -> None:
+        stage = self._stage("stage_11_extract_signals")
+        # Phase 1 shipped two subcommands; stage_11 represents the
+        # prepare half.
+        assert stage["subcommand"] == "extract-signals-prepare"
+
+    def test_stage_11_writes_canonical_output_filename(self) -> None:
+        stage = self._stage("stage_11_extract_signals")
+        # Phase 1 writes extract_signals.json + extract_signals_manifest.json,
+        # NOT signals.json.
+        assert any("extract_signals" in p for p in stage["expected_outputs"])
+        assert not any(p.endswith("/signals.json") for p in stage["expected_outputs"])
+
+    def test_stage_14_uses_real_flag_name(self) -> None:
+        stage = self._stage("stage_14_resolve_coverage")
+        # Phase 2 ships --extract-signals, NOT --signals.
+        assert "--extract-signals" in stage["args"]
+        assert "--signals" not in stage["args"]
+
+    def test_stage_14_points_at_canonical_signals_file(self) -> None:
+        stage = self._stage("stage_14_resolve_coverage")
+        # Argument value must be the canonical Phase 1 output path.
+        idx = stage["args"].index("--extract-signals")
+        assert stage["args"][idx + 1].endswith("/extract_signals.json")
+
+
+class TestPR124ValidatorRejectsUnknownChangeClass:
+    """MED-1: an unknown change_class.class value (e.g. typo
+    'scheme_change') silently never fires; without validator
+    enforcement this is a silent misroute.
+    """
+
+    def test_unknown_change_class_value_emits_warning(self) -> None:
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"coverage": [
+                {"reviewer": "schema-expert",
+                 "triggers": [{"type": "change_class", "class": "scheme_change"}],
+                 "required": False, "scope": "both"},
+            ]},
+            diff_data={"files_to_review": ["db/migrations/001.sql"]},
+        )
+        assert any("unknown change_class.class" in w for w in plan["warnings"])
+        # And the rule is rejected — the reviewer doesn't sneak through.
+        assert "schema-expert" not in [r["reviewer"] for r in plan["best_effort"]]
+
+    def test_known_change_class_value_accepted(self) -> None:
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"coverage": [
+                {"reviewer": "schema-expert",
+                 "triggers": [{"type": "change_class", "class": "schema_change"}],
+                 "required": False, "scope": "both"},
+            ]},
+            diff_data={"files_to_review": ["db/migrations/001.sql"]},
+        )
+        # No spurious warning, and the rule routes.
+        assert not any("unknown change_class.class" in w for w in plan["warnings"])
+        assert "schema-expert" in [r["reviewer"] for r in plan["best_effort"]]
+
+
+class TestPR124DowngradeWarningOnlyWhenMatched:
+    """MED-2: the determinism-downgrade warning fires ONLY when the
+    rule actually matches. A never-matching signal-only rule must not
+    claim a reviewer was "downgraded" — that would be misleading
+    observability.
+    """
+
+    def test_no_warning_when_signal_only_rule_does_not_fire(self) -> None:
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"coverage": [
+                {"reviewer": "a11y-expert",
+                 "triggers": [{"type": "signal", "name": "accessibility_relevant"}],
+                 "required": True, "scope": "code-review"},
+            ]},
+            diff_data={"files_to_review": ["src/foo.ts"]},
+            # Signal NOT extracted — rule cannot fire.
+            extract_signals=None,
+        )
+        assert not any(
+            "downgraded to best-effort" in w for w in plan["warnings"]
+        )
+        # And nothing routed.
+        assert "a11y-expert" not in [r["reviewer"] for r in plan["best_effort"]]
+        assert "a11y-expert" not in [r["reviewer"] for r in plan["required"]]
+
+    def test_warning_fires_when_signal_only_rule_matches(self) -> None:
+        from code_review_helpers import resolve_coverage
+        plan = resolve_coverage(
+            critic_gates={"coverage": [
+                {"reviewer": "a11y-expert",
+                 "triggers": [{"type": "signal", "name": "accessibility_relevant"}],
+                 "required": True, "scope": "code-review"},
+            ]},
+            diff_data={"files_to_review": ["src/Modal.tsx"]},
+            extract_signals={"signals": [
+                {"name": "accessibility_relevant", "evidence": "x", "confidence": 0.85},
+            ]},
+        )
+        # Rule matched → warning surfaces + reviewer downgraded.
+        assert any("downgraded to best-effort" in w for w in plan["warnings"])
+        assert "a11y-expert" in [r["reviewer"] for r in plan["best_effort"]]
+
+
+class TestPR124CmdResolveCoverageHandlesWriteFailure:
+    """MED-5: the docstring promised exit 0 on structurally valid runs.
+    An unwritable output_path would propagate OSError instead; now
+    returns 1 with a clear stderr message.
+    """
+
+    def test_write_failure_returns_1(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from code_review_helpers import cmd_resolve_coverage
+        cr_dir = tmp_path / "cr"
+        diff_path = tmp_path / "diff_data.json"
+        diff_path.write_text(json.dumps({"files_to_review": []}))
+
+        original_open = open
+
+        def deny_writes(path: Any, *a: Any, **kw: Any) -> Any:
+            if "w" in (a[0] if a else kw.get("mode", "r")) and "coverage_plan_initial" in str(path):
+                raise OSError("disk full")
+            return original_open(path, *a, **kw)
+
+        monkeypatch.setattr("builtins.open", deny_writes)
+
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(diff_path),
+            critic_gates=None,
+            extract_signals=None,
+            scope="code-review",
+        )
+        assert cmd_resolve_coverage(args) == 1
+
+
+class TestPR124MutuallyExclusiveDestArgs:
+    """MED-6: --in-place and --output are mutually exclusive in argparse,
+    so a single CLI invocation cannot accidentally set both (which would
+    have silently used one without warning).
+    """
+
+    def test_argparse_rejects_both_in_place_and_output(self) -> None:
+        from code_review_helpers import _register_subparsers
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command", required=True)
+        _register_subparsers(subparsers)
+        with pytest.raises(SystemExit):
+            # argparse exits with code 2 on mutex violation.
+            parser.parse_args([
+                "migrate-critic-gates",
+                "--input", "/tmp/cg.json",
+                "--in-place",
+                "--output", "/tmp/out.json",
+            ])
+
+
+class TestPR124MigrationIdempotent:
+    """MED-7: running --in-place twice must not duplicate the migrated
+    entries. Prior _migrated_from='moduleCritics' rows in coverage[]
+    are pruned before appending the freshly migrated set.
+    """
+
+    def _legacy(self) -> dict[str, Any]:
+        return {
+            "version": 1,
+            "moduleCritics": [
+                {"patterns": ["auth"], "critics": ["security-privacy"]},
+                {"patterns": ["build"], "critics": ["devops-architect"]},
+            ],
+        }
+
+    def test_second_in_place_run_does_not_duplicate(self, tmp_path: Path) -> None:
+        from code_review_helpers import cmd_migrate_critic_gates
+        path = tmp_path / "critic-gates.json"
+        path.write_text(json.dumps(self._legacy()))
+        args = argparse.Namespace(
+            input=str(path), output=None, in_place=True, dry_run=False,
+        )
+        assert cmd_migrate_critic_gates(args) == 0
+        first_run = json.loads(path.read_text())["coverage"]
+
+        # Re-run with the SAME args against the now-rewritten file.
+        assert cmd_migrate_critic_gates(args) == 0
+        second_run = json.loads(path.read_text())["coverage"]
+
+        assert first_run == second_run, (
+            "Migration was not idempotent — running twice changed the "
+            "coverage[] block"
+        )
+
+    def test_operator_edited_canonical_entries_preserved(self, tmp_path: Path) -> None:
+        """A canonical rule (no _migrated_from marker) survives a second
+        migration run — only prior migrated entries are pruned.
+        """
+        from code_review_helpers import cmd_migrate_critic_gates
+        canonical_rule = {
+            "reviewer": "ts-expert",
+            "triggers": [{"type": "extension", "extensions": [".ts"]}],
+            "required": True,
+            "scope": "code-review",
+        }
+        starting = {
+            "version": 1,
+            "coverage": [canonical_rule],
+            "moduleCritics": [
+                {"patterns": ["auth"], "critics": ["security-privacy"]},
+            ],
+        }
+        path = tmp_path / "critic-gates.json"
+        path.write_text(json.dumps(starting))
+        args = argparse.Namespace(
+            input=str(path), output=None, in_place=True, dry_run=False,
+        )
+        cmd_migrate_critic_gates(args)
+        cmd_migrate_critic_gates(args)
+        final = json.loads(path.read_text())["coverage"]
+        # Canonical rule still present exactly once.
+        canonical_matches = [
+            r for r in final if r.get("reviewer") == "ts-expert"
+        ]
+        assert len(canonical_matches) == 1
+        # Migrated rule still present exactly once.
+        migrated_matches = [
+            r for r in final if r.get("reviewer") == "security-privacy"
+        ]
+        assert len(migrated_matches) == 1

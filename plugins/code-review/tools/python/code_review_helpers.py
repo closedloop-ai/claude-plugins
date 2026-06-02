@@ -34,6 +34,7 @@ from code_review_schema import (
     CACHE_NAMESPACE_OVERRIDES,
     CACHE_NAMESPACE_SIGNALS,
     CACHE_NAMESPACE_VERIFICATIONS,
+    COVERAGE_CHANGE_CLASSES,
     COVERAGE_CORE_REQUIRED,
     COVERAGE_DETERMINISTIC_TRIGGERS,
     COVERAGE_SCOPES,
@@ -6117,10 +6118,18 @@ def _trigger_fires(
         patterns = trigger.get("patterns", [])
         if not isinstance(patterns, list):
             return False
+        # ``ignore_case`` is opt-in (default False so canonical rules keep
+        # their explicit case-sensitive semantics). The legacy migration
+        # sets it to True to preserve the old ``substring.lower() in
+        # path.lower()`` behaviour.
+        ignore_case = bool(trigger.get("ignore_case", False))
         for pat in patterns:
             if not isinstance(pat, str) or not pat:
                 continue
             rx = _glob_to_regex(pat)
+            if ignore_case:
+                # Re-compile with IGNORECASE preserving the same source pattern.
+                rx = re.compile(rx.pattern, re.IGNORECASE)
             if any(rx.search(f) for f in files):
                 return True
         return False
@@ -6164,14 +6173,14 @@ def migrate_legacy_module_critics(
 
     Pure function. Each legacy entry becomes one ``coverage[]`` entry
     per critic, scoped to ``both`` and ``required=False`` — preserving
-    the legacy semantics (best-effort, substring-match) inside the new
-    schema. Substrings are wrapped as ``**<sub>**`` globs so the
-    canonical resolver matches the substring anywhere in the path
-    (filename, directory, extension) — the same coverage the legacy
-    ``route`` had via ``"<sub>" in path.lower()``. The non-canonical
-    ``**foo**`` form translates to the regex ``^.*foo.*$`` per
-    ``_glob_to_regex``'s middle-``**`` rule, which is exactly the
-    substring-anywhere semantics we need.
+    the legacy semantics (best-effort, substring-match, case-insensitive)
+    inside the new schema. Substrings are wrapped as ``**<sub>**`` globs
+    so the canonical resolver matches the substring anywhere in the path
+    (filename, directory, extension) — the ``**foo**`` form translates
+    to the regex ``^.*foo.*$`` per ``_glob_to_regex``'s middle-``**``
+    rule. The migrated trigger carries ``ignore_case: True`` so the
+    resolver compiles the pattern with ``re.IGNORECASE``, matching the
+    legacy ``substring.lower() in path.lower()`` semantics.
 
     Returns ``(migrated, warnings)``. The warning list always contains a
     single ``[DEPRECATED]`` entry when at least one rule was migrated.
@@ -6198,7 +6207,15 @@ def migrate_legacy_module_critics(
                 continue
             migrated.append({
                 "reviewer": critic,
-                "triggers": [{"type": "path_pattern", "patterns": list(patterns)}],
+                "triggers": [{
+                    "type": "path_pattern",
+                    "patterns": list(patterns),
+                    # Legacy ``route`` matched ``substring.lower() in
+                    # path.lower()``. Preserve that by setting
+                    # ignore_case=True on the migrated trigger; canonical
+                    # rules default to case-sensitive.
+                    "ignore_case": True,
+                }],
                 "required": False,
                 "scope": "both",
                 "_migrated_from": "moduleCritics",
@@ -6224,10 +6241,22 @@ def _validate_coverage_rule(
     """Structural validation of a coverage[] rule. Returns (ok, errors).
 
     Catches the contract violations that would otherwise produce
-    silent-misroute behaviour: unknown trigger type, unknown scope,
-    required-with-only-llm-signals (downgraded by the resolver to
-    best-effort rather than rejected, but the warning is emitted here
-    too so callers can lint critic-gates.json at edit time).
+    silent-misroute behaviour:
+
+      - missing or invalid ``reviewer``
+      - missing or empty ``triggers``
+      - non-object trigger entry
+      - unknown trigger ``type``
+      - unknown ``change_class.class`` value (would silently never fire)
+      - unknown ``scope``
+
+    The required-with-only-LLM-signals invariant is enforced at
+    *resolution* time in ``resolve_coverage``, not here, because it
+    depends on knowing whether the rule actually fires (so a never-
+    matching rule does not generate misleading downgrade noise). See
+    PR #124 review (bha_p0_f1, bhb_f1) — this validator catches
+    edit-time structural problems only; runtime invariants live in the
+    resolver.
     """
     errors: list[str] = []
     reviewer = rule.get("reviewer")
@@ -6250,6 +6279,18 @@ def _validate_coverage_rule(
                 f"coverage[{index}].triggers[{ti}] ({reviewer}) "
                 f"unknown trigger type: {ttype!r}",
             )
+            continue
+        # PR #124 review (auditor_f1): catch unknown change_class
+        # values at edit time. Without this an operator can typo
+        # "scheme_change" and the trigger silently never fires.
+        if ttype == "change_class":
+            cls = t.get("class")
+            if not isinstance(cls, str) or cls not in COVERAGE_CHANGE_CLASSES:
+                errors.append(
+                    f"coverage[{index}].triggers[{ti}] ({reviewer}) "
+                    f"unknown change_class.class: {cls!r}. "
+                    f"Valid values: {sorted(COVERAGE_CHANGE_CLASSES)}",
+                )
     scope = rule.get("scope", "code-review")
     if scope not in COVERAGE_SCOPES:
         errors.append(
@@ -6342,18 +6383,18 @@ def resolve_coverage(
         required_flag = bool(rule.get("required", False))
         rules_evaluated += 1
 
-        # Determinism enforcement: required rules need at least one
-        # deterministic trigger. A rule depending ONLY on LLM signals
-        # gets downgraded to best-effort with an audit warning.
-        if required_flag and not any(
+        # Compute determinism status once (used both for the downgrade
+        # decision and the warning). The warning fires ONLY when the
+        # rule actually matches (PR #124 review bha_p0_f1) — a
+        # never-matching signal-only rule does not generate misleading
+        # "downgraded" noise. Required-flag adjustment happens before
+        # the match check so the downgrade is in effect when the rule
+        # is selected.
+        is_required_with_only_llm = required_flag and not any(
             isinstance(t, dict) and t.get("type") in COVERAGE_DETERMINISTIC_TRIGGERS
             for t in triggers
-        ):
-            warnings.append(
-                f"Rule for reviewer '{reviewer}' was required=true but has only "
-                f"LLM-signal triggers; downgraded to best-effort. Required rules "
-                f"must include at least one deterministic trigger.",
-            )
+        )
+        if is_required_with_only_llm:
             required_flag = False
 
         # OR semantics: first trigger that fires selects the reviewer.
@@ -6369,6 +6410,14 @@ def resolve_coverage(
         if matched_trigger is None:
             continue
         rules_matched += 1
+
+        # Now that the rule has actually matched, surface the downgrade.
+        if is_required_with_only_llm:
+            warnings.append(
+                f"Rule for reviewer '{reviewer}' was required=true but has only "
+                f"LLM-signal triggers; downgraded to best-effort. Required rules "
+                f"must include at least one deterministic trigger.",
+            )
 
         entry: dict[str, Any] = {
             "reviewer": reviewer,
@@ -6488,8 +6537,15 @@ def cmd_resolve_coverage(args: argparse.Namespace) -> int:
     output: dict[str, Any] = dict(plan)
     output["generated_at"] = datetime.now(timezone.utc).isoformat()
     output["scope"] = scope_filter
-    with open(output_path, "w") as f:
-        json.dump(output, f, indent=2)
+    # PR #124 review (auditor_f0): the docstring promised exit 0 on
+    # structurally valid runs, but an unwritable output_path would
+    # propagate OSError. Now matches the documented contract.
+    try:
+        with open(output_path, "w") as f:
+            json.dump(output, f, indent=2)
+    except OSError as exc:
+        print(f"Error writing coverage plan: {exc}", file=sys.stderr)
+        return 1
 
     summary = {
         "output_path": str(output_path),
@@ -6540,8 +6596,23 @@ def cmd_migrate_critic_gates(args: argparse.Namespace) -> int:
     existing_coverage = current.get("coverage", [])
     existing_coverage = existing_coverage if isinstance(existing_coverage, list) else []
 
+    # PR #124 review (#3, idempotency): a second --in-place run would
+    # otherwise re-migrate the legacy block and append duplicate entries.
+    # Strip any prior _migrated_from="moduleCritics" entries from the
+    # existing coverage[] before appending the freshly-migrated set, so
+    # running migration N times is equivalent to running it once.
+    # Operator-edited entries (no _migrated_from marker) survive untouched.
+    prior_migrated_count = sum(
+        1 for e in existing_coverage
+        if isinstance(e, dict) and e.get("_migrated_from") == "moduleCritics"
+    )
+    cleaned_existing = [
+        e for e in existing_coverage
+        if not (isinstance(e, dict) and e.get("_migrated_from") == "moduleCritics")
+    ]
+
     new_state = dict(current)
-    new_state["coverage"] = list(existing_coverage) + migrated
+    new_state["coverage"] = list(cleaned_existing) + migrated
     # Preserve moduleCritics on disk for one release as a back-out path;
     # the resolver tolerates duplicate naming because dedup is by
     # reviewer name across the composed rule list.
@@ -6552,6 +6623,7 @@ def cmd_migrate_critic_gates(args: argparse.Namespace) -> int:
         "input": str(in_path),
         "migrated_count": len(migrated),
         "existing_coverage_count": len(existing_coverage),
+        "prior_migrated_pruned": prior_migrated_count,
         "total_coverage_count": len(new_state["coverage"]),
         "warnings": warnings,
     }
@@ -7565,15 +7637,25 @@ def _build_run_plan_stages(
         {
             "id": "stage_11_extract_signals",
             "kind": "helper",
-            "subcommand": "extract-signals",
+            # PLN-725 Phase 1 shipped a two-step prep/consolidate flow
+            # rather than a single ``extract-signals`` subcommand. The
+            # prepare stage produces the manifest; the orchestrator
+            # spawns the agent; the consolidate stage validates and
+            # writes ``extract_signals.json``. Stage 11 here represents
+            # the prepare half (Phase 4 will add a stage_11b for the
+            # consolidate half once orchestrator wiring lands).
+            "subcommand": "extract-signals-prepare",
             "args": [
                 "--cr-dir", cr_dir,
                 "--diff-data", f"{cr_dir}/diff_data.json",
-                "--patches", f"{cr_dir}/patches_all.txt",
+                "--diff-tip", "HEAD",
                 "--intent", f"{cr_dir}/intent.json",
             ],
-            "stdout": f"{cr_dir}/signals.json",
-            "expected_outputs": [f"{cr_dir}/signals.json"],
+            "stdout": f"{cr_dir}/extract_signals_manifest.json",
+            "expected_outputs": [
+                f"{cr_dir}/extract_signals_manifest.json",
+                f"{cr_dir}/extract_signals.json",
+            ],
             "depends_on": ["stage_06_extract_patches", "stage_10_classify_intent"],
             "on_failure": "continue_with_coverage_gap",
             "enabled": False,  # plan 05
@@ -7609,8 +7691,11 @@ def _build_run_plan_stages(
             "subcommand": "resolve-coverage",
             "args": [
                 "--cr-dir", cr_dir,
-                "--signals", f"{cr_dir}/signals.json",
                 "--diff-data", f"{cr_dir}/diff_data.json",
+                # PLN-725 Phase 2 CLI flag is --extract-signals (not
+                # --signals); the file is extract_signals.json (not
+                # signals.json) per PLN-725 Phase 1.
+                "--extract-signals", f"{cr_dir}/extract_signals.json",
             ],
             "stdout": f"{cr_dir}/coverage_plan_initial.json",
             "expected_outputs": [f"{cr_dir}/coverage_plan_initial.json"],
@@ -7625,7 +7710,9 @@ def _build_run_plan_stages(
             "args": [
                 "--cr-dir", cr_dir,
                 "--coverage-plan", f"{cr_dir}/coverage_plan_initial.json",
-                "--signals", f"{cr_dir}/signals.json",
+                # PLN-725 Phase 3 will own the final flag name; until
+                # then this references the canonical file from Phase 1.
+                "--extract-signals", f"{cr_dir}/extract_signals.json",
             ],
             "stdout": f"{cr_dir}/coverage_critic.json",
             "expected_outputs": [f"{cr_dir}/coverage_critic.json"],
@@ -9049,13 +9136,18 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
         "--input", required=True,
         help="Path to legacy critic-gates.json",
     )
-    p_mcg.add_argument(
+    # PR #124 review (domain_0_f1): --in-place and --output are mutually
+    # exclusive destinations for the rewrite. --dry-run is orthogonal
+    # (no destination needed) so it stays a sibling flag; the command
+    # body still resolves precedence (dry_run wins).
+    p_mcg_dest = p_mcg.add_mutually_exclusive_group()
+    p_mcg_dest.add_argument(
         "--output", default=None,
         help="Output path (write migrated file here)",
     )
-    p_mcg.add_argument(
+    p_mcg_dest.add_argument(
         "--in-place", action="store_true",
-        help="Rewrite --input in place; mutually exclusive with --output",
+        help="Rewrite --input in place",
     )
     p_mcg.add_argument(
         "--dry-run", action="store_true",
