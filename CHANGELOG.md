@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.16.2
+
+#### Fixed
+- `coverage_critic_cache_key` now takes a 5-tuple `(coverage_plan_initial_hash, signals_hash, diff_tip, prompt_hash, available_reviewers_hash)` instead of a 4-tuple. The roster the validator enforces against is now part of the key, so a cache hit on the prior key can no longer serve a stale `coverage_plan.json` whose `best_effort[]` proposes a reviewer that has since been removed from the AVAILABLE roster — on hit consolidate never re-runs to catch it. The new `available_reviewers_hash` dimension is content-addressed over the sorted, dedup'd post-filter roster the agent actually sees, so list ordering and duplicates do not flip the key.
+
+#### Added
+- `_available_reviewers_hash` helper: deterministic hash of the AVAILABLE roster (sorts and dedups before hashing, drops non-string entries).
+- `available_reviewers_hash` field on the `coverage-critic-prepare` manifest, sibling to the existing `coverage_plan_initial_hash`, `signals_hash`, and `prompt_hash` debuggability fields.
+- Regression tests pinning the new cache-key dimension: `available_reviewers_hash` flips the key end-to-end; ordering and duplicates and non-string garbage do not flip the roster hash; and a roster-shrink miss test exercises the concrete failure mode — same plan, same signals, same prompt, same diff, but one reviewer retired between runs — and asserts the prior cache entry is not served (`manifest["status"] == "needs_agent"`, not `"cache_hit"`).
+
 ### code-review v2.16.1
 
 #### Fixed

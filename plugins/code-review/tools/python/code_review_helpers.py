@@ -6713,21 +6713,42 @@ def coverage_critic_cache_key(
     signals_hash: str,
     diff_tip: str,
     prompt_hash: str,
+    available_reviewers_hash: str,
 ) -> str:
     """Cache key for the ``coverage_critic`` namespace (PLN-725).
 
-    Tuple
-    ``(coverage_plan_initial_hash, signals_hash, diff_tip, prompt_hash)``
-    is the complete set of inputs the critic is a pure function of. All
-    four are content-addressed.
+    Tuple ``(coverage_plan_initial_hash, signals_hash, diff_tip,
+    prompt_hash, available_reviewers_hash)`` is the complete set of
+    inputs the critic is a pure function of. All five are
+    content-addressed.
+
+    ``available_reviewers_hash`` is the deterministic hash of the
+    AVAILABLE roster the agent will actually see (sorted, dedup'd, and
+    pre-filtered against the initial plan). It must be in the key because
+    the validator enforces every proposed addition against this list:
+    if the roster shrinks between runs, a cache hit on the old key would
+    serve a plan that proposes a reviewer no longer in the roster and
+    consolidate never re-runs to catch it.
     """
     payload = (
         (coverage_plan_initial_hash or "") + "\0"
         + (signals_hash or "") + "\0"
         + (diff_tip or "") + "\0"
-        + (prompt_hash or "")
+        + (prompt_hash or "") + "\0"
+        + (available_reviewers_hash or "")
     )
     return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()
+
+
+def _available_reviewers_hash(reviewers: list[str]) -> str:
+    """Deterministic hash of an AVAILABLE roster.
+
+    Sorts and dedups before hashing so list ordering cannot flip the
+    cache key — order is operator-controllable noise that does not
+    change what the agent sees as the closed-vocabulary contract.
+    """
+    sorted_dedup = sorted({r for r in reviewers if isinstance(r, str) and r})
+    return _stable_json_hash({"available": sorted_dedup})
 
 
 def _coverage_critic_cache_path(cache_dir: Path, key: str) -> Path:
@@ -7090,8 +7111,15 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
 
     plan_initial_hash = _stable_json_hash(plan_initial)
     signals_hash = _stable_json_hash(extract_signals or {"signals": []})
+    # Hash the post-filter AVAILABLE roster — that's the closed
+    # vocabulary the agent actually sees and the validator enforces
+    # against. If it changes between runs the prior cache entry is
+    # stale (could propose a now-removed reviewer), so it must key
+    # the cache.
+    available_reviewers_hash = _available_reviewers_hash(available_reviewers)
     key = coverage_critic_cache_key(
         plan_initial_hash, signals_hash, diff_tip, prompt_hash,
+        available_reviewers_hash,
     )
 
     cached = _read_cached_coverage_critic(cache_dir, key)
@@ -7131,6 +7159,7 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         "coverage_plan_initial_hash": plan_initial_hash,
         "signals_hash": signals_hash,
         "prompt_hash": prompt_hash,
+        "available_reviewers_hash": available_reviewers_hash,
         "input_path": str(input_path),
         "diff_summary_path": str(diff_summary_path),
         "prompt_path": str(prompt_path),

@@ -11929,30 +11929,95 @@ class TestCoverageCriticPromptHash:
 
 
 class TestCoverageCriticCacheKey:
-    """Cache key tuple invariants: (plan_initial_hash, signals_hash, diff_tip, prompt_hash)."""
+    """Cache key tuple invariants: ``(plan_initial_hash, signals_hash,
+    diff_tip, prompt_hash, available_reviewers_hash)``.
+
+    Every dimension must flip the key — otherwise a stale cache entry
+    could be served when one of these inputs changes between runs. The
+    ``available_reviewers_hash`` dimension is the determinism floor for
+    the closed-vocabulary contract: if the roster shrinks, the prior
+    cached plan could propose a now-removed reviewer.
+    """
 
     def test_same_inputs_same_key(self) -> None:
         from code_review_helpers import coverage_critic_cache_key
         assert (
-            coverage_critic_cache_key("p", "s", "t", "h")
-            == coverage_critic_cache_key("p", "s", "t", "h")
+            coverage_critic_cache_key("p", "s", "t", "h", "a")
+            == coverage_critic_cache_key("p", "s", "t", "h", "a")
         )
 
     def test_plan_initial_hash_flip_changes_key(self) -> None:
         from code_review_helpers import coverage_critic_cache_key
-        assert coverage_critic_cache_key("p1", "s", "t", "h") != coverage_critic_cache_key("p2", "s", "t", "h")
+        assert (
+            coverage_critic_cache_key("p1", "s", "t", "h", "a")
+            != coverage_critic_cache_key("p2", "s", "t", "h", "a")
+        )
 
     def test_signals_hash_flip_changes_key(self) -> None:
         from code_review_helpers import coverage_critic_cache_key
-        assert coverage_critic_cache_key("p", "s1", "t", "h") != coverage_critic_cache_key("p", "s2", "t", "h")
+        assert (
+            coverage_critic_cache_key("p", "s1", "t", "h", "a")
+            != coverage_critic_cache_key("p", "s2", "t", "h", "a")
+        )
 
     def test_diff_tip_flip_changes_key(self) -> None:
         from code_review_helpers import coverage_critic_cache_key
-        assert coverage_critic_cache_key("p", "s", "t1", "h") != coverage_critic_cache_key("p", "s", "t2", "h")
+        assert (
+            coverage_critic_cache_key("p", "s", "t1", "h", "a")
+            != coverage_critic_cache_key("p", "s", "t2", "h", "a")
+        )
 
     def test_prompt_hash_flip_changes_key(self) -> None:
         from code_review_helpers import coverage_critic_cache_key
-        assert coverage_critic_cache_key("p", "s", "t", "h1") != coverage_critic_cache_key("p", "s", "t", "h2")
+        assert (
+            coverage_critic_cache_key("p", "s", "t", "h1", "a")
+            != coverage_critic_cache_key("p", "s", "t", "h2", "a")
+        )
+
+    def test_available_reviewers_hash_flip_changes_key(self) -> None:
+        from code_review_helpers import coverage_critic_cache_key
+        assert (
+            coverage_critic_cache_key("p", "s", "t", "h", "a1")
+            != coverage_critic_cache_key("p", "s", "t", "h", "a2")
+        )
+
+
+class TestAvailableReviewersHash:
+    """The roster hash must be deterministic over ordering and dedup."""
+
+    def test_ordering_does_not_change_hash(self) -> None:
+        from code_review_helpers import _available_reviewers_hash
+        assert (
+            _available_reviewers_hash(["a", "b", "c"])
+            == _available_reviewers_hash(["c", "a", "b"])
+        )
+
+    def test_duplicates_do_not_change_hash(self) -> None:
+        from code_review_helpers import _available_reviewers_hash
+        assert (
+            _available_reviewers_hash(["a", "b"])
+            == _available_reviewers_hash(["a", "b", "a"])
+        )
+
+    def test_roster_shrink_flips_hash(self) -> None:
+        from code_review_helpers import _available_reviewers_hash
+        # Concrete failure mode the PR comment described: same diff, same
+        # plan, same signals, same prompt, but the roster shrank between
+        # runs because a reviewer was retired. The cache key MUST change
+        # so consolidate re-runs and re-checks the new roster.
+        assert (
+            _available_reviewers_hash(["a", "b", "c"])
+            != _available_reviewers_hash(["a", "b"])
+        )
+
+    def test_non_string_entries_filtered(self) -> None:
+        from code_review_helpers import _available_reviewers_hash
+        # Defensive: hashing happens after JSON parse so the input may
+        # legally contain garbage. Garbage must not poison the key.
+        assert (
+            _available_reviewers_hash(["a", "b"])
+            == _available_reviewers_hash(["a", "b", "", None])  # type: ignore[list-item]
+        )
 
 
 class TestStableJsonHash:
@@ -12286,6 +12351,7 @@ class TestCoverageCriticPrepareCLI:
     def test_cache_hit_serves_directly(self, tmp_path: Path) -> None:
         from code_review_helpers import (
             CACHE_NAMESPACE_COVERAGE_CRITIC,
+            _available_reviewers_hash,
             _stable_json_hash,
             cmd_coverage_critic_prepare,
             coverage_critic_cache_key,
@@ -12302,8 +12368,13 @@ class TestCoverageCriticPrepareCLI:
         prompt_hash = _coverage_critic_prompt_hash(
             _default_coverage_critic_prompt_path(),
         )
+        # Roster hash must mirror what prepare computes (post-filter) —
+        # plan_initial has bug_hunter_a in required, so the filter is a
+        # no-op against the default fixture (which lists
+        # accessibility-expert + i18n-expert).
+        available_hash = _available_reviewers_hash(inputs["available"])
         key = coverage_critic_cache_key(
-            plan_hash, signals_hash, "abc123", prompt_hash,
+            plan_hash, signals_hash, "abc123", prompt_hash, available_hash,
         )
         cached_payload = {
             "required": inputs["plan_initial"]["required"],
@@ -12329,6 +12400,76 @@ class TestCoverageCriticPrepareCLI:
         assert "accessibility-expert" in [r["reviewer"] for r in final["best_effort"]]
         # written_at metadata stripped from canonical output
         assert "written_at" not in final
+
+    def test_roster_shrink_misses_prior_cache(self, tmp_path: Path) -> None:
+        """Concrete failure mode the PR comment described: same diff,
+        same plan_initial, same signals, same prompt, but the
+        ``available_reviewers.json`` shrinks (a reviewer was retired)
+        between runs. The prior cache entry must NOT be served — its
+        ``best_effort`` could reference a name no longer in the roster
+        and consolidate never re-runs to catch it on a hit.
+        """
+        from code_review_helpers import (
+            CACHE_NAMESPACE_COVERAGE_CRITIC,
+            _available_reviewers_hash,
+            _stable_json_hash,
+            cmd_coverage_critic_prepare,
+            coverage_critic_cache_key,
+            _coverage_critic_prompt_hash,
+            _default_coverage_critic_prompt_path,
+        )
+
+        # First run: full roster.
+        inputs = _write_coverage_critic_inputs(
+            tmp_path,
+            signals={"signals": []},
+            available=["accessibility-expert", "i18n-expert"],
+        )
+        args = self._args(tmp_path, inputs)
+        cache_dir = Path(args.cache_dir)
+        (cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC).mkdir(parents=True)
+
+        plan_hash = _stable_json_hash(inputs["plan_initial"])
+        signals_hash = _stable_json_hash({"signals": []})
+        prompt_hash = _coverage_critic_prompt_hash(
+            _default_coverage_critic_prompt_path(),
+        )
+        old_key = coverage_critic_cache_key(
+            plan_hash, signals_hash, "abc123", prompt_hash,
+            _available_reviewers_hash(["accessibility-expert", "i18n-expert"]),
+        )
+        # Seed a cache entry under the OLD roster that proposes the
+        # about-to-be-retired reviewer.
+        (cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC / f"{old_key}.json").write_text(
+            json.dumps({
+                "required": inputs["plan_initial"]["required"],
+                "best_effort": [
+                    {"reviewer": "i18n-expert", "source": "critic",
+                     "trigger": {"type": "critic_addition"}, "evidence": "x"},
+                ],
+                "warnings": [],
+                "stats": {
+                    "required_count": 1, "best_effort_count": 0,
+                    "critic_additions": 1,
+                },
+                "written_at": datetime.now(timezone.utc).isoformat(),
+            }),
+        )
+
+        # Second run: i18n-expert removed from the roster file.
+        inputs["paths"]["available"].write_text(json.dumps(["accessibility-expert"]))
+
+        assert cmd_coverage_critic_prepare(args) == 0
+        manifest = json.loads(
+            (Path(args.cr_dir) / "coverage_critic_manifest.json").read_text(),
+        )
+        # Must miss — not cache_hit — so consolidate runs and re-checks
+        # the new roster instead of silently shipping a stale plan.
+        assert manifest["status"] == "needs_agent"
+        # And the manifest exposes the new roster hash for debuggability.
+        assert manifest["available_reviewers_hash"] == _available_reviewers_hash(
+            ["accessibility-expert"],
+        )
 
 
 class TestCoverageCriticConsolidateCLI:
