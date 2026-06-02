@@ -13737,7 +13737,11 @@ class TestPLN725Phase6VerifyCoveragePure:
         joined = " ".join(v["message"] for v in violations if v["check"] == "additive")
         assert "'b'" in joined
 
-    def test_blocking_when_reviewer_not_in_roster(self) -> None:
+    def test_blocking_when_critic_addition_not_in_roster(self) -> None:
+        # The closed_vocabulary check applies ONLY to source="critic"
+        # entries — core/rule reviewers are plugin-internal labels that
+        # the spawner translates (see v2.19.2 scoping fix). A critic
+        # addition outside the roster is the canonical violation.
         from code_review_helpers import verify_coverage_plan
         initial = self._plan(required=["a"])
         final = self._plan(required=["a"], best_effort=[
@@ -13746,6 +13750,45 @@ class TestPLN725Phase6VerifyCoveragePure:
         violations = verify_coverage_plan(final, initial, ["a"])
         checks = {v["check"] for v in violations}
         assert "closed_vocabulary" in checks
+        msg = next(v["message"] for v in violations if v["check"] == "closed_vocabulary")
+        assert "critic-added" in msg
+
+    def test_closed_vocabulary_ignores_core_reviewers_outside_roster(self) -> None:
+        # v2.19.2 scoping fix — the canonical case the verifier caught
+        # on itself: the rule-resolved plan contains plugin-internal
+        # reviewer labels (``bug_hunter_a``, ``unified_auditor``) that
+        # don't exist in the project's `.claude/agents/` roster. Without
+        # critic-source scoping every project would BLOCK on every
+        # review. Verifier must accept these entries as long as they
+        # carry source="core" or source="rule".
+        from code_review_helpers import verify_coverage_plan
+        initial = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {"reviewer": "unified_auditor", "source": "core"},
+            ],
+            "best_effort": [],
+            "stats": {},
+        }
+        final = initial
+        # Project roster contains only project-specific reviewers (the
+        # kinds of names operators put in `.claude/agents/`).
+        roster = ["devops-architect", "test-engineer"]
+        assert verify_coverage_plan(final, initial, roster) == []
+
+    def test_closed_vocabulary_ignores_rule_source_outside_roster(self) -> None:
+        # Same shape, source="rule" instead of "core" — both are
+        # plugin-internal sources and neither is roster-constrained.
+        from code_review_helpers import verify_coverage_plan
+        plan = {
+            "required": [],
+            "best_effort": [
+                {"reviewer": "python-pro", "source": "rule"},
+                {"reviewer": "legacy-rule-reviewer", "source": "rule"},
+            ],
+            "stats": {},
+        }
+        assert verify_coverage_plan(plan, plan, ["python-pro"]) == []
 
     def test_closed_vocabulary_bypassed_when_roster_none(self) -> None:
         # No roster file → can't enforce membership. Verifier must not
@@ -13889,7 +13932,16 @@ class TestPLN725Phase6VerifyCoverageCommand:
         if initial is not None:
             self._write(initial_path, initial)
         if include_roster_file:
-            self._write(roster_path, {"available_reviewers": roster or []})
+            # _load_available_reviewers reads `raw.get("available", [])`
+            # when the file holds a dict, and accepts a flat list as the
+            # alternate canonical shape. `cmd_load_available_reviewers`
+            # writes the flat list, so that's what the verifier sees in
+            # production — use the same shape here. (An earlier version
+            # of this fixture wrote `{"available_reviewers": [...]}`,
+            # which `_load_available_reviewers` silently ignored, so
+            # the closed-vocabulary regressions below were vacuously
+            # passing on a None roster.)
+            self._write(roster_path, roster or [])
         ns = argparse.Namespace(
             cr_dir=str(cr_dir),
             coverage_plan=str(plan_path),
@@ -14027,6 +14079,86 @@ class TestPLN725Phase6VerifyCoverageCommand:
         )
         assert rc == 0
         assert result["verdict"] == "PASS"
+
+    def test_closed_vocabulary_blocks_when_critic_addition_outside_roster(
+        self, tmp_path: Path,
+    ) -> None:
+        """End-to-end closed_vocabulary regression — the one the v2.19.1
+        fixture-key bug masked.
+
+        Earlier, ``_run`` wrote ``{"available_reviewers": roster}`` to
+        ``available_reviewers.json``, but ``_load_available_reviewers``
+        reads ``raw.get("available", [])`` — so the dict-shape was
+        silently ignored, ``available_reviewers`` came back ``[]``,
+        ``cmd_verify_coverage`` mapped ``[]`` to ``None`` via the falsy
+        check, and ``verify_coverage_plan``'s closed_vocabulary branch
+        was bypassed for every test using ``include_roster_file=True``.
+        Every one of those tests was vacuously passing — a regression
+        in the verifier's roster check would have shipped silently.
+
+        This test seeds the fixture in the correct flat-list shape AND
+        constructs the canonical violating plan (a critic addition not
+        in the roster), then asserts that the end-to-end pipeline emits
+        BLOCKING with the closed_vocabulary check named.
+        """
+        plan = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [
+                {
+                    "reviewer": "hallucinated-reviewer",
+                    "trigger": {"type": "critic_addition"},
+                    "source": "critic",
+                    "evidence": "imagined this one",
+                },
+            ],
+            "stats": {},
+        }
+        rc, result, cr_dir = self._run(
+            tmp_path, final=plan, initial={
+                "required": [{"reviewer": "a", "source": "rule"}],
+                "best_effort": [],
+                "stats": {},
+            }, roster=["devops-architect", "test-engineer"],
+        )
+        assert rc == 0
+        assert result["verdict"] == "BLOCKING"
+        checks = {v["check"] for v in result["violations"]}
+        assert "closed_vocabulary" in checks
+        msg = next(
+            v["message"] for v in result["violations"]
+            if v["check"] == "closed_vocabulary"
+        )
+        assert "hallucinated-reviewer" in msg
+        assert (cr_dir / "agent_coverage-verify-blocking.json").exists()
+
+    def test_core_reviewers_outside_roster_do_not_block(
+        self, tmp_path: Path,
+    ) -> None:
+        """End-to-end coverage for the v2.19.2 scoping fix.
+
+        This is the canonical case the verifier surfaced on itself:
+        the rule-resolved plan contains plugin-internal core reviewer
+        labels (``bug_hunter_a``, ``unified_auditor``) that don't exist
+        in the project's `.claude/agents/` roster — the spawner
+        translates those labels at dispatch time, they're not
+        project-configured agents. Verifier must PASS this, even
+        though the closed-vocabulary check is otherwise active.
+        """
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {"reviewer": "unified_auditor", "source": "core"},
+            ],
+            "best_effort": [],
+            "stats": {},
+        }
+        rc, result, cr_dir = self._run(
+            tmp_path, final=plan, initial=plan,
+            roster=["devops-architect", "test-engineer"],
+        )
+        assert rc == 0
+        assert result["verdict"] == "PASS"
+        assert not (cr_dir / "agent_coverage-verify-blocking.json").exists()
 
 
 class TestPLN725Phase6StageGraph:

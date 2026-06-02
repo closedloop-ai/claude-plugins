@@ -7793,15 +7793,30 @@ def verify_coverage_plan(
             ),
         })
 
-    # closed_vocabulary — only enforced when a roster is present and non-empty
+    # closed_vocabulary — only enforced when a roster is present and
+    # non-empty, AND only against source="critic" entries. The core/rule
+    # reviewer labels in coverage_plan.json (e.g. ``bug_hunter_a``,
+    # ``unified_auditor``) are plugin-internal identifiers that the
+    # spawn_reviewers stage translates to actual reviewer prompts —
+    # they do NOT need to appear in the project's `.claude/agents/`
+    # roster. Only the critic's LLM-proposed additions are constrained
+    # to AVAILABLE (matching the prepare-time validator at
+    # ``validate_coverage_critic_output``). Without this scoping every
+    # project would BLOCK on every review because its rule-resolved
+    # plan references plugin-internal labels by design.
     if available_reviewers:
         roster = set(available_reviewers)
-        unknown = sorted(final_names - roster)
+        critic_names = {
+            e.get("reviewer", "")
+            for e in best_effort_final
+            if e.get("source") == "critic"
+        }
+        unknown = sorted(critic_names - roster - {""})
         if unknown:
             violations.append({
                 "check": "closed_vocabulary",
                 "message": (
-                    f"reviewers not in AVAILABLE roster: {unknown}"
+                    f"critic-added reviewers not in AVAILABLE roster: {unknown}"
                 ),
             })
 
@@ -7920,7 +7935,8 @@ def _emit_coverage_verify_blocking_finding(
 
 
 def cmd_verify_coverage(args: argparse.Namespace) -> int:
-    """PLN-725 Stage 4: deterministic verifier for the final coverage plan.
+    """PLN-725 Phase 6 / stage_15c_verify_coverage: deterministic verifier
+    for the final coverage plan.
 
     Reads ``coverage_plan.json`` (final), ``coverage_plan_initial.json``
     (pre-critic), and ``available_reviewers.json`` (roster, optional).
