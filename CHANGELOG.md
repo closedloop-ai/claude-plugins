@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.17.2
+
+#### Changed
+- `cmd_coverage_critic_prepare` extracts a private `_emit_skipped_coverage_plan` helper shared by both the `--no-critic` operator-flag path and the missing-roster configuration path. The two branches were ~95% identical (same `merge_critic_additions` + `generated_at` stamp + `critic_status="skipped"` + manifest shape + stdout dump); the only caller-varying field was the manifest `reason`. Single edit site now for any future shape changes (e.g. adding an OSError guard to the manifest write).
+- `present-local` skill Summary section restructured so the Output directory line actually renders. The previous form mixed render-template content with instructional prose ("Append this line verbatim", "Always include this line") inside the template body, which the orchestrator read as scaffolding instructions rather than a line to emit. The Summary template now lives in a fenced markdown block following the skill's own header convention ("Fenced code blocks are card/footer templates"), with `[CR_DIR_PATH]` as a `[bracketed]` substitution placeholder matching the `[action based on findings]` form already used on the same template. Meta-instructions live above the block.
+
+#### Fixed
+- `test_malformed_roster_still_returns_one` replaces a vacuously-true guarded assertion (`if manifest_path.exists(): assert manifest.get("reason") != "no-roster"` — the guard never fired because `cmd_coverage_critic_prepare` returns 1 before any manifest write on malformed input) with an unconditional `assert not (cr_dir / "coverage_critic_manifest.json").exists()` plus the same check for `coverage_plan.json`. Positively asserts the skipped/no-roster path did not fire, and would catch a regression where exit-1 also wrote a manifest.
+
 ### code-review v2.17.1
 
 #### Fixed

@@ -12490,12 +12490,15 @@ class TestCoverageCriticPrepareCLI:
         inputs["paths"]["available"].write_text("{ not valid json")
         args = self._args(tmp_path, inputs)
         assert cmd_coverage_critic_prepare(args) == 1
-        # And the "skipped" / "no-roster" path did NOT fire.
+        # On exit-1 the cmd returns before writing the manifest, so the
+        # file MUST NOT exist. Positively asserts the skipped/no-roster
+        # path did not fire (an unguarded check that would catch a
+        # regression where exit-1 also wrote a manifest — the prior
+        # guarded `if manifest_path.exists():` form was vacuously true
+        # because the condition never holds in the expected flow).
         cr_dir = Path(args.cr_dir)
-        manifest_path = cr_dir / "coverage_critic_manifest.json"
-        if manifest_path.exists():
-            manifest = json.loads(manifest_path.read_text())
-            assert manifest.get("reason") != "no-roster"
+        assert not (cr_dir / "coverage_critic_manifest.json").exists()
+        assert not (cr_dir / "coverage_plan.json").exists()
 
     def test_cache_hit_serves_directly(self, tmp_path: Path) -> None:
         from code_review_helpers import (

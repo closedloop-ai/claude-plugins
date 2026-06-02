@@ -7008,6 +7008,52 @@ def merge_critic_additions(
     return final
 
 
+def _emit_skipped_coverage_plan(
+    plan_initial: dict[str, Any],
+    output_path: Path,
+    manifest_path: Path,
+    model: str,
+    reason: str,
+) -> int:
+    """Short-circuit ``coverage-critic-prepare`` with a "skipped" outcome.
+
+    Writes the initial plan as the final ``coverage_plan.json`` (with
+    ``critic_status="skipped"`` so Phase 4 consumers can distinguish
+    skipped from healthy-but-empty and fail_closed via the same field),
+    plus a manifest with ``status: "skipped"`` and the caller-supplied
+    ``reason``. Dumps the manifest to stdout so the walker's
+    redirected-stdout sees the same shape regardless of which skip
+    branch ran. Returns 0 on success; 1 if the plan file cannot be
+    written.
+
+    Shared between the ``--no-critic`` operator-flag path (reason
+    ``"no-critic"``) and the missing-roster configuration path (reason
+    ``"no-roster"``). Single edit site for any future shape changes
+    (e.g. adding an OSError guard to the manifest write).
+    """
+    final = merge_critic_additions(plan_initial, [])
+    final["generated_at"] = datetime.now(timezone.utc).isoformat()
+    final["critic_status"] = "skipped"
+    final["critic_errors"] = []
+    try:
+        with open(output_path, "w") as f:
+            json.dump(final, f, indent=2)
+    except OSError as exc:
+        print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
+        return 1
+    manifest = {
+        "status": "skipped",
+        "reason": reason,
+        "output_path": str(output_path),
+        "model": model,
+    }
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+    json.dump(manifest, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
 def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     """PLN-725 Stage 3a: prep the coverage-critic agent input + check cache.
 
@@ -7063,64 +7109,25 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     output_path = cr_dir / "coverage_plan.json"
     manifest_path = cr_dir / "coverage_critic_manifest.json"
 
+    # Short-circuit per Open Question 3 — write the initial plan
+    # straight through as the final, no agent spawn needed. See
+    # _emit_skipped_coverage_plan for the shared shape.
     if no_critic:
-        # Short-circuit per Open Question 3 — write the initial plan
-        # straight through as the final, no agent spawn needed.
-        # Stamp critic_status="skipped" so Phase 4 consumers can
-        # distinguish skipped from healthy-but-empty (ok) and
-        # fail_closed via the same field — see consolidate paths below.
-        final = merge_critic_additions(plan_initial, [])
-        final["generated_at"] = datetime.now(timezone.utc).isoformat()
-        final["critic_status"] = "skipped"
-        final["critic_errors"] = []
-        try:
-            with open(output_path, "w") as f:
-                json.dump(final, f, indent=2)
-        except OSError as exc:
-            print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
-            return 1
-        manifest = {
-            "status": "skipped",
-            "reason": "no-critic",
-            "output_path": str(output_path),
-            "model": model,
-        }
-        with open(manifest_path, "w") as f:
-            json.dump(manifest, f, indent=2)
-        json.dump(manifest, sys.stdout, indent=2)
-        sys.stdout.write("\n")
-        return 0
+        return _emit_skipped_coverage_plan(
+            plan_initial, output_path, manifest_path, model, reason="no-critic",
+        )
 
     # PLN-725 Phase 4 dry-run tolerance: the roster is produced by a
     # not-yet-shipped Phase 5 stage (Agent-Definition Loading). When the
-    # file does not exist, fall back to "skipped" semantics — write the
-    # initial plan as final with critic_status="skipped" and reason
-    # "no-roster". Mirrors --no-critic, but reachable by configuration
-    # rather than operator flag so Phase 4 surveys the pipeline without
-    # Phase 5 wired. A present-but-malformed file still returns 1 —
-    # that's an operator config error worth surfacing loudly.
+    # file does not exist, fall back to the same skipped semantics —
+    # reachable by configuration rather than operator flag so Phase 4
+    # surveys the pipeline without Phase 5 wired. A present-but-malformed
+    # file still returns 1 below — that's an operator config error
+    # worth surfacing loudly.
     if not available_path.exists():
-        final = merge_critic_additions(plan_initial, [])
-        final["generated_at"] = datetime.now(timezone.utc).isoformat()
-        final["critic_status"] = "skipped"
-        final["critic_errors"] = []
-        try:
-            with open(output_path, "w") as f:
-                json.dump(final, f, indent=2)
-        except OSError as exc:
-            print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
-            return 1
-        manifest = {
-            "status": "skipped",
-            "reason": "no-roster",
-            "output_path": str(output_path),
-            "model": model,
-        }
-        with open(manifest_path, "w") as f:
-            json.dump(manifest, f, indent=2)
-        json.dump(manifest, sys.stdout, indent=2)
-        sys.stdout.write("\n")
-        return 0
+        return _emit_skipped_coverage_plan(
+            plan_initial, output_path, manifest_path, model, reason="no-roster",
+        )
 
     extract_signals: dict[str, Any] | None = None
     if signals_path is not None and signals_path.exists():
