@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.16.3
+
+#### Fixed
+- `_load_available_reviewers` now returns `(roster, error_message)` instead of a bare `list | None`. An operator with a missing or malformed `available_reviewers.json` previously saw `Error: available_reviewers must be a list or {available: [...]}` regardless of the actual cause; both callers (`cmd_coverage_critic_prepare`, `cmd_coverage_critic_consolidate`) now surface a path-specific diagnostic — `Error reading available_reviewers: [Errno 2] No such file or directory: …` for IO/parse failures, and the shape-error message only when the JSON parses but the top-level value is neither a list nor `{available: [...]}`. Restores the IO/parse diagnostic the pre-helper prepare code emitted via `f"Error reading available_reviewers: {exc}"`.
+
+#### Added
+- Regression tests pinning the loader's three diagnostic paths: flat-list / wrapped-object success, missing-file IO diagnostic (asserts the IO message and that the shape-error string is absent), malformed-JSON parse diagnostic, unrecognized-top-level-shape shape diagnostic, and inner-`available`-wrong-type shape diagnostic.
+
 ### code-review v2.16.2
 
 #### Fixed

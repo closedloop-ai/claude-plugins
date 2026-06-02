@@ -6830,26 +6830,31 @@ def _coverage_plan_existing_reviewers(plan: dict[str, Any]) -> set[str]:
     return out
 
 
-def _load_available_reviewers(path: Path) -> list[str] | None:
+def _load_available_reviewers(
+    path: Path,
+) -> tuple[list[str] | None, str | None]:
     """Parse ``available_reviewers.json`` into a list of reviewer names.
 
     Accepts either a flat JSON list or ``{"available": [...]}``. Returns
-    ``None`` on read/parse error or unrecognized shape so both callers can
-    fail consistently rather than silently fall back to an empty list.
+    ``(roster, None)`` on success and ``(None, diagnostic)`` on failure
+    so callers can fail consistently AND surface a path-specific
+    diagnostic. IO/parse errors are bound to the exception so an
+    operator with a missing or malformed file sees the real cause
+    (e.g. ``[Errno 2] No such file or directory``) instead of a
+    misleading shape-error message.
     """
     try:
         with open(path) as f:
             raw = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"Error reading available_reviewers: {exc}"
     if isinstance(raw, list):
-        return [a for a in raw if isinstance(a, str) and a]
+        return [a for a in raw if isinstance(a, str) and a], None
     if isinstance(raw, dict):
         inner = raw.get("available", [])
         if isinstance(inner, list):
-            return [a for a in inner if isinstance(a, str) and a]
-        return None
-    return None
+            return [a for a in inner if isinstance(a, str) and a], None
+    return None, "Error: available_reviewers must be a list or {available: [...]}"
 
 
 def _build_coverage_critic_input(
@@ -7086,12 +7091,9 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         print("Error: diff_data is not a JSON object", file=sys.stderr)
         return 1
 
-    available_reviewers = _load_available_reviewers(available_path)
+    available_reviewers, load_err = _load_available_reviewers(available_path)
     if available_reviewers is None:
-        print(
-            "Error: available_reviewers must be a list or {available: [...]}",
-            file=sys.stderr,
-        )
+        print(load_err or "Error reading available_reviewers", file=sys.stderr)
         return 1
 
     # Subtract anything already in the initial plan so the critic
@@ -7230,12 +7232,9 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
     cache_key = str(manifest.get("cache_key") or "")
     model = str(manifest.get("model") or COVERAGE_CRITIC_MODEL_DEFAULT)
 
-    available_reviewers = _load_available_reviewers(available_path)
+    available_reviewers, load_err = _load_available_reviewers(available_path)
     if available_reviewers is None:
-        print(
-            "Error: available_reviewers must be a list or {available: [...]}",
-            file=sys.stderr,
-        )
+        print(load_err or "Error reading available_reviewers", file=sys.stderr)
         return 1
 
     existing_in_plan = _coverage_plan_existing_reviewers(plan_initial)

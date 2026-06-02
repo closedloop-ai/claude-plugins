@@ -12036,6 +12036,71 @@ class TestStableJsonHash:
         assert _stable_json_hash(a) != _stable_json_hash(b)
 
 
+class TestLoadAvailableReviewers:
+    """The roster loader must distinguish IO/parse failures from shape
+    mismatches so callers (and operators) get a path-specific diagnostic
+    instead of a misleading "must be a list or {available: [...]}" for
+    every failure mode.
+    """
+
+    def test_flat_list_roundtrips(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps(["a", "b"]))
+        roster, err = _load_available_reviewers(p)
+        assert roster == ["a", "b"]
+        assert err is None
+
+    def test_wrapped_object_roundtrips(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps({"available": ["a", "b"]}))
+        roster, err = _load_available_reviewers(p)
+        assert roster == ["a", "b"]
+        assert err is None
+
+    def test_missing_file_returns_io_diagnostic(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_available_reviewers
+        roster, err = _load_available_reviewers(tmp_path / "does-not-exist.json")
+        assert roster is None
+        # Operator must see the actual IO cause, not a shape error.
+        assert err is not None
+        assert "Error reading available_reviewers" in err
+        assert "list or {available: [...]}" not in err
+
+    def test_malformed_json_returns_parse_diagnostic(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text("{ not valid json")
+        roster, err = _load_available_reviewers(p)
+        assert roster is None
+        assert err is not None
+        # JSON parse errors are reported via the same IO-diagnostic path.
+        assert "Error reading available_reviewers" in err
+        assert "list or {available: [...]}" not in err
+
+    def test_unrecognized_shape_returns_shape_diagnostic(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps("not a list or object"))
+        roster, err = _load_available_reviewers(p)
+        assert roster is None
+        assert err is not None
+        # Genuine shape mismatch keeps the shape-error message.
+        assert "list or {available: [...]}" in err
+
+    def test_inner_available_wrong_type_returns_shape_diagnostic(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps({"available": "not a list"}))
+        roster, err = _load_available_reviewers(p)
+        assert roster is None
+        assert err is not None
+        assert "list or {available: [...]}" in err
+
+
 class TestCoverageCriticValidator:
     """Per PLN-725 §"Stage 3: Coverage Critic" constraints."""
 
