@@ -288,7 +288,7 @@ These notes annotate the run-plan stages with anything not obvious from the plan
 - **stage_20_spawn_reviewers**: agent_fleet stage. Dispatch to the "Reviewer Fleet" section below.
 - **stage_22_validate**: writes `<CR_DIR>/findings_validated.json` via `> <CR_DIR>/findings_validated.json` redirection. Phase B will retire this file; it remains during the transition.
 - **stage_22b_verify_prepare** (PLN-722): tier-selects findings for verification per the canonical table — BLOCKING/HIGH always; MEDIUM with confidence < 0.85 yes; MEDIUM with confidence ≥ 0.85 no; LOW (P3) no; `category: "Hygiene"` no; `source: "injection-detector"` no; `category: "Premise"` always (strict adversarial framing). Ranks the eligible set by `severity_weight × confidence`, caps at `VERIFY_MAX_VERIFICATIONS = 50`, and writes (a) `<CR_DIR>/verify_manifest.json` with `to_verify[]` + `skipped_no_verification[]` + `deferred_budget[]` + `cache_hits[]`, and (b) `<CR_DIR>/verifier_inputs/<finding_id>.json` per eligible finding. When `--cache-dir` is set, fresh verifier outputs from a prior run for the same `(finding_id, code_snippet_hash, model, prompt_hash)` tuple are pre-materialized at `agent_verifier_<finding_id>.json` and skipped from `to_verify[]` (logged under `cache_hits[]`). `on_failure: continue` is intentional — verify-prepare failure degrades to "no verifier this run", not a pipeline abort.
-- **stage_23_verify_findings** (PLN-722): agent_fleet stage. Dispatch to the "Verifier Fleet" section below. Each spawned agent reads its `verifier_inputs/<finding_id>.json` (containing the finding + the `verifier_prompt_path` + the canonical `output_path`) and emits one verdict file at `<CR_DIR>/agent_verifier_<finding_id>.json`. `on_failure: continue` so a single agent crash never aborts review.
+- **stage_23_verify_findings** (PLN-722): agent_fleet stage. Dispatch to the "Verifier Fleet" section below. Findings are batched (`VERIFY_BATCH_SIZE`, default 5) so each spawned agent verifies multiple findings in one pass, amortizing bootstrap cost and reusing codebase context. Each agent reads `verifier_inputs/<finding_id>.json` for every finding in its batch and emits one verdict file per finding at `<CR_DIR>/agent_verifier_<finding_id>.json`. `on_failure: continue` so a single agent crash never aborts review.
 - **stage_24a_verify_consolidate** (PLN-722, extended in PLN-721): merges all `agent_verifier_*.json` outputs back into the validated set, applies sensitive-path escalation from `.closedloop-ai/settings/verification-gates.json` (rules: REJECTED on `sensitive_paths` + BLOCKING/HIGH → TENTATIVE with severity capped at HIGH; any finding on `tentative_on_paths` → TENTATIVE; any finding on `mandatory_human_review_paths` → TENTATIVE + `force_human_review: true`), routes JUSTIFIED-VALID verdicts to a new `justified[]` bucket and JUSTIFIED-INVALID verdicts back into `verified[]` (the audited justification was refuted; the original concern stands), and writes `<CR_DIR>/findings_verified.json` with the bucket-split shape `{verified[], rejected[], pending_verification[], justified[], force_human_review}`. `tentative_on_paths` lifts JUSTIFIED-VALID/INVALID to TENTATIVE on the same operator-policy contract as the other verdicts. When `--cache-dir` is set, fresh verifier outputs are written back to the `verifications/` namespace (30-day TTL) for re-use on subsequent runs. Missing fleet outputs degrade to `pending_verification[]`; `on_failure: continue`.
 - **stage_25_finalize_result** (PLN-722 + PLN-721): writes `<CR_DIR>/review_result.json` (the canonical envelope) BEFORE running schema validation. PLN-722: prefers `<CR_DIR>/findings_verified.json` (verify-consolidate output) when present and honors its `force_human_review` flag in the verdict computation; falls back to `findings_validated.json` (everything to `verified[]`) when verify-consolidate didn't run. PLN-721: pipes the consolidate `justified[]` bucket into the envelope, and loads operator-overridable thresholds from `.closedloop-ai/settings/verdict-thresholds.json` (defaults to `premise_cumulative_medium=3`; absent/malformed → built-in default) so `_compute_canonical_verdict` Rule 4 can fire (≥ 3 MEDIUM Premise findings in `verified[]` → NEEDS_ATTENTION). A non-zero exit signals reviewer-emitted category/field drift (e.g. a category not in the canonical enum) but does not block the pipeline — `on_failure: continue` lets `stage_28_verdict` read the structurally complete envelope. Surface the stderr text in the present step so operators can correct prompts/schema; do not abort.
 - **stage_26_cache_update**: gated by **Gate C**.
@@ -672,7 +672,9 @@ This stage runs when the walker reaches `stage_23`. It implements PLN-722's find
 
 ### Spawn contract
 
-For each entry in `verify_manifest.json.to_verify[]`:
+Group entries in `verify_manifest.json.to_verify[]` into batches of up to `VERIFY_BATCH_SIZE` findings each (default `5`). Batching amortizes the per-agent bootstrap cost and lets the verifier reuse codebase context across findings that touch the same files.
+
+For each batch:
 
 1. Spawn one background `Task` with `subagent_type: "code-review:code-review-worker"`. The agent's tool allowlist (`Read`, `Write`, `Grep`, `Glob`) is identical to the Reviewer Fleet's — no permission changes needed.
 2. Prompt template:
@@ -680,20 +682,27 @@ For each entry in `verify_manifest.json.to_verify[]`:
    You are the FINDING VERIFIER. Read your prompt at:
      {VERIFIER_PROMPT_PATH}
 
-   Your input file is at:
-     {INPUT_PATH}
+   You have {N} findings to verify. For each finding below, read its
+   input file, verify the finding using Read/Grep on the codebase, and
+   write the verdict JSON to the output path specified in the input file.
 
-   Read it for the finding to verify, the canonical output path, and the
-   per-output JSON shape. Write your verdict JSON to the output path the
-   input file specifies. Do not write anywhere else.
+   Findings:
+   {for each entry in batch}
+   - Input: {INPUT_PATH}
+   {end for}
+
+   Process each finding independently. Write one output file per finding
+   at the path each input file specifies. Do not write anywhere else.
    ```
-   Substitute the resolved paths from the manifest entry (the verifier prompt is at `<CR_DIR>/verifier_prompt.txt`, copied by `stage_02_prep_assets`).
-3. Set `model` to the entry's `model` field (currently uniform `sonnet`; future revisions may split by original-reviewer model for cross-model independence).
+   Substitute the resolved paths from the manifest entries (the verifier prompt is at `<CR_DIR>/verifier_prompt.txt`, copied by `stage_02_prep_assets`).
+3. Set `model` to the batch entries' `model` field (currently uniform `sonnet`; all entries in a batch share the same model).
+
+`VERIFY_BATCH_SIZE` is configurable via `.closedloop-ai/settings/code-review.json` key `verify_batch_size` (integer, min 1, max 20, default 5). Set to `1` to restore one-agent-per-finding behavior.
 
 ### Collection contract
 
-- Call `TaskOutput` (block: true) for every spawned verifier agent before letting the walker proceed past `stage_23`.
-- A missing `agent_verifier_<finding_id>.json` is NOT a fatal error — `cmd_verify_consolidate` tags it as `pending_verification[]` so operators see what didn't get verified.
+- Call `TaskOutput` (block: true) for every spawned verifier batch agent before letting the walker proceed past `stage_23`.
+- A missing `agent_verifier_<finding_id>.json` is NOT a fatal error — `cmd_verify_consolidate` tags it as `pending_verification[]` so operators see what didn't get verified. When a batch agent fails, ALL findings in that batch degrade to `pending_verification[]`.
 - Do NOT retry verifier agents in the walker. If a verifier fails, the finding's downstream handling already covers the gap (pending) — and verifier retries would burn tokens on a finding already flagged for human review.
 - `stage_23.on_failure == "continue"`: a fleet-wide failure does NOT abort the pipeline; `verify-consolidate` and `finalize-result` produce a usable envelope even when zero verifier outputs land on disk.
 
