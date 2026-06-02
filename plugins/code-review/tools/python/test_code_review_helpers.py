@@ -10130,3 +10130,776 @@ class TestPartitionAwareReviewerLabeling:
         out = _verification_by_reviewer(verified, [])
         assert out["bha_p0"]["re_asserted"] == 0
         assert out["bha_p1"]["re_asserted"] == 2
+
+
+# ---------------------------------------------------------------------------
+# PLN-725 Phase 1 — Signal extraction taxonomy + validation + CLI
+# ---------------------------------------------------------------------------
+
+
+class TestSignalTaxonomy:
+    """Structural invariants for the v1 signal taxonomy asset."""
+
+    def test_loads_from_default_path(self) -> None:
+        from code_review_helpers import load_signal_taxonomy
+        taxonomy, raw = load_signal_taxonomy()
+        assert isinstance(taxonomy, dict)
+        assert "signals" in taxonomy
+        assert raw  # bytes for cache hashing
+
+    def test_has_at_least_v1_signal_count(self) -> None:
+        """v1 ships ~50 signals; pin a floor so accidental deletion fails CI."""
+        from code_review_helpers import load_signal_taxonomy
+        taxonomy, _ = load_signal_taxonomy()
+        assert len(taxonomy["signals"]) >= 45
+
+    def test_every_signal_entry_has_required_fields(self) -> None:
+        from code_review_helpers import load_signal_taxonomy
+        taxonomy, _ = load_signal_taxonomy()
+        for name, entry in taxonomy["signals"].items():
+            assert "category" in entry, f"{name} missing category"
+            assert "description" in entry, f"{name} missing description"
+            assert "recommended_min_confidence" in entry, (
+                f"{name} missing recommended_min_confidence"
+            )
+            rmc = entry["recommended_min_confidence"]
+            assert 0.0 <= float(rmc) <= 1.0, f"{name} rmc out of range"
+
+    def test_rejects_taxonomy_without_signals(self, tmp_path: Path) -> None:
+        from code_review_helpers import load_signal_taxonomy
+        bad = tmp_path / "bad_taxonomy.json"
+        bad.write_text(json.dumps({"schema_version": 1, "signals": {}}))
+        with pytest.raises(ValueError, match="no 'signals' object"):
+            load_signal_taxonomy(bad)
+
+    def test_rejects_signal_missing_required_field(self, tmp_path: Path) -> None:
+        from code_review_helpers import load_signal_taxonomy
+        bad = tmp_path / "bad_taxonomy.json"
+        bad.write_text(json.dumps({
+            "schema_version": 1,
+            "signals": {"foo": {"category": "language", "description": "x"}},  # no rmc
+        }))
+        with pytest.raises(ValueError, match="recommended_min_confidence"):
+            load_signal_taxonomy(bad)
+
+    def test_rejects_invalid_rmc(self, tmp_path: Path) -> None:
+        from code_review_helpers import load_signal_taxonomy
+        bad = tmp_path / "bad_taxonomy.json"
+        bad.write_text(json.dumps({
+            "schema_version": 1,
+            "signals": {"foo": {
+                "category": "language", "description": "x",
+                "recommended_min_confidence": 1.5,
+            }},
+        }))
+        with pytest.raises(ValueError, match="recommended_min_confidence"):
+            load_signal_taxonomy(bad)
+
+
+class TestSignalExtractionCacheKey:
+    """Cache key contract: tuple of (diff_tip, taxonomy_hash, prompt_hash)."""
+
+    def test_same_inputs_same_key(self) -> None:
+        from code_review_helpers import signal_extraction_cache_key
+        a = signal_extraction_cache_key("dt", "tax", "ph")
+        b = signal_extraction_cache_key("dt", "tax", "ph")
+        assert a == b
+
+    def test_diff_tip_flip_changes_key(self) -> None:
+        from code_review_helpers import signal_extraction_cache_key
+        a = signal_extraction_cache_key("dt1", "tax", "ph")
+        b = signal_extraction_cache_key("dt2", "tax", "ph")
+        assert a != b
+
+    def test_taxonomy_hash_flip_changes_key(self) -> None:
+        from code_review_helpers import signal_extraction_cache_key
+        a = signal_extraction_cache_key("dt", "tax1", "ph")
+        b = signal_extraction_cache_key("dt", "tax2", "ph")
+        assert a != b
+
+    def test_prompt_hash_flip_changes_key(self) -> None:
+        from code_review_helpers import signal_extraction_cache_key
+        a = signal_extraction_cache_key("dt", "tax", "ph1")
+        b = signal_extraction_cache_key("dt", "tax", "ph2")
+        assert a != b
+
+
+class TestSignalExtractionValidator:
+    """Per PLN-725 §2 contract enforced by validate_signal_extraction_output."""
+
+    def _taxonomy(self) -> dict[str, Any]:
+        from code_review_helpers import load_signal_taxonomy
+        t, _ = load_signal_taxonomy()
+        return t
+
+    def test_accepts_valid_signals_sorted_by_confidence(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "auth_touching", "evidence": "lib/auth.ts:5 — login", "confidence": 0.85},
+            {"name": "language_typescript", "evidence": "x.ts:1 — TS", "confidence": 0.95},
+        ]}, self._taxonomy())
+        assert errors == []
+        assert len(accepted) == 2
+        # Sorted by descending confidence.
+        assert accepted[0]["name"] == "language_typescript"
+        assert accepted[1]["name"] == "auth_touching"
+
+    def test_rejects_invented_signal_name(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "totally_made_up", "evidence": "x:1", "confidence": 0.9},
+        ]}, self._taxonomy())
+        assert accepted == []
+        assert any("totally_made_up" in e for e in errors)
+
+    def test_rejects_empty_evidence(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "language_typescript", "evidence": "   ", "confidence": 0.9},
+        ]}, self._taxonomy())
+        assert accepted == []
+        assert any("empty evidence" in e for e in errors)
+
+    def test_rejects_missing_evidence(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "language_typescript", "confidence": 0.9},
+        ]}, self._taxonomy())
+        assert accepted == []
+        assert errors
+
+    def test_rejects_confidence_below_floor(self) -> None:
+        from code_review_helpers import (
+            SIGNAL_CONFIDENCE_FLOOR,
+            validate_signal_extraction_output,
+        )
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "language_typescript", "evidence": "x:1 — y", "confidence": 0.6},
+        ]}, self._taxonomy())
+        assert accepted == []
+        assert any(str(SIGNAL_CONFIDENCE_FLOOR) in e for e in errors)
+
+    def test_rejects_confidence_above_one(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "language_typescript", "evidence": "x:1 — y", "confidence": 1.5},
+        ]}, self._taxonomy())
+        assert accepted == []
+        assert errors
+
+    def test_rejects_non_numeric_confidence(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "language_typescript", "evidence": "x:1 — y", "confidence": "high"},
+        ]}, self._taxonomy())
+        assert accepted == []
+        assert errors
+
+    def test_rejects_duplicate_signal_names(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({"signals": [
+            {"name": "language_typescript", "evidence": "a:1 — y", "confidence": 0.95},
+            {"name": "language_typescript", "evidence": "b:2 — y", "confidence": 0.9},
+        ]}, self._taxonomy())
+        assert len(accepted) == 1
+        assert any("duplicates" in e for e in errors)
+
+    def test_rejects_non_object_output(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output(
+            "not a json object", self._taxonomy(),
+        )
+        assert accepted == []
+        assert errors
+
+    def test_rejects_missing_signals_list(self) -> None:
+        from code_review_helpers import validate_signal_extraction_output
+        accepted, errors = validate_signal_extraction_output({}, self._taxonomy())
+        assert accepted == []
+        assert any("'signals'" in e for e in errors)
+
+
+class TestFailClosedSignalSet:
+    """Per PLN-725 §2: extraction failure → all signals at 0.5."""
+
+    def test_returns_every_taxonomy_signal_at_05(self) -> None:
+        from code_review_helpers import (
+            SIGNAL_FAIL_CLOSED_CONFIDENCE,
+            fail_closed_signal_set,
+            load_signal_taxonomy,
+        )
+        t, _ = load_signal_taxonomy()
+        fc = fail_closed_signal_set(t)
+        assert len(fc) == len(t["signals"])
+        assert {s["name"] for s in fc} == set(t["signals"].keys())
+        assert all(s["confidence"] == SIGNAL_FAIL_CLOSED_CONFIDENCE for s in fc)
+
+    def test_every_entry_has_evidence_string(self) -> None:
+        from code_review_helpers import fail_closed_signal_set, load_signal_taxonomy
+        t, _ = load_signal_taxonomy()
+        for entry in fail_closed_signal_set(t):
+            assert entry["evidence"]
+
+
+def _build_diff_data(tmp_path: Path) -> Path:
+    """Minimal diff_data.json fixture for extract-signals tests.
+
+    ``file_loc`` matches the canonical parse-diff shape
+    ``dict[str, dict[str, int]]`` — ``{"added": int, "removed": int}`` —
+    not the bare-int shape this PR initially had wrong.
+    """
+    diff_data = {
+        "file_statuses": {
+            "src/auth/login.ts": "M",
+            "package.json": "M",
+        },
+        "file_loc": {
+            "src/auth/login.ts": {"added": 2, "removed": 0},
+            "package.json": {"added": 1, "removed": 0},
+        },
+        "patch_lines": {
+            "src/auth/login.ts": {
+                "added_lines": {
+                    "10": "import { hashPassword } from './crypto';",
+                    "42": "const session = await issueToken(user);",
+                },
+                "removed_lines": {},
+            },
+            "package.json": {
+                "added_lines": {"15": '    "argon2": "^0.31.0",'},
+                "removed_lines": {},
+            },
+        },
+    }
+    path = tmp_path / "diff_data.json"
+    path.write_text(json.dumps(diff_data))
+    return path
+
+
+class TestExtractSignalsPrepare:
+    """End-to-end CLI: cache hit path, cache miss path, manifest contents."""
+
+    def test_cache_miss_writes_input_taxonomy_and_manifest(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import cmd_extract_signals_prepare
+        cr_dir = tmp_path / "cr"
+        cache_dir = tmp_path / "cache"
+        cr_dir.mkdir()
+        cache_dir.mkdir()
+        diff_path = _build_diff_data(tmp_path)
+
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(diff_path),
+            diff_tip="abcdef1234",
+            prompt_hash="ph0",
+            cache_dir=str(cache_dir),
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        rc = cmd_extract_signals_prepare(args)
+        assert rc == 0
+
+        manifest = json.loads((cr_dir / "extract_signals_manifest.json").read_text())
+        assert manifest["status"] == "needs_agent"
+        assert manifest["cache_key"]
+        assert manifest["taxonomy_hash"]
+        assert Path(manifest["input_path"]).exists()
+        assert Path(manifest["taxonomy_path"]).exists()
+        assert manifest["model"] == "haiku"
+
+        agent_input = json.loads((cr_dir / "extract_signals_input.json").read_text())
+        assert any(f["path"] == "src/auth/login.ts" for f in agent_input["files"])
+        # Language hint pre-populated deterministically.
+        ts_entry = next(f for f in agent_input["files"] if f["path"].endswith(".ts"))
+        assert ts_entry["language_hint"] == "typescript"
+
+    def test_cache_hit_serves_directly_without_agent(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_SIGNALS,
+            cmd_extract_signals_prepare,
+            load_signal_taxonomy,
+            signal_extraction_cache_key,
+        )
+        cr_dir = tmp_path / "cr"
+        cache_dir = tmp_path / "cache"
+        cr_dir.mkdir()
+        (cache_dir / CACHE_NAMESPACE_SIGNALS).mkdir(parents=True)
+        diff_path = _build_diff_data(tmp_path)
+
+        _, raw = load_signal_taxonomy()
+        import hashlib
+        taxonomy_hash = hashlib.sha256(raw).hexdigest()
+        key = signal_extraction_cache_key("abcdef1234", taxonomy_hash, "ph0")
+        cached_payload = {
+            "status": "ok",
+            "signals": [
+                {"name": "language_typescript", "evidence": "x.ts:1 — TS", "confidence": 0.95},
+            ],
+            "errors": [],
+            "model": "haiku",
+            "cache_key": key,
+            "taxonomy_hash": taxonomy_hash,
+            "prompt_hash": "ph0",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "written_at": datetime.now(timezone.utc).isoformat(),
+        }
+        (cache_dir / CACHE_NAMESPACE_SIGNALS / f"{key}.json").write_text(
+            json.dumps(cached_payload),
+        )
+
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(diff_path),
+            diff_tip="abcdef1234",
+            prompt_hash="ph0",
+            cache_dir=str(cache_dir),
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        rc = cmd_extract_signals_prepare(args)
+        assert rc == 0
+
+        manifest = json.loads((cr_dir / "extract_signals_manifest.json").read_text())
+        assert manifest["status"] == "cache_hit"
+        assert not (cr_dir / "extract_signals_input.json").exists()
+
+        output = json.loads((cr_dir / "extract_signals.json").read_text())
+        assert output["status"] == "ok"
+        assert output["signals"][0]["name"] == "language_typescript"
+        # Cache-only metadata is stripped from the canonical output.
+        assert "written_at" not in output
+
+
+class TestExtractSignalsConsolidate:
+    """Validator-driven consolidate behavior: ok path, fail-closed path, finding emission."""
+
+    def _prepare(self, tmp_path: Path) -> tuple[Path, Path, str, str]:
+        from code_review_helpers import cmd_extract_signals_prepare
+        cr_dir = tmp_path / "cr"
+        cache_dir = tmp_path / "cache"
+        cr_dir.mkdir()
+        cache_dir.mkdir()
+        diff_path = _build_diff_data(tmp_path)
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(diff_path),
+            diff_tip="abcdef1234",
+            prompt_hash="ph0",
+            cache_dir=str(cache_dir),
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        rc = cmd_extract_signals_prepare(args)
+        assert rc == 0
+        manifest = json.loads((cr_dir / "extract_signals_manifest.json").read_text())
+        return cr_dir, cache_dir, manifest["cache_key"], manifest["taxonomy_hash"]
+
+    def test_valid_agent_output_writes_ok_and_updates_cache(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_SIGNALS,
+            cmd_extract_signals_consolidate,
+        )
+        cr_dir, cache_dir, key, _ = self._prepare(tmp_path)
+        agent_path = cr_dir / "agent_extract_signals.json"
+        agent_path.write_text(json.dumps({"signals": [
+            {"name": "language_typescript", "evidence": "x.ts:1 — TS file", "confidence": 0.95},
+            {"name": "auth_touching", "evidence": "src/auth.ts:42 — login flow", "confidence": 0.85},
+        ]}))
+
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            agent_output=str(agent_path),
+            manifest=None,
+            taxonomy=None,
+            cache_dir=str(cache_dir),
+        )
+        rc = cmd_extract_signals_consolidate(args)
+        assert rc == 0
+
+        out = json.loads((cr_dir / "extract_signals.json").read_text())
+        assert out["status"] == "ok"
+        assert {s["name"] for s in out["signals"]} == {"language_typescript", "auth_touching"}
+        assert not (cr_dir / "agent_signal-extraction-failed.json").exists()
+
+        # Cache write-back.
+        cached_files = list((cache_dir / CACHE_NAMESPACE_SIGNALS).glob("*.json"))
+        assert len(cached_files) == 1
+        cached = json.loads(cached_files[0].read_text())
+        assert cached["cache_key"] == key
+
+    def test_all_invalid_falls_closed_and_emits_finding(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_SIGNALS,
+            SIGNAL_EXTRACTION_MARKER,
+            SIGNAL_FAIL_CLOSED_CONFIDENCE,
+            cmd_extract_signals_consolidate,
+        )
+        cr_dir, cache_dir, _, _ = self._prepare(tmp_path)
+        agent_path = cr_dir / "agent_extract_signals.json"
+        # Every entry violates the contract.
+        agent_path.write_text(json.dumps({"signals": [
+            {"name": "made_up_signal", "evidence": "x:1", "confidence": 0.9},
+            {"name": "language_typescript", "evidence": "", "confidence": 0.9},
+            {"name": "language_python", "evidence": "p.py:1 — py", "confidence": 0.1},
+        ]}))
+
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            agent_output=str(agent_path),
+            manifest=None,
+            taxonomy=None,
+            cache_dir=str(cache_dir),
+        )
+        rc = cmd_extract_signals_consolidate(args)
+        assert rc == 0
+
+        out = json.loads((cr_dir / "extract_signals.json").read_text())
+        assert out["status"] == "fail_closed"
+        # Every signal present at the fail-closed confidence.
+        assert all(s["confidence"] == SIGNAL_FAIL_CLOSED_CONFIDENCE for s in out["signals"])
+        assert len(out["errors"]) >= 3
+
+        # Fail-closed must NOT be cached (next run gets a fresh attempt).
+        cached_files = list((cache_dir / CACHE_NAMESPACE_SIGNALS).glob("*.json"))
+        assert cached_files == []
+
+        # Operator-visible finding emitted.
+        finding_file = cr_dir / "agent_signal-extraction-failed.json"
+        assert finding_file.exists()
+        finding = json.loads(finding_file.read_text())["findings"][0]
+        assert finding["system_marker"] == SIGNAL_EXTRACTION_MARKER
+        assert finding["severity"] == "MEDIUM"
+        assert finding["finding_scope"] == "system"
+
+    def test_unreadable_agent_output_falls_closed(self, tmp_path: Path) -> None:
+        from code_review_helpers import cmd_extract_signals_consolidate
+        cr_dir, cache_dir, _, _ = self._prepare(tmp_path)
+        # Point at a nonexistent file.
+        missing = cr_dir / "does_not_exist.json"
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            agent_output=str(missing),
+            manifest=None,
+            taxonomy=None,
+            cache_dir=str(cache_dir),
+        )
+        rc = cmd_extract_signals_consolidate(args)
+        assert rc == 0
+        out = json.loads((cr_dir / "extract_signals.json").read_text())
+        assert out["status"] == "fail_closed"
+        assert (cr_dir / "agent_signal-extraction-failed.json").exists()
+
+    def test_partial_validity_keeps_valid_signals_and_records_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import cmd_extract_signals_consolidate
+        cr_dir, cache_dir, _, _ = self._prepare(tmp_path)
+        agent_path = cr_dir / "agent_extract_signals.json"
+        agent_path.write_text(json.dumps({"signals": [
+            {"name": "language_typescript", "evidence": "x.ts:1 — TS", "confidence": 0.95},
+            {"name": "invented", "evidence": "y:1", "confidence": 0.9},
+        ]}))
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            agent_output=str(agent_path),
+            manifest=None,
+            taxonomy=None,
+            cache_dir=str(cache_dir),
+        )
+        rc = cmd_extract_signals_consolidate(args)
+        assert rc == 0
+        out = json.loads((cr_dir / "extract_signals.json").read_text())
+        # Mixed valid+invalid → ok with one signal kept; errors recorded for observability.
+        assert out["status"] == "ok"
+        assert [s["name"] for s in out["signals"]] == ["language_typescript"]
+        assert any("invented" in e for e in out["errors"])
+        # No fail-closed finding when at least one signal was accepted.
+        assert not (cr_dir / "agent_signal-extraction-failed.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# PLN-725 Phase 1 — PR #121 review fixes (regression tests)
+# ---------------------------------------------------------------------------
+
+
+class TestPR121SignalExtractorSource:
+    """HIGH #1: emitting source='signal-extractor' must not break validation.
+
+    Reviewer: Unified Auditor verified the failure finding emitted by
+    _emit_signal_extraction_failed_finding would be rejected by
+    validate_finding because 'signal-extractor' was missing from SOURCES.
+    Fix: add 'signal-extractor' to SOURCES (mirrors injection-detector
+    and coverage-verifier — system-marker emitters all live in the
+    allowlist).
+    """
+
+    def test_sources_allowlist_contains_signal_extractor(self) -> None:
+        from code_review_schema import SOURCES
+        assert "signal-extractor" in SOURCES
+
+    def test_emitted_finding_passes_validation(self, tmp_path: Path) -> None:
+        from code_review_helpers import _emit_signal_extraction_failed_finding
+        from code_review_schema import SOURCES, normalize_legacy_finding
+        cr_dir = tmp_path
+        _emit_signal_extraction_failed_finding(
+            cr_dir, ["unreadable agent output"], "2026-06-02T00:00:00+00:00",
+        )
+        finding_file = cr_dir / "agent_signal-extraction-failed.json"
+        assert finding_file.exists()
+        finding = json.loads(finding_file.read_text())["findings"][0]
+        assert finding["source"] == "signal-extractor"
+        assert finding["source"] in SOURCES
+        # Normalization preserves the source (setdefault doesn't overwrite)
+        # and the finding survives the contract path normalize_legacy_finding
+        # runs in cmd_collect_findings.
+        promoted = normalize_legacy_finding(
+            finding, reviewer="signal-extractor", source="signal-extractor",
+            index=0, emitted_at="2026-06-02T00:00:00+00:00",
+        )
+        assert promoted["source"] == "signal-extractor"
+
+
+class TestPR121CacheTTLOnMissingTimestamp:
+    """MED #1: _read_cached_signals must treat missing written_at as a miss.
+
+    Reviewer: Bug Hunter B noted the verifier (_read_cached_verification)
+    returns None when cached_at is missing/unparseable, whereas this PR
+    initially skipped the TTL check entirely, returning the entry. A
+    manually seeded or externally-written cache file would never expire.
+    Fix: mirror the verifier — treat missing/non-parseable written_at as
+    a miss and unlink the stale entry.
+    """
+
+    def _cache_entry(self, **extra: Any) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "signals": [{"name": "language_typescript", "evidence": "x:1 — y", "confidence": 0.9}],
+            "errors": [],
+            "model": "haiku",
+            "cache_key": "abc",
+            "taxonomy_hash": "t",
+            "prompt_hash": "p",
+            "generated_at": "2026-06-02T00:00:00+00:00",
+            **extra,
+        }
+
+    def test_missing_written_at_treated_as_miss(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_SIGNALS,
+            _read_cached_signals,
+        )
+        cache_dir = tmp_path / "cache"
+        ns = cache_dir / CACHE_NAMESPACE_SIGNALS
+        ns.mkdir(parents=True)
+        entry_path = ns / "deadbeef.json"
+        # Manually seeded entry without written_at — the pathological case.
+        entry_path.write_text(json.dumps(self._cache_entry()))
+
+        result = _read_cached_signals(cache_dir, "deadbeef")
+        assert result is None
+        # And the stale entry has been swept.
+        assert not entry_path.exists()
+
+    def test_non_string_written_at_treated_as_miss(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_SIGNALS,
+            _read_cached_signals,
+        )
+        cache_dir = tmp_path / "cache"
+        ns = cache_dir / CACHE_NAMESPACE_SIGNALS
+        ns.mkdir(parents=True)
+        entry_path = ns / "deadbeef.json"
+        entry_path.write_text(json.dumps(self._cache_entry(written_at=12345)))
+        assert _read_cached_signals(cache_dir, "deadbeef") is None
+        assert not entry_path.exists()
+
+    def test_fresh_written_at_returns_entry(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_SIGNALS,
+            _read_cached_signals,
+        )
+        cache_dir = tmp_path / "cache"
+        ns = cache_dir / CACHE_NAMESPACE_SIGNALS
+        ns.mkdir(parents=True)
+        entry_path = ns / "deadbeef.json"
+        now_iso = datetime.now(timezone.utc).isoformat()
+        entry_path.write_text(json.dumps(self._cache_entry(written_at=now_iso)))
+        result = _read_cached_signals(cache_dir, "deadbeef")
+        assert result is not None
+        assert result["status"] == "ok"
+        # Entry preserved on a hit.
+        assert entry_path.exists()
+
+    def test_expired_written_at_treated_as_miss(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_SIGNALS,
+            _read_cached_signals,
+        )
+        cache_dir = tmp_path / "cache"
+        ns = cache_dir / CACHE_NAMESPACE_SIGNALS
+        ns.mkdir(parents=True)
+        entry_path = ns / "deadbeef.json"
+        stale = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        entry_path.write_text(json.dumps(self._cache_entry(written_at=stale)))
+        assert _read_cached_signals(cache_dir, "deadbeef") is None
+        assert not entry_path.exists()
+
+
+class TestPR121PromptIsContentAddressed:
+    """MED #2 / PR #2: prompt_hash must be derived from prompt file bytes,
+    not taken on faith from --prompt-hash.
+
+    Reviewer: Bug Hunter B + devops-architect noted the cache-key docstring
+    claimed any prompt-asset edit busts the key, but prepare never read the
+    prompt bytes; --prompt-hash defaulted to "". A Phase 4 wiring that
+    forgets the flag would serve stale extractions across prompt edits.
+    Fix: add _signal_extraction_prompt_hash, read + hash the prompt file
+    inside cmd_extract_signals_prepare. The --prompt-hash flag remains as
+    an override but is no longer required for correctness.
+    """
+
+    def _args(self, base: Path, prompt_path: Path) -> argparse.Namespace:
+        from code_review_helpers import SIGNAL_EXTRACTION_MODEL_DEFAULT
+        base.mkdir(parents=True, exist_ok=True)
+        cr_dir = base / "cr"
+        cache_dir = base / "cache"
+        cr_dir.mkdir()
+        cache_dir.mkdir()
+        diff_path = _build_diff_data(base)
+        return argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(diff_path),
+            diff_tip="abcdef1234",
+            prompt_hash="",  # No override — exercise content-addressing.
+            cache_dir=str(cache_dir),
+            taxonomy=None,
+            prompt=str(prompt_path),
+            intent=None,
+            model=SIGNAL_EXTRACTION_MODEL_DEFAULT,
+        )
+
+    def test_prompt_hash_helper_changes_when_prompt_changes(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _signal_extraction_prompt_hash
+        p1 = tmp_path / "prompt1.txt"
+        p2 = tmp_path / "prompt2.txt"
+        p1.write_text("Be biased toward emission.\n")
+        p2.write_text("Be conservative.\n")
+        assert _signal_extraction_prompt_hash(p1) != _signal_extraction_prompt_hash(p2)
+
+    def test_prepare_uses_file_bytes_for_cache_key(self, tmp_path: Path) -> None:
+        """Two runs with the same diff but DIFFERENT prompt bytes must
+        produce different manifest cache_keys — proves the prompt asset
+        actually contributes to the key without operator opt-in.
+        """
+        from code_review_helpers import cmd_extract_signals_prepare
+        prompt_a = tmp_path / "prompt_a.txt"
+        prompt_a.write_text("emit signals\n")
+        args_a = self._args(tmp_path / "a", prompt_a)
+        assert cmd_extract_signals_prepare(args_a) == 0
+        key_a = json.loads(
+            (Path(args_a.cr_dir) / "extract_signals_manifest.json").read_text(),
+        )["cache_key"]
+
+        prompt_b = tmp_path / "prompt_b.txt"
+        prompt_b.write_text("emit signals with calibration\n")
+        args_b = self._args(tmp_path / "b", prompt_b)
+        assert cmd_extract_signals_prepare(args_b) == 0
+        key_b = json.loads(
+            (Path(args_b.cr_dir) / "extract_signals_manifest.json").read_text(),
+        )["cache_key"]
+
+        assert key_a != key_b
+
+
+class TestPR121AgentInputBundle:
+    """PR #1 + PR #3: agent input bundle must not advertise a populated
+    change_classes field (parse-diff doesn't emit it) and must not carry a
+    misannotated loc field (file_loc is dict[str, dict[str, int]], not an
+    int per path).
+
+    Reviewer: thadeusb noted both bugs would mislead a Phase 4 wiring —
+    the agent is told `change_classes` is populated when nothing ever
+    populates it, and the redundant `loc` field carried a dict where the
+    annotation said int. Both fields are now removed; lines_added /
+    lines_removed already convey the per-file churn.
+    """
+
+    def _prepare(self, tmp_path: Path) -> Path:
+        from code_review_helpers import (
+            SIGNAL_EXTRACTION_MODEL_DEFAULT,
+            cmd_extract_signals_prepare,
+        )
+        cr_dir = tmp_path / "cr"
+        cache_dir = tmp_path / "cache"
+        cr_dir.mkdir()
+        cache_dir.mkdir()
+        diff_path = _build_diff_data(tmp_path)
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(diff_path),
+            diff_tip="abcdef1234",
+            prompt_hash="",
+            cache_dir=str(cache_dir),
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model=SIGNAL_EXTRACTION_MODEL_DEFAULT,
+        )
+        rc = cmd_extract_signals_prepare(args)
+        assert rc == 0
+        return cr_dir / "extract_signals_input.json"
+
+    def test_input_bundle_omits_change_classes(self, tmp_path: Path) -> None:
+        input_path = self._prepare(tmp_path)
+        bundle = json.loads(input_path.read_text())
+        assert "change_classes" not in bundle
+
+    def test_input_bundle_files_omit_loc_field(self, tmp_path: Path) -> None:
+        input_path = self._prepare(tmp_path)
+        bundle = json.loads(input_path.read_text())
+        for entry in bundle["files"]:
+            assert "loc" not in entry, (
+                "loc is redundant with lines_added/lines_removed and was "
+                "misannotated as int when file_loc is dict per path"
+            )
+            # The surviving per-file churn signal is intact.
+            assert "lines_added" in entry
+            assert "lines_removed" in entry
+
+    def test_prompt_does_not_advertise_change_classes(self) -> None:
+        from code_review_helpers import _default_signal_extraction_prompt_path
+        prompt = _default_signal_extraction_prompt_path().read_text()
+        assert "change_classes" not in prompt, (
+            "prompt must not promise a field the input bundle never carries"
+        )
+
+
+class TestPR121TaxonomyCommentNoDanglingReference:
+    """MED #3: signal_taxonomy.json comment must not reference a bootstrap
+    mirror that does not yet exist.
+
+    Reviewer: Bug Hunter B + Premise both flagged the same doc-accuracy
+    gap. A developer adding a signal would look for the bootstrap mirror,
+    find nothing, and either skip the step (breaking the documented
+    invariant) or be confused. Fix: comment now defers the mirror to
+    Phase 9 explicitly, rather than implying a co-located file exists.
+    """
+
+    def test_no_present_tense_bootstrap_mirror_claim(self) -> None:
+        from code_review_helpers import _default_signal_taxonomy_path
+        text = _default_signal_taxonomy_path().read_text()
+        # The Phase 9 deferral wording is allowed; the previous bare
+        # "(and bootstrap's mirror)" parenthetical is not.
+        assert "(and bootstrap's mirror)" not in text
