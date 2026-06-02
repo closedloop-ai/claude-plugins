@@ -92,6 +92,7 @@ SOURCES: frozenset[str] = frozenset({
     "companion-validator",
     "coverage-verifier",
     "signal-extractor",
+    "coverage-critic",
 })
 
 

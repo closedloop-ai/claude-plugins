@@ -4,6 +4,24 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.16.0
+
+#### Added
+- PLN-725 Phase 3 (Coverage Critic): the `coverage-critic-prepare` and `coverage-critic-consolidate` subcommands, plus a new prompt asset and a constraint-enforcing validator that produces the final `coverage_plan.json`. Foundation only — no orchestrator wiring yet (Phase 4 will replace the placeholder `stage_15_coverage_critic` and add a sibling consolidate stage).
+- `plugins/code-review/tools/prompts/coverage_critic_prompt.txt`: adversarial prompt for the Sonnet critic agent. Codifies the closed-vocabulary contract (only names from `available_reviewers.json`), the evidence requirement (`<file>:<line> — rationale` or `signal:<name>@<conf> — rationale`), the additive-only rule, the best-effort-only rule (the critic cannot promote to required), the 5-addition hard cap, and the dedup-vs-existing-plan rule. Includes a calibration ladder telling the agent that "more is not better" — phantom additions cost the budget and dilute signal.
+- `coverage-critic-prepare` subcommand: reads `coverage_plan_initial.json` (from `resolve-coverage`), `extract_signals.json` (from `extract-signals-consolidate`), `diff_data.json`, and an `available_reviewers.json` (flat list OR `{available: [...]}` object). Filters the AVAILABLE list to remove anything already in the initial plan, computes the `coverage_critic/` namespace cache key from `(coverage_plan_initial_hash, signals_hash, diff_tip, prompt_hash)` (all content-addressed), serves a cache hit straight to `coverage_plan.json` and exits, or writes a bounded agent-input bundle plus a per-run diff summary on miss.
+- `coverage-critic-consolidate` subcommand: validates LLM output against the constraint contract and either merges accepted additions into the initial plan or fails closed. Successful runs cache to the `coverage_critic/` namespace (7-day TTL); fail-closed outputs are not cached.
+- `--no-critic` flag on `coverage-critic-prepare`: skips the LLM critic entirely, writing the initial plan straight through as the final `coverage_plan.json`. Manifest reports `status: "skipped"`, `reason: "no-critic"`. Useful for cost-sensitive runs.
+- `_stable_json_hash` helper: deterministic JSON serialization (`sort_keys=True`, compact separators) for content-addressing the plan-initial and signals inputs to the cache key.
+- `coverage-critic` added to the canonical `SOURCES` allowlist in `code_review_schema.py` so the fail-closed system-marker finding emitted by `_emit_coverage_critic_failed_finding` passes `validate_finding`. Matches the architectural pattern already used by `signal-extractor` (PLN-725 Phase 1) and `coverage-verifier` (PLN-725 Phase 6 placeholder).
+- Fail-closed coverage-critic behavior: any structural extraction failure (unreadable agent output, every addition rejected) leaves the initial plan as the final plan (no critic additions merged) and emits a MEDIUM `Coverage` finding with `system_marker: "coverage-critic-failed"` to `agent_coverage-critic-failed.json` so the operator footer surfaces the skipped stage.
+- `critic_status` (`ok` / `fail_closed`) and `critic_errors` fields on the final `coverage_plan.json` so downstream consumers can distinguish a healthy run with zero critic additions from a fail-closed run.
+- `stats.critic_additions` counter on the final `coverage_plan.json` recording how many critic additions were merged.
+- 35 regression tests across 9 new classes pinning the `SOURCES` membership, the prompt-hash content-addressing, the 4-tuple cache-key invariants (each of the four components flips the key), the deterministic `_stable_json_hash`, the validator's accept/reject paths for every constraint (invented reviewer, reviewer already in plan, empty/missing evidence, duplicate within additions, hard cap, optional model_override, malformed top-level shape), the merger's append-to-best-effort behavior, the required-floor-unchanged invariant, the CLI prepare cache-miss + cache-hit + `--no-critic` paths, the consolidate happy / fail-closed / unreadable / partial-validity paths, and the prepare-run pipeline manifest's `stage_15_coverage_critic` alignment with the shipped CLI (subcommand name, argument set, and expected_outputs).
+
+#### Changed
+- The prepare-run pipeline manifest's `stage_15_coverage_critic` entry now invokes the actually-shipped `coverage-critic-prepare` subcommand with the full argument set (`--coverage-plan-initial`, `--diff-data`, `--available-reviewers`, `--extract-signals`, `--diff-tip`). The stage's `expected_outputs` declares only `coverage_critic_manifest.json`; the final `coverage_plan.json` will be declared on a sibling consolidate stage added in Phase 4.
+
 ### code-review v2.15.2
 
 #### Added
