@@ -6637,7 +6637,12 @@ def _parse_agent_name(text: str) -> str | None:
 def _scan_agent_definitions(agents_dir: Path) -> tuple[list[str], list[str]]:
     """Walk ``agents_dir`` and return ``(reviewers, warnings)``.
 
-    Reviewers is a sorted dedup'd list of names. Warnings is a list of
+    Reviewers is a dedup'd list of names, sorted by NAME (not filename)
+    so the output is stable independent of the file-naming scheme and
+    matches the cache-key sort applied by ``_available_reviewers_hash``.
+    The walk itself is filename-sorted for deterministic duplicate
+    handling — when two files declare the same name, the
+    lexicographically-first filename wins. Warnings is a list of
     per-file diagnostics — unreadable files, missing frontmatter,
     duplicate names — surfaced to stderr by the caller for operator
     visibility without aborting the load.
@@ -6662,6 +6667,11 @@ def _scan_agent_definitions(agents_dir: Path) -> tuple[list[str], list[str]]:
             continue
         seen.add(name)
         reviewers.append(name)
+    # Final sort is by NAME — independent of filename scheme. Walking
+    # in filename order above kept the duplicate-name "first wins"
+    # behaviour deterministic; sorting the output here makes the
+    # documented "sorted by name" contract true for any naming scheme.
+    reviewers.sort()
     return reviewers, warnings
 
 
@@ -7292,6 +7302,19 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         print(load_err or "Error reading available_reviewers", file=sys.stderr)
         return 1
 
+    # PLN-725 Phase 5 fix: stage_14a_load_available_reviewers now
+    # ALWAYS writes available_reviewers.json (even an empty list when
+    # .claude/agents/ is missing or empty), so the earlier
+    # `not available_path.exists()` no-roster fallback never fires for
+    # empty-roster projects. Short-circuit on the empty roster here so
+    # the documented "no-roster skipped" semantics still apply and we
+    # don't waste a Sonnet dispatch on a roster the validator could
+    # never accept additions from.
+    if not available_reviewers:
+        return _emit_skipped_coverage_plan(
+            plan_initial, output_path, manifest_path, model, reason="no-roster",
+        )
+
     # Subtract anything already in the initial plan so the critic
     # sees the actual unused pool. The validator also checks this, but
     # surfacing it in the input bundle prevents the LLM from even
@@ -7300,6 +7323,17 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     available_reviewers = [
         r for r in available_reviewers if r not in existing_in_plan
     ]
+
+    # Same skip semantics if every roster member is already in the
+    # initial plan — the critic has nothing it could propose without
+    # the validator rejecting it as duplicate. Different reason for
+    # operator telemetry (this is "fully subscribed", not "no agents
+    # configured").
+    if not available_reviewers:
+        return _emit_skipped_coverage_plan(
+            plan_initial, output_path, manifest_path, model,
+            reason="no-candidates",
+        )
 
     try:
         prompt_hash = _coverage_critic_prompt_hash(prompt_path)

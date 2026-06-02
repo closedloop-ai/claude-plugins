@@ -12480,6 +12480,92 @@ class TestCoverageCriticPrepareCLI:
         # No agent input bundle, no manifest from the cache-miss path.
         assert not (cr_dir / "coverage_critic_input.json").exists()
 
+    def test_empty_roster_file_short_circuits_to_skipped_no_roster(
+        self, tmp_path: Path,
+    ) -> None:
+        """PLN-725 Phase 5 regression: when stage_14a runs in a project
+        with no .claude/agents/, it writes an EMPTY-LIST
+        available_reviewers.json rather than not writing the file at all.
+        The previous Phase 4 ``not available_path.exists()`` fallback
+        would no longer fire, and the critic would dispatch with an
+        empty AVAILABLE roster the validator can never accept from.
+
+        v2.18.2: prepare also short-circuits on an empty roster list,
+        producing the same status="skipped" + reason="no-roster" outcome
+        as the missing-file path. Without this, every empty-roster
+        project would burn a Sonnet call per review.
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        # File exists, but the roster is empty (the Phase 5 stage_14a
+        # output for projects with no .claude/agents/).
+        inputs["paths"]["available"].write_text(json.dumps([]))
+        args = self._args(tmp_path, inputs)
+        assert cmd_coverage_critic_prepare(args) == 0
+
+        cr_dir = Path(args.cr_dir)
+        manifest = json.loads(
+            (cr_dir / "coverage_critic_manifest.json").read_text(),
+        )
+        # Same shape as the missing-file path — operator can't tell from
+        # the manifest whether the empty came from "no file" or "empty
+        # file", and shouldn't have to.
+        assert manifest["status"] == "skipped"
+        assert manifest["reason"] == "no-roster"
+        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        assert final["critic_status"] == "skipped"
+        # The dispatch path MUST NOT have started: no input bundle.
+        assert not (cr_dir / "coverage_critic_input.json").exists()
+
+    def test_fully_subscribed_plan_short_circuits_to_skipped_no_candidates(
+        self, tmp_path: Path,
+    ) -> None:
+        """Adjacent skip case: the roster file is present and non-empty,
+        but every reviewer is already in the initial plan
+        (required[] or best_effort[]). The validator could never
+        accept any addition, so the critic dispatch would be wasted.
+
+        Different ``reason`` than no-roster so operator telemetry can
+        distinguish "no agents configured" from "rules already cover
+        every configured agent".
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+
+        agents = ["accessibility-expert", "i18n-expert"]
+        # Stuff every available reviewer into the initial plan.
+        plan_initial = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {"reviewer": "accessibility-expert", "source": "coverage"},
+            ],
+            "best_effort": [
+                {"reviewer": "i18n-expert", "source": "coverage"},
+            ],
+            "warnings": [],
+            "stats": {"required_count": 2, "best_effort_count": 1},
+        }
+        inputs = _write_coverage_critic_inputs(
+            tmp_path,
+            signals={"signals": []},
+            available=agents,
+            plan_initial=plan_initial,
+        )
+        args = self._args(tmp_path, inputs)
+        assert cmd_coverage_critic_prepare(args) == 0
+
+        cr_dir = Path(args.cr_dir)
+        manifest = json.loads(
+            (cr_dir / "coverage_critic_manifest.json").read_text(),
+        )
+        assert manifest["status"] == "skipped"
+        assert manifest["reason"] == "no-candidates"
+        # consolidate's no-op fires on status "skipped" regardless of
+        # reason — distinct telemetry without behavioural divergence.
+        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        assert final["critic_status"] == "skipped"
+        assert not (cr_dir / "coverage_critic_input.json").exists()
+
     def test_malformed_roster_still_returns_one(self, tmp_path: Path) -> None:
         """Tolerance is FILE-NOT-FOUND-only. A present-but-malformed
         roster is an operator config error and must still surface as
@@ -13141,6 +13227,31 @@ class TestPLN725Phase5LoadAvailableReviewers:
         reviewers, warnings = _scan_agent_definitions(agents_dir)
         assert reviewers == ["a-reviewer", "m-reviewer", "z-reviewer"]
         assert warnings == []
+
+    def test_scan_sorts_by_name_not_filename(self, tmp_path: Path) -> None:
+        """Counterexample for v2.18.1: when filename order and name
+        order disagree, the output MUST be sorted by NAME — the file
+        contents are what consumers iterate against and what the cache
+        key hashes. Filename is just the on-disk convention.
+
+        The previous ``test_scan_returns_sorted_dedup_list`` used data
+        where filename order happened to coincide with name order, so
+        it could not distinguish filename-sort from name-sort. This
+        test seeds them in opposite order.
+        """
+        from code_review_helpers import _scan_agent_definitions
+        agents_dir = tmp_path / "agents"
+        # Filename order: a-agent.md, m-agent.md, z-agent.md
+        # Name order:     a-reviewer, m-reviewer, z-reviewer
+        # The mapping below produces filename order != name order.
+        self._seed_agent(agents_dir, "a-agent.md", "z-reviewer")
+        self._seed_agent(agents_dir, "m-agent.md", "m-reviewer")
+        self._seed_agent(agents_dir, "z-agent.md", "a-reviewer")
+        reviewers, _ = _scan_agent_definitions(agents_dir)
+        # If sorted by filename, output would be:
+        #   ["z-reviewer", "m-reviewer", "a-reviewer"]
+        # Sorted by name (the documented + cache-key-relevant contract):
+        assert reviewers == ["a-reviewer", "m-reviewer", "z-reviewer"]
 
     def test_scan_warns_and_skips_files_without_frontmatter(
         self, tmp_path: Path,

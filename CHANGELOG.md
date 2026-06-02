@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.18.2
+
+#### Fixed
+- `cmd_coverage_critic_prepare` now short-circuits to the "skipped" semantics when the loaded roster is empty, restoring the documented no-roster fallback that v2.18.0's Phase 5 change broke. Previously, `stage_14a_load_available_reviewers` always wrote `available_reviewers.json` (an empty `[]` when `.claude/agents/` was missing or empty), so the earlier `not available_path.exists()` no-roster guard never fired for empty-roster projects — prepare would proceed to dispatch the Sonnet critic against an empty AVAILABLE list the validator could never accept from. Two new short-circuits cover the two empty-roster paths: empty-after-load → `reason: "no-roster"`, and empty-after-dedup-against-existing-plan → `reason: "no-candidates"` (distinct telemetry so operators can tell "no agents configured" from "rules already cover every configured agent"). Both produce the same `status: "skipped"` outcome, so `cmd_coverage_critic_consolidate`'s existing skipped-status no-op fires unchanged.
+- `_scan_agent_definitions` now sorts the returned reviewer list by NAME, not by source filename. The walk itself stays filename-sorted for deterministic duplicate handling (lexicographically-first filename wins on a name collision), but the final output is name-sorted so the contract is independent of the on-disk file-naming scheme and matches the cache-key sort applied by `_available_reviewers_hash`. Without this, the docstring claim of "sorted dedup'd list of names" was inaccurate — a project where filenames and names disagreed (e.g. `a-reviewer.md` declaring `name: z-reviewer`) would produce filename-ordered output.
+
+#### Added
+- `test_scan_sorts_by_name_not_filename`: counterexample with mismatched filename/name ordering (`a-agent.md` → `z-reviewer`, `z-agent.md` → `a-reviewer`, etc.) that fails under filename-sort and passes only under name-sort. The previous `test_scan_returns_sorted_dedup_list` used data where the two orderings coincided, so it could not distinguish between them.
+- `test_empty_roster_file_short_circuits_to_skipped_no_roster`: end-to-end regression for the empty-list fallback (file present, contents `[]` from a Phase 5 stage_14a run in a project with no `.claude/agents/`) — must produce `status: "skipped"`, `reason: "no-roster"`, and MUST NOT write `coverage_critic_input.json` (no dispatch path started).
+- `test_fully_subscribed_plan_short_circuits_to_skipped_no_candidates`: end-to-end regression for the adjacent skip case where the roster is non-empty but every reviewer is already in the initial plan — must produce `reason: "no-candidates"`, same `status: "skipped"`.
+
 ### code-review v2.18.1
 
 #### Changed
@@ -26,6 +37,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `stage_15_coverage_critic.depends_on` adds `stage_14a_load_available_reviewers`. The data dependency on the roster is now explicit on the wire — a future walker reorder cannot let stage_15 run before the roster lands on disk.
 - `start.md` Per-Stage Note for `stage_14a_load_available_reviewers` documenting scan behaviour, empty-roster semantics, and the on_failure rationale.
 - Regression tests pinning the Phase 5 contract: frontmatter parsing (extracts name from valid frontmatter; returns None for missing/unclosed frontmatter, missing name, prose-only files; first-name-wins on multiple names); directory scan (sorted+dedup output; missing-dir warning; duplicate-name warning + first-wins; ignores non-`.md` files); CLI envelope (writes the flat-list shape `_load_available_reviewers` accepts, returns 0 with empty list on missing agents dir so stage_15 falls through to no-roster, summary stdout carries reviewer_count); and stage graph (subcommand name, expected_outputs, position between stage_14 and stage_15, stage_15 depends_on, enabled, on_failure).
+
+### code-review v2.17.2
 
 #### Changed
 - `cmd_coverage_critic_prepare` extracts a private `_emit_skipped_coverage_plan` helper shared by both the `--no-critic` operator-flag path and the missing-roster configuration path. The two branches were ~95% identical (same `merge_critic_additions` + `generated_at` stamp + `critic_status="skipped"` + manifest shape + stdout dump); the only caller-varying field was the manifest `reason`. Single edit site now for any future shape changes (e.g. adding an OSError guard to the manifest write).
