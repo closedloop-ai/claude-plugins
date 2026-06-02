@@ -12434,6 +12434,69 @@ class TestCoverageCriticPrepareCLI:
         # And no agent input bundle written.
         assert not (cr_dir / "coverage_critic_input.json").exists()
 
+    def test_missing_roster_file_skips_with_no_roster_reason(
+        self, tmp_path: Path,
+    ) -> None:
+        """PLN-725 Phase 4 dry-run tolerance: when available_reviewers.json
+        does not exist (Phase 5 hasn't shipped yet), prepare must fall
+        back to "skipped" semantics — write the initial plan as final
+        with critic_status="skipped" and a manifest with status="skipped"
+        + reason="no-roster". Mirrors --no-critic but reachable by
+        configuration rather than operator flag.
+
+        Concrete failure mode this guards against: PR #128 v2.17.0 first
+        deployment crashed stage_15 silently because the dry-run
+        pipeline had no producer for available_reviewers.json; prepare
+        crashed inside _load_available_reviewers (returning 1 on the
+        missing-file diagnostic), the walker's stdout redirect left a
+        zero-byte coverage_critic_manifest.json, and the rest of the
+        chain degraded with no operator signal.
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        # Remove the roster file the fixture seeded.
+        inputs["paths"]["available"].unlink()
+        args = self._args(tmp_path, inputs)
+        assert cmd_coverage_critic_prepare(args) == 0
+
+        cr_dir = Path(args.cr_dir)
+        # Manifest: skipped + no-roster reason.
+        manifest = json.loads(
+            (cr_dir / "coverage_critic_manifest.json").read_text(),
+        )
+        assert manifest["status"] == "skipped"
+        assert manifest["reason"] == "no-roster"
+        # Final plan: initial plan + critic_status="skipped" — same
+        # shape as --no-critic so downstream consumers (Phase 6/7)
+        # don't need to special-case the "no roster" path.
+        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        assert final["critic_status"] == "skipped"
+        assert final["critic_errors"] == []
+        assert final["stats"]["critic_additions"] == 0
+        # No agent input bundle, no manifest from the cache-miss path.
+        assert not (cr_dir / "coverage_critic_input.json").exists()
+
+    def test_malformed_roster_still_returns_one(self, tmp_path: Path) -> None:
+        """Tolerance is FILE-NOT-FOUND-only. A present-but-malformed
+        roster is an operator config error and must still surface as
+        exit-1 + diagnostic so the operator notices and fixes the file
+        rather than silently shipping a skipped review.
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        # File present but JSON-invalid.
+        inputs["paths"]["available"].write_text("{ not valid json")
+        args = self._args(tmp_path, inputs)
+        assert cmd_coverage_critic_prepare(args) == 1
+        # And the "skipped" / "no-roster" path did NOT fire.
+        cr_dir = Path(args.cr_dir)
+        manifest_path = cr_dir / "coverage_critic_manifest.json"
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text())
+            assert manifest.get("reason") != "no-roster"
+
     def test_cache_hit_serves_directly(self, tmp_path: Path) -> None:
         from code_review_helpers import (
             CACHE_NAMESPACE_COVERAGE_CRITIC,

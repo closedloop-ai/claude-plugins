@@ -254,6 +254,8 @@ If `normalization_warnings > 0` in `findings_validated.json`, append this line d
 
 **Recommendation:** [action based on findings]
 
+**Output directory:** `<CR_DIR>` (substitute the CR_DIR resolved in stage 0 — typically `.closedloop-ai/code-review/cr-<NNNNN>`). Append this line verbatim after the Recommendation so the operator can locate the run's artifacts (`review_result.json`, agent outputs, manifests, patches, WIP files from in-progress pipeline phases) without scanning the filesystem. Always include this line — there is no "no artifacts" case at stage_29.
+
 **Consolidated Finding Format** (when multiple findings share root cause):
 
 ```markdown

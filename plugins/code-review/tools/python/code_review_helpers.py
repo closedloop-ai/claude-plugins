@@ -7091,6 +7091,37 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         sys.stdout.write("\n")
         return 0
 
+    # PLN-725 Phase 4 dry-run tolerance: the roster is produced by a
+    # not-yet-shipped Phase 5 stage (Agent-Definition Loading). When the
+    # file does not exist, fall back to "skipped" semantics — write the
+    # initial plan as final with critic_status="skipped" and reason
+    # "no-roster". Mirrors --no-critic, but reachable by configuration
+    # rather than operator flag so Phase 4 surveys the pipeline without
+    # Phase 5 wired. A present-but-malformed file still returns 1 —
+    # that's an operator config error worth surfacing loudly.
+    if not available_path.exists():
+        final = merge_critic_additions(plan_initial, [])
+        final["generated_at"] = datetime.now(timezone.utc).isoformat()
+        final["critic_status"] = "skipped"
+        final["critic_errors"] = []
+        try:
+            with open(output_path, "w") as f:
+                json.dump(final, f, indent=2)
+        except OSError as exc:
+            print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
+            return 1
+        manifest = {
+            "status": "skipped",
+            "reason": "no-roster",
+            "output_path": str(output_path),
+            "model": model,
+        }
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+        json.dump(manifest, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
     extract_signals: dict[str, Any] | None = None
     if signals_path is not None and signals_path.exists():
         try:

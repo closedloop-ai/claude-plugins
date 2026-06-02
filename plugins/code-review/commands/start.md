@@ -784,7 +784,14 @@ Spawn one foreground `Task`:
    Do not write anywhere else. Do not read source files in the
    repository unless the system prompt explicitly says so.
    ```
-   Substitute the resolved paths from the manifest. `{STAGE_LABEL}` is `"signal-extraction"` for stage_11 and `"coverage-critic"` for stage_15.
+   Placeholder substitution map (do NOT substitute every placeholder from the manifest — `output_path` in the manifest is the consolidate target, not the agent target):
+
+   | Placeholder | Source |
+   |---|---|
+   | `{PROMPT_PATH}` | `manifest.prompt_path` |
+   | `{INPUT_PATH}` | `manifest.input_path` |
+   | `{OUTPUT_PATH}` | The by-convention agent write target from the table above — `<CR_DIR>/agent_extract_signals.json` (stage_11) or `<CR_DIR>/agent_coverage_critic.json` (stage_15). **NOT** `manifest.output_path`. |
+   | `{STAGE_LABEL}` | `"signal-extraction"` for stage_11, `"coverage-critic"` for stage_15. |
 4. Block on the Task before advancing the walker to the sibling consolidate stage — `TaskOutput` with block-true.
 
 ### Failure semantics
