@@ -6760,21 +6760,24 @@ class TestPrepareRun:
             pr_number=pr_number,
         )
 
-    def test_emits_thirty_four_stages(self, tmp_path: Path) -> None:
+    def test_emits_thirty_five_stages(self, tmp_path: Path) -> None:
         """Stage count history:
           - Base pipeline: 30
           - PLN-722 v2.8.0 added stage_22b_verify_prepare and
             stage_24a_verify_consolidate → 32
           - PLN-725 Phase 4 (v2.17.0) added stage_11b_extract_signals_consolidate
             and stage_15b_coverage_critic_consolidate → 34
+          - PLN-725 Phase 5 (v2.18.0) added
+            stage_14a_load_available_reviewers → 35
 
         The ``_<NN>_`` prefix is a stable label, not a strict ordinal;
-        the lettered suffixes (``_11b_``, ``_15b_``, ``_22b_``,
-        ``_24a_``) mark stages inserted between original ordinals.
+        the lettered suffixes (``_11b_``, ``_14a_``, ``_15b_``,
+        ``_22b_``, ``_24a_``) mark stages inserted between original
+        ordinals.
         """
         summary, plan = self._run(tmp_path)
-        assert summary["stage_count"] == 34
-        assert len(plan["stages"]) == 34
+        assert summary["stage_count"] == 35
+        assert len(plan["stages"]) == 35
         ids = [s["id"] for s in plan["stages"]]
         assert ids[0] == "stage_01_setup"
         assert ids[-1] == "stage_30_footer"
@@ -12931,6 +12934,239 @@ class TestPLN725Phase4StageGraph:
 
     def test_stage_16_stays_disabled_in_phase_4(self) -> None:
         assert self._stage("stage_16_arbitrate_budget")["enabled"] is False
+
+
+class TestPLN725Phase5LoadAvailableReviewers:
+    """Phase 5 produces the AVAILABLE roster the coverage-critic enforces
+    against. This pins the helper (frontmatter parsing, scan dedup,
+    warning surfacing) and the CLI envelope (writes a flat list, exit
+    code semantics, summary stdout shape) so a future refactor cannot
+    silently break the contract stage_15 reads.
+    """
+
+    # --- frontmatter parser -----------------------------------------------
+
+    def test_parse_agent_name_extracts_name_from_frontmatter(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        text = "---\nname: bug-hunter-a\nmodel: opus\n---\n\nBody."
+        assert _parse_agent_name(text) == "bug-hunter-a"
+
+    def test_parse_agent_name_returns_none_without_frontmatter(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        assert _parse_agent_name("# No frontmatter here\n") is None
+
+    def test_parse_agent_name_returns_none_when_name_missing(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        text = "---\nmodel: opus\ndescription: nope\n---\n"
+        assert _parse_agent_name(text) is None
+
+    def test_parse_agent_name_returns_none_for_unclosed_frontmatter(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        # Only one boundary: the parser must NOT treat the entire file
+        # body as frontmatter and accidentally match a `name:` line in
+        # prose that happens to start with "name:".
+        text = "---\nname: real-name\n\nbody name: fake\n"
+        assert _parse_agent_name(text) is None
+
+    def test_parse_agent_name_returns_first_name_only(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        # YAML wouldn't actually allow this, but the regex is tolerant
+        # by design — first match wins, no second-name promotion.
+        text = "---\nname: first\nalias: second\n---\n"
+        assert _parse_agent_name(text) == "first"
+
+    # --- directory scan ---------------------------------------------------
+
+    def _seed_agent(
+        self, agents_dir: Path, filename: str, name: str | None,
+    ) -> Path:
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        path = agents_dir / filename
+        if name is None:
+            path.write_text("# no frontmatter\nbody\n")
+        else:
+            path.write_text(f"---\nname: {name}\nmodel: opus\n---\nbody\n")
+        return path
+
+    def test_scan_returns_sorted_dedup_list(self, tmp_path: Path) -> None:
+        from code_review_helpers import _scan_agent_definitions
+        agents_dir = tmp_path / "agents"
+        # Intentionally out-of-order filenames; the scan should sort the
+        # output deterministically so the cache key (which hashes the
+        # roster) is stable across filesystem traversal order.
+        self._seed_agent(agents_dir, "z-agent.md", "z-reviewer")
+        self._seed_agent(agents_dir, "a-agent.md", "a-reviewer")
+        self._seed_agent(agents_dir, "m-agent.md", "m-reviewer")
+        reviewers, warnings = _scan_agent_definitions(agents_dir)
+        assert reviewers == ["a-reviewer", "m-reviewer", "z-reviewer"]
+        assert warnings == []
+
+    def test_scan_warns_and_skips_files_without_frontmatter(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _scan_agent_definitions
+        agents_dir = tmp_path / "agents"
+        self._seed_agent(agents_dir, "good.md", "good-reviewer")
+        self._seed_agent(agents_dir, "bad.md", None)
+        reviewers, warnings = _scan_agent_definitions(agents_dir)
+        assert reviewers == ["good-reviewer"]
+        assert len(warnings) == 1
+        assert "bad.md" in warnings[0]
+
+    def test_scan_warns_on_duplicate_names(self, tmp_path: Path) -> None:
+        from code_review_helpers import _scan_agent_definitions
+        agents_dir = tmp_path / "agents"
+        self._seed_agent(agents_dir, "a.md", "same-name")
+        self._seed_agent(agents_dir, "b.md", "same-name")
+        reviewers, warnings = _scan_agent_definitions(agents_dir)
+        # First wins, second skipped with warning. Deterministic order
+        # (sorted filenames) means "a.md" claims the name.
+        assert reviewers == ["same-name"]
+        assert any("b.md" in w and "duplicate" in w for w in warnings)
+
+    def test_scan_returns_empty_list_for_missing_dir(self, tmp_path: Path) -> None:
+        from code_review_helpers import _scan_agent_definitions
+        reviewers, warnings = _scan_agent_definitions(tmp_path / "nope")
+        assert reviewers == []
+        # Surfaces the missing dir as a warning rather than silently
+        # producing an empty list — operator can tell the difference
+        # between "no .claude/agents/" and "empty .claude/agents/".
+        assert any("not found" in w for w in warnings)
+
+    def test_scan_ignores_non_md_files(self, tmp_path: Path) -> None:
+        from code_review_helpers import _scan_agent_definitions
+        agents_dir = tmp_path / "agents"
+        self._seed_agent(agents_dir, "good.md", "good-reviewer")
+        (agents_dir / "README.txt").write_text("not an agent")
+        (agents_dir / "settings.json").write_text("{}")
+        reviewers, _ = _scan_agent_definitions(agents_dir)
+        assert reviewers == ["good-reviewer"]
+
+    # --- CLI envelope -----------------------------------------------------
+
+    def test_cli_writes_flat_list_compatible_with_load_helper(
+        self, tmp_path: Path,
+    ) -> None:
+        import argparse
+        from code_review_helpers import (
+            _load_available_reviewers,
+            cmd_load_available_reviewers,
+        )
+        agents_dir = tmp_path / "agents"
+        self._seed_agent(agents_dir, "a.md", "first-reviewer")
+        self._seed_agent(agents_dir, "b.md", "second-reviewer")
+        cr_dir = tmp_path / "cr"
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            agents_dir=str(agents_dir),
+        )
+        assert cmd_load_available_reviewers(args) == 0
+        output = cr_dir / "available_reviewers.json"
+        assert output.exists()
+        # The file shape MUST be a flat list — that's the contract
+        # _load_available_reviewers (used by coverage-critic prepare
+        # and consolidate) reads. Round-trip through the helper to
+        # lock the writer/reader contract.
+        roster, err = _load_available_reviewers(output)
+        assert err is None
+        assert roster == ["first-reviewer", "second-reviewer"]
+
+    def test_cli_returns_zero_with_empty_list_on_missing_agents_dir(
+        self, tmp_path: Path,
+    ) -> None:
+        # An empty roster is a valid outcome (e.g. project has no
+        # .claude/agents/) — the cmd MUST NOT return non-zero, because
+        # the run plan stage has on_failure="continue_with_coverage_gap"
+        # and we want stage_15 to fall through to its no-roster
+        # skipped fallback rather than emit a coverage-gap finding for
+        # the absent roster.
+        import argparse
+        from code_review_helpers import cmd_load_available_reviewers
+        cr_dir = tmp_path / "cr"
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            agents_dir=str(tmp_path / "nope"),
+        )
+        assert cmd_load_available_reviewers(args) == 0
+        roster = json.loads(
+            (cr_dir / "available_reviewers.json").read_text(),
+        )
+        assert roster == []
+
+    def test_cli_summary_stdout_carries_reviewer_count(
+        self, tmp_path: Path, capsys: Any,
+    ) -> None:
+        import argparse
+        from code_review_helpers import cmd_load_available_reviewers
+        agents_dir = tmp_path / "agents"
+        self._seed_agent(agents_dir, "a.md", "one")
+        self._seed_agent(agents_dir, "b.md", "two")
+        args = argparse.Namespace(
+            cr_dir=str(tmp_path / "cr"),
+            agents_dir=str(agents_dir),
+        )
+        cmd_load_available_reviewers(args)
+        captured = capsys.readouterr()
+        summary = json.loads(captured.out)
+        assert summary["status"] == "ok"
+        assert summary["reviewer_count"] == 2
+        assert summary["agents_dir"] == str(agents_dir)
+
+
+class TestPLN725Phase5StageGraph:
+    """Phase 5 inserts stage_14a_load_available_reviewers between
+    stage_14 and stage_15. This pins the stage's shape, position, and
+    the depends_on rewire so stage_15 reads the roster after the
+    loader produces it.
+    """
+
+    def _stages(self) -> list[dict[str, Any]]:
+        from code_review_helpers import _build_run_plan_stages
+        return _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+
+    def _stage(self, stage_id: str) -> dict[str, Any]:
+        for s in self._stages():
+            if s["id"] == stage_id:
+                return s
+        raise AssertionError(f"{stage_id!r} missing from prepare-run manifest")
+
+    def test_stage_14a_exists_with_loader_subcommand(self) -> None:
+        stage = self._stage("stage_14a_load_available_reviewers")
+        assert stage["subcommand"] == "load-available-reviewers"
+        assert stage["kind"] == "helper"
+
+    def test_stage_14a_expected_outputs_is_available_reviewers_json(self) -> None:
+        stage = self._stage("stage_14a_load_available_reviewers")
+        assert any(
+            p.endswith("/available_reviewers.json")
+            for p in stage["expected_outputs"]
+        )
+
+    def test_stage_14a_runs_between_stage_14_and_stage_15(self) -> None:
+        ids = [s["id"] for s in self._stages()]
+        assert "stage_14a_load_available_reviewers" in ids
+        s14 = ids.index("stage_14_resolve_coverage")
+        s14a = ids.index("stage_14a_load_available_reviewers")
+        s15 = ids.index("stage_15_coverage_critic")
+        assert s14 < s14a < s15
+
+    def test_stage_15_depends_on_stage_14a(self) -> None:
+        # stage_15 reads available_reviewers.json. Without the
+        # explicit depends_on edge, a walker reorder could let
+        # stage_15 run before the roster lands on disk.
+        stage = self._stage("stage_15_coverage_critic")
+        assert "stage_14a_load_available_reviewers" in stage["depends_on"]
+
+    def test_stage_14a_enabled(self) -> None:
+        assert self._stage("stage_14a_load_available_reviewers")["enabled"] is True
+
+    def test_stage_14a_on_failure_is_continue_with_coverage_gap(self) -> None:
+        # An empty roster is a valid outcome, but a write failure on
+        # available_reviewers.json should not abort the pipeline —
+        # the critic falls back to its no-roster skipped semantics
+        # and the rest of the review still ships.
+        stage = self._stage("stage_14a_load_available_reviewers")
+        assert stage["on_failure"] == "continue_with_coverage_gap"
 
 
 class TestExtractSignalsConsolidateCacheHitNoOp:
