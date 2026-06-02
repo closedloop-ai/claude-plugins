@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.20.2
+
+#### Changed
+- Extracted module-level `_run_arbitrate_budget` helper in the test suite. `TestArbitrateBudget._run` and `TestPLN725Phase7ArbitrateBudgetGate._run` previously held nearly identical seed-files + invoke + read-outputs logic — the Phase 7 version just added optional `verify_doc` / `include_verify_flag` parameters. Both class-level methods now delegate to the shared helper, so a future `cmd_arbitrate_budget` Namespace surface change (a new `--foo` arg, schema-version bump, output-path rewire, etc.) edits one site instead of two. No behavior change for existing tests; call sites unchanged because the class methods preserve their signatures.
+- Inline comment on `test_pln725_chain_enabled_through_stage_15b` no longer claims "Stage 16 stays disabled". Phase 7 (v2.20.0) enabled it; the comment now points at `test_stage_15c_enabled` and `test_stage_16_enablement_history` as the canonical enablement assertions.
+- `start.md` per-stage note for `stage_15c_verify_coverage` rewritten to match v2.20.1 semantics. Documents BLOCKING-on-missing-inputs (was PASS-with-advisory), present-but-malformed roster BLOCKs with the new `roster` check (distinct from absent), the new bucket-aware `additive` check (`initial.required ⊆ final.required` enforced separately), the deeper `shape` check (per-entry dict + non-empty `reviewer` field; failures short-circuit other checks), and the canonical `coverage-verifier` source for the BLOCKING finding.
+
 ### code-review v2.20.1
 
 #### Fixed

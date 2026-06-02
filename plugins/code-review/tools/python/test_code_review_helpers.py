@@ -6544,6 +6544,85 @@ class TestVerdictReadsEnvelope:
 # Budget arbitration (PLN-719 Phase 3)
 # ---------------------------------------------------------------------------
 
+def _run_arbitrate_budget(
+    tmp_path: Path,
+    coverage_plan_in: dict[str, Any],
+    diff_data: dict[str, Any],
+    *,
+    cap: int = 20,
+    verify_doc: dict[str, Any] | None = None,
+    include_verify_flag: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Shared module-level driver for ``cmd_arbitrate_budget`` tests.
+
+    Earlier this lived as two near-identical ``_run`` methods on
+    ``TestArbitrateBudget`` and ``TestPLN725Phase7ArbitrateBudgetGate``;
+    the Phase 7 version just added optional ``verify_doc`` /
+    ``include_verify_flag`` parameters. Extracted here so the seed +
+    invoke + read pattern lives in one place — both test classes'
+    ``_run`` methods now delegate to this helper, so a future
+    Namespace/CLI surface change (a new --foo flag, schema-version bump,
+    etc.) edits one site, not two.
+
+    Args:
+        tmp_path: pytest tmp_path
+        coverage_plan_in: initial coverage_plan_initial.json contents
+        diff_data: diff_data.json contents
+        cap: --cap arg to arbitrate-budget
+        verify_doc: optional coverage_verify.json contents. None means
+            "do not write the file at all" — exercising the
+            missing-verify-file degradation path. Pre-Phase-7 callers
+            don't supply this so the absence is faithful to their
+            historical Namespace shape.
+        include_verify_flag: when False, even if verify_doc is written
+            the --coverage-verify argparse flag is omitted — simulates
+            an old-style call from before Phase 7 wired the flag in.
+
+    Returns:
+        ``(summary, final_plan, gaps)``: parsed stdout summary,
+        coverage_plan.json, coverage_gaps.json
+    """
+    import io
+    import sys as _sys
+
+    from code_review_helpers import cmd_arbitrate_budget
+
+    cp_path = tmp_path / "coverage_plan_initial.json"
+    cp_path.write_text(json.dumps(coverage_plan_in))
+    dd_path = tmp_path / "diff_data.json"
+    dd_path.write_text(json.dumps(diff_data))
+
+    verify_path: Path | None = None
+    if verify_doc is not None:
+        verify_path = tmp_path / "coverage_verify.json"
+        verify_path.write_text(json.dumps(verify_doc))
+
+    coverage_verify_arg = (
+        str(verify_path) if (include_verify_flag and verify_path)
+        else None
+    )
+
+    old_stdout = _sys.stdout
+    _sys.stdout = io.StringIO()
+    try:
+        ns = argparse.Namespace(
+            coverage_plan=str(cp_path),
+            diff_data=str(dd_path),
+            cap=cap,
+            output=None,
+            coverage_verify=coverage_verify_arg,
+        )
+        cmd_arbitrate_budget(ns)
+        _sys.stdout.seek(0)
+        summary = json.load(_sys.stdout)
+    finally:
+        _sys.stdout = old_stdout
+
+    final_plan = json.loads((tmp_path / "coverage_plan.json").read_text())
+    gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())
+    return summary, final_plan, gaps
+
+
 class TestArbitrateBudget:
     """Tests for cmd_arbitrate_budget (PLN-719 Section 5)."""
 
@@ -6555,35 +6634,10 @@ class TestArbitrateBudget:
         *,
         cap: int = 20,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-        import argparse
-        import io
-        import sys as _sys
-
-        from code_review_helpers import cmd_arbitrate_budget
-
-        cp_path = tmp_path / "coverage_plan_initial.json"
-        cp_path.write_text(json.dumps(coverage_plan_in))
-        dd_path = tmp_path / "diff_data.json"
-        dd_path.write_text(json.dumps(diff_data))
-
-        old_stdout = _sys.stdout
-        _sys.stdout = io.StringIO()
-        try:
-            ns = argparse.Namespace(
-                coverage_plan=str(cp_path),
-                diff_data=str(dd_path),
-                cap=cap,
-                output=None,
-            )
-            cmd_arbitrate_budget(ns)
-            _sys.stdout.seek(0)
-            summary = json.load(_sys.stdout)
-        finally:
-            _sys.stdout = old_stdout
-
-        final_plan = json.loads((tmp_path / "coverage_plan.json").read_text())
-        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())
-        return summary, final_plan, gaps
+        # Pre-Phase-7 shape — no verify_doc, no include_verify_flag.
+        # Delegates to the shared module-level helper so the seed+
+        # invoke+read mechanics live in one place.
+        return _run_arbitrate_budget(tmp_path, coverage_plan_in, diff_data, cap=cap)
 
     def test_simple_fits_under_cap(self, tmp_path: Path) -> None:
         diff = _make_diff_data(files=["src/app.ts"])
@@ -13045,9 +13099,14 @@ class TestPLN725Phase4StageGraph:
     # --- enablement --------------------------------------------------------
 
     def test_pln725_chain_enabled_through_stage_15b(self) -> None:
-        # The whole prepare-and-consolidate chain runs in Phase 4 even
-        # though nothing downstream yet consumes coverage_plan.json
-        # (Phase 6/7 wire that). Stage 16 stays disabled.
+        # The whole prepare-and-consolidate chain has been on since
+        # Phase 4. Phase 6 (v2.19.0) added stage_15c (the verifier) and
+        # Phase 7 (v2.20.0) enabled stage_16_arbitrate_budget with the
+        # BLOCKING gate, so Phase 4's "nothing downstream consumes
+        # coverage_plan.json" framing no longer applies on main. This
+        # test still pins the prepare/consolidate chain enablement —
+        # the canonical stage_15c / stage_16 enablement assertions live
+        # in test_stage_15c_enabled and test_stage_16_enablement_history.
         for sid in (
             "stage_11_extract_signals",
             "stage_11b_extract_signals_consolidate",
@@ -14604,45 +14663,14 @@ class TestPLN725Phase7ArbitrateBudgetGate:
         cap: int = 20,
         include_verify_flag: bool = True,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-        import io
-        import sys as _sys
-
-        from code_review_helpers import cmd_arbitrate_budget
-
-        cp_path = tmp_path / "coverage_plan_initial.json"
-        cp_path.write_text(json.dumps(coverage_plan_in))
-        dd_path = tmp_path / "diff_data.json"
-        dd_path.write_text(json.dumps(diff_data))
-
-        verify_path: Path | None = None
-        if verify_doc is not None:
-            verify_path = tmp_path / "coverage_verify.json"
-            verify_path.write_text(json.dumps(verify_doc))
-
-        coverage_verify_arg = (
-            str(verify_path) if (include_verify_flag and verify_path)
-            else None
+        # Phase 7 shape passes verify_doc + include_verify_flag through
+        # to the shared driver — same one TestArbitrateBudget uses, just
+        # exercising the post-Phase-7 Namespace surface.
+        return _run_arbitrate_budget(
+            tmp_path, coverage_plan_in, diff_data,
+            cap=cap, verify_doc=verify_doc,
+            include_verify_flag=include_verify_flag,
         )
-
-        old_stdout = _sys.stdout
-        _sys.stdout = io.StringIO()
-        try:
-            ns = argparse.Namespace(
-                coverage_plan=str(cp_path),
-                diff_data=str(dd_path),
-                cap=cap,
-                output=None,
-                coverage_verify=coverage_verify_arg,
-            )
-            cmd_arbitrate_budget(ns)
-            _sys.stdout.seek(0)
-            summary = json.load(_sys.stdout)
-        finally:
-            _sys.stdout = old_stdout
-
-        final_plan = json.loads((tmp_path / "coverage_plan.json").read_text())
-        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())
-        return summary, final_plan, gaps
 
     @staticmethod
     def _plan() -> dict[str, Any]:
