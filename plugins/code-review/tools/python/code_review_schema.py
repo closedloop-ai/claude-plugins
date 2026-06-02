@@ -94,6 +94,69 @@ SOURCES: frozenset[str] = frozenset({
     "signal-extractor",
 })
 
+
+# ---------------------------------------------------------------------------
+# PLN-725 Phase 2 — Coverage manifest schema
+# ---------------------------------------------------------------------------
+# These constants describe the new ``coverage[]`` array in
+# ``critic-gates.json``. They are distinct from ``REVIEWER_TRIGGERS`` above
+# (which labels findings) — these label rule definitions.
+
+# Trigger types a rule may use to select a reviewer.
+COVERAGE_TRIGGER_TYPES: frozenset[str] = frozenset({
+    "always",
+    "extension",
+    "path_pattern",
+    "content_signal",
+    "change_class",
+    "signal",
+})
+
+# Triggers a ``required: true`` rule may depend on. LLM signals cannot
+# solely drive required selection — the determinism floor lives here.
+COVERAGE_DETERMINISTIC_TRIGGERS: frozenset[str] = frozenset({
+    "always",
+    "extension",
+    "path_pattern",
+    "content_signal",
+    "change_class",
+})
+
+COVERAGE_LLM_TRIGGERS: frozenset[str] = frozenset({
+    "signal",
+})
+
+# Where a rule applies. ``code-review`` rules drive the reviewer pool for
+# /code-review runs; ``plan-review`` for /plan critic gates; ``both`` for
+# rules that apply equally.
+COVERAGE_SCOPES: frozenset[str] = frozenset({
+    "code-review",
+    "plan-review",
+    "both",
+})
+
+# Always-add core required reviewers (PLN-725 §"Coverage Resolution").
+# These are added to every Coverage Plan regardless of rules firing.
+# ``test_quality`` is the reviewer slot reserved for PLN-723 (currently
+# best-effort in practice; will become a first-class reviewer in PLN-723).
+COVERAGE_CORE_REQUIRED: tuple[str, ...] = (
+    "bug_hunter_a",
+    "bug_hunter_b",
+    "unified_auditor",
+    "premise_reviewer",
+    "test_quality",
+)
+
+# Canonical change_class values. Extensible — adding one requires
+# updating ``CHANGE_CLASS_PATH_PATTERNS`` in code_review_helpers.py and
+# the documenting comment here.
+COVERAGE_CHANGE_CLASSES: frozenset[str] = frozenset({
+    "schema_change",
+    "infrastructure_change",
+    "build_config_change",
+    "dependency_change",
+})
+
 VERDICTS: frozenset[str] = frozenset({
     "APPROVED",
     "NEEDS_ATTENTION",
