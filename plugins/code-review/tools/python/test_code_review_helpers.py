@@ -11837,3 +11837,879 @@ class TestPR124MigrationIdempotent:
             r for r in final if r.get("reviewer") == "security-privacy"
         ]
         assert len(migrated_matches) == 1
+
+
+# ---------------------------------------------------------------------------
+# PLN-725 Phase 3 — Coverage critic (LLM stage)
+# ---------------------------------------------------------------------------
+
+
+class TestCoverageCriticSourceAllowlist:
+    """The fail-closed finding source must survive validation."""
+
+    def test_sources_allowlist_contains_coverage_critic(self) -> None:
+        from code_review_schema import SOURCES
+        assert "coverage-critic" in SOURCES
+
+
+class TestCoverageCriticSystemMarkerRegistration:
+    """The fail-closed finding's system_marker must pass validate_finding.
+
+    Mirrors signal-extraction-failed: registered in SYSTEM_MARKERS_FIXED and
+    mapped to "system" scope. Without this, validate_finding drops every
+    coverage-critic-failed finding and the operator-visible degradation
+    signal is silently lost downstream.
+    """
+
+    def test_fixed_set_contains_coverage_critic_failed(self) -> None:
+        from code_review_schema import SYSTEM_MARKERS_FIXED
+        assert "coverage-critic-failed" in SYSTEM_MARKERS_FIXED
+
+    def test_scope_is_system(self) -> None:
+        from code_review_schema import system_marker_scope
+        assert system_marker_scope("coverage-critic-failed") == "system"
+
+    def test_is_valid_system_marker_true(self) -> None:
+        from code_review_schema import is_valid_system_marker
+        assert is_valid_system_marker("coverage-critic-failed") is True
+
+    def test_emitted_finding_passes_validation_after_collect_pipeline(
+        self, tmp_path: Path,
+    ) -> None:
+        """End-to-end: the emitter writes a finding that — after the same
+        normalize + priority-fill steps cmd_collect_findings applies on
+        every agent_*.json — passes validate_finding cleanly. Locks the
+        writer/reader contract for the operator-visible degradation signal,
+        which the bug being fixed (unregistered system_marker) would
+        otherwise silently drop.
+        """
+        from code_review_helpers import (
+            _emit_coverage_critic_failed_finding,
+            _normalize_findings,
+        )
+        from code_review_schema import normalize_legacy_finding, validate_finding
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        now_iso = "2026-06-02T00:00:00+00:00"
+        _emit_coverage_critic_failed_finding(
+            cr_dir, ["err one", "err two"], now_iso,
+        )
+        path = cr_dir / "agent_coverage-critic-failed.json"
+        assert path.exists()
+        payload = json.loads(path.read_text())
+        findings = payload.get("findings", [])
+        assert findings, "emitter must write at least one finding"
+
+        normalized, _, _ = _normalize_findings(findings, discarded=[])
+        for idx, f in enumerate(normalized):
+            promoted = normalize_legacy_finding(
+                f,
+                reviewer="coverage-critic",
+                source="coverage-critic",
+                index=idx,
+                emitted_at=now_iso,
+            )
+            errs = validate_finding(promoted)
+            assert not errs, (
+                f"validate_finding rejected the emitted finding: {errs}"
+            )
+
+
+class TestCoverageCriticPromptHash:
+    """Content-addressed prompt hash so prompt edits bust the cache key."""
+
+    def test_helper_changes_when_prompt_changes(self, tmp_path: Path) -> None:
+        from code_review_helpers import _coverage_critic_prompt_hash
+        a = tmp_path / "a.txt"
+        b = tmp_path / "b.txt"
+        a.write_text("be adversarial\n")
+        b.write_text("be tolerant\n")
+        assert _coverage_critic_prompt_hash(a) != _coverage_critic_prompt_hash(b)
+
+
+class TestCoverageCriticCacheKey:
+    """Cache key tuple invariants: ``(plan_initial_hash, signals_hash,
+    diff_tip, prompt_hash, available_reviewers_hash)``.
+
+    Every dimension must flip the key — otherwise a stale cache entry
+    could be served when one of these inputs changes between runs. The
+    ``available_reviewers_hash`` dimension is the determinism floor for
+    the closed-vocabulary contract: if the roster shrinks, the prior
+    cached plan could propose a now-removed reviewer.
+    """
+
+    def test_same_inputs_same_key(self) -> None:
+        from code_review_helpers import coverage_critic_cache_key
+        assert (
+            coverage_critic_cache_key("p", "s", "t", "h", "a")
+            == coverage_critic_cache_key("p", "s", "t", "h", "a")
+        )
+
+    def test_plan_initial_hash_flip_changes_key(self) -> None:
+        from code_review_helpers import coverage_critic_cache_key
+        assert (
+            coverage_critic_cache_key("p1", "s", "t", "h", "a")
+            != coverage_critic_cache_key("p2", "s", "t", "h", "a")
+        )
+
+    def test_signals_hash_flip_changes_key(self) -> None:
+        from code_review_helpers import coverage_critic_cache_key
+        assert (
+            coverage_critic_cache_key("p", "s1", "t", "h", "a")
+            != coverage_critic_cache_key("p", "s2", "t", "h", "a")
+        )
+
+    def test_diff_tip_flip_changes_key(self) -> None:
+        from code_review_helpers import coverage_critic_cache_key
+        assert (
+            coverage_critic_cache_key("p", "s", "t1", "h", "a")
+            != coverage_critic_cache_key("p", "s", "t2", "h", "a")
+        )
+
+    def test_prompt_hash_flip_changes_key(self) -> None:
+        from code_review_helpers import coverage_critic_cache_key
+        assert (
+            coverage_critic_cache_key("p", "s", "t", "h1", "a")
+            != coverage_critic_cache_key("p", "s", "t", "h2", "a")
+        )
+
+    def test_available_reviewers_hash_flip_changes_key(self) -> None:
+        from code_review_helpers import coverage_critic_cache_key
+        assert (
+            coverage_critic_cache_key("p", "s", "t", "h", "a1")
+            != coverage_critic_cache_key("p", "s", "t", "h", "a2")
+        )
+
+
+class TestAvailableReviewersHash:
+    """The roster hash must be deterministic over ordering and dedup."""
+
+    def test_ordering_does_not_change_hash(self) -> None:
+        from code_review_helpers import _available_reviewers_hash
+        assert (
+            _available_reviewers_hash(["a", "b", "c"])
+            == _available_reviewers_hash(["c", "a", "b"])
+        )
+
+    def test_duplicates_do_not_change_hash(self) -> None:
+        from code_review_helpers import _available_reviewers_hash
+        assert (
+            _available_reviewers_hash(["a", "b"])
+            == _available_reviewers_hash(["a", "b", "a"])
+        )
+
+    def test_roster_shrink_flips_hash(self) -> None:
+        from code_review_helpers import _available_reviewers_hash
+        # Concrete failure mode the PR comment described: same diff, same
+        # plan, same signals, same prompt, but the roster shrank between
+        # runs because a reviewer was retired. The cache key MUST change
+        # so consolidate re-runs and re-checks the new roster.
+        assert (
+            _available_reviewers_hash(["a", "b", "c"])
+            != _available_reviewers_hash(["a", "b"])
+        )
+
+    def test_non_string_entries_filtered(self) -> None:
+        from code_review_helpers import _available_reviewers_hash
+        # Defensive: hashing happens after JSON parse so the input may
+        # legally contain garbage. Garbage must not poison the key.
+        assert (
+            _available_reviewers_hash(["a", "b"])
+            == _available_reviewers_hash(["a", "b", "", None])  # type: ignore[list-item]
+        )
+
+
+class TestStableJsonHash:
+    """The plan-initial / signals hash inputs must be deterministic."""
+
+    def test_dict_key_order_does_not_affect_hash(self) -> None:
+        from code_review_helpers import _stable_json_hash
+        a = {"a": 1, "b": [1, 2], "c": {"d": 4}}
+        b = {"c": {"d": 4}, "b": [1, 2], "a": 1}
+        assert _stable_json_hash(a) == _stable_json_hash(b)
+
+    def test_value_change_flips_hash(self) -> None:
+        from code_review_helpers import _stable_json_hash
+        a = {"a": 1}
+        b = {"a": 2}
+        assert _stable_json_hash(a) != _stable_json_hash(b)
+
+
+class TestLoadAvailableReviewers:
+    """The roster loader must distinguish IO/parse failures from shape
+    mismatches so callers (and operators) get a path-specific diagnostic
+    instead of a misleading "must be a list or {available: [...]}" for
+    every failure mode.
+    """
+
+    def test_flat_list_roundtrips(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps(["a", "b"]))
+        roster, err = _load_available_reviewers(p)
+        assert roster == ["a", "b"]
+        assert err is None
+
+    def test_wrapped_object_roundtrips(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps({"available": ["a", "b"]}))
+        roster, err = _load_available_reviewers(p)
+        assert roster == ["a", "b"]
+        assert err is None
+
+    def test_missing_file_returns_io_diagnostic(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_available_reviewers
+        roster, err = _load_available_reviewers(tmp_path / "does-not-exist.json")
+        assert roster is None
+        # Operator must see the actual IO cause, not a shape error.
+        assert err is not None
+        assert "Error reading available_reviewers" in err
+        assert "list or {available: [...]}" not in err
+
+    def test_malformed_json_returns_parse_diagnostic(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text("{ not valid json")
+        roster, err = _load_available_reviewers(p)
+        assert roster is None
+        assert err is not None
+        # JSON parse errors are reported via the same IO-diagnostic path.
+        assert "Error reading available_reviewers" in err
+        assert "list or {available: [...]}" not in err
+
+    def test_unrecognized_shape_returns_shape_diagnostic(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps("not a list or object"))
+        roster, err = _load_available_reviewers(p)
+        assert roster is None
+        assert err is not None
+        # Genuine shape mismatch keeps the shape-error message.
+        assert "list or {available: [...]}" in err
+
+    def test_inner_available_wrong_type_returns_shape_diagnostic(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps({"available": "not a list"}))
+        roster, err = _load_available_reviewers(p)
+        assert roster is None
+        assert err is not None
+        assert "list or {available: [...]}" in err
+
+
+class TestCoverageCriticValidator:
+    """Per PLN-725 §"Stage 3: Coverage Critic" constraints."""
+
+    def _available(self) -> list[str]:
+        return ["accessibility-expert", "i18n-expert", "perf-expert"]
+
+    def _existing(self) -> set[str]:
+        return {"bug_hunter_a", "unified_auditor"}
+
+    def test_accepts_valid_additions(self) -> None:
+        from code_review_helpers import validate_coverage_critic_output
+        accepted, errors = validate_coverage_critic_output(
+            {"additions": [
+                {"reviewer": "accessibility-expert",
+                 "evidence": "src/Modal.tsx:42 — missing aria-modal"},
+                {"reviewer": "i18n-expert",
+                 "evidence": "signal:i18n_relevant@0.85 — strings touched"},
+            ]},
+            self._available(), self._existing(),
+        )
+        assert errors == []
+        assert {a["reviewer"] for a in accepted} == {"accessibility-expert", "i18n-expert"}
+
+    def test_accepted_entries_carry_critic_source_and_addition_trigger(self) -> None:
+        from code_review_helpers import validate_coverage_critic_output
+        accepted, _ = validate_coverage_critic_output(
+            {"additions": [
+                {"reviewer": "accessibility-expert", "evidence": "x:1 — y"},
+            ]},
+            self._available(), self._existing(),
+        )
+        assert accepted[0]["source"] == "critic"
+        assert accepted[0]["trigger"] == {"type": "critic_addition"}
+
+    def test_rejects_invented_reviewer(self) -> None:
+        from code_review_helpers import validate_coverage_critic_output
+        accepted, errors = validate_coverage_critic_output(
+            {"additions": [
+                {"reviewer": "made-up-reviewer", "evidence": "x:1 — y"},
+            ]},
+            self._available(), self._existing(),
+        )
+        assert accepted == []
+        assert any("not in available_reviewers" in e for e in errors)
+
+    def test_rejects_reviewer_already_in_plan(self) -> None:
+        """Belt-and-suspenders: even if the caller forgot to filter the
+        AVAILABLE list, a reviewer already in the plan is rejected.
+        """
+        from code_review_helpers import validate_coverage_critic_output
+        # Put the existing reviewer into the AVAILABLE list to exercise
+        # the existing-in-plan check (not the available-list check).
+        available = self._available() + ["unified_auditor"]
+        accepted, errors = validate_coverage_critic_output(
+            {"additions": [
+                {"reviewer": "unified_auditor", "evidence": "x:1 — y"},
+            ]},
+            available, self._existing(),
+        )
+        assert accepted == []
+        assert any("already in the plan" in e for e in errors)
+
+    def test_rejects_empty_evidence(self) -> None:
+        from code_review_helpers import validate_coverage_critic_output
+        accepted, errors = validate_coverage_critic_output(
+            {"additions": [
+                {"reviewer": "accessibility-expert", "evidence": "   "},
+            ]},
+            self._available(), self._existing(),
+        )
+        assert accepted == []
+        assert any("empty evidence" in e for e in errors)
+
+    def test_rejects_missing_evidence(self) -> None:
+        from code_review_helpers import validate_coverage_critic_output
+        accepted, errors = validate_coverage_critic_output(
+            {"additions": [
+                {"reviewer": "accessibility-expert"},
+            ]},
+            self._available(), self._existing(),
+        )
+        assert accepted == []
+        assert errors
+
+    def test_rejects_duplicate_within_additions(self) -> None:
+        from code_review_helpers import validate_coverage_critic_output
+        accepted, errors = validate_coverage_critic_output(
+            {"additions": [
+                {"reviewer": "perf-expert", "evidence": "a"},
+                {"reviewer": "perf-expert", "evidence": "b"},
+            ]},
+            self._available(), self._existing(),
+        )
+        assert len(accepted) == 1
+        assert any("duplicates reviewer" in e for e in errors)
+
+    def test_truncates_over_cap_with_warning(self) -> None:
+        from code_review_helpers import (
+            COVERAGE_CRITIC_MAX_ADDITIONS,
+            validate_coverage_critic_output,
+        )
+        big = [f"r{i}" for i in range(COVERAGE_CRITIC_MAX_ADDITIONS + 3)]
+        accepted, errors = validate_coverage_critic_output(
+            {"additions": [
+                {"reviewer": r, "evidence": "x"} for r in big
+            ]},
+            big, set(),
+        )
+        assert len(accepted) == COVERAGE_CRITIC_MAX_ADDITIONS
+        assert any("over the" in e and "cap" in e for e in errors)
+
+    def test_accepts_optional_model_override(self) -> None:
+        from code_review_helpers import validate_coverage_critic_output
+        accepted, _ = validate_coverage_critic_output(
+            {"additions": [
+                {"reviewer": "accessibility-expert",
+                 "evidence": "x",
+                 "model_override": "sonnet"},
+            ]},
+            self._available(), self._existing(),
+        )
+        assert accepted[0].get("model_override") == "sonnet"
+
+    def test_rejects_non_object_output(self) -> None:
+        from code_review_helpers import validate_coverage_critic_output
+        accepted, errors = validate_coverage_critic_output(
+            "not a dict", self._available(), self._existing(),
+        )
+        assert accepted == []
+        assert errors
+
+    def test_rejects_missing_additions_array(self) -> None:
+        from code_review_helpers import validate_coverage_critic_output
+        accepted, errors = validate_coverage_critic_output(
+            {"foo": "bar"}, self._available(), self._existing(),
+        )
+        assert accepted == []
+        assert any("'additions'" in e for e in errors)
+
+
+class TestMergeCriticAdditions:
+    """The merger appends to best_effort and bumps the stats counter."""
+
+    def _plan(self) -> dict[str, Any]:
+        return {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
+            "best_effort": [{"reviewer": "auth-security-expert", "source": "rule"}],
+            "warnings": [],
+            "stats": {"required_count": 1, "best_effort_count": 1},
+        }
+
+    def test_critic_additions_append_to_best_effort(self) -> None:
+        from code_review_helpers import merge_critic_additions
+        additions = [
+            {"reviewer": "a11y-expert", "trigger": {"type": "critic_addition"},
+             "source": "critic", "evidence": "x"},
+        ]
+        final = merge_critic_additions(self._plan(), additions)
+        names = [r["reviewer"] for r in final["best_effort"]]
+        assert "a11y-expert" in names
+        assert "auth-security-expert" in names
+
+    def test_required_floor_unchanged(self) -> None:
+        from code_review_helpers import merge_critic_additions
+        additions = [
+            {"reviewer": "a11y-expert", "trigger": {"type": "critic_addition"},
+             "source": "critic", "evidence": "x"},
+        ]
+        final = merge_critic_additions(self._plan(), additions)
+        # Critic CANNOT add to required[] — that's the architectural
+        # invariant (required is the deterministic floor).
+        assert [r["reviewer"] for r in final["required"]] == ["bug_hunter_a"]
+
+    def test_stats_critic_additions_count(self) -> None:
+        from code_review_helpers import merge_critic_additions
+        additions = [
+            {"reviewer": f"r{i}", "trigger": {"type": "critic_addition"},
+             "source": "critic", "evidence": "x"}
+            for i in range(3)
+        ]
+        final = merge_critic_additions(self._plan(), additions)
+        assert final["stats"]["critic_additions"] == 3
+
+    def test_empty_additions_still_produces_final_plan(self) -> None:
+        from code_review_helpers import merge_critic_additions
+        final = merge_critic_additions(self._plan(), [])
+        assert final["stats"]["critic_additions"] == 0
+        assert [r["reviewer"] for r in final["best_effort"]] == ["auth-security-expert"]
+
+
+def _write_coverage_critic_inputs(
+    tmp_path: Path,
+    plan_initial: dict[str, Any] | None = None,
+    available: list[str] | None = None,
+    signals: dict[str, Any] | None = None,
+    diff_data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    plan_initial = plan_initial or {
+        "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
+        "best_effort": [],
+        "warnings": [],
+        "stats": {"required_count": 1, "best_effort_count": 0},
+    }
+    available = available or ["accessibility-expert", "i18n-expert"]
+    diff_data = diff_data or {
+        "files_to_review": ["src/Modal.tsx"],
+        "file_statuses": {"src/Modal.tsx": "M"},
+        "patch_lines": {"src/Modal.tsx": {
+            "added_lines": {"42": "<div role='dialog'>"},
+            "removed_lines": {},
+        }},
+    }
+    paths = {
+        "plan_initial": tmp_path / "coverage_plan_initial.json",
+        "available": tmp_path / "available_reviewers.json",
+        "diff_data": tmp_path / "diff_data.json",
+        "signals": tmp_path / "extract_signals.json",
+    }
+    paths["plan_initial"].write_text(json.dumps(plan_initial))
+    paths["available"].write_text(json.dumps(available))
+    paths["diff_data"].write_text(json.dumps(diff_data))
+    if signals is not None:
+        paths["signals"].write_text(json.dumps(signals))
+    return {"paths": paths, "plan_initial": plan_initial, "available": available}
+
+
+class TestCoverageCriticPrepareCLI:
+    """End-to-end prepare: cache miss, cache hit, --no-critic short-circuit."""
+
+    def _args(self, tmp_path: Path, inputs: dict[str, Any], **kw: Any) -> argparse.Namespace:
+        from code_review_helpers import COVERAGE_CRITIC_MODEL_DEFAULT
+        cr_dir = tmp_path / "cr"
+        cache_dir = tmp_path / "cache"
+        cr_dir.mkdir()
+        cache_dir.mkdir()
+        defaults = {
+            "cr_dir": str(cr_dir),
+            "coverage_plan_initial": str(inputs["paths"]["plan_initial"]),
+            "extract_signals": str(inputs["paths"]["signals"]) if inputs["paths"]["signals"].exists() else None,
+            "diff_data": str(inputs["paths"]["diff_data"]),
+            "available_reviewers": str(inputs["paths"]["available"]),
+            "diff_tip": "abc123",
+            "cache_dir": str(cache_dir),
+            "prompt": None,
+            "model": COVERAGE_CRITIC_MODEL_DEFAULT,
+            "no_critic": False,
+        }
+        defaults.update(kw)
+        return argparse.Namespace(**defaults)
+
+    def test_cache_miss_writes_input_and_manifest(self, tmp_path: Path) -> None:
+        from code_review_helpers import cmd_coverage_critic_prepare
+        inputs = _write_coverage_critic_inputs(
+            tmp_path, signals={"signals": []},
+        )
+        args = self._args(tmp_path, inputs)
+        assert cmd_coverage_critic_prepare(args) == 0
+
+        cr_dir = Path(args.cr_dir)
+        manifest = json.loads((cr_dir / "coverage_critic_manifest.json").read_text())
+        assert manifest["status"] == "needs_agent"
+        assert manifest["cache_key"]
+        assert Path(manifest["input_path"]).exists()
+        assert Path(manifest["diff_summary_path"]).exists()
+
+        bundle = json.loads((cr_dir / "coverage_critic_input.json").read_text())
+        assert bundle["available_reviewers"] == inputs["available"]
+        assert "coverage_plan_initial" in bundle
+
+    def test_prepare_filters_existing_reviewers_from_available(self, tmp_path: Path) -> None:
+        """If the AVAILABLE list contains a reviewer already in the
+        initial plan, prepare must drop it before showing the agent.
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+        inputs = _write_coverage_critic_inputs(
+            tmp_path,
+            available=["bug_hunter_a", "accessibility-expert"],
+            signals={"signals": []},
+        )
+        args = self._args(tmp_path, inputs)
+        assert cmd_coverage_critic_prepare(args) == 0
+        bundle = json.loads(
+            (Path(args.cr_dir) / "coverage_critic_input.json").read_text(),
+        )
+        assert "bug_hunter_a" not in bundle["available_reviewers"]
+        assert "accessibility-expert" in bundle["available_reviewers"]
+
+    def test_no_critic_flag_short_circuits(self, tmp_path: Path) -> None:
+        """--no-critic copies the initial plan straight through to
+        coverage_plan.json without invoking the agent.
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        args = self._args(tmp_path, inputs, no_critic=True)
+        assert cmd_coverage_critic_prepare(args) == 0
+
+        cr_dir = Path(args.cr_dir)
+        manifest = json.loads((cr_dir / "coverage_critic_manifest.json").read_text())
+        assert manifest["status"] == "skipped"
+        assert manifest["reason"] == "no-critic"
+
+        # coverage_plan.json equals the initial plan + critic_additions=0
+        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        assert final["stats"]["critic_additions"] == 0
+        # critic_status must be present and distinguishable from
+        # "ok" / "fail_closed" so Phase 4 consumers can detect the
+        # skipped state without special-casing field absence.
+        assert final["critic_status"] == "skipped"
+        assert final["critic_errors"] == []
+        # And no agent input bundle written.
+        assert not (cr_dir / "coverage_critic_input.json").exists()
+
+    def test_cache_hit_serves_directly(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_COVERAGE_CRITIC,
+            _available_reviewers_hash,
+            _stable_json_hash,
+            cmd_coverage_critic_prepare,
+            coverage_critic_cache_key,
+            _coverage_critic_prompt_hash,
+            _default_coverage_critic_prompt_path,
+        )
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        args = self._args(tmp_path, inputs)
+        cache_dir = Path(args.cache_dir)
+        (cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC).mkdir(parents=True)
+
+        plan_hash = _stable_json_hash(inputs["plan_initial"])
+        signals_hash = _stable_json_hash({"signals": []})
+        prompt_hash = _coverage_critic_prompt_hash(
+            _default_coverage_critic_prompt_path(),
+        )
+        # Roster hash must mirror what prepare computes (post-filter) —
+        # plan_initial has bug_hunter_a in required, so the filter is a
+        # no-op against the default fixture (which lists
+        # accessibility-expert + i18n-expert).
+        available_hash = _available_reviewers_hash(inputs["available"])
+        key = coverage_critic_cache_key(
+            plan_hash, signals_hash, "abc123", prompt_hash, available_hash,
+        )
+        cached_payload = {
+            "required": inputs["plan_initial"]["required"],
+            "best_effort": [
+                {"reviewer": "accessibility-expert", "source": "critic",
+                 "trigger": {"type": "critic_addition"}, "evidence": "x"},
+            ],
+            "warnings": [],
+            "stats": {"required_count": 1, "best_effort_count": 0, "critic_additions": 1},
+            "written_at": datetime.now(timezone.utc).isoformat(),
+        }
+        (cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC / f"{key}.json").write_text(
+            json.dumps(cached_payload),
+        )
+
+        assert cmd_coverage_critic_prepare(args) == 0
+
+        manifest = json.loads(
+            (Path(args.cr_dir) / "coverage_critic_manifest.json").read_text(),
+        )
+        assert manifest["status"] == "cache_hit"
+        final = json.loads((Path(args.cr_dir) / "coverage_plan.json").read_text())
+        assert "accessibility-expert" in [r["reviewer"] for r in final["best_effort"]]
+        # written_at metadata stripped from canonical output
+        assert "written_at" not in final
+
+    def test_roster_shrink_misses_prior_cache(self, tmp_path: Path) -> None:
+        """Concrete failure mode the PR comment described: same diff,
+        same plan_initial, same signals, same prompt, but the
+        ``available_reviewers.json`` shrinks (a reviewer was retired)
+        between runs. The prior cache entry must NOT be served — its
+        ``best_effort`` could reference a name no longer in the roster
+        and consolidate never re-runs to catch it on a hit.
+        """
+        from code_review_helpers import (
+            CACHE_NAMESPACE_COVERAGE_CRITIC,
+            _available_reviewers_hash,
+            _stable_json_hash,
+            cmd_coverage_critic_prepare,
+            coverage_critic_cache_key,
+            _coverage_critic_prompt_hash,
+            _default_coverage_critic_prompt_path,
+        )
+
+        # First run: full roster.
+        inputs = _write_coverage_critic_inputs(
+            tmp_path,
+            signals={"signals": []},
+            available=["accessibility-expert", "i18n-expert"],
+        )
+        args = self._args(tmp_path, inputs)
+        cache_dir = Path(args.cache_dir)
+        (cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC).mkdir(parents=True)
+
+        plan_hash = _stable_json_hash(inputs["plan_initial"])
+        signals_hash = _stable_json_hash({"signals": []})
+        prompt_hash = _coverage_critic_prompt_hash(
+            _default_coverage_critic_prompt_path(),
+        )
+        old_key = coverage_critic_cache_key(
+            plan_hash, signals_hash, "abc123", prompt_hash,
+            _available_reviewers_hash(["accessibility-expert", "i18n-expert"]),
+        )
+        # Seed a cache entry under the OLD roster that proposes the
+        # about-to-be-retired reviewer.
+        (cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC / f"{old_key}.json").write_text(
+            json.dumps({
+                "required": inputs["plan_initial"]["required"],
+                "best_effort": [
+                    {"reviewer": "i18n-expert", "source": "critic",
+                     "trigger": {"type": "critic_addition"}, "evidence": "x"},
+                ],
+                "warnings": [],
+                "stats": {
+                    "required_count": 1, "best_effort_count": 0,
+                    "critic_additions": 1,
+                },
+                "written_at": datetime.now(timezone.utc).isoformat(),
+            }),
+        )
+
+        # Second run: i18n-expert removed from the roster file.
+        inputs["paths"]["available"].write_text(json.dumps(["accessibility-expert"]))
+
+        assert cmd_coverage_critic_prepare(args) == 0
+        manifest = json.loads(
+            (Path(args.cr_dir) / "coverage_critic_manifest.json").read_text(),
+        )
+        # Must miss — not cache_hit — so consolidate runs and re-checks
+        # the new roster instead of silently shipping a stale plan.
+        assert manifest["status"] == "needs_agent"
+        # And the manifest exposes the new roster hash for debuggability.
+        assert manifest["available_reviewers_hash"] == _available_reviewers_hash(
+            ["accessibility-expert"],
+        )
+
+
+class TestCoverageCriticConsolidateCLI:
+    """End-to-end consolidate: valid output, fail-closed, partial validity."""
+
+    def _prepare(self, tmp_path: Path) -> tuple[Path, dict[str, Any]]:
+        from code_review_helpers import (
+            COVERAGE_CRITIC_MODEL_DEFAULT,
+            cmd_coverage_critic_prepare,
+        )
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        cr_dir = tmp_path / "cr"
+        cache_dir = tmp_path / "cache"
+        cr_dir.mkdir()
+        cache_dir.mkdir()
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            coverage_plan_initial=str(inputs["paths"]["plan_initial"]),
+            extract_signals=str(inputs["paths"]["signals"]),
+            diff_data=str(inputs["paths"]["diff_data"]),
+            available_reviewers=str(inputs["paths"]["available"]),
+            diff_tip="abc123",
+            cache_dir=str(cache_dir),
+            prompt=None,
+            model=COVERAGE_CRITIC_MODEL_DEFAULT,
+            no_critic=False,
+        )
+        cmd_coverage_critic_prepare(args)
+        return cr_dir, inputs
+
+    def _consolidate_args(
+        self, cr_dir: Path, inputs: dict[str, Any], agent_output: Path, cache_dir: Path,
+    ) -> argparse.Namespace:
+        return argparse.Namespace(
+            cr_dir=str(cr_dir),
+            coverage_plan_initial=str(inputs["paths"]["plan_initial"]),
+            agent_output=str(agent_output),
+            available_reviewers=str(inputs["paths"]["available"]),
+            manifest=None,
+            cache_dir=str(cache_dir),
+        )
+
+    def test_valid_output_merges_into_coverage_plan_and_caches(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_COVERAGE_CRITIC,
+            cmd_coverage_critic_consolidate,
+        )
+        cr_dir, inputs = self._prepare(tmp_path)
+        cache_dir = tmp_path / "cache"
+        agent_output = cr_dir / "agent_coverage_critic.json"
+        agent_output.write_text(json.dumps({"additions": [
+            {"reviewer": "accessibility-expert",
+             "evidence": "src/Modal.tsx:42 — aria-modal missing"},
+        ]}))
+
+        args = self._consolidate_args(cr_dir, inputs, agent_output, cache_dir)
+        assert cmd_coverage_critic_consolidate(args) == 0
+
+        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        assert final["critic_status"] == "ok"
+        assert "accessibility-expert" in [r["reviewer"] for r in final["best_effort"]]
+        assert final["stats"]["critic_additions"] == 1
+
+        cached = list((cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC).glob("*.json"))
+        assert len(cached) == 1
+
+    def test_all_invalid_falls_closed_and_emits_finding(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_COVERAGE_CRITIC,
+            COVERAGE_CRITIC_MARKER,
+            cmd_coverage_critic_consolidate,
+        )
+        cr_dir, inputs = self._prepare(tmp_path)
+        cache_dir = tmp_path / "cache"
+        agent_output = cr_dir / "agent_coverage_critic.json"
+        agent_output.write_text(json.dumps({"additions": [
+            {"reviewer": "totally-invented", "evidence": "x"},
+        ]}))
+
+        args = self._consolidate_args(cr_dir, inputs, agent_output, cache_dir)
+        assert cmd_coverage_critic_consolidate(args) == 0
+
+        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        assert final["critic_status"] == "fail_closed"
+        # Final plan equals initial — no critic additions merged.
+        assert final["stats"]["critic_additions"] == 0
+        # No cache write on fail-closed (next run gets a fresh attempt).
+        cached = list((cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC).glob("*.json"))
+        assert cached == []
+        # Operator-visible finding emitted.
+        finding_file = cr_dir / "agent_coverage-critic-failed.json"
+        assert finding_file.exists()
+        f = json.loads(finding_file.read_text())["findings"][0]
+        assert f["system_marker"] == COVERAGE_CRITIC_MARKER
+        assert f["severity"] == "MEDIUM"
+        assert f["source"] == "coverage-critic"
+        assert f["finding_scope"] == "system"
+
+    def test_unreadable_agent_output_falls_closed(self, tmp_path: Path) -> None:
+        from code_review_helpers import cmd_coverage_critic_consolidate
+        cr_dir, inputs = self._prepare(tmp_path)
+        cache_dir = tmp_path / "cache"
+        missing = cr_dir / "does_not_exist.json"
+        args = self._consolidate_args(cr_dir, inputs, missing, cache_dir)
+        assert cmd_coverage_critic_consolidate(args) == 0
+        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        assert final["critic_status"] == "fail_closed"
+        assert (cr_dir / "agent_coverage-critic-failed.json").exists()
+
+    def test_partial_validity_keeps_valid_additions(self, tmp_path: Path) -> None:
+        from code_review_helpers import cmd_coverage_critic_consolidate
+        cr_dir, inputs = self._prepare(tmp_path)
+        cache_dir = tmp_path / "cache"
+        agent_output = cr_dir / "agent_coverage_critic.json"
+        agent_output.write_text(json.dumps({"additions": [
+            {"reviewer": "accessibility-expert",
+             "evidence": "src/Modal.tsx:42 — aria-modal missing"},
+            {"reviewer": "invented", "evidence": "x"},
+        ]}))
+        args = self._consolidate_args(cr_dir, inputs, agent_output, cache_dir)
+        assert cmd_coverage_critic_consolidate(args) == 0
+        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        assert final["critic_status"] == "ok"
+        assert "accessibility-expert" in [r["reviewer"] for r in final["best_effort"]]
+        assert final["stats"]["critic_additions"] == 1
+        # Errors surfaced for observability but the run is not fail-closed.
+        assert any("invented" in e for e in final["critic_errors"])
+        # No fail-closed finding when at least one addition was accepted.
+        assert not (cr_dir / "agent_coverage-critic-failed.json").exists()
+
+
+class TestStage15Alignment:
+    """The prepare-run pipeline manifest's stage_15 must match the
+    actually-shipped CLI surface (Phase 3 prep half), mirroring the
+    stage_11 / stage_14 alignment from PR #124.
+    """
+
+    def _stage(self, stage_id: str) -> dict[str, Any]:
+        from code_review_helpers import _build_run_plan_stages
+        for s in _build_run_plan_stages("/tmp/cr_dir", "local", None, {}):
+            if s["id"] == stage_id:
+                return s
+        raise AssertionError(f"{stage_id!r} missing from prepare-run manifest")
+
+    def test_stage_15_uses_prepare_subcommand(self) -> None:
+        # Phase 3 ships a two-step flow; stage_15 represents the prepare
+        # half (consolidate sibling will be added in Phase 4).
+        assert self._stage("stage_15_coverage_critic")["subcommand"] == "coverage-critic-prepare"
+
+    def test_stage_15_required_args_present(self) -> None:
+        stage = self._stage("stage_15_coverage_critic")
+        args = stage["args"]
+        assert "--coverage-plan-initial" in args
+        assert "--available-reviewers" in args
+        assert "--diff-data" in args
+        assert "--diff-tip" in args
+        # --extract-signals is optional but always wired for the
+        # pipeline (no reason to skip when stage_11 produced it).
+        assert "--extract-signals" in args
+
+    def test_stage_15_expected_outputs_match_what_prepare_writes(self) -> None:
+        stage = self._stage("stage_15_coverage_critic")
+        # Prepare writes ONLY the manifest. coverage_plan.json is the
+        # consolidate half's output (stage_15b, not yet shipped).
+        assert stage["expected_outputs"] == [
+            stage["expected_outputs"][0],
+        ]
+        assert stage["expected_outputs"][0].endswith(
+            "/coverage_critic_manifest.json",
+        )
+        assert not any(
+            p.endswith("/coverage_plan.json")
+            for p in stage["expected_outputs"]
+        )

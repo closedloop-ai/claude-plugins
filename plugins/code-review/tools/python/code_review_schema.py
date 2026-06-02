@@ -92,6 +92,7 @@ SOURCES: frozenset[str] = frozenset({
     "companion-validator",
     "coverage-verifier",
     "signal-extractor",
+    "coverage-critic",
 })
 
 
@@ -532,6 +533,7 @@ SYSTEM_MARKERS_FIXED: frozenset[str] = frozenset({
     "budget-exceeded",
     "agent-failure",
     "signal-extraction-failed",
+    "coverage-critic-failed",
     "schema-version",
     # pr_metadata category
     "pr_description",
@@ -549,6 +551,7 @@ SYSTEM_MARKER_SCOPES: dict[str, str] = {
     "budget-exceeded": "system",
     "agent-failure": "system",
     "signal-extraction-failed": "system",
+    "coverage-critic-failed": "system",
     "schema-version": "system",
     "pr_description": "pr_metadata",
 }

@@ -31,6 +31,7 @@ from typing import Any
 
 from code_review_schema import (
     CACHE_NAMESPACE_BHA,
+    CACHE_NAMESPACE_COVERAGE_CRITIC,
     CACHE_NAMESPACE_OVERRIDES,
     CACHE_NAMESPACE_SIGNALS,
     CACHE_NAMESPACE_VERIFICATIONS,
@@ -6655,6 +6656,705 @@ def cmd_migrate_critic_gates(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# PLN-725 Phase 3 — Coverage critic (Stage 3 of deterministic coverage)
+# ---------------------------------------------------------------------------
+# Adversarial LLM stage that fronts the final coverage_plan.json. Reads
+# the rule-resolved coverage_plan_initial.json from Phase 2 + the Phase 1
+# extract_signals.json + an AVAILABLE-list of reviewer names, and may
+# propose additive best-effort additions. The critic CANNOT remove,
+# rename, re-scope, promote-to-required, exceed the cap, or invent
+# reviewer names; the validator enforces every constraint.
+#
+# Two-step pattern mirroring extract-signals:
+#   1. coverage-critic-prepare — reads inputs, computes cache key,
+#      serves cache hit OR writes agent input bundle + manifest.
+#   2. coverage-critic-consolidate — validates LLM output, merges into
+#      coverage_plan.json, writes the cache on success. Fail-closed
+#      emits a MEDIUM Coverage finding so the operator footer surfaces
+#      the skipped stage.
+#
+# Phase 4 will wire these into start.md; Phase 3 alone changes no
+# orchestrator behavior.
+
+COVERAGE_CRITIC_MAX_ADDITIONS = 5
+COVERAGE_CRITIC_MARKER = "coverage-critic-failed"
+COVERAGE_CRITIC_PROMPT_FILENAME = "coverage_critic_prompt.txt"
+COVERAGE_CRITIC_MODEL_DEFAULT = "sonnet"
+
+
+def _default_coverage_critic_prompt_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "prompts" / COVERAGE_CRITIC_PROMPT_FILENAME
+
+
+def _coverage_critic_prompt_hash(path: Path) -> str:
+    """Content-addressed hash of the coverage-critic prompt asset.
+
+    Mirrors ``_signal_extraction_prompt_hash``: lives inside the
+    coverage_critic/ namespace, not the canonical compute-hashes
+    output. A premise/verifier/BHA prompt edit should not invalidate
+    coverage-critic caches.
+    """
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _stable_json_hash(payload: Any) -> str:
+    """SHA-256 over a deterministic JSON serialization.
+
+    Used to derive ``coverage_plan_initial_hash`` and ``signals_hash``
+    from in-memory dicts. ``sort_keys=True`` plus
+    ``separators=(",",":")`` makes the encoding stable across runs.
+    """
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8", "replace")).hexdigest()
+
+
+def coverage_critic_cache_key(
+    coverage_plan_initial_hash: str,
+    signals_hash: str,
+    diff_tip: str,
+    prompt_hash: str,
+    available_reviewers_hash: str,
+) -> str:
+    """Cache key for the ``coverage_critic`` namespace (PLN-725).
+
+    Tuple ``(coverage_plan_initial_hash, signals_hash, diff_tip,
+    prompt_hash, available_reviewers_hash)`` is the complete set of
+    inputs the critic is a pure function of. All five are
+    content-addressed.
+
+    ``available_reviewers_hash`` is the deterministic hash of the
+    AVAILABLE roster the agent will actually see (sorted, dedup'd, and
+    pre-filtered against the initial plan). It must be in the key because
+    the validator enforces every proposed addition against this list:
+    if the roster shrinks between runs, a cache hit on the old key would
+    serve a plan that proposes a reviewer no longer in the roster and
+    consolidate never re-runs to catch it.
+    """
+    payload = (
+        (coverage_plan_initial_hash or "") + "\0"
+        + (signals_hash or "") + "\0"
+        + (diff_tip or "") + "\0"
+        + (prompt_hash or "") + "\0"
+        + (available_reviewers_hash or "")
+    )
+    return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()
+
+
+def _available_reviewers_hash(reviewers: list[str]) -> str:
+    """Deterministic hash of an AVAILABLE roster.
+
+    Sorts and dedups before hashing so list ordering cannot flip the
+    cache key — order is operator-controllable noise that does not
+    change what the agent sees as the closed-vocabulary contract.
+    """
+    sorted_dedup = sorted({r for r in reviewers if isinstance(r, str) and r})
+    return _stable_json_hash({"available": sorted_dedup})
+
+
+def _coverage_critic_cache_path(cache_dir: Path, key: str) -> Path:
+    """PLN-719 namespace layout: ``<cache_dir>/coverage_critic/<key>.json``."""
+    return cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC / f"{key}.json"
+
+
+def _read_cached_coverage_critic(
+    cache_dir: Path | None, key: str,
+) -> dict[str, Any] | None:
+    """Return cached critic output if fresh, else None.
+
+    Mirrors ``_read_cached_signals``: missing or non-parseable
+    ``written_at`` is a miss (and the stale entry is swept).
+    """
+    if cache_dir is None:
+        return None
+    path = _coverage_critic_cache_path(cache_dir, key)
+    if not path.exists():
+        return None
+    try:
+        with open(path) as f:
+            entry = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(entry, dict):
+        return None
+    ttl = cache_ttl_days(CACHE_NAMESPACE_COVERAGE_CRITIC) or 7
+    written_at = entry.get("written_at")
+    try:
+        ts = datetime.fromisoformat(str(written_at).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return None
+    if datetime.now(timezone.utc) - ts > timedelta(days=ttl):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return None
+    return entry
+
+
+def _write_cached_coverage_critic(
+    cache_dir: Path | None, key: str, payload: dict[str, Any],
+) -> None:
+    """Persist a successful critic run to the ``coverage_critic`` cache."""
+    if cache_dir is None:
+        return
+    path = _coverage_critic_cache_path(cache_dir, key)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = dict(payload)
+        entry["written_at"] = datetime.now(timezone.utc).isoformat()
+        with open(path, "w") as f:
+            json.dump(entry, f, indent=2)
+    except OSError as exc:
+        print(
+            f"Warning: could not write coverage-critic cache entry: {exc}",
+            file=sys.stderr,
+        )
+
+
+def _coverage_plan_existing_reviewers(plan: dict[str, Any]) -> set[str]:
+    """Return the union of reviewers already present in the initial plan."""
+    out: set[str] = set()
+    for key in ("required", "best_effort"):
+        entries = plan.get(key) or []
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if isinstance(entry, dict):
+                name = entry.get("reviewer")
+                if isinstance(name, str) and name:
+                    out.add(name)
+    return out
+
+
+def _load_available_reviewers(
+    path: Path,
+) -> tuple[list[str] | None, str | None]:
+    """Parse ``available_reviewers.json`` into a list of reviewer names.
+
+    Accepts either a flat JSON list or ``{"available": [...]}``. Returns
+    ``(roster, None)`` on success and ``(None, diagnostic)`` on failure
+    so callers can fail consistently AND surface a path-specific
+    diagnostic. IO/parse errors are bound to the exception so an
+    operator with a missing or malformed file sees the real cause
+    (e.g. ``[Errno 2] No such file or directory``) instead of a
+    misleading shape-error message.
+    """
+    try:
+        with open(path) as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"Error reading available_reviewers: {exc}"
+    if isinstance(raw, list):
+        return [a for a in raw if isinstance(a, str) and a], None
+    if isinstance(raw, dict):
+        inner = raw.get("available", [])
+        if isinstance(inner, list):
+            return [a for a in inner if isinstance(a, str) and a], None
+    return None, "Error: available_reviewers must be a list or {available: [...]}"
+
+
+def _build_coverage_critic_input(
+    coverage_plan_initial: dict[str, Any],
+    extract_signals: dict[str, Any] | None,
+    diff_data: dict[str, Any],
+    available_reviewers: list[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Render the bounded agent-input bundle + a compact diff summary.
+
+    Returns ``(main_input, diff_summary)``. The main_input groups
+    everything the critic needs except the diff excerpts (which can be
+    large); the diff_summary is the same shape as the signal-extraction
+    excerpt bundle, capped to a small budget.
+    """
+    # Bounded diff summary identical to extract-signals (file metadata
+    # + top-N excerpts). Reuse the helper so the two stages see the
+    # same shape — the critic doesn't need a private excerpting story.
+    diff_summary = _build_signal_input(diff_data, intent_summary=None)
+
+    return (
+        {
+            "coverage_plan_initial": coverage_plan_initial,
+            "extract_signals": extract_signals or {"signals": []},
+            "available_reviewers": list(available_reviewers),
+        },
+        diff_summary,
+    )
+
+
+def validate_coverage_critic_output(
+    raw: Any,
+    available_reviewers: list[str],
+    existing_in_plan: set[str],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Validate LLM critic output against the constraint contract.
+
+    Returns ``(accepted_additions, errors)``. Per-addition rejection
+    keeps surviving additions; an empty ``accepted`` with non-empty
+    ``errors`` means the entire critic output is unusable and the
+    caller should fail closed.
+
+    Enforces:
+      - top-level shape: object with an ``additions`` array
+      - per-addition: ``reviewer`` in ``available_reviewers``
+      - per-addition: ``evidence`` non-empty after strip
+      - per-addition: no duplicate ``reviewer`` within ``additions``
+      - per-addition: ``reviewer`` not already in ``existing_in_plan``
+      - hard cap of ``COVERAGE_CRITIC_MAX_ADDITIONS`` (excess
+        truncated with a warning; truncation is not a rejection)
+    """
+    errors: list[str] = []
+    if not isinstance(raw, dict):
+        return [], ["output is not a JSON object"]
+    additions = raw.get("additions")
+    if not isinstance(additions, list):
+        return [], ["'additions' is missing or not a list"]
+    available_set = set(available_reviewers)
+    accepted: list[dict[str, Any]] = []
+    seen_in_additions: set[str] = set()
+    for idx, entry in enumerate(additions):
+        if not isinstance(entry, dict):
+            errors.append(f"additions[{idx}] is not an object")
+            continue
+        reviewer = entry.get("reviewer")
+        if not isinstance(reviewer, str) or not reviewer:
+            errors.append(f"additions[{idx}] missing or invalid 'reviewer'")
+            continue
+        if reviewer not in available_set:
+            errors.append(
+                f"additions[{idx}] reviewer {reviewer!r} not in available_reviewers",
+            )
+            continue
+        if reviewer in existing_in_plan:
+            errors.append(
+                f"additions[{idx}] reviewer {reviewer!r} is already in the plan",
+            )
+            continue
+        if reviewer in seen_in_additions:
+            errors.append(
+                f"additions[{idx}] duplicates reviewer {reviewer!r}",
+            )
+            continue
+        evidence = entry.get("evidence")
+        if not isinstance(evidence, str) or not evidence.strip():
+            errors.append(
+                f"additions[{idx}] ({reviewer}) has empty evidence",
+            )
+            continue
+        seen_in_additions.add(reviewer)
+        accepted_entry: dict[str, Any] = {
+            "reviewer": reviewer,
+            "trigger": {"type": "critic_addition"},
+            "source": "critic",
+            "evidence": evidence.strip(),
+        }
+        model_override = entry.get("model_override")
+        if isinstance(model_override, str) and model_override:
+            accepted_entry["model_override"] = model_override
+        accepted.append(accepted_entry)
+
+    if len(accepted) > COVERAGE_CRITIC_MAX_ADDITIONS:
+        errors.append(
+            f"truncated {len(accepted) - COVERAGE_CRITIC_MAX_ADDITIONS} "
+            f"additions over the {COVERAGE_CRITIC_MAX_ADDITIONS}-cap",
+        )
+        accepted = accepted[:COVERAGE_CRITIC_MAX_ADDITIONS]
+
+    return accepted, errors
+
+
+def merge_critic_additions(
+    coverage_plan_initial: dict[str, Any],
+    accepted_additions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Produce the final coverage_plan.json by appending critic additions
+    to the initial plan's ``best_effort[]``. Pure function.
+
+    Critic additions are always best-effort (the validator already
+    enforces this — there is no "required" code path here). Dedup
+    against the initial plan is also already enforced by the validator.
+    """
+    final: dict[str, Any] = {
+        "required": list(coverage_plan_initial.get("required", []) or []),
+        "best_effort": list(coverage_plan_initial.get("best_effort", []) or []),
+        "warnings": list(coverage_plan_initial.get("warnings", []) or []),
+        "stats": dict(coverage_plan_initial.get("stats", {}) or {}),
+    }
+    final["best_effort"].extend(accepted_additions)
+    final["stats"]["critic_additions"] = len(accepted_additions)
+    return final
+
+
+def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
+    """PLN-725 Stage 3a: prep the coverage-critic agent input + check cache.
+
+    Reads ``coverage_plan_initial.json``, ``extract_signals.json``,
+    ``diff_data.json``, and ``available_reviewers.json`` (or a flat
+    list-shaped file). Computes the
+    ``(coverage_plan_initial_hash, signals_hash, diff_tip, prompt_hash)``
+    cache key and either:
+
+      - **Cache hit** — writes the merged ``coverage_plan.json``
+        directly and exits with a ``cache_hit`` manifest.
+      - **Cache miss** — writes a bounded agent-input bundle to
+        ``<cr_dir>/coverage_critic_input.json`` plus a diff summary
+        copy and a manifest describing the spawn contract.
+
+    With ``--no-critic``, short-circuits: copies ``coverage_plan_initial``
+    to ``coverage_plan.json`` and emits a ``status: "skipped"`` manifest.
+    Useful for cost-sensitive runs per PLN-725 Open Question 3.
+
+    Always exits 0; structural failures print to stderr and return 1.
+    """
+    cr_dir = Path(args.cr_dir)
+    plan_initial_path = Path(args.coverage_plan_initial)
+    signals_path = (
+        Path(args.extract_signals) if getattr(args, "extract_signals", None) else None
+    )
+    diff_data_path = Path(args.diff_data)
+    available_path = Path(args.available_reviewers)
+    cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
+    diff_tip = str(args.diff_tip)
+    no_critic = bool(getattr(args, "no_critic", False))
+    prompt_path = (
+        Path(args.prompt) if getattr(args, "prompt", None) else _default_coverage_critic_prompt_path()
+    )
+    model = str(getattr(args, "model", None) or COVERAGE_CRITIC_MODEL_DEFAULT)
+
+    try:
+        cr_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"Error: cannot create cr_dir: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        with open(plan_initial_path) as f:
+            plan_initial = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error reading coverage_plan_initial: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(plan_initial, dict):
+        print("Error: coverage_plan_initial is not a JSON object", file=sys.stderr)
+        return 1
+
+    output_path = cr_dir / "coverage_plan.json"
+    manifest_path = cr_dir / "coverage_critic_manifest.json"
+
+    if no_critic:
+        # Short-circuit per Open Question 3 — write the initial plan
+        # straight through as the final, no agent spawn needed.
+        # Stamp critic_status="skipped" so Phase 4 consumers can
+        # distinguish skipped from healthy-but-empty (ok) and
+        # fail_closed via the same field — see consolidate paths below.
+        final = merge_critic_additions(plan_initial, [])
+        final["generated_at"] = datetime.now(timezone.utc).isoformat()
+        final["critic_status"] = "skipped"
+        final["critic_errors"] = []
+        try:
+            with open(output_path, "w") as f:
+                json.dump(final, f, indent=2)
+        except OSError as exc:
+            print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
+            return 1
+        manifest = {
+            "status": "skipped",
+            "reason": "no-critic",
+            "output_path": str(output_path),
+            "model": model,
+        }
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+        json.dump(manifest, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
+    extract_signals: dict[str, Any] | None = None
+    if signals_path is not None and signals_path.exists():
+        try:
+            with open(signals_path) as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                extract_signals = loaded
+        except (OSError, json.JSONDecodeError):
+            extract_signals = None
+
+    try:
+        with open(diff_data_path) as f:
+            diff_data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error reading diff_data: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(diff_data, dict):
+        print("Error: diff_data is not a JSON object", file=sys.stderr)
+        return 1
+
+    available_reviewers, load_err = _load_available_reviewers(available_path)
+    if available_reviewers is None:
+        print(load_err or "Error reading available_reviewers", file=sys.stderr)
+        return 1
+
+    # Subtract anything already in the initial plan so the critic
+    # sees the actual unused pool. The validator also checks this, but
+    # surfacing it in the input bundle prevents the LLM from even
+    # proposing names that would be rejected.
+    existing_in_plan = _coverage_plan_existing_reviewers(plan_initial)
+    available_reviewers = [
+        r for r in available_reviewers if r not in existing_in_plan
+    ]
+
+    try:
+        prompt_hash = _coverage_critic_prompt_hash(prompt_path)
+    except OSError as exc:
+        print(f"Error reading prompt asset: {exc}", file=sys.stderr)
+        return 1
+
+    plan_initial_hash = _stable_json_hash(plan_initial)
+    signals_hash = _stable_json_hash(extract_signals or {"signals": []})
+    # Hash the post-filter AVAILABLE roster — that's the closed
+    # vocabulary the agent actually sees and the validator enforces
+    # against. If it changes between runs the prior cache entry is
+    # stale (could propose a now-removed reviewer), so it must key
+    # the cache.
+    available_reviewers_hash = _available_reviewers_hash(available_reviewers)
+    key = coverage_critic_cache_key(
+        plan_initial_hash, signals_hash, diff_tip, prompt_hash,
+        available_reviewers_hash,
+    )
+
+    cached = _read_cached_coverage_critic(cache_dir, key)
+    if cached is not None:
+        canonical = {k: v for k, v in cached.items() if k != "written_at"}
+        try:
+            with open(output_path, "w") as f:
+                json.dump(canonical, f, indent=2)
+        except OSError as exc:
+            print(f"Error writing cached coverage_plan: {exc}", file=sys.stderr)
+            return 1
+        manifest = {
+            "status": "cache_hit",
+            "cache_key": key,
+            "output_path": str(output_path),
+            "model": model,
+        }
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+        json.dump(manifest, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
+    main_input, diff_summary = _build_coverage_critic_input(
+        plan_initial, extract_signals, diff_data, available_reviewers,
+    )
+    input_path = cr_dir / "coverage_critic_input.json"
+    diff_summary_path = cr_dir / "coverage_critic_diff_summary.json"
+    with open(input_path, "w") as f:
+        json.dump(main_input, f, indent=2)
+    with open(diff_summary_path, "w") as f:
+        json.dump(diff_summary, f, indent=2)
+
+    manifest = {
+        "status": "needs_agent",
+        "cache_key": key,
+        "coverage_plan_initial_hash": plan_initial_hash,
+        "signals_hash": signals_hash,
+        "prompt_hash": prompt_hash,
+        "available_reviewers_hash": available_reviewers_hash,
+        "input_path": str(input_path),
+        "diff_summary_path": str(diff_summary_path),
+        "prompt_path": str(prompt_path),
+        "output_path": str(output_path),
+        "model": model,
+    }
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+    json.dump(manifest, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
+    """PLN-725 Stage 3b: validate the agent's critic output, merge into
+    ``coverage_plan.json``, and update the cache.
+
+    Reads ``<agent_output>`` (typically
+    ``<cr_dir>/agent_coverage_critic.json``), validates against the
+    constraint contract, and:
+
+      - **At least one valid addition** — merges into the initial plan,
+        writes ``coverage_plan.json``, updates the cache, exits.
+      - **All rejected (or read failure)** — fails closed. Writes
+        ``coverage_plan.json`` equal to the initial plan (no critic
+        additions). Emits a MEDIUM ``Coverage`` finding with
+        ``system_marker="coverage-critic-failed"`` so the operator
+        footer surfaces the skipped stage. Does **not** cache.
+
+    Always exits 0 (degradation is not a halt); returns 1 only on
+    missing cr_dir or unreadable initial plan.
+    """
+    cr_dir = Path(args.cr_dir)
+    plan_initial_path = Path(args.coverage_plan_initial)
+    agent_output_path = Path(args.agent_output)
+    available_path = Path(args.available_reviewers)
+    cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
+    manifest_path = (
+        Path(args.manifest)
+        if getattr(args, "manifest", None)
+        else cr_dir / "coverage_critic_manifest.json"
+    )
+
+    if not cr_dir.exists():
+        print(f"Error: cr_dir does not exist: {cr_dir}", file=sys.stderr)
+        return 1
+
+    try:
+        with open(plan_initial_path) as f:
+            plan_initial = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error reading coverage_plan_initial: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(plan_initial, dict):
+        print("Error: coverage_plan_initial is not a JSON object", file=sys.stderr)
+        return 1
+
+    manifest: dict[str, Any] = {}
+    if manifest_path.exists():
+        try:
+            with open(manifest_path) as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                manifest = loaded
+        except (OSError, json.JSONDecodeError):
+            manifest = {}
+
+    cache_key = str(manifest.get("cache_key") or "")
+    model = str(manifest.get("model") or COVERAGE_CRITIC_MODEL_DEFAULT)
+
+    available_reviewers, load_err = _load_available_reviewers(available_path)
+    if available_reviewers is None:
+        print(load_err or "Error reading available_reviewers", file=sys.stderr)
+        return 1
+
+    existing_in_plan = _coverage_plan_existing_reviewers(plan_initial)
+
+    raw_output: Any = None
+    read_error: str | None = None
+    try:
+        with open(agent_output_path) as f:
+            raw_output = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        read_error = f"agent output unreadable: {exc}"
+
+    output_path = cr_dir / "coverage_plan.json"
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    def _fail_closed(errors: list[str]) -> int:
+        final = merge_critic_additions(plan_initial, [])
+        final["generated_at"] = now_iso
+        final["critic_status"] = "fail_closed"
+        final["critic_errors"] = errors
+        try:
+            with open(output_path, "w") as f:
+                json.dump(final, f, indent=2)
+        except OSError as exc:
+            print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
+            return 1
+        _emit_coverage_critic_failed_finding(cr_dir, errors, now_iso)
+        json.dump(
+            {"status": "fail_closed", "errors": errors[:10], "output_path": str(output_path)},
+            sys.stdout, indent=2,
+        )
+        sys.stdout.write("\n")
+        return 0
+
+    if read_error is not None:
+        return _fail_closed([read_error])
+
+    accepted, errors = validate_coverage_critic_output(
+        raw_output, available_reviewers, existing_in_plan,
+    )
+
+    if not accepted and errors:
+        return _fail_closed(errors)
+
+    final = merge_critic_additions(plan_initial, accepted)
+    final["generated_at"] = now_iso
+    final["critic_status"] = "ok"
+    final["critic_errors"] = errors
+    final["model"] = model
+    try:
+        with open(output_path, "w") as f:
+            json.dump(final, f, indent=2)
+    except OSError as exc:
+        print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
+        return 1
+    if cache_key:
+        _write_cached_coverage_critic(cache_dir, cache_key, final)
+    json.dump(
+        {
+            "status": "ok",
+            "addition_count": len(accepted),
+            "rejected": len(errors),
+            "output_path": str(output_path),
+        },
+        sys.stdout, indent=2,
+    )
+    sys.stdout.write("\n")
+    return 0
+
+
+def _emit_coverage_critic_failed_finding(
+    cr_dir: Path, errors: list[str], now_iso: str,
+) -> None:
+    """Write a MEDIUM system-marker finding for surfacing in the run summary.
+
+    Per PLN-725 §"Coverage Critic": a failed critic is a routing
+    degradation (the initial plan still runs), not a pipeline halt.
+    The finding surfaces the skipped stage to the operator so the
+    cause can be diagnosed. Fail-open on write error — telemetry is
+    observational.
+    """
+    error_summary = errors[:10]
+    if len(errors) > 10:
+        error_summary.append(f"… {len(errors) - 10} more")
+    finding = {
+        "reviewer": "coverage-critic",
+        "source": "coverage-critic",
+        "finding_scope": "system",
+        "system_marker": COVERAGE_CRITIC_MARKER,
+        "category": "Coverage",
+        "severity": "MEDIUM",
+        "file": None,
+        "line": None,
+        "issue": "Coverage critic produced no usable additions; the initial rule plan is being used as-is.",
+        "explanation": (
+            "The coverage-critic stage validates LLM additions against the "
+            "AVAILABLE list, evidence requirement, and dedup-vs-existing "
+            "constraints. When every addition is rejected (or the agent "
+            "output is unreadable), the initial rule plan runs unmodified."
+        ),
+        "recommendation": (
+            "Re-run the review once the underlying issue is resolved. "
+            "Common causes: agent output malformed, AVAILABLE-list "
+            "mismatch, taxonomy/prompt drift."
+        ),
+        "confidence": 1.0,
+        "rationale_summary": "; ".join(error_summary)[:1000],
+        "emitted_at": now_iso,
+    }
+    try:
+        with open(cr_dir / "agent_coverage-critic-failed.json", "w") as f:
+            json.dump({"findings": [finding]}, f, indent=2)
+    except OSError as exc:
+        print(
+            f"Warning: could not write coverage-critic-failed finding: {exc}",
+            file=sys.stderr,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: classify-intent
 # ---------------------------------------------------------------------------
 
@@ -7705,18 +8405,27 @@ def _build_run_plan_stages(
             "enabled": False,  # plan 05
         },
         {
+            # PLN-725 Phase 3 shipped a two-step prep/consolidate flow
+            # rather than a single ``coverage-critic`` subcommand.
+            # Stage 15 represents the prepare half — emits the manifest;
+            # the orchestrator spawns the Sonnet agent; a sibling
+            # stage_15b (added in Phase 4 with the rest of orchestrator
+            # wiring) will run consolidate and write coverage_plan.json.
             "id": "stage_15_coverage_critic",
             "kind": "helper",
-            "subcommand": "coverage-critic",
+            "subcommand": "coverage-critic-prepare",
             "args": [
                 "--cr-dir", cr_dir,
-                "--coverage-plan", f"{cr_dir}/coverage_plan_initial.json",
-                # PLN-725 Phase 3 will own the final flag name; until
-                # then this references the canonical file from Phase 1.
+                "--coverage-plan-initial", f"{cr_dir}/coverage_plan_initial.json",
+                "--diff-data", f"{cr_dir}/diff_data.json",
+                "--available-reviewers", f"{cr_dir}/available_reviewers.json",
                 "--extract-signals", f"{cr_dir}/extract_signals.json",
+                "--diff-tip", "HEAD",
             ],
-            "stdout": f"{cr_dir}/coverage_critic.json",
-            "expected_outputs": [f"{cr_dir}/coverage_critic.json"],
+            "stdout": f"{cr_dir}/coverage_critic_manifest.json",
+            # Phase 3 prepare emits only the manifest. The final
+            # coverage_plan.json is written by stage_15b (consolidate).
+            "expected_outputs": [f"{cr_dir}/coverage_critic_manifest.json"],
             "depends_on": ["stage_14_resolve_coverage"],
             "on_failure": "continue",
             "enabled": False,  # plan 05
@@ -9155,6 +9864,77 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
         help="Print the proposed merged coverage[] to stdout without writing",
     )
     p_mcg.set_defaults(func=cmd_migrate_critic_gates)
+
+    # coverage-critic-prepare (PLN-725 Stage 3a)
+    p_ccp = subparsers.add_parser(
+        "coverage-critic-prepare",
+        help="Prepare coverage-critic agent input; serve from coverage_critic/ cache on hit.",
+    )
+    p_ccp.add_argument("--cr-dir", required=True, help="CR_DIR path")
+    p_ccp.add_argument(
+        "--coverage-plan-initial", required=True,
+        help="Path to coverage_plan_initial.json (from resolve-coverage)",
+    )
+    p_ccp.add_argument(
+        "--diff-data", required=True, help="Path to diff_data.json",
+    )
+    p_ccp.add_argument(
+        "--available-reviewers", required=True,
+        help="Path to a JSON file containing the AVAILABLE list "
+        "(flat list or {available: [...]})",
+    )
+    p_ccp.add_argument(
+        "--extract-signals", default=None,
+        help="Path to extract_signals.json (optional but recommended)",
+    )
+    p_ccp.add_argument(
+        "--diff-tip", required=True, help="Diff tip SHA for cache key",
+    )
+    p_ccp.add_argument(
+        "--cache-dir", default=None,
+        help="Optional cache directory; fresh tuples served from coverage_critic/",
+    )
+    p_ccp.add_argument(
+        "--prompt", default=None,
+        help="Path to coverage_critic_prompt.txt (defaults to module-relative asset)",
+    )
+    p_ccp.add_argument(
+        "--model", default=COVERAGE_CRITIC_MODEL_DEFAULT,
+        help="Model label recorded in the manifest",
+    )
+    p_ccp.add_argument(
+        "--no-critic", action="store_true",
+        help="Skip the LLM critic entirely; write coverage_plan_initial as the final plan.",
+    )
+    p_ccp.set_defaults(func=cmd_coverage_critic_prepare)
+
+    # coverage-critic-consolidate (PLN-725 Stage 3b)
+    p_ccc = subparsers.add_parser(
+        "coverage-critic-consolidate",
+        help="Validate agent critic output; merge into coverage_plan.json + cache.",
+    )
+    p_ccc.add_argument("--cr-dir", required=True, help="CR_DIR path")
+    p_ccc.add_argument(
+        "--coverage-plan-initial", required=True,
+        help="Path to coverage_plan_initial.json",
+    )
+    p_ccc.add_argument(
+        "--agent-output", required=True,
+        help="Path to the agent's coverage-critic output JSON",
+    )
+    p_ccc.add_argument(
+        "--available-reviewers", required=True,
+        help="Path to the AVAILABLE list (same file used by --prepare)",
+    )
+    p_ccc.add_argument(
+        "--manifest", default=None,
+        help="Path to coverage_critic_manifest.json (defaults to <cr-dir>/coverage_critic_manifest.json)",
+    )
+    p_ccc.add_argument(
+        "--cache-dir", default=None,
+        help="Optional cache directory; successful runs write back to coverage_critic/",
+    )
+    p_ccc.set_defaults(func=cmd_coverage_critic_consolidate)
 
     # re-assert (PLN-773 Phase 4)
     p_ra = subparsers.add_parser(
