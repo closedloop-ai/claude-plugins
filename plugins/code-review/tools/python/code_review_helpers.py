@@ -5796,7 +5796,7 @@ def cmd_extract_signals_consolidate(args: argparse.Namespace) -> int:
     """PLN-725 Stage 1b: validate the agent's signal output, write the canonical
     ``extract_signals.json``, and update the cache.
 
-    Reads ``<agent_output>`` (typically ``<cr_dir>/agent_extract_signals.json``
+    Reads ``<agent_output>`` (typically ``<cr_dir>/pln725_extract_signals.json``
     written by the Haiku agent), validates against the taxonomy contract,
     and:
 
@@ -5858,7 +5858,7 @@ def cmd_extract_signals_consolidate(args: argparse.Namespace) -> int:
     # PLN-725 Phase 4: orchestrator wiring runs consolidate
     # unconditionally as the stage after the agent-dispatch step. On a
     # cache_hit manifest, prepare already wrote extract_signals.json
-    # directly — no agent was spawned, no agent_extract_signals.json
+    # directly — no agent was spawned, no pln725_extract_signals.json
     # exists, and re-reading from cache would just duplicate the work
     # prepare already did. No-op so the walker can stay
     # mechanically-driven without conditional dispatch.
@@ -6581,6 +6581,154 @@ def cmd_resolve_coverage(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# PLN-725 Phase 5 — Agent-Definition Loading
+#
+# Produces the AVAILABLE roster the coverage-critic enforces against.
+# Scans a directory (default ``.claude/agents/``) of markdown agent
+# definitions, parses YAML frontmatter for each file's ``name`` field,
+# and writes ``<cr_dir>/available_reviewers.json`` as a flat string
+# list. Phase 4's no-roster fallback (``cmd_coverage_critic_prepare``
+# short-circuiting on missing file) stays in place as the safety net
+# for projects with no ``.claude/agents/`` directory.
+#
+# Why parse YAML frontmatter rather than just listing filenames? The
+# filename is a stable convention but the in-file ``name`` is the
+# authoritative identifier (it's what reviewer prompts reference and
+# what ``critic-gates.json`` mentions). A filename/name mismatch
+# would surface here as a roster entry that doesn't match anything
+# the validator enforces against.
+# ---------------------------------------------------------------------------
+
+DEFAULT_AGENTS_DIR = Path(".claude/agents")
+
+_FRONTMATTER_BOUNDARY = re.compile(r"^---\s*$", re.MULTILINE)
+_FRONTMATTER_NAME = re.compile(
+    r"^name\s*:\s*([A-Za-z0-9][A-Za-z0-9_.-]*)\s*$",
+    re.MULTILINE,
+)
+
+
+def _parse_agent_name(text: str) -> str | None:
+    """Return the ``name`` field from a markdown agent's YAML frontmatter.
+
+    Tolerant by design — does NOT pull in PyYAML for one regex-able
+    field. Accepts the conventional ``---\\n…\\n---`` frontmatter
+    fence at the start of the file; returns the value of the first
+    ``name:`` line inside the fence. Returns ``None`` for missing
+    frontmatter, missing/empty ``name``, or any unparseable shape.
+    The caller drops Nones from the roster — a malformed agent file
+    is observable in stderr telemetry but not a fatal pipeline halt.
+    """
+    if not text.startswith("---"):
+        return None
+    # Find the closing boundary after the opening one (skip the first
+    # ``---`` at index 0).
+    boundaries = [m.start() for m in _FRONTMATTER_BOUNDARY.finditer(text)]
+    if len(boundaries) < 2:
+        return None
+    frontmatter = text[boundaries[0] + 3 : boundaries[1]]
+    match = _FRONTMATTER_NAME.search(frontmatter)
+    if not match:
+        return None
+    return match.group(1).strip() or None
+
+
+def _scan_agent_definitions(agents_dir: Path) -> tuple[list[str], list[str]]:
+    """Walk ``agents_dir`` and return ``(reviewers, warnings)``.
+
+    Reviewers is a dedup'd list of names, sorted by NAME (not filename)
+    so the output is stable independent of the file-naming scheme and
+    matches the cache-key sort applied by ``_available_reviewers_hash``.
+    The walk itself is filename-sorted for deterministic duplicate
+    handling — when two files declare the same name, the
+    lexicographically-first filename wins. Warnings is a list of
+    per-file diagnostics — unreadable files, missing frontmatter,
+    duplicate names — surfaced to stderr by the caller for operator
+    visibility without aborting the load.
+    """
+    reviewers: list[str] = []
+    seen: set[str] = set()
+    warnings: list[str] = []
+    if not agents_dir.is_dir():
+        return [], [f"agents dir not found: {agents_dir}"]
+    for path in sorted(agents_dir.glob("*.md")):
+        try:
+            text = path.read_text()
+        except OSError as exc:
+            warnings.append(f"{path.name}: read error {exc}")
+            continue
+        name = _parse_agent_name(text)
+        if name is None:
+            warnings.append(f"{path.name}: no parseable `name` in frontmatter")
+            continue
+        if name in seen:
+            warnings.append(f"{path.name}: duplicate name {name!r}; skipped")
+            continue
+        seen.add(name)
+        reviewers.append(name)
+    # Final sort is by NAME — independent of filename scheme. Walking
+    # in filename order above kept the duplicate-name "first wins"
+    # behaviour deterministic; sorting the output here makes the
+    # documented "sorted by name" contract true for any naming scheme.
+    reviewers.sort()
+    return reviewers, warnings
+
+
+def cmd_load_available_reviewers(args: argparse.Namespace) -> int:
+    """PLN-725 Stage 5: load the AVAILABLE roster the critic enforces against.
+
+    Scans ``--agents-dir`` (default ``.claude/agents``) for markdown
+    agent definitions, parses each file's YAML frontmatter for the
+    ``name`` field, and writes a flat JSON list to
+    ``<cr_dir>/available_reviewers.json``. Skipped files are reported
+    on stderr as warnings — empty or unreadable directories produce
+    an empty list rather than a non-zero exit, so the downstream
+    coverage-critic falls through to its existing no-roster skipped
+    semantics rather than aborting the pipeline.
+
+    Always exits 0 on a structurally valid CR_DIR; returns 1 only if
+    ``<cr_dir>`` itself cannot be created.
+    """
+    cr_dir = Path(args.cr_dir)
+    agents_dir = (
+        Path(args.agents_dir)
+        if getattr(args, "agents_dir", None)
+        else DEFAULT_AGENTS_DIR
+    )
+
+    try:
+        cr_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"Error: cannot create cr_dir {cr_dir}: {exc}", file=sys.stderr)
+        return 1
+
+    reviewers, warnings = _scan_agent_definitions(agents_dir)
+    for warning in warnings:
+        print(f"Warning: {warning}", file=sys.stderr)
+
+    output_path = cr_dir / "available_reviewers.json"
+    try:
+        with open(output_path, "w") as f:
+            json.dump(reviewers, f, indent=2)
+    except OSError as exc:
+        print(
+            f"Error writing available_reviewers.json: {exc}", file=sys.stderr,
+        )
+        return 1
+
+    summary = {
+        "status": "ok",
+        "reviewer_count": len(reviewers),
+        "agents_dir": str(agents_dir),
+        "output_path": str(output_path),
+        "warnings": warnings,
+    }
+    json.dump(summary, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
 def cmd_migrate_critic_gates(args: argparse.Namespace) -> int:
     """PLN-725 Phase 2: one-time legacy-to-canonical critic-gates rewriter.
 
@@ -7154,6 +7302,19 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         print(load_err or "Error reading available_reviewers", file=sys.stderr)
         return 1
 
+    # PLN-725 Phase 5 fix: stage_14a_load_available_reviewers now
+    # ALWAYS writes available_reviewers.json (even an empty list when
+    # .claude/agents/ is missing or empty), so the earlier
+    # `not available_path.exists()` no-roster fallback never fires for
+    # empty-roster projects. Short-circuit on the empty roster here so
+    # the documented "no-roster skipped" semantics still apply and we
+    # don't waste a Sonnet dispatch on a roster the validator could
+    # never accept additions from.
+    if not available_reviewers:
+        return _emit_skipped_coverage_plan(
+            plan_initial, output_path, manifest_path, model, reason="no-roster",
+        )
+
     # Subtract anything already in the initial plan so the critic
     # sees the actual unused pool. The validator also checks this, but
     # surfacing it in the input bundle prevents the LLM from even
@@ -7162,6 +7323,17 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     available_reviewers = [
         r for r in available_reviewers if r not in existing_in_plan
     ]
+
+    # Same skip semantics if every roster member is already in the
+    # initial plan — the critic has nothing it could propose without
+    # the validator rejecting it as duplicate. Different reason for
+    # operator telemetry (this is "fully subscribed", not "no agents
+    # configured").
+    if not available_reviewers:
+        return _emit_skipped_coverage_plan(
+            plan_initial, output_path, manifest_path, model,
+            reason="no-candidates",
+        )
 
     try:
         prompt_hash = _coverage_critic_prompt_hash(prompt_path)
@@ -7238,7 +7410,7 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
     ``coverage_plan.json``, and update the cache.
 
     Reads ``<agent_output>`` (typically
-    ``<cr_dir>/agent_coverage_critic.json``), validates against the
+    ``<cr_dir>/pln725_coverage_critic.json``), validates against the
     constraint contract, and:
 
       - **At least one valid addition** — merges into the initial plan,
@@ -7298,7 +7470,7 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
     # ``cache_hit`` or ``skipped`` manifest, prepare already wrote
     # coverage_plan.json (cache hit serves the cached plan directly;
     # ``--no-critic`` stamps the initial plan + critic_status="skipped").
-    # In both cases no agent was spawned, no agent_coverage_critic.json
+    # In both cases no agent was spawned, no pln725_coverage_critic.json
     # exists, and the work consolidate would normally do is already
     # done. No-op so the walker stays mechanically-driven without
     # conditional dispatch.
@@ -8416,6 +8588,29 @@ def _build_run_plan_stages(
             "enabled": True,
         },
         {
+            # PLN-725 Phase 5 reorder: stage_12_hygiene was previously
+            # positioned after stage_11_extract_signals, but Gate A
+            # (hygiene-only early exit) fires immediately after stage_12
+            # — and stage_11 is the first LLM-capable stage in the
+            # pipeline. With Phase 4 enabling stage_11, hygiene-only
+            # reviews would spend a Haiku call on signal extraction
+            # before Gate A fired, violating the documented "zero-LLM
+            # deterministic check" contract on hygiene-only runs.
+            # stage_12's depends_on is stage_05_parse_diff only (it
+            # doesn't read signals/intent/coverage), so moving it
+            # earlier is safe — execution order follows array position,
+            # the _12_ prefix is a stable label not an ordinal.
+            "id": "stage_12_hygiene",
+            "kind": "helper",
+            "subcommand": "hygiene",
+            "args": ["--diff-data", f"{cr_dir}/diff_data.json"],
+            "stdout": f"{cr_dir}/hygiene.json",
+            "expected_outputs": [f"{cr_dir}/hygiene.json"],
+            "depends_on": ["stage_05_parse_diff"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
             "id": "stage_11_extract_signals",
             "kind": "helper",
             # PLN-725 Phase 1 shipped a two-step prep/consolidate flow
@@ -8429,14 +8624,26 @@ def _build_run_plan_stages(
             "args": [
                 "--cr-dir", cr_dir,
                 "--diff-data", f"{cr_dir}/diff_data.json",
-                "--diff-tip", "HEAD",
+                # PLN-725 Phase 5 fix: <DIFF_TIP> is the walker-resolved
+                # token from scope.json. Literal "HEAD" here meant the
+                # cache key was constant across reviews (every entry
+                # wrote under the same diff_tip), making the documented
+                # cache_hit path unreachable through the walker and
+                # poisoning the cache namespace.
+                "--diff-tip", "<DIFF_TIP>",
                 "--intent", f"{cr_dir}/intent.json",
+                # PLN-725 Phase 5 fix: prepare reads --cache-dir to
+                # check for an existing entry. Without this arg
+                # prepare runs cache-blind and the orchestrator's
+                # singleton dispatch fires on every review even when
+                # the same diff has been seen.
+                "--cache-dir", "<CACHE_DIR>",
             ],
             "stdout": f"{cr_dir}/extract_signals_manifest.json",
             # stage_11 is the prepare half — it only emits the manifest.
             # extract_signals.json is written by stage_11b (consolidate)
             # AFTER the orchestrator's PLN-725 agent-dispatch step has
-            # written agent_extract_signals.json. On a cache_hit
+            # written pln725_extract_signals.json. On a cache_hit
             # manifest, prepare wrote extract_signals.json itself, no
             # agent runs, and stage_11b is a no-op (handled inside
             # cmd_extract_signals_consolidate).
@@ -8446,7 +8653,7 @@ def _build_run_plan_stages(
             "enabled": True,  # PLN-725 Phase 4
         },
         {
-            # PLN-725 Phase 4 sibling: consume agent_extract_signals.json
+            # PLN-725 Phase 4 sibling: consume pln725_extract_signals.json
             # (written by the orchestrator's agent-dispatch step) and
             # write extract_signals.json + cache update. No-ops on
             # cache_hit manifest so the walker drives this
@@ -8456,7 +8663,7 @@ def _build_run_plan_stages(
             "subcommand": "extract-signals-consolidate",
             "args": [
                 "--cr-dir", cr_dir,
-                "--agent-output", f"{cr_dir}/agent_extract_signals.json",
+                "--agent-output", f"{cr_dir}/pln725_extract_signals.json",
                 "--manifest", f"{cr_dir}/extract_signals_manifest.json",
                 "--cache-dir", "<CACHE_DIR>",
             ],
@@ -8465,17 +8672,6 @@ def _build_run_plan_stages(
             "depends_on": ["stage_11_extract_signals"],
             "on_failure": "continue_with_coverage_gap",
             "enabled": True,  # PLN-725 Phase 4
-        },
-        {
-            "id": "stage_12_hygiene",
-            "kind": "helper",
-            "subcommand": "hygiene",
-            "args": ["--diff-data", f"{cr_dir}/diff_data.json"],
-            "stdout": f"{cr_dir}/hygiene.json",
-            "expected_outputs": [f"{cr_dir}/hygiene.json"],
-            "depends_on": ["stage_05_parse_diff"],
-            "on_failure": "continue",
-            "enabled": True,
         },
         {
             "id": "stage_13_validate_companions",
@@ -8513,6 +8709,41 @@ def _build_run_plan_stages(
             "enabled": True,  # PLN-725 Phase 4
         },
         {
+            # PLN-725 Phase 5: produce the AVAILABLE roster the critic
+            # enforces against. Scans .claude/agents/*.md and writes a
+            # flat string list to <cr_dir>/available_reviewers.json. The
+            # stage is conceptually independent of coverage resolution
+            # (it doesn't read coverage_plan_initial.json), but it slots
+            # between stage_14 and stage_15 so the data dependency is
+            # explicit: stage_15 coverage-critic-prepare reads the
+            # roster. An empty .claude/agents/ (no project agents) or
+            # missing directory produces an empty roster — stage_15
+            # then falls back to the Phase 4 no-roster skipped semantics.
+            "id": "stage_14a_load_available_reviewers",
+            "kind": "helper",
+            "subcommand": "load-available-reviewers",
+            "args": [
+                "--cr-dir", cr_dir,
+                # No --agents-dir override: defaults to .claude/agents
+                # (DEFAULT_AGENTS_DIR), the standard repository-local
+                # location. Multi-repo layouts that need a different
+                # path can override here in a future change.
+            ],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/available_reviewers.json"],
+            # No data dependency on prior stages — the roster is
+            # statically derived from .claude/agents/. The depends_on
+            # is empty so the walker doesn't gate on stages whose
+            # outputs we don't read.
+            "depends_on": [],
+            # An empty roster is a valid outcome (no project agents);
+            # only a write failure on available_reviewers.json is
+            # non-fatal and the critic's no-roster fallback still
+            # produces a usable plan.
+            "on_failure": "continue_with_coverage_gap",
+            "enabled": True,  # PLN-725 Phase 5
+        },
+        {
             # PLN-725 Phase 3 shipped a two-step prep/consolidate flow
             # rather than a single ``coverage-critic`` subcommand.
             # Stage 15 represents the prepare half — emits the manifest;
@@ -8528,22 +8759,35 @@ def _build_run_plan_stages(
                 "--diff-data", f"{cr_dir}/diff_data.json",
                 "--available-reviewers", f"{cr_dir}/available_reviewers.json",
                 "--extract-signals", f"{cr_dir}/extract_signals.json",
-                "--diff-tip", "HEAD",
+                # PLN-725 Phase 5 fix: see stage_11 above. Same
+                # cache-key + cache-namespace bugs would fire here
+                # otherwise.
+                "--diff-tip", "<DIFF_TIP>",
+                "--cache-dir", "<CACHE_DIR>",
             ],
             "stdout": f"{cr_dir}/coverage_critic_manifest.json",
             # Phase 3 prepare emits only the manifest. The final
             # coverage_plan.json is written by stage_15b (consolidate),
             # which runs AFTER the orchestrator's PLN-725 agent-dispatch
-            # step has produced agent_coverage_critic.json. On cache_hit
+            # step has produced pln725_coverage_critic.json. On cache_hit
             # or skipped manifest, prepare already wrote
             # coverage_plan.json and stage_15b no-ops.
             "expected_outputs": [f"{cr_dir}/coverage_critic_manifest.json"],
-            "depends_on": ["stage_14_resolve_coverage"],
+            # PLN-725 Phase 5: also depends on the roster loader. Both
+            # coverage_plan_initial.json (stage_14) AND
+            # available_reviewers.json (stage_14a) are inputs the
+            # critic reads, and listing only stage_14 here would let
+            # stage_15 run before the roster lands on disk if a future
+            # walker change ever reorders the array.
+            "depends_on": [
+                "stage_14_resolve_coverage",
+                "stage_14a_load_available_reviewers",
+            ],
             "on_failure": "continue",
             "enabled": True,  # PLN-725 Phase 4
         },
         {
-            # PLN-725 Phase 4 sibling: consume agent_coverage_critic.json
+            # PLN-725 Phase 4 sibling: consume pln725_coverage_critic.json
             # (written by the orchestrator's agent-dispatch step) and
             # write coverage_plan.json. No-ops on cache_hit/skipped
             # manifest so the walker drives this unconditionally without
@@ -8554,7 +8798,7 @@ def _build_run_plan_stages(
             "args": [
                 "--cr-dir", cr_dir,
                 "--coverage-plan-initial", f"{cr_dir}/coverage_plan_initial.json",
-                "--agent-output", f"{cr_dir}/agent_coverage_critic.json",
+                "--agent-output", f"{cr_dir}/pln725_coverage_critic.json",
                 "--available-reviewers", f"{cr_dir}/available_reviewers.json",
                 "--manifest", f"{cr_dir}/coverage_critic_manifest.json",
                 "--cache-dir", "<CACHE_DIR>",
@@ -9987,6 +10231,18 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
         help="Rule scope filter (default: code-review)",
     )
     p_rc.set_defaults(func=cmd_resolve_coverage)
+
+    # load-available-reviewers (PLN-725 Phase 5)
+    p_lar = subparsers.add_parser(
+        "load-available-reviewers",
+        help="Scan .claude/agents/*.md -> available_reviewers.json (the AVAILABLE roster the critic enforces against)",
+    )
+    p_lar.add_argument("--cr-dir", required=True, help="CR_DIR path")
+    p_lar.add_argument(
+        "--agents-dir", default=None,
+        help="Directory of *.md agent definitions (default: .claude/agents)",
+    )
+    p_lar.set_defaults(func=cmd_load_available_reviewers)
 
     # migrate-critic-gates (PLN-725 Phase 2)
     p_mcg = subparsers.add_parser(

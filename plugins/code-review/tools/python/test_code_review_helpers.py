@@ -6760,21 +6760,24 @@ class TestPrepareRun:
             pr_number=pr_number,
         )
 
-    def test_emits_thirty_four_stages(self, tmp_path: Path) -> None:
+    def test_emits_thirty_five_stages(self, tmp_path: Path) -> None:
         """Stage count history:
           - Base pipeline: 30
           - PLN-722 v2.8.0 added stage_22b_verify_prepare and
             stage_24a_verify_consolidate → 32
           - PLN-725 Phase 4 (v2.17.0) added stage_11b_extract_signals_consolidate
             and stage_15b_coverage_critic_consolidate → 34
+          - PLN-725 Phase 5 (v2.18.0) added
+            stage_14a_load_available_reviewers → 35
 
         The ``_<NN>_`` prefix is a stable label, not a strict ordinal;
-        the lettered suffixes (``_11b_``, ``_15b_``, ``_22b_``,
-        ``_24a_``) mark stages inserted between original ordinals.
+        the lettered suffixes (``_11b_``, ``_14a_``, ``_15b_``,
+        ``_22b_``, ``_24a_``) mark stages inserted between original
+        ordinals.
         """
         summary, plan = self._run(tmp_path)
-        assert summary["stage_count"] == 34
-        assert len(plan["stages"]) == 34
+        assert summary["stage_count"] == 35
+        assert len(plan["stages"]) == 35
         ids = [s["id"] for s in plan["stages"]]
         assert ids[0] == "stage_01_setup"
         assert ids[-1] == "stage_30_footer"
@@ -12477,6 +12480,92 @@ class TestCoverageCriticPrepareCLI:
         # No agent input bundle, no manifest from the cache-miss path.
         assert not (cr_dir / "coverage_critic_input.json").exists()
 
+    def test_empty_roster_file_short_circuits_to_skipped_no_roster(
+        self, tmp_path: Path,
+    ) -> None:
+        """PLN-725 Phase 5 regression: when stage_14a runs in a project
+        with no .claude/agents/, it writes an EMPTY-LIST
+        available_reviewers.json rather than not writing the file at all.
+        The previous Phase 4 ``not available_path.exists()`` fallback
+        would no longer fire, and the critic would dispatch with an
+        empty AVAILABLE roster the validator can never accept from.
+
+        v2.18.2: prepare also short-circuits on an empty roster list,
+        producing the same status="skipped" + reason="no-roster" outcome
+        as the missing-file path. Without this, every empty-roster
+        project would burn a Sonnet call per review.
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        # File exists, but the roster is empty (the Phase 5 stage_14a
+        # output for projects with no .claude/agents/).
+        inputs["paths"]["available"].write_text(json.dumps([]))
+        args = self._args(tmp_path, inputs)
+        assert cmd_coverage_critic_prepare(args) == 0
+
+        cr_dir = Path(args.cr_dir)
+        manifest = json.loads(
+            (cr_dir / "coverage_critic_manifest.json").read_text(),
+        )
+        # Same shape as the missing-file path — operator can't tell from
+        # the manifest whether the empty came from "no file" or "empty
+        # file", and shouldn't have to.
+        assert manifest["status"] == "skipped"
+        assert manifest["reason"] == "no-roster"
+        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        assert final["critic_status"] == "skipped"
+        # The dispatch path MUST NOT have started: no input bundle.
+        assert not (cr_dir / "coverage_critic_input.json").exists()
+
+    def test_fully_subscribed_plan_short_circuits_to_skipped_no_candidates(
+        self, tmp_path: Path,
+    ) -> None:
+        """Adjacent skip case: the roster file is present and non-empty,
+        but every reviewer is already in the initial plan
+        (required[] or best_effort[]). The validator could never
+        accept any addition, so the critic dispatch would be wasted.
+
+        Different ``reason`` than no-roster so operator telemetry can
+        distinguish "no agents configured" from "rules already cover
+        every configured agent".
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+
+        agents = ["accessibility-expert", "i18n-expert"]
+        # Stuff every available reviewer into the initial plan.
+        plan_initial = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {"reviewer": "accessibility-expert", "source": "coverage"},
+            ],
+            "best_effort": [
+                {"reviewer": "i18n-expert", "source": "coverage"},
+            ],
+            "warnings": [],
+            "stats": {"required_count": 2, "best_effort_count": 1},
+        }
+        inputs = _write_coverage_critic_inputs(
+            tmp_path,
+            signals={"signals": []},
+            available=agents,
+            plan_initial=plan_initial,
+        )
+        args = self._args(tmp_path, inputs)
+        assert cmd_coverage_critic_prepare(args) == 0
+
+        cr_dir = Path(args.cr_dir)
+        manifest = json.loads(
+            (cr_dir / "coverage_critic_manifest.json").read_text(),
+        )
+        assert manifest["status"] == "skipped"
+        assert manifest["reason"] == "no-candidates"
+        # consolidate's no-op fires on status "skipped" regardless of
+        # reason — distinct telemetry without behavioural divergence.
+        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        assert final["critic_status"] == "skipped"
+        assert not (cr_dir / "coverage_critic_input.json").exists()
+
     def test_malformed_roster_still_returns_one(self, tmp_path: Path) -> None:
         """Tolerance is FILE-NOT-FOUND-only. A present-but-malformed
         roster is an operator config error and must still surface as
@@ -12842,9 +12931,13 @@ class TestPLN725Phase4StageGraph:
         assert "--cache-dir" in args
         # The agent-output value MUST match the dispatch-protocol
         # convention so the agent's write target and the consolidate
-        # read target are the same file.
+        # read target are the same file. Uses the pln725_ prefix
+        # (not agent_*) so the file is NOT swept up by stage_20's
+        # agent_*.json expected_outputs glob or by cmd_collect_findings'
+        # agent_*.json findings glob.
         agent_output_idx = args.index("--agent-output")
-        assert args[agent_output_idx + 1].endswith("/agent_extract_signals.json")
+        assert args[agent_output_idx + 1].endswith("/pln725_extract_signals.json")
+        assert "/agent_" not in args[agent_output_idx + 1]
         # The manifest value MUST be the same path prepare wrote to.
         manifest_idx = args.index("--manifest")
         assert args[manifest_idx + 1].endswith("/extract_signals_manifest.json")
@@ -12879,7 +12972,9 @@ class TestPLN725Phase4StageGraph:
         ):
             assert required in args, f"missing {required}"
         agent_output_idx = args.index("--agent-output")
-        assert args[agent_output_idx + 1].endswith("/agent_coverage_critic.json")
+        # Same namespace-collision reasoning as stage_11b above.
+        assert args[agent_output_idx + 1].endswith("/pln725_coverage_critic.json")
+        assert "/agent_" not in args[agent_output_idx + 1]
         manifest_idx = args.index("--manifest")
         assert args[manifest_idx + 1].endswith("/coverage_critic_manifest.json")
 
@@ -12931,6 +13026,399 @@ class TestPLN725Phase4StageGraph:
 
     def test_stage_16_stays_disabled_in_phase_4(self) -> None:
         assert self._stage("stage_16_arbitrate_budget")["enabled"] is False
+
+
+class TestPLN725Phase5PostMergeHardening:
+    """v2.18.1 fixes surfaced by post-merge review of PR #128. Each
+    test pins the concrete failure mode the corresponding finding
+    described, so a future refactor cannot silently regress to the
+    pre-fix shape.
+    """
+
+    def _stages(self) -> list[dict[str, Any]]:
+        from code_review_helpers import _build_run_plan_stages
+        return _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+
+    def _stage(self, stage_id: str) -> dict[str, Any]:
+        for s in self._stages():
+            if s["id"] == stage_id:
+                return s
+        raise AssertionError(f"{stage_id!r} missing from prepare-run manifest")
+
+    # --- Fix 1: namespace collision ---------------------------------------
+
+    def test_pln725_singleton_outputs_are_not_in_agent_namespace(self) -> None:
+        """stage_20_spawn_reviewers.expected_outputs is `agent_*.json`
+        and cmd_collect_findings globs `agent_*.json` for findings.
+        A successful pln725 protocol output sitting under
+        `agent_extract_signals.json` / `agent_coverage_critic.json`
+        would (a) satisfy stage_20's "at least one match" check
+        even if the reviewer fleet totally failed, and (b) get
+        ingested by collect-findings if the LLM ever emitted a
+        top-level `findings[]` in its protocol output. Both stages
+        must use the `pln725_` prefix instead.
+        """
+        for stage_id, expected_basename in (
+            ("stage_11b_extract_signals_consolidate", "pln725_extract_signals.json"),
+            ("stage_15b_coverage_critic_consolidate", "pln725_coverage_critic.json"),
+        ):
+            args = self._stage(stage_id)["args"]
+            idx = args.index("--agent-output")
+            value = args[idx + 1]
+            assert value.endswith(f"/{expected_basename}"), (
+                f"{stage_id} --agent-output should target "
+                f"{expected_basename!r}, got {value!r}"
+            )
+            assert "/agent_" not in value, (
+                f"{stage_id} --agent-output must NOT use the agent_ "
+                f"namespace (collides with stage_20 fleet glob and "
+                f"collect-findings glob); got {value!r}"
+            )
+
+    def test_collect_findings_glob_does_not_match_pln725_outputs(self) -> None:
+        # Belt-and-braces: confirm the pln725_ prefix doesn't
+        # accidentally happen to start with agent_ via some other
+        # path. Pure-string check on the run plan.
+        for stage_id in (
+            "stage_11b_extract_signals_consolidate",
+            "stage_15b_coverage_critic_consolidate",
+        ):
+            args = self._stage(stage_id)["args"]
+            value = args[args.index("--agent-output") + 1]
+            basename = Path(value).name
+            assert not basename.startswith("agent_"), (
+                f"{stage_id} pln725 output basename {basename!r} "
+                f"must not start with `agent_`"
+            )
+
+    # --- Fix 2: walker-resolved diff_tip + cache-dir on prepare ------------
+
+    def test_stage_11_prepare_uses_walker_diff_tip_token(self) -> None:
+        # Literal "HEAD" would make the cache key constant across
+        # reviews — every entry written under the same diff_tip,
+        # cache_hit path unreachable through the walker. The walker
+        # substitutes <DIFF_TIP> from scope.json before dispatch.
+        args = self._stage("stage_11_extract_signals")["args"]
+        idx = args.index("--diff-tip")
+        assert args[idx + 1] == "<DIFF_TIP>"
+        assert args[idx + 1] != "HEAD"
+
+    def test_stage_11_prepare_receives_cache_dir(self) -> None:
+        # Without --cache-dir, prepare runs cache-blind and the
+        # singleton dispatch fires on every review even when the
+        # same diff has been seen.
+        args = self._stage("stage_11_extract_signals")["args"]
+        assert "--cache-dir" in args
+        assert args[args.index("--cache-dir") + 1] == "<CACHE_DIR>"
+
+    def test_stage_15_prepare_uses_walker_diff_tip_token(self) -> None:
+        args = self._stage("stage_15_coverage_critic")["args"]
+        idx = args.index("--diff-tip")
+        assert args[idx + 1] == "<DIFF_TIP>"
+        assert args[idx + 1] != "HEAD"
+
+    def test_stage_15_prepare_receives_cache_dir(self) -> None:
+        args = self._stage("stage_15_coverage_critic")["args"]
+        assert "--cache-dir" in args
+        assert args[args.index("--cache-dir") + 1] == "<CACHE_DIR>"
+
+    # --- Fix 3: hygiene before LLM stages ---------------------------------
+
+    def test_stage_12_hygiene_runs_before_any_pln725_llm_stage(self) -> None:
+        """Gate A (the --hygiene-only early exit) fires immediately
+        after stage_12_hygiene. start.md documents hygiene-only as a
+        "zero-LLM deterministic check". If any PLN-725 LLM-capable
+        stage (stage_11 signal-extraction prepare; stage_15
+        coverage-critic prepare) appears in the array BEFORE
+        stage_12, hygiene-only reviews spend an LLM call before
+        Gate A fires. Stage execution follows array position, so
+        the ordering must put stage_12 ahead of every LLM stage.
+        """
+        ids = [s["id"] for s in self._stages()]
+        s12 = ids.index("stage_12_hygiene")
+        # Every PLN-725 prepare/consolidate stage that can fan out
+        # to an LLM dispatch must appear after stage_12.
+        for llm_stage_id in (
+            "stage_11_extract_signals",
+            "stage_11b_extract_signals_consolidate",
+            "stage_14_resolve_coverage",
+            "stage_14a_load_available_reviewers",
+            "stage_15_coverage_critic",
+            "stage_15b_coverage_critic_consolidate",
+        ):
+            assert s12 < ids.index(llm_stage_id), (
+                f"stage_12_hygiene must run before {llm_stage_id} so "
+                f"Gate A (--hygiene-only exit) fires before any LLM "
+                f"call; current order would burn an LLM dispatch on "
+                f"hygiene-only reviews."
+            )
+
+    def test_stage_12_hygiene_position_after_classify_intent(self) -> None:
+        # Sanity: stage_12 still slots after stage_10 (its dependency
+        # chain still needs stage_05_parse_diff). The reorder only
+        # moves it ahead of stage_11.
+        ids = [s["id"] for s in self._stages()]
+        s10 = ids.index("stage_10_classify_intent")
+        s12 = ids.index("stage_12_hygiene")
+        assert s10 < s12
+
+
+class TestPLN725Phase5LoadAvailableReviewers:
+    """Phase 5 produces the AVAILABLE roster the coverage-critic enforces
+    against. This pins the helper (frontmatter parsing, scan dedup,
+    warning surfacing) and the CLI envelope (writes a flat list, exit
+    code semantics, summary stdout shape) so a future refactor cannot
+    silently break the contract stage_15 reads.
+    """
+
+    # --- frontmatter parser -----------------------------------------------
+
+    def test_parse_agent_name_extracts_name_from_frontmatter(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        text = "---\nname: bug-hunter-a\nmodel: opus\n---\n\nBody."
+        assert _parse_agent_name(text) == "bug-hunter-a"
+
+    def test_parse_agent_name_returns_none_without_frontmatter(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        assert _parse_agent_name("# No frontmatter here\n") is None
+
+    def test_parse_agent_name_returns_none_when_name_missing(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        text = "---\nmodel: opus\ndescription: nope\n---\n"
+        assert _parse_agent_name(text) is None
+
+    def test_parse_agent_name_returns_none_for_unclosed_frontmatter(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        # Only one boundary: the parser must NOT treat the entire file
+        # body as frontmatter and accidentally match a `name:` line in
+        # prose that happens to start with "name:".
+        text = "---\nname: real-name\n\nbody name: fake\n"
+        assert _parse_agent_name(text) is None
+
+    def test_parse_agent_name_returns_first_name_only(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        # YAML wouldn't actually allow this, but the regex is tolerant
+        # by design — first match wins, no second-name promotion.
+        text = "---\nname: first\nalias: second\n---\n"
+        assert _parse_agent_name(text) == "first"
+
+    # --- directory scan ---------------------------------------------------
+
+    def _seed_agent(
+        self, agents_dir: Path, filename: str, name: str | None,
+    ) -> Path:
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        path = agents_dir / filename
+        if name is None:
+            path.write_text("# no frontmatter\nbody\n")
+        else:
+            path.write_text(f"---\nname: {name}\nmodel: opus\n---\nbody\n")
+        return path
+
+    def test_scan_returns_sorted_dedup_list(self, tmp_path: Path) -> None:
+        from code_review_helpers import _scan_agent_definitions
+        agents_dir = tmp_path / "agents"
+        # Intentionally out-of-order filenames; the scan should sort the
+        # output deterministically so the cache key (which hashes the
+        # roster) is stable across filesystem traversal order.
+        self._seed_agent(agents_dir, "z-agent.md", "z-reviewer")
+        self._seed_agent(agents_dir, "a-agent.md", "a-reviewer")
+        self._seed_agent(agents_dir, "m-agent.md", "m-reviewer")
+        reviewers, warnings = _scan_agent_definitions(agents_dir)
+        assert reviewers == ["a-reviewer", "m-reviewer", "z-reviewer"]
+        assert warnings == []
+
+    def test_scan_sorts_by_name_not_filename(self, tmp_path: Path) -> None:
+        """Counterexample for v2.18.1: when filename order and name
+        order disagree, the output MUST be sorted by NAME — the file
+        contents are what consumers iterate against and what the cache
+        key hashes. Filename is just the on-disk convention.
+
+        The previous ``test_scan_returns_sorted_dedup_list`` used data
+        where filename order happened to coincide with name order, so
+        it could not distinguish filename-sort from name-sort. This
+        test seeds them in opposite order.
+        """
+        from code_review_helpers import _scan_agent_definitions
+        agents_dir = tmp_path / "agents"
+        # Filename order: a-agent.md, m-agent.md, z-agent.md
+        # Name order:     a-reviewer, m-reviewer, z-reviewer
+        # The mapping below produces filename order != name order.
+        self._seed_agent(agents_dir, "a-agent.md", "z-reviewer")
+        self._seed_agent(agents_dir, "m-agent.md", "m-reviewer")
+        self._seed_agent(agents_dir, "z-agent.md", "a-reviewer")
+        reviewers, _ = _scan_agent_definitions(agents_dir)
+        # If sorted by filename, output would be:
+        #   ["z-reviewer", "m-reviewer", "a-reviewer"]
+        # Sorted by name (the documented + cache-key-relevant contract):
+        assert reviewers == ["a-reviewer", "m-reviewer", "z-reviewer"]
+
+    def test_scan_warns_and_skips_files_without_frontmatter(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _scan_agent_definitions
+        agents_dir = tmp_path / "agents"
+        self._seed_agent(agents_dir, "good.md", "good-reviewer")
+        self._seed_agent(agents_dir, "bad.md", None)
+        reviewers, warnings = _scan_agent_definitions(agents_dir)
+        assert reviewers == ["good-reviewer"]
+        assert len(warnings) == 1
+        assert "bad.md" in warnings[0]
+
+    def test_scan_warns_on_duplicate_names(self, tmp_path: Path) -> None:
+        from code_review_helpers import _scan_agent_definitions
+        agents_dir = tmp_path / "agents"
+        self._seed_agent(agents_dir, "a.md", "same-name")
+        self._seed_agent(agents_dir, "b.md", "same-name")
+        reviewers, warnings = _scan_agent_definitions(agents_dir)
+        # First wins, second skipped with warning. Deterministic order
+        # (sorted filenames) means "a.md" claims the name.
+        assert reviewers == ["same-name"]
+        assert any("b.md" in w and "duplicate" in w for w in warnings)
+
+    def test_scan_returns_empty_list_for_missing_dir(self, tmp_path: Path) -> None:
+        from code_review_helpers import _scan_agent_definitions
+        reviewers, warnings = _scan_agent_definitions(tmp_path / "nope")
+        assert reviewers == []
+        # Surfaces the missing dir as a warning rather than silently
+        # producing an empty list — operator can tell the difference
+        # between "no .claude/agents/" and "empty .claude/agents/".
+        assert any("not found" in w for w in warnings)
+
+    def test_scan_ignores_non_md_files(self, tmp_path: Path) -> None:
+        from code_review_helpers import _scan_agent_definitions
+        agents_dir = tmp_path / "agents"
+        self._seed_agent(agents_dir, "good.md", "good-reviewer")
+        (agents_dir / "README.txt").write_text("not an agent")
+        (agents_dir / "settings.json").write_text("{}")
+        reviewers, _ = _scan_agent_definitions(agents_dir)
+        assert reviewers == ["good-reviewer"]
+
+    # --- CLI envelope -----------------------------------------------------
+
+    def test_cli_writes_flat_list_compatible_with_load_helper(
+        self, tmp_path: Path,
+    ) -> None:
+        import argparse
+        from code_review_helpers import (
+            _load_available_reviewers,
+            cmd_load_available_reviewers,
+        )
+        agents_dir = tmp_path / "agents"
+        self._seed_agent(agents_dir, "a.md", "first-reviewer")
+        self._seed_agent(agents_dir, "b.md", "second-reviewer")
+        cr_dir = tmp_path / "cr"
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            agents_dir=str(agents_dir),
+        )
+        assert cmd_load_available_reviewers(args) == 0
+        output = cr_dir / "available_reviewers.json"
+        assert output.exists()
+        # The file shape MUST be a flat list — that's the contract
+        # _load_available_reviewers (used by coverage-critic prepare
+        # and consolidate) reads. Round-trip through the helper to
+        # lock the writer/reader contract.
+        roster, err = _load_available_reviewers(output)
+        assert err is None
+        assert roster == ["first-reviewer", "second-reviewer"]
+
+    def test_cli_returns_zero_with_empty_list_on_missing_agents_dir(
+        self, tmp_path: Path,
+    ) -> None:
+        # An empty roster is a valid outcome (e.g. project has no
+        # .claude/agents/) — the cmd MUST NOT return non-zero, because
+        # the run plan stage has on_failure="continue_with_coverage_gap"
+        # and we want stage_15 to fall through to its no-roster
+        # skipped fallback rather than emit a coverage-gap finding for
+        # the absent roster.
+        import argparse
+        from code_review_helpers import cmd_load_available_reviewers
+        cr_dir = tmp_path / "cr"
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            agents_dir=str(tmp_path / "nope"),
+        )
+        assert cmd_load_available_reviewers(args) == 0
+        roster = json.loads(
+            (cr_dir / "available_reviewers.json").read_text(),
+        )
+        assert roster == []
+
+    def test_cli_summary_stdout_carries_reviewer_count(
+        self, tmp_path: Path, capsys: Any,
+    ) -> None:
+        import argparse
+        from code_review_helpers import cmd_load_available_reviewers
+        agents_dir = tmp_path / "agents"
+        self._seed_agent(agents_dir, "a.md", "one")
+        self._seed_agent(agents_dir, "b.md", "two")
+        args = argparse.Namespace(
+            cr_dir=str(tmp_path / "cr"),
+            agents_dir=str(agents_dir),
+        )
+        cmd_load_available_reviewers(args)
+        captured = capsys.readouterr()
+        summary = json.loads(captured.out)
+        assert summary["status"] == "ok"
+        assert summary["reviewer_count"] == 2
+        assert summary["agents_dir"] == str(agents_dir)
+
+
+class TestPLN725Phase5StageGraph:
+    """Phase 5 inserts stage_14a_load_available_reviewers between
+    stage_14 and stage_15. This pins the stage's shape, position, and
+    the depends_on rewire so stage_15 reads the roster after the
+    loader produces it.
+    """
+
+    def _stages(self) -> list[dict[str, Any]]:
+        from code_review_helpers import _build_run_plan_stages
+        return _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+
+    def _stage(self, stage_id: str) -> dict[str, Any]:
+        for s in self._stages():
+            if s["id"] == stage_id:
+                return s
+        raise AssertionError(f"{stage_id!r} missing from prepare-run manifest")
+
+    def test_stage_14a_exists_with_loader_subcommand(self) -> None:
+        stage = self._stage("stage_14a_load_available_reviewers")
+        assert stage["subcommand"] == "load-available-reviewers"
+        assert stage["kind"] == "helper"
+
+    def test_stage_14a_expected_outputs_is_available_reviewers_json(self) -> None:
+        stage = self._stage("stage_14a_load_available_reviewers")
+        assert any(
+            p.endswith("/available_reviewers.json")
+            for p in stage["expected_outputs"]
+        )
+
+    def test_stage_14a_runs_between_stage_14_and_stage_15(self) -> None:
+        ids = [s["id"] for s in self._stages()]
+        assert "stage_14a_load_available_reviewers" in ids
+        s14 = ids.index("stage_14_resolve_coverage")
+        s14a = ids.index("stage_14a_load_available_reviewers")
+        s15 = ids.index("stage_15_coverage_critic")
+        assert s14 < s14a < s15
+
+    def test_stage_15_depends_on_stage_14a(self) -> None:
+        # stage_15 reads available_reviewers.json. Without the
+        # explicit depends_on edge, a walker reorder could let
+        # stage_15 run before the roster lands on disk.
+        stage = self._stage("stage_15_coverage_critic")
+        assert "stage_14a_load_available_reviewers" in stage["depends_on"]
+
+    def test_stage_14a_enabled(self) -> None:
+        assert self._stage("stage_14a_load_available_reviewers")["enabled"] is True
+
+    def test_stage_14a_on_failure_is_continue_with_coverage_gap(self) -> None:
+        # An empty roster is a valid outcome, but a write failure on
+        # available_reviewers.json should not abort the pipeline —
+        # the critic falls back to its no-roster skipped semantics
+        # and the rest of the review still ships.
+        stage = self._stage("stage_14a_load_available_reviewers")
+        assert stage["on_failure"] == "continue_with_coverage_gap"
 
 
 class TestExtractSignalsConsolidateCacheHitNoOp:
