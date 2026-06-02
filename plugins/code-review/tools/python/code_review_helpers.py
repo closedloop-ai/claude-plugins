@@ -9282,33 +9282,37 @@ def _build_run_plan_stages(
             "kind": "helper",
             "subcommand": "arbitrate-budget",
             "args": [
-                # PLN-725 Phase 4: when this stage flips on (Phase 7),
-                # its input is the consolidated plan (stage_15b's
-                # output, post-critic-additions), not the pre-critic
-                # initial plan. Path is the same file name —
-                # stage_15b writes coverage_plan.json on top of
-                # whatever was at coverage_plan_initial.json with
-                # critic_status + best_effort additions merged.
+                # Input is the post-consolidate, post-verify coverage_plan.
+                # stage_15b writes coverage_plan.json with critic_status +
+                # best_effort additions; stage_15c writes coverage_verify.
+                # json with verdict + violations but does NOT mutate
+                # coverage_plan.json. So this stage reads the same file
+                # the verifier read — guaranteeing the gate and the
+                # arbitration see the same plan.
                 "--coverage-plan", f"{cr_dir}/coverage_plan.json",
                 "--diff-data", f"{cr_dir}/diff_data.json",
                 "--output", f"{cr_dir}/coverage_plan.json",
+                # PLN-725 Phase 7: BLOCKING gate from stage_15c. Absent
+                # file = PASS (verifier didn't run, upstream aborted).
+                "--coverage-verify", f"{cr_dir}/coverage_verify.json",
             ],
             "stdout": None,
             "expected_outputs": [f"{cr_dir}/coverage_plan.json", f"{cr_dir}/coverage_gaps.json"],
             # PLN-725 Phase 6 depends_on rewire: stage_15c is the last
-            # stage to read coverage_plan.json before stage_16. When
-            # Phase 7 enables this stage and starts reading
-            # coverage_verify.json to gate on PASS, the dependency on
-            # stage_15c is what guarantees that artifact exists.
+            # stage to read coverage_plan.json before stage_16. The
+            # dependency on stage_15c guarantees coverage_verify.json
+            # exists before arbitrate-budget consults the verdict.
             "depends_on": ["stage_15c_verify_coverage"],
+            # PLN-725 Phase 7 enabled. on_failure stays at "abort" —
+            # arbitrate-budget has been ready since v2.16.x; flipping
+            # it on means a real failure here is a pipeline halt, not
+            # a coverage-gap degradation. The BLOCKING gate is the
+            # graceful path: input plan flows through, exit 0, no
+            # abort. spawn_reviewers (stage_20) still uses the static
+            # spec table in start.md — the coverage_plan.json →
+            # orchestrator rewire is Phase 8.
             "on_failure": "abort",
-            # Stays disabled in Phase 4 — arbitrate-budget integration
-            # is Phase 7. stages 11/11b/14/15/15b run in dry-run mode
-            # producing coverage_plan.json as telemetry that nothing
-            # downstream yet consumes; this stage flips on when the
-            # spawn_reviewers step (stage_20) starts reading
-            # coverage_plan.json instead of the static spec list.
-            "enabled": False,
+            "enabled": True,
         },
         {
             "id": "stage_18_compute_hashes",
@@ -9792,6 +9796,38 @@ def _make_coverage_gap_finding(
     )
 
 
+def _read_coverage_verify_verdict(path: Path | None) -> tuple[str | None, list[dict[str, str]]]:
+    """Return ``(verdict, violations)`` from a coverage_verify.json file.
+
+    Verdict is ``"PASS"``, ``"BLOCKING"``, or ``None`` if the file is
+    missing/unreadable (treated as PASS by callers — verification is
+    observational; an absent verifier output must not block arbitration).
+    """
+    if path is None or not path.exists():
+        return None, []
+    try:
+        with open(path) as f:
+            doc = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None, []
+    if not isinstance(doc, dict):
+        return None, []
+    verdict = doc.get("verdict")
+    if not isinstance(verdict, str):
+        return None, []
+    violations = doc.get("violations", [])
+    if not isinstance(violations, list):
+        violations = []
+    typed_violations: list[dict[str, str]] = []
+    for v in violations:
+        if isinstance(v, dict):
+            typed_violations.append({
+                "check": str(v.get("check", "")),
+                "message": str(v.get("message", "")),
+            })
+    return verdict, typed_violations
+
+
 def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     """Apply budget arbitration to a coverage plan (PLN-719 Section 5).
 
@@ -9799,6 +9835,22 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     and ``best_effort`` arrays) plus diff_data.json and produces the final
     coverage_plan.json. Emits coverage-gap findings for required reviewers
     that exceed the cap.
+
+    PLN-725 Phase 7: when ``--coverage-verify`` is supplied and that
+    file's verdict is ``"BLOCKING"``, arbitration short-circuits.
+    The input plan is written through to ``coverage_plan.json`` as-is
+    (preserving the rule floor — no cap, no pruning, no dropped
+    required) with ``budget.gated_by_verify: true`` so downstream
+    consumers can see why the cap wasn't applied. The same shape is
+    written — including ``deferred_for_budget``, ``dropped_required``,
+    and ``budget`` keys — so finalize-result and stage_20 readers
+    don't need to branch on a different schema. The BLOCKING finding
+    is already emitted by ``stage_15c_verify_coverage``
+    (``agent_coverage-verify-blocking.json``); arbitrate-budget does
+    not duplicate it. A missing ``coverage_verify.json`` (verifier
+    didn't run, or upstream stage aborted) is treated as PASS — the
+    verifier is observational, an absent artifact must not block
+    arbitration.
     """
     coverage_plan_in = _read_optional_json(Path(args.coverage_plan), None)
     if not isinstance(coverage_plan_in, dict):
@@ -9814,6 +9866,69 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     required: list[dict[str, Any]] = list(coverage_plan_in.get("required", []) or [])
     best_effort: list[dict[str, Any]] = list(coverage_plan_in.get("best_effort", []) or [])
     deprecation_warnings: list[str] = list(coverage_plan_in.get("deprecation_warnings", []) or [])
+
+    # PLN-725 Phase 7 BLOCKING gate. Short-circuit BEFORE any budget
+    # arithmetic so the input plan flows through untouched on a
+    # BLOCKING verdict. Note: the verifier itself stays observational
+    # (exit 0 on BLOCKING) — arbitrate-budget is where the verdict
+    # first translates into pipeline behavior change.
+    verify_path = (
+        Path(args.coverage_verify) if getattr(args, "coverage_verify", None)
+        else None
+    )
+    verdict, violations = _read_coverage_verify_verdict(verify_path)
+    now_iso_gate = datetime.now(timezone.utc).isoformat()
+    if verdict == "BLOCKING":
+        final_plan: dict[str, Any] = {
+            "required": required,
+            "best_effort": best_effort,
+            "deferred_for_budget": [],
+            "deprecation_warnings": deprecation_warnings,
+            "budget": {
+                "total_cap": cap,
+                "required_count": len(required),
+                "best_effort_count": len(best_effort),
+                "bha_partitions": 0,
+                "gated_by_verify": True,
+                "verify_violations": violations,
+            },
+            "dropped_required": [],
+            "arbitrate_status": "blocked_by_verify",
+            "generated_at": now_iso_gate,
+        }
+        output_path = (
+            Path(args.output) if args.output
+            else Path(args.coverage_plan).with_name("coverage_plan.json")
+        )
+        try:
+            with open(output_path, "w") as f:
+                json.dump(final_plan, f, indent=2)
+        except OSError as exc:
+            print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
+            return 1
+        gaps_path = output_path.with_name("coverage_gaps.json")
+        # Empty findings; the canonical BLOCKING finding is already
+        # in agent_coverage-verify-blocking.json from stage_15c.
+        try:
+            with open(gaps_path, "w") as f:
+                json.dump({"findings": []}, f, indent=2)
+        except OSError as exc:
+            print(f"Error writing coverage_gaps: {exc}", file=sys.stderr)
+            return 1
+        json.dump(
+            {
+                "status": "blocked_by_verify",
+                "coverage_plan": str(output_path),
+                "coverage_gaps": str(gaps_path),
+                "required_count": len(required),
+                "best_effort_count": len(best_effort),
+                "verify_violation_count": len(violations),
+            },
+            sys.stdout,
+            indent=2,
+        )
+        sys.stdout.write("\n")
+        return 0
 
     bha_floor = 0 if _is_docs_only(diff_data) else BUDGET_BHA_FLOOR_DEFAULT
     max_bha = _max_bha_partitions_by_loc(diff_data)
@@ -11097,6 +11212,18 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_ab.add_argument("--diff-data", required=True, help="Path to diff_data.json")
     p_ab.add_argument("--cap", type=int, default=BUDGET_TOTAL_CAP_DEFAULT, help="Total reviewer cap")
     p_ab.add_argument("--output", default=None, help="Output path (default: coverage_plan.json next to input)")
+    # PLN-725 Phase 7: BLOCKING gate from the Phase 6 verifier. When
+    # this file exists and contains verdict="BLOCKING", arbitration
+    # short-circuits (input plan passes through untouched, budget
+    # block flagged ``gated_by_verify: true``). Absent file = PASS.
+    p_ab.add_argument(
+        "--coverage-verify", default=None,
+        help=(
+            "Optional path to coverage_verify.json (PLN-725 Phase 6). "
+            "When present and verdict is BLOCKING, arbitration is "
+            "bypassed; input plan flows through unchanged."
+        ),
+    )
     p_ab.set_defaults(func=cmd_arbitrate_budget)
 
     # prepare-run (PLN-719 Phase 4)

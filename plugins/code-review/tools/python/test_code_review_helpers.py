@@ -6844,24 +6844,26 @@ class TestPrepareRun:
           - Plan 03 (PLN-722, verify-findings + prepare + consolidate)
             flipped on in v2.8.0.
           - PLN-725 Phase 4 (v2.17.0) flipped stages 11/11b/14/15/15b
-            on; stage_16_arbitrate_budget stays off until Phase 7.
+            on; stage_16_arbitrate_budget stayed off until Phase 7.
           - PLN-725 Phase 6 (v2.19.0) flipped stage_15c_verify_coverage on
             (observational; downstream consumers gate in Phase 7) and
             removed the stale stage_24_verify_coverage placeholder.
+          - PLN-725 Phase 7 (v2.20.0) flipped stage_16_arbitrate_budget on
+            with --coverage-verify wiring (BLOCKING short-circuit).
 
         Remaining deferred stages until their plans ship:
-          - stage_16_arbitrate_budget (PLN-725 Phase 7)
           - stage_13_validate_companions (PLN-726)
         """
         _, plan = self._run(tmp_path)
         by_id = {s["id"]: s for s in plan["stages"]}
         # Still-deferred
-        assert by_id["stage_16_arbitrate_budget"]["enabled"] is False
         assert by_id["stage_13_validate_companions"]["enabled"] is False
         # The legacy stage_24_verify_coverage placeholder was removed in
         # Phase 6 — verification now lives at stage_15c.
         assert "stage_24_verify_coverage" not in by_id
         assert "stage_15c_verify_coverage" in by_id
+        # Phase 7: stage_16_arbitrate_budget is now enabled.
+        assert by_id["stage_16_arbitrate_budget"]["enabled"] is True
 
     def test_pln_722_verify_pipeline_enabled_with_pinned_args(
         self, tmp_path: Path,
@@ -6949,31 +6951,42 @@ class TestPrepareRun:
         ):
             assert by_id[stage_id]["enabled"] is True, stage_id
 
-    def test_arbitrate_budget_gated_on_phase_7(self, tmp_path: Path) -> None:
-        """stage_16_arbitrate_budget stays disabled until PLN-725 Phase 7.
+    def test_arbitrate_budget_enabled_in_phase_7(self, tmp_path: Path) -> None:
+        """stage_16_arbitrate_budget flipped on in PLN-725 Phase 7 (v2.20.0).
 
-        Phase 4 turns on stages 11/11b/14/15/15b in dry-run mode —
-        `coverage_plan.json` is now produced on every review but is not
-        yet consumed by stage_20 (which still uses the static spec list).
-        Stage 16 (arbitrate-budget) is the cost-arbitration step that
-        slots between coverage-critic output and reviewer-spawn input;
-        flipping it on without spawn_reviewers consuming the output
-        would just rewrite coverage_plan.json with no consumer. Phase 7
-        wires both halves together.
-
-        Phase 6 (v2.19.0) re-anchors stage_16.depends_on to
-        stage_15c_verify_coverage so that when Phase 7 enables stage_16,
-        it can read coverage_verify.json from the same dependency chain.
+        Phase 4 turned on stages 11/11b/14/15/15b in dry-run mode —
+        `coverage_plan.json` was produced on every review but not yet
+        consumed by stage_20. Stage 16 (arbitrate-budget) is the cost-
+        arbitration step that slots between coverage-critic output and
+        reviewer-spawn input. Phase 6 wired stage_15c (the verifier)
+        between them and re-anchored stage_16.depends_on so the verdict
+        artifact lives on the dependency chain. Phase 7 enables
+        stage_16 with `--coverage-verify` wired in: a BLOCKING verdict
+        short-circuits arbitration (input plan flows through with
+        `budget.gated_by_verify: true`), a PASS verdict runs normal
+        arbitration. stage_20_spawn_reviewers still consumes the static
+        spec list; the orchestrator rewire is Phase 8.
         """
         _, plan = self._run(tmp_path)
         by_id = {s["id"]: s for s in plan["stages"]}
-        assert by_id["stage_16_arbitrate_budget"]["enabled"] is False
-        # Phase 6 rewired stage_16 to depend on stage_15c (the verifier)
-        # rather than stage_15b directly; stage_15c itself depends on
-        # stage_15b, so the producer chain still flows correctly.
+        # Phase 7 enablement
+        assert by_id["stage_16_arbitrate_budget"]["enabled"] is True
+        # depends_on still points at stage_15c (Phase 6 rewire) so the
+        # verdict artifact is on the dependency chain.
         assert "stage_15c_verify_coverage" in by_id[
             "stage_16_arbitrate_budget"
         ]["depends_on"]
+        # Phase 7 wires the verdict gate: --coverage-verify must point
+        # at the file stage_15c produces. Without this arg, BLOCKING
+        # verdicts would silently fall through to normal arbitration.
+        args = by_id["stage_16_arbitrate_budget"]["args"]
+        assert "--coverage-verify" in args
+        verify_idx = args.index("--coverage-verify")
+        assert args[verify_idx + 1].endswith("/coverage_verify.json")
+        # on_failure stays at "abort" — the BLOCKING gate is the
+        # graceful path (exit 0). A failure here is a real I/O or
+        # shape error that should halt the pipeline.
+        assert by_id["stage_16_arbitrate_budget"]["on_failure"] == "abort"
 
     def test_enabled_stages_do_not_depend_on_disabled_stages(
         self, tmp_path: Path,
@@ -13044,8 +13057,15 @@ class TestPLN725Phase4StageGraph:
         ):
             assert self._stage(sid)["enabled"] is True, sid
 
-    def test_stage_16_stays_disabled_in_phase_4(self) -> None:
-        assert self._stage("stage_16_arbitrate_budget")["enabled"] is False
+    def test_stage_16_enablement_history(self) -> None:
+        # Phase 4 (v2.17.0) kept stage_16 disabled because nothing
+        # downstream yet consumed coverage_plan.json. Phase 7 (v2.20.0)
+        # turned it on with --coverage-verify wiring (BLOCKING short-
+        # circuit). This test now records that the Phase 4 → Phase 7
+        # transition happened; the assertion mirrors the canonical
+        # Phase 7 enablement check in
+        # TestPLN725Phase7ArbitrateBudgetGate.
+        assert self._stage("stage_16_arbitrate_budget")["enabled"] is True
 
 
 class TestPLN725Phase5PostMergeHardening:
@@ -14230,6 +14250,230 @@ class TestPLN725Phase6StageGraph:
     def test_legacy_stage_24_verify_coverage_removed(self) -> None:
         ids = {s["id"] for s in self._stages()}
         assert "stage_24_verify_coverage" not in ids
+
+
+class TestPLN725Phase7ArbitrateBudgetGate:
+    """Phase 7 wires the BLOCKING verdict from stage_15c_verify_coverage
+    into stage_16_arbitrate_budget. On BLOCKING, arbitration is
+    short-circuited — the input plan flows through unchanged so the rule
+    floor is preserved, but the budget block is flagged
+    ``gated_by_verify: true`` and the summary status is
+    ``"blocked_by_verify"`` so finalize-result + present can show why
+    the cap wasn't applied. On PASS or missing-verify-file (verifier
+    didn't run), arbitration runs normally — preserving full backward
+    compat with the pre-Phase-7 behavior.
+    """
+
+    def _run(
+        self,
+        tmp_path: Path,
+        coverage_plan_in: dict[str, Any],
+        diff_data: dict[str, Any],
+        verify_doc: dict[str, Any] | None,
+        *,
+        cap: int = 20,
+        include_verify_flag: bool = True,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_arbitrate_budget
+
+        cp_path = tmp_path / "coverage_plan_initial.json"
+        cp_path.write_text(json.dumps(coverage_plan_in))
+        dd_path = tmp_path / "diff_data.json"
+        dd_path.write_text(json.dumps(diff_data))
+
+        verify_path: Path | None = None
+        if verify_doc is not None:
+            verify_path = tmp_path / "coverage_verify.json"
+            verify_path.write_text(json.dumps(verify_doc))
+
+        coverage_verify_arg = (
+            str(verify_path) if (include_verify_flag and verify_path)
+            else None
+        )
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(
+                coverage_plan=str(cp_path),
+                diff_data=str(dd_path),
+                cap=cap,
+                output=None,
+                coverage_verify=coverage_verify_arg,
+            )
+            cmd_arbitrate_budget(ns)
+            _sys.stdout.seek(0)
+            summary = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+
+        final_plan = json.loads((tmp_path / "coverage_plan.json").read_text())
+        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())
+        return summary, final_plan, gaps
+
+    @staticmethod
+    def _plan() -> dict[str, Any]:
+        # 25 required reviewers — under normal arbitration with cap=20,
+        # 6 would be dropped (cap - bha_floor = 19 keep; 25-19 = 6 drop).
+        # The BLOCKING short-circuit must preserve ALL 25 so the rule
+        # floor is never silently amputated by the gate.
+        return {
+            "required": [
+                {"reviewer": f"r{i}", "priority": 0} for i in range(25)
+            ],
+            "best_effort": [
+                {"reviewer": "low", "priority": 2},
+                {"reviewer": "high", "priority": 1},
+            ],
+        }
+
+    def test_blocking_verdict_passes_plan_through_unchanged(
+        self, tmp_path: Path,
+    ) -> None:
+        """Canonical Phase 7 contract — BLOCKING means "don't mutate"."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = self._plan()
+        verify = {
+            "verdict": "BLOCKING",
+            "violations": [
+                {"check": "closed_vocabulary", "message": "x not in roster"},
+            ],
+            "checked_at": "2026-06-02T00:00:00+00:00",
+        }
+        summary, plan, gaps = self._run(tmp_path, plan_in, diff, verify, cap=20)
+
+        # Status surfaces the gate to operator + finalize-result.
+        assert summary["status"] == "blocked_by_verify"
+        assert plan["arbitrate_status"] == "blocked_by_verify"
+
+        # Rule floor preserved — no reviewers dropped despite 25 > 20.
+        assert len(plan["required"]) == 25
+        assert plan["dropped_required"] == []
+        assert plan["deferred_for_budget"] == []
+        assert summary["required_count"] == 25
+
+        # Best-effort flows through unchanged (no priority-based prune).
+        assert len(plan["best_effort"]) == 2
+
+        # Budget block annotates the gate so downstream consumers (e.g.
+        # finalize-result, present) can show "cap not applied".
+        assert plan["budget"]["gated_by_verify"] is True
+        assert plan["budget"]["total_cap"] == 20
+        # Violations propagate so the present footer can echo the
+        # specific check that fired without re-reading coverage_verify.
+        assert plan["budget"]["verify_violations"] == verify["violations"]
+
+        # No new findings emitted — the canonical BLOCKING finding
+        # lives in agent_coverage-verify-blocking.json from stage_15c.
+        # Doubling here would inflate the run summary.
+        assert gaps["findings"] == []
+
+    def test_pass_verdict_runs_normal_arbitration(self, tmp_path: Path) -> None:
+        """PASS must NOT change pre-Phase-7 behavior."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = self._plan()
+        verify = {
+            "verdict": "PASS",
+            "violations": [],
+            "checked_at": "2026-06-02T00:00:00+00:00",
+        }
+        summary, plan, gaps = self._run(tmp_path, plan_in, diff, verify, cap=20)
+
+        # Normal arbitration: 25 required + bha_floor=1 → 6 dropped.
+        assert summary.get("status") != "blocked_by_verify"
+        assert "arbitrate_status" not in plan
+        assert plan["dropped_required"] != []
+        assert len(plan["dropped_required"]) == 6
+        # Budget overflow surfaces as `budget-exceeded` system findings.
+        assert len(gaps["findings"]) == 6
+        # No gate annotation when verdict is PASS.
+        assert "gated_by_verify" not in plan["budget"]
+
+    def test_missing_verify_file_treated_as_pass(self, tmp_path: Path) -> None:
+        """The verifier is observational — if its artifact is missing
+        (upstream aborted, Phase 6 disabled in a future toggle, etc.)
+        arbitration must run normally. Otherwise a stage_15c crash
+        would silently bypass the cap on every review.
+        """
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = self._plan()
+        summary, plan, gaps = self._run(
+            tmp_path, plan_in, diff, verify_doc=None, cap=20,
+        )
+        # No status, no gate annotation, dropped_required populated.
+        assert "status" not in summary or summary.get("status") != "blocked_by_verify"
+        assert "arbitrate_status" not in plan
+        assert "gated_by_verify" not in plan["budget"]
+        assert plan["dropped_required"] != []
+
+    def test_no_coverage_verify_flag_keeps_backward_compat(
+        self, tmp_path: Path,
+    ) -> None:
+        """Callers from before Phase 7 that don't pass --coverage-verify
+        must continue to get pre-Phase-7 semantics. argparse.Namespace
+        without ``coverage_verify`` set means ``getattr(args,
+        "coverage_verify", None)`` returns None and the gate is skipped.
+        """
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = self._plan()
+        # verify_doc present, but include_verify_flag=False simulates
+        # an old-style invocation that doesn't pass --coverage-verify.
+        verify = {"verdict": "BLOCKING", "violations": []}
+        summary, plan, gaps = self._run(
+            tmp_path, plan_in, diff, verify, cap=20,
+            include_verify_flag=False,
+        )
+        # Without the flag, BLOCKING on disk has no effect.
+        assert summary.get("status") != "blocked_by_verify"
+        assert "arbitrate_status" not in plan
+        assert plan["dropped_required"] != []
+
+    def test_blocking_with_empty_violations_still_gates(
+        self, tmp_path: Path,
+    ) -> None:
+        """Defensive — verdict="BLOCKING" with empty violations[] is a
+        weird shape but the gate's signal is the verdict, not the
+        violation count. Don't fall through to arbitration on a
+        misshapen verifier output.
+        """
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = self._plan()
+        verify = {"verdict": "BLOCKING", "violations": []}
+        summary, plan, gaps = self._run(tmp_path, plan_in, diff, verify, cap=20)
+        assert summary["status"] == "blocked_by_verify"
+        assert plan["budget"]["gated_by_verify"] is True
+        assert plan["budget"]["verify_violations"] == []
+
+    def test_malformed_verify_file_treated_as_pass(self, tmp_path: Path) -> None:
+        """Unparseable verifier output → treat as absent (PASS).
+        Otherwise a corrupt file (truncated, non-JSON) would silently
+        bypass budget arbitration on every review — worse than the
+        BLOCKING short-circuit which is at least loud and intentional.
+        """
+        from code_review_helpers import cmd_arbitrate_budget
+
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = self._plan()
+        cp = tmp_path / "cp.json"
+        cp.write_text(json.dumps(plan_in))
+        dd = tmp_path / "dd.json"
+        dd.write_text(json.dumps(diff))
+        verify = tmp_path / "coverage_verify.json"
+        verify.write_text("{this is not json")  # broken
+
+        ns = argparse.Namespace(
+            coverage_plan=str(cp), diff_data=str(dd), cap=20,
+            output=None, coverage_verify=str(verify),
+        )
+        rc = cmd_arbitrate_budget(ns)
+        assert rc == 0
+        plan = json.loads((tmp_path / "coverage_plan.json").read_text())
+        # Plan went through normal arbitration; no gate annotation.
+        assert "arbitrate_status" not in plan
+        assert "gated_by_verify" not in plan["budget"]
 
 
 class TestExtractSignalsConsolidateCacheHitNoOp:
