@@ -91,6 +91,7 @@ SOURCES: frozenset[str] = frozenset({
     "injection-detector",
     "companion-validator",
     "coverage-verifier",
+    "signal-extractor",
 })
 
 VERDICTS: frozenset[str] = frozenset({

@@ -5404,15 +5404,31 @@ def _taxonomy_hash(raw_bytes: bytes) -> str:
     return hashlib.sha256(raw_bytes).hexdigest()
 
 
+def _signal_extraction_prompt_hash(path: Path) -> str:
+    """Content-addressed hash of the signal-extraction prompt asset.
+
+    Self-contained inside the signals/ namespace rather than folded into
+    the canonical ``compute-hashes`` output. The other namespace prompt
+    hashes (shared, BHA suffix, verifier, premise) are concerns of those
+    pipelines; mixing them into the signal-extraction key would over-
+    invalidate (e.g. a premise-prompt edit would bust signal caches).
+    Mirrors the taxonomy hash pattern in this same module.
+    """
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def signal_extraction_cache_key(
     diff_tip: str, taxonomy_hash: str, prompt_hash: str,
 ) -> str:
     """Cache key for the ``signals`` namespace (PLN-725).
 
-    Mirrors the verifier's namespace contract: the tuple
-    ``(diff_tip, taxonomy_hash, prompt_hash)`` is the complete set of
-    inputs the extraction is a pure function of. Any change to the diff
-    head, the taxonomy file, or the prompt asset flips the key.
+    Tuple ``(diff_tip, taxonomy_hash, prompt_hash)`` is the complete set
+    of inputs the extraction is a pure function of. Both
+    ``taxonomy_hash`` and ``prompt_hash`` are content-addressed hashes of
+    the on-disk asset bytes (``_taxonomy_hash`` and
+    ``_signal_extraction_prompt_hash``), computed inside
+    ``cmd_extract_signals_prepare`` rather than taken on faith from
+    caller-supplied flags. Editing either asset flips the key for real.
     """
     payload = (
         (diff_tip or "") + "\0"
@@ -5446,15 +5462,26 @@ def _read_cached_signals(cache_dir: Path | None, key: str) -> dict[str, Any] | N
         return None
     if not isinstance(entry, dict):
         return None
-    ttl = cache_ttl_days(CACHE_NAMESPACE_SIGNALS)
+    # TTL check mirrors _read_cached_verification: missing or non-parseable
+    # written_at is treated as a miss, NOT as a fresh entry. A manually
+    # seeded or externally-written cache file lacking written_at would
+    # otherwise be served indefinitely.
+    ttl = cache_ttl_days(CACHE_NAMESPACE_SIGNALS) or 7
     written_at = entry.get("written_at")
-    if ttl is not None and isinstance(written_at, str):
+    try:
+        ts = datetime.fromisoformat(str(written_at).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
         try:
-            ts = datetime.fromisoformat(written_at)
-            if datetime.now(timezone.utc) - ts > timedelta(days=ttl):
-                return None
-        except ValueError:
-            return None
+            path.unlink()
+        except OSError:
+            pass
+        return None
+    if datetime.now(timezone.utc) - ts > timedelta(days=ttl):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return None
     return entry
 
 
@@ -5498,8 +5525,11 @@ def _build_signal_input(
     ``SIGNAL_EXCERPT_LINES_PER_FILE`` of each direction. Anything beyond
     the cap is summarized as ``…(+N more added lines, +M more removed)``.
     """
+    # parse-diff emits file_loc as ``{path: {"added": int, "removed": int}}``;
+    # signal extraction only needs counts, which lines_added/lines_removed
+    # already carry. The previous ``loc`` field was both misannotated and
+    # redundant.
     file_statuses: dict[str, str] = diff_data.get("file_statuses", {}) or {}
-    file_loc: dict[str, int] = diff_data.get("file_loc", {}) or {}
     patch_lines: dict[str, dict[str, dict[str, str]]] = diff_data.get("patch_lines", {}) or {}
 
     files: list[dict[str, Any]] = []
@@ -5512,7 +5542,6 @@ def _build_signal_input(
             "status": status,
             "lines_added": len(added),
             "lines_removed": len(removed),
-            "loc": file_loc.get(path, 0),
             "language_hint": _file_language_hint(path),
         })
 
@@ -5548,7 +5577,6 @@ def _build_signal_input(
         "files": files,
         "sample_diff_excerpts": excerpts,
         "intent": intent_summary or {},
-        "change_classes": diff_data.get("change_classes", []) or [],
     }
 
 
@@ -5646,7 +5674,6 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
     diff_data_path = Path(args.diff_data)
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
     diff_tip = str(args.diff_tip)
-    prompt_hash = str(getattr(args, "prompt_hash", "") or "")
     taxonomy_path = (
         Path(args.taxonomy) if getattr(args, "taxonomy", None) else _default_signal_taxonomy_path()
     )
@@ -5676,6 +5703,18 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
         taxonomy, taxonomy_bytes = load_signal_taxonomy(taxonomy_path)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"Error loading taxonomy: {exc}", file=sys.stderr)
+        return 1
+
+    # Hash the prompt asset from its actual bytes so any prompt edit busts
+    # every cached extraction — matches the taxonomy hash pattern. The
+    # vestigial --prompt-hash flag is honoured only as an explicit
+    # orchestrator override for cases where the prompt is computed
+    # off-disk; the default behaviour is content-addressed.
+    prompt_hash_override = str(getattr(args, "prompt_hash", "") or "")
+    try:
+        prompt_hash = prompt_hash_override or _signal_extraction_prompt_hash(prompt_path)
+    except OSError as exc:
+        print(f"Error reading prompt asset: {exc}", file=sys.stderr)
         return 1
 
     taxonomy_hash = _taxonomy_hash(taxonomy_bytes)

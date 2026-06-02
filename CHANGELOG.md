@@ -4,6 +4,21 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.14.1
+
+#### Added
+- `signal-extractor` added to the canonical `SOURCES` allowlist in `code_review_schema.py`. Mirrors the architectural pattern used by `injection-detector` and `coverage-verifier` (system-marker emitters live in the allowlist). Without this, the failure finding emitted by `_emit_signal_extraction_failed_finding` would be rejected by `validate_finding`, `cmd_finalize_result` would return exit code 1, and signal-extraction failure would break the pipeline — the opposite of the intended fail-open observability.
+- `_signal_extraction_prompt_hash` helper. The `signals/` cache key is now content-addressed on the actual prompt asset bytes (alongside the taxonomy bytes already hashed via `_taxonomy_hash`). Reads the prompt file inside `cmd_extract_signals_prepare` rather than trusting a caller-supplied `--prompt-hash` value. The `--prompt-hash` flag is retained as an orchestrator override but is no longer required for correctness. Prevents a Phase-4 wiring that forgets the flag from serving stale extractions across prompt edits.
+- 12 PR #121 regression tests across 5 new classes pinning every fix below.
+
+#### Fixed
+- **`source: "signal-extractor"` was not in `SOURCES` allowlist (PR #121, Unified Auditor HIGH).** The failure finding emitted on extraction failure carried a source string that `validate_finding` would reject. The finalize-result exit code 1 would then cascade through the pipeline. Two halves to the fix: the source name is now in `SOURCES` (above), and a regression test exercises `normalize_legacy_finding` on the failure finding to pin the contract.
+- **`_read_cached_signals` bypassed TTL when `written_at` was missing or non-string (PR #121, Bug Hunter B MED).** The verifier's `_read_cached_verification` treats missing/unparseable timestamps as a miss and unlinks the stale entry. The signals reader did neither; a manually seeded or externally written cache file would have been served indefinitely. Now mirrors the verifier exactly — missing/non-parseable `written_at` → miss + unlink.
+- **Signal-extraction prompt bytes were never hashed (PR #121, Bug Hunter B + devops-architect MED, duplicated by thadeusb's PR comment).** The cache-key docstring claimed any prompt-asset edit busts the key, but `cmd_extract_signals_prepare` never read the prompt file's bytes; `prompt_hash` came from `args.prompt_hash`, defaulting to `""`. The prompt asset is now hashed at the same level of rigor as the taxonomy — both are content-addressed inside the namespace.
+- **`change_classes` field promised but never populated (PR #121, thadeusb).** `parse-diff` does not emit `change_classes` in `diff_data.json`, yet `_build_signal_input` defaulted it into the agent's bundle and the prompt advertised it. Both removed. When Phase 2's `resolve-coverage` lands, it can re-add the field as part of a deterministic file-classification stage; until then the agent isn't told a field exists that it never receives.
+- **`file_loc` misannotated as `dict[str, int]` and `loc` redundant (PR #121, thadeusb).** The canonical `parse-diff` shape is `dict[str, dict[str, int]]` (`{"added": int, "removed": int}`). The bundle's per-file `loc` field would have been a dict where the annotation said int, and `lines_added` / `lines_removed` already carry the same churn information. Annotation removed; redundant field dropped.
+- **Taxonomy comment referenced a bootstrap mirror that does not exist (PR #121, Bug Hunter B MED, also flagged by Premise reviewer).** A developer adding a signal would have looked for the (nonexistent) bootstrap mirror, found nothing, and either skipped the step or been confused. Comment now defers the mirror to Phase 9 explicitly.
+
 ### code-review v2.14.0
 
 #### Added

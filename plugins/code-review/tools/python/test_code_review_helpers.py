@@ -10342,13 +10342,21 @@ class TestFailClosedSignalSet:
 
 
 def _build_diff_data(tmp_path: Path) -> Path:
-    """Minimal diff_data.json fixture for extract-signals tests."""
+    """Minimal diff_data.json fixture for extract-signals tests.
+
+    ``file_loc`` matches the canonical parse-diff shape
+    ``dict[str, dict[str, int]]`` — ``{"added": int, "removed": int}`` —
+    not the bare-int shape this PR initially had wrong.
+    """
     diff_data = {
         "file_statuses": {
             "src/auth/login.ts": "M",
             "package.json": "M",
         },
-        "file_loc": {"src/auth/login.ts": 120, "package.json": 50},
+        "file_loc": {
+            "src/auth/login.ts": {"added": 2, "removed": 0},
+            "package.json": {"added": 1, "removed": 0},
+        },
         "patch_lines": {
             "src/auth/login.ts": {
                 "added_lines": {
@@ -10617,3 +10625,281 @@ class TestExtractSignalsConsolidate:
         assert any("invented" in e for e in out["errors"])
         # No fail-closed finding when at least one signal was accepted.
         assert not (cr_dir / "agent_signal-extraction-failed.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# PLN-725 Phase 1 — PR #121 review fixes (regression tests)
+# ---------------------------------------------------------------------------
+
+
+class TestPR121SignalExtractorSource:
+    """HIGH #1: emitting source='signal-extractor' must not break validation.
+
+    Reviewer: Unified Auditor verified the failure finding emitted by
+    _emit_signal_extraction_failed_finding would be rejected by
+    validate_finding because 'signal-extractor' was missing from SOURCES.
+    Fix: add 'signal-extractor' to SOURCES (mirrors injection-detector
+    and coverage-verifier — system-marker emitters all live in the
+    allowlist).
+    """
+
+    def test_sources_allowlist_contains_signal_extractor(self) -> None:
+        from code_review_schema import SOURCES
+        assert "signal-extractor" in SOURCES
+
+    def test_emitted_finding_passes_validation(self, tmp_path: Path) -> None:
+        from code_review_helpers import _emit_signal_extraction_failed_finding
+        from code_review_schema import SOURCES, normalize_legacy_finding
+        cr_dir = tmp_path
+        _emit_signal_extraction_failed_finding(
+            cr_dir, ["unreadable agent output"], "2026-06-02T00:00:00+00:00",
+        )
+        finding_file = cr_dir / "agent_signal-extraction-failed.json"
+        assert finding_file.exists()
+        finding = json.loads(finding_file.read_text())["findings"][0]
+        assert finding["source"] == "signal-extractor"
+        assert finding["source"] in SOURCES
+        # Normalization preserves the source (setdefault doesn't overwrite)
+        # and the finding survives the contract path normalize_legacy_finding
+        # runs in cmd_collect_findings.
+        promoted = normalize_legacy_finding(
+            finding, reviewer="signal-extractor", source="signal-extractor",
+            index=0, emitted_at="2026-06-02T00:00:00+00:00",
+        )
+        assert promoted["source"] == "signal-extractor"
+
+
+class TestPR121CacheTTLOnMissingTimestamp:
+    """MED #1: _read_cached_signals must treat missing written_at as a miss.
+
+    Reviewer: Bug Hunter B noted the verifier (_read_cached_verification)
+    returns None when cached_at is missing/unparseable, whereas this PR
+    initially skipped the TTL check entirely, returning the entry. A
+    manually seeded or externally-written cache file would never expire.
+    Fix: mirror the verifier — treat missing/non-parseable written_at as
+    a miss and unlink the stale entry.
+    """
+
+    def _cache_entry(self, **extra: Any) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "signals": [{"name": "language_typescript", "evidence": "x:1 — y", "confidence": 0.9}],
+            "errors": [],
+            "model": "haiku",
+            "cache_key": "abc",
+            "taxonomy_hash": "t",
+            "prompt_hash": "p",
+            "generated_at": "2026-06-02T00:00:00+00:00",
+            **extra,
+        }
+
+    def test_missing_written_at_treated_as_miss(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_SIGNALS,
+            _read_cached_signals,
+        )
+        cache_dir = tmp_path / "cache"
+        ns = cache_dir / CACHE_NAMESPACE_SIGNALS
+        ns.mkdir(parents=True)
+        entry_path = ns / "deadbeef.json"
+        # Manually seeded entry without written_at — the pathological case.
+        entry_path.write_text(json.dumps(self._cache_entry()))
+
+        result = _read_cached_signals(cache_dir, "deadbeef")
+        assert result is None
+        # And the stale entry has been swept.
+        assert not entry_path.exists()
+
+    def test_non_string_written_at_treated_as_miss(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_SIGNALS,
+            _read_cached_signals,
+        )
+        cache_dir = tmp_path / "cache"
+        ns = cache_dir / CACHE_NAMESPACE_SIGNALS
+        ns.mkdir(parents=True)
+        entry_path = ns / "deadbeef.json"
+        entry_path.write_text(json.dumps(self._cache_entry(written_at=12345)))
+        assert _read_cached_signals(cache_dir, "deadbeef") is None
+        assert not entry_path.exists()
+
+    def test_fresh_written_at_returns_entry(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_SIGNALS,
+            _read_cached_signals,
+        )
+        cache_dir = tmp_path / "cache"
+        ns = cache_dir / CACHE_NAMESPACE_SIGNALS
+        ns.mkdir(parents=True)
+        entry_path = ns / "deadbeef.json"
+        now_iso = datetime.now(timezone.utc).isoformat()
+        entry_path.write_text(json.dumps(self._cache_entry(written_at=now_iso)))
+        result = _read_cached_signals(cache_dir, "deadbeef")
+        assert result is not None
+        assert result["status"] == "ok"
+        # Entry preserved on a hit.
+        assert entry_path.exists()
+
+    def test_expired_written_at_treated_as_miss(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            CACHE_NAMESPACE_SIGNALS,
+            _read_cached_signals,
+        )
+        cache_dir = tmp_path / "cache"
+        ns = cache_dir / CACHE_NAMESPACE_SIGNALS
+        ns.mkdir(parents=True)
+        entry_path = ns / "deadbeef.json"
+        stale = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        entry_path.write_text(json.dumps(self._cache_entry(written_at=stale)))
+        assert _read_cached_signals(cache_dir, "deadbeef") is None
+        assert not entry_path.exists()
+
+
+class TestPR121PromptIsContentAddressed:
+    """MED #2 / PR #2: prompt_hash must be derived from prompt file bytes,
+    not taken on faith from --prompt-hash.
+
+    Reviewer: Bug Hunter B + devops-architect noted the cache-key docstring
+    claimed any prompt-asset edit busts the key, but prepare never read the
+    prompt bytes; --prompt-hash defaulted to "". A Phase 4 wiring that
+    forgets the flag would serve stale extractions across prompt edits.
+    Fix: add _signal_extraction_prompt_hash, read + hash the prompt file
+    inside cmd_extract_signals_prepare. The --prompt-hash flag remains as
+    an override but is no longer required for correctness.
+    """
+
+    def _args(self, base: Path, prompt_path: Path) -> argparse.Namespace:
+        from code_review_helpers import SIGNAL_EXTRACTION_MODEL_DEFAULT
+        base.mkdir(parents=True, exist_ok=True)
+        cr_dir = base / "cr"
+        cache_dir = base / "cache"
+        cr_dir.mkdir()
+        cache_dir.mkdir()
+        diff_path = _build_diff_data(base)
+        return argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(diff_path),
+            diff_tip="abcdef1234",
+            prompt_hash="",  # No override — exercise content-addressing.
+            cache_dir=str(cache_dir),
+            taxonomy=None,
+            prompt=str(prompt_path),
+            intent=None,
+            model=SIGNAL_EXTRACTION_MODEL_DEFAULT,
+        )
+
+    def test_prompt_hash_helper_changes_when_prompt_changes(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _signal_extraction_prompt_hash
+        p1 = tmp_path / "prompt1.txt"
+        p2 = tmp_path / "prompt2.txt"
+        p1.write_text("Be biased toward emission.\n")
+        p2.write_text("Be conservative.\n")
+        assert _signal_extraction_prompt_hash(p1) != _signal_extraction_prompt_hash(p2)
+
+    def test_prepare_uses_file_bytes_for_cache_key(self, tmp_path: Path) -> None:
+        """Two runs with the same diff but DIFFERENT prompt bytes must
+        produce different manifest cache_keys — proves the prompt asset
+        actually contributes to the key without operator opt-in.
+        """
+        from code_review_helpers import cmd_extract_signals_prepare
+        prompt_a = tmp_path / "prompt_a.txt"
+        prompt_a.write_text("emit signals\n")
+        args_a = self._args(tmp_path / "a", prompt_a)
+        assert cmd_extract_signals_prepare(args_a) == 0
+        key_a = json.loads(
+            (Path(args_a.cr_dir) / "extract_signals_manifest.json").read_text(),
+        )["cache_key"]
+
+        prompt_b = tmp_path / "prompt_b.txt"
+        prompt_b.write_text("emit signals with calibration\n")
+        args_b = self._args(tmp_path / "b", prompt_b)
+        assert cmd_extract_signals_prepare(args_b) == 0
+        key_b = json.loads(
+            (Path(args_b.cr_dir) / "extract_signals_manifest.json").read_text(),
+        )["cache_key"]
+
+        assert key_a != key_b
+
+
+class TestPR121AgentInputBundle:
+    """PR #1 + PR #3: agent input bundle must not advertise a populated
+    change_classes field (parse-diff doesn't emit it) and must not carry a
+    misannotated loc field (file_loc is dict[str, dict[str, int]], not an
+    int per path).
+
+    Reviewer: thadeusb noted both bugs would mislead a Phase 4 wiring —
+    the agent is told `change_classes` is populated when nothing ever
+    populates it, and the redundant `loc` field carried a dict where the
+    annotation said int. Both fields are now removed; lines_added /
+    lines_removed already convey the per-file churn.
+    """
+
+    def _prepare(self, tmp_path: Path) -> Path:
+        from code_review_helpers import (
+            SIGNAL_EXTRACTION_MODEL_DEFAULT,
+            cmd_extract_signals_prepare,
+        )
+        cr_dir = tmp_path / "cr"
+        cache_dir = tmp_path / "cache"
+        cr_dir.mkdir()
+        cache_dir.mkdir()
+        diff_path = _build_diff_data(tmp_path)
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(diff_path),
+            diff_tip="abcdef1234",
+            prompt_hash="",
+            cache_dir=str(cache_dir),
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model=SIGNAL_EXTRACTION_MODEL_DEFAULT,
+        )
+        rc = cmd_extract_signals_prepare(args)
+        assert rc == 0
+        return cr_dir / "extract_signals_input.json"
+
+    def test_input_bundle_omits_change_classes(self, tmp_path: Path) -> None:
+        input_path = self._prepare(tmp_path)
+        bundle = json.loads(input_path.read_text())
+        assert "change_classes" not in bundle
+
+    def test_input_bundle_files_omit_loc_field(self, tmp_path: Path) -> None:
+        input_path = self._prepare(tmp_path)
+        bundle = json.loads(input_path.read_text())
+        for entry in bundle["files"]:
+            assert "loc" not in entry, (
+                "loc is redundant with lines_added/lines_removed and was "
+                "misannotated as int when file_loc is dict per path"
+            )
+            # The surviving per-file churn signal is intact.
+            assert "lines_added" in entry
+            assert "lines_removed" in entry
+
+    def test_prompt_does_not_advertise_change_classes(self) -> None:
+        from code_review_helpers import _default_signal_extraction_prompt_path
+        prompt = _default_signal_extraction_prompt_path().read_text()
+        assert "change_classes" not in prompt, (
+            "prompt must not promise a field the input bundle never carries"
+        )
+
+
+class TestPR121TaxonomyCommentNoDanglingReference:
+    """MED #3: signal_taxonomy.json comment must not reference a bootstrap
+    mirror that does not yet exist.
+
+    Reviewer: Bug Hunter B + Premise both flagged the same doc-accuracy
+    gap. A developer adding a signal would look for the bootstrap mirror,
+    find nothing, and either skip the step (breaking the documented
+    invariant) or be confused. Fix: comment now defers the mirror to
+    Phase 9 explicitly, rather than implying a co-located file exists.
+    """
+
+    def test_no_present_tense_bootstrap_mirror_claim(self) -> None:
+        from code_review_helpers import _default_signal_taxonomy_path
+        text = _default_signal_taxonomy_path().read_text()
+        # The Phase 9 deferral wording is allowed; the previous bare
+        # "(and bootstrap's mirror)" parenthetical is not.
+        assert "(and bootstrap's mirror)" not in text

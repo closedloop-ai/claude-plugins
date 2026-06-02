@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "taxonomy_version": "1.0.0",
-  "comment": "PLN-725 v1 signal taxonomy. Fixed vocabulary — signal-extraction agents cannot invent new names. Adding a signal requires editing this file (and bootstrap's mirror) intentionally. Per-signal recommended_min_confidence is the floor a coverage rule should apply when not overridden in critic-gates.json.",
+  "comment": "PLN-725 v1 signal taxonomy. Fixed vocabulary — signal-extraction agents cannot invent new names. Adding a signal requires editing this file intentionally (Phase 9 will mirror the taxonomy into bootstrap's agent-decomposer so the two stay in sync). Per-signal recommended_min_confidence is the floor a coverage rule should apply when not overridden in critic-gates.json.",
   "signals": {
     "language_typescript": {"category": "language", "description": "TypeScript source touched (.ts, .tsx).", "recommended_min_confidence": 0.9},
     "language_javascript": {"category": "language", "description": "JavaScript source touched (.js, .jsx, .mjs, .cjs).", "recommended_min_confidence": 0.9},
