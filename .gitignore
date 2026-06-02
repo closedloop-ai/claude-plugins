@@ -30,7 +30,13 @@ __pycache__/
 **/.claude/cache/
 
 # ClosedLoop plugin workspace (code review ephemeral data, etc.)
-.closedloop-ai/
+# Ignore everything under .closedloop-ai/ EXCEPT the bootstrap plugin's
+# durable outputs (per plugins/bootstrap/README.md):
+#   - bootstrap-metadata.json  (tracks generated agents for --update mode)
+#   - settings/critic-gates.json  (critic selection rules for /code workflows)
+.closedloop-ai/*
+!.closedloop-ai/bootstrap-metadata.json
+!.closedloop-ai/settings/
 
 # Generated route knowledge files
 .claude/docs/routes/*

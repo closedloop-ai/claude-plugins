@@ -1,0 +1,114 @@
+{
+  "bootstrap_version": "1.2.0",
+  "last_run": "2026-06-02T15:00:00Z",
+  "run_dir": ".closedloop-ai/bootstrap/20260602-150000",
+  "target_command": "code",
+  "agents": {
+    "test-strategist": {
+      "generated": "2026-06-02T15:00:00Z",
+      "domain": "testing-strategy",
+      "role": "required-project-specific",
+      "model": "sonnet",
+      "color": "yellow",
+      "supportsCriticMode": true
+    },
+    "security-privacy": {
+      "generated": "2026-06-02T15:00:00Z",
+      "domain": "security-privacy",
+      "role": "required-project-specific",
+      "model": "sonnet",
+      "color": "red",
+      "supportsCriticMode": true
+    },
+    "python-pro": {
+      "generated": "2026-06-02T15:00:00Z",
+      "domain": "python-tooling",
+      "role": "language-expert",
+      "language": "python",
+      "model": "sonnet",
+      "color": "green",
+      "supportsCriticMode": true
+    },
+    "shell-scripting-expert": {
+      "generated": "2026-06-02T15:00:00Z",
+      "domain": "shell-scripting",
+      "role": "language-expert",
+      "language": "shell",
+      "model": "sonnet",
+      "color": "green",
+      "supportsCriticMode": true
+    },
+    "agent-prompt-architect": {
+      "generated": "2026-06-02T15:00:00Z",
+      "domain": "agent-prompt-authoring",
+      "role": "domain-expert",
+      "model": "sonnet",
+      "color": "purple",
+      "supportsCriticMode": true
+    },
+    "skill-author": {
+      "generated": "2026-06-02T15:00:00Z",
+      "domain": "skill-authoring",
+      "role": "domain-expert",
+      "model": "sonnet",
+      "color": "purple",
+      "supportsCriticMode": true
+    },
+    "hook-engineer": {
+      "generated": "2026-06-02T15:00:00Z",
+      "domain": "hook-development",
+      "role": "domain-expert",
+      "model": "sonnet",
+      "color": "blue",
+      "supportsCriticMode": true
+    },
+    "json-schema-designer": {
+      "generated": "2026-06-02T15:00:00Z",
+      "domain": "json-schema-design",
+      "role": "domain-expert",
+      "model": "sonnet",
+      "color": "blue",
+      "supportsCriticMode": true
+    },
+    "plugin-manifest-versioning": {
+      "generated": "2026-06-02T15:00:00Z",
+      "domain": "plugin-manifest-and-versioning",
+      "role": "domain-expert",
+      "model": "sonnet",
+      "color": "orange",
+      "supportsCriticMode": true
+    },
+    "run-loop-orchestration-expert": {
+      "generated": "2026-06-02T15:00:00Z",
+      "domain": "closedloop-orchestration",
+      "role": "domain-expert",
+      "model": "sonnet",
+      "color": "orange",
+      "supportsCriticMode": true
+    },
+    "self-learning-toon-expert": {
+      "generated": "2026-06-02T15:00:00Z",
+      "domain": "self-learning-and-toon",
+      "role": "domain-expert",
+      "model": "sonnet",
+      "color": "pink",
+      "supportsCriticMode": true
+    },
+    "judge-evaluation-expert": {
+      "generated": "2026-06-02T15:00:00Z",
+      "domain": "llm-as-judge-evaluation",
+      "role": "domain-expert",
+      "model": "sonnet",
+      "color": "yellow",
+      "supportsCriticMode": true
+    },
+    "code-review-automation-expert": {
+      "generated": "2026-06-02T15:00:00Z",
+      "domain": "code-review-automation",
+      "role": "domain-expert",
+      "model": "sonnet",
+      "color": "green",
+      "supportsCriticMode": true
+    }
+  }
+}
