@@ -1,0 +1,64 @@
+{
+  "bootstrap_version": "0.1.0",
+  "last_run": "2026-06-02T09:22:41Z",
+  "run_dir": ".closedloop-ai/bootstrap/20260602-092241",
+  "agents": {
+    "test-strategist": {
+      "generated": "2026-06-02T09:22:41Z",
+      "domain": "required-project-specific",
+      "specialization": {
+        "technologies": ["pytest", "python", "golden_fixture_harness", "conftest"],
+        "complexity": "medium"
+      },
+      "generation_hash": "a5eb1abfd832a3a5"
+    },
+    "security-privacy": {
+      "generated": "2026-06-02T09:22:41Z",
+      "domain": "required-project-specific",
+      "specialization": {
+        "technologies": ["prompt-injection", "tool-allowlists", "hook-attack-surface", "secret-hygiene", "cache-key-correctness", "fcntl-flock", "gh-credentials"],
+        "complexity": "high"
+      },
+      "generation_hash": "a5eb1abfd832a3a5"
+    },
+    "python-pro": {
+      "generated": "2026-06-02T09:22:41Z",
+      "domain": "language-expert",
+      "specialization": {
+        "technologies": ["python-3.13", "pyright-strict", "ruff", "argparse", "pathlib", "subprocess", "pytest", "type-hints", "conftest"],
+        "complexity": "medium"
+      },
+      "generation_hash": "a5eb1abfd832a3a5"
+    },
+    "devops-architect": {
+      "generated": "2026-06-02T09:22:41Z",
+      "domain": "domain-expert",
+      "specialization": {
+        "technologies": ["ruff", "pyright", "uv", "pytest", "git-hooks", "semver", "plugin-json", "marketplace-json", "hooks-json"],
+        "complexity": "medium"
+      },
+      "generation_hash": "a5eb1abfd832a3a5"
+    },
+    "observability-architect": {
+      "generated": "2026-06-02T09:22:41Z",
+      "domain": "domain-expert",
+      "specialization": {
+        "technologies": ["code_review_schema", "code_review_helpers", "cmd_finalize_result", "cmd_footer", "run-loop.sh", "toon", "fcntl", "self-learning-pipeline"],
+        "complexity": "high"
+      },
+      "generation_hash": "a5eb1abfd832a3a5"
+    }
+  },
+  "pre_existing_agents": [
+    "agent-context-reviewer",
+    "agent-definition-expert",
+    "claude-command-reviewer",
+    "claude-skill-reviewer",
+    "json-schema-architect",
+    "plugin-manifest-expert",
+    "pr-reviewer",
+    "python-script-reviewer",
+    "test-engineer"
+  ],
+  "pre_existing_note": "Hand-curated for plugin development before bootstrap was first run. NOT subject to bootstrap regeneration. The test-engineer/test-strategist split is intentional: test-engineer owns pytest execution and failure repair; test-strategist owns coverage policy, test pyramid, fixture design, and golden-fixture regression design."
+}
