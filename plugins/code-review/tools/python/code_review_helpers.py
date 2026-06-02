@@ -5796,7 +5796,7 @@ def cmd_extract_signals_consolidate(args: argparse.Namespace) -> int:
     """PLN-725 Stage 1b: validate the agent's signal output, write the canonical
     ``extract_signals.json``, and update the cache.
 
-    Reads ``<agent_output>`` (typically ``<cr_dir>/agent_extract_signals.json``
+    Reads ``<agent_output>`` (typically ``<cr_dir>/pln725_extract_signals.json``
     written by the Haiku agent), validates against the taxonomy contract,
     and:
 
@@ -5858,7 +5858,7 @@ def cmd_extract_signals_consolidate(args: argparse.Namespace) -> int:
     # PLN-725 Phase 4: orchestrator wiring runs consolidate
     # unconditionally as the stage after the agent-dispatch step. On a
     # cache_hit manifest, prepare already wrote extract_signals.json
-    # directly — no agent was spawned, no agent_extract_signals.json
+    # directly — no agent was spawned, no pln725_extract_signals.json
     # exists, and re-reading from cache would just duplicate the work
     # prepare already did. No-op so the walker can stay
     # mechanically-driven without conditional dispatch.
@@ -7376,7 +7376,7 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
     ``coverage_plan.json``, and update the cache.
 
     Reads ``<agent_output>`` (typically
-    ``<cr_dir>/agent_coverage_critic.json``), validates against the
+    ``<cr_dir>/pln725_coverage_critic.json``), validates against the
     constraint contract, and:
 
       - **At least one valid addition** — merges into the initial plan,
@@ -7436,7 +7436,7 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
     # ``cache_hit`` or ``skipped`` manifest, prepare already wrote
     # coverage_plan.json (cache hit serves the cached plan directly;
     # ``--no-critic`` stamps the initial plan + critic_status="skipped").
-    # In both cases no agent was spawned, no agent_coverage_critic.json
+    # In both cases no agent was spawned, no pln725_coverage_critic.json
     # exists, and the work consolidate would normally do is already
     # done. No-op so the walker stays mechanically-driven without
     # conditional dispatch.
@@ -8554,6 +8554,29 @@ def _build_run_plan_stages(
             "enabled": True,
         },
         {
+            # PLN-725 Phase 5 reorder: stage_12_hygiene was previously
+            # positioned after stage_11_extract_signals, but Gate A
+            # (hygiene-only early exit) fires immediately after stage_12
+            # — and stage_11 is the first LLM-capable stage in the
+            # pipeline. With Phase 4 enabling stage_11, hygiene-only
+            # reviews would spend a Haiku call on signal extraction
+            # before Gate A fired, violating the documented "zero-LLM
+            # deterministic check" contract on hygiene-only runs.
+            # stage_12's depends_on is stage_05_parse_diff only (it
+            # doesn't read signals/intent/coverage), so moving it
+            # earlier is safe — execution order follows array position,
+            # the _12_ prefix is a stable label not an ordinal.
+            "id": "stage_12_hygiene",
+            "kind": "helper",
+            "subcommand": "hygiene",
+            "args": ["--diff-data", f"{cr_dir}/diff_data.json"],
+            "stdout": f"{cr_dir}/hygiene.json",
+            "expected_outputs": [f"{cr_dir}/hygiene.json"],
+            "depends_on": ["stage_05_parse_diff"],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
             "id": "stage_11_extract_signals",
             "kind": "helper",
             # PLN-725 Phase 1 shipped a two-step prep/consolidate flow
@@ -8567,14 +8590,26 @@ def _build_run_plan_stages(
             "args": [
                 "--cr-dir", cr_dir,
                 "--diff-data", f"{cr_dir}/diff_data.json",
-                "--diff-tip", "HEAD",
+                # PLN-725 Phase 5 fix: <DIFF_TIP> is the walker-resolved
+                # token from scope.json. Literal "HEAD" here meant the
+                # cache key was constant across reviews (every entry
+                # wrote under the same diff_tip), making the documented
+                # cache_hit path unreachable through the walker and
+                # poisoning the cache namespace.
+                "--diff-tip", "<DIFF_TIP>",
                 "--intent", f"{cr_dir}/intent.json",
+                # PLN-725 Phase 5 fix: prepare reads --cache-dir to
+                # check for an existing entry. Without this arg
+                # prepare runs cache-blind and the orchestrator's
+                # singleton dispatch fires on every review even when
+                # the same diff has been seen.
+                "--cache-dir", "<CACHE_DIR>",
             ],
             "stdout": f"{cr_dir}/extract_signals_manifest.json",
             # stage_11 is the prepare half — it only emits the manifest.
             # extract_signals.json is written by stage_11b (consolidate)
             # AFTER the orchestrator's PLN-725 agent-dispatch step has
-            # written agent_extract_signals.json. On a cache_hit
+            # written pln725_extract_signals.json. On a cache_hit
             # manifest, prepare wrote extract_signals.json itself, no
             # agent runs, and stage_11b is a no-op (handled inside
             # cmd_extract_signals_consolidate).
@@ -8584,7 +8619,7 @@ def _build_run_plan_stages(
             "enabled": True,  # PLN-725 Phase 4
         },
         {
-            # PLN-725 Phase 4 sibling: consume agent_extract_signals.json
+            # PLN-725 Phase 4 sibling: consume pln725_extract_signals.json
             # (written by the orchestrator's agent-dispatch step) and
             # write extract_signals.json + cache update. No-ops on
             # cache_hit manifest so the walker drives this
@@ -8594,7 +8629,7 @@ def _build_run_plan_stages(
             "subcommand": "extract-signals-consolidate",
             "args": [
                 "--cr-dir", cr_dir,
-                "--agent-output", f"{cr_dir}/agent_extract_signals.json",
+                "--agent-output", f"{cr_dir}/pln725_extract_signals.json",
                 "--manifest", f"{cr_dir}/extract_signals_manifest.json",
                 "--cache-dir", "<CACHE_DIR>",
             ],
@@ -8603,17 +8638,6 @@ def _build_run_plan_stages(
             "depends_on": ["stage_11_extract_signals"],
             "on_failure": "continue_with_coverage_gap",
             "enabled": True,  # PLN-725 Phase 4
-        },
-        {
-            "id": "stage_12_hygiene",
-            "kind": "helper",
-            "subcommand": "hygiene",
-            "args": ["--diff-data", f"{cr_dir}/diff_data.json"],
-            "stdout": f"{cr_dir}/hygiene.json",
-            "expected_outputs": [f"{cr_dir}/hygiene.json"],
-            "depends_on": ["stage_05_parse_diff"],
-            "on_failure": "continue",
-            "enabled": True,
         },
         {
             "id": "stage_13_validate_companions",
@@ -8701,13 +8725,17 @@ def _build_run_plan_stages(
                 "--diff-data", f"{cr_dir}/diff_data.json",
                 "--available-reviewers", f"{cr_dir}/available_reviewers.json",
                 "--extract-signals", f"{cr_dir}/extract_signals.json",
-                "--diff-tip", "HEAD",
+                # PLN-725 Phase 5 fix: see stage_11 above. Same
+                # cache-key + cache-namespace bugs would fire here
+                # otherwise.
+                "--diff-tip", "<DIFF_TIP>",
+                "--cache-dir", "<CACHE_DIR>",
             ],
             "stdout": f"{cr_dir}/coverage_critic_manifest.json",
             # Phase 3 prepare emits only the manifest. The final
             # coverage_plan.json is written by stage_15b (consolidate),
             # which runs AFTER the orchestrator's PLN-725 agent-dispatch
-            # step has produced agent_coverage_critic.json. On cache_hit
+            # step has produced pln725_coverage_critic.json. On cache_hit
             # or skipped manifest, prepare already wrote
             # coverage_plan.json and stage_15b no-ops.
             "expected_outputs": [f"{cr_dir}/coverage_critic_manifest.json"],
@@ -8725,7 +8753,7 @@ def _build_run_plan_stages(
             "enabled": True,  # PLN-725 Phase 4
         },
         {
-            # PLN-725 Phase 4 sibling: consume agent_coverage_critic.json
+            # PLN-725 Phase 4 sibling: consume pln725_coverage_critic.json
             # (written by the orchestrator's agent-dispatch step) and
             # write coverage_plan.json. No-ops on cache_hit/skipped
             # manifest so the walker drives this unconditionally without
@@ -8736,7 +8764,7 @@ def _build_run_plan_stages(
             "args": [
                 "--cr-dir", cr_dir,
                 "--coverage-plan-initial", f"{cr_dir}/coverage_plan_initial.json",
-                "--agent-output", f"{cr_dir}/agent_coverage_critic.json",
+                "--agent-output", f"{cr_dir}/pln725_coverage_critic.json",
                 "--available-reviewers", f"{cr_dir}/available_reviewers.json",
                 "--manifest", f"{cr_dir}/coverage_critic_manifest.json",
                 "--cache-dir", "<CACHE_DIR>",

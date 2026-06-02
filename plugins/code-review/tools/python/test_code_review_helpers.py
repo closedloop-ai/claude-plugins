@@ -12845,9 +12845,13 @@ class TestPLN725Phase4StageGraph:
         assert "--cache-dir" in args
         # The agent-output value MUST match the dispatch-protocol
         # convention so the agent's write target and the consolidate
-        # read target are the same file.
+        # read target are the same file. Uses the pln725_ prefix
+        # (not agent_*) so the file is NOT swept up by stage_20's
+        # agent_*.json expected_outputs glob or by cmd_collect_findings'
+        # agent_*.json findings glob.
         agent_output_idx = args.index("--agent-output")
-        assert args[agent_output_idx + 1].endswith("/agent_extract_signals.json")
+        assert args[agent_output_idx + 1].endswith("/pln725_extract_signals.json")
+        assert "/agent_" not in args[agent_output_idx + 1]
         # The manifest value MUST be the same path prepare wrote to.
         manifest_idx = args.index("--manifest")
         assert args[manifest_idx + 1].endswith("/extract_signals_manifest.json")
@@ -12882,7 +12886,9 @@ class TestPLN725Phase4StageGraph:
         ):
             assert required in args, f"missing {required}"
         agent_output_idx = args.index("--agent-output")
-        assert args[agent_output_idx + 1].endswith("/agent_coverage_critic.json")
+        # Same namespace-collision reasoning as stage_11b above.
+        assert args[agent_output_idx + 1].endswith("/pln725_coverage_critic.json")
+        assert "/agent_" not in args[agent_output_idx + 1]
         manifest_idx = args.index("--manifest")
         assert args[manifest_idx + 1].endswith("/coverage_critic_manifest.json")
 
@@ -12934,6 +12940,141 @@ class TestPLN725Phase4StageGraph:
 
     def test_stage_16_stays_disabled_in_phase_4(self) -> None:
         assert self._stage("stage_16_arbitrate_budget")["enabled"] is False
+
+
+class TestPLN725Phase5PostMergeHardening:
+    """v2.18.1 fixes surfaced by post-merge review of PR #128. Each
+    test pins the concrete failure mode the corresponding finding
+    described, so a future refactor cannot silently regress to the
+    pre-fix shape.
+    """
+
+    def _stages(self) -> list[dict[str, Any]]:
+        from code_review_helpers import _build_run_plan_stages
+        return _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+
+    def _stage(self, stage_id: str) -> dict[str, Any]:
+        for s in self._stages():
+            if s["id"] == stage_id:
+                return s
+        raise AssertionError(f"{stage_id!r} missing from prepare-run manifest")
+
+    # --- Fix 1: namespace collision ---------------------------------------
+
+    def test_pln725_singleton_outputs_are_not_in_agent_namespace(self) -> None:
+        """stage_20_spawn_reviewers.expected_outputs is `agent_*.json`
+        and cmd_collect_findings globs `agent_*.json` for findings.
+        A successful pln725 protocol output sitting under
+        `agent_extract_signals.json` / `agent_coverage_critic.json`
+        would (a) satisfy stage_20's "at least one match" check
+        even if the reviewer fleet totally failed, and (b) get
+        ingested by collect-findings if the LLM ever emitted a
+        top-level `findings[]` in its protocol output. Both stages
+        must use the `pln725_` prefix instead.
+        """
+        for stage_id, expected_basename in (
+            ("stage_11b_extract_signals_consolidate", "pln725_extract_signals.json"),
+            ("stage_15b_coverage_critic_consolidate", "pln725_coverage_critic.json"),
+        ):
+            args = self._stage(stage_id)["args"]
+            idx = args.index("--agent-output")
+            value = args[idx + 1]
+            assert value.endswith(f"/{expected_basename}"), (
+                f"{stage_id} --agent-output should target "
+                f"{expected_basename!r}, got {value!r}"
+            )
+            assert "/agent_" not in value, (
+                f"{stage_id} --agent-output must NOT use the agent_ "
+                f"namespace (collides with stage_20 fleet glob and "
+                f"collect-findings glob); got {value!r}"
+            )
+
+    def test_collect_findings_glob_does_not_match_pln725_outputs(self) -> None:
+        # Belt-and-braces: confirm the pln725_ prefix doesn't
+        # accidentally happen to start with agent_ via some other
+        # path. Pure-string check on the run plan.
+        for stage_id in (
+            "stage_11b_extract_signals_consolidate",
+            "stage_15b_coverage_critic_consolidate",
+        ):
+            args = self._stage(stage_id)["args"]
+            value = args[args.index("--agent-output") + 1]
+            basename = Path(value).name
+            assert not basename.startswith("agent_"), (
+                f"{stage_id} pln725 output basename {basename!r} "
+                f"must not start with `agent_`"
+            )
+
+    # --- Fix 2: walker-resolved diff_tip + cache-dir on prepare ------------
+
+    def test_stage_11_prepare_uses_walker_diff_tip_token(self) -> None:
+        # Literal "HEAD" would make the cache key constant across
+        # reviews — every entry written under the same diff_tip,
+        # cache_hit path unreachable through the walker. The walker
+        # substitutes <DIFF_TIP> from scope.json before dispatch.
+        args = self._stage("stage_11_extract_signals")["args"]
+        idx = args.index("--diff-tip")
+        assert args[idx + 1] == "<DIFF_TIP>"
+        assert args[idx + 1] != "HEAD"
+
+    def test_stage_11_prepare_receives_cache_dir(self) -> None:
+        # Without --cache-dir, prepare runs cache-blind and the
+        # singleton dispatch fires on every review even when the
+        # same diff has been seen.
+        args = self._stage("stage_11_extract_signals")["args"]
+        assert "--cache-dir" in args
+        assert args[args.index("--cache-dir") + 1] == "<CACHE_DIR>"
+
+    def test_stage_15_prepare_uses_walker_diff_tip_token(self) -> None:
+        args = self._stage("stage_15_coverage_critic")["args"]
+        idx = args.index("--diff-tip")
+        assert args[idx + 1] == "<DIFF_TIP>"
+        assert args[idx + 1] != "HEAD"
+
+    def test_stage_15_prepare_receives_cache_dir(self) -> None:
+        args = self._stage("stage_15_coverage_critic")["args"]
+        assert "--cache-dir" in args
+        assert args[args.index("--cache-dir") + 1] == "<CACHE_DIR>"
+
+    # --- Fix 3: hygiene before LLM stages ---------------------------------
+
+    def test_stage_12_hygiene_runs_before_any_pln725_llm_stage(self) -> None:
+        """Gate A (the --hygiene-only early exit) fires immediately
+        after stage_12_hygiene. start.md documents hygiene-only as a
+        "zero-LLM deterministic check". If any PLN-725 LLM-capable
+        stage (stage_11 signal-extraction prepare; stage_15
+        coverage-critic prepare) appears in the array BEFORE
+        stage_12, hygiene-only reviews spend an LLM call before
+        Gate A fires. Stage execution follows array position, so
+        the ordering must put stage_12 ahead of every LLM stage.
+        """
+        ids = [s["id"] for s in self._stages()]
+        s12 = ids.index("stage_12_hygiene")
+        # Every PLN-725 prepare/consolidate stage that can fan out
+        # to an LLM dispatch must appear after stage_12.
+        for llm_stage_id in (
+            "stage_11_extract_signals",
+            "stage_11b_extract_signals_consolidate",
+            "stage_14_resolve_coverage",
+            "stage_14a_load_available_reviewers",
+            "stage_15_coverage_critic",
+            "stage_15b_coverage_critic_consolidate",
+        ):
+            assert s12 < ids.index(llm_stage_id), (
+                f"stage_12_hygiene must run before {llm_stage_id} so "
+                f"Gate A (--hygiene-only exit) fires before any LLM "
+                f"call; current order would burn an LLM dispatch on "
+                f"hygiene-only reviews."
+            )
+
+    def test_stage_12_hygiene_position_after_classify_intent(self) -> None:
+        # Sanity: stage_12 still slots after stage_10 (its dependency
+        # chain still needs stage_05_parse_diff). The reorder only
+        # moves it ahead of stage_11.
+        ids = [s["id"] for s in self._stages()]
+        s10 = ids.index("stage_10_classify_intent")
+        s12 = ids.index("stage_12_hygiene")
+        assert s10 < s12
 
 
 class TestPLN725Phase5LoadAvailableReviewers:
