@@ -6760,18 +6760,21 @@ class TestPrepareRun:
             pr_number=pr_number,
         )
 
-    def test_emits_thirty_two_stages(self, tmp_path: Path) -> None:
-        """PLN-722 v2.8.0 added two helper-wrapper stages around the
-        verifier fleet (``stage_22b_verify_prepare`` and
-        ``stage_24a_verify_consolidate``), bringing the total from 30 to
-        32. The ``_<NN>_`` prefix is a stable label, not a strict ordinal;
-        the lettered suffixes (``_22b_``, ``_24a_``) mark stages inserted
-        between original ordinals.
+    def test_emits_thirty_four_stages(self, tmp_path: Path) -> None:
+        """Stage count history:
+          - Base pipeline: 30
+          - PLN-722 v2.8.0 added stage_22b_verify_prepare and
+            stage_24a_verify_consolidate → 32
+          - PLN-725 Phase 4 (v2.17.0) added stage_11b_extract_signals_consolidate
+            and stage_15b_coverage_critic_consolidate → 34
+
+        The ``_<NN>_`` prefix is a stable label, not a strict ordinal;
+        the lettered suffixes (``_11b_``, ``_15b_``, ``_22b_``,
+        ``_24a_``) mark stages inserted between original ordinals.
         """
         summary, plan = self._run(tmp_path)
-        assert summary["stage_count"] == 32
-        assert len(plan["stages"]) == 32
-        # Ordered stage ids
+        assert summary["stage_count"] == 34
+        assert len(plan["stages"]) == 34
         ids = [s["id"] for s in plan["stages"]]
         assert ids[0] == "stage_01_setup"
         assert ids[-1] == "stage_30_footer"
@@ -6787,6 +6790,17 @@ class TestPrepareRun:
             f"→ finalize; got prep={prep_idx} fleet={fleet_idx} "
             f"cons={cons_idx} finalize={finalize_idx}"
         )
+        # PLN-725 Phase 4 consolidate sibling order: each consolidate
+        # must appear immediately after its prepare sibling so the
+        # walker dispatch protocol fires between them.
+        assert "stage_11b_extract_signals_consolidate" in ids
+        assert "stage_15b_coverage_critic_consolidate" in ids
+        sig_prep_idx = ids.index("stage_11_extract_signals")
+        sig_cons_idx = ids.index("stage_11b_extract_signals_consolidate")
+        crit_prep_idx = ids.index("stage_15_coverage_critic")
+        crit_cons_idx = ids.index("stage_15b_coverage_critic_consolidate")
+        assert sig_cons_idx == sig_prep_idx + 1
+        assert crit_cons_idx == crit_prep_idx + 1
 
     def test_extract_patches_runs_after_parse_diff(self, tmp_path: Path) -> None:
         """PLN-719 Section 7: extract-patches MOVED to right after parse-diff."""
@@ -6818,22 +6832,23 @@ class TestPrepareRun:
     def test_plan_dependent_stages_disabled(self, tmp_path: Path) -> None:
         """Stages from still-deferred plans must remain enabled=false.
 
-        Plan 01 (PLN-720, detect-injection) was flipped to enabled in v2.7.0
-        and plan 03 (PLN-722, verify-findings + verify-prepare + verify-
-        consolidate) was flipped in v2.8.0; both have their own contract
-        tests. The remaining deferred stages must stay off until their
-        plans land:
-          - plan 05 (PLN-725): stage_11_extract_signals, stage_14_resolve_coverage
-          - plan 06 (PLN-726): stage_13_validate_companions
-          - plan 05 coverage verifier: stage_24_verify_coverage
+        Enabled-history checkpoints:
+          - Plan 01 (PLN-720, detect-injection) flipped on in v2.7.0.
+          - Plan 03 (PLN-722, verify-findings + prepare + consolidate)
+            flipped on in v2.8.0.
+          - PLN-725 Phase 4 (v2.17.0) flipped stages 11/11b/14/15/15b
+            on; stage_16_arbitrate_budget stays off until Phase 7.
+
+        Remaining deferred stages until their plans ship:
+          - stage_16_arbitrate_budget (PLN-725 Phase 7)
+          - stage_24_verify_coverage (PLN-725 coverage verifier — Phase 6)
+          - stage_13_validate_companions (PLN-726)
         """
         _, plan = self._run(tmp_path)
         by_id = {s["id"]: s for s in plan["stages"]}
-        # plan 05
-        assert by_id["stage_11_extract_signals"]["enabled"] is False
-        assert by_id["stage_14_resolve_coverage"]["enabled"] is False
+        # Still-deferred
+        assert by_id["stage_16_arbitrate_budget"]["enabled"] is False
         assert by_id["stage_24_verify_coverage"]["enabled"] is False
-        # plan 06
         assert by_id["stage_13_validate_companions"]["enabled"] is False
 
     def test_pln_722_verify_pipeline_enabled_with_pinned_args(
@@ -6922,21 +6937,27 @@ class TestPrepareRun:
         ):
             assert by_id[stage_id]["enabled"] is True, stage_id
 
-    def test_arbitrate_budget_gated_on_plan_05(self, tmp_path: Path) -> None:
-        """stage_16_arbitrate_budget is disabled until plan 05 ships.
+    def test_arbitrate_budget_gated_on_phase_7(self, tmp_path: Path) -> None:
+        """stage_16_arbitrate_budget stays disabled until PLN-725 Phase 7.
 
-        Its `--coverage-plan` input is `coverage_plan_initial.json`, the
-        output of stage_14_resolve_coverage (plan 05). Enabling stage_16
-        before plan 05 would cause arbitrate-budget to error on a missing
-        input file. The subcommand itself is foundation-owned and callable
-        today; only the orchestrated stage is gated.
+        Phase 4 turns on stages 11/11b/14/15/15b in dry-run mode —
+        `coverage_plan.json` is now produced on every review but is not
+        yet consumed by stage_20 (which still uses the static spec list).
+        Stage 16 (arbitrate-budget) is the cost-arbitration step that
+        slots between coverage-critic output and reviewer-spawn input;
+        flipping it on without spawn_reviewers consuming the output
+        would just rewrite coverage_plan.json with no consumer. Phase 7
+        wires both halves together.
         """
         _, plan = self._run(tmp_path)
         by_id = {s["id"]: s for s in plan["stages"]}
         assert by_id["stage_16_arbitrate_budget"]["enabled"] is False
-        # Sanity-check the dependency chain so it flips together with plan 05.
-        for stage_id in ("stage_14_resolve_coverage", "stage_15_coverage_critic"):
-            assert by_id[stage_id]["enabled"] is False, stage_id
+        # Sanity-check the depends_on chain still points where Phase 4
+        # rewired it (stage_15b's output is the input arbitrate-budget
+        # will read in Phase 7).
+        assert "stage_15b_coverage_critic_consolidate" in by_id[
+            "stage_16_arbitrate_budget"
+        ]["depends_on"]
 
     def test_enabled_stages_do_not_depend_on_disabled_stages(
         self, tmp_path: Path,
@@ -12413,6 +12434,72 @@ class TestCoverageCriticPrepareCLI:
         # And no agent input bundle written.
         assert not (cr_dir / "coverage_critic_input.json").exists()
 
+    def test_missing_roster_file_skips_with_no_roster_reason(
+        self, tmp_path: Path,
+    ) -> None:
+        """PLN-725 Phase 4 dry-run tolerance: when available_reviewers.json
+        does not exist (Phase 5 hasn't shipped yet), prepare must fall
+        back to "skipped" semantics — write the initial plan as final
+        with critic_status="skipped" and a manifest with status="skipped"
+        + reason="no-roster". Mirrors --no-critic but reachable by
+        configuration rather than operator flag.
+
+        Concrete failure mode this guards against: PR #128 v2.17.0 first
+        deployment crashed stage_15 silently because the dry-run
+        pipeline had no producer for available_reviewers.json; prepare
+        crashed inside _load_available_reviewers (returning 1 on the
+        missing-file diagnostic), the walker's stdout redirect left a
+        zero-byte coverage_critic_manifest.json, and the rest of the
+        chain degraded with no operator signal.
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        # Remove the roster file the fixture seeded.
+        inputs["paths"]["available"].unlink()
+        args = self._args(tmp_path, inputs)
+        assert cmd_coverage_critic_prepare(args) == 0
+
+        cr_dir = Path(args.cr_dir)
+        # Manifest: skipped + no-roster reason.
+        manifest = json.loads(
+            (cr_dir / "coverage_critic_manifest.json").read_text(),
+        )
+        assert manifest["status"] == "skipped"
+        assert manifest["reason"] == "no-roster"
+        # Final plan: initial plan + critic_status="skipped" — same
+        # shape as --no-critic so downstream consumers (Phase 6/7)
+        # don't need to special-case the "no roster" path.
+        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        assert final["critic_status"] == "skipped"
+        assert final["critic_errors"] == []
+        assert final["stats"]["critic_additions"] == 0
+        # No agent input bundle, no manifest from the cache-miss path.
+        assert not (cr_dir / "coverage_critic_input.json").exists()
+
+    def test_malformed_roster_still_returns_one(self, tmp_path: Path) -> None:
+        """Tolerance is FILE-NOT-FOUND-only. A present-but-malformed
+        roster is an operator config error and must still surface as
+        exit-1 + diagnostic so the operator notices and fixes the file
+        rather than silently shipping a skipped review.
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        # File present but JSON-invalid.
+        inputs["paths"]["available"].write_text("{ not valid json")
+        args = self._args(tmp_path, inputs)
+        assert cmd_coverage_critic_prepare(args) == 1
+        # On exit-1 the cmd returns before writing the manifest, so the
+        # file MUST NOT exist. Positively asserts the skipped/no-roster
+        # path did not fire (an unguarded check that would catch a
+        # regression where exit-1 also wrote a manifest — the prior
+        # guarded `if manifest_path.exists():` form was vacuously true
+        # because the condition never holds in the expected flow).
+        cr_dir = Path(args.cr_dir)
+        assert not (cr_dir / "coverage_critic_manifest.json").exists()
+        assert not (cr_dir / "coverage_plan.json").exists()
+
     def test_cache_hit_serves_directly(self, tmp_path: Path) -> None:
         from code_review_helpers import (
             CACHE_NAMESPACE_COVERAGE_CRITIC,
@@ -12672,8 +12759,9 @@ class TestCoverageCriticConsolidateCLI:
 
 class TestStage15Alignment:
     """The prepare-run pipeline manifest's stage_15 must match the
-    actually-shipped CLI surface (Phase 3 prep half), mirroring the
-    stage_11 / stage_14 alignment from PR #124.
+    actually-shipped CLI surface (Phase 3 prep half). Phase 4 added
+    the stage_15b sibling consolidate; stage_15 still only emits the
+    manifest.
     """
 
     def _stage(self, stage_id: str) -> dict[str, Any]:
@@ -12684,8 +12772,6 @@ class TestStage15Alignment:
         raise AssertionError(f"{stage_id!r} missing from prepare-run manifest")
 
     def test_stage_15_uses_prepare_subcommand(self) -> None:
-        # Phase 3 ships a two-step flow; stage_15 represents the prepare
-        # half (consolidate sibling will be added in Phase 4).
         assert self._stage("stage_15_coverage_critic")["subcommand"] == "coverage-critic-prepare"
 
     def test_stage_15_required_args_present(self) -> None:
@@ -12702,7 +12788,7 @@ class TestStage15Alignment:
     def test_stage_15_expected_outputs_match_what_prepare_writes(self) -> None:
         stage = self._stage("stage_15_coverage_critic")
         # Prepare writes ONLY the manifest. coverage_plan.json is the
-        # consolidate half's output (stage_15b, not yet shipped).
+        # consolidate half's output (stage_15b — Phase 4).
         assert stage["expected_outputs"] == [
             stage["expected_outputs"][0],
         ]
@@ -12713,3 +12799,276 @@ class TestStage15Alignment:
             p.endswith("/coverage_plan.json")
             for p in stage["expected_outputs"]
         )
+
+
+class TestPLN725Phase4StageGraph:
+    """Phase 4 wires the PLN-725 chain end-to-end. This pins:
+       1. stage_11b + stage_15b sibling consolidate stages exist with
+          the CLI surface the consolidate subcommands actually accept.
+       2. depends_on rewiring: stage_14 now depends on stage_11b
+          (the producer of extract_signals.json), and stage_16 depends
+          on stage_15b (the producer of coverage_plan.json) — not their
+          prepare-half siblings.
+       3. Stages 11/11b/14/15/15b are all enabled. Stage 16 stays
+          disabled (Phase 7).
+       4. The agent-output paths the consolidate stages read (via
+          --agent-output) match the dispatch-protocol convention in
+          start.md ("PLN-725 Single-Agent Dispatch").
+    """
+
+    def _stages(self) -> list[dict[str, Any]]:
+        from code_review_helpers import _build_run_plan_stages
+        return _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+
+    def _stage(self, stage_id: str) -> dict[str, Any]:
+        for s in self._stages():
+            if s["id"] == stage_id:
+                return s
+        raise AssertionError(f"{stage_id!r} missing from prepare-run manifest")
+
+    # --- stage_11b shape ---------------------------------------------------
+
+    def test_stage_11b_exists_with_consolidate_subcommand(self) -> None:
+        stage = self._stage("stage_11b_extract_signals_consolidate")
+        assert stage["subcommand"] == "extract-signals-consolidate"
+        assert stage["kind"] == "helper"
+
+    def test_stage_11b_args_match_consolidate_cli(self) -> None:
+        stage = self._stage("stage_11b_extract_signals_consolidate")
+        args = stage["args"]
+        assert "--cr-dir" in args
+        assert "--agent-output" in args
+        assert "--manifest" in args
+        assert "--cache-dir" in args
+        # The agent-output value MUST match the dispatch-protocol
+        # convention so the agent's write target and the consolidate
+        # read target are the same file.
+        agent_output_idx = args.index("--agent-output")
+        assert args[agent_output_idx + 1].endswith("/agent_extract_signals.json")
+        # The manifest value MUST be the same path prepare wrote to.
+        manifest_idx = args.index("--manifest")
+        assert args[manifest_idx + 1].endswith("/extract_signals_manifest.json")
+
+    def test_stage_11b_expected_outputs_is_canonical_signals(self) -> None:
+        stage = self._stage("stage_11b_extract_signals_consolidate")
+        assert any(
+            p.endswith("/extract_signals.json")
+            for p in stage["expected_outputs"]
+        )
+
+    def test_stage_11b_depends_on_stage_11(self) -> None:
+        stage = self._stage("stage_11b_extract_signals_consolidate")
+        assert "stage_11_extract_signals" in stage["depends_on"]
+
+    def test_stage_11b_enabled(self) -> None:
+        assert self._stage("stage_11b_extract_signals_consolidate")["enabled"] is True
+
+    # --- stage_15b shape ---------------------------------------------------
+
+    def test_stage_15b_exists_with_consolidate_subcommand(self) -> None:
+        stage = self._stage("stage_15b_coverage_critic_consolidate")
+        assert stage["subcommand"] == "coverage-critic-consolidate"
+        assert stage["kind"] == "helper"
+
+    def test_stage_15b_args_match_consolidate_cli(self) -> None:
+        stage = self._stage("stage_15b_coverage_critic_consolidate")
+        args = stage["args"]
+        for required in (
+            "--cr-dir", "--coverage-plan-initial", "--agent-output",
+            "--available-reviewers", "--manifest", "--cache-dir",
+        ):
+            assert required in args, f"missing {required}"
+        agent_output_idx = args.index("--agent-output")
+        assert args[agent_output_idx + 1].endswith("/agent_coverage_critic.json")
+        manifest_idx = args.index("--manifest")
+        assert args[manifest_idx + 1].endswith("/coverage_critic_manifest.json")
+
+    def test_stage_15b_expected_outputs_is_canonical_plan(self) -> None:
+        stage = self._stage("stage_15b_coverage_critic_consolidate")
+        assert any(
+            p.endswith("/coverage_plan.json")
+            for p in stage["expected_outputs"]
+        )
+
+    def test_stage_15b_depends_on_stage_15(self) -> None:
+        stage = self._stage("stage_15b_coverage_critic_consolidate")
+        assert "stage_15_coverage_critic" in stage["depends_on"]
+
+    def test_stage_15b_enabled(self) -> None:
+        assert self._stage("stage_15b_coverage_critic_consolidate")["enabled"] is True
+
+    # --- depends_on rewiring -----------------------------------------------
+
+    def test_stage_14_depends_on_stage_11b_not_stage_11(self) -> None:
+        # The signals file stage_14 consumes is produced by stage_11b,
+        # not stage_11. Pinning the rewire so a future "tidy the deps"
+        # edit can't silently put stage_14 back to depending on the
+        # prepare half (which would let stage_14 run before signals
+        # land on disk).
+        stage = self._stage("stage_14_resolve_coverage")
+        assert "stage_11b_extract_signals_consolidate" in stage["depends_on"]
+        assert "stage_11_extract_signals" not in stage["depends_on"]
+
+    def test_stage_16_depends_on_stage_15b_not_stage_15(self) -> None:
+        stage = self._stage("stage_16_arbitrate_budget")
+        assert "stage_15b_coverage_critic_consolidate" in stage["depends_on"]
+        assert "stage_15_coverage_critic" not in stage["depends_on"]
+
+    # --- enablement --------------------------------------------------------
+
+    def test_pln725_chain_enabled_through_stage_15b(self) -> None:
+        # The whole prepare-and-consolidate chain runs in Phase 4 even
+        # though nothing downstream yet consumes coverage_plan.json
+        # (Phase 6/7 wire that). Stage 16 stays disabled.
+        for sid in (
+            "stage_11_extract_signals",
+            "stage_11b_extract_signals_consolidate",
+            "stage_14_resolve_coverage",
+            "stage_15_coverage_critic",
+            "stage_15b_coverage_critic_consolidate",
+        ):
+            assert self._stage(sid)["enabled"] is True, sid
+
+    def test_stage_16_stays_disabled_in_phase_4(self) -> None:
+        assert self._stage("stage_16_arbitrate_budget")["enabled"] is False
+
+
+class TestExtractSignalsConsolidateCacheHitNoOp:
+    """PLN-725 Phase 4: when prepare emitted a cache_hit manifest the
+    canonical extract_signals.json is already on disk; consolidate must
+    exit 0 without trying to read agent_extract_signals.json (which
+    doesn't exist on a cache hit).
+    """
+
+    def test_cache_hit_manifest_returns_zero_without_agent_output(
+        self, tmp_path: Path,
+    ) -> None:
+        import argparse
+
+        from code_review_helpers import cmd_extract_signals_consolidate
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        # Seed the canonical output (prepare did this on cache hit).
+        (cr_dir / "extract_signals.json").write_text(json.dumps({
+            "status": "ok",
+            "signals": [],
+        }))
+        # Seed a cache_hit manifest.
+        (cr_dir / "extract_signals_manifest.json").write_text(json.dumps({
+            "status": "cache_hit",
+            "cache_key": "abc",
+            "model": "haiku",
+        }))
+        # Deliberately do NOT create agent_extract_signals.json — that's
+        # the whole point of cache_hit semantics.
+
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            agent_output=str(cr_dir / "agent_extract_signals.json"),
+            manifest=str(cr_dir / "extract_signals_manifest.json"),
+            taxonomy=None,
+            cache_dir=None,
+        )
+        assert cmd_extract_signals_consolidate(args) == 0
+        # And consolidate did NOT touch the canonical output (no
+        # rewrite, no fail_closed marker).
+        canonical = json.loads((cr_dir / "extract_signals.json").read_text())
+        assert canonical["status"] == "ok"
+        # No fail-closed finding emitted either.
+        assert not (cr_dir / "agent_signal-extraction-failed.json").exists()
+
+
+class TestCoverageCriticConsolidateCacheHitAndSkippedNoOp:
+    """PLN-725 Phase 4: when prepare emitted cache_hit or skipped
+    coverage_plan.json is already on disk; consolidate must exit 0
+    without trying to read agent_coverage_critic.json.
+    """
+
+    def _seed(self, tmp_path: Path, status: str) -> tuple[Path, Path]:
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        plan_initial = cr_dir / "coverage_plan_initial.json"
+        plan_initial.write_text(json.dumps({
+            "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
+            "best_effort": [],
+            "warnings": [],
+            "stats": {"required_count": 1, "best_effort_count": 0},
+        }))
+        available = cr_dir / "available_reviewers.json"
+        available.write_text(json.dumps(["accessibility-expert"]))
+        # Seed the canonical output.
+        (cr_dir / "coverage_plan.json").write_text(json.dumps({
+            "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
+            "best_effort": [],
+            "warnings": [],
+            "stats": {"required_count": 1, "best_effort_count": 0},
+            "critic_status": status,
+            "critic_errors": [],
+        }))
+        # Seed the manifest with the given status.
+        (cr_dir / "coverage_critic_manifest.json").write_text(json.dumps({
+            "status": status,
+            "cache_key": "abc",
+            "model": "sonnet",
+        }))
+        return cr_dir, plan_initial
+
+    def _args(self, cr_dir: Path, plan_initial: Path) -> Any:
+        import argparse
+        return argparse.Namespace(
+            cr_dir=str(cr_dir),
+            coverage_plan_initial=str(plan_initial),
+            agent_output=str(cr_dir / "agent_coverage_critic.json"),
+            available_reviewers=str(cr_dir / "available_reviewers.json"),
+            manifest=str(cr_dir / "coverage_critic_manifest.json"),
+            cache_dir=None,
+        )
+
+    def test_cache_hit_returns_zero_and_leaves_plan_untouched(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import cmd_coverage_critic_consolidate
+        cr_dir, plan_initial = self._seed(tmp_path, "cache_hit")
+        assert cmd_coverage_critic_consolidate(
+            self._args(cr_dir, plan_initial),
+        ) == 0
+        canonical = json.loads((cr_dir / "coverage_plan.json").read_text())
+        # Status preserved from prepare's write — consolidate did NOT
+        # rewrite the file with critic_status="fail_closed".
+        assert canonical["critic_status"] == "cache_hit"
+        assert not (cr_dir / "agent_coverage-critic-failed.json").exists()
+
+    def test_skipped_returns_zero_and_leaves_plan_untouched(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import cmd_coverage_critic_consolidate
+        cr_dir, plan_initial = self._seed(tmp_path, "skipped")
+        assert cmd_coverage_critic_consolidate(
+            self._args(cr_dir, plan_initial),
+        ) == 0
+        canonical = json.loads((cr_dir / "coverage_plan.json").read_text())
+        assert canonical["critic_status"] == "skipped"
+        assert not (cr_dir / "agent_coverage-critic-failed.json").exists()
+
+    def test_needs_agent_with_missing_output_still_fails_closed(
+        self, tmp_path: Path,
+    ) -> None:
+        # The cache_hit / skipped short-circuit MUST NOT fire when
+        # the manifest says needs_agent. With no agent output on disk,
+        # consolidate must still take the fail_closed path so the
+        # operator-visible degradation signal is emitted.
+        from code_review_helpers import cmd_coverage_critic_consolidate
+        cr_dir, plan_initial = self._seed(tmp_path, "needs_agent")
+        # Remove the seeded coverage_plan.json so we don't confuse
+        # "needs_agent prepare also writes coverage_plan.json" — it
+        # does not, the seeded file is left over from setup.
+        (cr_dir / "coverage_plan.json").unlink()
+        assert cmd_coverage_critic_consolidate(
+            self._args(cr_dir, plan_initial),
+        ) == 0
+        # Fail-closed finding emitted because agent_coverage_critic.json
+        # doesn't exist.
+        assert (cr_dir / "agent_coverage-critic-failed.json").exists()
+        canonical = json.loads((cr_dir / "coverage_plan.json").read_text())
+        assert canonical["critic_status"] == "fail_closed"

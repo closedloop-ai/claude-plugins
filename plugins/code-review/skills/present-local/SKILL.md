@@ -246,6 +246,9 @@ If `normalization_warnings > 0` in `findings_validated.json`, append this line d
 
 ## Summary
 
+The Output directory line is mandatory at every stage_29 — there is no "no artifacts" case at present-time. Substitute `[CR_DIR_PATH]` with the actual CR_DIR resolved in stage 0 (typically `.closedloop-ai/code-review/cr-<NNNNN>`) so operators can locate `review_result.json`, agent outputs, manifests, patches, and WIP files from in-progress pipeline phases without scanning the filesystem. Render the template below verbatim:
+
+```markdown
 | Severity | Count |
 |----------|-------|
 | Blocking | X |
@@ -253,6 +256,9 @@ If `normalization_warnings > 0` in `findings_validated.json`, append this line d
 | Medium | Z |
 
 **Recommendation:** [action based on findings]
+
+**Output directory:** `[CR_DIR_PATH]`
+```
 
 **Consolidated Finding Format** (when multiple findings share root cause):
 

@@ -5850,6 +5850,29 @@ def cmd_extract_signals_consolidate(args: argparse.Namespace) -> int:
     taxonomy_hash = str(manifest.get("taxonomy_hash") or "")
     prompt_hash = str(manifest.get("prompt_hash") or "")
     model = str(manifest.get("model") or SIGNAL_EXTRACTION_MODEL_DEFAULT)
+    manifest_status = str(manifest.get("status") or "")
+
+    output_path = cr_dir / "extract_signals.json"
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # PLN-725 Phase 4: orchestrator wiring runs consolidate
+    # unconditionally as the stage after the agent-dispatch step. On a
+    # cache_hit manifest, prepare already wrote extract_signals.json
+    # directly — no agent was spawned, no agent_extract_signals.json
+    # exists, and re-reading from cache would just duplicate the work
+    # prepare already did. No-op so the walker can stay
+    # mechanically-driven without conditional dispatch.
+    if manifest_status == "cache_hit" and output_path.exists():
+        json.dump(
+            {
+                "status": "cache_hit",
+                "output_path": str(output_path),
+                "cache_key": cache_key,
+            },
+            sys.stdout, indent=2,
+        )
+        sys.stdout.write("\n")
+        return 0
 
     raw_output: Any = None
     read_error: str | None = None
@@ -5858,9 +5881,6 @@ def cmd_extract_signals_consolidate(args: argparse.Namespace) -> int:
             raw_output = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
         read_error = f"agent output unreadable: {exc}"
-
-    output_path = cr_dir / "extract_signals.json"
-    now_iso = datetime.now(timezone.utc).isoformat()
 
     if read_error is not None:
         canonical = {
@@ -6988,6 +7008,52 @@ def merge_critic_additions(
     return final
 
 
+def _emit_skipped_coverage_plan(
+    plan_initial: dict[str, Any],
+    output_path: Path,
+    manifest_path: Path,
+    model: str,
+    reason: str,
+) -> int:
+    """Short-circuit ``coverage-critic-prepare`` with a "skipped" outcome.
+
+    Writes the initial plan as the final ``coverage_plan.json`` (with
+    ``critic_status="skipped"`` so Phase 4 consumers can distinguish
+    skipped from healthy-but-empty and fail_closed via the same field),
+    plus a manifest with ``status: "skipped"`` and the caller-supplied
+    ``reason``. Dumps the manifest to stdout so the walker's
+    redirected-stdout sees the same shape regardless of which skip
+    branch ran. Returns 0 on success; 1 if the plan file cannot be
+    written.
+
+    Shared between the ``--no-critic`` operator-flag path (reason
+    ``"no-critic"``) and the missing-roster configuration path (reason
+    ``"no-roster"``). Single edit site for any future shape changes
+    (e.g. adding an OSError guard to the manifest write).
+    """
+    final = merge_critic_additions(plan_initial, [])
+    final["generated_at"] = datetime.now(timezone.utc).isoformat()
+    final["critic_status"] = "skipped"
+    final["critic_errors"] = []
+    try:
+        with open(output_path, "w") as f:
+            json.dump(final, f, indent=2)
+    except OSError as exc:
+        print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
+        return 1
+    manifest = {
+        "status": "skipped",
+        "reason": reason,
+        "output_path": str(output_path),
+        "model": model,
+    }
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+    json.dump(manifest, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
 def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     """PLN-725 Stage 3a: prep the coverage-critic agent input + check cache.
 
@@ -7043,33 +7109,25 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     output_path = cr_dir / "coverage_plan.json"
     manifest_path = cr_dir / "coverage_critic_manifest.json"
 
+    # Short-circuit per Open Question 3 — write the initial plan
+    # straight through as the final, no agent spawn needed. See
+    # _emit_skipped_coverage_plan for the shared shape.
     if no_critic:
-        # Short-circuit per Open Question 3 — write the initial plan
-        # straight through as the final, no agent spawn needed.
-        # Stamp critic_status="skipped" so Phase 4 consumers can
-        # distinguish skipped from healthy-but-empty (ok) and
-        # fail_closed via the same field — see consolidate paths below.
-        final = merge_critic_additions(plan_initial, [])
-        final["generated_at"] = datetime.now(timezone.utc).isoformat()
-        final["critic_status"] = "skipped"
-        final["critic_errors"] = []
-        try:
-            with open(output_path, "w") as f:
-                json.dump(final, f, indent=2)
-        except OSError as exc:
-            print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
-            return 1
-        manifest = {
-            "status": "skipped",
-            "reason": "no-critic",
-            "output_path": str(output_path),
-            "model": model,
-        }
-        with open(manifest_path, "w") as f:
-            json.dump(manifest, f, indent=2)
-        json.dump(manifest, sys.stdout, indent=2)
-        sys.stdout.write("\n")
-        return 0
+        return _emit_skipped_coverage_plan(
+            plan_initial, output_path, manifest_path, model, reason="no-critic",
+        )
+
+    # PLN-725 Phase 4 dry-run tolerance: the roster is produced by a
+    # not-yet-shipped Phase 5 stage (Agent-Definition Loading). When the
+    # file does not exist, fall back to the same skipped semantics —
+    # reachable by configuration rather than operator flag so Phase 4
+    # surveys the pipeline without Phase 5 wired. A present-but-malformed
+    # file still returns 1 below — that's an operator config error
+    # worth surfacing loudly.
+    if not available_path.exists():
+        return _emit_skipped_coverage_plan(
+            plan_initial, output_path, manifest_path, model, reason="no-roster",
+        )
 
     extract_signals: dict[str, Any] | None = None
     if signals_path is not None and signals_path.exists():
@@ -7231,6 +7289,30 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
 
     cache_key = str(manifest.get("cache_key") or "")
     model = str(manifest.get("model") or COVERAGE_CRITIC_MODEL_DEFAULT)
+    manifest_status = str(manifest.get("status") or "")
+
+    output_path = cr_dir / "coverage_plan.json"
+
+    # PLN-725 Phase 4: orchestrator wiring runs consolidate
+    # unconditionally as the stage after the agent-dispatch step. On a
+    # ``cache_hit`` or ``skipped`` manifest, prepare already wrote
+    # coverage_plan.json (cache hit serves the cached plan directly;
+    # ``--no-critic`` stamps the initial plan + critic_status="skipped").
+    # In both cases no agent was spawned, no agent_coverage_critic.json
+    # exists, and the work consolidate would normally do is already
+    # done. No-op so the walker stays mechanically-driven without
+    # conditional dispatch.
+    if manifest_status in ("cache_hit", "skipped") and output_path.exists():
+        json.dump(
+            {
+                "status": manifest_status,
+                "output_path": str(output_path),
+                "cache_key": cache_key,
+            },
+            sys.stdout, indent=2,
+        )
+        sys.stdout.write("\n")
+        return 0
 
     available_reviewers, load_err = _load_available_reviewers(available_path)
     if available_reviewers is None:
@@ -7247,7 +7329,6 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
     except (OSError, json.JSONDecodeError) as exc:
         read_error = f"agent output unreadable: {exc}"
 
-    output_path = cr_dir / "coverage_plan.json"
     now_iso = datetime.now(timezone.utc).isoformat()
 
     def _fail_closed(errors: list[str]) -> int:
@@ -8353,13 +8434,37 @@ def _build_run_plan_stages(
             ],
             "stdout": f"{cr_dir}/extract_signals_manifest.json",
             # stage_11 is the prepare half — it only emits the manifest.
-            # extract_signals.json is written by stage_11b (consolidate),
-            # which Phase 4 will add when the orchestrator wiring lands.
-            # Listing it here would block enablement.
+            # extract_signals.json is written by stage_11b (consolidate)
+            # AFTER the orchestrator's PLN-725 agent-dispatch step has
+            # written agent_extract_signals.json. On a cache_hit
+            # manifest, prepare wrote extract_signals.json itself, no
+            # agent runs, and stage_11b is a no-op (handled inside
+            # cmd_extract_signals_consolidate).
             "expected_outputs": [f"{cr_dir}/extract_signals_manifest.json"],
             "depends_on": ["stage_06_extract_patches", "stage_10_classify_intent"],
             "on_failure": "continue_with_coverage_gap",
-            "enabled": False,  # plan 05
+            "enabled": True,  # PLN-725 Phase 4
+        },
+        {
+            # PLN-725 Phase 4 sibling: consume agent_extract_signals.json
+            # (written by the orchestrator's agent-dispatch step) and
+            # write extract_signals.json + cache update. No-ops on
+            # cache_hit manifest so the walker drives this
+            # unconditionally without inspecting prepare's status.
+            "id": "stage_11b_extract_signals_consolidate",
+            "kind": "helper",
+            "subcommand": "extract-signals-consolidate",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--agent-output", f"{cr_dir}/agent_extract_signals.json",
+                "--manifest", f"{cr_dir}/extract_signals_manifest.json",
+                "--cache-dir", "<CACHE_DIR>",
+            ],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/extract_signals.json"],
+            "depends_on": ["stage_11_extract_signals"],
+            "on_failure": "continue_with_coverage_gap",
+            "enabled": True,  # PLN-725 Phase 4
         },
         {
             "id": "stage_12_hygiene",
@@ -8400,9 +8505,12 @@ def _build_run_plan_stages(
             ],
             "stdout": f"{cr_dir}/coverage_plan_initial.json",
             "expected_outputs": [f"{cr_dir}/coverage_plan_initial.json"],
-            "depends_on": ["stage_11_extract_signals"],
-            "on_failure": "abort",
-            "enabled": False,  # plan 05
+            # PLN-725 Phase 4: depend on the consolidate sibling — that's
+            # where extract_signals.json (our --extract-signals input)
+            # actually lands. Prepare only emits the manifest.
+            "depends_on": ["stage_11b_extract_signals_consolidate"],
+            "on_failure": "continue_with_coverage_gap",
+            "enabled": True,  # PLN-725 Phase 4
         },
         {
             # PLN-725 Phase 3 shipped a two-step prep/consolidate flow
@@ -8424,30 +8532,73 @@ def _build_run_plan_stages(
             ],
             "stdout": f"{cr_dir}/coverage_critic_manifest.json",
             # Phase 3 prepare emits only the manifest. The final
-            # coverage_plan.json is written by stage_15b (consolidate).
+            # coverage_plan.json is written by stage_15b (consolidate),
+            # which runs AFTER the orchestrator's PLN-725 agent-dispatch
+            # step has produced agent_coverage_critic.json. On cache_hit
+            # or skipped manifest, prepare already wrote
+            # coverage_plan.json and stage_15b no-ops.
             "expected_outputs": [f"{cr_dir}/coverage_critic_manifest.json"],
             "depends_on": ["stage_14_resolve_coverage"],
             "on_failure": "continue",
-            "enabled": False,  # plan 05
+            "enabled": True,  # PLN-725 Phase 4
+        },
+        {
+            # PLN-725 Phase 4 sibling: consume agent_coverage_critic.json
+            # (written by the orchestrator's agent-dispatch step) and
+            # write coverage_plan.json. No-ops on cache_hit/skipped
+            # manifest so the walker drives this unconditionally without
+            # inspecting prepare's status.
+            "id": "stage_15b_coverage_critic_consolidate",
+            "kind": "helper",
+            "subcommand": "coverage-critic-consolidate",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--coverage-plan-initial", f"{cr_dir}/coverage_plan_initial.json",
+                "--agent-output", f"{cr_dir}/agent_coverage_critic.json",
+                "--available-reviewers", f"{cr_dir}/available_reviewers.json",
+                "--manifest", f"{cr_dir}/coverage_critic_manifest.json",
+                "--cache-dir", "<CACHE_DIR>",
+            ],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/coverage_plan.json"],
+            "depends_on": ["stage_15_coverage_critic"],
+            # Fail-closed semantics already live inside the cmd; a
+            # consolidate failure produces the initial plan as final
+            # plus a coverage-critic-failed finding. Continue rather
+            # than abort.
+            "on_failure": "continue",
+            "enabled": True,  # PLN-725 Phase 4
         },
         {
             "id": "stage_16_arbitrate_budget",
             "kind": "helper",
             "subcommand": "arbitrate-budget",
             "args": [
-                "--coverage-plan", f"{cr_dir}/coverage_plan_initial.json",
+                # PLN-725 Phase 4: when this stage flips on (Phase 7),
+                # its input is the consolidated plan (stage_15b's
+                # output, post-critic-additions), not the pre-critic
+                # initial plan. Path is the same file name —
+                # stage_15b writes coverage_plan.json on top of
+                # whatever was at coverage_plan_initial.json with
+                # critic_status + best_effort additions merged.
+                "--coverage-plan", f"{cr_dir}/coverage_plan.json",
                 "--diff-data", f"{cr_dir}/diff_data.json",
                 "--output", f"{cr_dir}/coverage_plan.json",
             ],
             "stdout": None,
             "expected_outputs": [f"{cr_dir}/coverage_plan.json", f"{cr_dir}/coverage_gaps.json"],
-            "depends_on": ["stage_15_coverage_critic"],
+            # PLN-725 Phase 4 depends_on rewire: stage_15b is the actual
+            # producer of coverage_plan.json. stage_16 will overwrite
+            # that same path with the budget-arbitrated version when
+            # Phase 7 enables it.
+            "depends_on": ["stage_15b_coverage_critic_consolidate"],
             "on_failure": "abort",
-            # Gated on plan 05 — its `--coverage-plan` input is the output of
-            # stage_14_resolve_coverage, which is disabled until plan 05 ships
-            # (resolve-coverage + coverage-critic). The subcommand itself is
-            # foundation-owned and the helper is callable today; this stage
-            # flips to True together with stages 11/14/15 when plan 05 lands.
+            # Stays disabled in Phase 4 — arbitrate-budget integration
+            # is Phase 7. stages 11/11b/14/15/15b run in dry-run mode
+            # producing coverage_plan.json as telemetry that nothing
+            # downstream yet consumes; this stage flips on when the
+            # spawn_reviewers step (stage_20) starts reading
+            # coverage_plan.json instead of the static spec list.
             "enabled": False,
         },
         {
