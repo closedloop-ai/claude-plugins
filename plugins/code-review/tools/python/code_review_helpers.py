@@ -7652,10 +7652,11 @@ def _build_run_plan_stages(
                 "--intent", f"{cr_dir}/intent.json",
             ],
             "stdout": f"{cr_dir}/extract_signals_manifest.json",
-            "expected_outputs": [
-                f"{cr_dir}/extract_signals_manifest.json",
-                f"{cr_dir}/extract_signals.json",
-            ],
+            # stage_11 is the prepare half — it only emits the manifest.
+            # extract_signals.json is written by stage_11b (consolidate),
+            # which Phase 4 will add when the orchestrator wiring lands.
+            # Listing it here would block enablement.
+            "expected_outputs": [f"{cr_dir}/extract_signals_manifest.json"],
             "depends_on": ["stage_06_extract_patches", "stage_10_classify_intent"],
             "on_failure": "continue_with_coverage_gap",
             "enabled": False,  # plan 05

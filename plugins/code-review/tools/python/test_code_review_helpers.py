@@ -11586,12 +11586,26 @@ class TestPR124PrepareRunStageAlignment:
         # prepare half.
         assert stage["subcommand"] == "extract-signals-prepare"
 
-    def test_stage_11_writes_canonical_output_filename(self) -> None:
+    def test_stage_11_expected_outputs_match_what_prepare_writes(self) -> None:
         stage = self._stage("stage_11_extract_signals")
-        # Phase 1 writes extract_signals.json + extract_signals_manifest.json,
-        # NOT signals.json.
-        assert any("extract_signals" in p for p in stage["expected_outputs"])
-        assert not any(p.endswith("/signals.json") for p in stage["expected_outputs"])
+        # stage_11 is the prepare half — emits ONLY the manifest. The
+        # canonical extract_signals.json is written by stage_11b
+        # (consolidate, not yet shipped), so listing it here would block
+        # Phase 4 enablement. Also pins that the legacy `signals.json`
+        # path is gone.
+        assert stage["expected_outputs"] == [
+            stage["expected_outputs"][0],
+        ]
+        assert stage["expected_outputs"][0].endswith(
+            "/extract_signals_manifest.json",
+        )
+        assert not any(
+            p.endswith("/signals.json") for p in stage["expected_outputs"]
+        )
+        assert not any(
+            p.endswith("/extract_signals.json")
+            for p in stage["expected_outputs"]
+        )
 
     def test_stage_14_uses_real_flag_name(self) -> None:
         stage = self._stage("stage_14_resolve_coverage")
@@ -11602,6 +11616,20 @@ class TestPR124PrepareRunStageAlignment:
     def test_stage_14_points_at_canonical_signals_file(self) -> None:
         stage = self._stage("stage_14_resolve_coverage")
         # Argument value must be the canonical Phase 1 output path.
+        idx = stage["args"].index("--extract-signals")
+        assert stage["args"][idx + 1].endswith("/extract_signals.json")
+
+    def test_stage_15_uses_real_flag_name(self) -> None:
+        # Coverage parity with stage_14: the diff applied the same fix
+        # to stage_15_coverage_critic, so it needs the same regression
+        # pinning. A revert of stage_15 back to --signals would
+        # otherwise pass this PR's regression suite undetected.
+        stage = self._stage("stage_15_coverage_critic")
+        assert "--extract-signals" in stage["args"]
+        assert "--signals" not in stage["args"]
+
+    def test_stage_15_points_at_canonical_signals_file(self) -> None:
+        stage = self._stage("stage_15_coverage_critic")
         idx = stage["args"].index("--extract-signals")
         assert stage["args"][idx + 1].endswith("/extract_signals.json")
 
