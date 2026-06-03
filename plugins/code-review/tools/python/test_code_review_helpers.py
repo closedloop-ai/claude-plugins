@@ -17491,3 +17491,337 @@ class TestCoverageCriticConsolidateCacheHitAndSkippedNoOp:
         assert (cr_dir / "agent_coverage-critic-failed.json").exists()
         canonical = json.loads((cr_dir / "coverage_plan.json").read_text())
         assert canonical["critic_status"] == "fail_closed"
+
+
+class TestCRSPhaseADeclarativeStagesConfig:
+    """Phase A: run-plan stage definitions live in config/stages.json.
+
+    The loader-based ``_build_run_plan_stages`` must produce byte-identical
+    output to the pre-refactor function across both conditional dimensions
+    (mode, pr_number, flags). The two captured snapshots cover:
+      - snap1: local mode, no PR, empty flags  (every conditional in its "off" state)
+      - snap2: github mode, PR #42, all flags  (every conditional in its "on" state)
+    """
+
+    def _snapshot_dir(self) -> Path:
+        return Path(__file__).parent / "fixtures" / "run_plan_snapshots"
+
+    def test_loader_matches_local_no_pr_empty_flags_snapshot(self) -> None:
+        from code_review_helpers import _build_run_plan_stages
+        expected = json.loads(
+            (self._snapshot_dir() / "local_no_pr_empty_flags.json").read_text(),
+        )
+        actual = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        assert actual == expected
+
+    def test_loader_matches_github_pr42_all_flags_snapshot(self) -> None:
+        from code_review_helpers import _build_run_plan_stages
+        expected = json.loads(
+            (self._snapshot_dir() / "github_pr42_all_flags.json").read_text(),
+        )
+        actual = _build_run_plan_stages(
+            "/tmp/cr_dir",
+            "github",
+            42,
+            {
+                "scope_args": "origin/main..HEAD",
+                "base_ref_override": "origin/main",
+                "full_review": True,
+                "since_last_review": True,
+                "hygiene_only": True,
+            },
+        )
+        assert actual == expected
+
+    def test_pr_flag_omitted_when_pr_number_is_none(self) -> None:
+        """The @pr_flag splat must produce zero args when pr_number is None."""
+        from code_review_helpers import _build_run_plan_stages
+        stages = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        by_id = {s["id"]: s for s in stages}
+        assert "--pr-number" not in by_id["stage_03_resolve_scope"]["args"]
+        assert "--pr-number" not in by_id["stage_04_finalize_cache"]["args"]
+        assert "--pr-number" not in by_id["stage_08_fetch_intent"]["args"]
+        assert "--pr-number" not in by_id["stage_25_finalize_result"]["args"]
+
+    def test_pr_flag_inserted_when_pr_number_is_truthy(self) -> None:
+        from code_review_helpers import _build_run_plan_stages
+        stages = _build_run_plan_stages("/tmp/cr_dir", "github", 42, {})
+        by_id = {s["id"]: s for s in stages}
+        for sid in (
+            "stage_03_resolve_scope",
+            "stage_04_finalize_cache",
+            "stage_08_fetch_intent",
+            "stage_25_finalize_result",
+        ):
+            args = by_id[sid]["args"]
+            assert "--pr-number" in args, f"{sid} missing --pr-number"
+            assert args[args.index("--pr-number") + 1] == "42"
+
+    def test_schema_version_resolved_from_constant(self) -> None:
+        """{schema_version} must substitute the SCHEMA_VERSION constant, not a literal."""
+        from code_review_helpers import _build_run_plan_stages
+        from code_review_schema import SCHEMA_VERSION
+        stages = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        by_id = {s["id"]: s for s in stages}
+        for sid in ("stage_19_cache_check", "stage_26_cache_update"):
+            args = by_id[sid]["args"]
+            idx = args.index("--schema-version")
+            assert args[idx + 1] == str(SCHEMA_VERSION)
+
+    def test_returned_stage_lists_are_not_aliased_to_lru_cache(self) -> None:
+        """Mutating a returned stage's nested list must not corrupt the cache.
+
+        _load_stages_config() is lru_cached. A shallow copy of the cached
+        template would share ``depends_on``/``agent_specs`` list references; a
+        caller doing ``stage["depends_on"].append(...)`` would mutate every
+        future call's output. The loader's copy.deepcopy guarantees isolation.
+        """
+        from code_review_helpers import _build_run_plan_stages
+        s1 = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        s1[0]["depends_on"].append("__mutation_probe__")
+        s2 = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        assert "__mutation_probe__" not in s2[0]["depends_on"]
+
+
+class TestCRSPhaseAStageTemplateValidator:
+    """Phase A: stages.json templatable strings are validated at load time.
+
+    Catches a literal ``{`` or ``}`` accidentally introduced by a future editor
+    before ``str.format`` raises an opaque KeyError/ValueError deep inside the
+    loader. Validation runs once per process via lru_cache.
+    """
+
+    def test_unknown_template_key_rejected(self) -> None:
+        from code_review_helpers import _validate_stages_config
+        bad = {"stages": [{
+            "id": "stage_x",
+            "args": ["--foo", "{nonexistent_key}"],
+        }]}
+        with pytest.raises(ValueError, match="unknown template key"):
+            _validate_stages_config(bad)
+
+    def test_unbalanced_braces_rejected(self) -> None:
+        from code_review_helpers import _validate_stages_config
+        bad = {"stages": [{
+            "id": "stage_x",
+            "args": ["--foo", "literal { brace"],
+        }]}
+        with pytest.raises(ValueError, match="unbalanced braces"):
+            _validate_stages_config(bad)
+
+    def test_known_keys_and_splat_marker_pass(self) -> None:
+        from code_review_helpers import _validate_stages_config
+        good = {"stages": [{
+            "id": "stage_x",
+            "args": ["--cr-dir", "{cr_dir}", "@pr_flag", "--mode", "{mode}"],
+            "expected_outputs": ["{cr_dir}/foo.json"],
+            "stdout": "{cr_dir}/bar.json",
+        }]}
+        _validate_stages_config(good)  # no raise
+
+    def test_validation_diagnostic_names_the_field(self) -> None:
+        """Error message must point at stage_id + field for fast editing."""
+        from code_review_helpers import _validate_stages_config
+        bad = {"stages": [{
+            "id": "stage_99_demo",
+            "args": ["--cr-dir", "{cr_dir}", "--bad", "{wrong_key}"],
+        }]}
+        with pytest.raises(ValueError, match=r"stage_99_demo\.args\[3\]"):
+            _validate_stages_config(bad)
+
+
+class TestCRSPhaseACLIConfigLoader:
+    """Phase A: _register_subparsers is now a loader over config/cli.json.
+
+    44 parsers / 199 args / 8 hand-curated $$ constant slots / 1 mutex group.
+    A captured snapshot pins the resolved parser spec (defaults, types,
+    choices, required, action, func) so a regression in cli.json or in
+    _resolve_cli_constant fails loud. Plus targeted tests for the constant
+    resolution, mutex routing, func allowlist, and error paths.
+    """
+
+    def _snapshot_dir(self) -> Path:
+        return Path(__file__).parent / "fixtures" / "run_plan_snapshots"
+
+    def _resolved_spec(self) -> list[dict[str, Any]]:
+        """Build a parser via the loader and dump the resolved spec for diffing."""
+        import argparse as _argparse
+        from code_review_helpers import _register_subparsers
+
+        parser = _argparse.ArgumentParser()
+        sub = parser.add_subparsers(dest="command", required=True)
+        _register_subparsers(sub)
+        type_names = {int: "int", float: "float", str: "str"}
+        out: list[dict[str, Any]] = []
+        for name, p in sub.choices.items():  # type: ignore[attr-defined]
+            p_data: dict[str, Any] = {"name": name}
+            func = p._defaults.get("func")
+            p_data["func"] = func.__name__ if func else None
+            extra = {k: v for k, v in p._defaults.items() if k != "func"}
+            if extra:
+                p_data["extra_defaults"] = extra
+            args: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            for action in p._actions:
+                if isinstance(action, _argparse._HelpAction):
+                    continue
+                opts = list(action.option_strings)
+                if not opts or action.dest in seen:
+                    continue
+                seen.add(action.dest)
+                a_data: dict[str, Any] = {
+                    "flags": opts,
+                    "dest": action.dest,
+                    "default": action.default,
+                }
+                if action.required:
+                    a_data["required"] = True
+                if isinstance(action, _argparse._StoreTrueAction):
+                    a_data["action"] = "store_true"
+                if getattr(action, "nargs", None) == "*":
+                    a_data["nargs"] = "*"
+                if action.type is not None:
+                    a_data["type"] = type_names.get(action.type, str(action.type))
+                if action.choices is not None:
+                    a_data["choices"] = list(action.choices)
+                args.append(a_data)
+            p_data["args"] = args
+            mg: list[list[str]] = []
+            for grp in p._mutually_exclusive_groups:
+                members = [act.option_strings[0] for act in grp._group_actions]
+                if members:
+                    mg.append(members)
+            if mg:
+                p_data["mutex_groups"] = mg
+            out.append(p_data)
+        return out
+
+    def test_resolved_parser_spec_matches_snapshot(self) -> None:
+        """Byte-equality snapshot of every parser's resolved structure.
+
+        Catches: cli.json type/default/choices/action edits, $$ constant
+        misroutes (the original false positive was --max-files = 20 vs
+        BUDGET_TOTAL_CAP_DEFAULT = 20), missing required flags, mutex routing
+        drift, and func name drift across all 44 subparsers.
+        """
+        expected = json.loads(
+            (self._snapshot_dir() / "cli_parser_resolved.json").read_text(),
+        )
+        assert {"parsers": self._resolved_spec()} == expected
+
+    def test_constant_defaults_resolve_to_imported_values(self) -> None:
+        """$$NAME defaults track the imported constant, not a frozen literal."""
+        from code_review_helpers import (
+            BUDGET_TOTAL_CAP_DEFAULT,
+            CACHE_GC_MAX_PER_FILE_DEFAULT,
+            CACHE_GC_TTL_DAYS_DEFAULT,
+            DEFAULT_MAX_BHA_AGENTS,
+            _EXTRACT_PATCHES_BATCH_SIZE,
+        )
+        spec = {p["name"]: p for p in self._resolved_spec()}
+        # partition --max-bha-agents resolves to DEFAULT_MAX_BHA_AGENTS
+        partition_args = {a["flags"][0]: a for a in spec["partition"]["args"]}
+        assert partition_args["--max-bha-agents"]["default"] == DEFAULT_MAX_BHA_AGENTS
+        # arbitrate-budget --cap resolves to BUDGET_TOTAL_CAP_DEFAULT
+        ab_args = {a["flags"][0]: a for a in spec["arbitrate-budget"]["args"]}
+        assert ab_args["--cap"]["default"] == BUDGET_TOTAL_CAP_DEFAULT
+        # cache-update --gc-ttl-days resolves to CACHE_GC_TTL_DAYS_DEFAULT
+        cu_args = {a["flags"][0]: a for a in spec["cache-update"]["args"]}
+        assert cu_args["--gc-ttl-days"]["default"] == CACHE_GC_TTL_DAYS_DEFAULT
+        assert cu_args["--gc-max-per-file"]["default"] == CACHE_GC_MAX_PER_FILE_DEFAULT
+        # extract-patches --batch-size resolves to _EXTRACT_PATCHES_BATCH_SIZE
+        ep_args = {a["flags"][0]: a for a in spec["extract-patches"]["args"]}
+        assert ep_args["--batch-size"]["default"] == _EXTRACT_PATCHES_BATCH_SIZE
+
+    def test_computed_choices_resolve_to_sorted_coverage_scopes(self) -> None:
+        from code_review_schema import COVERAGE_SCOPES
+        spec = {p["name"]: p for p in self._resolved_spec()}
+        rc_args = {a["flags"][0]: a for a in spec["resolve-coverage"]["args"]}
+        assert rc_args["--scope"]["choices"] == sorted(COVERAGE_SCOPES)
+
+    def test_mutex_group_accepts_single_choice(self) -> None:
+        """migrate-critic-gates --output and --in-place are exclusive."""
+        import argparse as _argparse
+        from code_review_helpers import _register_subparsers
+        parser = _argparse.ArgumentParser()
+        sub = parser.add_subparsers(dest="command", required=True)
+        _register_subparsers(sub)
+        # --output only: succeeds
+        ns = parser.parse_args(
+            ["migrate-critic-gates", "--input", "/i", "--output", "/o"],
+        )
+        assert ns.output == "/o"
+        assert ns.in_place is False
+        # --in-place only: succeeds
+        ns2 = parser.parse_args(
+            ["migrate-critic-gates", "--input", "/i", "--in-place"],
+        )
+        assert ns2.in_place is True
+        assert ns2.output is None
+
+    def test_mutex_group_rejects_both_choices(self) -> None:
+        import argparse as _argparse
+        from code_review_helpers import _register_subparsers
+        parser = _argparse.ArgumentParser()
+        sub = parser.add_subparsers(dest="command", required=True)
+        _register_subparsers(sub)
+        with pytest.raises(SystemExit):
+            parser.parse_args([
+                "migrate-critic-gates", "--input", "/i",
+                "--output", "/o", "--in-place",
+            ])
+
+    def test_cmd_registry_allowlist_rejects_non_cmd_names(self) -> None:
+        """A func name that isn't a cmd_* callable raises a clear ValueError."""
+        from code_review_helpers import _cli_cmd_registry
+        registry = _cli_cmd_registry()
+        # Sanity: non-cmd_ globals never appear
+        assert "json" not in registry
+        assert "_load_stages_config" not in registry
+        # All registered names start with cmd_
+        assert all(n.startswith("cmd_") for n in registry)
+        # All registered values are callables
+        assert all(callable(f) for f in registry.values())
+
+    def test_loader_raises_on_unknown_func_name(self) -> None:
+        """A bogus 'func' value in cli.json yields a descriptive ValueError."""
+        import argparse as _argparse
+        from unittest.mock import patch
+        from code_review_helpers import _register_subparsers
+        bogus_cfg = {"parsers": [{
+            "name": "demo",
+            "func": "cmd_does_not_exist",
+            "args": [],
+        }]}
+        parser = _argparse.ArgumentParser()
+        sub = parser.add_subparsers(dest="command", required=True)
+        with patch(
+            "code_review_helpers._load_cli_config",
+            return_value=bogus_cfg,
+        ), pytest.raises(ValueError, match="cmd_does_not_exist"):
+            _register_subparsers(sub)
+
+    def test_loader_rejects_func_in_extra_defaults(self) -> None:
+        """extra_defaults must not smuggle a different handler in via 'func'."""
+        import argparse as _argparse
+        from unittest.mock import patch
+        from code_review_helpers import _register_subparsers
+        bogus_cfg = {"parsers": [{
+            "name": "demo",
+            "func": "cmd_parse_diff",
+            "args": [],
+            "extra_defaults": {"func": "cmd_hygiene"},
+        }]}
+        parser = _argparse.ArgumentParser()
+        sub = parser.add_subparsers(dest="command", required=True)
+        with patch(
+            "code_review_helpers._load_cli_config",
+            return_value=bogus_cfg,
+        ), pytest.raises(ValueError, match="extra_defaults must not include 'func'"):
+            _register_subparsers(sub)
+
+    def test_resolve_cli_constant_error_uses_dollar_dollar_convention(self) -> None:
+        """Error message must match the $$NAME encoding used in cli.json."""
+        from code_review_helpers import _resolve_cli_constant
+        with pytest.raises(KeyError, match=r"\$\$NOT_A_REAL_CONSTANT"):
+            _resolve_cli_constant("NOT_A_REAL_CONSTANT")

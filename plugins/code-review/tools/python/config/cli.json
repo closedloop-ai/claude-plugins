@@ -1,0 +1,1691 @@
+{
+  "parsers": [
+    {
+      "name": "parse-diff",
+      "help": "Parse git diff into structured JSON",
+      "func": "cmd_parse_diff",
+      "args": [
+        {
+          "flags": [
+            "--scope"
+          ],
+          "required": true,
+          "help": "Git diff scope (e.g. \"main...HEAD\", \"--cached\")"
+        },
+        {
+          "flags": [
+            "--workdir"
+          ],
+          "help": "Git working directory"
+        },
+        {
+          "flags": [
+            "--no-patch-lines"
+          ],
+          "action": "store_true",
+          "help": "Omit patch_lines from output"
+        }
+      ]
+    },
+    {
+      "name": "hygiene",
+      "help": "Run deterministic hygiene checks",
+      "func": "cmd_hygiene",
+      "args": [
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "help": "Path to diff_data.json (reads stdin if omitted)"
+        },
+        {
+          "flags": [
+            "--workdir"
+          ],
+          "help": "Git working directory for check-ignore"
+        }
+      ]
+    },
+    {
+      "name": "partition",
+      "help": "Bin-pack files into partitions",
+      "func": "cmd_partition",
+      "args": [
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "help": "Path to diff_data.json (reads stdin if omitted)"
+        },
+        {
+          "flags": [
+            "--loc-budget"
+          ],
+          "default": 400,
+          "type": "int",
+          "help": "LOC budget per partition"
+        },
+        {
+          "flags": [
+            "--max-files"
+          ],
+          "default": 20,
+          "type": "int",
+          "help": "Max files per partition"
+        },
+        {
+          "flags": [
+            "--max-bha-agents"
+          ],
+          "default": "$$DEFAULT_MAX_BHA_AGENTS",
+          "type": "int",
+          "help": "Max BHA agent partitions (cap enforcement)"
+        },
+        {
+          "flags": [
+            "--diff-scope"
+          ],
+          "help": "Git diff scope for per-partition patch generation"
+        },
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "help": "Directory to write patches_p<N>.txt into"
+        },
+        {
+          "flags": [
+            "--workdir"
+          ],
+          "help": "Git working directory"
+        }
+      ]
+    },
+    {
+      "name": "route",
+      "help": "Compute risk scores and model routing",
+      "func": "cmd_route",
+      "args": [
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "help": "Path to diff_data.json (reads stdin if omitted)"
+        },
+        {
+          "flags": [
+            "--critic-gates"
+          ],
+          "help": "Path to critic-gates.json"
+        },
+        {
+          "flags": [
+            "--intent"
+          ],
+          "default": "mixed",
+          "choices": [
+            "feature",
+            "fix",
+            "refactor",
+            "mixed"
+          ],
+          "help": "PR intent classification (from classify-intent)"
+        }
+      ]
+    },
+    {
+      "name": "validate",
+      "help": "Normalize, filter, and deduplicate findings",
+      "func": "cmd_validate",
+      "args": [
+        {
+          "flags": [
+            "--findings"
+          ],
+          "required": true,
+          "help": "Path to findings JSON file"
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "required": true,
+          "help": "Path to diff data JSON file"
+        },
+        {
+          "flags": [
+            "--settings"
+          ],
+          "help": "Path to code-review.json (operator-tunable settings; defaults to .closedloop-ai/settings/code-review.json). Used to load out_of_hunk_confidence_floor."
+        }
+      ]
+    },
+    {
+      "name": "verify-prepare",
+      "help": "Tier-select findings for verification and emit per-finding inputs",
+      "func": "cmd_verify_prepare",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR path"
+        },
+        {
+          "flags": [
+            "--findings"
+          ],
+          "required": true,
+          "help": "Path to findings_validated.json (or any {validated|findings: [...]} JSON)"
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "help": "Optional cache directory; when set, fresh (finding_id, snippet_hash, model, prompt_hash) tuples are served from the verifications/ namespace."
+        },
+        {
+          "flags": [
+            "--prompt-hash"
+          ],
+          "default": "",
+          "help": "Verifier prompt hash; part of the cache key so prompt revs invalidate cache."
+        },
+        {
+          "flags": [
+            "--no-verify"
+          ],
+          "action": "store_true",
+          "help": "PLN-773: emergency bypass \u2014 skip verification entirely. Every eligible finding is treated as skipped_no_verification. Requires --no-verify-reason."
+        },
+        {
+          "flags": [
+            "--no-verify-reason"
+          ],
+          "default": "",
+          "help": "PLN-773: reason for --no-verify, recorded in the manifest and echoed in the operator-facing footer audit banner."
+        }
+      ]
+    },
+    {
+      "name": "verify-consolidate",
+      "help": "Merge verifier outputs with validated set + bucket-split (verified/rejected/pending)",
+      "func": "cmd_verify_consolidate",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR path"
+        },
+        {
+          "flags": [
+            "--validated"
+          ],
+          "required": true,
+          "help": "Path to findings_validated.json"
+        },
+        {
+          "flags": [
+            "--manifest"
+          ],
+          "help": "Path to verify_manifest.json (defaults to <cr-dir>/verify_manifest.json)"
+        },
+        {
+          "flags": [
+            "--gates"
+          ],
+          "help": "Path to verification-gates.json (defaults to .closedloop-ai/settings/verification-gates.json)"
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "help": "Optional cache directory; fresh verifier outputs are written back here."
+        },
+        {
+          "flags": [
+            "--prompt-hash"
+          ],
+          "default": "",
+          "help": "Verifier prompt hash for cache write-back keys."
+        }
+      ]
+    },
+    {
+      "name": "extract-signals-prepare",
+      "help": "Prepare signal-extraction agent input; serve from signals/ cache on hit.",
+      "func": "cmd_extract_signals_prepare",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR path"
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "required": true,
+          "help": "Path to diff_data.json"
+        },
+        {
+          "flags": [
+            "--diff-tip"
+          ],
+          "required": true,
+          "help": "Diff tip SHA for cache key"
+        },
+        {
+          "flags": [
+            "--prompt-hash"
+          ],
+          "default": "",
+          "help": "Canonical prompt hash for the signals/ namespace cache key."
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "help": "Optional cache directory; fresh (diff_tip, taxonomy_hash, prompt_hash) tuples are served from the signals/ namespace."
+        },
+        {
+          "flags": [
+            "--taxonomy"
+          ],
+          "help": "Path to signal_taxonomy.json (defaults to module-relative asset)."
+        },
+        {
+          "flags": [
+            "--prompt"
+          ],
+          "help": "Path to signal_extraction_prompt.txt (defaults to module-relative asset)."
+        },
+        {
+          "flags": [
+            "--intent"
+          ],
+          "help": "Optional intent context JSON (treated as untrusted hint in the agent input)."
+        },
+        {
+          "flags": [
+            "--model"
+          ],
+          "default": "$$SIGNAL_EXTRACTION_MODEL_DEFAULT",
+          "help": "Model label recorded in the manifest (the orchestrator picks the actual agent)."
+        }
+      ]
+    },
+    {
+      "name": "extract-signals-consolidate",
+      "help": "Validate agent signal output; write extract_signals.json + cache on success.",
+      "func": "cmd_extract_signals_consolidate",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR path"
+        },
+        {
+          "flags": [
+            "--agent-output"
+          ],
+          "required": true,
+          "help": "Path to the agent's signal-extraction output JSON."
+        },
+        {
+          "flags": [
+            "--manifest"
+          ],
+          "help": "Path to extract_signals_manifest.json (defaults to <cr-dir>/extract_signals_manifest.json)."
+        },
+        {
+          "flags": [
+            "--taxonomy"
+          ],
+          "help": "Path to signal_taxonomy.json (defaults to module-relative asset)."
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "help": "Optional cache directory; successful extractions write back to signals/."
+        }
+      ]
+    },
+    {
+      "name": "resolve-coverage",
+      "help": "Deterministic resolver: critic-gates + diff + signals -> coverage_plan_initial.json",
+      "func": "cmd_resolve_coverage",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR path"
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "required": true,
+          "help": "Path to diff_data.json"
+        },
+        {
+          "flags": [
+            "--critic-gates"
+          ],
+          "help": "Path to critic-gates.json (defaults to empty manifest when absent)"
+        },
+        {
+          "flags": [
+            "--extract-signals"
+          ],
+          "help": "Path to extract_signals.json (optional; absent \u2192 signal triggers cannot fire)"
+        },
+        {
+          "flags": [
+            "--scope"
+          ],
+          "default": "code-review",
+          "choices": "$$COVERAGE_SCOPES_SORTED",
+          "help": "Rule scope filter (default: code-review)"
+        }
+      ]
+    },
+    {
+      "name": "load-available-reviewers",
+      "help": "Scan .claude/agents/*.md -> available_reviewers.json (the AVAILABLE roster the critic enforces against)",
+      "func": "cmd_load_available_reviewers",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR path"
+        },
+        {
+          "flags": [
+            "--agents-dir"
+          ],
+          "help": "Directory of *.md agent definitions (default: .claude/agents)"
+        }
+      ]
+    },
+    {
+      "name": "migrate-critic-gates",
+      "help": "One-time rewriter: legacy moduleCritics[] -> canonical coverage[]",
+      "func": "cmd_migrate_critic_gates",
+      "args": [
+        {
+          "flags": [
+            "--input"
+          ],
+          "required": true,
+          "help": "Path to legacy critic-gates.json"
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "help": "Output path (write migrated file here)"
+        },
+        {
+          "flags": [
+            "--in-place"
+          ],
+          "action": "store_true",
+          "help": "Rewrite --input in place"
+        },
+        {
+          "flags": [
+            "--dry-run"
+          ],
+          "action": "store_true",
+          "help": "Print the proposed merged coverage[] to stdout without writing"
+        }
+      ],
+      "mutex_groups": [
+        {
+          "actions": [
+            "--output",
+            "--in-place"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "coverage-critic-prepare",
+      "help": "Prepare coverage-critic agent input; serve from coverage_critic/ cache on hit.",
+      "func": "cmd_coverage_critic_prepare",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR path"
+        },
+        {
+          "flags": [
+            "--coverage-plan-initial"
+          ],
+          "required": true,
+          "help": "Path to coverage_plan_initial.json (from resolve-coverage)"
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "required": true,
+          "help": "Path to diff_data.json"
+        },
+        {
+          "flags": [
+            "--available-reviewers"
+          ],
+          "required": true,
+          "help": "Path to a JSON file containing the AVAILABLE list (flat list or {available: [...]})"
+        },
+        {
+          "flags": [
+            "--extract-signals"
+          ],
+          "help": "Path to extract_signals.json (optional but recommended)"
+        },
+        {
+          "flags": [
+            "--diff-tip"
+          ],
+          "required": true,
+          "help": "Diff tip SHA for cache key"
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "help": "Optional cache directory; fresh tuples served from coverage_critic/"
+        },
+        {
+          "flags": [
+            "--prompt"
+          ],
+          "help": "Path to coverage_critic_prompt.txt (defaults to module-relative asset)"
+        },
+        {
+          "flags": [
+            "--model"
+          ],
+          "default": "$$COVERAGE_CRITIC_MODEL_DEFAULT",
+          "help": "Model label recorded in the manifest"
+        },
+        {
+          "flags": [
+            "--no-critic"
+          ],
+          "action": "store_true",
+          "help": "Skip the LLM critic entirely; write coverage_plan_initial as the final plan."
+        }
+      ]
+    },
+    {
+      "name": "coverage-critic-consolidate",
+      "help": "Validate agent critic output; merge into coverage_plan.json + cache.",
+      "func": "cmd_coverage_critic_consolidate",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR path"
+        },
+        {
+          "flags": [
+            "--coverage-plan-initial"
+          ],
+          "required": true,
+          "help": "Path to coverage_plan_initial.json"
+        },
+        {
+          "flags": [
+            "--agent-output"
+          ],
+          "required": true,
+          "help": "Path to the agent's coverage-critic output JSON"
+        },
+        {
+          "flags": [
+            "--available-reviewers"
+          ],
+          "required": true,
+          "help": "Path to the AVAILABLE list (same file used by --prepare)"
+        },
+        {
+          "flags": [
+            "--manifest"
+          ],
+          "help": "Path to coverage_critic_manifest.json (defaults to <cr-dir>/coverage_critic_manifest.json)"
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "help": "Optional cache directory; successful runs write back to coverage_critic/"
+        }
+      ]
+    },
+    {
+      "name": "verify-coverage",
+      "help": "Deterministic verifier for coverage_plan.json. Emits coverage_verify.json with verdict PASS|BLOCKING and per-check violations; emits a HIGH system finding on BLOCKING.",
+      "func": "cmd_verify_coverage",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR path"
+        },
+        {
+          "flags": [
+            "--coverage-plan"
+          ],
+          "required": true,
+          "help": "Path to final coverage_plan.json (post-consolidate)"
+        },
+        {
+          "flags": [
+            "--coverage-plan-initial"
+          ],
+          "required": true,
+          "help": "Path to pre-critic coverage_plan_initial.json"
+        },
+        {
+          "flags": [
+            "--available-reviewers"
+          ],
+          "help": "Path to available_reviewers.json (roster). Closed-vocabulary check is bypassed when the file is missing or empty."
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "help": "Output path (defaults to <cr-dir>/coverage_verify.json)"
+        }
+      ]
+    },
+    {
+      "name": "re-assert",
+      "help": "Write operator override files for one or more finding IDs",
+      "func": "cmd_re_assert",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR path"
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "required": true,
+          "help": "Cache directory where overrides/<finding_id>.json files are written."
+        },
+        {
+          "flags": [
+            "--finding-ids"
+          ],
+          "required": true,
+          "help": "Comma-separated list of finding IDs to re-assert."
+        },
+        {
+          "flags": [
+            "--prior-result"
+          ],
+          "help": "Path to prior review_result.json. Defaults to <CR_DIR>/review_result.json."
+        },
+        {
+          "flags": [
+            "--reason"
+          ],
+          "default": "",
+          "help": "Optional operator-supplied reason for the re-assertion; recorded in the override file and pending-learnings."
+        },
+        {
+          "flags": [
+            "--asserted-by"
+          ],
+          "default": "operator",
+          "help": "Identifier of the operator (defaults to 'operator')."
+        }
+      ]
+    },
+    {
+      "name": "review-dismissed-prepare",
+      "help": "Build a haiku-verifier manifest from prior rejected[] for second-opinion run.",
+      "func": "cmd_review_dismissed_prepare",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR path"
+        },
+        {
+          "flags": [
+            "--prior-result"
+          ],
+          "help": "Path to prior review_result.json. Defaults to <CR_DIR>/review_result.json."
+        }
+      ]
+    },
+    {
+      "name": "review-dismissed-consolidate",
+      "help": "Read haiku verifier outputs; auto-promote non-REJECTED verdicts via overrides.",
+      "func": "cmd_review_dismissed_consolidate",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR path"
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "required": true,
+          "help": "Cache directory; auto-promotions write overrides/<finding_id>.json."
+        },
+        {
+          "flags": [
+            "--manifest"
+          ],
+          "help": "Path to review_dismissed_manifest.json (defaults to <CR_DIR>/review_dismissed_manifest.json)."
+        }
+      ]
+    },
+    {
+      "name": "cache-check",
+      "help": "Check BHA cache for previously reviewed files",
+      "func": "cmd_cache_check",
+      "args": [
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "required": true,
+          "help": "Path to cache directory"
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "required": true,
+          "help": "Path to diff_data.json"
+        },
+        {
+          "flags": [
+            "--prompt-hash"
+          ],
+          "required": true,
+          "help": "SHA256 of shared prompt"
+        },
+        {
+          "flags": [
+            "--model-id"
+          ],
+          "required": true,
+          "help": "Model identifier (e.g. opus)"
+        },
+        {
+          "flags": [
+            "--schema-version"
+          ],
+          "required": true,
+          "type": "int",
+          "help": "Cache schema version"
+        },
+        {
+          "flags": [
+            "--output-dir"
+          ],
+          "required": true,
+          "help": "Directory for output files"
+        },
+        {
+          "flags": [
+            "--global-cache"
+          ],
+          "default": 0,
+          "type": "int",
+          "help": "Enable global V2 cache (0 or 1)"
+        },
+        {
+          "flags": [
+            "--context-key"
+          ],
+          "default": "",
+          "help": "Context key (merge-base SHA)"
+        }
+      ]
+    },
+    {
+      "name": "cache-update",
+      "help": "Update BHA cache with new findings",
+      "func": "cmd_cache_update",
+      "args": [
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "required": true,
+          "help": "Path to cache directory"
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "required": true,
+          "help": "Path to diff_data.json"
+        },
+        {
+          "flags": [
+            "--bha-dir"
+          ],
+          "required": true,
+          "help": "Directory containing agent_bha_*.json files"
+        },
+        {
+          "flags": [
+            "--prompt-hash"
+          ],
+          "required": true,
+          "help": "SHA256 of shared prompt"
+        },
+        {
+          "flags": [
+            "--model-id"
+          ],
+          "required": true,
+          "help": "Model identifier (e.g. opus)"
+        },
+        {
+          "flags": [
+            "--schema-version"
+          ],
+          "required": true,
+          "type": "int",
+          "help": "Cache schema version"
+        },
+        {
+          "flags": [
+            "--reviewed-files"
+          ],
+          "default": [],
+          "nargs": "*",
+          "help": "Files that were reviewed"
+        },
+        {
+          "flags": [
+            "--partitions-file"
+          ],
+          "help": "Path to partitions JSON (extracts reviewed files)"
+        },
+        {
+          "flags": [
+            "--global-cache"
+          ],
+          "default": 0,
+          "type": "int",
+          "help": "Enable global V2 cache (0 or 1)"
+        },
+        {
+          "flags": [
+            "--context-key"
+          ],
+          "default": "",
+          "help": "Context key (merge-base SHA)"
+        },
+        {
+          "flags": [
+            "--gc-ttl-days"
+          ],
+          "default": "$$CACHE_GC_TTL_DAYS_DEFAULT",
+          "type": "int",
+          "help": "GC TTL in days"
+        },
+        {
+          "flags": [
+            "--gc-max-per-file"
+          ],
+          "default": "$$CACHE_GC_MAX_PER_FILE_DEFAULT",
+          "type": "int",
+          "help": "Max cache entries per file"
+        },
+        {
+          "flags": [
+            "--exclude-test-partitions"
+          ],
+          "action": "store_true",
+          "help": "Skip caching files from is_test_only partitions"
+        }
+      ]
+    },
+    {
+      "name": "post-comments",
+      "help": "Post inline review comments to GitHub PR",
+      "func": "cmd_post_comments",
+      "args": [
+        {
+          "flags": [
+            "--findings"
+          ],
+          "required": true,
+          "help": "Path to code-review-findings.json"
+        },
+        {
+          "flags": [
+            "--repo"
+          ],
+          "help": "owner/repo (defaults to GITHUB_REPOSITORY env)"
+        },
+        {
+          "flags": [
+            "--dry-run"
+          ],
+          "action": "store_true",
+          "help": "Print actions without executing"
+        }
+      ]
+    },
+    {
+      "name": "resolve-threads",
+      "help": "Resolve outdated review threads on GitHub PR",
+      "func": "cmd_resolve_threads",
+      "args": [
+        {
+          "flags": [
+            "--threads"
+          ],
+          "required": true,
+          "help": "Path to code-review-threads.json"
+        },
+        {
+          "flags": [
+            "--dry-run"
+          ],
+          "action": "store_true",
+          "help": "Print actions without executing"
+        }
+      ]
+    },
+    {
+      "name": "review-state-read",
+      "help": "Read review state for a branch:base key",
+      "func": "cmd_review_state_read",
+      "args": [
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "required": true,
+          "help": "Path to cache directory"
+        },
+        {
+          "flags": [
+            "--key"
+          ],
+          "required": true,
+          "help": "State key (branch:base_ref)"
+        }
+      ]
+    },
+    {
+      "name": "review-state-write",
+      "help": "Write review state entry",
+      "func": "cmd_review_state_write",
+      "args": [
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "required": true,
+          "help": "Path to cache directory"
+        },
+        {
+          "flags": [
+            "--key"
+          ],
+          "required": true,
+          "help": "State key (branch:base_ref)"
+        },
+        {
+          "flags": [
+            "--sha"
+          ],
+          "help": "HEAD SHA at time of review"
+        },
+        {
+          "flags": [
+            "--ref"
+          ],
+          "help": "Git ref to resolve to SHA (alternative to --sha)"
+        }
+      ]
+    },
+    {
+      "name": "session-tokens",
+      "help": "Sum token usage from session transcript",
+      "func": "cmd_session_tokens",
+      "args": [
+        {
+          "flags": [
+            "--project-dir"
+          ],
+          "help": "Project directory (defaults to cwd)"
+        },
+        {
+          "flags": [
+            "--start-time"
+          ],
+          "required": true,
+          "type": "float",
+          "help": "Epoch seconds when review started"
+        }
+      ]
+    },
+    {
+      "name": "setup",
+      "help": "Session setup: start_time, repo_name, current_branch, global_cache",
+      "func": "cmd_setup",
+      "args": [
+        {
+          "flags": [
+            "--mode"
+          ],
+          "required": true,
+          "choices": [
+            "local",
+            "github"
+          ],
+          "help": "Review mode"
+        },
+        {
+          "flags": [
+            "--cr-dir-prefix"
+          ],
+          "help": "CR dir prefix (e.g. .closedloop-ai/code-review/cr-); random suffix appended"
+        }
+      ]
+    },
+    {
+      "name": "resolve-scope",
+      "help": "Resolve diff scope from arguments",
+      "func": "cmd_resolve_scope",
+      "args": [
+        {
+          "flags": [
+            "--mode"
+          ],
+          "required": true,
+          "choices": [
+            "local",
+            "github"
+          ]
+        },
+        {
+          "flags": [
+            "--pr-number"
+          ],
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--scope-args"
+          ],
+          "default": "",
+          "help": "Remaining scope arguments"
+        },
+        {
+          "flags": [
+            "--base-ref-override"
+          ]
+        },
+        {
+          "flags": [
+            "--setup-json"
+          ],
+          "required": true,
+          "help": "Path to setup.json"
+        }
+      ]
+    },
+    {
+      "name": "fetch-intent",
+      "help": "Fetch intent context for premise review",
+      "func": "cmd_fetch_intent",
+      "args": [
+        {
+          "flags": [
+            "--pr-number"
+          ],
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--base-ref"
+          ],
+          "default": "main"
+        },
+        {
+          "flags": [
+            "--diff-tip"
+          ],
+          "default": "HEAD"
+        },
+        {
+          "flags": [
+            "--scope-kind"
+          ],
+          "required": true,
+          "choices": [
+            "pr",
+            "branch",
+            "staged",
+            "file_paths",
+            "github_pending"
+          ]
+        },
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "compute-hashes",
+      "help": "Compute prompt hash and context key",
+      "func": "cmd_compute_hashes",
+      "args": [
+        {
+          "flags": [
+            "--shared-prompt"
+          ],
+          "required": true,
+          "help": "Path to shared_prompt.txt"
+        },
+        {
+          "flags": [
+            "--bha-suffix"
+          ],
+          "required": true,
+          "help": "Path to bha_suffix.txt"
+        },
+        {
+          "flags": [
+            "--verifier-prompt"
+          ],
+          "help": "Path to verifier_prompt.txt. When provided, folds into prompt_hash so cache keys invalidate on verifier prompt edits."
+        },
+        {
+          "flags": [
+            "--premise-prompt"
+          ],
+          "help": "Path to premise_prompt.txt. When provided, folds into prompt_hash so cache keys invalidate on premise prompt edits."
+        },
+        {
+          "flags": [
+            "--diff-tip"
+          ],
+          "required": true,
+          "help": "Git ref for diff tip (e.g. HEAD, origin/branch)"
+        },
+        {
+          "flags": [
+            "--base-ref"
+          ],
+          "required": true,
+          "help": "Base ref name (e.g. main)"
+        }
+      ]
+    },
+    {
+      "name": "auto-incremental",
+      "help": "Evaluate auto-incremental eligibility",
+      "func": "cmd_auto_incremental",
+      "args": [
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "default": "",
+          "help": "Path to cache directory"
+        },
+        {
+          "flags": [
+            "--key"
+          ],
+          "required": true,
+          "help": "State key (branch:base_ref)"
+        },
+        {
+          "flags": [
+            "--diff-tip"
+          ],
+          "required": true,
+          "help": "Git ref for diff tip"
+        },
+        {
+          "flags": [
+            "--base-ref"
+          ],
+          "default": "main",
+          "help": "Base ref name"
+        },
+        {
+          "flags": [
+            "--original-scope"
+          ],
+          "required": true,
+          "help": "Original DIFF_SCOPE value"
+        },
+        {
+          "flags": [
+            "--full-review"
+          ],
+          "default": "false",
+          "help": "true if --full-review flag set"
+        },
+        {
+          "flags": [
+            "--since-last-review"
+          ],
+          "default": "false",
+          "help": "true if --since-last-review flag set"
+        },
+        {
+          "flags": [
+            "--mode"
+          ],
+          "default": "local",
+          "help": "Review mode (local or github)"
+        }
+      ]
+    },
+    {
+      "name": "finalize-cache",
+      "help": "Resolve final CACHE_DIR from setup.json",
+      "func": "cmd_finalize_cache",
+      "args": [
+        {
+          "flags": [
+            "--setup-json"
+          ],
+          "required": true,
+          "help": "Path to setup.json"
+        },
+        {
+          "flags": [
+            "--mode"
+          ],
+          "required": true,
+          "help": "Review mode (local or github)"
+        },
+        {
+          "flags": [
+            "--pr-number"
+          ],
+          "help": "PR number (if reviewing a PR)"
+        }
+      ]
+    },
+    {
+      "name": "footer",
+      "help": "Compute review footer with timing and token stats",
+      "func": "cmd_footer",
+      "extra_defaults": {
+        "project_dir": null
+      },
+      "args": [
+        {
+          "flags": [
+            "--start-time"
+          ],
+          "required": true,
+          "type": "float",
+          "help": "Epoch seconds when review started"
+        },
+        {
+          "flags": [
+            "--cache-result"
+          ],
+          "help": "Path to cache_result.json"
+        },
+        {
+          "flags": [
+            "--review-mode-line"
+          ],
+          "help": "Review mode line (falls back to cr-dir/auto_incremental.json)"
+        },
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "help": "CR session dir (fallback for --review-mode-line)"
+        }
+      ]
+    },
+    {
+      "name": "classify-intent",
+      "help": "Classify diff intent for model routing",
+      "func": "cmd_classify_intent",
+      "args": [
+        {
+          "flags": [
+            "--intent-context"
+          ],
+          "required": true,
+          "help": "Path to intent_context.json"
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "help": "Path to diff_data.json for file statuses"
+        }
+      ]
+    },
+    {
+      "name": "detect-injection",
+      "help": "Score intent_context.json for prompt-injection signals; quarantine on Medium+",
+      "func": "cmd_detect_injection",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR session directory"
+        },
+        {
+          "flags": [
+            "--intent-context"
+          ],
+          "required": true,
+          "help": "Path to intent_context.json (written by fetch-intent)"
+        }
+      ]
+    },
+    {
+      "name": "collect-findings",
+      "help": "Merge agent + hygiene findings",
+      "func": "cmd_collect_findings",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "Directory containing agent_*.json files"
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "default": "findings.json",
+          "help": "Output filename (written to cr-dir)"
+        },
+        {
+          "flags": [
+            "--hygiene"
+          ],
+          "help": "Path to hygiene.json"
+        }
+      ]
+    },
+    {
+      "name": "verdict",
+      "help": "Compute PR verdict from validated findings",
+      "func": "cmd_verdict",
+      "args": [
+        {
+          "flags": [
+            "--validate-output"
+          ],
+          "required": true,
+          "help": "Path to validate_output.json (legacy fallback)"
+        },
+        {
+          "flags": [
+            "--review-result"
+          ],
+          "help": "Path to review_result.json (canonical envelope; preferred when present)"
+        },
+        {
+          "flags": [
+            "--thresholds"
+          ],
+          "help": "Path to verdict-thresholds.json. Defaults to .closedloop-ai/settings/verdict-thresholds.json (absent \u2192 built-in default 3)."
+        }
+      ]
+    },
+    {
+      "name": "finalize-result",
+      "help": "Build the canonical review_result.json envelope from validated findings",
+      "func": "cmd_finalize_result",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR for the review session"
+        },
+        {
+          "flags": [
+            "--validate-output"
+          ],
+          "required": true,
+          "help": "Path to validate_output.json"
+        },
+        {
+          "flags": [
+            "--mode"
+          ],
+          "choices": [
+            "local",
+            "github"
+          ],
+          "help": "Run mode"
+        },
+        {
+          "flags": [
+            "--diff-tip"
+          ],
+          "help": "Diff tip sha (falls back to scope.json/setup.json)"
+        },
+        {
+          "flags": [
+            "--pr-number"
+          ],
+          "type": "int",
+          "help": "PR number for github mode"
+        },
+        {
+          "flags": [
+            "--thresholds"
+          ],
+          "help": "Path to verdict-thresholds.json. Defaults to .closedloop-ai/settings/verdict-thresholds.json (absent \u2192 built-in default 3)."
+        }
+      ]
+    },
+    {
+      "name": "arbitrate-budget",
+      "help": "Apply budget arbitration to coverage_plan_initial.json -> coverage_plan.json",
+      "func": "cmd_arbitrate_budget",
+      "args": [
+        {
+          "flags": [
+            "--coverage-plan"
+          ],
+          "required": true,
+          "help": "Path to coverage_plan_initial.json"
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "required": true,
+          "help": "Path to diff_data.json"
+        },
+        {
+          "flags": [
+            "--cap"
+          ],
+          "default": "$$BUDGET_TOTAL_CAP_DEFAULT",
+          "type": "int",
+          "help": "Total reviewer cap"
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "help": "Output path (default: coverage_plan.json next to input)"
+        },
+        {
+          "flags": [
+            "--coverage-verify"
+          ],
+          "help": "Optional path to coverage_verify.json (PLN-725 Phase 6). When present and verdict is BLOCKING, arbitration is bypassed; input plan flows through unchanged."
+        }
+      ]
+    },
+    {
+      "name": "derive-spawn-spec",
+      "help": "Translate post-arbitrate coverage_plan.json + partitions.json + route.json into spawn_spec.json for stage_20_spawn_reviewers",
+      "func": "cmd_derive_spawn_spec",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "Session CR_DIR path"
+        },
+        {
+          "flags": [
+            "--coverage-plan"
+          ],
+          "required": true,
+          "help": "Path to coverage_plan.json (post-arbitrate)"
+        },
+        {
+          "flags": [
+            "--partitions"
+          ],
+          "required": true,
+          "help": "Path to partitions.json"
+        },
+        {
+          "flags": [
+            "--route"
+          ],
+          "required": true,
+          "help": "Path to route.json"
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "help": "Output path (default: <cr-dir>/spawn_spec.json)"
+        }
+      ]
+    },
+    {
+      "name": "verify-spawn",
+      "help": "Compare spawn_spec.agents[] against on-disk agent_*.json; emit coverage-gap findings for missing required agents",
+      "func": "cmd_verify_spawn",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "Session CR_DIR path"
+        }
+      ]
+    },
+    {
+      "name": "render-fleet-summary",
+      "help": "Render the operator-facing Reviewer Fleet markdown block from spawn_spec.json + spawn_verification.json + route.json",
+      "func": "cmd_render_fleet_summary",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "Session CR_DIR path"
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "help": "Optional output file path; default stdout-only"
+        }
+      ]
+    },
+    {
+      "name": "prepare-run",
+      "help": "Emit run_plan.json describing the full review pipeline",
+      "func": "cmd_prepare_run",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR for the review session"
+        },
+        {
+          "flags": [
+            "--mode"
+          ],
+          "required": true,
+          "choices": [
+            "local",
+            "github"
+          ],
+          "help": "Run mode"
+        },
+        {
+          "flags": [
+            "--hygiene-only"
+          ],
+          "default": "false",
+          "help": "Run hygiene-only review"
+        },
+        {
+          "flags": [
+            "--since-last-review"
+          ],
+          "default": "false",
+          "help": "Limit scope to commits since last review"
+        },
+        {
+          "flags": [
+            "--full-review"
+          ],
+          "default": "false",
+          "help": "Force a full re-review"
+        },
+        {
+          "flags": [
+            "--base-ref-override"
+          ],
+          "default": "",
+          "help": "Override base ref for scope resolution"
+        },
+        {
+          "flags": [
+            "--scope-args"
+          ],
+          "default": "",
+          "help": "Free-form scope args passed to resolve-scope"
+        },
+        {
+          "flags": [
+            "--pr-number"
+          ],
+          "type": "int",
+          "help": "PR number for github mode"
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "help": "Output path (default: <cr-dir>/run_plan.json)"
+        }
+      ]
+    },
+    {
+      "name": "prep-assets",
+      "help": "Copy prompt assets from plugin to CR_DIR",
+      "func": "cmd_prep_assets",
+      "args": [
+        {
+          "flags": [
+            "--plugin-root"
+          ],
+          "required": true,
+          "help": "Resolved CLAUDE_PLUGIN_ROOT path"
+        },
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "Session CR_DIR path"
+        }
+      ]
+    },
+    {
+      "name": "extract-patches",
+      "help": "Extract git diff patches to disk files",
+      "func": "cmd_extract_patches",
+      "args": [
+        {
+          "flags": [
+            "--diff-scope"
+          ],
+          "required": true,
+          "help": "Git diff scope string"
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "required": true,
+          "help": "Path to full diff_data.json (for patches_all.txt)"
+        },
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "Output directory for patch files"
+        },
+        {
+          "flags": [
+            "--workdir"
+          ],
+          "help": "Git working directory"
+        },
+        {
+          "flags": [
+            "--batch-size"
+          ],
+          "default": "$$_EXTRACT_PATCHES_BATCH_SIZE",
+          "type": "int",
+          "help": "Batch size for large diffs"
+        }
+      ]
+    }
+  ]
+}

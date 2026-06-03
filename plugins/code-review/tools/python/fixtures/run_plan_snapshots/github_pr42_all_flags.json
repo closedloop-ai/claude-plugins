@@ -1,0 +1,844 @@
+[
+  {
+    "id": "stage_01_setup",
+    "kind": "helper",
+    "subcommand": "setup",
+    "args": [
+      "--mode",
+      "github",
+      "--cr-dir-prefix",
+      ".closedloop-ai/code-review/cr-"
+    ],
+    "stdout": null,
+    "expected_outputs": [
+      "/tmp/cr_dir/setup.json"
+    ],
+    "depends_on": [],
+    "on_failure": "abort",
+    "enabled": true
+  },
+  {
+    "id": "stage_02_prep_assets",
+    "kind": "helper",
+    "subcommand": "prep-assets",
+    "args": [
+      "--plugin-root",
+      "<PLUGIN_ROOT>",
+      "--cr-dir",
+      "/tmp/cr_dir"
+    ],
+    "stdout": null,
+    "expected_outputs": [
+      "/tmp/cr_dir/shared_prompt.txt",
+      "/tmp/cr_dir/bha_suffix.txt"
+    ],
+    "depends_on": [
+      "stage_01_setup"
+    ],
+    "on_failure": "abort",
+    "enabled": true
+  },
+  {
+    "id": "stage_03_resolve_scope",
+    "kind": "helper",
+    "subcommand": "resolve-scope",
+    "args": [
+      "--mode",
+      "github",
+      "--setup-json",
+      "/tmp/cr_dir/setup.json",
+      "--pr-number",
+      "42",
+      "--scope-args",
+      "origin/main..HEAD",
+      "--base-ref-override",
+      "origin/main"
+    ],
+    "stdout": "/tmp/cr_dir/scope.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/scope.json"
+    ],
+    "depends_on": [
+      "stage_02_prep_assets"
+    ],
+    "on_failure": "abort",
+    "enabled": true
+  },
+  {
+    "id": "stage_04_finalize_cache",
+    "kind": "helper",
+    "subcommand": "finalize-cache",
+    "args": [
+      "--setup-json",
+      "/tmp/cr_dir/setup.json",
+      "--mode",
+      "github",
+      "--pr-number",
+      "42"
+    ],
+    "stdout": "/tmp/cr_dir/cache_config.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/cache_config.json"
+    ],
+    "depends_on": [
+      "stage_03_resolve_scope"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_07_auto_incremental",
+    "kind": "helper",
+    "subcommand": "auto-incremental",
+    "args": [
+      "--cache-dir",
+      "<CACHE_DIR>",
+      "--key",
+      "<STATE_KEY>",
+      "--diff-tip",
+      "<DIFF_TIP>",
+      "--base-ref",
+      "<BASE_REF>",
+      "--original-scope",
+      "<DIFF_SCOPE>",
+      "--full-review",
+      "true",
+      "--since-last-review",
+      "true",
+      "--mode",
+      "github"
+    ],
+    "stdout": "/tmp/cr_dir/auto_incremental.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/auto_incremental.json"
+    ],
+    "depends_on": [
+      "stage_04_finalize_cache"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_05_parse_diff",
+    "kind": "helper",
+    "subcommand": "parse-diff",
+    "args": [
+      "--scope",
+      "<DIFF_SCOPE>"
+    ],
+    "stdout": "/tmp/cr_dir/diff_data.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/diff_data.json"
+    ],
+    "depends_on": [
+      "stage_03_resolve_scope",
+      "stage_07_auto_incremental"
+    ],
+    "on_failure": "abort",
+    "enabled": true
+  },
+  {
+    "id": "stage_06_extract_patches",
+    "kind": "helper",
+    "subcommand": "extract-patches",
+    "args": [
+      "--diff-scope",
+      "<DIFF_SCOPE>",
+      "--diff-data",
+      "/tmp/cr_dir/diff_data.json",
+      "--cr-dir",
+      "/tmp/cr_dir"
+    ],
+    "stdout": null,
+    "expected_outputs": [
+      "/tmp/cr_dir/patches_all.txt"
+    ],
+    "depends_on": [
+      "stage_05_parse_diff"
+    ],
+    "on_failure": "abort",
+    "enabled": true
+  },
+  {
+    "id": "stage_08_fetch_intent",
+    "kind": "helper",
+    "subcommand": "fetch-intent",
+    "args": [
+      "--scope-kind",
+      "<SCOPE_KIND>",
+      "--cr-dir",
+      "/tmp/cr_dir",
+      "--pr-number",
+      "42",
+      "--base-ref",
+      "<BASE_REF>",
+      "--diff-tip",
+      "<DIFF_TIP>"
+    ],
+    "stdout": null,
+    "expected_outputs": [
+      "/tmp/cr_dir/intent_context.json"
+    ],
+    "depends_on": [
+      "stage_03_resolve_scope"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_09_detect_injection",
+    "kind": "helper",
+    "subcommand": "detect-injection",
+    "args": [
+      "--cr-dir",
+      "/tmp/cr_dir",
+      "--intent-context",
+      "/tmp/cr_dir/intent_context.json"
+    ],
+    "stdout": "/tmp/cr_dir/injection_report.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/injection_report.json"
+    ],
+    "depends_on": [
+      "stage_08_fetch_intent"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_10_classify_intent",
+    "kind": "helper",
+    "subcommand": "classify-intent",
+    "args": [
+      "--intent-context",
+      "/tmp/cr_dir/intent_context.json",
+      "--diff-data",
+      "/tmp/cr_dir/diff_data.json"
+    ],
+    "stdout": "/tmp/cr_dir/intent.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/intent.json"
+    ],
+    "depends_on": [
+      "stage_08_fetch_intent",
+      "stage_05_parse_diff"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_12_hygiene",
+    "kind": "helper",
+    "subcommand": "hygiene",
+    "args": [
+      "--diff-data",
+      "/tmp/cr_dir/diff_data.json"
+    ],
+    "stdout": "/tmp/cr_dir/hygiene.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/hygiene.json"
+    ],
+    "depends_on": [
+      "stage_05_parse_diff"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_11_extract_signals",
+    "kind": "helper",
+    "subcommand": "extract-signals-prepare",
+    "args": [
+      "--cr-dir",
+      "/tmp/cr_dir",
+      "--diff-data",
+      "/tmp/cr_dir/diff_data.json",
+      "--diff-tip",
+      "<DIFF_TIP>",
+      "--intent",
+      "/tmp/cr_dir/intent.json",
+      "--cache-dir",
+      "<CACHE_DIR>"
+    ],
+    "stdout": "/tmp/cr_dir/extract_signals_manifest.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/extract_signals_manifest.json"
+    ],
+    "depends_on": [
+      "stage_06_extract_patches",
+      "stage_10_classify_intent"
+    ],
+    "on_failure": "continue_with_coverage_gap",
+    "enabled": true
+  },
+  {
+    "id": "stage_11b_extract_signals_consolidate",
+    "kind": "helper",
+    "subcommand": "extract-signals-consolidate",
+    "args": [
+      "--cr-dir",
+      "/tmp/cr_dir",
+      "--agent-output",
+      "/tmp/cr_dir/pln725_extract_signals.json",
+      "--manifest",
+      "/tmp/cr_dir/extract_signals_manifest.json",
+      "--cache-dir",
+      "<CACHE_DIR>"
+    ],
+    "stdout": null,
+    "expected_outputs": [
+      "/tmp/cr_dir/extract_signals.json"
+    ],
+    "depends_on": [
+      "stage_11_extract_signals"
+    ],
+    "on_failure": "continue_with_coverage_gap",
+    "enabled": true
+  },
+  {
+    "id": "stage_13_validate_companions",
+    "kind": "helper",
+    "subcommand": "validate-companions",
+    "args": [
+      "--cr-dir",
+      "/tmp/cr_dir",
+      "--diff-data",
+      "/tmp/cr_dir/diff_data.json"
+    ],
+    "stdout": "/tmp/cr_dir/companion_findings.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/companion_findings.json"
+    ],
+    "depends_on": [
+      "stage_05_parse_diff"
+    ],
+    "on_failure": "continue",
+    "enabled": false
+  },
+  {
+    "id": "stage_14_resolve_coverage",
+    "kind": "helper",
+    "subcommand": "resolve-coverage",
+    "args": [
+      "--cr-dir",
+      "/tmp/cr_dir",
+      "--diff-data",
+      "/tmp/cr_dir/diff_data.json",
+      "--extract-signals",
+      "/tmp/cr_dir/extract_signals.json"
+    ],
+    "stdout": "/tmp/cr_dir/coverage_plan_initial.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/coverage_plan_initial.json"
+    ],
+    "depends_on": [
+      "stage_11b_extract_signals_consolidate"
+    ],
+    "on_failure": "continue_with_coverage_gap",
+    "enabled": true
+  },
+  {
+    "id": "stage_14a_load_available_reviewers",
+    "kind": "helper",
+    "subcommand": "load-available-reviewers",
+    "args": [
+      "--cr-dir",
+      "/tmp/cr_dir"
+    ],
+    "stdout": null,
+    "expected_outputs": [
+      "/tmp/cr_dir/available_reviewers.json"
+    ],
+    "depends_on": [],
+    "on_failure": "continue_with_coverage_gap",
+    "enabled": true
+  },
+  {
+    "id": "stage_15_coverage_critic",
+    "kind": "helper",
+    "subcommand": "coverage-critic-prepare",
+    "args": [
+      "--cr-dir",
+      "/tmp/cr_dir",
+      "--coverage-plan-initial",
+      "/tmp/cr_dir/coverage_plan_initial.json",
+      "--diff-data",
+      "/tmp/cr_dir/diff_data.json",
+      "--available-reviewers",
+      "/tmp/cr_dir/available_reviewers.json",
+      "--extract-signals",
+      "/tmp/cr_dir/extract_signals.json",
+      "--diff-tip",
+      "<DIFF_TIP>",
+      "--cache-dir",
+      "<CACHE_DIR>"
+    ],
+    "stdout": "/tmp/cr_dir/coverage_critic_manifest.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/coverage_critic_manifest.json"
+    ],
+    "depends_on": [
+      "stage_14_resolve_coverage",
+      "stage_14a_load_available_reviewers"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_15b_coverage_critic_consolidate",
+    "kind": "helper",
+    "subcommand": "coverage-critic-consolidate",
+    "args": [
+      "--cr-dir",
+      "/tmp/cr_dir",
+      "--coverage-plan-initial",
+      "/tmp/cr_dir/coverage_plan_initial.json",
+      "--agent-output",
+      "/tmp/cr_dir/pln725_coverage_critic.json",
+      "--available-reviewers",
+      "/tmp/cr_dir/available_reviewers.json",
+      "--manifest",
+      "/tmp/cr_dir/coverage_critic_manifest.json",
+      "--cache-dir",
+      "<CACHE_DIR>"
+    ],
+    "stdout": null,
+    "expected_outputs": [
+      "/tmp/cr_dir/coverage_plan.json"
+    ],
+    "depends_on": [
+      "stage_15_coverage_critic"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_15c_verify_coverage",
+    "kind": "helper",
+    "subcommand": "verify-coverage",
+    "args": [
+      "--cr-dir",
+      "/tmp/cr_dir",
+      "--coverage-plan",
+      "/tmp/cr_dir/coverage_plan.json",
+      "--coverage-plan-initial",
+      "/tmp/cr_dir/coverage_plan_initial.json",
+      "--available-reviewers",
+      "/tmp/cr_dir/available_reviewers.json"
+    ],
+    "stdout": null,
+    "expected_outputs": [
+      "/tmp/cr_dir/coverage_verify.json"
+    ],
+    "depends_on": [
+      "stage_15b_coverage_critic_consolidate"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_16_arbitrate_budget",
+    "kind": "helper",
+    "subcommand": "arbitrate-budget",
+    "args": [
+      "--coverage-plan",
+      "/tmp/cr_dir/coverage_plan.json",
+      "--diff-data",
+      "/tmp/cr_dir/diff_data.json",
+      "--output",
+      "/tmp/cr_dir/coverage_plan.json",
+      "--coverage-verify",
+      "/tmp/cr_dir/coverage_verify.json"
+    ],
+    "stdout": null,
+    "expected_outputs": [
+      "/tmp/cr_dir/coverage_plan.json",
+      "/tmp/cr_dir/coverage_gaps.json"
+    ],
+    "depends_on": [
+      "stage_15c_verify_coverage"
+    ],
+    "on_failure": "abort",
+    "enabled": true
+  },
+  {
+    "id": "stage_18_compute_hashes",
+    "kind": "helper",
+    "subcommand": "compute-hashes",
+    "args": [
+      "--shared-prompt",
+      "/tmp/cr_dir/shared_prompt.txt",
+      "--bha-suffix",
+      "/tmp/cr_dir/bha_suffix.txt",
+      "--verifier-prompt",
+      "/tmp/cr_dir/verifier_prompt.txt",
+      "--premise-prompt",
+      "/tmp/cr_dir/premise_prompt.txt",
+      "--diff-tip",
+      "<DIFF_TIP>",
+      "--base-ref",
+      "<BASE_REF>"
+    ],
+    "stdout": "/tmp/cr_dir/hashes.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/hashes.json"
+    ],
+    "depends_on": [
+      "stage_02_prep_assets",
+      "stage_03_resolve_scope"
+    ],
+    "on_failure": "abort",
+    "enabled": true
+  },
+  {
+    "id": "stage_19_cache_check",
+    "kind": "helper",
+    "subcommand": "cache-check",
+    "args": [
+      "--cache-dir",
+      "<CACHE_DIR>",
+      "--diff-data",
+      "/tmp/cr_dir/diff_data.json",
+      "--prompt-hash",
+      "<PROMPT_HASH>",
+      "--model-id",
+      "<MODEL_ID>",
+      "--schema-version",
+      "1",
+      "--output-dir",
+      "/tmp/cr_dir",
+      "--global-cache",
+      "<GLOBAL_CACHE>",
+      "--context-key",
+      "<CONTEXT_KEY>"
+    ],
+    "stdout": null,
+    "expected_outputs": [
+      "/tmp/cr_dir/cache_result.json"
+    ],
+    "depends_on": [
+      "stage_18_compute_hashes",
+      "stage_04_finalize_cache"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_17_partition",
+    "kind": "helper",
+    "subcommand": "partition",
+    "args": [
+      "--diff-data",
+      "/tmp/cr_dir/diff_data.json",
+      "--diff-scope",
+      "<DIFF_SCOPE>",
+      "--cr-dir",
+      "/tmp/cr_dir"
+    ],
+    "stdout": "/tmp/cr_dir/partitions.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/partitions.json",
+      "/tmp/cr_dir/patches_p<N>.txt"
+    ],
+    "depends_on": [
+      "stage_05_parse_diff",
+      "stage_19_cache_check"
+    ],
+    "on_failure": "abort",
+    "enabled": true
+  },
+  {
+    "id": "stage_19b_derive_spawn_spec",
+    "kind": "helper",
+    "subcommand": "derive-spawn-spec",
+    "args": [
+      "--cr-dir",
+      "/tmp/cr_dir",
+      "--coverage-plan",
+      "/tmp/cr_dir/coverage_plan.json",
+      "--partitions",
+      "/tmp/cr_dir/partitions.json",
+      "--route",
+      "/tmp/cr_dir/route.json"
+    ],
+    "stdout": null,
+    "expected_outputs": [
+      "/tmp/cr_dir/spawn_spec.json"
+    ],
+    "depends_on": [
+      "stage_16_arbitrate_budget"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_20_spawn_reviewers",
+    "kind": "agent_fleet",
+    "agent_specs": [],
+    "expected_outputs": [
+      "/tmp/cr_dir/agent_*.json"
+    ],
+    "depends_on": [
+      "stage_17_partition",
+      "stage_19b_derive_spawn_spec"
+    ],
+    "on_failure": "continue_with_coverage_gap",
+    "enabled": true
+  },
+  {
+    "id": "stage_20b_verify_spawn",
+    "kind": "helper",
+    "subcommand": "verify-spawn",
+    "args": [
+      "--cr-dir",
+      "/tmp/cr_dir"
+    ],
+    "stdout": null,
+    "expected_outputs": [
+      "/tmp/cr_dir/spawn_verification.json"
+    ],
+    "depends_on": [
+      "stage_19b_derive_spawn_spec",
+      "stage_20_spawn_reviewers"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_21_collect_findings",
+    "kind": "helper",
+    "subcommand": "collect-findings",
+    "args": [
+      "--cr-dir",
+      "/tmp/cr_dir",
+      "--hygiene",
+      "/tmp/cr_dir/hygiene.json"
+    ],
+    "stdout": null,
+    "expected_outputs": [
+      "/tmp/cr_dir/findings.json"
+    ],
+    "depends_on": [
+      "stage_20_spawn_reviewers",
+      "stage_20b_verify_spawn"
+    ],
+    "on_failure": "abort",
+    "enabled": true
+  },
+  {
+    "id": "stage_22_validate",
+    "kind": "helper",
+    "subcommand": "validate",
+    "args": [
+      "--findings",
+      "/tmp/cr_dir/findings.json",
+      "--diff-data",
+      "/tmp/cr_dir/diff_data.json"
+    ],
+    "stdout": "/tmp/cr_dir/findings_validated.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/findings_validated.json"
+    ],
+    "depends_on": [
+      "stage_21_collect_findings"
+    ],
+    "on_failure": "abort",
+    "enabled": true
+  },
+  {
+    "id": "stage_22b_verify_prepare",
+    "kind": "helper",
+    "subcommand": "verify-prepare",
+    "args": [
+      "--cr-dir",
+      "/tmp/cr_dir",
+      "--findings",
+      "/tmp/cr_dir/findings_validated.json",
+      "--cache-dir",
+      "<CACHE_DIR>",
+      "--prompt-hash",
+      "<PROMPT_HASH>"
+    ],
+    "stdout": "/tmp/cr_dir/verify_manifest.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/verify_manifest.json"
+    ],
+    "depends_on": [
+      "stage_22_validate"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_23_verify_findings",
+    "kind": "agent_fleet",
+    "agent_specs": [],
+    "expected_outputs": [
+      "/tmp/cr_dir/agent_verifier_*.json"
+    ],
+    "depends_on": [
+      "stage_22b_verify_prepare"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_24a_verify_consolidate",
+    "kind": "helper",
+    "subcommand": "verify-consolidate",
+    "args": [
+      "--cr-dir",
+      "/tmp/cr_dir",
+      "--validated",
+      "/tmp/cr_dir/findings_validated.json",
+      "--manifest",
+      "/tmp/cr_dir/verify_manifest.json",
+      "--cache-dir",
+      "<CACHE_DIR>",
+      "--prompt-hash",
+      "<PROMPT_HASH>"
+    ],
+    "stdout": null,
+    "expected_outputs": [
+      "/tmp/cr_dir/findings_verified.json"
+    ],
+    "depends_on": [
+      "stage_23_verify_findings"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_25_finalize_result",
+    "kind": "helper",
+    "subcommand": "finalize-result",
+    "args": [
+      "--cr-dir",
+      "/tmp/cr_dir",
+      "--validate-output",
+      "/tmp/cr_dir/findings_validated.json",
+      "--mode",
+      "github",
+      "--diff-tip",
+      "<DIFF_TIP>",
+      "--pr-number",
+      "42"
+    ],
+    "stdout": null,
+    "expected_outputs": [
+      "/tmp/cr_dir/review_result.json"
+    ],
+    "depends_on": [
+      "stage_24a_verify_consolidate"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_26_cache_update",
+    "kind": "helper",
+    "subcommand": "cache-update",
+    "args": [
+      "--cache-dir",
+      "<CACHE_DIR>",
+      "--diff-data",
+      "/tmp/cr_dir/diff_data.json",
+      "--bha-dir",
+      "/tmp/cr_dir",
+      "--prompt-hash",
+      "<PROMPT_HASH>",
+      "--model-id",
+      "<MODEL_ID>",
+      "--schema-version",
+      "1",
+      "--partitions-file",
+      "/tmp/cr_dir/partitions.json",
+      "--global-cache",
+      "<GLOBAL_CACHE>",
+      "--context-key",
+      "<CONTEXT_KEY>"
+    ],
+    "stdout": null,
+    "expected_outputs": [],
+    "depends_on": [
+      "stage_25_finalize_result"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_27_review_state_write",
+    "kind": "helper",
+    "subcommand": "review-state-write",
+    "args": [
+      "--cache-dir",
+      "<CACHE_DIR>",
+      "--key",
+      "<STATE_KEY>",
+      "--ref",
+      "<DIFF_TIP>"
+    ],
+    "stdout": null,
+    "expected_outputs": [],
+    "depends_on": [
+      "stage_25_finalize_result"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_28_verdict",
+    "kind": "helper",
+    "subcommand": "verdict",
+    "args": [
+      "--review-result",
+      "/tmp/cr_dir/review_result.json",
+      "--validate-output",
+      "/tmp/cr_dir/findings_validated.json"
+    ],
+    "stdout": "/tmp/cr_dir/verdict.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/verdict.json"
+    ],
+    "depends_on": [
+      "stage_25_finalize_result"
+    ],
+    "on_failure": "abort",
+    "enabled": true
+  },
+  {
+    "id": "stage_29_present",
+    "kind": "present",
+    "subcommand": null,
+    "args": [],
+    "stdout": null,
+    "expected_outputs": [],
+    "depends_on": [
+      "stage_28_verdict"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  },
+  {
+    "id": "stage_30_footer",
+    "kind": "helper",
+    "subcommand": "footer",
+    "args": [
+      "--start-time",
+      "<START_TIME>",
+      "--cache-result",
+      "/tmp/cr_dir/cache_result.json",
+      "--cr-dir",
+      "/tmp/cr_dir"
+    ],
+    "stdout": "/tmp/cr_dir/footer.json",
+    "expected_outputs": [
+      "/tmp/cr_dir/footer.json"
+    ],
+    "depends_on": [
+      "stage_29_present"
+    ],
+    "on_failure": "continue",
+    "enabled": true
+  }
+]
