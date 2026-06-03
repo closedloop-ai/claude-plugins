@@ -16506,16 +16506,36 @@ def _seed_phase9_inputs(
 
 
 def _run_render_fleet_summary(tmp_path: Path) -> str:
-    """Invoke cmd_render_fleet_summary on a seeded CR_DIR; return stdout."""
+    """Invoke cmd_render_fleet_summary on a seeded CR_DIR; return stdout.
+
+    Asserts the captured stdout is non-empty so a silent crash or
+    early-return inside the command surfaces as a clear assertion
+    rather than the opaque "assert 'Bug Hunter A' in ''" failure
+    every downstream test would otherwise produce. Mirrors the
+    silent-failure guard in ``_run_derive_spawn_spec`` (v2.22.1).
+    """
     from code_review_helpers import cmd_render_fleet_summary
     from golden_fixture_harness import run_with_stdout_capture
 
     ns = argparse.Namespace(cr_dir=str(tmp_path), output=None)
-    return run_with_stdout_capture(cmd_render_fleet_summary, ns)
+    out = run_with_stdout_capture(cmd_render_fleet_summary, ns)
+    assert out, (
+        "cmd_render_fleet_summary produced no stdout — command may have "
+        "failed silently or output redirection broke the stdout-only contract"
+    )
+    return out
 
 
 def _standard_spec() -> dict[str, Any]:
-    """The canonical happy-path 5-agent spec used as a baseline."""
+    """The canonical happy-path 5-agent spec used as a baseline.
+
+    Four core reviewers (BHA on partition 0, BHB, Auditor, Premise)
+    plus one operator-configured domain critic from a critic-gates
+    rule. The fifth agent makes the `× N` BHA-multiplier path
+    distinct from the domain-critic provenance path in the rendered
+    output, and pins that the canonical-fleet docstring matches the
+    actual fixture (cr-83787 caught the mismatch).
+    """
     return {
         "fast_path": False,
         "gated_by_verify": False,
@@ -16539,11 +16559,15 @@ def _standard_spec() -> dict[str, Any]:
              "model": "opus", "partitioned": False,
              "patches_file": "patches_all.txt",
              "source": "core", "bucket": "required"},
+            {"agent_id": "domain_0", "reviewer": "ts-expert",
+             "model": "sonnet", "partitioned": False,
+             "patches_file": "patches_all.txt",
+             "source": "rule", "bucket": "required", "priority": 1},
         ],
         "skipped": [],
         "stats": {
-            "agent_count": 4, "bha_count": 1, "domain_critic_count": 0,
-            "from_required": 4, "from_best_effort": 0,
+            "agent_count": 5, "bha_count": 1, "domain_critic_count": 1,
+            "from_required": 5, "from_best_effort": 0,
             "required_coverage_gaps": 0,
         },
     }
@@ -16552,9 +16576,9 @@ def _standard_spec() -> dict[str, Any]:
 def _clean_verification() -> dict[str, Any]:
     return {
         "verified": True,
-        "present_count": 4,
-        "intended_count": 4,
-        "present_agents": ["auditor", "bha_p0", "bhb", "premise"],
+        "present_count": 5,
+        "intended_count": 5,
+        "present_agents": ["auditor", "bha_p0", "bhb", "domain_0", "premise"],
         "missing_agents": [],
         "missing_required": [],
         "missing_required_gaps": 0,
@@ -16583,9 +16607,10 @@ class TestPLN725Phase9RenderFleetSummaryHappyPath:
     """
 
     def test_canonical_5_agent_standard_flow(self, tmp_path: Path) -> None:
-        """The four core reviewers + one BHA partition renders the
-        canonical Reviewers line with the static-table-equivalent
-        copy. Fleet line shows runtime tally.
+        """The four core reviewers + one BHA partition + one
+        operator-configured domain critic renders the canonical
+        Reviewers line with the static-table-equivalent copy plus
+        the inline critic name. Fleet line shows runtime tally.
         """
         _seed_phase9_inputs(
             tmp_path,
@@ -16594,9 +16619,15 @@ class TestPLN725Phase9RenderFleetSummaryHappyPath:
             route=_standard_route(),
         )
         out = _run_render_fleet_summary(tmp_path)
-        assert "**Reviewers:** Bug Hunter A, Bug Hunter B, Unified Auditor, Premise Reviewer" in out
+        # All four core display names appear, in order, on the
+        # Reviewers line — followed by the inline critic name with
+        # provenance suffix.
+        assert (
+            "**Reviewers:** Bug Hunter A, Bug Hunter B, Unified Auditor, "
+            "Premise Reviewer, domain critic: ts-expert (1 rule-resolved)"
+        ) in out
         assert "**Model Routing:** Medium — BHA=opus, BHB=sonnet, Auditor=sonnet, Premise=opus" in out
-        assert "**Fleet:** 4 intended | 4 ran | 0 required missing" in out
+        assert "**Fleet:** 5 intended | 5 ran | 0 required missing" in out
         # No notes block when fleet ran clean.
         assert "🛡️" not in out
         assert "⚠️" not in out
@@ -16609,7 +16640,9 @@ class TestPLN725Phase9RenderFleetSummaryHappyPath:
         partition count at a glance.
         """
         spec = _standard_spec()
-        # Add a second BHA partition.
+        # Add a second BHA partition (standard fixture has 5 agents
+        # — one BHA + three non-partitioned core + one rule-resolved
+        # critic; this brings it to 6 with two BHA).
         spec["agents"].insert(1, {
             "agent_id": "bha_p1", "reviewer": "bug_hunter_a",
             "model": "sonnet", "partitioned": True, "partition_id": 1,
@@ -16617,7 +16650,7 @@ class TestPLN725Phase9RenderFleetSummaryHappyPath:
             "source": "core", "bucket": "required",
         })
         spec["stats"]["bha_count"] = 2
-        spec["stats"]["agent_count"] = 5
+        spec["stats"]["agent_count"] = 6
         _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
         out = _run_render_fleet_summary(tmp_path)
         assert "Bug Hunter A × 2" in out
@@ -16629,25 +16662,29 @@ class TestPLN725Phase9RenderFleetSummaryHappyPath:
         resolved from critic-gates) or ``"critic"`` (LLM-proposed).
         The renderer must show the split so operators can tell
         operator-configured coverage apart from one-off LLM
-        proposals — same audit-trail rationale as v2.22.2.
+        proposals — same audit-trail rationale as v2.22.2. The
+        standard fixture already includes one rule-resolved critic
+        (``ts-expert``); this test extends it with one more rule
+        entry and one LLM-proposed critic to exercise the 3-critic
+        split.
         """
         spec = _standard_spec()
         spec["agents"].extend([
-            {"agent_id": "domain_0", "reviewer": "ts-expert",
+            {"agent_id": "domain_1", "reviewer": "rust-expert",
              "model": "sonnet", "partitioned": False,
              "patches_file": "patches_all.txt",
              "source": "rule", "bucket": "required", "priority": 1},
-            {"agent_id": "domain_1", "reviewer": "graphql-architect",
+            {"agent_id": "domain_2", "reviewer": "graphql-architect",
              "model": "sonnet", "partitioned": False,
              "patches_file": "patches_all.txt",
              "source": "critic", "bucket": "best_effort", "priority": 2},
         ])
-        spec["stats"]["domain_critic_count"] = 2
-        spec["stats"]["agent_count"] = 6
+        spec["stats"]["domain_critic_count"] = 3
+        spec["stats"]["agent_count"] = 7
         _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
         out = _run_render_fleet_summary(tmp_path)
-        assert "2 domain critics" in out
-        assert "1 rule-resolved" in out
+        assert "3 domain critics" in out
+        assert "2 rule-resolved" in out
         assert "1 LLM-proposed" in out
 
     def test_single_domain_critic_named_inline(
@@ -16655,20 +16692,32 @@ class TestPLN725Phase9RenderFleetSummaryHappyPath:
     ) -> None:
         """A single domain critic shows its name inline rather than
         a count — there's no ambiguity to compress and operators
-        benefit from seeing the critic name at the top.
+        benefit from seeing the critic name at the top. The
+        canonical 5-agent fixture already exercises this path via
+        the standard rule-resolved critic; this test pins the inline
+        rendering explicitly with an LLM-proposed (``source: "critic"``)
+        single critic so both provenance values are covered.
         """
         spec = _standard_spec()
+        # Replace the standard fixture's rule-critic with one
+        # LLM-proposed critic so this test stays orthogonal to the
+        # canonical flow and pins the ``critic`` provenance variant.
+        spec["agents"] = [
+            a for a in spec["agents"] if a.get("source") != "rule"
+        ]
         spec["agents"].append({
-            "agent_id": "domain_0", "reviewer": "ts-expert",
+            "agent_id": "domain_0", "reviewer": "graphql-architect",
             "model": "sonnet", "partitioned": False,
             "patches_file": "patches_all.txt",
-            "source": "rule", "bucket": "required", "priority": 1,
+            "source": "critic", "bucket": "best_effort", "priority": 1,
         })
         spec["stats"]["domain_critic_count"] = 1
         spec["stats"]["agent_count"] = 5
+        spec["stats"]["from_best_effort"] = 1
+        spec["stats"]["from_required"] = 4
         _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
         out = _run_render_fleet_summary(tmp_path)
-        assert "domain critic: ts-expert (1 rule-resolved)" in out
+        assert "domain critic: graphql-architect (1 LLM-proposed)" in out
 
     def test_fast_path_branch(self, tmp_path: Path) -> None:
         """Fast-path runs collapse the standard-flow logic into a
@@ -16734,7 +16783,7 @@ class TestPLN725Phase9RenderFleetSummaryNotes:
     ) -> None:
         spec = _standard_spec()
         verification = _clean_verification()
-        verification["present_count"] = 3
+        verification["present_count"] = 4
         verification["missing_agents"] = [
             {"agent_id": "auditor", "reviewer": "unified_auditor",
              "bucket": "required", "source": "core"},
@@ -16746,7 +16795,7 @@ class TestPLN725Phase9RenderFleetSummaryNotes:
             route=_standard_route(),
         )
         out = _run_render_fleet_summary(tmp_path)
-        assert "**Fleet:** 4 intended | 3 ran | 1 required missing" in out
+        assert "**Fleet:** 5 intended | 4 ran | 1 required missing" in out
         assert "1 required reviewer(s) did not produce output" in out
         assert "Unified Auditor" in out  # display name, not snake_case
         assert "coverage_gaps.json" in out
@@ -16834,8 +16883,14 @@ class TestPLN725Phase9RenderFleetSummaryNotes:
         )
         out = _run_render_fleet_summary(tmp_path)
         # Ordering: 🛡️ first, then ⚠️ missing-required, then ⚠️ budget,
-        # then ℹ️ deferral. Use index comparison to assert ordering
-        # without coupling to exact wording.
+        # then ℹ️ deferral. Assert presence before computing indices
+        # so a regression that suppresses one note surfaces as a
+        # descriptive AssertionError rather than ``ValueError:
+        # substring not found`` from str.index().
+        assert "Arbitration bypassed" in out
+        assert "required reviewer(s) did not produce" in out
+        assert "BHA partition cap" in out
+        assert "PLN-723" in out
         idx_blocking = out.index("Arbitration bypassed")
         idx_missing = out.index("required reviewer(s) did not produce")
         idx_budget = out.index("BHA partition cap")
@@ -16889,7 +16944,7 @@ class TestPLN725Phase9RenderFleetSummaryFallbacks:
             route=_standard_route(),
         )
         out = _run_render_fleet_summary(tmp_path)
-        assert "4 intended (runtime tally unavailable)" in out
+        assert "5 intended (runtime tally unavailable)" in out
         # Notes that don't depend on verification (e.g. PLN-723) still fire.
         assert "required missing" not in out
 
@@ -16910,6 +16965,65 @@ class TestPLN725Phase9RenderFleetSummaryFallbacks:
         # Model Routing line is omitted (no size_category) rather
         # than emitting a fabricated assignment list.
         assert "**Model Routing:**" not in out
+
+
+class TestPLN725Phase9RenderFleetSummaryOutputContract:
+    """PLN-725 Phase 9 / v2.23.1 — the stdout XOR ``--output`` contract.
+    The argparse help documents ``--output`` as "Optional output file
+    path; default stdout-only" — providing the flag suppresses stdout
+    so a shell pipeline that captures stdout while persisting via
+    ``--output`` doesn't receive duplicate content. The pre-v2.23.1
+    behavior tee'd to both channels because ``sys.stdout.write`` ran
+    unconditionally after the file-write branch.
+    """
+
+    def test_output_path_suppresses_stdout(self, tmp_path: Path) -> None:
+        """When ``--output`` is given, the rendered markdown goes
+        ONLY to the file. stdout is empty so callers capturing it
+        don't double up.
+        """
+        from code_review_helpers import cmd_render_fleet_summary
+        from golden_fixture_harness import run_with_stdout_capture
+
+        _seed_phase9_inputs(
+            tmp_path,
+            spec=_standard_spec(),
+            verification=_clean_verification(),
+            route=_standard_route(),
+        )
+        output_path = tmp_path / "fleet_summary.md"
+        ns = argparse.Namespace(
+            cr_dir=str(tmp_path), output=str(output_path),
+        )
+        captured = run_with_stdout_capture(cmd_render_fleet_summary, ns)
+        # Stdout must be empty under the mutex contract.
+        assert captured == "", (
+            f"--output should suppress stdout but stdout captured: {captured!r}"
+        )
+        # File must contain the rendered markdown.
+        assert output_path.exists()
+        contents = output_path.read_text()
+        assert "**Reviewers:** Bug Hunter A" in contents
+        assert "**Fleet:** 5 intended | 5 ran | 0 required missing" in contents
+
+    def test_default_path_writes_to_stdout_only(self, tmp_path: Path) -> None:
+        """Without ``--output``, the rendered markdown goes to
+        stdout and no extraneous file is written.
+        """
+        from code_review_helpers import cmd_render_fleet_summary
+        from golden_fixture_harness import run_with_stdout_capture
+
+        _seed_phase9_inputs(
+            tmp_path,
+            spec=_standard_spec(),
+            verification=_clean_verification(),
+            route=_standard_route(),
+        )
+        ns = argparse.Namespace(cr_dir=str(tmp_path), output=None)
+        captured = run_with_stdout_capture(cmd_render_fleet_summary, ns)
+        assert "**Reviewers:** Bug Hunter A" in captured
+        # No spurious output file was created in the cr_dir.
+        assert not (tmp_path / "fleet_summary.md").exists()
 
 
 class TestExtractSignalsConsolidateCacheHitNoOp:

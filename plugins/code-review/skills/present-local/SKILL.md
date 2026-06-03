@@ -36,7 +36,7 @@ Output in this format:
 python "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py" render-fleet-summary --cr-dir <CR_DIR>
 ```
 
-The renderer consumes `<CR_DIR>/spawn_spec.json` (intended fleet from stage_19b), `<CR_DIR>/spawn_verification.json` (runtime tally from stage_20b), and `<CR_DIR>/route.json` (model assignments). The output is a deterministic markdown block of 2–6 lines covering:
+The renderer consumes `<CR_DIR>/spawn_spec.json` (intended fleet from stage_19b), `<CR_DIR>/spawn_verification.json` (runtime tally from stage_20b), and `<CR_DIR>/route.json` (model assignments). The output is a deterministic markdown block of 2–9 lines — 2–4 for the core **Reviewers** / **Model Routing** / **Fleet** section, plus up to 5 conditional note bullets — covering:
 
 - **Reviewers** — the actual fleet that spawned (with the rule-resolved vs LLM-proposed split surfaced on domain critics so the operator can tell operator-configured coverage apart from one-off LLM proposals).
 - **Model Routing** — the per-agent model assignments derived from route.json.

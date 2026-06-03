@@ -11381,17 +11381,16 @@ def _render_fast_path_fleet(
     return lines
 
 
-def _render_fleet_breakdown(
-    spec: dict[str, Any],
-) -> tuple[list[str], dict[str, int]]:
-    """Render the standard-flow Reviewers line + tally domain critics.
+def _render_fleet_breakdown(spec: dict[str, Any]) -> list[str]:
+    """Render the standard-flow Reviewers line.
 
-    Returns ``(lines, tallies)``. Tallies are used by the caller to
-    decide which note blocks to emit. The Reviewers line shows BHA
-    partition count, the non-partitioned core trio, and the domain
-    critic count split by source (rule vs critic) so operators can
-    distinguish operator-configured coverage from LLM-proposed
-    additions.
+    The Reviewers line shows BHA partition count, the
+    non-partitioned core trio, and the domain critic count split by
+    source (rule vs critic) so operators can distinguish
+    operator-configured coverage from LLM-proposed additions. Note
+    selection (BLOCKING / runtime / budget / deferral) is driven
+    independently by ``_render_fleet_notes`` reading ``spec``
+    directly — no derived tally needs to flow through here.
     """
     agents = spec.get("agents") or []
     bha_count = sum(
@@ -11449,12 +11448,7 @@ def _render_fleet_breakdown(
         if pieces
         else "**Reviewers:** (none — fleet derivation failed)"
     )
-    tallies = {
-        "bha_count": bha_count,
-        "rule_critics": len(rule_critics),
-        "llm_critics": len(llm_critics),
-    }
-    return [reviewers_line], tallies
+    return [reviewers_line]
 
 
 def _render_fleet_notes(
@@ -11601,8 +11595,7 @@ def cmd_render_fleet_summary(args: argparse.Namespace) -> int:
         return _write_fleet_summary(out_lines, args)
 
     # Standard flow.
-    reviewers_lines, _tallies = _render_fleet_breakdown(spec)
-    out_lines.extend(reviewers_lines)
+    out_lines.extend(_render_fleet_breakdown(spec))
 
     # Model Routing — derived from route.json; mirror the existing
     # presenter shape. We don't re-derive route ourselves here, just
@@ -11654,7 +11647,15 @@ def cmd_render_fleet_summary(args: argparse.Namespace) -> int:
 
 
 def _write_fleet_summary(lines: list[str], args: argparse.Namespace) -> int:
-    """Emit the rendered markdown to stdout or ``--output``."""
+    """Emit the rendered markdown to stdout OR ``--output`` (mutually exclusive).
+
+    The argparse help on ``--output`` documents the flag as
+    "Optional output file path; default stdout-only" — providing
+    ``--output`` suppresses stdout, so a shell pipeline that
+    captures stdout while also persisting via ``--output`` doesn't
+    receive duplicate content (the pre-v2.23.1 behavior tee'd to
+    both channels).
+    """
     text = "\n".join(lines) + "\n"
     if getattr(args, "output", None):
         try:
@@ -11662,7 +11663,8 @@ def _write_fleet_summary(lines: list[str], args: argparse.Namespace) -> int:
         except OSError as exc:
             print(f"Error writing fleet summary: {exc}", file=sys.stderr)
             return 1
-    sys.stdout.write(text)
+    else:
+        sys.stdout.write(text)
     return 0
 
 
