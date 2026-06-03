@@ -18008,3 +18008,61 @@ class TestCRSPhaseBSharedHelpers:
         _write_simple_cache_entry(tmp_path, path, {"data": "x"}, "test-label")
         captured = capsys.readouterr().err
         assert "Warning: could not write test-label cache entry" in captured
+
+
+class TestRunPlanStdoutRedirectRaceClass:
+    """A stage whose cmd writes the canonical output file directly via
+    ``--cr-dir`` must have ``stdout: None`` in the run plan.
+
+    Background: ``cmd_resolve_coverage`` writes
+    ``<cr_dir>/coverage_plan_initial.json`` itself AND prints a small summary
+    JSON to stdout. The original run plan redirected stdout to the same file
+    via ``> coverage_plan_initial.json``, so two writers raced on the same
+    path: the helper wrote the full plan, then the shell redirect overwrote
+    the head with the 8-line summary, leaving trailing garbage from the
+    longer plan. The next stage that tried to parse the file failed with
+    ``Extra data: line 9 column 6``.
+
+    Same race class also affected the three ``*_prepare`` stages whose
+    cmds use ``_write_and_emit_manifest`` (which writes the canonical
+    manifest file AND prints the manifest to stdout). Those happened to
+    work by coincidence — the file write and the stdout write produced
+    the same bytes (modulo trailing newline) — but the design is fragile.
+
+    Pinning ``stdout: None`` on all four removes the redundant redirect
+    and makes the helper the sole writer.
+
+    ``stage_08_fetch_intent`` already gets this treatment with explicit
+    rationale in ``start.md``; this test enforces the same invariant for
+    every cmd in the same class.
+    """
+
+    # Stages whose cmd writes the canonical output file directly via --cr-dir.
+    # Discovered by source inspection (cmd writes a file under cr_dir AND
+    # prints to stdout). Any future addition that fits this shape must be
+    # added here AND must have stdout=None in stages.json.
+    CMD_WRITES_OWN_FILE_STAGES = (
+        "stage_11_extract_signals",
+        "stage_14_resolve_coverage",
+        "stage_15_coverage_critic",
+        "stage_22b_verify_prepare",
+    )
+
+    def test_cmd_writes_own_file_stages_have_stdout_none(self) -> None:
+        from code_review_helpers import _build_run_plan_stages
+        stages = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        by_id = {s["id"]: s for s in stages}
+        for sid in self.CMD_WRITES_OWN_FILE_STAGES:
+            assert by_id[sid]["stdout"] is None, (
+                f"{sid} has stdout={by_id[sid]['stdout']!r}; the cmd writes its "
+                f"own output file via --cr-dir, so a stdout redirect to the "
+                f"same path would race the helper's write (see "
+                f"TestRunPlanStdoutRedirectRaceClass docstring)."
+            )
+
+    def test_stage_08_fetch_intent_still_has_stdout_none(self) -> None:
+        """The canonical example documented in start.md — pinned here too."""
+        from code_review_helpers import _build_run_plan_stages
+        stages = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        by_id = {s["id"]: s for s in stages}
+        assert by_id["stage_08_fetch_intent"]["stdout"] is None

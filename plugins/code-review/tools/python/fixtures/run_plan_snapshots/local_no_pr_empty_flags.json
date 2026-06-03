@@ -254,7 +254,7 @@
       "--cache-dir",
       "<CACHE_DIR>"
     ],
-    "stdout": "/tmp/cr_dir/extract_signals_manifest.json",
+    "stdout": null,
     "expected_outputs": [
       "/tmp/cr_dir/extract_signals_manifest.json"
     ],
@@ -321,7 +321,7 @@
       "--extract-signals",
       "/tmp/cr_dir/extract_signals.json"
     ],
-    "stdout": "/tmp/cr_dir/coverage_plan_initial.json",
+    "stdout": null,
     "expected_outputs": [
       "/tmp/cr_dir/coverage_plan_initial.json"
     ],
@@ -367,7 +367,7 @@
       "--cache-dir",
       "<CACHE_DIR>"
     ],
-    "stdout": "/tmp/cr_dir/coverage_critic_manifest.json",
+    "stdout": null,
     "expected_outputs": [
       "/tmp/cr_dir/coverage_critic_manifest.json"
     ],
@@ -653,7 +653,7 @@
       "--prompt-hash",
       "<PROMPT_HASH>"
     ],
-    "stdout": "/tmp/cr_dir/verify_manifest.json",
+    "stdout": null,
     "expected_outputs": [
       "/tmp/cr_dir/verify_manifest.json"
     ],

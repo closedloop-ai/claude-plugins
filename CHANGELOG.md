@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.25.1
+
+#### Fixed
+- `stage_14_resolve_coverage` now has `stdout: null` in `config/stages.json`. The pre-v2.25.1 entry redirected stdout to `<cr_dir>/coverage_plan_initial.json` — the same path `cmd_resolve_coverage` writes the canonical plan to via `--cr-dir`. Two writers raced on the same file: the helper wrote the full plan, then the shell's `>` redirect overwrote the head with the 8-line summary, leaving trailing garbage from the longer plan. The next stage (`coverage-critic-prepare`) failed with `Extra data: line 9 column 6` when parsing the corrupted file. The bug class is the same one `start.md` already documents for setup ("Do NOT redirect setup's stdout..."); `stage_08_fetch_intent` also gets this treatment with explicit rationale. The bug predates the CRS refactor — it was carried over from the original `_build_run_plan_stages` Python literal into `config/stages.json` in v2.24.0 — but lives squarely in the run-plan config we now own.
+- `stage_11_extract_signals`, `stage_15_coverage_critic`, and `stage_22b_verify_prepare` also have `stdout: null` now. Each uses `_write_and_emit_manifest` (introduced in v2.25.0), which writes the canonical manifest file directly AND prints the same manifest to stdout. With the stdout redirect active, the helper's file write and the shell-redirected stdout write produced the same bytes modulo trailing newline — so the file ended up correct by coincidence, not by design. A future edit that made one write differ from the other (different content, different `indent`, an added field on only one path) would have re-introduced the race. Removing the redirect makes the helper the sole writer for the canonical file across all four stages.
+
+#### Added
+- `TestRunPlanStdoutRedirectRaceClass` (2 tests) enforces the invariant: stages whose cmd writes the canonical output file directly via `--cr-dir` must have `stdout: null` in the run plan. The pinned list (`CMD_WRITES_OWN_FILE_STAGES`) is `stage_11_extract_signals`, `stage_14_resolve_coverage`, `stage_15_coverage_critic`, `stage_22b_verify_prepare`. `test_stage_08_fetch_intent_still_has_stdout_none` pins the canonical example for consistency. A future stage in the same class must be added to the list and given `stdout: null` simultaneously.
+
 ### code-review v2.25.0
 
 #### Changed
