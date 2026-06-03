@@ -354,27 +354,23 @@ Prepend BEFORE the `## Code Review Summary` header so it is the first thing the 
 
 ### Summary Format
 
-Read `<CR_DIR>/route.json` before rendering. Extract `fast_path`, `models["fast_path_reviewer"]`, and `domain_critics`.
-
 ```markdown
 ## Code Review Summary
 
 **Status:** [Approved | Changes Requested | Needs Attention]
 ```
 
-**Reviewers line is conditional on `fast_path`:**
+**Reviewer Fleet block (PLN-725 Phase 9 / v2.23.0).** Do NOT hand-author the Reviewers / Model Routing lines. Run the canonical renderer and embed its output verbatim immediately after the **Status** line:
 
-- **If `fast_path == true`:**
-```markdown
-**Reviewers:** Fast Path Reviewer (single-agent mode)
-**Model Routing:** Fast path — <MODEL> single reviewer
+```bash
+python "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py" render-fleet-summary --cr-dir <CR_DIR>
 ```
 
-- **If `fast_path == false`:**
-```markdown
-**Reviewers:** Bug Hunter A, Bug Hunter B, Unified Auditor, Premise Reviewer
-[+ domain specialist if triggered]
-```
+The renderer reads `<CR_DIR>/spawn_spec.json` (intended fleet from stage_19b), `<CR_DIR>/spawn_verification.json` (runtime tally from stage_20b), and `<CR_DIR>/route.json` (model assignments) and emits the **Reviewers**, **Model Routing**, **Fleet** (`N intended | N ran | N required missing`), and a conditional **Notes** block. The notes surface non-default outcomes (BLOCKING sanitization, runtime missing required, BHA budget cap, PLN-723 deferral, malformed-plan required skips) — operators reading the summary comment see these without having to dig into `coverage_gaps.json` or `spawn_verification.json`.
+
+**Fallback:** if the renderer reports `spawn-spec unavailable` or `spawn-spec fell back`, embed its line as-is — the orchestrator walked the static fleet for this run and the static `## Reviewer Fleet` section of `start.md` is the source of truth for fleet composition.
+
+**Fast-path runs** are handled by the renderer — it emits the `Fast Path Reviewer (single-agent mode)` line + the resolved fast-path model. No branch needed in this presenter.
 
 Then continue with the remaining summary content:
 

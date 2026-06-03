@@ -16483,6 +16483,435 @@ class TestPLN725Phase8StageGraph:
         assert "stage_20b_verify_spawn" in collect["depends_on"]
 
 
+def _seed_phase9_inputs(
+    tmp_path: Path,
+    *,
+    spec: dict[str, Any] | None,
+    verification: dict[str, Any] | None = None,
+    route: dict[str, Any] | None = None,
+) -> None:
+    """Write the three artifacts cmd_render_fleet_summary consumes.
+
+    Passing ``None`` for an arg omits the corresponding file so the
+    missing/unreadable degradation paths can be exercised. Each test
+    seeds a focused subset rather than constructing a full-blown
+    end-to-end run.
+    """
+    if spec is not None:
+        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+    if verification is not None:
+        (tmp_path / "spawn_verification.json").write_text(json.dumps(verification))
+    if route is not None:
+        (tmp_path / "route.json").write_text(json.dumps(route))
+
+
+def _run_render_fleet_summary(tmp_path: Path) -> str:
+    """Invoke cmd_render_fleet_summary on a seeded CR_DIR; return stdout."""
+    from code_review_helpers import cmd_render_fleet_summary
+    from golden_fixture_harness import run_with_stdout_capture
+
+    ns = argparse.Namespace(cr_dir=str(tmp_path), output=None)
+    return run_with_stdout_capture(cmd_render_fleet_summary, ns)
+
+
+def _standard_spec() -> dict[str, Any]:
+    """The canonical happy-path 5-agent spec used as a baseline."""
+    return {
+        "fast_path": False,
+        "gated_by_verify": False,
+        "arbitrate_status": "ok",
+        "cr_dir": "",
+        "generated_at": "",
+        "agents": [
+            {"agent_id": "bha_p0", "reviewer": "bug_hunter_a",
+             "model": "opus", "partitioned": True, "partition_id": 0,
+             "is_test_only": False, "patches_file": "patches_p0.txt",
+             "source": "core", "bucket": "required"},
+            {"agent_id": "bhb", "reviewer": "bug_hunter_b",
+             "model": "sonnet", "partitioned": False,
+             "patches_file": "patches_all.txt",
+             "source": "core", "bucket": "required"},
+            {"agent_id": "auditor", "reviewer": "unified_auditor",
+             "model": "sonnet", "partitioned": False,
+             "patches_file": "patches_all.txt",
+             "source": "core", "bucket": "required"},
+            {"agent_id": "premise", "reviewer": "premise_reviewer",
+             "model": "opus", "partitioned": False,
+             "patches_file": "patches_all.txt",
+             "source": "core", "bucket": "required"},
+        ],
+        "skipped": [],
+        "stats": {
+            "agent_count": 4, "bha_count": 1, "domain_critic_count": 0,
+            "from_required": 4, "from_best_effort": 0,
+            "required_coverage_gaps": 0,
+        },
+    }
+
+
+def _clean_verification() -> dict[str, Any]:
+    return {
+        "verified": True,
+        "present_count": 4,
+        "intended_count": 4,
+        "present_agents": ["auditor", "bha_p0", "bhb", "premise"],
+        "missing_agents": [],
+        "missing_required": [],
+        "missing_required_gaps": 0,
+    }
+
+
+def _standard_route() -> dict[str, Any]:
+    return {
+        "size_category": "Medium",
+        "models": {
+            "bug_hunter_a": {"default": "opus", "test_only": "sonnet"},
+            "bug_hunter_b": "sonnet",
+            "unified_auditor": "sonnet",
+            "premise_reviewer": "opus",
+            "fast_path_reviewer": "sonnet",
+        },
+    }
+
+
+class TestPLN725Phase9RenderFleetSummaryHappyPath:
+    """PLN-725 Phase 9 — fleet summary renderer happy paths. The
+    helper replaces the presenters' previous static "Reviewers" +
+    "Model Routing" lines so the operator-facing summary reflects
+    the deterministic coverage selection rather than a hardcoded
+    fleet description.
+    """
+
+    def test_canonical_5_agent_standard_flow(self, tmp_path: Path) -> None:
+        """The four core reviewers + one BHA partition renders the
+        canonical Reviewers line with the static-table-equivalent
+        copy. Fleet line shows runtime tally.
+        """
+        _seed_phase9_inputs(
+            tmp_path,
+            spec=_standard_spec(),
+            verification=_clean_verification(),
+            route=_standard_route(),
+        )
+        out = _run_render_fleet_summary(tmp_path)
+        assert "**Reviewers:** Bug Hunter A, Bug Hunter B, Unified Auditor, Premise Reviewer" in out
+        assert "**Model Routing:** Medium — BHA=opus, BHB=sonnet, Auditor=sonnet, Premise=opus" in out
+        assert "**Fleet:** 4 intended | 4 ran | 0 required missing" in out
+        # No notes block when fleet ran clean.
+        assert "🛡️" not in out
+        assert "⚠️" not in out
+
+    def test_multiple_bha_partitions_shows_multiplier(
+        self, tmp_path: Path,
+    ) -> None:
+        """When multiple BHA partitions ran, the Reviewers line uses
+        ``× N`` instead of a single entry so the operator sees the
+        partition count at a glance.
+        """
+        spec = _standard_spec()
+        # Add a second BHA partition.
+        spec["agents"].insert(1, {
+            "agent_id": "bha_p1", "reviewer": "bug_hunter_a",
+            "model": "sonnet", "partitioned": True, "partition_id": 1,
+            "is_test_only": True, "patches_file": "patches_p1.txt",
+            "source": "core", "bucket": "required",
+        })
+        spec["stats"]["bha_count"] = 2
+        spec["stats"]["agent_count"] = 5
+        _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
+        out = _run_render_fleet_summary(tmp_path)
+        assert "Bug Hunter A × 2" in out
+
+    def test_rule_vs_critic_provenance_surfaced(
+        self, tmp_path: Path,
+    ) -> None:
+        """Domain critics carry source ``"rule"`` (deterministically
+        resolved from critic-gates) or ``"critic"`` (LLM-proposed).
+        The renderer must show the split so operators can tell
+        operator-configured coverage apart from one-off LLM
+        proposals — same audit-trail rationale as v2.22.2.
+        """
+        spec = _standard_spec()
+        spec["agents"].extend([
+            {"agent_id": "domain_0", "reviewer": "ts-expert",
+             "model": "sonnet", "partitioned": False,
+             "patches_file": "patches_all.txt",
+             "source": "rule", "bucket": "required", "priority": 1},
+            {"agent_id": "domain_1", "reviewer": "graphql-architect",
+             "model": "sonnet", "partitioned": False,
+             "patches_file": "patches_all.txt",
+             "source": "critic", "bucket": "best_effort", "priority": 2},
+        ])
+        spec["stats"]["domain_critic_count"] = 2
+        spec["stats"]["agent_count"] = 6
+        _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
+        out = _run_render_fleet_summary(tmp_path)
+        assert "2 domain critics" in out
+        assert "1 rule-resolved" in out
+        assert "1 LLM-proposed" in out
+
+    def test_single_domain_critic_named_inline(
+        self, tmp_path: Path,
+    ) -> None:
+        """A single domain critic shows its name inline rather than
+        a count — there's no ambiguity to compress and operators
+        benefit from seeing the critic name at the top.
+        """
+        spec = _standard_spec()
+        spec["agents"].append({
+            "agent_id": "domain_0", "reviewer": "ts-expert",
+            "model": "sonnet", "partitioned": False,
+            "patches_file": "patches_all.txt",
+            "source": "rule", "bucket": "required", "priority": 1,
+        })
+        spec["stats"]["domain_critic_count"] = 1
+        spec["stats"]["agent_count"] = 5
+        _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
+        out = _run_render_fleet_summary(tmp_path)
+        assert "domain critic: ts-expert (1 rule-resolved)" in out
+
+    def test_fast_path_branch(self, tmp_path: Path) -> None:
+        """Fast-path runs collapse the standard-flow logic into a
+        single one-line block. The model is read from the spec's
+        fast_path_reviewer slot (which mirrors route.json).
+        """
+        spec = {
+            "fast_path": True, "gated_by_verify": False,
+            "arbitrate_status": "ok", "cr_dir": "", "generated_at": "",
+            "agents": [{
+                "agent_id": "fast", "reviewer": "fast_path_reviewer",
+                "model": "sonnet", "partitioned": False,
+                "patches_file": "patches_all.txt",
+                "source": "fast_path", "bucket": "fast_path",
+            }],
+            "skipped": [],
+            "stats": {"agent_count": 1, "bha_count": 0,
+                      "domain_critic_count": 0,
+                      "from_required": 0, "from_best_effort": 0,
+                      "required_coverage_gaps": 0},
+        }
+        _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
+        out = _run_render_fleet_summary(tmp_path)
+        assert "**Reviewers:** Fast Path Reviewer (single-agent mode)" in out
+        assert "**Model Routing:** Fast path — sonnet single reviewer" in out
+        # Standard-flow content must NOT leak through.
+        assert "Bug Hunter A" not in out
+        assert "Fleet:" not in out
+
+
+class TestPLN725Phase9RenderFleetSummaryNotes:
+    """PLN-725 Phase 9 — the conditional notes block. Each
+    non-default fleet outcome surfaces as a single bullet so the
+    section stays scannable; multiple notes can fire together in
+    one run.
+    """
+
+    def test_blocking_sanitized_emits_shield_note(
+        self, tmp_path: Path,
+    ) -> None:
+        spec = _standard_spec()
+        spec["gated_by_verify"] = True
+        spec["arbitrate_status"] = "blocked_by_verify"
+        spec["skipped"] = [
+            {"reviewer": "ts-expert", "bucket": "required",
+             "reason": "gated_by_verify", "source": "rule"},
+            {"reviewer": "graphql-architect", "bucket": "best_effort",
+             "reason": "gated_by_verify", "source": "critic"},
+        ]
+        _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
+        out = _run_render_fleet_summary(tmp_path)
+        assert "🛡️" in out
+        assert "Arbitration bypassed" in out
+        assert "BLOCKING verify verdict" in out
+        # Both suppressed names appear so the operator can see what
+        # was dropped from the fleet for this run.
+        assert "ts-expert" in out
+        assert "graphql-architect" in out
+        assert "agent_coverage-verify-blocking.json" in out
+
+    def test_missing_required_at_runtime_emits_warning(
+        self, tmp_path: Path,
+    ) -> None:
+        spec = _standard_spec()
+        verification = _clean_verification()
+        verification["present_count"] = 3
+        verification["missing_agents"] = [
+            {"agent_id": "auditor", "reviewer": "unified_auditor",
+             "bucket": "required", "source": "core"},
+        ]
+        verification["missing_required"] = list(verification["missing_agents"])
+        verification["missing_required_gaps"] = 1
+        _seed_phase9_inputs(
+            tmp_path, spec=spec, verification=verification,
+            route=_standard_route(),
+        )
+        out = _run_render_fleet_summary(tmp_path)
+        assert "**Fleet:** 4 intended | 3 ran | 1 required missing" in out
+        assert "1 required reviewer(s) did not produce output" in out
+        assert "Unified Auditor" in out  # display name, not snake_case
+        assert "coverage_gaps.json" in out
+
+    def test_budget_capped_partitions_emits_warning(
+        self, tmp_path: Path,
+    ) -> None:
+        spec = _standard_spec()
+        spec["skipped"] = [
+            {"reviewer": "bug_hunter_a", "bucket": "required",
+             "reason": "budget_capped", "partition_id": 2,
+             "budget_cap": 2, "partition_count": 3},
+            {"reviewer": "bug_hunter_a", "bucket": "required",
+             "reason": "budget_capped", "partition_id": 3,
+             "budget_cap": 2, "partition_count": 3},
+        ]
+        _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
+        out = _run_render_fleet_summary(tmp_path)
+        assert "BHA partition cap" in out
+        assert "2 partition(s)" in out
+        assert "(2/3)" in out
+
+    def test_test_quality_deferral_emits_info_note(
+        self, tmp_path: Path,
+    ) -> None:
+        spec = _standard_spec()
+        spec["skipped"] = [
+            {"reviewer": "test_quality", "bucket": "required",
+             "reason": "deferred_pln723"},
+        ]
+        _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
+        out = _run_render_fleet_summary(tmp_path)
+        assert "ℹ️" in out
+        assert "`test_quality`" in out
+        assert "PLN-723" in out
+
+    def test_malformed_required_skips_emit_warning(
+        self, tmp_path: Path,
+    ) -> None:
+        """unknown_reviewer / duplicate_agent_id / missing_reviewer_name
+        in required[] produce coverage_gaps.json findings via stage_19b;
+        the renderer surfaces the count so the operator sees the gap
+        without scrolling to the findings list.
+        """
+        spec = _standard_spec()
+        spec["skipped"] = [
+            {"reviewer": "mystery", "bucket": "required",
+             "reason": "unknown_reviewer"},
+            {"reviewer": "bug_hunter_b", "bucket": "required",
+             "reason": "duplicate_agent_id", "agent_id": "bhb"},
+        ]
+        _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
+        out = _run_render_fleet_summary(tmp_path)
+        assert "2 required reviewer(s) could not be spawned" in out
+        assert "malformed plan entry" in out
+
+    def test_multiple_notes_compose(self, tmp_path: Path) -> None:
+        """BLOCKING + missing required + budget cap + deferral all
+        fire in the same run — the section composes them into one
+        bulleted block in the documented order (sanitization first,
+        then runtime, then derive-time skips).
+        """
+        spec = _standard_spec()
+        spec["gated_by_verify"] = True
+        spec["arbitrate_status"] = "blocked_by_verify"
+        spec["skipped"] = [
+            {"reviewer": "ts-expert", "bucket": "required",
+             "reason": "gated_by_verify", "source": "rule"},
+            {"reviewer": "bug_hunter_a", "bucket": "required",
+             "reason": "budget_capped", "partition_id": 2,
+             "budget_cap": 2, "partition_count": 3},
+            {"reviewer": "test_quality", "bucket": "required",
+             "reason": "deferred_pln723"},
+        ]
+        verification = _clean_verification()
+        verification["present_count"] = 3
+        verification["missing_required"] = [
+            {"agent_id": "premise", "reviewer": "premise_reviewer",
+             "bucket": "required", "source": "core"},
+        ]
+        verification["missing_required_gaps"] = 1
+        _seed_phase9_inputs(
+            tmp_path, spec=spec, verification=verification,
+            route=_standard_route(),
+        )
+        out = _run_render_fleet_summary(tmp_path)
+        # Ordering: 🛡️ first, then ⚠️ missing-required, then ⚠️ budget,
+        # then ℹ️ deferral. Use index comparison to assert ordering
+        # without coupling to exact wording.
+        idx_blocking = out.index("Arbitration bypassed")
+        idx_missing = out.index("required reviewer(s) did not produce")
+        idx_budget = out.index("BHA partition cap")
+        idx_deferral = out.index("PLN-723")
+        assert idx_blocking < idx_missing < idx_budget < idx_deferral
+
+
+class TestPLN725Phase9RenderFleetSummaryFallbacks:
+    """PLN-725 Phase 9 — fallback paths. When the spawn-spec is
+    missing or marks ``arbitrate_status: "fallback"``, the renderer
+    emits a minimal block that tells the presenter to walk the
+    static reviewer table in start.md. The renderer does NOT try to
+    reconstruct fleet composition from agent_*.json glob — the
+    static table in start.md is the documented source of truth for
+    that case.
+    """
+
+    def test_missing_spec_emits_fallback_line(self, tmp_path: Path) -> None:
+        _seed_phase9_inputs(tmp_path, spec=None, route=_standard_route())
+        out = _run_render_fleet_summary(tmp_path)
+        assert "spawn-spec unavailable" in out
+        assert "static reviewer table" in out
+        assert "Reviewers:" not in out  # no fake reviewer list
+
+    def test_fallback_sentinel_includes_reason(self, tmp_path: Path) -> None:
+        spec = {
+            "fast_path": False, "gated_by_verify": False,
+            "arbitrate_status": "fallback",
+            "fallback_reason": "partitions_missing_or_malformed",
+            "cr_dir": "", "generated_at": "",
+            "agents": [], "skipped": [],
+            "stats": {"agent_count": 0, "bha_count": 0,
+                      "domain_critic_count": 0,
+                      "from_required": 0, "from_best_effort": 0},
+        }
+        _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
+        out = _run_render_fleet_summary(tmp_path)
+        assert "spawn-spec fell back" in out
+        assert "`partitions_missing_or_malformed`" in out
+        assert "Reviewers:" not in out
+
+    def test_missing_verification_omits_runtime_line(
+        self, tmp_path: Path,
+    ) -> None:
+        """When stage_20b didn't run (or its artifact is missing),
+        the renderer falls back to the intended-only fleet line
+        and explicitly notes runtime tally is unavailable.
+        """
+        _seed_phase9_inputs(
+            tmp_path, spec=_standard_spec(), verification=None,
+            route=_standard_route(),
+        )
+        out = _run_render_fleet_summary(tmp_path)
+        assert "4 intended (runtime tally unavailable)" in out
+        # Notes that don't depend on verification (e.g. PLN-723) still fire.
+        assert "required missing" not in out
+
+    def test_missing_route_uses_safe_defaults(
+        self, tmp_path: Path,
+    ) -> None:
+        """A missing route.json must NOT abort the renderer — the
+        Reviewers line is independent of route, and the Model
+        Routing line is omitted when route is unavailable rather
+        than fabricating a model summary.
+        """
+        _seed_phase9_inputs(
+            tmp_path, spec=_standard_spec(),
+            verification=_clean_verification(), route=None,
+        )
+        out = _run_render_fleet_summary(tmp_path)
+        assert "Bug Hunter A" in out
+        # Model Routing line is omitted (no size_category) rather
+        # than emitting a fabricated assignment list.
+        assert "**Model Routing:**" not in out
+
+
 class TestExtractSignalsConsolidateCacheHitNoOp:
     """PLN-725 Phase 4: when prepare emitted a cache_hit manifest the
     canonical extract_signals.json is already on disk; consolidate must

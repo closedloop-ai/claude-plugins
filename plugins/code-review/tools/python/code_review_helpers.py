@@ -11330,6 +11330,343 @@ def cmd_verify_spawn(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: render-fleet-summary (PLN-725 Phase 9 — presenter)
+# ---------------------------------------------------------------------------
+#
+# Phase 8 (v2.22.0–v2.22.3) wired spawn_spec.json + spawn_verification.json
+# into the pipeline as the canonical "who was intended to run, and who
+# actually ran" artifacts. Phase 9 lets the presenter consume them
+# instead of deriving the fleet from agent_*.json filename heuristics
+# plus a hardcoded static reviewer list. The helper emits a
+# deterministic markdown block; the present-local skill and
+# github-review.md substitute it into their existing Reviewers / Model
+# Routing slot. Moving the derivation into Python (vs prose
+# instructions in the skill) makes the rendering testable via
+# golden-fixture-style assertions.
+
+# Canonical snake_case → display-name mapping. Reviewers not in this
+# table render with their original ``reviewer`` string so
+# operator-configured critic names (e.g. ``ts-expert``,
+# ``graphql-architect``) appear verbatim — they're the names the
+# operator wrote into ``critic-gates.json``.
+_FLEET_DISPLAY_NAMES: dict[str, str] = {
+    "bug_hunter_a": "Bug Hunter A",
+    "bug_hunter_b": "Bug Hunter B",
+    "unified_auditor": "Unified Auditor",
+    "premise_reviewer": "Premise Reviewer",
+    "fast_path_reviewer": "Fast Path Reviewer",
+    "test_quality": "Test Quality",
+}
+
+
+def _fleet_display_name(reviewer: str) -> str:
+    """Map a snake_case reviewer label to its operator-facing display name."""
+    return _FLEET_DISPLAY_NAMES.get(reviewer, reviewer)
+
+
+def _render_fast_path_fleet(
+    spec: dict[str, Any], route: dict[str, Any],
+) -> list[str]:
+    """Render the fast-path branch: single agent does all review passes."""
+    agents = spec.get("agents") or []
+    fast_agent = agents[0] if agents and isinstance(agents[0], dict) else {}
+    model = str(
+        fast_agent.get("model")
+        or (route.get("models") or {}).get("fast_path_reviewer", "sonnet"),
+    )
+    lines = [
+        "**Reviewers:** Fast Path Reviewer (single-agent mode)",
+        f"**Model Routing:** Fast path — {model} single reviewer",
+    ]
+    return lines
+
+
+def _render_fleet_breakdown(
+    spec: dict[str, Any],
+) -> tuple[list[str], dict[str, int]]:
+    """Render the standard-flow Reviewers line + tally domain critics.
+
+    Returns ``(lines, tallies)``. Tallies are used by the caller to
+    decide which note blocks to emit. The Reviewers line shows BHA
+    partition count, the non-partitioned core trio, and the domain
+    critic count split by source (rule vs critic) so operators can
+    distinguish operator-configured coverage from LLM-proposed
+    additions.
+    """
+    agents = spec.get("agents") or []
+    bha_count = sum(
+        1 for a in agents
+        if isinstance(a, dict) and a.get("reviewer") == "bug_hunter_a"
+    )
+    rule_critics = [
+        a for a in agents
+        if isinstance(a, dict) and a.get("source") == "rule"
+    ]
+    llm_critics = [
+        a for a in agents
+        if isinstance(a, dict) and a.get("source") == "critic"
+    ]
+    # Core non-partitioned reviewers actually present (the canonical
+    # trio is BHB / Auditor / Premise but sanitization or fallback
+    # paths may drop entries).
+    core_non_partitioned: list[str] = []
+    for reviewer in ("bug_hunter_b", "unified_auditor", "premise_reviewer"):
+        if any(
+            isinstance(a, dict) and a.get("reviewer") == reviewer
+            for a in agents
+        ):
+            core_non_partitioned.append(_fleet_display_name(reviewer))
+
+    pieces: list[str] = []
+    if bha_count > 0:
+        if bha_count == 1:
+            pieces.append("Bug Hunter A")
+        else:
+            pieces.append(f"Bug Hunter A × {bha_count}")
+    pieces.extend(core_non_partitioned)
+    domain_total = len(rule_critics) + len(llm_critics)
+    if domain_total > 0:
+        # Show the split so operators can tell config-driven coverage
+        # apart from one-off LLM proposals — the two have very
+        # different audit implications.
+        provenance: list[str] = []
+        if rule_critics:
+            provenance.append(f"{len(rule_critics)} rule-resolved")
+        if llm_critics:
+            provenance.append(f"{len(llm_critics)} LLM-proposed")
+        suffix = (
+            f" ({', '.join(provenance)})" if provenance else ""
+        )
+        if domain_total == 1:
+            critic_entry = rule_critics[0] if rule_critics else llm_critics[0]
+            critic_name = str(critic_entry.get("reviewer", "domain critic"))
+            pieces.append(f"domain critic: {critic_name}{suffix}")
+        else:
+            pieces.append(f"{domain_total} domain critics{suffix}")
+
+    reviewers_line = (
+        f"**Reviewers:** {', '.join(pieces)}"
+        if pieces
+        else "**Reviewers:** (none — fleet derivation failed)"
+    )
+    tallies = {
+        "bha_count": bha_count,
+        "rule_critics": len(rule_critics),
+        "llm_critics": len(llm_critics),
+    }
+    return [reviewers_line], tallies
+
+
+def _render_fleet_notes(
+    spec: dict[str, Any], verification: dict[str, Any] | None,
+) -> list[str]:
+    """Emit conditional note blocks for non-default fleet outcomes.
+
+    Each note is a single bullet so the section stays scannable. The
+    notes are mutually independent — a run can simultaneously be
+    BLOCKING-sanitized AND have a runtime crash AND a budget-capped
+    BHA partition, so all four blocks may fire together.
+    """
+    notes: list[str] = []
+    skipped = spec.get("skipped") or []
+    if not isinstance(skipped, list):
+        skipped = []
+
+    # BLOCKING sanitization — emit before any runtime notes so the
+    # operator reads the upstream-cause line first.
+    if spec.get("gated_by_verify") is True:
+        suppressed = [
+            s for s in skipped
+            if isinstance(s, dict) and s.get("reason") == "gated_by_verify"
+        ]
+        suppressed_names = ", ".join(
+            sorted({str(s.get("reviewer", "")) for s in suppressed if s.get("reviewer")})
+        )
+        suffix = f" Suppressed: {suppressed_names}." if suppressed_names else ""
+        notes.append(
+            "- 🛡️ **Arbitration bypassed** (BLOCKING verify verdict). "
+            "Sanitized to core fleet only."
+            f"{suffix} See `agent_coverage-verify-blocking.json`.",
+        )
+
+    # Runtime — missing required agents (from stage_20b_verify_spawn).
+    if isinstance(verification, dict) and verification.get("verified") is True:
+        missing_required = verification.get("missing_required") or []
+        if missing_required:
+            missing_names = ", ".join(sorted({
+                _fleet_display_name(str(m.get("reviewer") or m.get("agent_id", "")))
+                for m in missing_required
+                if isinstance(m, dict)
+            }))
+            notes.append(
+                f"- ⚠️ **{len(missing_required)} required reviewer(s) did not "
+                f"produce output:** {missing_names}. "
+                "See `coverage_gaps.json`.",
+            )
+
+    # BHA budget cap — collapse multiple partition_id entries into one note.
+    capped_entries = [
+        s for s in skipped
+        if isinstance(s, dict) and s.get("reason") == "budget_capped"
+    ]
+    if capped_entries:
+        first = capped_entries[0]
+        cap = first.get("budget_cap", 0)
+        total = first.get("partition_count", len(capped_entries))
+        notes.append(
+            f"- ⚠️ **BHA partition cap:** {len(capped_entries)} partition(s) "
+            f"exceeded the post-arbitrate budget ({cap}/{total}).",
+        )
+
+    # PLN-723 deferral — informational only.
+    if any(
+        isinstance(s, dict) and s.get("reason") == "deferred_pln723"
+        for s in skipped
+    ):
+        notes.append("- ℹ️ `test_quality` slot reserved for PLN-723.")
+
+    # Other skip reasons (unknown_reviewer / duplicate_agent_id /
+    # missing_reviewer_name) → already produce coverage_gaps.json
+    # findings via stage_19b. Surface them as a single line so the
+    # operator sees the count without us re-listing each finding.
+    other_required_skips = [
+        s for s in skipped
+        if isinstance(s, dict)
+        and s.get("bucket") == "required"
+        and s.get("reason") in {
+            "unknown_reviewer", "duplicate_agent_id", "missing_reviewer_name",
+        }
+    ]
+    if other_required_skips:
+        notes.append(
+            f"- ⚠️ **{len(other_required_skips)} required reviewer(s) could "
+            "not be spawned** (malformed plan entry). See "
+            "`coverage_gaps.json`.",
+        )
+
+    return notes
+
+
+def cmd_render_fleet_summary(args: argparse.Namespace) -> int:
+    """Render the operator-facing Reviewer Fleet markdown block.
+
+    PLN-725 Phase 9. Reads ``<cr-dir>/spawn_spec.json`` (Phase 8 v2.22.0),
+    ``<cr-dir>/spawn_verification.json`` (v2.22.3), and
+    ``<cr-dir>/route.json``, then emits a self-contained markdown
+    block to stdout (or ``--output``). The block replaces the
+    presenters' previous static "Reviewers" + "Model Routing" lines
+    so the operator-facing summary reflects the actual deterministic
+    coverage selection — including BLOCKING sanitization,
+    budget-capped BHA partitions, runtime crashes, and the rule vs
+    critic provenance distinction on domain agents.
+
+    Fallback behavior: when ``spawn_spec.json`` is missing or marks
+    ``arbitrate_status: "fallback"``, the helper emits a minimal
+    block that says "spawn-spec unavailable" + the fallback_reason
+    and instructs the presenter to walk the static reviewer table.
+    The presenters' existing fallback path remains the source of
+    truth for that case — Phase 9 doesn't try to reconstruct fleet
+    composition from agent_*.json glob (the legacy heuristic).
+    """
+    cr_dir = Path(args.cr_dir)
+    spec = _read_optional_json(cr_dir / "spawn_spec.json", None)
+    verification = _read_optional_json(cr_dir / "spawn_verification.json", None)
+    route = _read_optional_json(cr_dir / "route.json", {}) or {}
+    if not isinstance(route, dict):
+        route = {}
+
+    out_lines: list[str] = []
+
+    if not isinstance(spec, dict):
+        out_lines.append(
+            "**Reviewer Fleet:** spawn-spec unavailable; walking static "
+            "reviewer table (legacy fleet derivation).",
+        )
+        out_lines.append(
+            "**Model Routing:** (see `route.json`)",
+        )
+        return _write_fleet_summary(out_lines, args)
+
+    if str(spec.get("arbitrate_status", "")) == "fallback":
+        reason = str(spec.get("fallback_reason", "unknown"))
+        out_lines.append(
+            f"**Reviewer Fleet:** spawn-spec fell back (`{reason}`); the "
+            "orchestrator walked the static reviewer table for this run.",
+        )
+        out_lines.append("**Model Routing:** (see `route.json`)")
+        return _write_fleet_summary(out_lines, args)
+
+    if spec.get("fast_path") is True:
+        out_lines.extend(_render_fast_path_fleet(spec, route))
+        return _write_fleet_summary(out_lines, args)
+
+    # Standard flow.
+    reviewers_lines, _tallies = _render_fleet_breakdown(spec)
+    out_lines.extend(reviewers_lines)
+
+    # Model Routing — derived from route.json; mirror the existing
+    # presenter shape. We don't re-derive route ourselves here, just
+    # echo the size category + a compact model summary so the
+    # presenter doesn't need a second read.
+    size_category = str(route.get("size_category", "")).strip()
+    models = route.get("models") or {}
+    if isinstance(models, dict) and size_category:
+        bha_default = ""
+        bha_models = models.get("bug_hunter_a")
+        if isinstance(bha_models, dict):
+            bha_default = str(bha_models.get("default", ""))
+        summary_parts: list[str] = []
+        if bha_default:
+            summary_parts.append(f"BHA={bha_default}")
+        for slot, label in (
+            ("bug_hunter_b", "BHB"),
+            ("unified_auditor", "Auditor"),
+            ("premise_reviewer", "Premise"),
+        ):
+            value = models.get(slot)
+            if isinstance(value, str) and value:
+                summary_parts.append(f"{label}={value}")
+        summary = ", ".join(summary_parts) if summary_parts else "see route.json"
+        out_lines.append(f"**Model Routing:** {size_category} — {summary}")
+
+    # Fleet outcome line — surface the intended vs ran counts so the
+    # operator sees runtime tally without scrolling to Verifier Stats.
+    stats = spec.get("stats") or {}
+    intended = int(stats.get("agent_count", 0)) if isinstance(stats, dict) else 0
+    if isinstance(verification, dict) and verification.get("verified") is True:
+        present = int(verification.get("present_count", 0))
+        missing_required_count = len(verification.get("missing_required") or [])
+        fleet_line = (
+            f"**Fleet:** {intended} intended | {present} ran"
+            f" | {missing_required_count} required missing"
+        )
+        out_lines.append(fleet_line)
+    elif intended:
+        out_lines.append(f"**Fleet:** {intended} intended (runtime tally unavailable)")
+
+    # Notes — conditional bullets for non-default outcomes.
+    notes = _render_fleet_notes(spec, verification)
+    if notes:
+        out_lines.append("")  # blank line so notes render as a separate block
+        out_lines.extend(notes)
+
+    return _write_fleet_summary(out_lines, args)
+
+
+def _write_fleet_summary(lines: list[str], args: argparse.Namespace) -> int:
+    """Emit the rendered markdown to stdout or ``--output``."""
+    text = "\n".join(lines) + "\n"
+    if getattr(args, "output", None):
+        try:
+            Path(args.output).write_text(text)
+        except OSError as exc:
+            print(f"Error writing fleet summary: {exc}", file=sys.stderr)
+            return 1
+    sys.stdout.write(text)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: finalize-result (PLN-719 Phase 2)
 # ---------------------------------------------------------------------------
 
@@ -12587,6 +12924,21 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     )
     p_vs.add_argument("--cr-dir", required=True, help="Session CR_DIR path")
     p_vs.set_defaults(func=cmd_verify_spawn)
+
+    # render-fleet-summary (PLN-725 Phase 9)
+    p_rfs = subparsers.add_parser(
+        "render-fleet-summary",
+        help=(
+            "Render the operator-facing Reviewer Fleet markdown block "
+            "from spawn_spec.json + spawn_verification.json + route.json"
+        ),
+    )
+    p_rfs.add_argument("--cr-dir", required=True, help="Session CR_DIR path")
+    p_rfs.add_argument(
+        "--output", default=None,
+        help="Optional output file path; default stdout-only",
+    )
+    p_rfs.set_defaults(func=cmd_render_fleet_summary)
 
     # prepare-run (PLN-719 Phase 4)
     p_pr = subparsers.add_parser(
