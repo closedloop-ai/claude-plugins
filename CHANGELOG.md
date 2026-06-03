@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.20.3
+
+#### Fixed
+- `_load_available_reviewers` now returns `(None, diagnostic)` for present-but-wrong-shape rosters: dict missing the `available` key (e.g. the realistic operator hand-edit `{"reviewers": [...]}`), dict with `available` of the wrong inner type, list of non-strings, and dict-with-`available` whose entries are all non-strings. v2.20.1 added the roster BLOCK path in `cmd_verify_coverage`, but it keyed on `loaded is None` — which the loader only returned for top-level type errors. The wrong-key and non-string-list shapes silently fell through `raw.get("available", [])` to `([], None)`, the verifier treated that as "no roster", skipped closed-vocabulary, and emitted PASS on plans that should have been gated. Truly-empty rosters (`[]` or `{"available": []}`) still return `([], None)` and keep the no-roster skip semantics — only present-with-content-but-unusable shapes now BLOCK.
+- Error messages are now type-specific so operators see exactly what shape they wrote (`"available_reviewers['available'] must be a list (got str)"`, `"available_reviewers dict missing required 'available' key (got keys: ['reviewers'])"`) instead of the generic `must be a list or {available: [...]}` envelope.
+
+#### Added
+- Five regression tests in `TestLoadAvailableReviewers`: `test_wrong_top_level_key_returns_none`, `test_list_of_non_strings_returns_none`, `test_inner_available_list_of_non_strings_returns_none`, plus `test_truly_empty_list_still_returns_success` and `test_truly_empty_inner_list_still_returns_success` to pin that intentional empty rosters keep the no-roster skip semantics (no over-rotation in the fix).
+- End-to-end `test_wrong_key_roster_blocks_with_roster_check` in `TestPLN725Phase6VerifyCoverageCommand` writes `{"reviewers": [...]}` to `available_reviewers.json` and asserts the full pipeline emits BLOCKING with the `roster` check — the regression that would have caught the v2.20.1 gap.
+
 ### code-review v2.20.2
 
 #### Changed

@@ -12202,7 +12202,67 @@ class TestLoadAvailableReviewers:
         roster, err = _load_available_reviewers(p)
         assert roster is None
         assert err is not None
-        assert "list or {available: [...]}" in err
+        # v2.20.3: error message is now type-specific so operators see
+        # exactly what shape they wrote instead of the generic envelope.
+        assert "must be a list" in err
+        assert "str" in err
+
+    # v2.20.3 — present-but-wrong-shape rosters now return (None, err),
+    # which means cmd_verify_coverage's roster-BLOCK path actually
+    # fires for them. Previously these realistic operator hand-edits
+    # returned ([], None) and silently degraded to no-roster PASS.
+
+    def test_wrong_top_level_key_returns_none(self, tmp_path: Path) -> None:
+        # Most common hand-edit: typed the wrong key.
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps({"reviewers": ["a", "b"]}))
+        roster, err = _load_available_reviewers(p)
+        assert roster is None
+        assert err is not None
+        assert "available" in err and "missing" in err
+
+    def test_list_of_non_strings_returns_none(self, tmp_path: Path) -> None:
+        # A literal `[1, 2, 3]` previously was silently filtered into
+        # `[]`. Now it BLOCKs — operator wrote something with intent
+        # and nothing usable was extracted.
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps([1, 2, 3]))
+        roster, err = _load_available_reviewers(p)
+        assert roster is None
+        assert err is not None
+
+    def test_inner_available_list_of_non_strings_returns_none(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps({"available": [1, 2, 3]}))
+        roster, err = _load_available_reviewers(p)
+        assert roster is None
+        assert err is not None
+
+    def test_truly_empty_list_still_returns_success(self, tmp_path: Path) -> None:
+        # An intentional empty list is NOT malformed — the project has
+        # no configured agents, and the no-roster skip semantics
+        # downstream are the right behavior. Must NOT regress to None.
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps([]))
+        roster, err = _load_available_reviewers(p)
+        assert roster == []
+        assert err is None
+
+    def test_truly_empty_inner_list_still_returns_success(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps({"available": []}))
+        roster, err = _load_available_reviewers(p)
+        assert roster == []
+        assert err is None
 
 
 class TestCoverageCriticValidator:
@@ -14568,6 +14628,47 @@ class TestPLN725Phase6VerifyCoverageCommand:
         assert "roster" in checks
         # BLOCKING also emits the system finding.
         assert (cr_dir / "agent_coverage-verify-blocking.json").exists()
+
+    def test_wrong_key_roster_blocks_with_roster_check(
+        self, tmp_path: Path,
+    ) -> None:
+        """v2.20.3: a present-but-wrong-shape roster
+        (``{"reviewers": [...]}`` instead of ``{"available": [...]}``)
+        is a realistic operator hand-edit — exactly the kind of typo
+        people make. The end-to-end behavior must be BLOCKING with the
+        `roster` check, not silent no-roster PASS. v2.20.1 added the
+        roster BLOCK path but keyed on `loaded is None` which
+        ``_load_available_reviewers`` only returned for top-level type
+        errors; wrong-key dicts fell through ``raw.get("available",
+        [])`` to ``([], None)`` and bypassed the check.
+        """
+        from code_review_helpers import cmd_verify_coverage
+        cr_dir = tmp_path / "cr_dir"
+        cr_dir.mkdir()
+        plan = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [],
+            "stats": {},
+        }
+        self._write(cr_dir / "coverage_plan.json", plan)
+        self._write(cr_dir / "coverage_plan_initial.json", plan)
+        # The canonical hand-edit thadeusb flagged: wrong top-level key.
+        self._write(cr_dir / "available_reviewers.json", {
+            "reviewers": ["devops-architect", "test-engineer"],
+        })
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            coverage_plan=str(cr_dir / "coverage_plan.json"),
+            coverage_plan_initial=str(cr_dir / "coverage_plan_initial.json"),
+            available_reviewers=str(cr_dir / "available_reviewers.json"),
+            output=None,
+        )
+        rc = cmd_verify_coverage(ns)
+        result = json.loads((cr_dir / "coverage_verify.json").read_text())
+        assert rc == 0
+        assert result["verdict"] == "BLOCKING"
+        checks = {v["check"] for v in result["violations"]}
+        assert "roster" in checks
 
 
 class TestPLN725Phase6StageGraph:

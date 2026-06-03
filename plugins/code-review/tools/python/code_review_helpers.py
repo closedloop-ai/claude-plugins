@@ -7146,10 +7146,30 @@ def _load_available_reviewers(
     Accepts either a flat JSON list or ``{"available": [...]}``. Returns
     ``(roster, None)`` on success and ``(None, diagnostic)`` on failure
     so callers can fail consistently AND surface a path-specific
-    diagnostic. IO/parse errors are bound to the exception so an
-    operator with a missing or malformed file sees the real cause
-    (e.g. ``[Errno 2] No such file or directory``) instead of a
-    misleading shape-error message.
+    diagnostic.
+
+    "Success" includes a TRULY-empty roster (``[]`` or ``{"available":
+    []}``) — the project legitimately has no configured agents, and
+    the verifier's no-roster skip semantics kick in downstream. But a
+    present-but-wrong-shape file is NOT a successful empty parse:
+
+      - ``{"reviewers": [...]}`` (wrong key)  → ``(None, "...")``
+      - ``{"available": "not-a-list"}``       → ``(None, "...")``
+      - ``[1, 2, 3]`` (list of non-strings)   → ``(None, "...")``
+
+    Those are realistic operator hand-edits, and the previous version
+    silently returned ``([], None)`` for them (``raw.get("available", [])``
+    defaulted to ``[]``, the non-string filter collapsed everything),
+    masking the operator config error. ``cmd_verify_coverage`` then
+    saw "no roster", skipped closed-vocabulary, and emitted PASS on a
+    plan that should have been gated. The verifier's roster-BLOCK
+    path (v2.20.1) keyed on ``loaded is None`` and never fired for
+    these shapes.
+
+    IO/parse errors stay bound to the exception so an operator with a
+    missing or malformed file sees the real cause (e.g. ``[Errno 2]
+    No such file or directory``) instead of a misleading shape-error
+    message.
     """
     try:
         with open(path) as f:
@@ -7157,11 +7177,45 @@ def _load_available_reviewers(
     except (OSError, json.JSONDecodeError) as exc:
         return None, f"Error reading available_reviewers: {exc}"
     if isinstance(raw, list):
-        return [a for a in raw if isinstance(a, str) and a], None
+        # Truly empty is fine (no configured agents). A non-empty list
+        # whose entries are all non-strings (or all empty strings) is
+        # malformed — the operator wrote something with intent and we
+        # extracted nothing usable.
+        if not raw:
+            return [], None
+        filtered = [a for a in raw if isinstance(a, str) and a]
+        if not filtered:
+            return None, (
+                "Error: available_reviewers list contains no usable "
+                "string entries (got non-string or empty values)"
+            )
+        return filtered, None
     if isinstance(raw, dict):
-        inner = raw.get("available", [])
-        if isinstance(inner, list):
-            return [a for a in inner if isinstance(a, str) and a], None
+        # Distinguish "key absent" from "key present with empty list".
+        # Absent key → operator wrote a different shape (e.g. the
+        # common hand-edit `{"reviewers": [...]}` instead of
+        # `{"available": [...]}`); never silently treat as empty.
+        if "available" not in raw:
+            return None, (
+                "Error: available_reviewers dict missing required "
+                "'available' key (got keys: "
+                f"{sorted(raw.keys())[:10]})"
+            )
+        inner = raw["available"]
+        if not isinstance(inner, list):
+            return None, (
+                "Error: available_reviewers['available'] must be a "
+                f"list (got {type(inner).__name__})"
+            )
+        if not inner:
+            return [], None
+        filtered = [a for a in inner if isinstance(a, str) and a]
+        if not filtered:
+            return None, (
+                "Error: available_reviewers['available'] contains no "
+                "usable string entries"
+            )
+        return filtered, None
     return None, "Error: available_reviewers must be a list or {available: [...]}"
 
 
