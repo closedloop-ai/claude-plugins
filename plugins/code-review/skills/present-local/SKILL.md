@@ -36,10 +36,10 @@ Output in this format:
 python "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py" render-fleet-summary --cr-dir <CR_DIR>
 ```
 
-The renderer consumes `<CR_DIR>/spawn_spec.json` (intended fleet from stage_19b), `<CR_DIR>/spawn_verification.json` (runtime tally from stage_20b), and `<CR_DIR>/route.json` (model assignments). The output is a deterministic markdown block of 2–9 lines — 2–4 for the core **Reviewers** / **Model Routing** / **Fleet** section, plus up to 5 conditional note bullets — covering:
+The renderer consumes `<CR_DIR>/spawn.json` (sections: `spec` — intended fleet from stage_19b; `verification` — runtime tally from stage_20b; `route` — model assignments from Gate B). The output is a deterministic markdown block of 2–9 lines — 2–4 for the core **Reviewers** / **Model Routing** / **Fleet** section, plus up to 5 conditional note bullets — covering:
 
 - **Reviewers** — the actual fleet that spawned (with the rule-resolved vs LLM-proposed split surfaced on domain critics so the operator can tell operator-configured coverage apart from one-off LLM proposals).
-- **Model Routing** — the per-agent model assignments derived from route.json.
+- **Model Routing** — the per-agent model assignments derived from `spawn.json.route`.
 - **Fleet** — `N intended | N ran | N required missing` so the operator sees the runtime tally without scrolling to Verifier Stats.
 - **Notes (conditional)** — only emitted when the run was non-default: BLOCKING-sanitized arbitration, missing required reviewers (runtime crash), BHA partitions capped by post-arbitrate budget, PLN-723 deferral, malformed-plan required skips. Each note is a single bullet so the section stays scannable; multiple notes can fire together.
 

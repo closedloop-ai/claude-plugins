@@ -15369,25 +15369,27 @@ def _run_derive_spawn_spec(
     p_path = tmp_path / "partitions.json"
     if partitions is not None:
         p_path.write_text(json.dumps(partitions))
-    r_path = tmp_path / "route.json"
+    # Phase D (v2.26.0): route lives in spawn.json.route, not route.json.
+    # Seed it via the section helper so future read-modify-write writes
+    # from cmd_derive_spawn_spec preserve it.
     if route is not None:
-        r_path.write_text(json.dumps(route))
+        (tmp_path / "spawn.json").write_text(json.dumps({"route": route}))
 
     ns = argparse.Namespace(
         cr_dir=str(tmp_path),
         coverage_plan=str(cp_path),
         partitions=str(p_path),
-        route=str(r_path),
-        output=None,
+        route=None,
     )
     captured = run_with_stdout_capture(cmd_derive_spawn_spec, ns)
     summary = json.loads(captured) if captured else {}
-    # ``run_with_stdout_capture`` swallows the return value; assert here
-    # by reading the on-disk artifact, which is the same invariant the
-    # production walker checks (expected_outputs: [<cr_dir>/spawn_spec.json]).
-    spec_path = tmp_path / "spawn_spec.json"
-    assert spec_path.exists(), "spawn_spec.json missing — cmd_derive_spawn_spec failed silently"
-    spec = json.loads(spec_path.read_text())
+    # Read the spec section from the post-cmd spawn.json. The production
+    # walker checks expected_outputs: [<cr_dir>/spawn.json].
+    spawn_path = tmp_path / "spawn.json"
+    assert spawn_path.exists(), "spawn.json missing — cmd_derive_spawn_spec failed silently"
+    state = json.loads(spawn_path.read_text())
+    spec = state.get("spec", {})
+    assert spec, "spawn.json.spec missing — cmd_derive_spawn_spec did not write the spec section"
     return summary, spec
 
 
@@ -15788,8 +15790,8 @@ class TestPLN725Phase8DeriveSpawnSpec:
         cp.write_text(json.dumps([]))  # valid JSON, wrong shape
         p = tmp_path / "partitions.json"
         p.write_text(json.dumps(self._two_partitions()))
-        r = tmp_path / "route.json"
-        r.write_text(json.dumps(self._route()))
+        # Phase D (v2.26.0): route lives in spawn.json.route, not route.json.
+        (tmp_path / "spawn.json").write_text(json.dumps({"route": self._route()}))
 
         from code_review_helpers import cmd_derive_spawn_spec
         from golden_fixture_harness import run_with_stdout_capture
@@ -15798,11 +15800,11 @@ class TestPLN725Phase8DeriveSpawnSpec:
             cr_dir=str(tmp_path),
             coverage_plan=str(cp),
             partitions=str(p),
-            route=str(r),
-            output=None,
+            route=None,
         )
         run_with_stdout_capture(cmd_derive_spawn_spec, ns)
-        spec = json.loads((tmp_path / "spawn_spec.json").read_text())
+        state = json.loads((tmp_path / "spawn.json").read_text())
+        spec = state["spec"]
         assert spec["arbitrate_status"] == "fallback"
         assert spec["fallback_reason"] == "coverage_plan_missing_or_malformed"
         assert spec["agents"] == []
@@ -16223,7 +16225,9 @@ class TestPLN725Phase8VerifySpawn:
 
         ns = argparse.Namespace(cr_dir=str(tmp_path))
         run_with_stdout_capture(cmd_verify_spawn, ns)
-        return json.loads((tmp_path / "spawn_verification.json").read_text())
+        # Phase D (v2.26.0): verification lives in spawn.json.verification.
+        state = json.loads((tmp_path / "spawn.json").read_text())
+        return state.get("verification", {})
 
     @staticmethod
     def _spec(agents: list[dict[str, Any]]) -> dict[str, Any]:
@@ -16253,7 +16257,7 @@ class TestPLN725Phase8VerifySpawn:
             {"agent_id": "auditor", "reviewer": "unified_auditor",
              "bucket": "required", "source": "core"},
         ])
-        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+        (tmp_path / "spawn.json").write_text(json.dumps({"spec": spec}))
         (tmp_path / "agent_bhb.json").write_text("{}")
         (tmp_path / "agent_auditor.json").write_text("{}")
         verification = self._run(tmp_path)
@@ -16274,7 +16278,7 @@ class TestPLN725Phase8VerifySpawn:
             {"agent_id": "auditor", "reviewer": "unified_auditor",
              "bucket": "required", "source": "core"},
         ])
-        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+        (tmp_path / "spawn.json").write_text(json.dumps({"spec": spec}))
         # Only bhb wrote its output; auditor crashed at runtime.
         (tmp_path / "agent_bhb.json").write_text("{}")
 
@@ -16299,7 +16303,7 @@ class TestPLN725Phase8VerifySpawn:
             {"agent_id": "domain_0", "reviewer": "graphql-architect",
              "bucket": "best_effort", "source": "critic"},
         ])
-        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+        (tmp_path / "spawn.json").write_text(json.dumps({"spec": spec}))
         (tmp_path / "agent_bhb.json").write_text("{}")
         # domain_0 didn't write — budget-driven.
 
@@ -16326,7 +16330,7 @@ class TestPLN725Phase8VerifySpawn:
                       "from_required": 0, "from_best_effort": 0},
             "generated_at": "",
         }
-        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+        (tmp_path / "spawn.json").write_text(json.dumps({"spec": spec}))
         verification = self._run(tmp_path)
         assert verification["verified"] is False
         assert verification["reason"] == "spec_fallback"
@@ -16378,9 +16382,10 @@ class TestPLN725Phase8StageGraph:
         # partitions.json fall through to the fallback sentinel.
         assert "stage_16_arbitrate_budget" in s["depends_on"]
         assert "stage_17_partition" not in s["depends_on"]
-        # Expected output is the spawn_spec.json artifact.
+        # Phase D (v2.26.0): spec lives in spawn.json.spec; the canonical
+        # expected output is the consolidated spawn-state aggregate.
         assert any(
-            "spawn_spec.json" in str(out) for out in s["expected_outputs"]
+            "spawn.json" in str(out) for out in s["expected_outputs"]
         )
 
     def test_fast_path_reaches_stage_20_without_stage_17(
@@ -16464,8 +16469,9 @@ class TestPLN725Phase8StageGraph:
         # Must depend on both the spec producer and the spawn stage.
         assert "stage_19b_derive_spawn_spec" in s["depends_on"]
         assert "stage_20_spawn_reviewers" in s["depends_on"]
+        # Phase D (v2.26.0): verification lives in spawn.json.verification.
         assert any(
-            "spawn_verification.json" in str(out)
+            "spawn.json" in str(out)
             for out in s["expected_outputs"]
         )
 
@@ -16497,12 +16503,19 @@ def _seed_phase9_inputs(
     seeds a focused subset rather than constructing a full-blown
     end-to-end run.
     """
-    if spec is not None:
-        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
-    if verification is not None:
-        (tmp_path / "spawn_verification.json").write_text(json.dumps(verification))
+    # Phase D (v2.26.0): the three sections live in one spawn.json file.
+    # Seed only what the caller asked for; missing sections drive the
+    # presenter's degraded-output paths via state.get("route"/"spec"/
+    # "verification") returning None.
+    state: dict[str, Any] = {}
     if route is not None:
-        (tmp_path / "route.json").write_text(json.dumps(route))
+        state["route"] = route
+    if spec is not None:
+        state["spec"] = spec
+    if verification is not None:
+        state["verification"] = verification
+    if state:
+        (tmp_path / "spawn.json").write_text(json.dumps(state))
 
 
 def _run_render_fleet_summary(tmp_path: Path) -> str:
@@ -17242,7 +17255,9 @@ class TestPLN725Phase9VerifySpawnIntendedScoping:
 
         ns = argparse.Namespace(cr_dir=str(tmp_path))
         run_with_stdout_capture(cmd_verify_spawn, ns)
-        return json.loads((tmp_path / "spawn_verification.json").read_text())
+        # Phase D (v2.26.0): verification lives in spawn.json.verification.
+        state = json.loads((tmp_path / "spawn.json").read_text())
+        return state.get("verification", {})
 
     def test_non_spec_agent_files_excluded_from_present_count(
         self, tmp_path: Path,
@@ -17262,7 +17277,7 @@ class TestPLN725Phase9VerifySpawnIntendedScoping:
                       "from_required": 2, "from_best_effort": 0,
                       "required_coverage_gaps": 0},
         }
-        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+        (tmp_path / "spawn.json").write_text(json.dumps({"spec": spec}))
         # Two on-disk outputs match the spec.
         (tmp_path / "agent_bhb.json").write_text("{}")
         (tmp_path / "agent_auditor.json").write_text("{}")

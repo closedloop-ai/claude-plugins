@@ -299,10 +299,11 @@ in what order, against what cap." See PLN-719 Section 5.
 
 ---
 
-## 6b. Reviewer spawn spec (`spawn_spec.json`)
+## 6b. Reviewer spawn spec (`spawn.json.spec`)
 
-Produced by `stage_19b_derive_spawn_spec` (PLN-725 Phase 8) from the
-post-arbitrate `coverage_plan.json` + `partitions.json` + `route.json`;
+Produced by `stage_19b_derive_spawn_spec` (PLN-725 Phase 8; consolidated
+into `spawn.json` under the `spec` section in v2.26.0) from the
+post-arbitrate `coverage_plan.json` + `partitions.json` + `spawn.json.route`;
 consumed by the `stage_20_spawn_reviewers` orchestrator. Closes the
 deterministic-coverage loop — before Phase 8 the coverage plan was
 ignored at spawn time.
@@ -408,9 +409,11 @@ verdict. The runtime symmetric pair to this derive-time check is
 
 ---
 
-## 6c. Spawn verification (`spawn_verification.json`)
+## 6c. Spawn verification (`spawn.json.verification`)
 
-Produced by `stage_20b_verify_spawn` (PLN-725 Phase 8 / v2.22.3) AFTER
+Produced by `stage_20b_verify_spawn` (PLN-725 Phase 8 / v2.22.3;
+consolidated into `spawn.json` under the `verification` section in
+v2.26.0) AFTER
 `stage_20_spawn_reviewers` finishes. Closes the runtime side of the
 spawn-spec contract: derive-spawn-spec catches required reviewers the
 spec couldn't even describe; verify-spawn catches required agents that
@@ -473,9 +476,9 @@ finding — best-effort omissions are budget-driven, not coverage gaps.
 | 17 | partition                    | `partition`              | `partitions.json`, `patches_p<N>.txt`                          |
 | 18 | compute-hashes               | `compute-hashes`         | `hashes.json`                                                 |
 | 19 | cache-check                  | `cache-check`            | `cache_result.json`                                            |
-| 19b| derive-spawn-spec (plan 05)  | `derive-spawn-spec`      | `spawn_spec.json`                                              |
+| 19b| derive-spawn-spec (plan 05)  | `derive-spawn-spec`      | `spawn.json` (`spec` section)                                  |
 | 20 | spawn-reviewers              | (agent_fleet)            | `agent_<id>.json`                                              |
-| 20b| verify-spawn (plan 05)       | `verify-spawn`           | `spawn_verification.json` + `coverage_gaps.json` append         |
+| 20b| verify-spawn (plan 05)       | `verify-spawn`           | `spawn.json` (`verification` section) + `coverage_gaps.json` append |
 | 21 | collect-findings             | `collect-findings`       | `findings.json` (with deterministic IDs)                       |
 | 22 | validate                     | `validate`               | `findings_validated.json`                                     |
 | 23 | verify-findings (plan 03)    | `verify-findings`        | `findings_verified.json`                                      |

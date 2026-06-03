@@ -130,6 +130,12 @@
             "mixed"
           ],
           "help": "PR intent classification (from classify-intent)"
+        },
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "help": "CR session directory; when set, writes spawn.json.route via atomic section update. Without it, the routing block is only emitted to stdout (legacy mode)."
         }
       ]
     },
@@ -1506,14 +1512,7 @@
           "flags": [
             "--route"
           ],
-          "required": true,
-          "help": "Path to route.json"
-        },
-        {
-          "flags": [
-            "--output"
-          ],
-          "help": "Output path (default: <cr-dir>/spawn_spec.json)"
+          "help": "Path to route.json (legacy fallback). When omitted, route is read from spawn.json.route (Phase D consolidation)."
         }
       ]
     },
