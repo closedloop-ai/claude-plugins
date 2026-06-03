@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.24.0
+
+#### Changed
+- The two largest config-as-code functions in `code_review_helpers.py` are now thin loaders over declarative JSON. `_build_run_plan_stages` (894 LOC) and `_register_subparsers` (706 LOC) collectively dropped from ~1,600 LOC of nested dict-and-`add_argument` literals to ~60 LOC of loader code; `code_review_helpers.py` shrinks by 1,431 LOC net. Stage definitions live at `tools/python/config/stages.json` (37 stages); CLI subparser definitions live at `tools/python/config/cli.json` (44 parsers, 199 args).
+- Runtime behavior is preserved byte-for-byte. Template variables (`{cr_dir}`, `{mode}`, `{schema_version}`, `{flags_scope_args}`, `{flags_base_ref_override}`, `{flags_full_review}`, `{flags_since_last_review}`) and the `@pr_flag` splat marker are substituted by `_build_run_plan_stages` at call time. Angle-bracket walker tokens like `<CACHE_DIR>`, `<DIFF_TIP>`, `<PROMPT_HASH>` are passed through unchanged — they remain the orchestrator/walker's responsibility to resolve from prior-stage outputs.
+- `$$NAME` references in `cli.json` resolve via `_resolve_cli_constant` to imported constants (`DEFAULT_MAX_BHA_AGENTS`, `BUDGET_TOTAL_CAP_DEFAULT`, `CACHE_GC_TTL_DAYS_DEFAULT`, `CACHE_GC_MAX_PER_FILE_DEFAULT`, `_EXTRACT_PATCHES_BATCH_SIZE`, `SIGNAL_EXTRACTION_MODEL_DEFAULT`, `COVERAGE_CRITIC_MODEL_DEFAULT`) and computed choices (`sorted(COVERAGE_SCOPES)`) at parser-build time. Constant edits at the import site propagate to argparse defaults without touching `cli.json`. The encoded slots are hand-curated against the source to avoid value-collision false positives (e.g. `--max-files default=20` collides with `BUDGET_TOTAL_CAP_DEFAULT=20` by value but is a literal, not a constant reference).
+- The single mutually-exclusive group in the surface area (`migrate-critic-gates --output` vs `--in-place`) is declared via `mutex_groups[].actions` on the parser entry; the loader creates the group and routes the listed flags into it instead of the main parser.
+
+#### Added
+- `TestCRSPhaseADeclarativeStagesConfig` (5 tests) asserts the loader-based `_build_run_plan_stages` produces output equal to the captured pre-refactor snapshots across both conditional dimensions, pins the `@pr_flag` splat semantics (omitted when `pr_number is None`, inserted as `["--pr-number", str(pr_number)]` when truthy at the correct positions in stages 03/04/08/25), and pins that `{schema_version}` resolves to `SCHEMA_VERSION` from `code_review_schema` rather than a literal `"1"`.
+- `tools/python/fixtures/run_plan_snapshots/local_no_pr_empty_flags.json` and `github_pr42_all_flags.json` capture the pre-refactor reference output for the two canonical configurations (every conditional in its "off" vs "on" state) and serve as the byte-equality baseline for the snapshot tests.
+
 ### code-review v2.23.3
 
 #### Fixed

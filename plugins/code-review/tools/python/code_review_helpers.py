@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import functools
 import hashlib
 import json
 import os
@@ -9221,898 +9222,79 @@ def cmd_verdict(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+# Stages config: declarative pipeline lives in config/stages.json.
+# The loader below substitutes template variables ({cr_dir}, {mode}, etc.)
+# and resolves the @pr_flag splat marker into ["--pr-number", "<n>"] or [].
+# Angle-bracket tokens (<PLUGIN_ROOT>, <DIFF_SCOPE>, <CACHE_DIR>, etc.) are
+# pass-through — the walker resolves them at dispatch time from earlier
+# stage outputs (scope.json, setup.json, hashes.json, etc.).
+_STAGES_CONFIG_PATH = Path(__file__).parent / "config" / "stages.json"
+
+
+@functools.lru_cache(maxsize=1)
+def _load_stages_config() -> dict[str, Any]:
+    """Load and cache the declarative stage definitions from config/stages.json."""
+    return json.loads(_STAGES_CONFIG_PATH.read_text())
+
+
 def _build_run_plan_stages(
     cr_dir: str,
     mode: str,
     pr_number: int | None,
     flags: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Return the canonical 30-stage pipeline (PLN-719 Section 7).
+    """Return the canonical pipeline by loading config/stages.json and substituting runtime values.
 
-    Args lists use angle-bracket placeholders for values the orchestrator
-    must resolve at runtime (see the token table below). Every required
-    argparse argument is included so the orchestrator can substitute and
-    invoke each helper directly.
+    Template variables resolved here:
+      {cr_dir}                    -- session CR_DIR
+      {mode}                      -- "local" | "github"
+      {schema_version}            -- str(SCHEMA_VERSION) from code_review_schema
+      {flags_scope_args}          -- flags["scope_args"] or ""
+      {flags_base_ref_override}   -- flags["base_ref_override"] or ""
+      {flags_full_review}         -- "true" | "false"
+      {flags_since_last_review}   -- "true" | "false"
 
-    ``stdout`` points to a file the orchestrator must redirect the helper's
-    stdout to (the legacy ``> validate_output.json`` redirection). When
-    ``stdout`` is None, the helper writes its primary output directly to
-    disk.
+    Special arg marker resolved here:
+      @pr_flag                    -- splat: ["--pr-number", str(pr_number)] when pr_number is truthy, else []
+                                    (argparse rejects ``--pr-number ""`` because the flag is type=int,
+                                     so the flag must be omitted entirely when no PR is active.)
 
-    Runtime placeholder tokens:
-      <PLUGIN_ROOT>  -- $CLAUDE_PLUGIN_ROOT
-      <DIFF_SCOPE>   -- scope.json.diff_scope (from resolve-scope)
-      <BASE_REF>     -- scope.json.base_ref
-      <DIFF_TIP>     -- scope.json.diff_tip
-      <SCOPE_KIND>   -- scope.json.scope_kind
-      <CACHE_DIR>    -- cache_config.json.cache_dir (from finalize-cache)
-      <GLOBAL_CACHE> -- setup.json.global_cache (0 or 1)
-      <PROMPT_HASH>  -- hashes.json.prompt_hash (from compute-hashes)
-      <CONTEXT_KEY>  -- hashes.json.context_key
-      <MODEL_ID>     -- orchestrator-chosen model (e.g. "opus")
-      <START_TIME>   -- setup.json.start_time (epoch seconds)
-      <STATE_KEY>    -- "<review_branch>:<base_ref>"
-
-    Stages that depend on plans 01/03/05/06 are present but marked
-    ``enabled: false`` until those plans land. Their args include the
-    best-known shape so when those plans wire them on, only ``enabled``
-    needs to flip.
+    Angle-bracket tokens like <CACHE_DIR>, <DIFF_TIP> stay as literal strings — they're resolved
+    by the walker at dispatch time from prior-stage outputs.
     """
-    # Conditional --pr-number: argparse declares ``--pr-number`` as
-    # ``type=int``, which rejects empty strings with
-    # ``invalid int value: ''``. When no PR is active, omit the flag
-    # entirely so the helpers' argparse defaults (None) apply.
+    ctx = {
+        "cr_dir": cr_dir,
+        "mode": mode,
+        "schema_version": str(SCHEMA_VERSION),
+        "flags_scope_args": flags.get("scope_args", "") or "",
+        "flags_base_ref_override": flags.get("base_ref_override", "") or "",
+        "flags_full_review": "true" if flags.get("full_review") else "false",
+        "flags_since_last_review": "true" if flags.get("since_last_review") else "false",
+    }
+    # argparse declares --pr-number as type=int, which rejects empty strings.
+    # When no PR is active, omit the flag entirely so argparse defaults (None) apply.
     pr_flag: list[str] = ["--pr-number", str(pr_number)] if pr_number else []
 
-    return [
-        {
-            "id": "stage_01_setup",
-            "kind": "helper",
-            "subcommand": "setup",
-            "args": ["--mode", mode, "--cr-dir-prefix", ".closedloop-ai/code-review/cr-"],
-            # The walker handles setup specially in stage 0b: it runs
-            # setup, captures stdout in-memory, parses ``cr_dir``, then
-            # writes setup.json into the newly-created cr_dir itself. A
-            # shell-style ``> <cr_dir>/setup.json`` redirect cannot work
-            # because cr_dir does not exist until setup runs. The stdout
-            # field is ``None`` here so a walker that reaches this stage
-            # via the run plan treats it as already-completed.
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/setup.json"],
-            "depends_on": [],
-            "on_failure": "abort",
-            "enabled": True,
-        },
-        {
-            "id": "stage_02_prep_assets",
-            "kind": "helper",
-            "subcommand": "prep-assets",
-            "args": ["--plugin-root", "<PLUGIN_ROOT>", "--cr-dir", cr_dir],
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/shared_prompt.txt", f"{cr_dir}/bha_suffix.txt"],
-            "depends_on": ["stage_01_setup"],
-            "on_failure": "abort",
-            "enabled": True,
-        },
-        {
-            "id": "stage_03_resolve_scope",
-            "kind": "helper",
-            "subcommand": "resolve-scope",
-            "args": [
-                "--mode", mode,
-                "--setup-json", f"{cr_dir}/setup.json",
-                *pr_flag,
-                "--scope-args", flags.get("scope_args", "") or "",
-                "--base-ref-override", flags.get("base_ref_override", "") or "",
-            ],
-            "stdout": f"{cr_dir}/scope.json",
-            "expected_outputs": [f"{cr_dir}/scope.json"],
-            "depends_on": ["stage_02_prep_assets"],
-            "on_failure": "abort",
-            "enabled": True,
-        },
-        {
-            "id": "stage_04_finalize_cache",
-            "kind": "helper",
-            "subcommand": "finalize-cache",
-            "args": [
-                "--setup-json", f"{cr_dir}/setup.json",
-                "--mode", mode,
-                *pr_flag,
-            ],
-            "stdout": f"{cr_dir}/cache_config.json",
-            "expected_outputs": [f"{cr_dir}/cache_config.json"],
-            "depends_on": ["stage_03_resolve_scope"],
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        # stage_07_auto_incremental must run BEFORE parse-diff so that any
-        # diff_scope override it emits is applied to the cached <DIFF_SCOPE>
-        # token before parse-diff and extract-patches materialize diff_data
-        # and patch files. The stage id retains its _07_ prefix as a stable
-        # label; execution order follows array position.
-        {
-            "id": "stage_07_auto_incremental",
-            "kind": "helper",
-            "subcommand": "auto-incremental",
-            "args": [
-                "--cache-dir", "<CACHE_DIR>",
-                "--key", "<STATE_KEY>",
-                "--diff-tip", "<DIFF_TIP>",
-                "--base-ref", "<BASE_REF>",
-                "--original-scope", "<DIFF_SCOPE>",
-                "--full-review", "true" if flags.get("full_review") else "false",
-                "--since-last-review", "true" if flags.get("since_last_review") else "false",
-                "--mode", mode,
-            ],
-            "stdout": f"{cr_dir}/auto_incremental.json",
-            "expected_outputs": [f"{cr_dir}/auto_incremental.json"],
-            # auto-incremental does NOT consume diff_data.json (its inputs
-            # are cache state + git refs). The previous run-plan listed
-            # stage_05_parse_diff as a dep, which both wrongly suggested
-            # data dependence AND forced auto-incremental's position past
-            # parse-diff — making any scope override useless.
-            "depends_on": ["stage_04_finalize_cache"],
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        {
-            "id": "stage_05_parse_diff",
-            "kind": "helper",
-            "subcommand": "parse-diff",
-            "args": ["--scope", "<DIFF_SCOPE>"],
-            "stdout": f"{cr_dir}/diff_data.json",
-            "expected_outputs": [f"{cr_dir}/diff_data.json"],
-            "depends_on": ["stage_03_resolve_scope", "stage_07_auto_incremental"],
-            "on_failure": "abort",
-            "enabled": True,
-        },
-        {
-            "id": "stage_06_extract_patches",
-            "kind": "helper",
-            "subcommand": "extract-patches",
-            "args": [
-                "--diff-scope", "<DIFF_SCOPE>",
-                "--diff-data", f"{cr_dir}/diff_data.json",
-                "--cr-dir", cr_dir,
-            ],
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/patches_all.txt"],
-            "depends_on": ["stage_05_parse_diff"],
-            "on_failure": "abort",
-            "enabled": True,
-        },
-        {
-            "id": "stage_08_fetch_intent",
-            "kind": "helper",
-            "subcommand": "fetch-intent",
-            "args": [
-                "--scope-kind", "<SCOPE_KIND>",
-                "--cr-dir", cr_dir,
-                *pr_flag,
-                "--base-ref", "<BASE_REF>",
-                "--diff-tip", "<DIFF_TIP>",
-            ],
-            # cmd_fetch_intent writes intent_context.json into cr_dir
-            # itself; the stdout output is a small {path, source} summary.
-            # Redirecting stdout into intent_context.json would corrupt
-            # the file by overwriting the helper's structured payload
-            # with the summary line.
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/intent_context.json"],
-            "depends_on": ["stage_03_resolve_scope"],
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        {
-            "id": "stage_09_detect_injection",
-            "kind": "helper",
-            "subcommand": "detect-injection",
-            "args": [
-                "--cr-dir", cr_dir,
-                "--intent-context", f"{cr_dir}/intent_context.json",
-            ],
-            "stdout": f"{cr_dir}/injection_report.json",
-            "expected_outputs": [f"{cr_dir}/injection_report.json"],
-            "depends_on": ["stage_08_fetch_intent"],
-            "on_failure": "continue",
-            "enabled": True,  # PLN-720
-        },
-        {
-            "id": "stage_10_classify_intent",
-            "kind": "helper",
-            "subcommand": "classify-intent",
-            "args": [
-                "--intent-context", f"{cr_dir}/intent_context.json",
-                "--diff-data", f"{cr_dir}/diff_data.json",
-            ],
-            "stdout": f"{cr_dir}/intent.json",
-            "expected_outputs": [f"{cr_dir}/intent.json"],
-            "depends_on": ["stage_08_fetch_intent", "stage_05_parse_diff"],
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        {
-            # PLN-725 Phase 5 reorder: stage_12_hygiene was previously
-            # positioned after stage_11_extract_signals, but Gate A
-            # (hygiene-only early exit) fires immediately after stage_12
-            # — and stage_11 is the first LLM-capable stage in the
-            # pipeline. With Phase 4 enabling stage_11, hygiene-only
-            # reviews would spend a Haiku call on signal extraction
-            # before Gate A fired, violating the documented "zero-LLM
-            # deterministic check" contract on hygiene-only runs.
-            # stage_12's depends_on is stage_05_parse_diff only (it
-            # doesn't read signals/intent/coverage), so moving it
-            # earlier is safe — execution order follows array position,
-            # the _12_ prefix is a stable label not an ordinal.
-            "id": "stage_12_hygiene",
-            "kind": "helper",
-            "subcommand": "hygiene",
-            "args": ["--diff-data", f"{cr_dir}/diff_data.json"],
-            "stdout": f"{cr_dir}/hygiene.json",
-            "expected_outputs": [f"{cr_dir}/hygiene.json"],
-            "depends_on": ["stage_05_parse_diff"],
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        {
-            "id": "stage_11_extract_signals",
-            "kind": "helper",
-            # PLN-725 Phase 1 shipped a two-step prep/consolidate flow
-            # rather than a single ``extract-signals`` subcommand. The
-            # prepare stage produces the manifest; the orchestrator
-            # spawns the agent; the consolidate stage validates and
-            # writes ``extract_signals.json``. Stage 11 here represents
-            # the prepare half (Phase 4 will add a stage_11b for the
-            # consolidate half once orchestrator wiring lands).
-            "subcommand": "extract-signals-prepare",
-            "args": [
-                "--cr-dir", cr_dir,
-                "--diff-data", f"{cr_dir}/diff_data.json",
-                # PLN-725 Phase 5 fix: <DIFF_TIP> is the walker-resolved
-                # token from scope.json. Literal "HEAD" here meant the
-                # cache key was constant across reviews (every entry
-                # wrote under the same diff_tip), making the documented
-                # cache_hit path unreachable through the walker and
-                # poisoning the cache namespace.
-                "--diff-tip", "<DIFF_TIP>",
-                "--intent", f"{cr_dir}/intent.json",
-                # PLN-725 Phase 5 fix: prepare reads --cache-dir to
-                # check for an existing entry. Without this arg
-                # prepare runs cache-blind and the orchestrator's
-                # singleton dispatch fires on every review even when
-                # the same diff has been seen.
-                "--cache-dir", "<CACHE_DIR>",
-            ],
-            "stdout": f"{cr_dir}/extract_signals_manifest.json",
-            # stage_11 is the prepare half — it only emits the manifest.
-            # extract_signals.json is written by stage_11b (consolidate)
-            # AFTER the orchestrator's PLN-725 agent-dispatch step has
-            # written pln725_extract_signals.json. On a cache_hit
-            # manifest, prepare wrote extract_signals.json itself, no
-            # agent runs, and stage_11b is a no-op (handled inside
-            # cmd_extract_signals_consolidate).
-            "expected_outputs": [f"{cr_dir}/extract_signals_manifest.json"],
-            "depends_on": ["stage_06_extract_patches", "stage_10_classify_intent"],
-            "on_failure": "continue_with_coverage_gap",
-            "enabled": True,  # PLN-725 Phase 4
-        },
-        {
-            # PLN-725 Phase 4 sibling: consume pln725_extract_signals.json
-            # (written by the orchestrator's agent-dispatch step) and
-            # write extract_signals.json + cache update. No-ops on
-            # cache_hit manifest so the walker drives this
-            # unconditionally without inspecting prepare's status.
-            "id": "stage_11b_extract_signals_consolidate",
-            "kind": "helper",
-            "subcommand": "extract-signals-consolidate",
-            "args": [
-                "--cr-dir", cr_dir,
-                "--agent-output", f"{cr_dir}/pln725_extract_signals.json",
-                "--manifest", f"{cr_dir}/extract_signals_manifest.json",
-                "--cache-dir", "<CACHE_DIR>",
-            ],
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/extract_signals.json"],
-            "depends_on": ["stage_11_extract_signals"],
-            "on_failure": "continue_with_coverage_gap",
-            "enabled": True,  # PLN-725 Phase 4
-        },
-        {
-            "id": "stage_13_validate_companions",
-            "kind": "helper",
-            "subcommand": "validate-companions",
-            "args": [
-                "--cr-dir", cr_dir,
-                "--diff-data", f"{cr_dir}/diff_data.json",
-            ],
-            "stdout": f"{cr_dir}/companion_findings.json",
-            "expected_outputs": [f"{cr_dir}/companion_findings.json"],
-            "depends_on": ["stage_05_parse_diff"],
-            "on_failure": "continue",
-            "enabled": False,  # plan 06
-        },
-        {
-            "id": "stage_14_resolve_coverage",
-            "kind": "helper",
-            "subcommand": "resolve-coverage",
-            "args": [
-                "--cr-dir", cr_dir,
-                "--diff-data", f"{cr_dir}/diff_data.json",
-                # PLN-725 Phase 2 CLI flag is --extract-signals (not
-                # --signals); the file is extract_signals.json (not
-                # signals.json) per PLN-725 Phase 1.
-                "--extract-signals", f"{cr_dir}/extract_signals.json",
-            ],
-            "stdout": f"{cr_dir}/coverage_plan_initial.json",
-            "expected_outputs": [f"{cr_dir}/coverage_plan_initial.json"],
-            # PLN-725 Phase 4: depend on the consolidate sibling — that's
-            # where extract_signals.json (our --extract-signals input)
-            # actually lands. Prepare only emits the manifest.
-            "depends_on": ["stage_11b_extract_signals_consolidate"],
-            "on_failure": "continue_with_coverage_gap",
-            "enabled": True,  # PLN-725 Phase 4
-        },
-        {
-            # PLN-725 Phase 5: produce the AVAILABLE roster the critic
-            # enforces against. Scans .claude/agents/*.md and writes a
-            # flat string list to <cr_dir>/available_reviewers.json. The
-            # stage is conceptually independent of coverage resolution
-            # (it doesn't read coverage_plan_initial.json), but it slots
-            # between stage_14 and stage_15 so the data dependency is
-            # explicit: stage_15 coverage-critic-prepare reads the
-            # roster. An empty .claude/agents/ (no project agents) or
-            # missing directory produces an empty roster — stage_15
-            # then falls back to the Phase 4 no-roster skipped semantics.
-            "id": "stage_14a_load_available_reviewers",
-            "kind": "helper",
-            "subcommand": "load-available-reviewers",
-            "args": [
-                "--cr-dir", cr_dir,
-                # No --agents-dir override: defaults to .claude/agents
-                # (DEFAULT_AGENTS_DIR), the standard repository-local
-                # location. Multi-repo layouts that need a different
-                # path can override here in a future change.
-            ],
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/available_reviewers.json"],
-            # No data dependency on prior stages — the roster is
-            # statically derived from .claude/agents/. The depends_on
-            # is empty so the walker doesn't gate on stages whose
-            # outputs we don't read.
-            "depends_on": [],
-            # An empty roster is a valid outcome (no project agents);
-            # only a write failure on available_reviewers.json is
-            # non-fatal and the critic's no-roster fallback still
-            # produces a usable plan.
-            "on_failure": "continue_with_coverage_gap",
-            "enabled": True,  # PLN-725 Phase 5
-        },
-        {
-            # PLN-725 Phase 3 shipped a two-step prep/consolidate flow
-            # rather than a single ``coverage-critic`` subcommand.
-            # Stage 15 represents the prepare half — emits the manifest;
-            # the orchestrator spawns the Sonnet agent; a sibling
-            # stage_15b (added in Phase 4 with the rest of orchestrator
-            # wiring) will run consolidate and write coverage_plan.json.
-            "id": "stage_15_coverage_critic",
-            "kind": "helper",
-            "subcommand": "coverage-critic-prepare",
-            "args": [
-                "--cr-dir", cr_dir,
-                "--coverage-plan-initial", f"{cr_dir}/coverage_plan_initial.json",
-                "--diff-data", f"{cr_dir}/diff_data.json",
-                "--available-reviewers", f"{cr_dir}/available_reviewers.json",
-                "--extract-signals", f"{cr_dir}/extract_signals.json",
-                # PLN-725 Phase 5 fix: see stage_11 above. Same
-                # cache-key + cache-namespace bugs would fire here
-                # otherwise.
-                "--diff-tip", "<DIFF_TIP>",
-                "--cache-dir", "<CACHE_DIR>",
-            ],
-            "stdout": f"{cr_dir}/coverage_critic_manifest.json",
-            # Phase 3 prepare emits only the manifest. The final
-            # coverage_plan.json is written by stage_15b (consolidate),
-            # which runs AFTER the orchestrator's PLN-725 agent-dispatch
-            # step has produced pln725_coverage_critic.json. On cache_hit
-            # or skipped manifest, prepare already wrote
-            # coverage_plan.json and stage_15b no-ops.
-            "expected_outputs": [f"{cr_dir}/coverage_critic_manifest.json"],
-            # PLN-725 Phase 5: also depends on the roster loader. Both
-            # coverage_plan_initial.json (stage_14) AND
-            # available_reviewers.json (stage_14a) are inputs the
-            # critic reads, and listing only stage_14 here would let
-            # stage_15 run before the roster lands on disk if a future
-            # walker change ever reorders the array.
-            "depends_on": [
-                "stage_14_resolve_coverage",
-                "stage_14a_load_available_reviewers",
-            ],
-            "on_failure": "continue",
-            "enabled": True,  # PLN-725 Phase 4
-        },
-        {
-            # PLN-725 Phase 4 sibling: consume pln725_coverage_critic.json
-            # (written by the orchestrator's agent-dispatch step) and
-            # write coverage_plan.json. No-ops on cache_hit/skipped
-            # manifest so the walker drives this unconditionally without
-            # inspecting prepare's status.
-            "id": "stage_15b_coverage_critic_consolidate",
-            "kind": "helper",
-            "subcommand": "coverage-critic-consolidate",
-            "args": [
-                "--cr-dir", cr_dir,
-                "--coverage-plan-initial", f"{cr_dir}/coverage_plan_initial.json",
-                "--agent-output", f"{cr_dir}/pln725_coverage_critic.json",
-                "--available-reviewers", f"{cr_dir}/available_reviewers.json",
-                "--manifest", f"{cr_dir}/coverage_critic_manifest.json",
-                "--cache-dir", "<CACHE_DIR>",
-            ],
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/coverage_plan.json"],
-            "depends_on": ["stage_15_coverage_critic"],
-            # Fail-closed semantics already live inside the cmd; a
-            # consolidate failure produces the initial plan as final
-            # plus a coverage-critic-failed finding. Continue rather
-            # than abort.
-            "on_failure": "continue",
-            "enabled": True,  # PLN-725 Phase 4
-        },
-        {
-            # PLN-725 Phase 6: deterministic post-LLM verifier. Reads
-            # coverage_plan.json (final), coverage_plan_initial.json
-            # (pre-critic), and available_reviewers.json (roster).
-            # Validates the closed-vocabulary, additive-only, best-
-            # effort-only-critic, evidence-required, 5-cap, and no-
-            # duplicates contracts. Writes coverage_verify.json with
-            # verdict PASS|BLOCKING and per-check violations; on
-            # BLOCKING also emits a HIGH system finding so the run
-            # summary surfaces the failure.
-            #
-            # Phase 6 rollout: observational only. exit 0 on PASS AND
-            # BLOCKING; on_failure: continue. Phase 7 will gate
-            # stage_16/stage_20 on a PASS verdict by reading
-            # coverage_verify.json from those downstream stages —
-            # NOT by changing the verifier's exit code.
-            "id": "stage_15c_verify_coverage",
-            "kind": "helper",
-            "subcommand": "verify-coverage",
-            "args": [
-                "--cr-dir", cr_dir,
-                "--coverage-plan", f"{cr_dir}/coverage_plan.json",
-                "--coverage-plan-initial", f"{cr_dir}/coverage_plan_initial.json",
-                "--available-reviewers", f"{cr_dir}/available_reviewers.json",
-            ],
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/coverage_verify.json"],
-            "depends_on": ["stage_15b_coverage_critic_consolidate"],
-            "on_failure": "continue",
-            "enabled": True,  # PLN-725 Phase 6
-        },
-        {
-            "id": "stage_16_arbitrate_budget",
-            "kind": "helper",
-            "subcommand": "arbitrate-budget",
-            "args": [
-                # Input is the post-consolidate, post-verify coverage_plan.
-                # stage_15b writes coverage_plan.json with critic_status +
-                # best_effort additions; stage_15c writes coverage_verify.
-                # json with verdict + violations but does NOT mutate
-                # coverage_plan.json. So this stage reads the same file
-                # the verifier read — guaranteeing the gate and the
-                # arbitration see the same plan.
-                "--coverage-plan", f"{cr_dir}/coverage_plan.json",
-                "--diff-data", f"{cr_dir}/diff_data.json",
-                "--output", f"{cr_dir}/coverage_plan.json",
-                # PLN-725 Phase 7: BLOCKING gate from stage_15c. Absent
-                # file = PASS (verifier didn't run, upstream aborted).
-                "--coverage-verify", f"{cr_dir}/coverage_verify.json",
-            ],
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/coverage_plan.json", f"{cr_dir}/coverage_gaps.json"],
-            # PLN-725 Phase 6 depends_on rewire: stage_15c is the last
-            # stage to read coverage_plan.json before stage_16. The
-            # dependency on stage_15c guarantees coverage_verify.json
-            # exists before arbitrate-budget consults the verdict.
-            "depends_on": ["stage_15c_verify_coverage"],
-            # PLN-725 Phase 7 enabled. on_failure stays at "abort" —
-            # arbitrate-budget has been ready since v2.16.x; flipping
-            # it on means a real failure here is a pipeline halt, not
-            # a coverage-gap degradation. The BLOCKING gate is the
-            # graceful path: input plan flows through, exit 0, no
-            # abort. spawn_reviewers (stage_20) still uses the static
-            # spec table in start.md — the coverage_plan.json →
-            # orchestrator rewire is Phase 8.
-            "on_failure": "abort",
-            "enabled": True,
-        },
-        {
-            "id": "stage_18_compute_hashes",
-            "kind": "helper",
-            "subcommand": "compute-hashes",
-            "args": [
-                "--shared-prompt", f"{cr_dir}/shared_prompt.txt",
-                "--bha-suffix", f"{cr_dir}/bha_suffix.txt",
-                # PLN-722 v2.8.1: fold the verifier prompt into <PROMPT_HASH>
-                # so verifier prompt edits bust both the BHA cache and the
-                # verifications/ cache. The reviewer feedback on v2.8.0
-                # surfaced that without this arg, `verifier_prompt_hash` in
-                # the verifications/ cache key was sourced from a hash that
-                # didn't actually include the verifier prompt bytes — the
-                # CHANGELOG's "prompt rev invalidates everything globally"
-                # promise was broken.
-                "--verifier-prompt", f"{cr_dir}/verifier_prompt.txt",
-                # PLN-721: fold the premise prompt into <PROMPT_HASH>
-                # on the same contract as the verifier prompt — editing
-                # premise_prompt.txt busts both the BHA cache and the
-                # verifications/ cache.
-                "--premise-prompt", f"{cr_dir}/premise_prompt.txt",
-                "--diff-tip", "<DIFF_TIP>",
-                "--base-ref", "<BASE_REF>",
-            ],
-            "stdout": f"{cr_dir}/hashes.json",
-            "expected_outputs": [f"{cr_dir}/hashes.json"],
-            # Real deps: prep_assets writes shared_prompt + bha_suffix;
-            # resolve-scope produces diff-tip + base-ref (substituted via
-            # tokens at walker dispatch). compute-hashes does NOT consume
-            # partition output despite the original plan listing
-            # stage_17_partition here — that dep was spurious and was
-            # removed to unblock partition's reordering past cache-check.
-            "depends_on": ["stage_02_prep_assets", "stage_03_resolve_scope"],
-            "on_failure": "abort",
-            "enabled": True,
-        },
-        {
-            "id": "stage_19_cache_check",
-            "kind": "helper",
-            "subcommand": "cache-check",
-            "args": [
-                "--cache-dir", "<CACHE_DIR>",
-                "--diff-data", f"{cr_dir}/diff_data.json",
-                "--prompt-hash", "<PROMPT_HASH>",
-                "--model-id", "<MODEL_ID>",
-                "--schema-version", str(SCHEMA_VERSION),
-                "--output-dir", cr_dir,
-                "--global-cache", "<GLOBAL_CACHE>",
-                "--context-key", "<CONTEXT_KEY>",
-            ],
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/cache_result.json"],
-            "depends_on": ["stage_18_compute_hashes", "stage_04_finalize_cache"],
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        # stage_17_partition is positioned here (after cache-check) so
-        # Gate B's runtime route invocation can supply --max-bha-agents
-        # before partition runs. The stage id retains its _17_ prefix as
-        # a stable label; execution order follows array position, not the
-        # numeric suffix.
-        {
-            "id": "stage_17_partition",
-            "kind": "helper",
-            "subcommand": "partition",
-            "args": [
-                "--diff-data", f"{cr_dir}/diff_data.json",
-                "--diff-scope", "<DIFF_SCOPE>",
-                "--cr-dir", cr_dir,
-            ],
-            "stdout": f"{cr_dir}/partitions.json",
-            # PLN-719 Phase 5: partition is the canonical producer of
-            # patches_p<N>.txt (previously emitted by extract-patches). The
-            # exact count is determined at runtime, so the glob pattern is
-            # an expected output template.
-            "expected_outputs": [
-                f"{cr_dir}/partitions.json",
-                f"{cr_dir}/patches_p<N>.txt",
-            ],
-            # Real data dep is diff_data.json (stage_05_parse_diff);
-            # stage_19_cache_check is also a positional prerequisite
-            # because Gate B's route invocation runs between them.
-            "depends_on": ["stage_05_parse_diff", "stage_19_cache_check"],
-            "on_failure": "abort",
-            "enabled": True,
-        },
-        {
-            # PLN-725 Phase 8: deterministic translation of the post-
-            # arbitrate coverage_plan.json into a flat spawn_spec.json
-            # the stage_20 orchestrator consumes. Before this stage,
-            # stage_20 walked a static reviewer table baked into
-            # start.md and the coverage plan was effectively ignored at
-            # spawn time. The fast-path route, BLOCKING-verify
-            # gated_by_verify flag, and bucket-aware required vs.
-            # best-effort distinctions all propagate through this spec.
-            # on_failure: continue so a derive bug never blocks review —
-            # the orchestrator falls back to the static table when
-            # spawn_spec.json is missing or marks arbitrate_status:
-            # "fallback". depends_on includes stage_17_partition (for
-            # partitions.json) and stage_16_arbitrate_budget (for the
-            # final coverage_plan.json + gated_by_verify flag).
-            "id": "stage_19b_derive_spawn_spec",
-            "kind": "helper",
-            "subcommand": "derive-spawn-spec",
-            "args": [
-                "--cr-dir", cr_dir,
-                "--coverage-plan", f"{cr_dir}/coverage_plan.json",
-                "--partitions", f"{cr_dir}/partitions.json",
-                "--route", f"{cr_dir}/route.json",
-            ],
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/spawn_spec.json"],
-            # PLN-725 Phase 8 (v2.22.3): stage_17_partition is NOT a
-            # hard dep. Gate B's fast-path branch skips stage_17
-            # entirely and drives a single fast-path reviewer in
-            # stage_20 — listing stage_17 as a hard dep would block
-            # stage_19b (and therefore stage_20's spec-driven dispatch)
-            # exactly when the fast descriptor is needed. The cmd
-            # handles missing partitions.json internally: fast_path:
-            # true emits the fast descriptor without reading
-            # partitions; non-fast-path with missing/malformed
-            # partitions.json emits a fallback sentinel
-            # ("partitions_missing_or_malformed") so the orchestrator
-            # walks the static reviewer table.
-            "depends_on": ["stage_16_arbitrate_budget"],
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        {
-            "id": "stage_20_spawn_reviewers",
-            "kind": "agent_fleet",
-            "agent_specs": [],  # populated by orchestrator from spawn_spec.json
-            # Only agent_*.json is produced here; partitions.json is an INPUT
-            # (produced by stage_17_partition) and belongs in depends_on, not
-            # expected_outputs. Including it here would mask total-agent-failure
-            # via the walker's "at-least-one-exists" check, since partitions.json
-            # already exists from the prior stage.
-            "expected_outputs": [f"{cr_dir}/agent_*.json"],
-            # PLN-725 Phase 8 depends_on rewire: stage_19b is the
-            # canonical spawn-spec producer. stage_17_partition is
-            # retained transitively via stage_19b for the partitions
-            # input but kept here as well so an explicit "partitions
-            # exists before spawn" check stays visible to the walker.
-            "depends_on": [
-                "stage_17_partition",
-                "stage_19b_derive_spawn_spec",
-            ],
-            "on_failure": "continue_with_coverage_gap",
-            "enabled": True,
-        },
-        {
-            # PLN-725 Phase 8 (v2.22.3): runtime symmetric pair to
-            # stage_19b. Reads spawn_spec.json + globs agent_*.json
-            # and appends coverage-gap findings for every required
-            # agent_id from the spec that has no corresponding output
-            # file on disk. Closes the runtime side of the spawn-spec
-            # contract: derive-spawn-spec catches required reviewers
-            # the spec couldn't describe; verify-spawn catches
-            # required agents that crashed at runtime. Together the
-            # two stages make the "required reviewer missing" failure
-            # mode observable in the run summary instead of silently
-            # dropping coverage. on_failure: continue so a
-            # verification bug never blocks review; the worst case
-            # is missing telemetry, not a halted pipeline.
-            "id": "stage_20b_verify_spawn",
-            "kind": "helper",
-            "subcommand": "verify-spawn",
-            "args": ["--cr-dir", cr_dir],
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/spawn_verification.json"],
-            "depends_on": [
-                "stage_19b_derive_spawn_spec",
-                "stage_20_spawn_reviewers",
-            ],
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        {
-            "id": "stage_21_collect_findings",
-            "kind": "helper",
-            "subcommand": "collect-findings",
-            "args": [
-                "--cr-dir", cr_dir,
-                "--hygiene", f"{cr_dir}/hygiene.json",
-            ],
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/findings.json"],
-            # PLN-725 Phase 8 (v2.22.3): stage_20b_verify_spawn must
-            # run before stage_21 so its missing-required-agent
-            # coverage gaps land in coverage_gaps.json in time for
-            # finalize-result to pick them up.
-            "depends_on": [
-                "stage_20_spawn_reviewers",
-                "stage_20b_verify_spawn",
-            ],
-            "on_failure": "abort",
-            "enabled": True,
-        },
-        {
-            "id": "stage_22_validate",
-            "kind": "helper",
-            "subcommand": "validate",
-            "args": [
-                "--findings", f"{cr_dir}/findings.json",
-                "--diff-data", f"{cr_dir}/diff_data.json",
-            ],
-            "stdout": f"{cr_dir}/findings_validated.json",
-            "expected_outputs": [f"{cr_dir}/findings_validated.json"],
-            "depends_on": ["stage_21_collect_findings"],
-            "on_failure": "abort",
-            "enabled": True,
-        },
-        {
-            # PLN-722 wrapper around the verifier fleet — tier-selects
-            # eligible findings ("What gets verified" table in the plan),
-            # ranks by severity_weight × confidence, writes per-finding
-            # input files plus verify_manifest.json that the Verifier Fleet
-            # walker section reads to know which finding_ids to spawn.
-            "id": "stage_22b_verify_prepare",
-            "kind": "helper",
-            "subcommand": "verify-prepare",
-            "args": [
-                "--cr-dir", cr_dir,
-                "--findings", f"{cr_dir}/findings_validated.json",
-                "--cache-dir", "<CACHE_DIR>",
-                "--prompt-hash", "<PROMPT_HASH>",
-            ],
-            "stdout": f"{cr_dir}/verify_manifest.json",
-            "expected_outputs": [f"{cr_dir}/verify_manifest.json"],
-            "depends_on": ["stage_22_validate"],
-            # If verify-prepare fails the verifier doesn't run, but
-            # verify-consolidate degrades to "everything verified[]" and
-            # finalize-result still produces a usable envelope. Continue
-            # rather than abort so a verifier infrastructure bug never
-            # kills a review.
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        {
-            "id": "stage_23_verify_findings",
-            "kind": "agent_fleet",
-            "agent_specs": [],  # populated per-finding by orchestrator from verify_manifest.json
-            # The fleet emits agent_verifier_<finding_id>.json per finding;
-            # findings_verified.json (the bucket-split envelope-input) is
-            # produced by stage_24a_verify_consolidate, not here.
-            "expected_outputs": [f"{cr_dir}/agent_verifier_*.json"],
-            "depends_on": ["stage_22b_verify_prepare"],
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        {
-            # PLN-722 wrapper that merges the per-finding verifier outputs
-            # back into the validated set, applies sensitive-path escalation
-            # from verification-gates.json, and writes the bucket-split
-            # envelope-input that stage_25_finalize_result reads.
-            "id": "stage_24a_verify_consolidate",
-            "kind": "helper",
-            "subcommand": "verify-consolidate",
-            "args": [
-                "--cr-dir", cr_dir,
-                "--validated", f"{cr_dir}/findings_validated.json",
-                "--manifest", f"{cr_dir}/verify_manifest.json",
-                "--cache-dir", "<CACHE_DIR>",
-                "--prompt-hash", "<PROMPT_HASH>",
-            ],
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/findings_verified.json"],
-            "depends_on": ["stage_23_verify_findings"],
-            # Missing fleet outputs degrade to "pending_verification[] for
-            # the missing ids"; finalize-result handles either bucket
-            # shape, so continue rather than abort.
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        # Note: PLN-725 Phase 6 (v2.19.0) shipped the coverage verifier as
-        # stage_15c_verify_coverage immediately after stage_15b_coverage_
-        # critic_consolidate — that's where coverage_plan.json is born, so
-        # verification belongs there, not after the findings verifier (which
-        # is a completely orthogonal pipeline). The legacy stage_24_verify_
-        # coverage placeholder that originally lived at this position was
-        # removed when stage_15c shipped.
-        {
-            "id": "stage_25_finalize_result",
-            "kind": "helper",
-            "subcommand": "finalize-result",
-            "args": [
-                "--cr-dir", cr_dir,
-                "--validate-output", f"{cr_dir}/findings_validated.json",
-                "--mode", mode,
-                "--diff-tip", "<DIFF_TIP>",
-                *pr_flag,
-            ],
-            "stdout": None,
-            "expected_outputs": [f"{cr_dir}/review_result.json"],
-            "depends_on": ["stage_24a_verify_consolidate"],
-            # `cmd_finalize_result` writes review_result.json BEFORE running
-            # schema validation (see code_review_helpers.py:cmd_finalize_result),
-            # so a non-zero exit signals validation errors to the operator
-            # without preventing stage_28_verdict from reading a structurally
-            # complete envelope. Use "continue" so reviewer-emitted category
-            # drift (e.g. "Documentation" before we added it to CATEGORIES)
-            # doesn't kill the pipeline; the stderr signal is preserved.
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        {
-            "id": "stage_26_cache_update",
-            "kind": "helper",
-            "subcommand": "cache-update",
-            "args": [
-                "--cache-dir", "<CACHE_DIR>",
-                "--diff-data", f"{cr_dir}/diff_data.json",
-                "--bha-dir", cr_dir,
-                "--prompt-hash", "<PROMPT_HASH>",
-                "--model-id", "<MODEL_ID>",
-                "--schema-version", str(SCHEMA_VERSION),
-                "--partitions-file", f"{cr_dir}/partitions.json",
-                "--global-cache", "<GLOBAL_CACHE>",
-                "--context-key", "<CONTEXT_KEY>",
-            ],
-            "stdout": None,
-            "expected_outputs": [],
-            "depends_on": ["stage_25_finalize_result"],
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        {
-            "id": "stage_27_review_state_write",
-            "kind": "helper",
-            "subcommand": "review-state-write",
-            "args": [
-                "--cache-dir", "<CACHE_DIR>",
-                "--key", "<STATE_KEY>",
-                "--ref", "<DIFF_TIP>",
-            ],
-            "stdout": None,
-            "expected_outputs": [],
-            "depends_on": ["stage_25_finalize_result"],
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        {
-            "id": "stage_28_verdict",
-            "kind": "helper",
-            "subcommand": "verdict",
-            "args": [
-                "--review-result", f"{cr_dir}/review_result.json",
-                "--validate-output", f"{cr_dir}/findings_validated.json",
-            ],
-            "stdout": f"{cr_dir}/verdict.json",
-            "expected_outputs": [f"{cr_dir}/verdict.json"],
-            "depends_on": ["stage_25_finalize_result"],
-            "on_failure": "abort",
-            "enabled": True,
-        },
-        {
-            "id": "stage_29_present",
-            "kind": "present",
-            "subcommand": None,
-            "args": [],
-            "stdout": None,
-            "expected_outputs": [],
-            "depends_on": ["stage_28_verdict"],
-            "on_failure": "continue",
-            "enabled": True,
-        },
-        {
-            "id": "stage_30_footer",
-            "kind": "helper",
-            "subcommand": "footer",
-            "args": [
-                "--start-time", "<START_TIME>",
-                "--cache-result", f"{cr_dir}/cache_result.json",
-                "--cr-dir", cr_dir,
-            ],
-            # cmd_footer writes its JSON payload ({"footer_line": "..."}) to
-            # stdout. The per-stage prose in start.md tells the walker to read
-            # <CR_DIR>/footer.json, so the plan must redirect stdout to that
-            # file. Leaving this as None caused the walker to read a missing
-            # file and conflate that with helper non-zero exit.
-            "stdout": f"{cr_dir}/footer.json",
-            "expected_outputs": [f"{cr_dir}/footer.json"],
-            "depends_on": ["stage_29_present"],
-            "on_failure": "continue",
-            "enabled": True,
-        },
-    ]
+    def resolve_args(template_args: list[str]) -> list[str]:
+        out: list[str] = []
+        for arg in template_args:
+            if arg == "@pr_flag":
+                out.extend(pr_flag)
+            else:
+                out.append(arg.format(**ctx))
+        return out
+
+    out_stages: list[dict[str, Any]] = []
+    for template in _load_stages_config()["stages"]:
+        stage = dict(template)
+        if "args" in stage and isinstance(stage["args"], list):
+            stage["args"] = resolve_args(stage["args"])
+        if "expected_outputs" in stage and isinstance(stage["expected_outputs"], list):
+            stage["expected_outputs"] = [p.format(**ctx) for p in stage["expected_outputs"]]
+        if isinstance(stage.get("stdout"), str):
+            stage["stdout"] = stage["stdout"].format(**ctx)
+        out_stages.append(stage)
+    return out_stages
 
 
 def _build_validation_gates(cr_dir: str) -> list[dict[str, Any]]:
@@ -12427,710 +11609,97 @@ def cmd_extract_patches(args: argparse.Namespace) -> int:
 # Main
 # ---------------------------------------------------------------------------
 
+# CLI config: declarative subparser/argument definitions live in config/cli.json.
+# The loader below resolves $$NAME references to imported constants/computed
+# choices and routes args into mutually-exclusive groups where declared.
+_CLI_CONFIG_PATH = Path(__file__).parent / "config" / "cli.json"
+
+_CLI_TYPE_MAP: dict[str, type] = {"int": int, "float": float, "str": str}
+
+
+@functools.lru_cache(maxsize=1)
+def _load_cli_config() -> dict[str, Any]:
+    return json.loads(_CLI_CONFIG_PATH.read_text())
+
+
+def _resolve_cli_constant(name: str) -> Any:
+    """Resolve a $$NAME reference from cli.json to its runtime value.
+
+    Centralizing the map here means constant edits at the import site propagate
+    without touching cli.json. Adding a new constant slot requires both an
+    entry here and a matching ``"$$NAME"`` reference in cli.json.
+    """
+    if name == "DEFAULT_MAX_BHA_AGENTS":
+        return DEFAULT_MAX_BHA_AGENTS
+    if name == "SIGNAL_EXTRACTION_MODEL_DEFAULT":
+        return SIGNAL_EXTRACTION_MODEL_DEFAULT
+    if name == "COVERAGE_CRITIC_MODEL_DEFAULT":
+        return COVERAGE_CRITIC_MODEL_DEFAULT
+    if name == "BUDGET_TOTAL_CAP_DEFAULT":
+        return BUDGET_TOTAL_CAP_DEFAULT
+    if name == "CACHE_GC_TTL_DAYS_DEFAULT":
+        return CACHE_GC_TTL_DAYS_DEFAULT
+    if name == "CACHE_GC_MAX_PER_FILE_DEFAULT":
+        return CACHE_GC_MAX_PER_FILE_DEFAULT
+    if name == "_EXTRACT_PATCHES_BATCH_SIZE":
+        return _EXTRACT_PATCHES_BATCH_SIZE
+    if name == "COVERAGE_SCOPES_SORTED":
+        return sorted(COVERAGE_SCOPES)
+    raise KeyError(f"unknown CLI constant reference: ${{{name}}}")
+
+
+def _resolve_cli_value(val: Any) -> Any:
+    if isinstance(val, str) and val.startswith("$$"):
+        return _resolve_cli_constant(val[2:])
+    return val
+
+
 def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
-    """Register all subcommands."""
-    # parse-diff
-    p_diff = subparsers.add_parser("parse-diff", help="Parse git diff into structured JSON")
-    p_diff.add_argument("--scope", required=True, help='Git diff scope (e.g. "main...HEAD", "--cached")')
-    p_diff.add_argument("--workdir", default=None, help="Git working directory")
-    p_diff.add_argument("--no-patch-lines", action="store_true", help="Omit patch_lines from output")
-    p_diff.set_defaults(func=cmd_parse_diff)
+    """Register all subcommands by loading config/cli.json.
 
-    # hygiene
-    p_hyg = subparsers.add_parser("hygiene", help="Run deterministic hygiene checks")
-    p_hyg.add_argument("--diff-data", default=None, help="Path to diff_data.json (reads stdin if omitted)")
-    p_hyg.add_argument("--workdir", default=None, help="Git working directory for check-ignore")
-    p_hyg.set_defaults(func=cmd_hygiene)
+    Per-subparser entries declare flags, types, defaults, choices, action,
+    help text, and the cmd_* callable name resolved against this module's
+    globals. Computed defaults and computed choices that come from imported
+    constants (DEFAULT_MAX_BHA_AGENTS, sorted(COVERAGE_SCOPES), etc.) are
+    encoded in cli.json as ``"$$NAME"`` strings and resolved via
+    _resolve_cli_constant below — so a constant value change at the import
+    site propagates everywhere without editing cli.json.
 
-    # partition
-    p_part = subparsers.add_parser("partition", help="Bin-pack files into partitions")
-    p_part.add_argument("--diff-data", default=None, help="Path to diff_data.json (reads stdin if omitted)")
-    p_part.add_argument("--loc-budget", type=int, default=400, help="LOC budget per partition")
-    p_part.add_argument("--max-files", type=int, default=20, help="Max files per partition")
-    p_part.add_argument("--max-bha-agents", type=int, default=DEFAULT_MAX_BHA_AGENTS, help="Max BHA agent partitions (cap enforcement)")
-    # PLN-719 Phase 5: partition is the canonical producer of patches_p<N>.txt.
-    # When both --diff-scope and --cr-dir are supplied, partition writes them
-    # alongside partitions.json. Optional for backward compat with callers
-    # that only want the partition assignment.
-    p_part.add_argument("--diff-scope", default=None, help="Git diff scope for per-partition patch generation")
-    p_part.add_argument("--cr-dir", default=None, help="Directory to write patches_p<N>.txt into")
-    p_part.add_argument("--workdir", default=None, help="Git working directory")
-    p_part.set_defaults(func=cmd_partition)
-
-    # route
-    p_route = subparsers.add_parser("route", help="Compute risk scores and model routing")
-    p_route.add_argument("--diff-data", default=None, help="Path to diff_data.json (reads stdin if omitted)")
-    p_route.add_argument("--critic-gates", default=None, help="Path to critic-gates.json")
-    p_route.add_argument("--intent", default="mixed", choices=["feature", "fix", "refactor", "mixed"],
-                         help="PR intent classification (from classify-intent)")
-    p_route.set_defaults(func=cmd_route)
-
-    # validate
-    p_val = subparsers.add_parser("validate", help="Normalize, filter, and deduplicate findings")
-    p_val.add_argument("--findings", required=True, help="Path to findings JSON file")
-    p_val.add_argument("--diff-data", required=True, help="Path to diff data JSON file")
-    # v2.21.0: settings override for the out-of-hunk confidence floor.
-    # Defaults to .closedloop-ai/settings/code-review.json relative to cwd.
-    p_val.add_argument(
-        "--settings", default=None,
-        help=(
-            "Path to code-review.json (operator-tunable settings; defaults "
-            "to .closedloop-ai/settings/code-review.json). Used to load "
-            "out_of_hunk_confidence_floor."
-        ),
-    )
-    p_val.set_defaults(func=cmd_validate)
-
-    # verify-prepare (PLN-722)
-    p_vp = subparsers.add_parser(
-        "verify-prepare",
-        help="Tier-select findings for verification and emit per-finding inputs",
-    )
-    p_vp.add_argument("--cr-dir", required=True, help="CR_DIR path")
-    p_vp.add_argument(
-        "--findings", required=True,
-        help="Path to findings_validated.json (or any {validated|findings: [...]} JSON)",
-    )
-    p_vp.add_argument(
-        "--cache-dir", default=None,
-        help="Optional cache directory; when set, fresh (finding_id, snippet_hash, "
-        "model, prompt_hash) tuples are served from the verifications/ namespace.",
-    )
-    p_vp.add_argument(
-        "--prompt-hash", default="",
-        help="Verifier prompt hash; part of the cache key so prompt revs invalidate cache.",
-    )
-    # PLN-773 Phase 4: --no-verify emergency-bypass. Every finding lands
-    # in skipped_no_verification[]; consolidate routes them to verified[]
-    # with verifier_verdict=None. Requires --no-verify-reason for audit.
-    p_vp.add_argument(
-        "--no-verify", action="store_true",
-        help="PLN-773: emergency bypass — skip verification entirely. "
-             "Every eligible finding is treated as skipped_no_verification. "
-             "Requires --no-verify-reason.",
-    )
-    p_vp.add_argument(
-        "--no-verify-reason", default="",
-        help="PLN-773: reason for --no-verify, recorded in the manifest and "
-             "echoed in the operator-facing footer audit banner.",
-    )
-    p_vp.set_defaults(func=cmd_verify_prepare)
-
-    # verify-consolidate (PLN-722)
-    p_vc = subparsers.add_parser(
-        "verify-consolidate",
-        help="Merge verifier outputs with validated set + bucket-split (verified/rejected/pending)",
-    )
-    p_vc.add_argument("--cr-dir", required=True, help="CR_DIR path")
-    p_vc.add_argument(
-        "--validated", required=True,
-        help="Path to findings_validated.json",
-    )
-    p_vc.add_argument(
-        "--manifest", default=None,
-        help="Path to verify_manifest.json (defaults to <cr-dir>/verify_manifest.json)",
-    )
-    p_vc.add_argument(
-        "--gates", default=None,
-        help="Path to verification-gates.json (defaults to .closedloop-ai/settings/verification-gates.json)",
-    )
-    p_vc.add_argument(
-        "--cache-dir", default=None,
-        help="Optional cache directory; fresh verifier outputs are written back here.",
-    )
-    p_vc.add_argument(
-        "--prompt-hash", default="",
-        help="Verifier prompt hash for cache write-back keys.",
-    )
-    p_vc.set_defaults(func=cmd_verify_consolidate)
-
-    # extract-signals-prepare (PLN-725 Stage 1a)
-    p_esp = subparsers.add_parser(
-        "extract-signals-prepare",
-        help="Prepare signal-extraction agent input; serve from signals/ cache on hit.",
-    )
-    p_esp.add_argument("--cr-dir", required=True, help="CR_DIR path")
-    p_esp.add_argument("--diff-data", required=True, help="Path to diff_data.json")
-    p_esp.add_argument("--diff-tip", required=True, help="Diff tip SHA for cache key")
-    p_esp.add_argument(
-        "--prompt-hash", default="",
-        help="Canonical prompt hash for the signals/ namespace cache key.",
-    )
-    p_esp.add_argument(
-        "--cache-dir", default=None,
-        help="Optional cache directory; fresh (diff_tip, taxonomy_hash, prompt_hash) "
-        "tuples are served from the signals/ namespace.",
-    )
-    p_esp.add_argument(
-        "--taxonomy", default=None,
-        help="Path to signal_taxonomy.json (defaults to module-relative asset).",
-    )
-    p_esp.add_argument(
-        "--prompt", default=None,
-        help="Path to signal_extraction_prompt.txt (defaults to module-relative asset).",
-    )
-    p_esp.add_argument(
-        "--intent", default=None,
-        help="Optional intent context JSON (treated as untrusted hint in the agent input).",
-    )
-    p_esp.add_argument(
-        "--model", default=SIGNAL_EXTRACTION_MODEL_DEFAULT,
-        help="Model label recorded in the manifest (the orchestrator picks the actual agent).",
-    )
-    p_esp.set_defaults(func=cmd_extract_signals_prepare)
-
-    # extract-signals-consolidate (PLN-725 Stage 1b)
-    p_esc = subparsers.add_parser(
-        "extract-signals-consolidate",
-        help="Validate agent signal output; write extract_signals.json + cache on success.",
-    )
-    p_esc.add_argument("--cr-dir", required=True, help="CR_DIR path")
-    p_esc.add_argument(
-        "--agent-output", required=True,
-        help="Path to the agent's signal-extraction output JSON.",
-    )
-    p_esc.add_argument(
-        "--manifest", default=None,
-        help="Path to extract_signals_manifest.json (defaults to <cr-dir>/extract_signals_manifest.json).",
-    )
-    p_esc.add_argument(
-        "--taxonomy", default=None,
-        help="Path to signal_taxonomy.json (defaults to module-relative asset).",
-    )
-    p_esc.add_argument(
-        "--cache-dir", default=None,
-        help="Optional cache directory; successful extractions write back to signals/.",
-    )
-    p_esc.set_defaults(func=cmd_extract_signals_consolidate)
-
-    # resolve-coverage (PLN-725 Stage 2)
-    p_rc = subparsers.add_parser(
-        "resolve-coverage",
-        help="Deterministic resolver: critic-gates + diff + signals -> coverage_plan_initial.json",
-    )
-    p_rc.add_argument("--cr-dir", required=True, help="CR_DIR path")
-    p_rc.add_argument(
-        "--diff-data", required=True, help="Path to diff_data.json",
-    )
-    p_rc.add_argument(
-        "--critic-gates", default=None,
-        help="Path to critic-gates.json (defaults to empty manifest when absent)",
-    )
-    p_rc.add_argument(
-        "--extract-signals", default=None,
-        help="Path to extract_signals.json (optional; absent → signal triggers cannot fire)",
-    )
-    p_rc.add_argument(
-        "--scope", default="code-review",
-        choices=sorted(COVERAGE_SCOPES),
-        help="Rule scope filter (default: code-review)",
-    )
-    p_rc.set_defaults(func=cmd_resolve_coverage)
-
-    # load-available-reviewers (PLN-725 Phase 5)
-    p_lar = subparsers.add_parser(
-        "load-available-reviewers",
-        help="Scan .claude/agents/*.md -> available_reviewers.json (the AVAILABLE roster the critic enforces against)",
-    )
-    p_lar.add_argument("--cr-dir", required=True, help="CR_DIR path")
-    p_lar.add_argument(
-        "--agents-dir", default=None,
-        help="Directory of *.md agent definitions (default: .claude/agents)",
-    )
-    p_lar.set_defaults(func=cmd_load_available_reviewers)
-
-    # migrate-critic-gates (PLN-725 Phase 2)
-    p_mcg = subparsers.add_parser(
-        "migrate-critic-gates",
-        help="One-time rewriter: legacy moduleCritics[] -> canonical coverage[]",
-    )
-    p_mcg.add_argument(
-        "--input", required=True,
-        help="Path to legacy critic-gates.json",
-    )
-    # PR #124 review (domain_0_f1): --in-place and --output are mutually
-    # exclusive destinations for the rewrite. --dry-run is orthogonal
-    # (no destination needed) so it stays a sibling flag; the command
-    # body still resolves precedence (dry_run wins).
-    p_mcg_dest = p_mcg.add_mutually_exclusive_group()
-    p_mcg_dest.add_argument(
-        "--output", default=None,
-        help="Output path (write migrated file here)",
-    )
-    p_mcg_dest.add_argument(
-        "--in-place", action="store_true",
-        help="Rewrite --input in place",
-    )
-    p_mcg.add_argument(
-        "--dry-run", action="store_true",
-        help="Print the proposed merged coverage[] to stdout without writing",
-    )
-    p_mcg.set_defaults(func=cmd_migrate_critic_gates)
-
-    # coverage-critic-prepare (PLN-725 Stage 3a)
-    p_ccp = subparsers.add_parser(
-        "coverage-critic-prepare",
-        help="Prepare coverage-critic agent input; serve from coverage_critic/ cache on hit.",
-    )
-    p_ccp.add_argument("--cr-dir", required=True, help="CR_DIR path")
-    p_ccp.add_argument(
-        "--coverage-plan-initial", required=True,
-        help="Path to coverage_plan_initial.json (from resolve-coverage)",
-    )
-    p_ccp.add_argument(
-        "--diff-data", required=True, help="Path to diff_data.json",
-    )
-    p_ccp.add_argument(
-        "--available-reviewers", required=True,
-        help="Path to a JSON file containing the AVAILABLE list "
-        "(flat list or {available: [...]})",
-    )
-    p_ccp.add_argument(
-        "--extract-signals", default=None,
-        help="Path to extract_signals.json (optional but recommended)",
-    )
-    p_ccp.add_argument(
-        "--diff-tip", required=True, help="Diff tip SHA for cache key",
-    )
-    p_ccp.add_argument(
-        "--cache-dir", default=None,
-        help="Optional cache directory; fresh tuples served from coverage_critic/",
-    )
-    p_ccp.add_argument(
-        "--prompt", default=None,
-        help="Path to coverage_critic_prompt.txt (defaults to module-relative asset)",
-    )
-    p_ccp.add_argument(
-        "--model", default=COVERAGE_CRITIC_MODEL_DEFAULT,
-        help="Model label recorded in the manifest",
-    )
-    p_ccp.add_argument(
-        "--no-critic", action="store_true",
-        help="Skip the LLM critic entirely; write coverage_plan_initial as the final plan.",
-    )
-    p_ccp.set_defaults(func=cmd_coverage_critic_prepare)
-
-    # coverage-critic-consolidate (PLN-725 Stage 3b)
-    p_ccc = subparsers.add_parser(
-        "coverage-critic-consolidate",
-        help="Validate agent critic output; merge into coverage_plan.json + cache.",
-    )
-    p_ccc.add_argument("--cr-dir", required=True, help="CR_DIR path")
-    p_ccc.add_argument(
-        "--coverage-plan-initial", required=True,
-        help="Path to coverage_plan_initial.json",
-    )
-    p_ccc.add_argument(
-        "--agent-output", required=True,
-        help="Path to the agent's coverage-critic output JSON",
-    )
-    p_ccc.add_argument(
-        "--available-reviewers", required=True,
-        help="Path to the AVAILABLE list (same file used by --prepare)",
-    )
-    p_ccc.add_argument(
-        "--manifest", default=None,
-        help="Path to coverage_critic_manifest.json (defaults to <cr-dir>/coverage_critic_manifest.json)",
-    )
-    p_ccc.add_argument(
-        "--cache-dir", default=None,
-        help="Optional cache directory; successful runs write back to coverage_critic/",
-    )
-    p_ccc.set_defaults(func=cmd_coverage_critic_consolidate)
-
-    # verify-coverage (PLN-725 Phase 6)
-    p_vc = subparsers.add_parser(
-        "verify-coverage",
-        help=(
-            "Deterministic verifier for coverage_plan.json. Emits "
-            "coverage_verify.json with verdict PASS|BLOCKING and per-check "
-            "violations; emits a HIGH system finding on BLOCKING."
-        ),
-    )
-    p_vc.add_argument("--cr-dir", required=True, help="CR_DIR path")
-    p_vc.add_argument(
-        "--coverage-plan", required=True,
-        help="Path to final coverage_plan.json (post-consolidate)",
-    )
-    p_vc.add_argument(
-        "--coverage-plan-initial", required=True,
-        help="Path to pre-critic coverage_plan_initial.json",
-    )
-    p_vc.add_argument(
-        "--available-reviewers", default=None,
-        help=(
-            "Path to available_reviewers.json (roster). Closed-vocabulary "
-            "check is bypassed when the file is missing or empty."
-        ),
-    )
-    p_vc.add_argument(
-        "--output", default=None,
-        help="Output path (defaults to <cr-dir>/coverage_verify.json)",
-    )
-    p_vc.set_defaults(func=cmd_verify_coverage)
-
-    # re-assert (PLN-773 Phase 4)
-    p_ra = subparsers.add_parser(
-        "re-assert",
-        help="Write operator override files for one or more finding IDs",
-    )
-    p_ra.add_argument("--cr-dir", required=True, help="CR_DIR path")
-    p_ra.add_argument(
-        "--cache-dir", required=True,
-        help="Cache directory where overrides/<finding_id>.json files are written.",
-    )
-    p_ra.add_argument(
-        "--finding-ids", required=True,
-        help="Comma-separated list of finding IDs to re-assert.",
-    )
-    p_ra.add_argument(
-        "--prior-result", default=None,
-        help="Path to prior review_result.json. Defaults to <CR_DIR>/review_result.json.",
-    )
-    p_ra.add_argument(
-        "--reason", default="",
-        help="Optional operator-supplied reason for the re-assertion; "
-             "recorded in the override file and pending-learnings.",
-    )
-    p_ra.add_argument(
-        "--asserted-by", default="operator",
-        help="Identifier of the operator (defaults to 'operator').",
-    )
-    p_ra.set_defaults(func=cmd_re_assert)
-
-    # review-dismissed-prepare (PLN-773 Phase 5)
-    p_rdp = subparsers.add_parser(
-        "review-dismissed-prepare",
-        help="Build a haiku-verifier manifest from prior rejected[] for second-opinion run.",
-    )
-    p_rdp.add_argument("--cr-dir", required=True, help="CR_DIR path")
-    p_rdp.add_argument(
-        "--prior-result", default=None,
-        help="Path to prior review_result.json. Defaults to <CR_DIR>/review_result.json.",
-    )
-    p_rdp.set_defaults(func=cmd_review_dismissed_prepare)
-
-    # review-dismissed-consolidate (PLN-773 Phase 5)
-    p_rdc = subparsers.add_parser(
-        "review-dismissed-consolidate",
-        help="Read haiku verifier outputs; auto-promote non-REJECTED verdicts via overrides.",
-    )
-    p_rdc.add_argument("--cr-dir", required=True, help="CR_DIR path")
-    p_rdc.add_argument(
-        "--cache-dir", required=True,
-        help="Cache directory; auto-promotions write overrides/<finding_id>.json.",
-    )
-    p_rdc.add_argument(
-        "--manifest", default=None,
-        help="Path to review_dismissed_manifest.json (defaults to <CR_DIR>/review_dismissed_manifest.json).",
-    )
-    p_rdc.set_defaults(func=cmd_review_dismissed_consolidate)
-
-    # cache-check
-    p_cc = subparsers.add_parser("cache-check", help="Check BHA cache for previously reviewed files")
-    p_cc.add_argument("--cache-dir", required=True, help="Path to cache directory")
-    p_cc.add_argument("--diff-data", required=True, help="Path to diff_data.json")
-    p_cc.add_argument("--prompt-hash", required=True, help="SHA256 of shared prompt")
-    p_cc.add_argument("--model-id", required=True, help="Model identifier (e.g. opus)")
-    p_cc.add_argument("--schema-version", type=int, required=True, help="Cache schema version")
-    p_cc.add_argument("--output-dir", required=True, help="Directory for output files")
-    p_cc.add_argument("--global-cache", type=int, default=0, help="Enable global V2 cache (0 or 1)")
-    p_cc.add_argument("--context-key", default="", help="Context key (merge-base SHA)")
-    p_cc.set_defaults(func=cmd_cache_check)
-
-    # cache-update
-    p_cu = subparsers.add_parser("cache-update", help="Update BHA cache with new findings")
-    p_cu.add_argument("--cache-dir", required=True, help="Path to cache directory")
-    p_cu.add_argument("--diff-data", required=True, help="Path to diff_data.json")
-    p_cu.add_argument("--bha-dir", required=True, help="Directory containing agent_bha_*.json files")
-    p_cu.add_argument("--prompt-hash", required=True, help="SHA256 of shared prompt")
-    p_cu.add_argument("--model-id", required=True, help="Model identifier (e.g. opus)")
-    p_cu.add_argument("--schema-version", type=int, required=True, help="Cache schema version")
-    p_cu.add_argument("--reviewed-files", nargs="*", default=[], help="Files that were reviewed")
-    p_cu.add_argument("--partitions-file", default=None, help="Path to partitions JSON (extracts reviewed files)")
-    p_cu.add_argument("--global-cache", type=int, default=0, help="Enable global V2 cache (0 or 1)")
-    p_cu.add_argument("--context-key", default="", help="Context key (merge-base SHA)")
-    p_cu.add_argument("--gc-ttl-days", type=int, default=CACHE_GC_TTL_DAYS_DEFAULT, help="GC TTL in days")
-    p_cu.add_argument("--gc-max-per-file", type=int, default=CACHE_GC_MAX_PER_FILE_DEFAULT, help="Max cache entries per file")
-    p_cu.add_argument("--exclude-test-partitions", action="store_true",
-                      help="Skip caching files from is_test_only partitions")
-    p_cu.set_defaults(func=cmd_cache_update)
-
-    # post-comments
-    p_pc = subparsers.add_parser("post-comments", help="Post inline review comments to GitHub PR")
-    p_pc.add_argument("--findings", required=True, help="Path to code-review-findings.json")
-    p_pc.add_argument("--repo", default=None, help="owner/repo (defaults to GITHUB_REPOSITORY env)")
-    p_pc.add_argument("--dry-run", action="store_true", help="Print actions without executing")
-    p_pc.set_defaults(func=cmd_post_comments)
-
-    # resolve-threads
-    p_rt = subparsers.add_parser("resolve-threads", help="Resolve outdated review threads on GitHub PR")
-    p_rt.add_argument("--threads", required=True, help="Path to code-review-threads.json")
-    p_rt.add_argument("--dry-run", action="store_true", help="Print actions without executing")
-    p_rt.set_defaults(func=cmd_resolve_threads)
-
-    # review-state-read
-    p_rsr = subparsers.add_parser("review-state-read", help="Read review state for a branch:base key")
-    p_rsr.add_argument("--cache-dir", required=True, help="Path to cache directory")
-    p_rsr.add_argument("--key", required=True, help="State key (branch:base_ref)")
-    p_rsr.set_defaults(func=cmd_review_state_read)
-
-    # review-state-write
-    p_rsw = subparsers.add_parser("review-state-write", help="Write review state entry")
-    p_rsw.add_argument("--cache-dir", required=True, help="Path to cache directory")
-    p_rsw.add_argument("--key", required=True, help="State key (branch:base_ref)")
-    p_rsw.add_argument("--sha", default=None, help="HEAD SHA at time of review")
-    p_rsw.add_argument("--ref", default=None, help="Git ref to resolve to SHA (alternative to --sha)")
-    p_rsw.set_defaults(func=cmd_review_state_write)
-
-    # session-tokens
-    p_st = subparsers.add_parser("session-tokens", help="Sum token usage from session transcript")
-    p_st.add_argument("--project-dir", default=None, help="Project directory (defaults to cwd)")
-    p_st.add_argument("--start-time", required=True, type=float, help="Epoch seconds when review started")
-    p_st.set_defaults(func=cmd_session_tokens)
-
-    # setup
-    p_setup = subparsers.add_parser("setup", help="Session setup: start_time, repo_name, current_branch, global_cache")
-    p_setup.add_argument("--mode", required=True, choices=["local", "github"], help="Review mode")
-    p_setup.add_argument("--cr-dir-prefix", default=None,
-                         help="CR dir prefix (e.g. .closedloop-ai/code-review/cr-); random suffix appended")
-    p_setup.set_defaults(func=cmd_setup)
-
-    # resolve-scope
-    p_rs = subparsers.add_parser("resolve-scope", help="Resolve diff scope from arguments")
-    p_rs.add_argument("--mode", required=True, choices=["local", "github"])
-    p_rs.add_argument("--pr-number", type=int, default=None)
-    p_rs.add_argument("--scope-args", default="", help="Remaining scope arguments")
-    p_rs.add_argument("--base-ref-override", default=None)
-    p_rs.add_argument("--setup-json", required=True, help="Path to setup.json")
-    p_rs.set_defaults(func=cmd_resolve_scope)
-
-    # fetch-intent
-    p_fi = subparsers.add_parser("fetch-intent", help="Fetch intent context for premise review")
-    p_fi.add_argument("--pr-number", type=int, default=None)
-    p_fi.add_argument("--base-ref", default="main")
-    p_fi.add_argument("--diff-tip", default="HEAD")
-    p_fi.add_argument("--scope-kind", required=True, choices=["pr", "branch", "staged", "file_paths", "github_pending"])
-    p_fi.add_argument("--cr-dir", required=True)
-    p_fi.set_defaults(func=cmd_fetch_intent)
-
-    # compute-hashes
-    p_ch = subparsers.add_parser("compute-hashes", help="Compute prompt hash and context key")
-    p_ch.add_argument("--shared-prompt", required=True, help="Path to shared_prompt.txt")
-    p_ch.add_argument("--bha-suffix", required=True, help="Path to bha_suffix.txt")
-    # PLN-722 v2.8.1: optional for back-compat with pre-PLN-722 callers
-    # (when absent, the hash matches v2.8.0 byte-identically). New
-    # callers must pass it so verifier prompt revs invalidate caches.
-    p_ch.add_argument(
-        "--verifier-prompt", default=None,
-        help="Path to verifier_prompt.txt. When provided, folds into prompt_hash "
-             "so cache keys invalidate on verifier prompt edits.",
-    )
-    # PLN-721: optional for back-compat with pre-PLN-721 callers
-    # (when absent, the hash matches v2.8.1 byte-identically). New
-    # callers must pass it so premise prompt revs invalidate caches.
-    p_ch.add_argument(
-        "--premise-prompt", default=None,
-        help="Path to premise_prompt.txt. When provided, folds into prompt_hash "
-             "so cache keys invalidate on premise prompt edits.",
-    )
-    p_ch.add_argument("--diff-tip", required=True, help="Git ref for diff tip (e.g. HEAD, origin/branch)")
-    p_ch.add_argument("--base-ref", required=True, help="Base ref name (e.g. main)")
-    p_ch.set_defaults(func=cmd_compute_hashes)
-
-    # auto-incremental
-    p_ai = subparsers.add_parser("auto-incremental", help="Evaluate auto-incremental eligibility")
-    p_ai.add_argument("--cache-dir", default="", help="Path to cache directory")
-    p_ai.add_argument("--key", required=True, help="State key (branch:base_ref)")
-    p_ai.add_argument("--diff-tip", required=True, help="Git ref for diff tip")
-    p_ai.add_argument("--base-ref", default="main", help="Base ref name")
-    p_ai.add_argument("--original-scope", required=True, help="Original DIFF_SCOPE value")
-    p_ai.add_argument("--full-review", default="false", help="true if --full-review flag set")
-    p_ai.add_argument("--since-last-review", default="false", help="true if --since-last-review flag set")
-    p_ai.add_argument("--mode", default="local", help="Review mode (local or github)")
-    p_ai.set_defaults(func=cmd_auto_incremental)
-
-    # finalize-cache
-    p_fc = subparsers.add_parser("finalize-cache", help="Resolve final CACHE_DIR from setup.json")
-    p_fc.add_argument("--setup-json", required=True, help="Path to setup.json")
-    p_fc.add_argument("--mode", required=True, help="Review mode (local or github)")
-    p_fc.add_argument("--pr-number", default=None, help="PR number (if reviewing a PR)")
-    p_fc.set_defaults(func=cmd_finalize_cache)
-
-    # footer
-    p_footer = subparsers.add_parser("footer", help="Compute review footer with timing and token stats")
-    p_footer.add_argument("--start-time", required=True, type=float, help="Epoch seconds when review started")
-    p_footer.add_argument("--cache-result", default=None, help="Path to cache_result.json")
-    p_footer.add_argument("--review-mode-line", default=None, help="Review mode line (falls back to cr-dir/auto_incremental.json)")
-    p_footer.add_argument("--cr-dir", default=None, help="CR session dir (fallback for --review-mode-line)")
-    p_footer.set_defaults(func=cmd_footer, project_dir=None)
-
-    # classify-intent
-    p_ci = subparsers.add_parser("classify-intent", help="Classify diff intent for model routing")
-    p_ci.add_argument("--intent-context", required=True, help="Path to intent_context.json")
-    p_ci.add_argument("--diff-data", default=None, help="Path to diff_data.json for file statuses")
-    p_ci.set_defaults(func=cmd_classify_intent)
-
-    # detect-injection (PLN-720)
-    p_di = subparsers.add_parser(
-        "detect-injection",
-        help="Score intent_context.json for prompt-injection signals; quarantine on Medium+",
-    )
-    p_di.add_argument("--cr-dir", required=True, help="CR session directory")
-    p_di.add_argument(
-        "--intent-context", required=True,
-        help="Path to intent_context.json (written by fetch-intent)",
-    )
-    p_di.set_defaults(func=cmd_detect_injection)
-
-    # collect-findings
-    p_cf = subparsers.add_parser("collect-findings", help="Merge agent + hygiene findings")
-    p_cf.add_argument("--cr-dir", required=True, help="Directory containing agent_*.json files")
-    p_cf.add_argument("--output", default="findings.json", help="Output filename (written to cr-dir)")
-    p_cf.add_argument("--hygiene", default=None, help="Path to hygiene.json")
-    p_cf.set_defaults(func=cmd_collect_findings)
-
-    # verdict
-    p_v = subparsers.add_parser("verdict", help="Compute PR verdict from validated findings")
-    p_v.add_argument("--validate-output", required=True, help="Path to validate_output.json (legacy fallback)")
-    p_v.add_argument(
-        "--review-result", default=None,
-        help="Path to review_result.json (canonical envelope; preferred when present)",
-    )
-    # PLN-721: optional operator override for verdict thresholds (defaults
-    # to .closedloop-ai/settings/verdict-thresholds.json when absent).
-    p_v.add_argument(
-        "--thresholds", default=None,
-        help="Path to verdict-thresholds.json. Defaults to "
-             ".closedloop-ai/settings/verdict-thresholds.json (absent → built-in default 3).",
-    )
-    p_v.set_defaults(func=cmd_verdict)
-
-    # finalize-result (PLN-719 Phase 2)
-    p_fr = subparsers.add_parser(
-        "finalize-result",
-        help="Build the canonical review_result.json envelope from validated findings",
-    )
-    p_fr.add_argument("--cr-dir", required=True, help="CR_DIR for the review session")
-    p_fr.add_argument("--validate-output", required=True, help="Path to validate_output.json")
-    p_fr.add_argument("--mode", default=None, choices=["local", "github"], help="Run mode")
-    p_fr.add_argument("--diff-tip", default=None, help="Diff tip sha (falls back to scope.json/setup.json)")
-    p_fr.add_argument("--pr-number", type=int, default=None, help="PR number for github mode")
-    # PLN-721: optional operator override for verdict thresholds (defaults
-    # to .closedloop-ai/settings/verdict-thresholds.json when absent).
-    p_fr.add_argument(
-        "--thresholds", default=None,
-        help="Path to verdict-thresholds.json. Defaults to "
-             ".closedloop-ai/settings/verdict-thresholds.json (absent → built-in default 3).",
-    )
-    p_fr.set_defaults(func=cmd_finalize_result)
-
-    # arbitrate-budget (PLN-719 Phase 3)
-    p_ab = subparsers.add_parser(
-        "arbitrate-budget",
-        help="Apply budget arbitration to coverage_plan_initial.json -> coverage_plan.json",
-    )
-    p_ab.add_argument("--coverage-plan", required=True, help="Path to coverage_plan_initial.json")
-    p_ab.add_argument("--diff-data", required=True, help="Path to diff_data.json")
-    p_ab.add_argument("--cap", type=int, default=BUDGET_TOTAL_CAP_DEFAULT, help="Total reviewer cap")
-    p_ab.add_argument("--output", default=None, help="Output path (default: coverage_plan.json next to input)")
-    # PLN-725 Phase 7: BLOCKING gate from the Phase 6 verifier. When
-    # this file exists and contains verdict="BLOCKING", arbitration
-    # short-circuits (input plan passes through untouched, budget
-    # block flagged ``gated_by_verify: true``). Absent file = PASS.
-    p_ab.add_argument(
-        "--coverage-verify", default=None,
-        help=(
-            "Optional path to coverage_verify.json (PLN-725 Phase 6). "
-            "When present and verdict is BLOCKING, arbitration is "
-            "bypassed; input plan flows through unchanged."
-        ),
-    )
-    p_ab.set_defaults(func=cmd_arbitrate_budget)
-
-    # derive-spawn-spec (PLN-725 Phase 8)
-    p_dss = subparsers.add_parser(
-        "derive-spawn-spec",
-        help=(
-            "Translate post-arbitrate coverage_plan.json + partitions.json + "
-            "route.json into spawn_spec.json for stage_20_spawn_reviewers"
-        ),
-    )
-    p_dss.add_argument("--cr-dir", required=True, help="Session CR_DIR path")
-    p_dss.add_argument(
-        "--coverage-plan", required=True,
-        help="Path to coverage_plan.json (post-arbitrate)",
-    )
-    p_dss.add_argument(
-        "--partitions", required=True, help="Path to partitions.json",
-    )
-    p_dss.add_argument(
-        "--route", required=True, help="Path to route.json",
-    )
-    p_dss.add_argument(
-        "--output", default=None,
-        help="Output path (default: <cr-dir>/spawn_spec.json)",
-    )
-    p_dss.set_defaults(func=cmd_derive_spawn_spec)
-
-    # verify-spawn (PLN-725 Phase 8 / stage_20b)
-    p_vs = subparsers.add_parser(
-        "verify-spawn",
-        help=(
-            "Compare spawn_spec.agents[] against on-disk agent_*.json; "
-            "emit coverage-gap findings for missing required agents"
-        ),
-    )
-    p_vs.add_argument("--cr-dir", required=True, help="Session CR_DIR path")
-    p_vs.set_defaults(func=cmd_verify_spawn)
-
-    # render-fleet-summary (PLN-725 Phase 9)
-    p_rfs = subparsers.add_parser(
-        "render-fleet-summary",
-        help=(
-            "Render the operator-facing Reviewer Fleet markdown block "
-            "from spawn_spec.json + spawn_verification.json + route.json"
-        ),
-    )
-    p_rfs.add_argument("--cr-dir", required=True, help="Session CR_DIR path")
-    p_rfs.add_argument(
-        "--output", default=None,
-        help="Optional output file path; default stdout-only",
-    )
-    p_rfs.set_defaults(func=cmd_render_fleet_summary)
-
-    # prepare-run (PLN-719 Phase 4)
-    p_pr = subparsers.add_parser(
-        "prepare-run",
-        help="Emit run_plan.json describing the full review pipeline",
-    )
-    p_pr.add_argument("--cr-dir", required=True, help="CR_DIR for the review session")
-    p_pr.add_argument("--mode", required=True, choices=["local", "github"], help="Run mode")
-    p_pr.add_argument("--hygiene-only", default="false", help="Run hygiene-only review")
-    p_pr.add_argument("--since-last-review", default="false", help="Limit scope to commits since last review")
-    p_pr.add_argument("--full-review", default="false", help="Force a full re-review")
-    p_pr.add_argument("--base-ref-override", default="", help="Override base ref for scope resolution")
-    p_pr.add_argument("--scope-args", default="", help="Free-form scope args passed to resolve-scope")
-    p_pr.add_argument("--pr-number", type=int, default=None, help="PR number for github mode")
-    p_pr.add_argument("--output", default=None, help="Output path (default: <cr-dir>/run_plan.json)")
-    p_pr.set_defaults(func=cmd_prepare_run)
-
-    # prep-assets
-    p_pa = subparsers.add_parser("prep-assets", help="Copy prompt assets from plugin to CR_DIR")
-    p_pa.add_argument("--plugin-root", required=True, help="Resolved CLAUDE_PLUGIN_ROOT path")
-    p_pa.add_argument("--cr-dir", required=True, help="Session CR_DIR path")
-    p_pa.set_defaults(func=cmd_prep_assets)
-
-    # extract-patches
-    p_ep = subparsers.add_parser("extract-patches", help="Extract git diff patches to disk files")
-    # PLN-719 Phase 5: --partitions-file removed; per-partition patches are
-    # emitted by the partition subcommand.
-    p_ep.add_argument("--diff-scope", required=True, help="Git diff scope string")
-    p_ep.add_argument("--diff-data", required=True, help="Path to full diff_data.json (for patches_all.txt)")
-    p_ep.add_argument("--cr-dir", required=True, help="Output directory for patch files")
-    p_ep.add_argument("--workdir", default=None, help="Git working directory")
-    p_ep.add_argument("--batch-size", type=int, default=_EXTRACT_PATCHES_BATCH_SIZE, help="Batch size for large diffs")
-    p_ep.set_defaults(func=cmd_extract_patches)
+    Mutually exclusive groups (one parser currently uses them) declare
+    the participating flags under mutex_groups and the loader routes
+    those args into the group instead of the main parser.
+    """
+    cfg = _load_cli_config()
+    for parser_spec in cfg["parsers"]:
+        name = parser_spec["name"]
+        sub_p = subparsers.add_parser(name, help=parser_spec.get("help"))
+        mutex_routes: dict[str, Any] = {}
+        for grp_spec in parser_spec.get("mutex_groups", []):
+            grp = sub_p.add_mutually_exclusive_group()
+            for flag in grp_spec["actions"]:
+                mutex_routes[flag] = grp
+        for arg in parser_spec.get("args", []):
+            flags = arg["flags"]
+            target = mutex_routes.get(flags[0], sub_p)
+            kwargs: dict[str, Any] = {}
+            if arg.get("required"):
+                kwargs["required"] = True
+            if "default" in arg:
+                kwargs["default"] = _resolve_cli_value(arg["default"])
+            if arg.get("action") == "store_true":
+                kwargs["action"] = "store_true"
+            if arg.get("nargs"):
+                kwargs["nargs"] = arg["nargs"]
+            if "type" in arg:
+                kwargs["type"] = _CLI_TYPE_MAP[arg["type"]]
+            if "choices" in arg:
+                kwargs["choices"] = _resolve_cli_value(arg["choices"])
+            if "help" in arg:
+                kwargs["help"] = arg["help"]
+            target.add_argument(*flags, **kwargs)
+        defaults: dict[str, Any] = {"func": globals()[parser_spec["func"]]}
+        defaults.update(parser_spec.get("extra_defaults", {}))
+        sub_p.set_defaults(**defaults)
 
 
 def main() -> int:

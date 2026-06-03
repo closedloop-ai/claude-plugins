@@ -17491,3 +17491,79 @@ class TestCoverageCriticConsolidateCacheHitAndSkippedNoOp:
         assert (cr_dir / "agent_coverage-critic-failed.json").exists()
         canonical = json.loads((cr_dir / "coverage_plan.json").read_text())
         assert canonical["critic_status"] == "fail_closed"
+
+
+class TestCRSPhaseADeclarativeStagesConfig:
+    """Phase A: run-plan stage definitions live in config/stages.json.
+
+    The loader-based ``_build_run_plan_stages`` must produce byte-identical
+    output to the pre-refactor function across both conditional dimensions
+    (mode, pr_number, flags). The two captured snapshots cover:
+      - snap1: local mode, no PR, empty flags  (every conditional in its "off" state)
+      - snap2: github mode, PR #42, all flags  (every conditional in its "on" state)
+    """
+
+    def _snapshot_dir(self) -> Path:
+        return Path(__file__).parent / "fixtures" / "run_plan_snapshots"
+
+    def test_loader_matches_local_no_pr_empty_flags_snapshot(self) -> None:
+        from code_review_helpers import _build_run_plan_stages
+        expected = json.loads(
+            (self._snapshot_dir() / "local_no_pr_empty_flags.json").read_text(),
+        )
+        actual = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        assert actual == expected
+
+    def test_loader_matches_github_pr42_all_flags_snapshot(self) -> None:
+        from code_review_helpers import _build_run_plan_stages
+        expected = json.loads(
+            (self._snapshot_dir() / "github_pr42_all_flags.json").read_text(),
+        )
+        actual = _build_run_plan_stages(
+            "/tmp/cr_dir",
+            "github",
+            42,
+            {
+                "scope_args": "origin/main..HEAD",
+                "base_ref_override": "origin/main",
+                "full_review": True,
+                "since_last_review": True,
+                "hygiene_only": True,
+            },
+        )
+        assert actual == expected
+
+    def test_pr_flag_omitted_when_pr_number_is_none(self) -> None:
+        """The @pr_flag splat must produce zero args when pr_number is None."""
+        from code_review_helpers import _build_run_plan_stages
+        stages = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        by_id = {s["id"]: s for s in stages}
+        assert "--pr-number" not in by_id["stage_03_resolve_scope"]["args"]
+        assert "--pr-number" not in by_id["stage_04_finalize_cache"]["args"]
+        assert "--pr-number" not in by_id["stage_08_fetch_intent"]["args"]
+        assert "--pr-number" not in by_id["stage_25_finalize_result"]["args"]
+
+    def test_pr_flag_inserted_when_pr_number_is_truthy(self) -> None:
+        from code_review_helpers import _build_run_plan_stages
+        stages = _build_run_plan_stages("/tmp/cr_dir", "github", 42, {})
+        by_id = {s["id"]: s for s in stages}
+        for sid in (
+            "stage_03_resolve_scope",
+            "stage_04_finalize_cache",
+            "stage_08_fetch_intent",
+            "stage_25_finalize_result",
+        ):
+            args = by_id[sid]["args"]
+            assert "--pr-number" in args, f"{sid} missing --pr-number"
+            assert args[args.index("--pr-number") + 1] == "42"
+
+    def test_schema_version_resolved_from_constant(self) -> None:
+        """{schema_version} must substitute the SCHEMA_VERSION constant, not a literal."""
+        from code_review_helpers import _build_run_plan_stages
+        from code_review_schema import SCHEMA_VERSION
+        stages = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        by_id = {s["id"]: s for s in stages}
+        for sid in ("stage_19_cache_check", "stage_26_cache_update"):
+            args = by_id[sid]["args"]
+            idx = args.index("--schema-version")
+            assert args[idx + 1] == str(SCHEMA_VERSION)
