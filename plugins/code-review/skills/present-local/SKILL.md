@@ -30,20 +30,24 @@ Output in this format:
 **Files Reviewed:** [count]
 ```
 
-**Reviewers and Model Routing lines are conditional on `FAST_PATH`:**
+**Reviewer Fleet block (PLN-725 Phase 9 / v2.23.0).** Do NOT write the Reviewers / Model Routing / Fleet lines from scratch. Run the canonical renderer and embed its output verbatim:
 
-- **If `FAST_PATH == false`:**
-```markdown
-**Reviewers:** Bug Hunter A, Bug Hunter B, Unified Auditor, Premise Reviewer
-[+ domain specialist if triggered]
-**Model Routing:** [Small/Medium/Large] — [model assignments summary]
+```bash
+python "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py" render-fleet-summary --cr-dir <CR_DIR>
 ```
 
-- **If `FAST_PATH == true`:**
-```markdown
-**Reviewers:** Fast Path Reviewer (single-agent mode)
-**Model Routing:** Fast path — <MODEL> single reviewer
-```
+The renderer consumes `<CR_DIR>/spawn_spec.json` (intended fleet from stage_19b), `<CR_DIR>/spawn_verification.json` (runtime tally from stage_20b), and `<CR_DIR>/route.json` (model assignments). The output is a deterministic markdown block of 2–9 lines — 2–4 for the core **Reviewers** / **Model Routing** / **Fleet** section, plus up to 5 conditional note bullets — covering:
+
+- **Reviewers** — the actual fleet that spawned (with the rule-resolved vs LLM-proposed split surfaced on domain critics so the operator can tell operator-configured coverage apart from one-off LLM proposals).
+- **Model Routing** — the per-agent model assignments derived from route.json.
+- **Fleet** — `N intended | N ran | N required missing` so the operator sees the runtime tally without scrolling to Verifier Stats.
+- **Notes (conditional)** — only emitted when the run was non-default: BLOCKING-sanitized arbitration, missing required reviewers (runtime crash), BHA partitions capped by post-arbitrate budget, PLN-723 deferral, malformed-plan required skips. Each note is a single bullet so the section stays scannable; multiple notes can fire together.
+
+Embed the renderer's output verbatim where the prior static Reviewers/Model Routing block would have appeared (between the `**Files Reviewed:**` line and the next `---` separator). Do NOT hand-author a separate Reviewers line — the renderer is the single source of truth for fleet composition.
+
+**Fallback:** if the renderer reports `spawn-spec unavailable` or `spawn-spec fell back`, the orchestrator walked the static reviewer table in `start.md` for this run. The renderer says so explicitly; embed its line as-is and rely on the static `## Reviewer Fleet` section in `start.md` for what the fleet looked like at dispatch time.
+
+**Fast-path runs** are handled by the renderer too — it emits the `Fast Path Reviewer (single-agent mode)` line + the resolved fast-path model. No branch needed in this skill.
 
 Then continue with:
 
