@@ -4,6 +4,23 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.21.1
+
+#### Fixed
+- `_filter_scope_and_range` out-of-hunk comparison is now strictly greater-than (`confidence > floor`) instead of `>=`. The v2.21.0 docstring claimed `floor = 1.0` was a kill switch, but the inclusive comparison let confidence-exactly-1.0 findings through — and `_normalize_findings` defaults missing confidence to 1.0, so the kill switch was easy to trip into bypassing. Strict `>` makes the kill switch real because reviewer confidence is bounded at 1.0 (so `confidence > 1.0` is impossible). Boundary semantics are now operator-visible: `floor = 0.80` means confidence > 0.80 survives, confidence == 0.80 discards.
+- `_needs_verification` always returns True for findings carrying `out_of_hunk_kept: True`. The v2.21.0 relaxation deliberately let MEDIUM out-of-hunk findings through with high confidence on the premise that they cite a real causal relationship to the diff, but the verifier's tier table skipped MEDIUM at confidence ≥ 0.85 — so the canonical 0.9-confidence companion-change finding (the exact case the v2.21.0 test pinned) never got a second-pass verdict. Cross-region causation claims are precisely what LLM reviewers are weakest on, so high confidence is the wrong signal to gate verification on. The backstop is placed after the deterministic-producer guards (Hygiene, injection-detector) so they remain absolute, and before the severity tiers so confidence-based skips don't apply.
+- `_filter_scope_and_range` now pops any reviewer-supplied `out_of_hunk_kept` value on the in-hunk path and on the system/pr_metadata path. The validator OWNS the field — schema convention is that the tag is present (and True) IFF the finding is a companion-change survivor of the out-of-hunk filter. Without the pop, a reviewer that pre-populated `out_of_hunk_kept: true` would slip through untouched and inflate the `kept_out_of_hunk` telemetry counter plus any downstream presenter labels keying on the tag (low odds today since the field is brand new, but the telemetry and future presenter logic both trust it).
+- `cmd_validate` counts `kept_out_of_hunk` from the post-filter `filtered` set instead of the post-grouping `validated` set. `_group_cross_file` absorbs similar-issue findings across files into the primary's `other_locations[]`, where only file/line/severity are carried — the `out_of_hunk_kept` tag is lost in the absorption. Counting post-grouping silently undercounted every companion-change finding that happened to be grouped with another. The counter is about how many findings survived the filter, not how many made it to the final presenter view, so pre-grouping is the semantically correct measurement point.
+- Docstrings for the `OUT_OF_HUNK_CONFIDENCE_FLOOR` constant and the filter function now correctly describe the strict `>` semantics, the boundary behavior, and why `floor = 1.0` actually works as a kill switch. Same for the `start.md` per-stage note for `stage_22_validate`.
+
+#### Added
+- `test_out_of_hunk_kill_switch_blocks_confidence_1_0` exercises the specific boundary case the pre-v2.21.1 `>=` leaked — MEDIUM at confidence=1.0 with floor=1.0 must discard.
+- `test_out_of_hunk_floor_boundary_is_strict` pins the documented "confidence > 0.80 survives, confidence == 0.80 discards" contract at the non-1.0 boundary.
+- `test_validator_overrides_reviewer_supplied_out_of_hunk_kept` writes a reviewer-pre-populated `out_of_hunk_kept: true` on an in-hunk finding and asserts the validator strips it and the counter stays at 0.
+- `test_kept_out_of_hunk_counts_grouped_companions` writes two cross-file companion-change findings with similar issue text — they group into one `validated` entry with `other_locations` populated, but BOTH count toward `kept_out_of_hunk` (pre-v2.21.1 the counter reported 1 instead of 2).
+- `test_out_of_hunk_kept_always_verified_even_at_high_confidence` covers the verifier-tier backstop: a MEDIUM with confidence=0.9 and `out_of_hunk_kept: True` returns True from `_needs_verification` (without the backstop the existing 0.85 cliff for MEDIUM returns False).
+- `test_out_of_hunk_kept_does_not_resurrect_hygiene_or_injection` pins the ordering — the deterministic-producer guards precede the backstop so Hygiene + injection-detector findings stay unverifiable even if they somehow carry the tag.
+
 ### code-review v2.21.0
 
 #### Changed

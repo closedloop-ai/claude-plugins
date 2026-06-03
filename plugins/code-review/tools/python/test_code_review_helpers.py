@@ -1978,13 +1978,19 @@ class TestValidate:
         assert result["stats"]["discarded_out_of_hunk_low_confidence"] == 1
         assert result["stats"]["kept_out_of_hunk"] == 0
 
-    def test_out_of_hunk_kill_switch_via_settings(self, tmp_path: Path) -> None:
-        """Operator can restore pre-v2.21 strict behavior by setting
-        ``out_of_hunk_confidence_floor: 1.0`` in code-review.json.
-        At floor=1.0, no out-of-hunk finding can clear (even
-        confidence=1.0 finds the inequality is strict ≥; values
-        emitted by reviewers are bounded at 1.0 so this is the
-        effective kill switch).
+    def test_out_of_hunk_kill_switch_blocks_confidence_1_0(
+        self, tmp_path: Path,
+    ) -> None:
+        """v2.21.1 kill-switch correctness. Setting
+        ``out_of_hunk_confidence_floor: 1.0`` must block out-of-hunk
+        findings even at ``confidence == 1.0``. The pre-v2.21.1
+        ``>=`` comparison let the boundary-case finding through —
+        and since ``_normalize_findings`` defaults missing confidence
+        to 1.0, the kill switch was easy to trip into bypassing.
+
+        The fix changes the comparison to strict ``>``: reviewer
+        confidence is bounded at 1.0, so ``confidence > 1.0`` is
+        impossible and every out-of-hunk finding fails at floor=1.0.
         """
         diff_data = _make_diff_data(
             files=["src/app.ts"],
@@ -1997,9 +2003,7 @@ class TestValidate:
             "category": "Correctness",
             "issue": "Bug",
             "priority": 2,
-            # 0.999 is the highest reviewer-emitted value short of 1.0.
-            # At floor=1.0 it must fail the gate.
-            "confidence": 0.999,
+            "confidence": 1.0,  # the boundary case that pre-v2.21.1 leaked
         }]
         result = self._run_validate(
             findings, diff_data, tmp_path,
@@ -2008,6 +2012,31 @@ class TestValidate:
         assert len(result["validated"]) == 0
         assert result["stats"]["discarded_out_of_hunk_low_confidence"] == 1
         assert result["stats"]["out_of_hunk_confidence_floor"] == 1.0
+
+    def test_out_of_hunk_floor_boundary_is_strict(
+        self, tmp_path: Path,
+    ) -> None:
+        """The strict ``>`` semantics also apply at non-1.0 floors.
+        confidence == floor must DISCARD (not survive). This is the
+        boundary case for the documented "confidence > 0.80 survives,
+        confidence == 0.80 discards" contract.
+        """
+        diff_data = _make_diff_data(
+            files=["src/app.ts"],
+            ranges={"src/app.ts": {"added": [[10, 15]], "removed": []}},
+        )
+        findings = [{
+            "file": "src/app.ts",
+            "line": 100,
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Bug",
+            "priority": 2,
+            "confidence": 0.80,  # exactly at the floor
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert len(result["validated"]) == 0
+        assert result["stats"]["discarded_out_of_hunk_low_confidence"] == 1
 
     def test_out_of_hunk_floor_operator_lowered(self, tmp_path: Path) -> None:
         """Operator can also lower the floor (e.g. 0.5) to let more
@@ -2058,6 +2087,102 @@ class TestValidate:
         assert len(result["validated"]) == 1
         assert "out_of_hunk_kept" not in result["validated"][0]
         assert result["stats"]["kept_out_of_hunk"] == 0
+
+    def test_validator_overrides_reviewer_supplied_out_of_hunk_kept(
+        self, tmp_path: Path,
+    ) -> None:
+        """v2.21.1: the validator OWNS the ``out_of_hunk_kept`` field.
+        A reviewer that pre-populates ``out_of_hunk_kept: true`` on an
+        in-hunk finding must NOT have that value survive — otherwise
+        the kept_out_of_hunk telemetry counter is poisoned and any
+        downstream presenter label keying on the tag mislabels the
+        finding.
+
+        Schema convention: tag present (and True) IFF the finding is
+        a companion-change survivor. Absence means in-hunk; the
+        validator pops on every in-hunk exit path.
+        """
+        diff_data = _make_diff_data(
+            files=["src/app.ts"],
+            ranges={"src/app.ts": {"added": [[10, 20]], "removed": []}},
+        )
+        findings = [{
+            "file": "src/app.ts",
+            "line": 15,  # IN hunk — should NOT keep the tag
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Bug",
+            "priority": 2,
+            "confidence": 0.9,
+            # Reviewer (incorrectly) pre-set the field. Validator must
+            # strip it — owning the field means trusting only its own
+            # branch decisions.
+            "out_of_hunk_kept": True,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert len(result["validated"]) == 1
+        assert "out_of_hunk_kept" not in result["validated"][0]
+        assert result["stats"]["kept_out_of_hunk"] == 0
+
+    def test_kept_out_of_hunk_counts_grouped_companions(
+        self, tmp_path: Path,
+    ) -> None:
+        """v2.21.1: the kept_out_of_hunk counter must count from the
+        post-filter set, NOT from the post-grouping ``validated`` set.
+
+        ``_group_cross_file`` absorbs similar-issue findings across
+        files into the primary's ``other_locations[]``, where only
+        file/line/severity are carried — the ``out_of_hunk_kept`` tag
+        is lost in the absorption. Counting post-grouping silently
+        undercounted every companion-change finding that happened to
+        be grouped with another. Fix: count on ``filtered`` (post-
+        filter, pre-grouping) since the counter is about how many
+        findings survived the filter, not how many made it to the
+        final presenter view.
+
+        This test seeds two cross-file companion-change findings with
+        the same category and similar issue text — they'll be grouped
+        into one ``validated`` entry, but both should be counted.
+        """
+        # Two files, both in scope, both with hunks at [10, 15].
+        diff_data = _make_diff_data(
+            files=["src/a.ts", "src/b.ts"],
+            ranges={
+                "src/a.ts": {"added": [[10, 15]], "removed": []},
+                "src/b.ts": {"added": [[10, 15]], "removed": []},
+            },
+        )
+        # Two out-of-hunk findings (line 100) with high confidence —
+        # both survive the relaxation, both get tagged. Same category
+        # + nearly identical issue text → grouped by _group_cross_file.
+        findings = [
+            {
+                "file": "src/a.ts",
+                "line": 100,
+                "severity": "MEDIUM",
+                "category": "Correctness",
+                "issue": "Stale sibling call site after signature change",
+                "priority": 2,
+                "confidence": 0.9,
+            },
+            {
+                "file": "src/b.ts",
+                "line": 100,
+                "severity": "MEDIUM",
+                "category": "Correctness",
+                "issue": "Stale sibling call site after signature change",
+                "priority": 2,
+                "confidence": 0.9,
+            },
+        ]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        # Grouped into one validated entry...
+        assert len(result["validated"]) == 1
+        # ...with the cross-file other_locations populated...
+        assert len(result["validated"][0].get("other_locations", [])) == 1
+        # ...but BOTH companion-change findings count toward telemetry.
+        # Pre-v2.21.1 this asserted 1; the counter undercounted.
+        assert result["stats"]["kept_out_of_hunk"] == 2
 
     def test_p1_never_discarded_for_line_range(self, tmp_path: Path) -> None:
         diff_data = _make_diff_data(
@@ -7924,6 +8049,60 @@ class TestVerifyTierTable:
         f = {"severity": "MEDIUM", "confidence": 0.95,
              "category": "Premise", "source": "agent"}
         assert _needs_verification(f) is True
+
+    def test_out_of_hunk_kept_always_verified_even_at_high_confidence(
+        self,
+    ) -> None:
+        """v2.21.1 backstop. v2.21.0 let MEDIUM out-of-hunk findings
+        with confidence > 0.80 through the validator, but the verifier
+        tier table skipped MEDIUM ≥ 0.85 — so the canonical 0.9
+        companion-change finding (the exact case my own v2.21.0 test
+        pinned) never got a second-pass CONFIRMED/REJECTED verdict
+        and landed in the presenter unchallenged. Cross-region
+        causation claims are exactly what LLM reviewers are weakest
+        on; relying on high confidence to gate verification gets the
+        risk profile backwards.
+
+        Fix: ``out_of_hunk_kept: True`` forces verification regardless
+        of severity/confidence — the relaxation guarantees the verifier
+        gets to second-opinion every companion-change finding.
+        """
+        # Identical to the canonical companion-change scenario:
+        # MEDIUM with confidence above 0.85 (the tier-skip cliff).
+        # Without the backstop, _needs_verification → False.
+        f = {
+            "severity": "MEDIUM",
+            "confidence": 0.9,
+            "category": "Correctness",
+            "source": "agent",
+            "out_of_hunk_kept": True,
+        }
+        assert _needs_verification(f) is True
+
+    def test_out_of_hunk_kept_does_not_resurrect_hygiene_or_injection(
+        self,
+    ) -> None:
+        """The deterministic-producer guards (Hygiene, injection-
+        detector) precede the out_of_hunk backstop so they remain
+        absolute — those categories are never verified regardless of
+        any tag the upstream might carry. Defensive: in practice
+        Hygiene findings never get the out_of_hunk_kept tag (Hygiene
+        is generated from a regex catalogue, not from agent reviewers),
+        but pinning the ordering keeps a future refactor honest.
+        """
+        f_hyg = {
+            "severity": "HIGH", "confidence": 0.99,
+            "category": "Hygiene", "source": "hygiene",
+            "out_of_hunk_kept": True,
+        }
+        assert _needs_verification(f_hyg) is False
+
+        f_inj = {
+            "severity": "HIGH", "confidence": 0.99,
+            "category": "InjectionAttempt", "source": "injection-detector",
+            "out_of_hunk_kept": True,
+        }
+        assert _needs_verification(f_inj) is False
 
     def test_priority_ranking_higher_severity_first(self) -> None:
         blocking_lo = {"severity": "BLOCKING", "confidence": 0.5}
