@@ -5655,7 +5655,13 @@ def _read_cached_signals(cache_dir: Path | None, key: str) -> dict[str, Any] | N
 def _write_cached_signals(
     cache_dir: Path | None, key: str, payload: dict[str, Any],
 ) -> None:
-    """Persist a successful extraction to the ``signals`` cache namespace."""
+    """Persist a successful extraction to the ``signals`` cache namespace.
+
+    Fail-open: delegates to ``_write_simple_cache_entry``; an OSError on the
+    cache write is logged to stderr but never raised — the canonical
+    ``<cr_dir>/extract_signals.json`` is already on disk, so cache-write
+    failure is a re-run cost issue, not a pipeline halt.
+    """
     if cache_dir is None:
         return
     _write_simple_cache_entry(
@@ -7176,7 +7182,13 @@ def _read_cached_coverage_critic(
 def _write_cached_coverage_critic(
     cache_dir: Path | None, key: str, payload: dict[str, Any],
 ) -> None:
-    """Persist a successful critic run to the ``coverage_critic`` cache."""
+    """Persist a successful critic run to the ``coverage_critic`` cache.
+
+    Fail-open: delegates to ``_write_simple_cache_entry``; an OSError on the
+    cache write is logged to stderr but never raised — the canonical
+    ``<cr_dir>/coverage_plan.json`` is already on disk, so cache-write
+    failure is a re-run cost issue, not a pipeline halt.
+    """
     if cache_dir is None:
         return
     _write_simple_cache_entry(

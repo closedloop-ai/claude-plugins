@@ -17922,11 +17922,18 @@ class TestCRSPhaseBSharedHelpers:
     def test_read_simple_cache_entry_returns_none_when_cache_dir_is_none(
         self, tmp_path: Path,
     ) -> None:
+        """The ``cache_dir is None`` guard must short-circuit BEFORE the path
+        existence check, so seed a valid, fresh entry on disk and verify the
+        read still returns None. A regression that dropped the ``cache_dir is
+        None`` check would otherwise pass this test because the file existence
+        + fresh ``written_at`` would route through the success branch.
+        """
         from code_review_helpers import _read_simple_cache_entry
-        # Path argument doesn't matter when cache_dir is None — should short-circuit
-        assert _read_simple_cache_entry(
-            None, tmp_path / "anything.json", "signals", 7,
-        ) is None
+        path = tmp_path / "would_be_a_hit.json"
+        fresh_ts = datetime.now(timezone.utc).isoformat()
+        path.write_text(json.dumps({"data": "x", "written_at": fresh_ts}))
+        assert path.exists()  # sanity: not testing the path-missing branch
+        assert _read_simple_cache_entry(None, path, "signals", 7) is None
 
     def test_read_simple_cache_entry_returns_none_when_path_missing(
         self, tmp_path: Path,

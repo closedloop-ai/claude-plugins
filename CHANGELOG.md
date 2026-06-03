@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.25.2
+
+#### Fixed
+- `test_read_simple_cache_entry_returns_none_when_cache_dir_is_none` now seeds a valid, fresh cache entry on disk before asserting the read returns `None`. The pre-v2.25.2 test passed a `tmp_path / "anything.json"` that didn't exist, so both the `cache_dir is None` guard AND the `not path.exists()` guard fired together — a regression that dropped the `cache_dir is None` check would still pass the test because the file-missing branch would catch it. With a valid fresh entry on disk and `path.exists()` confirmed before the call, the assertion specifically pins the `cache_dir is None` short-circuit.
+- `_write_cached_signals` and `_write_cached_coverage_critic` docstrings now restate the fail-open contract that the Phase B refactor (v2.25.0) collapsed into the shared `_write_simple_cache_entry`. Callers reading the wrapper docstring at the call site no longer have to chase the contract one indirection deeper; both wrappers now explicitly note that delegation to the shared helper preserves the OSError-logged-not-raised semantic, named alongside the canonical `<cr_dir>/<output>.json` that makes cache write failure a re-run cost issue rather than a pipeline halt.
+
 ### code-review v2.25.1
 
 #### Fixed
