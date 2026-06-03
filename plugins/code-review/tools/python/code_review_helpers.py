@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import functools
 import hashlib
 import json
@@ -9230,11 +9231,75 @@ def cmd_verdict(args: argparse.Namespace) -> int:
 # stage outputs (scope.json, setup.json, hashes.json, etc.).
 _STAGES_CONFIG_PATH = Path(__file__).parent / "config" / "stages.json"
 
+# Known template keys substituted by ``_build_run_plan_stages``. Any other
+# ``{...}`` brace pattern in stages.json is rejected at load time — a literal
+# ``{`` or ``}`` accidentally introduced by a future editor would otherwise
+# raise an opaque ``KeyError``/``ValueError`` from ``str.format`` deep inside
+# the loader instead of a clear "this stage's args contains a bad template"
+# diagnostic at config-load.
+_STAGES_TEMPLATE_KEYS: frozenset[str] = frozenset({
+    "cr_dir",
+    "mode",
+    "schema_version",
+    "flags_scope_args",
+    "flags_base_ref_override",
+    "flags_full_review",
+    "flags_since_last_review",
+})
+
+# Valid arg splat markers (resolved separately from template substitution).
+_STAGES_SPLAT_MARKERS: frozenset[str] = frozenset({"@pr_flag"})
+
+# Single brace-or-key matcher: every ``{`` and every ``}`` MUST be part of a
+# ``{identifier}`` pair, and the identifier MUST be in _STAGES_TEMPLATE_KEYS.
+_TEMPLATE_KEY_RE = re.compile(r"\{([^{}]*)\}")
+
+
+def _validate_template_string(value: str, where: str) -> None:
+    """Reject stages.json strings whose braces aren't a known ``{key}`` pattern.
+
+    Called per arg/expected_output/stdout at load time. ``where`` is the human-
+    readable origin (e.g. ``"stage_03_resolve_scope.args[5]"``) and surfaces in
+    the error so an editor can find and fix the bad template fast.
+    """
+    if value.count("{") != value.count("}"):
+        raise ValueError(
+            f"stages.json {where}: unbalanced braces in template string "
+            f"{value!r} (every '{{' must close with a '}}')",
+        )
+    for match in _TEMPLATE_KEY_RE.finditer(value):
+        key = match.group(1)
+        if key not in _STAGES_TEMPLATE_KEYS:
+            raise ValueError(
+                f"stages.json {where}: unknown template key {{{key}}} in "
+                f"{value!r}; known keys: {sorted(_STAGES_TEMPLATE_KEYS)}",
+            )
+
+
+def _validate_stages_config(config: dict[str, Any]) -> None:
+    """Validate every templatable string in stages.json once at load time."""
+    for stage in config.get("stages", []):
+        sid = stage.get("id", "<unknown>")
+        for i, arg in enumerate(stage.get("args", []) or []):
+            if not isinstance(arg, str):
+                continue
+            if arg in _STAGES_SPLAT_MARKERS:
+                continue
+            _validate_template_string(arg, f"{sid}.args[{i}]")
+        for i, out in enumerate(stage.get("expected_outputs", []) or []):
+            if isinstance(out, str):
+                _validate_template_string(out, f"{sid}.expected_outputs[{i}]")
+        stdout = stage.get("stdout")
+        if isinstance(stdout, str):
+            _validate_template_string(stdout, f"{sid}.stdout")
+
 
 @functools.lru_cache(maxsize=1)
 def _load_stages_config() -> dict[str, Any]:
-    """Load and cache the declarative stage definitions from config/stages.json."""
-    return json.loads(_STAGES_CONFIG_PATH.read_text())
+    """Load, validate, and cache the declarative stage definitions."""
+    config = json.loads(_STAGES_CONFIG_PATH.read_text())
+    _validate_stages_config(config)
+    return config
 
 
 def _build_run_plan_stages(
@@ -9286,7 +9351,13 @@ def _build_run_plan_stages(
 
     out_stages: list[dict[str, Any]] = []
     for template in _load_stages_config()["stages"]:
-        stage = dict(template)
+        # Deep-copy: _load_stages_config is lru_cached, so its returned dict's
+        # nested lists (depends_on, agent_specs, expected_outputs) are shared
+        # across every call. A shallow ``dict(template)`` would leave callers
+        # one ``.append()`` away from corrupting the cache for the rest of
+        # the process — a regression vs the pre-refactor code that always
+        # built fresh list literals.
+        stage = copy.deepcopy(template)
         if "args" in stage and isinstance(stage["args"], list):
             stage["args"] = resolve_args(stage["args"])
         if "expected_outputs" in stage and isinstance(stage["expected_outputs"], list):
@@ -11645,13 +11716,31 @@ def _resolve_cli_constant(name: str) -> Any:
         return _EXTRACT_PATCHES_BATCH_SIZE
     if name == "COVERAGE_SCOPES_SORTED":
         return sorted(COVERAGE_SCOPES)
-    raise KeyError(f"unknown CLI constant reference: ${{{name}}}")
+    raise KeyError(f"unknown CLI constant reference: $${name}")
 
 
 def _resolve_cli_value(val: Any) -> Any:
     if isinstance(val, str) and val.startswith("$$"):
         return _resolve_cli_constant(val[2:])
     return val
+
+
+@functools.lru_cache(maxsize=1)
+def _cli_cmd_registry() -> dict[str, Any]:
+    """Allowlist registry mapping cmd_* function names to their callables.
+
+    Restricts ``func`` resolution in cli.json to module-level functions whose
+    name begins with ``cmd_``. The previous direct ``globals()`` lookup made
+    every name in the module's namespace — imported modules, internal helpers,
+    constants — reachable as a subcommand handler. The cmd_ prefix is the
+    convention every subcommand handler follows; nothing else should be a valid
+    func target.
+    """
+    return {
+        name: obj
+        for name, obj in globals().items()
+        if name.startswith("cmd_") and callable(obj)
+    }
 
 
 def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
@@ -11697,8 +11786,26 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
             if "help" in arg:
                 kwargs["help"] = arg["help"]
             target.add_argument(*flags, **kwargs)
-        defaults: dict[str, Any] = {"func": globals()[parser_spec["func"]]}
-        defaults.update(parser_spec.get("extra_defaults", {}))
+        # Resolve the subcommand handler through the cmd_* allowlist registry.
+        # Raising at config-load time (vs ``globals()[...]`` KeyError) keeps the
+        # diagnostic clean: a mistyped func name in cli.json no longer escapes
+        # as an unhandled traceback past main()'s except block.
+        registry = _cli_cmd_registry()
+        func_name = parser_spec["func"]
+        if func_name not in registry:
+            raise ValueError(
+                f"cli.json parser {parser_spec['name']!r} references unknown "
+                f"command function {func_name!r} (must be a cmd_* callable in "
+                f"code_review_helpers)",
+            )
+        extra_defaults = parser_spec.get("extra_defaults", {})
+        if "func" in extra_defaults:
+            raise ValueError(
+                f"cli.json parser {parser_spec['name']!r} extra_defaults must "
+                f"not include 'func' (use the parser-level 'func' field)",
+            )
+        defaults: dict[str, Any] = {"func": registry[func_name]}
+        defaults.update(extra_defaults)
         sub_p.set_defaults(**defaults)
 
 

@@ -1,0 +1,1820 @@
+{
+  "parsers": [
+    {
+      "name": "parse-diff",
+      "func": "cmd_parse_diff",
+      "args": [
+        {
+          "flags": [
+            "--scope"
+          ],
+          "dest": "scope",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--workdir"
+          ],
+          "dest": "workdir",
+          "default": null
+        },
+        {
+          "flags": [
+            "--no-patch-lines"
+          ],
+          "dest": "no_patch_lines",
+          "default": false,
+          "action": "store_true"
+        }
+      ]
+    },
+    {
+      "name": "hygiene",
+      "func": "cmd_hygiene",
+      "args": [
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "dest": "diff_data",
+          "default": null
+        },
+        {
+          "flags": [
+            "--workdir"
+          ],
+          "dest": "workdir",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "partition",
+      "func": "cmd_partition",
+      "args": [
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "dest": "diff_data",
+          "default": null
+        },
+        {
+          "flags": [
+            "--loc-budget"
+          ],
+          "dest": "loc_budget",
+          "default": 400,
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--max-files"
+          ],
+          "dest": "max_files",
+          "default": 20,
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--max-bha-agents"
+          ],
+          "dest": "max_bha_agents",
+          "default": 5,
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--diff-scope"
+          ],
+          "dest": "diff_scope",
+          "default": null
+        },
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null
+        },
+        {
+          "flags": [
+            "--workdir"
+          ],
+          "dest": "workdir",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "route",
+      "func": "cmd_route",
+      "args": [
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "dest": "diff_data",
+          "default": null
+        },
+        {
+          "flags": [
+            "--critic-gates"
+          ],
+          "dest": "critic_gates",
+          "default": null
+        },
+        {
+          "flags": [
+            "--intent"
+          ],
+          "dest": "intent",
+          "default": "mixed",
+          "choices": [
+            "feature",
+            "fix",
+            "refactor",
+            "mixed"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "validate",
+      "func": "cmd_validate",
+      "args": [
+        {
+          "flags": [
+            "--findings"
+          ],
+          "dest": "findings",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "dest": "diff_data",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--settings"
+          ],
+          "dest": "settings",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "verify-prepare",
+      "func": "cmd_verify_prepare",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--findings"
+          ],
+          "dest": "findings",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "dest": "cache_dir",
+          "default": null
+        },
+        {
+          "flags": [
+            "--prompt-hash"
+          ],
+          "dest": "prompt_hash",
+          "default": ""
+        },
+        {
+          "flags": [
+            "--no-verify"
+          ],
+          "dest": "no_verify",
+          "default": false,
+          "action": "store_true"
+        },
+        {
+          "flags": [
+            "--no-verify-reason"
+          ],
+          "dest": "no_verify_reason",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "name": "verify-consolidate",
+      "func": "cmd_verify_consolidate",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--validated"
+          ],
+          "dest": "validated",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--manifest"
+          ],
+          "dest": "manifest",
+          "default": null
+        },
+        {
+          "flags": [
+            "--gates"
+          ],
+          "dest": "gates",
+          "default": null
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "dest": "cache_dir",
+          "default": null
+        },
+        {
+          "flags": [
+            "--prompt-hash"
+          ],
+          "dest": "prompt_hash",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "name": "extract-signals-prepare",
+      "func": "cmd_extract_signals_prepare",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "dest": "diff_data",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--diff-tip"
+          ],
+          "dest": "diff_tip",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--prompt-hash"
+          ],
+          "dest": "prompt_hash",
+          "default": ""
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "dest": "cache_dir",
+          "default": null
+        },
+        {
+          "flags": [
+            "--taxonomy"
+          ],
+          "dest": "taxonomy",
+          "default": null
+        },
+        {
+          "flags": [
+            "--prompt"
+          ],
+          "dest": "prompt",
+          "default": null
+        },
+        {
+          "flags": [
+            "--intent"
+          ],
+          "dest": "intent",
+          "default": null
+        },
+        {
+          "flags": [
+            "--model"
+          ],
+          "dest": "model",
+          "default": "haiku"
+        }
+      ]
+    },
+    {
+      "name": "extract-signals-consolidate",
+      "func": "cmd_extract_signals_consolidate",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--agent-output"
+          ],
+          "dest": "agent_output",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--manifest"
+          ],
+          "dest": "manifest",
+          "default": null
+        },
+        {
+          "flags": [
+            "--taxonomy"
+          ],
+          "dest": "taxonomy",
+          "default": null
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "dest": "cache_dir",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "resolve-coverage",
+      "func": "cmd_resolve_coverage",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "dest": "diff_data",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--critic-gates"
+          ],
+          "dest": "critic_gates",
+          "default": null
+        },
+        {
+          "flags": [
+            "--extract-signals"
+          ],
+          "dest": "extract_signals",
+          "default": null
+        },
+        {
+          "flags": [
+            "--scope"
+          ],
+          "dest": "scope",
+          "default": "code-review",
+          "choices": [
+            "both",
+            "code-review",
+            "plan-review"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "load-available-reviewers",
+      "func": "cmd_load_available_reviewers",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--agents-dir"
+          ],
+          "dest": "agents_dir",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "migrate-critic-gates",
+      "func": "cmd_migrate_critic_gates",
+      "args": [
+        {
+          "flags": [
+            "--input"
+          ],
+          "dest": "input",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "dest": "output",
+          "default": null
+        },
+        {
+          "flags": [
+            "--in-place"
+          ],
+          "dest": "in_place",
+          "default": false,
+          "action": "store_true"
+        },
+        {
+          "flags": [
+            "--dry-run"
+          ],
+          "dest": "dry_run",
+          "default": false,
+          "action": "store_true"
+        }
+      ],
+      "mutex_groups": [
+        [
+          "--output",
+          "--in-place"
+        ]
+      ]
+    },
+    {
+      "name": "coverage-critic-prepare",
+      "func": "cmd_coverage_critic_prepare",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--coverage-plan-initial"
+          ],
+          "dest": "coverage_plan_initial",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "dest": "diff_data",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--available-reviewers"
+          ],
+          "dest": "available_reviewers",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--extract-signals"
+          ],
+          "dest": "extract_signals",
+          "default": null
+        },
+        {
+          "flags": [
+            "--diff-tip"
+          ],
+          "dest": "diff_tip",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "dest": "cache_dir",
+          "default": null
+        },
+        {
+          "flags": [
+            "--prompt"
+          ],
+          "dest": "prompt",
+          "default": null
+        },
+        {
+          "flags": [
+            "--model"
+          ],
+          "dest": "model",
+          "default": "sonnet"
+        },
+        {
+          "flags": [
+            "--no-critic"
+          ],
+          "dest": "no_critic",
+          "default": false,
+          "action": "store_true"
+        }
+      ]
+    },
+    {
+      "name": "coverage-critic-consolidate",
+      "func": "cmd_coverage_critic_consolidate",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--coverage-plan-initial"
+          ],
+          "dest": "coverage_plan_initial",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--agent-output"
+          ],
+          "dest": "agent_output",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--available-reviewers"
+          ],
+          "dest": "available_reviewers",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--manifest"
+          ],
+          "dest": "manifest",
+          "default": null
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "dest": "cache_dir",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "verify-coverage",
+      "func": "cmd_verify_coverage",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--coverage-plan"
+          ],
+          "dest": "coverage_plan",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--coverage-plan-initial"
+          ],
+          "dest": "coverage_plan_initial",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--available-reviewers"
+          ],
+          "dest": "available_reviewers",
+          "default": null
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "dest": "output",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "re-assert",
+      "func": "cmd_re_assert",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "dest": "cache_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--finding-ids"
+          ],
+          "dest": "finding_ids",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--prior-result"
+          ],
+          "dest": "prior_result",
+          "default": null
+        },
+        {
+          "flags": [
+            "--reason"
+          ],
+          "dest": "reason",
+          "default": ""
+        },
+        {
+          "flags": [
+            "--asserted-by"
+          ],
+          "dest": "asserted_by",
+          "default": "operator"
+        }
+      ]
+    },
+    {
+      "name": "review-dismissed-prepare",
+      "func": "cmd_review_dismissed_prepare",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--prior-result"
+          ],
+          "dest": "prior_result",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "review-dismissed-consolidate",
+      "func": "cmd_review_dismissed_consolidate",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "dest": "cache_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--manifest"
+          ],
+          "dest": "manifest",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "cache-check",
+      "func": "cmd_cache_check",
+      "args": [
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "dest": "cache_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "dest": "diff_data",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--prompt-hash"
+          ],
+          "dest": "prompt_hash",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--model-id"
+          ],
+          "dest": "model_id",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--schema-version"
+          ],
+          "dest": "schema_version",
+          "default": null,
+          "required": true,
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--output-dir"
+          ],
+          "dest": "output_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--global-cache"
+          ],
+          "dest": "global_cache",
+          "default": 0,
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--context-key"
+          ],
+          "dest": "context_key",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "name": "cache-update",
+      "func": "cmd_cache_update",
+      "args": [
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "dest": "cache_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "dest": "diff_data",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--bha-dir"
+          ],
+          "dest": "bha_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--prompt-hash"
+          ],
+          "dest": "prompt_hash",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--model-id"
+          ],
+          "dest": "model_id",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--schema-version"
+          ],
+          "dest": "schema_version",
+          "default": null,
+          "required": true,
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--reviewed-files"
+          ],
+          "dest": "reviewed_files",
+          "default": [],
+          "nargs": "*"
+        },
+        {
+          "flags": [
+            "--partitions-file"
+          ],
+          "dest": "partitions_file",
+          "default": null
+        },
+        {
+          "flags": [
+            "--global-cache"
+          ],
+          "dest": "global_cache",
+          "default": 0,
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--context-key"
+          ],
+          "dest": "context_key",
+          "default": ""
+        },
+        {
+          "flags": [
+            "--gc-ttl-days"
+          ],
+          "dest": "gc_ttl_days",
+          "default": 14,
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--gc-max-per-file"
+          ],
+          "dest": "gc_max_per_file",
+          "default": 3,
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--exclude-test-partitions"
+          ],
+          "dest": "exclude_test_partitions",
+          "default": false,
+          "action": "store_true"
+        }
+      ]
+    },
+    {
+      "name": "post-comments",
+      "func": "cmd_post_comments",
+      "args": [
+        {
+          "flags": [
+            "--findings"
+          ],
+          "dest": "findings",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--repo"
+          ],
+          "dest": "repo",
+          "default": null
+        },
+        {
+          "flags": [
+            "--dry-run"
+          ],
+          "dest": "dry_run",
+          "default": false,
+          "action": "store_true"
+        }
+      ]
+    },
+    {
+      "name": "resolve-threads",
+      "func": "cmd_resolve_threads",
+      "args": [
+        {
+          "flags": [
+            "--threads"
+          ],
+          "dest": "threads",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--dry-run"
+          ],
+          "dest": "dry_run",
+          "default": false,
+          "action": "store_true"
+        }
+      ]
+    },
+    {
+      "name": "review-state-read",
+      "func": "cmd_review_state_read",
+      "args": [
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "dest": "cache_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--key"
+          ],
+          "dest": "key",
+          "default": null,
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "review-state-write",
+      "func": "cmd_review_state_write",
+      "args": [
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "dest": "cache_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--key"
+          ],
+          "dest": "key",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--sha"
+          ],
+          "dest": "sha",
+          "default": null
+        },
+        {
+          "flags": [
+            "--ref"
+          ],
+          "dest": "ref",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "session-tokens",
+      "func": "cmd_session_tokens",
+      "args": [
+        {
+          "flags": [
+            "--project-dir"
+          ],
+          "dest": "project_dir",
+          "default": null
+        },
+        {
+          "flags": [
+            "--start-time"
+          ],
+          "dest": "start_time",
+          "default": null,
+          "required": true,
+          "type": "float"
+        }
+      ]
+    },
+    {
+      "name": "setup",
+      "func": "cmd_setup",
+      "args": [
+        {
+          "flags": [
+            "--mode"
+          ],
+          "dest": "mode",
+          "default": null,
+          "required": true,
+          "choices": [
+            "local",
+            "github"
+          ]
+        },
+        {
+          "flags": [
+            "--cr-dir-prefix"
+          ],
+          "dest": "cr_dir_prefix",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "resolve-scope",
+      "func": "cmd_resolve_scope",
+      "args": [
+        {
+          "flags": [
+            "--mode"
+          ],
+          "dest": "mode",
+          "default": null,
+          "required": true,
+          "choices": [
+            "local",
+            "github"
+          ]
+        },
+        {
+          "flags": [
+            "--pr-number"
+          ],
+          "dest": "pr_number",
+          "default": null,
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--scope-args"
+          ],
+          "dest": "scope_args",
+          "default": ""
+        },
+        {
+          "flags": [
+            "--base-ref-override"
+          ],
+          "dest": "base_ref_override",
+          "default": null
+        },
+        {
+          "flags": [
+            "--setup-json"
+          ],
+          "dest": "setup_json",
+          "default": null,
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "fetch-intent",
+      "func": "cmd_fetch_intent",
+      "args": [
+        {
+          "flags": [
+            "--pr-number"
+          ],
+          "dest": "pr_number",
+          "default": null,
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--base-ref"
+          ],
+          "dest": "base_ref",
+          "default": "main"
+        },
+        {
+          "flags": [
+            "--diff-tip"
+          ],
+          "dest": "diff_tip",
+          "default": "HEAD"
+        },
+        {
+          "flags": [
+            "--scope-kind"
+          ],
+          "dest": "scope_kind",
+          "default": null,
+          "required": true,
+          "choices": [
+            "pr",
+            "branch",
+            "staged",
+            "file_paths",
+            "github_pending"
+          ]
+        },
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "compute-hashes",
+      "func": "cmd_compute_hashes",
+      "args": [
+        {
+          "flags": [
+            "--shared-prompt"
+          ],
+          "dest": "shared_prompt",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--bha-suffix"
+          ],
+          "dest": "bha_suffix",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--verifier-prompt"
+          ],
+          "dest": "verifier_prompt",
+          "default": null
+        },
+        {
+          "flags": [
+            "--premise-prompt"
+          ],
+          "dest": "premise_prompt",
+          "default": null
+        },
+        {
+          "flags": [
+            "--diff-tip"
+          ],
+          "dest": "diff_tip",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--base-ref"
+          ],
+          "dest": "base_ref",
+          "default": null,
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "auto-incremental",
+      "func": "cmd_auto_incremental",
+      "args": [
+        {
+          "flags": [
+            "--cache-dir"
+          ],
+          "dest": "cache_dir",
+          "default": ""
+        },
+        {
+          "flags": [
+            "--key"
+          ],
+          "dest": "key",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--diff-tip"
+          ],
+          "dest": "diff_tip",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--base-ref"
+          ],
+          "dest": "base_ref",
+          "default": "main"
+        },
+        {
+          "flags": [
+            "--original-scope"
+          ],
+          "dest": "original_scope",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--full-review"
+          ],
+          "dest": "full_review",
+          "default": "false"
+        },
+        {
+          "flags": [
+            "--since-last-review"
+          ],
+          "dest": "since_last_review",
+          "default": "false"
+        },
+        {
+          "flags": [
+            "--mode"
+          ],
+          "dest": "mode",
+          "default": "local"
+        }
+      ]
+    },
+    {
+      "name": "finalize-cache",
+      "func": "cmd_finalize_cache",
+      "args": [
+        {
+          "flags": [
+            "--setup-json"
+          ],
+          "dest": "setup_json",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--mode"
+          ],
+          "dest": "mode",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--pr-number"
+          ],
+          "dest": "pr_number",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "footer",
+      "func": "cmd_footer",
+      "extra_defaults": {
+        "project_dir": null
+      },
+      "args": [
+        {
+          "flags": [
+            "--start-time"
+          ],
+          "dest": "start_time",
+          "default": null,
+          "required": true,
+          "type": "float"
+        },
+        {
+          "flags": [
+            "--cache-result"
+          ],
+          "dest": "cache_result",
+          "default": null
+        },
+        {
+          "flags": [
+            "--review-mode-line"
+          ],
+          "dest": "review_mode_line",
+          "default": null
+        },
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "classify-intent",
+      "func": "cmd_classify_intent",
+      "args": [
+        {
+          "flags": [
+            "--intent-context"
+          ],
+          "dest": "intent_context",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "dest": "diff_data",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "detect-injection",
+      "func": "cmd_detect_injection",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--intent-context"
+          ],
+          "dest": "intent_context",
+          "default": null,
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "collect-findings",
+      "func": "cmd_collect_findings",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "dest": "output",
+          "default": "findings.json"
+        },
+        {
+          "flags": [
+            "--hygiene"
+          ],
+          "dest": "hygiene",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "verdict",
+      "func": "cmd_verdict",
+      "args": [
+        {
+          "flags": [
+            "--validate-output"
+          ],
+          "dest": "validate_output",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--review-result"
+          ],
+          "dest": "review_result",
+          "default": null
+        },
+        {
+          "flags": [
+            "--thresholds"
+          ],
+          "dest": "thresholds",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "finalize-result",
+      "func": "cmd_finalize_result",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--validate-output"
+          ],
+          "dest": "validate_output",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--mode"
+          ],
+          "dest": "mode",
+          "default": null,
+          "choices": [
+            "local",
+            "github"
+          ]
+        },
+        {
+          "flags": [
+            "--diff-tip"
+          ],
+          "dest": "diff_tip",
+          "default": null
+        },
+        {
+          "flags": [
+            "--pr-number"
+          ],
+          "dest": "pr_number",
+          "default": null,
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--thresholds"
+          ],
+          "dest": "thresholds",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "arbitrate-budget",
+      "func": "cmd_arbitrate_budget",
+      "args": [
+        {
+          "flags": [
+            "--coverage-plan"
+          ],
+          "dest": "coverage_plan",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "dest": "diff_data",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--cap"
+          ],
+          "dest": "cap",
+          "default": 20,
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "dest": "output",
+          "default": null
+        },
+        {
+          "flags": [
+            "--coverage-verify"
+          ],
+          "dest": "coverage_verify",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "derive-spawn-spec",
+      "func": "cmd_derive_spawn_spec",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--coverage-plan"
+          ],
+          "dest": "coverage_plan",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--partitions"
+          ],
+          "dest": "partitions",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--route"
+          ],
+          "dest": "route",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "dest": "output",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "verify-spawn",
+      "func": "cmd_verify_spawn",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "render-fleet-summary",
+      "func": "cmd_render_fleet_summary",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "dest": "output",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "prepare-run",
+      "func": "cmd_prepare_run",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--mode"
+          ],
+          "dest": "mode",
+          "default": null,
+          "required": true,
+          "choices": [
+            "local",
+            "github"
+          ]
+        },
+        {
+          "flags": [
+            "--hygiene-only"
+          ],
+          "dest": "hygiene_only",
+          "default": "false"
+        },
+        {
+          "flags": [
+            "--since-last-review"
+          ],
+          "dest": "since_last_review",
+          "default": "false"
+        },
+        {
+          "flags": [
+            "--full-review"
+          ],
+          "dest": "full_review",
+          "default": "false"
+        },
+        {
+          "flags": [
+            "--base-ref-override"
+          ],
+          "dest": "base_ref_override",
+          "default": ""
+        },
+        {
+          "flags": [
+            "--scope-args"
+          ],
+          "dest": "scope_args",
+          "default": ""
+        },
+        {
+          "flags": [
+            "--pr-number"
+          ],
+          "dest": "pr_number",
+          "default": null,
+          "type": "int"
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "dest": "output",
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "prep-assets",
+      "func": "cmd_prep_assets",
+      "args": [
+        {
+          "flags": [
+            "--plugin-root"
+          ],
+          "dest": "plugin_root",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "extract-patches",
+      "func": "cmd_extract_patches",
+      "args": [
+        {
+          "flags": [
+            "--diff-scope"
+          ],
+          "dest": "diff_scope",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--diff-data"
+          ],
+          "dest": "diff_data",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--workdir"
+          ],
+          "dest": "workdir",
+          "default": null
+        },
+        {
+          "flags": [
+            "--batch-size"
+          ],
+          "dest": "batch_size",
+          "default": 50,
+          "type": "int"
+        }
+      ]
+    }
+  ]
+}
