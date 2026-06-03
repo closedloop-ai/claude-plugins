@@ -6612,7 +6612,10 @@ _FRONTMATTER_BOUNDARY = re.compile(r"^---\s*$", re.MULTILINE)
 # the post-process step below. The bare-scalar regex stays
 # conservative (must start with [A-Za-z0-9], YAML-safe chars only)
 # so a typo on a different key doesn't accidentally swallow content
-# from a later line.
+# from a later line. Quoted forms are matched more permissively but
+# the post-process step validates the unquoted value against
+# ``_REVIEWER_ID_RE`` so ``name: "../x"``, ``name: "bad reviewer"``,
+# and similarly malformed identifiers are rejected.
 _FRONTMATTER_NAME = re.compile(
     r"""^name\s*:\s*
         (?:
@@ -6625,12 +6628,43 @@ _FRONTMATTER_NAME = re.compile(
     re.MULTILINE | re.VERBOSE,
 )
 
+# Canonical agent-name grammar — used to validate ``name`` values
+# extracted from quoted YAML scalars before they enter the roster. The
+# bare scalar form is already constrained by the regex above, but
+# quoted forms could otherwise smuggle path traversal (``"../x"``),
+# whitespace (``"bad reviewer"``), or absurdly long strings into
+# ``available_reviewers.json`` — names the critic could then propose
+# and the closed-vocabulary check would accept because they came from
+# the roster. Length cap is set conservatively at 63 chars; every
+# actual project agent uses lowercase-with-hyphens well under this.
+#
+# The grammar mirrors ``_REVIEWER_ID_RE`` defined later for the
+# collect-findings stage (which validates against ``make_finding_id``'s
+# ``^[a-z][a-z0-9_-]*$`` requirement). Keeping the agent-name grammar
+# at the same level of strictness guarantees that any name added to
+# the roster will survive the downstream ``make_finding_id`` check —
+# without this alignment a name that passed here could still poison
+# the collect-findings stage. Named distinctly to avoid the module-
+# level collision the earlier draft hit.
+_AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
+
 # Bounded read for an agent file: enough to cover even pathologically
 # long frontmatter, far less than what a `.md` symlinked to /dev/zero
 # would let the runner consume. The parser only ever reads the
 # frontmatter (between the first two ``---`` lines), so the prose body
 # can be truncated without affecting `name` extraction.
 _AGENT_FILE_READ_LIMIT_BYTES = 64 * 1024
+
+# Aggregate caps for the agent-definition scan. Per-file read is
+# already bounded by _AGENT_FILE_READ_LIMIT_BYTES, but a hostile PR
+# could otherwise add hundreds of small valid agent files (or names
+# right up to the 63-char cap) to grow scan time, JSON-roster size,
+# and downstream critic prompt size — none of which are limited by
+# the per-file read alone. The caps deliberately apply at scan time
+# (not just post-load) so the work is bounded before any bytes are
+# read.
+_AGENTS_DIR_MAX_FILES = 200
+_ROSTER_MAX_ENTRIES = 200
 
 
 def _parse_agent_name(text: str) -> str | None:
@@ -6660,8 +6694,19 @@ def _parse_agent_name(text: str) -> str | None:
     match = _FRONTMATTER_NAME.search(frontmatter)
     if not match:
         return None
-    value = match.group("dq") or match.group("sq") or match.group("bare") or ""
-    return value.strip() or None
+    value = (match.group("dq") or match.group("sq") or match.group("bare") or "").strip()
+    if not value:
+        return None
+    # Validate the unquoted value against the canonical agent-name
+    # grammar — the regex above accepts arbitrary quoted strings so
+    # the YAML parser is permissive, but the roster has stricter
+    # requirements (it feeds the closed-vocabulary contract AND must
+    # satisfy the downstream ``make_finding_id`` schema). A rejection
+    # here surfaces as a per-file warning in the caller and the agent
+    # is dropped from the roster.
+    if not _AGENT_NAME_RE.match(value):
+        return None
+    return value
 
 
 def _scan_agent_definitions(agents_dir: Path) -> tuple[list[str], list[str]]:
@@ -6682,7 +6727,32 @@ def _scan_agent_definitions(agents_dir: Path) -> tuple[list[str], list[str]]:
     warnings: list[str] = []
     if not agents_dir.is_dir():
         return [], [f"agents dir not found: {agents_dir}"]
-    for path in sorted(agents_dir.glob("*.md")):
+    # Cap scanned files BEFORE reading any bytes. A hostile PR could add
+    # hundreds of small valid agent files; per-file read bounds prevent
+    # OOM on any single file but say nothing about aggregate scan time,
+    # roster-JSON size, or critic-input prompt size. Sort first so the
+    # cap is deterministic in filename order (lexicographically-first
+    # wins on collision).
+    all_paths = sorted(agents_dir.glob("*.md"))
+    if len(all_paths) > _AGENTS_DIR_MAX_FILES:
+        warnings.append(
+            f"agents dir exceeds {_AGENTS_DIR_MAX_FILES}-file cap "
+            f"({len(all_paths)} matches); scanning first "
+            f"{_AGENTS_DIR_MAX_FILES} files only",
+        )
+        all_paths = all_paths[:_AGENTS_DIR_MAX_FILES]
+    for path in all_paths:
+        # Roster-entry cap — independent from the file-count cap because
+        # even within the scanned files, duplicates and warnings reduce
+        # the roster size. Stop adding entries once the cap is reached;
+        # remaining files still get scanned for warning purposes so
+        # operators see why their roster is short.
+        if len(reviewers) >= _ROSTER_MAX_ENTRIES:
+            warnings.append(
+                f"roster size cap reached at {_ROSTER_MAX_ENTRIES} "
+                f"entries; skipping remaining {path.name} and beyond",
+            )
+            break
         # Skip symlinks and non-regular files. The review pipeline runs
         # against an untrusted repo checkout — a PR can add
         # `.claude/agents/x.md` as a symlink to /dev/zero, a FIFO, or a
@@ -7076,10 +7146,30 @@ def _load_available_reviewers(
     Accepts either a flat JSON list or ``{"available": [...]}``. Returns
     ``(roster, None)`` on success and ``(None, diagnostic)`` on failure
     so callers can fail consistently AND surface a path-specific
-    diagnostic. IO/parse errors are bound to the exception so an
-    operator with a missing or malformed file sees the real cause
-    (e.g. ``[Errno 2] No such file or directory``) instead of a
-    misleading shape-error message.
+    diagnostic.
+
+    "Success" includes a TRULY-empty roster (``[]`` or ``{"available":
+    []}``) — the project legitimately has no configured agents, and
+    the verifier's no-roster skip semantics kick in downstream. But a
+    present-but-wrong-shape file is NOT a successful empty parse:
+
+      - ``{"reviewers": [...]}`` (wrong key)  → ``(None, "...")``
+      - ``{"available": "not-a-list"}``       → ``(None, "...")``
+      - ``[1, 2, 3]`` (list of non-strings)   → ``(None, "...")``
+
+    Those are realistic operator hand-edits, and the previous version
+    silently returned ``([], None)`` for them (``raw.get("available", [])``
+    defaulted to ``[]``, the non-string filter collapsed everything),
+    masking the operator config error. ``cmd_verify_coverage`` then
+    saw "no roster", skipped closed-vocabulary, and emitted PASS on a
+    plan that should have been gated. The verifier's roster-BLOCK
+    path (v2.20.1) keyed on ``loaded is None`` and never fired for
+    these shapes.
+
+    IO/parse errors stay bound to the exception so an operator with a
+    missing or malformed file sees the real cause (e.g. ``[Errno 2]
+    No such file or directory``) instead of a misleading shape-error
+    message.
     """
     try:
         with open(path) as f:
@@ -7087,11 +7177,45 @@ def _load_available_reviewers(
     except (OSError, json.JSONDecodeError) as exc:
         return None, f"Error reading available_reviewers: {exc}"
     if isinstance(raw, list):
-        return [a for a in raw if isinstance(a, str) and a], None
+        # Truly empty is fine (no configured agents). A non-empty list
+        # whose entries are all non-strings (or all empty strings) is
+        # malformed — the operator wrote something with intent and we
+        # extracted nothing usable.
+        if not raw:
+            return [], None
+        filtered = [a for a in raw if isinstance(a, str) and a]
+        if not filtered:
+            return None, (
+                "Error: available_reviewers list contains no usable "
+                "string entries (got non-string or empty values)"
+            )
+        return filtered, None
     if isinstance(raw, dict):
-        inner = raw.get("available", [])
-        if isinstance(inner, list):
-            return [a for a in inner if isinstance(a, str) and a], None
+        # Distinguish "key absent" from "key present with empty list".
+        # Absent key → operator wrote a different shape (e.g. the
+        # common hand-edit `{"reviewers": [...]}` instead of
+        # `{"available": [...]}`); never silently treat as empty.
+        if "available" not in raw:
+            return None, (
+                "Error: available_reviewers dict missing required "
+                "'available' key (got keys: "
+                f"{sorted(raw.keys())[:10]})"
+            )
+        inner = raw["available"]
+        if not isinstance(inner, list):
+            return None, (
+                "Error: available_reviewers['available'] must be a "
+                f"list (got {type(inner).__name__})"
+            )
+        if not inner:
+            return [], None
+        filtered = [a for a in inner if isinstance(a, str) and a]
+        if not filtered:
+            return None, (
+                "Error: available_reviewers['available'] contains no "
+                "usable string entries"
+            )
+        return filtered, None
     return None, "Error: available_reviewers must be a list or {available: [...]}"
 
 
@@ -7754,8 +7878,19 @@ def verify_coverage_plan(
 
     Checks (each appends at most one violation per failure mode):
       - shape: top-level is an object with required[] + best_effort[]
-      - additive: every initial reviewer survives in some bucket of final
-      - closed_vocabulary: every final reviewer is in roster (when roster)
+               (lists) AND every entry is a dict carrying a non-empty
+               ``reviewer`` string. Shape failures short-circuit all
+               other checks since they all assume valid entries.
+      - additive: bucket-aware. ``initial.required ⊆ final.required``
+               (promotion to required from best_effort is fine;
+               demotion to best_effort is NOT — that silently downgrades
+               mandatory coverage). ``initial.best_effort ⊆ final.required
+               ∪ final.best_effort`` (best-effort may stay or be
+               promoted, must not be deleted).
+      - closed_vocabulary: every source="critic" entry in best_effort
+               is in roster (when roster present and non-empty).
+               Core/rule reviewer labels are plugin-internal and NOT
+               roster-constrained (v2.19.2 scoping fix).
       - critic_best_effort_only: source="critic" entries never in required[]
       - critic_evidence: every source="critic" entry has non-empty evidence
       - critic_cap: critic_addition count <= COVERAGE_CRITIC_MAX_ADDITIONS
@@ -7763,7 +7898,13 @@ def verify_coverage_plan(
     """
     violations: list[dict[str, str]] = []
 
-    # shape
+    # shape — required[]/best_effort[] must be lists of {reviewer: <str>}
+    # dicts. The earlier version only checked that the buckets were
+    # lists; ``{"required": [{}], "best_effort": []}`` and
+    # ``{"required": [{"reviewer": ""}], ...}`` both PASSED. Since the
+    # verifier is the last guard before downstream spawning, malformed
+    # entries are caught here as a ``shape`` violation rather than
+    # silently dropped by ``_plan_reviewer_buckets`` and ``_reviewer_names``.
     if not isinstance(plan.get("required"), list):
         violations.append({
             "check": "shape",
@@ -7776,20 +7917,68 @@ def verify_coverage_plan(
         })
     if violations:
         return violations  # downstream checks assume shape is valid
+    for bucket_name in ("required", "best_effort"):
+        for idx, entry in enumerate(plan.get(bucket_name, []) or []):
+            if not isinstance(entry, dict):
+                violations.append({
+                    "check": "shape",
+                    "message": (
+                        f"coverage_plan.{bucket_name}[{idx}] is not an object"
+                    ),
+                })
+                continue
+            reviewer = entry.get("reviewer")
+            if not isinstance(reviewer, str) or not reviewer.strip():
+                violations.append({
+                    "check": "shape",
+                    "message": (
+                        f"coverage_plan.{bucket_name}[{idx}] missing or empty "
+                        f"'reviewer' field"
+                    ),
+                })
+    if violations:
+        # Shape violations short-circuit — additive / closed_vocabulary /
+        # critic_* checks all assume valid entries with string reviewer
+        # names. Running them on malformed input would generate misleading
+        # downstream violations that obscure the actual fault.
+        return violations
 
     required_final, best_effort_final = _plan_reviewer_buckets(plan)
     required_initial, best_effort_initial = _plan_reviewer_buckets(plan_initial)
     final_names = set(_reviewer_names(required_final)) | set(_reviewer_names(best_effort_final))
 
-    # additive
-    initial_names = set(_reviewer_names(required_initial)) | set(_reviewer_names(best_effort_initial))
-    dropped = sorted(initial_names - final_names)
-    if dropped:
+    # additive — bucket-aware. The earlier check unioned both buckets
+    # on each side, so an initial-required reviewer could move into
+    # final.best_effort[] and the contract considered it preserved. But
+    # the spawn_reviewers stage interprets ``required`` as "mandatory
+    # coverage" and ``best_effort`` as "if budget allows" — silently
+    # demoting a required reviewer downgrades coverage without any
+    # operator-visible signal. Enforce ``initial.required ⊆ final.required``
+    # as a separate check from ``initial.best_effort ⊆ final.(required ∪
+    # best_effort)``: promotion of an initial best-effort to required
+    # IS valid (still additive); demotion of an initial required is NOT.
+    required_initial_names = set(_reviewer_names(required_initial))
+    required_final_names = set(_reviewer_names(required_final))
+    demoted_or_dropped = sorted(required_initial_names - required_final_names)
+    if demoted_or_dropped:
         violations.append({
             "check": "additive",
             "message": (
-                f"initial-plan reviewers missing from final plan: {dropped} "
-                f"(coverage critic may only ADD; deletions violate the contract)"
+                f"initial required reviewers missing from final required[]: "
+                f"{demoted_or_dropped} (required reviewers MUST stay "
+                f"required; demotion to best_effort or deletion violates "
+                f"the additive-only contract)"
+            ),
+        })
+    best_effort_initial_names = set(_reviewer_names(best_effort_initial))
+    dropped_best_effort = sorted(best_effort_initial_names - final_names)
+    if dropped_best_effort:
+        violations.append({
+            "check": "additive",
+            "message": (
+                f"initial best-effort reviewers missing from final plan: "
+                f"{dropped_best_effort} (coverage critic may only ADD; "
+                f"deletions violate the contract)"
             ),
         })
 
@@ -7893,8 +8082,13 @@ def _emit_coverage_verify_blocking_finding(
     if len(violations) > 10:
         summary.append(f"… {len(violations) - 10} more")
     finding = {
-        "reviewer": "coverage-verify",
-        "source": "coverage-verify",
+        # ``coverage-verifier`` is the canonical source registered in
+        # ``code_review_schema.SOURCES``. Emitting ``coverage-verify``
+        # here would cause schema validation at stage_22 to reject the
+        # finding exactly when the verifier needs to surface a BLOCKING
+        # result, silently dropping it from the run summary.
+        "reviewer": "coverage-verifier",
+        "source": "coverage-verifier",
         "finding_scope": "system",
         "system_marker": COVERAGE_VERIFY_MARKER,
         "category": "Coverage",
@@ -7946,11 +8140,26 @@ def cmd_verify_coverage(args: argparse.Namespace) -> int:
     the verdict and violations, and on BLOCKING also emits an
     ``agent_coverage-verify-blocking.json`` system finding.
 
-    Exit code is 0 on PASS, BLOCKING, AND on missing-input early-exit
-    (which is treated as PASS so the verifier is fully observational
-    in Phase 6 — Phase 7 will gate spawn_reviewers on PASS via the
-    artifact, not the exit code). Returns 1 only on a write failure to
+    Exit code is 0 on PASS and BLOCKING (the walker is observational —
+    halting on BLOCKING would break the Phase 4/5 telemetry posture
+    for any review surfacing a violation). Phase 7 (v2.20.0) gates
+    ``stage_16_arbitrate_budget`` on the verdict by reading the
+    artifact, not the exit code. Returns 1 only on a write failure to
     ``coverage_verify.json`` itself.
+
+    Missing or unreadable verifier inputs (``coverage_plan.json``,
+    ``coverage_plan_initial.json``) BLOCK with an ``input`` check
+    (v2.20.1). The earlier behavior — PASS with an advisory ``input``
+    violation — made "no plan was verified" indistinguishable from a
+    real PASS in the artifact, and Phase 7's gate would have silently
+    bypassed the cap on every upstream-aborted run.
+
+    Roster semantics: missing file → no project agents configured
+    (closed-vocabulary check is bypassed; verdict reflects only the
+    other checks). Empty file or empty list → same. PRESENT but
+    invalid (unreadable, wrong shape) → BLOCK with a ``roster`` check
+    (v2.20.1) — distinguishable from absent so an operator config
+    error is surfaced.
 
     Skip semantics: when ``coverage_plan.json`` has
     ``critic_status: "skipped"`` (--no-critic, no-roster, or
@@ -7997,18 +8206,21 @@ def cmd_verify_coverage(args: argparse.Namespace) -> int:
         sys.stdout.write("\n")
         return 0
 
-    # Missing inputs are not a verifier failure — they mean an upstream
-    # stage didn't produce its artifact (likely because a prior stage
-    # aborted). Treat as PASS with a single advisory violation so
-    # operators see why verification was vacuous, without blocking
-    # downstream observability.
+    # Missing or unreadable verifier inputs now BLOCK. The earlier
+    # version treated them as PASS with an advisory ``input`` violation,
+    # but that made "no plan was verified" indistinguishable from a real
+    # PASS in the artifact downstream (Phase 7 arbitrate-budget will gate
+    # on the verdict — a silent PASS-on-missing-input would bypass the
+    # cap on every aborted-upstream run). Exit code stays 0 so the walker
+    # doesn't halt — observational semantics are about the WALKER, the
+    # verdict is about the ARTIFACT consumer.
     try:
         with open(plan_path) as f:
             plan = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
-        return _write_verdict("PASS", [{
+        return _write_verdict("BLOCKING", [{
             "check": "input",
-            "message": f"coverage_plan unreadable, verifier ran no checks: {exc}",
+            "message": f"coverage_plan unreadable: {exc}",
         }])
     if not isinstance(plan, dict):
         return _write_verdict("BLOCKING", [{
@@ -8020,19 +8232,33 @@ def cmd_verify_coverage(args: argparse.Namespace) -> int:
         with open(plan_initial_path) as f:
             plan_initial = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
-        return _write_verdict("PASS", [{
+        return _write_verdict("BLOCKING", [{
             "check": "input",
             "message": f"coverage_plan_initial unreadable: {exc}",
         }])
     if not isinstance(plan_initial, dict):
-        plan_initial = {}
+        return _write_verdict("BLOCKING", [{
+            "check": "input",
+            "message": "coverage_plan_initial is not a JSON object",
+        }])
 
     available_reviewers: list[str] | None = None
     if available_path is not None and available_path.exists():
-        loaded, _ = _load_available_reviewers(available_path)
-        # Roster read errors degrade to None (skip closed-vocabulary check)
-        # rather than emitting a violation — the verifier's job is to
-        # check the plan, not the roster file shape.
+        loaded, err = _load_available_reviewers(available_path)
+        if loaded is None:
+            # Present-but-malformed roster — distinct from missing/empty.
+            # Missing file → no project agents configured (no-roster
+            # semantics, closed-vocabulary check is bypassed). Empty file
+            # / empty list → same. But a PRESENT INVALID file is an
+            # operator config error: previously the read error was
+            # silently discarded and ``available_reviewers`` stayed
+            # None, causing the closed-vocabulary check to be skipped.
+            # That let a corrupted ``available_reviewers.json`` produce
+            # a misleading PASS on a plan that should have been gated.
+            return _write_verdict("BLOCKING", [{
+                "check": "roster",
+                "message": f"available_reviewers unparseable: {err}",
+            }])
         available_reviewers = loaded if loaded else None
 
     violations = verify_coverage_plan(plan, plan_initial, available_reviewers)
@@ -9282,33 +9508,37 @@ def _build_run_plan_stages(
             "kind": "helper",
             "subcommand": "arbitrate-budget",
             "args": [
-                # PLN-725 Phase 4: when this stage flips on (Phase 7),
-                # its input is the consolidated plan (stage_15b's
-                # output, post-critic-additions), not the pre-critic
-                # initial plan. Path is the same file name —
-                # stage_15b writes coverage_plan.json on top of
-                # whatever was at coverage_plan_initial.json with
-                # critic_status + best_effort additions merged.
+                # Input is the post-consolidate, post-verify coverage_plan.
+                # stage_15b writes coverage_plan.json with critic_status +
+                # best_effort additions; stage_15c writes coverage_verify.
+                # json with verdict + violations but does NOT mutate
+                # coverage_plan.json. So this stage reads the same file
+                # the verifier read — guaranteeing the gate and the
+                # arbitration see the same plan.
                 "--coverage-plan", f"{cr_dir}/coverage_plan.json",
                 "--diff-data", f"{cr_dir}/diff_data.json",
                 "--output", f"{cr_dir}/coverage_plan.json",
+                # PLN-725 Phase 7: BLOCKING gate from stage_15c. Absent
+                # file = PASS (verifier didn't run, upstream aborted).
+                "--coverage-verify", f"{cr_dir}/coverage_verify.json",
             ],
             "stdout": None,
             "expected_outputs": [f"{cr_dir}/coverage_plan.json", f"{cr_dir}/coverage_gaps.json"],
             # PLN-725 Phase 6 depends_on rewire: stage_15c is the last
-            # stage to read coverage_plan.json before stage_16. When
-            # Phase 7 enables this stage and starts reading
-            # coverage_verify.json to gate on PASS, the dependency on
-            # stage_15c is what guarantees that artifact exists.
+            # stage to read coverage_plan.json before stage_16. The
+            # dependency on stage_15c guarantees coverage_verify.json
+            # exists before arbitrate-budget consults the verdict.
             "depends_on": ["stage_15c_verify_coverage"],
+            # PLN-725 Phase 7 enabled. on_failure stays at "abort" —
+            # arbitrate-budget has been ready since v2.16.x; flipping
+            # it on means a real failure here is a pipeline halt, not
+            # a coverage-gap degradation. The BLOCKING gate is the
+            # graceful path: input plan flows through, exit 0, no
+            # abort. spawn_reviewers (stage_20) still uses the static
+            # spec table in start.md — the coverage_plan.json →
+            # orchestrator rewire is Phase 8.
             "on_failure": "abort",
-            # Stays disabled in Phase 4 — arbitrate-budget integration
-            # is Phase 7. stages 11/11b/14/15/15b run in dry-run mode
-            # producing coverage_plan.json as telemetry that nothing
-            # downstream yet consumes; this stage flips on when the
-            # spawn_reviewers step (stage_20) starts reading
-            # coverage_plan.json instead of the static spec list.
-            "enabled": False,
+            "enabled": True,
         },
         {
             "id": "stage_18_compute_hashes",
@@ -9792,6 +10022,38 @@ def _make_coverage_gap_finding(
     )
 
 
+def _read_coverage_verify_verdict(path: Path | None) -> tuple[str | None, list[dict[str, str]]]:
+    """Return ``(verdict, violations)`` from a coverage_verify.json file.
+
+    Verdict is ``"PASS"``, ``"BLOCKING"``, or ``None`` if the file is
+    missing/unreadable (treated as PASS by callers — verification is
+    observational; an absent verifier output must not block arbitration).
+    """
+    if path is None or not path.exists():
+        return None, []
+    try:
+        with open(path) as f:
+            doc = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None, []
+    if not isinstance(doc, dict):
+        return None, []
+    verdict = doc.get("verdict")
+    if not isinstance(verdict, str):
+        return None, []
+    violations = doc.get("violations", [])
+    if not isinstance(violations, list):
+        violations = []
+    typed_violations: list[dict[str, str]] = []
+    for v in violations:
+        if isinstance(v, dict):
+            typed_violations.append({
+                "check": str(v.get("check", "")),
+                "message": str(v.get("message", "")),
+            })
+    return verdict, typed_violations
+
+
 def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     """Apply budget arbitration to a coverage plan (PLN-719 Section 5).
 
@@ -9799,6 +10061,22 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     and ``best_effort`` arrays) plus diff_data.json and produces the final
     coverage_plan.json. Emits coverage-gap findings for required reviewers
     that exceed the cap.
+
+    PLN-725 Phase 7: when ``--coverage-verify`` is supplied and that
+    file's verdict is ``"BLOCKING"``, arbitration short-circuits.
+    The input plan is written through to ``coverage_plan.json`` as-is
+    (preserving the rule floor — no cap, no pruning, no dropped
+    required) with ``budget.gated_by_verify: true`` so downstream
+    consumers can see why the cap wasn't applied. The same shape is
+    written — including ``deferred_for_budget``, ``dropped_required``,
+    and ``budget`` keys — so finalize-result and stage_20 readers
+    don't need to branch on a different schema. The BLOCKING finding
+    is already emitted by ``stage_15c_verify_coverage``
+    (``agent_coverage-verify-blocking.json``); arbitrate-budget does
+    not duplicate it. A missing ``coverage_verify.json`` (verifier
+    didn't run, or upstream stage aborted) is treated as PASS — the
+    verifier is observational, an absent artifact must not block
+    arbitration.
     """
     coverage_plan_in = _read_optional_json(Path(args.coverage_plan), None)
     if not isinstance(coverage_plan_in, dict):
@@ -9814,6 +10092,69 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     required: list[dict[str, Any]] = list(coverage_plan_in.get("required", []) or [])
     best_effort: list[dict[str, Any]] = list(coverage_plan_in.get("best_effort", []) or [])
     deprecation_warnings: list[str] = list(coverage_plan_in.get("deprecation_warnings", []) or [])
+
+    # PLN-725 Phase 7 BLOCKING gate. Short-circuit BEFORE any budget
+    # arithmetic so the input plan flows through untouched on a
+    # BLOCKING verdict. Note: the verifier itself stays observational
+    # (exit 0 on BLOCKING) — arbitrate-budget is where the verdict
+    # first translates into pipeline behavior change.
+    verify_path = (
+        Path(args.coverage_verify) if getattr(args, "coverage_verify", None)
+        else None
+    )
+    verdict, violations = _read_coverage_verify_verdict(verify_path)
+    now_iso_gate = datetime.now(timezone.utc).isoformat()
+    if verdict == "BLOCKING":
+        final_plan: dict[str, Any] = {
+            "required": required,
+            "best_effort": best_effort,
+            "deferred_for_budget": [],
+            "deprecation_warnings": deprecation_warnings,
+            "budget": {
+                "total_cap": cap,
+                "required_count": len(required),
+                "best_effort_count": len(best_effort),
+                "bha_partitions": 0,
+                "gated_by_verify": True,
+                "verify_violations": violations,
+            },
+            "dropped_required": [],
+            "arbitrate_status": "blocked_by_verify",
+            "generated_at": now_iso_gate,
+        }
+        output_path = (
+            Path(args.output) if args.output
+            else Path(args.coverage_plan).with_name("coverage_plan.json")
+        )
+        try:
+            with open(output_path, "w") as f:
+                json.dump(final_plan, f, indent=2)
+        except OSError as exc:
+            print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
+            return 1
+        gaps_path = output_path.with_name("coverage_gaps.json")
+        # Empty findings; the canonical BLOCKING finding is already
+        # in agent_coverage-verify-blocking.json from stage_15c.
+        try:
+            with open(gaps_path, "w") as f:
+                json.dump({"findings": []}, f, indent=2)
+        except OSError as exc:
+            print(f"Error writing coverage_gaps: {exc}", file=sys.stderr)
+            return 1
+        json.dump(
+            {
+                "status": "blocked_by_verify",
+                "coverage_plan": str(output_path),
+                "coverage_gaps": str(gaps_path),
+                "required_count": len(required),
+                "best_effort_count": len(best_effort),
+                "verify_violation_count": len(violations),
+            },
+            sys.stdout,
+            indent=2,
+        )
+        sys.stdout.write("\n")
+        return 0
 
     bha_floor = 0 if _is_docs_only(diff_data) else BUDGET_BHA_FLOOR_DEFAULT
     max_bha = _max_bha_partitions_by_loc(diff_data)
@@ -11097,6 +11438,18 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_ab.add_argument("--diff-data", required=True, help="Path to diff_data.json")
     p_ab.add_argument("--cap", type=int, default=BUDGET_TOTAL_CAP_DEFAULT, help="Total reviewer cap")
     p_ab.add_argument("--output", default=None, help="Output path (default: coverage_plan.json next to input)")
+    # PLN-725 Phase 7: BLOCKING gate from the Phase 6 verifier. When
+    # this file exists and contains verdict="BLOCKING", arbitration
+    # short-circuits (input plan passes through untouched, budget
+    # block flagged ``gated_by_verify: true``). Absent file = PASS.
+    p_ab.add_argument(
+        "--coverage-verify", default=None,
+        help=(
+            "Optional path to coverage_verify.json (PLN-725 Phase 6). "
+            "When present and verdict is BLOCKING, arbitration is "
+            "bypassed; input plan flows through unchanged."
+        ),
+    )
     p_ab.set_defaults(func=cmd_arbitrate_budget)
 
     # prepare-run (PLN-719 Phase 4)

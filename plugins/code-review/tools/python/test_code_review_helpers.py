@@ -6544,6 +6544,85 @@ class TestVerdictReadsEnvelope:
 # Budget arbitration (PLN-719 Phase 3)
 # ---------------------------------------------------------------------------
 
+def _run_arbitrate_budget(
+    tmp_path: Path,
+    coverage_plan_in: dict[str, Any],
+    diff_data: dict[str, Any],
+    *,
+    cap: int = 20,
+    verify_doc: dict[str, Any] | None = None,
+    include_verify_flag: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Shared module-level driver for ``cmd_arbitrate_budget`` tests.
+
+    Earlier this lived as two near-identical ``_run`` methods on
+    ``TestArbitrateBudget`` and ``TestPLN725Phase7ArbitrateBudgetGate``;
+    the Phase 7 version just added optional ``verify_doc`` /
+    ``include_verify_flag`` parameters. Extracted here so the seed +
+    invoke + read pattern lives in one place — both test classes'
+    ``_run`` methods now delegate to this helper, so a future
+    Namespace/CLI surface change (a new --foo flag, schema-version bump,
+    etc.) edits one site, not two.
+
+    Args:
+        tmp_path: pytest tmp_path
+        coverage_plan_in: initial coverage_plan_initial.json contents
+        diff_data: diff_data.json contents
+        cap: --cap arg to arbitrate-budget
+        verify_doc: optional coverage_verify.json contents. None means
+            "do not write the file at all" — exercising the
+            missing-verify-file degradation path. Pre-Phase-7 callers
+            don't supply this so the absence is faithful to their
+            historical Namespace shape.
+        include_verify_flag: when False, even if verify_doc is written
+            the --coverage-verify argparse flag is omitted — simulates
+            an old-style call from before Phase 7 wired the flag in.
+
+    Returns:
+        ``(summary, final_plan, gaps)``: parsed stdout summary,
+        coverage_plan.json, coverage_gaps.json
+    """
+    import io
+    import sys as _sys
+
+    from code_review_helpers import cmd_arbitrate_budget
+
+    cp_path = tmp_path / "coverage_plan_initial.json"
+    cp_path.write_text(json.dumps(coverage_plan_in))
+    dd_path = tmp_path / "diff_data.json"
+    dd_path.write_text(json.dumps(diff_data))
+
+    verify_path: Path | None = None
+    if verify_doc is not None:
+        verify_path = tmp_path / "coverage_verify.json"
+        verify_path.write_text(json.dumps(verify_doc))
+
+    coverage_verify_arg = (
+        str(verify_path) if (include_verify_flag and verify_path)
+        else None
+    )
+
+    old_stdout = _sys.stdout
+    _sys.stdout = io.StringIO()
+    try:
+        ns = argparse.Namespace(
+            coverage_plan=str(cp_path),
+            diff_data=str(dd_path),
+            cap=cap,
+            output=None,
+            coverage_verify=coverage_verify_arg,
+        )
+        cmd_arbitrate_budget(ns)
+        _sys.stdout.seek(0)
+        summary = json.load(_sys.stdout)
+    finally:
+        _sys.stdout = old_stdout
+
+    final_plan = json.loads((tmp_path / "coverage_plan.json").read_text())
+    gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())
+    return summary, final_plan, gaps
+
+
 class TestArbitrateBudget:
     """Tests for cmd_arbitrate_budget (PLN-719 Section 5)."""
 
@@ -6555,35 +6634,10 @@ class TestArbitrateBudget:
         *,
         cap: int = 20,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-        import argparse
-        import io
-        import sys as _sys
-
-        from code_review_helpers import cmd_arbitrate_budget
-
-        cp_path = tmp_path / "coverage_plan_initial.json"
-        cp_path.write_text(json.dumps(coverage_plan_in))
-        dd_path = tmp_path / "diff_data.json"
-        dd_path.write_text(json.dumps(diff_data))
-
-        old_stdout = _sys.stdout
-        _sys.stdout = io.StringIO()
-        try:
-            ns = argparse.Namespace(
-                coverage_plan=str(cp_path),
-                diff_data=str(dd_path),
-                cap=cap,
-                output=None,
-            )
-            cmd_arbitrate_budget(ns)
-            _sys.stdout.seek(0)
-            summary = json.load(_sys.stdout)
-        finally:
-            _sys.stdout = old_stdout
-
-        final_plan = json.loads((tmp_path / "coverage_plan.json").read_text())
-        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())
-        return summary, final_plan, gaps
+        # Pre-Phase-7 shape — no verify_doc, no include_verify_flag.
+        # Delegates to the shared module-level helper so the seed+
+        # invoke+read mechanics live in one place.
+        return _run_arbitrate_budget(tmp_path, coverage_plan_in, diff_data, cap=cap)
 
     def test_simple_fits_under_cap(self, tmp_path: Path) -> None:
         diff = _make_diff_data(files=["src/app.ts"])
@@ -6844,24 +6898,26 @@ class TestPrepareRun:
           - Plan 03 (PLN-722, verify-findings + prepare + consolidate)
             flipped on in v2.8.0.
           - PLN-725 Phase 4 (v2.17.0) flipped stages 11/11b/14/15/15b
-            on; stage_16_arbitrate_budget stays off until Phase 7.
+            on; stage_16_arbitrate_budget stayed off until Phase 7.
           - PLN-725 Phase 6 (v2.19.0) flipped stage_15c_verify_coverage on
             (observational; downstream consumers gate in Phase 7) and
             removed the stale stage_24_verify_coverage placeholder.
+          - PLN-725 Phase 7 (v2.20.0) flipped stage_16_arbitrate_budget on
+            with --coverage-verify wiring (BLOCKING short-circuit).
 
         Remaining deferred stages until their plans ship:
-          - stage_16_arbitrate_budget (PLN-725 Phase 7)
           - stage_13_validate_companions (PLN-726)
         """
         _, plan = self._run(tmp_path)
         by_id = {s["id"]: s for s in plan["stages"]}
         # Still-deferred
-        assert by_id["stage_16_arbitrate_budget"]["enabled"] is False
         assert by_id["stage_13_validate_companions"]["enabled"] is False
         # The legacy stage_24_verify_coverage placeholder was removed in
         # Phase 6 — verification now lives at stage_15c.
         assert "stage_24_verify_coverage" not in by_id
         assert "stage_15c_verify_coverage" in by_id
+        # Phase 7: stage_16_arbitrate_budget is now enabled.
+        assert by_id["stage_16_arbitrate_budget"]["enabled"] is True
 
     def test_pln_722_verify_pipeline_enabled_with_pinned_args(
         self, tmp_path: Path,
@@ -6949,31 +7005,42 @@ class TestPrepareRun:
         ):
             assert by_id[stage_id]["enabled"] is True, stage_id
 
-    def test_arbitrate_budget_gated_on_phase_7(self, tmp_path: Path) -> None:
-        """stage_16_arbitrate_budget stays disabled until PLN-725 Phase 7.
+    def test_arbitrate_budget_enabled_in_phase_7(self, tmp_path: Path) -> None:
+        """stage_16_arbitrate_budget flipped on in PLN-725 Phase 7 (v2.20.0).
 
-        Phase 4 turns on stages 11/11b/14/15/15b in dry-run mode —
-        `coverage_plan.json` is now produced on every review but is not
-        yet consumed by stage_20 (which still uses the static spec list).
-        Stage 16 (arbitrate-budget) is the cost-arbitration step that
-        slots between coverage-critic output and reviewer-spawn input;
-        flipping it on without spawn_reviewers consuming the output
-        would just rewrite coverage_plan.json with no consumer. Phase 7
-        wires both halves together.
-
-        Phase 6 (v2.19.0) re-anchors stage_16.depends_on to
-        stage_15c_verify_coverage so that when Phase 7 enables stage_16,
-        it can read coverage_verify.json from the same dependency chain.
+        Phase 4 turned on stages 11/11b/14/15/15b in dry-run mode —
+        `coverage_plan.json` was produced on every review but not yet
+        consumed by stage_20. Stage 16 (arbitrate-budget) is the cost-
+        arbitration step that slots between coverage-critic output and
+        reviewer-spawn input. Phase 6 wired stage_15c (the verifier)
+        between them and re-anchored stage_16.depends_on so the verdict
+        artifact lives on the dependency chain. Phase 7 enables
+        stage_16 with `--coverage-verify` wired in: a BLOCKING verdict
+        short-circuits arbitration (input plan flows through with
+        `budget.gated_by_verify: true`), a PASS verdict runs normal
+        arbitration. stage_20_spawn_reviewers still consumes the static
+        spec list; the orchestrator rewire is Phase 8.
         """
         _, plan = self._run(tmp_path)
         by_id = {s["id"]: s for s in plan["stages"]}
-        assert by_id["stage_16_arbitrate_budget"]["enabled"] is False
-        # Phase 6 rewired stage_16 to depend on stage_15c (the verifier)
-        # rather than stage_15b directly; stage_15c itself depends on
-        # stage_15b, so the producer chain still flows correctly.
+        # Phase 7 enablement
+        assert by_id["stage_16_arbitrate_budget"]["enabled"] is True
+        # depends_on still points at stage_15c (Phase 6 rewire) so the
+        # verdict artifact is on the dependency chain.
         assert "stage_15c_verify_coverage" in by_id[
             "stage_16_arbitrate_budget"
         ]["depends_on"]
+        # Phase 7 wires the verdict gate: --coverage-verify must point
+        # at the file stage_15c produces. Without this arg, BLOCKING
+        # verdicts would silently fall through to normal arbitration.
+        args = by_id["stage_16_arbitrate_budget"]["args"]
+        assert "--coverage-verify" in args
+        verify_idx = args.index("--coverage-verify")
+        assert args[verify_idx + 1].endswith("/coverage_verify.json")
+        # on_failure stays at "abort" — the BLOCKING gate is the
+        # graceful path (exit 0). A failure here is a real I/O or
+        # shape error that should halt the pipeline.
+        assert by_id["stage_16_arbitrate_budget"]["on_failure"] == "abort"
 
     def test_enabled_stages_do_not_depend_on_disabled_stages(
         self, tmp_path: Path,
@@ -12135,7 +12202,67 @@ class TestLoadAvailableReviewers:
         roster, err = _load_available_reviewers(p)
         assert roster is None
         assert err is not None
-        assert "list or {available: [...]}" in err
+        # v2.20.3: error message is now type-specific so operators see
+        # exactly what shape they wrote instead of the generic envelope.
+        assert "must be a list" in err
+        assert "str" in err
+
+    # v2.20.3 — present-but-wrong-shape rosters now return (None, err),
+    # which means cmd_verify_coverage's roster-BLOCK path actually
+    # fires for them. Previously these realistic operator hand-edits
+    # returned ([], None) and silently degraded to no-roster PASS.
+
+    def test_wrong_top_level_key_returns_none(self, tmp_path: Path) -> None:
+        # Most common hand-edit: typed the wrong key.
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps({"reviewers": ["a", "b"]}))
+        roster, err = _load_available_reviewers(p)
+        assert roster is None
+        assert err is not None
+        assert "available" in err and "missing" in err
+
+    def test_list_of_non_strings_returns_none(self, tmp_path: Path) -> None:
+        # A literal `[1, 2, 3]` previously was silently filtered into
+        # `[]`. Now it BLOCKs — operator wrote something with intent
+        # and nothing usable was extracted.
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps([1, 2, 3]))
+        roster, err = _load_available_reviewers(p)
+        assert roster is None
+        assert err is not None
+
+    def test_inner_available_list_of_non_strings_returns_none(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps({"available": [1, 2, 3]}))
+        roster, err = _load_available_reviewers(p)
+        assert roster is None
+        assert err is not None
+
+    def test_truly_empty_list_still_returns_success(self, tmp_path: Path) -> None:
+        # An intentional empty list is NOT malformed — the project has
+        # no configured agents, and the no-roster skip semantics
+        # downstream are the right behavior. Must NOT regress to None.
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps([]))
+        roster, err = _load_available_reviewers(p)
+        assert roster == []
+        assert err is None
+
+    def test_truly_empty_inner_list_still_returns_success(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _load_available_reviewers
+        p = tmp_path / "available.json"
+        p.write_text(json.dumps({"available": []}))
+        roster, err = _load_available_reviewers(p)
+        assert roster == []
+        assert err is None
 
 
 class TestCoverageCriticValidator:
@@ -13032,9 +13159,14 @@ class TestPLN725Phase4StageGraph:
     # --- enablement --------------------------------------------------------
 
     def test_pln725_chain_enabled_through_stage_15b(self) -> None:
-        # The whole prepare-and-consolidate chain runs in Phase 4 even
-        # though nothing downstream yet consumes coverage_plan.json
-        # (Phase 6/7 wire that). Stage 16 stays disabled.
+        # The whole prepare-and-consolidate chain has been on since
+        # Phase 4. Phase 6 (v2.19.0) added stage_15c (the verifier) and
+        # Phase 7 (v2.20.0) enabled stage_16_arbitrate_budget with the
+        # BLOCKING gate, so Phase 4's "nothing downstream consumes
+        # coverage_plan.json" framing no longer applies on main. This
+        # test still pins the prepare/consolidate chain enablement —
+        # the canonical stage_15c / stage_16 enablement assertions live
+        # in test_stage_15c_enabled and test_stage_16_enablement_history.
         for sid in (
             "stage_11_extract_signals",
             "stage_11b_extract_signals_consolidate",
@@ -13044,8 +13176,15 @@ class TestPLN725Phase4StageGraph:
         ):
             assert self._stage(sid)["enabled"] is True, sid
 
-    def test_stage_16_stays_disabled_in_phase_4(self) -> None:
-        assert self._stage("stage_16_arbitrate_budget")["enabled"] is False
+    def test_stage_16_enablement_history(self) -> None:
+        # Phase 4 (v2.17.0) kept stage_16 disabled because nothing
+        # downstream yet consumed coverage_plan.json. Phase 7 (v2.20.0)
+        # turned it on with --coverage-verify wiring (BLOCKING short-
+        # circuit). This test now records that the Phase 4 → Phase 7
+        # transition happened; the assertion mirrors the canonical
+        # Phase 7 enablement check in
+        # TestPLN725Phase7ArbitrateBudgetGate.
+        assert self._stage("stage_16_arbitrate_budget")["enabled"] is True
 
 
 class TestPLN725Phase5PostMergeHardening:
@@ -13232,16 +13371,18 @@ class TestPLN725Phase5LoaderHardening:
         assert _parse_agent_name(text) == "security-reviewer"
 
     def test_parse_agent_name_handles_quoted_dashes_underscores(self) -> None:
-        # Quoted forms intentionally accept the same char class as bare
-        # (YAML-safe identifiers); ensure the quoted parser doesn't
-        # truncate at the first dash/underscore.
+        # Quoted forms intentionally accept the same char class as bare;
+        # ensure the quoted parser doesn't truncate at the first dash
+        # or underscore. Grammar is locked to ``[a-z][a-z0-9_-]*`` (see
+        # ``_AGENT_NAME_RE``) so the test values use the same form that
+        # every actual project agent uses on disk.
         from code_review_helpers import _parse_agent_name
         for sample in (
-            '---\nname: "foo-bar_baz.qux"\n---\n',
-            "---\nname: 'foo-bar_baz.qux'\n---\n",
-            "---\nname: foo-bar_baz.qux\n---\n",
+            '---\nname: "foo-bar_baz_qux"\n---\n',
+            "---\nname: 'foo-bar_baz_qux'\n---\n",
+            "---\nname: foo-bar_baz_qux\n---\n",
         ):
-            assert _parse_agent_name(sample) == "foo-bar_baz.qux"
+            assert _parse_agent_name(sample) == "foo-bar_baz_qux"
 
     # --- scanner: symlink / oversized / non-UTF8 --------------------------
 
@@ -13339,6 +13480,121 @@ class TestPLN725Phase5LoaderHardening:
         # second iteration would never run because the first bad
         # file raised UnicodeDecodeError out of the for-loop.)
         _ = warnings
+
+
+class TestPLN725Phase5LoaderGrammarAndCaps:
+    """v2.20.1 hardening for the agent-definition loader. Three more
+    gaps surfaced on PR #130 post-merge review:
+
+      1. Quoted ``name:`` values bypassed the canonical reviewer-id
+         grammar. ``name: "../x"``, ``name: "bad reviewer"``, or any
+         multi-kilobyte string in quotes would land in
+         ``available_reviewers.json`` and could then be selected by
+         the critic (the closed-vocabulary check accepts it because
+         it came from the roster).
+      2. Per-file read was bounded, but aggregate scan size wasn't —
+         a PR could add hundreds of valid agent files to grow CPU,
+         memory, roster JSON, and downstream critic prompt size.
+      3. Reviewer-id length was unbounded.
+
+    Tests use the canonical grammar ``^[a-z][a-z0-9_-]{0,62}$`` (same
+    as ``make_finding_id``'s requirement so any name passing here
+    will also pass downstream).
+    """
+
+    @staticmethod
+    def _seed(agents_dir: Path, filename: str, name_value: str) -> None:
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / filename).write_text(
+            f"---\nname: {name_value}\n---\nbody\n",
+        )
+
+    # --- grammar ----------------------------------------------------------
+
+    def test_quoted_path_traversal_rejected(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        assert _parse_agent_name('---\nname: "../x"\n---\n') is None
+
+    def test_quoted_whitespace_rejected(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        assert _parse_agent_name('---\nname: "bad reviewer"\n---\n') is None
+
+    def test_quoted_uppercase_rejected(self) -> None:
+        # The collect-findings reviewer_id regex is lowercase-only
+        # (`^[a-z][a-z0-9_-]*$`), so accepting `name: "Foo"` here
+        # would smuggle a name that crashes downstream.
+        from code_review_helpers import _parse_agent_name
+        assert _parse_agent_name('---\nname: "FooBar"\n---\n') is None
+
+    def test_quoted_dot_rejected(self) -> None:
+        # Dots are valid in YAML scalars but not in the canonical
+        # reviewer-id grammar — every actual project agent uses
+        # lowercase-with-hyphens.
+        from code_review_helpers import _parse_agent_name
+        assert _parse_agent_name('---\nname: "foo.bar"\n---\n') is None
+
+    def test_quoted_exceeding_length_cap_rejected(self) -> None:
+        # 63 chars total = 1 leading + 62 tail, so a 64-char name fails.
+        from code_review_helpers import _parse_agent_name
+        too_long = "a" + "b" * 63  # 64 chars
+        sample = f'---\nname: "{too_long}"\n---\n'
+        assert _parse_agent_name(sample) is None
+
+    def test_quoted_at_length_cap_accepted(self) -> None:
+        from code_review_helpers import _parse_agent_name
+        ok = "a" + "b" * 62  # 63 chars — at the cap
+        sample = f'---\nname: "{ok}"\n---\n'
+        assert _parse_agent_name(sample) == ok
+
+    def test_bare_uppercase_still_rejected(self) -> None:
+        # The bare-scalar regex was already case-sensitive but cited
+        # `[A-Za-z0-9]`; the post-validate step ensures uppercase is
+        # rejected even via the bare path, so there's no asymmetry
+        # between bare and quoted.
+        from code_review_helpers import _parse_agent_name
+        assert _parse_agent_name("---\nname: FooBar\n---\n") is None
+
+    # --- aggregate caps ---------------------------------------------------
+
+    def test_scan_caps_files_to_max(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            _AGENTS_DIR_MAX_FILES,
+            _scan_agent_definitions,
+        )
+        agents_dir = tmp_path / "agents"
+        # Seed one more than the cap to verify truncation.
+        total = _AGENTS_DIR_MAX_FILES + 5
+        for i in range(total):
+            self._seed(agents_dir, f"a{i:04d}.md", f"reviewer-{i:04d}")
+        reviewers, warnings = _scan_agent_definitions(agents_dir)
+        # Only the first _AGENTS_DIR_MAX_FILES are scanned (sort order
+        # = filename); resulting roster is bounded.
+        assert len(reviewers) == _AGENTS_DIR_MAX_FILES
+        assert any(
+            f"{_AGENTS_DIR_MAX_FILES}-file cap" in w for w in warnings
+        )
+
+    def test_scan_caps_roster_size(self, tmp_path: Path) -> None:
+        # File count under the file cap but enough VALID reviewers to
+        # exceed the roster size cap — exercises the second cap which
+        # fires inside the loop. We seed _ROSTER_MAX_ENTRIES + 5
+        # uniquely-named files; first _ROSTER_MAX_ENTRIES are accepted,
+        # the rest are skipped with a roster-cap warning. Caps are
+        # equal by design (_AGENTS_DIR_MAX_FILES == _ROSTER_MAX_ENTRIES);
+        # if they ever diverge this test pins the roster-side specifically.
+        from code_review_helpers import (
+            _AGENTS_DIR_MAX_FILES,
+            _ROSTER_MAX_ENTRIES,
+            _scan_agent_definitions,
+        )
+        agents_dir = tmp_path / "agents"
+        # Seed exactly _AGENTS_DIR_MAX_FILES files to avoid the file-cap
+        # warning, then sanity-check that the per-roster cap also bounds
+        # the resulting roster size.
+        for i in range(_AGENTS_DIR_MAX_FILES):
+            self._seed(agents_dir, f"a{i:04d}.md", f"reviewer-{i:04d}")
+        reviewers, _ = _scan_agent_definitions(agents_dir)
+        assert len(reviewers) <= _ROSTER_MAX_ENTRIES
 
 
 class TestPLN725Phase5StageGraphDefaults:
@@ -13901,6 +14157,105 @@ class TestPLN725Phase6VerifyCoveragePure:
         empty = {"required": [], "best_effort": [], "stats": {}}
         assert verify_coverage_plan(empty, empty, None) == []
 
+    # ----------------------------------------------------------------
+    # v2.20.1 hardening: shafty023 #2 (deeper shape) and #1 (bucket-
+    # aware additive) caught two ways the verifier could PASS a plan
+    # that downstream stages would either crash on or silently
+    # downgrade. Each new test corresponds to a concrete failure mode.
+    # ----------------------------------------------------------------
+
+    def test_shape_rejects_non_dict_bucket_entry(self) -> None:
+        from code_review_helpers import verify_coverage_plan
+        plan = {
+            "required": [{"reviewer": "a"}, "not-a-dict"],
+            "best_effort": [],
+            "stats": {},
+        }
+        violations = verify_coverage_plan(plan, plan, None)
+        assert any(v["check"] == "shape" for v in violations)
+        msg = " ".join(v["message"] for v in violations if v["check"] == "shape")
+        assert "[1]" in msg
+        assert "not an object" in msg
+
+    def test_shape_rejects_empty_reviewer_field(self) -> None:
+        from code_review_helpers import verify_coverage_plan
+        plan = {
+            "required": [{"reviewer": ""}],
+            "best_effort": [],
+            "stats": {},
+        }
+        violations = verify_coverage_plan(plan, plan, None)
+        assert any(v["check"] == "shape" for v in violations)
+
+    def test_shape_rejects_missing_reviewer_field(self) -> None:
+        from code_review_helpers import verify_coverage_plan
+        plan = {
+            "required": [{}],
+            "best_effort": [],
+            "stats": {},
+        }
+        violations = verify_coverage_plan(plan, plan, None)
+        # The previous shape check accepted ``[{}]`` because
+        # ``_plan_reviewer_buckets`` and ``_reviewer_names`` silently
+        # dropped non-dicts and empty reviewers. Now it must violate.
+        assert any(v["check"] == "shape" for v in violations)
+
+    def test_shape_failure_short_circuits_other_checks(self) -> None:
+        # Shape failure must NOT generate misleading downstream
+        # violations like "critic_evidence" on entries we already
+        # know are malformed.
+        from code_review_helpers import verify_coverage_plan
+        plan = {
+            "required": [{}],
+            "best_effort": [{"reviewer": "z", "source": "critic"}],  # missing evidence
+            "stats": {},
+        }
+        violations = verify_coverage_plan(plan, plan, None)
+        checks = {v["check"] for v in violations}
+        # Only shape, NOT critic_evidence — short-circuit prevents
+        # confusing the operator with cascading violations.
+        assert checks == {"shape"}
+
+    def test_additive_blocks_required_demoted_to_best_effort(self) -> None:
+        """Initial required reviewer moved to final best_effort is the
+        canonical "silent coverage downgrade" the bucket-insensitive
+        check missed (shafty023 #1). Phase 7 reads this artifact to
+        gate arbitration — a corrupted cached plan that demoted a
+        mandatory reviewer to best-effort would previously PASS.
+        """
+        from code_review_helpers import verify_coverage_plan
+        initial = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [],
+            "stats": {},
+        }
+        final = {
+            "required": [],  # demotion
+            "best_effort": [{"reviewer": "a", "source": "rule"}],
+            "stats": {},
+        }
+        violations = verify_coverage_plan(final, initial, None)
+        assert any(v["check"] == "additive" for v in violations)
+        msg = next(v["message"] for v in violations if v["check"] == "additive")
+        assert "required reviewers MUST stay required" in msg
+        assert "'a'" in msg
+
+    def test_additive_allows_best_effort_promoted_to_required(self) -> None:
+        # Promotion (best_effort → required) is additive — it
+        # increases coverage strength, doesn't decrease it.
+        from code_review_helpers import verify_coverage_plan
+        initial = {
+            "required": [],
+            "best_effort": [{"reviewer": "a", "source": "rule"}],
+            "stats": {},
+        }
+        final = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [],
+            "stats": {},
+        }
+        assert verify_coverage_plan(final, initial, None) == []
+
 
 class TestPLN725Phase6VerifyCoverageCommand:
     """End-to-end coverage for `cmd_verify_coverage`: artifact writing,
@@ -14007,14 +14362,24 @@ class TestPLN725Phase6VerifyCoverageCommand:
         assert rc == 0
         assert not (cr_dir / "agent_coverage-verify-blocking.json").exists()
 
-    def test_missing_plan_degrades_to_pass_with_input_advisory(
+    def test_missing_plan_blocks_with_input_violation(
         self, tmp_path: Path,
     ) -> None:
-        # Missing coverage_plan.json (upstream stage aborted) must not
-        # cause the verifier to BLOCK on missing inputs — that would
-        # invert "fail-open observational" into "fail-closed blocking".
-        # Verdict stays PASS with an `input` advisory violation so
-        # operators see why verification was vacuous.
+        """v2.20.1 semantic change: missing inputs now BLOCK.
+
+        Previously v2.19.0 returned PASS with an advisory ``input``
+        violation, on the rationale that the verifier should be
+        purely observational. But that made "no plan was verified"
+        indistinguishable from a real PASS in the artifact — and
+        Phase 7 (v2.20.0) reads the artifact to gate arbitration.
+        A silent PASS-on-missing-input would bypass the cap on every
+        upstream-aborted run.
+
+        Now: missing inputs return BLOCKING with the same ``input``
+        check name. Exit code stays 0 so the walker doesn't halt —
+        observational semantics are about the WALKER, the verdict is
+        about the ARTIFACT consumer.
+        """
         from code_review_helpers import cmd_verify_coverage
         cr_dir = tmp_path / "cr_dir"
         cr_dir.mkdir()
@@ -14031,8 +14396,10 @@ class TestPLN725Phase6VerifyCoverageCommand:
         rc = cmd_verify_coverage(ns)
         result = json.loads((cr_dir / "coverage_verify.json").read_text())
         assert rc == 0
-        assert result["verdict"] == "PASS"
+        assert result["verdict"] == "BLOCKING"
         assert any(v["check"] == "input" for v in result["violations"])
+        # BLOCKING also emits the canonical system finding.
+        assert (cr_dir / "agent_coverage-verify-blocking.json").exists()
 
     def test_missing_roster_file_skips_closed_vocabulary_check(
         self, tmp_path: Path,
@@ -14160,6 +14527,149 @@ class TestPLN725Phase6VerifyCoverageCommand:
         assert result["verdict"] == "PASS"
         assert not (cr_dir / "agent_coverage-verify-blocking.json").exists()
 
+    # ----------------------------------------------------------------
+    # v2.20.1 hardening: shafty023 #4 (canonical source name) and #5
+    # (corrupted roster). End-to-end coverage so the schema-validation
+    # path and the roster-shape path are exercised through the same
+    # entry point downstream consumers use.
+    # ----------------------------------------------------------------
+
+    def test_blocking_finding_uses_canonical_coverage_verifier_source(
+        self, tmp_path: Path,
+    ) -> None:
+        """The emitted finding must use ``source: "coverage-verifier"``
+        (canonical, in ``SOURCES``) NOT ``coverage-verify``. The earlier
+        wrong value would cause stage_22 schema validation to drop the
+        finding exactly when the verifier needs to surface BLOCKING.
+        Reviewer field follows the same convention.
+        """
+        from code_review_schema import SOURCES
+        initial = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [],
+            "stats": {},
+        }
+        final = {
+            "required": [],  # additive violation → BLOCKING
+            "best_effort": [],
+            "stats": {},
+        }
+        rc, result, cr_dir = self._run(
+            tmp_path, final=final, initial=initial, roster=[],
+        )
+        assert rc == 0
+        assert result["verdict"] == "BLOCKING"
+        finding_doc = json.loads(
+            (cr_dir / "agent_coverage-verify-blocking.json").read_text(),
+        )
+        finding = finding_doc["findings"][0]
+        assert finding["source"] == "coverage-verifier"
+        assert finding["source"] in SOURCES
+        assert finding["reviewer"] == "coverage-verifier"
+
+    def test_unreadable_coverage_plan_initial_blocks(self, tmp_path: Path) -> None:
+        """v2.20.1 semantic change covers the initial plan too — not
+        just the final plan. Same rationale: silent PASS-on-missing
+        becomes a BLOCKING with the ``input`` check name so Phase 7's
+        gate cannot inherit a vacuous PASS.
+        """
+        from code_review_helpers import cmd_verify_coverage
+        cr_dir = tmp_path / "cr_dir"
+        cr_dir.mkdir()
+        # Write final but deliberately omit initial.
+        self._write(cr_dir / "coverage_plan.json", {
+            "required": [], "best_effort": [], "stats": {},
+        })
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            coverage_plan=str(cr_dir / "coverage_plan.json"),
+            coverage_plan_initial=str(cr_dir / "coverage_plan_initial.json"),
+            available_reviewers=None,
+            output=None,
+        )
+        rc = cmd_verify_coverage(ns)
+        result = json.loads((cr_dir / "coverage_verify.json").read_text())
+        assert rc == 0
+        assert result["verdict"] == "BLOCKING"
+        assert any(v["check"] == "input" for v in result["violations"])
+
+    def test_corrupted_roster_blocks_with_roster_check(self, tmp_path: Path) -> None:
+        """Present-but-malformed roster file must BLOCK with a
+        ``roster`` check, distinct from absent/empty (which still
+        PASS as no-roster). A corrupted ``available_reviewers.json``
+        previously was silently treated as absent, letting the
+        closed-vocabulary check be bypassed and the verdict come
+        back PASS on a plan that should have been gated.
+        """
+        from code_review_helpers import cmd_verify_coverage
+        cr_dir = tmp_path / "cr_dir"
+        cr_dir.mkdir()
+        plan = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [],
+            "stats": {},
+        }
+        self._write(cr_dir / "coverage_plan.json", plan)
+        self._write(cr_dir / "coverage_plan_initial.json", plan)
+        # Write a malformed roster — not a list, not a dict-with-available.
+        (cr_dir / "available_reviewers.json").write_text("[{this is broken")
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            coverage_plan=str(cr_dir / "coverage_plan.json"),
+            coverage_plan_initial=str(cr_dir / "coverage_plan_initial.json"),
+            available_reviewers=str(cr_dir / "available_reviewers.json"),
+            output=None,
+        )
+        rc = cmd_verify_coverage(ns)
+        result = json.loads((cr_dir / "coverage_verify.json").read_text())
+        assert rc == 0
+        assert result["verdict"] == "BLOCKING"
+        checks = {v["check"] for v in result["violations"]}
+        assert "roster" in checks
+        # BLOCKING also emits the system finding.
+        assert (cr_dir / "agent_coverage-verify-blocking.json").exists()
+
+    def test_wrong_key_roster_blocks_with_roster_check(
+        self, tmp_path: Path,
+    ) -> None:
+        """v2.20.3: a present-but-wrong-shape roster
+        (``{"reviewers": [...]}`` instead of ``{"available": [...]}``)
+        is a realistic operator hand-edit — exactly the kind of typo
+        people make. The end-to-end behavior must be BLOCKING with the
+        `roster` check, not silent no-roster PASS. v2.20.1 added the
+        roster BLOCK path but keyed on `loaded is None` which
+        ``_load_available_reviewers`` only returned for top-level type
+        errors; wrong-key dicts fell through ``raw.get("available",
+        [])`` to ``([], None)`` and bypassed the check.
+        """
+        from code_review_helpers import cmd_verify_coverage
+        cr_dir = tmp_path / "cr_dir"
+        cr_dir.mkdir()
+        plan = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [],
+            "stats": {},
+        }
+        self._write(cr_dir / "coverage_plan.json", plan)
+        self._write(cr_dir / "coverage_plan_initial.json", plan)
+        # The canonical hand-edit thadeusb flagged: wrong top-level key.
+        self._write(cr_dir / "available_reviewers.json", {
+            "reviewers": ["devops-architect", "test-engineer"],
+        })
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            coverage_plan=str(cr_dir / "coverage_plan.json"),
+            coverage_plan_initial=str(cr_dir / "coverage_plan_initial.json"),
+            available_reviewers=str(cr_dir / "available_reviewers.json"),
+            output=None,
+        )
+        rc = cmd_verify_coverage(ns)
+        result = json.loads((cr_dir / "coverage_verify.json").read_text())
+        assert rc == 0
+        assert result["verdict"] == "BLOCKING"
+        checks = {v["check"] for v in result["violations"]}
+        assert "roster" in checks
+
 
 class TestPLN725Phase6StageGraph:
     """Pin stage_15c_verify_coverage shape, position, dependencies, and
@@ -14230,6 +14740,199 @@ class TestPLN725Phase6StageGraph:
     def test_legacy_stage_24_verify_coverage_removed(self) -> None:
         ids = {s["id"] for s in self._stages()}
         assert "stage_24_verify_coverage" not in ids
+
+
+class TestPLN725Phase7ArbitrateBudgetGate:
+    """Phase 7 wires the BLOCKING verdict from stage_15c_verify_coverage
+    into stage_16_arbitrate_budget. On BLOCKING, arbitration is
+    short-circuited — the input plan flows through unchanged so the rule
+    floor is preserved, but the budget block is flagged
+    ``gated_by_verify: true`` and the summary status is
+    ``"blocked_by_verify"`` so finalize-result + present can show why
+    the cap wasn't applied. On PASS or missing-verify-file (verifier
+    didn't run), arbitration runs normally — preserving full backward
+    compat with the pre-Phase-7 behavior.
+    """
+
+    def _run(
+        self,
+        tmp_path: Path,
+        coverage_plan_in: dict[str, Any],
+        diff_data: dict[str, Any],
+        verify_doc: dict[str, Any] | None,
+        *,
+        cap: int = 20,
+        include_verify_flag: bool = True,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        # Phase 7 shape passes verify_doc + include_verify_flag through
+        # to the shared driver — same one TestArbitrateBudget uses, just
+        # exercising the post-Phase-7 Namespace surface.
+        return _run_arbitrate_budget(
+            tmp_path, coverage_plan_in, diff_data,
+            cap=cap, verify_doc=verify_doc,
+            include_verify_flag=include_verify_flag,
+        )
+
+    @staticmethod
+    def _plan() -> dict[str, Any]:
+        # 25 required reviewers — under normal arbitration with cap=20,
+        # 6 would be dropped (cap - bha_floor = 19 keep; 25-19 = 6 drop).
+        # The BLOCKING short-circuit must preserve ALL 25 so the rule
+        # floor is never silently amputated by the gate.
+        return {
+            "required": [
+                {"reviewer": f"r{i}", "priority": 0} for i in range(25)
+            ],
+            "best_effort": [
+                {"reviewer": "low", "priority": 2},
+                {"reviewer": "high", "priority": 1},
+            ],
+        }
+
+    def test_blocking_verdict_passes_plan_through_unchanged(
+        self, tmp_path: Path,
+    ) -> None:
+        """Canonical Phase 7 contract — BLOCKING means "don't mutate"."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = self._plan()
+        verify = {
+            "verdict": "BLOCKING",
+            "violations": [
+                {"check": "closed_vocabulary", "message": "x not in roster"},
+            ],
+            "checked_at": "2026-06-02T00:00:00+00:00",
+        }
+        summary, plan, gaps = self._run(tmp_path, plan_in, diff, verify, cap=20)
+
+        # Status surfaces the gate to operator + finalize-result.
+        assert summary["status"] == "blocked_by_verify"
+        assert plan["arbitrate_status"] == "blocked_by_verify"
+
+        # Rule floor preserved — no reviewers dropped despite 25 > 20.
+        assert len(plan["required"]) == 25
+        assert plan["dropped_required"] == []
+        assert plan["deferred_for_budget"] == []
+        assert summary["required_count"] == 25
+
+        # Best-effort flows through unchanged (no priority-based prune).
+        assert len(plan["best_effort"]) == 2
+
+        # Budget block annotates the gate so downstream consumers (e.g.
+        # finalize-result, present) can show "cap not applied".
+        assert plan["budget"]["gated_by_verify"] is True
+        assert plan["budget"]["total_cap"] == 20
+        # Violations propagate so the present footer can echo the
+        # specific check that fired without re-reading coverage_verify.
+        assert plan["budget"]["verify_violations"] == verify["violations"]
+
+        # No new findings emitted — the canonical BLOCKING finding
+        # lives in agent_coverage-verify-blocking.json from stage_15c.
+        # Doubling here would inflate the run summary.
+        assert gaps["findings"] == []
+
+    def test_pass_verdict_runs_normal_arbitration(self, tmp_path: Path) -> None:
+        """PASS must NOT change pre-Phase-7 behavior."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = self._plan()
+        verify = {
+            "verdict": "PASS",
+            "violations": [],
+            "checked_at": "2026-06-02T00:00:00+00:00",
+        }
+        summary, plan, gaps = self._run(tmp_path, plan_in, diff, verify, cap=20)
+
+        # Normal arbitration: 25 required + bha_floor=1 → 6 dropped.
+        assert summary.get("status") != "blocked_by_verify"
+        assert "arbitrate_status" not in plan
+        assert plan["dropped_required"] != []
+        assert len(plan["dropped_required"]) == 6
+        # Budget overflow surfaces as `budget-exceeded` system findings.
+        assert len(gaps["findings"]) == 6
+        # No gate annotation when verdict is PASS.
+        assert "gated_by_verify" not in plan["budget"]
+
+    def test_missing_verify_file_treated_as_pass(self, tmp_path: Path) -> None:
+        """The verifier is observational — if its artifact is missing
+        (upstream aborted, Phase 6 disabled in a future toggle, etc.)
+        arbitration must run normally. Otherwise a stage_15c crash
+        would silently bypass the cap on every review.
+        """
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = self._plan()
+        summary, plan, gaps = self._run(
+            tmp_path, plan_in, diff, verify_doc=None, cap=20,
+        )
+        # No status, no gate annotation, dropped_required populated.
+        assert "status" not in summary or summary.get("status") != "blocked_by_verify"
+        assert "arbitrate_status" not in plan
+        assert "gated_by_verify" not in plan["budget"]
+        assert plan["dropped_required"] != []
+
+    def test_no_coverage_verify_flag_keeps_backward_compat(
+        self, tmp_path: Path,
+    ) -> None:
+        """Callers from before Phase 7 that don't pass --coverage-verify
+        must continue to get pre-Phase-7 semantics. argparse.Namespace
+        without ``coverage_verify`` set means ``getattr(args,
+        "coverage_verify", None)`` returns None and the gate is skipped.
+        """
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = self._plan()
+        # verify_doc present, but include_verify_flag=False simulates
+        # an old-style invocation that doesn't pass --coverage-verify.
+        verify = {"verdict": "BLOCKING", "violations": []}
+        summary, plan, gaps = self._run(
+            tmp_path, plan_in, diff, verify, cap=20,
+            include_verify_flag=False,
+        )
+        # Without the flag, BLOCKING on disk has no effect.
+        assert summary.get("status") != "blocked_by_verify"
+        assert "arbitrate_status" not in plan
+        assert plan["dropped_required"] != []
+
+    def test_blocking_with_empty_violations_still_gates(
+        self, tmp_path: Path,
+    ) -> None:
+        """Defensive — verdict="BLOCKING" with empty violations[] is a
+        weird shape but the gate's signal is the verdict, not the
+        violation count. Don't fall through to arbitration on a
+        misshapen verifier output.
+        """
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = self._plan()
+        verify = {"verdict": "BLOCKING", "violations": []}
+        summary, plan, gaps = self._run(tmp_path, plan_in, diff, verify, cap=20)
+        assert summary["status"] == "blocked_by_verify"
+        assert plan["budget"]["gated_by_verify"] is True
+        assert plan["budget"]["verify_violations"] == []
+
+    def test_malformed_verify_file_treated_as_pass(self, tmp_path: Path) -> None:
+        """Unparseable verifier output → treat as absent (PASS).
+        Otherwise a corrupt file (truncated, non-JSON) would silently
+        bypass budget arbitration on every review — worse than the
+        BLOCKING short-circuit which is at least loud and intentional.
+        """
+        from code_review_helpers import cmd_arbitrate_budget
+
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan_in = self._plan()
+        cp = tmp_path / "cp.json"
+        cp.write_text(json.dumps(plan_in))
+        dd = tmp_path / "dd.json"
+        dd.write_text(json.dumps(diff))
+        verify = tmp_path / "coverage_verify.json"
+        verify.write_text("{this is not json")  # broken
+
+        ns = argparse.Namespace(
+            coverage_plan=str(cp), diff_data=str(dd), cap=20,
+            output=None, coverage_verify=str(verify),
+        )
+        rc = cmd_arbitrate_budget(ns)
+        assert rc == 0
+        plan = json.loads((tmp_path / "coverage_plan.json").read_text())
+        # Plan went through normal arbitration; no gate annotation.
+        assert "arbitrate_status" not in plan
+        assert "gated_by_verify" not in plan["budget"]
 
 
 class TestExtractSignalsConsolidateCacheHitNoOp:
