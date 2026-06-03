@@ -5641,43 +5641,15 @@ def _signal_cache_path(cache_dir: Path, key: str) -> Path:
 def _read_cached_signals(cache_dir: Path | None, key: str) -> dict[str, Any] | None:
     """Return cached extraction output if fresh, else None.
 
-    Mirrors the verifier cache TTL semantics: an entry older than the
-    namespace TTL is treated as a miss. Malformed JSON is also a miss
-    rather than a crash — the worst case is paying for one re-extraction.
+    Thin wrapper over ``_read_simple_cache_entry`` — the signals namespace
+    follows the standard ``written_at``-stamped scheme.
     """
     if cache_dir is None:
         return None
-    path = _signal_cache_path(cache_dir, key)
-    if not path.exists():
-        return None
-    try:
-        with open(path) as f:
-            entry = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(entry, dict):
-        return None
-    # TTL check mirrors _read_cached_verification: missing or non-parseable
-    # written_at is treated as a miss, NOT as a fresh entry. A manually
-    # seeded or externally-written cache file lacking written_at would
-    # otherwise be served indefinitely.
-    ttl = cache_ttl_days(CACHE_NAMESPACE_SIGNALS) or 7
-    written_at = entry.get("written_at")
-    try:
-        ts = datetime.fromisoformat(str(written_at).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        try:
-            path.unlink()
-        except OSError:
-            pass
-        return None
-    if datetime.now(timezone.utc) - ts > timedelta(days=ttl):
-        try:
-            path.unlink()
-        except OSError:
-            pass
-        return None
-    return entry
+    return _read_simple_cache_entry(
+        cache_dir, _signal_cache_path(cache_dir, key),
+        CACHE_NAMESPACE_SIGNALS, 7,
+    )
 
 
 def _write_cached_signals(
@@ -5685,21 +5657,16 @@ def _write_cached_signals(
 ) -> None:
     """Persist a successful extraction to the ``signals`` cache namespace.
 
-    Fail-open: cache-write failure is logged but not fatal — the
-    extraction itself succeeded and downstream stages already have the
-    canonical file in ``cr_dir``.
+    Fail-open: delegates to ``_write_simple_cache_entry``; an OSError on the
+    cache write is logged to stderr but never raised — the canonical
+    ``<cr_dir>/extract_signals.json`` is already on disk, so cache-write
+    failure is a re-run cost issue, not a pipeline halt.
     """
     if cache_dir is None:
         return
-    path = _signal_cache_path(cache_dir, key)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        entry = dict(payload)
-        entry["written_at"] = datetime.now(timezone.utc).isoformat()
-        with open(path, "w") as f:
-            json.dump(entry, f, indent=2)
-    except OSError as exc:
-        print(f"Warning: could not write signal cache entry: {exc}", file=sys.stderr)
+    _write_simple_cache_entry(
+        cache_dir, _signal_cache_path(cache_dir, key), payload, "signal",
+    )
 
 
 def _file_language_hint(path: str) -> str | None:
@@ -5917,6 +5884,7 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
 
     output_path = cr_dir / "extract_signals.json"
 
+    manifest_path = cr_dir / "extract_signals_manifest.json"
     cached = _read_cached_signals(cache_dir, key)
     if cached is not None:
         # Strip cache-only metadata before writing the canonical output.
@@ -5927,20 +5895,14 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
         except OSError as exc:
             print(f"Error writing cached extraction: {exc}", file=sys.stderr)
             return 1
-        manifest = {
+        return _write_and_emit_manifest(manifest_path, {
             "status": "cache_hit",
             "cache_key": key,
             "taxonomy_hash": taxonomy_hash,
             "prompt_hash": prompt_hash,
             "output_path": str(output_path),
             "model": model,
-        }
-        manifest_path = cr_dir / "extract_signals_manifest.json"
-        with open(manifest_path, "w") as f:
-            json.dump(manifest, f, indent=2)
-        json.dump(manifest, sys.stdout, indent=2)
-        sys.stdout.write("\n")
-        return 0
+        })
 
     intent_summary: dict[str, Any] | None = None
     if intent_path is not None:
@@ -5962,7 +5924,7 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
     taxonomy_snapshot_path = cr_dir / "extract_signals_taxonomy.json"
     taxonomy_snapshot_path.write_bytes(taxonomy_bytes)
 
-    manifest = {
+    return _write_and_emit_manifest(manifest_path, {
         "status": "needs_agent",
         "cache_key": key,
         "taxonomy_hash": taxonomy_hash,
@@ -5972,13 +5934,7 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
         "prompt_path": str(prompt_path),
         "output_path": str(output_path),
         "model": model,
-    }
-    manifest_path = cr_dir / "extract_signals_manifest.json"
-    with open(manifest_path, "w") as f:
-        json.dump(manifest, f, indent=2)
-    json.dump(manifest, sys.stdout, indent=2)
-    sys.stdout.write("\n")
-    return 0
+    })
 
 
 def cmd_extract_signals_consolidate(args: argparse.Namespace) -> int:
@@ -6025,16 +5981,7 @@ def cmd_extract_signals_consolidate(args: argparse.Namespace) -> int:
         print(f"Error loading taxonomy: {exc}", file=sys.stderr)
         return 1
 
-    manifest: dict[str, Any] = {}
-    if manifest_path.exists():
-        try:
-            with open(manifest_path) as f:
-                loaded = json.load(f)
-            if isinstance(loaded, dict):
-                manifest = loaded
-        except (OSError, json.JSONDecodeError):
-            manifest = {}
-
+    manifest = _read_manifest_dict(manifest_path)
     cache_key = str(manifest.get("cache_key") or "")
     taxonomy_hash = str(manifest.get("taxonomy_hash") or "")
     prompt_hash = str(manifest.get("prompt_hash") or "")
@@ -6044,58 +5991,21 @@ def cmd_extract_signals_consolidate(args: argparse.Namespace) -> int:
     output_path = cr_dir / "extract_signals.json"
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # PLN-725 Phase 4: orchestrator wiring runs consolidate
-    # unconditionally as the stage after the agent-dispatch step. On a
-    # cache_hit manifest, prepare already wrote extract_signals.json
-    # directly — no agent was spawned, no pln725_extract_signals.json
-    # exists, and re-reading from cache would just duplicate the work
-    # prepare already did. No-op so the walker can stay
+    # PLN-725 Phase 4: orchestrator wiring runs consolidate unconditionally as
+    # the stage after the agent-dispatch step. On a cache_hit manifest, prepare
+    # already wrote extract_signals.json directly — no agent was spawned, no
+    # pln725_extract_signals.json exists, and re-reading from cache would just
+    # duplicate the work prepare already did. No-op so the walker stays
     # mechanically-driven without conditional dispatch.
     if manifest_status == "cache_hit" and output_path.exists():
-        json.dump(
-            {
-                "status": "cache_hit",
-                "output_path": str(output_path),
-                "cache_key": cache_key,
-            },
-            sys.stdout, indent=2,
-        )
-        sys.stdout.write("\n")
-        return 0
-
-    raw_output: Any = None
-    read_error: str | None = None
-    try:
-        with open(agent_output_path) as f:
-            raw_output = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        read_error = f"agent output unreadable: {exc}"
-
-    if read_error is not None:
-        canonical = {
-            "status": "fail_closed",
-            "signals": fail_closed_signal_set(taxonomy),
-            "errors": [read_error],
-            "model": model,
+        return _emit_summary({
+            "status": "cache_hit",
+            "output_path": str(output_path),
             "cache_key": cache_key,
-            "taxonomy_hash": taxonomy_hash,
-            "prompt_hash": prompt_hash,
-            "generated_at": now_iso,
-        }
-        _emit_signal_extraction_failed_finding(cr_dir, [read_error], now_iso)
-        with open(output_path, "w") as f:
-            json.dump(canonical, f, indent=2)
-        json.dump(
-            {"status": "fail_closed", "errors": [read_error], "output_path": str(output_path)},
-            sys.stdout, indent=2,
-        )
-        sys.stdout.write("\n")
-        return 0
+        })
 
-    accepted, errors = validate_signal_extraction_output(raw_output, taxonomy)
-
-    if not accepted and errors:
-        canonical = {
+    def _build_fail_closed_canonical(errors: list[str]) -> dict[str, Any]:
+        return {
             "status": "fail_closed",
             "signals": fail_closed_signal_set(taxonomy),
             "errors": errors,
@@ -6105,15 +6015,25 @@ def cmd_extract_signals_consolidate(args: argparse.Namespace) -> int:
             "prompt_hash": prompt_hash,
             "generated_at": now_iso,
         }
+
+    def _fail_closed(errors: list[str]) -> int:
+        canonical = _build_fail_closed_canonical(errors)
         _emit_signal_extraction_failed_finding(cr_dir, errors, now_iso)
         with open(output_path, "w") as f:
             json.dump(canonical, f, indent=2)
-        json.dump(
-            {"status": "fail_closed", "errors": errors, "output_path": str(output_path)},
-            sys.stdout, indent=2,
-        )
-        sys.stdout.write("\n")
-        return 0
+        return _emit_summary({
+            "status": "fail_closed",
+            "errors": errors,
+            "output_path": str(output_path),
+        })
+
+    raw_output, read_error = _read_agent_output_or_error(agent_output_path)
+    if read_error is not None:
+        return _fail_closed([read_error])
+
+    accepted, errors = validate_signal_extraction_output(raw_output, taxonomy)
+    if not accepted and errors:
+        return _fail_closed(errors)
 
     canonical = {
         "status": "ok",
@@ -6129,17 +6049,12 @@ def cmd_extract_signals_consolidate(args: argparse.Namespace) -> int:
         json.dump(canonical, f, indent=2)
     if cache_key:
         _write_cached_signals(cache_dir, cache_key, canonical)
-    json.dump(
-        {
-            "status": "ok",
-            "signal_count": len(accepted),
-            "rejected": len(errors),
-            "output_path": str(output_path),
-        },
-        sys.stdout, indent=2,
-    )
-    sys.stdout.write("\n")
-    return 0
+    return _emit_summary({
+        "status": "ok",
+        "signal_count": len(accepted),
+        "rejected": len(errors),
+        "output_path": str(output_path),
+    })
 
 
 def _emit_signal_extraction_failed_finding(
@@ -7255,60 +7170,31 @@ def _coverage_critic_cache_path(cache_dir: Path, key: str) -> Path:
 def _read_cached_coverage_critic(
     cache_dir: Path | None, key: str,
 ) -> dict[str, Any] | None:
-    """Return cached critic output if fresh, else None.
-
-    Mirrors ``_read_cached_signals``: missing or non-parseable
-    ``written_at`` is a miss (and the stale entry is swept).
-    """
+    """Return cached critic output if fresh, else None."""
     if cache_dir is None:
         return None
-    path = _coverage_critic_cache_path(cache_dir, key)
-    if not path.exists():
-        return None
-    try:
-        with open(path) as f:
-            entry = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(entry, dict):
-        return None
-    ttl = cache_ttl_days(CACHE_NAMESPACE_COVERAGE_CRITIC) or 7
-    written_at = entry.get("written_at")
-    try:
-        ts = datetime.fromisoformat(str(written_at).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        try:
-            path.unlink()
-        except OSError:
-            pass
-        return None
-    if datetime.now(timezone.utc) - ts > timedelta(days=ttl):
-        try:
-            path.unlink()
-        except OSError:
-            pass
-        return None
-    return entry
+    return _read_simple_cache_entry(
+        cache_dir, _coverage_critic_cache_path(cache_dir, key),
+        CACHE_NAMESPACE_COVERAGE_CRITIC, 7,
+    )
 
 
 def _write_cached_coverage_critic(
     cache_dir: Path | None, key: str, payload: dict[str, Any],
 ) -> None:
-    """Persist a successful critic run to the ``coverage_critic`` cache."""
+    """Persist a successful critic run to the ``coverage_critic`` cache.
+
+    Fail-open: delegates to ``_write_simple_cache_entry``; an OSError on the
+    cache write is logged to stderr but never raised — the canonical
+    ``<cr_dir>/coverage_plan.json`` is already on disk, so cache-write
+    failure is a re-run cost issue, not a pipeline halt.
+    """
     if cache_dir is None:
         return
-    path = _coverage_critic_cache_path(cache_dir, key)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        entry = dict(payload)
-        entry["written_at"] = datetime.now(timezone.utc).isoformat()
-        with open(path, "w") as f:
-            json.dump(entry, f, indent=2)
-    except OSError as exc:
-        print(
-            f"Warning: could not write coverage-critic cache entry: {exc}",
-            file=sys.stderr,
-        )
+    _write_simple_cache_entry(
+        cache_dir, _coverage_critic_cache_path(cache_dir, key),
+        payload, "coverage-critic",
+    )
 
 
 def _coverage_plan_existing_reviewers(plan: dict[str, Any]) -> set[str]:
@@ -7571,17 +7457,12 @@ def _emit_skipped_coverage_plan(
     except OSError as exc:
         print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
         return 1
-    manifest = {
+    return _write_and_emit_manifest(manifest_path, {
         "status": "skipped",
         "reason": reason,
         "output_path": str(output_path),
         "model": model,
-    }
-    with open(manifest_path, "w") as f:
-        json.dump(manifest, f, indent=2)
-    json.dump(manifest, sys.stdout, indent=2)
-    sys.stdout.write("\n")
-    return 0
+    })
 
 
 def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
@@ -7747,17 +7628,12 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         except OSError as exc:
             print(f"Error writing cached coverage_plan: {exc}", file=sys.stderr)
             return 1
-        manifest = {
+        return _write_and_emit_manifest(manifest_path, {
             "status": "cache_hit",
             "cache_key": key,
             "output_path": str(output_path),
             "model": model,
-        }
-        with open(manifest_path, "w") as f:
-            json.dump(manifest, f, indent=2)
-        json.dump(manifest, sys.stdout, indent=2)
-        sys.stdout.write("\n")
-        return 0
+        })
 
     main_input, diff_summary = _build_coverage_critic_input(
         plan_initial, extract_signals, diff_data, available_reviewers,
@@ -7769,7 +7645,7 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     with open(diff_summary_path, "w") as f:
         json.dump(diff_summary, f, indent=2)
 
-    manifest = {
+    return _write_and_emit_manifest(manifest_path, {
         "status": "needs_agent",
         "cache_key": key,
         "coverage_plan_initial_hash": plan_initial_hash,
@@ -7781,12 +7657,7 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         "prompt_path": str(prompt_path),
         "output_path": str(output_path),
         "model": model,
-    }
-    with open(manifest_path, "w") as f:
-        json.dump(manifest, f, indent=2)
-    json.dump(manifest, sys.stdout, indent=2)
-    sys.stdout.write("\n")
-    return 0
+    })
 
 
 def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
@@ -7833,42 +7704,25 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
         print("Error: coverage_plan_initial is not a JSON object", file=sys.stderr)
         return 1
 
-    manifest: dict[str, Any] = {}
-    if manifest_path.exists():
-        try:
-            with open(manifest_path) as f:
-                loaded = json.load(f)
-            if isinstance(loaded, dict):
-                manifest = loaded
-        except (OSError, json.JSONDecodeError):
-            manifest = {}
-
+    manifest = _read_manifest_dict(manifest_path)
     cache_key = str(manifest.get("cache_key") or "")
     model = str(manifest.get("model") or COVERAGE_CRITIC_MODEL_DEFAULT)
     manifest_status = str(manifest.get("status") or "")
 
     output_path = cr_dir / "coverage_plan.json"
 
-    # PLN-725 Phase 4: orchestrator wiring runs consolidate
-    # unconditionally as the stage after the agent-dispatch step. On a
-    # ``cache_hit`` or ``skipped`` manifest, prepare already wrote
-    # coverage_plan.json (cache hit serves the cached plan directly;
-    # ``--no-critic`` stamps the initial plan + critic_status="skipped").
-    # In both cases no agent was spawned, no pln725_coverage_critic.json
-    # exists, and the work consolidate would normally do is already
-    # done. No-op so the walker stays mechanically-driven without
-    # conditional dispatch.
+    # PLN-725 Phase 4: orchestrator wiring runs consolidate unconditionally as
+    # the stage after the agent-dispatch step. On ``cache_hit`` or ``skipped``,
+    # prepare already wrote coverage_plan.json (cache hit serves the cached
+    # plan; ``--no-critic`` stamps the initial plan + critic_status="skipped").
+    # Either way no agent was spawned and the work is done — no-op so the
+    # walker stays mechanically-driven without conditional dispatch.
     if manifest_status in ("cache_hit", "skipped") and output_path.exists():
-        json.dump(
-            {
-                "status": manifest_status,
-                "output_path": str(output_path),
-                "cache_key": cache_key,
-            },
-            sys.stdout, indent=2,
-        )
-        sys.stdout.write("\n")
-        return 0
+        return _emit_summary({
+            "status": manifest_status,
+            "output_path": str(output_path),
+            "cache_key": cache_key,
+        })
 
     available_reviewers, load_err = _load_available_reviewers(available_path)
     if available_reviewers is None:
@@ -7877,14 +7731,7 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
 
     existing_in_plan = _coverage_plan_existing_reviewers(plan_initial)
 
-    raw_output: Any = None
-    read_error: str | None = None
-    try:
-        with open(agent_output_path) as f:
-            raw_output = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        read_error = f"agent output unreadable: {exc}"
-
+    raw_output, read_error = _read_agent_output_or_error(agent_output_path)
     now_iso = datetime.now(timezone.utc).isoformat()
 
     def _fail_closed(errors: list[str]) -> int:
@@ -7899,12 +7746,11 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
             print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
             return 1
         _emit_coverage_critic_failed_finding(cr_dir, errors, now_iso)
-        json.dump(
-            {"status": "fail_closed", "errors": errors[:10], "output_path": str(output_path)},
-            sys.stdout, indent=2,
-        )
-        sys.stdout.write("\n")
-        return 0
+        return _emit_summary({
+            "status": "fail_closed",
+            "errors": errors[:10],
+            "output_path": str(output_path),
+        })
 
     if read_error is not None:
         return _fail_closed([read_error])
@@ -7929,17 +7775,12 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
         return 1
     if cache_key:
         _write_cached_coverage_critic(cache_dir, cache_key, final)
-    json.dump(
-        {
-            "status": "ok",
-            "addition_count": len(accepted),
-            "rejected": len(errors),
-            "output_path": str(output_path),
-        },
-        sys.stdout, indent=2,
-    )
-    sys.stdout.write("\n")
-    return 0
+    return _emit_summary({
+        "status": "ok",
+        "addition_count": len(accepted),
+        "rejected": len(errors),
+        "output_path": str(output_path),
+    })
 
 
 def _emit_coverage_critic_failed_finding(
@@ -9143,6 +8984,141 @@ def _read_optional_json(path: Path, default: Any) -> Any:
             return json.load(f)
     except (OSError, json.JSONDecodeError):
         return default
+
+
+# ---------------------------------------------------------------------------
+# Shared scaffolding for singleton-agent prepare/consolidate (PLN-725 Phase 1
+# extract-signals + Phase 3 coverage-critic). Two prepare/consolidate pairs
+# follow the same lifecycle: read inputs → cache lookup → emit manifest →
+# (later) read agent output → validate → write canonical / fail-closed.
+# These helpers de-duplicate the boilerplate that both pairs replicate.
+# ---------------------------------------------------------------------------
+
+
+def _read_manifest_dict(path: Path) -> dict[str, Any]:
+    """Read a manifest JSON file, returning ``{}`` on any failure.
+
+    Both consolidate paths need the manifest's ``status``/``cache_key``/``model``
+    fields but must tolerate the manifest being missing (legacy callers) or
+    malformed (truncated mid-write). An empty dict gives ``manifest.get(...)``
+    callers the same ``None``-coalescing behavior as the original try/except
+    blocks while collapsing the seven-line pattern into one call.
+    """
+    if not path.exists():
+        return {}
+    try:
+        with open(path) as f:
+            loaded = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _emit_summary(payload: dict[str, Any]) -> int:
+    """Dump ``payload`` to stdout as indented JSON + newline and return 0.
+
+    Used by every singleton prepare/consolidate to surface the summary the
+    walker reads. Returning the int lets callers write ``return _emit_summary(...)``
+    instead of the three-line dump/write/return triple.
+    """
+    json.dump(payload, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def _read_agent_output_or_error(path: Path) -> tuple[Any, str | None]:
+    """Read agent JSON output, returning ``(value, None)`` or ``(None, error_msg)``.
+
+    Both consolidate paths immediately route a read error into the fail-closed
+    branch with the same diagnostic shape, so the read+except pattern is shared.
+    """
+    try:
+        with open(path) as f:
+            return json.load(f), None
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"agent output unreadable: {exc}"
+
+
+def _write_and_emit_manifest(
+    manifest_path: Path, manifest: dict[str, Any],
+) -> int:
+    """Write a manifest to disk and emit it to stdout as the summary; return 0.
+
+    The walker reads stdout to know what prepare emitted; the manifest file
+    serves the consolidate stage. Both prepare paths in extract-signals and
+    coverage-critic write the same dict to both places.
+    """
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+    return _emit_summary(manifest)
+
+
+def _read_simple_cache_entry(
+    cache_dir: Path | None,
+    path: Path,
+    namespace: str,
+    default_ttl_days: int,
+) -> dict[str, Any] | None:
+    """Return a cached entry from a ``written_at``-stamped JSON file, or None.
+
+    Shared between the ``signals`` and ``coverage_critic`` cache namespaces.
+    Both store ``{written_at: ISO, ...payload}`` per entry, apply the namespace
+    TTL via ``cache_ttl_days``, sweep stale entries on read, and treat any of
+    {missing file, malformed JSON, non-dict payload, missing/unparseable
+    written_at, TTL-expired} as a cache miss. Verifications uses a different
+    timestamp field and envelope shape and stays on its own reader.
+    """
+    if cache_dir is None or not path.exists():
+        return None
+    try:
+        with open(path) as f:
+            entry = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(entry, dict):
+        return None
+    ttl = cache_ttl_days(namespace) or default_ttl_days
+    written_at = entry.get("written_at")
+    try:
+        ts = datetime.fromisoformat(str(written_at).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        # Missing/unparseable written_at: a manually seeded or partially
+        # written entry. Sweep so the next miss is clean; do NOT serve it.
+        with contextlib.suppress(OSError):
+            path.unlink()
+        return None
+    if datetime.now(timezone.utc) - ts > timedelta(days=ttl):
+        with contextlib.suppress(OSError):
+            path.unlink()
+        return None
+    return entry
+
+
+def _write_simple_cache_entry(
+    cache_dir: Path | None,
+    path: Path,
+    payload: dict[str, Any],
+    warning_label: str,
+) -> None:
+    """Persist a successful agent output to a ``written_at``-stamped cache file.
+
+    Fail-open: any OSError logs a one-line warning and returns. The canonical
+    file in cr_dir is the source of truth — the cache is purely a re-run cost
+    optimization, so a write failure here must never abort the pipeline.
+    """
+    if cache_dir is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = dict(payload)
+        entry["written_at"] = datetime.now(timezone.utc).isoformat()
+        with open(path, "w") as f:
+            json.dump(entry, f, indent=2)
+    except OSError as exc:
+        print(
+            f"Warning: could not write {warning_label} cache entry: {exc}",
+            file=sys.stderr,
+        )
 
 
 def cmd_verdict(args: argparse.Namespace) -> int:
