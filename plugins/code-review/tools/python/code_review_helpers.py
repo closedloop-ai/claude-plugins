@@ -11626,7 +11626,17 @@ def _render_fleet_notes(
                 "See `coverage_gaps.json`.",
             )
 
-    # BHA budget cap — collapse multiple partition_id entries into one note.
+    # BHA budget cap — collapse multiple partition_id entries into
+    # one note. Two emission shapes from _derive_spawn_agents_from_plan:
+    #   - cap > 0: one capped entry per dropped partition (each
+    #     carries ``partition_id``). Dropped count = len(entries).
+    #   - cap == 0 (docs-only post-arbitrate): a single aggregate
+    #     entry covers ALL N suppressed partitions (no
+    #     ``partition_id``; ``partition_count`` reflects the total).
+    #     Dropped count = ``partition_count`` from the aggregate.
+    # Pre-v2.23.3 the renderer always used ``len(capped_entries)``,
+    # which under-reported the docs-only case as "1 partition(s)"
+    # when N partitions were actually suppressed.
     capped_entries = [
         s for s in skipped
         if isinstance(s, dict) and s.get("reason") == "budget_capped"
@@ -11635,8 +11645,14 @@ def _render_fleet_notes(
         first = capped_entries[0]
         cap = first.get("budget_cap", 0)
         total = first.get("partition_count", len(capped_entries))
+        # Aggregate-shape detection: a cap=0 entry has no
+        # partition_id and represents every suppressed partition.
+        if "partition_id" not in first:
+            dropped = _safe_int(total, len(capped_entries))
+        else:
+            dropped = len(capped_entries)
         notes.append(
-            f"- ⚠️ **BHA partition cap:** {len(capped_entries)} partition(s) "
+            f"- ⚠️ **BHA partition cap:** {dropped} partition(s) "
             f"exceeded the post-arbitrate budget ({cap}/{total}).",
         )
 
@@ -11759,7 +11775,8 @@ def cmd_render_fleet_summary(args: argparse.Namespace) -> int:
     # a malformed artifact (e.g. ``stats.agent_count: "five"`` from
     # a half-written file) degrades to 0 rather than raising
     # ValueError mid-render.
-    stats = spec.get("stats") if isinstance(spec.get("stats"), dict) else {}
+    raw_stats = spec.get("stats")
+    stats: dict[str, Any] = raw_stats if isinstance(raw_stats, dict) else {}
     intended = _safe_int(stats.get("agent_count"), 0)
     if isinstance(verification, dict) and verification.get("verified") is True:
         present = _safe_int(verification.get("present_count"), 0)

@@ -16832,6 +16832,32 @@ class TestPLN725Phase9RenderFleetSummaryNotes:
         assert "2 partition(s)" in out
         assert "(2/3)" in out
 
+    def test_budget_capped_docs_only_aggregate_uses_partition_count(
+        self, tmp_path: Path,
+    ) -> None:
+        """When the post-arbitrate cap is 0 (docs-only),
+        ``_derive_spawn_agents_from_plan`` emits ONE aggregate
+        ``budget_capped`` entry covering all N suppressed
+        partitions (no ``partition_id``, ``partition_count`` =
+        N). Pre-v2.23.3 the renderer counted
+        ``len(capped_entries)`` and reported ``1 partition(s)``
+        regardless of how many were actually suppressed. The fix
+        drives the dropped count off ``partition_count`` when the
+        aggregate shape is detected.
+        """
+        spec = _standard_spec()
+        # Aggregate entry shape: cap=0, no partition_id, partition_count=5.
+        spec["skipped"] = [
+            {"reviewer": "bug_hunter_a", "bucket": "required",
+             "reason": "budget_capped",
+             "budget_cap": 0, "partition_count": 5},
+        ]
+        _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
+        out = _run_render_fleet_summary(tmp_path)
+        # All 5 suppressed partitions reflected in the count, not 1.
+        assert "5 partition(s)" in out
+        assert "(0/5)" in out
+
     def test_test_quality_deferral_emits_info_note(
         self, tmp_path: Path,
     ) -> None:

@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.23.3
+
+#### Fixed
+- `_render_fleet_notes` no longer under-reports the BHA dropped-partition count in the docs-only branch. `_derive_spawn_agents_from_plan` has two emission shapes for `budget_capped` skip entries: when `cap > 0` it emits one entry per dropped partition (each carrying `partition_id`); when `cap == 0` (docs-only post-arbitrate) it emits a single aggregate entry covering all N suppressed partitions (no `partition_id`, `partition_count` reflects the total). The pre-v2.23.3 renderer always used `len(capped_entries)` for the count, so a docs-only run that suppressed 5 BHA partitions reported `1 partition(s) ... (0/5)` instead of `5 partition(s) ... (0/5)`. The renderer now detects the aggregate shape via the absence of `partition_id` on the first entry and drives the count off `partition_count` instead.
+- `cmd_render_fleet_summary` now binds `spec.get("stats")` into a local before the `isinstance(dict)` check so pyright's narrowing covers the subsequent `.get("agent_count")` access. The pre-v2.23.3 shape called `spec.get("stats")` twice in one expression (`if isinstance(spec.get("stats"), dict) else {}`), which the type narrower treats as two separate calls — the LHS still appears as `Any | None` at the `.get` call site. CI's stricter pyright settings flagged this as `reportOptionalMemberAccess`; the local environment had laxer settings and missed it. The runtime behavior was always safe (Python evaluates short-circuit), but the diagnostic was correct that the narrowing didn't carry. Binding via `raw_stats = spec.get("stats")` first makes the narrowing explicit.
+
+#### Added
+- `test_budget_capped_docs_only_aggregate_uses_partition_count` pins the v2.23.3 fix: a single aggregate `budget_capped` entry with `budget_cap: 0` and `partition_count: 5` renders as `5 partition(s) ... (0/5)`, not `1 partition(s) ... (0/5)`. The existing `test_budget_capped_partitions_emits_warning` (which seeded per-partition entries with `partition_id`) continues to exercise the `cap > 0` branch, so both emission shapes are covered.
+
 ### code-review v2.23.2
 
 #### Fixed
