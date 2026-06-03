@@ -7081,7 +7081,7 @@ class TestPrepareRun:
             pr_number=pr_number,
         )
 
-    def test_emits_thirty_five_stages(self, tmp_path: Path) -> None:
+    def test_emits_thirty_seven_stages(self, tmp_path: Path) -> None:
         """Stage count history:
           - Base pipeline: 30
           - PLN-722 v2.8.0 added stage_22b_verify_prepare and
@@ -7094,21 +7094,31 @@ class TestPrepareRun:
             removed the stale stage_24_verify_coverage placeholder
             (net 0; the verifier now lives next to where coverage_plan.json
             is produced, not after findings verification) → 35
+          - PLN-725 Phase 8 (v2.22.0) added stage_19b_derive_spawn_spec
+            (translates post-arbitrate coverage_plan.json into
+            spawn_spec.json for stage_20_spawn_reviewers) → 36
+          - PLN-725 Phase 8 (v2.22.3) added stage_20b_verify_spawn
+            (runtime symmetric pair to stage_19b: compares
+            spawn_spec.agents[] against on-disk agent_*.json and
+            emits coverage-gap findings for missing required agents) → 37
 
         The ``_<NN>_`` prefix is a stable label, not a strict ordinal;
         the lettered suffixes (``_11b_``, ``_14a_``, ``_15b_``,
-        ``_15c_``, ``_22b_``, ``_24a_``) mark stages inserted between
-        original ordinals.
+        ``_15c_``, ``_19b_``, ``_20b_``, ``_22b_``, ``_24a_``) mark
+        stages inserted between original ordinals.
         """
         summary, plan = self._run(tmp_path)
-        assert summary["stage_count"] == 35
-        assert len(plan["stages"]) == 35
+        assert summary["stage_count"] == 37
+        assert len(plan["stages"]) == 37
         ids = [s["id"] for s in plan["stages"]]
         assert ids[0] == "stage_01_setup"
         assert ids[-1] == "stage_30_footer"
         # Verifier wrapper insertion points
         assert "stage_22b_verify_prepare" in ids
         assert "stage_24a_verify_consolidate" in ids
+        # PLN-725 Phase 8 spawn-spec derivation + runtime verification
+        assert "stage_19b_derive_spawn_spec" in ids
+        assert "stage_20b_verify_spawn" in ids
         prep_idx = ids.index("stage_22b_verify_prepare")
         fleet_idx = ids.index("stage_23_verify_findings")
         cons_idx = ids.index("stage_24a_verify_consolidate")
@@ -15327,6 +15337,1150 @@ class TestPLN725Phase7ArbitrateBudgetGate:
         # Plan went through normal arbitration; no gate annotation.
         assert "arbitrate_status" not in plan
         assert "gated_by_verify" not in plan["budget"]
+
+
+def _run_derive_spawn_spec(
+    tmp_path: Path,
+    coverage_plan: dict[str, Any] | None,
+    partitions: dict[str, Any] | list[Any] | None,
+    route: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Shared driver for ``cmd_derive_spawn_spec`` tests.
+
+    Mirrors ``_run_arbitrate_budget`` — seeds the three input files,
+    invokes the command via Namespace, returns ``(summary, spec)``.
+    Passing ``None`` for an input omits the file entirely so the
+    missing-input degradation paths can be exercised.
+
+    Delegates stdout suppression to ``run_with_stdout_capture`` from
+    ``golden_fixture_harness`` (the canonical helper that ``conftest.
+    invoke_prepare_run`` already uses) rather than re-inlining the
+    ``io.StringIO()`` swap. Captures and asserts the return code so a
+    silent ``_write_spawn_spec`` OSError surfaces as a meaningful
+    assertion rather than a downstream ``JSONDecodeError`` on empty
+    stdout.
+    """
+    from code_review_helpers import cmd_derive_spawn_spec
+    from golden_fixture_harness import run_with_stdout_capture
+
+    cp_path = tmp_path / "coverage_plan.json"
+    if coverage_plan is not None:
+        cp_path.write_text(json.dumps(coverage_plan))
+    p_path = tmp_path / "partitions.json"
+    if partitions is not None:
+        p_path.write_text(json.dumps(partitions))
+    r_path = tmp_path / "route.json"
+    if route is not None:
+        r_path.write_text(json.dumps(route))
+
+    ns = argparse.Namespace(
+        cr_dir=str(tmp_path),
+        coverage_plan=str(cp_path),
+        partitions=str(p_path),
+        route=str(r_path),
+        output=None,
+    )
+    captured = run_with_stdout_capture(cmd_derive_spawn_spec, ns)
+    summary = json.loads(captured) if captured else {}
+    # ``run_with_stdout_capture`` swallows the return value; assert here
+    # by reading the on-disk artifact, which is the same invariant the
+    # production walker checks (expected_outputs: [<cr_dir>/spawn_spec.json]).
+    spec_path = tmp_path / "spawn_spec.json"
+    assert spec_path.exists(), "spawn_spec.json missing — cmd_derive_spawn_spec failed silently"
+    spec = json.loads(spec_path.read_text())
+    return summary, spec
+
+
+class TestPLN725Phase8DeriveSpawnSpec:
+    """PLN-725 Phase 8 — translation from coverage_plan.json (post-
+    arbitrate) into spawn_spec.json (the flat agent descriptor list the
+    stage_20 orchestrator dispatches Tasks from). Before Phase 8, the
+    coverage plan was effectively ignored at spawn time: stage_20 walked
+    a static reviewer table baked into start.md. These tests pin the
+    bucket-to-spec mapping, the fast-path passthrough, the BLOCKING-
+    verify propagation, and the fallback sentinels.
+    """
+
+    @staticmethod
+    def _core_plan() -> dict[str, Any]:
+        return {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "unified_auditor", "source": "core"},
+                {"reviewer": "premise_reviewer", "source": "core"},
+                {"reviewer": "test_quality", "source": "core"},
+            ],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 2},
+        }
+
+    @staticmethod
+    def _two_partitions() -> dict[str, Any]:
+        return {
+            "partitions": [
+                {"id": 0, "files": [{"file": "src/a.ts"}], "is_test_only": False},
+                {"id": 1, "files": [{"file": "test/b.test.ts"}], "is_test_only": True},
+            ],
+            "test_file_paths": ["test/b.test.ts"],
+            "force_merged_count": 0,
+        }
+
+    @staticmethod
+    def _route(fast_path: bool = False) -> dict[str, Any]:
+        return {
+            "fast_path": fast_path,
+            "models": {
+                "bug_hunter_a": {"default": "opus", "test_only": "sonnet"},
+                "bug_hunter_b": "sonnet",
+                "unified_auditor": "sonnet",
+                "premise_reviewer": "opus",
+                "fast_path_reviewer": "sonnet",
+            },
+        }
+
+    def test_core_required_expands_to_canonical_agent_ids(
+        self, tmp_path: Path,
+    ) -> None:
+        """The five COVERAGE_CORE_REQUIRED reviewers map to the
+        canonical AGENT_IDs the orchestrator already knows (bha_p<N>,
+        bhb, auditor, premise, plus the deferred test_quality slot in
+        skipped[]). BHA expands one agent per partition.
+        """
+        summary, spec = _run_derive_spawn_spec(
+            tmp_path,
+            self._core_plan(),
+            self._two_partitions(),
+            self._route(),
+        )
+
+        assert summary["fast_path"] is False
+        assert summary["agent_count"] == 5  # 2 BHA + BHB + Auditor + Premise
+
+        ids = {a["agent_id"]: a for a in spec["agents"]}
+        assert set(ids) == {"bha_p0", "bha_p1", "bhb", "auditor", "premise"}
+
+        # BHA partitions get per-partition is_test_only routing and
+        # use partition-specific patches files.
+        assert ids["bha_p0"]["partitioned"] is True
+        assert ids["bha_p0"]["partition_id"] == 0
+        assert ids["bha_p0"]["is_test_only"] is False
+        assert ids["bha_p0"]["model"] == "opus"
+        assert ids["bha_p0"]["patches_file"] == "patches_p0.txt"
+
+        # Test-only partition takes the Sonnet slot.
+        assert ids["bha_p1"]["is_test_only"] is True
+        assert ids["bha_p1"]["model"] == "sonnet"
+        assert ids["bha_p1"]["patches_file"] == "patches_p1.txt"
+
+        # Non-partitioned core roles use patches_all.txt with the
+        # canonical static-table AGENT_IDs.
+        assert ids["bhb"]["partitioned"] is False
+        assert ids["bhb"]["patches_file"] == "patches_all.txt"
+        assert ids["auditor"]["patches_file"] == "patches_all.txt"
+        assert ids["premise"]["model"] == "opus"
+
+        # test_quality is the PLN-723 placeholder — surfaced in skipped[]
+        # so operators can see the deferral, not silently dropped.
+        deferred = [s for s in spec["skipped"] if s["reviewer"] == "test_quality"]
+        assert len(deferred) == 1
+        assert deferred[0]["reason"] == "deferred_pln723"
+
+        # All five agents came from required[]; pin the bucket counter
+        # so future plan-shape changes can't silently mis-attribute the
+        # tier they were selected from.
+        assert spec["stats"]["from_required"] == 5
+        assert spec["stats"]["from_best_effort"] == 0
+
+    def test_critic_best_effort_becomes_domain_critic(
+        self, tmp_path: Path,
+    ) -> None:
+        """An LLM-proposed critic in best_effort[] (source: "critic")
+        maps to a sequential domain_<N> AGENT_ID with patches_all.txt
+        and the sonnet default — matching the static "Domain Critic"
+        row in start.md but without hardcoding the name.
+        """
+        plan = self._core_plan()
+        plan["best_effort"] = [
+            {"reviewer": "graphql-architect", "source": "critic", "priority": 2},
+            {"reviewer": "react-component-architect", "source": "critic", "priority": 1},
+        ]
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._two_partitions(), self._route(),
+        )
+        critics = [a for a in spec["agents"] if a["source"] == "critic"]
+        assert len(critics) == 2
+        assert [c["agent_id"] for c in critics] == ["domain_0", "domain_1"]
+        assert all(c["patches_file"] == "patches_all.txt" for c in critics)
+        assert all(c["model"] == "sonnet" for c in critics)
+        # Reviewer name surfaces as-is so the orchestrator can pass it
+        # into the per-agent prompt's {critic_name} slot.
+        assert critics[0]["reviewer"] == "graphql-architect"
+        assert spec["stats"]["domain_critic_count"] == 2
+        # Bucket attribution: both critics came from best_effort[]. The
+        # four core required reviewers (BHA expands to 2 agents, plus
+        # BHB/Auditor/Premise) still come from required[].
+        assert spec["stats"]["from_best_effort"] == 2
+        assert spec["stats"]["from_required"] == 5
+
+    def test_fast_path_skips_bucket_walk(self, tmp_path: Path) -> None:
+        """When route.fast_path is true, the spec emits exactly one
+        agent (``agent_id: "fast"``) regardless of how rich the
+        coverage plan is. Mirrors the existing Fast Path branch in
+        start.md — fast path runs all review passes in one agent so
+        the bucketed reviewer distinctions don't apply.
+        """
+        _, spec = _run_derive_spawn_spec(
+            tmp_path,
+            self._core_plan(),  # rich plan that would normally make 5 agents
+            self._two_partitions(),
+            self._route(fast_path=True),
+        )
+        assert spec["fast_path"] is True
+        assert spec["stats"]["agent_count"] == 1
+        assert spec["agents"][0]["agent_id"] == "fast"
+        assert spec["agents"][0]["model"] == "sonnet"
+        assert spec["agents"][0]["source"] == "fast_path"
+        assert spec["agents"][0]["patches_file"] == "patches_all.txt"
+
+    def test_gated_by_verify_propagates_without_pruning(
+        self, tmp_path: Path,
+    ) -> None:
+        """The Phase 7 BLOCKING short-circuit sets
+        ``budget.gated_by_verify: true`` on the plan; the spawn-spec
+        must propagate that flag (so presenters can warn that
+        arbitration was bypassed) but still emit the full agent list
+        — review still runs against the unbudgeted plan.
+        """
+        plan = self._core_plan()
+        plan["budget"]["gated_by_verify"] = True
+        plan["arbitrate_status"] = "blocked_by_verify"
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._two_partitions(), self._route(),
+        )
+        assert spec["gated_by_verify"] is True
+        assert spec["arbitrate_status"] == "blocked_by_verify"
+        # Agents still spawn — Phase 8 inherits Phase 7's "signal, not
+        # halt" semantics. The canonical BLOCKING finding already lives
+        # in agent_coverage-verify-blocking.json so the operator sees
+        # the gate; spawn-spec doesn't double-emit.
+        assert spec["stats"]["agent_count"] == 5
+
+    def test_bha_skipped_when_partitions_empty(
+        self, tmp_path: Path,
+    ) -> None:
+        """When all files are cached (or docs-only post-arbitrate),
+        ``partitions.json`` lists zero partitions. Per start.md "Skip
+        BHA when all files are cached", BHA must NOT spawn. The
+        skipped[] entry surfaces this so operators can see why bha_p<N>
+        is missing from the fleet.
+        """
+        empty_parts = {"partitions": [], "test_file_paths": [], "force_merged_count": 0}
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, self._core_plan(), empty_parts, self._route(),
+        )
+        bha_agents = [a for a in spec["agents"] if a["reviewer"] == "bug_hunter_a"]
+        assert bha_agents == []
+        bha_skipped = [
+            s for s in spec["skipped"] if s["reviewer"] == "bug_hunter_a"
+        ]
+        assert len(bha_skipped) == 1
+        assert bha_skipped[0]["reason"] == "no_partitions"
+        # Non-partitioned core roles still spawn even when BHA is skipped.
+        assert {"bhb", "auditor", "premise"} <= {
+            a["agent_id"] for a in spec["agents"]
+        }
+
+    def test_missing_coverage_plan_emits_fallback_sentinel(
+        self, tmp_path: Path,
+    ) -> None:
+        """A missing or unreadable coverage_plan.json must NOT abort
+        the pipeline — stage_20 falls back to the static table in
+        start.md. The spec marks ``arbitrate_status: "fallback"`` so
+        the orchestrator knows to walk the static table instead of an
+        empty spec.
+        """
+        _, spec = _run_derive_spawn_spec(
+            tmp_path,
+            coverage_plan=None,  # don't write the file at all
+            partitions=self._two_partitions(),
+            route=self._route(),
+        )
+        assert spec["arbitrate_status"] == "fallback"
+        assert spec["fallback_reason"] == "coverage_plan_missing_or_malformed"
+        assert spec["agents"] == []
+        assert spec["stats"]["agent_count"] == 0
+
+    def test_rule_resolved_domain_reviewer_spawns_as_domain_critic(
+        self, tmp_path: Path,
+    ) -> None:
+        """A required entry whose reviewer name isn't a core role but
+        whose source is ``"rule"`` came from a deterministically
+        matched critic-gates.json ``coverage[]`` rule (or a migrated
+        legacy ``moduleCritics[]`` entry — ``migrate_legacy_module_critics``
+        turns those into source ``"rule"`` rules). Pre-v2.22.2 these
+        landed in ``skipped[]`` with ``reason: "unknown_reviewer"``
+        because the dispatch only rescued ``source == "critic"`` — a
+        silent regression for any repo with a canonical coverage rule
+        naming a non-core reviewer. They must now spawn as
+        ``domain_<N>`` with the entry's source preserved.
+        """
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                # The canonical coverage[] rule shape:
+                # {"reviewer": "ts-expert", "required": true, "triggers": [...]}
+                # resolves via _resolve_coverage to a required[] entry
+                # with source: "rule".
+                {
+                    "reviewer": "ts-expert",
+                    "source": "rule",
+                    "trigger": {"type": "extension", "value": ".ts"},
+                },
+            ],
+            "best_effort": [
+                # Legacy moduleCritics[] also migrates to source "rule"
+                # in best_effort[] after rule-resolution.
+                {
+                    "reviewer": "legacy-domain-critic",
+                    "source": "rule",
+                    "priority": 2,
+                },
+            ],
+            "budget": {"total_cap": 20, "bha_partitions": 1},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._two_partitions(), self._route(),
+        )
+        # Both rule-resolved reviewers spawn as sequential domain_<N>
+        # agents; neither lands in skipped[].
+        rule_agents = [a for a in spec["agents"] if a["source"] == "rule"]
+        assert len(rule_agents) == 2
+        assert {a["reviewer"] for a in rule_agents} == {
+            "ts-expert", "legacy-domain-critic",
+        }
+        assert {a["agent_id"] for a in rule_agents} == {"domain_0", "domain_1"}
+        assert all(a["patches_file"] == "patches_all.txt" for a in rule_agents)
+        assert all(a["model"] == "sonnet" for a in rule_agents)
+        # Source is preserved (not flattened to "critic") so presenters
+        # can distinguish operator-configured rules from LLM proposals.
+        assert all(a["source"] == "rule" for a in rule_agents)
+        # Neither rule-resolved entry should appear in skipped[].
+        assert not any(
+            s["reviewer"] in {"ts-expert", "legacy-domain-critic"}
+            for s in spec["skipped"]
+        )
+        # domain_critic_count includes both rule-resolved and
+        # critic-resolved agents (they share the dispatch path).
+        assert spec["stats"]["domain_critic_count"] == 2
+        # Known cores still spawn alongside.
+        assert any(a["reviewer"] == "bug_hunter_a" for a in spec["agents"])
+
+    def test_unknown_source_lands_in_skipped(
+        self, tmp_path: Path,
+    ) -> None:
+        """Genuinely unknown source (not core/rule/critic/fast_path) is
+        the only path that should land in ``skipped[]`` with
+        ``reason: "unknown_reviewer"``. Defense in depth for a
+        malformed plan or a future source value the spawner hasn't
+        been taught yet — the pre-v2.22.2 test fixture used
+        ``source: "rule"`` which incorrectly pinned the regression.
+        """
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {
+                    "reviewer": "mystery_reviewer",
+                    # Empty source falls through every known branch.
+                    "source": "",
+                },
+            ],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 1},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._two_partitions(), self._route(),
+        )
+        unknowns = [s for s in spec["skipped"] if s["reviewer"] == "mystery_reviewer"]
+        assert len(unknowns) == 1
+        assert unknowns[0]["reason"] == "unknown_reviewer"
+        assert unknowns[0]["bucket"] == "required"
+        assert any(a["reviewer"] == "bug_hunter_a" for a in spec["agents"])
+
+    def test_route_models_overrides_default(
+        self, tmp_path: Path,
+    ) -> None:
+        """The route.json ``models`` block is the single source of
+        truth for per-agent model selection; the spec must echo
+        operator overrides (e.g. premise on Sonnet for a "feat" intent)
+        rather than re-deriving them in the orchestrator.
+        """
+        route = self._route()
+        route["models"]["premise_reviewer"] = "sonnet"
+        route["models"]["bug_hunter_a"] = {"default": "sonnet", "test_only": "haiku"}
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, self._core_plan(), self._two_partitions(), route,
+        )
+        ids = {a["agent_id"]: a for a in spec["agents"]}
+        assert ids["premise"]["model"] == "sonnet"
+        assert ids["bha_p0"]["model"] == "sonnet"
+        assert ids["bha_p1"]["model"] == "haiku"  # test-only partition
+
+    def test_missing_route_uses_safe_defaults(
+        self, tmp_path: Path,
+    ) -> None:
+        """A missing route.json must NOT abort the spec — fall back to
+        the canonical defaults ``cmd_route`` emits. The orchestrator
+        treats absence the same as a route with no overrides, so a
+        route failure degrades gracefully into the default model
+        routing rather than failing the spawn-spec derivation.
+        """
+        _, spec = _run_derive_spawn_spec(
+            tmp_path,
+            self._core_plan(),
+            self._two_partitions(),
+            route=None,
+        )
+        ids = {a["agent_id"]: a for a in spec["agents"]}
+        # BHA defaults to opus/sonnet from _spawn_resolve_models.
+        assert ids["bha_p0"]["model"] == "opus"
+        assert ids["bha_p1"]["model"] == "sonnet"
+        # Other roles default to sonnet.
+        assert ids["bhb"]["model"] == "sonnet"
+        assert ids["premise"]["model"] == "sonnet"
+
+    def test_missing_partitions_file_emits_fallback_sentinel(
+        self, tmp_path: Path,
+    ) -> None:
+        """``partitions.json`` absent is distinct from ``partitions.json``
+        present-but-empty: present-but-empty is the documented
+        all-files-cached / docs-only path (BHA legitimately has
+        nothing to review); absent means stage_17_partition didn't
+        produce its artifact — usually an upstream crash. The
+        pre-v2.22.3 behavior collapsed both into ``no_partitions``,
+        suppressing BHA either way. That silently hid coverage gaps
+        when the partitioner crashed. Now the missing-file path
+        emits a fallback sentinel so the orchestrator walks the
+        static reviewer table where the documented "Skip BHA when
+        all files are cached" logic can re-derive the answer from
+        ``diff_data`` directly.
+        """
+        _, spec = _run_derive_spawn_spec(
+            tmp_path,
+            self._core_plan(),
+            partitions=None,  # file absent → _read_optional_json returns None
+            route=self._route(),
+        )
+        assert spec["arbitrate_status"] == "fallback"
+        assert spec["fallback_reason"] == "partitions_missing_or_malformed"
+        assert spec["agents"] == []
+
+    def test_malformed_coverage_plan_emits_fallback_sentinel(
+        self, tmp_path: Path,
+    ) -> None:
+        """The fallback sentinel must fire for ``coverage_plan.json``
+        that contains valid JSON but isn't a dict (e.g. ``[]`` from a
+        partial write or an upstream bug). Distinct from the absent-file
+        path — both produce the same sentinel so the orchestrator's
+        fallback logic only needs one branch.
+        """
+        cp = tmp_path / "coverage_plan.json"
+        cp.write_text(json.dumps([]))  # valid JSON, wrong shape
+        p = tmp_path / "partitions.json"
+        p.write_text(json.dumps(self._two_partitions()))
+        r = tmp_path / "route.json"
+        r.write_text(json.dumps(self._route()))
+
+        from code_review_helpers import cmd_derive_spawn_spec
+        from golden_fixture_harness import run_with_stdout_capture
+
+        ns = argparse.Namespace(
+            cr_dir=str(tmp_path),
+            coverage_plan=str(cp),
+            partitions=str(p),
+            route=str(r),
+            output=None,
+        )
+        run_with_stdout_capture(cmd_derive_spawn_spec, ns)
+        spec = json.loads((tmp_path / "spawn_spec.json").read_text())
+        assert spec["arbitrate_status"] == "fallback"
+        assert spec["fallback_reason"] == "coverage_plan_missing_or_malformed"
+        assert spec["agents"] == []
+
+    def test_empty_reviewer_name_lands_in_skipped(
+        self, tmp_path: Path,
+    ) -> None:
+        """A plan entry with a blank ``reviewer`` field (LLM-produced
+        plans with a dropped key) records a ``missing_reviewer_name``
+        skip rather than fabricating an empty AGENT_ID — the
+        defense-in-depth branch that catches malformed inputs upstream
+        of stage_15c's closed-vocabulary check.
+        """
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "", "source": "core"},
+            ],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 0},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._two_partitions(), self._route(),
+        )
+        blanks = [s for s in spec["skipped"] if s["reason"] == "missing_reviewer_name"]
+        assert len(blanks) == 1
+        assert blanks[0]["bucket"] == "required"
+        # The well-formed entry still spawns.
+        assert any(a["agent_id"] == "bhb" for a in spec["agents"])
+
+    def test_duplicate_non_partitioned_reviewer_dedupes(
+        self, tmp_path: Path,
+    ) -> None:
+        """Defense-in-depth: a malformed plan that lists the same
+        non-partitioned reviewer in both required[] and best_effort[]
+        must emit ONE agent, not two. Two descriptors with the same
+        AGENT_ID would race on the ``agent_<id>.json`` output file,
+        silently losing one set of findings. stage_15c's closed-
+        vocabulary check should catch this upstream, but spawn-spec is
+        a downstream consumer and guards independently.
+        """
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_b", "source": "core"},
+            ],
+            "best_effort": [
+                {"reviewer": "bug_hunter_b", "source": "core"},
+            ],
+            "budget": {"total_cap": 20, "bha_partitions": 0},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._two_partitions(), self._route(),
+        )
+        bhb_agents = [a for a in spec["agents"] if a["agent_id"] == "bhb"]
+        assert len(bhb_agents) == 1
+        # First occurrence wins (required[] walked first).
+        assert bhb_agents[0]["bucket"] == "required"
+        # Second occurrence surfaces in skipped[] with the dedup reason.
+        dupes = [s for s in spec["skipped"] if s["reason"] == "duplicate_agent_id"]
+        assert len(dupes) == 1
+        assert dupes[0]["agent_id"] == "bhb"
+        assert dupes[0]["bucket"] == "best_effort"
+
+
+class TestPLN725Phase8DeriveSpawnSpecBudgetCap:
+    """PLN-725 Phase 8 / v2.22.3 — the post-arbitrate
+    ``budget.bha_partitions`` cap. The partitioner runs separately
+    from arbitrate-budget and may emit more partitions than the
+    final budget reserves slots for; the spawner must honor the
+    arbitrate-budget cap to keep the spawned fleet within the
+    project-configured ceiling.
+    """
+
+    @staticmethod
+    def _three_partitions() -> dict[str, Any]:
+        return {
+            "partitions": [
+                {"id": i, "files": [{"file": f"src/{i}.ts"}], "is_test_only": False}
+                for i in range(3)
+            ],
+            "test_file_paths": [],
+            "force_merged_count": 0,
+        }
+
+    @staticmethod
+    def _route() -> dict[str, Any]:
+        return {
+            "fast_path": False,
+            "models": {
+                "bug_hunter_a": {"default": "opus", "test_only": "sonnet"},
+                "bug_hunter_b": "sonnet",
+                "unified_auditor": "sonnet",
+                "premise_reviewer": "opus",
+                "fast_path_reviewer": "sonnet",
+            },
+        }
+
+    def test_bha_capped_at_budget_partitions(self, tmp_path: Path) -> None:
+        """When the partitioner produced 3 partitions but
+        arbitrate-budget reserved only 2 BHA slots, exactly 2 BHA
+        agents spawn (the first 2 — prefix-take preserves the
+        partitioner's bin-packed ordering) and the third lands in
+        ``skipped[]`` with ``reason: "budget_capped"``.
+        """
+        plan = {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 2},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._three_partitions(), self._route(),
+        )
+        bha_agents = [a for a in spec["agents"] if a["reviewer"] == "bug_hunter_a"]
+        assert len(bha_agents) == 2
+        assert {a["partition_id"] for a in bha_agents} == {0, 1}
+        capped = [s for s in spec["skipped"] if s["reason"] == "budget_capped"]
+        assert len(capped) == 1
+        assert capped[0]["partition_id"] == 2
+        assert capped[0]["budget_cap"] == 2
+        assert capped[0]["partition_count"] == 3
+
+    def test_bha_partitions_zero_suppresses_all_bha(self, tmp_path: Path) -> None:
+        """Docs-only post-arbitrate sets ``bha_partitions: 0``. No BHA
+        descriptors emit even when the partitioner produced
+        partitions (e.g. on a mixed docs+code diff where docs
+        dominate the LOC cap).
+        """
+        plan = {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 0},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._three_partitions(), self._route(),
+        )
+        bha_agents = [a for a in spec["agents"] if a["reviewer"] == "bug_hunter_a"]
+        assert bha_agents == []
+        capped = [
+            s for s in spec["skipped"]
+            if s["reviewer"] == "bug_hunter_a" and s["reason"] == "budget_capped"
+        ]
+        assert len(capped) == 1
+        assert capped[0]["budget_cap"] == 0
+        assert capped[0]["partition_count"] == 3
+
+    def test_bha_cap_equals_partition_count_spawns_all(
+        self, tmp_path: Path,
+    ) -> None:
+        """When the cap exactly matches the partition count, every
+        partition spawns. No ``budget_capped`` entries.
+        """
+        plan = {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 3},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._three_partitions(), self._route(),
+        )
+        bha_agents = [a for a in spec["agents"] if a["reviewer"] == "bug_hunter_a"]
+        assert len(bha_agents) == 3
+        capped = [s for s in spec["skipped"] if s["reason"] == "budget_capped"]
+        assert capped == []
+
+
+class TestPLN725Phase8DeriveSpawnSpecBlockingSanitization:
+    """PLN-725 Phase 8 / v2.22.3 — under a BLOCKING verify verdict,
+    the spawner sanitizes the plan to ``source: "core"`` only.
+    Phase 7 deliberately let the plan flow through arbitrate-budget
+    so review still ran, but actioning a verifier-rejected plan can
+    spawn agents the closed_vocabulary / shape / evidence checks
+    flagged. Sanitization keeps the canonical static fleet running
+    (BHB, Auditor, Premise, BHA per partition) while suppressing
+    every rule/critic-source reviewer; the BLOCKING gap finding
+    already lives in agent_coverage-verify-blocking.json so the
+    operator sees the rejection.
+    """
+
+    @staticmethod
+    def _plan_with_critic() -> dict[str, Any]:
+        return {
+            "required": [
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "ts-expert", "source": "rule",
+                 "trigger": {"type": "extension", "value": ".ts"}},
+            ],
+            "best_effort": [
+                {"reviewer": "graphql-architect", "source": "critic", "priority": 1},
+            ],
+            "budget": {
+                "total_cap": 20,
+                "bha_partitions": 0,
+                "gated_by_verify": True,
+            },
+            "arbitrate_status": "blocked_by_verify",
+        }
+
+    @staticmethod
+    def _partitions() -> dict[str, Any]:
+        return {
+            "partitions": [],
+            "test_file_paths": [],
+            "force_merged_count": 0,
+        }
+
+    @staticmethod
+    def _route() -> dict[str, Any]:
+        return {"fast_path": False, "models": {"bug_hunter_b": "sonnet"}}
+
+    def test_blocking_sanitizes_to_core_only(self, tmp_path: Path) -> None:
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, self._plan_with_critic(), self._partitions(), self._route(),
+        )
+        # gated_by_verify still propagates so presenters show the gate.
+        assert spec["gated_by_verify"] is True
+        # Only the core reviewer spawned; rule/critic were sanitized.
+        assert {a["reviewer"] for a in spec["agents"]} == {"bug_hunter_b"}
+        # Suppressed reviewers land in skipped[] with the canonical reason.
+        suppressed = [
+            s for s in spec["skipped"] if s["reason"] == "gated_by_verify"
+        ]
+        names = {s["reviewer"] for s in suppressed}
+        assert names == {"ts-expert", "graphql-architect"}
+        # Source is preserved on the skipped record so presenters can
+        # distinguish operator-configured (rule) suppressions from
+        # LLM-proposed (critic) suppressions.
+        sources = {s["source"] for s in suppressed}
+        assert sources == {"rule", "critic"}
+
+    def test_blocking_with_only_core_reviewers_no_op(
+        self, tmp_path: Path,
+    ) -> None:
+        """If the plan happens to contain only core reviewers, BLOCKING
+        sanitization is a no-op — all original agents still spawn.
+        Verifies the sanitization branch doesn't accidentally drop
+        core entries.
+        """
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "unified_auditor", "source": "core"},
+            ],
+            "best_effort": [],
+            "budget": {
+                "total_cap": 20,
+                "bha_partitions": 0,
+                "gated_by_verify": True,
+            },
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._partitions(), self._route(),
+        )
+        assert spec["gated_by_verify"] is True
+        assert {a["reviewer"] for a in spec["agents"]} == {
+            "bug_hunter_b", "unified_auditor",
+        }
+        gated_skips = [
+            s for s in spec["skipped"] if s["reason"] == "gated_by_verify"
+        ]
+        assert gated_skips == []
+
+
+class TestPLN725Phase8RequiredCoverageGaps:
+    """PLN-725 Phase 8 / v2.22.3 — required reviewers that the
+    spawn-spec couldn't describe produce coverage-gap findings in
+    coverage_gaps.json so finalize-result picks them up. Benign
+    skips (deferred_pln723, no_partitions, gated_by_verify) emit no
+    finding; non-benign skips (unknown_reviewer, duplicate_agent_id,
+    missing_reviewer_name) do.
+    """
+
+    def test_unknown_required_reviewer_emits_gap_finding(
+        self, tmp_path: Path,
+    ) -> None:
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "mystery", "source": ""},  # genuinely unknown source
+            ],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 0},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan,
+            {"partitions": [], "test_file_paths": [], "force_merged_count": 0},
+            {"fast_path": False, "models": {}},
+        )
+        # The skipped[] entry was emitted.
+        unknowns = [s for s in spec["skipped"] if s["reason"] == "unknown_reviewer"]
+        assert len(unknowns) == 1
+        # And a coverage_gaps.json finding now exists for it.
+        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())
+        assert any(
+            "mystery" in (f.get("issue") or f.get("title") or "")
+            for f in gaps["findings"]
+        )
+        # The spec stat tracks the count.
+        assert spec["stats"]["required_coverage_gaps"] == 1
+
+    def test_deferred_pln723_does_not_emit_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        """test_quality is the PLN-723 placeholder. Required-bucket but
+        intentional — must NOT produce a coverage gap finding (it
+        would otherwise make every review NEEDS_ATTENTION).
+        """
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "test_quality", "source": "core"},
+            ],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 0},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan,
+            {"partitions": [], "test_file_paths": [], "force_merged_count": 0},
+            {"fast_path": False, "models": {}},
+        )
+        # test_quality is in skipped[] as the PLN-723 deferral.
+        assert any(
+            s["reason"] == "deferred_pln723" for s in spec["skipped"]
+        )
+        # But NO coverage gap finding (it would inflate the verdict).
+        # The file may not exist OR may have other entries from
+        # arbitrate-budget but none for test_quality.
+        gaps_path = tmp_path / "coverage_gaps.json"
+        if gaps_path.exists():
+            gaps = json.loads(gaps_path.read_text())
+            assert not any(
+                "test_quality" in (f.get("issue") or "")
+                for f in gaps["findings"]
+            )
+        assert spec["stats"]["required_coverage_gaps"] == 0
+
+    def test_gated_by_verify_suppression_does_not_emit_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        """BLOCKING sanitization is its own canonical signal — the
+        agent_coverage-verify-blocking.json finding from stage_15c
+        already surfaces the rejection. Per-suppressed-reviewer
+        coverage gaps would double-count.
+        """
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "ts-expert", "source": "rule"},
+            ],
+            "best_effort": [],
+            "budget": {
+                "total_cap": 20, "bha_partitions": 0,
+                "gated_by_verify": True,
+            },
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan,
+            {"partitions": [], "test_file_paths": [], "force_merged_count": 0},
+            {"fast_path": False, "models": {}},
+        )
+        # ts-expert is suppressed by gated_by_verify (required bucket).
+        assert any(
+            s["reason"] == "gated_by_verify" and s["reviewer"] == "ts-expert"
+            for s in spec["skipped"]
+        )
+        # No coverage gap finding for it.
+        assert spec["stats"]["required_coverage_gaps"] == 0
+
+    def test_appended_not_overwritten_to_coverage_gaps_json(
+        self, tmp_path: Path,
+    ) -> None:
+        """arbitrate-budget is the original producer of
+        coverage_gaps.json (budget_exceeded findings). derive-spawn-
+        spec must APPEND to that file, not overwrite — otherwise the
+        arbitrate-budget findings would be lost.
+        """
+        # Pre-seed an arbitrate-budget finding.
+        gaps_path = tmp_path / "coverage_gaps.json"
+        existing = {"findings": [{
+            "id": "arb_0",
+            "reviewer": "coverage-verifier",
+            "system_marker": "budget-exceeded",
+            "issue": "Required reviewer dropped: pre-existing",
+        }]}
+        gaps_path.write_text(json.dumps(existing))
+
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "mystery", "source": ""},
+            ],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 0},
+        }
+        _, _ = _run_derive_spawn_spec(
+            tmp_path, plan,
+            {"partitions": [], "test_file_paths": [], "force_merged_count": 0},
+            {"fast_path": False, "models": {}},
+        )
+        gaps = json.loads(gaps_path.read_text())
+        # Both the pre-existing arbitrate-budget finding AND the new
+        # spawn-spec gap are present.
+        issues = [f.get("issue") for f in gaps["findings"]]
+        assert any("pre-existing" in (i or "") for i in issues)
+        assert any("mystery" in (i or "") for i in issues)
+
+
+class TestPLN725Phase8VerifySpawn:
+    """PLN-725 Phase 8 / v2.22.3 stage_20b_verify_spawn. Reads
+    spawn_spec.json + globs agent_*.json; emits coverage-gap
+    findings for required agents missing on-disk outputs. The
+    runtime symmetric pair to stage_19b's required-skip findings.
+    """
+
+    @staticmethod
+    def _run(tmp_path: Path) -> dict[str, Any]:
+        from code_review_helpers import cmd_verify_spawn
+        from golden_fixture_harness import run_with_stdout_capture
+
+        ns = argparse.Namespace(cr_dir=str(tmp_path))
+        run_with_stdout_capture(cmd_verify_spawn, ns)
+        return json.loads((tmp_path / "spawn_verification.json").read_text())
+
+    @staticmethod
+    def _spec(agents: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "fast_path": False,
+            "gated_by_verify": False,
+            "arbitrate_status": "ok",
+            "cr_dir": "",
+            "agents": agents,
+            "skipped": [],
+            "stats": {
+                "agent_count": len(agents), "bha_count": 0,
+                "domain_critic_count": 0,
+                "from_required": sum(1 for a in agents if a.get("bucket") == "required"),
+                "from_best_effort": sum(1 for a in agents if a.get("bucket") == "best_effort"),
+            },
+            "generated_at": "",
+        }
+
+    def test_all_required_present_no_gap(self, tmp_path: Path) -> None:
+        """When every required agent has an output file, no coverage
+        gap findings emit and verification reports zero missing.
+        """
+        spec = self._spec([
+            {"agent_id": "bhb", "reviewer": "bug_hunter_b",
+             "bucket": "required", "source": "core"},
+            {"agent_id": "auditor", "reviewer": "unified_auditor",
+             "bucket": "required", "source": "core"},
+        ])
+        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+        (tmp_path / "agent_bhb.json").write_text("{}")
+        (tmp_path / "agent_auditor.json").write_text("{}")
+        verification = self._run(tmp_path)
+        assert verification["verified"] is True
+        assert verification["missing_required"] == []
+        assert verification["missing_required_gaps"] == 0
+        # No coverage_gaps.json written when nothing to report.
+        assert not (tmp_path / "coverage_gaps.json").exists()
+
+    def test_missing_required_emits_coverage_gap(self, tmp_path: Path) -> None:
+        """A required agent_id with no output file → a coverage-gap
+        finding appended to coverage_gaps.json so finalize-result's
+        verdict computation sees it.
+        """
+        spec = self._spec([
+            {"agent_id": "bhb", "reviewer": "bug_hunter_b",
+             "bucket": "required", "source": "core"},
+            {"agent_id": "auditor", "reviewer": "unified_auditor",
+             "bucket": "required", "source": "core"},
+        ])
+        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+        # Only bhb wrote its output; auditor crashed at runtime.
+        (tmp_path / "agent_bhb.json").write_text("{}")
+
+        verification = self._run(tmp_path)
+        assert verification["missing_required_gaps"] == 1
+        assert {m["agent_id"] for m in verification["missing_required"]} == {"auditor"}
+
+        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())
+        assert any(
+            "unified_auditor" in (f.get("issue") or "")
+            for f in gaps["findings"]
+        )
+
+    def test_missing_best_effort_no_gap(self, tmp_path: Path) -> None:
+        """A best-effort agent missing from disk is a budget-driven
+        omission, not a coverage gap — record it in missing_agents
+        for telemetry but emit no finding.
+        """
+        spec = self._spec([
+            {"agent_id": "bhb", "reviewer": "bug_hunter_b",
+             "bucket": "required", "source": "core"},
+            {"agent_id": "domain_0", "reviewer": "graphql-architect",
+             "bucket": "best_effort", "source": "critic"},
+        ])
+        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+        (tmp_path / "agent_bhb.json").write_text("{}")
+        # domain_0 didn't write — budget-driven.
+
+        verification = self._run(tmp_path)
+        assert verification["missing_required_gaps"] == 0
+        # missing_agents records all missing for telemetry.
+        assert any(m["agent_id"] == "domain_0" for m in verification["missing_agents"])
+        # But the on-disk gaps file has no entry for it.
+        assert not (tmp_path / "coverage_gaps.json").exists()
+
+    def test_fallback_spec_no_ops(self, tmp_path: Path) -> None:
+        """When spawn_spec marks ``arbitrate_status: "fallback"``, the
+        orchestrator walked the static table. verify-spawn has no
+        spec to verify against; it no-ops cleanly without emitting
+        spurious gaps.
+        """
+        spec = {
+            "fast_path": False, "gated_by_verify": False,
+            "arbitrate_status": "fallback",
+            "fallback_reason": "coverage_plan_missing_or_malformed",
+            "cr_dir": "", "agents": [], "skipped": [],
+            "stats": {"agent_count": 0, "bha_count": 0,
+                      "domain_critic_count": 0,
+                      "from_required": 0, "from_best_effort": 0},
+            "generated_at": "",
+        }
+        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+        verification = self._run(tmp_path)
+        assert verification["verified"] is False
+        assert verification["reason"] == "spec_fallback"
+        assert not (tmp_path / "coverage_gaps.json").exists()
+
+    def test_missing_spec_no_ops(self, tmp_path: Path) -> None:
+        """spawn_spec.json absent (stage_19b didn't run / crashed) →
+        no-op with reason ``spec_missing``. The pipeline continues;
+        finalize-result still produces a usable envelope from
+        whatever findings did make it through.
+        """
+        # No spawn_spec.json written.
+        verification = self._run(tmp_path)
+        assert verification["verified"] is False
+        assert verification["reason"] == "spec_missing"
+
+
+class TestPLN725Phase8StageGraph:
+    """The Phase 8 stage_19b_derive_spawn_spec slot in the prepare-run
+    walker. Pins the dependency chain so a future reorder can't
+    accidentally make stage_20 read a stale spawn_spec (or none at
+    all).
+    """
+
+    def _plan(self, tmp_path: Path) -> dict[str, Any]:
+        # Delegate to the canonical helper from conftest so stdout is
+        # suppressed (cmd_prepare_run writes a summary blob to
+        # sys.stdout; an inline call would leak it into pytest output)
+        # and the Namespace shape stays in lock-step with the CLI parser.
+        _, run_plan = invoke_prepare_run(
+            tmp_path, output=tmp_path / "run_plan.json",
+        )
+        return run_plan
+
+    def test_stage_19b_present_and_correctly_wired(
+        self, tmp_path: Path,
+    ) -> None:
+        plan = self._plan(tmp_path)
+        stages = {s["id"]: s for s in plan["stages"]}
+        assert "stage_19b_derive_spawn_spec" in stages
+        s = stages["stage_19b_derive_spawn_spec"]
+        assert s["subcommand"] == "derive-spawn-spec"
+        assert s["on_failure"] == "continue"
+        # PLN-725 Phase 8 (v2.22.3): only the arbitrated coverage_plan
+        # is a hard dependency. stage_17_partition is intentionally
+        # NOT a hard dep so Gate B's fast-path branch (which skips
+        # stage_17) can still reach stage_19b → stage_20 with the
+        # fast descriptor. Non-fast-path runs with a missing
+        # partitions.json fall through to the fallback sentinel.
+        assert "stage_16_arbitrate_budget" in s["depends_on"]
+        assert "stage_17_partition" not in s["depends_on"]
+        # Expected output is the spawn_spec.json artifact.
+        assert any(
+            "spawn_spec.json" in str(out) for out in s["expected_outputs"]
+        )
+
+    def test_fast_path_reaches_stage_20_without_stage_17(
+        self, tmp_path: Path,
+    ) -> None:
+        """Gate B documents ``fast_path == true`` as "skips
+        stage_17_partition entirely and drives a single fast-path
+        reviewer in stage_20." If stage_19b had a hard dep on
+        stage_17, a dependency-aware walker would refuse to run
+        stage_19b in fast-path mode and stage_20 would either run
+        without a spawn_spec (silently regressing to the fallback
+        path) or be skipped entirely. Pin the reachable ordering:
+        stage_19b appears before stage_20 in the run plan and does
+        not require stage_17 as a hard prerequisite.
+        """
+        plan = self._plan(tmp_path)
+        ids = [s["id"] for s in plan["stages"]]
+        # Ordering: stage_19b precedes stage_20, and both precede
+        # stage_21 (collect-findings). stage_17 may or may not be
+        # before stage_19b — the orchestrator skips it under
+        # fast_path — but the dep graph must not force it.
+        assert ids.index("stage_19b_derive_spawn_spec") < ids.index(
+            "stage_20_spawn_reviewers",
+        )
+        # The 19b deps reach back to stage_16 (which depends back
+        # through stage_15c/15b/etc. to setup), all of which run
+        # regardless of fast_path. No partition stage in the chain.
+        stages = {s["id"]: s for s in plan["stages"]}
+        s19b = stages["stage_19b_derive_spawn_spec"]
+        assert "stage_17_partition" not in s19b["depends_on"]
+
+    def test_stage_20_depends_on_derive_spawn_spec(
+        self, tmp_path: Path,
+    ) -> None:
+        """stage_20 reads spawn_spec.json — the dep must be explicit so
+        a partial run that skips stage_19b can't reach stage_20 with a
+        missing or stale spec.
+        """
+        plan = self._plan(tmp_path)
+        stages = {s["id"]: s for s in plan["stages"]}
+        spawn = stages["stage_20_spawn_reviewers"]
+        assert "stage_19b_derive_spawn_spec" in spawn["depends_on"]
+
+    def test_stage_19b_ordered_after_inputs(
+        self, tmp_path: Path,
+    ) -> None:
+        """stage_16 must run before stage_19b so the post-arbitrate
+        coverage_plan is on disk when derive-spawn-spec runs.
+        stage_17_partition is not a hard dep (so fast_path can skip
+        it), but the *positional* ordering in the run plan keeps it
+        before stage_19b for non-fast-path runs — that's enforced by
+        the existing stage_20 dependency on stage_17 plus our
+        stage_19b precedes stage_20. We don't pin stage_17 < stage_19b
+        directly so a future reorder that runs partition after
+        derive (e.g. lazy partitioning) doesn't break this test.
+        """
+        plan = self._plan(tmp_path)
+        ids = [s["id"] for s in plan["stages"]]
+        assert ids.index("stage_16_arbitrate_budget") < ids.index(
+            "stage_19b_derive_spawn_spec",
+        )
+        assert ids.index("stage_19b_derive_spawn_spec") < ids.index(
+            "stage_20_spawn_reviewers",
+        )
+
+    def test_stage_20b_verify_spawn_present_and_wired(
+        self, tmp_path: Path,
+    ) -> None:
+        """The runtime symmetric pair to stage_19b. Reads spawn_spec.json
+        + globs agent_*.json after stage_20 finishes; emits coverage-gap
+        findings for missing required agents. Must run before
+        stage_21_collect_findings so finalize-result picks up the gaps
+        from coverage_gaps.json.
+        """
+        plan = self._plan(tmp_path)
+        stages = {s["id"]: s for s in plan["stages"]}
+        assert "stage_20b_verify_spawn" in stages
+        s = stages["stage_20b_verify_spawn"]
+        assert s["subcommand"] == "verify-spawn"
+        assert s["on_failure"] == "continue"
+        # Must depend on both the spec producer and the spawn stage.
+        assert "stage_19b_derive_spawn_spec" in s["depends_on"]
+        assert "stage_20_spawn_reviewers" in s["depends_on"]
+        assert any(
+            "spawn_verification.json" in str(out)
+            for out in s["expected_outputs"]
+        )
+
+    def test_collect_findings_depends_on_verify_spawn(
+        self, tmp_path: Path,
+    ) -> None:
+        """The coverage-gap findings emitted by stage_20b must land
+        in coverage_gaps.json before stage_25_finalize_result reads it.
+        Pinning the dependency at stage_21 (the next stage in the
+        chain) is the cheapest way to enforce that ordering.
+        """
+        plan = self._plan(tmp_path)
+        stages = {s["id"]: s for s in plan["stages"]}
+        collect = stages["stage_21_collect_findings"]
+        assert "stage_20b_verify_spawn" in collect["depends_on"]
 
 
 class TestExtractSignalsConsolidateCacheHitNoOp:

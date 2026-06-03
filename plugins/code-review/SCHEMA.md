@@ -299,6 +299,156 @@ in what order, against what cap." See PLN-719 Section 5.
 
 ---
 
+## 6b. Reviewer spawn spec (`spawn_spec.json`)
+
+Produced by `stage_19b_derive_spawn_spec` (PLN-725 Phase 8) from the
+post-arbitrate `coverage_plan.json` + `partitions.json` + `route.json`;
+consumed by the `stage_20_spawn_reviewers` orchestrator. Closes the
+deterministic-coverage loop — before Phase 8 the coverage plan was
+ignored at spawn time.
+
+```jsonc
+{
+  // ── Routing ──────────────────────────────────────────────
+  "fast_path": false,                  // mirrors route.fast_path
+  "gated_by_verify": false,            // mirrors budget.gated_by_verify
+                                       // from arbitrate-budget (Phase 7)
+  "arbitrate_status": "ok",            // closed vocab: see below
+  "fallback_reason": "<string>",       // only present when arbitrate_status="fallback"
+  "cr_dir": "<absolute path>",
+  "generated_at": "<ISO-8601 timestamp>",
+
+  // ── Agents to spawn ──────────────────────────────────────
+  "agents": [
+    {
+      "agent_id": "bha_p0 | bhb | auditor | premise | domain_<N> | fast",
+      "reviewer": "bug_hunter_a | bug_hunter_b | unified_auditor | premise_reviewer | <critic-name> | fast_path_reviewer",
+      "model": "<model id>",
+      "partitioned": true,             // only BHA partitions
+      "partition_id": 0,               // only when partitioned
+      "is_test_only": false,           // only when partitioned (drives BHA model slot)
+      "patches_file": "patches_p<N>.txt | patches_all.txt",
+      "source": "core | rule | critic | fast_path",
+      "bucket": "required | best_effort | fast_path",
+      "priority": 2                    // only on critics
+    }
+  ],
+
+  // ── Reviewers deliberately not spawned ───────────────────
+  "skipped": [
+    {
+      "reviewer": "<name>",
+      "bucket": "required | best_effort",
+      "reason": "deferred_pln723 | no_partitions | unknown_reviewer | missing_reviewer_name | duplicate_agent_id | budget_capped | gated_by_verify",
+      "agent_id": "<id>",              // only on duplicate_agent_id
+      "partition_id": 0,               // only on budget_capped (BHA)
+      "budget_cap": 0,                 // only on budget_capped
+      "partition_count": 0,            // only on budget_capped
+      "source": "rule | critic"        // only on gated_by_verify (preserved for presenters)
+    }
+  ],
+
+  // ── Telemetry ────────────────────────────────────────────
+  "stats": {
+    "agent_count": 5,
+    "bha_count": 1,
+    "domain_critic_count": 0,
+    "from_required": 4,
+    "from_best_effort": 0,
+    "required_coverage_gaps": 0       // count of coverage_gaps.json findings emitted
+  }
+}
+```
+
+**Closed-vocabulary fields** (validated at production time; codified as
+constants in `code_review_schema.py`):
+
+| Field | Values | Notes |
+| --- | --- | --- |
+| `arbitrate_status` | `ok`, `blocked_by_verify`, `fallback` | `ok` = normal arbitration ran; `blocked_by_verify` = Phase 7 BLOCKING gate fired upstream and the plan passed through unchanged; `fallback` = derive failed, orchestrator must walk static table |
+| `source` | `core`, `rule`, `critic`, `fast_path` | Selects the prompt-suffix dispatch in `start.md` (`source: "core"` further branches on `reviewer`; `rule` and `critic` both map to the Domain Critic suffix — `rule` for deterministically matched critic-gates rules including migrated `moduleCritics[]`, `critic` for LLM-proposed additions) |
+| `bucket` | `required`, `best_effort`, `fast_path` | Mirrors the source bucket in `coverage_plan.json` |
+| `skipped[].reason` | `deferred_pln723`, `no_partitions`, `unknown_reviewer`, `missing_reviewer_name`, `duplicate_agent_id`, `budget_capped`, `gated_by_verify` | Reasons surfaced so operators see why a reviewer was omitted |
+| `fallback_reason` | `coverage_plan_missing_or_malformed`, `partitions_missing_or_malformed` | Only set when `arbitrate_status == "fallback"`; names the specific upstream-artifact failure |
+
+**Fallback sentinel invariant:** when `arbitrate_status == "fallback"`,
+`agents[]` is empty and `fallback_reason` is set. The orchestrator must
+treat this as "ignore the spec; walk the static reviewer table in
+start.md" — a derive failure must never block review.
+
+**BLOCKING propagation invariant:** when `gated_by_verify == true`,
+`agents[]` is populated from a SANITIZED plan — only `source: "core"`
+entries survive; every `rule` and `critic` entry from the verifier-
+rejected plan is dropped into `skipped[]` with
+`reason: "gated_by_verify"` and the entry's original source preserved.
+This keeps the canonical static fleet (BHB, Auditor, Premise, BHA per
+partition) running so review still produces output, while refusing to
+action the closed-vocabulary / shape / evidence / cap violations the
+verifier flagged. The canonical BLOCKING finding already lives in
+`agent_coverage-verify-blocking.json` from `stage_15c`; the spawn-spec
+does not duplicate it. Presenters use `gated_by_verify` to surface
+"arbitration bypassed" in the run summary.
+
+**BHA budget cap invariant:** the BHA descriptor count is bounded by
+`coverage_plan.budget.bha_partitions` (the post-arbitrate cap), not
+by the count of partitions in `partitions.json`. When the partitioner
+emitted more partitions than the budget reserved, the first `cap`
+partitions spawn and the rest land in `skipped[]` with
+`reason: "budget_capped"`. A cap of 0 (docs-only post-arbitrate)
+suppresses all BHA spawns regardless of partition count.
+
+**Required coverage-gap invariant:** every entry in `skipped[]`
+with `bucket == "required"` and a non-benign reason
+(everything except `deferred_pln723`, `no_partitions`,
+`gated_by_verify`) produces a coverage-gap finding appended to
+`coverage_gaps.json`. `cmd_finalize_result` reads that file into the
+envelope's coverage-gap bucket where it contributes to the canonical
+verdict. The runtime symmetric pair to this derive-time check is
+`stage_20b_verify_spawn` (see §6c).
+
+---
+
+## 6c. Spawn verification (`spawn_verification.json`)
+
+Produced by `stage_20b_verify_spawn` (PLN-725 Phase 8 / v2.22.3) AFTER
+`stage_20_spawn_reviewers` finishes. Closes the runtime side of the
+spawn-spec contract: derive-spawn-spec catches required reviewers the
+spec couldn't even describe; verify-spawn catches required agents that
+crashed at runtime. Both producers write to `coverage_gaps.json` so
+`cmd_finalize_result` sees a unified gap list.
+
+```jsonc
+{
+  "verified": true,
+  "present_count": 5,
+  "intended_count": 5,
+  "present_agents": ["auditor", "bha_p0", "bhb", "domain_0", "premise"],
+  "missing_agents": [],            // every missing descriptor (required + best_effort)
+  "missing_required": [],          // subset of missing_agents with bucket == "required"
+  "missing_required_gaps": 0,      // coverage_gaps.json findings appended
+  "generated_at": "<ISO-8601>"
+}
+```
+
+**No-op shape** — emitted when there's nothing to verify against:
+
+```jsonc
+{
+  "verified": false,
+  "reason": "spec_missing | spec_fallback | spec_empty",
+  "present_agents": [], "missing_agents": [], "missing_required": [],
+  "generated_at": "<ISO-8601>"
+}
+```
+
+**Runtime gap invariant:** for each entry in `missing_required[]`,
+exactly one coverage-gap finding is appended to `coverage_gaps.json`
+with `source: "coverage-verifier"` and reason `spawn_missing_required_agent`.
+Missing best-effort agents are recorded for telemetry but emit no
+finding — best-effort omissions are budget-driven, not coverage gaps.
+
+---
+
 ## 7. Pipeline ordering
 
 | #  | Stage                        | Subcommand               | Produces                                                       |
@@ -323,7 +473,9 @@ in what order, against what cap." See PLN-719 Section 5.
 | 17 | partition                    | `partition`              | `partitions.json`, `patches_p<N>.txt`                          |
 | 18 | compute-hashes               | `compute-hashes`         | `hashes.json`                                                 |
 | 19 | cache-check                  | `cache-check`            | `cache_result.json`                                            |
+| 19b| derive-spawn-spec (plan 05)  | `derive-spawn-spec`      | `spawn_spec.json`                                              |
 | 20 | spawn-reviewers              | (agent_fleet)            | `agent_<id>.json`                                              |
+| 20b| verify-spawn (plan 05)       | `verify-spawn`           | `spawn_verification.json` + `coverage_gaps.json` append         |
 | 21 | collect-findings             | `collect-findings`       | `findings.json` (with deterministic IDs)                       |
 | 22 | validate                     | `validate`               | `findings_validated.json`                                     |
 | 23 | verify-findings (plan 03)    | `verify-findings`        | `findings_verified.json`                                      |
