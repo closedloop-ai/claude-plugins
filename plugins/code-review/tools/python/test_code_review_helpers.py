@@ -1844,7 +1844,19 @@ class TestValidate:
         findings: list[dict[str, Any]],
         diff_data: dict[str, Any],
         tmp_path: Path,
+        *,
+        settings: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Invoke cmd_validate against fixture files in ``tmp_path``.
+
+        When ``settings`` is provided it's written to a temp file and
+        passed via ``--settings``. Tests use this to exercise the
+        out_of_hunk_confidence_floor override (v2.21.0). Default None
+        leaves the Namespace ``settings`` arg at None — the loader
+        falls back to ``.closedloop-ai/settings/code-review.json``
+        relative to cwd, which is absent in test runs so built-in
+        defaults apply.
+        """
         import io
         import sys as _sys
 
@@ -1853,6 +1865,12 @@ class TestValidate:
         diff_path = tmp_path / "diff_data.json"
         diff_path.write_text(json.dumps(diff_data))
 
+        settings_arg: str | None = None
+        if settings is not None:
+            settings_path = tmp_path / "code-review.json"
+            settings_path.write_text(json.dumps(settings))
+            settings_arg = str(settings_path)
+
         old_stdout = _sys.stdout
         _sys.stdout = io.StringIO()
         try:
@@ -1860,6 +1878,7 @@ class TestValidate:
             ns = argparse.Namespace(
                 findings=str(findings_path),
                 diff_data=str(diff_path),
+                settings=settings_arg,
             )
             cmd_validate(ns)
             _sys.stdout.seek(0)
@@ -1899,7 +1918,80 @@ class TestValidate:
         assert len(result["validated"]) == 0
         assert result["stats"]["discarded_file_not_changed"] == 1
 
-    def test_line_not_in_changed_range(self, tmp_path: Path) -> None:
+    def test_out_of_hunk_high_confidence_survives(self, tmp_path: Path) -> None:
+        """v2.21.0 relaxation: a P2+ MEDIUM finding outside the changed
+        range now survives validation when confidence ≥ the floor
+        (default 0.80). This is the canonical companion-change case —
+        a function signature changed in the diff, the stale sibling
+        call site sits at line 100 just outside the [10, 15] hunk, and
+        the reviewer correctly flagged it with high confidence. The
+        pre-v2.21 unconditional discard silently dropped it; now it
+        flows through and gets tagged ``out_of_hunk_kept: True``.
+        """
+        diff_data = _make_diff_data(
+            files=["src/app.ts"],
+            ranges={"src/app.ts": {"added": [[10, 15]], "removed": []}},
+        )
+        findings = [{
+            "file": "src/app.ts",
+            "line": 100,
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Stale sibling call site",
+            "priority": 2,
+            "confidence": 0.9,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert len(result["validated"]) == 1
+        assert result["validated"][0].get("out_of_hunk_kept") is True
+        # Telemetry: the kept_out_of_hunk counter tracks the relaxation
+        # for A/B observability against historical runs.
+        assert result["stats"]["kept_out_of_hunk"] == 1
+        # The retired discarded_line_not_changed key now reports 0; the
+        # new discarded_out_of_hunk_low_confidence key tracks remaining
+        # filter activity (none here since the finding survived).
+        assert result["stats"]["discarded_line_not_changed"] == 0
+        assert result["stats"]["discarded_out_of_hunk_low_confidence"] == 0
+
+    def test_out_of_hunk_low_confidence_discarded(self, tmp_path: Path) -> None:
+        """Below the floor (default 0.80), out-of-hunk P2+ findings
+        are still discarded — relaxation isn't a free pass. Reason
+        changes from DISCARD_LINE_NOT_CHANGED to
+        DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE so the stats remain
+        separable from the in-hunk discard path.
+        """
+        diff_data = _make_diff_data(
+            files=["src/app.ts"],
+            ranges={"src/app.ts": {"added": [[10, 15]], "removed": []}},
+        )
+        findings = [{
+            "file": "src/app.ts",
+            "line": 100,
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Maybe-stale call",
+            "priority": 2,
+            "confidence": 0.6,  # below 0.80 floor
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert len(result["validated"]) == 0
+        assert result["stats"]["discarded_out_of_hunk_low_confidence"] == 1
+        assert result["stats"]["kept_out_of_hunk"] == 0
+
+    def test_out_of_hunk_kill_switch_blocks_confidence_1_0(
+        self, tmp_path: Path,
+    ) -> None:
+        """v2.21.1 kill-switch correctness. Setting
+        ``out_of_hunk_confidence_floor: 1.0`` must block out-of-hunk
+        findings even at ``confidence == 1.0``. The pre-v2.21.1
+        ``>=`` comparison let the boundary-case finding through —
+        and since ``_normalize_findings`` defaults missing confidence
+        to 1.0, the kill switch was easy to trip into bypassing.
+
+        The fix changes the comparison to strict ``>``: reviewer
+        confidence is bounded at 1.0, so ``confidence > 1.0`` is
+        impossible and every out-of-hunk finding fails at floor=1.0.
+        """
         diff_data = _make_diff_data(
             files=["src/app.ts"],
             ranges={"src/app.ts": {"added": [[10, 15]], "removed": []}},
@@ -1911,11 +2003,186 @@ class TestValidate:
             "category": "Correctness",
             "issue": "Bug",
             "priority": 2,
-            "confidence": 0.9,
+            "confidence": 1.0,  # the boundary case that pre-v2.21.1 leaked
+        }]
+        result = self._run_validate(
+            findings, diff_data, tmp_path,
+            settings={"out_of_hunk_confidence_floor": 1.0},
+        )
+        assert len(result["validated"]) == 0
+        assert result["stats"]["discarded_out_of_hunk_low_confidence"] == 1
+        assert result["stats"]["out_of_hunk_confidence_floor"] == 1.0
+
+    def test_out_of_hunk_floor_boundary_is_strict(
+        self, tmp_path: Path,
+    ) -> None:
+        """The strict ``>`` semantics also apply at non-1.0 floors.
+        confidence == floor must DISCARD (not survive). This is the
+        boundary case for the documented "confidence > 0.80 survives,
+        confidence == 0.80 discards" contract.
+        """
+        diff_data = _make_diff_data(
+            files=["src/app.ts"],
+            ranges={"src/app.ts": {"added": [[10, 15]], "removed": []}},
+        )
+        findings = [{
+            "file": "src/app.ts",
+            "line": 100,
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Bug",
+            "priority": 2,
+            "confidence": 0.80,  # exactly at the floor
         }]
         result = self._run_validate(findings, diff_data, tmp_path)
         assert len(result["validated"]) == 0
-        assert result["stats"]["discarded_line_not_changed"] == 1
+        assert result["stats"]["discarded_out_of_hunk_low_confidence"] == 1
+
+    def test_out_of_hunk_floor_operator_lowered(self, tmp_path: Path) -> None:
+        """Operator can also lower the floor (e.g. 0.5) to let more
+        through. Same value the in-hunk threshold uses.
+        """
+        diff_data = _make_diff_data(
+            files=["src/app.ts"],
+            ranges={"src/app.ts": {"added": [[10, 15]], "removed": []}},
+        )
+        findings = [{
+            "file": "src/app.ts",
+            "line": 100,
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Bug",
+            "priority": 2,
+            "confidence": 0.6,  # below default 0.80 floor, above 0.5
+        }]
+        result = self._run_validate(
+            findings, diff_data, tmp_path,
+            settings={"out_of_hunk_confidence_floor": 0.5},
+        )
+        assert len(result["validated"]) == 1
+        assert result["validated"][0].get("out_of_hunk_kept") is True
+
+    def test_in_hunk_finding_does_not_get_out_of_hunk_tag(
+        self, tmp_path: Path,
+    ) -> None:
+        """The ``out_of_hunk_kept`` tag must only apply to findings
+        that legitimately are out-of-hunk. An in-hunk finding flowing
+        through the standard path stays untagged so presenters don't
+        mislabel ordinary findings as companion-change.
+        """
+        diff_data = _make_diff_data(
+            files=["src/app.ts"],
+            ranges={"src/app.ts": {"added": [[10, 20]], "removed": []}},
+        )
+        findings = [{
+            "file": "src/app.ts",
+            "line": 15,  # IN hunk
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Bug",
+            "priority": 2,
+            "confidence": 0.9,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert len(result["validated"]) == 1
+        assert "out_of_hunk_kept" not in result["validated"][0]
+        assert result["stats"]["kept_out_of_hunk"] == 0
+
+    def test_validator_overrides_reviewer_supplied_out_of_hunk_kept(
+        self, tmp_path: Path,
+    ) -> None:
+        """v2.21.1: the validator OWNS the ``out_of_hunk_kept`` field.
+        A reviewer that pre-populates ``out_of_hunk_kept: true`` on an
+        in-hunk finding must NOT have that value survive — otherwise
+        the kept_out_of_hunk telemetry counter is poisoned and any
+        downstream presenter label keying on the tag mislabels the
+        finding.
+
+        Schema convention: tag present (and True) IFF the finding is
+        a companion-change survivor. Absence means in-hunk; the
+        validator pops on every in-hunk exit path.
+        """
+        diff_data = _make_diff_data(
+            files=["src/app.ts"],
+            ranges={"src/app.ts": {"added": [[10, 20]], "removed": []}},
+        )
+        findings = [{
+            "file": "src/app.ts",
+            "line": 15,  # IN hunk — should NOT keep the tag
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Bug",
+            "priority": 2,
+            "confidence": 0.9,
+            # Reviewer (incorrectly) pre-set the field. Validator must
+            # strip it — owning the field means trusting only its own
+            # branch decisions.
+            "out_of_hunk_kept": True,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert len(result["validated"]) == 1
+        assert "out_of_hunk_kept" not in result["validated"][0]
+        assert result["stats"]["kept_out_of_hunk"] == 0
+
+    def test_kept_out_of_hunk_counts_grouped_companions(
+        self, tmp_path: Path,
+    ) -> None:
+        """v2.21.1: the kept_out_of_hunk counter must count from the
+        post-filter set, NOT from the post-grouping ``validated`` set.
+
+        ``_group_cross_file`` absorbs similar-issue findings across
+        files into the primary's ``other_locations[]``, where only
+        file/line/severity are carried — the ``out_of_hunk_kept`` tag
+        is lost in the absorption. Counting post-grouping silently
+        undercounted every companion-change finding that happened to
+        be grouped with another. Fix: count on ``filtered`` (post-
+        filter, pre-grouping) since the counter is about how many
+        findings survived the filter, not how many made it to the
+        final presenter view.
+
+        This test seeds two cross-file companion-change findings with
+        the same category and similar issue text — they'll be grouped
+        into one ``validated`` entry, but both should be counted.
+        """
+        # Two files, both in scope, both with hunks at [10, 15].
+        diff_data = _make_diff_data(
+            files=["src/a.ts", "src/b.ts"],
+            ranges={
+                "src/a.ts": {"added": [[10, 15]], "removed": []},
+                "src/b.ts": {"added": [[10, 15]], "removed": []},
+            },
+        )
+        # Two out-of-hunk findings (line 100) with high confidence —
+        # both survive the relaxation, both get tagged. Same category
+        # + nearly identical issue text → grouped by _group_cross_file.
+        findings = [
+            {
+                "file": "src/a.ts",
+                "line": 100,
+                "severity": "MEDIUM",
+                "category": "Correctness",
+                "issue": "Stale sibling call site after signature change",
+                "priority": 2,
+                "confidence": 0.9,
+            },
+            {
+                "file": "src/b.ts",
+                "line": 100,
+                "severity": "MEDIUM",
+                "category": "Correctness",
+                "issue": "Stale sibling call site after signature change",
+                "priority": 2,
+                "confidence": 0.9,
+            },
+        ]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        # Grouped into one validated entry...
+        assert len(result["validated"]) == 1
+        # ...with the cross-file other_locations populated...
+        assert len(result["validated"][0].get("other_locations", [])) == 1
+        # ...but BOTH companion-change findings count toward telemetry.
+        # Pre-v2.21.1 this asserted 1; the counter undercounted.
+        assert result["stats"]["kept_out_of_hunk"] == 2
 
     def test_p1_never_discarded_for_line_range(self, tmp_path: Path) -> None:
         diff_data = _make_diff_data(
@@ -7783,6 +8050,60 @@ class TestVerifyTierTable:
              "category": "Premise", "source": "agent"}
         assert _needs_verification(f) is True
 
+    def test_out_of_hunk_kept_always_verified_even_at_high_confidence(
+        self,
+    ) -> None:
+        """v2.21.1 backstop. v2.21.0 let MEDIUM out-of-hunk findings
+        with confidence > 0.80 through the validator, but the verifier
+        tier table skipped MEDIUM ≥ 0.85 — so the canonical 0.9
+        companion-change finding (the exact case my own v2.21.0 test
+        pinned) never got a second-pass CONFIRMED/REJECTED verdict
+        and landed in the presenter unchallenged. Cross-region
+        causation claims are exactly what LLM reviewers are weakest
+        on; relying on high confidence to gate verification gets the
+        risk profile backwards.
+
+        Fix: ``out_of_hunk_kept: True`` forces verification regardless
+        of severity/confidence — the relaxation guarantees the verifier
+        gets to second-opinion every companion-change finding.
+        """
+        # Identical to the canonical companion-change scenario:
+        # MEDIUM with confidence above 0.85 (the tier-skip cliff).
+        # Without the backstop, _needs_verification → False.
+        f = {
+            "severity": "MEDIUM",
+            "confidence": 0.9,
+            "category": "Correctness",
+            "source": "agent",
+            "out_of_hunk_kept": True,
+        }
+        assert _needs_verification(f) is True
+
+    def test_out_of_hunk_kept_does_not_resurrect_hygiene_or_injection(
+        self,
+    ) -> None:
+        """The deterministic-producer guards (Hygiene, injection-
+        detector) precede the out_of_hunk backstop so they remain
+        absolute — those categories are never verified regardless of
+        any tag the upstream might carry. Defensive: in practice
+        Hygiene findings never get the out_of_hunk_kept tag (Hygiene
+        is generated from a regex catalogue, not from agent reviewers),
+        but pinning the ordering keeps a future refactor honest.
+        """
+        f_hyg = {
+            "severity": "HIGH", "confidence": 0.99,
+            "category": "Hygiene", "source": "hygiene",
+            "out_of_hunk_kept": True,
+        }
+        assert _needs_verification(f_hyg) is False
+
+        f_inj = {
+            "severity": "HIGH", "confidence": 0.99,
+            "category": "InjectionAttempt", "source": "injection-detector",
+            "out_of_hunk_kept": True,
+        }
+        assert _needs_verification(f_inj) is False
+
     def test_priority_ranking_higher_severity_first(self) -> None:
         blocking_lo = {"severity": "BLOCKING", "confidence": 0.5}
         medium_hi = {"severity": "MEDIUM", "confidence": 0.84}
@@ -10051,10 +10372,19 @@ class TestLoadCodeReviewSettings:
 
     def test_missing_file_returns_defaults(self, tmp_path: Path) -> None:
         from code_review_helpers import (
-            BHA_UNIFIED_THRESHOLD_LOC, _load_code_review_settings,
+            BHA_UNIFIED_THRESHOLD_LOC,
+            OUT_OF_HUNK_CONFIDENCE_FLOOR,
+            _load_code_review_settings,
         )
         out = _load_code_review_settings(tmp_path / "does-not-exist.json")
-        assert out == {"bha_unified_threshold_loc": BHA_UNIFIED_THRESHOLD_LOC}
+        # v2.21.0 added out_of_hunk_confidence_floor to the canonical
+        # defaults; the loader must surface ALL canonical keys so
+        # callers can read with .get(key, default) safely without
+        # having to know which keys were added in which version.
+        assert out == {
+            "bha_unified_threshold_loc": BHA_UNIFIED_THRESHOLD_LOC,
+            "out_of_hunk_confidence_floor": OUT_OF_HUNK_CONFIDENCE_FLOOR,
+        }
 
     def test_operator_override_honored(self, tmp_path: Path) -> None:
         from code_review_helpers import _load_code_review_settings
@@ -10101,6 +10431,70 @@ class TestLoadCodeReviewSettings:
         path.write_text(json.dumps({"bha_unified_threshold_loc": True}))
         out = _load_code_review_settings(path)
         assert out["bha_unified_threshold_loc"] == BHA_UNIFIED_THRESHOLD_LOC
+
+    # v2.21.0: out_of_hunk_confidence_floor validation
+
+    def test_floor_operator_override_honored(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_code_review_settings
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"out_of_hunk_confidence_floor": 0.65}))
+        out = _load_code_review_settings(path)
+        assert out["out_of_hunk_confidence_floor"] == 0.65
+
+    def test_floor_accepts_int_zero(self, tmp_path: Path) -> None:
+        """0 (int, not bool) is a valid floor meaning "no out-of-hunk
+        filtering" — the inverse of the 1.0 kill switch.
+        """
+        from code_review_helpers import _load_code_review_settings
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"out_of_hunk_confidence_floor": 0}))
+        out = _load_code_review_settings(path)
+        assert out["out_of_hunk_confidence_floor"] == 0.0
+
+    def test_floor_accepts_one_kill_switch(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_code_review_settings
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"out_of_hunk_confidence_floor": 1.0}))
+        out = _load_code_review_settings(path)
+        assert out["out_of_hunk_confidence_floor"] == 1.0
+
+    def test_floor_above_range_falls_back(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            OUT_OF_HUNK_CONFIDENCE_FLOOR, _load_code_review_settings,
+        )
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"out_of_hunk_confidence_floor": 1.5}))
+        out = _load_code_review_settings(path)
+        assert out["out_of_hunk_confidence_floor"] == OUT_OF_HUNK_CONFIDENCE_FLOOR
+
+    def test_floor_negative_falls_back(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            OUT_OF_HUNK_CONFIDENCE_FLOOR, _load_code_review_settings,
+        )
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"out_of_hunk_confidence_floor": -0.1}))
+        out = _load_code_review_settings(path)
+        assert out["out_of_hunk_confidence_floor"] == OUT_OF_HUNK_CONFIDENCE_FLOOR
+
+    def test_floor_bool_rejected(self, tmp_path: Path) -> None:
+        # Same discipline as bha_unified_threshold_loc — `true` in JSON
+        # must not quietly become 1.0.
+        from code_review_helpers import (
+            OUT_OF_HUNK_CONFIDENCE_FLOOR, _load_code_review_settings,
+        )
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"out_of_hunk_confidence_floor": True}))
+        out = _load_code_review_settings(path)
+        assert out["out_of_hunk_confidence_floor"] == OUT_OF_HUNK_CONFIDENCE_FLOOR
+
+    def test_floor_wrong_type_falls_back(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            OUT_OF_HUNK_CONFIDENCE_FLOOR, _load_code_review_settings,
+        )
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"out_of_hunk_confidence_floor": "0.8"}))
+        out = _load_code_review_settings(path)
+        assert out["out_of_hunk_confidence_floor"] == OUT_OF_HUNK_CONFIDENCE_FLOOR
 
 
 class TestVerifyManifestPartitionPropagation:

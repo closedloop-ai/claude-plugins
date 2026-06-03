@@ -136,6 +136,40 @@ CONFIDENCE_DISCARD_THRESHOLD = 0.5
 LINE_TOLERANCE = 3
 JACCARD_DEDUP_THRESHOLD = 0.6
 
+# Out-of-hunk confidence floor (v2.21.0). Reviewers now legitimately
+# surface "the diff demonstrably broke this nearby unchanged code"
+# findings — the canonical example is a function signature change in
+# the diff window whose stale sibling call sites sit just outside it.
+# Previously every P2+ out-of-hunk finding was unconditionally
+# DISCARD_LINE_NOT_CHANGED, which silently dropped real companion-
+# change findings.
+#
+# The relaxation: out-of-hunk findings survive when ``confidence >
+# floor``; otherwise they're still discarded. Same priority guard as
+# before (P1 BLOCKING/HIGH always passes, no floor; P2+ needs to clear
+# the floor when out-of-hunk).
+#
+# Comparison is STRICTLY greater-than (>) — not ``>=`` — so that
+# ``floor = 1.0`` is a real kill switch: reviewer confidence is
+# bounded at 1.0, so ``confidence > 1.0`` is impossible and every
+# out-of-hunk finding fails. Under ``>=`` the v2.21.0 kill-switch
+# claim was inaccurate — confidence-exactly-1.0 findings still
+# cleared (and ``_normalize_findings`` defaults missing confidence
+# to 1.0, so the bypass was easy to trip into).
+#
+# Default 0.80 is intentionally tighter than the in-hunk floor
+# (CONFIDENCE_DISCARD_THRESHOLD = 0.5) since out-of-hunk findings
+# have a higher false-positive bar — they require the reviewer to
+# demonstrate causation, not just colocation. Boundary semantics:
+# confidence > 0.80 survives, confidence == 0.80 discards. Operator-
+# overridable via ``.closedloop-ai/settings/code-review.json`` with
+# key ``out_of_hunk_confidence_floor`` (range [0.0, 1.0]). Setting
+# it to 1.0 is the canonical kill switch (no out-of-hunk findings
+# clear, regardless of confidence). Setting 0.0 lets every
+# out-of-hunk P2+ through whose confidence is non-zero (use with
+# care — leans entirely on the PLN-722 verifier for noise filtering).
+OUT_OF_HUNK_CONFIDENCE_FLOOR = 0.80
+
 # Number formatting thresholds
 FORMAT_MILLION = 1_000_000
 FORMAT_THOUSAND = 1_000
@@ -1310,16 +1344,56 @@ def _filter_scope_and_range(
     files_to_review: set[str],
     changed_ranges: dict[str, dict[str, list[list[int]]]],
     discarded: list[dict[str, Any]],
+    *,
+    out_of_hunk_confidence_floor: float = OUT_OF_HUNK_CONFIDENCE_FLOOR,
 ) -> list[dict[str, Any]]:
     """Phases 2-4: Filter by file scope, line range, and confidence.
 
     Honors ``finding_scope`` (PLN-719 Section 3):
-      - ``diff`` (default): file-in-diff + line-in-changed-range checks apply.
+      - ``diff`` (default): file-in-diff check applies; line-in-changed-range
+        check is relaxed (v2.21.0).
       - ``system`` / ``pr_metadata``: file/line checks bypassed; finding must
         carry a canonical ``system_marker``.
 
-    Low-confidence findings (P2/P3 with confidence < threshold) are discarded
-    regardless of scope.
+    **v2.21.0 relaxation.** The pre-v2.21 unconditional
+    ``DISCARD_LINE_NOT_CHANGED`` for P2+ out-of-hunk findings was a
+    pre-verification heuristic that predates PLN-722's per-finding
+    verifier. Modern reviewer agents legitimately surface
+    "the diff demonstrably broke this nearby unchanged code" findings —
+    most commonly when a function signature change in the diff window
+    leaves stale sibling call sites just outside it. The verifier
+    (stage_23) now does noise-filtering structurally (tier-selects by
+    severity, ranks by ``severity × confidence``, emits CONFIRMED/
+    REJECTED).
+
+    New semantics for out-of-hunk P2+ findings (in-hunk and P1 paths
+    unchanged):
+      - confidence > ``out_of_hunk_confidence_floor`` (default 0.80) →
+        the finding survives and gets tagged with
+        ``out_of_hunk_kept: True`` so downstream presenters can
+        distinguish in-hunk from companion-change findings without
+        re-deriving the hunk membership. v2.21.1 makes the validator
+        OWN this field: it's set to ``False`` on every in-hunk exit
+        path so a reviewer that pre-populated the field can't trick
+        the telemetry counter or downstream presenter labels.
+      - confidence ≤ floor → discarded with reason
+        ``DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE`` (distinct from the
+        in-hunk ``DISCARD_LOW_CONFIDENCE`` so the validate-summary
+        stats keep them separable for A/B observability).
+
+    Comparison is strict ``>`` so ``floor = 1.0`` is a real kill switch
+    (reviewer confidence is bounded at 1.0; nothing can clear). The
+    boundary is operator-visible: ``floor = 0.80`` means
+    confidence > 0.80 survives, ``confidence == 0.80`` discards.
+
+    The floor default (0.80) is deliberately tighter than the in-hunk
+    floor (CONFIDENCE_DISCARD_THRESHOLD = 0.5): out-of-hunk findings
+    have to demonstrate causation, not just colocation. Operator can
+    raise the floor (1.0 = kill switch) or lower it via
+    ``.closedloop-ai/settings/code-review.json``.
+
+    Low-confidence in-hunk findings (P2+ with confidence < the in-hunk
+    threshold) are still discarded with reason ``DISCARD_LOW_CONFIDENCE``.
     """
     result: list[dict[str, Any]] = []
 
@@ -1341,6 +1415,11 @@ def _filter_scope_and_range(
             if priority > 1 and confidence < CONFIDENCE_DISCARD_THRESHOLD:
                 discarded.append({"finding": finding, "reason": "DISCARD_LOW_CONFIDENCE"})
                 continue
+            # v2.21.1: system/pr_metadata findings can never be
+            # "companion-change" — the field is meaningless for them.
+            # Pop any reviewer-supplied value so the schema convention
+            # (present iff companion-change) holds universally.
+            finding.pop("out_of_hunk_kept", None)
             result.append(finding)
             continue
 
@@ -1358,13 +1437,35 @@ def _filter_scope_and_range(
 
         in_range = _line_in_range(line, added) or _line_in_range(line, removed)
         if not in_range and priority > 1:
-            discarded.append({"finding": finding, "reason": "DISCARD_LINE_NOT_CHANGED"})
+            # v2.21.0 relaxation, v2.21.1 strict-comparison. Confidence
+            # must STRICTLY EXCEED the floor (``>``, not ``>=``) so
+            # ``floor=1.0`` is a real kill switch — reviewer confidence
+            # is bounded at 1.0, so ``confidence > 1.0`` is impossible
+            # and every out-of-hunk finding fails. Survivors get tagged
+            # so presenters can label them as companion-change without
+            # re-deriving hunk membership against changed_ranges.
+            if confidence > out_of_hunk_confidence_floor:
+                finding["out_of_hunk_kept"] = True
+                result.append(finding)
+            else:
+                discarded.append({
+                    "finding": finding,
+                    "reason": "DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE",
+                })
             continue
 
+        # In-hunk diff-scope path. v2.21.1: pop any reviewer-supplied
+        # ``out_of_hunk_kept`` value so the validator OWNS the field.
+        # Schema convention: tag is present (and True) IFF the finding
+        # is a companion-change survivor of the out-of-hunk filter.
+        # Absence means in-hunk. Without this pop, a reviewer that
+        # pre-populated ``out_of_hunk_kept: true`` would slip through
+        # untouched and inflate the kept_out_of_hunk counter + any
+        # downstream presenter labels that key on the tag.
         if priority > 1 and confidence < CONFIDENCE_DISCARD_THRESHOLD:
             discarded.append({"finding": finding, "reason": "DISCARD_LOW_CONFIDENCE"})
             continue
-
+        finding.pop("out_of_hunk_kept", None)
         result.append(finding)
 
     return result
@@ -1553,13 +1654,48 @@ def cmd_validate(args: argparse.Namespace) -> int:
     files_to_review: set[str] = set(diff_data.get("files_to_review", []))
     changed_ranges: dict[str, dict[str, list[list[int]]]] = diff_data.get("changed_ranges", {})
 
+    # v2.21.0: read the operator-tunable out-of-hunk confidence floor
+    # from code-review.json (same file that already hosts
+    # bha_unified_threshold_loc). Settings path is overridable via
+    # --settings for test isolation; falls back to the canonical
+    # repo-root location otherwise.
+    settings_path = Path(
+        getattr(args, "settings", None) or _CODE_REVIEW_SETTINGS_DEFAULT_PATH,
+    )
+    code_review_settings = _load_code_review_settings(settings_path)
+    out_of_hunk_floor = float(
+        code_review_settings.get(
+            "out_of_hunk_confidence_floor", OUT_OF_HUNK_CONFIDENCE_FLOOR,
+        ),
+    )
+
     discarded: list[dict[str, Any]] = []
     total_input = len(raw_findings)
 
     normalized, normalization_warnings, non_standard_values = _normalize_findings(
         raw_findings, discarded
     )
-    filtered = _filter_scope_and_range(normalized, files_to_review, changed_ranges, discarded)
+    filtered = _filter_scope_and_range(
+        normalized, files_to_review, changed_ranges, discarded,
+        out_of_hunk_confidence_floor=out_of_hunk_floor,
+    )
+    # v2.21.0 telemetry: count out-of-hunk findings that survived the
+    # relaxation so operators can A/B the change against historical
+    # runs where DISCARD_LINE_NOT_CHANGED hit every one of these.
+    #
+    # v2.21.1: count on ``filtered`` (post-filter, pre-grouping) rather
+    # than on the final ``validated`` set. ``_group_cross_file`` absorbs
+    # sibling findings into the primary's ``other_locations``, where
+    # only file/line/severity are carried — the ``out_of_hunk_kept``
+    # tag is lost. Counting post-grouping silently undercounted every
+    # companion-change finding that happened to be grouped with another.
+    # The counter is about how many findings survived the filter, not
+    # how many made it to the final presenter view, so pre-grouping
+    # is the semantically correct point to measure.
+    kept_out_of_hunk = sum(
+        1 for f in filtered if f.get("out_of_hunk_kept") is True
+    )
+
     deduped = _merge_duplicates(filtered, discarded)
     validated = _group_cross_file(deduped)
 
@@ -1571,11 +1707,23 @@ def cmd_validate(args: argparse.Namespace) -> int:
         "total_input": total_input,
         "validated": len(validated),
         "cross_file_grouped": cross_file_grouped,
+        "kept_out_of_hunk": kept_out_of_hunk,
         "discarded_file_not_changed": sum(1 for d in discarded if d["reason"] == "DISCARD_FILE_NOT_CHANGED"),
-        "discarded_line_not_changed": sum(1 for d in discarded if d["reason"] == "DISCARD_LINE_NOT_CHANGED"),
+        # v2.21.0: ``discarded_line_not_changed`` is retired (always 0 now)
+        # in favor of ``discarded_out_of_hunk_low_confidence`` — the relaxed
+        # filter only discards out-of-hunk findings when they don't clear
+        # the confidence floor. Keeping the old key at 0 for one release
+        # so downstream telemetry dashboards see the transition without
+        # crashing on a missing key; future cleanup can drop it.
+        "discarded_line_not_changed": 0,
+        "discarded_out_of_hunk_low_confidence": sum(
+            1 for d in discarded
+            if d["reason"] == "DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE"
+        ),
         "discarded_low_confidence": sum(1 for d in discarded if d["reason"] == "DISCARD_LOW_CONFIDENCE"),
         "discarded_low_severity": sum(1 for d in discarded if d["reason"] == "DISCARD_LOW_SEVERITY"),
         "discarded_duplicate": sum(1 for d in discarded if d["reason"] == "DISCARD_DUPLICATE"),
+        "out_of_hunk_confidence_floor": out_of_hunk_floor,
     }
 
     json.dump(
@@ -2048,7 +2196,21 @@ def _verification_priority(finding: dict[str, Any]) -> float:
 
 
 def _needs_verification(finding: dict[str, Any]) -> bool:
-    """Apply the PLN-722 'What gets verified' tier table to one finding."""
+    """Apply the PLN-722 'What gets verified' tier table to one finding.
+
+    v2.21.1: out-of-hunk findings (``out_of_hunk_kept: True``,
+    introduced by the v2.21.0 line-scope relaxation) ALWAYS verify,
+    regardless of confidence. The relaxation deliberately lets through
+    P2+ findings that fall outside the diff hunks on the premise that
+    they cite a real causal relationship to the diff (a function
+    signature change in the diff window leaving stale sibling call
+    sites just outside it, etc.). Those claims are exactly the
+    cross-region causation reasoning LLM reviewers are weakest on,
+    so the high-confidence MEDIUM skip rule (confidence ≥ 0.85 → no
+    verification) is precisely the wrong default for them: the
+    canonical case my own v2.21.0 test pinned (0.9-confidence
+    companion-change finding) would never have been backstopped.
+    """
     category = str(finding.get("category", ""))
     source = str(finding.get("source", ""))
     severity = str(finding.get("severity", ""))
@@ -2063,6 +2225,14 @@ def _needs_verification(finding: dict[str, Any]) -> bool:
         return False
     if source == "injection-detector":
         return False
+
+    # v2.21.1 backstop: every out-of-hunk-kept finding gets verified.
+    # Placed after the deterministic-producer guards (Hygiene findings
+    # never carry the tag in practice, but the ordering keeps the
+    # never-verify producers absolute) and before the severity tiers
+    # so confidence-based skips don't apply.
+    if finding.get("out_of_hunk_kept") is True:
+        return True
 
     # Premise: always verified with the strict adversarial framing in
     # verifier_prompt.txt — the verdict precedence already gives Premise
@@ -2495,13 +2665,20 @@ def _load_code_review_settings(path: Path | None) -> dict[str, Any]:
         cross-region invariants stay visible to one reviewer. Default
         :data:`BHA_UNIFIED_THRESHOLD_LOC` (5000). Setting the value to 0
         forces the historical always-partition behavior (kill switch).
+      - ``out_of_hunk_confidence_floor`` (float, [0.0, 1.0]): P2+ findings
+        whose line is outside the changed-range of the file but whose
+        confidence ≥ this value survive validation (v2.21.0 relaxation
+        for legitimate companion-change findings). Default
+        :data:`OUT_OF_HUNK_CONFIDENCE_FLOOR` (0.80). Setting to 1.0
+        restores pre-v2.21 strict "in-hunk only" behavior.
 
-    Unknown keys are ignored. Invalid entries (wrong type, negative)
+    Unknown keys are ignored. Invalid entries (wrong type, out of range)
     fall back to the default — the file is operator-authored and should
     not crash the pipeline on a typo.
     """
     defaults: dict[str, Any] = {
         "bha_unified_threshold_loc": BHA_UNIFIED_THRESHOLD_LOC,
+        "out_of_hunk_confidence_floor": OUT_OF_HUNK_CONFIDENCE_FLOOR,
     }
     data, out = _load_optional_settings_dict(path, defaults)
     if data is None:
@@ -2513,6 +2690,15 @@ def _load_code_review_settings(path: Path | None) -> dict[str, Any]:
         and raw_threshold >= 0
     ):
         out["bha_unified_threshold_loc"] = raw_threshold
+    raw_floor = data.get("out_of_hunk_confidence_floor")
+    # Accept int or float; reject bool (which is an int subclass) so
+    # a stray `true` in JSON doesn't quietly become 1.0. Range [0, 1].
+    if (
+        isinstance(raw_floor, (int, float))
+        and not isinstance(raw_floor, bool)
+        and 0.0 <= float(raw_floor) <= 1.0
+    ):
+        out["out_of_hunk_confidence_floor"] = float(raw_floor)
     return out
 
 
@@ -10883,6 +11069,16 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
     p_val = subparsers.add_parser("validate", help="Normalize, filter, and deduplicate findings")
     p_val.add_argument("--findings", required=True, help="Path to findings JSON file")
     p_val.add_argument("--diff-data", required=True, help="Path to diff data JSON file")
+    # v2.21.0: settings override for the out-of-hunk confidence floor.
+    # Defaults to .closedloop-ai/settings/code-review.json relative to cwd.
+    p_val.add_argument(
+        "--settings", default=None,
+        help=(
+            "Path to code-review.json (operator-tunable settings; defaults "
+            "to .closedloop-ai/settings/code-review.json). Used to load "
+            "out_of_hunk_confidence_floor."
+        ),
+    )
     p_val.set_defaults(func=cmd_validate)
 
     # verify-prepare (PLN-722)
