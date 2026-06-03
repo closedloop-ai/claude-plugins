@@ -9813,16 +9813,57 @@ def _build_run_plan_stages(
             "enabled": True,
         },
         {
+            # PLN-725 Phase 8: deterministic translation of the post-
+            # arbitrate coverage_plan.json into a flat spawn_spec.json
+            # the stage_20 orchestrator consumes. Before this stage,
+            # stage_20 walked a static reviewer table baked into
+            # start.md and the coverage plan was effectively ignored at
+            # spawn time. The fast-path route, BLOCKING-verify
+            # gated_by_verify flag, and bucket-aware required vs.
+            # best-effort distinctions all propagate through this spec.
+            # on_failure: continue so a derive bug never blocks review —
+            # the orchestrator falls back to the static table when
+            # spawn_spec.json is missing or marks arbitrate_status:
+            # "fallback". depends_on includes stage_17_partition (for
+            # partitions.json) and stage_16_arbitrate_budget (for the
+            # final coverage_plan.json + gated_by_verify flag).
+            "id": "stage_19b_derive_spawn_spec",
+            "kind": "helper",
+            "subcommand": "derive-spawn-spec",
+            "args": [
+                "--cr-dir", cr_dir,
+                "--coverage-plan", f"{cr_dir}/coverage_plan.json",
+                "--partitions", f"{cr_dir}/partitions.json",
+                "--route", f"{cr_dir}/route.json",
+            ],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/spawn_spec.json"],
+            "depends_on": [
+                "stage_16_arbitrate_budget",
+                "stage_17_partition",
+            ],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
             "id": "stage_20_spawn_reviewers",
             "kind": "agent_fleet",
-            "agent_specs": [],  # populated by orchestrator from coverage_plan + partitions
+            "agent_specs": [],  # populated by orchestrator from spawn_spec.json
             # Only agent_*.json is produced here; partitions.json is an INPUT
             # (produced by stage_17_partition) and belongs in depends_on, not
             # expected_outputs. Including it here would mask total-agent-failure
             # via the walker's "at-least-one-exists" check, since partitions.json
             # already exists from the prior stage.
             "expected_outputs": [f"{cr_dir}/agent_*.json"],
-            "depends_on": ["stage_17_partition"],
+            # PLN-725 Phase 8 depends_on rewire: stage_19b is the
+            # canonical spawn-spec producer. stage_17_partition is
+            # retained transitively via stage_19b for the partitions
+            # input but kept here as well so an explicit "partitions
+            # exists before spawn" check stays visible to the walker.
+            "depends_on": [
+                "stage_17_partition",
+                "stage_19b_derive_spawn_spec",
+            ],
             "on_failure": "continue_with_coverage_gap",
             "enabled": True,
         },
@@ -10417,6 +10458,391 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
             "dropped_required_count": len(dropped_required),
             "bha_partitions": bha_partitions,
             "docs_only": _is_docs_only(diff_data),
+        },
+        sys.stdout,
+        indent=2,
+    )
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: derive-spawn-spec (PLN-725 Phase 8)
+# ---------------------------------------------------------------------------
+#
+# Reads the post-arbitrate coverage_plan.json + partitions.json + route.json
+# and emits ``spawn_spec.json`` — a flat list of agent descriptors the
+# orchestrator (start.md "Reviewer Fleet" section) dispatches Task calls
+# from. Before Phase 8, stage_20 walked a static table hard-coded into the
+# command markdown; the coverage_plan was effectively ignored at spawn
+# time. This stage closes the loop so the deterministic coverage signal
+# (PLN-725) actually shapes the spawned fleet.
+#
+# The spec is observational: the orchestrator may fall back to the static
+# table if ``spawn_spec.json`` is absent or its ``arbitrate_status`` field
+# is ``"fallback"`` — a derive failure must never break review.
+
+# Canonical role → AGENT_ID + partitioning + patches-file mapping. The
+# reviewer names on the left are the snake_case identifiers used in
+# coverage_plan.json (matching ``COVERAGE_CORE_REQUIRED``); the AGENT_ID
+# strings on the right are the display IDs used in agent_*.json filenames
+# (matching the static table in start.md).
+_SPAWN_CORE_ROLES: dict[str, dict[str, Any]] = {
+    "bug_hunter_a": {
+        "agent_id_prefix": "bha_p",
+        "partitioned": True,
+        "patches_template": "patches_p{partition_id}.txt",
+    },
+    "bug_hunter_b": {
+        "agent_id": "bhb",
+        "partitioned": False,
+        "patches_template": "patches_all.txt",
+    },
+    "unified_auditor": {
+        "agent_id": "auditor",
+        "partitioned": False,
+        "patches_template": "patches_all.txt",
+    },
+    "premise_reviewer": {
+        "agent_id": "premise",
+        "partitioned": False,
+        "patches_template": "patches_all.txt",
+    },
+}
+
+# Roles that are reserved in the coverage plan but not yet spawnable. The
+# spawn-spec records them in ``skipped[]`` so the absence is visible to
+# operators reading the artifact (vs. silently dropping the entry, which
+# masks rollout state).
+_SPAWN_DEFERRED_ROLES: dict[str, str] = {
+    "test_quality": "deferred_pln723",
+}
+
+
+def _spawn_resolve_models(route: dict[str, Any]) -> dict[str, Any]:
+    """Return the ``models`` block from route.json with safe defaults.
+
+    A missing or malformed route file falls back to the same canonical
+    defaults ``cmd_route`` emits. The orchestrator can read the model
+    string straight from the spawn-spec without re-parsing route.json.
+    """
+    models_raw = route.get("models") if isinstance(route, dict) else None
+    models = models_raw if isinstance(models_raw, dict) else {}
+    return {
+        "bug_hunter_a": models.get(
+            "bug_hunter_a", {"default": "opus", "test_only": "sonnet"},
+        ),
+        "bug_hunter_b": models.get("bug_hunter_b", "sonnet"),
+        "unified_auditor": models.get("unified_auditor", "sonnet"),
+        "premise_reviewer": models.get("premise_reviewer", "sonnet"),
+        "fast_path_reviewer": models.get("fast_path_reviewer", "sonnet"),
+    }
+
+
+def _spawn_bha_model(
+    models: dict[str, Any], is_test_only: bool,
+) -> str:
+    """Pick the BHA model per partition.
+
+    Matches ``stage_20`` model selection: test-only partitions take the
+    Sonnet ``test_only`` slot; everything else takes the Opus default.
+    The route.json shape is ``{"bug_hunter_a": {"default": ..., "test_only": ...}}``;
+    we tolerate a plain string for back-compat (treat as the default).
+    """
+    bha_models = models.get("bug_hunter_a")
+    if isinstance(bha_models, dict):
+        if is_test_only:
+            return str(bha_models.get("test_only", "sonnet"))
+        return str(bha_models.get("default", "opus"))
+    return str(bha_models or "opus")
+
+
+def _derive_spawn_agents_from_plan(
+    coverage_plan: dict[str, Any],
+    partitions: list[dict[str, Any]],
+    models: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Walk the post-arbitrate plan into a flat (agents, skipped) pair.
+
+    ``required[]`` and ``best_effort[]`` are both consulted; entries that
+    map to a known core role expand per ``_SPAWN_CORE_ROLES``; entries
+    flagged as critics (``source: "critic"``) become ``domain_<N>``;
+    anything else lands in ``skipped[]`` with reason ``unknown_reviewer``
+    so the orchestrator surfaces the gap.
+    """
+    agents: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    critic_index = 0
+
+    def _emit_for_entry(entry: dict[str, Any], bucket: str) -> None:
+        nonlocal critic_index
+        reviewer = str(entry.get("reviewer", "") or "")
+        source = str(entry.get("source", "") or "")
+        if not reviewer:
+            skipped.append({
+                "reviewer": "",
+                "bucket": bucket,
+                "reason": "missing_reviewer_name",
+            })
+            return
+        if reviewer in _SPAWN_DEFERRED_ROLES:
+            skipped.append({
+                "reviewer": reviewer,
+                "bucket": bucket,
+                "reason": _SPAWN_DEFERRED_ROLES[reviewer],
+            })
+            return
+        role_cfg = _SPAWN_CORE_ROLES.get(reviewer)
+        if role_cfg is not None:
+            if role_cfg["partitioned"]:
+                # BHA expands per partition. When partitions is empty
+                # (all cached or docs-only post-arbitrate), no BHA spawn.
+                if not partitions:
+                    skipped.append({
+                        "reviewer": reviewer,
+                        "bucket": bucket,
+                        "reason": "no_partitions",
+                    })
+                    return
+                for part in partitions:
+                    part_id = int(part.get("id", 0))
+                    is_test_only = bool(part.get("is_test_only", False))
+                    agents.append({
+                        "agent_id": f"{role_cfg['agent_id_prefix']}{part_id}",
+                        "reviewer": reviewer,
+                        "model": _spawn_bha_model(models, is_test_only),
+                        "partitioned": True,
+                        "partition_id": part_id,
+                        "is_test_only": is_test_only,
+                        "patches_file": role_cfg["patches_template"].format(
+                            partition_id=part_id,
+                        ),
+                        "source": source or "core",
+                        "bucket": bucket,
+                    })
+                return
+            # Non-partitioned core roles: one agent per entry.
+            model_slot = models.get(reviewer, "sonnet")
+            model = model_slot if isinstance(model_slot, str) else "sonnet"
+            agents.append({
+                "agent_id": role_cfg["agent_id"],
+                "reviewer": reviewer,
+                "model": model,
+                "partitioned": False,
+                "patches_file": role_cfg["patches_template"],
+                "source": source or "core",
+                "bucket": bucket,
+            })
+            return
+        # Unknown reviewer name. If the rule-resolved entry was a critic
+        # (closed-vocabulary checks have already passed by stage_15c),
+        # treat it as a domain critic and assign a sequential ID.
+        if source == "critic":
+            agents.append({
+                "agent_id": f"domain_{critic_index}",
+                "reviewer": reviewer,
+                "model": "sonnet",
+                "partitioned": False,
+                "patches_file": "patches_all.txt",
+                "source": "critic",
+                "bucket": bucket,
+                "priority": int(entry.get("priority", 2)),
+            })
+            critic_index += 1
+            return
+        skipped.append({
+            "reviewer": reviewer,
+            "bucket": bucket,
+            "reason": "unknown_reviewer",
+        })
+
+    for entry in coverage_plan.get("required", []) or []:
+        if isinstance(entry, dict):
+            _emit_for_entry(entry, "required")
+    for entry in coverage_plan.get("best_effort", []) or []:
+        if isinstance(entry, dict):
+            _emit_for_entry(entry, "best_effort")
+    return agents, skipped
+
+
+def _spawn_spec_fallback(
+    reason: str,
+    cr_dir: Path,
+    now_iso: str,
+) -> dict[str, Any]:
+    """Emit a sentinel spec that signals "fall back to the static table".
+
+    Used when the inputs are missing or malformed. The orchestrator
+    treats ``arbitrate_status == "fallback"`` as "ignore the spec; walk
+    the start.md static reviewer table." This preserves review even when
+    the spawn-spec derivation can't run.
+    """
+    return {
+        "fast_path": False,
+        "gated_by_verify": False,
+        "arbitrate_status": "fallback",
+        "fallback_reason": reason,
+        "cr_dir": str(cr_dir),
+        "agents": [],
+        "skipped": [],
+        "stats": {
+            "agent_count": 0,
+            "bha_count": 0,
+            "domain_critic_count": 0,
+            "from_required": 0,
+            "from_best_effort": 0,
+        },
+        "generated_at": now_iso,
+    }
+
+
+def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
+    """Translate the post-arbitrate coverage plan into a flat spawn spec.
+
+    PLN-725 Phase 8. Reads ``coverage_plan.json`` (post-arbitrate),
+    ``partitions.json`` (post-partition), and ``route.json`` (post-route)
+    and writes ``spawn_spec.json`` enumerating every agent the
+    orchestrator should spawn at ``stage_20_spawn_reviewers``.
+
+    Fast-path passthrough: when ``route.fast_path`` is true, the spec
+    emits exactly one agent (``agent_id: "fast"``) and the bucket walk
+    is skipped — matching the existing Fast Path branch in start.md.
+
+    BLOCKING verdict propagation: when ``coverage_plan.budget.gated_by_verify``
+    is true (set by ``arbitrate-budget`` on a BLOCKING verify verdict),
+    the spec is still derived from the input plan, but the
+    ``gated_by_verify`` flag is propagated so presenters/operators can
+    see that arbitration was bypassed. This matches Phase 7 semantics:
+    the BLOCKING verdict is signaled, not a hard halt — review still
+    runs against the unbudgeted plan.
+
+    Failure modes: any unreadable input emits a fallback spec
+    (``arbitrate_status: "fallback"``) and returns 0. The orchestrator
+    falls back to the start.md static reviewer table on the fallback
+    sentinel — a derive failure must never block review.
+    """
+    cr_dir = Path(args.cr_dir)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    output_path = (
+        Path(args.output) if args.output
+        else cr_dir / "spawn_spec.json"
+    )
+
+    coverage_plan = _read_optional_json(Path(args.coverage_plan), None)
+    if not isinstance(coverage_plan, dict):
+        spec = _spawn_spec_fallback(
+            "coverage_plan_missing_or_malformed", cr_dir, now_iso,
+        )
+        return _write_spawn_spec(spec, output_path)
+
+    route = _read_optional_json(Path(args.route), {}) or {}
+    if not isinstance(route, dict):
+        route = {}
+    models = _spawn_resolve_models(route)
+    fast_path = bool(route.get("fast_path", False))
+
+    budget = (
+        coverage_plan.get("budget", {})
+        if isinstance(coverage_plan.get("budget", {}), dict)
+        else {}
+    )
+    gated_by_verify = bool(budget.get("gated_by_verify", False))
+    arbitrate_status = str(
+        coverage_plan.get("arbitrate_status", "ok") or "ok",
+    )
+
+    # Fast-path: spawn a single agent regardless of coverage plan shape.
+    # The fast-path agent does all review passes in one run; the
+    # coverage plan's bucket distinctions don't apply.
+    if fast_path:
+        spec = {
+            "fast_path": True,
+            "gated_by_verify": gated_by_verify,
+            "arbitrate_status": arbitrate_status,
+            "cr_dir": str(cr_dir),
+            "agents": [{
+                "agent_id": "fast",
+                "reviewer": "fast_path_reviewer",
+                "model": str(models.get("fast_path_reviewer", "sonnet")),
+                "partitioned": False,
+                "patches_file": "patches_all.txt",
+                "source": "fast_path",
+                "bucket": "fast_path",
+            }],
+            "skipped": [],
+            "stats": {
+                "agent_count": 1,
+                "bha_count": 0,
+                "domain_critic_count": 0,
+                "from_required": 0,
+                "from_best_effort": 0,
+            },
+            "generated_at": now_iso,
+        }
+        return _write_spawn_spec(spec, output_path)
+
+    partitions_blob = _read_optional_json(Path(args.partitions), None)
+    if isinstance(partitions_blob, dict):
+        partitions = partitions_blob.get("partitions", []) or []
+    elif isinstance(partitions_blob, list):
+        # Legacy/test shape: bare partitions list.
+        partitions = partitions_blob
+    else:
+        # Missing partitions is recoverable for non-fast-path runs only
+        # when all files are cached (BHA skipped). We emit the spec with
+        # the BHA role recorded in skipped[] via _derive_spawn_agents_from_plan.
+        partitions = []
+    partitions = [p for p in partitions if isinstance(p, dict)]
+
+    agents, skipped = _derive_spawn_agents_from_plan(
+        coverage_plan, partitions, models,
+    )
+
+    bha_count = sum(1 for a in agents if a["reviewer"] == "bug_hunter_a")
+    critic_count = sum(1 for a in agents if a["source"] == "critic")
+    from_required = sum(1 for a in agents if a.get("bucket") == "required")
+    from_best_effort = sum(
+        1 for a in agents if a.get("bucket") == "best_effort"
+    )
+
+    spec = {
+        "fast_path": False,
+        "gated_by_verify": gated_by_verify,
+        "arbitrate_status": arbitrate_status,
+        "cr_dir": str(cr_dir),
+        "agents": agents,
+        "skipped": skipped,
+        "stats": {
+            "agent_count": len(agents),
+            "bha_count": bha_count,
+            "domain_critic_count": critic_count,
+            "from_required": from_required,
+            "from_best_effort": from_best_effort,
+        },
+        "generated_at": now_iso,
+    }
+    return _write_spawn_spec(spec, output_path)
+
+
+def _write_spawn_spec(spec: dict[str, Any], output_path: Path) -> int:
+    """Write spawn_spec.json + emit a short summary to stdout."""
+    try:
+        with open(output_path, "w") as f:
+            json.dump(spec, f, indent=2)
+    except OSError as exc:
+        print(f"Error writing spawn_spec: {exc}", file=sys.stderr)
+        return 1
+    json.dump(
+        {
+            "spawn_spec": str(output_path),
+            "fast_path": spec["fast_path"],
+            "gated_by_verify": spec["gated_by_verify"],
+            "arbitrate_status": spec["arbitrate_status"],
+            "agent_count": spec["stats"]["agent_count"],
+            "bha_count": spec["stats"]["bha_count"],
+            "domain_critic_count": spec["stats"]["domain_critic_count"],
+            "skipped_count": len(spec["skipped"]),
         },
         sys.stdout,
         indent=2,
@@ -11647,6 +12073,31 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
         ),
     )
     p_ab.set_defaults(func=cmd_arbitrate_budget)
+
+    # derive-spawn-spec (PLN-725 Phase 8)
+    p_dss = subparsers.add_parser(
+        "derive-spawn-spec",
+        help=(
+            "Translate post-arbitrate coverage_plan.json + partitions.json + "
+            "route.json into spawn_spec.json for stage_20_spawn_reviewers"
+        ),
+    )
+    p_dss.add_argument("--cr-dir", required=True, help="Session CR_DIR path")
+    p_dss.add_argument(
+        "--coverage-plan", required=True,
+        help="Path to coverage_plan.json (post-arbitrate)",
+    )
+    p_dss.add_argument(
+        "--partitions", required=True, help="Path to partitions.json",
+    )
+    p_dss.add_argument(
+        "--route", required=True, help="Path to route.json",
+    )
+    p_dss.add_argument(
+        "--output", default=None,
+        help="Output path (default: <cr-dir>/spawn_spec.json)",
+    )
+    p_dss.set_defaults(func=cmd_derive_spawn_spec)
 
     # prepare-run (PLN-719 Phase 4)
     p_pr = subparsers.add_parser(

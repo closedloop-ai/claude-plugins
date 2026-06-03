@@ -4,6 +4,20 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.22.0
+
+#### Added
+- New `derive-spawn-spec` subcommand on `code_review_helpers.py`. Reads the post-arbitrate `coverage_plan.json` plus `partitions.json` and `route.json` and writes `spawn_spec.json` — a flat list of agent descriptors keyed by `agent_id` (canonical IDs `bha_p<N>`, `bhb`, `auditor`, `premise`, `domain_<N>`, `fast`) carrying `reviewer`, `model`, `partitioned`, `patches_file`, `source`, and (for BHA) `partition_id` + `is_test_only`. The orchestrator at `stage_20_spawn_reviewers` consumes this artifact to dispatch one Task per descriptor instead of walking the static reviewer table previously baked into `start.md`. Closes the PLN-725 deterministic-coverage loop: the rule-resolved + verified coverage plan now actually shapes the spawned fleet.
+- New `stage_19b_derive_spawn_spec` walker entry between `stage_17_partition` and `stage_20_spawn_reviewers`. Declares `coverage_plan.json` + `partitions.json` + `route.json` as inputs, `spawn_spec.json` as the expected output, and `on_failure: continue` so a derive bug never blocks review — the stage emits a sentinel spec with `arbitrate_status: "fallback"` on any unreadable input, which the orchestrator interprets as "ignore the spec; walk the static table."
+- `start.md` Reviewer Fleet section now opens with the spawn-spec consumption protocol — the orchestrator Reads `spawn_spec.json` first, dispatches per descriptor, and falls back to the static reviewer table only when the spec is missing or marks `arbitrate_status: "fallback"`. The fast-path `agent_id: "fast"` and the BLOCKING-verify `gated_by_verify` flag are surfaced to the orchestrator so the present step can warn when arbitration was bypassed.
+- `SCHEMA.md` lists `stage_19b` and its `spawn_spec.json` artifact in the per-stage output table.
+- `TestPLN725Phase8DeriveSpawnSpec` covers the bucket-to-spec mapping (the five `COVERAGE_CORE_REQUIRED` reviewers expand to canonical AGENT_IDs; BHA expands per partition with test-only model routing; the deferred `test_quality` slot surfaces in `skipped[]`), `best_effort[]` critic mapping to `domain_<N>`, fast-path passthrough (rich plan + `route.fast_path = true` collapses to one `fast` agent), gated-by-verify propagation (Phase 7 BLOCKING flag carries through without pruning), the "all files cached" branch (zero partitions → BHA in `skipped[]`, non-partitioned roles still spawn), the unknown-reviewer defense-in-depth branch (closed-vocabulary violation lands in `skipped[]` with `reason: "unknown_reviewer"` rather than fabricating an AGENT_ID), route-model overrides honored without re-derivation, and missing-route safe-default fallback.
+- `TestPLN725Phase8StageGraph` pins the walker wiring: stage exists with the correct subcommand and `on_failure: continue`, `depends_on` includes both `stage_16_arbitrate_budget` and `stage_17_partition`, `stage_20_spawn_reviewers` lists `stage_19b_derive_spawn_spec` in its own `depends_on`, and the array ordering keeps stage_19b strictly after both inputs and strictly before the spawn stage.
+
+#### Changed
+- `stage_20_spawn_reviewers` walker entry now declares `stage_19b_derive_spawn_spec` in its `depends_on` so a partial run that skips the derive stage cannot reach the spawn stage with a stale or missing spec.
+- Stage count expectation in `TestPrepareRun` bumped from 35 to 36 (renamed `test_emits_thirty_five_stages` → `test_emits_thirty_six_stages`) with the history comment updated.
+
 ### code-review v2.21.1
 
 #### Fixed

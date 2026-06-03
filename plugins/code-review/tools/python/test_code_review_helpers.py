@@ -7081,7 +7081,7 @@ class TestPrepareRun:
             pr_number=pr_number,
         )
 
-    def test_emits_thirty_five_stages(self, tmp_path: Path) -> None:
+    def test_emits_thirty_six_stages(self, tmp_path: Path) -> None:
         """Stage count history:
           - Base pipeline: 30
           - PLN-722 v2.8.0 added stage_22b_verify_prepare and
@@ -7094,21 +7094,26 @@ class TestPrepareRun:
             removed the stale stage_24_verify_coverage placeholder
             (net 0; the verifier now lives next to where coverage_plan.json
             is produced, not after findings verification) → 35
+          - PLN-725 Phase 8 (v2.22.0) added stage_19b_derive_spawn_spec
+            (translates post-arbitrate coverage_plan.json into
+            spawn_spec.json for stage_20_spawn_reviewers) → 36
 
         The ``_<NN>_`` prefix is a stable label, not a strict ordinal;
         the lettered suffixes (``_11b_``, ``_14a_``, ``_15b_``,
-        ``_15c_``, ``_22b_``, ``_24a_``) mark stages inserted between
-        original ordinals.
+        ``_15c_``, ``_19b_``, ``_22b_``, ``_24a_``) mark stages inserted
+        between original ordinals.
         """
         summary, plan = self._run(tmp_path)
-        assert summary["stage_count"] == 35
-        assert len(plan["stages"]) == 35
+        assert summary["stage_count"] == 36
+        assert len(plan["stages"]) == 36
         ids = [s["id"] for s in plan["stages"]]
         assert ids[0] == "stage_01_setup"
         assert ids[-1] == "stage_30_footer"
         # Verifier wrapper insertion points
         assert "stage_22b_verify_prepare" in ids
         assert "stage_24a_verify_consolidate" in ids
+        # PLN-725 Phase 8 spawn-spec derivation
+        assert "stage_19b_derive_spawn_spec" in ids
         prep_idx = ids.index("stage_22b_verify_prepare")
         fleet_idx = ids.index("stage_23_verify_findings")
         cons_idx = ids.index("stage_24a_verify_consolidate")
@@ -15327,6 +15332,404 @@ class TestPLN725Phase7ArbitrateBudgetGate:
         # Plan went through normal arbitration; no gate annotation.
         assert "arbitrate_status" not in plan
         assert "gated_by_verify" not in plan["budget"]
+
+
+def _run_derive_spawn_spec(
+    tmp_path: Path,
+    coverage_plan: dict[str, Any] | None,
+    partitions: dict[str, Any] | list[Any] | None,
+    route: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Shared driver for ``cmd_derive_spawn_spec`` tests.
+
+    Mirrors ``_run_arbitrate_budget`` — seeds the three input files,
+    invokes the command via Namespace, returns ``(summary, spec)``.
+    Passing ``None`` for an input omits the file entirely so the
+    missing-input degradation paths can be exercised.
+    """
+    import io
+    import sys as _sys
+
+    from code_review_helpers import cmd_derive_spawn_spec
+
+    cp_path = tmp_path / "coverage_plan.json"
+    if coverage_plan is not None:
+        cp_path.write_text(json.dumps(coverage_plan))
+    p_path = tmp_path / "partitions.json"
+    if partitions is not None:
+        p_path.write_text(json.dumps(partitions))
+    r_path = tmp_path / "route.json"
+    if route is not None:
+        r_path.write_text(json.dumps(route))
+
+    old_stdout = _sys.stdout
+    _sys.stdout = io.StringIO()
+    try:
+        ns = argparse.Namespace(
+            cr_dir=str(tmp_path),
+            coverage_plan=str(cp_path),
+            partitions=str(p_path),
+            route=str(r_path),
+            output=None,
+        )
+        cmd_derive_spawn_spec(ns)
+        _sys.stdout.seek(0)
+        summary = json.load(_sys.stdout)
+    finally:
+        _sys.stdout = old_stdout
+
+    spec = json.loads((tmp_path / "spawn_spec.json").read_text())
+    return summary, spec
+
+
+class TestPLN725Phase8DeriveSpawnSpec:
+    """PLN-725 Phase 8 — translation from coverage_plan.json (post-
+    arbitrate) into spawn_spec.json (the flat agent descriptor list the
+    stage_20 orchestrator dispatches Tasks from). Before Phase 8, the
+    coverage plan was effectively ignored at spawn time: stage_20 walked
+    a static reviewer table baked into start.md. These tests pin the
+    bucket-to-spec mapping, the fast-path passthrough, the BLOCKING-
+    verify propagation, and the fallback sentinels.
+    """
+
+    @staticmethod
+    def _core_plan() -> dict[str, Any]:
+        return {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "unified_auditor", "source": "core"},
+                {"reviewer": "premise_reviewer", "source": "core"},
+                {"reviewer": "test_quality", "source": "core"},
+            ],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 2},
+        }
+
+    @staticmethod
+    def _two_partitions() -> dict[str, Any]:
+        return {
+            "partitions": [
+                {"id": 0, "files": [{"file": "src/a.ts"}], "is_test_only": False},
+                {"id": 1, "files": [{"file": "test/b.test.ts"}], "is_test_only": True},
+            ],
+            "test_file_paths": ["test/b.test.ts"],
+            "force_merged_count": 0,
+        }
+
+    @staticmethod
+    def _route(fast_path: bool = False) -> dict[str, Any]:
+        return {
+            "fast_path": fast_path,
+            "models": {
+                "bug_hunter_a": {"default": "opus", "test_only": "sonnet"},
+                "bug_hunter_b": "sonnet",
+                "unified_auditor": "sonnet",
+                "premise_reviewer": "opus",
+                "fast_path_reviewer": "sonnet",
+            },
+        }
+
+    def test_core_required_expands_to_canonical_agent_ids(
+        self, tmp_path: Path,
+    ) -> None:
+        """The five COVERAGE_CORE_REQUIRED reviewers map to the
+        canonical AGENT_IDs the orchestrator already knows (bha_p<N>,
+        bhb, auditor, premise, plus the deferred test_quality slot in
+        skipped[]). BHA expands one agent per partition.
+        """
+        summary, spec = _run_derive_spawn_spec(
+            tmp_path,
+            self._core_plan(),
+            self._two_partitions(),
+            self._route(),
+        )
+
+        assert summary["fast_path"] is False
+        assert summary["agent_count"] == 5  # 2 BHA + BHB + Auditor + Premise
+
+        ids = {a["agent_id"]: a for a in spec["agents"]}
+        assert set(ids) == {"bha_p0", "bha_p1", "bhb", "auditor", "premise"}
+
+        # BHA partitions get per-partition is_test_only routing and
+        # use partition-specific patches files.
+        assert ids["bha_p0"]["partitioned"] is True
+        assert ids["bha_p0"]["partition_id"] == 0
+        assert ids["bha_p0"]["is_test_only"] is False
+        assert ids["bha_p0"]["model"] == "opus"
+        assert ids["bha_p0"]["patches_file"] == "patches_p0.txt"
+
+        # Test-only partition takes the Sonnet slot.
+        assert ids["bha_p1"]["is_test_only"] is True
+        assert ids["bha_p1"]["model"] == "sonnet"
+        assert ids["bha_p1"]["patches_file"] == "patches_p1.txt"
+
+        # Non-partitioned core roles use patches_all.txt with the
+        # canonical static-table AGENT_IDs.
+        assert ids["bhb"]["partitioned"] is False
+        assert ids["bhb"]["patches_file"] == "patches_all.txt"
+        assert ids["auditor"]["patches_file"] == "patches_all.txt"
+        assert ids["premise"]["model"] == "opus"
+
+        # test_quality is the PLN-723 placeholder — surfaced in skipped[]
+        # so operators can see the deferral, not silently dropped.
+        deferred = [s for s in spec["skipped"] if s["reviewer"] == "test_quality"]
+        assert len(deferred) == 1
+        assert deferred[0]["reason"] == "deferred_pln723"
+
+    def test_critic_best_effort_becomes_domain_critic(
+        self, tmp_path: Path,
+    ) -> None:
+        """An LLM-proposed critic in best_effort[] (source: "critic")
+        maps to a sequential domain_<N> AGENT_ID with patches_all.txt
+        and the sonnet default — matching the static "Domain Critic"
+        row in start.md but without hardcoding the name.
+        """
+        plan = self._core_plan()
+        plan["best_effort"] = [
+            {"reviewer": "graphql-architect", "source": "critic", "priority": 2},
+            {"reviewer": "react-component-architect", "source": "critic", "priority": 1},
+        ]
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._two_partitions(), self._route(),
+        )
+        critics = [a for a in spec["agents"] if a["source"] == "critic"]
+        assert len(critics) == 2
+        assert [c["agent_id"] for c in critics] == ["domain_0", "domain_1"]
+        assert all(c["patches_file"] == "patches_all.txt" for c in critics)
+        assert all(c["model"] == "sonnet" for c in critics)
+        # Reviewer name surfaces as-is so the orchestrator can pass it
+        # into the per-agent prompt's {critic_name} slot.
+        assert critics[0]["reviewer"] == "graphql-architect"
+        assert spec["stats"]["domain_critic_count"] == 2
+
+    def test_fast_path_skips_bucket_walk(self, tmp_path: Path) -> None:
+        """When route.fast_path is true, the spec emits exactly one
+        agent (``agent_id: "fast"``) regardless of how rich the
+        coverage plan is. Mirrors the existing Fast Path branch in
+        start.md — fast path runs all review passes in one agent so
+        the bucketed reviewer distinctions don't apply.
+        """
+        _, spec = _run_derive_spawn_spec(
+            tmp_path,
+            self._core_plan(),  # rich plan that would normally make 5 agents
+            self._two_partitions(),
+            self._route(fast_path=True),
+        )
+        assert spec["fast_path"] is True
+        assert spec["stats"]["agent_count"] == 1
+        assert spec["agents"][0]["agent_id"] == "fast"
+        assert spec["agents"][0]["model"] == "sonnet"
+        assert spec["agents"][0]["source"] == "fast_path"
+        assert spec["agents"][0]["patches_file"] == "patches_all.txt"
+
+    def test_gated_by_verify_propagates_without_pruning(
+        self, tmp_path: Path,
+    ) -> None:
+        """The Phase 7 BLOCKING short-circuit sets
+        ``budget.gated_by_verify: true`` on the plan; the spawn-spec
+        must propagate that flag (so presenters can warn that
+        arbitration was bypassed) but still emit the full agent list
+        — review still runs against the unbudgeted plan.
+        """
+        plan = self._core_plan()
+        plan["budget"]["gated_by_verify"] = True
+        plan["arbitrate_status"] = "blocked_by_verify"
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._two_partitions(), self._route(),
+        )
+        assert spec["gated_by_verify"] is True
+        assert spec["arbitrate_status"] == "blocked_by_verify"
+        # Agents still spawn — Phase 8 inherits Phase 7's "signal, not
+        # halt" semantics. The canonical BLOCKING finding already lives
+        # in agent_coverage-verify-blocking.json so the operator sees
+        # the gate; spawn-spec doesn't double-emit.
+        assert spec["stats"]["agent_count"] == 5
+
+    def test_bha_skipped_when_partitions_empty(
+        self, tmp_path: Path,
+    ) -> None:
+        """When all files are cached (or docs-only post-arbitrate),
+        ``partitions.json`` lists zero partitions. Per start.md "Skip
+        BHA when all files are cached", BHA must NOT spawn. The
+        skipped[] entry surfaces this so operators can see why bha_p<N>
+        is missing from the fleet.
+        """
+        empty_parts = {"partitions": [], "test_file_paths": [], "force_merged_count": 0}
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, self._core_plan(), empty_parts, self._route(),
+        )
+        bha_agents = [a for a in spec["agents"] if a["reviewer"] == "bug_hunter_a"]
+        assert bha_agents == []
+        bha_skipped = [
+            s for s in spec["skipped"] if s["reviewer"] == "bug_hunter_a"
+        ]
+        assert len(bha_skipped) == 1
+        assert bha_skipped[0]["reason"] == "no_partitions"
+        # Non-partitioned core roles still spawn even when BHA is skipped.
+        assert {"bhb", "auditor", "premise"} <= {
+            a["agent_id"] for a in spec["agents"]
+        }
+
+    def test_missing_coverage_plan_emits_fallback_sentinel(
+        self, tmp_path: Path,
+    ) -> None:
+        """A missing or unreadable coverage_plan.json must NOT abort
+        the pipeline — stage_20 falls back to the static table in
+        start.md. The spec marks ``arbitrate_status: "fallback"`` so
+        the orchestrator knows to walk the static table instead of an
+        empty spec.
+        """
+        _, spec = _run_derive_spawn_spec(
+            tmp_path,
+            coverage_plan=None,  # don't write the file at all
+            partitions=self._two_partitions(),
+            route=self._route(),
+        )
+        assert spec["arbitrate_status"] == "fallback"
+        assert spec["fallback_reason"] == "coverage_plan_missing_or_malformed"
+        assert spec["agents"] == []
+        assert spec["stats"]["agent_count"] == 0
+
+    def test_unknown_required_reviewer_lands_in_skipped(
+        self, tmp_path: Path,
+    ) -> None:
+        """A required entry whose reviewer name isn't a core role and
+        isn't tagged as a critic is a closed-vocabulary violation that
+        should have been caught at stage_15c. Defense in depth: surface
+        the gap in skipped[] rather than silently fabricating an
+        AGENT_ID for it.
+        """
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {"reviewer": "unrecognized_role", "source": "rule"},
+            ],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 1},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._two_partitions(), self._route(),
+        )
+        unknowns = [s for s in spec["skipped"] if s["reviewer"] == "unrecognized_role"]
+        assert len(unknowns) == 1
+        assert unknowns[0]["reason"] == "unknown_reviewer"
+        assert unknowns[0]["bucket"] == "required"
+        # Known cores still spawn.
+        assert any(a["reviewer"] == "bug_hunter_a" for a in spec["agents"])
+
+    def test_route_models_overrides_default(
+        self, tmp_path: Path,
+    ) -> None:
+        """The route.json ``models`` block is the single source of
+        truth for per-agent model selection; the spec must echo
+        operator overrides (e.g. premise on Sonnet for a "feat" intent)
+        rather than re-deriving them in the orchestrator.
+        """
+        route = self._route()
+        route["models"]["premise_reviewer"] = "sonnet"
+        route["models"]["bug_hunter_a"] = {"default": "sonnet", "test_only": "haiku"}
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, self._core_plan(), self._two_partitions(), route,
+        )
+        ids = {a["agent_id"]: a for a in spec["agents"]}
+        assert ids["premise"]["model"] == "sonnet"
+        assert ids["bha_p0"]["model"] == "sonnet"
+        assert ids["bha_p1"]["model"] == "haiku"  # test-only partition
+
+    def test_missing_route_uses_safe_defaults(
+        self, tmp_path: Path,
+    ) -> None:
+        """A missing route.json must NOT abort the spec — fall back to
+        the canonical defaults ``cmd_route`` emits. The orchestrator
+        treats absence the same as a route with no overrides, so a
+        route failure degrades gracefully into the default model
+        routing rather than failing the spawn-spec derivation.
+        """
+        _, spec = _run_derive_spawn_spec(
+            tmp_path,
+            self._core_plan(),
+            self._two_partitions(),
+            route=None,
+        )
+        ids = {a["agent_id"]: a for a in spec["agents"]}
+        # BHA defaults to opus/sonnet from _spawn_resolve_models.
+        assert ids["bha_p0"]["model"] == "opus"
+        assert ids["bha_p1"]["model"] == "sonnet"
+        # Other roles default to sonnet.
+        assert ids["bhb"]["model"] == "sonnet"
+        assert ids["premise"]["model"] == "sonnet"
+
+
+class TestPLN725Phase8StageGraph:
+    """The Phase 8 stage_19b_derive_spawn_spec slot in the prepare-run
+    walker. Pins the dependency chain so a future reorder can't
+    accidentally make stage_20 read a stale spawn_spec (or none at
+    all).
+    """
+
+    def _plan(self, tmp_path: Path) -> dict[str, Any]:
+        from code_review_helpers import cmd_prepare_run
+
+        out_path = tmp_path / "run_plan.json"
+        ns = argparse.Namespace(
+            cr_dir=str(tmp_path),
+            mode="local",
+            hygiene_only="false",
+            since_last_review="false",
+            full_review="false",
+            base_ref_override="",
+            scope_args="",
+            pr_number=None,
+            output=str(out_path),
+        )
+        cmd_prepare_run(ns)
+        return json.loads(out_path.read_text())
+
+    def test_stage_19b_present_and_correctly_wired(
+        self, tmp_path: Path,
+    ) -> None:
+        plan = self._plan(tmp_path)
+        stages = {s["id"]: s for s in plan["stages"]}
+        assert "stage_19b_derive_spawn_spec" in stages
+        s = stages["stage_19b_derive_spawn_spec"]
+        assert s["subcommand"] == "derive-spawn-spec"
+        assert s["on_failure"] == "continue"
+        # Inputs must include both the arbitrated plan and the
+        # partitions; missing either is a fallback case, not an abort.
+        assert "stage_16_arbitrate_budget" in s["depends_on"]
+        assert "stage_17_partition" in s["depends_on"]
+        # Expected output is the spawn_spec.json artifact.
+        assert any(
+            "spawn_spec.json" in str(out) for out in s["expected_outputs"]
+        )
+
+    def test_stage_20_depends_on_derive_spawn_spec(
+        self, tmp_path: Path,
+    ) -> None:
+        """stage_20 reads spawn_spec.json — the dep must be explicit so
+        a partial run that skips stage_19b can't reach stage_20 with a
+        missing or stale spec.
+        """
+        plan = self._plan(tmp_path)
+        stages = {s["id"]: s for s in plan["stages"]}
+        spawn = stages["stage_20_spawn_reviewers"]
+        assert "stage_19b_derive_spawn_spec" in spawn["depends_on"]
+
+    def test_stage_19b_ordered_after_inputs(
+        self, tmp_path: Path,
+    ) -> None:
+        plan = self._plan(tmp_path)
+        ids = [s["id"] for s in plan["stages"]]
+        assert ids.index("stage_16_arbitrate_budget") < ids.index(
+            "stage_19b_derive_spawn_spec",
+        )
+        assert ids.index("stage_17_partition") < ids.index(
+            "stage_19b_derive_spawn_spec",
+        )
+        assert ids.index("stage_19b_derive_spawn_spec") < ids.index(
+            "stage_20_spawn_reviewers",
+        )
 
 
 class TestExtractSignalsConsolidateCacheHitNoOp:

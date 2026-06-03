@@ -323,6 +323,7 @@ in what order, against what cap." See PLN-719 Section 5.
 | 17 | partition                    | `partition`              | `partitions.json`, `patches_p<N>.txt`                          |
 | 18 | compute-hashes               | `compute-hashes`         | `hashes.json`                                                 |
 | 19 | cache-check                  | `cache-check`            | `cache_result.json`                                            |
+| 19b| derive-spawn-spec (plan 05)  | `derive-spawn-spec`      | `spawn_spec.json`                                              |
 | 20 | spawn-reviewers              | (agent_fleet)            | `agent_<id>.json`                                              |
 | 21 | collect-findings             | `collect-findings`       | `findings.json` (with deterministic IDs)                       |
 | 22 | validate                     | `validate`               | `findings_validated.json`                                     |
