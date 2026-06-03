@@ -11251,13 +11251,33 @@ def cmd_verify_spawn(args: argparse.Namespace) -> int:
     if not isinstance(agents, list) or not agents:
         return _emit_no_op("spec_empty")
 
-    # Glob the on-disk agent outputs. The orchestrator writes to
-    # ``agent_<agent_id>.json`` per the spawn-spec contract.
+    # Intended agent IDs from the spec. Scoping ``present_ids`` to
+    # this set is critical: the orchestrator writes spawned outputs
+    # to ``agent_<agent_id>.json`` per the spawn-spec contract, but
+    # the same ``agent_*.json`` glob also matches non-spec artifacts
+    # — ``agent_coverage-verify-blocking.json`` from stage_15c,
+    # ``agent_cached_bha.json`` from the cache replay, the future
+    # ``agent_injection.json`` from the injection detector, etc.
+    # Counting those toward ``present_count`` over-reports runtime
+    # presence and pollutes the operator-facing fleet tally.
+    intended_ids: set[str] = {
+        str(d.get("agent_id", "") or "")
+        for d in agents
+        if isinstance(d, dict) and d.get("agent_id")
+    }
+
+    # Glob the on-disk agent outputs and intersect with the intended
+    # set. Files that exist but weren't enumerated by stage_19b are
+    # outside the spawn-spec contract and don't belong in the
+    # fleet's runtime tally.
     present_ids: set[str] = set()
     for path in cr_dir.glob("agent_*.json"):
         name = path.stem  # e.g. "agent_bha_p0"
-        if name.startswith("agent_"):
-            present_ids.add(name[len("agent_"):])
+        if not name.startswith("agent_"):
+            continue
+        candidate = name[len("agent_"):]
+        if candidate in intended_ids:
+            present_ids.add(candidate)
 
     missing_agents: list[dict[str, Any]] = []
     missing_required: list[dict[str, Any]] = []
@@ -11364,16 +11384,39 @@ def _fleet_display_name(reviewer: str) -> str:
     return _FLEET_DISPLAY_NAMES.get(reviewer, reviewer)
 
 
+def _safe_int(value: Any, default: int) -> int:
+    """Coerce ``value`` to int; return ``default`` on failure.
+
+    Used for numeric fields inside artifacts where a half-written
+    file or operator-mangled input could plausibly land a string or
+    ``None`` where a number was expected. The renderer would
+    otherwise raise ``ValueError`` mid-output and produce no Fleet
+    line at all — degrading the count to ``default`` is preferable
+    to halting the entire summary block.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _render_fast_path_fleet(
     spec: dict[str, Any], route: dict[str, Any],
 ) -> list[str]:
     """Render the fast-path branch: single agent does all review passes."""
     agents = spec.get("agents") or []
     fast_agent = agents[0] if agents and isinstance(agents[0], dict) else {}
-    model = str(
-        fast_agent.get("model")
-        or (route.get("models") or {}).get("fast_path_reviewer", "sonnet"),
-    )
+    # ``route.models`` may be malformed (non-dict) — guard before
+    # subscripting so a wrong-shape route doesn't raise. The same
+    # guard exists in ``_spawn_resolve_models``; fast-path bypassed
+    # it pre-v2.23.2.
+    route_models = route.get("models")
+    fallback = "sonnet"
+    if isinstance(route_models, dict):
+        fp = route_models.get("fast_path_reviewer")
+        if isinstance(fp, str) and fp:
+            fallback = fp
+    model = str(fast_agent.get("model") or fallback)
     lines = [
         "**Reviewers:** Fast Path Reviewer (single-agent mode)",
         f"**Model Routing:** Fast path — {model} single reviewer",
@@ -11449,6 +11492,91 @@ def _render_fleet_breakdown(spec: dict[str, Any]) -> list[str]:
         else "**Reviewers:** (none — fleet derivation failed)"
     )
     return [reviewers_line]
+
+
+def _render_model_summary(
+    spec: dict[str, Any], route: dict[str, Any],
+) -> str:
+    """Build the Model Routing summary from the actual spawned models.
+
+    Walks ``spawn_spec.agents[].model`` so the rendered summary
+    reflects what each agent dispatched with. BHA shows the set of
+    models in use across partitions (so a mixed Opus + Sonnet
+    test-only run shows both, instead of just route's default).
+    Non-partitioned core slots show their actual descriptor model.
+    Domain critics get a single ``Critics`` aggregate when present
+    (the per-critic model is uniform in practice — sonnet — but
+    surfacing the slot lets operators see they participated).
+
+    ``route`` is consulted only as a fallback when the spec has no
+    descriptor for a slot (defensive — shouldn't happen on the
+    standard flow but keeps the legacy route-based summary working
+    if the spec is partial).
+    """
+    agents = spec.get("agents") or []
+    if not isinstance(agents, list):
+        return "see route.json"
+
+    # Collect per-role model assignments. Use dict-by-role-of-set so
+    # mixed assignments (BHA Opus on impl, Sonnet on test-only)
+    # surface as ``BHA=opus/sonnet`` rather than silently picking
+    # one.
+    role_models: dict[str, list[str]] = {}
+    critic_models: list[str] = []
+    for a in agents:
+        if not isinstance(a, dict):
+            continue
+        reviewer = str(a.get("reviewer", "") or "")
+        model = str(a.get("model", "") or "")
+        if not reviewer or not model:
+            continue
+        if a.get("source") in {"rule", "critic"}:
+            critic_models.append(model)
+        else:
+            role_models.setdefault(reviewer, []).append(model)
+
+    summary_parts: list[str] = []
+    # Render canonical core slots in fixed order; mirror the
+    # display-name table so the summary key matches the Reviewers
+    # line shorthand (BHA / BHB / Auditor / Premise).
+    for reviewer, label in (
+        ("bug_hunter_a", "BHA"),
+        ("bug_hunter_b", "BHB"),
+        ("unified_auditor", "Auditor"),
+        ("premise_reviewer", "Premise"),
+    ):
+        seen = role_models.get(reviewer)
+        if seen:
+            # Preserve first-appearance order while deduping so
+            # mixed assignments render as ``opus/sonnet`` not the
+            # reverse depending on dict iteration order.
+            unique: list[str] = []
+            for m in seen:
+                if m not in unique:
+                    unique.append(m)
+            summary_parts.append(f"{label}={'/'.join(unique)}")
+            continue
+        # Fallback to route.json defaults when the spec has no
+        # descriptor for this slot (partial spec / fallback paths).
+        models_dict = route.get("models")
+        if not isinstance(models_dict, dict):
+            continue
+        raw = models_dict.get(reviewer)
+        if isinstance(raw, dict):
+            default = raw.get("default")
+            if isinstance(default, str) and default:
+                summary_parts.append(f"{label}={default}")
+        elif isinstance(raw, str) and raw:
+            # Plain-string form of the route models entry — was
+            # silently dropped pre-v2.23.2.
+            summary_parts.append(f"{label}={raw}")
+    if critic_models:
+        unique_critic: list[str] = []
+        for m in critic_models:
+            if m not in unique_critic:
+                unique_critic.append(m)
+        summary_parts.append(f"Critics={'/'.join(unique_critic)}")
+    return ", ".join(summary_parts) if summary_parts else "see route.json"
 
 
 def _render_fleet_notes(
@@ -11590,45 +11718,57 @@ def cmd_render_fleet_summary(args: argparse.Namespace) -> int:
         out_lines.append("**Model Routing:** (see `route.json`)")
         return _write_fleet_summary(out_lines, args)
 
-    if spec.get("fast_path") is True:
+    fast_path = spec.get("fast_path") is True
+    if fast_path:
+        # Fast-path emits its own Reviewers + Model Routing lines
+        # (the bucket/role logic doesn't apply when a single agent
+        # runs every pass), then falls through to the shared Fleet
+        # + Notes block below so a fast-path run with a missing
+        # ``agent_fast.json`` shows ``1 intended | 0 ran`` instead
+        # of looking like a clean run.
         out_lines.extend(_render_fast_path_fleet(spec, route))
-        return _write_fleet_summary(out_lines, args)
+    else:
+        # Standard flow.
+        out_lines.extend(_render_fleet_breakdown(spec))
 
-    # Standard flow.
-    out_lines.extend(_render_fleet_breakdown(spec))
-
-    # Model Routing — derived from route.json; mirror the existing
-    # presenter shape. We don't re-derive route ourselves here, just
-    # echo the size category + a compact model summary so the
-    # presenter doesn't need a second read.
-    size_category = str(route.get("size_category", "")).strip()
-    models = route.get("models") or {}
-    if isinstance(models, dict) and size_category:
-        bha_default = ""
-        bha_models = models.get("bug_hunter_a")
-        if isinstance(bha_models, dict):
-            bha_default = str(bha_models.get("default", ""))
-        summary_parts: list[str] = []
-        if bha_default:
-            summary_parts.append(f"BHA={bha_default}")
-        for slot, label in (
-            ("bug_hunter_b", "BHB"),
-            ("unified_auditor", "Auditor"),
-            ("premise_reviewer", "Premise"),
-        ):
-            value = models.get(slot)
-            if isinstance(value, str) and value:
-                summary_parts.append(f"{label}={value}")
-        summary = ", ".join(summary_parts) if summary_parts else "see route.json"
-        out_lines.append(f"**Model Routing:** {size_category} — {summary}")
+    # Model Routing — standard flow only; fast-path already emitted
+    # its own Fast-path-mode routing line above. Derived from
+    # spawn_spec.agents[].model so the operator sees the models
+    # actually used at dispatch, not the route.json defaults. Three
+    # cases this matters:
+    #   - test-only BHA partition ran on Sonnet but route.json's
+    #     bug_hunter_a.default still says Opus → pre-v2.23.2 the
+    #     summary said "BHA=opus", misleading the operator about
+    #     what model produced the partition's findings.
+    #   - route.models.bug_hunter_a is a plain string (the
+    #     supported single-model form) → pre-v2.23.2 the BHA entry
+    #     was silently dropped because only the dict shape was
+    #     consulted.
+    #   - Domain critic models → spec carries them per descriptor;
+    #     route.json never had them.
+    # route.size_category is still used as the header label.
+    if not fast_path:
+        size_category = str(route.get("size_category", "")).strip()
+        if size_category:
+            model_summary = _render_model_summary(spec, route)
+            out_lines.append(f"**Model Routing:** {size_category} — {model_summary}")
 
     # Fleet outcome line — surface the intended vs ran counts so the
-    # operator sees runtime tally without scrolling to Verifier Stats.
-    stats = spec.get("stats") or {}
-    intended = int(stats.get("agent_count", 0)) if isinstance(stats, dict) else 0
+    # operator sees runtime tally without scrolling to Verifier
+    # Stats. The numeric fields are coerced through ``_safe_int`` so
+    # a malformed artifact (e.g. ``stats.agent_count: "five"`` from
+    # a half-written file) degrades to 0 rather than raising
+    # ValueError mid-render.
+    stats = spec.get("stats") if isinstance(spec.get("stats"), dict) else {}
+    intended = _safe_int(stats.get("agent_count"), 0)
     if isinstance(verification, dict) and verification.get("verified") is True:
-        present = int(verification.get("present_count", 0))
-        missing_required_count = len(verification.get("missing_required") or [])
+        present = _safe_int(verification.get("present_count"), 0)
+        missing_required_raw = verification.get("missing_required")
+        missing_required_count = (
+            len(missing_required_raw)
+            if isinstance(missing_required_raw, list)
+            else 0
+        )
         fleet_line = (
             f"**Fleet:** {intended} intended | {present} ran"
             f" | {missing_required_count} required missing"

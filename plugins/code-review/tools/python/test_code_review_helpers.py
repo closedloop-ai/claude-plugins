@@ -16722,7 +16722,11 @@ class TestPLN725Phase9RenderFleetSummaryHappyPath:
     def test_fast_path_branch(self, tmp_path: Path) -> None:
         """Fast-path runs collapse the standard-flow logic into a
         single one-line block. The model is read from the spec's
-        fast_path_reviewer slot (which mirrors route.json).
+        fast_path_reviewer slot (which mirrors route.json). As of
+        v2.23.2 the fast-path branch also falls through to the
+        shared Fleet / Notes block so a fast-path run with a
+        missing ``agent_fast.json`` shows ``1 intended | 0 ran``
+        instead of looking like a clean run.
         """
         spec = {
             "fast_path": True, "gated_by_verify": False,
@@ -16739,13 +16743,23 @@ class TestPLN725Phase9RenderFleetSummaryHappyPath:
                       "from_required": 0, "from_best_effort": 0,
                       "required_coverage_gaps": 0},
         }
-        _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
+        verification = {
+            "verified": True, "present_count": 1, "intended_count": 1,
+            "present_agents": ["fast"], "missing_agents": [],
+            "missing_required": [], "missing_required_gaps": 0,
+        }
+        _seed_phase9_inputs(
+            tmp_path, spec=spec, verification=verification,
+            route=_standard_route(),
+        )
         out = _run_render_fleet_summary(tmp_path)
         assert "**Reviewers:** Fast Path Reviewer (single-agent mode)" in out
         assert "**Model Routing:** Fast path — sonnet single reviewer" in out
-        # Standard-flow content must NOT leak through.
+        # Standard-flow Reviewers content must NOT leak through.
         assert "Bug Hunter A" not in out
-        assert "Fleet:" not in out
+        # Fleet line IS now emitted on fast-path so runtime tally
+        # (and the "0 ran" failure mode) is visible.
+        assert "**Fleet:** 1 intended | 1 ran | 0 required missing" in out
 
 
 class TestPLN725Phase9RenderFleetSummaryNotes:
@@ -17024,6 +17038,292 @@ class TestPLN725Phase9RenderFleetSummaryOutputContract:
         assert "**Reviewers:** Bug Hunter A" in captured
         # No spurious output file was created in the cr_dir.
         assert not (tmp_path / "fleet_summary.md").exists()
+
+
+class TestPLN725Phase9FastPathFleetTally:
+    """PLN-725 Phase 9 / v2.23.2 — fast-path now renders the
+    common Fleet line + Notes block. Pre-v2.23.2 the fast-path
+    branch returned early after writing its Reviewers + Model
+    Routing lines, so a fast-path run where ``agent_fast.json``
+    crashed at runtime still showed a clean-looking summary.
+    """
+
+    @staticmethod
+    def _fast_spec() -> dict[str, Any]:
+        return {
+            "fast_path": True, "gated_by_verify": False,
+            "arbitrate_status": "ok", "cr_dir": "", "generated_at": "",
+            "agents": [{
+                "agent_id": "fast", "reviewer": "fast_path_reviewer",
+                "model": "sonnet", "partitioned": False,
+                "patches_file": "patches_all.txt",
+                "source": "fast_path", "bucket": "fast_path",
+            }],
+            "skipped": [],
+            "stats": {"agent_count": 1, "bha_count": 0,
+                      "domain_critic_count": 0,
+                      "from_required": 0, "from_best_effort": 0,
+                      "required_coverage_gaps": 0},
+        }
+
+    def test_fast_path_runtime_crash_surfaces_in_fleet_line(
+        self, tmp_path: Path,
+    ) -> None:
+        """A fast-path run where the single agent crashed (no
+        ``agent_fast.json``) must surface as ``1 intended | 0 ran``
+        — not as a clean summary.
+        """
+        verification = {
+            "verified": True, "present_count": 0, "intended_count": 1,
+            "present_agents": [], "missing_agents": [
+                {"agent_id": "fast", "reviewer": "fast_path_reviewer",
+                 "bucket": "fast_path", "source": "fast_path"},
+            ],
+            # bucket="fast_path" is NOT "required" so the missing
+            # agent doesn't synthesize a coverage gap; the Fleet
+            # tally is the operator-facing signal that the run
+            # produced no output.
+            "missing_required": [],
+            "missing_required_gaps": 0,
+        }
+        _seed_phase9_inputs(
+            tmp_path, spec=self._fast_spec(), verification=verification,
+            route=_standard_route(),
+        )
+        out = _run_render_fleet_summary(tmp_path)
+        assert "**Fleet:** 1 intended | 0 ran" in out
+        # The operator still sees the Fast Path Reviewers + Model
+        # Routing lines too (regression guard against accidental
+        # removal of the fast-path-specific block).
+        assert "Fast Path Reviewer (single-agent mode)" in out
+        assert "Fast path — sonnet single reviewer" in out
+
+
+class TestPLN725Phase9ModelRoutingFromSpec:
+    """PLN-725 Phase 9 / v2.23.2 — Model Routing summary built from
+    ``spawn_spec.agents[].model`` (not route.json defaults). Three
+    cases this matters: test-only BHA partitions running on Sonnet
+    (route default says Opus); the plain-string form of
+    ``route.models.bug_hunter_a`` (previously silently dropped);
+    and domain critic models (route never had them).
+    """
+
+    def test_mixed_bha_models_show_both(self, tmp_path: Path) -> None:
+        """A run with one impl-BHA partition (Opus) and one
+        test-only BHA partition (Sonnet) renders as
+        ``BHA=opus/sonnet`` so the operator can see the mix at a
+        glance rather than seeing only route.json's default.
+        """
+        spec = _standard_spec()
+        # Append a test-only BHA partition on Sonnet to the
+        # standard fixture's Opus BHA on partition 0.
+        spec["agents"].append({
+            "agent_id": "bha_p1", "reviewer": "bug_hunter_a",
+            "model": "sonnet", "partitioned": True, "partition_id": 1,
+            "is_test_only": True, "patches_file": "patches_p1.txt",
+            "source": "core", "bucket": "required",
+        })
+        spec["stats"]["bha_count"] = 2
+        spec["stats"]["agent_count"] = 6
+        _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
+        out = _run_render_fleet_summary(tmp_path)
+        assert "BHA=opus/sonnet" in out
+
+    def test_per_descriptor_model_overrides_route_default(
+        self, tmp_path: Path,
+    ) -> None:
+        """If the spec's BHB descriptor carries a model that
+        diverges from route.json's bug_hunter_b slot (operator
+        override, partial route, etc.), the summary echoes the
+        spec value — that's what actually dispatched.
+        """
+        spec = _standard_spec()
+        # Override the BHB model in the spec to something that
+        # disagrees with route.
+        for a in spec["agents"]:
+            if a.get("reviewer") == "bug_hunter_b":
+                a["model"] = "haiku"
+        route = _standard_route()
+        # Route still says sonnet — but the summary should follow
+        # the spec, not the route default.
+        assert route["models"]["bug_hunter_b"] == "sonnet"
+        _seed_phase9_inputs(tmp_path, spec=spec, route=route)
+        out = _run_render_fleet_summary(tmp_path)
+        assert "BHB=haiku" in out
+        assert "BHB=sonnet" not in out
+
+    def test_plain_string_route_models_no_longer_dropped(
+        self, tmp_path: Path,
+    ) -> None:
+        """If the spec is partial (no BHA descriptor) but route's
+        ``bug_hunter_a`` is a plain string (the supported single-
+        model form), the renderer falls back to the string instead
+        of silently dropping the BHA slot. Pre-v2.23.2 only the
+        dict shape was consulted.
+        """
+        spec = _standard_spec()
+        # Drop BHA from the spec entirely so the fallback path
+        # fires (route lookup happens only when the spec has no
+        # descriptor for the slot).
+        spec["agents"] = [a for a in spec["agents"] if a.get("reviewer") != "bug_hunter_a"]
+        spec["stats"]["bha_count"] = 0
+        spec["stats"]["agent_count"] = 4
+        route = _standard_route()
+        route["models"]["bug_hunter_a"] = "sonnet"  # plain-string form
+        _seed_phase9_inputs(tmp_path, spec=spec, route=route)
+        out = _run_render_fleet_summary(tmp_path)
+        # BHA falls back to the plain-string entry instead of being
+        # omitted entirely.
+        assert "BHA=sonnet" in out
+
+    def test_critic_model_appears_in_routing(
+        self, tmp_path: Path,
+    ) -> None:
+        """Domain critic models are surfaced as a single ``Critics``
+        aggregate. Route.json never carried per-critic model
+        assignments; only the spec descriptor knows what dispatched.
+        """
+        spec = _standard_spec()
+        # The standard fixture has one rule-resolved critic
+        # (ts-expert on sonnet); add an LLM-proposed critic.
+        spec["agents"].append({
+            "agent_id": "domain_1", "reviewer": "graphql-architect",
+            "model": "sonnet", "partitioned": False,
+            "patches_file": "patches_all.txt",
+            "source": "critic", "bucket": "best_effort", "priority": 2,
+        })
+        spec["stats"]["domain_critic_count"] = 2
+        spec["stats"]["agent_count"] = 6
+        _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
+        out = _run_render_fleet_summary(tmp_path)
+        assert "Critics=sonnet" in out
+
+
+class TestPLN725Phase9VerifySpawnIntendedScoping:
+    """PLN-725 Phase 9 / v2.23.2 — ``cmd_verify_spawn`` scopes
+    ``present_count`` and ``present_agents`` to the intended fleet.
+    Pre-v2.23.2 the glob counted every ``agent_*.json`` in the
+    CR_DIR — including ``agent_coverage-verify-blocking.json``,
+    ``agent_cached_bha.json``, future ``agent_injection.json`` —
+    over-reporting how many spawn-spec agents actually produced
+    output.
+    """
+
+    @staticmethod
+    def _run(tmp_path: Path) -> dict[str, Any]:
+        from code_review_helpers import cmd_verify_spawn
+        from golden_fixture_harness import run_with_stdout_capture
+
+        ns = argparse.Namespace(cr_dir=str(tmp_path))
+        run_with_stdout_capture(cmd_verify_spawn, ns)
+        return json.loads((tmp_path / "spawn_verification.json").read_text())
+
+    def test_non_spec_agent_files_excluded_from_present_count(
+        self, tmp_path: Path,
+    ) -> None:
+        spec = {
+            "fast_path": False, "gated_by_verify": False,
+            "arbitrate_status": "ok", "cr_dir": "", "generated_at": "",
+            "agents": [
+                {"agent_id": "bhb", "reviewer": "bug_hunter_b",
+                 "bucket": "required", "source": "core"},
+                {"agent_id": "auditor", "reviewer": "unified_auditor",
+                 "bucket": "required", "source": "core"},
+            ],
+            "skipped": [],
+            "stats": {"agent_count": 2, "bha_count": 0,
+                      "domain_critic_count": 0,
+                      "from_required": 2, "from_best_effort": 0,
+                      "required_coverage_gaps": 0},
+        }
+        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+        # Two on-disk outputs match the spec.
+        (tmp_path / "agent_bhb.json").write_text("{}")
+        (tmp_path / "agent_auditor.json").write_text("{}")
+        # And three non-spec ``agent_*.json`` files exist alongside
+        # them — the kind of artifacts that have always polluted
+        # the glob.
+        (tmp_path / "agent_coverage-verify-blocking.json").write_text("{}")
+        (tmp_path / "agent_cached_bha.json").write_text("{}")
+        (tmp_path / "agent_injection.json").write_text("{}")
+
+        verification = self._run(tmp_path)
+        # Only the two intended agents count toward present_count.
+        assert verification["present_count"] == 2
+        assert set(verification["present_agents"]) == {"bhb", "auditor"}
+        # And no missing required, no spurious coverage gaps.
+        assert verification["missing_required"] == []
+        assert verification["missing_required_gaps"] == 0
+
+
+class TestPLN725Phase9MalformedTelemetry:
+    """PLN-725 Phase 9 / v2.23.2 — lightweight safe-coercion for
+    malformed numeric telemetry fields. The renderer degrades to 0
+    rather than raising ``ValueError`` mid-output so a half-written
+    artifact doesn't suppress the entire Fleet line. Per-finding
+    review feedback flagged this as "use your best judgement if
+    very straightforward to handle" — the two numeric fields
+    consumed during rendering (stats.agent_count and
+    spawn_verification.present_count) are the trivial cases.
+    """
+
+    def test_non_numeric_agent_count_degrades_to_zero(
+        self, tmp_path: Path,
+    ) -> None:
+        spec = _standard_spec()
+        spec["stats"]["agent_count"] = "five"  # malformed
+        _seed_phase9_inputs(
+            tmp_path, spec=spec, verification=_clean_verification(),
+            route=_standard_route(),
+        )
+        out = _run_render_fleet_summary(tmp_path)
+        # Renderer still produced output (didn't crash) and the
+        # intended count safely defaulted to 0.
+        assert "**Fleet:** 0 intended" in out
+
+    def test_non_numeric_present_count_degrades_to_zero(
+        self, tmp_path: Path,
+    ) -> None:
+        verification = _clean_verification()
+        verification["present_count"] = None  # malformed
+        _seed_phase9_inputs(
+            tmp_path, spec=_standard_spec(), verification=verification,
+            route=_standard_route(),
+        )
+        out = _run_render_fleet_summary(tmp_path)
+        assert "**Fleet:** 5 intended | 0 ran" in out
+
+    def test_fast_path_handles_non_dict_route_models(
+        self, tmp_path: Path,
+    ) -> None:
+        """Pre-v2.23.2 the fast-path branch called
+        ``(route.get("models") or {}).get("fast_path_reviewer", ...)``
+        which raises ``AttributeError`` when ``route.models`` is a
+        list. Standard-flow had an ``isinstance(dict)`` guard but
+        fast-path bypassed it. The renderer now degrades to the
+        spec's per-agent model.
+        """
+        spec = {
+            "fast_path": True, "gated_by_verify": False,
+            "arbitrate_status": "ok", "cr_dir": "", "generated_at": "",
+            "agents": [{
+                "agent_id": "fast", "reviewer": "fast_path_reviewer",
+                "model": "haiku", "partitioned": False,
+                "patches_file": "patches_all.txt",
+                "source": "fast_path", "bucket": "fast_path",
+            }],
+            "skipped": [],
+            "stats": {"agent_count": 1, "bha_count": 0,
+                      "domain_critic_count": 0,
+                      "from_required": 0, "from_best_effort": 0,
+                      "required_coverage_gaps": 0},
+        }
+        route = {"size_category": "Small", "models": ["malformed"]}
+        _seed_phase9_inputs(tmp_path, spec=spec, route=route)
+        out = _run_render_fleet_summary(tmp_path)
+        # Renderer survived the malformed route shape and used the
+        # spec's per-agent model.
+        assert "Fast path — haiku single reviewer" in out
 
 
 class TestExtractSignalsConsolidateCacheHitNoOp:
