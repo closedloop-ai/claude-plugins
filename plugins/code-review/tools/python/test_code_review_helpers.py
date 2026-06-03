@@ -15346,11 +15346,17 @@ def _run_derive_spawn_spec(
     invokes the command via Namespace, returns ``(summary, spec)``.
     Passing ``None`` for an input omits the file entirely so the
     missing-input degradation paths can be exercised.
-    """
-    import io
-    import sys as _sys
 
+    Delegates stdout suppression to ``run_with_stdout_capture`` from
+    ``golden_fixture_harness`` (the canonical helper that ``conftest.
+    invoke_prepare_run`` already uses) rather than re-inlining the
+    ``io.StringIO()`` swap. Captures and asserts the return code so a
+    silent ``_write_spawn_spec`` OSError surfaces as a meaningful
+    assertion rather than a downstream ``JSONDecodeError`` on empty
+    stdout.
+    """
     from code_review_helpers import cmd_derive_spawn_spec
+    from golden_fixture_harness import run_with_stdout_capture
 
     cp_path = tmp_path / "coverage_plan.json"
     if coverage_plan is not None:
@@ -15362,23 +15368,21 @@ def _run_derive_spawn_spec(
     if route is not None:
         r_path.write_text(json.dumps(route))
 
-    old_stdout = _sys.stdout
-    _sys.stdout = io.StringIO()
-    try:
-        ns = argparse.Namespace(
-            cr_dir=str(tmp_path),
-            coverage_plan=str(cp_path),
-            partitions=str(p_path),
-            route=str(r_path),
-            output=None,
-        )
-        cmd_derive_spawn_spec(ns)
-        _sys.stdout.seek(0)
-        summary = json.load(_sys.stdout)
-    finally:
-        _sys.stdout = old_stdout
-
-    spec = json.loads((tmp_path / "spawn_spec.json").read_text())
+    ns = argparse.Namespace(
+        cr_dir=str(tmp_path),
+        coverage_plan=str(cp_path),
+        partitions=str(p_path),
+        route=str(r_path),
+        output=None,
+    )
+    captured = run_with_stdout_capture(cmd_derive_spawn_spec, ns)
+    summary = json.loads(captured) if captured else {}
+    # ``run_with_stdout_capture`` swallows the return value; assert here
+    # by reading the on-disk artifact, which is the same invariant the
+    # production walker checks (expected_outputs: [<cr_dir>/spawn_spec.json]).
+    spec_path = tmp_path / "spawn_spec.json"
+    assert spec_path.exists(), "spawn_spec.json missing — cmd_derive_spawn_spec failed silently"
+    spec = json.loads(spec_path.read_text())
     return summary, spec
 
 
@@ -15477,6 +15481,12 @@ class TestPLN725Phase8DeriveSpawnSpec:
         assert len(deferred) == 1
         assert deferred[0]["reason"] == "deferred_pln723"
 
+        # All five agents came from required[]; pin the bucket counter
+        # so future plan-shape changes can't silently mis-attribute the
+        # tier they were selected from.
+        assert spec["stats"]["from_required"] == 5
+        assert spec["stats"]["from_best_effort"] == 0
+
     def test_critic_best_effort_becomes_domain_critic(
         self, tmp_path: Path,
     ) -> None:
@@ -15502,6 +15512,11 @@ class TestPLN725Phase8DeriveSpawnSpec:
         # into the per-agent prompt's {critic_name} slot.
         assert critics[0]["reviewer"] == "graphql-architect"
         assert spec["stats"]["domain_critic_count"] == 2
+        # Bucket attribution: both critics came from best_effort[]. The
+        # four core required reviewers (BHA expands to 2 agents, plus
+        # BHB/Auditor/Premise) still come from required[].
+        assert spec["stats"]["from_best_effort"] == 2
+        assert spec["stats"]["from_required"] == 5
 
     def test_fast_path_skips_bucket_walk(self, tmp_path: Path) -> None:
         """When route.fast_path is true, the spec emits exactly one
@@ -15660,6 +15675,128 @@ class TestPLN725Phase8DeriveSpawnSpec:
         assert ids["bhb"]["model"] == "sonnet"
         assert ids["premise"]["model"] == "sonnet"
 
+    def test_missing_partitions_file_treated_as_no_partitions(
+        self, tmp_path: Path,
+    ) -> None:
+        """``partitions.json`` absent is distinct from ``partitions.json``
+        present-but-empty: the former exercises the ``_read_optional_json
+        → None`` branch (file doesn't exist), the latter the
+        ``isinstance(dict)`` branch with an empty inner list. Both must
+        skip BHA without aborting the spec — Phase 8 inputs are
+        observational, never hard prerequisites.
+        """
+        _, spec = _run_derive_spawn_spec(
+            tmp_path,
+            self._core_plan(),
+            partitions=None,  # file absent → _read_optional_json returns None
+            route=self._route(),
+        )
+        # NOT a fallback sentinel — missing partitions is a recoverable
+        # case (all-cached / docs-only / extreme-skip scenarios).
+        assert spec["arbitrate_status"] == "ok"
+        bha_agents = [a for a in spec["agents"] if a["reviewer"] == "bug_hunter_a"]
+        assert bha_agents == []
+        bha_skipped = [
+            s for s in spec["skipped"] if s["reviewer"] == "bug_hunter_a"
+        ]
+        assert len(bha_skipped) == 1
+        assert bha_skipped[0]["reason"] == "no_partitions"
+        # Non-partitioned core roles still spawn.
+        assert {"bhb", "auditor", "premise"} <= {
+            a["agent_id"] for a in spec["agents"]
+        }
+
+    def test_malformed_coverage_plan_emits_fallback_sentinel(
+        self, tmp_path: Path,
+    ) -> None:
+        """The fallback sentinel must fire for ``coverage_plan.json``
+        that contains valid JSON but isn't a dict (e.g. ``[]`` from a
+        partial write or an upstream bug). Distinct from the absent-file
+        path — both produce the same sentinel so the orchestrator's
+        fallback logic only needs one branch.
+        """
+        cp = tmp_path / "coverage_plan.json"
+        cp.write_text(json.dumps([]))  # valid JSON, wrong shape
+        p = tmp_path / "partitions.json"
+        p.write_text(json.dumps(self._two_partitions()))
+        r = tmp_path / "route.json"
+        r.write_text(json.dumps(self._route()))
+
+        from code_review_helpers import cmd_derive_spawn_spec
+        from golden_fixture_harness import run_with_stdout_capture
+
+        ns = argparse.Namespace(
+            cr_dir=str(tmp_path),
+            coverage_plan=str(cp),
+            partitions=str(p),
+            route=str(r),
+            output=None,
+        )
+        run_with_stdout_capture(cmd_derive_spawn_spec, ns)
+        spec = json.loads((tmp_path / "spawn_spec.json").read_text())
+        assert spec["arbitrate_status"] == "fallback"
+        assert spec["fallback_reason"] == "coverage_plan_missing_or_malformed"
+        assert spec["agents"] == []
+
+    def test_empty_reviewer_name_lands_in_skipped(
+        self, tmp_path: Path,
+    ) -> None:
+        """A plan entry with a blank ``reviewer`` field (LLM-produced
+        plans with a dropped key) records a ``missing_reviewer_name``
+        skip rather than fabricating an empty AGENT_ID — the
+        defense-in-depth branch that catches malformed inputs upstream
+        of stage_15c's closed-vocabulary check.
+        """
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "", "source": "core"},
+            ],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 0},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._two_partitions(), self._route(),
+        )
+        blanks = [s for s in spec["skipped"] if s["reason"] == "missing_reviewer_name"]
+        assert len(blanks) == 1
+        assert blanks[0]["bucket"] == "required"
+        # The well-formed entry still spawns.
+        assert any(a["agent_id"] == "bhb" for a in spec["agents"])
+
+    def test_duplicate_non_partitioned_reviewer_dedupes(
+        self, tmp_path: Path,
+    ) -> None:
+        """Defense-in-depth: a malformed plan that lists the same
+        non-partitioned reviewer in both required[] and best_effort[]
+        must emit ONE agent, not two. Two descriptors with the same
+        AGENT_ID would race on the ``agent_<id>.json`` output file,
+        silently losing one set of findings. stage_15c's closed-
+        vocabulary check should catch this upstream, but spawn-spec is
+        a downstream consumer and guards independently.
+        """
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_b", "source": "core"},
+            ],
+            "best_effort": [
+                {"reviewer": "bug_hunter_b", "source": "core"},
+            ],
+            "budget": {"total_cap": 20, "bha_partitions": 0},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._two_partitions(), self._route(),
+        )
+        bhb_agents = [a for a in spec["agents"] if a["agent_id"] == "bhb"]
+        assert len(bhb_agents) == 1
+        # First occurrence wins (required[] walked first).
+        assert bhb_agents[0]["bucket"] == "required"
+        # Second occurrence surfaces in skipped[] with the dedup reason.
+        dupes = [s for s in spec["skipped"] if s["reason"] == "duplicate_agent_id"]
+        assert len(dupes) == 1
+        assert dupes[0]["agent_id"] == "bhb"
+        assert dupes[0]["bucket"] == "best_effort"
+
 
 class TestPLN725Phase8StageGraph:
     """The Phase 8 stage_19b_derive_spawn_spec slot in the prepare-run
@@ -15669,22 +15806,14 @@ class TestPLN725Phase8StageGraph:
     """
 
     def _plan(self, tmp_path: Path) -> dict[str, Any]:
-        from code_review_helpers import cmd_prepare_run
-
-        out_path = tmp_path / "run_plan.json"
-        ns = argparse.Namespace(
-            cr_dir=str(tmp_path),
-            mode="local",
-            hygiene_only="false",
-            since_last_review="false",
-            full_review="false",
-            base_ref_override="",
-            scope_args="",
-            pr_number=None,
-            output=str(out_path),
+        # Delegate to the canonical helper from conftest so stdout is
+        # suppressed (cmd_prepare_run writes a summary blob to
+        # sys.stdout; an inline call would leak it into pytest output)
+        # and the Namespace shape stays in lock-step with the CLI parser.
+        _, run_plan = invoke_prepare_run(
+            tmp_path, output=tmp_path / "run_plan.json",
         )
-        cmd_prepare_run(ns)
-        return json.loads(out_path.read_text())
+        return run_plan
 
     def test_stage_19b_present_and_correctly_wired(
         self, tmp_path: Path,

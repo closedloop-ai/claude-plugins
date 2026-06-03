@@ -299,6 +299,86 @@ in what order, against what cap." See PLN-719 Section 5.
 
 ---
 
+## 6b. Reviewer spawn spec (`spawn_spec.json`)
+
+Produced by `stage_19b_derive_spawn_spec` (PLN-725 Phase 8) from the
+post-arbitrate `coverage_plan.json` + `partitions.json` + `route.json`;
+consumed by the `stage_20_spawn_reviewers` orchestrator. Closes the
+deterministic-coverage loop — before Phase 8 the coverage plan was
+ignored at spawn time.
+
+```jsonc
+{
+  // ── Routing ──────────────────────────────────────────────
+  "fast_path": false,                  // mirrors route.fast_path
+  "gated_by_verify": false,            // mirrors budget.gated_by_verify
+                                       // from arbitrate-budget (Phase 7)
+  "arbitrate_status": "ok",            // closed vocab: see below
+  "fallback_reason": "<string>",       // only present when arbitrate_status="fallback"
+  "cr_dir": "<absolute path>",
+  "generated_at": "<ISO-8601 timestamp>",
+
+  // ── Agents to spawn ──────────────────────────────────────
+  "agents": [
+    {
+      "agent_id": "bha_p0 | bhb | auditor | premise | domain_<N> | fast",
+      "reviewer": "bug_hunter_a | bug_hunter_b | unified_auditor | premise_reviewer | <critic-name> | fast_path_reviewer",
+      "model": "<model id>",
+      "partitioned": true,             // only BHA partitions
+      "partition_id": 0,               // only when partitioned
+      "is_test_only": false,           // only when partitioned (drives BHA model slot)
+      "patches_file": "patches_p<N>.txt | patches_all.txt",
+      "source": "core | critic | fast_path",
+      "bucket": "required | best_effort | fast_path",
+      "priority": 2                    // only on critics
+    }
+  ],
+
+  // ── Reviewers deliberately not spawned ───────────────────
+  "skipped": [
+    {
+      "reviewer": "<name>",
+      "bucket": "required | best_effort",
+      "reason": "deferred_pln723 | no_partitions | unknown_reviewer | missing_reviewer_name | duplicate_agent_id",
+      "agent_id": "<id>"               // only on duplicate_agent_id
+    }
+  ],
+
+  // ── Telemetry ────────────────────────────────────────────
+  "stats": {
+    "agent_count": 5,
+    "bha_count": 1,
+    "domain_critic_count": 0,
+    "from_required": 4,
+    "from_best_effort": 0
+  }
+}
+```
+
+**Closed-vocabulary fields** (validated at production time; codified as
+constants in `code_review_schema.py`):
+
+| Field | Values | Notes |
+| --- | --- | --- |
+| `arbitrate_status` | `ok`, `blocked_by_verify`, `fallback` | `ok` = normal arbitration ran; `blocked_by_verify` = Phase 7 BLOCKING gate fired upstream and the plan passed through unchanged; `fallback` = derive failed, orchestrator must walk static table |
+| `source` | `core`, `critic`, `fast_path` | Selects the prompt-suffix dispatch in `start.md` (`source: "core"` further branches on `reviewer`) |
+| `bucket` | `required`, `best_effort`, `fast_path` | Mirrors the source bucket in `coverage_plan.json` |
+| `skipped[].reason` | `deferred_pln723`, `no_partitions`, `unknown_reviewer`, `missing_reviewer_name`, `duplicate_agent_id` | Defense-in-depth reasons surfaced so operators see why a reviewer was omitted |
+
+**Fallback sentinel invariant:** when `arbitrate_status == "fallback"`,
+`agents[]` is empty and `fallback_reason` is set. The orchestrator must
+treat this as "ignore the spec; walk the static reviewer table in
+start.md" — a derive failure must never block review.
+
+**BLOCKING propagation invariant:** when `gated_by_verify == true`,
+`agents[]` is still populated from the (unbudgeted) input plan. The
+canonical BLOCKING finding already lives in
+`agent_coverage-verify-blocking.json` from `stage_15c`; the spawn-spec
+does not duplicate it. Presenters use the flag to surface "arbitration
+bypassed" in the run summary.
+
+---
+
 ## 7. Pipeline ordering
 
 | #  | Stage                        | Subcommand               | Produces                                                       |

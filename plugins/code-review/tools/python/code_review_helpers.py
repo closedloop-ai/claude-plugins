@@ -10483,10 +10483,14 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
 # is ``"fallback"`` — a derive failure must never break review.
 
 # Canonical role → AGENT_ID + partitioning + patches-file mapping. The
-# reviewer names on the left are the snake_case identifiers used in
-# coverage_plan.json (matching ``COVERAGE_CORE_REQUIRED``); the AGENT_ID
-# strings on the right are the display IDs used in agent_*.json filenames
-# (matching the static table in start.md).
+# reviewer names on the left are the SPAWNABLE subset of
+# ``COVERAGE_CORE_REQUIRED`` (snake_case identifiers used in
+# coverage_plan.json); the deferred subset lives in
+# ``_SPAWN_DEFERRED_ROLES`` below. The two dicts together must cover
+# every entry in ``COVERAGE_CORE_REQUIRED`` — adding a new core role
+# means choosing which dict it belongs in. The AGENT_ID strings on the
+# right are the display IDs used in agent_*.json filenames (matching
+# the static table in start.md).
 _SPAWN_CORE_ROLES: dict[str, dict[str, Any]] = {
     "bug_hunter_a": {
         "agent_id_prefix": "bha_p",
@@ -10572,6 +10576,7 @@ def _derive_spawn_agents_from_plan(
     """
     agents: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    seen_agent_ids: set[str] = set()
     critic_index = 0
 
     def _emit_for_entry(entry: dict[str, Any], bucket: str) -> None:
@@ -10607,8 +10612,23 @@ def _derive_spawn_agents_from_plan(
                 for part in partitions:
                     part_id = int(part.get("id", 0))
                     is_test_only = bool(part.get("is_test_only", False))
+                    agent_id = f"{role_cfg['agent_id_prefix']}{part_id}"
+                    # Dedup: BHA partitions are normally unique by id,
+                    # but a malformed plan could repeat bug_hunter_a or
+                    # ship duplicate partition ids. The orchestrator
+                    # would otherwise dispatch two Tasks writing to the
+                    # same agent_<id>.json file, racing each other.
+                    if agent_id in seen_agent_ids:
+                        skipped.append({
+                            "reviewer": reviewer,
+                            "bucket": bucket,
+                            "reason": "duplicate_agent_id",
+                            "agent_id": agent_id,
+                        })
+                        continue
+                    seen_agent_ids.add(agent_id)
                     agents.append({
-                        "agent_id": f"{role_cfg['agent_id_prefix']}{part_id}",
+                        "agent_id": agent_id,
                         "reviewer": reviewer,
                         "model": _spawn_bha_model(models, is_test_only),
                         "partitioned": True,
@@ -10621,11 +10641,27 @@ def _derive_spawn_agents_from_plan(
                         "bucket": bucket,
                     })
                 return
-            # Non-partitioned core roles: one agent per entry.
+            # Non-partitioned core roles: one agent per entry. The
+            # closed-vocabulary check at stage_15c should prevent the
+            # same reviewer appearing in both required[] and
+            # best_effort[], but Phase 8 is a downstream consumer —
+            # defense in depth via the dedup guard means a single
+            # source-of-truth violation upstream doesn't silently
+            # produce two agents racing on the same output file.
+            agent_id = str(role_cfg["agent_id"])
+            if agent_id in seen_agent_ids:
+                skipped.append({
+                    "reviewer": reviewer,
+                    "bucket": bucket,
+                    "reason": "duplicate_agent_id",
+                    "agent_id": agent_id,
+                })
+                return
+            seen_agent_ids.add(agent_id)
             model_slot = models.get(reviewer, "sonnet")
             model = model_slot if isinstance(model_slot, str) else "sonnet"
             agents.append({
-                "agent_id": role_cfg["agent_id"],
+                "agent_id": agent_id,
                 "reviewer": reviewer,
                 "model": model,
                 "partitioned": False,
@@ -10636,10 +10672,15 @@ def _derive_spawn_agents_from_plan(
             return
         # Unknown reviewer name. If the rule-resolved entry was a critic
         # (closed-vocabulary checks have already passed by stage_15c),
-        # treat it as a domain critic and assign a sequential ID.
+        # treat it as a domain critic and assign a sequential ID. The
+        # critic_index is monotonic so domain_<N> names are inherently
+        # unique by construction, but we still record them in
+        # seen_agent_ids for symmetry with the core-role guard.
         if source == "critic":
+            agent_id = f"domain_{critic_index}"
+            seen_agent_ids.add(agent_id)
             agents.append({
-                "agent_id": f"domain_{critic_index}",
+                "agent_id": agent_id,
                 "reviewer": reviewer,
                 "model": "sonnet",
                 "partitioned": False,

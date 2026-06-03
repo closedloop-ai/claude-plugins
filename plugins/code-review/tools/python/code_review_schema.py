@@ -148,6 +148,55 @@ COVERAGE_CORE_REQUIRED: tuple[str, ...] = (
     "test_quality",
 )
 
+
+# ---------------------------------------------------------------------------
+# PLN-725 Phase 8 — Reviewer spawn spec
+# ---------------------------------------------------------------------------
+# These constants describe the ``spawn_spec.json`` wire format produced by
+# ``stage_19b_derive_spawn_spec`` and consumed by ``stage_20_spawn_reviewers``.
+# See SCHEMA.md §6b for the full envelope shape.
+
+# Top-level ``arbitrate_status``. ``ok`` = normal arbitration ran;
+# ``blocked_by_verify`` = Phase 7 BLOCKING gate fired upstream and the
+# plan passed through unbudgeted; ``fallback`` = derive failed and the
+# orchestrator must walk the static reviewer table in start.md.
+SPAWN_SPEC_ARBITRATE_STATUSES: frozenset[str] = frozenset({
+    "ok",
+    "blocked_by_verify",
+    "fallback",
+})
+
+# Per-agent ``source`` field. Selects the prompt-suffix dispatch in
+# start.md; ``source: "core"`` further branches on the ``reviewer`` field
+# (bug_hunter_a → BHA, bug_hunter_b → BHB, unified_auditor → Auditor,
+# premise_reviewer → Premise).
+SPAWN_SPEC_SOURCES: frozenset[str] = frozenset({
+    "core",
+    "critic",
+    "fast_path",
+})
+
+# Per-agent ``bucket`` field. Mirrors the source bucket in
+# coverage_plan.json so presenters can group spawned agents by the rule
+# tier that selected them.
+SPAWN_SPEC_BUCKETS: frozenset[str] = frozenset({
+    "required",
+    "best_effort",
+    "fast_path",
+})
+
+# Reasons surfaced in ``skipped[]`` for reviewers the spec deliberately
+# did not spawn. Operators read these to understand why a reviewer is
+# absent from the fleet.
+SPAWN_SPEC_SKIP_REASONS: frozenset[str] = frozenset({
+    "deferred_pln723",         # test_quality slot reserved for PLN-723
+    "no_partitions",           # all files cached or docs-only → no BHA
+    "unknown_reviewer",        # closed-vocab violation: not core, not critic
+    "missing_reviewer_name",   # plan entry with blank/missing reviewer
+    "duplicate_agent_id",      # same agent_id produced twice (defense-in-depth)
+})
+
+
 # Canonical change_class values. Extensible — adding one requires
 # updating ``CHANGE_CLASS_PATH_PATTERNS`` in code_review_helpers.py and
 # the documenting comment here.
