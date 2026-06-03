@@ -17825,3 +17825,186 @@ class TestCRSPhaseACLIConfigLoader:
         from code_review_helpers import _resolve_cli_constant
         with pytest.raises(KeyError, match=r"\$\$NOT_A_REAL_CONSTANT"):
             _resolve_cli_constant("NOT_A_REAL_CONSTANT")
+
+
+class TestCRSPhaseBSharedHelpers:
+    """Phase B: shared scaffolding for singleton-agent prepare/consolidate.
+
+    Locks the contracts of the five helpers that de-duplicate the boilerplate
+    across extract-signals + coverage-critic. Each helper is small but used by
+    multiple callers; a regression in any one would silently corrupt manifest
+    handling or cache writes for both pairs.
+    """
+
+    def test_read_manifest_dict_returns_empty_on_missing_file(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _read_manifest_dict
+        assert _read_manifest_dict(tmp_path / "missing.json") == {}
+
+    def test_read_manifest_dict_returns_empty_on_malformed_json(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _read_manifest_dict
+        path = tmp_path / "bad.json"
+        path.write_text("{not valid json")
+        assert _read_manifest_dict(path) == {}
+
+    def test_read_manifest_dict_returns_empty_on_non_dict_root(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _read_manifest_dict
+        path = tmp_path / "list.json"
+        path.write_text("[1, 2, 3]")
+        assert _read_manifest_dict(path) == {}
+
+    def test_read_manifest_dict_returns_loaded_dict(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _read_manifest_dict
+        path = tmp_path / "ok.json"
+        path.write_text('{"status": "cache_hit", "cache_key": "abc"}')
+        assert _read_manifest_dict(path) == {
+            "status": "cache_hit", "cache_key": "abc",
+        }
+
+    def test_emit_summary_returns_zero_and_writes_indented_json(
+        self, capsys: Any,
+    ) -> None:
+        from code_review_helpers import _emit_summary
+        rc = _emit_summary({"status": "ok", "count": 3})
+        assert rc == 0
+        captured = capsys.readouterr().out
+        # Indented JSON + trailing newline
+        assert captured.startswith("{\n")
+        assert captured.endswith("}\n")
+        assert json.loads(captured) == {"status": "ok", "count": 3}
+
+    def test_read_agent_output_success(self, tmp_path: Path) -> None:
+        from code_review_helpers import _read_agent_output_or_error
+        path = tmp_path / "agent.json"
+        path.write_text('{"signals": [{"name": "x"}]}')
+        value, err = _read_agent_output_or_error(path)
+        assert err is None
+        assert value == {"signals": [{"name": "x"}]}
+
+    def test_read_agent_output_error_message_on_missing_file(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _read_agent_output_or_error
+        value, err = _read_agent_output_or_error(tmp_path / "missing.json")
+        assert value is None
+        assert err is not None
+        assert "agent output unreadable" in err
+
+    def test_read_agent_output_error_message_on_malformed_json(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _read_agent_output_or_error
+        path = tmp_path / "bad.json"
+        path.write_text("not json")
+        value, err = _read_agent_output_or_error(path)
+        assert value is None
+        assert err is not None
+        assert "agent output unreadable" in err
+
+    def test_write_and_emit_manifest_writes_file_and_stdout(
+        self, tmp_path: Path, capsys: Any,
+    ) -> None:
+        from code_review_helpers import _write_and_emit_manifest
+        manifest = {"status": "needs_agent", "model": "haiku"}
+        path = tmp_path / "manifest.json"
+        rc = _write_and_emit_manifest(path, manifest)
+        assert rc == 0
+        assert json.loads(path.read_text()) == manifest
+        assert json.loads(capsys.readouterr().out) == manifest
+
+    def test_read_simple_cache_entry_returns_none_when_cache_dir_is_none(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _read_simple_cache_entry
+        # Path argument doesn't matter when cache_dir is None — should short-circuit
+        assert _read_simple_cache_entry(
+            None, tmp_path / "anything.json", "signals", 7,
+        ) is None
+
+    def test_read_simple_cache_entry_returns_none_when_path_missing(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _read_simple_cache_entry
+        assert _read_simple_cache_entry(
+            tmp_path, tmp_path / "missing.json", "signals", 7,
+        ) is None
+
+    def test_read_simple_cache_entry_returns_none_and_sweeps_on_missing_written_at(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _read_simple_cache_entry
+        path = tmp_path / "stale.json"
+        path.write_text('{"data": "old"}')  # no written_at field
+        result = _read_simple_cache_entry(tmp_path, path, "signals", 7)
+        assert result is None
+        # Stale entry was swept so a future miss reads cleanly.
+        assert not path.exists()
+
+    def test_read_simple_cache_entry_returns_none_and_sweeps_on_expired_ttl(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _read_simple_cache_entry
+        path = tmp_path / "expired.json"
+        # written 100 days ago, TTL 7 → expired
+        old_ts = (
+            datetime.now(timezone.utc) - timedelta(days=100)
+        ).isoformat()
+        path.write_text(json.dumps({"data": "x", "written_at": old_ts}))
+        result = _read_simple_cache_entry(tmp_path, path, "signals", 7)
+        assert result is None
+        assert not path.exists()
+
+    def test_read_simple_cache_entry_returns_fresh_entry(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _read_simple_cache_entry
+        path = tmp_path / "fresh.json"
+        fresh_ts = datetime.now(timezone.utc).isoformat()
+        payload = {"data": "x", "written_at": fresh_ts}
+        path.write_text(json.dumps(payload))
+        result = _read_simple_cache_entry(tmp_path, path, "signals", 7)
+        assert result == payload
+
+    def test_write_simple_cache_entry_noop_when_cache_dir_is_none(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _write_simple_cache_entry
+        # cache_dir=None → silent return, no exception even with a bad path
+        _write_simple_cache_entry(
+            None, tmp_path / "wherever.json", {"data": "x"}, "test",
+        )
+        assert not (tmp_path / "wherever.json").exists()
+
+    def test_write_simple_cache_entry_persists_payload_with_timestamp(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _write_simple_cache_entry
+        path = tmp_path / "cache" / "entry.json"
+        _write_simple_cache_entry(tmp_path, path, {"data": "x"}, "test")
+        assert path.exists()
+        loaded = json.loads(path.read_text())
+        assert loaded["data"] == "x"
+        assert "written_at" in loaded
+        # Parseable ISO timestamp
+        datetime.fromisoformat(loaded["written_at"])
+
+    def test_write_simple_cache_entry_fails_open_on_oserror(
+        self, tmp_path: Path, capsys: Any,
+    ) -> None:
+        """Cache write failure must log a warning and return — never raise."""
+        from code_review_helpers import _write_simple_cache_entry
+        # Pre-create the parent as a FILE so mkdir(parents=True) raises
+        blocker = tmp_path / "blocker"
+        blocker.write_text("not a dir")
+        path = blocker / "child" / "entry.json"
+        # Should not raise
+        _write_simple_cache_entry(tmp_path, path, {"data": "x"}, "test-label")
+        captured = capsys.readouterr().err
+        assert "Warning: could not write test-label cache entry" in captured
