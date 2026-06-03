@@ -200,6 +200,16 @@ SPAWN_SPEC_SKIP_REASONS: frozenset[str] = frozenset({
     "unknown_reviewer",        # closed-vocab violation: not core, not critic
     "missing_reviewer_name",   # plan entry with blank/missing reviewer
     "duplicate_agent_id",      # same agent_id produced twice (defense-in-depth)
+    "budget_capped",           # BHA partitions exceeded arbitrate-budget cap
+    "gated_by_verify",         # BLOCKING sanitization dropped non-core entries
+})
+
+# ``fallback_reason`` values when ``arbitrate_status == "fallback"``.
+# Each names a specific upstream-artifact failure the spawner can't
+# recover from observationally.
+SPAWN_SPEC_FALLBACK_REASONS: frozenset[str] = frozenset({
+    "coverage_plan_missing_or_malformed",
+    "partitions_missing_or_malformed",
 })
 
 

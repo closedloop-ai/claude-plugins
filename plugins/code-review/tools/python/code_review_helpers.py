@@ -9838,10 +9838,19 @@ def _build_run_plan_stages(
             ],
             "stdout": None,
             "expected_outputs": [f"{cr_dir}/spawn_spec.json"],
-            "depends_on": [
-                "stage_16_arbitrate_budget",
-                "stage_17_partition",
-            ],
+            # PLN-725 Phase 8 (v2.22.3): stage_17_partition is NOT a
+            # hard dep. Gate B's fast-path branch skips stage_17
+            # entirely and drives a single fast-path reviewer in
+            # stage_20 — listing stage_17 as a hard dep would block
+            # stage_19b (and therefore stage_20's spec-driven dispatch)
+            # exactly when the fast descriptor is needed. The cmd
+            # handles missing partitions.json internally: fast_path:
+            # true emits the fast descriptor without reading
+            # partitions; non-fast-path with missing/malformed
+            # partitions.json emits a fallback sentinel
+            # ("partitions_missing_or_malformed") so the orchestrator
+            # walks the static reviewer table.
+            "depends_on": ["stage_16_arbitrate_budget"],
             "on_failure": "continue",
             "enabled": True,
         },
@@ -9868,6 +9877,33 @@ def _build_run_plan_stages(
             "enabled": True,
         },
         {
+            # PLN-725 Phase 8 (v2.22.3): runtime symmetric pair to
+            # stage_19b. Reads spawn_spec.json + globs agent_*.json
+            # and appends coverage-gap findings for every required
+            # agent_id from the spec that has no corresponding output
+            # file on disk. Closes the runtime side of the spawn-spec
+            # contract: derive-spawn-spec catches required reviewers
+            # the spec couldn't describe; verify-spawn catches
+            # required agents that crashed at runtime. Together the
+            # two stages make the "required reviewer missing" failure
+            # mode observable in the run summary instead of silently
+            # dropping coverage. on_failure: continue so a
+            # verification bug never blocks review; the worst case
+            # is missing telemetry, not a halted pipeline.
+            "id": "stage_20b_verify_spawn",
+            "kind": "helper",
+            "subcommand": "verify-spawn",
+            "args": ["--cr-dir", cr_dir],
+            "stdout": None,
+            "expected_outputs": [f"{cr_dir}/spawn_verification.json"],
+            "depends_on": [
+                "stage_19b_derive_spawn_spec",
+                "stage_20_spawn_reviewers",
+            ],
+            "on_failure": "continue",
+            "enabled": True,
+        },
+        {
             "id": "stage_21_collect_findings",
             "kind": "helper",
             "subcommand": "collect-findings",
@@ -9877,7 +9913,14 @@ def _build_run_plan_stages(
             ],
             "stdout": None,
             "expected_outputs": [f"{cr_dir}/findings.json"],
-            "depends_on": ["stage_20_spawn_reviewers"],
+            # PLN-725 Phase 8 (v2.22.3): stage_20b_verify_spawn must
+            # run before stage_21 so its missing-required-agent
+            # coverage gaps land in coverage_gaps.json in time for
+            # finalize-result to pick them up.
+            "depends_on": [
+                "stage_20_spawn_reviewers",
+                "stage_20b_verify_spawn",
+            ],
             "on_failure": "abort",
             "enabled": True,
         },
@@ -10565,6 +10608,8 @@ def _derive_spawn_agents_from_plan(
     coverage_plan: dict[str, Any],
     partitions: list[dict[str, Any]],
     models: dict[str, Any],
+    *,
+    bha_partitions_cap: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Walk the post-arbitrate plan into a flat (agents, skipped) pair.
 
@@ -10573,6 +10618,16 @@ def _derive_spawn_agents_from_plan(
     flagged as critics (``source: "critic"``) become ``domain_<N>``;
     anything else lands in ``skipped[]`` with reason ``unknown_reviewer``
     so the orchestrator surfaces the gap.
+
+    ``bha_partitions_cap`` honors the post-arbitrate budget. When the
+    partitioner produced N partitions but arbitrate-budget reserved
+    only K < N slots for BHA (the route-level ``max_bha_agents`` cap
+    and the post-arbitrate cap are computed at different times and
+    can diverge), the first K partitions are spawned and the rest
+    land in ``skipped[]`` with ``reason: "budget_capped"``. A cap of 0
+    suppresses all BHA spawns (docs-only post-arbitrate). ``None``
+    means "no cap" — only used in legacy callers that pre-date the
+    cap parameter.
     """
     agents: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -10609,7 +10664,35 @@ def _derive_spawn_agents_from_plan(
                         "reason": "no_partitions",
                     })
                     return
-                for part in partitions:
+                # Budget cap: arbitrate-budget computes a final
+                # ``bha_partitions`` count that may be < the number of
+                # partitions on disk (the route-level
+                # ``max_bha_agents`` and the post-arbitrate cap are
+                # computed at different times and can diverge). When
+                # the cap is 0, no BHA agents spawn at all
+                # (docs-only post-arbitrate). When the cap is positive
+                # but < len(partitions), the first cap partitions
+                # spawn (partitions are bin-packed by the partitioner
+                # in roughly diff-LOC order, so prefix-take is the
+                # safest cap policy without re-running the bin-pack).
+                effective_partitions = partitions
+                dropped_for_cap: list[dict[str, Any]] = []
+                if bha_partitions_cap is not None:
+                    cap = max(0, int(bha_partitions_cap))
+                    if cap == 0:
+                        # Docs-only post-arbitrate; skip BHA entirely.
+                        skipped.append({
+                            "reviewer": reviewer,
+                            "bucket": bucket,
+                            "reason": "budget_capped",
+                            "budget_cap": 0,
+                            "partition_count": len(partitions),
+                        })
+                        return
+                    if cap < len(partitions):
+                        effective_partitions = partitions[:cap]
+                        dropped_for_cap = list(partitions[cap:])
+                for part in effective_partitions:
                     part_id = int(part.get("id", 0))
                     is_test_only = bool(part.get("is_test_only", False))
                     agent_id = f"{role_cfg['agent_id_prefix']}{part_id}"
@@ -10639,6 +10722,19 @@ def _derive_spawn_agents_from_plan(
                         ),
                         "source": source or "core",
                         "bucket": bucket,
+                    })
+                # Record partitions dropped by the budget cap so
+                # operators see that BHA coverage is incomplete vs the
+                # partitioner's intended fleet size.
+                for part in dropped_for_cap:
+                    part_id = int(part.get("id", 0))
+                    skipped.append({
+                        "reviewer": reviewer,
+                        "bucket": bucket,
+                        "reason": "budget_capped",
+                        "partition_id": part_id,
+                        "budget_cap": int(bha_partitions_cap or 0),
+                        "partition_count": len(partitions),
                     })
                 return
             # Non-partitioned core roles: one agent per entry. The
@@ -10840,22 +10936,110 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
         }
         return _write_spawn_spec(spec, output_path)
 
-    partitions_blob = _read_optional_json(Path(args.partitions), None)
+    # Distinguish missing partitions.json (upstream stage_17 failure)
+    # from valid empty partitions (all files cached). A missing file
+    # means the standard flow can't know if there's nothing to review
+    # or if the partitioner crashed; silently skipping BHA in that
+    # case would suppress coverage. Treat as a fallback sentinel so
+    # the orchestrator walks the static reviewer table where the
+    # existing "Skip BHA when all files cached" logic can re-derive
+    # the answer from primary inputs.
+    partitions_path = Path(args.partitions)
+    partitions_blob = _read_optional_json(partitions_path, None)
+    if partitions_blob is None:
+        spec = _spawn_spec_fallback(
+            "partitions_missing_or_malformed", cr_dir, now_iso,
+        )
+        return _write_spawn_spec(spec, output_path)
     if isinstance(partitions_blob, dict):
         partitions = partitions_blob.get("partitions", []) or []
     elif isinstance(partitions_blob, list):
         # Legacy/test shape: bare partitions list.
         partitions = partitions_blob
     else:
-        # Missing partitions is recoverable for non-fast-path runs only
-        # when all files are cached (BHA skipped). We emit the spec with
-        # the BHA role recorded in skipped[] via _derive_spawn_agents_from_plan.
-        partitions = []
+        # Present-but-wrong-shape (e.g. string, number) — same fallback.
+        spec = _spawn_spec_fallback(
+            "partitions_missing_or_malformed", cr_dir, now_iso,
+        )
+        return _write_spawn_spec(spec, output_path)
     partitions = [p for p in partitions if isinstance(p, dict)]
 
+    # PLN-725 Phase 8 — BLOCKING sanitization. The Phase 7 BLOCKING
+    # gate let the input plan flow through to arbitrate-budget; before
+    # v2.22.3, derive-spawn-spec then dispatched that unverified plan
+    # as-is. But the verifier's BLOCKING reasons include
+    # closed-vocabulary (LLM proposed a critic not in roster), shape
+    # (malformed entries), evidence (missing required evidence), and
+    # cap (>5 best_effort additions) — actioning the plan can
+    # silently spawn agents the verifier explicitly flagged as
+    # unsafe. The canonical BLOCKING finding already lives in
+    # agent_coverage-verify-blocking.json, so the run still surfaces
+    # the failure to operators; we sanitize the plan by dropping
+    # everything that isn't ``source: "core"`` so only the canonical
+    # static fleet runs. Phase 7's "review still runs against the
+    # plan" intent is preserved (core BHA/BHB/Auditor/Premise still
+    # spawn), and the verifier's gap remains the canonical signal of
+    # the rejection.
+    plan_for_spawn = coverage_plan
+    sanitized_extras: list[dict[str, Any]] = []
+    if gated_by_verify:
+        plan_for_spawn = dict(coverage_plan)
+        plan_for_spawn["required"] = [
+            e for e in (coverage_plan.get("required") or [])
+            if isinstance(e, dict) and e.get("source") == "core"
+        ]
+        plan_for_spawn["best_effort"] = [
+            e for e in (coverage_plan.get("best_effort") or [])
+            if isinstance(e, dict) and e.get("source") == "core"
+        ]
+        for bucket_name, original in (
+            ("required", coverage_plan.get("required") or []),
+            ("best_effort", coverage_plan.get("best_effort") or []),
+        ):
+            for entry in original:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("source") != "core":
+                    sanitized_extras.append({
+                        "reviewer": str(entry.get("reviewer", "") or ""),
+                        "bucket": bucket_name,
+                        "reason": "gated_by_verify",
+                        "source": str(entry.get("source", "") or ""),
+                    })
+
+    # Budget cap on BHA (#fix-1). arbitrate-budget computes a final
+    # ``bha_partitions`` that honors the LOC cap + total reviewer cap;
+    # the partitioner runs separately and may emit more partitions.
+    # Pass the cap into the resolver so the spawn-spec never exceeds
+    # the post-arbitrate fleet size.
+    bha_cap_raw = budget.get("bha_partitions")
+    bha_cap: int | None = int(bha_cap_raw) if isinstance(bha_cap_raw, int) else None
+
     agents, skipped = _derive_spawn_agents_from_plan(
-        coverage_plan, partitions, models,
+        plan_for_spawn, partitions, models,
+        bha_partitions_cap=bha_cap,
     )
+    skipped.extend(sanitized_extras)
+
+    # Required coverage-gap findings (#fix-2). When a required[]
+    # reviewer was skipped for a non-benign reason, the static-table
+    # path used to fail-closed (orchestrator-level coverage-gap on
+    # missing required reviewer). The spawn-spec path now emits the
+    # same canonical Coverage finding so finalize-result picks it up
+    # via coverage_gaps.json. Benign reasons (test_quality deferral,
+    # all-cached/docs-only no_partitions, gated_by_verify suppression)
+    # are explicitly excluded — those are intentional omissions, not
+    # coverage gaps.
+    _SPAWN_BENIGN_REQUIRED_SKIPS = {
+        "deferred_pln723",      # PLN-723 placeholder slot
+        "no_partitions",        # all-cached / docs-only
+        "gated_by_verify",      # BLOCKING sanitization
+    }
+    spawn_gap_findings = _build_spawn_required_gap_findings(
+        skipped, _SPAWN_BENIGN_REQUIRED_SKIPS, emitted_at=now_iso,
+    )
+    if spawn_gap_findings:
+        _append_to_coverage_gaps(cr_dir / "coverage_gaps.json", spawn_gap_findings)
 
     bha_count = sum(1 for a in agents if a["reviewer"] == "bug_hunter_a")
     # Domain critics span both source values (``rule`` for
@@ -10881,10 +11065,84 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
             "domain_critic_count": critic_count,
             "from_required": from_required,
             "from_best_effort": from_best_effort,
+            "required_coverage_gaps": len(spawn_gap_findings),
         },
         "generated_at": now_iso,
     }
     return _write_spawn_spec(spec, output_path)
+
+
+def _build_spawn_required_gap_findings(
+    skipped: list[dict[str, Any]],
+    benign_reasons: set[str],
+    *,
+    emitted_at: str,
+) -> list[dict[str, Any]]:
+    """Build coverage-gap findings for non-benign required-bucket skips.
+
+    A required reviewer that lands in ``spawn_spec.skipped[]`` for a
+    non-benign reason (anything outside ``benign_reasons``) is a real
+    coverage gap — the orchestrator's spec-driven dispatch will omit
+    that reviewer, and without an explicit finding the omission goes
+    silent. The finalize-result step glob-reads ``coverage_gaps.json``
+    findings into the canonical coverage gaps list, where they
+    contribute to the NEEDS_ATTENTION/CHANGES_REQUESTED verdict.
+
+    Benign reasons (intentional omissions, not coverage gaps): the
+    PLN-723 ``deferred_pln723`` placeholder, ``no_partitions``
+    (all-cached / docs-only — BHA legitimately has nothing to do),
+    and ``gated_by_verify`` (BLOCKING sanitization already surfaces
+    via agent_coverage-verify-blocking.json).
+    """
+    findings: list[dict[str, Any]] = []
+    idx = 0
+    for entry in skipped:
+        if entry.get("bucket") != "required":
+            continue
+        reason = str(entry.get("reason", "") or "")
+        if reason in benign_reasons:
+            continue
+        # Map spawn-spec reasons to the arbitrate-budget reason
+        # vocabulary expected by _make_coverage_gap_finding's marker
+        # synthesis (it special-cases "budget_exceeded" → marker
+        # "budget-exceeded"; other reasons become "coverage:<name>").
+        findings.append(
+            _make_coverage_gap_finding(
+                {"reviewer": entry.get("reviewer", "unknown")},
+                reason=f"spawn_{reason}",
+                index=idx,
+                emitted_at=emitted_at,
+            ),
+        )
+        idx += 1
+    return findings
+
+
+def _append_to_coverage_gaps(
+    gaps_path: Path, new_findings: list[dict[str, Any]],
+) -> None:
+    """Append findings to ``coverage_gaps.json`` preserving existing entries.
+
+    ``arbitrate-budget`` is the original producer of this file
+    (writing the ``budget_exceeded`` findings); ``derive-spawn-spec``
+    is the second producer (writing the ``spawn_*`` reason findings).
+    Both run before ``stage_21_collect_findings`` which globs
+    ``agent_*.json`` and ``cmd_finalize_result`` which reads
+    ``coverage_gaps.json`` directly. The append-not-overwrite
+    contract keeps both producers' findings visible in the final
+    envelope.
+    """
+    existing = _read_optional_json(gaps_path, None)
+    if isinstance(existing, dict):
+        merged = list(existing.get("findings", []) or [])
+    else:
+        merged = []
+    merged.extend(new_findings)
+    try:
+        with open(gaps_path, "w") as f:
+            json.dump({"findings": merged}, f, indent=2)
+    except OSError as exc:
+        print(f"Warning: could not append spawn coverage gaps: {exc}", file=sys.stderr)
 
 
 def _write_spawn_spec(spec: dict[str, Any], output_path: Path) -> int:
@@ -10908,6 +11166,164 @@ def _write_spawn_spec(spec: dict[str, Any], output_path: Path) -> int:
         },
         sys.stdout,
         indent=2,
+    )
+    sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: verify-spawn (PLN-725 Phase 8 / stage_20b)
+# ---------------------------------------------------------------------------
+#
+# Closes the runtime side of the spawn-spec contract. ``derive-spawn-spec``
+# enumerates the intended fleet; ``stage_20_spawn_reviewers`` dispatches
+# one Task per agent descriptor; ``verify-spawn`` (this stage) checks
+# that every required agent_id from the spec produced an output file on
+# disk. Missing required agents become coverage-gap findings appended to
+# ``coverage_gaps.json`` so the canonical envelope's verdict computation
+# sees them.
+#
+# This is the symmetric pair to the derive-time required-skip findings:
+# derive-spawn-spec catches required reviewers the spec couldn't even
+# describe; verify-spawn catches required agents that crashed at runtime.
+# Together they make the "required reviewer missing" failure mode
+# observable in the run summary instead of silently dropping coverage.
+
+
+def cmd_verify_spawn(args: argparse.Namespace) -> int:
+    """Compare ``spawn_spec.agents[]`` against on-disk ``agent_*.json``.
+
+    PLN-725 Phase 8 / stage_20b_verify_spawn. For every agent
+    descriptor with ``bucket == "required"`` that has no corresponding
+    ``agent_<agent_id>.json`` file on disk, emit a coverage-gap
+    finding to ``coverage_gaps.json``. Non-required (best_effort)
+    missing agents emit no finding — those are budget-driven
+    omissions, not coverage gaps.
+
+    Reads:
+      - ``<cr_dir>/spawn_spec.json`` (derived by stage_19b)
+      - All ``<cr_dir>/agent_*.json`` files (written by stage_20)
+
+    Writes:
+      - ``<cr_dir>/spawn_verification.json`` (telemetry only)
+      - Appends coverage-gap findings to ``<cr_dir>/coverage_gaps.json``
+
+    Fallback behavior: when spawn_spec.json is missing, marks
+    ``arbitrate_status: "fallback"``, or has no agents (e.g.
+    fast-path collapse), the stage no-ops and returns 0 — the
+    static-table path doesn't have a spec to verify against.
+
+    ``on_failure: continue`` at the walker — a verification failure
+    must never block review.
+    """
+    cr_dir = Path(args.cr_dir)
+    spec_path = cr_dir / "spawn_spec.json"
+    spec = _read_optional_json(spec_path, None)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    def _emit_no_op(reason: str) -> int:
+        verification = {
+            "verified": False,
+            "reason": reason,
+            "present_agents": [],
+            "missing_agents": [],
+            "missing_required": [],
+            "generated_at": now_iso,
+        }
+        try:
+            (cr_dir / "spawn_verification.json").write_text(
+                json.dumps(verification, indent=2),
+            )
+        except OSError as exc:
+            print(f"Warning: could not write spawn_verification: {exc}", file=sys.stderr)
+        json.dump(
+            {"verified": False, "reason": reason},
+            sys.stdout, indent=2,
+        )
+        sys.stdout.write("\n")
+        return 0
+
+    if not isinstance(spec, dict):
+        return _emit_no_op("spec_missing")
+    if str(spec.get("arbitrate_status", "")) == "fallback":
+        return _emit_no_op("spec_fallback")
+    agents = spec.get("agents") or []
+    if not isinstance(agents, list) or not agents:
+        return _emit_no_op("spec_empty")
+
+    # Glob the on-disk agent outputs. The orchestrator writes to
+    # ``agent_<agent_id>.json`` per the spawn-spec contract.
+    present_ids: set[str] = set()
+    for path in cr_dir.glob("agent_*.json"):
+        name = path.stem  # e.g. "agent_bha_p0"
+        if name.startswith("agent_"):
+            present_ids.add(name[len("agent_"):])
+
+    missing_agents: list[dict[str, Any]] = []
+    missing_required: list[dict[str, Any]] = []
+    for desc in agents:
+        if not isinstance(desc, dict):
+            continue
+        agent_id = str(desc.get("agent_id", "") or "")
+        if not agent_id or agent_id in present_ids:
+            continue
+        record = {
+            "agent_id": agent_id,
+            "reviewer": str(desc.get("reviewer", "") or ""),
+            "bucket": str(desc.get("bucket", "") or ""),
+            "source": str(desc.get("source", "") or ""),
+        }
+        missing_agents.append(record)
+        if desc.get("bucket") == "required":
+            missing_required.append(record)
+
+    # Emit one coverage-gap finding per missing REQUIRED agent. Best-
+    # effort omissions are budget-driven (the spec already records
+    # ``budget_capped``/etc. in skipped[]) and don't warrant a
+    # blocking coverage gap.
+    findings: list[dict[str, Any]] = []
+    for idx, rec in enumerate(missing_required):
+        findings.append(
+            _make_coverage_gap_finding(
+                {"reviewer": rec["reviewer"] or rec["agent_id"]},
+                reason="spawn_missing_required_agent",
+                index=idx,
+                emitted_at=now_iso,
+            ),
+        )
+    if findings:
+        _append_to_coverage_gaps(
+            cr_dir / "coverage_gaps.json", findings,
+        )
+
+    verification = {
+        "verified": True,
+        "present_count": len(present_ids),
+        "intended_count": len([a for a in agents if isinstance(a, dict)]),
+        "present_agents": sorted(present_ids),
+        "missing_agents": missing_agents,
+        "missing_required": missing_required,
+        "missing_required_gaps": len(findings),
+        "generated_at": now_iso,
+    }
+    try:
+        (cr_dir / "spawn_verification.json").write_text(
+            json.dumps(verification, indent=2),
+        )
+    except OSError as exc:
+        print(f"Error writing spawn_verification: {exc}", file=sys.stderr)
+        return 1
+    json.dump(
+        {
+            "verified": True,
+            "intended_count": verification["intended_count"],
+            "present_count": verification["present_count"],
+            "missing_required_count": len(missing_required),
+            "missing_best_effort_count": (
+                len(missing_agents) - len(missing_required)
+            ),
+        },
+        sys.stdout, indent=2,
     )
     sys.stdout.write("\n")
     return 0
@@ -12160,6 +12576,17 @@ def _register_subparsers(subparsers: argparse._SubParsersAction) -> None:  # typ
         help="Output path (default: <cr-dir>/spawn_spec.json)",
     )
     p_dss.set_defaults(func=cmd_derive_spawn_spec)
+
+    # verify-spawn (PLN-725 Phase 8 / stage_20b)
+    p_vs = subparsers.add_parser(
+        "verify-spawn",
+        help=(
+            "Compare spawn_spec.agents[] against on-disk agent_*.json; "
+            "emit coverage-gap findings for missing required agents"
+        ),
+    )
+    p_vs.add_argument("--cr-dir", required=True, help="Session CR_DIR path")
+    p_vs.set_defaults(func=cmd_verify_spawn)
 
     # prepare-run (PLN-719 Phase 4)
     p_pr = subparsers.add_parser(
