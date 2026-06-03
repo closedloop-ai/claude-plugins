@@ -19,9 +19,10 @@ pytest plugins/                          # all tests
 pytest plugins/code/tools/python/        # single plugin's tests
 pytest plugins/code/tools/python/test_count_tokens.py -k test_name  # single test
 
-# Linting & type checking
-ruff check .
-pyright
+# Linting & type checking (match CI exactly — local-pyright vs uv-run-pyright
+# divergence can mask reportOptionalMemberAccess and similar diagnostics)
+uv run ruff check .
+uv run pyright
 ```
 
 ## Architecture
@@ -90,6 +91,7 @@ All commits MUST follow the conventions in `CONTRIBUTING.md`. Specifically:
 ### Code Quality
 - **[mistake]**: When modifying behavior, audit adjacent comments and docstrings for accuracy — remove or update references to non-existent files, incomplete field lists, or scope descriptions narrower than actual behavior. (context: comments|docstrings|accuracy)
 - **[mistake]**: Before adding helper logic, grep for adjacent helpers with the same responsibility and delegate instead of duplicating membership checks or fixture factories. (context: duplication|helpers|tests|shell)
+- **[mistake]**: When narrowing an `Any`-typed value with `isinstance`, bind it to a local first; calling the source twice in one expression (e.g. `d.get(k) if isinstance(d.get(k), dict) else {}`) makes pyright treat the two calls as separate evaluations so the narrowing doesn't carry to downstream `.get()` accesses — `reportOptionalMemberAccess` fires under stricter CI pyright settings even when local pyright misses it. (context: pyright|narrowing|ci-divergence)
 
 ### Orchestration & State
 - **[mistake]**: When changing run-loop or self-learning resume/rate-limit logic, preserve persisted state contracts: iteration rows, session IDs, success counts, and terminal statuses. (context: run-loop|resume|state|rate-limit)
