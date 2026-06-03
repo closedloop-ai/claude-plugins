@@ -167,11 +167,17 @@ SPAWN_SPEC_ARBITRATE_STATUSES: frozenset[str] = frozenset({
 })
 
 # Per-agent ``source`` field. Selects the prompt-suffix dispatch in
-# start.md; ``source: "core"`` further branches on the ``reviewer`` field
-# (bug_hunter_a → BHA, bug_hunter_b → BHB, unified_auditor → Auditor,
-# premise_reviewer → Premise).
+# start.md; ``source: "core"`` further branches on the ``reviewer``
+# field (bug_hunter_a → BHA, bug_hunter_b → BHB, unified_auditor →
+# Auditor, premise_reviewer → Premise). Non-core domain reviewers
+# carry their plan-entry source through: ``"rule"`` means the entry
+# came from a deterministically matched critic-gates.json rule
+# (including migrated legacy moduleCritics[]); ``"critic"`` means the
+# entry was LLM-proposed by coverage_critic. Both map to the Domain
+# Critic suffix at dispatch but presenters can distinguish them.
 SPAWN_SPEC_SOURCES: frozenset[str] = frozenset({
     "core",
+    "rule",
     "critic",
     "fast_path",
 })

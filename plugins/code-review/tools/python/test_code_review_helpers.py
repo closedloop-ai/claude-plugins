@@ -15606,19 +15606,89 @@ class TestPLN725Phase8DeriveSpawnSpec:
         assert spec["agents"] == []
         assert spec["stats"]["agent_count"] == 0
 
-    def test_unknown_required_reviewer_lands_in_skipped(
+    def test_rule_resolved_domain_reviewer_spawns_as_domain_critic(
         self, tmp_path: Path,
     ) -> None:
-        """A required entry whose reviewer name isn't a core role and
-        isn't tagged as a critic is a closed-vocabulary violation that
-        should have been caught at stage_15c. Defense in depth: surface
-        the gap in skipped[] rather than silently fabricating an
-        AGENT_ID for it.
+        """A required entry whose reviewer name isn't a core role but
+        whose source is ``"rule"`` came from a deterministically
+        matched critic-gates.json ``coverage[]`` rule (or a migrated
+        legacy ``moduleCritics[]`` entry — ``migrate_legacy_module_critics``
+        turns those into source ``"rule"`` rules). Pre-v2.22.2 these
+        landed in ``skipped[]`` with ``reason: "unknown_reviewer"``
+        because the dispatch only rescued ``source == "critic"`` — a
+        silent regression for any repo with a canonical coverage rule
+        naming a non-core reviewer. They must now spawn as
+        ``domain_<N>`` with the entry's source preserved.
         """
         plan = {
             "required": [
                 {"reviewer": "bug_hunter_a", "source": "core"},
-                {"reviewer": "unrecognized_role", "source": "rule"},
+                # The canonical coverage[] rule shape:
+                # {"reviewer": "ts-expert", "required": true, "triggers": [...]}
+                # resolves via _resolve_coverage to a required[] entry
+                # with source: "rule".
+                {
+                    "reviewer": "ts-expert",
+                    "source": "rule",
+                    "trigger": {"type": "extension", "value": ".ts"},
+                },
+            ],
+            "best_effort": [
+                # Legacy moduleCritics[] also migrates to source "rule"
+                # in best_effort[] after rule-resolution.
+                {
+                    "reviewer": "legacy-domain-critic",
+                    "source": "rule",
+                    "priority": 2,
+                },
+            ],
+            "budget": {"total_cap": 20, "bha_partitions": 1},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._two_partitions(), self._route(),
+        )
+        # Both rule-resolved reviewers spawn as sequential domain_<N>
+        # agents; neither lands in skipped[].
+        rule_agents = [a for a in spec["agents"] if a["source"] == "rule"]
+        assert len(rule_agents) == 2
+        assert {a["reviewer"] for a in rule_agents} == {
+            "ts-expert", "legacy-domain-critic",
+        }
+        assert {a["agent_id"] for a in rule_agents} == {"domain_0", "domain_1"}
+        assert all(a["patches_file"] == "patches_all.txt" for a in rule_agents)
+        assert all(a["model"] == "sonnet" for a in rule_agents)
+        # Source is preserved (not flattened to "critic") so presenters
+        # can distinguish operator-configured rules from LLM proposals.
+        assert all(a["source"] == "rule" for a in rule_agents)
+        # Neither rule-resolved entry should appear in skipped[].
+        assert not any(
+            s["reviewer"] in {"ts-expert", "legacy-domain-critic"}
+            for s in spec["skipped"]
+        )
+        # domain_critic_count includes both rule-resolved and
+        # critic-resolved agents (they share the dispatch path).
+        assert spec["stats"]["domain_critic_count"] == 2
+        # Known cores still spawn alongside.
+        assert any(a["reviewer"] == "bug_hunter_a" for a in spec["agents"])
+
+    def test_unknown_source_lands_in_skipped(
+        self, tmp_path: Path,
+    ) -> None:
+        """Genuinely unknown source (not core/rule/critic/fast_path) is
+        the only path that should land in ``skipped[]`` with
+        ``reason: "unknown_reviewer"``. Defense in depth for a
+        malformed plan or a future source value the spawner hasn't
+        been taught yet — the pre-v2.22.2 test fixture used
+        ``source: "rule"`` which incorrectly pinned the regression.
+        """
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {
+                    "reviewer": "mystery_reviewer",
+                    # Empty source falls through every known branch.
+                    "source": "",
+                },
             ],
             "best_effort": [],
             "budget": {"total_cap": 20, "bha_partitions": 1},
@@ -15626,11 +15696,10 @@ class TestPLN725Phase8DeriveSpawnSpec:
         _, spec = _run_derive_spawn_spec(
             tmp_path, plan, self._two_partitions(), self._route(),
         )
-        unknowns = [s for s in spec["skipped"] if s["reviewer"] == "unrecognized_role"]
+        unknowns = [s for s in spec["skipped"] if s["reviewer"] == "mystery_reviewer"]
         assert len(unknowns) == 1
         assert unknowns[0]["reason"] == "unknown_reviewer"
         assert unknowns[0]["bucket"] == "required"
-        # Known cores still spawn.
         assert any(a["reviewer"] == "bug_hunter_a" for a in spec["agents"])
 
     def test_route_models_overrides_default(

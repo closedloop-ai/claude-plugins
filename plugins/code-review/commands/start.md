@@ -320,7 +320,7 @@ This stage runs when the walker reaches `stage_20`.
 - `partitioned: false` → patches file is `patches_all.txt`; `<files_assigned>` is the full `files_to_review` list.
 - Prompt-suffix dispatch is **two-level**:
   - When `source == "core"`, branch on the `reviewer` field to select the suffix: `bug_hunter_a` → BHA, `bug_hunter_b` → BHB, `unified_auditor` → Auditor, `premise_reviewer` → Premise. (All four roles share `source: "core"`, so `source` alone is not enough.)
-  - When `source == "critic"` → Domain Critic suffix (the `reviewer` field carries the critic name for the `{critic_name}` prompt slot).
+  - When `source` is `"rule"` or `"critic"` → Domain Critic suffix (the `reviewer` field carries the critic name for the `{critic_name}` prompt slot). `"rule"` means the entry came from a deterministically matched `critic-gates.json` `coverage[]` rule (including migrated legacy `moduleCritics[]`); `"critic"` means the entry was LLM-proposed by `coverage_critic`. Both spawn as `domain_<N>` with sonnet.
   - When `source == "fast_path"` → Fast Path suffix (only emitted on the fast-path branch; mutually exclusive with the bucket walk).
 - `spec.fast_path: true` → spec emits exactly one agent (`agent_id: "fast"`); skip the standard-flow tables and use the Fast Path suffix below.
 - `spec.gated_by_verify: true` → arbitration was bypassed by a BLOCKING verify verdict from stage_15c (the canonical finding already lives in `agent_coverage-verify-blocking.json`). Spawn the spec as-is; surface a one-line warning in the present step that the review ran against an unbudgeted plan.

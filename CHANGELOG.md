@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.22.2
+
+#### Fixed
+- `_derive_spawn_agents_from_plan` now rescues domain reviewers carrying `source: "rule"` from the dispatch path, not just `source: "critic"`. The pre-v2.22.2 spawner only treated `source == "critic"` as a domain critic, so any required or best-effort entry that came out of `_resolve_coverage` with `source: "rule"` (the value `_resolve_coverage` emits for every rule-matched entry — both canonical `coverage[]` rules in `critic-gates.json` and migrated legacy `moduleCritics[]` entries) silently landed in `skipped[]` with `reason: "unknown_reviewer"`. The orchestrator's spawn-spec contract then told `stage_20` not to re-add them, so for any repo with a critic-gates rule naming a non-core reviewer, the reviewer that used to run under the static-table path was now omitted from the fleet with no warning. The fix widens the dispatch to accept both `rule` and `critic`; the entry's source is preserved on the descriptor so presenters can still distinguish operator-configured rules from LLM-proposed additions.
+- `domain_critic_count` telemetry now sums across both `source` values (`rule` + `critic`) — both spawn as `domain_<N>` and both belong in the counter. The pre-v2.22.2 counter would under-report any repo that drove its domain coverage through `critic-gates.json` rules instead of LLM proposals.
+- `spawn_spec.json` `source` closed vocabulary in `SCHEMA.md` and `SPAWN_SPEC_SOURCES` in `code_review_schema.py` now include `"rule"` as a first-class value alongside `core`, `critic`, and `fast_path`. The omission was the same root cause as the dispatch bug — the spawner treated `rule` as out-of-vocabulary.
+- `start.md` Reviewer Fleet two-level dispatch documentation now spells out that `source` of either `"rule"` or `"critic"` selects the Domain Critic suffix, with the distinction recorded for presenter use.
+- `test_unknown_required_reviewer_lands_in_skipped` was renamed `test_unknown_source_lands_in_skipped` and rewritten — the previous fixture used `source: "rule"` for a reviewer it labeled "unrecognized," which pinned the regression. The new fixture uses an empty source so only the genuine defense-in-depth branch fires.
+
+#### Added
+- `test_rule_resolved_domain_reviewer_spawns_as_domain_critic` pins the new correct behavior: a `source: "rule"` entry naming a non-core reviewer spawns as `domain_<N>` with the source preserved, doesn't land in `skipped[]`, and counts toward `domain_critic_count`. Covers both the required[] path (canonical coverage[] rule) and the best_effort[] path (migrated legacy moduleCritics[]).
+
 ### code-review v2.22.1
 
 #### Fixed

@@ -328,7 +328,7 @@ ignored at spawn time.
       "partition_id": 0,               // only when partitioned
       "is_test_only": false,           // only when partitioned (drives BHA model slot)
       "patches_file": "patches_p<N>.txt | patches_all.txt",
-      "source": "core | critic | fast_path",
+      "source": "core | rule | critic | fast_path",
       "bucket": "required | best_effort | fast_path",
       "priority": 2                    // only on critics
     }
@@ -361,7 +361,7 @@ constants in `code_review_schema.py`):
 | Field | Values | Notes |
 | --- | --- | --- |
 | `arbitrate_status` | `ok`, `blocked_by_verify`, `fallback` | `ok` = normal arbitration ran; `blocked_by_verify` = Phase 7 BLOCKING gate fired upstream and the plan passed through unchanged; `fallback` = derive failed, orchestrator must walk static table |
-| `source` | `core`, `critic`, `fast_path` | Selects the prompt-suffix dispatch in `start.md` (`source: "core"` further branches on `reviewer`) |
+| `source` | `core`, `rule`, `critic`, `fast_path` | Selects the prompt-suffix dispatch in `start.md` (`source: "core"` further branches on `reviewer`; `rule` and `critic` both map to the Domain Critic suffix — `rule` for deterministically matched critic-gates rules including migrated `moduleCritics[]`, `critic` for LLM-proposed additions) |
 | `bucket` | `required`, `best_effort`, `fast_path` | Mirrors the source bucket in `coverage_plan.json` |
 | `skipped[].reason` | `deferred_pln723`, `no_partitions`, `unknown_reviewer`, `missing_reviewer_name`, `duplicate_agent_id` | Defense-in-depth reasons surfaced so operators see why a reviewer was omitted |
 

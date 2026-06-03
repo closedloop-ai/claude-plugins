@@ -10670,27 +10670,44 @@ def _derive_spawn_agents_from_plan(
                 "bucket": bucket,
             })
             return
-        # Unknown reviewer name. If the rule-resolved entry was a critic
-        # (closed-vocabulary checks have already passed by stage_15c),
-        # treat it as a domain critic and assign a sequential ID. The
-        # critic_index is monotonic so domain_<N> names are inherently
-        # unique by construction, but we still record them in
-        # seen_agent_ids for symmetry with the core-role guard.
-        if source == "critic":
+        # Non-core reviewer with a known plan-entry source. Both
+        # ``source: "rule"`` (deterministically matched from
+        # critic-gates.json ``coverage[]`` rules, including the
+        # migrated legacy ``moduleCritics[]`` path) and
+        # ``source: "critic"`` (LLM-proposed via coverage_critic
+        # consolidate) map to a domain_<N> agent. The pre-v2.22.2
+        # check rescued only "critic", which made rule-resolved
+        # domain reviewers regression-land in skipped[] for any
+        # repo with a canonical coverage[] rule naming a non-core
+        # reviewer (e.g. {"reviewer": "ts-expert", "required": true,
+        # "triggers": [...]}). The closed_vocabulary check at
+        # stage_15c scopes to source: "critic" only — rule entries
+        # are operator-owned names from critic-gates.json that the
+        # spawner translates at dispatch time. The critic_index is
+        # monotonic so domain_<N> names are inherently unique by
+        # construction, but we still record them in seen_agent_ids
+        # for symmetry with the core-role guard.
+        if source in {"rule", "critic"}:
             agent_id = f"domain_{critic_index}"
             seen_agent_ids.add(agent_id)
+            # Echo the entry's actual source so presenters can tell
+            # operator-configured (rule) from LLM-proposed (critic)
+            # domain coverage.
             agents.append({
                 "agent_id": agent_id,
                 "reviewer": reviewer,
                 "model": "sonnet",
                 "partitioned": False,
                 "patches_file": "patches_all.txt",
-                "source": "critic",
+                "source": source,
                 "bucket": bucket,
                 "priority": int(entry.get("priority", 2)),
             })
             critic_index += 1
             return
+        # Genuinely unknown source — not core/rule/critic. Defense-
+        # in-depth for a malformed plan or a future source value
+        # that wasn't taught to the spawner.
         skipped.append({
             "reviewer": reviewer,
             "bucket": bucket,
@@ -10841,7 +10858,11 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     )
 
     bha_count = sum(1 for a in agents if a["reviewer"] == "bug_hunter_a")
-    critic_count = sum(1 for a in agents if a["source"] == "critic")
+    # Domain critics span both source values (``rule`` for
+    # deterministically resolved critic-gates rules + migrated
+    # moduleCritics, ``critic`` for LLM-proposed additions). Both
+    # spawn as ``domain_<N>`` so both count toward the telemetry.
+    critic_count = sum(1 for a in agents if a["source"] in {"rule", "critic"})
     from_required = sum(1 for a in agents if a.get("bucket") == "required")
     from_best_effort = sum(
         1 for a in agents if a.get("bucket") == "best_effort"
