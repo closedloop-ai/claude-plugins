@@ -1720,6 +1720,28 @@
       ]
     },
     {
+      "name": "evaluate-gate",
+      "func": "cmd_evaluate_gate",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--after-stage"
+          ],
+          "dest": "after_stage",
+          "default": null,
+          "required": true
+        }
+      ]
+    },
+    {
       "name": "prep-assets",
       "func": "cmd_prep_assets",
       "args": [

@@ -9450,16 +9450,33 @@ def evaluate_validation_gate(
 ) -> tuple[bool, str | None]:
     """Evaluate a single validation gate against the filesystem.
 
-    Returns ``(passed, reason)``. ``passed`` is True only when every
-    file in ``outputs`` exists AND every section listed in
-    ``required_sections`` is present as a top-level dict key in its
-    file. ``reason`` is None on pass, a short diagnostic on fail
-    (suitable for the walker to surface to the operator).
+    Returns ``(passed, reason)``. ``passed`` is True only when:
+
+    1. Every literal-path entry in ``outputs`` exists as a regular file.
+    2. Every file listed in ``required_sections`` exists, parses as
+       JSON, and is a top-level JSON object.
+    3. Every section key listed for a file is present in that file's
+       top-level object AND its value is itself a JSON object (dict).
+
+    The dict-value check at (3) catches the corrupt-atomic-write
+    scenario where a section key is written as ``null`` mid-replace;
+    a downstream consumer expecting ``state[key]`` to be a dict would
+    crash on attribute access. The walker MUST treat a section whose
+    value is null/scalar/list as a gate failure, not a pass.
+
+    ``reason`` is None on pass, a short diagnostic on fail (suitable
+    for the walker to surface to the operator via stderr).
 
     Glob entries in ``outputs`` (e.g. ``agent_*.json``) are intentionally
     NOT expanded here — the walker's existing ``all_required_outputs_present``
     semantics handle those separately. This helper enforces literal-path
     outputs plus the section-presence contract.
+
+    Defensive: ``required_sections[file]`` MUST be a list of strings.
+    A bare string here would silently iterate per-character ("final"
+    → ['f','i','n','a','l']) and produce misleading "missing required
+    section 'f'" failures. The type guard surfaces the configuration
+    bug at the gate boundary instead.
     """
     for path_str in gate.get("outputs", []):
         if "*" in path_str or "?" in path_str:
@@ -9469,6 +9486,11 @@ def evaluate_validation_gate(
 
     required_sections = gate.get("required_sections") or {}
     for path_str, section_keys in required_sections.items():
+        if not isinstance(section_keys, list):
+            return False, (
+                f"gate required_sections[{path_str!r}] must be a list, "
+                f"got {type(section_keys).__name__}"
+            )
         path = Path(path_str)
         if not path.is_file():
             return False, f"missing section-bearing file: {path_str}"
@@ -9489,6 +9511,47 @@ def evaluate_validation_gate(
                 )
 
     return True, None
+
+
+def cmd_evaluate_gate(args: argparse.Namespace) -> int:
+    """Evaluate the validation gate anchored at ``--after-stage``.
+
+    CLI wrapper around ``evaluate_validation_gate``. The walker (the
+    LLM following ``start.md`` step 7) shells out to this subcommand
+    after each stage finishes, passing ``--cr-dir`` and the just-
+    completed stage id as ``--after-stage``. The helper looks up the
+    gate dict from the canonical ``_build_validation_gates`` table —
+    the same table ``prepare-run`` writes into ``run_plan.json`` — so
+    a single source of truth governs both planning and enforcement.
+
+    Exit codes:
+        0 — gate passed (no matching gate for this anchor is also pass:
+            a stage with no declared gate is unconstrained).
+        1 — gate failed; diagnostic on stderr.
+
+    The walker reads exit code and applies the gate's
+    ``on_failure_action`` (which the walker still has in scope from
+    ``run_plan.json``). The helper itself does NOT consult
+    ``on_failure_action`` — that's a walker-level policy decision so
+    the same enforcer serves abort, continue, and emit_coverage_gap
+    cases without branching.
+    """
+    cr_dir = str(args.cr_dir)
+    after_stage = str(args.after_stage)
+    gates = _build_validation_gates(cr_dir)
+    matching = [g for g in gates if g.get("after_stage") == after_stage]
+    if not matching:
+        return 0
+    for gate in matching:
+        passed, reason = evaluate_validation_gate(gate)
+        if not passed:
+            print(
+                f"gate {gate.get('gate', '?')!r} after {after_stage!r} FAILED: "
+                f"{reason}",
+                file=sys.stderr,
+            )
+            return 1
+    return 0
 
 
 def cmd_prepare_run(args: argparse.Namespace) -> int:

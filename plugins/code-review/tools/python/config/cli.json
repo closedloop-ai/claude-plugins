@@ -1597,6 +1597,27 @@
       ]
     },
     {
+      "name": "evaluate-gate",
+      "help": "Evaluate one validation gate by anchor stage; exit 0 on pass, 1 on fail (diagnostic to stderr).",
+      "func": "cmd_evaluate_gate",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR for the review session"
+        },
+        {
+          "flags": [
+            "--after-stage"
+          ],
+          "required": true,
+          "help": "Anchor stage id (e.g. stage_16_arbitrate_budget); the helper looks up the matching gate from the canonical gates table."
+        }
+      ]
+    },
+    {
       "name": "prep-assets",
       "help": "Copy prompt assets from plugin to CR_DIR",
       "func": "cmd_prep_assets",

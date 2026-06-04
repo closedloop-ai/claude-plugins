@@ -1162,8 +1162,11 @@ class TestEvaluateValidationGate:
     """The walker contract documented in start.md step 7 says gates
     enforce both ``outputs`` existence AND any declared
     ``required_sections``. ``evaluate_validation_gate`` is the
-    deterministic enforcer the walker shells into so the contract
-    cannot drift between the markdown spec and the implementation.
+    deterministic enforcer the walker shells into via the
+    ``evaluate-gate`` subcommand (``cmd_evaluate_gate``) so the
+    contract cannot drift between the markdown spec and the
+    implementation: start.md instructs the LLM walker to invoke the
+    Python helper rather than re-implement the check in prose.
     """
 
     def _gate(self, tmp_path: Path, after_stage: str) -> dict[str, Any]:
@@ -1257,8 +1260,11 @@ class TestEvaluateValidationGate:
         """``stage_20_spawn_reviewers`` declares ``agent_*.json``; the
         all-required-outputs check belongs in a separate enforcer that
         knows the spawn-spec roster. ``evaluate_validation_gate`` must
-        skip glob entries so it never erroneously passes on a literal
-        path named ``agent_*.json``.
+        skip glob entries so it never erroneously fails on a literal
+        path lookup (``Path("agent_*.json").is_file()`` returns False
+        on every real filesystem, so without the skip the gate would
+        always fail; with the skip it trivially passes since glob
+        enforcement is delegated).
         """
         from code_review_helpers import evaluate_validation_gate
         cr = tmp_path / "cr"
@@ -1268,6 +1274,112 @@ class TestEvaluateValidationGate:
         # No literal outputs, no required sections → trivially passes.
         assert passed is True
         assert reason is None
+
+    def test_rejects_bare_string_section_keys(self, tmp_path: Path) -> None:
+        """A misconfigured gate that maps a file path to a bare string
+        (instead of a list of strings) must surface as a config
+        failure, not silently iterate per-character. Without the
+        guard, ``for key in "final"`` walks ``'f','i','n','a','l'``
+        and produces a misleading "missing required section 'f'"
+        diagnostic. The type-guard error message names the bad type
+        so the operator can fix the gate definition.
+        """
+        from code_review_helpers import evaluate_validation_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        (cr / "coverage.json").write_text(json.dumps({"final": {}}))
+        bad_gate = {
+            "after_stage": "stage_16_arbitrate_budget",
+            "gate": "coverage_plan_well_formed",
+            "outputs": [],
+            "required_sections": {
+                str(cr / "coverage.json"): "final",  # bare string, not a list
+            },
+            "on_failure_action": "abort",
+        }
+        passed, reason = evaluate_validation_gate(bad_gate)
+        assert passed is False
+        assert reason is not None
+        assert "must be a list" in reason
+        assert "str" in reason
+
+
+class TestCmdEvaluateGate:
+    """``cmd_evaluate_gate`` is the CLI wrapper the walker shells out
+    to from start.md step 7. Tests pin the exit-code contract (0
+    pass, 1 fail), the diagnostic-to-stderr contract, and the
+    "unknown anchor stage is unconstrained" exit-0 case so a stage
+    without a declared gate doesn't accidentally abort the pipeline.
+    """
+
+    @staticmethod
+    def _args(cr_dir: Path, after_stage: str) -> argparse.Namespace:
+        return argparse.Namespace(
+            cr_dir=str(cr_dir),
+            after_stage=after_stage,
+        )
+
+    def test_exits_zero_when_gate_passes(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from code_review_helpers import cmd_evaluate_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        (cr / "coverage.json").write_text(json.dumps({
+            "initial": {"x": 1},
+            "final": {"required": [], "budget": {}},
+        }))
+        rc = cmd_evaluate_gate(self._args(cr, "stage_16_arbitrate_budget"))
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert captured.err == ""
+
+    def test_exits_one_with_stderr_diagnostic_when_gate_fails(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The pre-fix scenario: coverage.json exists with .initial
+        but no .final after stage_16. The walker must abort here.
+        """
+        from code_review_helpers import cmd_evaluate_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        (cr / "coverage.json").write_text(json.dumps({
+            "initial": {"required": []},
+        }))
+        rc = cmd_evaluate_gate(self._args(cr, "stage_16_arbitrate_budget"))
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "final" in captured.err
+        assert "stage_16_arbitrate_budget" in captured.err
+        assert "FAILED" in captured.err
+
+    def test_unknown_anchor_stage_is_unconstrained_exit_zero(
+        self, tmp_path: Path,
+    ) -> None:
+        """Most stages have no declared gate. The walker calls this
+        helper after every stage; an unknown anchor must exit 0 so
+        unguarded stages don't abort the pipeline. (Stages WITH a gate
+        get enforcement; stages WITHOUT one are intentionally
+        unconstrained.)
+        """
+        from code_review_helpers import cmd_evaluate_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        rc = cmd_evaluate_gate(self._args(cr, "stage_99_never_existed"))
+        assert rc == 0
+
+    def test_registered_in_cli_json(self) -> None:
+        """The walker invokes ``python3 <HELPERS> evaluate-gate``; the
+        subcommand MUST be parseable through the declarative CLI
+        loader, not just exposed as a Python function.
+        """
+        from code_review_helpers import _load_cli_config
+        cfg = _load_cli_config()
+        parser_names = {p["name"] for p in cfg["parsers"]}
+        assert "evaluate-gate" in parser_names, (
+            "evaluate-gate must be registered in config/cli.json so the "
+            "walker can invoke it as `python3 <HELPERS> evaluate-gate ...`"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -18493,7 +18605,7 @@ class TestCRSPhaseAStageTemplateValidator:
 class TestCRSPhaseACLIConfigLoader:
     """Phase A: _register_subparsers is now a loader over config/cli.json.
 
-    44 parsers / 196 args / 8 hand-curated $$ constant slots / 1 mutex group.
+    45 parsers / 198 args / 8 hand-curated $$ constant slots / 1 mutex group.
     A captured snapshot pins the resolved parser spec (defaults, types,
     choices, required, action, func) so a regression in cli.json or in
     _resolve_cli_constant fails loud. Plus targeted tests for the constant
