@@ -439,49 +439,6 @@
       ]
     },
     {
-      "name": "migrate-critic-gates",
-      "func": "cmd_migrate_critic_gates",
-      "args": [
-        {
-          "flags": [
-            "--input"
-          ],
-          "dest": "input",
-          "default": null,
-          "required": true
-        },
-        {
-          "flags": [
-            "--output"
-          ],
-          "dest": "output",
-          "default": null
-        },
-        {
-          "flags": [
-            "--in-place"
-          ],
-          "dest": "in_place",
-          "default": false,
-          "action": "store_true"
-        },
-        {
-          "flags": [
-            "--dry-run"
-          ],
-          "dest": "dry_run",
-          "default": false,
-          "action": "store_true"
-        }
-      ],
-      "mutex_groups": [
-        [
-          "--output",
-          "--in-place"
-        ]
-      ]
-    },
-    {
       "name": "coverage-critic-prepare",
       "func": "cmd_coverage_critic_prepare",
       "args": [
@@ -492,13 +449,6 @@
           "dest": "cr_dir",
           "default": null,
           "required": true
-        },
-        {
-          "flags": [
-            "--coverage-plan-initial"
-          ],
-          "dest": "coverage_plan_initial",
-          "default": null
         },
         {
           "flags": [
@@ -576,13 +526,6 @@
         },
         {
           "flags": [
-            "--coverage-plan-initial"
-          ],
-          "dest": "coverage_plan_initial",
-          "default": null
-        },
-        {
-          "flags": [
             "--agent-output"
           ],
           "dest": "agent_output",
@@ -596,13 +539,6 @@
           "dest": "available_reviewers",
           "default": null,
           "required": true
-        },
-        {
-          "flags": [
-            "--manifest"
-          ],
-          "dest": "manifest",
-          "default": null
         },
         {
           "flags": [
@@ -624,20 +560,6 @@
           "dest": "cr_dir",
           "default": null,
           "required": true
-        },
-        {
-          "flags": [
-            "--coverage-plan"
-          ],
-          "dest": "coverage_plan",
-          "default": null
-        },
-        {
-          "flags": [
-            "--coverage-plan-initial"
-          ],
-          "dest": "coverage_plan_initial",
-          "default": null
         },
         {
           "flags": [
@@ -1445,9 +1367,9 @@
       "args": [
         {
           "flags": [
-            "--validate-output"
+            "--findings-validated"
           ],
-          "dest": "validate_output",
+          "dest": "findings_validated",
           "default": null,
           "required": true
         },
@@ -1481,9 +1403,9 @@
         },
         {
           "flags": [
-            "--validate-output"
+            "--findings-validated"
           ],
-          "dest": "validate_output",
+          "dest": "findings_validated",
           "default": null,
           "required": true
         },
@@ -1531,14 +1453,8 @@
             "--cr-dir"
           ],
           "dest": "cr_dir",
-          "default": null
-        },
-        {
-          "flags": [
-            "--coverage-plan"
-          ],
-          "dest": "coverage_plan",
-          "default": null
+          "default": null,
+          "required": true
         },
         {
           "flags": [
@@ -1555,20 +1471,6 @@
           "dest": "cap",
           "default": 20,
           "type": "int"
-        },
-        {
-          "flags": [
-            "--output"
-          ],
-          "dest": "output",
-          "default": null
-        },
-        {
-          "flags": [
-            "--coverage-verify"
-          ],
-          "dest": "coverage_verify",
-          "default": null
         }
       ]
     },
@@ -1586,25 +1488,11 @@
         },
         {
           "flags": [
-            "--coverage-plan"
-          ],
-          "dest": "coverage_plan",
-          "default": null
-        },
-        {
-          "flags": [
             "--partitions"
           ],
           "dest": "partitions",
           "default": null,
           "required": true
-        },
-        {
-          "flags": [
-            "--route"
-          ],
-          "dest": "route",
-          "default": null
         }
       ]
     },

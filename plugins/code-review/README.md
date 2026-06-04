@@ -54,10 +54,7 @@ canonical schema documented in [SCHEMA.md](SCHEMA.md). Key contracts:
 - **Canonical `prompt_hash`** folds in `schema_version`: a MAJOR schema bump
   invalidates every cache namespace at once.
 
-For backward compatibility, `validate_output.json` is still emitted alongside
-`review_result.json` so existing consumers (`code` plugin's `run-loop.sh`,
-the `/fix` skill) keep working. Future versions may discontinue this dual
-emission.
+The terminal artifact of every review run is `review_result.json` (PLN-722 envelope).
 
 ### Component Roles
 
@@ -140,7 +137,7 @@ The orchestrator executes these steps in order:
 11. **Cache update** (if caching is active) — writes validated findings to the cache for future incremental runs
 12. **Present results** — local mode: prints findings by severity in the terminal; GitHub mode: writes `.closedloop-ai/code-review-findings.json`, `.closedloop-ai/code-review-threads.json`, and `.closedloop-ai/code-review-summary.md` for the CI workflow to post
 13. **Review state write** — persists the current diff tip so future `--since-last-review` runs can narrow the scope
-14. **Footer** — prints elapsed time, token usage stats, and a deterministic `<pr_verdict>` tag
+14. **Footer** — prints elapsed time, token usage stats, and writes the deterministic verdict JSON to `<CR_DIR>/verdict.json` (consumed by the `code` plugin's `run-loop.sh`)
 
 (Step numbers in this list are illustrative; the canonical 30-stage ordering lives in `prepare-run`'s `run_plan.json`.)
 

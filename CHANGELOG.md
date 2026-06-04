@@ -4,6 +4,41 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.28.0
+
+Evidence-based audit of every backward-compat / legacy surface in the plugin. Each surface was kept only if grep found a real external consumer; everything else was deleted. MINOR bump (not PATCH) because the helper CLI surface contracts change: subcommand removal, flag rename, and verdict-artifact field set — consistent with prior monorepo precedent for similar consolidation work (v2.25.0 / v2.26.0 / v2.27.0).
+
+#### Removed
+- `cmd_migrate_critic_gates` subcommand and its 4 args (`--input`, `--output`, `--in-place`, `--dry-run`) plus mutex-group config. No grep hits anywhere for `migrate-critic-gates` invocation outside the function's own definition. The `migrate_legacy_module_critics` helper that does the actual `moduleCritics[]` → `coverage[]` migration is retained because it's called from `cmd_resolve_coverage` (the bootstrap-plugin cross-plugin contract still produces `moduleCritics[]`).
+- `<pr_verdict>` XML tag and the `tag` field from `verdict.json`. Grep finds zero consumers of the XML tag anywhere in the monorepo. The `verdict.json` JSON `.verdict` field IS consumed by `plugins/code/scripts/run-loop.sh:987` (which keys on the legacy `"approve"` / `"needs_attention"` / `"decline"` strings); the `_CANONICAL_TO_LEGACY_VERDICT` mapping is retained for that.
+- 10 explicit-path "backward-compat fallback" CLI args that `stages.json` never passes (verified by grep): `coverage-critic-prepare --coverage-plan-initial`; `coverage-critic-consolidate --coverage-plan-initial` + `--manifest`; `verify-coverage --coverage-plan` + `--coverage-plan-initial`; `arbitrate-budget --coverage-plan` + `--coverage-verify` + `--output`; `derive-spawn-spec --coverage-plan` + `--route`. All canonical callers use `--cr-dir` and the section-based read/write paths.
+- `_read_coverage_verify_verdict` helper — only used by the deleted `arbitrate-budget --coverage-verify` arg path.
+- `discarded_line_not_changed: 0` validate-stats key. Grep finds zero readers outside the writer itself; superseded by `discarded_out_of_hunk_low_confidence`.
+- `partitions.json` bare-list shape acceptance in `cmd_derive_spawn_spec`. `cmd_partition` always emits the wrapped form `{"partitions": [...], "partition_count": ...}`; only test fixtures used the bare list.
+- `partitions.json` without `partition_count` fallback in `cmd_verify_prepare`. `cmd_partition` always emits `partition_count`; cache-replay scenarios were the only source of older shapes and caches turn over.
+- The `[DEPRECATED]` warning-text prefix on migrated `moduleCritics[]` entries; warning text is now plain prose.
+
+#### Changed
+- Renamed `--validate-output` flag to `--findings-validated` on `cmd_verdict` and `cmd_finalize_result`. The flag was misnamed — `stages.json` has always passed `{cr_dir}/findings_validated.json` to it; the README/SCHEMA claim that `validate_output.json` was "still emitted alongside `review_result.json`" was documentation drift (no file by that name is ever written). README, SCHEMA.md, `github-review.md`, and `cli.json` updated to match reality.
+- `cmd_arbitrate_budget` now requires `--cr-dir` (previously optional, but the only canonical caller passed it). Reads input plan from `coverage.json.final`, verifier verdict from `coverage.json.verify`, writes arbitrated plan back into `coverage.json.final`.
+- `cmd_verify_coverage`, `cmd_coverage_critic_consolidate`, `cmd_coverage_critic_prepare`, `cmd_derive_spawn_spec` all simplified to single-path implementations reading from `coverage.json` / `spawn.json` sections.
+- `<CR_DIR>/verdict.json` now contains `verdict` (legacy string for `run-loop.sh`), `canonical_verdict` (envelope verdict), and `reason` — no longer the `tag` field.
+- Updated `SCHEMA.md`, `README.md`, `commands/start.md` to describe current behavior. Removed the false `validate_output.json` dual-emission claim. Reframed the `<pr_verdict>` table entry as `verdict.json`. Rewrote the Repo Hygiene "alias for Hygiene" schema comment (it's the canonical category for repo-level findings, not an alias). Rewrote the `normalize_legacy_finding` section header from "Normalization: legacy -> canonical" to describe what the function actually does (fills canonical fields on partially-shaped findings from non-canonical producers).
+
+#### Tests
+- Deleted `TestMigrateCriticGatesCLI` (10 tests) and `TestPR124MigrationIdempotent` (2 tests) — both exercised the removed subcommand.
+- Deleted `test_no_coverage_verify_flag_keeps_backward_compat` and `test_mutex_group_accepts_single_choice` + `test_mutex_group_rejects_both_choices` — exercised removed args.
+- Refactored `_run_arbitrate_budget` (helper), `_write_coverage_critic_inputs` (helper), `_run_derive_spawn_spec` (helper), `TestPLN725Phase6VerifyCoverageCommand._run` (helper), and `TestCoverageCriticConsolidateCLI._prepare` / `_consolidate_args` to seed inputs into canonical sections instead of standalone files.
+- Updated `TestMigrateLegacyModuleCritics` and `TestResolveCoverage` to assert on the new warning text (no `[DEPRECATED]` prefix).
+- Regenerated all three snapshot fixtures (`cli_parser_resolved.json`, `local_no_pr_empty_flags.json`, `github_pr42_all_flags.json`) to reflect the smaller arg surface.
+- Deleted `TestPR124MutuallyExclusiveDestArgs` — exercised the deleted `migrate-critic-gates` subcommand's mutex contract; the test now passes only because argparse rejects an unknown command, not because mutex routing works.
+
+#### Docs (review fixes from PR #142)
+- `commands/start.md` "PR Verdict" section now describes the current `verdict.json` field set (`verdict` / `canonical_verdict` / `reason`) instead of telling the walker to print a `tag` value. The `tag` field was removed; printing a final-line tag was a no-op contract that would have surfaced as a broken UI banner.
+- `prompts/github-review.md` GitHub Summary "Discarded — line not changed" stat replaced with "Discarded — out-of-hunk (low confidence)" reading `discarded_out_of_hunk_low_confidence`. The original `discarded_line_not_changed` field was deleted in this PR.
+- `code_review_helpers.py` PLN-725 component-list comment no longer enumerates `migrate-critic-gates` as a subcommand. The inline `migrate_legacy_module_critics` helper is called out instead.
+- Stale docstring fallbacks on `cmd_coverage_critic_prepare`, `cmd_verify_coverage`, and `cmd_derive_spawn_spec` no longer advertise removed `--coverage-plan-initial` / `--coverage-plan` / `--route` paths.
+
 ### code-review v2.27.6
 
 #### Fixed
@@ -21,6 +56,41 @@ Four production bugs in the CRS Phase A walker, the coverage-resolver wiring, th
 - `stage_14_resolve_coverage` now wires `--critic-gates .closedloop-ai/settings/critic-gates.json` into its args. Pre-fix, `cmd_resolve_coverage` silently fell back to `_EMPTY_CRITIC_GATES` when the arg was absent (no error, no warning), so every production run ignored configured `coverage[]` rules and migrated `moduleCritics[]` entries. Only the core reviewer floor routed.
 - Validation gates now enforce `required_sections`. The field was declared on the `stage_16_arbitrate_budget` gate in v2.27.1 but the walker contract in `start.md` only checked `outputs` existence — so the stage-16 gate fired-true on `coverage.json` from stage_14 even when stages 15/15b/15c/16 all failed to populate `.final`. New `evaluate_validation_gate` helper plus the `evaluate-gate` CLI subcommand (`cmd_evaluate_gate`) make the contract deterministic and testable; `start.md` step 7 now instructs the walker to shell out to `python3 <HELPERS> evaluate-gate --cr-dir <CR_DIR> --after-stage <stage_id>` after every stage, so the markdown spec and the Python implementation cannot drift.
 - BLOCKING verify verdict no longer drops BHA. `cmd_arbitrate_budget` hardcoded `budget.bha_partitions: 0` on the BLOCKING short-circuit, which propagated through `bha_partitions_cap` in `derive-spawn-spec` and skipped every BHA partition with `reason: budget_capped` — contradicting the start.md contract that BLOCKING preserves core reviewers and only annotates. BHA is `source: "core"` and survives derive-spawn-spec's plan sanitization; the BLOCKING path now computes BHA with the same floor-honoring formula as the PASS path. Docs-only PRs still get 0 (the BHA floor is waived on both paths).
+
+Evidence-based audit of every backward-compat / legacy surface in the plugin. Each surface was kept only if grep found a real external consumer; everything else was deleted. MINOR bump (not PATCH) because the helper CLI surface contracts change: subcommand removal, flag rename, and verdict-artifact field set — consistent with prior monorepo precedent for similar consolidation work (v2.25.0 / v2.26.0 / v2.27.0).
+
+#### Removed
+- `cmd_migrate_critic_gates` subcommand and its 4 args (`--input`, `--output`, `--in-place`, `--dry-run`) plus mutex-group config. No grep hits anywhere for `migrate-critic-gates` invocation outside the function's own definition. The `migrate_legacy_module_critics` helper that does the actual `moduleCritics[]` → `coverage[]` migration is retained because it's called from `cmd_resolve_coverage` (the bootstrap-plugin cross-plugin contract still produces `moduleCritics[]`).
+- `<pr_verdict>` XML tag and the `tag` field from `verdict.json`. Grep finds zero consumers of the XML tag anywhere in the monorepo. The `verdict.json` JSON `.verdict` field IS consumed by `plugins/code/scripts/run-loop.sh:987` (which keys on the legacy `"approve"` / `"needs_attention"` / `"decline"` strings); the `_CANONICAL_TO_LEGACY_VERDICT` mapping is retained for that.
+- 10 explicit-path "backward-compat fallback" CLI args that `stages.json` never passes (verified by grep): `coverage-critic-prepare --coverage-plan-initial`; `coverage-critic-consolidate --coverage-plan-initial` + `--manifest`; `verify-coverage --coverage-plan` + `--coverage-plan-initial`; `arbitrate-budget --coverage-plan` + `--coverage-verify` + `--output`; `derive-spawn-spec --coverage-plan` + `--route`. All canonical callers use `--cr-dir` and the section-based read/write paths.
+- `_read_coverage_verify_verdict` helper — only used by the deleted `arbitrate-budget --coverage-verify` arg path.
+- `discarded_line_not_changed: 0` validate-stats key. Grep finds zero readers outside the writer itself; superseded by `discarded_out_of_hunk_low_confidence`.
+- `partitions.json` bare-list shape acceptance in `cmd_derive_spawn_spec`. `cmd_partition` always emits the wrapped form `{"partitions": [...], "partition_count": ...}`; only test fixtures used the bare list.
+- `partitions.json` without `partition_count` fallback in `cmd_verify_prepare`. `cmd_partition` always emits `partition_count`; cache-replay scenarios were the only source of older shapes and caches turn over.
+- The `[DEPRECATED]` warning-text prefix on migrated `moduleCritics[]` entries; warning text is now plain prose.
+
+#### Changed
+- Renamed `--validate-output` flag to `--findings-validated` on `cmd_verdict` and `cmd_finalize_result`. The flag was misnamed — `stages.json` has always passed `{cr_dir}/findings_validated.json` to it; the README/SCHEMA claim that `validate_output.json` was "still emitted alongside `review_result.json`" was documentation drift (no file by that name is ever written). README, SCHEMA.md, `github-review.md`, and `cli.json` updated to match reality.
+- `cmd_arbitrate_budget` now requires `--cr-dir` (previously optional, but the only canonical caller passed it). Reads input plan from `coverage.json.final`, verifier verdict from `coverage.json.verify`, writes arbitrated plan back into `coverage.json.final`.
+- `cmd_verify_coverage`, `cmd_coverage_critic_consolidate`, `cmd_coverage_critic_prepare`, `cmd_derive_spawn_spec` all simplified to single-path implementations reading from `coverage.json` / `spawn.json` sections.
+- `<CR_DIR>/verdict.json` now contains `verdict` (legacy string for `run-loop.sh`), `canonical_verdict` (envelope verdict), and `reason` — no longer the `tag` field.
+- Updated `SCHEMA.md`, `README.md`, `commands/start.md` to describe current behavior. Removed the false `validate_output.json` dual-emission claim. Reframed the `<pr_verdict>` table entry as `verdict.json`. Rewrote the Repo Hygiene "alias for Hygiene" schema comment (it's the canonical category for repo-level findings, not an alias). Rewrote the `normalize_legacy_finding` section header from "Normalization: legacy -> canonical" to describe what the function actually does (fills canonical fields on partially-shaped findings from non-canonical producers).
+
+#### Tests
+- Deleted `TestMigrateCriticGatesCLI` (10 tests) and `TestPR124MigrationIdempotent` (2 tests) — both exercised the removed subcommand.
+- Deleted `test_no_coverage_verify_flag_keeps_backward_compat` and `test_mutex_group_accepts_single_choice` + `test_mutex_group_rejects_both_choices` — exercised removed args.
+- Refactored `_run_arbitrate_budget` (helper), `_write_coverage_critic_inputs` (helper), `_run_derive_spawn_spec` (helper), `TestPLN725Phase6VerifyCoverageCommand._run` (helper), and `TestCoverageCriticConsolidateCLI._prepare` / `_consolidate_args` to seed inputs into canonical sections instead of standalone files.
+- Updated `TestMigrateLegacyModuleCritics` and `TestResolveCoverage` to assert on the new warning text (no `[DEPRECATED]` prefix).
+- Regenerated all three snapshot fixtures (`cli_parser_resolved.json`, `local_no_pr_empty_flags.json`, `github_pr42_all_flags.json`) to reflect the smaller arg surface.
+- Deleted `TestPR124MutuallyExclusiveDestArgs` — exercised the deleted `migrate-critic-gates` subcommand's mutex contract; the test now passes only because argparse rejects an unknown command, not because mutex routing works.
+
+#### Docs (review fixes from PR #142)
+- `commands/start.md` "PR Verdict" section now describes the current `verdict.json` field set (`verdict` / `canonical_verdict` / `reason`) instead of telling the walker to print a `tag` value. The `tag` field was removed; printing a final-line tag was a no-op contract that would have surfaced as a broken UI banner.
+- `prompts/github-review.md` GitHub Summary "Discarded — line not changed" stat replaced with "Discarded — out-of-hunk (low confidence)" reading `discarded_out_of_hunk_low_confidence`. The original `discarded_line_not_changed` field was deleted in this PR.
+- `code_review_helpers.py` PLN-725 component-list comment no longer enumerates `migrate-critic-gates` as a subcommand. The inline `migrate_legacy_module_critics` helper is called out instead.
+- Stale docstring fallbacks on `cmd_coverage_critic_prepare`, `cmd_verify_coverage`, and `cmd_derive_spawn_spec` no longer advertise removed `--coverage-plan-initial` / `--coverage-plan` / `--route` paths.
+
+1051 tests pass, ruff clean, pyright 0 errors / 0 warnings / 0 informations.
 
 ### code-review v2.27.4
 
