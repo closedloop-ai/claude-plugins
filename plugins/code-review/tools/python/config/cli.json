@@ -17,13 +17,6 @@
             "--workdir"
           ],
           "help": "Git working directory"
-        },
-        {
-          "flags": [
-            "--no-patch-lines"
-          ],
-          "action": "store_true",
-          "help": "Omit patch_lines from output"
         }
       ]
     },
@@ -197,20 +190,6 @@
           ],
           "default": "",
           "help": "Verifier prompt hash; part of the cache key so prompt revs invalidate cache."
-        },
-        {
-          "flags": [
-            "--no-verify"
-          ],
-          "action": "store_true",
-          "help": "PLN-773: emergency bypass \u2014 skip verification entirely. Every eligible finding is treated as skipped_no_verification. Requires --no-verify-reason."
-        },
-        {
-          "flags": [
-            "--no-verify-reason"
-          ],
-          "default": "",
-          "help": "PLN-773: reason for --no-verify, recorded in the manifest and echoed in the operator-facing footer audit banner."
         }
       ]
     },

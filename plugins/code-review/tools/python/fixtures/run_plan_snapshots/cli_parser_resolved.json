@@ -18,14 +18,6 @@
           ],
           "dest": "workdir",
           "default": null
-        },
-        {
-          "flags": [
-            "--no-patch-lines"
-          ],
-          "dest": "no_patch_lines",
-          "default": false,
-          "action": "store_true"
         }
       ]
     },
@@ -208,21 +200,6 @@
             "--prompt-hash"
           ],
           "dest": "prompt_hash",
-          "default": ""
-        },
-        {
-          "flags": [
-            "--no-verify"
-          ],
-          "dest": "no_verify",
-          "default": false,
-          "action": "store_true"
-        },
-        {
-          "flags": [
-            "--no-verify-reason"
-          ],
-          "dest": "no_verify_reason",
           "default": ""
         }
       ]

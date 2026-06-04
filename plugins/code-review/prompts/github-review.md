@@ -296,14 +296,6 @@ The Reviewer column keys off the `reviewer` field, which `cmd_collect_findings` 
 </details>
 ```
 
-If `<CR_DIR>/verify_manifest.json` exists and has `no_verify: true`, prepend the audit banner BEFORE the collapsible block:
-
-```markdown
-> ⚠️ **`--no-verify` was used.** Verifier was bypassed entirely.
-> Reason: "{no_verify_reason}"
-> {N} findings reached verdict without verifier audit.
-```
-
 If the manifest carries `override_hits` or `override_invalidated`, append a one-liner inside the `<details>` block:
 
 ```
@@ -340,15 +332,6 @@ cat > .closedloop-ai/code-review-summary.md << 'SUMMARY_EOF'
 SUMMARY_EOF
 ```
 
-**`--no-verify` audit banner.** If `<CR_DIR>/verify_manifest.json` exists and has `no_verify: true`, prepend the audit banner to the Summary file as well as the verifier-stats file (Step 6e). The banner must ride the Summary comment — that's the most-visible comment in the PR, and a verifier-bypassed review must not require the reader to scroll into the Verifier Stats `<details>` block to see that the verifier was skipped:
-
-```markdown
-> ⚠️ **`--no-verify` was used.** Verifier was bypassed entirely.
-> Reason: "{no_verify_reason}"
-> {N} findings reached verdict without verifier audit.
-```
-
-Prepend BEFORE the `## Code Review Summary` header so it is the first thing the reader sees. This duplicates the same banner posted via `code-review-verifier-stats.md` (Step 6e) — intentional; the audit signal must appear on both comments because a PR reviewer skimming only the Summary cannot be allowed to miss it.
 
 **Do NOT** post the summary to GitHub directly. Do NOT use `gh api` to create comments or `gh pr review` to submit a review. The workflow handles all GitHub posting after Claude exits.
 

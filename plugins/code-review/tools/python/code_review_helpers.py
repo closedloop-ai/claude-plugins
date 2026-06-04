@@ -138,38 +138,15 @@ CONFIDENCE_DISCARD_THRESHOLD = 0.5
 LINE_TOLERANCE = 3
 JACCARD_DEDUP_THRESHOLD = 0.6
 
-# Out-of-hunk confidence floor (v2.21.0). Reviewers now legitimately
-# surface "the diff demonstrably broke this nearby unchanged code"
-# findings — the canonical example is a function signature change in
-# the diff window whose stale sibling call sites sit just outside it.
-# Previously every P2+ out-of-hunk finding was unconditionally
-# DISCARD_LINE_NOT_CHANGED, which silently dropped real companion-
-# change findings.
-#
-# The relaxation: out-of-hunk findings survive when ``confidence >
-# floor``; otherwise they're still discarded. Same priority guard as
-# before (P1 BLOCKING/HIGH always passes, no floor; P2+ needs to clear
-# the floor when out-of-hunk).
-#
-# Comparison is STRICTLY greater-than (>) — not ``>=`` — so that
-# ``floor = 1.0`` is a real kill switch: reviewer confidence is
-# bounded at 1.0, so ``confidence > 1.0`` is impossible and every
-# out-of-hunk finding fails. Under ``>=`` the v2.21.0 kill-switch
-# claim was inaccurate — confidence-exactly-1.0 findings still
-# cleared (and ``_normalize_findings`` defaults missing confidence
-# to 1.0, so the bypass was easy to trip into).
-#
-# Default 0.80 is intentionally tighter than the in-hunk floor
-# (CONFIDENCE_DISCARD_THRESHOLD = 0.5) since out-of-hunk findings
-# have a higher false-positive bar — they require the reviewer to
-# demonstrate causation, not just colocation. Boundary semantics:
-# confidence > 0.80 survives, confidence == 0.80 discards. Operator-
-# overridable via ``.closedloop-ai/settings/code-review.json`` with
-# key ``out_of_hunk_confidence_floor`` (range [0.0, 1.0]). Setting
-# it to 1.0 is the canonical kill switch (no out-of-hunk findings
-# clear, regardless of confidence). Setting 0.0 lets every
-# out-of-hunk P2+ through whose confidence is non-zero (use with
-# care — leans entirely on the PLN-722 verifier for noise filtering).
+# Out-of-hunk confidence floor. P1 BLOCKING/HIGH always passes (no floor);
+# P2+ out-of-hunk findings survive when ``confidence > floor`` (strict ``>``).
+# Operator-overridable via ``.closedloop-ai/settings/code-review.json`` key
+# ``out_of_hunk_confidence_floor`` (range [0.0, 1.0]). Floor 1.0 is a kill
+# switch (reviewer confidence is bounded at 1.0; nothing can clear); floor 0.0
+# lets every non-zero-confidence out-of-hunk P2+ through (leans entirely on the
+# PLN-722 verifier for noise filtering). The default is tighter than the
+# in-hunk floor (CONFIDENCE_DISCARD_THRESHOLD = 0.5) because out-of-hunk
+# findings must demonstrate causation, not just colocation.
 OUT_OF_HUNK_CONFIDENCE_FLOOR = 0.80
 
 # Number formatting thresholds
@@ -505,7 +482,7 @@ def cmd_parse_diff(args: argparse.Namespace) -> int:
     total_loc = sum(v["added"] + v["removed"] for v in file_loc.values())
 
     # 4. -U0 (batched if >200 files)
-    include_patch_lines = not args.no_patch_lines
+    include_patch_lines = True
     if len(files_to_review) > U0_FILE_THRESHOLD:
         all_ranges: dict[str, dict[str, list[list[int]]]] = {}
         all_patch_lines: dict[str, dict[str, dict[str, str]]] = {}
@@ -771,10 +748,9 @@ def _write_per_partition_patches(
 ) -> list[str]:
     """Write ``patches_p<N>.txt`` for each partition and return their filenames.
 
-    PLN-719 Phase 5 makes the ``partition`` helper the canonical producer of
-    per-partition patch files (previously emitted by ``extract-patches``).
-    Strips any embedded pathspec (``-- file1 file2``) from ``diff_scope`` since
-    we always supply our own explicit file list.
+    The ``partition`` helper is the canonical producer of per-partition patch
+    files. Strips any embedded pathspec (``-- file1 file2``) from ``diff_scope``
+    since we always supply our own explicit file list.
     """
     run_kwargs: dict[str, Any] = {"capture_output": False, "text": True, "check": False}
     if workdir:
@@ -792,9 +768,9 @@ def _write_per_partition_patches(
 
         # Guard against empty files lists: `git diff <range> --` with no
         # pathspec is an unrestricted diff of every changed file, which would
-        # silently fold the entire diff into this partition's patch. Mirror
-        # the guard previously used in cmd_extract_patches: when a partition
-        # somehow has no files, write an empty patch and skip the git call.
+        # silently fold the entire diff into this partition's patch. When a
+        # partition somehow has no files, write an empty patch and skip the
+        # git call.
         if not files_in_part:
             patch_path.write_text("")
             written.append(patch_name)
@@ -1193,16 +1169,11 @@ def _load_critic_gates(path: str | None) -> dict[str, Any]:
 def cmd_route(args: argparse.Namespace) -> int:
     """Execute route subcommand.
 
-    PLN-725 Phase D (v2.26.0): writes ``<cr_dir>/spawn.json.route`` directly
-    via ``--cr-dir`` instead of streaming the routing block to stdout. The
-    payload is the same as the legacy ``route.json`` shape so downstream
-    consumers (cmd_derive_spawn_spec, cmd_render_fleet_summary) read from
-    ``state["route"]`` instead of opening a separate file.
-
-    The routing block is also emitted to stdout unconditionally — this
-    preserves the legacy ``helpers route ... > route.json`` shell idiom
-    for callers that haven't switched to ``--cr-dir`` and gives operators
-    visibility regardless of which path they take.
+    Writes the routing payload into ``<cr_dir>/spawn.json`` (``route`` section)
+    via ``--cr-dir``; downstream consumers (cmd_derive_spawn_spec,
+    cmd_render_fleet_summary) read it from ``state["route"]``. The routing
+    block is also emitted to stdout unconditionally so callers using the
+    ``helpers route ... > route.json`` shell idiom continue to work.
     """
     diff_data_path: str | None = getattr(args, "diff_data", None)
     diff_data = json.load(open(diff_data_path)) if diff_data_path else json.load(sys.stdin)
@@ -1286,7 +1257,7 @@ def cmd_route(args: argparse.Namespace) -> int:
         "max_bha_agents": max_bha_agents,
     }
 
-    # Phase D: when --cr-dir is supplied, write the routing block into
+    # When --cr-dir is supplied, write the routing block into
     # ``spawn.json.route`` via atomic section update so a later stage's
     # write to a different section can't clobber it.
     cr_dir_arg: str | None = getattr(args, "cr_dir", None)
@@ -1363,50 +1334,34 @@ def _filter_scope_and_range(
     *,
     out_of_hunk_confidence_floor: float = OUT_OF_HUNK_CONFIDENCE_FLOOR,
 ) -> list[dict[str, Any]]:
-    """Phases 2-4: Filter by file scope, line range, and confidence.
+    """Filter by file scope, line range, and confidence.
 
-    Honors ``finding_scope`` (PLN-719 Section 3):
+    Honors ``finding_scope``:
       - ``diff`` (default): file-in-diff check applies; line-in-changed-range
-        check is relaxed (v2.21.0).
+        check is confidence-gated for P2+ (see below).
       - ``system`` / ``pr_metadata``: file/line checks bypassed; finding must
         carry a canonical ``system_marker``.
 
-    **v2.21.0 relaxation.** The pre-v2.21 unconditional
-    ``DISCARD_LINE_NOT_CHANGED`` for P2+ out-of-hunk findings was a
-    pre-verification heuristic that predates PLN-722's per-finding
-    verifier. Modern reviewer agents legitimately surface
-    "the diff demonstrably broke this nearby unchanged code" findings —
-    most commonly when a function signature change in the diff window
-    leaves stale sibling call sites just outside it. The verifier
-    (stage_23) now does noise-filtering structurally (tier-selects by
-    severity, ranks by ``severity × confidence``, emits CONFIRMED/
-    REJECTED).
-
-    New semantics for out-of-hunk P2+ findings (in-hunk and P1 paths
-    unchanged):
+    Out-of-hunk P2+ semantics (in-hunk and P1 paths unchanged):
       - confidence > ``out_of_hunk_confidence_floor`` (default 0.80) →
-        the finding survives and gets tagged with
-        ``out_of_hunk_kept: True`` so downstream presenters can
-        distinguish in-hunk from companion-change findings without
-        re-deriving the hunk membership. v2.21.1 makes the validator
-        OWN this field: it's set to ``False`` on every in-hunk exit
-        path so a reviewer that pre-populated the field can't trick
-        the telemetry counter or downstream presenter labels.
+        the finding survives and is tagged ``out_of_hunk_kept: True`` so
+        presenters can distinguish in-hunk from companion-change findings
+        without re-deriving the hunk membership. The validator OWNS this
+        field — it's set to ``False`` on every in-hunk exit path so a
+        reviewer that pre-populated the field can't trick the telemetry
+        counter or downstream presenter labels.
       - confidence ≤ floor → discarded with reason
-        ``DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE`` (distinct from the
-        in-hunk ``DISCARD_LOW_CONFIDENCE`` so the validate-summary
-        stats keep them separable for A/B observability).
+        ``DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE`` (distinct from the in-hunk
+        ``DISCARD_LOW_CONFIDENCE`` so the validate-summary stats keep
+        them separable).
 
-    Comparison is strict ``>`` so ``floor = 1.0`` is a real kill switch
-    (reviewer confidence is bounded at 1.0; nothing can clear). The
-    boundary is operator-visible: ``floor = 0.80`` means
-    confidence > 0.80 survives, ``confidence == 0.80`` discards.
-
-    The floor default (0.80) is deliberately tighter than the in-hunk
-    floor (CONFIDENCE_DISCARD_THRESHOLD = 0.5): out-of-hunk findings
-    have to demonstrate causation, not just colocation. Operator can
-    raise the floor (1.0 = kill switch) or lower it via
-    ``.closedloop-ai/settings/code-review.json``.
+    Strict ``>`` comparison makes floor 1.0 a kill switch (reviewer
+    confidence is bounded at 1.0; nothing can clear); floor 0.80 means
+    confidence > 0.80 survives, ``confidence == 0.80`` discards. The
+    default (0.80) is tighter than the in-hunk floor
+    (CONFIDENCE_DISCARD_THRESHOLD = 0.5) because out-of-hunk findings
+    must demonstrate causation, not just colocation. Operator-tunable
+    via ``.closedloop-ai/settings/code-review.json``.
 
     Low-confidence in-hunk findings (P2+ with confidence < the in-hunk
     threshold) are still discarded with reason ``DISCARD_LOW_CONFIDENCE``.
@@ -1414,7 +1369,7 @@ def _filter_scope_and_range(
     result: list[dict[str, Any]] = []
 
     for finding in findings:
-        # Default to diff scope when missing (legacy compat).
+        # Default to diff scope when missing.
         scope = finding.get("finding_scope") or "diff"
         priority = int(finding.get("priority", 2))
         confidence = float(finding.get("confidence", 1.0))
@@ -1431,10 +1386,10 @@ def _filter_scope_and_range(
             if priority > 1 and confidence < CONFIDENCE_DISCARD_THRESHOLD:
                 discarded.append({"finding": finding, "reason": "DISCARD_LOW_CONFIDENCE"})
                 continue
-            # v2.21.1: system/pr_metadata findings can never be
-            # "companion-change" — the field is meaningless for them.
-            # Pop any reviewer-supplied value so the schema convention
-            # (present iff companion-change) holds universally.
+            # system/pr_metadata findings can never be "companion-change" —
+            # the field is meaningless for them. Pop any reviewer-supplied
+            # value so the schema convention (present iff companion-change)
+            # holds universally.
             finding.pop("out_of_hunk_kept", None)
             result.append(finding)
             continue
@@ -1453,12 +1408,11 @@ def _filter_scope_and_range(
 
         in_range = _line_in_range(line, added) or _line_in_range(line, removed)
         if not in_range and priority > 1:
-            # v2.21.0 relaxation, v2.21.1 strict-comparison. Confidence
-            # must STRICTLY EXCEED the floor (``>``, not ``>=``) so
-            # ``floor=1.0`` is a real kill switch — reviewer confidence
-            # is bounded at 1.0, so ``confidence > 1.0`` is impossible
-            # and every out-of-hunk finding fails. Survivors get tagged
-            # so presenters can label them as companion-change without
+            # Confidence must STRICTLY EXCEED the floor (``>``, not ``>=``)
+            # so ``floor=1.0`` is a real kill switch — reviewer confidence
+            # is bounded at 1.0, so ``confidence > 1.0`` is impossible and
+            # every out-of-hunk finding fails. Survivors get tagged so
+            # presenters can label them as companion-change without
             # re-deriving hunk membership against changed_ranges.
             if confidence > out_of_hunk_confidence_floor:
                 finding["out_of_hunk_kept"] = True
@@ -1470,14 +1424,13 @@ def _filter_scope_and_range(
                 })
             continue
 
-        # In-hunk diff-scope path. v2.21.1: pop any reviewer-supplied
+        # In-hunk diff-scope path: pop any reviewer-supplied
         # ``out_of_hunk_kept`` value so the validator OWNS the field.
         # Schema convention: tag is present (and True) IFF the finding
-        # is a companion-change survivor of the out-of-hunk filter.
-        # Absence means in-hunk. Without this pop, a reviewer that
-        # pre-populated ``out_of_hunk_kept: true`` would slip through
-        # untouched and inflate the kept_out_of_hunk counter + any
-        # downstream presenter labels that key on the tag.
+        # is a companion-change survivor of the out-of-hunk filter; absence
+        # means in-hunk. Without this pop, a reviewer that pre-populated
+        # ``out_of_hunk_kept: true`` would slip through untouched and
+        # inflate the kept_out_of_hunk counter + downstream presenter labels.
         if priority > 1 and confidence < CONFIDENCE_DISCARD_THRESHOLD:
             discarded.append({"finding": finding, "reason": "DISCARD_LOW_CONFIDENCE"})
             continue
@@ -1670,11 +1623,10 @@ def cmd_validate(args: argparse.Namespace) -> int:
     files_to_review: set[str] = set(diff_data.get("files_to_review", []))
     changed_ranges: dict[str, dict[str, list[list[int]]]] = diff_data.get("changed_ranges", {})
 
-    # v2.21.0: read the operator-tunable out-of-hunk confidence floor
-    # from code-review.json (same file that already hosts
-    # bha_unified_threshold_loc). Settings path is overridable via
-    # --settings for test isolation; falls back to the canonical
-    # repo-root location otherwise.
+    # Read the operator-tunable out-of-hunk confidence floor from
+    # code-review.json (same file that hosts bha_unified_threshold_loc).
+    # Settings path is overridable via --settings for test isolation;
+    # falls back to the canonical repo-root location otherwise.
     settings_path = Path(
         getattr(args, "settings", None) or _CODE_REVIEW_SETTINGS_DEFAULT_PATH,
     )
@@ -1695,19 +1647,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
         normalized, files_to_review, changed_ranges, discarded,
         out_of_hunk_confidence_floor=out_of_hunk_floor,
     )
-    # v2.21.0 telemetry: count out-of-hunk findings that survived the
-    # relaxation so operators can A/B the change against historical
-    # runs where DISCARD_LINE_NOT_CHANGED hit every one of these.
-    #
-    # v2.21.1: count on ``filtered`` (post-filter, pre-grouping) rather
-    # than on the final ``validated`` set. ``_group_cross_file`` absorbs
-    # sibling findings into the primary's ``other_locations``, where
-    # only file/line/severity are carried — the ``out_of_hunk_kept``
-    # tag is lost. Counting post-grouping silently undercounted every
-    # companion-change finding that happened to be grouped with another.
-    # The counter is about how many findings survived the filter, not
-    # how many made it to the final presenter view, so pre-grouping
-    # is the semantically correct point to measure.
+    # Count out-of-hunk findings that survived the confidence floor.
+    # Counted on ``filtered`` (post-filter, pre-grouping) because
+    # ``_group_cross_file`` absorbs sibling findings into the primary's
+    # ``other_locations`` where the ``out_of_hunk_kept`` tag is lost;
+    # post-grouping would silently undercount companion-change findings
+    # that happened to be grouped with another.
     kept_out_of_hunk = sum(
         1 for f in filtered if f.get("out_of_hunk_kept") is True
     )
@@ -1725,12 +1670,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
         "cross_file_grouped": cross_file_grouped,
         "kept_out_of_hunk": kept_out_of_hunk,
         "discarded_file_not_changed": sum(1 for d in discarded if d["reason"] == "DISCARD_FILE_NOT_CHANGED"),
-        # v2.21.0: ``discarded_line_not_changed`` is retired (always 0 now)
-        # in favor of ``discarded_out_of_hunk_low_confidence`` — the relaxed
-        # filter only discards out-of-hunk findings when they don't clear
-        # the confidence floor. Keeping the old key at 0 for one release
-        # so downstream telemetry dashboards see the transition without
-        # crashing on a missing key; future cleanup can drop it.
+        # Retained at 0 for backward compat with downstream telemetry
+        # dashboards; superseded by ``discarded_out_of_hunk_low_confidence``.
         "discarded_line_not_changed": 0,
         "discarded_out_of_hunk_low_confidence": sum(
             1 for d in discarded
@@ -2137,8 +2078,8 @@ def _read_cached_verification(
     if not isinstance(data, dict):
         return None
     # TTL check: cached_at must be present and within the window. Missing
-    # cached_at → treat as miss (legacy entry); explicit `None` (e.g. a
-    # corrupted write) → miss.
+    # cached_at → treat as miss; explicit `None` (e.g. a corrupted write)
+    # → miss.
     cached_at = data.get("cached_at")
     ttl = cache_ttl_days(CACHE_NAMESPACE_VERIFICATIONS) or 30
     try:
@@ -2214,18 +2155,11 @@ def _verification_priority(finding: dict[str, Any]) -> float:
 def _needs_verification(finding: dict[str, Any]) -> bool:
     """Apply the PLN-722 'What gets verified' tier table to one finding.
 
-    v2.21.1: out-of-hunk findings (``out_of_hunk_kept: True``,
-    introduced by the v2.21.0 line-scope relaxation) ALWAYS verify,
-    regardless of confidence. The relaxation deliberately lets through
-    P2+ findings that fall outside the diff hunks on the premise that
-    they cite a real causal relationship to the diff (a function
-    signature change in the diff window leaving stale sibling call
-    sites just outside it, etc.). Those claims are exactly the
-    cross-region causation reasoning LLM reviewers are weakest on,
-    so the high-confidence MEDIUM skip rule (confidence ≥ 0.85 → no
-    verification) is precisely the wrong default for them: the
-    canonical case my own v2.21.0 test pinned (0.9-confidence
-    companion-change finding) would never have been backstopped.
+    Out-of-hunk findings (``out_of_hunk_kept: True``) ALWAYS verify
+    regardless of confidence. Their causal claim — that the diff broke
+    nearby unchanged code — is exactly the cross-region reasoning LLM
+    reviewers are weakest on, so the high-confidence MEDIUM skip rule
+    (confidence ≥ 0.85 → no verification) is the wrong default for them.
     """
     category = str(finding.get("category", ""))
     source = str(finding.get("source", ""))
@@ -2242,7 +2176,7 @@ def _needs_verification(finding: dict[str, Any]) -> bool:
     if source == "injection-detector":
         return False
 
-    # v2.21.1 backstop: every out-of-hunk-kept finding gets verified.
+    # Out-of-hunk-kept backstop: every such finding gets verified.
     # Placed after the deterministic-producer guards (Hygiene findings
     # never carry the tag in practice, but the ordering keeps the
     # never-verify producers absolute) and before the severity tiers
@@ -2307,13 +2241,11 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
     findings_path = Path(args.findings)
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
     prompt_hash = str(getattr(args, "prompt_hash", "") or "")
-    no_verify: bool = bool(getattr(args, "no_verify", False))
-    no_verify_reason: str = str(getattr(args, "no_verify_reason", "") or "")
-    # PLN-774 — Read partitions.json (written by ``cmd_partition`` at
-    # stage_17) so the verify manifest can surface partition mode +
-    # count for downstream consumers (presenters, stats split).
-    # Defensive: absent file → unknown mode, partition_count=0; this is
-    # the legitimate state for hygiene-only runs or pre-PLN-774 caches.
+    # Read partitions.json (written by ``cmd_partition`` at stage_17)
+    # so the verify manifest can surface partition mode + count for
+    # downstream consumers (presenters, stats split). Defensive: absent
+    # file → unknown mode, partition_count=0 (legitimate state for
+    # hygiene-only runs or older caches).
     partitions_meta = _read_optional_json(cr_dir / "partitions.json", None)
     partition_mode = "unknown"
     partition_count = 0
@@ -2325,20 +2257,9 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
         if isinstance(raw_count, int) and raw_count >= 0:
             partition_count = raw_count
         elif isinstance(partitions_meta.get("partitions"), list):
-            # Fallback for pre-PLN-774 caches that lack ``partition_count``
+            # Fallback for older caches that lack ``partition_count``
             # but still have the ``partitions`` array.
             partition_count = len(partitions_meta["partitions"])
-
-    # PLN-773 Phase 4: --no-verify requires an explicit reason so the
-    # emergency bypass is never silent. The audit banner downstream
-    # echoes the reason in the operator-facing footer.
-    if no_verify and not no_verify_reason.strip():
-        print(
-            "Error: --no-verify requires --no-verify-reason='<why>' so the "
-            "emergency bypass is captured in the audit trail.",
-            file=sys.stderr,
-        )
-        return 2
 
     data = _read_optional_json(findings_path, {})
     if isinstance(data, dict):
@@ -2357,29 +2278,19 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
 
     eligible: list[dict[str, Any]] = []
     skipped: list[str] = []
-    # PLN-773 Phase 4: --no-verify short-circuits the tier table — every
-    # finding lands in skipped_no_verification[] so cmd_verify_consolidate
-    # routes the whole set to verified[] with verifier_verdict=None.
-    # Sensitive-path rules in consolidate key on verifier_verdict and have
-    # nothing to escalate against a null verdict; the audit banner makes
-    # the bypass visible in the operator-facing footer.
-    if no_verify:
-        for f in findings:
-            skipped.append(str(f["id"]))
-    else:
-        for f in findings:
-            fid = str(f["id"])
-            if _needs_verification(f):
-                eligible.append({
-                    "finding_id": fid,
-                    "model": _select_verifier_model(f),
-                    "severity": f.get("severity"),
-                    "confidence": f.get("confidence"),
-                    "category": f.get("category"),
-                    "_priority_score": _verification_priority(f),
-                })
-            else:
-                skipped.append(fid)
+    for f in findings:
+        fid = str(f["id"])
+        if _needs_verification(f):
+            eligible.append({
+                "finding_id": fid,
+                "model": _select_verifier_model(f),
+                "severity": f.get("severity"),
+                "confidence": f.get("confidence"),
+                "category": f.get("category"),
+                "_priority_score": _verification_priority(f),
+            })
+        else:
+            skipped.append(fid)
 
     # Rank by priority; stable secondary sort by finding_id so a tie
     # doesn't make the cutoff non-deterministic across runs (cache
@@ -2474,15 +2385,10 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
         # was rejected on file-content drift and ran normal verification.
         "override_hits": override_hits,
         "override_invalidated": override_invalidated,
-        # PLN-773 Phase 4 — emergency-bypass flag. Downstream presenter
-        # surfaces this in the audit banner so the bypass is visible.
-        "no_verify": no_verify,
-        "no_verify_reason": no_verify_reason if no_verify else "",
-        # PLN-774 — partition-mode telemetry propagated from
-        # partitions.json (stage_17). Surfaces in the presenter footers
-        # and drives the per-reviewer FP-rate split (BHA findings get
-        # bucketed by partition id only when ``partition_mode ==
-        # "partitioned"``).
+        # Partition-mode telemetry propagated from partitions.json
+        # (stage_17). Surfaces in the presenter footers and drives the
+        # per-reviewer FP-rate split (BHA findings get bucketed by
+        # partition id only when ``partition_mode == "partitioned"``).
         "partition_mode": partition_mode,
         "partition_count": partition_count,
         "max_verifications": VERIFY_MAX_VERIFICATIONS,
@@ -2521,9 +2427,9 @@ _VERIFICATION_GATES_DEFAULT_PATH = Path(".closedloop-ai/settings/verification-ga
 # patch is structurally wrong even when no individual line is dangerous").
 _VERDICT_THRESHOLDS_DEFAULT_PATH = Path(".closedloop-ai/settings/verdict-thresholds.json")
 _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT = 3
-# PLN-773 v2.10.0: Premise justification rate alert. Fires when the share
-# of Premise findings carrying author justification crosses the threshold
-# — PLN-721 §Telemetry: "if > ~30%, authors likely gaming the hatch".
+# PLN-773 Premise justification rate alert. Fires when the share of
+# Premise findings carrying author justification crosses the threshold
+# (PLN-721 §Telemetry: "if > ~30%, authors likely gaming the hatch").
 # Operator-tunable via the same verdict-thresholds.json config.
 _VERDICT_JUSTIFICATION_RATE_ALERT_DEFAULT = 0.30
 _VERDICT_THRESHOLD_KEYS: tuple[str, ...] = (
@@ -2538,8 +2444,7 @@ def _load_optional_settings_dict(
     """Open an optional operator-authored settings JSON file.
 
     Shared frame for ``_load_verdict_thresholds`` and
-    ``_load_verification_gates`` (the v2.9.0 review surfaced their
-    structural duplication). Returns:
+    ``_load_verification_gates``. Returns:
 
       - ``(None, fresh_defaults)`` when ``path`` is None, missing, or
         the file does not contain a top-level JSON object — caller
@@ -2680,13 +2585,13 @@ def _load_code_review_settings(path: Path | None) -> dict[str, Any]:
         or below this value gets a single "unified" BHA partition so
         cross-region invariants stay visible to one reviewer. Default
         :data:`BHA_UNIFIED_THRESHOLD_LOC` (5000). Setting the value to 0
-        forces the historical always-partition behavior (kill switch).
+        forces always-partition behavior (kill switch).
       - ``out_of_hunk_confidence_floor`` (float, [0.0, 1.0]): P2+ findings
         whose line is outside the changed-range of the file but whose
-        confidence ≥ this value survive validation (v2.21.0 relaxation
-        for legitimate companion-change findings). Default
-        :data:`OUT_OF_HUNK_CONFIDENCE_FLOOR` (0.80). Setting to 1.0
-        restores pre-v2.21 strict "in-hunk only" behavior.
+        confidence exceeds this floor survive validation (admits
+        legitimate companion-change findings). Default
+        :data:`OUT_OF_HUNK_CONFIDENCE_FLOOR` (0.80). Setting to 1.0 is a
+        kill switch (strict "in-hunk only" behavior).
 
     Unknown keys are ignored. Invalid entries (wrong type, out of range)
     fall back to the default — the file is operator-authored and should
@@ -2934,7 +2839,7 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
         elif fid in skipped_ids:
             # Tier-skipped: verifier_verdict stays None. Land in verified[].
             pass
-        # else: not in any manifest list → treat as skipped (legacy/no manifest)
+        # else: not in any manifest list → treat as skipped (no manifest)
 
         # Sensitive-path escalation
         if _matches_any_glob(file_path, gates["mandatory_human_review_paths"]):
@@ -3537,7 +3442,7 @@ def _cmd_cache_check_v1(  # noqa: PLR0913
     model_id: str,
     prompt_hash: str,
 ) -> int:
-    """Legacy V1 cache-check path."""
+    """Per-cr-dir cache-check path (non-global-cache fallback)."""
     manifest_file_existed = (cache_dir / CACHE_MANIFEST_FILENAME).exists()
     manifest = _load_manifest(cache_dir)
 
@@ -3752,7 +3657,7 @@ def _cmd_cache_update_v1(  # noqa: PLR0913
     model_id: str,
     prompt_hash: str,
 ) -> int:
-    """Legacy V1 cache-update path."""
+    """Per-cr-dir cache-update path (non-global-cache fallback)."""
     manifest = _load_manifest(cache_dir)
     diff_file_set = set(files_to_review)
     updated_manifest: dict[str, Any] = {
@@ -3979,15 +3884,11 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
 
         path = finding.get("file") or ""
         # Schema permits ``line: int | None`` for system + pr_metadata scopes;
-        # legacy reviewers also sometimes emit ``"42"`` as a string. The
-        # previous ``int(finding.get("line", 0))`` coerced strings cleanly
-        # but crashed on ``None``; tightening to ``isinstance(int)`` fixed
-        # the crash but silently dropped string-valued lines into ``failed``
-        # (regression flagged in PR #107 review). The split below keeps both
-        # behaviors: reject ``bool`` first (``bool`` is a subclass of ``int``
-        # in Python — ``isinstance(True, int)`` is True — so unguarded
-        # ``int(True)`` posts to line 1), then try ``int(line_raw)`` which
-        # handles ints, numeric strings, and falls through to ``0`` on
+        # some reviewers emit ``"42"`` as a string. The split below: reject
+        # ``bool`` first (``bool`` is a subclass of ``int`` in Python —
+        # ``isinstance(True, int)`` is True — so unguarded ``int(True)`` posts
+        # to line 1), then try ``int(line_raw)`` which handles ints, numeric
+        # strings, and falls through to ``0`` on
         # ``None``/non-numeric values via the typed exception catch.
         line_raw = finding.get("line")
         if isinstance(line_raw, bool):
@@ -4541,18 +4442,13 @@ def cmd_compute_hashes(args: argparse.Namespace) -> int:
     """Compute prompt hash and context key for cache operations.
 
     The prompt hash folds the canonical schema_version per PLN-719
-    Section 9 (any MAJOR schema bump invalidates all caches) and — since
-    PLN-722 v2.8.1 — the verifier prompt bytes, so editing
-    ``verifier_prompt.txt`` busts every cache namespace that keys on
-    ``<PROMPT_HASH>`` (BHA cache and the new ``verifications/`` namespace).
-    PLN-721 extends the same contract to ``premise_prompt.txt``: editing
-    the Premise Reviewer prompt invalidates the same cache namespaces.
+    Section 9 (any MAJOR schema bump invalidates all caches) plus the
+    verifier and premise prompt bytes, so editing ``verifier_prompt.txt``
+    or ``premise_prompt.txt`` busts every cache namespace that keys on
+    ``<PROMPT_HASH>`` (BHA cache and the ``verifications/`` namespace).
     Coarse but correct: prompt revs are rare, and the over-invalidation
     cost (re-pay the BHA reviewer pass) is bounded by how often the
-    prompts actually change. The alternative (separate per-asset hash)
-    splits the cache-key contract across N CLI flags without preventing
-    the bug PLN-722 v2.8.0 v1 shipped — stale verifier verdicts
-    surviving a prompt edit.
+    prompts actually change.
     """
     shared_prompt: str = args.shared_prompt
     bha_suffix: str = args.bha_suffix
@@ -4574,10 +4470,8 @@ def cmd_compute_hashes(args: argparse.Namespace) -> int:
     except OSError as exc:
         print(f"Error: cannot read BHA suffix: {exc}", file=sys.stderr)
         return 1
-    # verifier_prompt.txt is optional for backward compatibility with
-    # pre-PLN-722 callers; new callers (stage_18 wiring) always pass it.
-    # When absent, the prompt hash matches v2.8.0 exactly so existing
-    # cache entries stay valid through the upgrade.
+    # verifier_prompt.txt is optional for backward compatibility;
+    # canonical callers (stage_18 wiring) always pass it.
     verifier_bytes: bytes | None = None
     if verifier_prompt:
         try:
@@ -4587,8 +4481,7 @@ def cmd_compute_hashes(args: argparse.Namespace) -> int:
             print(f"Error: cannot read verifier prompt: {exc}", file=sys.stderr)
             return 1
     # premise_prompt.txt is optional with the same back-compat contract
-    # as verifier_prompt — when absent (pre-PLN-721 callers) the hash
-    # matches v2.8.1 exactly.
+    # as verifier_prompt.
     premise_bytes: bytes | None = None
     if premise_prompt:
         try:
@@ -5524,9 +5417,7 @@ def cmd_detect_injection(args: argparse.Namespace) -> int:
 #      against the taxonomy / evidence / confidence-floor contract, write the
 #      final ``extract_signals.json``, and update the cache.
 #
-# Phase 1 ships the foundation only — Phase 4 wires these into ``start.md``.
-# Signal-extraction output is shadowed in Phase A (Rollout) and does not yet
-# affect routing.
+# Signal-extraction output is observational and does not affect routing.
 
 SIGNAL_CONFIDENCE_FLOOR = 0.7
 SIGNAL_CONFIDENCE_MAX = 1.0
@@ -6120,24 +6011,18 @@ def _emit_signal_extraction_failed_finding(
 
 
 # ---------------------------------------------------------------------------
-# PLN-725 Phase 2 — Coverage resolution (Stage 2 of deterministic coverage)
+# PLN-725 — Coverage resolution (deterministic coverage stage)
 # ---------------------------------------------------------------------------
-# Phase 2 ships:
+# Components:
 #   1. The ``coverage[]`` rule schema in ``critic-gates.json`` (constants
 #      live in ``code_review_schema.py``).
 #   2. ``resolve-coverage`` subcommand: deterministic resolver that reads
 #      diff_data + critic-gates + (optional) extract_signals.json,
 #      evaluates trigger rules, and writes the initial plan into the
-#      ``initial`` section of ``coverage.json`` (Phase C, v2.27.0; the
-#      pre-v2.27.0 target was a standalone ``coverage_plan_initial.json``).
+#      ``initial`` section of ``coverage.json``.
 #   3. ``migrate-critic-gates`` subcommand: one-time rewriter that
-#      translates legacy ``moduleCritics[]`` substring rules into
-#      canonical ``coverage[]`` path_pattern rules.
-#
-# Phase 4 will wire ``resolve-coverage`` into ``start.md`` (replacing the
-# ``route`` subcommand's domain-critic selection). Phase 6 will gate the
-# verdict on missing required reviewers. Phase 2 alone changes no
-# orchestrator behaviour — both new subcommands are additive.
+#      translates ``moduleCritics[]`` substring rules into canonical
+#      ``coverage[]`` path_pattern rules.
 
 # Canonical change_class → path glob patterns. Adding a class requires
 # an entry here AND in ``COVERAGE_CHANGE_CLASSES`` (schema module).
@@ -6260,9 +6145,9 @@ def _trigger_fires(
         if not isinstance(patterns, list):
             return False
         # ``ignore_case`` is opt-in (default False so canonical rules keep
-        # their explicit case-sensitive semantics). The legacy migration
-        # sets it to True to preserve the old ``substring.lower() in
-        # path.lower()`` behaviour.
+        # their explicit case-sensitive semantics). ``moduleCritics[]``
+        # migration sets it to True to preserve the original
+        # ``substring.lower() in path.lower()`` behaviour.
         ignore_case = bool(trigger.get("ignore_case", False))
         for pat in patterns:
             if not isinstance(pat, str) or not pat:
@@ -6309,22 +6194,21 @@ def _trigger_fires(
 def migrate_legacy_module_critics(
     module_critics: list[Any],
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Translate legacy ``moduleCritics[]`` substring rules into
-    canonical ``coverage[]`` path_pattern rules.
+    """Migrate ``moduleCritics[]`` substring rules into canonical
+    ``coverage[]`` path_pattern rules.
 
-    Pure function. Each legacy entry becomes one ``coverage[]`` entry
-    per critic, scoped to ``both`` and ``required=False`` — preserving
-    the legacy semantics (best-effort, substring-match, case-insensitive)
-    inside the new schema. Substrings are wrapped as ``**<sub>**`` globs
-    so the canonical resolver matches the substring anywhere in the path
-    (filename, directory, extension) — the ``**foo**`` form translates
-    to the regex ``^.*foo.*$`` per ``_glob_to_regex``'s middle-``**``
-    rule. The migrated trigger carries ``ignore_case: True`` so the
-    resolver compiles the pattern with ``re.IGNORECASE``, matching the
-    legacy ``substring.lower() in path.lower()`` semantics.
+    Pure function. Each entry becomes one ``coverage[]`` entry per critic,
+    scoped to ``both`` and ``required=False`` — best-effort, substring-match,
+    case-insensitive inside the new schema. Substrings are wrapped as
+    ``**<sub>**`` globs so the canonical resolver matches anywhere in the
+    path (filename, directory, extension); ``**foo**`` translates to the
+    regex ``^.*foo.*$`` per ``_glob_to_regex``'s middle-``**`` rule. The
+    migrated trigger carries ``ignore_case: True`` so the resolver compiles
+    the pattern with ``re.IGNORECASE``, matching the original
+    ``substring.lower() in path.lower()`` semantics.
 
-    Returns ``(migrated, warnings)``. The warning list always contains a
-    single ``[DEPRECATED]`` entry when at least one rule was migrated.
+    Returns ``(migrated, warnings)``. The warning list contains a single
+    ``[DEPRECATED]`` entry when at least one rule was migrated.
     """
     migrated: list[dict[str, Any]] = []
     skipped = 0
@@ -6450,9 +6334,9 @@ def resolve_coverage(
 
     Inputs:
       - ``critic_gates``: parsed critic-gates.json. Reads both
-        ``coverage[]`` (canonical) and ``moduleCritics[]`` (legacy
-        soft-compat). The legacy entries are migrated on the fly via
-        ``migrate_legacy_module_critics`` so a file with only legacy
+        ``coverage[]`` (canonical) and ``moduleCritics[]`` (soft-compat).
+        ``moduleCritics[]`` entries are migrated on the fly via
+        ``migrate_legacy_module_critics`` so a file with only those
         entries keeps working.
       - ``diff_data``: parse-diff output. Uses ``files_to_review`` for
         path/extension/change_class triggers and ``patch_lines`` for
@@ -6484,9 +6368,9 @@ def resolve_coverage(
     # Compose rule list: canonical coverage[] + migrated moduleCritics[].
     canonical = critic_gates.get("coverage", [])
     canonical = canonical if isinstance(canonical, list) else []
-    legacy = critic_gates.get("moduleCritics", [])
-    legacy = legacy if isinstance(legacy, list) else []
-    migrated, migration_warnings = migrate_legacy_module_critics(legacy)
+    module_critics = critic_gates.get("moduleCritics", [])
+    module_critics = module_critics if isinstance(module_critics, list) else []
+    migrated, migration_warnings = migrate_legacy_module_critics(module_critics)
     rules = list(canonical) + migrated
 
     warnings: list[str] = list(migration_warnings)
@@ -6606,16 +6490,14 @@ def resolve_coverage(
 
 
 def cmd_resolve_coverage(args: argparse.Namespace) -> int:
-    """PLN-725 Stage 2: deterministic coverage resolver.
+    """Deterministic coverage resolver (PLN-725).
 
     Reads diff_data + critic-gates + (optional) extract_signals.json,
     runs ``resolve_coverage``, writes the rule-resolved plan into
-    ``<cr_dir>/coverage.json`` under the ``initial`` section (Phase C,
-    v2.27.0; pre-v2.27.0 wrote a standalone
-    ``coverage_plan_initial.json``), and emits a summary on stdout.
-    Always exits 0 on a structurally valid run; returns 1 on file-read
-    failure (which is the only condition the orchestrator needs to
-    halt on — empty results are valid).
+    ``<cr_dir>/coverage.json`` under the ``initial`` section, and emits
+    a summary on stdout. Always exits 0 on a structurally valid run;
+    returns 1 on file-read failure (which is the only condition the
+    orchestrator needs to halt on — empty results are valid).
     """
     cr_dir = Path(args.cr_dir)
     diff_data_path = Path(args.diff_data)
@@ -6679,11 +6561,10 @@ def cmd_resolve_coverage(args: argparse.Namespace) -> int:
     output: dict[str, Any] = dict(plan)
     output["generated_at"] = datetime.now(timezone.utc).isoformat()
     output["scope"] = scope_filter
-    # Phase C (v2.27.0): write into coverage.json.initial via atomic
-    # section update instead of a standalone coverage_plan_initial.json.
+    # Write into coverage.json.initial via atomic section update.
     # The docstring guarantees exit 0 on structurally valid runs; an
-    # OSError on the write surfaces as a structured failure here so
-    # the contract holds.
+    # OSError on the write surfaces as a structured failure so the
+    # contract holds.
     try:
         _write_coverage_section(cr_dir, "initial", output)
     except OSError as exc:
@@ -6991,7 +6872,7 @@ def cmd_load_available_reviewers(args: argparse.Namespace) -> int:
 
 
 def cmd_migrate_critic_gates(args: argparse.Namespace) -> int:
-    """PLN-725 Phase 2: one-time legacy-to-canonical critic-gates rewriter.
+    """One-time rewriter that migrates ``moduleCritics[]`` to ``coverage[]``.
 
     Reads ``<input>`` (defaults to .closedloop-ai/settings/critic-gates.json),
     migrates ``moduleCritics[]`` into ``coverage[]`` via
@@ -7019,19 +6900,19 @@ def cmd_migrate_critic_gates(args: argparse.Namespace) -> int:
         print(f"Error: {in_path} is not a JSON object", file=sys.stderr)
         return 1
 
-    legacy = current.get("moduleCritics", [])
-    legacy = legacy if isinstance(legacy, list) else []
-    migrated, warnings = migrate_legacy_module_critics(legacy)
+    module_critics = current.get("moduleCritics", [])
+    module_critics = module_critics if isinstance(module_critics, list) else []
+    migrated, warnings = migrate_legacy_module_critics(module_critics)
 
     existing_coverage = current.get("coverage", [])
     existing_coverage = existing_coverage if isinstance(existing_coverage, list) else []
 
-    # PR #124 review (#3, idempotency): a second --in-place run would
-    # otherwise re-migrate the legacy block and append duplicate entries.
-    # Strip any prior _migrated_from="moduleCritics" entries from the
-    # existing coverage[] before appending the freshly-migrated set, so
-    # running migration N times is equivalent to running it once.
-    # Operator-edited entries (no _migrated_from marker) survive untouched.
+    # Idempotency: a second --in-place run would otherwise re-migrate the
+    # moduleCritics[] block and append duplicate entries. Strip any prior
+    # _migrated_from="moduleCritics" entries from the existing coverage[]
+    # before appending the freshly-migrated set, so running migration N
+    # times is equivalent to running it once. Operator-edited entries
+    # (no _migrated_from marker) survive untouched.
     prior_migrated_count = sum(
         1 for e in existing_coverage
         if isinstance(e, dict) and e.get("_migrated_from") == "moduleCritics"
@@ -7043,11 +6924,10 @@ def cmd_migrate_critic_gates(args: argparse.Namespace) -> int:
 
     new_state = dict(current)
     new_state["coverage"] = list(cleaned_existing) + migrated
-    # Preserve moduleCritics on disk for one release as a back-out path;
-    # the resolver tolerates duplicate naming because dedup is by
-    # reviewer name across the composed rule list.
-    # Users can remove the legacy block manually once they've verified
-    # the migrated entries.
+    # Preserve moduleCritics on disk as a back-out path; the resolver
+    # tolerates duplicate naming because dedup is by reviewer name across
+    # the composed rule list. Operators can remove the moduleCritics block
+    # manually once they've verified the migrated entries.
 
     summary = {
         "input": str(in_path),
@@ -7085,16 +6965,14 @@ def cmd_migrate_critic_gates(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# PLN-725 Phase 3 — Coverage critic (Stage 3 of deterministic coverage)
+# PLN-725 — Coverage critic
 # ---------------------------------------------------------------------------
 # Adversarial LLM stage that fronts the final coverage plan. Reads the
-# rule-resolved plan from ``coverage.json.initial`` (Phase C, v2.27.0;
-# pre-v2.27.0 read a standalone ``coverage_plan_initial.json``) plus
-# the Phase 1 extract_signals.json and an AVAILABLE-list of reviewer
-# names, and may propose additive best-effort additions. The critic
-# CANNOT remove, rename, re-scope, promote-to-required, exceed the
-# cap, or invent reviewer names; the validator enforces every
-# constraint.
+# rule-resolved plan from ``coverage.json.initial`` plus the
+# extract_signals.json output and an AVAILABLE-list of reviewer names,
+# and may propose additive best-effort additions. The critic CANNOT
+# remove, rename, re-scope, promote-to-required, exceed the cap, or
+# invent reviewer names; the validator enforces every constraint.
 #
 # Two-step pattern mirroring extract-signals:
 #   1. coverage-critic-prepare — reads inputs, computes cache key,
@@ -7104,9 +6982,6 @@ def cmd_migrate_critic_gates(args: argparse.Namespace) -> int:
 #      ``coverage.json.final``, writes the cache on success.
 #      Fail-closed emits a MEDIUM Coverage finding so the operator
 #      footer surfaces the skipped stage.
-#
-# Phase 4 will wire these into start.md; Phase 3 alone changes no
-# orchestrator behavior.
 
 COVERAGE_CRITIC_MAX_ADDITIONS = 5
 COVERAGE_CRITIC_MARKER = "coverage-critic-failed"
@@ -7252,14 +7127,11 @@ def _load_available_reviewers(
       - ``{"available": "not-a-list"}``       → ``(None, "...")``
       - ``[1, 2, 3]`` (list of non-strings)   → ``(None, "...")``
 
-    Those are realistic operator hand-edits, and the previous version
-    silently returned ``([], None)`` for them (``raw.get("available", [])``
-    defaulted to ``[]``, the non-string filter collapsed everything),
-    masking the operator config error. ``cmd_verify_coverage`` then
-    saw "no roster", skipped closed-vocabulary, and emitted PASS on a
-    plan that should have been gated. The verifier's roster-BLOCK
-    path (v2.20.1) keyed on ``loaded is None`` and never fired for
-    these shapes.
+    Those are realistic operator hand-edits; without explicit detection
+    they would masquerade as "no roster" — ``cmd_verify_coverage`` would
+    skip closed-vocabulary and emit PASS on a plan that should have
+    been gated. The verifier's roster-BLOCK path keys on ``loaded is
+    None``, so detection here gives it the signal it needs.
 
     IO/parse errors stay bound to the exception so an operator with a
     missing or malformed file sees the real cause (e.g. ``[Errno 2]
@@ -7463,10 +7335,6 @@ def _emit_skipped_coverage_plan(
     regardless of which skip branch ran. Returns 0 on success; 1 if
     the section writes fail.
 
-    Phase C (v2.27.0) consolidated the legacy standalone
-    ``coverage_plan.json`` + ``coverage_critic_manifest.json`` into
-    sections of ``coverage.json``. Shape preserved.
-
     Shared between the ``--no-critic`` operator-flag path (reason
     ``"no-critic"``) and the missing-roster configuration path (reason
     ``"no-roster"``). Single edit site for any future shape changes.
@@ -7494,29 +7362,26 @@ def _emit_skipped_coverage_plan(
 
 
 def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
-    """PLN-725 Stage 3a: prep the coverage-critic agent input + check cache.
+    """Prep the coverage-critic agent input + check cache (PLN-725).
 
     Reads the rule-resolved plan from ``coverage.json``'s ``.initial``
-    section (Phase C, v2.27.0; pre-v2.27.0 read a standalone
-    ``coverage_plan_initial.json`` via ``--coverage-plan-initial``,
-    which is still accepted as a legacy explicit-path fallback) plus
-    ``extract_signals.json``, ``diff_data.json``, and
-    ``available_reviewers.json``. Computes the
+    section (or from an explicit ``--coverage-plan-initial`` path for
+    backward compat) plus ``extract_signals.json``, ``diff_data.json``,
+    and ``available_reviewers.json``. Computes the
     ``(coverage_plan_initial_hash, signals_hash, diff_tip, prompt_hash,
     available_reviewers_hash)`` cache key and either:
 
-      - **Cache hit** — writes the merged plan into
-        ``coverage.json``'s ``.final`` section directly and exits with
-        a ``cache_hit`` manifest written into ``.critic``.
+      - **Cache hit** — writes the merged plan into ``coverage.json``'s
+        ``.final`` section directly and exits with a ``cache_hit``
+        manifest written into ``.critic``.
       - **Cache miss** — writes a bounded agent-input bundle to
-        ``<cr_dir>/coverage_critic_input.json`` plus a diff summary
-        copy and a manifest into ``coverage.json``'s ``.critic``
-        section describing the spawn contract.
+        ``<cr_dir>/coverage_critic_input.json`` plus a diff summary copy
+        and a manifest into ``coverage.json``'s ``.critic`` section
+        describing the spawn contract.
 
     With ``--no-critic``, short-circuits: copies the initial plan into
-    ``coverage.json``'s ``.final`` section and emits a ``status:
-    "skipped"`` manifest. Useful for cost-sensitive runs per PLN-725
-    Open Question 3.
+    ``.final`` and emits a ``status: "skipped"`` manifest. Useful for
+    cost-sensitive runs (PLN-725 Open Question 3).
 
     Always exits 0; structural failures print to stderr and return 1.
     """
@@ -7541,9 +7406,9 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         print(f"Error: cannot create cr_dir: {exc}", file=sys.stderr)
         return 1
 
-    # Phase C: initial plan lives in coverage.json.initial by default;
-    # legacy callers may still pass --coverage-plan-initial as an
-    # explicit file path.
+    # Initial plan lives in coverage.json.initial by default; callers
+    # may pass --coverage-plan-initial as an explicit file path for
+    # backward compat.
     plan_initial: Any
     if plan_initial_path_arg:
         try:
@@ -7574,13 +7439,12 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
 
     # Safety net for the case where stage_14a_load_available_reviewers
     # failed to write available_reviewers.json at all (write error on
-    # the roster file). Phase 5 (v2.18.0) ships stage_14a so the file
-    # is always produced under normal operation; the empty-roster and
-    # fully-subscribed-roster short-circuits below handle the "file
-    # present but the AVAILABLE set is empty" cases. This branch only
-    # fires when stage_14a's write was skipped or lost — a present-but-
-    # malformed file still returns 1 below — that's an operator config
-    # error worth surfacing loudly.
+    # the roster file). Under normal operation stage_14a always produces
+    # the file; the empty-roster and fully-subscribed-roster
+    # short-circuits below handle the "file present but the AVAILABLE
+    # set is empty" cases. This branch only fires when stage_14a's
+    # write was skipped or lost — a present-but-malformed file still
+    # returns 1 below as an operator config error.
     if not available_path.exists():
         return _emit_skipped_coverage_plan(
             plan_initial, cr_dir, model, reason="no-roster",
@@ -7731,12 +7595,9 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
         ``system_marker="coverage-critic-failed"`` so the operator
         footer surfaces the skipped stage. Does **not** cache.
 
-    Phase C (v2.27.0) consolidated the legacy ``coverage_plan.json``
-    + ``coverage_critic_manifest.json`` into sections of
-    ``coverage.json``. The ``--coverage-plan-initial`` and
-    ``--manifest`` args are still accepted as legacy explicit-path
-    fallbacks; default reads come from ``coverage.json``'s ``.initial``
-    and ``.critic`` sections.
+    Default reads come from ``coverage.json``'s ``.initial`` and
+    ``.critic`` sections; ``--coverage-plan-initial`` and ``--manifest``
+    args are accepted as explicit-path fallbacks for backward compat.
 
     Always exits 0 (degradation is not a halt); returns 1 only on
     missing cr_dir or unreadable initial plan.
@@ -7752,9 +7613,9 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
         print(f"Error: cr_dir does not exist: {cr_dir}", file=sys.stderr)
         return 1
 
-    # Phase C: initial plan lives in coverage.json.initial by default;
-    # legacy callers may still pass --coverage-plan-initial as an
-    # explicit file path.
+    # Initial plan lives in coverage.json.initial by default; callers
+    # may pass --coverage-plan-initial as an explicit file path for
+    # backward compat.
     plan_initial: Any
     if plan_initial_path_arg:
         try:
@@ -7775,8 +7636,8 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
         print("Error: coverage_plan_initial is not a JSON object", file=sys.stderr)
         return 1
 
-    # Phase C: manifest lives in coverage.json.critic by default;
-    # legacy callers may still pass --manifest as an explicit path.
+    # Manifest lives in coverage.json.critic by default; callers may
+    # pass --manifest as an explicit path for backward compat.
     if manifest_path_arg:
         manifest = _read_manifest_dict(Path(manifest_path_arg))
     else:
@@ -7909,7 +7770,7 @@ def _emit_coverage_critic_failed_finding(
 
 
 # ---------------------------------------------------------------------------
-# PLN-725 Phase 6 — Coverage Verifier (deterministic post-LLM gate)
+# PLN-725 — Coverage Verifier (deterministic post-LLM gate)
 # ---------------------------------------------------------------------------
 #
 # Stage_15c_verify_coverage runs immediately after stage_15b_coverage_critic_
@@ -7919,16 +7780,14 @@ def _emit_coverage_critic_failed_finding(
 # required, and 5-cap constraints documented in PLN-725 §"Coverage Critic
 # Contract".
 #
-# Verdict shape (Phase C v2.27.0: ``coverage.json.verify`` section; pre-
-# v2.27.0: standalone ``coverage_verify.json``):
+# Verdict shape (written into ``coverage.json``'s ``.verify`` section):
 #   {"verdict": "PASS", "violations": [], "checked_at": ...}
 #   {"verdict": "BLOCKING", "violations": [{"check": "...", "message": "..."}], ...}
 #
-# Phase 6 rollout: BLOCKING is encoded in the artifact and surfaces as a HIGH
-# system-marker finding, but exit code stays 0 and ``on_failure: continue``
-# so the walker doesn't halt — downstream stages (spawn_reviewers, arbitrate-
-# budget) read ``coverage.json.final`` as of Phase 7. Phase 7 gates those
-# stages on the verdict; the verifier itself stays observational.
+# BLOCKING is encoded in the artifact and surfaces as a HIGH system-marker
+# finding, but exit code stays 0 and ``on_failure: continue`` so the walker
+# doesn't halt — downstream stages (arbitrate-budget, spawn_reviewers) read
+# the verdict from ``coverage.json.verify`` and gate themselves on it.
 
 COVERAGE_VERIFY_MARKER = "coverage-verify-blocking"
 
@@ -7976,10 +7835,9 @@ def verify_coverage_plan(
     Empty list means PASS. Pure function — no I/O.
 
     Args:
-        plan: the final coverage plan (post-consolidate; from
-            ``coverage.json.final`` in Phase C / v2.27.0)
+        plan: the final coverage plan (from ``coverage.json.final``)
         plan_initial: the pre-critic coverage plan (from
-            ``coverage.json.initial`` in Phase C / v2.27.0)
+            ``coverage.json.initial``)
         available_reviewers: roster of allowed reviewers, or None when
             the roster wasn't produced (no-roster skip path). When None
             or empty, the closed-vocabulary check is bypassed — there's
@@ -7999,7 +7857,7 @@ def verify_coverage_plan(
       - closed_vocabulary: every source="critic" entry in best_effort
                is in roster (when roster present and non-empty).
                Core/rule reviewer labels are plugin-internal and NOT
-               roster-constrained (v2.19.2 scoping fix).
+               roster-constrained.
       - critic_best_effort_only: source="critic" entries never in required[]
       - critic_evidence: every source="critic" entry has non-empty evidence
       - critic_cap: critic_addition count <= COVERAGE_CRITIC_MAX_ADDITIONS
@@ -8238,49 +8096,39 @@ def _emit_coverage_verify_blocking_finding(
 
 
 def cmd_verify_coverage(args: argparse.Namespace) -> int:
-    """PLN-725 Phase 6 / stage_15c_verify_coverage: deterministic verifier
-    for the final coverage plan.
+    """Deterministic verifier for the final coverage plan (stage_15c).
 
     Reads the final plan from ``coverage.json``'s ``.final`` section
-    and the pre-critic plan from ``.initial`` (Phase C, v2.27.0;
-    pre-v2.27.0 read standalone ``coverage_plan.json`` /
-    ``coverage_plan_initial.json``, still accepted as legacy
-    explicit-path fallbacks via ``--coverage-plan`` /
-    ``--coverage-plan-initial``). Optionally reads
-    ``available_reviewers.json`` (roster). Computes a list of
-    violations against the closed-vocabulary, additive-only,
-    best-effort-only-critic, evidence-required, 5-cap, and
-    no-duplicates contracts. Writes the verdict into
-    ``coverage.json``'s ``.verify`` section, and on BLOCKING also emits
-    an ``agent_coverage-verify-blocking.json`` system finding.
+    and the pre-critic plan from ``.initial``. Optionally reads
+    ``available_reviewers.json`` (roster). Computes violations against
+    the closed-vocabulary, additive-only, best-effort-only-critic,
+    evidence-required, 5-cap, and no-duplicates contracts. Writes the
+    verdict into ``coverage.json``'s ``.verify`` section, and on
+    BLOCKING also emits an ``agent_coverage-verify-blocking.json``
+    system finding. Explicit-path fallbacks via ``--coverage-plan`` /
+    ``--coverage-plan-initial`` are accepted for backward compat.
 
-    Exit code is 0 on PASS and BLOCKING (the walker is observational —
-    halting on BLOCKING would break the Phase 4/5 telemetry posture
-    for any review surfacing a violation). Phase 7 (v2.20.0) gates
-    ``stage_16_arbitrate_budget`` on the verdict by reading the
-    artifact, not the exit code. Returns 1 only on a write failure to
-    ``coverage.json.verify`` itself.
+    Exit code is 0 on PASS and BLOCKING (the walker is observational).
+    Downstream stages (arbitrate-budget) gate on the verdict by reading
+    the artifact, not the exit code. Returns 1 only on a write failure
+    to ``coverage.json.verify`` itself.
 
-    Missing or unreadable verifier inputs (the ``.final`` or
-    ``.initial`` section) BLOCK with an ``input`` check (v2.20.1). The
-    earlier behavior — PASS with an advisory ``input`` violation —
-    made "no plan was verified" indistinguishable from a real PASS in
-    the artifact, and Phase 7's gate would have silently bypassed the
-    cap on every upstream-aborted run.
+    Missing or unreadable verifier inputs (``.final`` or ``.initial``)
+    BLOCK with an ``input`` check so an upstream abort is never confused
+    with a real PASS in the artifact.
 
     Roster semantics: missing file → no project agents configured
     (closed-vocabulary check is bypassed; verdict reflects only the
-    other checks). Empty file or empty list → same. PRESENT but
-    invalid (unreadable, wrong shape) → BLOCK with a ``roster`` check
-    (v2.20.1) — distinguishable from absent so an operator config
-    error is surfaced.
+    other checks). Empty file or empty list → same. PRESENT but invalid
+    (unreadable, wrong shape) → BLOCK with a ``roster`` check —
+    distinguishable from absent so an operator config error is
+    surfaced.
 
-    Skip semantics: when the final plan has
-    ``critic_status: "skipped"`` (--no-critic, no-roster, or
-    no-candidates path), the verifier still runs the shape +
-    additivity + no-duplicates checks. The closed-vocabulary check is
-    bypassed when the roster file is absent or empty — there's no
-    roster to enforce against.
+    Skip semantics: when the final plan has ``critic_status:
+    "skipped"`` (--no-critic, no-roster, or no-candidates path), the
+    verifier still runs the shape + additivity + no-duplicates checks.
+    The closed-vocabulary check is bypassed when the roster file is
+    absent or empty.
     """
     cr_dir = Path(args.cr_dir)
     plan_path_arg = getattr(args, "coverage_plan", None)
@@ -8315,16 +8163,13 @@ def cmd_verify_coverage(args: argparse.Namespace) -> int:
         sys.stdout.write("\n")
         return 0
 
-    # Phase C: prefer coverage.json sections; fall back to explicit
-    # paths for legacy callers. Missing or unreadable verifier inputs
-    # BLOCK with an ``input`` check. The earlier version treated them
-    # as PASS with an advisory ``input`` violation, but that made
-    # "no plan was verified" indistinguishable from a real PASS in the
-    # artifact downstream (Phase 7 arbitrate-budget gates on the verdict
-    # — a silent PASS-on-missing-input would bypass the cap on every
-    # aborted-upstream run). Exit code stays 0 so the walker doesn't
-    # halt — observational semantics are about the WALKER, the verdict
-    # is about the ARTIFACT consumer.
+    # Prefer coverage.json sections; fall back to explicit paths for
+    # backward-compat callers. Missing or unreadable verifier inputs
+    # BLOCK with an ``input`` check so "no plan was verified" is
+    # distinguishable from a real PASS in the artifact (downstream
+    # arbitrate-budget gates on the verdict). Exit code stays 0 so the
+    # walker doesn't halt — observational semantics are about the
+    # WALKER, the verdict is about the ARTIFACT consumer.
     plan: Any
     if plan_path_arg:
         try:
@@ -8930,8 +8775,9 @@ def cmd_re_assert(args: argparse.Namespace) -> int:
 
 _VERDICT_REASON_MAX = 80
 
-# Mapping between canonical envelope verdicts (PLN-719) and legacy tag verdicts
-# used by `<pr_verdict>` consumers (run-loop.sh, github-review presenter).
+# Mapping between canonical envelope verdicts and the ``<pr_verdict>``
+# tag values consumed by run-loop.sh and the github-review presenter
+# (kept for backward compatibility with those consumers).
 _CANONICAL_TO_LEGACY_VERDICT: dict[str, str] = {
     "APPROVED": "approve",
     "NEEDS_ATTENTION": "needs_attention",
@@ -8951,13 +8797,12 @@ def _count_gateable_premise_medium(verified: list[dict[str, Any]]) -> int:
       - Only ``verified[]`` findings (``justified[]`` is bucketed
         elsewhere; ``rejected[]`` is dropped from the verdict; and
         ``coverage_gaps`` never carry ``category=Premise``).
-      - JUSTIFIED-VALID vs JUSTIFIED-INVALID are **asymmetric**
-        (thadeusb on PR #113):
+      - JUSTIFIED-VALID vs JUSTIFIED-INVALID are **asymmetric**:
           * ``JUSTIFIED-VALID`` = author defense was audited and
             accepted; the finding is dismissed and lives in
             ``justified[]``, NOT ``verified[]``. Excluded defensively
-            in case a legacy/cached entry leaks into ``verified[]`` —
-            its concern was waived.
+            in case a cached entry leaks into ``verified[]`` — its
+            concern was waived.
           * ``JUSTIFIED-INVALID`` = author defense was audited and
             REFUSED; the original concern survived. It belongs in the
             count the same way a plain CONFIRMED MEDIUM does. The
@@ -9019,8 +8864,6 @@ def _compute_canonical_verdict(
     all_findings = verified + coverage_gaps
 
     # Rule 2: BLOCKING (any scope) or Premise P0 → CHANGES_REQUESTED.
-    # Premise P0 precedence is preserved from legacy verdict behavior; plan 02
-    # will refine it.
     for finding in all_findings:
         sev = str(finding.get("severity", ""))
         if sev == "BLOCKING":
@@ -9057,8 +8900,7 @@ def _compute_canonical_verdict(
     # Rule 4 (PLN-721): cumulative Premise MEDIUM gate. The counting
     # policy is documented on ``_count_gateable_premise_medium`` — this
     # site MUST use that helper so the value the gate fires on matches
-    # the value telemetry reports in ``premise_cumulative_medium_count``
-    # (the v2.9.0 review surfaced that divergence as a real bug).
+    # the value telemetry reports in ``premise_cumulative_medium_count``.
     premise_medium_threshold = int(
         thresholds.get(
             "premise_cumulative_medium",
@@ -9087,11 +8929,11 @@ def _read_optional_json(path: Path, default: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Shared scaffolding for singleton-agent prepare/consolidate (PLN-725 Phase 1
-# extract-signals + Phase 3 coverage-critic). Two prepare/consolidate pairs
-# follow the same lifecycle: read inputs → cache lookup → emit manifest →
+# Shared scaffolding for singleton-agent prepare/consolidate pairs
+# (extract-signals and coverage-critic in PLN-725). Both pairs follow
+# the same lifecycle: read inputs → cache lookup → emit manifest →
 # (later) read agent output → validate → write canonical / fail-closed.
-# These helpers de-duplicate the boilerplate that both pairs replicate.
+# These helpers de-duplicate the boilerplate.
 # ---------------------------------------------------------------------------
 
 
@@ -9099,8 +8941,8 @@ def _read_manifest_dict(path: Path) -> dict[str, Any]:
     """Read a manifest JSON file, returning ``{}`` on any failure.
 
     Both consolidate paths need the manifest's ``status``/``cache_key``/``model``
-    fields but must tolerate the manifest being missing (legacy callers) or
-    malformed (truncated mid-write). An empty dict gives ``manifest.get(...)``
+    fields but must tolerate the manifest being missing or malformed
+    (truncated mid-write). An empty dict gives ``manifest.get(...)``
     callers the same ``None``-coalescing behavior as the original try/except
     blocks while collapsing the seven-line pattern into one call.
     """
@@ -9155,10 +8997,10 @@ def _write_and_emit_manifest(
 
 # ---------------------------------------------------------------------------
 # State-aggregate helpers: shared read/write contract for the ``spawn.json``
-# (Phase D) and ``coverage.json`` (Phase C) consolidated artifacts. Each
-# aggregate has a fixed section vocabulary; each section is updated by
-# exactly one stage. The writer uses atomic read-modify-write (tmp +
-# ``os.replace``) so a crash mid-write leaves the prior state intact.
+# and ``coverage.json`` consolidated artifacts. Each aggregate has a fixed
+# section vocabulary; each section is updated by exactly one stage. The writer
+# uses atomic read-modify-write (tmp + ``os.replace``) so a crash mid-write
+# leaves the prior state intact.
 # ``_write_state_sections`` (plural) is the atomic batched variant — used
 # by the cache-hit and skipped paths in coverage-critic-prepare which
 # must materialize multiple sections without leaving the aggregate in a
@@ -9335,10 +9177,10 @@ def _write_simple_cache_entry(
 def cmd_verdict(args: argparse.Namespace) -> int:
     """Compute PR verdict.
 
-    Reads ``review_result.json`` when available (canonical Phase 2 envelope);
-    falls back to legacy ``validate_output.json`` otherwise. Emits the legacy
-    ``<pr_verdict>`` tag in the same shape used today so existing consumers
-    (run-loop.sh, the github presenter) keep working through Phase A.
+    Reads ``review_result.json`` (canonical envelope) when available; falls
+    back to ``validate_output.json`` otherwise. Emits the ``<pr_verdict>``
+    tag for backward compatibility with existing consumers (run-loop.sh,
+    the github presenter).
     """
     validate_output_path: str = args.validate_output
     review_result_path: str | None = getattr(args, "review_result", None)
@@ -9353,7 +9195,7 @@ def cmd_verdict(args: argparse.Namespace) -> int:
             canonical_verdict = envelope.get("verdict")
             reason = str(envelope.get("verdict_reason", ""))[:_VERDICT_REASON_MAX]
 
-    # Fallback: re-derive from validate_output.json (legacy path).
+    # Fallback: re-derive from validate_output.json.
     if canonical_verdict is None:
         try:
             with open(validate_output_path) as f:
@@ -9365,8 +9207,8 @@ def cmd_verdict(args: argparse.Namespace) -> int:
         validated: list[dict[str, Any]] = validate_output.get("validated", [])
         # Split coverage findings out (mirrors finalize-result's bucketing).
         # Partition by index so we avoid dict-equality membership tests —
-        # canonical finding ids would also work but legacy findings may lack
-        # them at this fallback path.
+        # canonical finding ids would also work but findings on this path
+        # may lack them.
         coverage_indices: set[int] = {
             i for i, f in enumerate(validated)
             if str(f.get("category", "")) == "Coverage"
@@ -9753,9 +9595,8 @@ def _read_coverage_verify_verdict(path: Path | None) -> tuple[str | None, list[d
     missing/unreadable (treated as PASS by callers — verification is
     observational; an absent verifier output must not block arbitration).
 
-    Legacy explicit-path read; Phase C consumers should call
-    ``_normalize_coverage_verify_doc`` on ``coverage.json.verify``
-    directly instead.
+    Explicit-path read for backward compat; canonical consumers call
+    ``_normalize_coverage_verify_doc`` on ``coverage.json.verify`` directly.
     """
     if path is None or not path.exists():
         return None, []
@@ -9771,9 +9612,9 @@ def _normalize_coverage_verify_doc(doc: Any) -> tuple[str | None, list[dict[str,
     """Coerce a parsed coverage-verify section/file into ``(verdict, violations)``.
 
     Tolerates a non-dict input (returns ``(None, [])`` so callers treat it
-    as PASS — verifier is observational). Used by both the legacy
-    file-path reader and the Phase C section reader so the shape
-    handling lives in one place.
+    as PASS — verifier is observational). Shared by the explicit-path
+    reader and the canonical section reader so the shape handling lives
+    in one place.
     """
     if not isinstance(doc, dict):
         return None, []
@@ -9798,34 +9639,33 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
 
     Reads the post-consolidate plan from ``coverage.json``'s ``.final``
     section, applies the budget cap, and writes the arbitrated plan
-    back into the same ``.final`` section (Phase C, v2.27.0; pre-v2.27.0
-    read/wrote a standalone ``coverage_plan.json``, still accepted as
-    a legacy explicit-path fallback via ``--coverage-plan`` /
-    ``--output``). Emits coverage-gap findings for required reviewers
-    that exceed the cap.
+    back into the same ``.final`` section. Explicit ``--coverage-plan``
+    / ``--output`` paths are accepted as backward-compat fallbacks.
+    Emits coverage-gap findings for required reviewers that exceed
+    the cap.
 
-    PLN-725 Phase 7: when the verifier's verdict (read from
-    ``coverage.json.verify`` by default, or ``--coverage-verify`` for
-    legacy callers) is ``"BLOCKING"``, arbitration short-circuits. The
-    input plan is written through to ``coverage.json.final`` as-is
-    (preserving the rule floor — no cap, no pruning, no dropped
-    required) with ``budget.gated_by_verify: true`` so downstream
-    consumers can see why the cap wasn't applied. The same shape is
-    written — including ``deferred_for_budget``, ``dropped_required``,
-    and ``budget`` keys — so finalize-result and stage_20 readers
-    don't need to branch on a different schema. The BLOCKING finding
-    is already emitted by ``stage_15c_verify_coverage``
-    (``agent_coverage-verify-blocking.json``); arbitrate-budget does
-    not duplicate it. A missing verify section/file (verifier didn't
-    run, or upstream stage aborted) is treated as PASS — the verifier
-    is observational, an absent artifact must not block arbitration.
+    When the verifier's verdict (read from ``coverage.json.verify`` by
+    default, or ``--coverage-verify``) is ``"BLOCKING"``, arbitration
+    short-circuits. The input plan is written through to
+    ``coverage.json.final`` as-is (preserving the rule floor — no cap,
+    no pruning, no dropped required) with ``budget.gated_by_verify:
+    true`` so downstream consumers can see why the cap wasn't applied.
+    The same shape is written — including ``deferred_for_budget``,
+    ``dropped_required``, and ``budget`` keys — so finalize-result and
+    stage_20 readers don't need to branch on a different schema. The
+    BLOCKING finding is already emitted by
+    ``stage_15c_verify_coverage`` (``agent_coverage-verify-blocking
+    .json``); arbitrate-budget does not duplicate it. A missing verify
+    section/file (verifier didn't run, or upstream stage aborted) is
+    treated as PASS — the verifier is observational, an absent artifact
+    must not block arbitration.
     """
     cr_dir = Path(args.cr_dir) if getattr(args, "cr_dir", None) else None
     plan_path_arg = getattr(args, "coverage_plan", None)
     output_path_arg = getattr(args, "output", None)
 
-    # Phase C: read input plan from coverage.json.final by default;
-    # legacy callers may pass --coverage-plan as an explicit path.
+    # Read input plan from coverage.json.final by default; callers may
+    # pass --coverage-plan as an explicit path for backward compat.
     coverage_plan_in: Any
     if plan_path_arg:
         coverage_plan_in = _read_optional_json(Path(plan_path_arg), None)
@@ -9847,14 +9687,13 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         print(f"Error: --cap must be > 0, got {cap}", file=sys.stderr)
         return 1
 
-    # Phase C: resolve output target. Section write (coverage.json.final)
-    # is the default when --cr-dir is set and --output is not. The
-    # legacy --output path keeps working for callers (tests, ad-hoc
-    # CLI use) that pass an explicit destination.
+    # Resolve output target. Section write (coverage.json.final) is the
+    # default when --cr-dir is set and --output is not. Explicit --output
+    # keeps working for backward-compat callers.
     output_path = Path(output_path_arg) if output_path_arg else None
     if output_path is None and plan_path_arg is not None and cr_dir is None:
-        # Legacy default — colocate with the input path (pre-Phase-C
-        # behavior when neither --cr-dir nor --output was supplied).
+        # Backward-compat default — colocate with the input path when
+        # neither --cr-dir nor --output was supplied.
         output_path = Path(plan_path_arg).with_name("coverage_plan.json")
 
     def _persist_plan(plan: dict[str, Any]) -> int:
@@ -10039,19 +9878,17 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Subcommand: derive-spawn-spec (PLN-725 Phase 8)
+# Subcommand: derive-spawn-spec (PLN-725)
 # ---------------------------------------------------------------------------
 #
 # Reads the post-arbitrate ``coverage.json.final`` + ``partitions.json``
 # and the ``route`` section of ``spawn.json`` (written by Gate B's
 # ``cmd_route --cr-dir``), then writes the flat list of agent
 # descriptors into ``spawn.json`` under the ``spec`` section. The
-# orchestrator (start.md "Reviewer Fleet" section) dispatches Task
-# calls from that list. Before Phase 8, stage_20 walked a static table
-# hard-coded into the command markdown; the coverage plan was
-# effectively ignored at spawn time. This stage closes the loop so the
-# deterministic coverage signal (PLN-725) actually shapes the spawned
-# fleet.
+# orchestrator (start.md "Reviewer Fleet" section) dispatches Task calls
+# from that list — this closes the loop so the deterministic coverage
+# signal (PLN-725) shapes the spawned fleet rather than walking a static
+# hard-coded table.
 #
 # The spec is observational: the orchestrator may fall back to the static
 # table if ``spawn.json`` is absent, its ``spec`` section is missing, or
@@ -10159,8 +9996,8 @@ def _derive_spawn_agents_from_plan(
     can diverge), the first K partitions are spawned and the rest
     land in ``skipped[]`` with ``reason: "budget_capped"``. A cap of 0
     suppresses all BHA spawns (docs-only post-arbitrate). ``None``
-    means "no cap" — only used in legacy callers that pre-date the
-    cap parameter.
+    means "no cap" — only used by callers that pre-date the cap
+    parameter.
     """
     agents: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -10273,7 +10110,7 @@ def _derive_spawn_agents_from_plan(
             # Non-partitioned core roles: one agent per entry. The
             # closed-vocabulary check at stage_15c should prevent the
             # same reviewer appearing in both required[] and
-            # best_effort[], but Phase 8 is a downstream consumer —
+            # best_effort[], but this is a downstream consumer —
             # defense in depth via the dedup guard means a single
             # source-of-truth violation upstream doesn't silently
             # produce two agents racing on the same output file.
@@ -10301,21 +10138,16 @@ def _derive_spawn_agents_from_plan(
             return
         # Non-core reviewer with a known plan-entry source. Both
         # ``source: "rule"`` (deterministically matched from
-        # critic-gates.json ``coverage[]`` rules, including the
-        # migrated legacy ``moduleCritics[]`` path) and
-        # ``source: "critic"`` (LLM-proposed via coverage_critic
-        # consolidate) map to a domain_<N> agent. The pre-v2.22.2
-        # check rescued only "critic", which made rule-resolved
-        # domain reviewers regression-land in skipped[] for any
-        # repo with a canonical coverage[] rule naming a non-core
-        # reviewer (e.g. {"reviewer": "ts-expert", "required": true,
-        # "triggers": [...]}). The closed_vocabulary check at
-        # stage_15c scopes to source: "critic" only — rule entries
-        # are operator-owned names from critic-gates.json that the
-        # spawner translates at dispatch time. The critic_index is
-        # monotonic so domain_<N> names are inherently unique by
-        # construction, but we still record them in seen_agent_ids
-        # for symmetry with the core-role guard.
+        # critic-gates.json ``coverage[]`` rules, including migrated
+        # ``moduleCritics[]`` entries) and ``source: "critic"``
+        # (LLM-proposed via coverage_critic consolidate) map to a
+        # domain_<N> agent. The closed_vocabulary check at stage_15c
+        # scopes to source: "critic" only — rule entries are
+        # operator-owned names from critic-gates.json that the spawner
+        # translates at dispatch time. The critic_index is monotonic
+        # so domain_<N> names are inherently unique by construction,
+        # but we still record them in seen_agent_ids for symmetry with
+        # the core-role guard.
         if source in {"rule", "critic"}:
             agent_id = f"domain_{critic_index}"
             seen_agent_ids.add(agent_id)
@@ -10386,25 +10218,25 @@ def _spawn_spec_fallback(
 def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     """Translate the post-arbitrate coverage plan into a flat spawn spec.
 
-    PLN-725 Phase 8. Reads ``coverage.json.final`` (post-arbitrate),
-    ``partitions.json`` (post-partition), and the ``route`` section of
-    ``spawn.json`` (post-route — written by Gate B's ``cmd_route --cr-dir``)
-    and writes the ``spec`` section of ``spawn.json`` enumerating every
+    Reads ``coverage.json.final`` (post-arbitrate), ``partitions.json``
+    (post-partition), and the ``route`` section of ``spawn.json``
+    (post-route — written by Gate B's ``cmd_route --cr-dir``) and
+    writes the ``spec`` section of ``spawn.json`` enumerating every
     agent the orchestrator should spawn at ``stage_20_spawn_reviewers``.
     Callers may override either source with ``--coverage-plan`` /
     ``--route`` explicit file paths.
 
     Fast-path passthrough: when ``route.fast_path`` is true, the spec
     emits exactly one agent (``agent_id: "fast"``) and the bucket walk
-    is skipped — matching the existing Fast Path branch in start.md.
+    is skipped — matching the Fast Path branch in start.md.
 
     BLOCKING verdict propagation: when ``coverage_plan.budget.gated_by_verify``
     is true (set by ``arbitrate-budget`` on a BLOCKING verify verdict),
     the spec is still derived from the input plan, but the
     ``gated_by_verify`` flag is propagated so presenters/operators can
-    see that arbitration was bypassed. This matches Phase 7 semantics:
-    the BLOCKING verdict is signaled, not a hard halt — review still
-    runs against the unbudgeted plan.
+    see that arbitration was bypassed. The BLOCKING verdict is
+    signaled, not a hard halt — review still runs against the
+    unbudgeted plan.
 
     Failure modes: any unreadable input emits a fallback spec
     (``arbitrate_status: "fallback"``) and returns 0. The orchestrator
@@ -10414,10 +10246,10 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     cr_dir = Path(args.cr_dir)
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # Phase C (v2.27.0): post-arbitrate plan lives in
-    # ``coverage.json.final``. The legacy ``--coverage-plan`` path is
-    # honored as an override for callers that pass an explicit plan
-    # file; when absent, fall through to the coverage-state aggregate.
+    # Post-arbitrate plan lives in ``coverage.json.final``. The explicit
+    # ``--coverage-plan`` path is honored as an override for callers that
+    # pass an explicit plan file; when absent, fall through to the
+    # coverage-state aggregate.
     coverage_plan_arg = getattr(args, "coverage_plan", None)
     if coverage_plan_arg:
         coverage_plan = _read_optional_json(Path(coverage_plan_arg), None)
@@ -10429,10 +10261,10 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
         )
         return _write_spawn_spec(spec, cr_dir)
 
-    # Phase D (v2.26.0): route now lives in spawn.json.route. The legacy
-    # ``--route`` path is honored as an override for callers (mostly tests)
-    # that pass an explicit route file. When absent or unreadable, fall
-    # through to the spawn-state aggregate.
+    # Route lives in spawn.json.route. The explicit ``--route`` path is
+    # honored as an override for callers (mostly tests) that pass an
+    # explicit route file. When absent or unreadable, fall through to
+    # the spawn-state aggregate.
     route_arg = getattr(args, "route", None)
     if route_arg:
         route = _read_optional_json(Path(route_arg), {}) or {}
@@ -10501,7 +10333,7 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     if isinstance(partitions_blob, dict):
         partitions = partitions_blob.get("partitions", []) or []
     elif isinstance(partitions_blob, list):
-        # Legacy/test shape: bare partitions list.
+        # Test/bare-list shape: partitions list with no wrapper.
         partitions = partitions_blob
     else:
         # Present-but-wrong-shape (e.g. string, number) — same fallback.
@@ -10511,22 +10343,17 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
         return _write_spawn_spec(spec, cr_dir)
     partitions = [p for p in partitions if isinstance(p, dict)]
 
-    # PLN-725 Phase 8 — BLOCKING sanitization. The Phase 7 BLOCKING
-    # gate let the input plan flow through to arbitrate-budget; before
-    # v2.22.3, derive-spawn-spec then dispatched that unverified plan
-    # as-is. But the verifier's BLOCKING reasons include
-    # closed-vocabulary (LLM proposed a critic not in roster), shape
-    # (malformed entries), evidence (missing required evidence), and
-    # cap (>5 best_effort additions) — actioning the plan can
-    # silently spawn agents the verifier explicitly flagged as
-    # unsafe. The canonical BLOCKING finding already lives in
-    # agent_coverage-verify-blocking.json, so the run still surfaces
-    # the failure to operators; we sanitize the plan by dropping
-    # everything that isn't ``source: "core"`` so only the canonical
-    # static fleet runs. Phase 7's "review still runs against the
-    # plan" intent is preserved (core BHA/BHB/Auditor/Premise still
-    # spawn), and the verifier's gap remains the canonical signal of
-    # the rejection.
+    # BLOCKING verdict sanitization. The verifier's BLOCKING reasons
+    # include closed-vocabulary (LLM proposed a critic not in roster),
+    # shape (malformed entries), evidence (missing required evidence),
+    # and cap (>5 best_effort additions) — dispatching the unverified
+    # plan as-is could silently spawn agents the verifier explicitly
+    # flagged as unsafe. The canonical BLOCKING finding already lives
+    # in agent_coverage-verify-blocking.json, so the run surfaces the
+    # failure to operators; we sanitize the plan by dropping everything
+    # that isn't ``source: "core"`` so only the canonical static fleet
+    # runs. The "review still runs against the plan" intent is preserved
+    # (core BHA/BHB/Auditor/Premise still spawn).
     plan_for_spawn = coverage_plan
     sanitized_extras: list[dict[str, Any]] = []
     if gated_by_verify:
@@ -10590,9 +10417,9 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
 
     bha_count = sum(1 for a in agents if a["reviewer"] == "bug_hunter_a")
     # Domain critics span both source values (``rule`` for
-    # deterministically resolved critic-gates rules + migrated
-    # moduleCritics, ``critic`` for LLM-proposed additions). Both
-    # spawn as ``domain_<N>`` so both count toward the telemetry.
+    # deterministically resolved critic-gates rules including migrated
+    # moduleCritics, ``critic`` for LLM-proposed additions). Both spawn
+    # as ``domain_<N>`` so both count toward the telemetry.
     critic_count = sum(1 for a in agents if a["source"] in {"rule", "critic"})
     from_required = sum(1 for a in agents if a.get("bucket") == "required")
     from_best_effort = sum(
@@ -10695,12 +10522,9 @@ def _append_to_coverage_gaps(
 def _write_spawn_spec(spec: dict[str, Any], cr_dir: Path) -> int:
     """Write the spec into spawn.json.spec and emit a short summary to stdout.
 
-    Phase D (v2.26.0): the canonical write target is now the ``spec`` section
-    of ``<cr_dir>/spawn.json`` via the atomic ``_write_spawn_section`` helper,
-    not a standalone ``spawn_spec.json``. The stdout summary still surfaces
-    the same telemetry the legacy ``spawn_spec.json`` write target reported,
-    but now points at ``<cr_dir>/spawn.json`` so operators reading the
-    summary know where to look.
+    Writes via the atomic ``_write_spawn_section`` helper; the stdout
+    summary points at ``<cr_dir>/spawn.json`` so operators know where
+    to look.
     """
     try:
         _write_spawn_section(cr_dir, "spec", spec)
@@ -10726,7 +10550,7 @@ def _write_spawn_spec(spec: dict[str, Any], cr_dir: Path) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Subcommand: verify-spawn (PLN-725 Phase 8 / stage_20b)
+# Subcommand: verify-spawn (PLN-725 / stage_20b)
 # ---------------------------------------------------------------------------
 #
 # Closes the runtime side of the spawn-spec contract. ``derive-spawn-spec``
@@ -10747,12 +10571,11 @@ def _write_spawn_spec(spec: dict[str, Any], cr_dir: Path) -> int:
 def cmd_verify_spawn(args: argparse.Namespace) -> int:
     """Compare ``spawn_spec.agents[]`` against on-disk ``agent_*.json``.
 
-    PLN-725 Phase 8 / stage_20b_verify_spawn. For every agent
-    descriptor with ``bucket == "required"`` that has no corresponding
-    ``agent_<agent_id>.json`` file on disk, emit a coverage-gap
-    finding to ``coverage_gaps.json``. Non-required (best_effort)
-    missing agents emit no finding — those are budget-driven
-    omissions, not coverage gaps.
+    For every agent descriptor with ``bucket == "required"`` that has
+    no corresponding ``agent_<agent_id>.json`` file on disk, emit a
+    coverage-gap finding to ``coverage_gaps.json``. Non-required
+    (best_effort) missing agents emit no finding — those are
+    budget-driven omissions, not coverage gaps.
 
     Reads:
       - ``<cr_dir>/spawn.json`` ``.spec`` section (derived by stage_19b)
@@ -10771,8 +10594,6 @@ def cmd_verify_spawn(args: argparse.Namespace) -> int:
     must never block review.
     """
     cr_dir = Path(args.cr_dir)
-    # Phase D (v2.26.0): spec is the .spec section of spawn.json instead of
-    # a standalone spawn_spec.json file. Same downstream semantics.
     state = _read_spawn_state(cr_dir)
     spec = state.get("spec")
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -10892,19 +10713,15 @@ def cmd_verify_spawn(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Subcommand: render-fleet-summary (PLN-725 Phase 9 — presenter)
+# Subcommand: render-fleet-summary (PLN-725 — presenter)
 # ---------------------------------------------------------------------------
 #
-# Phase 8 (v2.22.0–v2.22.3) wired spawn_spec.json + spawn_verification.json
-# into the pipeline as the canonical "who was intended to run, and who
-# actually ran" artifacts. Phase 9 lets the presenter consume them
-# instead of deriving the fleet from agent_*.json filename heuristics
-# plus a hardcoded static reviewer list. The helper emits a
-# deterministic markdown block; the present-local skill and
-# github-review.md substitute it into their existing Reviewers / Model
-# Routing slot. Moving the derivation into Python (vs prose
-# instructions in the skill) makes the rendering testable via
-# golden-fixture-style assertions.
+# Consumes the spawn-spec + spawn-verification artifacts ("who was intended
+# to run, and who actually ran") and emits a deterministic markdown block.
+# The present-local skill and github-review.md substitute it into their
+# existing Reviewers / Model Routing slot. Moving the derivation into
+# Python (vs prose instructions in the skill) makes the rendering testable
+# via golden-fixture-style assertions.
 
 # Canonical snake_case → display-name mapping. Reviewers not in this
 # table render with their original ``reviewer`` string so
@@ -10950,8 +10767,7 @@ def _render_fast_path_fleet(
     fast_agent = agents[0] if agents and isinstance(agents[0], dict) else {}
     # ``route.models`` may be malformed (non-dict) — guard before
     # subscripting so a wrong-shape route doesn't raise. The same
-    # guard exists in ``_spawn_resolve_models``; fast-path bypassed
-    # it pre-v2.23.2.
+    # guard exists in ``_spawn_resolve_models``.
     route_models = route.get("models")
     fallback = "sonnet"
     if isinstance(route_models, dict):
@@ -11051,9 +10867,8 @@ def _render_model_summary(
     surfacing the slot lets operators see they participated).
 
     ``route`` is consulted only as a fallback when the spec has no
-    descriptor for a slot (defensive — shouldn't happen on the
-    standard flow but keeps the legacy route-based summary working
-    if the spec is partial).
+    descriptor for a slot (defensive — shouldn't happen on the standard
+    flow but keeps the route-based summary working if the spec is partial).
     """
     agents = spec.get("agents") or []
     if not isinstance(agents, list):
@@ -11109,8 +10924,7 @@ def _render_model_summary(
             if isinstance(default, str) and default:
                 summary_parts.append(f"{label}={default}")
         elif isinstance(raw, str) and raw:
-            # Plain-string form of the route models entry — was
-            # silently dropped pre-v2.23.2.
+            # Plain-string form of the route models entry.
             summary_parts.append(f"{label}={raw}")
     if critic_models:
         unique_critic: list[str] = []
@@ -11176,9 +10990,9 @@ def _render_fleet_notes(
     #     entry covers ALL N suppressed partitions (no
     #     ``partition_id``; ``partition_count`` reflects the total).
     #     Dropped count = ``partition_count`` from the aggregate.
-    # Pre-v2.23.3 the renderer always used ``len(capped_entries)``,
-    # which under-reported the docs-only case as "1 partition(s)"
-    # when N partitions were actually suppressed.
+    # Counting len(capped_entries) under-reports the docs-only case
+    # as "1 partition(s)" when N partitions were actually suppressed
+    # via a single aggregate entry.
     capped_entries = [
         s for s in skipped
         if isinstance(s, dict) and s.get("reason") == "budget_capped"
@@ -11230,31 +11044,25 @@ def _render_fleet_notes(
 def cmd_render_fleet_summary(args: argparse.Namespace) -> int:
     """Render the operator-facing Reviewer Fleet markdown block.
 
-    PLN-725 Phase 9. Reads ``<cr-dir>/spawn.json`` and pulls the
-    ``.spec`` (Phase 8 v2.22.0), ``.verification`` (v2.22.3), and
-    ``.route`` (Phase D v2.26.0) sections, then emits a self-contained
-    markdown block to stdout (or ``--output``). The block replaces the
-    presenters' previous static "Reviewers" + "Model Routing" lines
-    so the operator-facing summary reflects the actual deterministic
-    coverage selection — including BLOCKING sanitization,
-    budget-capped BHA partitions, runtime crashes, and the rule vs
-    critic provenance distinction on domain agents.
+    Reads ``<cr-dir>/spawn.json`` (``.spec``, ``.verification``, and
+    ``.route`` sections) and emits a self-contained markdown block to
+    stdout (or ``--output``). The block reflects the deterministic
+    coverage selection — including BLOCKING sanitization, budget-capped
+    BHA partitions, runtime crashes, and the rule vs critic provenance
+    distinction on domain agents.
 
     Fallback behavior: when ``spawn.json`` is missing, its ``.spec``
     section is absent, or the section marks ``arbitrate_status:
     "fallback"``, the helper emits a minimal block that says
     "spawn-spec unavailable" + the fallback_reason and instructs the
     presenter to walk the static reviewer table.
-    The presenters' existing fallback path remains the source of
-    truth for that case — Phase 9 doesn't try to reconstruct fleet
-    composition from agent_*.json glob (the legacy heuristic).
     """
     cr_dir = Path(args.cr_dir)
-    # Phase D (v2.26.0): all three sources live in spawn.json under .route,
-    # .spec, and .verification. Each ``.get()`` falls through to None/{} so
-    # the existing degraded-output paths (no spec → "spawn-spec unavailable",
-    # no verification → "runtime tally unavailable", no route → omit Model
-    # Routing line) continue to fire on the same semantics.
+    # All three sources live in spawn.json under .route, .spec, and
+    # .verification. Each ``.get()`` falls through to None/{} so the
+    # degraded-output paths fire on the same semantics: no spec →
+    # "spawn-spec unavailable", no verification → "runtime tally
+    # unavailable", no route → omit Model Routing line.
     state = _read_spawn_state(cr_dir)
     spec = state.get("spec")
     verification = state.get("verification")
@@ -11267,7 +11075,7 @@ def cmd_render_fleet_summary(args: argparse.Namespace) -> int:
     if not isinstance(spec, dict):
         out_lines.append(
             "**Reviewer Fleet:** spawn-spec unavailable; walking static "
-            "reviewer table (legacy fleet derivation).",
+            "reviewer table fallback.",
         )
         out_lines.append(
             "**Model Routing:** (see `spawn.json.route`)",
@@ -11299,17 +11107,13 @@ def cmd_render_fleet_summary(args: argparse.Namespace) -> int:
     # Model Routing — standard flow only; fast-path already emitted
     # its own Fast-path-mode routing line above. Derived from
     # spec.agents[].model so the operator sees the models actually
-    # used at dispatch, not the spawn.json.route defaults. Three cases
-    # this matters:
-    #   - test-only BHA partition ran on Sonnet but route's
-    #     bug_hunter_a.default still says Opus → pre-v2.23.2 the
-    #     summary said "BHA=opus", misleading the operator about
-    #     what model produced the partition's findings.
-    #   - route.models.bug_hunter_a is a plain string (the
-    #     supported single-model form) → pre-v2.23.2 the BHA entry
-    #     was silently dropped because only the dict shape was
-    #     consulted.
-    #   - Domain critic models → spec carries them per descriptor;
+    # used at dispatch, not the spawn.json.route defaults. This
+    # matters when:
+    #   - a test-only BHA partition ran on Sonnet while route's
+    #     bug_hunter_a.default says Opus (the spec wins);
+    #   - route.models.bug_hunter_a is a plain string (single-model
+    #     form) — both dict and string shapes are respected;
+    #   - domain critics carry their models per-descriptor and
     #     spawn.json.route never had them.
     # route.size_category is still used as the header label.
     if not fast_path:
@@ -11357,10 +11161,9 @@ def _write_fleet_summary(lines: list[str], args: argparse.Namespace) -> int:
 
     The argparse help on ``--output`` documents the flag as
     "Optional output file path; default stdout-only" — providing
-    ``--output`` suppresses stdout, so a shell pipeline that
-    captures stdout while also persisting via ``--output`` doesn't
-    receive duplicate content (the pre-v2.23.1 behavior tee'd to
-    both channels).
+    ``--output`` suppresses stdout, so a shell pipeline that captures
+    stdout while also persisting via ``--output`` doesn't receive
+    duplicate content.
     """
     text = "\n".join(lines) + "\n"
     if getattr(args, "output", None):
@@ -11596,8 +11399,8 @@ def _stats_from_findings(
             # PLN-773 Phase 2 — per-reviewer FP rate + override counter.
             "by_reviewer": _verification_by_reviewer(verified, rejected),
         },
-        # PLN-721 v2.9.1: must match the count Rule 4 actually fires on
-        # — _count_gateable_premise_medium is the single source of truth
+        # Must match the count Rule 4 actually fires on —
+        # _count_gateable_premise_medium is the single source of truth
         # for that policy (excludes JUSTIFIED-VALID / JUSTIFIED-INVALID).
         "premise_cumulative_medium_count": _count_gateable_premise_medium(verified),
         "agent_failures": [],
@@ -11607,11 +11410,11 @@ def _stats_from_findings(
 def _extract_bha_cache_hit_rate(cr_dir: Path) -> float | None:
     """Return the BHA cache hit rate (0.0-1.0) from cache_result.json, or None.
 
-    PLN-719 Phase 7 wires the first ``cache_hit_rate`` namespace producer.
-    ``cache_result.json`` records ``stats.hit_rate_pct`` (0-100) per cache-check;
-    we normalize to the canonical [0, 1] domain that ``validate_telemetry``
-    enforces. Missing or malformed files degrade silently to None so legacy
-    runs (e.g. ``--hygiene-only`` without a cache-check) don't crash finalize.
+    ``cache_result.json`` records ``stats.hit_rate_pct`` (0-100) per
+    cache-check; we normalize to the canonical [0, 1] domain that
+    ``validate_telemetry`` enforces. Missing or malformed files degrade
+    silently to None so runs without a cache-check stage (e.g.
+    ``--hygiene-only``) don't crash finalize.
     """
     doc = _read_optional_json(cr_dir / "cache_result.json", None)
     if not isinstance(doc, dict):
@@ -11655,20 +11458,20 @@ def _build_telemetry_block(cr_dir: Path) -> dict[str, Any]:
 def cmd_finalize_result(args: argparse.Namespace) -> int:
     """Consolidate findings + coverage state + verdict into review_result.json.
 
-    PLN-719 Phase 2 + PLN-722. Prefers the bucket-split output of
-    ``cmd_verify_consolidate`` (``<cr_dir>/findings_verified.json``) when
-    present — that file carries ``verified[]`` / ``rejected[]`` /
-    ``pending_verification[]`` already shaped for the envelope, plus the
-    ``force_human_review`` flag from sensitive-path escalation. Falls back
-    to ``findings_validated.json`` when verify-consolidate didn't run
-    (stage_23 disabled, verify-prepare/consolidate infrastructure failure,
-    or a pre-PLN-722 cache hit) —
-    everything lands in ``verified[]`` exactly as Phase A behaved.
+    Prefers the bucket-split output of ``cmd_verify_consolidate``
+    (``<cr_dir>/findings_verified.json``) when present — that file
+    carries ``verified[]`` / ``rejected[]`` / ``pending_verification[]``
+    already shaped for the envelope, plus the ``force_human_review``
+    flag from sensitive-path escalation. Falls back to
+    ``findings_validated.json`` when verify-consolidate didn't run
+    (stage_23 disabled, verify-prepare/consolidate infrastructure
+    failure, or a pre-verifier cache hit) — everything lands in
+    ``verified[]``.
 
-    Coverage-scoped findings (``category=Coverage`` + ``finding_scope=system``)
-    are routed to ``coverage_gaps[]`` after the verifier bucketing, since
-    coverage routing is verifier-independent and applies to both source
-    paths uniformly.
+    Coverage-scoped findings (``category=Coverage`` + ``finding_scope=
+    system``) are routed to ``coverage_gaps[]`` after the verifier
+    bucketing, since coverage routing is verifier-independent and
+    applies to both source paths uniformly.
     """
     cr_dir = Path(args.cr_dir)
     validate_output_path = Path(args.validate_output)
@@ -11690,10 +11493,10 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
         raw_verified: list[dict[str, Any]] = consolidated.get("verified", []) or []
         raw_rejected: list[dict[str, Any]] = consolidated.get("rejected", []) or []
         raw_pending: list[dict[str, Any]] = consolidated.get("pending_verification", []) or []
-        # PLN-721: justified[] bucket from cmd_verify_consolidate. Defensive
-        # default to [] so legacy findings_verified.json files (PLN-722
-        # v2.8.0/v2.8.1, before the bucket was emitted) keep finalizing
-        # without keying on a missing field.
+        # justified[] bucket from cmd_verify_consolidate. Defensive
+        # default to [] so older findings_verified.json files (before
+        # the bucket was emitted) keep finalizing without keying on a
+        # missing field.
         raw_justified: list[dict[str, Any]] = consolidated.get("justified", []) or []
         force_human_review = bool(consolidated.get("force_human_review", False))
     else:
@@ -11704,7 +11507,7 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
         force_human_review = False
 
     # Promote findings to canonical schema (defensive — collect-findings
-    # should already have done this, but legacy producers may bypass it).
+    # should already have done this, but cached producers may bypass it).
     # Mirror cmd_collect_findings: coerce non-canonical reviewer strings
     # (e.g. "Bug Hunter A") so make_finding_id doesn't ValueError, and
     # skip individually malformed findings rather than aborting the run.
@@ -11783,8 +11586,7 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
     setup_data = _read_optional_json(cr_dir / "setup.json", {}) or {}
     scope_data = _read_optional_json(cr_dir / "scope.json", {}) or {}
     intent_data = _read_optional_json(cr_dir / "intent.json", {}) or {}
-    # Phase C (v2.27.0): coverage plan is the ``.final`` section of
-    # coverage.json. Pre-v2.27.0 was a standalone ``coverage_plan.json``.
+    # Coverage plan lives in the ``.final`` section of coverage.json.
     coverage_plan = _read_coverage_state(cr_dir).get("final")
     if not isinstance(coverage_plan, dict):
         coverage_plan = _empty_coverage_plan()
