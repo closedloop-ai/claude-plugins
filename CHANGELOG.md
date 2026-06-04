@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.27.5
+
+Four production bugs in the CRS Phase A walker, the coverage-resolver wiring, the validation-gate contract, and the BLOCKING-verdict arbitration path. None of these had test coverage that exercised the production codepath end-to-end; each is now pinned by a focused regression test.
+
+#### Fixed
+- `/start staged` no longer dies at the first stage. The Phase 4b walker rewrite (PR #107) dropped the `--flag=value` form for scope args; staged reviews resolve `DIFF_SCOPE` to `--cached`, which space-separated argparse interpreted as an unknown option (`--scope: expected one argument`) and aborted `stage_05_parse_diff`. The four scope-consuming stages (`parse-diff`, `extract-patches`, `auto-incremental`, `partition`) now emit the joined form so leading-dash scope values bind unambiguously. Restores the v1.5.5 fix.
+- `stage_14_resolve_coverage` now wires `--critic-gates .closedloop-ai/settings/critic-gates.json` into its args. Pre-fix, `cmd_resolve_coverage` silently fell back to `_EMPTY_CRITIC_GATES` when the arg was absent (no error, no warning), so every production run ignored configured `coverage[]` rules and migrated `moduleCritics[]` entries. Only the core reviewer floor routed.
+- Validation gates now enforce `required_sections`. The field was declared on the `stage_16_arbitrate_budget` gate but the walker contract in `start.md` only checked `outputs` existence — so the stage-16 gate fired-true on `coverage.json` from stage_14 even when stages 15/15b/15c/16 all failed to populate `.final`. New `evaluate_validation_gate` helper makes the contract deterministic and testable; the walker shells into it so the markdown spec and the implementation cannot drift.
+- BLOCKING verify verdict no longer drops BHA. `cmd_arbitrate_budget` hardcoded `budget.bha_partitions: 0` on the BLOCKING short-circuit, which propagated through `bha_partitions_cap` in `derive-spawn-spec` and skipped every BHA partition with `reason: budget_capped` — contradicting the start.md contract that BLOCKING preserves core reviewers and only annotates. BHA is `source: "core"` and survives derive-spawn-spec's plan sanitization; the BLOCKING path now computes BHA with the same floor-honoring formula as the PASS path. Docs-only PRs still get 0 (the BHA floor is waived on both paths).
+
 ### code-review v2.27.4
 
 #### Fixed

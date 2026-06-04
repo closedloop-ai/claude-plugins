@@ -9799,6 +9799,28 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         verdict, violations = None, []
     now_iso_gate = datetime.now(timezone.utc).isoformat()
     if verdict == "BLOCKING":
+        # BHA is source: "core" and survives derive-spawn-spec's
+        # gated_by_verify plan sanitization (rule/critic entries are
+        # moved to skipped[], core is preserved). Computing
+        # bha_partitions with the same floor-honoring formula as the
+        # PASS path keeps the core reviewer floor alive on a BLOCKING
+        # verdict; hardcoding it to 0 would drop BHA via the
+        # bha_partitions_cap chain in derive-spawn-spec, contradicting
+        # start.md's "review is not halted by the BLOCKING verdict,
+        # only annotated" contract. Docs-only PRs still get 0 because
+        # the BHA floor is 0 for them on the PASS path too.
+        if _is_docs_only(diff_data):
+            blocking_bha_partitions = 0
+        else:
+            bha_floor_blocking = BUDGET_BHA_FLOOR_DEFAULT
+            max_bha_blocking = _max_bha_partitions_by_loc(diff_data)
+            leftover_blocking = max(
+                0, cap - len(required) - len(best_effort),
+            )
+            blocking_bha_partitions = max(
+                bha_floor_blocking,
+                min(leftover_blocking, max_bha_blocking),
+            )
         final_plan: dict[str, Any] = {
             "required": required,
             "best_effort": best_effort,
@@ -9808,7 +9830,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
                 "total_cap": cap,
                 "required_count": len(required),
                 "best_effort_count": len(best_effort),
-                "bha_partitions": 0,
+                "bha_partitions": blocking_bha_partitions,
                 "gated_by_verify": True,
                 "verify_violations": violations,
             },

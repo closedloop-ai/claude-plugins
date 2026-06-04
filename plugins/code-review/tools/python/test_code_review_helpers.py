@@ -7780,7 +7780,13 @@ class TestPrepareRun:
                 if not option_strings:
                     continue  # positional / required subparser slot
                 # Any of the action's flag aliases satisfies the requirement.
-                assert any(opt in args for opt in option_strings), (
+                # Match either the bare flag (space-separated) or the
+                # joined form (--flag=value) — staged scope args use the
+                # latter so leading-dash values like "--cached" bind.
+                def _matches(arg: str, opts: list[str] = option_strings) -> bool:
+                    return any(arg == o or arg.startswith(f"{o}=") for o in opts)
+
+                assert any(_matches(a) for a in args), (
                     f"stage {stage['id']!r} (subcommand={sub!r}) is enabled "
                     f"but missing required argparse flag(s) {option_strings!r}; "
                     f"args={args}"
@@ -7795,8 +7801,12 @@ class TestPrepareRun:
 
         # prep-assets needs PLUGIN_ROOT from runtime env.
         assert "<PLUGIN_ROOT>" in by_id["stage_02_prep_assets"]["args"]
-        # parse-diff needs DIFF_SCOPE from scope.json.
-        assert "<DIFF_SCOPE>" in by_id["stage_05_parse_diff"]["args"]
+        # parse-diff needs DIFF_SCOPE from scope.json. The token is joined
+        # with the flag in the = form to survive leading-dash values
+        # (staged → "--cached"); see TestCRSPhaseADeclarativeStagesConfig.
+        assert any(
+            "<DIFF_SCOPE>" in a for a in by_id["stage_05_parse_diff"]["args"]
+        )
         # cache-check needs CACHE_DIR, PROMPT_HASH, MODEL_ID, CONTEXT_KEY at runtime.
         cc_args = by_id["stage_19_cache_check"]["args"]
         for token in ("<CACHE_DIR>", "<PROMPT_HASH>", "<MODEL_ID>", "<CONTEXT_KEY>"):
@@ -15690,6 +15700,93 @@ class TestArbitrateBudgetCrDirDefault:
         final = _read_coverage_section(cr_dir, "final")
         assert final.get("arbitrate_status") == "blocked_by_verify"
         assert final["budget"]["gated_by_verify"] is True
+
+    def test_blocking_verdict_preserves_bha_partitions_for_code_pr(
+        self, tmp_path: Path,
+    ) -> None:
+        """start.md:294/298 contract: a BLOCKING verdict bypasses
+        arbitration and only annotates; review continues. BHA is
+        ``source: "core"`` and survives derive-spawn-spec's
+        gated_by_verify plan sanitization. So arbitrate-budget MUST
+        emit a non-zero ``bha_partitions`` count on BLOCKING for a
+        normal code PR — hardcoding 0 (pre-fix behavior) propagated
+        through ``budget.bha_partitions`` → ``bha_partitions_cap`` →
+        ``_compute_bha_partitions(cap=0)`` and dropped every BHA agent
+        with ``reason: "budget_capped"``, contradicting the docs and
+        leaving the run with zero BHA coverage on a BLOCKING verdict.
+        """
+        from code_review_helpers import (
+            BUDGET_BHA_FLOOR_DEFAULT, _write_coverage_sections,
+            cmd_arbitrate_budget,
+        )
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        plan = {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core",
+                          "trigger": {"type": "core"}, "evidence": "n/a"}],
+            "best_effort": [],
+            "deprecation_warnings": [],
+        }
+        _write_coverage_sections(cr_dir, {
+            "final": plan,
+            "verify": {
+                "verdict": "BLOCKING",
+                "violations": [{"check": "shape", "message": "x"}],
+                "checked_at": "x",
+            },
+        })
+        diff = self._diff_data_path(cr_dir)
+        assert cmd_arbitrate_budget(self._args(cr_dir, diff)) == 0
+        final = _read_coverage_section(cr_dir, "final")
+        assert final["arbitrate_status"] == "blocked_by_verify"
+        assert final["budget"]["gated_by_verify"] is True
+        # Non-zero BHA — the core floor survives.
+        assert final["budget"]["bha_partitions"] >= BUDGET_BHA_FLOOR_DEFAULT, (
+            f"BLOCKING verdict on a code PR dropped BHA to "
+            f"{final['budget']['bha_partitions']!r} (pre-fix bug); should "
+            f"honor BUDGET_BHA_FLOOR_DEFAULT={BUDGET_BHA_FLOOR_DEFAULT}"
+        )
+
+    def test_blocking_verdict_docs_only_diff_still_zero_bha(
+        self, tmp_path: Path,
+    ) -> None:
+        """Docs-only PRs get ``bha_partitions: 0`` on the PASS path
+        (the BHA floor is waived). BLOCKING must match — emitting BHA
+        for a docs-only diff would be a brand-new regression in the
+        opposite direction.
+        """
+        from code_review_helpers import (
+            _write_coverage_sections, cmd_arbitrate_budget,
+        )
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        # Docs-only diff_data: only .md files changed.
+        diff = cr_dir / "diff_data.json"
+        diff.write_text(json.dumps({
+            "files_to_review": ["README.md", "docs/intro.md"],
+            "file_loc": {
+                "README.md": {"added": 20, "removed": 0},
+                "docs/intro.md": {"added": 10, "removed": 5},
+            },
+            "total_loc": 35,
+        }))
+        plan = {
+            "required": [],
+            "best_effort": [],
+            "deprecation_warnings": [],
+        }
+        _write_coverage_sections(cr_dir, {
+            "final": plan,
+            "verify": {
+                "verdict": "BLOCKING",
+                "violations": [{"check": "shape", "message": "x"}],
+                "checked_at": "x",
+            },
+        })
+        assert cmd_arbitrate_budget(self._args(cr_dir, diff)) == 0
+        final = _read_coverage_section(cr_dir, "final")
+        assert final["arbitrate_status"] == "blocked_by_verify"
+        assert final["budget"]["bha_partitions"] == 0
 
     def test_writes_coverage_gaps_alongside_aggregate(self, tmp_path: Path) -> None:
         """``coverage_gaps.json`` stays standalone (multi-writer). On
