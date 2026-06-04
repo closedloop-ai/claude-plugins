@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.27.3
+
+#### Fixed
+- `_run_verify_consolidate` test helper docstring no longer carries PR #114 historical-framing prose; trimmed to a single-line summary to match its sibling `_run_verify_prepare`, which was already cleaned in v2.27.2.
+- `TestCRSPhaseACLIConfigLoader` class docstring now reports `196 args` (down from a stale `199 args`) so the calibration anchor for `cli_parser_resolved.json` audits matches the regenerated fixture.
+- `cli_parser_resolved.json` snapshot fixture now ends with a trailing newline, matching POSIX convention so future regenerations diff cleanly.
+
+#### Changed
+- `cmd_parse_diff` no longer carries a dead `include_patch_lines` local variable. After v2.27.2 hardcoded the value to `True`, the `if include_patch_lines:` guard at line 510 and the two parameter pass-throughs at lines 494/501 were no-op constant references. The local is gone; `_parse_u0_output` is called with `True` inline and `result["patch_lines"]` is unconditionally populated. `_parse_u0_output` retains its `include_patch_lines` parameter for the internal API exercise covered by `test_include_patch_lines_false`.
+- Renamed test `test_no_patch_lines_flag` → `test_include_patch_lines_false`. The flag was removed in v2.27.2; the test still exercises the `_parse_u0_output(..., include_patch_lines=False)` internal API path, but its name no longer references the dead CLI flag.
+
 ### code-review v2.27.2
 
 #### Changed

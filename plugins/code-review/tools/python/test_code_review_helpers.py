@@ -228,7 +228,7 @@ class TestParseU0Output:
         assert ranges["f.ts"]["removed"] == []
         assert ranges["f.ts"]["added"] == [[5, 7]]
 
-    def test_no_patch_lines_flag(self) -> None:
+    def test_include_patch_lines_false(self) -> None:
         raw = (
             "diff --git a/f.ts b/f.ts\n"
             "@@ -1,1 +1,1 @@\n"
@@ -8141,13 +8141,7 @@ def _run_verify_consolidate(
     prompt_hash: str = "",
     cr_dir: Path | None = None,
 ) -> tuple[int, dict[str, Any]]:
-    """Invoke ``cmd_verify_consolidate`` with stdout captured.
-
-    PR #114 review fix — ``cr_dir`` is now optional so end-to-end tests
-    that share a cr between prepare and consolidate can pass the same
-    path to both helpers. Default behaviour (``tmp_path / "cr"``) is
-    preserved for the existing single-phase callers.
-    """
+    """Invoke ``cmd_verify_consolidate`` with stdout captured into a dict."""
     import io
     import sys as _sys
 
@@ -18200,7 +18194,7 @@ class TestCRSPhaseAStageTemplateValidator:
 class TestCRSPhaseACLIConfigLoader:
     """Phase A: _register_subparsers is now a loader over config/cli.json.
 
-    44 parsers / 199 args / 8 hand-curated $$ constant slots / 1 mutex group.
+    44 parsers / 196 args / 8 hand-curated $$ constant slots / 1 mutex group.
     A captured snapshot pins the resolved parser spec (defaults, types,
     choices, required, action, func) so a regression in cli.json or in
     _resolve_cli_constant fails loud. Plus targeted tests for the constant

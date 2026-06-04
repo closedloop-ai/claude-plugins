@@ -482,7 +482,6 @@ def cmd_parse_diff(args: argparse.Namespace) -> int:
     total_loc = sum(v["added"] + v["removed"] for v in file_loc.values())
 
     # 4. -U0 (batched if >200 files)
-    include_patch_lines = True
     if len(files_to_review) > U0_FILE_THRESHOLD:
         all_ranges: dict[str, dict[str, list[list[int]]]] = {}
         all_patch_lines: dict[str, dict[str, dict[str, str]]] = {}
@@ -491,14 +490,14 @@ def cmd_parse_diff(args: argparse.Namespace) -> int:
             u0_raw = _run_git(
                 ["diff", "-U0"] + scope_args + ["--"] + batch, workdir
             )
-            ranges, plines = _parse_u0_output(u0_raw, include_patch_lines)
+            ranges, plines = _parse_u0_output(u0_raw, True)
             all_ranges.update(ranges)
             all_patch_lines.update(plines)
         changed_ranges = all_ranges
         patch_lines = all_patch_lines
     else:
         u0_raw = _run_git(["diff", "-U0"] + scope_args, workdir)
-        changed_ranges, patch_lines = _parse_u0_output(u0_raw, include_patch_lines)
+        changed_ranges, patch_lines = _parse_u0_output(u0_raw, True)
 
     result = {
         "files_to_review": files_to_review,
@@ -506,9 +505,8 @@ def cmd_parse_diff(args: argparse.Namespace) -> int:
         "file_loc": file_loc,
         "total_loc": total_loc,
         "changed_ranges": changed_ranges,
+        "patch_lines": patch_lines,
     }
-    if include_patch_lines:
-        result["patch_lines"] = patch_lines
 
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")
