@@ -98,8 +98,7 @@
         "<DIFF_TIP>",
         "--base-ref",
         "<BASE_REF>",
-        "--original-scope",
-        "<DIFF_SCOPE>",
+        "--original-scope=<DIFF_SCOPE>",
         "--full-review",
         "{flags_full_review}",
         "--since-last-review",
@@ -122,8 +121,7 @@
       "kind": "helper",
       "subcommand": "parse-diff",
       "args": [
-        "--scope",
-        "<DIFF_SCOPE>"
+        "--scope=<DIFF_SCOPE>"
       ],
       "stdout": "{cr_dir}/diff_data.json",
       "expected_outputs": [
@@ -141,8 +139,7 @@
       "kind": "helper",
       "subcommand": "extract-patches",
       "args": [
-        "--diff-scope",
-        "<DIFF_SCOPE>",
+        "--diff-scope=<DIFF_SCOPE>",
         "--diff-data",
         "{cr_dir}/diff_data.json",
         "--cr-dir",
@@ -323,7 +320,9 @@
         "--diff-data",
         "{cr_dir}/diff_data.json",
         "--extract-signals",
-        "{cr_dir}/extract_signals.json"
+        "{cr_dir}/extract_signals.json",
+        "--critic-gates",
+        ".closedloop-ai/settings/critic-gates.json"
       ],
       "stdout": null,
       "expected_outputs": [
@@ -514,8 +513,7 @@
       "args": [
         "--diff-data",
         "{cr_dir}/diff_data.json",
-        "--diff-scope",
-        "<DIFF_SCOPE>",
+        "--diff-scope=<DIFF_SCOPE>",
         "--cr-dir",
         "{cr_dir}"
       ],

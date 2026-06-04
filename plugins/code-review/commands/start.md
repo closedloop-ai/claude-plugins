@@ -189,7 +189,19 @@ If a token's source file does not exist yet (a prior stage that produces it was 
 
 6. **PLN-725 singleton agent dispatch.** When the stage just finished is `stage_11_extract_signals` or `stage_15_coverage_critic`, read the manifest it just wrote and run the protocol in the "PLN-725 Single-Agent Dispatch" section below before proceeding to the next stage. The manifest's `status` field decides whether an agent spawn is needed — `cache_hit` / `skipped` skips, `needs_agent` spawns. The downstream sibling stage (`stage_11b` / `stage_15b`) walks normally as the next array entry; its `cmd` no-ops on `cache_hit` / `skipped` manifests so the walker doesn't need to branch.
 
-7. **Run gates.** After completing a stage, scan `GATES` for any entry whose `after_stage` matches the stage just finished. Each gate checks `outputs` exist and are well-formed; `on_failure_action` follows the same `abort | continue | emit_coverage_gap` semantics.
+7. **Run gates.** After completing a stage, scan `GATES` for any entry whose `after_stage` matches the stage just finished. For each match, shell out to the canonical enforcer:
+
+   ```bash
+   python3 <HELPERS> evaluate-gate --cr-dir <CR_DIR> --after-stage <stage_id>
+   ```
+
+   The helper looks the gate up from the same canonical `_build_validation_gates` table that produced `run_plan.json` and checks:
+   - Every literal-path entry in `outputs` exists as a regular file (glob entries like `agent_*.json` are scoped to the `all_required_outputs_present` enforcer and are skipped here).
+   - For every file listed in `required_sections`, the file exists, parses as JSON, is a top-level JSON object, and every listed section key is present in that object AND its value is a JSON object (dict). The dict-value check catches the corrupt-atomic-write scenario where a section is written as `null` mid-replace — a downstream consumer expecting `state[key]` to be a dict would crash on attribute access.
+
+   Exit code `0` means the gate passed. Exit code `1` means it failed; the diagnostic is on stderr. Read the matching gate's `on_failure_action` from `run_plan.json` (`abort | continue | emit_coverage_gap`) and apply it. The enforcer is gate-policy-agnostic by design — the same helper serves all three actions without branching, so contract changes propagate uniformly.
+
+   `required_sections` distinguishes "the file exists on disk" from "the stage that owns this section actually populated it." `coverage.json` exists from `stage_14` onward (sections accumulate), so a bare file-existence check after `stage_16` would fire-true even if stages 15/15b/15c/16 all failed to populate their sections.
 
 8. **Branching gates** (see next section) fire at specific stage boundaries.
 

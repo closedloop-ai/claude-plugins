@@ -1158,6 +1158,230 @@ class TestValidationGatesCoverageFinalRequired:
         assert "required_sections" not in gate
 
 
+class TestEvaluateValidationGate:
+    """The walker contract documented in start.md step 7 says gates
+    enforce both ``outputs`` existence AND any declared
+    ``required_sections``. ``evaluate_validation_gate`` is the
+    deterministic enforcer the walker shells into via the
+    ``evaluate-gate`` subcommand (``cmd_evaluate_gate``) so the
+    contract cannot drift between the markdown spec and the
+    implementation: start.md instructs the LLM walker to invoke the
+    Python helper rather than re-implement the check in prose.
+    """
+
+    def _gate(self, tmp_path: Path, after_stage: str) -> dict[str, Any]:
+        from code_review_helpers import _build_validation_gates
+        return next(
+            g for g in _build_validation_gates(str(tmp_path / "cr"))
+            if g["after_stage"] == after_stage
+        )
+
+    def test_passes_when_outputs_present_and_no_required_sections(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import evaluate_validation_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        (cr / "diff_data.json").write_text("{}")
+        passed, reason = evaluate_validation_gate(
+            self._gate(tmp_path, "stage_05_parse_diff"),
+        )
+        assert passed is True
+        assert reason is None
+
+    def test_fails_when_output_missing(self, tmp_path: Path) -> None:
+        from code_review_helpers import evaluate_validation_gate
+        (tmp_path / "cr").mkdir()
+        passed, reason = evaluate_validation_gate(
+            self._gate(tmp_path, "stage_05_parse_diff"),
+        )
+        assert passed is False
+        assert reason is not None
+        assert "diff_data.json" in reason
+
+    def test_fails_when_required_section_missing(self, tmp_path: Path) -> None:
+        """The pre-fix walker bug: coverage.json exists on disk (stage_14
+        wrote .initial), but stages 15/15b/15c/16 failed to populate
+        .final. Bare file-existence would pass; the section check must
+        fail so the pipeline aborts before stage_19b reads a
+        non-existent ``final`` plan.
+        """
+        from code_review_helpers import evaluate_validation_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        # Stage 14 wrote .initial but stage 16 never wrote .final.
+        (cr / "coverage.json").write_text(json.dumps({
+            "initial": {"required": [], "best_effort": []},
+        }))
+        passed, reason = evaluate_validation_gate(
+            self._gate(tmp_path, "stage_16_arbitrate_budget"),
+        )
+        assert passed is False
+        assert reason is not None
+        assert "final" in reason
+        assert "coverage.json" in reason
+
+    def test_passes_when_required_section_present(self, tmp_path: Path) -> None:
+        from code_review_helpers import evaluate_validation_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        (cr / "coverage.json").write_text(json.dumps({
+            "initial": {"required": [], "best_effort": []},
+            "final": {"required": [], "best_effort": [], "budget": {}},
+        }))
+        passed, reason = evaluate_validation_gate(
+            self._gate(tmp_path, "stage_16_arbitrate_budget"),
+        )
+        assert passed is True
+        assert reason is None
+
+    def test_fails_when_required_section_is_not_dict(self, tmp_path: Path) -> None:
+        """A scalar/null at the section key indicates a corrupt write
+        (e.g. an aborted atomic-replace); should not be treated as
+        ``the section was populated.``
+        """
+        from code_review_helpers import evaluate_validation_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        (cr / "coverage.json").write_text(json.dumps({
+            "initial": {"required": []},
+            "final": None,
+        }))
+        passed, reason = evaluate_validation_gate(
+            self._gate(tmp_path, "stage_16_arbitrate_budget"),
+        )
+        assert passed is False
+        assert reason is not None
+        assert "final" in reason
+
+    def test_glob_outputs_are_not_treated_as_literal_paths(
+        self, tmp_path: Path,
+    ) -> None:
+        """``stage_20_spawn_reviewers`` declares ``agent_*.json``; the
+        all-required-outputs check belongs in a separate enforcer that
+        knows the spawn-spec roster. ``evaluate_validation_gate`` must
+        skip glob entries so it never erroneously fails on a literal
+        path lookup (``Path("agent_*.json").is_file()`` returns False
+        on every real filesystem, so without the skip the gate would
+        always fail; with the skip it trivially passes since glob
+        enforcement is delegated).
+        """
+        from code_review_helpers import evaluate_validation_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        gate = self._gate(tmp_path, "stage_20_spawn_reviewers")
+        passed, reason = evaluate_validation_gate(gate)
+        # No literal outputs, no required sections → trivially passes.
+        assert passed is True
+        assert reason is None
+
+    def test_rejects_bare_string_section_keys(self, tmp_path: Path) -> None:
+        """A misconfigured gate that maps a file path to a bare string
+        (instead of a list of strings) must surface as a config
+        failure, not silently iterate per-character. Without the
+        guard, ``for key in "final"`` walks ``'f','i','n','a','l'``
+        and produces a misleading "missing required section 'f'"
+        diagnostic. The type-guard error message names the bad type
+        so the operator can fix the gate definition.
+        """
+        from code_review_helpers import evaluate_validation_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        (cr / "coverage.json").write_text(json.dumps({"final": {}}))
+        bad_gate = {
+            "after_stage": "stage_16_arbitrate_budget",
+            "gate": "coverage_plan_well_formed",
+            "outputs": [],
+            "required_sections": {
+                str(cr / "coverage.json"): "final",  # bare string, not a list
+            },
+            "on_failure_action": "abort",
+        }
+        passed, reason = evaluate_validation_gate(bad_gate)
+        assert passed is False
+        assert reason is not None
+        assert "must be a list" in reason
+        assert "str" in reason
+
+
+class TestCmdEvaluateGate:
+    """``cmd_evaluate_gate`` is the CLI wrapper the walker shells out
+    to from start.md step 7. Tests pin the exit-code contract (0
+    pass, 1 fail), the diagnostic-to-stderr contract, and the
+    "unknown anchor stage is unconstrained" exit-0 case so a stage
+    without a declared gate doesn't accidentally abort the pipeline.
+    """
+
+    @staticmethod
+    def _args(cr_dir: Path, after_stage: str) -> argparse.Namespace:
+        return argparse.Namespace(
+            cr_dir=str(cr_dir),
+            after_stage=after_stage,
+        )
+
+    def test_exits_zero_when_gate_passes(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from code_review_helpers import cmd_evaluate_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        (cr / "coverage.json").write_text(json.dumps({
+            "initial": {"x": 1},
+            "final": {"required": [], "budget": {}},
+        }))
+        rc = cmd_evaluate_gate(self._args(cr, "stage_16_arbitrate_budget"))
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert captured.err == ""
+
+    def test_exits_one_with_stderr_diagnostic_when_gate_fails(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The pre-fix scenario: coverage.json exists with .initial
+        but no .final after stage_16. The walker must abort here.
+        """
+        from code_review_helpers import cmd_evaluate_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        (cr / "coverage.json").write_text(json.dumps({
+            "initial": {"required": []},
+        }))
+        rc = cmd_evaluate_gate(self._args(cr, "stage_16_arbitrate_budget"))
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "final" in captured.err
+        assert "stage_16_arbitrate_budget" in captured.err
+        assert "FAILED" in captured.err
+
+    def test_unknown_anchor_stage_is_unconstrained_exit_zero(
+        self, tmp_path: Path,
+    ) -> None:
+        """Most stages have no declared gate. The walker calls this
+        helper after every stage; an unknown anchor must exit 0 so
+        unguarded stages don't abort the pipeline. (Stages WITH a gate
+        get enforcement; stages WITHOUT one are intentionally
+        unconstrained.)
+        """
+        from code_review_helpers import cmd_evaluate_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        rc = cmd_evaluate_gate(self._args(cr, "stage_99_never_existed"))
+        assert rc == 0
+
+    def test_registered_in_cli_json(self) -> None:
+        """The walker invokes ``python3 <HELPERS> evaluate-gate``; the
+        subcommand MUST be parseable through the declarative CLI
+        loader, not just exposed as a Python function.
+        """
+        from code_review_helpers import _load_cli_config
+        cfg = _load_cli_config()
+        parser_names = {p["name"] for p in cfg["parsers"]}
+        assert "evaluate-gate" in parser_names, (
+            "evaluate-gate must be registered in config/cli.json so the "
+            "walker can invoke it as `python3 <HELPERS> evaluate-gate ...`"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Partition post-processing
 # ---------------------------------------------------------------------------
@@ -7668,7 +7892,13 @@ class TestPrepareRun:
                 if not option_strings:
                     continue  # positional / required subparser slot
                 # Any of the action's flag aliases satisfies the requirement.
-                assert any(opt in args for opt in option_strings), (
+                # Match either the bare flag (space-separated) or the
+                # joined form (--flag=value) — staged scope args use the
+                # latter so leading-dash values like "--cached" bind.
+                def _matches(arg: str, opts: list[str] = option_strings) -> bool:
+                    return any(arg == o or arg.startswith(f"{o}=") for o in opts)
+
+                assert any(_matches(a) for a in args), (
                     f"stage {stage['id']!r} (subcommand={sub!r}) is enabled "
                     f"but missing required argparse flag(s) {option_strings!r}; "
                     f"args={args}"
@@ -7683,8 +7913,12 @@ class TestPrepareRun:
 
         # prep-assets needs PLUGIN_ROOT from runtime env.
         assert "<PLUGIN_ROOT>" in by_id["stage_02_prep_assets"]["args"]
-        # parse-diff needs DIFF_SCOPE from scope.json.
-        assert "<DIFF_SCOPE>" in by_id["stage_05_parse_diff"]["args"]
+        # parse-diff needs DIFF_SCOPE from scope.json. The token is joined
+        # with the flag in the = form to survive leading-dash values
+        # (staged → "--cached"); see TestCRSPhaseADeclarativeStagesConfig.
+        assert any(
+            "<DIFF_SCOPE>" in a for a in by_id["stage_05_parse_diff"]["args"]
+        )
         # cache-check needs CACHE_DIR, PROMPT_HASH, MODEL_ID, CONTEXT_KEY at runtime.
         cc_args = by_id["stage_19_cache_check"]["args"]
         for token in ("<CACHE_DIR>", "<PROMPT_HASH>", "<MODEL_ID>", "<CONTEXT_KEY>"):
@@ -15579,6 +15813,93 @@ class TestArbitrateBudgetCrDirDefault:
         assert final.get("arbitrate_status") == "blocked_by_verify"
         assert final["budget"]["gated_by_verify"] is True
 
+    def test_blocking_verdict_preserves_bha_partitions_for_code_pr(
+        self, tmp_path: Path,
+    ) -> None:
+        """start.md:294/298 contract: a BLOCKING verdict bypasses
+        arbitration and only annotates; review continues. BHA is
+        ``source: "core"`` and survives derive-spawn-spec's
+        gated_by_verify plan sanitization. So arbitrate-budget MUST
+        emit a non-zero ``bha_partitions`` count on BLOCKING for a
+        normal code PR — hardcoding 0 (pre-fix behavior) propagated
+        through ``budget.bha_partitions`` → ``bha_partitions_cap`` →
+        ``_compute_bha_partitions(cap=0)`` and dropped every BHA agent
+        with ``reason: "budget_capped"``, contradicting the docs and
+        leaving the run with zero BHA coverage on a BLOCKING verdict.
+        """
+        from code_review_helpers import (
+            BUDGET_BHA_FLOOR_DEFAULT, _write_coverage_sections,
+            cmd_arbitrate_budget,
+        )
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        plan = {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core",
+                          "trigger": {"type": "core"}, "evidence": "n/a"}],
+            "best_effort": [],
+            "deprecation_warnings": [],
+        }
+        _write_coverage_sections(cr_dir, {
+            "final": plan,
+            "verify": {
+                "verdict": "BLOCKING",
+                "violations": [{"check": "shape", "message": "x"}],
+                "checked_at": "x",
+            },
+        })
+        diff = self._diff_data_path(cr_dir)
+        assert cmd_arbitrate_budget(self._args(cr_dir, diff)) == 0
+        final = _read_coverage_section(cr_dir, "final")
+        assert final["arbitrate_status"] == "blocked_by_verify"
+        assert final["budget"]["gated_by_verify"] is True
+        # Non-zero BHA — the core floor survives.
+        assert final["budget"]["bha_partitions"] >= BUDGET_BHA_FLOOR_DEFAULT, (
+            f"BLOCKING verdict on a code PR dropped BHA to "
+            f"{final['budget']['bha_partitions']!r} (pre-fix bug); should "
+            f"honor BUDGET_BHA_FLOOR_DEFAULT={BUDGET_BHA_FLOOR_DEFAULT}"
+        )
+
+    def test_blocking_verdict_docs_only_diff_still_zero_bha(
+        self, tmp_path: Path,
+    ) -> None:
+        """Docs-only PRs get ``bha_partitions: 0`` on the PASS path
+        (the BHA floor is waived). BLOCKING must match — emitting BHA
+        for a docs-only diff would be a brand-new regression in the
+        opposite direction.
+        """
+        from code_review_helpers import (
+            _write_coverage_sections, cmd_arbitrate_budget,
+        )
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        # Docs-only diff_data: only .md files changed.
+        diff = cr_dir / "diff_data.json"
+        diff.write_text(json.dumps({
+            "files_to_review": ["README.md", "docs/intro.md"],
+            "file_loc": {
+                "README.md": {"added": 20, "removed": 0},
+                "docs/intro.md": {"added": 10, "removed": 5},
+            },
+            "total_loc": 35,
+        }))
+        plan = {
+            "required": [],
+            "best_effort": [],
+            "deprecation_warnings": [],
+        }
+        _write_coverage_sections(cr_dir, {
+            "final": plan,
+            "verify": {
+                "verdict": "BLOCKING",
+                "violations": [{"check": "shape", "message": "x"}],
+                "checked_at": "x",
+            },
+        })
+        assert cmd_arbitrate_budget(self._args(cr_dir, diff)) == 0
+        final = _read_coverage_section(cr_dir, "final")
+        assert final["arbitrate_status"] == "blocked_by_verify"
+        assert final["budget"]["bha_partitions"] == 0
+
     def test_writes_coverage_gaps_alongside_aggregate(self, tmp_path: Path) -> None:
         """``coverage_gaps.json`` stays standalone (multi-writer). On
         the ``--cr-dir`` path it must land in ``<cr_dir>/`` alongside
@@ -18094,6 +18415,96 @@ class TestCRSPhaseADeclarativeStagesConfig:
         )
         assert actual == expected
 
+    def test_scope_flags_use_equals_form_so_leading_dash_values_parse(self) -> None:
+        """Staged scope resolves DIFF_SCOPE to the literal ``--cached``.
+
+        Space-separated argparse (``--scope --cached``) makes argparse
+        consume the next token as the option name and fail with
+        ``expected one argument``, killing the staged pipeline at the
+        first ``on_failure: abort`` stage. The ``=`` form
+        (``--scope=--cached``) binds unambiguously. This test pins the
+        ``=`` form across every stage that consumes ``<DIFF_SCOPE>`` so
+        the v1.5.5 regression cannot reappear.
+        """
+        from code_review_helpers import _build_run_plan_stages, _register_subparsers
+        stages = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        by_id = {s["id"]: s for s in stages}
+        scope_consumers = {
+            "stage_07_auto_incremental": "--original-scope",
+            "stage_05_parse_diff": "--scope",
+            "stage_06_extract_patches": "--diff-scope",
+            "stage_17_partition": "--diff-scope",
+        }
+        for stage_id, flag in scope_consumers.items():
+            args = by_id[stage_id]["args"]
+            joined = next((a for a in args if a.startswith(f"{flag}=")), None)
+            assert joined is not None, (
+                f"{stage_id} args must carry {flag}=<DIFF_SCOPE> (= form); got {args!r}"
+            )
+            assert "<DIFF_SCOPE>" in joined, (
+                f"{stage_id} {flag} must template <DIFF_SCOPE>; got {joined!r}"
+            )
+            # The space-separated form (two adjacent tokens) is what broke
+            # /start staged; pin that it's absent.
+            assert flag not in args, (
+                f"{stage_id} args still carry bare {flag!r}; switch to {flag}=<DIFF_SCOPE>"
+            )
+
+        # End-to-end: every scope-consuming subparser must accept its
+        # joined form with diff_scope resolved to "--cached" (the staged
+        # value). This is the exact failure mode the v1.5.5 fix addressed.
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command", required=True)
+        _register_subparsers(subparsers)
+        for stage_id, flag in scope_consumers.items():
+            joined = next(a for a in by_id[stage_id]["args"] if a.startswith(f"{flag}="))
+            resolved = joined.replace("<DIFF_SCOPE>", "--cached")
+            subcommand = by_id[stage_id]["subcommand"]
+            # Strip the joined arg from the rest of the stage's args, then
+            # build a minimal argv with required positionals filled in.
+            extra: list[str] = []
+            for a in by_id[stage_id]["args"]:
+                if a == joined:
+                    extra.append(resolved)
+                elif "{cr_dir}" in a:
+                    extra.append(a.replace("{cr_dir}", "/tmp/cr_dir"))
+                elif a.startswith("<") or a.startswith("{"):
+                    # Placeholder; supply a benign default per known shape.
+                    extra.append("placeholder")
+                else:
+                    extra.append(a)
+            argv = [subcommand, *extra]
+            try:
+                parser.parse_args(argv)
+            except SystemExit as exc:
+                raise AssertionError(
+                    f"{stage_id} ({subcommand}) failed argparse with diff_scope=--cached: "
+                    f"argv={argv!r}, exit={exc.code}",
+                ) from exc
+
+    def test_stage_14_resolve_coverage_wires_critic_gates(self) -> None:
+        """stage_14 must pass --critic-gates or production runs silently
+        ignore operator-configured coverage[] / moduleCritics[] rules.
+
+        cmd_resolve_coverage falls back to _EMPTY_CRITIC_GATES when the
+        arg is absent, with no error and no warning — so a regression
+        would be invisible until an operator notices their configured
+        critics aren't routing. The canonical path is the on-disk
+        settings file at .closedloop-ai/settings/critic-gates.json.
+        """
+        from code_review_helpers import _build_run_plan_stages
+        stages = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        by_id = {s["id"]: s for s in stages}
+        rc_args = by_id["stage_14_resolve_coverage"]["args"]
+        assert "--critic-gates" in rc_args, (
+            f"stage_14_resolve_coverage must pass --critic-gates; got {rc_args!r}"
+        )
+        idx = rc_args.index("--critic-gates")
+        assert rc_args[idx + 1] == ".closedloop-ai/settings/critic-gates.json", (
+            f"--critic-gates must point to the canonical settings path; "
+            f"got {rc_args[idx + 1]!r}"
+        )
+
     def test_pr_flag_omitted_when_pr_number_is_none(self) -> None:
         """The @pr_flag splat must produce zero args when pr_number is None."""
         from code_review_helpers import _build_run_plan_stages
@@ -18194,7 +18605,7 @@ class TestCRSPhaseAStageTemplateValidator:
 class TestCRSPhaseACLIConfigLoader:
     """Phase A: _register_subparsers is now a loader over config/cli.json.
 
-    44 parsers / 196 args / 8 hand-curated $$ constant slots / 1 mutex group.
+    45 parsers / 198 args / 8 hand-curated $$ constant slots / 1 mutex group.
     A captured snapshot pins the resolved parser spec (defaults, types,
     choices, required, action, func) so a regression in cli.json or in
     _resolve_cli_constant fails loud. Plus targeted tests for the constant
