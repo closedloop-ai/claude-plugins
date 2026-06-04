@@ -9113,6 +9113,17 @@ _STAGES_TEMPLATE_KEYS: frozenset[str] = frozenset({
 # Valid arg splat markers (resolved separately from template substitution).
 _STAGES_SPLAT_MARKERS: frozenset[str] = frozenset({"@pr_flag"})
 
+# Valid ``min_depth`` values on stages.json entries. Each stage declares the
+# minimum invocation tier at which it runs; the run-plan builder filters by
+# ``_DEPTH_RANK[invocation_tier] >= _DEPTH_RANK[stage.min_depth]``. A stage
+# without an explicit ``min_depth`` defaults to ``"standard"`` so that
+# adding a new stage without thinking about tiering doesn't accidentally
+# leak it into shallow.
+_VALID_MIN_DEPTHS: frozenset[str] = frozenset({"shallow", "standard", "deep"})
+_DEPTH_RANK: dict[str, int] = {"shallow": 1, "standard": 2, "deep": 3}
+_DEFAULT_MIN_DEPTH: str = "standard"
+_DEFAULT_INVOCATION_DEPTH: str = "standard"
+
 # Single brace-or-key matcher: every ``{`` and every ``}`` MUST be part of a
 # ``{identifier}`` pair, and the identifier MUST be in _STAGES_TEMPLATE_KEYS.
 _TEMPLATE_KEY_RE = re.compile(r"\{([^{}]*)\}")
@@ -9140,7 +9151,7 @@ def _validate_template_string(value: str, where: str) -> None:
 
 
 def _validate_stages_config(config: dict[str, Any]) -> None:
-    """Validate every templatable string in stages.json once at load time."""
+    """Validate every templatable string and tier marker in stages.json once at load time."""
     for stage in config.get("stages", []):
         sid = stage.get("id", "<unknown>")
         for i, arg in enumerate(stage.get("args", []) or []):
@@ -9155,6 +9166,52 @@ def _validate_stages_config(config: dict[str, Any]) -> None:
         stdout = stage.get("stdout")
         if isinstance(stdout, str):
             _validate_template_string(stdout, f"{sid}.stdout")
+        # ``min_depth`` is optional in the schema (defaults to "standard")
+        # but when present MUST be one of the canonical tier names so a
+        # typo (e.g. "shallw") doesn't silently drop the stage out of
+        # every run plan.
+        if "min_depth" in stage:
+            md = stage["min_depth"]
+            if md not in _VALID_MIN_DEPTHS:
+                raise ValueError(
+                    f"stages.json {sid}.min_depth: invalid tier {md!r}; "
+                    f"must be one of {sorted(_VALID_MIN_DEPTHS)}",
+                )
+
+
+def _filter_stages_by_depth(
+    stages: list[dict[str, Any]], invocation_tier: str,
+) -> list[dict[str, Any]]:
+    """Return only stages whose ``min_depth`` is satisfied by ``invocation_tier``.
+
+    Tier ranking: ``shallow < standard < deep``. A stage with
+    ``min_depth: shallow`` runs in all tiers; ``min_depth: standard``
+    runs in standard and deep; ``min_depth: deep`` runs only in deep.
+
+    Stages without an explicit ``min_depth`` default to ``"standard"`` —
+    a new stage added without thinking about tiering stays out of
+    shallow until explicitly opted in.
+    """
+    tier_rank = _DEPTH_RANK[invocation_tier]
+    return [
+        s for s in stages
+        if _DEPTH_RANK.get(s.get("min_depth", _DEFAULT_MIN_DEPTH), 2) <= tier_rank
+    ]
+
+
+def _filter_validation_gates_by_stages(
+    gates: list[dict[str, Any]], stage_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Drop validation gates whose ``after_stage`` anchor isn't in the run plan.
+
+    When shallow filters out ``stage_16_arbitrate_budget``, the gate
+    anchored on that stage has nothing to fire after — left in place it
+    would fail-closed on ``missing section-bearing file`` because
+    ``coverage.json.final`` is never written. Filtering the gate out
+    instead is the correct behavior: the stage didn't run, so its
+    post-condition has no meaning.
+    """
+    return [g for g in gates if g.get("after_stage") in stage_ids]
 
 
 @functools.lru_cache(maxsize=1)
@@ -9170,6 +9227,7 @@ def _build_run_plan_stages(
     mode: str,
     pr_number: int | None,
     flags: dict[str, Any],
+    depth: str = _DEFAULT_INVOCATION_DEPTH,
 ) -> list[dict[str, Any]]:
     """Return the canonical pipeline by loading config/stages.json and substituting runtime values.
 
@@ -9212,8 +9270,9 @@ def _build_run_plan_stages(
                 out.append(arg.format(**ctx))
         return out
 
+    raw_stages = _filter_stages_by_depth(_load_stages_config()["stages"], depth)
     out_stages: list[dict[str, Any]] = []
-    for template in _load_stages_config()["stages"]:
+    for template in raw_stages:
         # Deep-copy: _load_stages_config is lru_cached, so its returned dict's
         # nested lists (depends_on, agent_specs, expected_outputs) are shared
         # across every call. A shallow ``dict(template)`` would leave callers
@@ -9414,6 +9473,14 @@ def cmd_prepare_run(args: argparse.Namespace) -> int:
             return val.strip().lower() in ("true", "1", "yes")
         return False
 
+    depth = (getattr(args, "depth", None) or _DEFAULT_INVOCATION_DEPTH).lower()
+    if depth not in _VALID_MIN_DEPTHS:
+        print(
+            f"Error: --depth must be one of {sorted(_VALID_MIN_DEPTHS)}, got {depth!r}",
+            file=sys.stderr,
+        )
+        return 1
+
     flags = {
         "hygiene_only": _flag("hygiene_only"),
         "since_last_review": _flag("since_last_review"),
@@ -9421,17 +9488,25 @@ def cmd_prepare_run(args: argparse.Namespace) -> int:
         "base_ref_override": args.base_ref_override or "",
         "scope_args": args.scope_args or "",
         "pr_number": args.pr_number,
+        "depth": depth,
     }
+
+    stages = _build_run_plan_stages(cr_dir, mode, args.pr_number, flags, depth)
+    stage_ids = {s["id"] for s in stages}
+    gates = _filter_validation_gates_by_stages(
+        _build_validation_gates(cr_dir), stage_ids,
+    )
 
     run_plan: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "review_id": str(uuid.uuid4()),
         "cr_dir": cr_dir,
         "mode": mode,
+        "depth": depth,
         "flags": flags,
         "scope": {},  # populated by stage_03_resolve_scope at runtime
-        "stages": _build_run_plan_stages(cr_dir, mode, args.pr_number, flags),
-        "validation_gates": _build_validation_gates(cr_dir),
+        "stages": stages,
+        "validation_gates": gates,
         "telemetry": {
             "expected_total_duration_ms": 0,
             "estimated_cost_usd": 0.0,

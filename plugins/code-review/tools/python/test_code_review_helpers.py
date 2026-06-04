@@ -18788,3 +18788,211 @@ class TestRunPlanStdoutRedirectRaceClass:
         stages = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
         by_id = {s["id"]: s for s in stages}
         assert by_id["stage_08_fetch_intent"]["stdout"] is None
+
+
+class TestPLN807DepthTierFiltering:
+    """PLN-807 Phase 1: ``min_depth`` field on stages + run-plan filtering.
+
+    Standard mode is the default; bare invocations must produce identical
+    output to today. Shallow mode skips signal extraction, coverage
+    planning, budget arbitration, and the spawn-spec derive/verify pair.
+    Deep mode runs the same set as standard today (reserved for future
+    Impact Analyzer entries with ``min_depth: deep``).
+    """
+
+    # Stages tagged ``min_depth: standard`` — skipped in shallow.
+    EXPECTED_STANDARD_ONLY = {
+        "stage_11_extract_signals",
+        "stage_11b_extract_signals_consolidate",
+        "stage_14_resolve_coverage",
+        "stage_14a_load_available_reviewers",
+        "stage_15_coverage_critic",
+        "stage_15b_coverage_critic_consolidate",
+        "stage_15c_verify_coverage",
+        "stage_16_arbitrate_budget",
+        "stage_19b_derive_spawn_spec",
+        "stage_20b_verify_spawn",
+    }
+
+    def test_every_stage_has_explicit_min_depth(self) -> None:
+        """Every stage entry must carry an explicit tier marker.
+
+        The schema defaults absent ``min_depth`` to ``"standard"``, but
+        leaving the field implicit lets future stage additions slip into
+        a tier accidentally. This test enforces intent at config-load.
+        """
+        from code_review_helpers import _load_stages_config
+
+        for stage in _load_stages_config()["stages"]:
+            assert "min_depth" in stage, (
+                f"{stage['id']}: missing explicit min_depth; "
+                f"tag as 'shallow' or 'standard' in stages.json"
+            )
+            assert stage["min_depth"] in {"shallow", "standard", "deep"}, (
+                f"{stage['id']}.min_depth={stage['min_depth']!r} is invalid"
+            )
+
+    def test_standard_only_stages_match_plan(self) -> None:
+        """Pin the exact set of standard-only stages from PLN-807."""
+        from code_review_helpers import _load_stages_config
+
+        standard_ids = {
+            s["id"] for s in _load_stages_config()["stages"]
+            if s.get("min_depth") == "standard"
+        }
+        assert standard_ids == self.EXPECTED_STANDARD_ONLY
+
+    def test_shallow_filters_out_standard_stages(self) -> None:
+        from code_review_helpers import _build_run_plan_stages
+
+        stages = _build_run_plan_stages(
+            "/tmp/cr_dir", "local", None, {}, depth="shallow",
+        )
+        ids = {s["id"] for s in stages}
+        for sid in self.EXPECTED_STANDARD_ONLY:
+            assert sid not in ids, (
+                f"{sid} should be filtered out of shallow run plans"
+            )
+
+    def test_shallow_preserves_core_pipeline(self) -> None:
+        """The reviewer fleet, verifier, finalize, and present stages
+        must still run in shallow — otherwise the review wouldn't actually happen."""
+        from code_review_helpers import _build_run_plan_stages
+
+        stages = _build_run_plan_stages(
+            "/tmp/cr_dir", "local", None, {}, depth="shallow",
+        )
+        ids = {s["id"] for s in stages}
+        for sid in (
+            "stage_01_setup",
+            "stage_05_parse_diff",
+            "stage_12_hygiene",
+            "stage_17_partition",
+            "stage_20_spawn_reviewers",
+            "stage_22_validate",
+            "stage_23_verify_findings",
+            "stage_25_finalize_result",
+            "stage_28_verdict",
+            "stage_30_footer",
+        ):
+            assert sid in ids, (
+                f"{sid} must remain in shallow — it's part of the core "
+                f"review pipeline that all tiers share"
+            )
+
+    def test_standard_runs_every_enabled_stage(self) -> None:
+        """Standard tier must include the full 37-stage pipeline.
+
+        Backwards compatibility: bare ``/code-review start`` defaults to
+        standard, and standard must produce identical output to today.
+        """
+        from code_review_helpers import (
+            _build_run_plan_stages, _load_stages_config,
+        )
+
+        standard_stages = _build_run_plan_stages(
+            "/tmp/cr_dir", "local", None, {}, depth="standard",
+        )
+        all_stages = _load_stages_config()["stages"]
+        assert {s["id"] for s in standard_stages} == {s["id"] for s in all_stages}
+
+    def test_deep_runs_every_current_stage(self) -> None:
+        """Deep tier today is equivalent to standard — no min_depth: deep
+        entries exist yet. This pins that contract so the Impact Analyzer
+        follow-up plan has a visible target to extend."""
+        from code_review_helpers import (
+            _build_run_plan_stages, _load_stages_config,
+        )
+
+        deep_stages = _build_run_plan_stages(
+            "/tmp/cr_dir", "local", None, {}, depth="deep",
+        )
+        all_stages = _load_stages_config()["stages"]
+        assert {s["id"] for s in deep_stages} == {s["id"] for s in all_stages}
+
+    def test_default_depth_is_standard(self) -> None:
+        """A bare _build_run_plan_stages call (no depth arg) behaves
+        identically to depth=standard so existing tests stay valid
+        without modification."""
+        from code_review_helpers import _build_run_plan_stages
+
+        default = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        explicit = _build_run_plan_stages(
+            "/tmp/cr_dir", "local", None, {}, depth="standard",
+        )
+        assert [s["id"] for s in default] == [s["id"] for s in explicit]
+
+    def test_invalid_depth_raises(self) -> None:
+        from code_review_helpers import _filter_stages_by_depth
+
+        with pytest.raises(KeyError):
+            _filter_stages_by_depth([], "shallw")  # typo
+
+    def test_unknown_min_depth_in_stages_json_rejected_at_load(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A typo in stages.json's min_depth must fail loud at load time,
+        not silently default-route the stage."""
+        import code_review_helpers
+
+        bad_config = tmp_path / "stages.json"
+        bad_config.write_text(json.dumps({
+            "stages": [
+                {
+                    "id": "stage_typo",
+                    "kind": "helper",
+                    "subcommand": "noop",
+                    "args": [],
+                    "min_depth": "shallw",
+                    "depends_on": [],
+                    "on_failure": "abort",
+                    "enabled": True,
+                },
+            ],
+        }))
+        monkeypatch.setattr(
+            code_review_helpers, "_STAGES_CONFIG_PATH", bad_config,
+        )
+        code_review_helpers._load_stages_config.cache_clear()
+        with pytest.raises(ValueError, match="invalid tier"):
+            code_review_helpers._load_stages_config()
+        code_review_helpers._load_stages_config.cache_clear()
+
+    def test_validation_gates_filtered_to_present_stages(
+        self, tmp_path: Path,
+    ) -> None:
+        """The stage_16_arbitrate_budget gate must not appear in a
+        shallow run plan, because the anchor stage was filtered out and
+        the post-condition has no meaning."""
+        _, run_plan = invoke_prepare_run(tmp_path, depth="shallow")
+        gate_anchors = {g["after_stage"] for g in run_plan["validation_gates"]}
+        assert "stage_16_arbitrate_budget" not in gate_anchors
+        # But the parse-diff gate must survive — its anchor runs in shallow.
+        assert "stage_05_parse_diff" in gate_anchors
+
+    def test_run_plan_records_depth(self, tmp_path: Path) -> None:
+        _, run_plan = invoke_prepare_run(tmp_path, depth="deep")
+        assert run_plan["depth"] == "deep"
+        assert run_plan["flags"]["depth"] == "deep"
+
+    def test_cmd_prepare_run_rejects_invalid_depth(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from code_review_helpers import cmd_prepare_run
+
+        ns = argparse.Namespace(
+            cr_dir=str(tmp_path),
+            mode="local",
+            hygiene_only=False,
+            since_last_review=False,
+            full_review=False,
+            base_ref_override="",
+            scope_args="",
+            pr_number=None,
+            depth="exhaustive",
+            output=None,
+        )
+        rc = cmd_prepare_run(ns)
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert "exhaustive" in captured.err

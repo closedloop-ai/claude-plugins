@@ -1489,6 +1489,18 @@
         },
         {
           "flags": [
+            "--depth"
+          ],
+          "default": "standard",
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ],
+          "help": "Review depth tier (shallow=built-ins only, standard=current behavior, deep=reserved for future heavy reviewers)"
+        },
+        {
+          "flags": [
             "--output"
           ],
           "help": "Output path (default: <cr-dir>/run_plan.json)"

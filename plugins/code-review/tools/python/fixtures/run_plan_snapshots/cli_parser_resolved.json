@@ -1600,6 +1600,18 @@
         },
         {
           "flags": [
+            "--depth"
+          ],
+          "dest": "depth",
+          "default": "standard",
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ]
+        },
+        {
+          "flags": [
             "--output"
           ],
           "dest": "output",
