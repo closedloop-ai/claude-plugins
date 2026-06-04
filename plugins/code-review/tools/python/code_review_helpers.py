@@ -7206,9 +7206,9 @@ def _write_cached_coverage_critic(
     """Persist a successful critic run to the ``coverage_critic`` cache.
 
     Fail-open: delegates to ``_write_simple_cache_entry``; an OSError on the
-    cache write is logged to stderr but never raised — the canonical
-    ``<cr_dir>/coverage_plan.json`` is already on disk, so cache-write
-    failure is a re-run cost issue, not a pipeline halt.
+    cache write is logged to stderr but never raised — ``coverage.json.final``
+    is already on disk, so cache-write failure is a re-run cost issue,
+    not a pipeline halt.
     """
     if cache_dir is None:
         return
@@ -7427,8 +7427,9 @@ def merge_critic_additions(
     coverage_plan_initial: dict[str, Any],
     accepted_additions: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Produce the final coverage_plan.json by appending critic additions
-    to the initial plan's ``best_effort[]``. Pure function.
+    """Produce the final coverage plan by appending critic additions to
+    the initial plan's ``best_effort[]``. Pure function — the caller
+    persists the result into ``coverage.json.final``.
 
     Critic additions are always best-effort (the validator already
     enforces this — there is no "required" code path here). Dedup
@@ -7480,9 +7481,12 @@ def _emit_skipped_coverage_plan(
         "coverage_state": str(cr_dir / _COVERAGE_STATE_FILENAME),
         "model": model,
     }
+    # Atomic multi-section write: ``.final`` + ``.critic`` land as a
+    # unit. Sequencing two single-section writes would leave the
+    # aggregate inconsistent (``.final`` updated, ``.critic`` stale) if
+    # the second write failed mid-OSError.
     try:
-        _write_coverage_section(cr_dir, "final", final)
-        _write_coverage_section(cr_dir, "critic", manifest)
+        _write_coverage_sections(cr_dir, {"final": final, "critic": manifest})
     except OSError as exc:
         print(f"Error writing coverage.json: {exc}", file=sys.stderr)
         return 1
@@ -7668,9 +7672,12 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
             "coverage_state": str(cr_dir / _COVERAGE_STATE_FILENAME),
             "model": model,
         }
+        # Same atomic multi-section invariant as the skipped path —
+        # ``.final`` + ``.critic`` land as a unit.
         try:
-            _write_coverage_section(cr_dir, "final", canonical)
-            _write_coverage_section(cr_dir, "critic", manifest)
+            _write_coverage_sections(
+                cr_dir, {"final": canonical, "critic": manifest},
+            )
         except OSError as exc:
             print(f"Error writing coverage.json (cache hit): {exc}", file=sys.stderr)
             return 1
@@ -8086,7 +8093,7 @@ def verify_coverage_plan(
 
     # closed_vocabulary — only enforced when a roster is present and
     # non-empty, AND only against source="critic" entries. The core/rule
-    # reviewer labels in coverage_plan.json (e.g. ``bug_hunter_a``,
+    # reviewer labels in the final plan (e.g. ``bug_hunter_a``,
     # ``unified_auditor``) are plugin-internal identifiers that the
     # spawn_reviewers stage translates to actual reviewer prompts —
     # they do NOT need to appear in the project's `.claude/agents/`
@@ -9147,109 +9154,114 @@ def _write_and_emit_manifest(
 
 
 # ---------------------------------------------------------------------------
-# Phase D: spawn-state aggregate (replaces route.json + spawn_spec.json +
-# spawn_verification.json). Three distinct stages write to three sections of
-# one ``spawn.json`` file via atomic read-modify-write: ``route`` (Gate B's
-# model routing decision), ``spec`` (stage_19b's flat agent descriptor list),
-# and ``verification`` (stage_20b's runtime tally). The presenter reads all
-# three sections from the single file via ``_read_spawn_state``.
+# State-aggregate helpers: shared read/write contract for the ``spawn.json``
+# (Phase D) and ``coverage.json`` (Phase C) consolidated artifacts. Each
+# aggregate has a fixed section vocabulary; each section is updated by
+# exactly one stage. The writer uses atomic read-modify-write (tmp +
+# ``os.replace``) so a crash mid-write leaves the prior state intact.
+# ``_write_state_sections`` (plural) is the atomic batched variant — used
+# by the cache-hit and skipped paths in coverage-critic-prepare which
+# must materialize multiple sections without leaving the aggregate in a
+# half-written shape if the second write fails.
 # ---------------------------------------------------------------------------
 
 
 _SPAWN_STATE_FILENAME = "spawn.json"
 _SPAWN_STATE_SECTIONS: frozenset[str] = frozenset({"route", "spec", "verification"})
 
+_COVERAGE_STATE_FILENAME = "coverage.json"
+_COVERAGE_STATE_SECTIONS: frozenset[str] = frozenset({"initial", "critic", "final", "verify"})
+
+_STATE_SECTION_VOCAB: dict[str, frozenset[str]] = {
+    _SPAWN_STATE_FILENAME: _SPAWN_STATE_SECTIONS,
+    _COVERAGE_STATE_FILENAME: _COVERAGE_STATE_SECTIONS,
+}
+
+
+def _read_state_aggregate(cr_dir: Path, filename: str) -> dict[str, Any]:
+    """Return the parsed contents of ``<cr_dir>/<filename>`` or ``{}``.
+
+    Tolerates missing / malformed / non-dict so callers can chain
+    ``state.get(section)`` without isinstance checks. Used directly by
+    presenters and verifiers whose degraded-output paths fire on the
+    same shape (a missing section is structurally indistinguishable
+    from a missing file).
+    """
+    raw = _read_optional_json(cr_dir / filename, {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def _write_state_sections(
+    cr_dir: Path, filename: str, updates: dict[str, dict[str, Any]],
+) -> None:
+    """Atomically merge one or more sections into ``<cr_dir>/<filename>``.
+
+    Read-modify-write via tmp + ``os.replace``: read the current state
+    (or ``{}`` if absent), apply every ``(section, payload)`` in
+    ``updates``, write the merged state to ``<filename>.tmp``, rename
+    over ``<filename>``. POSIX guarantees the rename is atomic — a crash
+    mid-write either leaves the prior state intact or installs the full
+    update, never a half-written shape.
+
+    Single-call multi-section semantics matter for skip/cache-hit paths
+    that must publish both ``.final`` and ``.critic`` (or similar) as a
+    unit: an OSError between two single-section writes would leave the
+    aggregate readable but inconsistent (one section updated, the other
+    stale), and the next stage's consumers would see a contradiction.
+    """
+    vocab = _STATE_SECTION_VOCAB.get(filename)
+    if vocab is None:
+        raise ValueError(f"unknown state aggregate {filename!r}")
+    bad = [s for s in updates if s not in vocab]
+    if bad:
+        raise ValueError(
+            f"unknown {filename} section(s) {bad!r}; expected subset of "
+            f"{sorted(vocab)}",
+        )
+    cr_dir.mkdir(parents=True, exist_ok=True)
+    state = _read_state_aggregate(cr_dir, filename)
+    state.update(updates)
+    path = cr_dir / filename
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, indent=2))
+    os.replace(str(tmp), str(path))
+
 
 def _read_spawn_state(cr_dir: Path) -> dict[str, Any]:
-    """Return the parsed contents of ``<cr_dir>/spawn.json`` or ``{}``.
-
-    Tolerates missing/malformed/non-dict so consumers can chain
-    ``state.get("route", {})``, ``state.get("spec")``, etc. without
-    isinstance checks at every call site. The presenter's degraded-output
-    paths (no spec, no verification) drive directly off the same shape.
-    """
-    raw = _read_optional_json(cr_dir / _SPAWN_STATE_FILENAME, {})
-    return raw if isinstance(raw, dict) else {}
+    """Return the parsed contents of ``<cr_dir>/spawn.json`` or ``{}``."""
+    return _read_state_aggregate(cr_dir, _SPAWN_STATE_FILENAME)
 
 
 def _write_spawn_section(
     cr_dir: Path, section: str, payload: dict[str, Any],
 ) -> None:
-    """Atomically update one section of ``spawn.json`` without clobbering others.
-
-    Read-modify-write via tmp + rename: read the current state (or ``{}`` if
-    absent), replace the named section, write to ``spawn.json.tmp``, rename
-    over ``spawn.json``. The rename is atomic on POSIX, so a crash mid-write
-    leaves the prior state intact rather than a half-written file.
-    """
-    if section not in _SPAWN_STATE_SECTIONS:
-        raise ValueError(
-            f"unknown spawn.json section {section!r}; expected one of "
-            f"{sorted(_SPAWN_STATE_SECTIONS)}",
-        )
-    cr_dir.mkdir(parents=True, exist_ok=True)
-    state = _read_spawn_state(cr_dir)
-    state[section] = payload
-    path = cr_dir / _SPAWN_STATE_FILENAME
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, indent=2))
-    os.replace(str(tmp), str(path))
-
-
-# ---------------------------------------------------------------------------
-# Phase C: coverage-state aggregate (replaces coverage_plan_initial.json +
-# coverage_critic_manifest.json + coverage_plan.json + coverage_verify.json).
-# Four distinct stages write to four sections of one ``coverage.json`` file
-# via atomic read-modify-write: ``initial`` (stage_14's rule-resolved plan),
-# ``critic`` (stage_15's prepare manifest with status cache_hit / skipped /
-# needs_agent), ``final`` (stage_15b consolidate's merged plan, then mutated
-# in place by stage_16 arbitrate-budget), and ``verify`` (stage_15c verifier
-# verdict). The LLM-prompt artifacts (coverage_critic_input.json + diff
-# summary) and the multi-writer coverage_gaps.json keep their standalone
-# shape — prompt material is large and single-consumer, and gaps has
-# append-from-many semantics that don't fit atomic section updates.
-# ---------------------------------------------------------------------------
-
-
-_COVERAGE_STATE_FILENAME = "coverage.json"
-_COVERAGE_STATE_SECTIONS: frozenset[str] = frozenset({"initial", "critic", "final", "verify"})
+    """Atomically update one ``spawn.json`` section."""
+    _write_state_sections(cr_dir, _SPAWN_STATE_FILENAME, {section: payload})
 
 
 def _read_coverage_state(cr_dir: Path) -> dict[str, Any]:
-    """Return the parsed contents of ``<cr_dir>/coverage.json`` or ``{}``.
-
-    Tolerates missing/malformed/non-dict so consumers can chain
-    ``state.get("initial", {})``, ``state.get("final")``, etc. without
-    isinstance checks at every call site. The verifier's degraded-output
-    BLOCKING paths (no plan, no initial) drive directly off the same shape.
-    """
-    raw = _read_optional_json(cr_dir / _COVERAGE_STATE_FILENAME, {})
-    return raw if isinstance(raw, dict) else {}
+    """Return the parsed contents of ``<cr_dir>/coverage.json`` or ``{}``."""
+    return _read_state_aggregate(cr_dir, _COVERAGE_STATE_FILENAME)
 
 
 def _write_coverage_section(
     cr_dir: Path, section: str, payload: dict[str, Any],
 ) -> None:
-    """Atomically update one section of ``coverage.json`` without clobbering others.
+    """Atomically update one ``coverage.json`` section."""
+    _write_state_sections(cr_dir, _COVERAGE_STATE_FILENAME, {section: payload})
 
-    Read-modify-write via tmp + rename: read the current state (or ``{}`` if
-    absent), replace the named section, write to ``coverage.json.tmp``,
-    rename over ``coverage.json``. The rename is atomic on POSIX, so a
-    crash mid-write leaves the prior state intact rather than a half-
-    written file.
+
+def _write_coverage_sections(
+    cr_dir: Path, updates: dict[str, dict[str, Any]],
+) -> None:
+    """Atomically update multiple ``coverage.json`` sections in one write.
+
+    Used by the skip / cache-hit paths in coverage-critic-prepare so
+    ``.final`` and ``.critic`` land as a unit; sequencing two
+    single-section writes would leave the aggregate inconsistent if the
+    second write failed mid-OSError.
     """
-    if section not in _COVERAGE_STATE_SECTIONS:
-        raise ValueError(
-            f"unknown coverage.json section {section!r}; expected one of "
-            f"{sorted(_COVERAGE_STATE_SECTIONS)}",
-        )
-    cr_dir.mkdir(parents=True, exist_ok=True)
-    state = _read_coverage_state(cr_dir)
-    state[section] = payload
-    path = cr_dir / _COVERAGE_STATE_FILENAME
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, indent=2))
-    os.replace(str(tmp), str(path))
+    _write_state_sections(cr_dir, _COVERAGE_STATE_FILENAME, updates)
 
 
 def _read_simple_cache_entry(
@@ -9544,7 +9556,18 @@ def _build_run_plan_stages(
 
 
 def _build_validation_gates(cr_dir: str) -> list[dict[str, Any]]:
-    """Return canonical inter-stage validation gates."""
+    """Return canonical inter-stage validation gates.
+
+    The ``outputs`` field lists files that must exist after the gate's
+    anchor stage. The optional ``required_sections`` field maps a file
+    path to a list of top-level dict keys that must be present in that
+    file — the gate enforcer must check each section, not just file
+    existence. ``coverage.json`` exists from ``stage_14`` onward
+    (sections accumulate), so a bare file-existence check after
+    ``stage_16`` would fire-true even if stages 15/15b/15c/16 failed to
+    populate their sections. ``required_sections`` distinguishes "any
+    coverage state on disk" from "post-arbitrate ``final`` plan present."
+    """
     return [
         {
             "after_stage": "stage_05_parse_diff",
@@ -9556,6 +9579,9 @@ def _build_validation_gates(cr_dir: str) -> list[dict[str, Any]]:
             "after_stage": "stage_16_arbitrate_budget",
             "gate": "coverage_plan_well_formed",
             "outputs": [f"{cr_dir}/coverage.json"],
+            "required_sections": {
+                f"{cr_dir}/coverage.json": ["final"],
+            },
             "on_failure_action": "abort",
         },
         {
@@ -10016,14 +10042,16 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
 # Subcommand: derive-spawn-spec (PLN-725 Phase 8)
 # ---------------------------------------------------------------------------
 #
-# Reads the post-arbitrate coverage_plan.json + partitions.json and the
-# route section of spawn.json (written by Gate B's ``cmd_route --cr-dir``),
-# then writes the flat list of agent descriptors into ``spawn.json`` under
-# the ``spec`` section. The orchestrator (start.md "Reviewer Fleet" section)
-# dispatches Task calls from that list. Before Phase 8, stage_20 walked a
-# static table hard-coded into the command markdown; the coverage_plan was
+# Reads the post-arbitrate ``coverage.json.final`` + ``partitions.json``
+# and the ``route`` section of ``spawn.json`` (written by Gate B's
+# ``cmd_route --cr-dir``), then writes the flat list of agent
+# descriptors into ``spawn.json`` under the ``spec`` section. The
+# orchestrator (start.md "Reviewer Fleet" section) dispatches Task
+# calls from that list. Before Phase 8, stage_20 walked a static table
+# hard-coded into the command markdown; the coverage plan was
 # effectively ignored at spawn time. This stage closes the loop so the
-# deterministic coverage signal (PLN-725) actually shapes the spawned fleet.
+# deterministic coverage signal (PLN-725) actually shapes the spawned
+# fleet.
 #
 # The spec is observational: the orchestrator may fall back to the static
 # table if ``spawn.json`` is absent, its ``spec`` section is missing, or
@@ -10032,13 +10060,13 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
 
 # Canonical role → AGENT_ID + partitioning + patches-file mapping. The
 # reviewer names on the left are the SPAWNABLE subset of
-# ``COVERAGE_CORE_REQUIRED`` (snake_case identifiers used in
-# coverage_plan.json); the deferred subset lives in
-# ``_SPAWN_DEFERRED_ROLES`` below. The two dicts together must cover
-# every entry in ``COVERAGE_CORE_REQUIRED`` — adding a new core role
-# means choosing which dict it belongs in. The AGENT_ID strings on the
-# right are the display IDs used in agent_*.json filenames (matching
-# the static table in start.md).
+# ``COVERAGE_CORE_REQUIRED`` (snake_case identifiers carried in the
+# final plan); the deferred subset lives in ``_SPAWN_DEFERRED_ROLES``
+# below. The two dicts together must cover every entry in
+# ``COVERAGE_CORE_REQUIRED`` — adding a new core role means choosing
+# which dict it belongs in. The AGENT_ID strings on the right are the
+# display IDs used in agent_*.json filenames (matching the static
+# table in start.md).
 _SPAWN_CORE_ROLES: dict[str, dict[str, Any]] = {
     "bug_hunter_a": {
         "agent_id_prefix": "bha_p",
@@ -10358,13 +10386,13 @@ def _spawn_spec_fallback(
 def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     """Translate the post-arbitrate coverage plan into a flat spawn spec.
 
-    PLN-725 Phase 8. Reads ``coverage_plan.json`` (post-arbitrate),
+    PLN-725 Phase 8. Reads ``coverage.json.final`` (post-arbitrate),
     ``partitions.json`` (post-partition), and the ``route`` section of
     ``spawn.json`` (post-route — written by Gate B's ``cmd_route --cr-dir``)
     and writes the ``spec`` section of ``spawn.json`` enumerating every
     agent the orchestrator should spawn at ``stage_20_spawn_reviewers``.
-    Legacy callers may still supply ``--route`` to point at a standalone
-    routing file; the spawn-state route section is the default.
+    Callers may override either source with ``--coverage-plan`` /
+    ``--route`` explicit file paths.
 
     Fast-path passthrough: when ``route.fast_path`` is true, the spec
     emits exactly one agent (``agent_id: "fast"``) and the bucket walk

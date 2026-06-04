@@ -984,6 +984,180 @@ class TestCmdRouteCrDir:
         assert isinstance(state.get("route"), dict)
 
 
+class TestStateAggregateHelpers:
+    """Direct unit tests for the shared state-aggregate read/write
+    contract that backs ``spawn.json`` (Phase D) and ``coverage.json``
+    (Phase C). The cmds that compose these helpers are covered by
+    their own end-to-end tests; this class pins the helpers themselves
+    so a regression in section-vocabulary validation, atomic
+    read-modify-write, or the multi-section batched variant is caught
+    without needing a cmd to fire it.
+    """
+
+    def test_read_state_aggregate_missing_file_returns_empty(self, tmp_path: Path) -> None:
+        from code_review_helpers import _read_state_aggregate
+        assert _read_state_aggregate(tmp_path, "coverage.json") == {}
+        assert _read_state_aggregate(tmp_path, "spawn.json") == {}
+
+    def test_read_state_aggregate_non_dict_returns_empty(self, tmp_path: Path) -> None:
+        """A list at the top level (legitimate JSON, wrong shape) must
+        coerce to ``{}`` so consumers chaining ``state.get(...)`` never
+        AttributeError on a producer that wrote a malformed aggregate.
+        """
+        from code_review_helpers import _read_state_aggregate
+        (tmp_path / "coverage.json").write_text(json.dumps([1, 2, 3]))
+        assert _read_state_aggregate(tmp_path, "coverage.json") == {}
+
+    def test_write_state_sections_rejects_unknown_section(self, tmp_path: Path) -> None:
+        """Closed-vocabulary check prevents a typo'd section name from
+        silently scribbling into the aggregate. The frozenset is the
+        guard at the call site.
+        """
+        from code_review_helpers import _write_state_sections
+        with pytest.raises(ValueError, match="unknown coverage.json section"):
+            _write_state_sections(tmp_path, "coverage.json", {"finall": {}})
+        with pytest.raises(ValueError, match="unknown spawn.json section"):
+            _write_state_sections(tmp_path, "spawn.json", {"roote": {}})
+
+    def test_write_state_sections_rejects_unknown_filename(self, tmp_path: Path) -> None:
+        """A filename outside ``_STATE_SECTION_VOCAB`` is rejected.
+        Prevents the helper from being repurposed for an unrelated
+        aggregate that hasn't published a section vocabulary.
+        """
+        from code_review_helpers import _write_state_sections
+        with pytest.raises(ValueError, match="unknown state aggregate"):
+            _write_state_sections(tmp_path, "review_result.json", {})
+
+    def test_write_state_sections_preserves_other_sections(self, tmp_path: Path) -> None:
+        """Updating one section must leave the others on disk
+        untouched. This is the read-modify-write contract every stage
+        depends on — without it, the third stage's write would clobber
+        the first stage's section.
+        """
+        from code_review_helpers import (
+            _read_state_aggregate, _write_state_sections,
+        )
+        _write_state_sections(tmp_path, "coverage.json", {"initial": {"a": 1}})
+        _write_state_sections(tmp_path, "coverage.json", {"verify": {"b": 2}})
+        state = _read_state_aggregate(tmp_path, "coverage.json")
+        assert state == {"initial": {"a": 1}, "verify": {"b": 2}}
+
+    def test_write_state_sections_batched_atomic(self, tmp_path: Path) -> None:
+        """The multi-section variant lands every update as a single
+        ``os.replace``. Either every section is updated or none is —
+        no half-written aggregate visible to a concurrent reader.
+        """
+        from code_review_helpers import (
+            _read_state_aggregate, _write_state_sections,
+        )
+        _write_state_sections(
+            tmp_path, "coverage.json",
+            {"final": {"f": 1}, "critic": {"c": 2}},
+        )
+        state = _read_state_aggregate(tmp_path, "coverage.json")
+        assert state == {"final": {"f": 1}, "critic": {"c": 2}}
+        # Verify the tmp file did not survive (os.replace consumed it).
+        assert not (tmp_path / "coverage.json.tmp").exists()
+
+    def test_write_state_sections_batched_rejects_any_unknown(self, tmp_path: Path) -> None:
+        """If even one section in the batch is unknown, the whole
+        batch is rejected before any state is touched. Prevents a
+        typo'd second section from leaving the first section
+        speculatively written.
+        """
+        from code_review_helpers import (
+            _read_state_aggregate, _write_state_sections,
+        )
+        with pytest.raises(ValueError, match="unknown coverage.json section"):
+            _write_state_sections(
+                tmp_path, "coverage.json",
+                {"final": {"f": 1}, "finallllll": {"x": 1}},
+            )
+        # No partial write — the aggregate must not have either entry.
+        assert _read_state_aggregate(tmp_path, "coverage.json") == {}
+
+    def test_named_wrappers_share_contract(self, tmp_path: Path) -> None:
+        """The four named wrappers (``_read_spawn_state`` /
+        ``_write_spawn_section`` / ``_read_coverage_state`` /
+        ``_write_coverage_section``) all route to the same generic
+        helpers. Pinning this so a refactor that gives one pair an
+        extra side-effect breaks loudly.
+        """
+        from code_review_helpers import (
+            _read_coverage_state,
+            _read_spawn_state,
+            _write_coverage_section,
+            _write_spawn_section,
+        )
+        _write_spawn_section(tmp_path, "route", {"size_category": "Small"})
+        _write_coverage_section(tmp_path, "initial", {"required": []})
+        assert _read_spawn_state(tmp_path) == {"route": {"size_category": "Small"}}
+        assert _read_coverage_state(tmp_path) == {"initial": {"required": []}}
+
+    def test_write_coverage_sections_atomic(self, tmp_path: Path) -> None:
+        """``_write_coverage_sections`` is the coverage-specific batched
+        variant used by the skip / cache-hit paths in
+        coverage-critic-prepare. Its atomicity is the invariant
+        ``_emit_skipped_coverage_plan`` and the cache-hit path depend
+        on — half-state would leave the next stage reading a critic
+        manifest that contradicts the final plan.
+        """
+        from code_review_helpers import (
+            _read_coverage_state, _write_coverage_sections,
+        )
+        _write_coverage_sections(
+            tmp_path,
+            {"final": {"critic_status": "skipped"}, "critic": {"status": "skipped"}},
+        )
+        state = _read_coverage_state(tmp_path)
+        assert state["final"]["critic_status"] == "skipped"
+        assert state["critic"]["status"] == "skipped"
+
+
+class TestValidationGatesCoverageFinalRequired:
+    """``coverage_plan_well_formed`` gate fires after stage_16. Pre-
+    Phase-C the gate's ``coverage.json`` path was uniquely produced by
+    stage_15b/stage_16, so file existence was a meaningful integrity
+    check. Post-Phase-C the file exists from stage_14 onward
+    (sections accumulate); the gate must therefore distinguish
+    "any coverage state on disk" from "post-arbitrate ``final``
+    section present." This class pins the metadata shape so a future
+    refactor that drops ``required_sections`` regresses loudly.
+    """
+
+    def _gates(self, tmp_path: Path) -> list[dict[str, Any]]:
+        from code_review_helpers import _build_validation_gates
+        return _build_validation_gates(str(tmp_path / "cr"))
+
+    def test_stage_16_gate_requires_final_section(self, tmp_path: Path) -> None:
+        gates = self._gates(tmp_path)
+        gate = next(
+            g for g in gates
+            if g["after_stage"] == "stage_16_arbitrate_budget"
+        )
+        assert "required_sections" in gate, (
+            "coverage_plan_well_formed gate must declare required_sections "
+            "so file existence alone does not satisfy it (coverage.json "
+            "exists from stage_14)"
+        )
+        cov_path = f"{tmp_path}/cr/coverage.json"
+        assert gate["required_sections"] == {cov_path: ["final"]}
+
+    def test_stage_05_gate_does_not_declare_required_sections(
+        self, tmp_path: Path,
+    ) -> None:
+        """``diff_data.json`` is a single-writer artifact whose
+        existence IS the integrity signal. ``required_sections`` is
+        scoped to aggregate files that accumulate section writes —
+        adding it gratuitously to every gate would be noise.
+        """
+        gates = self._gates(tmp_path)
+        gate = next(
+            g for g in gates if g["after_stage"] == "stage_05_parse_diff"
+        )
+        assert "required_sections" not in gate
+
+
 # ---------------------------------------------------------------------------
 # Partition post-processing
 # ---------------------------------------------------------------------------
@@ -12975,40 +13149,16 @@ class TestMergeCriticAdditions:
 
 
 def _read_coverage_section(cr_dir: Path, section: str) -> dict[str, Any]:
-    """Read one section of ``<cr_dir>/coverage.json``; ``{}`` if absent.
-
-    Phase C (v2.27.0) consolidated four legacy standalone artifacts
-    (coverage_plan_initial.json, coverage_critic_manifest.json,
-    coverage_plan.json, coverage_verify.json) into sections of one
-    aggregate. Tests that previously read each standalone file now
-    read the corresponding section via this helper.
-    """
-    state_path = cr_dir / "coverage.json"
-    if not state_path.exists():
-        return {}
-    state = json.loads(state_path.read_text())
-    if not isinstance(state, dict):
-        return {}
-    value = state.get(section)
+    """Read one section of ``<cr_dir>/coverage.json``; ``{}`` if absent."""
+    from code_review_helpers import _read_coverage_state
+    value = _read_coverage_state(cr_dir).get(section)
     return value if isinstance(value, dict) else {}
 
 
 def _coverage_section_present(cr_dir: Path, section: str) -> bool:
-    """Return True iff ``<cr_dir>/coverage.json`` has the named section.
-
-    The Phase C replacement for ``(cr_dir / "coverage_plan.json").exists()``
-    and friends — "section absent" is the new "file absent."
-    """
-    state_path = cr_dir / "coverage.json"
-    if not state_path.exists():
-        return False
-    try:
-        state = json.loads(state_path.read_text())
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(state, dict):
-        return False
-    return isinstance(state.get(section), dict)
+    """Return True iff ``<cr_dir>/coverage.json`` has the named section."""
+    from code_review_helpers import _read_coverage_state
+    return isinstance(_read_coverage_state(cr_dir).get(section), dict)
 
 
 def _write_coverage_critic_inputs(
@@ -13400,6 +13550,128 @@ class TestCoverageCriticPrepareCLI:
         assert manifest["available_reviewers_hash"] == _available_reviewers_hash(
             ["accessibility-expert"],
         )
+
+
+class TestCoverageCriticPrepareCrDirDefault:
+    """Phase C (v2.27.0) shifted the canonical initial-plan source to
+    ``coverage.json.initial`` via ``--cr-dir``. The existing
+    ``TestCoverageCriticPrepareCLI`` suite always passes
+    ``--coverage-plan-initial`` pointing at a tmp_path file, so it
+    only exercises the legacy explicit-path fallback. This class
+    pins the section-read default path so a regression that silently
+    falls back to the legacy branch (or worse, fails when neither is
+    supplied) is caught.
+    """
+
+    @staticmethod
+    def _seed_initial(cr_dir: Path, plan: dict[str, Any]) -> None:
+        from code_review_helpers import _write_coverage_section
+        _write_coverage_section(cr_dir, "initial", plan)
+
+    @staticmethod
+    def _args(cr_dir: Path, available: Path, diff_data: Path, **kw: Any) -> argparse.Namespace:
+        from code_review_helpers import COVERAGE_CRITIC_MODEL_DEFAULT
+        defaults: dict[str, Any] = {
+            "cr_dir": str(cr_dir),
+            "extract_signals": None,
+            "diff_data": str(diff_data),
+            "available_reviewers": str(available),
+            "diff_tip": "abc123",
+            "cache_dir": None,
+            "prompt": None,
+            "model": COVERAGE_CRITIC_MODEL_DEFAULT,
+            "no_critic": False,
+            "coverage_plan_initial": None,
+        }
+        defaults.update(kw)
+        return argparse.Namespace(**defaults)
+
+    def test_reads_initial_from_coverage_section(self, tmp_path: Path) -> None:
+        """With ``--coverage-plan-initial`` omitted, prepare must
+        read the rule-resolved plan from ``coverage.json.initial`` and
+        produce a ``needs_agent`` manifest in ``coverage.json.critic``.
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        self._seed_initial(cr_dir, {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
+            "best_effort": [],
+            "warnings": [],
+            "stats": {"required_count": 1, "best_effort_count": 0},
+        })
+        (cr_dir / "available_reviewers.json").write_text(
+            json.dumps(["accessibility-expert"]),
+        )
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/Modal.tsx"],
+            "file_statuses": {"src/Modal.tsx": "M"},
+            "patch_lines": {"src/Modal.tsx": {
+                "added_lines": {"42": "<div>"}, "removed_lines": {},
+            }},
+        }))
+        args = self._args(
+            cr_dir,
+            cr_dir / "available_reviewers.json",
+            cr_dir / "diff_data.json",
+        )
+        assert cmd_coverage_critic_prepare(args) == 0
+        manifest = _read_coverage_section(cr_dir, "critic")
+        assert manifest["status"] == "needs_agent"
+
+    def test_missing_initial_section_returns_1(self, tmp_path: Path) -> None:
+        """Without ``--coverage-plan-initial`` and without a seeded
+        ``.initial`` section, prepare must fail loud (exit 1) — silent
+        fall-through to the empty-plan default would mask a missing
+        stage_14 producer.
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        (cr_dir / "available_reviewers.json").write_text(
+            json.dumps(["accessibility-expert"]),
+        )
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": [], "file_statuses": {}, "patch_lines": {},
+        }))
+        args = self._args(
+            cr_dir,
+            cr_dir / "available_reviewers.json",
+            cr_dir / "diff_data.json",
+        )
+        assert cmd_coverage_critic_prepare(args) == 1
+
+    def test_no_critic_default_path_writes_final_section(self, tmp_path: Path) -> None:
+        """``--no-critic`` on the default path must publish the
+        initial plan straight through to ``coverage.json.final`` with
+        ``critic_status="skipped"`` — same shape as the legacy path.
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        initial = {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
+            "best_effort": [],
+            "warnings": [],
+            "stats": {"required_count": 1, "best_effort_count": 0},
+        }
+        self._seed_initial(cr_dir, initial)
+        (cr_dir / "available_reviewers.json").write_text(
+            json.dumps(["accessibility-expert"]),
+        )
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": [], "file_statuses": {}, "patch_lines": {},
+        }))
+        args = self._args(
+            cr_dir,
+            cr_dir / "available_reviewers.json",
+            cr_dir / "diff_data.json",
+            no_critic=True,
+        )
+        assert cmd_coverage_critic_prepare(args) == 0
+        final = _read_coverage_section(cr_dir, "final")
+        assert final["critic_status"] == "skipped"
+        assert final["critic_errors"] == []
 
 
 class TestCoverageCriticConsolidateCLI:
@@ -15214,6 +15486,193 @@ class TestPLN725Phase6VerifyCoverageCommand:
         assert result["verdict"] == "BLOCKING"
         checks = {v["check"] for v in result["violations"]}
         assert "roster" in checks
+
+
+class TestVerifyCoverageCrDirDefault:
+    """Phase C (v2.27.0) shifted the canonical input source to
+    ``coverage.json`` sections. The existing
+    ``TestPLN725Phase6VerifyCoverageCommand`` suite passes
+    ``--coverage-plan`` / ``--coverage-plan-initial`` explicit paths,
+    so it only exercises the legacy fallback. This class pins the
+    section-read default path and the BLOCKING-on-missing-section
+    semantics that fire when stage_15b didn't populate ``.final``.
+    """
+
+    @staticmethod
+    def _args(cr_dir: Path) -> argparse.Namespace:
+        return argparse.Namespace(
+            cr_dir=str(cr_dir),
+            coverage_plan=None,
+            coverage_plan_initial=None,
+            available_reviewers=None,
+        )
+
+    def test_reads_both_plans_from_coverage_sections(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            _write_coverage_section, cmd_verify_coverage,
+        )
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        plan = {
+            "required": [{"reviewer": "a", "source": "rule"}],
+            "best_effort": [],
+            "stats": {},
+        }
+        _write_coverage_section(cr_dir, "initial", plan)
+        _write_coverage_section(cr_dir, "final", plan)
+        assert cmd_verify_coverage(self._args(cr_dir)) == 0
+        result = _read_coverage_section(cr_dir, "verify")
+        assert result["verdict"] == "PASS"
+
+    def test_missing_final_section_blocks_with_input_check(self, tmp_path: Path) -> None:
+        """When stage_15b didn't populate ``.final``, the verifier
+        must BLOCK with check ``input`` — the same shape the legacy
+        missing-file path produced. Phase C consolidation MUST NOT
+        regress this signal.
+        """
+        from code_review_helpers import (
+            _write_coverage_section, cmd_verify_coverage,
+        )
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        _write_coverage_section(cr_dir, "initial", {
+            "required": [], "best_effort": [], "stats": {},
+        })
+        # No .final section.
+        assert cmd_verify_coverage(self._args(cr_dir)) == 0
+        result = _read_coverage_section(cr_dir, "verify")
+        assert result["verdict"] == "BLOCKING"
+        checks = {v["check"] for v in result["violations"]}
+        assert "input" in checks
+
+    def test_missing_initial_section_blocks_with_input_check(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            _write_coverage_section, cmd_verify_coverage,
+        )
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        _write_coverage_section(cr_dir, "final", {
+            "required": [], "best_effort": [], "stats": {},
+        })
+        # No .initial section.
+        assert cmd_verify_coverage(self._args(cr_dir)) == 0
+        result = _read_coverage_section(cr_dir, "verify")
+        assert result["verdict"] == "BLOCKING"
+
+
+class TestArbitrateBudgetCrDirDefault:
+    """Phase C arbitrate-budget reads/writes ``coverage.json.final``
+    and reads the verdict from ``coverage.json.verify`` when
+    ``--cr-dir`` is supplied. The existing ``_run_arbitrate_budget``
+    helper passes ``--coverage-plan`` / ``--coverage-verify`` /
+    ``--output``, so it exercises only the legacy fallback. This
+    class pins the section-read default path.
+    """
+
+    @staticmethod
+    def _diff_data_path(cr_dir: Path) -> Path:
+        p = cr_dir / "diff_data.json"
+        p.write_text(json.dumps({
+            "files_to_review": ["src/a.ts"],
+            "file_loc": {"src/a.ts": {"added": 100, "removed": 50}},
+            "total_loc": 150,
+        }))
+        return p
+
+    @staticmethod
+    def _args(cr_dir: Path, diff_data: Path, cap: int = 8) -> argparse.Namespace:
+        return argparse.Namespace(
+            cr_dir=str(cr_dir),
+            coverage_plan=None,
+            output=None,
+            coverage_verify=None,
+            diff_data=str(diff_data),
+            cap=cap,
+        )
+
+    def test_reads_final_writes_final_pass_verdict(self, tmp_path: Path) -> None:
+        """With ``--cr-dir`` and a PASS verdict, arbitrate-budget must
+        read the input plan from ``coverage.json.final``, apply the
+        cap, and write the arbitrated plan back into the same
+        ``.final`` section atomically.
+        """
+        from code_review_helpers import (
+            _write_coverage_sections, cmd_arbitrate_budget,
+        )
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        plan = {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core",
+                          "trigger": {"type": "core"}, "evidence": "n/a"}],
+            "best_effort": [],
+            "deprecation_warnings": [],
+        }
+        _write_coverage_sections(cr_dir, {
+            "final": plan,
+            "verify": {"verdict": "PASS", "violations": [], "checked_at": "x"},
+        })
+        diff = self._diff_data_path(cr_dir)
+        assert cmd_arbitrate_budget(self._args(cr_dir, diff)) == 0
+        # Arbitration mutated .final in place — budget block added.
+        final = _read_coverage_section(cr_dir, "final")
+        assert "budget" in final
+        assert final["budget"]["total_cap"] == 8
+        assert final.get("arbitrate_status") != "blocked_by_verify"
+
+    def test_blocking_verdict_short_circuits_via_section(self, tmp_path: Path) -> None:
+        """BLOCKING verdict in ``coverage.json.verify`` must trigger
+        the short-circuit path — the input plan flows through
+        unchanged with ``budget.gated_by_verify: true`` and
+        ``arbitrate_status: "blocked_by_verify"``. This is the
+        Phase 7 contract; Phase C must not regress it.
+        """
+        from code_review_helpers import (
+            _write_coverage_sections, cmd_arbitrate_budget,
+        )
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        plan = {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core",
+                          "trigger": {"type": "core"}, "evidence": "n/a"}],
+            "best_effort": [],
+            "deprecation_warnings": [],
+        }
+        _write_coverage_sections(cr_dir, {
+            "final": plan,
+            "verify": {
+                "verdict": "BLOCKING",
+                "violations": [{"check": "shape", "message": "x"}],
+                "checked_at": "x",
+            },
+        })
+        diff = self._diff_data_path(cr_dir)
+        assert cmd_arbitrate_budget(self._args(cr_dir, diff)) == 0
+        final = _read_coverage_section(cr_dir, "final")
+        assert final.get("arbitrate_status") == "blocked_by_verify"
+        assert final["budget"]["gated_by_verify"] is True
+
+    def test_writes_coverage_gaps_alongside_aggregate(self, tmp_path: Path) -> None:
+        """``coverage_gaps.json`` stays standalone (multi-writer). On
+        the ``--cr-dir`` path it must land in ``<cr_dir>/`` alongside
+        ``coverage.json`` rather than a stale path next to a legacy
+        ``coverage_plan.json``.
+        """
+        from code_review_helpers import (
+            _write_coverage_sections, cmd_arbitrate_budget,
+        )
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        plan = {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core",
+                          "trigger": {"type": "core"}, "evidence": "n/a"}],
+            "best_effort": [],
+            "deprecation_warnings": [],
+        }
+        _write_coverage_sections(cr_dir, {"final": plan})
+        diff = self._diff_data_path(cr_dir)
+        assert cmd_arbitrate_budget(self._args(cr_dir, diff)) == 0
+        gaps_path = cr_dir / "coverage_gaps.json"
+        assert gaps_path.exists()
 
 
 class TestPLN725Phase6StageGraph:

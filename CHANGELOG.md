@@ -4,6 +4,21 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.27.1
+
+#### Fixed
+- Partial-write window in `_emit_skipped_coverage_plan` and `cmd_coverage_critic_prepare` cache-hit path. Pre-fix, both paths called `_write_coverage_section` twice in sequence (`.final` then `.critic`); an `OSError` on the second write would leave `coverage.json` with an updated `.final` section and a stale `.critic` section, and the next stage's consumer (consolidate's cache-hit / skipped no-op) would see a contradiction. New `_write_coverage_sections` (plural) atomic batched variant merges every update into one `tmp + os.replace`, so either both sections land or neither does.
+- `coverage_plan_well_formed` validation gate at `stage_16_arbitrate_budget` no longer fires vacuously. Pre-fix, the gate's `outputs: ["<CR_DIR>/coverage.json"]` would pass-true as soon as `stage_14_resolve_coverage` ran (the aggregate exists from stage_14 onward), masking failures in stages 15/15b/15c/16 that should populate the `.final` section. The gate now declares `required_sections: {"<CR_DIR>/coverage.json": ["final"]}` so any enforcer can distinguish "any coverage state on disk" from "post-arbitrate `final` plan present."
+- Stale docstrings still naming `coverage_plan.json`: `_write_cached_coverage_critic` (fail-open rationale), `merge_critic_additions` (purpose), the `derive-spawn-spec` block comment and section preamble (`_SPAWN_CORE_ROLES` mapping doc), and `cmd_derive_spawn_spec` (reads/writes line). All now reference `coverage.json.final` directly.
+
+#### Changed
+- `_read_spawn_state` / `_write_spawn_section` and `_read_coverage_state` / `_write_coverage_section` now delegate to shared `_read_state_aggregate` / `_write_state_sections` helpers. Pre-fix, the spawn and coverage helper pairs duplicated ~30 lines of identical atomic-write logic differing only in filename and section vocabulary. The shared helpers accept any state-aggregate filename whose section vocabulary is registered in `_STATE_SECTION_VOCAB`; the four named wrappers remain as thin call-site sugar so consumers read as `_write_coverage_section(cr_dir, "final", payload)` rather than threading the filename through every call.
+- Test helper `_read_coverage_section` now delegates to the production `_read_coverage_state` helper instead of duplicating the parse-and-coerce logic. Pre-fix, the test helper silently re-raised on malformed JSON while its sibling `_coverage_section_present` swallowed the same error — an inconsistency that would let a flaky-fixture test pass under one helper and fail under the other. Both helpers now share the production read path.
+
+#### Added
+- `TestStateAggregateHelpers` — eight direct unit tests for the shared `_read_state_aggregate` / `_write_state_sections` contract: missing-file → `{}`, non-dict → `{}`, unknown-section rejection, unknown-filename rejection, single-section preservation, multi-section atomic write, partial-rejection of mixed-valid-and-invalid batched updates (no speculative write), and named-wrapper routing. Plus `TestValidationGatesCoverageFinalRequired` pinning the `required_sections` field on the `coverage_plan_well_formed` gate so a future refactor that drops it regresses loudly.
+- `TestCoverageCriticPrepareCrDirDefault` (3 tests), `TestVerifyCoverageCrDirDefault` (3 tests), and `TestArbitrateBudgetCrDirDefault` (3 tests) — pin the Phase C `--cr-dir` default path for each of the three cmds whose existing test classes only exercised the legacy `--coverage-plan-initial` / `--coverage-plan` / `--coverage-verify` explicit-path fallbacks. Each class covers the canonical happy-path read-from-section behavior plus the missing-section degradation (BLOCKING on missing `.final` or `.initial` for verify-coverage; exit 1 on missing `.initial` for prepare; BLOCKING short-circuit propagation from `.verify` for arbitrate-budget).
+
 ### code-review v2.27.0
 
 #### Changed
