@@ -133,9 +133,7 @@ null on initial emission; populated by the `verify-findings` subcommand
 
 ## 2. Result envelope (`review_result.json`)
 
-The terminal artifact of every review run. Replaces `validate_output.json` and
-`verified_output.json` (those legacy files will be deleted in Phase B of the
-foundation rollout).
+The terminal artifact of every review run.
 
 ```jsonc
 {
@@ -278,7 +276,7 @@ The `verdict` subcommand applies these rules in order; the first match wins.
 
 `verdict_reason` cites the specific finding(s) that produced the verdict.
 
-The legacy `<pr_verdict>` tag is still emitted (verdict subcommand mapping):
+The `<pr_verdict>` tag is emitted for backward compatibility (verdict subcommand mapping):
 - APPROVED → approve
 - NEEDS_ATTENTION → needs_attention
 - CHANGES_REQUESTED → decline

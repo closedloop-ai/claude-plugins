@@ -9,7 +9,6 @@
 
 - The verifier budget cap (`VERIFY_MAX_VERIFICATIONS`) deferred it past this run.
 - A verifier subagent crashed or timed out.
-- The reviewer was run with `--no-verify` (operator emergency bypass).
 
 **`/fix` does NOT re-verify these findings.** Verification is the code-review pipeline's job (`cmd_verify_prepare` + `cmd_verify_consolidate`); having `/fix` run a parallel verifier would duplicate that machinery and let `/fix` drift from the canonical verifier prompt over time.
 

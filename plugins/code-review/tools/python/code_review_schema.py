@@ -48,15 +48,15 @@ SEVERITIES: frozenset[str] = frozenset({"BLOCKING", "HIGH", "MEDIUM"})
 # excluding P3 forced reviewers to misclassify nice-to-haves as P2.
 PRIORITIES: frozenset[int] = frozenset({0, 1, 2, 3})
 
-# Categories — section 1 of the plan. Includes legacy "Repo Hygiene" as an
-# accepted alias so the hygiene helper can keep its historical category
-# string until plan 04 / Phase D rewrites it. "Code Quality" is the
-# canonical category for DRY/maintainability/style findings (MEDIUM-tier
-# duplication, smell, or convention violations) — already documented as
-# the example category in the shared reviewer prompt (shared_prompt.txt)
-# for MEDIUM DRY findings. "Documentation" covers README/docstring/comment
-# accuracy and completeness findings — reviewers naturally emit this for
-# stale, missing, or misleading docs and we accept it as a first-class
+# Categories — section 1 of the plan. "Repo Hygiene" is accepted as an
+# alias for "Hygiene" so the hygiene helper's category string keeps
+# working. "Code Quality" is the canonical category for DRY/
+# maintainability/style findings (MEDIUM-tier duplication, smell, or
+# convention violations) — documented as the example category in the
+# shared reviewer prompt (shared_prompt.txt) for MEDIUM DRY findings.
+# "Documentation" covers README/docstring/comment accuracy and
+# completeness findings — reviewers naturally emit this for stale,
+# missing, or misleading docs and we accept it as a first-class
 # category rather than coercing it under "Code Quality".
 CATEGORIES: frozenset[str] = frozenset({
     "Correctness",
@@ -150,19 +150,17 @@ COVERAGE_CORE_REQUIRED: tuple[str, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# PLN-725 Phase 8 — Reviewer spawn spec
+# PLN-725 — Reviewer spawn spec
 # ---------------------------------------------------------------------------
 # These constants describe the ``spawn.json`` ``.spec`` section wire format
 # produced by ``stage_19b_derive_spawn_spec`` and consumed by
-# ``stage_20_spawn_reviewers``. Phase D (v2.26.0) consolidated the legacy
-# standalone ``spawn_spec.json`` artifact into a section of ``spawn.json``;
-# the descriptor shape itself is unchanged. See SCHEMA.md §6b for the full
-# envelope shape.
+# ``stage_20_spawn_reviewers``. See SCHEMA.md §6b for the full envelope
+# shape.
 
 # Top-level ``arbitrate_status``. ``ok`` = normal arbitration ran;
-# ``blocked_by_verify`` = Phase 7 BLOCKING gate fired upstream and the
-# plan passed through unbudgeted; ``fallback`` = derive failed and the
-# orchestrator must walk the static reviewer table in start.md.
+# ``blocked_by_verify`` = the verify-stage BLOCKING gate fired upstream
+# and the plan passed through unbudgeted; ``fallback`` = derive failed
+# and the orchestrator must walk the static reviewer table in start.md.
 SPAWN_SPEC_ARBITRATE_STATUSES: frozenset[str] = frozenset({
     "ok",
     "blocked_by_verify",
@@ -175,7 +173,7 @@ SPAWN_SPEC_ARBITRATE_STATUSES: frozenset[str] = frozenset({
 # Auditor, premise_reviewer → Premise). Non-core domain reviewers
 # carry their plan-entry source through: ``"rule"`` means the entry
 # came from a deterministically matched critic-gates.json rule
-# (including migrated legacy moduleCritics[]); ``"critic"`` means the
+# (including migrated moduleCritics[] entries); ``"critic"`` means the
 # entry was LLM-proposed by coverage_critic. Both map to the Domain
 # Critic suffix at dispatch but presenters can distinguish them.
 SPAWN_SPEC_SOURCES: frozenset[str] = frozenset({
@@ -985,9 +983,9 @@ def validate_result_envelope(envelope: dict[str, Any]) -> list[str]:
         errors.append("coverage_gaps must be a list")
     errors.extend(_validate_envelope_findings(envelope))
 
-    # Telemetry block (PLN-719 Phase 9). When absent, treat as the zero-valued
-    # default — finalize-result always emits one, but legacy envelopes might
-    # not. When present, the block must conform to the canonical telemetry
+    # Telemetry block. When absent, treat as the zero-valued default —
+    # finalize-result always emits one, but cached envelopes might not.
+    # When present, the block must conform to the canonical telemetry
     # schema (required keys + correct types).
     if "telemetry" in envelope:
         errors.extend(validate_telemetry(envelope["telemetry"]))
@@ -1008,10 +1006,10 @@ def normalize_legacy_finding(
     index: int = 0,
     emitted_at: str = "",
 ) -> dict[str, Any]:
-    """Take a legacy finding (pre-foundation) and fill in canonical fields.
+    """Fill in canonical fields on a finding emitted by a non-canonical producer.
 
     Used by `validate` and `collect-findings` to upgrade in-flight findings
-    until every producer emits canonical schema natively.
+    that producers haven't emitted in canonical schema natively.
 
     Does NOT replace fields that are already canonical; only fills gaps.
     """

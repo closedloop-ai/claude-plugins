@@ -228,7 +228,7 @@ class TestParseU0Output:
         assert ranges["f.ts"]["removed"] == []
         assert ranges["f.ts"]["added"] == [[5, 7]]
 
-    def test_no_patch_lines_flag(self) -> None:
+    def test_include_patch_lines_false(self) -> None:
         raw = (
             "diff --git a/f.ts b/f.ts\n"
             "@@ -1,1 +1,1 @@\n"
@@ -8100,16 +8100,8 @@ def _run_verify_prepare(
     cache_dir: Path | None = None,
     prompt_hash: str = "",
     cr_dir: Path | None = None,
-    no_verify: bool = False,
-    no_verify_reason: str = "",
 ) -> tuple[int, dict[str, Any]]:
-    """Invoke ``cmd_verify_prepare`` with stdout captured into a dict.
-
-    PR #114 review fix — ``cr_dir``, ``no_verify``, and ``no_verify_reason``
-    were inlined per-test before; the helper now owns them so the
-    TestOverrideCache and TestNoVerifyBypass classes can stop duplicating
-    the stdout-capture + Namespace dance.
-    """
+    """Invoke ``cmd_verify_prepare`` with stdout captured into a dict."""
     import io
     import sys as _sys
 
@@ -8129,8 +8121,6 @@ def _run_verify_prepare(
             findings=str(findings_path),
             cache_dir=str(cache_dir) if cache_dir else None,
             prompt_hash=prompt_hash,
-            no_verify=no_verify,
-            no_verify_reason=no_verify_reason,
         )
         rc = cmd_verify_prepare(ns)
         _sys.stdout.seek(0)
@@ -8151,13 +8141,7 @@ def _run_verify_consolidate(
     prompt_hash: str = "",
     cr_dir: Path | None = None,
 ) -> tuple[int, dict[str, Any]]:
-    """Invoke ``cmd_verify_consolidate`` with stdout captured.
-
-    PR #114 review fix — ``cr_dir`` is now optional so end-to-end tests
-    that share a cr between prepare and consolidate can pass the same
-    path to both helpers. Default behaviour (``tmp_path / "cr"``) is
-    preserved for the existing single-phase callers.
-    """
+    """Invoke ``cmd_verify_consolidate`` with stdout captured into a dict."""
     import io
     import sys as _sys
 
@@ -8987,62 +8971,6 @@ class TestReviewDismissed:
         assert diff is not None
         assert diff["stats"]["missing_output"] == 1
         assert diff["diff"][0]["action"] == "missing_output"
-
-
-class TestNoVerifyBypass:
-    """PLN-773 Phase 4 — `--no-verify` emergency-bypass flag."""
-
-    def _run(
-        self, tmp_path: Path, findings: list[dict[str, Any]],
-        *, no_verify: bool = True, reason: str = "release in 5 minutes",
-    ) -> tuple[int, dict[str, Any] | None]:
-        # PR #114 review fix — delegate to the shared helper so the
-        # Namespace shape lives in one place. ``rc == 2`` (validation
-        # error) raises JSONDecodeError inside the helper because
-        # cmd_verify_prepare emits no manifest; catch and return (rc, None).
-        try:
-            rc, manifest = _run_verify_prepare(
-                tmp_path, findings,
-                no_verify=no_verify, no_verify_reason=reason,
-            )
-            return rc, manifest
-        except json.JSONDecodeError:
-            return 2, None
-
-    def test_requires_explicit_reason(self, tmp_path: Path) -> None:
-        rc, _ = self._run(tmp_path, [
-            _make_validated_finding("bha_p0_f0", severity="HIGH"),
-        ], reason="")
-        assert rc == 2  # validation error
-
-    def test_routes_all_findings_to_skipped(self, tmp_path: Path) -> None:
-        findings = [
-            _make_validated_finding("bha_p0_f0", severity="BLOCKING"),
-            _make_validated_finding("bhb_f0", severity="MEDIUM", confidence=0.5),
-            _make_validated_finding("premise_f0", category="Premise",
-                                    severity="MEDIUM", confidence=0.99),
-        ]
-        rc, manifest = self._run(tmp_path, findings)
-        assert rc == 0
-        assert manifest is not None
-        assert manifest["to_verify"] == []
-        assert set(manifest["skipped_no_verification"]) == {
-            "bha_p0_f0", "bhb_f0", "premise_f0",
-        }
-        assert manifest["no_verify"] is True
-        assert manifest["no_verify_reason"] == "release in 5 minutes"
-
-    def test_no_verify_false_disables_audit_fields(self, tmp_path: Path) -> None:
-        """When --no-verify is NOT passed, the manifest still has the audit
-        fields but both are empty/false — so downstream consumers can key
-        on no_verify without a missing-key check."""
-        rc, manifest = self._run(tmp_path, [
-            _make_validated_finding("bha_p0_f0", severity="BLOCKING"),
-        ], no_verify=False, reason="")
-        assert rc == 0
-        assert manifest is not None
-        assert manifest["no_verify"] is False
-        assert manifest["no_verify_reason"] == ""
 
 
 class TestReAssert:
@@ -18266,7 +18194,7 @@ class TestCRSPhaseAStageTemplateValidator:
 class TestCRSPhaseACLIConfigLoader:
     """Phase A: _register_subparsers is now a loader over config/cli.json.
 
-    44 parsers / 199 args / 8 hand-curated $$ constant slots / 1 mutex group.
+    44 parsers / 196 args / 8 hand-curated $$ constant slots / 1 mutex group.
     A captured snapshot pins the resolved parser spec (defaults, types,
     choices, required, action, func) so a regression in cli.json or in
     _resolve_cli_constant fails loud. Plus targeted tests for the constant

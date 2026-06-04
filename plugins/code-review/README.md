@@ -54,10 +54,10 @@ canonical schema documented in [SCHEMA.md](SCHEMA.md). Key contracts:
 - **Canonical `prompt_hash`** folds in `schema_version`: a MAJOR schema bump
   invalidates every cache namespace at once.
 
-The legacy `validate_output.json` is still emitted alongside `review_result.json`
-during Phase A so existing consumers keep working. Phase B will delete the
-legacy file in lockstep with the `code` plugin's `run-loop.sh` and the `/fix`
-skill.
+For backward compatibility, `validate_output.json` is still emitted alongside
+`review_result.json` so existing consumers (`code` plugin's `run-loop.sh`,
+the `/fix` skill) keep working. Future versions may discontinue this dual
+emission.
 
 ### Component Roles
 
@@ -243,13 +243,12 @@ The chosen mode + count surface in `partitions.json` (`partition_mode`, `partiti
 
 ## Override Flow (PLN-773)
 
-When the verifier dismisses a finding the operator believes is real, three flags falsify the dismissal without editing code:
+When the verifier dismisses a finding the operator believes is real, two flags falsify the dismissal without editing code:
 
 | Flag | Effect |
 |---|---|
 | `--re-assert <id>[,<id>...]` | Write an override file at `<CACHE_DIR>/overrides/<finding_id>.json`. On the next run, `cmd_verify_prepare` honors the override (synthesizes a `RE_ASSERTED` verdict and skips the agent spawn) so long as the cited file's content hash still matches. Optional `--re-assert-reason='<why>'` is recorded in the override and in `pending-learnings/verifier-overrides.jsonl`. |
 | `--review-dismissed` | Run a second opinion via the haiku verifier against the prior run's `rejected[]`. Any verdict that is NOT `REJECTED` auto-promotes via a `REVIEW_DISMISSED` override. Side-by-side diff lands at `<CR_DIR>/review_dismissed_diff.json`. |
-| `--no-verify` + `--no-verify-reason='<why>'` | Emergency bypass — verifier skipped entirely; every eligible finding lands in `verified[]` with `verifier_verdict: null`. Footer carries an explicit audit banner so the bypass is never silent. Mutually exclusive with `--re-assert` / `--review-dismissed`. |
 
 Overrides survive across runs while the file content matches and the 90-day TTL (`CACHE_TTL_DAYS["overrides"]`) has not expired. Edit the cited line and the override auto-invalidates on the next run; the verifier runs normally. `mandatory_human_review_paths` (verification-gates.json) outranks every override — the operator-policy invariant always wins.
 

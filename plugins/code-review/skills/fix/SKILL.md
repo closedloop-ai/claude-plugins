@@ -61,7 +61,7 @@ Findings live in:
 | `envelope.verified[]` | CONFIRMED + DOWNGRADE + TENTATIVE + RE_ASSERTED + JUSTIFIED-INVALID | filter into dispatch |
 | `envelope.justified[]` | JUSTIFIED-VALID (author defended, verifier confirmed) | exclude unless `--include-justified` (manual-surface only) |
 | `envelope.rejected[]` | REJECTED by verifier | always exclude |
-| `envelope.pending_verification[]` | Verifier didn't run on this finding (verifier failed, was deferred past budget, or `--no-verify` bypass) | include if severity matches; always **manual-surface** with the `pending_verification.md` template — `/fix` does NOT re-implement the verifier |
+| `envelope.pending_verification[]` | Verifier didn't run on this finding (verifier failed or was deferred past budget) | include if severity matches; always **manual-surface** with the `pending_verification.md` template — `/fix` does NOT re-implement the verifier |
 | `envelope.coverage_gaps[]` | System-scoped coverage findings | always include if severity matches; manual-surface bucket |
 
 ### Apply severity + verdict filter

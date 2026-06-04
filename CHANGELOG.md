@@ -4,6 +4,35 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.27.4
+
+#### Fixed
+- `README.md` Override Flow section lead-in now reads "two flags" (was "three"). v2.27.2 removed the `--no-verify` row from the table but left the count stale, so the operator docs disagreed with the table beneath them.
+
+### code-review v2.27.3
+
+#### Fixed
+- `_run_verify_consolidate` test helper docstring no longer carries PR #114 historical-framing prose; trimmed to a single-line summary to match its sibling `_run_verify_prepare`, which was already cleaned in v2.27.2.
+- `TestCRSPhaseACLIConfigLoader` class docstring now reports `196 args` (down from a stale `199 args`) so the calibration anchor for `cli_parser_resolved.json` audits matches the regenerated fixture.
+- `cli_parser_resolved.json` snapshot fixture now ends with a trailing newline, matching POSIX convention so future regenerations diff cleanly.
+
+#### Changed
+- `cmd_parse_diff` no longer carries a dead `include_patch_lines` local variable. After v2.27.2 hardcoded the value to `True`, the `if include_patch_lines:` guard at line 510 and the two parameter pass-throughs at lines 494/501 were no-op constant references. The local is gone; `_parse_u0_output` is called with `True` inline and `result["patch_lines"]` is unconditionally populated. `_parse_u0_output` retains its `include_patch_lines` parameter for the internal API exercise covered by `test_include_patch_lines_false`.
+- Renamed test `test_no_patch_lines_flag` → `test_include_patch_lines_false`. The flag was removed in v2.27.2; the test still exercises the `_parse_u0_output(..., include_patch_lines=False)` internal API path, but its name no longer references the dead CLI flag.
+
+### code-review v2.27.2
+
+#### Changed
+- Stripped historical-framing prose from `start.md`, `code_review_helpers.py`, `code_review_schema.py`, `SCHEMA.md`, and `README.md`. Stage descriptions, docstrings, and inline comments no longer carry phase labels (`Phase A/B/C/D`), version-tagged "as of" markers, or `pre-vN.M.K` references to prior behavior. The text now describes the code as it stands; legitimate backward-compatibility shims (e.g. `--coverage-plan-initial`, `--manifest`, `--coverage-plan`, `--route`, `validate_output.json` dual-emission, `<pr_verdict>` tag, migrated `moduleCritics[]` entries) are framed as such instead of as "legacy". Reduces every agent invocation's prompt budget by the size of the historical framing it previously carried.
+
+#### Removed
+- Deleted unwired `--no-verify` / `--no-verify-reason` flags from `cli.json` plus all references in `cmd_verify_prepare`, the verify manifest, presenter audit banners (`github-review.md`, `present-local/SKILL.md`), the operator-flag README table, and the `pending_verification.md` template. The PLN-773 emergency-bypass pair was defined in `cli.json` and parsed by `cmd_verify_prepare` but never plumbed through `stages.json` — no orchestration path could invoke it. If the bypass is needed in the future it can be re-added with proper stages.json wiring.
+- Deleted unwired `--no-patch-lines` flag from `cli.json` plus the dead `args.no_patch_lines` reference in `cmd_parse_diff`. The flag was never passed by any stage.
+- Test class `TestNoVerifyBypass` (3 tests) and the `no_verify`/`no_verify_reason` kwargs on the `_run_verify_prepare` shared helper.
+
+#### Fixed
+- Regenerated `cli_parser_resolved.json` snapshot fixture to reflect the removed `--no-verify`, `--no-verify-reason`, and `--no-patch-lines` flags. All 1061 tests pass.
+
 ### code-review v2.27.1
 
 #### Fixed

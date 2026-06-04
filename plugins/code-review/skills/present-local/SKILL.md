@@ -157,7 +157,7 @@ After all rejected findings (or the cap), print:
 If `review_result.json.pending_verification[]` is non-empty, append a one-line note:
 
 ```
-⚠️ {M} finding(s) were eligible for verification but no verifier output landed on disk (agent timeout, --no-verify, or budget overflow). Treat them as unverified and re-review by reading review_result.json.pending_verification[].
+⚠️ {M} finding(s) were eligible for verification but no verifier output landed on disk (agent timeout or budget overflow). Treat them as unverified and re-review by reading review_result.json.pending_verification[].
 ```
 
 ---
@@ -185,14 +185,6 @@ Partition mode: {verify_manifest.partition_mode} ({verify_manifest.partition_cou
 
 Render the **Partition mode** line by reading `<CR_DIR>/verify_manifest.json` → `partition_mode` ("unified" | "partitioned" | "unknown") and `partition_count` (int). The Reviewers block above keys off the `reviewer` field which `cmd_collect_findings` derives from the agent filename (`agent_bha_p0.json` → `reviewer='bha_p0'`), so BHA naturally appears as one bucket per partition under partitioned mode and a single `bha_p0` bucket under unified mode (only one partition exists). Defensive: if `verify_manifest.json` is missing (pre-PLN-774 cache or hygiene-only run), omit this line — do NOT fabricate a value.
 
-If the verify-prepare manifest carried `no_verify: true` (read `<CR_DIR>/verify_manifest.json`), prepend the audit banner BEFORE the Verifier Stats section:
-
-```
-⚠️ --no-verify was passed; finding verification was bypassed entirely.
-   Reason: "{no_verify_reason}"
-   {N} findings reached verdict without verifier audit.
-```
-
 If the verify-prepare manifest carried `override_hits` (operator `--re-assert` honored) or `override_invalidated` (override rejected on file-content drift), echo a one-line summary:
 
 ```
@@ -204,11 +196,6 @@ If the verify-prepare manifest carried `override_hits` (operator `--re-assert` h
 - **`--justified-only`** — when present, render ONLY the Justified Findings section above. Suppress BLOCKING / HIGH / MEDIUM / Dismissed sections so the operator can audit justification usage without scrolling past every finding.
 - **`--re-assert <id>[,<id>...]`** — write operator overrides for the listed finding IDs via `code_review_helpers.py re-assert --cr-dir <CR_DIR> --cache-dir <CACHE_DIR> --finding-ids <ids> [--reason '<why>']`. Promotes from `rejected[]` / `pending_verification[]` back into `verified[]` on the next run. Persists across runs via `<CACHE_DIR>/overrides/<finding_id>.json` keyed on file-content hash — content drift auto-invalidates the override.
 - **`--review-dismissed`** — fetch a second opinion (haiku verifier) on prior `rejected[]`. Run `review-dismissed-prepare` to build the manifest, dispatch a haiku-verifier fleet against the per-finding inputs, then run `review-dismissed-consolidate` to auto-promote any non-REJECTED verdict via the same override file format (`override: "REVIEW_DISMISSED"`). Side-by-side diff lands at `<CR_DIR>/review_dismissed_diff.json`.
-- **`--no-verify`** — emergency bypass. **Requires `--no-verify-reason='<why>'`** so the bypass is captured in the audit log. The verifier is skipped entirely; every eligible finding lands in `verified[]` with `verifier_verdict: null`. Mutually exclusive with `--re-assert` / `--review-dismissed`.
-
-### Mutual exclusion enforcement
-
-The orchestrator MUST reject `--no-verify` combined with `--re-assert` or `--review-dismissed` at flag-parse time with a clear error message — emergency bypass is an explicit operator decision; combining it with overrides muddles the audit trail. `cmd_verify_prepare`'s own `--no-verify-reason` check is the second line of defense.
 
 ### Override precedence in stage_22b
 
