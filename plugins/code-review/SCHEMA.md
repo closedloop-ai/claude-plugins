@@ -276,7 +276,7 @@ The `verdict` subcommand applies these rules in order; the first match wins.
 
 `verdict_reason` cites the specific finding(s) that produced the verdict.
 
-The `<pr_verdict>` tag is emitted for backward compatibility (verdict subcommand mapping):
+The verdict subcommand writes `<CR_DIR>/verdict.json` with both the canonical verdict and a `verdict` string compatible with `run-loop.sh` (which keys on the legacy form):
 - APPROVED → approve
 - NEEDS_ATTENTION → needs_attention
 - CHANGES_REQUESTED → decline
@@ -483,7 +483,7 @@ finding — best-effort omissions are budget-driven, not coverage gaps.
 | 25 | finalize-result              | `finalize-result`        | `review_result.json` (canonical envelope)                     |
 | 26 | cache-update                 | `cache-update`           | Cache manifest                                                |
 | 27 | review-state-write           | `review-state-write`     | Review state                                                  |
-| 28 | verdict                      | `verdict`                | `<pr_verdict>` tag                                            |
+| 28 | verdict                      | `verdict`                | `verdict.json`                                                |
 | 29 | present                      | (present)                | Local or GitHub output                                        |
 | 30 | footer                       | `footer`                 | Footer line                                                   |
 

@@ -48,16 +48,17 @@ SEVERITIES: frozenset[str] = frozenset({"BLOCKING", "HIGH", "MEDIUM"})
 # excluding P3 forced reviewers to misclassify nice-to-haves as P2.
 PRIORITIES: frozenset[int] = frozenset({0, 1, 2, 3})
 
-# Categories — section 1 of the plan. "Repo Hygiene" is accepted as an
-# alias for "Hygiene" so the hygiene helper's category string keeps
-# working. "Code Quality" is the canonical category for DRY/
-# maintainability/style findings (MEDIUM-tier duplication, smell, or
-# convention violations) — documented as the example category in the
-# shared reviewer prompt (shared_prompt.txt) for MEDIUM DRY findings.
-# "Documentation" covers README/docstring/comment accuracy and
-# completeness findings — reviewers naturally emit this for stale,
-# missing, or misleading docs and we accept it as a first-class
-# category rather than coercing it under "Code Quality".
+# Categories — section 1 of the plan. "Hygiene" covers in-diff hygiene
+# findings; "Repo Hygiene" covers repo-level hygiene findings emitted by
+# the hygiene helper (e.g. .gitignore drift, sensitive-file detection).
+# "Code Quality" is the canonical category for DRY/maintainability/style
+# findings (MEDIUM-tier duplication, smell, or convention violations) —
+# documented as the example category in the shared reviewer prompt
+# (shared_prompt.txt) for MEDIUM DRY findings. "Documentation" covers
+# README/docstring/comment accuracy and completeness findings —
+# reviewers naturally emit this for stale, missing, or misleading docs
+# and we accept it as a first-class category rather than coercing it
+# under "Code Quality".
 CATEGORIES: frozenset[str] = frozenset({
     "Correctness",
     "Code Quality",
@@ -994,7 +995,9 @@ def validate_result_envelope(envelope: dict[str, Any]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Normalization: legacy -> canonical
+# Schema normalization: fill canonical fields on partially-shaped findings
+# emitted by reviewer agents and other producers that don't emit the
+# canonical schema natively.
 # ---------------------------------------------------------------------------
 
 

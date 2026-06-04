@@ -148,7 +148,7 @@ If no threads are outdated, write with an empty array — the workflow step hand
 
 ### 6b: Write Validated Findings
 
-Read `$CR_DIR/review_result.json` when present (PLN-722), else fall back to `$CR_DIR/validate_output.json`.
+Read `$CR_DIR/review_result.json` when present (PLN-722), else fall back to `$CR_DIR/findings_validated.json`.
 
 Write `.closedloop-ai/code-review-findings.json`:
 ```json
@@ -383,7 +383,7 @@ Mirrors the local-mode Validation Summary so PR reviewers can see the same accur
 - **Total findings from agents:** X
 - **Validated (confirmed):** A
 - **Discarded — file not changed:** B
-- **Discarded — line not changed:** C
+- **Discarded — out-of-hunk (low confidence):** C *(reads `discarded_out_of_hunk_low_confidence`)*
 - **Discarded — low confidence:** D
 - **Discarded — rejected by validation:** E
 - **Duplicates merged:** F

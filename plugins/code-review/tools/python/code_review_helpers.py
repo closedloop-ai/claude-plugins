@@ -1668,9 +1668,6 @@ def cmd_validate(args: argparse.Namespace) -> int:
         "cross_file_grouped": cross_file_grouped,
         "kept_out_of_hunk": kept_out_of_hunk,
         "discarded_file_not_changed": sum(1 for d in discarded if d["reason"] == "DISCARD_FILE_NOT_CHANGED"),
-        # Retained at 0 for backward compat with downstream telemetry
-        # dashboards; superseded by ``discarded_out_of_hunk_low_confidence``.
-        "discarded_line_not_changed": 0,
         "discarded_out_of_hunk_low_confidence": sum(
             1 for d in discarded
             if d["reason"] == "DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE"
@@ -2075,9 +2072,8 @@ def _read_cached_verification(
         return None
     if not isinstance(data, dict):
         return None
-    # TTL check: cached_at must be present and within the window. Missing
-    # cached_at → treat as miss; explicit `None` (e.g. a corrupted write)
-    # → miss.
+    # TTL check: cached_at must be present and within the window;
+    # malformed/missing → miss + unlink.
     cached_at = data.get("cached_at")
     ttl = cache_ttl_days(CACHE_NAMESPACE_VERIFICATIONS) or 30
     try:
@@ -2254,10 +2250,6 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
         raw_count = partitions_meta.get("partition_count")
         if isinstance(raw_count, int) and raw_count >= 0:
             partition_count = raw_count
-        elif isinstance(partitions_meta.get("partitions"), list):
-            # Fallback for older caches that lack ``partition_count``
-            # but still have the ``partitions`` array.
-            partition_count = len(partitions_meta["partitions"])
 
     data = _read_optional_json(findings_path, {})
     if isinstance(data, dict):
@@ -6017,10 +6009,9 @@ def _emit_signal_extraction_failed_finding(
 #   2. ``resolve-coverage`` subcommand: deterministic resolver that reads
 #      diff_data + critic-gates + (optional) extract_signals.json,
 #      evaluates trigger rules, and writes the initial plan into the
-#      ``initial`` section of ``coverage.json``.
-#   3. ``migrate-critic-gates`` subcommand: one-time rewriter that
-#      translates ``moduleCritics[]`` substring rules into canonical
-#      ``coverage[]`` path_pattern rules.
+#      ``initial`` section of ``coverage.json``. Best-effort migration
+#      of legacy ``moduleCritics[]`` entries is handled inline by
+#      ``migrate_legacy_module_critics``.
 
 # Canonical change_class → path glob patterns. Adding a class requires
 # an entry here AND in ``COVERAGE_CHANGE_CLASSES`` (schema module).
@@ -6205,8 +6196,8 @@ def migrate_legacy_module_critics(
     the pattern with ``re.IGNORECASE``, matching the original
     ``substring.lower() in path.lower()`` semantics.
 
-    Returns ``(migrated, warnings)``. The warning list contains a single
-    ``[DEPRECATED]`` entry when at least one rule was migrated.
+    Returns ``(migrated, warnings)``. The warning list reports the number
+    of entries migrated and the number skipped as malformed.
     """
     migrated: list[dict[str, Any]] = []
     skipped = 0
@@ -6246,10 +6237,10 @@ def migrate_legacy_module_critics(
     warnings: list[str] = []
     if migrated:
         warnings.append(
-            f"[DEPRECATED] {len(migrated)} entries migrated from "
-            f"moduleCritics[] to coverage[] as best-effort path_pattern "
-            f"rules; edit critic-gates.json to use the canonical "
-            f"coverage[] schema for finer-grained control."
+            f"{len(migrated)} entries migrated from moduleCritics[] to "
+            f"coverage[] as best-effort path_pattern rules; edit "
+            f"critic-gates.json to use the canonical coverage[] schema "
+            f"for finer-grained control."
         )
     if skipped:
         warnings.append(
@@ -6869,99 +6860,6 @@ def cmd_load_available_reviewers(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_migrate_critic_gates(args: argparse.Namespace) -> int:
-    """One-time rewriter that migrates ``moduleCritics[]`` to ``coverage[]``.
-
-    Reads ``<input>`` (defaults to .closedloop-ai/settings/critic-gates.json),
-    migrates ``moduleCritics[]`` into ``coverage[]`` via
-    ``migrate_legacy_module_critics``, preserves any existing ``coverage[]``
-    entries (canonical takes priority — migrated entries appended), and
-    writes the merged result to ``<output>`` (defaults to the input path
-    when --in-place is set). With --dry-run, prints the diff to stdout
-    without touching disk.
-    """
-    in_path = Path(args.input)
-    out_path = (
-        Path(args.output)
-        if getattr(args, "output", None)
-        else (in_path if getattr(args, "in_place", False) else None)
-    )
-    dry_run = bool(getattr(args, "dry_run", False))
-
-    try:
-        with open(in_path) as f:
-            current = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"Error reading {in_path}: {exc}", file=sys.stderr)
-        return 1
-    if not isinstance(current, dict):
-        print(f"Error: {in_path} is not a JSON object", file=sys.stderr)
-        return 1
-
-    module_critics = current.get("moduleCritics", [])
-    module_critics = module_critics if isinstance(module_critics, list) else []
-    migrated, warnings = migrate_legacy_module_critics(module_critics)
-
-    existing_coverage = current.get("coverage", [])
-    existing_coverage = existing_coverage if isinstance(existing_coverage, list) else []
-
-    # Idempotency: a second --in-place run would otherwise re-migrate the
-    # moduleCritics[] block and append duplicate entries. Strip any prior
-    # _migrated_from="moduleCritics" entries from the existing coverage[]
-    # before appending the freshly-migrated set, so running migration N
-    # times is equivalent to running it once. Operator-edited entries
-    # (no _migrated_from marker) survive untouched.
-    prior_migrated_count = sum(
-        1 for e in existing_coverage
-        if isinstance(e, dict) and e.get("_migrated_from") == "moduleCritics"
-    )
-    cleaned_existing = [
-        e for e in existing_coverage
-        if not (isinstance(e, dict) and e.get("_migrated_from") == "moduleCritics")
-    ]
-
-    new_state = dict(current)
-    new_state["coverage"] = list(cleaned_existing) + migrated
-    # Preserve moduleCritics on disk as a back-out path; the resolver
-    # tolerates duplicate naming because dedup is by reviewer name across
-    # the composed rule list. Operators can remove the moduleCritics block
-    # manually once they've verified the migrated entries.
-
-    summary = {
-        "input": str(in_path),
-        "migrated_count": len(migrated),
-        "existing_coverage_count": len(existing_coverage),
-        "prior_migrated_pruned": prior_migrated_count,
-        "total_coverage_count": len(new_state["coverage"]),
-        "warnings": warnings,
-    }
-
-    if dry_run:
-        summary["dry_run"] = True
-        summary["preview"] = new_state["coverage"]
-        json.dump(summary, sys.stdout, indent=2)
-        sys.stdout.write("\n")
-        return 0
-
-    if out_path is None:
-        print(
-            "Error: must pass --output <path> or --in-place to write the migration",
-            file=sys.stderr,
-        )
-        return 1
-
-    try:
-        with open(out_path, "w") as f:
-            json.dump(new_state, f, indent=2)
-    except OSError as exc:
-        print(f"Error writing {out_path}: {exc}", file=sys.stderr)
-        return 1
-    summary["output"] = str(out_path)
-    json.dump(summary, sys.stdout, indent=2)
-    sys.stdout.write("\n")
-    return 0
-
-
 # ---------------------------------------------------------------------------
 # PLN-725 — Coverage critic
 # ---------------------------------------------------------------------------
@@ -7363,9 +7261,8 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     """Prep the coverage-critic agent input + check cache (PLN-725).
 
     Reads the rule-resolved plan from ``coverage.json``'s ``.initial``
-    section (or from an explicit ``--coverage-plan-initial`` path for
-    backward compat) plus ``extract_signals.json``, ``diff_data.json``,
-    and ``available_reviewers.json``. Computes the
+    section, plus ``extract_signals.json``, ``diff_data.json``, and
+    ``available_reviewers.json``. Computes the
     ``(coverage_plan_initial_hash, signals_hash, diff_tip, prompt_hash,
     available_reviewers_hash)`` cache key and either:
 
@@ -7384,7 +7281,6 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     Always exits 0; structural failures print to stderr and return 1.
     """
     cr_dir = Path(args.cr_dir)
-    plan_initial_path_arg = getattr(args, "coverage_plan_initial", None)
     signals_path = (
         Path(args.extract_signals) if getattr(args, "extract_signals", None) else None
     )
@@ -7404,27 +7300,16 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         print(f"Error: cannot create cr_dir: {exc}", file=sys.stderr)
         return 1
 
-    # Initial plan lives in coverage.json.initial by default; callers
-    # may pass --coverage-plan-initial as an explicit file path for
-    # backward compat.
-    plan_initial: Any
-    if plan_initial_path_arg:
-        try:
-            with open(Path(plan_initial_path_arg)) as f:
-                plan_initial = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
-            print(f"Error reading coverage_plan_initial: {exc}", file=sys.stderr)
-            return 1
-    else:
-        plan_initial = _read_coverage_state(cr_dir).get("initial")
-        if plan_initial is None:
-            print(
-                "Error: coverage.json.initial missing — has stage_14 run?",
-                file=sys.stderr,
-            )
-            return 1
+    # Initial plan lives in coverage.json.initial.
+    plan_initial = _read_coverage_state(cr_dir).get("initial")
+    if plan_initial is None:
+        print(
+            "Error: coverage.json.initial missing — has stage_14 run?",
+            file=sys.stderr,
+        )
+        return 1
     if not isinstance(plan_initial, dict):
-        print("Error: coverage_plan_initial is not a JSON object", file=sys.stderr)
+        print("Error: coverage.json.initial is not a JSON object", file=sys.stderr)
         return 1
 
     # Short-circuit per Open Question 3 — write the initial plan
@@ -7593,54 +7478,34 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
         ``system_marker="coverage-critic-failed"`` so the operator
         footer surfaces the skipped stage. Does **not** cache.
 
-    Default reads come from ``coverage.json``'s ``.initial`` and
-    ``.critic`` sections; ``--coverage-plan-initial`` and ``--manifest``
-    args are accepted as explicit-path fallbacks for backward compat.
+    Reads the initial plan from ``coverage.json.initial`` and the
+    manifest from ``coverage.json.critic``.
 
     Always exits 0 (degradation is not a halt); returns 1 only on
     missing cr_dir or unreadable initial plan.
     """
     cr_dir = Path(args.cr_dir)
-    plan_initial_path_arg = getattr(args, "coverage_plan_initial", None)
     agent_output_path = Path(args.agent_output)
     available_path = Path(args.available_reviewers)
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
-    manifest_path_arg = getattr(args, "manifest", None)
 
     if not cr_dir.exists():
         print(f"Error: cr_dir does not exist: {cr_dir}", file=sys.stderr)
         return 1
 
-    # Initial plan lives in coverage.json.initial by default; callers
-    # may pass --coverage-plan-initial as an explicit file path for
-    # backward compat.
-    plan_initial: Any
-    if plan_initial_path_arg:
-        try:
-            with open(Path(plan_initial_path_arg)) as f:
-                plan_initial = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
-            print(f"Error reading coverage_plan_initial: {exc}", file=sys.stderr)
-            return 1
-    else:
-        plan_initial = _read_coverage_state(cr_dir).get("initial")
-        if plan_initial is None:
-            print(
-                "Error: coverage.json.initial missing — has stage_14 run?",
-                file=sys.stderr,
-            )
-            return 1
+    plan_initial = _read_coverage_state(cr_dir).get("initial")
+    if plan_initial is None:
+        print(
+            "Error: coverage.json.initial missing — has stage_14 run?",
+            file=sys.stderr,
+        )
+        return 1
     if not isinstance(plan_initial, dict):
-        print("Error: coverage_plan_initial is not a JSON object", file=sys.stderr)
+        print("Error: coverage.json.initial is not a JSON object", file=sys.stderr)
         return 1
 
-    # Manifest lives in coverage.json.critic by default; callers may
-    # pass --manifest as an explicit path for backward compat.
-    if manifest_path_arg:
-        manifest = _read_manifest_dict(Path(manifest_path_arg))
-    else:
-        critic_section = _read_coverage_state(cr_dir).get("critic")
-        manifest = critic_section if isinstance(critic_section, dict) else {}
+    critic_section = _read_coverage_state(cr_dir).get("critic")
+    manifest = critic_section if isinstance(critic_section, dict) else {}
     cache_key = str(manifest.get("cache_key") or "")
     model = str(manifest.get("model") or COVERAGE_CRITIC_MODEL_DEFAULT)
     manifest_status = str(manifest.get("status") or "")
@@ -8103,8 +7968,7 @@ def cmd_verify_coverage(args: argparse.Namespace) -> int:
     evidence-required, 5-cap, and no-duplicates contracts. Writes the
     verdict into ``coverage.json``'s ``.verify`` section, and on
     BLOCKING also emits an ``agent_coverage-verify-blocking.json``
-    system finding. Explicit-path fallbacks via ``--coverage-plan`` /
-    ``--coverage-plan-initial`` are accepted for backward compat.
+    system finding.
 
     Exit code is 0 on PASS and BLOCKING (the walker is observational).
     Downstream stages (arbitrate-budget) gate on the verdict by reading
@@ -8129,8 +7993,6 @@ def cmd_verify_coverage(args: argparse.Namespace) -> int:
     absent or empty.
     """
     cr_dir = Path(args.cr_dir)
-    plan_path_arg = getattr(args, "coverage_plan", None)
-    plan_initial_path_arg = getattr(args, "coverage_plan_initial", None)
     available_path = (
         Path(args.available_reviewers)
         if getattr(args, "available_reviewers", None)
@@ -8161,57 +8023,34 @@ def cmd_verify_coverage(args: argparse.Namespace) -> int:
         sys.stdout.write("\n")
         return 0
 
-    # Prefer coverage.json sections; fall back to explicit paths for
-    # backward-compat callers. Missing or unreadable verifier inputs
-    # BLOCK with an ``input`` check so "no plan was verified" is
-    # distinguishable from a real PASS in the artifact (downstream
-    # arbitrate-budget gates on the verdict). Exit code stays 0 so the
-    # walker doesn't halt — observational semantics are about the
-    # WALKER, the verdict is about the ARTIFACT consumer.
-    plan: Any
-    if plan_path_arg:
-        try:
-            with open(Path(plan_path_arg)) as f:
-                plan = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
-            return _write_verdict("BLOCKING", [{
-                "check": "input",
-                "message": f"coverage_plan unreadable: {exc}",
-            }])
-    else:
-        plan = _read_coverage_state(cr_dir).get("final")
-        if plan is None:
-            return _write_verdict("BLOCKING", [{
-                "check": "input",
-                "message": "coverage.json.final missing",
-            }])
+    # Read plans from coverage.json sections. Missing or unreadable
+    # verifier inputs BLOCK with an ``input`` check so "no plan was
+    # verified" is distinguishable from a real PASS in the artifact
+    # (downstream arbitrate-budget gates on the verdict). Exit code
+    # stays 0 so the walker doesn't halt — observational semantics
+    # are about the WALKER, the verdict is about the ARTIFACT consumer.
+    plan = _read_coverage_state(cr_dir).get("final")
+    if plan is None:
+        return _write_verdict("BLOCKING", [{
+            "check": "input",
+            "message": "coverage.json.final missing",
+        }])
     if not isinstance(plan, dict):
         return _write_verdict("BLOCKING", [{
             "check": "shape",
-            "message": "coverage_plan is not a JSON object",
+            "message": "coverage.json.final is not a JSON object",
         }])
 
-    plan_initial: Any
-    if plan_initial_path_arg:
-        try:
-            with open(Path(plan_initial_path_arg)) as f:
-                plan_initial = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
-            return _write_verdict("BLOCKING", [{
-                "check": "input",
-                "message": f"coverage_plan_initial unreadable: {exc}",
-            }])
-    else:
-        plan_initial = _read_coverage_state(cr_dir).get("initial")
-        if plan_initial is None:
-            return _write_verdict("BLOCKING", [{
-                "check": "input",
-                "message": "coverage.json.initial missing",
-            }])
+    plan_initial = _read_coverage_state(cr_dir).get("initial")
+    if plan_initial is None:
+        return _write_verdict("BLOCKING", [{
+            "check": "input",
+            "message": "coverage.json.initial missing",
+        }])
     if not isinstance(plan_initial, dict):
         return _write_verdict("BLOCKING", [{
             "check": "input",
-            "message": "coverage_plan_initial is not a JSON object",
+            "message": "coverage.json.initial is not a JSON object",
         }])
 
     available_reviewers: list[str] | None = None
@@ -8773,9 +8612,9 @@ def cmd_re_assert(args: argparse.Namespace) -> int:
 
 _VERDICT_REASON_MAX = 80
 
-# Mapping between canonical envelope verdicts and the ``<pr_verdict>``
-# tag values consumed by run-loop.sh and the github-review presenter
-# (kept for backward compatibility with those consumers).
+# Mapping between canonical envelope verdicts and the legacy verdict
+# strings consumed by run-loop.sh (`approve` / `needs_attention` /
+# `decline`).
 _CANONICAL_TO_LEGACY_VERDICT: dict[str, str] = {
     "APPROVED": "approve",
     "NEEDS_ATTENTION": "needs_attention",
@@ -9176,11 +9015,11 @@ def cmd_verdict(args: argparse.Namespace) -> int:
     """Compute PR verdict.
 
     Reads ``review_result.json`` (canonical envelope) when available; falls
-    back to ``validate_output.json`` otherwise. Emits the ``<pr_verdict>``
-    tag for backward compatibility with existing consumers (run-loop.sh,
-    the github presenter).
+    back to ``findings_validated.json`` otherwise. Emits a JSON object with
+    the canonical verdict, the run-loop-compatible legacy verdict string,
+    and a reason.
     """
-    validate_output_path: str = args.validate_output
+    findings_validated_path: str = args.findings_validated
     review_result_path: str | None = getattr(args, "review_result", None)
 
     canonical_verdict: str | None = None
@@ -9193,16 +9032,16 @@ def cmd_verdict(args: argparse.Namespace) -> int:
             canonical_verdict = envelope.get("verdict")
             reason = str(envelope.get("verdict_reason", ""))[:_VERDICT_REASON_MAX]
 
-    # Fallback: re-derive from validate_output.json.
+    # Fallback: re-derive from findings_validated.json.
     if canonical_verdict is None:
         try:
-            with open(validate_output_path) as f:
-                validate_output = json.load(f)
+            with open(findings_validated_path) as f:
+                findings_validated = json.load(f)
         except (OSError, json.JSONDecodeError) as exc:
-            print(f"Error reading validate output: {exc}", file=sys.stderr)
+            print(f"Error reading findings_validated: {exc}", file=sys.stderr)
             return 1
 
-        validated: list[dict[str, Any]] = validate_output.get("validated", [])
+        validated: list[dict[str, Any]] = findings_validated.get("validated", [])
         # Split coverage findings out (mirrors finalize-result's bucketing).
         # Partition by index so we avoid dict-equality membership tests —
         # canonical finding ids would also work but findings on this path
@@ -9228,15 +9067,12 @@ def cmd_verdict(args: argparse.Namespace) -> int:
         )
 
     legacy_verdict = _CANONICAL_TO_LEGACY_VERDICT.get(canonical_verdict, "approve")
-    tag_payload = json.dumps({"verdict": legacy_verdict, "reason": reason})
-    tag = f"<pr_verdict>{tag_payload}</pr_verdict>"
 
     json.dump(
         {
             "verdict": legacy_verdict,
             "canonical_verdict": canonical_verdict,
             "reason": reason,
-            "tag": tag,
         },
         sys.stdout,
         indent=2,
@@ -9695,26 +9531,6 @@ def _make_coverage_gap_finding(
     )
 
 
-def _read_coverage_verify_verdict(path: Path | None) -> tuple[str | None, list[dict[str, str]]]:
-    """Return ``(verdict, violations)`` from a coverage_verify.json file.
-
-    Verdict is ``"PASS"``, ``"BLOCKING"``, or ``None`` if the file is
-    missing/unreadable (treated as PASS by callers — verification is
-    observational; an absent verifier output must not block arbitration).
-
-    Explicit-path read for backward compat; canonical consumers call
-    ``_normalize_coverage_verify_doc`` on ``coverage.json.verify`` directly.
-    """
-    if path is None or not path.exists():
-        return None, []
-    try:
-        with open(path) as f:
-            doc = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None, []
-    return _normalize_coverage_verify_doc(doc)
-
-
 def _normalize_coverage_verify_doc(doc: Any) -> tuple[str | None, list[dict[str, str]]]:
     """Coerce a parsed coverage-verify section/file into ``(verdict, violations)``.
 
@@ -9746,44 +9562,30 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
 
     Reads the post-consolidate plan from ``coverage.json``'s ``.final``
     section, applies the budget cap, and writes the arbitrated plan
-    back into the same ``.final`` section. Explicit ``--coverage-plan``
-    / ``--output`` paths are accepted as backward-compat fallbacks.
-    Emits coverage-gap findings for required reviewers that exceed
-    the cap.
+    back into the same ``.final`` section. Emits coverage-gap findings
+    for required reviewers that exceed the cap.
 
-    When the verifier's verdict (read from ``coverage.json.verify`` by
-    default, or ``--coverage-verify``) is ``"BLOCKING"``, arbitration
-    short-circuits. The input plan is written through to
-    ``coverage.json.final`` as-is (preserving the rule floor — no cap,
-    no pruning, no dropped required) with ``budget.gated_by_verify:
-    true`` so downstream consumers can see why the cap wasn't applied.
-    The same shape is written — including ``deferred_for_budget``,
-    ``dropped_required``, and ``budget`` keys — so finalize-result and
-    stage_20 readers don't need to branch on a different schema. The
-    BLOCKING finding is already emitted by
+    When the verifier's verdict in ``coverage.json.verify`` is
+    ``"BLOCKING"``, arbitration short-circuits. The input plan is
+    written through to ``coverage.json.final`` as-is (preserving the
+    rule floor — no cap, no pruning, no dropped required) with
+    ``budget.gated_by_verify: true`` so downstream consumers can see
+    why the cap wasn't applied. The same shape is written — including
+    ``deferred_for_budget``, ``dropped_required``, and ``budget`` keys
+    — so finalize-result and stage_20 readers don't need to branch on a
+    different schema. The BLOCKING finding is already emitted by
     ``stage_15c_verify_coverage`` (``agent_coverage-verify-blocking
     .json``); arbitrate-budget does not duplicate it. A missing verify
-    section/file (verifier didn't run, or upstream stage aborted) is
-    treated as PASS — the verifier is observational, an absent artifact
-    must not block arbitration.
+    section (verifier didn't run, or upstream stage aborted) is treated
+    as PASS — the verifier is observational, an absent artifact must
+    not block arbitration.
     """
-    cr_dir = Path(args.cr_dir) if getattr(args, "cr_dir", None) else None
-    plan_path_arg = getattr(args, "coverage_plan", None)
-    output_path_arg = getattr(args, "output", None)
+    cr_dir = Path(args.cr_dir)
 
-    # Read input plan from coverage.json.final by default; callers may
-    # pass --coverage-plan as an explicit path for backward compat.
-    coverage_plan_in: Any
-    if plan_path_arg:
-        coverage_plan_in = _read_optional_json(Path(plan_path_arg), None)
-    elif cr_dir is not None:
-        coverage_plan_in = _read_coverage_state(cr_dir).get("final")
-    else:
-        coverage_plan_in = None
+    coverage_plan_in = _read_coverage_state(cr_dir).get("final")
     if not isinstance(coverage_plan_in, dict):
         print(
-            "Error: input coverage plan not found or malformed "
-            f"({'--coverage-plan ' + str(plan_path_arg) if plan_path_arg else 'coverage.json.final'})",
+            "Error: coverage.json.final not found or malformed",
             file=sys.stderr,
         )
         return 1
@@ -9794,25 +9596,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         print(f"Error: --cap must be > 0, got {cap}", file=sys.stderr)
         return 1
 
-    # Resolve output target. Section write (coverage.json.final) is the
-    # default when --cr-dir is set and --output is not. Explicit --output
-    # keeps working for backward-compat callers.
-    output_path = Path(output_path_arg) if output_path_arg else None
-    if output_path is None and plan_path_arg is not None and cr_dir is None:
-        # Backward-compat default — colocate with the input path when
-        # neither --cr-dir nor --output was supplied.
-        output_path = Path(plan_path_arg).with_name("coverage_plan.json")
-
     def _persist_plan(plan: dict[str, Any]) -> int:
-        if output_path is not None:
-            try:
-                with open(output_path, "w") as f:
-                    json.dump(plan, f, indent=2)
-            except OSError as exc:
-                print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
-                return 1
-            return 0
-        assert cr_dir is not None  # exhaustive — checked above
         try:
             _write_coverage_section(cr_dir, "final", plan)
         except OSError as exc:
@@ -9821,13 +9605,8 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         return 0
 
     def _gaps_target(findings: list[dict[str, Any]]) -> tuple[int, Path]:
-        # coverage_gaps.json stays standalone (multi-writer). Resolve
-        # its path relative to the same directory as the output plan.
-        if output_path is not None:
-            gaps_path = output_path.with_name("coverage_gaps.json")
-        else:
-            assert cr_dir is not None
-            gaps_path = cr_dir / "coverage_gaps.json"
+        # coverage_gaps.json stays standalone (multi-writer).
+        gaps_path = cr_dir / "coverage_gaps.json"
         try:
             with open(gaps_path, "w") as f:
                 json.dump({"findings": findings}, f, indent=2)
@@ -9837,9 +9616,6 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         return 0, gaps_path
 
     def _plan_target_str() -> str:
-        if output_path is not None:
-            return str(output_path)
-        assert cr_dir is not None
         return str(cr_dir / _COVERAGE_STATE_FILENAME)
 
     required: list[dict[str, Any]] = list(coverage_plan_in.get("required", []) or [])
@@ -9851,15 +9627,9 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     # BLOCKING verdict. Note: the verifier itself stays observational
     # (exit 0 on BLOCKING) — arbitrate-budget is where the verdict
     # first translates into pipeline behavior change.
-    verify_path_arg = getattr(args, "coverage_verify", None)
-    if verify_path_arg:
-        verdict, violations = _read_coverage_verify_verdict(Path(verify_path_arg))
-    elif cr_dir is not None:
-        verdict, violations = _normalize_coverage_verify_doc(
-            _read_coverage_state(cr_dir).get("verify"),
-        )
-    else:
-        verdict, violations = None, []
+    verdict, violations = _normalize_coverage_verify_doc(
+        _read_coverage_state(cr_dir).get("verify"),
+    )
     now_iso_gate = datetime.now(timezone.utc).isoformat()
     if verdict == "BLOCKING":
         # BHA is source: "core" and survives derive-spawn-spec's
@@ -10352,8 +10122,6 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     (post-route — written by Gate B's ``cmd_route --cr-dir``) and
     writes the ``spec`` section of ``spawn.json`` enumerating every
     agent the orchestrator should spawn at ``stage_20_spawn_reviewers``.
-    Callers may override either source with ``--coverage-plan`` /
-    ``--route`` explicit file paths.
 
     Fast-path passthrough: when ``route.fast_path`` is true, the spec
     emits exactly one agent (``agent_id: "fast"``) and the bucket walk
@@ -10375,30 +10143,14 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     cr_dir = Path(args.cr_dir)
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # Post-arbitrate plan lives in ``coverage.json.final``. The explicit
-    # ``--coverage-plan`` path is honored as an override for callers that
-    # pass an explicit plan file; when absent, fall through to the
-    # coverage-state aggregate.
-    coverage_plan_arg = getattr(args, "coverage_plan", None)
-    if coverage_plan_arg:
-        coverage_plan = _read_optional_json(Path(coverage_plan_arg), None)
-    else:
-        coverage_plan = _read_coverage_state(cr_dir).get("final")
+    coverage_plan = _read_coverage_state(cr_dir).get("final")
     if not isinstance(coverage_plan, dict):
         spec = _spawn_spec_fallback(
             "coverage_plan_missing_or_malformed", cr_dir, now_iso,
         )
         return _write_spawn_spec(spec, cr_dir)
 
-    # Route lives in spawn.json.route. The explicit ``--route`` path is
-    # honored as an override for callers (mostly tests) that pass an
-    # explicit route file. When absent or unreadable, fall through to
-    # the spawn-state aggregate.
-    route_arg = getattr(args, "route", None)
-    if route_arg:
-        route = _read_optional_json(Path(route_arg), {}) or {}
-    else:
-        route = _read_spawn_state(cr_dir).get("route", {}) or {}
+    route = _read_spawn_state(cr_dir).get("route", {}) or {}
     if not isinstance(route, dict):
         route = {}
     models = _spawn_resolve_models(route)
@@ -10454,22 +10206,12 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     # the answer from primary inputs.
     partitions_path = Path(args.partitions)
     partitions_blob = _read_optional_json(partitions_path, None)
-    if partitions_blob is None:
+    if not isinstance(partitions_blob, dict):
         spec = _spawn_spec_fallback(
             "partitions_missing_or_malformed", cr_dir, now_iso,
         )
         return _write_spawn_spec(spec, cr_dir)
-    if isinstance(partitions_blob, dict):
-        partitions = partitions_blob.get("partitions", []) or []
-    elif isinstance(partitions_blob, list):
-        # Test/bare-list shape: partitions list with no wrapper.
-        partitions = partitions_blob
-    else:
-        # Present-but-wrong-shape (e.g. string, number) — same fallback.
-        spec = _spawn_spec_fallback(
-            "partitions_missing_or_malformed", cr_dir, now_iso,
-        )
-        return _write_spawn_spec(spec, cr_dir)
+    partitions = partitions_blob.get("partitions", []) or []
     partitions = [p for p in partitions if isinstance(p, dict)]
 
     # BLOCKING verdict sanitization. The verifier's BLOCKING reasons
@@ -11603,11 +11345,11 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
     applies to both source paths uniformly.
     """
     cr_dir = Path(args.cr_dir)
-    validate_output_path = Path(args.validate_output)
+    findings_validated_path = Path(args.findings_validated)
 
-    validate_output = _read_optional_json(validate_output_path, None)
-    if not isinstance(validate_output, dict):
-        print(f"Error: validate_output not found or malformed at {validate_output_path}", file=sys.stderr)
+    findings_validated = _read_optional_json(findings_validated_path, None)
+    if not isinstance(findings_validated, dict):
+        print(f"Error: findings_validated not found or malformed at {findings_validated_path}", file=sys.stderr)
         return 1
 
     # Prefer the verify-consolidate output when present (PLN-722).
@@ -11629,7 +11371,7 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
         raw_justified: list[dict[str, Any]] = consolidated.get("justified", []) or []
         force_human_review = bool(consolidated.get("force_human_review", False))
     else:
-        raw_verified = validate_output.get("validated", []) or []
+        raw_verified = findings_validated.get("validated", []) or []
         raw_rejected = []
         raw_pending = []
         raw_justified = []

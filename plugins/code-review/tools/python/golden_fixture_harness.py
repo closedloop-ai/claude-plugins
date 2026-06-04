@@ -168,7 +168,7 @@ def run_post_collection_pipeline(cr_dir: Path, fixture: GoldenFixture) -> dict[s
 
     finalize_ns = argparse.Namespace(
         cr_dir=str(cr_dir),
-        validate_output=str(validated_path),
+        findings_validated=str(validated_path),
         mode=fixture.config.get("mode", "local"),
         diff_tip=fixture.config.get("diff_tip", "abc1234"),
         pr_number=fixture.config.get("pr_number"),

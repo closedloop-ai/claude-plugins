@@ -219,7 +219,7 @@ If `FLAGS.hygiene_only` is true (or the equivalent `--hygiene-only` was passed):
 2. Mark "Present hygiene findings" `in_progress`.
 3. Parse `<CR_DIR>/hygiene.json` and render using the "Hygiene Findings Format (Gate A render target)" section below.
 4. If MODE=github, write hygiene findings to `.closedloop-ai/code-review-summary.md` and `.closedloop-ai/code-review-findings.json`; the workflow handles posting.
-5. **EXIT.** Do not run any remaining stages — not route, partition, agents, validate, finalize, cache-update, review-state-write, verdict, or footer. Hygiene-only runs do not emit a `<pr_verdict>` tag (there is no findings_validated.json or review_result.json for verdict to read; invoking it would crash the walker via `on_failure: abort`). This matches the pre-Phase-4b orchestrator behavior.
+5. **EXIT.** Do not run any remaining stages — not route, partition, agents, validate, finalize, cache-update, review-state-write, verdict, or footer. Hygiene-only runs do not emit a `verdict.json` (there is no findings_validated.json or review_result.json for verdict to read; invoking it would crash the walker via `on_failure: abort`).
 
 ### Gate B — After `stage_19_cache_check`: Route + fast_path decision
 
@@ -904,7 +904,7 @@ Read `<CR_DIR>/footer.json` for `footer_line` and print:
 
 ## PR Verdict (stage_28_verdict — printed last)
 
-`stage_28_verdict` runs as a normal helper in the walker; its output JSON has a `tag` field. After the footer prints, output the `tag` value on a final line. The ClosedLoop UI parses this tag to render a verdict banner.
+`stage_28_verdict` runs as a normal helper in the walker. It writes `<CR_DIR>/verdict.json` with three fields: `verdict` (legacy string for `run-loop.sh`: `approve` | `needs_attention` | `decline`), `canonical_verdict` (envelope form: `APPROVED` | `NEEDS_ATTENTION` | `CHANGES_REQUESTED`), and `reason`. After the footer prints, do not output any additional line — the verdict artifact is the contract; consumers read `verdict.json` directly.
 
 ---
 

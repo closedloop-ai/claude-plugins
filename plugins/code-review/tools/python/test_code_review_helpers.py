@@ -2217,7 +2217,7 @@ class TestVerdict:
         _sys.stdout = io.StringIO()
         try:
             import argparse
-            ns = argparse.Namespace(validate_output=tf_path)
+            ns = argparse.Namespace(findings_validated=tf_path)
             cmd_verdict(ns)
             _sys.stdout.seek(0)
             return json.load(_sys.stdout)
@@ -2451,10 +2451,6 @@ class TestValidate:
         # Telemetry: the kept_out_of_hunk counter tracks the relaxation
         # for A/B observability against historical runs.
         assert result["stats"]["kept_out_of_hunk"] == 1
-        # The retired discarded_line_not_changed key now reports 0; the
-        # new discarded_out_of_hunk_low_confidence key tracks remaining
-        # filter activity (none here since the finding survived).
-        assert result["stats"]["discarded_line_not_changed"] == 0
         assert result["stats"]["discarded_out_of_hunk_low_confidence"] == 0
 
     def test_out_of_hunk_low_confidence_discarded(self, tmp_path: Path) -> None:
@@ -6989,7 +6985,7 @@ class TestFinalizeResult:
         try:
             ns = argparse.Namespace(
                 cr_dir=str(cr_dir),
-                validate_output=str(validate_path),
+                findings_validated=str(validate_path),
                 mode=mode,
                 diff_tip=diff_tip,
                 pr_number=None,
@@ -7268,7 +7264,7 @@ class TestVerdictReadsEnvelope:
         _sys.stdout = io.StringIO()
         try:
             ns = argparse.Namespace(
-                validate_output=str(legacy_path),
+                findings_validated=str(legacy_path),
                 review_result=str(envelope_path),
             )
             cmd_verdict(ns)
@@ -7278,7 +7274,7 @@ class TestVerdictReadsEnvelope:
             _sys.stdout = old_stdout
 
         assert result["canonical_verdict"] == "CHANGES_REQUESTED"
-        assert result["verdict"] == "decline"  # legacy tag mapping
+        assert result["verdict"] == "decline"  # legacy string mapping (CHANGES_REQUESTED → "decline")
         assert "Auth bypass" in result["reason"]
 
     def test_falls_back_to_validate_output(self, tmp_path: Path) -> None:
@@ -7297,7 +7293,7 @@ class TestVerdictReadsEnvelope:
         _sys.stdout = io.StringIO()
         try:
             ns = argparse.Namespace(
-                validate_output=str(legacy_path),
+                findings_validated=str(legacy_path),
                 review_result=None,
             )
             cmd_verdict(ns)
@@ -7322,66 +7318,50 @@ def _run_arbitrate_budget(
     *,
     cap: int = 20,
     verify_doc: dict[str, Any] | None = None,
-    include_verify_flag: bool = True,
+    include_verify_flag: bool = True,  # noqa: ARG001 - retained for caller signature
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Shared module-level driver for ``cmd_arbitrate_budget`` tests.
 
-    Earlier this lived as two near-identical ``_run`` methods on
-    ``TestArbitrateBudget`` and ``TestPLN725Phase7ArbitrateBudgetGate``;
-    the Phase 7 version just added optional ``verify_doc`` /
-    ``include_verify_flag`` parameters. Extracted here so the seed +
-    invoke + read pattern lives in one place — both test classes'
-    ``_run`` methods now delegate to this helper, so a future
-    Namespace/CLI surface change (a new --foo flag, schema-version bump,
-    etc.) edits one site, not two.
+    Seeds the post-consolidate plan into ``coverage.json.final`` and (when
+    ``verify_doc`` is supplied) the verifier verdict into
+    ``coverage.json.verify``; then invokes ``cmd_arbitrate_budget --cr-dir``.
 
     Args:
-        tmp_path: pytest tmp_path
-        coverage_plan_in: initial coverage_plan_initial.json contents
+        tmp_path: pytest tmp_path (used as the CR_DIR)
+        coverage_plan_in: input plan to seed into coverage.json.final
         diff_data: diff_data.json contents
-        cap: --cap arg to arbitrate-budget
-        verify_doc: optional coverage_verify.json contents. None means
-            "do not write the file at all" — exercising the
-            missing-verify-file degradation path. Pre-Phase-7 callers
-            don't supply this so the absence is faithful to their
-            historical Namespace shape.
-        include_verify_flag: when False, even if verify_doc is written
-            the --coverage-verify argparse flag is omitted — simulates
-            an old-style call from before Phase 7 wired the flag in.
+        cap: --cap arg
+        verify_doc: optional verdict to seed into coverage.json.verify;
+            None means leave the section absent.
+        include_verify_flag: retained for backward-compatible callers
+            but no longer affects behavior — verify_doc absence and the
+            arg absence are now equivalent (section read returns None).
 
     Returns:
-        ``(summary, final_plan, gaps)``: parsed stdout summary,
-        coverage_plan.json, coverage_gaps.json
+        ``(summary, final_plan, gaps)`` — parsed stdout summary,
+        coverage.json.final, coverage_gaps.json
     """
     import io
     import sys as _sys
 
-    from code_review_helpers import cmd_arbitrate_budget
+    from code_review_helpers import (
+        _write_coverage_section,
+        cmd_arbitrate_budget,
+    )
 
-    cp_path = tmp_path / "coverage_plan_initial.json"
-    cp_path.write_text(json.dumps(coverage_plan_in))
+    _write_coverage_section(tmp_path, "final", coverage_plan_in)
     dd_path = tmp_path / "diff_data.json"
     dd_path.write_text(json.dumps(diff_data))
-
-    verify_path: Path | None = None
     if verify_doc is not None:
-        verify_path = tmp_path / "coverage_verify.json"
-        verify_path.write_text(json.dumps(verify_doc))
-
-    coverage_verify_arg = (
-        str(verify_path) if (include_verify_flag and verify_path)
-        else None
-    )
+        _write_coverage_section(tmp_path, "verify", verify_doc)
 
     old_stdout = _sys.stdout
     _sys.stdout = io.StringIO()
     try:
         ns = argparse.Namespace(
-            coverage_plan=str(cp_path),
+            cr_dir=str(tmp_path),
             diff_data=str(dd_path),
             cap=cap,
-            output=None,
-            coverage_verify=coverage_verify_arg,
         )
         cmd_arbitrate_budget(ns)
         _sys.stdout.seek(0)
@@ -7389,7 +7369,8 @@ def _run_arbitrate_budget(
     finally:
         _sys.stdout = old_stdout
 
-    final_plan = json.loads((tmp_path / "coverage_plan.json").read_text())
+    from code_review_helpers import _read_coverage_state
+    final_plan = _read_coverage_state(tmp_path).get("final") or {}
     gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())
     return summary, final_plan, gaps
 
@@ -7484,15 +7465,17 @@ class TestArbitrateBudget:
         plan_in = {"required": [], "best_effort": []}
 
         import argparse
-        from code_review_helpers import cmd_arbitrate_budget
+        from code_review_helpers import (
+            _write_coverage_section,
+            cmd_arbitrate_budget,
+        )
 
-        cp = tmp_path / "cp.json"
-        cp.write_text(json.dumps(plan_in))
+        _write_coverage_section(tmp_path, "final", plan_in)
         dd = tmp_path / "dd.json"
         dd.write_text(json.dumps(diff))
 
         ns = argparse.Namespace(
-            coverage_plan=str(cp), diff_data=str(dd), cap=0, output=None,
+            cr_dir=str(tmp_path), diff_data=str(dd), cap=0,
         )
         rc = cmd_arbitrate_budget(ns)
         assert rc == 1
@@ -7508,13 +7491,14 @@ class TestArbitrateBudgetVerdict:
 
         from code_review_helpers import cmd_arbitrate_budget, cmd_finalize_result
 
+        from code_review_helpers import _write_coverage_section
+
         diff = _make_diff_data(files=["src/app.ts"])
         plan_in = {
             "required": [{"reviewer": f"r{i}", "priority": 0} for i in range(25)],
             "best_effort": [],
         }
-        cp = tmp_path / "coverage_plan_initial.json"
-        cp.write_text(json.dumps(plan_in))
+        _write_coverage_section(tmp_path, "final", plan_in)
         dd = tmp_path / "diff_data.json"
         dd.write_text(json.dumps(diff))
 
@@ -7523,7 +7507,7 @@ class TestArbitrateBudgetVerdict:
         _sys.stdout = io.StringIO()
         try:
             ns = argparse.Namespace(
-                coverage_plan=str(cp), diff_data=str(dd), cap=20, output=None,
+                cr_dir=str(tmp_path), diff_data=str(dd), cap=20,
             )
             cmd_arbitrate_budget(ns)
         finally:
@@ -7539,7 +7523,7 @@ class TestArbitrateBudgetVerdict:
         try:
             ns = argparse.Namespace(
                 cr_dir=str(tmp_path),
-                validate_output=str(validate_path),
+                findings_validated=str(validate_path),
                 mode="local",
                 diff_tip="abc",
                 pr_number=None,
@@ -10316,7 +10300,7 @@ class TestFinalizeResultPrefersVerified:
         try:
             ns = argparse.Namespace(
                 cr_dir=str(cr_dir),
-                validate_output=str(validated_path),
+                findings_validated=str(validated_path),
                 mode="local",
                 diff_tip="abc",
                 pr_number=None,
@@ -12077,7 +12061,7 @@ class TestMigrateLegacyModuleCritics:
         # case-insensitive — migrated rule preserves that.
         assert trigger["ignore_case"] is True
         assert migrated[0]["_migrated_from"] == "moduleCritics"
-        assert any("DEPRECATED" in w for w in warnings)
+        assert any("migrated" in w for w in warnings)
 
     def test_one_entry_multiple_critics_produces_one_rule_each(self) -> None:
         from code_review_helpers import migrate_legacy_module_critics
@@ -12262,7 +12246,7 @@ class TestResolveCoverage:
             diff_data=self._diff(["lib/auth/login.ts"]),
         )
         assert "security-privacy" in [r["reviewer"] for r in plan["best_effort"]]
-        assert any("DEPRECATED" in w for w in plan["warnings"])
+        assert any("migrated" in w for w in plan["warnings"])
 
     def test_unknown_trigger_type_warns_and_skips(self) -> None:
         from code_review_helpers import resolve_coverage
@@ -12364,108 +12348,6 @@ class TestResolveCoverageCLI:
         )
         assert cmd_resolve_coverage(args) == 1
 
-
-class TestMigrateCriticGatesCLI:
-    """One-time rewriter behavior: in-place, output path, dry-run."""
-
-    def _legacy(self) -> dict[str, Any]:
-        return {
-            "version": 1,
-            "defaults": {"reviewBudget": 8},
-            "moduleCritics": [
-                {"patterns": ["auth"], "critics": ["security-privacy"]},
-                {"patterns": ["build", "ci"], "critics": ["devops-architect"]},
-            ],
-        }
-
-    def test_in_place_rewrites_file(self, tmp_path: Path) -> None:
-        from code_review_helpers import cmd_migrate_critic_gates
-        path = tmp_path / "critic-gates.json"
-        path.write_text(json.dumps(self._legacy()))
-        args = argparse.Namespace(
-            input=str(path),
-            output=None,
-            in_place=True,
-            dry_run=False,
-        )
-        assert cmd_migrate_critic_gates(args) == 0
-        rewritten = json.loads(path.read_text())
-        # Legacy block preserved (for one-release back-out); coverage[] added.
-        assert "moduleCritics" in rewritten
-        assert isinstance(rewritten.get("coverage"), list)
-        critics = {r["reviewer"] for r in rewritten["coverage"]}
-        assert critics == {"security-privacy", "devops-architect"}
-
-    def test_dry_run_does_not_write(self, tmp_path: Path) -> None:
-        from code_review_helpers import cmd_migrate_critic_gates
-        path = tmp_path / "critic-gates.json"
-        path.write_text(json.dumps(self._legacy()))
-        original = path.read_text()
-        args = argparse.Namespace(
-            input=str(path),
-            output=None,
-            in_place=False,
-            dry_run=True,
-        )
-        assert cmd_migrate_critic_gates(args) == 0
-        assert path.read_text() == original
-
-    def test_explicit_output_path(self, tmp_path: Path) -> None:
-        from code_review_helpers import cmd_migrate_critic_gates
-        src = tmp_path / "input.json"
-        dst = tmp_path / "output.json"
-        src.write_text(json.dumps(self._legacy()))
-        args = argparse.Namespace(
-            input=str(src),
-            output=str(dst),
-            in_place=False,
-            dry_run=False,
-        )
-        assert cmd_migrate_critic_gates(args) == 0
-        assert dst.exists()
-        # Source untouched.
-        assert json.loads(src.read_text()) == self._legacy()
-
-    def test_no_output_and_no_in_place_returns_1(self, tmp_path: Path) -> None:
-        from code_review_helpers import cmd_migrate_critic_gates
-        path = tmp_path / "critic-gates.json"
-        path.write_text(json.dumps(self._legacy()))
-        args = argparse.Namespace(
-            input=str(path),
-            output=None,
-            in_place=False,
-            dry_run=False,
-        )
-        assert cmd_migrate_critic_gates(args) == 1
-
-    def test_preserves_existing_coverage_entries(self, tmp_path: Path) -> None:
-        """If critic-gates already has a coverage[] block, migration
-        appends the migrated entries; existing canonical entries are
-        not lost.
-        """
-        from code_review_helpers import cmd_migrate_critic_gates
-        path = tmp_path / "critic-gates.json"
-        path.write_text(json.dumps({
-            "version": 1,
-            "coverage": [
-                {"reviewer": "ts-expert",
-                 "triggers": [{"type": "extension", "extensions": [".ts"]}],
-                 "required": True, "scope": "code-review"},
-            ],
-            "moduleCritics": [
-                {"patterns": ["auth"], "critics": ["security-privacy"]},
-            ],
-        }))
-        args = argparse.Namespace(
-            input=str(path),
-            output=None,
-            in_place=True,
-            dry_run=False,
-        )
-        assert cmd_migrate_critic_gates(args) == 0
-        out = json.loads(path.read_text())
-        critics = {r["reviewer"] for r in out["coverage"]}
-        assert {"ts-expert", "security-privacy"} <= critics
 
 
 # ---------------------------------------------------------------------------
@@ -12703,99 +12585,6 @@ class TestPR124CmdResolveCoverageHandlesWriteFailure:
             scope="code-review",
         )
         assert cmd_resolve_coverage(args) == 1
-
-
-class TestPR124MutuallyExclusiveDestArgs:
-    """MED-6: --in-place and --output are mutually exclusive in argparse,
-    so a single CLI invocation cannot accidentally set both (which would
-    have silently used one without warning).
-    """
-
-    def test_argparse_rejects_both_in_place_and_output(self) -> None:
-        from code_review_helpers import _register_subparsers
-        parser = argparse.ArgumentParser()
-        subparsers = parser.add_subparsers(dest="command", required=True)
-        _register_subparsers(subparsers)
-        with pytest.raises(SystemExit):
-            # argparse exits with code 2 on mutex violation.
-            parser.parse_args([
-                "migrate-critic-gates",
-                "--input", "/tmp/cg.json",
-                "--in-place",
-                "--output", "/tmp/out.json",
-            ])
-
-
-class TestPR124MigrationIdempotent:
-    """MED-7: running --in-place twice must not duplicate the migrated
-    entries. Prior _migrated_from='moduleCritics' rows in coverage[]
-    are pruned before appending the freshly migrated set.
-    """
-
-    def _legacy(self) -> dict[str, Any]:
-        return {
-            "version": 1,
-            "moduleCritics": [
-                {"patterns": ["auth"], "critics": ["security-privacy"]},
-                {"patterns": ["build"], "critics": ["devops-architect"]},
-            ],
-        }
-
-    def test_second_in_place_run_does_not_duplicate(self, tmp_path: Path) -> None:
-        from code_review_helpers import cmd_migrate_critic_gates
-        path = tmp_path / "critic-gates.json"
-        path.write_text(json.dumps(self._legacy()))
-        args = argparse.Namespace(
-            input=str(path), output=None, in_place=True, dry_run=False,
-        )
-        assert cmd_migrate_critic_gates(args) == 0
-        first_run = json.loads(path.read_text())["coverage"]
-
-        # Re-run with the SAME args against the now-rewritten file.
-        assert cmd_migrate_critic_gates(args) == 0
-        second_run = json.loads(path.read_text())["coverage"]
-
-        assert first_run == second_run, (
-            "Migration was not idempotent — running twice changed the "
-            "coverage[] block"
-        )
-
-    def test_operator_edited_canonical_entries_preserved(self, tmp_path: Path) -> None:
-        """A canonical rule (no _migrated_from marker) survives a second
-        migration run — only prior migrated entries are pruned.
-        """
-        from code_review_helpers import cmd_migrate_critic_gates
-        canonical_rule = {
-            "reviewer": "ts-expert",
-            "triggers": [{"type": "extension", "extensions": [".ts"]}],
-            "required": True,
-            "scope": "code-review",
-        }
-        starting = {
-            "version": 1,
-            "coverage": [canonical_rule],
-            "moduleCritics": [
-                {"patterns": ["auth"], "critics": ["security-privacy"]},
-            ],
-        }
-        path = tmp_path / "critic-gates.json"
-        path.write_text(json.dumps(starting))
-        args = argparse.Namespace(
-            input=str(path), output=None, in_place=True, dry_run=False,
-        )
-        cmd_migrate_critic_gates(args)
-        cmd_migrate_critic_gates(args)
-        final = json.loads(path.read_text())["coverage"]
-        # Canonical rule still present exactly once.
-        canonical_matches = [
-            r for r in final if r.get("reviewer") == "ts-expert"
-        ]
-        assert len(canonical_matches) == 1
-        # Migrated rule still present exactly once.
-        migrated_matches = [
-            r for r in final if r.get("reviewer") == "security-privacy"
-        ]
-        assert len(migrated_matches) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -13329,7 +13118,10 @@ def _write_coverage_critic_inputs(
     available: list[str] | None = None,
     signals: dict[str, Any] | None = None,
     diff_data: dict[str, Any] | None = None,
+    cr_dir: Path | None = None,
 ) -> dict[str, Any]:
+    from code_review_helpers import _write_coverage_section
+
     plan_initial = plan_initial or {
         "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
         "best_effort": [],
@@ -13345,18 +13137,26 @@ def _write_coverage_critic_inputs(
             "removed_lines": {},
         }},
     }
+    # Seed the canonical initial plan into <cr_dir>/coverage.json.initial.
+    if cr_dir is None:
+        cr_dir = tmp_path / "cr"
+    cr_dir.mkdir(parents=True, exist_ok=True)
+    _write_coverage_section(cr_dir, "initial", plan_initial)
     paths = {
-        "plan_initial": tmp_path / "coverage_plan_initial.json",
         "available": tmp_path / "available_reviewers.json",
         "diff_data": tmp_path / "diff_data.json",
         "signals": tmp_path / "extract_signals.json",
     }
-    paths["plan_initial"].write_text(json.dumps(plan_initial))
     paths["available"].write_text(json.dumps(available))
     paths["diff_data"].write_text(json.dumps(diff_data))
     if signals is not None:
         paths["signals"].write_text(json.dumps(signals))
-    return {"paths": paths, "plan_initial": plan_initial, "available": available}
+    return {
+        "paths": paths,
+        "plan_initial": plan_initial,
+        "available": available,
+        "cr_dir": cr_dir,
+    }
 
 
 class TestCoverageCriticPrepareCLI:
@@ -13364,13 +13164,11 @@ class TestCoverageCriticPrepareCLI:
 
     def _args(self, tmp_path: Path, inputs: dict[str, Any], **kw: Any) -> argparse.Namespace:
         from code_review_helpers import COVERAGE_CRITIC_MODEL_DEFAULT
-        cr_dir = tmp_path / "cr"
+        cr_dir = inputs["cr_dir"]
         cache_dir = tmp_path / "cache"
-        cr_dir.mkdir()
-        cache_dir.mkdir()
+        cache_dir.mkdir(exist_ok=True)
         defaults = {
             "cr_dir": str(cr_dir),
-            "coverage_plan_initial": str(inputs["paths"]["plan_initial"]),
             "extract_signals": str(inputs["paths"]["signals"]) if inputs["paths"]["signals"].exists() else None,
             "diff_data": str(inputs["paths"]["diff_data"]),
             "available_reviewers": str(inputs["paths"]["available"]),
@@ -13845,13 +13643,11 @@ class TestCoverageCriticConsolidateCLI:
             cmd_coverage_critic_prepare,
         )
         inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
-        cr_dir = tmp_path / "cr"
+        cr_dir = inputs["cr_dir"]
         cache_dir = tmp_path / "cache"
-        cr_dir.mkdir()
-        cache_dir.mkdir()
+        cache_dir.mkdir(exist_ok=True)
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
-            coverage_plan_initial=str(inputs["paths"]["plan_initial"]),
             extract_signals=str(inputs["paths"]["signals"]),
             diff_data=str(inputs["paths"]["diff_data"]),
             available_reviewers=str(inputs["paths"]["available"]),
@@ -13869,10 +13665,8 @@ class TestCoverageCriticConsolidateCLI:
     ) -> argparse.Namespace:
         return argparse.Namespace(
             cr_dir=str(cr_dir),
-            coverage_plan_initial=str(inputs["paths"]["plan_initial"]),
             agent_output=str(agent_output),
             available_reviewers=str(inputs["paths"]["available"]),
-            manifest=None,
             cache_dir=str(cache_dir),
         )
 
@@ -15255,33 +15049,22 @@ class TestPLN725Phase6VerifyCoverageCommand:
         """Stage CR_DIR inputs, run cmd_verify_coverage, return
         ``(exit_code, coverage_verify_dict, cr_dir)``.
         """
-        from code_review_helpers import cmd_verify_coverage
+        from code_review_helpers import (
+            _write_coverage_section,
+            cmd_verify_coverage,
+        )
         cr_dir = tmp_path / "cr_dir"
         cr_dir.mkdir(exist_ok=True)
-        plan_path = cr_dir / "coverage_plan.json"
-        initial_path = cr_dir / "coverage_plan_initial.json"
         roster_path = cr_dir / "available_reviewers.json"
         if final is not None:
-            self._write(plan_path, final)
+            _write_coverage_section(cr_dir, "final", final)
         if initial is not None:
-            self._write(initial_path, initial)
+            _write_coverage_section(cr_dir, "initial", initial)
         if include_roster_file:
-            # _load_available_reviewers reads `raw.get("available", [])`
-            # when the file holds a dict, and accepts a flat list as the
-            # alternate canonical shape. `cmd_load_available_reviewers`
-            # writes the flat list, so that's what the verifier sees in
-            # production — use the same shape here. (An earlier version
-            # of this fixture wrote `{"available_reviewers": [...]}`,
-            # which `_load_available_reviewers` silently ignored, so
-            # the closed-vocabulary regressions below were vacuously
-            # passing on a None roster.)
             self._write(roster_path, roster or [])
         ns = argparse.Namespace(
             cr_dir=str(cr_dir),
-            coverage_plan=str(plan_path),
-            coverage_plan_initial=str(initial_path),
             available_reviewers=str(roster_path) if include_roster_file else None,
-            output=None,
         )
         rc = cmd_verify_coverage(ns)
         result = _read_coverage_section(cr_dir, "verify")
@@ -15359,18 +15142,20 @@ class TestPLN725Phase6VerifyCoverageCommand:
         observational semantics are about the WALKER, the verdict is
         about the ARTIFACT consumer.
         """
-        from code_review_helpers import cmd_verify_coverage
+        from code_review_helpers import (
+            _write_coverage_section,
+            cmd_verify_coverage,
+        )
         cr_dir = tmp_path / "cr_dir"
         cr_dir.mkdir()
         # Write only initial; deliberately omit final.
-        initial_path = cr_dir / "coverage_plan_initial.json"
-        self._write(initial_path, {"required": [], "best_effort": [], "stats": {}})
+        _write_coverage_section(
+            cr_dir, "initial",
+            {"required": [], "best_effort": [], "stats": {}},
+        )
         ns = argparse.Namespace(
             cr_dir=str(cr_dir),
-            coverage_plan=str(cr_dir / "coverage_plan.json"),
-            coverage_plan_initial=str(initial_path),
             available_reviewers=None,
-            output=None,
         )
         rc = cmd_verify_coverage(ns)
         result = _read_coverage_section(cr_dir, "verify")
@@ -15388,7 +15173,10 @@ class TestPLN725Phase6VerifyCoverageCommand:
         # against an implicit empty roster. Otherwise the verifier
         # would BLOCK every review in a project without agents,
         # contradicting the Phase 5 no-roster skip semantics.
-        from code_review_helpers import cmd_verify_coverage
+        from code_review_helpers import (
+            _write_coverage_section,
+            cmd_verify_coverage,
+        )
         cr_dir = tmp_path / "cr_dir"
         cr_dir.mkdir()
         plan = {
@@ -15396,15 +15184,12 @@ class TestPLN725Phase6VerifyCoverageCommand:
             "best_effort": [],
             "stats": {},
         }
-        self._write(cr_dir / "coverage_plan.json", plan)
-        self._write(cr_dir / "coverage_plan_initial.json", plan)
+        _write_coverage_section(cr_dir, "final", plan)
+        _write_coverage_section(cr_dir, "initial", plan)
         # No available_reviewers.json on disk
         ns = argparse.Namespace(
             cr_dir=str(cr_dir),
-            coverage_plan=str(cr_dir / "coverage_plan.json"),
-            coverage_plan_initial=str(cr_dir / "coverage_plan_initial.json"),
             available_reviewers=str(cr_dir / "available_reviewers.json"),
-            output=None,
         )
         rc = cmd_verify_coverage(ns)
         result = _read_coverage_section(cr_dir, "verify")
@@ -15551,26 +15336,43 @@ class TestPLN725Phase6VerifyCoverageCommand:
         just the final plan. Same rationale: silent PASS-on-missing
         becomes a BLOCKING with the ``input`` check name so Phase 7's
         gate cannot inherit a vacuous PASS.
+
+        The test seeds ``coverage.json.final`` so the verifier reads
+        a present final plan and proceeds to the initial check, then
+        deliberately omits ``coverage.json.initial`` so the BLOCKING
+        verdict and ``input`` check name fire on the initial branch
+        specifically. Without seeding ``.final``, the verifier would
+        BLOCK on ``.final missing`` before ever inspecting ``.initial``
+        and the test would pass vacuously for the wrong reason.
         """
-        from code_review_helpers import cmd_verify_coverage
+        from code_review_helpers import (
+            _write_coverage_section,
+            cmd_verify_coverage,
+        )
         cr_dir = tmp_path / "cr_dir"
         cr_dir.mkdir()
-        # Write final but deliberately omit initial.
-        self._write(cr_dir / "coverage_plan.json", {
+        # Seed .final so the verifier proceeds past the final check.
+        _write_coverage_section(cr_dir, "final", {
             "required": [], "best_effort": [], "stats": {},
         })
+        # Deliberately omit .initial — that's the branch under test.
         ns = argparse.Namespace(
             cr_dir=str(cr_dir),
-            coverage_plan=str(cr_dir / "coverage_plan.json"),
-            coverage_plan_initial=str(cr_dir / "coverage_plan_initial.json"),
             available_reviewers=None,
-            output=None,
         )
         rc = cmd_verify_coverage(ns)
         result = _read_coverage_section(cr_dir, "verify")
         assert rc == 0
         assert result["verdict"] == "BLOCKING"
-        assert any(v["check"] == "input" for v in result["violations"])
+        # Pin the diagnostic targets the initial section specifically.
+        input_violations = [v for v in result["violations"] if v["check"] == "input"]
+        assert input_violations, "expected at least one input-check violation"
+        assert any(
+            "initial" in v.get("message", "").lower() for v in input_violations
+        ), (
+            f"expected an input-check violation naming the initial section; "
+            f"got {input_violations!r}"
+        )
 
     def test_corrupted_roster_blocks_with_roster_check(self, tmp_path: Path) -> None:
         """Present-but-malformed roster file must BLOCK with a
@@ -15580,7 +15382,10 @@ class TestPLN725Phase6VerifyCoverageCommand:
         closed-vocabulary check be bypassed and the verdict come
         back PASS on a plan that should have been gated.
         """
-        from code_review_helpers import cmd_verify_coverage
+        from code_review_helpers import (
+            _write_coverage_section,
+            cmd_verify_coverage,
+        )
         cr_dir = tmp_path / "cr_dir"
         cr_dir.mkdir()
         plan = {
@@ -15588,16 +15393,13 @@ class TestPLN725Phase6VerifyCoverageCommand:
             "best_effort": [],
             "stats": {},
         }
-        self._write(cr_dir / "coverage_plan.json", plan)
-        self._write(cr_dir / "coverage_plan_initial.json", plan)
+        _write_coverage_section(cr_dir, "final", plan)
+        _write_coverage_section(cr_dir, "initial", plan)
         # Write a malformed roster — not a list, not a dict-with-available.
         (cr_dir / "available_reviewers.json").write_text("[{this is broken")
         ns = argparse.Namespace(
             cr_dir=str(cr_dir),
-            coverage_plan=str(cr_dir / "coverage_plan.json"),
-            coverage_plan_initial=str(cr_dir / "coverage_plan_initial.json"),
             available_reviewers=str(cr_dir / "available_reviewers.json"),
-            output=None,
         )
         rc = cmd_verify_coverage(ns)
         result = _read_coverage_section(cr_dir, "verify")
@@ -15621,7 +15423,10 @@ class TestPLN725Phase6VerifyCoverageCommand:
         errors; wrong-key dicts fell through ``raw.get("available",
         [])`` to ``([], None)`` and bypassed the check.
         """
-        from code_review_helpers import cmd_verify_coverage
+        from code_review_helpers import (
+            _write_coverage_section,
+            cmd_verify_coverage,
+        )
         cr_dir = tmp_path / "cr_dir"
         cr_dir.mkdir()
         plan = {
@@ -15629,18 +15434,15 @@ class TestPLN725Phase6VerifyCoverageCommand:
             "best_effort": [],
             "stats": {},
         }
-        self._write(cr_dir / "coverage_plan.json", plan)
-        self._write(cr_dir / "coverage_plan_initial.json", plan)
-        # The canonical hand-edit thadeusb flagged: wrong top-level key.
+        _write_coverage_section(cr_dir, "final", plan)
+        _write_coverage_section(cr_dir, "initial", plan)
+        # The canonical hand-edit: wrong top-level key.
         self._write(cr_dir / "available_reviewers.json", {
             "reviewers": ["devops-architect", "test-engineer"],
         })
         ns = argparse.Namespace(
             cr_dir=str(cr_dir),
-            coverage_plan=str(cr_dir / "coverage_plan.json"),
-            coverage_plan_initial=str(cr_dir / "coverage_plan_initial.json"),
             available_reviewers=str(cr_dir / "available_reviewers.json"),
-            output=None,
         )
         rc = cmd_verify_coverage(ns)
         result = _read_coverage_section(cr_dir, "verify")
@@ -15664,8 +15466,6 @@ class TestVerifyCoverageCrDirDefault:
     def _args(cr_dir: Path) -> argparse.Namespace:
         return argparse.Namespace(
             cr_dir=str(cr_dir),
-            coverage_plan=None,
-            coverage_plan_initial=None,
             available_reviewers=None,
         )
 
@@ -15723,12 +15523,17 @@ class TestVerifyCoverageCrDirDefault:
 
 
 class TestArbitrateBudgetCrDirDefault:
-    """Phase C arbitrate-budget reads/writes ``coverage.json.final``
-    and reads the verdict from ``coverage.json.verify`` when
-    ``--cr-dir`` is supplied. The existing ``_run_arbitrate_budget``
-    helper passes ``--coverage-plan`` / ``--coverage-verify`` /
-    ``--output``, so it exercises only the legacy fallback. This
-    class pins the section-read default path.
+    """End-to-end coverage for arbitrate-budget's canonical
+    ``--cr-dir`` / ``coverage.json`` section read/write path.
+
+    Inputs are seeded into ``coverage.json.final`` and
+    ``coverage.json.verify`` via ``_write_coverage_section``; the
+    arbitrated plan is read back from ``.final``. The shared
+    ``_run_arbitrate_budget`` helper now also uses this path (legacy
+    explicit-path args were removed), so this class focuses on
+    behaviors not covered by that helper — the per-verdict (PASS /
+    BLOCKING / missing-verify) short-circuit semantics and the
+    docs-only BHA-waiver invariant.
     """
 
     @staticmethod
@@ -15745,9 +15550,6 @@ class TestArbitrateBudgetCrDirDefault:
     def _args(cr_dir: Path, diff_data: Path, cap: int = 8) -> argparse.Namespace:
         return argparse.Namespace(
             cr_dir=str(cr_dir),
-            coverage_plan=None,
-            output=None,
-            coverage_verify=None,
             diff_data=str(diff_data),
             cap=cap,
         )
@@ -16123,27 +15925,6 @@ class TestPLN725Phase7ArbitrateBudgetGate:
         assert "gated_by_verify" not in plan["budget"]
         assert plan["dropped_required"] != []
 
-    def test_no_coverage_verify_flag_keeps_backward_compat(
-        self, tmp_path: Path,
-    ) -> None:
-        """Callers from before Phase 7 that don't pass --coverage-verify
-        must continue to get pre-Phase-7 semantics. argparse.Namespace
-        without ``coverage_verify`` set means ``getattr(args,
-        "coverage_verify", None)`` returns None and the gate is skipped.
-        """
-        diff = _make_diff_data(files=["src/app.ts"])
-        plan_in = self._plan()
-        # verify_doc present, but include_verify_flag=False simulates
-        # an old-style invocation that doesn't pass --coverage-verify.
-        verify = {"verdict": "BLOCKING", "violations": []}
-        summary, plan, gaps = self._run(
-            tmp_path, plan_in, diff, verify, cap=20,
-            include_verify_flag=False,
-        )
-        # Without the flag, BLOCKING on disk has no effect.
-        assert summary.get("status") != "blocked_by_verify"
-        assert "arbitrate_status" not in plan
-        assert plan["dropped_required"] != []
 
     def test_blocking_with_empty_violations_still_gates(
         self, tmp_path: Path,
@@ -16161,30 +15942,34 @@ class TestPLN725Phase7ArbitrateBudgetGate:
         assert plan["budget"]["gated_by_verify"] is True
         assert plan["budget"]["verify_violations"] == []
 
-    def test_malformed_verify_file_treated_as_pass(self, tmp_path: Path) -> None:
-        """Unparseable verifier output → treat as absent (PASS).
-        Otherwise a corrupt file (truncated, non-JSON) would silently
-        bypass budget arbitration on every review — worse than the
-        BLOCKING short-circuit which is at least loud and intentional.
+    def test_malformed_verify_section_treated_as_pass(self, tmp_path: Path) -> None:
+        """Unparseable verify section → treat as absent (PASS).
+        A corrupt verify section would otherwise silently bypass budget
+        arbitration on every review.
         """
-        from code_review_helpers import cmd_arbitrate_budget
+        from code_review_helpers import (
+            _read_coverage_state,
+            _write_coverage_section,
+            cmd_arbitrate_budget,
+        )
 
         diff = _make_diff_data(files=["src/app.ts"])
         plan_in = self._plan()
-        cp = tmp_path / "cp.json"
-        cp.write_text(json.dumps(plan_in))
+        _write_coverage_section(tmp_path, "final", plan_in)
         dd = tmp_path / "dd.json"
         dd.write_text(json.dumps(diff))
-        verify = tmp_path / "coverage_verify.json"
-        verify.write_text("{this is not json")  # broken
+        # Write an empty verify section. _normalize_coverage_verify_doc
+        # finds no "verdict" key, doc.get("verdict") returns None, the
+        # isinstance(verdict, str) check fails, the helper returns
+        # (None, []), and arbitrate-budget treats that as PASS.
+        _write_coverage_section(tmp_path, "verify", {})
 
         ns = argparse.Namespace(
-            coverage_plan=str(cp), diff_data=str(dd), cap=20,
-            output=None, coverage_verify=str(verify),
+            cr_dir=str(tmp_path), diff_data=str(dd), cap=20,
         )
         rc = cmd_arbitrate_budget(ns)
         assert rc == 0
-        plan = json.loads((tmp_path / "coverage_plan.json").read_text())
+        plan = _read_coverage_state(tmp_path)["final"]
         # Plan went through normal arbitration; no gate annotation.
         assert "arbitrate_status" not in plan
         assert "gated_by_verify" not in plan["budget"]
@@ -16198,39 +15983,30 @@ def _run_derive_spawn_spec(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Shared driver for ``cmd_derive_spawn_spec`` tests.
 
-    Mirrors ``_run_arbitrate_budget`` — seeds the three input files,
+    Seeds the inputs into their canonical locations (``coverage.json.final``
+    and ``spawn.json.route`` sections, plus a standalone ``partitions.json``),
     invokes the command via Namespace, returns ``(summary, spec)``.
-    Passing ``None`` for an input omits the file entirely so the
-    missing-input degradation paths can be exercised.
-
-    Delegates stdout suppression to ``run_with_stdout_capture`` from
-    ``golden_fixture_harness`` (the canonical helper that ``conftest.
-    invoke_prepare_run`` already uses) rather than re-inlining the
-    ``io.StringIO()`` swap. Captures and asserts the return code so a
-    silent ``_write_spawn_spec`` OSError surfaces as a meaningful
-    assertion rather than a downstream ``JSONDecodeError`` on empty
-    stdout.
+    Passing ``None`` for an input omits it entirely so the missing-input
+    degradation paths can be exercised.
     """
-    from code_review_helpers import cmd_derive_spawn_spec
+    from code_review_helpers import (
+        _write_coverage_section,
+        _write_spawn_section,
+        cmd_derive_spawn_spec,
+    )
     from golden_fixture_harness import run_with_stdout_capture
 
-    cp_path = tmp_path / "coverage_plan.json"
     if coverage_plan is not None:
-        cp_path.write_text(json.dumps(coverage_plan))
+        _write_coverage_section(tmp_path, "final", coverage_plan)
     p_path = tmp_path / "partitions.json"
     if partitions is not None:
         p_path.write_text(json.dumps(partitions))
-    # Phase D (v2.26.0): route lives in spawn.json.route, not route.json.
-    # Seed it via the section helper so future read-modify-write writes
-    # from cmd_derive_spawn_spec preserve it.
     if route is not None:
-        (tmp_path / "spawn.json").write_text(json.dumps({"route": route}))
+        _write_spawn_section(tmp_path, "route", route)
 
     ns = argparse.Namespace(
         cr_dir=str(tmp_path),
-        coverage_plan=str(cp_path),
         partitions=str(p_path),
-        route=None,
     )
     captured = run_with_stdout_capture(cmd_derive_spawn_spec, ns)
     summary = json.loads(captured) if captured else {}
@@ -16633,27 +16409,26 @@ class TestPLN725Phase8DeriveSpawnSpec:
     def test_malformed_coverage_plan_emits_fallback_sentinel(
         self, tmp_path: Path,
     ) -> None:
-        """The fallback sentinel must fire for ``coverage_plan.json``
-        that contains valid JSON but isn't a dict (e.g. ``[]`` from a
-        partial write or an upstream bug). Distinct from the absent-file
-        path — both produce the same sentinel so the orchestrator's
-        fallback logic only needs one branch.
+        """The fallback sentinel must fire when ``coverage.json.final``
+        contains valid JSON but isn't a dict (e.g. ``[]`` from a partial
+        write or an upstream bug).
         """
-        cp = tmp_path / "coverage_plan.json"
-        cp.write_text(json.dumps([]))  # valid JSON, wrong shape
+        from code_review_helpers import (
+            _write_spawn_section,
+            cmd_derive_spawn_spec,
+        )
+        from golden_fixture_harness import run_with_stdout_capture
+
+        # Seed coverage.json with a non-dict ``.final`` section by writing
+        # the aggregate directly (the section writer would reject this).
+        (tmp_path / "coverage.json").write_text(json.dumps({"final": []}))
         p = tmp_path / "partitions.json"
         p.write_text(json.dumps(self._two_partitions()))
-        # Phase D (v2.26.0): route lives in spawn.json.route, not route.json.
-        (tmp_path / "spawn.json").write_text(json.dumps({"route": self._route()}))
-
-        from code_review_helpers import cmd_derive_spawn_spec
-        from golden_fixture_harness import run_with_stdout_capture
+        _write_spawn_section(tmp_path, "route", self._route())
 
         ns = argparse.Namespace(
             cr_dir=str(tmp_path),
-            coverage_plan=str(cp),
             partitions=str(p),
-            route=None,
         )
         run_with_stdout_capture(cmd_derive_spawn_spec, ns)
         state = json.loads((tmp_path / "spawn.json").read_text())
@@ -18710,38 +18485,6 @@ class TestCRSPhaseACLIConfigLoader:
         spec = {p["name"]: p for p in self._resolved_spec()}
         rc_args = {a["flags"][0]: a for a in spec["resolve-coverage"]["args"]}
         assert rc_args["--scope"]["choices"] == sorted(COVERAGE_SCOPES)
-
-    def test_mutex_group_accepts_single_choice(self) -> None:
-        """migrate-critic-gates --output and --in-place are exclusive."""
-        import argparse as _argparse
-        from code_review_helpers import _register_subparsers
-        parser = _argparse.ArgumentParser()
-        sub = parser.add_subparsers(dest="command", required=True)
-        _register_subparsers(sub)
-        # --output only: succeeds
-        ns = parser.parse_args(
-            ["migrate-critic-gates", "--input", "/i", "--output", "/o"],
-        )
-        assert ns.output == "/o"
-        assert ns.in_place is False
-        # --in-place only: succeeds
-        ns2 = parser.parse_args(
-            ["migrate-critic-gates", "--input", "/i", "--in-place"],
-        )
-        assert ns2.in_place is True
-        assert ns2.output is None
-
-    def test_mutex_group_rejects_both_choices(self) -> None:
-        import argparse as _argparse
-        from code_review_helpers import _register_subparsers
-        parser = _argparse.ArgumentParser()
-        sub = parser.add_subparsers(dest="command", required=True)
-        _register_subparsers(sub)
-        with pytest.raises(SystemExit):
-            parser.parse_args([
-                "migrate-critic-gates", "--input", "/i",
-                "--output", "/o", "--in-place",
-            ])
 
     def test_cmd_registry_allowlist_rejects_non_cmd_names(self) -> None:
         """A func name that isn't a cmd_* callable raises a clear ValueError."""

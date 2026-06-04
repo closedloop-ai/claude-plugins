@@ -693,7 +693,7 @@
       "args": [
         "--cr-dir",
         "{cr_dir}",
-        "--validate-output",
+        "--findings-validated",
         "{cr_dir}/findings_validated.json",
         "--mode",
         "{mode}",
@@ -770,7 +770,7 @@
       "args": [
         "--review-result",
         "{cr_dir}/review_result.json",
-        "--validate-output",
+        "--findings-validated",
         "{cr_dir}/findings_validated.json"
       ],
       "stdout": "{cr_dir}/verdict.json",

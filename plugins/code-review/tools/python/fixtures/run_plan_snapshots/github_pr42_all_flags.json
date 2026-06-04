@@ -695,7 +695,7 @@
     "args": [
       "--cr-dir",
       "/tmp/cr_dir",
-      "--validate-output",
+      "--findings-validated",
       "/tmp/cr_dir/findings_validated.json",
       "--mode",
       "github",
@@ -773,7 +773,7 @@
     "args": [
       "--review-result",
       "/tmp/cr_dir/review_result.json",
-      "--validate-output",
+      "--findings-validated",
       "/tmp/cr_dir/findings_validated.json"
     ],
     "stdout": "/tmp/cr_dir/verdict.json",
