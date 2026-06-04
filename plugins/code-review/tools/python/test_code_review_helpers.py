@@ -7413,13 +7413,14 @@ class TestPrepareRun:
         assert "stage_15c_verify_coverage" in by_id[
             "stage_16_arbitrate_budget"
         ]["depends_on"]
-        # Phase 7 wires the verdict gate: --coverage-verify must point
-        # at the file stage_15c produces. Without this arg, BLOCKING
-        # verdicts would silently fall through to normal arbitration.
+        # Phase C (v2.27.0): the verdict gate now reads from
+        # coverage.json.verify via --cr-dir; the legacy --coverage-verify
+        # explicit path is no longer wired on the stage args (but still
+        # accepted by the cmd for callers/tests passing an explicit
+        # file). Without --cr-dir, BLOCKING verdicts would silently
+        # fall through to normal arbitration.
         args = by_id["stage_16_arbitrate_budget"]["args"]
-        assert "--coverage-verify" in args
-        verify_idx = args.index("--coverage-verify")
-        assert args[verify_idx + 1].endswith("/coverage_verify.json")
+        assert "--cr-dir" in args
         # on_failure stays at "abort" — the BLOCKING gate is the
         # graceful path (exit 0). A failure here is a real I/O or
         # shape error that should halt the pipeline.
@@ -11979,7 +11980,10 @@ class TestResolveCoverage:
 
 
 class TestResolveCoverageCLI:
-    """End-to-end CLI: cmd_resolve_coverage writes coverage_plan_initial.json."""
+    """End-to-end CLI: cmd_resolve_coverage writes coverage.json.initial
+    (Phase C, v2.27.0; pre-v2.27.0 wrote a standalone
+    coverage_plan_initial.json).
+    """
 
     def test_writes_plan_and_emits_summary(self, tmp_path: Path) -> None:
         from code_review_helpers import cmd_resolve_coverage
@@ -12006,7 +12010,8 @@ class TestResolveCoverageCLI:
         rc = cmd_resolve_coverage(args)
         assert rc == 0
 
-        plan = json.loads((cr_dir / "coverage_plan_initial.json").read_text())
+        state = json.loads((cr_dir / "coverage.json").read_text())
+        plan = state["initial"]
         assert plan["scope"] == "code-review"
         assert "ts-expert" in [r["reviewer"] for r in plan["required"]]
         assert "generated_at" in plan
@@ -12336,19 +12341,23 @@ class TestPR124CmdResolveCoverageHandlesWriteFailure:
     def test_write_failure_returns_1(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        import code_review_helpers as crh
         from code_review_helpers import cmd_resolve_coverage
         cr_dir = tmp_path / "cr"
         diff_path = tmp_path / "diff_data.json"
         diff_path.write_text(json.dumps({"files_to_review": []}))
 
-        original_open = open
+        # Phase C (v2.27.0): cmd_resolve_coverage writes the initial
+        # plan via ``_write_coverage_section``. Patch that helper to
+        # raise OSError so the cmd's try/except surfaces exit 1 — the
+        # behavior the docstring promises on a structurally valid run
+        # whose underlying write fails.
+        def deny_section_write(*_a: Any, **_kw: Any) -> None:
+            raise OSError("disk full")
 
-        def deny_writes(path: Any, *a: Any, **kw: Any) -> Any:
-            if "w" in (a[0] if a else kw.get("mode", "r")) and "coverage_plan_initial" in str(path):
-                raise OSError("disk full")
-            return original_open(path, *a, **kw)
-
-        monkeypatch.setattr("builtins.open", deny_writes)
+        monkeypatch.setattr(
+            crh, "_write_coverage_section", deny_section_write,
+        )
 
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
@@ -12965,6 +12974,43 @@ class TestMergeCriticAdditions:
         assert [r["reviewer"] for r in final["best_effort"]] == ["auth-security-expert"]
 
 
+def _read_coverage_section(cr_dir: Path, section: str) -> dict[str, Any]:
+    """Read one section of ``<cr_dir>/coverage.json``; ``{}`` if absent.
+
+    Phase C (v2.27.0) consolidated four legacy standalone artifacts
+    (coverage_plan_initial.json, coverage_critic_manifest.json,
+    coverage_plan.json, coverage_verify.json) into sections of one
+    aggregate. Tests that previously read each standalone file now
+    read the corresponding section via this helper.
+    """
+    state_path = cr_dir / "coverage.json"
+    if not state_path.exists():
+        return {}
+    state = json.loads(state_path.read_text())
+    if not isinstance(state, dict):
+        return {}
+    value = state.get(section)
+    return value if isinstance(value, dict) else {}
+
+
+def _coverage_section_present(cr_dir: Path, section: str) -> bool:
+    """Return True iff ``<cr_dir>/coverage.json`` has the named section.
+
+    The Phase C replacement for ``(cr_dir / "coverage_plan.json").exists()``
+    and friends — "section absent" is the new "file absent."
+    """
+    state_path = cr_dir / "coverage.json"
+    if not state_path.exists():
+        return False
+    try:
+        state = json.loads(state_path.read_text())
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(state, dict):
+        return False
+    return isinstance(state.get(section), dict)
+
+
 def _write_coverage_critic_inputs(
     tmp_path: Path,
     plan_initial: dict[str, Any] | None = None,
@@ -13034,7 +13080,7 @@ class TestCoverageCriticPrepareCLI:
         assert cmd_coverage_critic_prepare(args) == 0
 
         cr_dir = Path(args.cr_dir)
-        manifest = json.loads((cr_dir / "coverage_critic_manifest.json").read_text())
+        manifest = _read_coverage_section(cr_dir, "critic")
         assert manifest["status"] == "needs_agent"
         assert manifest["cache_key"]
         assert Path(manifest["input_path"]).exists()
@@ -13072,12 +13118,12 @@ class TestCoverageCriticPrepareCLI:
         assert cmd_coverage_critic_prepare(args) == 0
 
         cr_dir = Path(args.cr_dir)
-        manifest = json.loads((cr_dir / "coverage_critic_manifest.json").read_text())
+        manifest = _read_coverage_section(cr_dir, "critic")
         assert manifest["status"] == "skipped"
         assert manifest["reason"] == "no-critic"
 
         # coverage_plan.json equals the initial plan + critic_additions=0
-        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        final = _read_coverage_section(cr_dir, "final")
         assert final["stats"]["critic_additions"] == 0
         # critic_status must be present and distinguishable from
         # "ok" / "fail_closed" so Phase 4 consumers can detect the
@@ -13115,15 +13161,13 @@ class TestCoverageCriticPrepareCLI:
 
         cr_dir = Path(args.cr_dir)
         # Manifest: skipped + no-roster reason.
-        manifest = json.loads(
-            (cr_dir / "coverage_critic_manifest.json").read_text(),
-        )
+        manifest = _read_coverage_section(cr_dir, "critic")
         assert manifest["status"] == "skipped"
         assert manifest["reason"] == "no-roster"
         # Final plan: initial plan + critic_status="skipped" — same
         # shape as --no-critic so downstream consumers (Phase 6/7)
         # don't need to special-case the "no roster" path.
-        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        final = _read_coverage_section(cr_dir, "final")
         assert final["critic_status"] == "skipped"
         assert final["critic_errors"] == []
         assert final["stats"]["critic_additions"] == 0
@@ -13155,15 +13199,13 @@ class TestCoverageCriticPrepareCLI:
         assert cmd_coverage_critic_prepare(args) == 0
 
         cr_dir = Path(args.cr_dir)
-        manifest = json.loads(
-            (cr_dir / "coverage_critic_manifest.json").read_text(),
-        )
+        manifest = _read_coverage_section(cr_dir, "critic")
         # Same shape as the missing-file path — operator can't tell from
         # the manifest whether the empty came from "no file" or "empty
         # file", and shouldn't have to.
         assert manifest["status"] == "skipped"
         assert manifest["reason"] == "no-roster"
-        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        final = _read_coverage_section(cr_dir, "final")
         assert final["critic_status"] == "skipped"
         # The dispatch path MUST NOT have started: no input bundle.
         assert not (cr_dir / "coverage_critic_input.json").exists()
@@ -13205,14 +13247,12 @@ class TestCoverageCriticPrepareCLI:
         assert cmd_coverage_critic_prepare(args) == 0
 
         cr_dir = Path(args.cr_dir)
-        manifest = json.loads(
-            (cr_dir / "coverage_critic_manifest.json").read_text(),
-        )
+        manifest = _read_coverage_section(cr_dir, "critic")
         assert manifest["status"] == "skipped"
         assert manifest["reason"] == "no-candidates"
         # consolidate's no-op fires on status "skipped" regardless of
         # reason — distinct telemetry without behavioural divergence.
-        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        final = _read_coverage_section(cr_dir, "final")
         assert final["critic_status"] == "skipped"
         assert not (cr_dir / "coverage_critic_input.json").exists()
 
@@ -13236,8 +13276,10 @@ class TestCoverageCriticPrepareCLI:
         # guarded `if manifest_path.exists():` form was vacuously true
         # because the condition never holds in the expected flow).
         cr_dir = Path(args.cr_dir)
-        assert not (cr_dir / "coverage_critic_manifest.json").exists()
-        assert not (cr_dir / "coverage_plan.json").exists()
+        # Phase C (v2.27.0): the malformed-roster early exit must
+        # leave coverage.json without ``critic`` or ``final`` sections.
+        assert not _coverage_section_present(cr_dir, "critic")
+        assert not _coverage_section_present(cr_dir, "final")
 
     def test_cache_hit_serves_directly(self, tmp_path: Path) -> None:
         from code_review_helpers import (
@@ -13283,11 +13325,10 @@ class TestCoverageCriticPrepareCLI:
 
         assert cmd_coverage_critic_prepare(args) == 0
 
-        manifest = json.loads(
-            (Path(args.cr_dir) / "coverage_critic_manifest.json").read_text(),
-        )
+        cr_dir = Path(args.cr_dir)
+        manifest = _read_coverage_section(cr_dir, "critic")
         assert manifest["status"] == "cache_hit"
-        final = json.loads((Path(args.cr_dir) / "coverage_plan.json").read_text())
+        final = _read_coverage_section(cr_dir, "final")
         assert "accessibility-expert" in [r["reviewer"] for r in final["best_effort"]]
         # written_at metadata stripped from canonical output
         assert "written_at" not in final
@@ -13351,9 +13392,7 @@ class TestCoverageCriticPrepareCLI:
         inputs["paths"]["available"].write_text(json.dumps(["accessibility-expert"]))
 
         assert cmd_coverage_critic_prepare(args) == 0
-        manifest = json.loads(
-            (Path(args.cr_dir) / "coverage_critic_manifest.json").read_text(),
-        )
+        manifest = _read_coverage_section(Path(args.cr_dir), "critic")
         # Must miss — not cache_hit — so consolidate runs and re-checks
         # the new roster instead of silently shipping a stale plan.
         assert manifest["status"] == "needs_agent"
@@ -13421,7 +13460,7 @@ class TestCoverageCriticConsolidateCLI:
         args = self._consolidate_args(cr_dir, inputs, agent_output, cache_dir)
         assert cmd_coverage_critic_consolidate(args) == 0
 
-        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        final = _read_coverage_section(cr_dir, "final")
         assert final["critic_status"] == "ok"
         assert "accessibility-expert" in [r["reviewer"] for r in final["best_effort"]]
         assert final["stats"]["critic_additions"] == 1
@@ -13447,7 +13486,7 @@ class TestCoverageCriticConsolidateCLI:
         args = self._consolidate_args(cr_dir, inputs, agent_output, cache_dir)
         assert cmd_coverage_critic_consolidate(args) == 0
 
-        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        final = _read_coverage_section(cr_dir, "final")
         assert final["critic_status"] == "fail_closed"
         # Final plan equals initial — no critic additions merged.
         assert final["stats"]["critic_additions"] == 0
@@ -13470,7 +13509,7 @@ class TestCoverageCriticConsolidateCLI:
         missing = cr_dir / "does_not_exist.json"
         args = self._consolidate_args(cr_dir, inputs, missing, cache_dir)
         assert cmd_coverage_critic_consolidate(args) == 0
-        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        final = _read_coverage_section(cr_dir, "final")
         assert final["critic_status"] == "fail_closed"
         assert (cr_dir / "agent_coverage-critic-failed.json").exists()
 
@@ -13486,7 +13525,7 @@ class TestCoverageCriticConsolidateCLI:
         ]}))
         args = self._consolidate_args(cr_dir, inputs, agent_output, cache_dir)
         assert cmd_coverage_critic_consolidate(args) == 0
-        final = json.loads((cr_dir / "coverage_plan.json").read_text())
+        final = _read_coverage_section(cr_dir, "final")
         assert final["critic_status"] == "ok"
         assert "accessibility-expert" in [r["reviewer"] for r in final["best_effort"]]
         assert final["stats"]["critic_additions"] == 1
@@ -13516,7 +13555,10 @@ class TestStage15Alignment:
     def test_stage_15_required_args_present(self) -> None:
         stage = self._stage("stage_15_coverage_critic")
         args = stage["args"]
-        assert "--coverage-plan-initial" in args
+        # Phase C (v2.27.0): --coverage-plan-initial is now optional;
+        # the initial plan defaults to coverage.json.initial via
+        # --cr-dir.
+        assert "--cr-dir" in args
         assert "--available-reviewers" in args
         assert "--diff-data" in args
         assert "--diff-tip" in args
@@ -13526,18 +13568,10 @@ class TestStage15Alignment:
 
     def test_stage_15_expected_outputs_match_what_prepare_writes(self) -> None:
         stage = self._stage("stage_15_coverage_critic")
-        # Prepare writes ONLY the manifest. coverage_plan.json is the
-        # consolidate half's output (stage_15b — Phase 4).
-        assert stage["expected_outputs"] == [
-            stage["expected_outputs"][0],
-        ]
-        assert stage["expected_outputs"][0].endswith(
-            "/coverage_critic_manifest.json",
-        )
-        assert not any(
-            p.endswith("/coverage_plan.json")
-            for p in stage["expected_outputs"]
-        )
+        # Phase C (v2.27.0): prepare writes the manifest into
+        # coverage.json.critic (and the final plan into .final on
+        # cache_hit / skipped paths). Both live in the same aggregate.
+        assert stage["expected_outputs"] == ["/tmp/cr_dir/coverage.json"]
 
 
 class TestPLN725Phase4StageGraph:
@@ -13616,22 +13650,23 @@ class TestPLN725Phase4StageGraph:
     def test_stage_15b_args_match_consolidate_cli(self) -> None:
         stage = self._stage("stage_15b_coverage_critic_consolidate")
         args = stage["args"]
+        # Phase C (v2.27.0): --coverage-plan-initial and --manifest are
+        # now optional (default reads come from coverage.json sections).
         for required in (
-            "--cr-dir", "--coverage-plan-initial", "--agent-output",
-            "--available-reviewers", "--manifest", "--cache-dir",
+            "--cr-dir", "--agent-output",
+            "--available-reviewers", "--cache-dir",
         ):
             assert required in args, f"missing {required}"
         agent_output_idx = args.index("--agent-output")
         # Same namespace-collision reasoning as stage_11b above.
         assert args[agent_output_idx + 1].endswith("/pln725_coverage_critic.json")
         assert "/agent_" not in args[agent_output_idx + 1]
-        manifest_idx = args.index("--manifest")
-        assert args[manifest_idx + 1].endswith("/coverage_critic_manifest.json")
 
     def test_stage_15b_expected_outputs_is_canonical_plan(self) -> None:
         stage = self._stage("stage_15b_coverage_critic_consolidate")
+        # Phase C (v2.27.0): final plan lives in coverage.json.final.
         assert any(
-            p.endswith("/coverage_plan.json")
+            p.endswith("/coverage.json")
             for p in stage["expected_outputs"]
         )
 
@@ -14815,7 +14850,7 @@ class TestPLN725Phase6VerifyCoverageCommand:
             output=None,
         )
         rc = cmd_verify_coverage(ns)
-        result = json.loads((cr_dir / "coverage_verify.json").read_text())
+        result = _read_coverage_section(cr_dir, "verify")
         return rc, result, cr_dir
 
     def test_writes_pass_verdict_and_exits_zero(self, tmp_path: Path) -> None:
@@ -14904,7 +14939,7 @@ class TestPLN725Phase6VerifyCoverageCommand:
             output=None,
         )
         rc = cmd_verify_coverage(ns)
-        result = json.loads((cr_dir / "coverage_verify.json").read_text())
+        result = _read_coverage_section(cr_dir, "verify")
         assert rc == 0
         assert result["verdict"] == "BLOCKING"
         assert any(v["check"] == "input" for v in result["violations"])
@@ -14938,7 +14973,7 @@ class TestPLN725Phase6VerifyCoverageCommand:
             output=None,
         )
         rc = cmd_verify_coverage(ns)
-        result = json.loads((cr_dir / "coverage_verify.json").read_text())
+        result = _read_coverage_section(cr_dir, "verify")
         assert rc == 0
         assert result["verdict"] == "PASS"
 
@@ -15098,7 +15133,7 @@ class TestPLN725Phase6VerifyCoverageCommand:
             output=None,
         )
         rc = cmd_verify_coverage(ns)
-        result = json.loads((cr_dir / "coverage_verify.json").read_text())
+        result = _read_coverage_section(cr_dir, "verify")
         assert rc == 0
         assert result["verdict"] == "BLOCKING"
         assert any(v["check"] == "input" for v in result["violations"])
@@ -15131,7 +15166,7 @@ class TestPLN725Phase6VerifyCoverageCommand:
             output=None,
         )
         rc = cmd_verify_coverage(ns)
-        result = json.loads((cr_dir / "coverage_verify.json").read_text())
+        result = _read_coverage_section(cr_dir, "verify")
         assert rc == 0
         assert result["verdict"] == "BLOCKING"
         checks = {v["check"] for v in result["violations"]}
@@ -15174,7 +15209,7 @@ class TestPLN725Phase6VerifyCoverageCommand:
             output=None,
         )
         rc = cmd_verify_coverage(ns)
-        result = json.loads((cr_dir / "coverage_verify.json").read_text())
+        result = _read_coverage_section(cr_dir, "verify")
         assert rc == 0
         assert result["verdict"] == "BLOCKING"
         checks = {v["check"] for v in result["violations"]}
@@ -15218,17 +15253,19 @@ class TestPLN725Phase6StageGraph:
 
     def test_stage_15c_expected_outputs_is_coverage_verify_json(self) -> None:
         stage = self._stage("stage_15c_verify_coverage")
+        # Phase C (v2.27.0): verdict lives in coverage.json.verify.
         assert any(
-            p.endswith("/coverage_verify.json") for p in stage["expected_outputs"]
+            p.endswith("/coverage.json") for p in stage["expected_outputs"]
         )
 
     def test_stage_15c_passes_roster_and_initial_plan_args(self) -> None:
-        # All three inputs (final plan, initial plan, roster) must be
-        # passed — without them the verifier can't run the closed-
-        # vocabulary or additivity checks.
+        # Phase C (v2.27.0): the verifier reads both plans from
+        # coverage.json sections by default; only --cr-dir and the
+        # roster need to be wired on the stage args (the legacy
+        # --coverage-plan / --coverage-plan-initial paths remain
+        # accepted as overrides but the production stage uses defaults).
         stage = self._stage("stage_15c_verify_coverage")
-        assert "--coverage-plan" in stage["args"]
-        assert "--coverage-plan-initial" in stage["args"]
+        assert "--cr-dir" in stage["args"]
         assert "--available-reviewers" in stage["args"]
 
     def test_stage_15c_enabled(self) -> None:
@@ -17524,48 +17561,58 @@ class TestExtractSignalsConsolidateCacheHitNoOp:
 
 
 class TestCoverageCriticConsolidateCacheHitAndSkippedNoOp:
-    """PLN-725 Phase 4: when prepare emitted cache_hit or skipped
-    coverage_plan.json is already on disk; consolidate must exit 0
-    without trying to read agent_coverage_critic.json.
+    """PLN-725 Phase 4 / CRS Phase C (v2.27.0): when prepare emitted
+    cache_hit or skipped, ``coverage.json``'s ``.final`` section is
+    already populated; consolidate must exit 0 without trying to read
+    agent_coverage_critic.json. Phase C consolidated the legacy
+    ``coverage_plan.json`` + ``coverage_critic_manifest.json`` artifacts
+    into sections of ``coverage.json``.
     """
 
     def _seed(self, tmp_path: Path, status: str) -> tuple[Path, Path]:
+        from code_review_helpers import (
+            _write_coverage_section as _write_section,
+        )
         cr_dir = tmp_path / "cr"
         cr_dir.mkdir()
-        plan_initial = cr_dir / "coverage_plan_initial.json"
-        plan_initial.write_text(json.dumps({
+        initial_plan = {
             "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
             "best_effort": [],
             "warnings": [],
             "stats": {"required_count": 1, "best_effort_count": 0},
-        }))
+        }
+        # Phase C: seed the .initial section instead of writing a
+        # standalone coverage_plan_initial.json. The cmd's legacy
+        # ``--coverage-plan-initial`` arg accepts an explicit path, but
+        # the default path reads from coverage.json.initial.
+        _write_section(cr_dir, "initial", initial_plan)
         available = cr_dir / "available_reviewers.json"
         available.write_text(json.dumps(["accessibility-expert"]))
-        # Seed the canonical output.
-        (cr_dir / "coverage_plan.json").write_text(json.dumps({
-            "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
-            "best_effort": [],
-            "warnings": [],
-            "stats": {"required_count": 1, "best_effort_count": 0},
+        # Seed the .final section — same shape as the legacy
+        # ``coverage_plan.json`` produced by prepare's cache-hit /
+        # --no-critic paths.
+        _write_section(cr_dir, "final", {
+            **initial_plan,
             "critic_status": status,
             "critic_errors": [],
-        }))
-        # Seed the manifest with the given status.
-        (cr_dir / "coverage_critic_manifest.json").write_text(json.dumps({
+        })
+        # Seed the .critic section (manifest) with the given status.
+        _write_section(cr_dir, "critic", {
             "status": status,
             "cache_key": "abc",
             "model": "sonnet",
-        }))
-        return cr_dir, plan_initial
+        })
+        return cr_dir, cr_dir / "coverage.json"
 
-    def _args(self, cr_dir: Path, plan_initial: Path) -> Any:
+    def _args(self, cr_dir: Path, _plan_initial_unused: Path) -> Any:
         import argparse
+        # Phase C: drop the legacy --coverage-plan-initial and
+        # --manifest explicit paths — defaults read from
+        # coverage.json.{initial,critic}.
         return argparse.Namespace(
             cr_dir=str(cr_dir),
-            coverage_plan_initial=str(plan_initial),
             agent_output=str(cr_dir / "agent_coverage_critic.json"),
             available_reviewers=str(cr_dir / "available_reviewers.json"),
-            manifest=str(cr_dir / "coverage_critic_manifest.json"),
             cache_dir=None,
         )
 
@@ -17577,7 +17624,7 @@ class TestCoverageCriticConsolidateCacheHitAndSkippedNoOp:
         assert cmd_coverage_critic_consolidate(
             self._args(cr_dir, plan_initial),
         ) == 0
-        canonical = json.loads((cr_dir / "coverage_plan.json").read_text())
+        canonical = _read_coverage_section(cr_dir, "final")
         # Status preserved from prepare's write — consolidate did NOT
         # rewrite the file with critic_status="fail_closed".
         assert canonical["critic_status"] == "cache_hit"
@@ -17591,7 +17638,7 @@ class TestCoverageCriticConsolidateCacheHitAndSkippedNoOp:
         assert cmd_coverage_critic_consolidate(
             self._args(cr_dir, plan_initial),
         ) == 0
-        canonical = json.loads((cr_dir / "coverage_plan.json").read_text())
+        canonical = _read_coverage_section(cr_dir, "final")
         assert canonical["critic_status"] == "skipped"
         assert not (cr_dir / "agent_coverage-critic-failed.json").exists()
 
@@ -17604,17 +17651,19 @@ class TestCoverageCriticConsolidateCacheHitAndSkippedNoOp:
         # operator-visible degradation signal is emitted.
         from code_review_helpers import cmd_coverage_critic_consolidate
         cr_dir, plan_initial = self._seed(tmp_path, "needs_agent")
-        # Remove the seeded coverage_plan.json so we don't confuse
-        # "needs_agent prepare also writes coverage_plan.json" — it
-        # does not, the seeded file is left over from setup.
-        (cr_dir / "coverage_plan.json").unlink()
+        # Phase C: clear the seeded .final section so we don't confuse
+        # "needs_agent prepare also writes .final" — it does not; the
+        # seeded section is left over from setup.
+        state = json.loads((cr_dir / "coverage.json").read_text())
+        state.pop("final", None)
+        (cr_dir / "coverage.json").write_text(json.dumps(state))
         assert cmd_coverage_critic_consolidate(
             self._args(cr_dir, plan_initial),
         ) == 0
         # Fail-closed finding emitted because agent_coverage_critic.json
         # doesn't exist.
         assert (cr_dir / "agent_coverage-critic-failed.json").exists()
-        canonical = json.loads((cr_dir / "coverage_plan.json").read_text())
+        canonical = _read_coverage_section(cr_dir, "final")
         assert canonical["critic_status"] == "fail_closed"
 
 

@@ -521,8 +521,7 @@
             "--coverage-plan-initial"
           ],
           "dest": "coverage_plan_initial",
-          "default": null,
-          "required": true
+          "default": null
         },
         {
           "flags": [
@@ -603,8 +602,7 @@
             "--coverage-plan-initial"
           ],
           "dest": "coverage_plan_initial",
-          "default": null,
-          "required": true
+          "default": null
         },
         {
           "flags": [
@@ -655,29 +653,20 @@
             "--coverage-plan"
           ],
           "dest": "coverage_plan",
-          "default": null,
-          "required": true
+          "default": null
         },
         {
           "flags": [
             "--coverage-plan-initial"
           ],
           "dest": "coverage_plan_initial",
-          "default": null,
-          "required": true
+          "default": null
         },
         {
           "flags": [
             "--available-reviewers"
           ],
           "dest": "available_reviewers",
-          "default": null
-        },
-        {
-          "flags": [
-            "--output"
-          ],
-          "dest": "output",
           "default": null
         }
       ]
@@ -1562,11 +1551,17 @@
       "args": [
         {
           "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null
+        },
+        {
+          "flags": [
             "--coverage-plan"
           ],
           "dest": "coverage_plan",
-          "default": null,
-          "required": true
+          "default": null
         },
         {
           "flags": [
@@ -1617,8 +1612,7 @@
             "--coverage-plan"
           ],
           "dest": "coverage_plan",
-          "default": null,
-          "required": true
+          "default": null
         },
         {
           "flags": [

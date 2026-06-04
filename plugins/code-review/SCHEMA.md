@@ -303,7 +303,7 @@ in what order, against what cap." See PLN-719 Section 5.
 
 Produced by `stage_19b_derive_spawn_spec` (PLN-725 Phase 8; consolidated
 into `spawn.json` under the `spec` section in v2.26.0) from the
-post-arbitrate `coverage_plan.json` + `partitions.json` + `spawn.json.route`;
+post-arbitrate `coverage.json.final` + `partitions.json` + `spawn.json.route`;
 consumed by the `stage_20_spawn_reviewers` orchestrator. Closes the
 deterministic-coverage loop — before Phase 8 the coverage plan was
 ignored at spawn time.
@@ -469,10 +469,10 @@ finding — best-effort omissions are budget-driven, not coverage gaps.
 | 11 | extract-signals (plan 05)    | `extract-signals`        | `signals.json`                                                |
 | 12 | hygiene                      | `hygiene`                | `hygiene.json`                                                |
 | 13 | validate-companions (plan 06)| `validate-companions`    | `companion_findings.json`                                     |
-| 14 | resolve-coverage (plan 05)   | `resolve-coverage`       | `coverage_plan_initial.json`                                  |
-| 15 | coverage-critic (plan 05)    | `coverage-critic`        | `coverage_critic.json`                                        |
-| 15c| verify-coverage (plan 05)    | `verify-coverage`        | `coverage_verify.json`                                        |
-| 16 | arbitrate-budget             | `arbitrate-budget`       | `coverage_plan.json`, `coverage_gaps.json`                    |
+| 14 | resolve-coverage (plan 05)   | `resolve-coverage`       | `coverage.json` (`initial` section)                            |
+| 15 | coverage-critic (plan 05)    | `coverage-critic`        | `coverage.json` (`critic` section, `final` on cache_hit/skipped) |
+| 15c| verify-coverage (plan 05)    | `verify-coverage`        | `coverage.json` (`verify` section)                             |
+| 16 | arbitrate-budget             | `arbitrate-budget`       | `coverage.json` (`final` section, in-place), `coverage_gaps.json` |
 | 17 | partition                    | `partition`              | `partitions.json`, `patches_p<N>.txt`                          |
 | 18 | compute-hashes               | `compute-hashes`         | `hashes.json`                                                 |
 | 19 | cache-check                  | `cache-check`            | `cache_result.json`                                            |
