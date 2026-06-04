@@ -1158,6 +1158,118 @@ class TestValidationGatesCoverageFinalRequired:
         assert "required_sections" not in gate
 
 
+class TestEvaluateValidationGate:
+    """The walker contract documented in start.md step 7 says gates
+    enforce both ``outputs`` existence AND any declared
+    ``required_sections``. ``evaluate_validation_gate`` is the
+    deterministic enforcer the walker shells into so the contract
+    cannot drift between the markdown spec and the implementation.
+    """
+
+    def _gate(self, tmp_path: Path, after_stage: str) -> dict[str, Any]:
+        from code_review_helpers import _build_validation_gates
+        return next(
+            g for g in _build_validation_gates(str(tmp_path / "cr"))
+            if g["after_stage"] == after_stage
+        )
+
+    def test_passes_when_outputs_present_and_no_required_sections(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import evaluate_validation_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        (cr / "diff_data.json").write_text("{}")
+        passed, reason = evaluate_validation_gate(
+            self._gate(tmp_path, "stage_05_parse_diff"),
+        )
+        assert passed is True
+        assert reason is None
+
+    def test_fails_when_output_missing(self, tmp_path: Path) -> None:
+        from code_review_helpers import evaluate_validation_gate
+        (tmp_path / "cr").mkdir()
+        passed, reason = evaluate_validation_gate(
+            self._gate(tmp_path, "stage_05_parse_diff"),
+        )
+        assert passed is False
+        assert reason is not None
+        assert "diff_data.json" in reason
+
+    def test_fails_when_required_section_missing(self, tmp_path: Path) -> None:
+        """The pre-fix walker bug: coverage.json exists on disk (stage_14
+        wrote .initial), but stages 15/15b/15c/16 failed to populate
+        .final. Bare file-existence would pass; the section check must
+        fail so the pipeline aborts before stage_19b reads a
+        non-existent ``final`` plan.
+        """
+        from code_review_helpers import evaluate_validation_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        # Stage 14 wrote .initial but stage 16 never wrote .final.
+        (cr / "coverage.json").write_text(json.dumps({
+            "initial": {"required": [], "best_effort": []},
+        }))
+        passed, reason = evaluate_validation_gate(
+            self._gate(tmp_path, "stage_16_arbitrate_budget"),
+        )
+        assert passed is False
+        assert reason is not None
+        assert "final" in reason
+        assert "coverage.json" in reason
+
+    def test_passes_when_required_section_present(self, tmp_path: Path) -> None:
+        from code_review_helpers import evaluate_validation_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        (cr / "coverage.json").write_text(json.dumps({
+            "initial": {"required": [], "best_effort": []},
+            "final": {"required": [], "best_effort": [], "budget": {}},
+        }))
+        passed, reason = evaluate_validation_gate(
+            self._gate(tmp_path, "stage_16_arbitrate_budget"),
+        )
+        assert passed is True
+        assert reason is None
+
+    def test_fails_when_required_section_is_not_dict(self, tmp_path: Path) -> None:
+        """A scalar/null at the section key indicates a corrupt write
+        (e.g. an aborted atomic-replace); should not be treated as
+        ``the section was populated.``
+        """
+        from code_review_helpers import evaluate_validation_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        (cr / "coverage.json").write_text(json.dumps({
+            "initial": {"required": []},
+            "final": None,
+        }))
+        passed, reason = evaluate_validation_gate(
+            self._gate(tmp_path, "stage_16_arbitrate_budget"),
+        )
+        assert passed is False
+        assert reason is not None
+        assert "final" in reason
+
+    def test_glob_outputs_are_not_treated_as_literal_paths(
+        self, tmp_path: Path,
+    ) -> None:
+        """``stage_20_spawn_reviewers`` declares ``agent_*.json``; the
+        all-required-outputs check belongs in a separate enforcer that
+        knows the spawn-spec roster. ``evaluate_validation_gate`` must
+        skip glob entries so it never erroneously passes on a literal
+        path named ``agent_*.json``.
+        """
+        from code_review_helpers import evaluate_validation_gate
+        cr = tmp_path / "cr"
+        cr.mkdir()
+        gate = self._gate(tmp_path, "stage_20_spawn_reviewers")
+        passed, reason = evaluate_validation_gate(gate)
+        # No literal outputs, no required sections → trivially passes.
+        assert passed is True
+        assert reason is None
+
+
 # ---------------------------------------------------------------------------
 # Partition post-processing
 # ---------------------------------------------------------------------------

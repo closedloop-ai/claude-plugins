@@ -9445,6 +9445,52 @@ def _build_validation_gates(cr_dir: str) -> list[dict[str, Any]]:
     ]
 
 
+def evaluate_validation_gate(
+    gate: dict[str, Any],
+) -> tuple[bool, str | None]:
+    """Evaluate a single validation gate against the filesystem.
+
+    Returns ``(passed, reason)``. ``passed`` is True only when every
+    file in ``outputs`` exists AND every section listed in
+    ``required_sections`` is present as a top-level dict key in its
+    file. ``reason`` is None on pass, a short diagnostic on fail
+    (suitable for the walker to surface to the operator).
+
+    Glob entries in ``outputs`` (e.g. ``agent_*.json``) are intentionally
+    NOT expanded here — the walker's existing ``all_required_outputs_present``
+    semantics handle those separately. This helper enforces literal-path
+    outputs plus the section-presence contract.
+    """
+    for path_str in gate.get("outputs", []):
+        if "*" in path_str or "?" in path_str:
+            continue
+        if not Path(path_str).is_file():
+            return False, f"missing output: {path_str}"
+
+    required_sections = gate.get("required_sections") or {}
+    for path_str, section_keys in required_sections.items():
+        path = Path(path_str)
+        if not path.is_file():
+            return False, f"missing section-bearing file: {path_str}"
+        try:
+            with open(path) as f:
+                state = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            return False, f"unreadable section-bearing file {path_str}: {exc}"
+        if not isinstance(state, dict):
+            return False, f"section-bearing file {path_str} is not a JSON object"
+        for key in section_keys:
+            if key not in state:
+                return False, f"{path_str} missing required section {key!r}"
+            if not isinstance(state[key], dict):
+                return False, (
+                    f"{path_str} section {key!r} is not a JSON object "
+                    f"(got {type(state[key]).__name__})"
+                )
+
+    return True, None
+
+
 def cmd_prepare_run(args: argparse.Namespace) -> int:
     """Emit ``run_plan.json`` describing the full review pipeline.
 
