@@ -1484,7 +1484,7 @@
     },
     {
       "name": "derive-spawn-spec",
-      "help": "Translate post-arbitrate coverage_plan.json + partitions.json + route.json into spawn_spec.json for stage_20_spawn_reviewers",
+      "help": "Translate post-arbitrate coverage_plan.json + partitions.json + spawn.json.route into spawn.json.spec for stage_20_spawn_reviewers",
       "func": "cmd_derive_spawn_spec",
       "args": [
         {
@@ -1518,7 +1518,7 @@
     },
     {
       "name": "verify-spawn",
-      "help": "Compare spawn_spec.agents[] against on-disk agent_*.json; emit coverage-gap findings for missing required agents",
+      "help": "Compare spawn.json.spec.agents[] against on-disk agent_*.json; emit coverage-gap findings for missing required agents and write the tally to spawn.json.verification",
       "func": "cmd_verify_spawn",
       "args": [
         {
@@ -1532,7 +1532,7 @@
     },
     {
       "name": "render-fleet-summary",
-      "help": "Render the operator-facing Reviewer Fleet markdown block from spawn_spec.json + spawn_verification.json + route.json",
+      "help": "Render the operator-facing Reviewer Fleet markdown block from spawn.json (.spec + .verification + .route sections)",
       "func": "cmd_render_fleet_summary",
       "args": [
         {

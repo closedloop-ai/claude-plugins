@@ -152,9 +152,12 @@ COVERAGE_CORE_REQUIRED: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 # PLN-725 Phase 8 — Reviewer spawn spec
 # ---------------------------------------------------------------------------
-# These constants describe the ``spawn_spec.json`` wire format produced by
-# ``stage_19b_derive_spawn_spec`` and consumed by ``stage_20_spawn_reviewers``.
-# See SCHEMA.md §6b for the full envelope shape.
+# These constants describe the ``spawn.json`` ``.spec`` section wire format
+# produced by ``stage_19b_derive_spawn_spec`` and consumed by
+# ``stage_20_spawn_reviewers``. Phase D (v2.26.0) consolidated the legacy
+# standalone ``spawn_spec.json`` artifact into a section of ``spawn.json``;
+# the descriptor shape itself is unchanged. See SCHEMA.md §6b for the full
+# envelope shape.
 
 # Top-level ``arbitrate_status``. ``ok`` = normal arbitration ran;
 # ``blocked_by_verify`` = Phase 7 BLOCKING gate fired upstream and the

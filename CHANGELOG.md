@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.26.1
+
+#### Fixed
+- Phase D docstring/comment trailing cleanup. The v2.26.0 consolidation rewrote the code paths but missed several adjacent docstrings, block comments, and operator-facing prose that still named the pre-Phase-D standalone artifacts. Concretely: `cmd_derive_spawn_spec`, `cmd_verify_spawn`, and `cmd_render_fleet_summary` docstrings now reference `spawn.json` sections (`.route` / `.spec` / `.verification`) instead of standalone `route.json` / `spawn_spec.json` / `spawn_verification.json` filenames; the `derive-spawn-spec` section header block comment and `_spawn_resolve_models` / `_spawn_bha_model` helper docstrings track the same rename; `start.md`'s `stage_19b` and `stage_20` notes, the static-table fallback paragraph, and the `stage_16` note's Phase 8 reference all point at the consolidated file; `cli.json` help strings for `derive-spawn-spec`, `verify-spawn`, and `render-fleet-summary` describe the section shape; `code_review_schema.py`'s Phase 8 reviewer-spawn-spec preamble notes the consolidation; affected test class and method docstrings (`TestPLN725Phase8DeriveSpawnSpec`, `TestPLN725Phase8VerifySpawn`, `TestPLN725Phase9ModelRoutingFromSpec`, plus several individual `test_*` docstrings under `TestPLN725Phase9RenderFleetSummary*`) match current behavior.
+- `cmd_route` docstring no longer claims stdout is suppressed when `--cr-dir` is supplied. The implementation always emits the routing block to stdout (the legacy `helpers route ... > route.json` shell idiom still works for callers that haven't switched); the pre-fix docstring read "the routing block is also emitted to stdout when `--cr-dir` is omitted," which a developer would reasonably interpret as "stdout is suppressed when `--cr-dir` is set." Now states the unconditional behavior directly.
+- `_write_spawn_section` no longer accepts `payload=None`. The pre-fix signature had `payload: dict[str, Any] | None` with a docstring describing a "clear a section" use case driven by `cmd_verify_spawn`'s no-op paths, but no caller ever passes `None` — every path writes a populated dict. Type tightened to `dict[str, Any]` and the docstring trimmed accordingly.
+
+#### Added
+- `TestCmdRouteCrDir` — three regression tests pinning the canonical Phase D production path (`cmd_route --cr-dir`) that had zero coverage in v2.26.0. `test_writes_route_section_to_spawn_json` asserts the `.route` section materializes with the canonical key set; `test_stdout_still_emits_with_cr_dir` asserts the legacy stdout summary still fires unconditionally; `test_preserves_existing_sections` seeds a stale `.spec` section before running the cmd and confirms it survives the route write, exercising the atomic read-modify-write contract that the three-stage Phase D pipeline depends on.
+
 ### code-review v2.26.0
 
 #### Changed
