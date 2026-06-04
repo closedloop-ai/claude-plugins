@@ -243,7 +243,7 @@ The chosen mode + count surface in `partitions.json` (`partition_mode`, `partiti
 
 ## Override Flow (PLN-773)
 
-When the verifier dismisses a finding the operator believes is real, three flags falsify the dismissal without editing code:
+When the verifier dismisses a finding the operator believes is real, two flags falsify the dismissal without editing code:
 
 | Flag | Effect |
 |---|---|

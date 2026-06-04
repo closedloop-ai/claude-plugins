@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.27.4
+
+#### Fixed
+- `README.md` Override Flow section lead-in now reads "two flags" (was "three"). v2.27.2 removed the `--no-verify` row from the table but left the count stale, so the operator docs disagreed with the table beneath them.
+
 ### code-review v2.27.3
 
 #### Fixed
