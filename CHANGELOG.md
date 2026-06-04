@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.28.1
+
+#### Fixed (cr-52603 review-feedback follow-ups for v2.28.0)
+- `TestArbitrateBudgetCrDirDefault` class docstring no longer claims `_run_arbitrate_budget` "exercises only the legacy fallback". v2.28.0 refactored the helper to seed via `_write_coverage_section` and pass `--cr-dir`, so the docstring's stated rationale was invalidated by the same diff. Class docstring rewritten to describe the per-verdict short-circuit semantics this class actually pins.
+- `test_unreadable_coverage_plan_initial_blocks` now actually exercises its stated contract. v2.28.0 removed the explicit-path fallback from `cmd_verify_coverage`, but the test still wrote a standalone `coverage_plan.json` and asserted BLOCKING — passing vacuously because the absence of `coverage.json.final` (not `.initial`) also triggers BLOCKING with `check: input`. The test now seeds `coverage.json.final` via `_write_coverage_section`, omits `.initial`, and asserts the violation message names the `initial` section so the regression named in the title is the regression the test actually catches.
+- Inline comment on `test_malformed_verify_section_treated_as_pass` no longer claims `isinstance(doc, dict)` is the gate that causes PASS. `_write_coverage_section(tmp_path, "verify", {})` writes a valid empty dict; the actual PASS-through path is `verdict = doc.get("verdict")` → `None` → `not isinstance(verdict, str)` → returns `(None, [])`. Comment rewritten to name the correct branch in `_normalize_coverage_verify_doc`.
+- "legacy tag mapping" inline comment in `cmd_verdict` test renamed to "legacy string mapping (CHANGES_REQUESTED → 'decline')". v2.28.0 deleted the `<pr_verdict>` XML tag and the `tag` field; the assertion checks `_CANONICAL_TO_LEGACY_VERDICT` output, which is a string mapping, not a tag.
+- Trailing newlines restored on `github_pr42_all_flags.json` and `local_no_pr_empty_flags.json`. v2.28.0's regeneration step dropped them; POSIX text-file convention requires them and the missing newline created permanent diff-noise on every future regeneration.
+
 ### code-review v2.28.0
 
 Evidence-based audit of every backward-compat / legacy surface in the plugin. Each surface was kept only if grep found a real external consumer; everything else was deleted. MINOR bump (not PATCH) because the helper CLI surface contracts change: subcommand removal, flag rename, and verdict-artifact field set — consistent with prior monorepo precedent for similar consolidation work (v2.25.0 / v2.26.0 / v2.27.0).

@@ -7274,7 +7274,7 @@ class TestVerdictReadsEnvelope:
             _sys.stdout = old_stdout
 
         assert result["canonical_verdict"] == "CHANGES_REQUESTED"
-        assert result["verdict"] == "decline"  # legacy tag mapping
+        assert result["verdict"] == "decline"  # legacy string mapping (CHANGES_REQUESTED → "decline")
         assert "Auth bypass" in result["reason"]
 
     def test_falls_back_to_validate_output(self, tmp_path: Path) -> None:
@@ -15336,24 +15336,43 @@ class TestPLN725Phase6VerifyCoverageCommand:
         just the final plan. Same rationale: silent PASS-on-missing
         becomes a BLOCKING with the ``input`` check name so Phase 7's
         gate cannot inherit a vacuous PASS.
+
+        The test seeds ``coverage.json.final`` so the verifier reads
+        a present final plan and proceeds to the initial check, then
+        deliberately omits ``coverage.json.initial`` so the BLOCKING
+        verdict and ``input`` check name fire on the initial branch
+        specifically. Without seeding ``.final``, the verifier would
+        BLOCK on ``.final missing`` before ever inspecting ``.initial``
+        and the test would pass vacuously for the wrong reason.
         """
-        from code_review_helpers import cmd_verify_coverage
+        from code_review_helpers import (
+            _write_coverage_section,
+            cmd_verify_coverage,
+        )
         cr_dir = tmp_path / "cr_dir"
         cr_dir.mkdir()
-        # Write final but deliberately omit initial.
-        self._write(cr_dir / "coverage_plan.json", {
+        # Seed .final so the verifier proceeds past the final check.
+        _write_coverage_section(cr_dir, "final", {
             "required": [], "best_effort": [], "stats": {},
         })
+        # Deliberately omit .initial — that's the branch under test.
         ns = argparse.Namespace(
             cr_dir=str(cr_dir),
             available_reviewers=None,
-            output=None,
         )
         rc = cmd_verify_coverage(ns)
         result = _read_coverage_section(cr_dir, "verify")
         assert rc == 0
         assert result["verdict"] == "BLOCKING"
-        assert any(v["check"] == "input" for v in result["violations"])
+        # Pin the diagnostic targets the initial section specifically.
+        input_violations = [v for v in result["violations"] if v["check"] == "input"]
+        assert input_violations, "expected at least one input-check violation"
+        assert any(
+            "initial" in v.get("message", "").lower() for v in input_violations
+        ), (
+            f"expected an input-check violation naming the initial section; "
+            f"got {input_violations!r}"
+        )
 
     def test_corrupted_roster_blocks_with_roster_check(self, tmp_path: Path) -> None:
         """Present-but-malformed roster file must BLOCK with a
@@ -15504,12 +15523,17 @@ class TestVerifyCoverageCrDirDefault:
 
 
 class TestArbitrateBudgetCrDirDefault:
-    """Phase C arbitrate-budget reads/writes ``coverage.json.final``
-    and reads the verdict from ``coverage.json.verify`` when
-    ``--cr-dir`` is supplied. The existing ``_run_arbitrate_budget``
-    helper passes ``--coverage-plan`` / ``--coverage-verify`` /
-    ``--output``, so it exercises only the legacy fallback. This
-    class pins the section-read default path.
+    """End-to-end coverage for arbitrate-budget's canonical
+    ``--cr-dir`` / ``coverage.json`` section read/write path.
+
+    Inputs are seeded into ``coverage.json.final`` and
+    ``coverage.json.verify`` via ``_write_coverage_section``; the
+    arbitrated plan is read back from ``.final``. The shared
+    ``_run_arbitrate_budget`` helper now also uses this path (legacy
+    explicit-path args were removed), so this class focuses on
+    behaviors not covered by that helper — the per-verdict (PASS /
+    BLOCKING / missing-verify) short-circuit semantics and the
+    docs-only BHA-waiver invariant.
     """
 
     @staticmethod
@@ -15934,9 +15958,11 @@ class TestPLN725Phase7ArbitrateBudgetGate:
         _write_coverage_section(tmp_path, "final", plan_in)
         dd = tmp_path / "dd.json"
         dd.write_text(json.dumps(diff))
-        # Inject a non-dict verdict into the verify section (the section
-        # reader returns None when isinstance(..., dict) is False).
-        _write_coverage_section(tmp_path, "verify", {})  # empty dict → no verdict key
+        # Write an empty verify section. _normalize_coverage_verify_doc
+        # finds no "verdict" key, doc.get("verdict") returns None, the
+        # isinstance(verdict, str) check fails, the helper returns
+        # (None, []), and arbitrate-budget treats that as PASS.
+        _write_coverage_section(tmp_path, "verify", {})
 
         ns = argparse.Namespace(
             cr_dir=str(tmp_path), diff_data=str(dd), cap=20,
