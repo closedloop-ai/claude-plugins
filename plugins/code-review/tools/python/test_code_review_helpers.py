@@ -18161,6 +18161,29 @@ class TestCRSPhaseADeclarativeStagesConfig:
                     f"argv={argv!r}, exit={exc.code}",
                 ) from exc
 
+    def test_stage_14_resolve_coverage_wires_critic_gates(self) -> None:
+        """stage_14 must pass --critic-gates or production runs silently
+        ignore operator-configured coverage[] / moduleCritics[] rules.
+
+        cmd_resolve_coverage falls back to _EMPTY_CRITIC_GATES when the
+        arg is absent, with no error and no warning — so a regression
+        would be invisible until an operator notices their configured
+        critics aren't routing. The canonical path is the on-disk
+        settings file at .closedloop-ai/settings/critic-gates.json.
+        """
+        from code_review_helpers import _build_run_plan_stages
+        stages = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        by_id = {s["id"]: s for s in stages}
+        rc_args = by_id["stage_14_resolve_coverage"]["args"]
+        assert "--critic-gates" in rc_args, (
+            f"stage_14_resolve_coverage must pass --critic-gates; got {rc_args!r}"
+        )
+        idx = rc_args.index("--critic-gates")
+        assert rc_args[idx + 1] == ".closedloop-ai/settings/critic-gates.json", (
+            f"--critic-gates must point to the canonical settings path; "
+            f"got {rc_args[idx + 1]!r}"
+        )
+
     def test_pr_flag_omitted_when_pr_number_is_none(self) -> None:
         """The @pr_flag splat must produce zero args when pr_number is None."""
         from code_review_helpers import _build_run_plan_stages

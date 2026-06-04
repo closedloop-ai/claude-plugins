@@ -320,7 +320,9 @@
         "--diff-data",
         "{cr_dir}/diff_data.json",
         "--extract-signals",
-        "{cr_dir}/extract_signals.json"
+        "{cr_dir}/extract_signals.json",
+        "--critic-gates",
+        ".closedloop-ai/settings/critic-gates.json"
       ],
       "stdout": null,
       "expected_outputs": [
