@@ -367,7 +367,7 @@
     },
     {
       "name": "resolve-coverage",
-      "help": "Deterministic resolver: critic-gates + diff + signals -> coverage_plan_initial.json",
+      "help": "Deterministic resolver: critic-gates + diff + signals -> coverage.json.initial (Phase C, v2.27.0; pre-v2.27.0 wrote a standalone coverage_plan_initial.json)",
       "func": "cmd_resolve_coverage",
       "args": [
         {
@@ -470,7 +470,7 @@
     },
     {
       "name": "coverage-critic-prepare",
-      "help": "Prepare coverage-critic agent input; serve from coverage_critic/ cache on hit.",
+      "help": "Prepare coverage-critic agent input; serve from coverage_critic/ cache on hit. Reads initial plan from coverage.json.initial; writes critic manifest to coverage.json.critic and (on cache_hit/skipped) the final plan to coverage.json.final.",
       "func": "cmd_coverage_critic_prepare",
       "args": [
         {
@@ -484,8 +484,7 @@
           "flags": [
             "--coverage-plan-initial"
           ],
-          "required": true,
-          "help": "Path to coverage_plan_initial.json (from resolve-coverage)"
+          "help": "Legacy explicit path to coverage_plan_initial.json. Phase C (v2.27.0) reads the initial plan from coverage.json.initial by default; this arg overrides that for callers passing a standalone file."
         },
         {
           "flags": [
@@ -538,13 +537,13 @@
             "--no-critic"
           ],
           "action": "store_true",
-          "help": "Skip the LLM critic entirely; write coverage_plan_initial as the final plan."
+          "help": "Skip the LLM critic entirely; copy the initial plan straight through into coverage.json.final with critic_status=\"skipped\"."
         }
       ]
     },
     {
       "name": "coverage-critic-consolidate",
-      "help": "Validate agent critic output; merge into coverage_plan.json + cache.",
+      "help": "Validate agent critic output; merge into coverage.json.final + cache.",
       "func": "cmd_coverage_critic_consolidate",
       "args": [
         {
@@ -558,8 +557,7 @@
           "flags": [
             "--coverage-plan-initial"
           ],
-          "required": true,
-          "help": "Path to coverage_plan_initial.json"
+          "help": "Legacy explicit path to coverage_plan_initial.json. Phase C (v2.27.0) reads the initial plan from coverage.json.initial by default."
         },
         {
           "flags": [
@@ -579,7 +577,7 @@
           "flags": [
             "--manifest"
           ],
-          "help": "Path to coverage_critic_manifest.json (defaults to <cr-dir>/coverage_critic_manifest.json)"
+          "help": "Legacy explicit path to coverage_critic_manifest.json. Phase C (v2.27.0) reads the manifest from coverage.json.critic by default."
         },
         {
           "flags": [
@@ -591,7 +589,7 @@
     },
     {
       "name": "verify-coverage",
-      "help": "Deterministic verifier for coverage_plan.json. Emits coverage_verify.json with verdict PASS|BLOCKING and per-check violations; emits a HIGH system finding on BLOCKING.",
+      "help": "Deterministic verifier for coverage.json.final. Writes verdict PASS|BLOCKING and per-check violations to coverage.json.verify; emits a HIGH system finding on BLOCKING.",
       "func": "cmd_verify_coverage",
       "args": [
         {
@@ -605,27 +603,19 @@
           "flags": [
             "--coverage-plan"
           ],
-          "required": true,
-          "help": "Path to final coverage_plan.json (post-consolidate)"
+          "help": "Legacy explicit path to final coverage_plan.json. Phase C (v2.27.0) reads the final plan from coverage.json.final by default."
         },
         {
           "flags": [
             "--coverage-plan-initial"
           ],
-          "required": true,
-          "help": "Path to pre-critic coverage_plan_initial.json"
+          "help": "Legacy explicit path to pre-critic coverage_plan_initial.json. Phase C (v2.27.0) reads the initial plan from coverage.json.initial by default."
         },
         {
           "flags": [
             "--available-reviewers"
           ],
           "help": "Path to available_reviewers.json (roster). Closed-vocabulary check is bypassed when the file is missing or empty."
-        },
-        {
-          "flags": [
-            "--output"
-          ],
-          "help": "Output path (defaults to <cr-dir>/coverage_verify.json)"
         }
       ]
     },
@@ -1443,15 +1433,20 @@
     },
     {
       "name": "arbitrate-budget",
-      "help": "Apply budget arbitration to coverage_plan_initial.json -> coverage_plan.json",
+      "help": "Apply budget arbitration to coverage.json.final (in-place mutation). Phase C (v2.27.0) consumes the post-consolidate plan from coverage.json.final and the verifier verdict from coverage.json.verify by default; legacy callers may still pass --coverage-plan / --coverage-verify / --output as explicit file paths.",
       "func": "cmd_arbitrate_budget",
       "args": [
         {
           "flags": [
+            "--cr-dir"
+          ],
+          "help": "Session CR_DIR path. Phase C (v2.27.0): when supplied, the post-consolidate plan is read from coverage.json.final, the verify verdict from coverage.json.verify, and the arbitrated plan is written back into coverage.json.final via atomic section update. Legacy callers may omit --cr-dir and pass --coverage-plan / --output instead."
+        },
+        {
+          "flags": [
             "--coverage-plan"
           ],
-          "required": true,
-          "help": "Path to coverage_plan_initial.json"
+          "help": "Legacy explicit path to the input coverage plan. When omitted (and --cr-dir is supplied), the plan is read from coverage.json.final."
         },
         {
           "flags": [
@@ -1472,19 +1467,19 @@
           "flags": [
             "--output"
           ],
-          "help": "Output path (default: coverage_plan.json next to input)"
+          "help": "Legacy explicit output path. When omitted (and --cr-dir is supplied), the arbitrated plan is written back into coverage.json.final via atomic section update."
         },
         {
           "flags": [
             "--coverage-verify"
           ],
-          "help": "Optional path to coverage_verify.json (PLN-725 Phase 6). When present and verdict is BLOCKING, arbitration is bypassed; input plan flows through unchanged."
+          "help": "Legacy explicit path to coverage_verify.json (PLN-725 Phase 6). When omitted (and --cr-dir is supplied), the verifier verdict is read from coverage.json.verify. When the verdict is BLOCKING, arbitration is bypassed; input plan flows through unchanged."
         }
       ]
     },
     {
       "name": "derive-spawn-spec",
-      "help": "Translate post-arbitrate coverage_plan.json + partitions.json + spawn.json.route into spawn.json.spec for stage_20_spawn_reviewers",
+      "help": "Translate post-arbitrate coverage.json.final + partitions.json + spawn.json.route into spawn.json.spec for stage_20_spawn_reviewers",
       "func": "cmd_derive_spawn_spec",
       "args": [
         {
@@ -1498,8 +1493,7 @@
           "flags": [
             "--coverage-plan"
           ],
-          "required": true,
-          "help": "Path to coverage_plan.json (post-arbitrate)"
+          "help": "Legacy explicit path to coverage_plan.json (post-arbitrate). When omitted, the plan is read from coverage.json.final (Phase C consolidation)."
         },
         {
           "flags": [

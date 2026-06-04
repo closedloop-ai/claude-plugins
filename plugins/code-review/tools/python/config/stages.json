@@ -327,7 +327,7 @@
       ],
       "stdout": null,
       "expected_outputs": [
-        "{cr_dir}/coverage_plan_initial.json"
+        "{cr_dir}/coverage.json"
       ],
       "depends_on": [
         "stage_11b_extract_signals_consolidate"
@@ -358,8 +358,6 @@
       "args": [
         "--cr-dir",
         "{cr_dir}",
-        "--coverage-plan-initial",
-        "{cr_dir}/coverage_plan_initial.json",
         "--diff-data",
         "{cr_dir}/diff_data.json",
         "--available-reviewers",
@@ -373,7 +371,7 @@
       ],
       "stdout": null,
       "expected_outputs": [
-        "{cr_dir}/coverage_critic_manifest.json"
+        "{cr_dir}/coverage.json"
       ],
       "depends_on": [
         "stage_14_resolve_coverage",
@@ -389,20 +387,16 @@
       "args": [
         "--cr-dir",
         "{cr_dir}",
-        "--coverage-plan-initial",
-        "{cr_dir}/coverage_plan_initial.json",
         "--agent-output",
         "{cr_dir}/pln725_coverage_critic.json",
         "--available-reviewers",
         "{cr_dir}/available_reviewers.json",
-        "--manifest",
-        "{cr_dir}/coverage_critic_manifest.json",
         "--cache-dir",
         "<CACHE_DIR>"
       ],
       "stdout": null,
       "expected_outputs": [
-        "{cr_dir}/coverage_plan.json"
+        "{cr_dir}/coverage.json"
       ],
       "depends_on": [
         "stage_15_coverage_critic"
@@ -417,16 +411,12 @@
       "args": [
         "--cr-dir",
         "{cr_dir}",
-        "--coverage-plan",
-        "{cr_dir}/coverage_plan.json",
-        "--coverage-plan-initial",
-        "{cr_dir}/coverage_plan_initial.json",
         "--available-reviewers",
         "{cr_dir}/available_reviewers.json"
       ],
       "stdout": null,
       "expected_outputs": [
-        "{cr_dir}/coverage_verify.json"
+        "{cr_dir}/coverage.json"
       ],
       "depends_on": [
         "stage_15b_coverage_critic_consolidate"
@@ -439,18 +429,14 @@
       "kind": "helper",
       "subcommand": "arbitrate-budget",
       "args": [
-        "--coverage-plan",
-        "{cr_dir}/coverage_plan.json",
+        "--cr-dir",
+        "{cr_dir}",
         "--diff-data",
-        "{cr_dir}/diff_data.json",
-        "--output",
-        "{cr_dir}/coverage_plan.json",
-        "--coverage-verify",
-        "{cr_dir}/coverage_verify.json"
+        "{cr_dir}/diff_data.json"
       ],
       "stdout": null,
       "expected_outputs": [
-        "{cr_dir}/coverage_plan.json",
+        "{cr_dir}/coverage.json",
         "{cr_dir}/coverage_gaps.json"
       ],
       "depends_on": [
@@ -552,8 +538,6 @@
       "args": [
         "--cr-dir",
         "{cr_dir}",
-        "--coverage-plan",
-        "{cr_dir}/coverage_plan.json",
         "--partitions",
         "{cr_dir}/partitions.json"
       ],

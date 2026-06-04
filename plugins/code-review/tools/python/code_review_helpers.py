@@ -6127,7 +6127,9 @@ def _emit_signal_extraction_failed_finding(
 #      live in ``code_review_schema.py``).
 #   2. ``resolve-coverage`` subcommand: deterministic resolver that reads
 #      diff_data + critic-gates + (optional) extract_signals.json,
-#      evaluates trigger rules, and emits ``coverage_plan_initial.json``.
+#      evaluates trigger rules, and writes the initial plan into the
+#      ``initial`` section of ``coverage.json`` (Phase C, v2.27.0; the
+#      pre-v2.27.0 target was a standalone ``coverage_plan_initial.json``).
 #   3. ``migrate-critic-gates`` subcommand: one-time rewriter that
 #      translates legacy ``moduleCritics[]`` substring rules into
 #      canonical ``coverage[]`` path_pattern rules.
@@ -6607,11 +6609,13 @@ def cmd_resolve_coverage(args: argparse.Namespace) -> int:
     """PLN-725 Stage 2: deterministic coverage resolver.
 
     Reads diff_data + critic-gates + (optional) extract_signals.json,
-    runs ``resolve_coverage``, writes
-    ``<cr_dir>/coverage_plan_initial.json``, and emits a summary on
-    stdout. Always exits 0 on a structurally valid run; returns 1 on
-    file-read failure (which is the only condition the orchestrator
-    needs to halt on — empty results are valid).
+    runs ``resolve_coverage``, writes the rule-resolved plan into
+    ``<cr_dir>/coverage.json`` under the ``initial`` section (Phase C,
+    v2.27.0; pre-v2.27.0 wrote a standalone
+    ``coverage_plan_initial.json``), and emits a summary on stdout.
+    Always exits 0 on a structurally valid run; returns 1 on file-read
+    failure (which is the only condition the orchestrator needs to
+    halt on — empty results are valid).
     """
     cr_dir = Path(args.cr_dir)
     diff_data_path = Path(args.diff_data)
@@ -6672,22 +6676,22 @@ def cmd_resolve_coverage(args: argparse.Namespace) -> int:
         scope_filter=scope_filter,
     )
 
-    output_path = cr_dir / "coverage_plan_initial.json"
     output: dict[str, Any] = dict(plan)
     output["generated_at"] = datetime.now(timezone.utc).isoformat()
     output["scope"] = scope_filter
-    # PR #124 review (auditor_f0): the docstring promised exit 0 on
-    # structurally valid runs, but an unwritable output_path would
-    # propagate OSError. Now matches the documented contract.
+    # Phase C (v2.27.0): write into coverage.json.initial via atomic
+    # section update instead of a standalone coverage_plan_initial.json.
+    # The docstring guarantees exit 0 on structurally valid runs; an
+    # OSError on the write surfaces as a structured failure here so
+    # the contract holds.
     try:
-        with open(output_path, "w") as f:
-            json.dump(output, f, indent=2)
+        _write_coverage_section(cr_dir, "initial", output)
     except OSError as exc:
         print(f"Error writing coverage plan: {exc}", file=sys.stderr)
         return 1
 
     summary = {
-        "output_path": str(output_path),
+        "coverage_state": str(cr_dir / _COVERAGE_STATE_FILENAME),
         "required_count": plan["stats"]["required_count"],
         "best_effort_count": plan["stats"]["best_effort_count"],
         "rules_evaluated": plan["stats"]["rules_evaluated"],
@@ -7083,20 +7087,23 @@ def cmd_migrate_critic_gates(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 # PLN-725 Phase 3 — Coverage critic (Stage 3 of deterministic coverage)
 # ---------------------------------------------------------------------------
-# Adversarial LLM stage that fronts the final coverage_plan.json. Reads
-# the rule-resolved coverage_plan_initial.json from Phase 2 + the Phase 1
-# extract_signals.json + an AVAILABLE-list of reviewer names, and may
-# propose additive best-effort additions. The critic CANNOT remove,
-# rename, re-scope, promote-to-required, exceed the cap, or invent
-# reviewer names; the validator enforces every constraint.
+# Adversarial LLM stage that fronts the final coverage plan. Reads the
+# rule-resolved plan from ``coverage.json.initial`` (Phase C, v2.27.0;
+# pre-v2.27.0 read a standalone ``coverage_plan_initial.json``) plus
+# the Phase 1 extract_signals.json and an AVAILABLE-list of reviewer
+# names, and may propose additive best-effort additions. The critic
+# CANNOT remove, rename, re-scope, promote-to-required, exceed the
+# cap, or invent reviewer names; the validator enforces every
+# constraint.
 #
 # Two-step pattern mirroring extract-signals:
 #   1. coverage-critic-prepare — reads inputs, computes cache key,
-#      serves cache hit OR writes agent input bundle + manifest.
+#      serves cache hit OR writes agent input bundle + manifest into
+#      ``coverage.json.critic``.
 #   2. coverage-critic-consolidate — validates LLM output, merges into
-#      coverage_plan.json, writes the cache on success. Fail-closed
-#      emits a MEDIUM Coverage finding so the operator footer surfaces
-#      the skipped stage.
+#      ``coverage.json.final``, writes the cache on success.
+#      Fail-closed emits a MEDIUM Coverage finding so the operator
+#      footer surfaces the skipped stage.
 #
 # Phase 4 will wire these into start.md; Phase 3 alone changes no
 # orchestrator behavior.
@@ -7199,9 +7206,9 @@ def _write_cached_coverage_critic(
     """Persist a successful critic run to the ``coverage_critic`` cache.
 
     Fail-open: delegates to ``_write_simple_cache_entry``; an OSError on the
-    cache write is logged to stderr but never raised — the canonical
-    ``<cr_dir>/coverage_plan.json`` is already on disk, so cache-write
-    failure is a re-run cost issue, not a pipeline halt.
+    cache write is logged to stderr but never raised — ``coverage.json.final``
+    is already on disk, so cache-write failure is a re-run cost issue,
+    not a pipeline halt.
     """
     if cache_dir is None:
         return
@@ -7420,8 +7427,9 @@ def merge_critic_additions(
     coverage_plan_initial: dict[str, Any],
     accepted_additions: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Produce the final coverage_plan.json by appending critic additions
-    to the initial plan's ``best_effort[]``. Pure function.
+    """Produce the final coverage plan by appending critic additions to
+    the initial plan's ``best_effort[]``. Pure function — the caller
+    persists the result into ``coverage.json.final``.
 
     Critic additions are always best-effort (the validator already
     enforces this — there is no "required" code path here). Dedup
@@ -7440,68 +7448,80 @@ def merge_critic_additions(
 
 def _emit_skipped_coverage_plan(
     plan_initial: dict[str, Any],
-    output_path: Path,
-    manifest_path: Path,
+    cr_dir: Path,
     model: str,
     reason: str,
 ) -> int:
     """Short-circuit ``coverage-critic-prepare`` with a "skipped" outcome.
 
-    Writes the initial plan as the final ``coverage_plan.json`` (with
-    ``critic_status="skipped"`` so Phase 4 consumers can distinguish
+    Writes the initial plan into ``coverage.json``'s ``.final`` section
+    (with ``critic_status="skipped"`` so consumers can distinguish
     skipped from healthy-but-empty and fail_closed via the same field),
-    plus a manifest with ``status: "skipped"`` and the caller-supplied
-    ``reason``. Dumps the manifest to stdout so the walker's
-    redirected-stdout sees the same shape regardless of which skip
-    branch ran. Returns 0 on success; 1 if the plan file cannot be
-    written.
+    plus a manifest into the ``.critic`` section with ``status:
+    "skipped"`` and the caller-supplied ``reason``. Dumps the manifest
+    to stdout so the walker's redirected-stdout sees the same shape
+    regardless of which skip branch ran. Returns 0 on success; 1 if
+    the section writes fail.
+
+    Phase C (v2.27.0) consolidated the legacy standalone
+    ``coverage_plan.json`` + ``coverage_critic_manifest.json`` into
+    sections of ``coverage.json``. Shape preserved.
 
     Shared between the ``--no-critic`` operator-flag path (reason
     ``"no-critic"``) and the missing-roster configuration path (reason
-    ``"no-roster"``). Single edit site for any future shape changes
-    (e.g. adding an OSError guard to the manifest write).
+    ``"no-roster"``). Single edit site for any future shape changes.
     """
     final = merge_critic_additions(plan_initial, [])
     final["generated_at"] = datetime.now(timezone.utc).isoformat()
     final["critic_status"] = "skipped"
     final["critic_errors"] = []
-    try:
-        with open(output_path, "w") as f:
-            json.dump(final, f, indent=2)
-    except OSError as exc:
-        print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
-        return 1
-    return _write_and_emit_manifest(manifest_path, {
+    manifest = {
         "status": "skipped",
         "reason": reason,
-        "output_path": str(output_path),
+        "coverage_state": str(cr_dir / _COVERAGE_STATE_FILENAME),
         "model": model,
-    })
+    }
+    # Atomic multi-section write: ``.final`` + ``.critic`` land as a
+    # unit. Sequencing two single-section writes would leave the
+    # aggregate inconsistent (``.final`` updated, ``.critic`` stale) if
+    # the second write failed mid-OSError.
+    try:
+        _write_coverage_sections(cr_dir, {"final": final, "critic": manifest})
+    except OSError as exc:
+        print(f"Error writing coverage.json: {exc}", file=sys.stderr)
+        return 1
+    return _emit_summary(manifest)
 
 
 def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     """PLN-725 Stage 3a: prep the coverage-critic agent input + check cache.
 
-    Reads ``coverage_plan_initial.json``, ``extract_signals.json``,
-    ``diff_data.json``, and ``available_reviewers.json`` (or a flat
-    list-shaped file). Computes the
-    ``(coverage_plan_initial_hash, signals_hash, diff_tip, prompt_hash)``
-    cache key and either:
+    Reads the rule-resolved plan from ``coverage.json``'s ``.initial``
+    section (Phase C, v2.27.0; pre-v2.27.0 read a standalone
+    ``coverage_plan_initial.json`` via ``--coverage-plan-initial``,
+    which is still accepted as a legacy explicit-path fallback) plus
+    ``extract_signals.json``, ``diff_data.json``, and
+    ``available_reviewers.json``. Computes the
+    ``(coverage_plan_initial_hash, signals_hash, diff_tip, prompt_hash,
+    available_reviewers_hash)`` cache key and either:
 
-      - **Cache hit** — writes the merged ``coverage_plan.json``
-        directly and exits with a ``cache_hit`` manifest.
+      - **Cache hit** — writes the merged plan into
+        ``coverage.json``'s ``.final`` section directly and exits with
+        a ``cache_hit`` manifest written into ``.critic``.
       - **Cache miss** — writes a bounded agent-input bundle to
         ``<cr_dir>/coverage_critic_input.json`` plus a diff summary
-        copy and a manifest describing the spawn contract.
+        copy and a manifest into ``coverage.json``'s ``.critic``
+        section describing the spawn contract.
 
-    With ``--no-critic``, short-circuits: copies ``coverage_plan_initial``
-    to ``coverage_plan.json`` and emits a ``status: "skipped"`` manifest.
-    Useful for cost-sensitive runs per PLN-725 Open Question 3.
+    With ``--no-critic``, short-circuits: copies the initial plan into
+    ``coverage.json``'s ``.final`` section and emits a ``status:
+    "skipped"`` manifest. Useful for cost-sensitive runs per PLN-725
+    Open Question 3.
 
     Always exits 0; structural failures print to stderr and return 1.
     """
     cr_dir = Path(args.cr_dir)
-    plan_initial_path = Path(args.coverage_plan_initial)
+    plan_initial_path_arg = getattr(args, "coverage_plan_initial", None)
     signals_path = (
         Path(args.extract_signals) if getattr(args, "extract_signals", None) else None
     )
@@ -7521,25 +7541,35 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         print(f"Error: cannot create cr_dir: {exc}", file=sys.stderr)
         return 1
 
-    try:
-        with open(plan_initial_path) as f:
-            plan_initial = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"Error reading coverage_plan_initial: {exc}", file=sys.stderr)
-        return 1
+    # Phase C: initial plan lives in coverage.json.initial by default;
+    # legacy callers may still pass --coverage-plan-initial as an
+    # explicit file path.
+    plan_initial: Any
+    if plan_initial_path_arg:
+        try:
+            with open(Path(plan_initial_path_arg)) as f:
+                plan_initial = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"Error reading coverage_plan_initial: {exc}", file=sys.stderr)
+            return 1
+    else:
+        plan_initial = _read_coverage_state(cr_dir).get("initial")
+        if plan_initial is None:
+            print(
+                "Error: coverage.json.initial missing — has stage_14 run?",
+                file=sys.stderr,
+            )
+            return 1
     if not isinstance(plan_initial, dict):
         print("Error: coverage_plan_initial is not a JSON object", file=sys.stderr)
         return 1
-
-    output_path = cr_dir / "coverage_plan.json"
-    manifest_path = cr_dir / "coverage_critic_manifest.json"
 
     # Short-circuit per Open Question 3 — write the initial plan
     # straight through as the final, no agent spawn needed. See
     # _emit_skipped_coverage_plan for the shared shape.
     if no_critic:
         return _emit_skipped_coverage_plan(
-            plan_initial, output_path, manifest_path, model, reason="no-critic",
+            plan_initial, cr_dir, model, reason="no-critic",
         )
 
     # Safety net for the case where stage_14a_load_available_reviewers
@@ -7553,7 +7583,7 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     # error worth surfacing loudly.
     if not available_path.exists():
         return _emit_skipped_coverage_plan(
-            plan_initial, output_path, manifest_path, model, reason="no-roster",
+            plan_initial, cr_dir, model, reason="no-roster",
         )
 
     extract_signals: dict[str, Any] | None = None
@@ -7591,7 +7621,7 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     # never accept additions from.
     if not available_reviewers:
         return _emit_skipped_coverage_plan(
-            plan_initial, output_path, manifest_path, model, reason="no-roster",
+            plan_initial, cr_dir, model, reason="no-roster",
         )
 
     # Subtract anything already in the initial plan so the critic
@@ -7610,7 +7640,7 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     # configured").
     if not available_reviewers:
         return _emit_skipped_coverage_plan(
-            plan_initial, output_path, manifest_path, model,
+            plan_initial, cr_dir, model,
             reason="no-candidates",
         )
 
@@ -7636,18 +7666,22 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     cached = _read_cached_coverage_critic(cache_dir, key)
     if cached is not None:
         canonical = {k: v for k, v in cached.items() if k != "written_at"}
-        try:
-            with open(output_path, "w") as f:
-                json.dump(canonical, f, indent=2)
-        except OSError as exc:
-            print(f"Error writing cached coverage_plan: {exc}", file=sys.stderr)
-            return 1
-        return _write_and_emit_manifest(manifest_path, {
+        manifest = {
             "status": "cache_hit",
             "cache_key": key,
-            "output_path": str(output_path),
+            "coverage_state": str(cr_dir / _COVERAGE_STATE_FILENAME),
             "model": model,
-        })
+        }
+        # Same atomic multi-section invariant as the skipped path —
+        # ``.final`` + ``.critic`` land as a unit.
+        try:
+            _write_coverage_sections(
+                cr_dir, {"final": canonical, "critic": manifest},
+            )
+        except OSError as exc:
+            print(f"Error writing coverage.json (cache hit): {exc}", file=sys.stderr)
+            return 1
+        return _emit_summary(manifest)
 
     main_input, diff_summary = _build_coverage_critic_input(
         plan_initial, extract_signals, diff_data, available_reviewers,
@@ -7659,7 +7693,7 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     with open(diff_summary_path, "w") as f:
         json.dump(diff_summary, f, indent=2)
 
-    return _write_and_emit_manifest(manifest_path, {
+    manifest = {
         "status": "needs_agent",
         "cache_key": key,
         "coverage_plan_initial_hash": plan_initial_hash,
@@ -7669,72 +7703,102 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         "input_path": str(input_path),
         "diff_summary_path": str(diff_summary_path),
         "prompt_path": str(prompt_path),
-        "output_path": str(output_path),
+        "coverage_state": str(cr_dir / _COVERAGE_STATE_FILENAME),
         "model": model,
-    })
+    }
+    try:
+        _write_coverage_section(cr_dir, "critic", manifest)
+    except OSError as exc:
+        print(f"Error writing coverage.json.critic: {exc}", file=sys.stderr)
+        return 1
+    return _emit_summary(manifest)
 
 
 def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
     """PLN-725 Stage 3b: validate the agent's critic output, merge into
-    ``coverage_plan.json``, and update the cache.
+    ``coverage.json``'s ``.final`` section, and update the cache.
 
     Reads ``<agent_output>`` (typically
     ``<cr_dir>/pln725_coverage_critic.json``), validates against the
     constraint contract, and:
 
       - **At least one valid addition** — merges into the initial plan,
-        writes ``coverage_plan.json``, updates the cache, exits.
+        writes ``coverage.json``'s ``.final`` section, updates the
+        cache, exits.
       - **All rejected (or read failure)** — fails closed. Writes
-        ``coverage_plan.json`` equal to the initial plan (no critic
-        additions). Emits a MEDIUM ``Coverage`` finding with
+        the initial plan (no critic additions) into ``.final``. Emits
+        a MEDIUM ``Coverage`` finding with
         ``system_marker="coverage-critic-failed"`` so the operator
         footer surfaces the skipped stage. Does **not** cache.
+
+    Phase C (v2.27.0) consolidated the legacy ``coverage_plan.json``
+    + ``coverage_critic_manifest.json`` into sections of
+    ``coverage.json``. The ``--coverage-plan-initial`` and
+    ``--manifest`` args are still accepted as legacy explicit-path
+    fallbacks; default reads come from ``coverage.json``'s ``.initial``
+    and ``.critic`` sections.
 
     Always exits 0 (degradation is not a halt); returns 1 only on
     missing cr_dir or unreadable initial plan.
     """
     cr_dir = Path(args.cr_dir)
-    plan_initial_path = Path(args.coverage_plan_initial)
+    plan_initial_path_arg = getattr(args, "coverage_plan_initial", None)
     agent_output_path = Path(args.agent_output)
     available_path = Path(args.available_reviewers)
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
-    manifest_path = (
-        Path(args.manifest)
-        if getattr(args, "manifest", None)
-        else cr_dir / "coverage_critic_manifest.json"
-    )
+    manifest_path_arg = getattr(args, "manifest", None)
 
     if not cr_dir.exists():
         print(f"Error: cr_dir does not exist: {cr_dir}", file=sys.stderr)
         return 1
 
-    try:
-        with open(plan_initial_path) as f:
-            plan_initial = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"Error reading coverage_plan_initial: {exc}", file=sys.stderr)
-        return 1
+    # Phase C: initial plan lives in coverage.json.initial by default;
+    # legacy callers may still pass --coverage-plan-initial as an
+    # explicit file path.
+    plan_initial: Any
+    if plan_initial_path_arg:
+        try:
+            with open(Path(plan_initial_path_arg)) as f:
+                plan_initial = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"Error reading coverage_plan_initial: {exc}", file=sys.stderr)
+            return 1
+    else:
+        plan_initial = _read_coverage_state(cr_dir).get("initial")
+        if plan_initial is None:
+            print(
+                "Error: coverage.json.initial missing — has stage_14 run?",
+                file=sys.stderr,
+            )
+            return 1
     if not isinstance(plan_initial, dict):
         print("Error: coverage_plan_initial is not a JSON object", file=sys.stderr)
         return 1
 
-    manifest = _read_manifest_dict(manifest_path)
+    # Phase C: manifest lives in coverage.json.critic by default;
+    # legacy callers may still pass --manifest as an explicit path.
+    if manifest_path_arg:
+        manifest = _read_manifest_dict(Path(manifest_path_arg))
+    else:
+        critic_section = _read_coverage_state(cr_dir).get("critic")
+        manifest = critic_section if isinstance(critic_section, dict) else {}
     cache_key = str(manifest.get("cache_key") or "")
     model = str(manifest.get("model") or COVERAGE_CRITIC_MODEL_DEFAULT)
     manifest_status = str(manifest.get("status") or "")
 
-    output_path = cr_dir / "coverage_plan.json"
-
     # PLN-725 Phase 4: orchestrator wiring runs consolidate unconditionally as
     # the stage after the agent-dispatch step. On ``cache_hit`` or ``skipped``,
-    # prepare already wrote coverage_plan.json (cache hit serves the cached
+    # prepare already wrote coverage.json.final (cache hit serves the cached
     # plan; ``--no-critic`` stamps the initial plan + critic_status="skipped").
     # Either way no agent was spawned and the work is done — no-op so the
     # walker stays mechanically-driven without conditional dispatch.
-    if manifest_status in ("cache_hit", "skipped") and output_path.exists():
+    final_already_written = isinstance(
+        _read_coverage_state(cr_dir).get("final"), dict,
+    )
+    if manifest_status in ("cache_hit", "skipped") and final_already_written:
         return _emit_summary({
             "status": manifest_status,
-            "output_path": str(output_path),
+            "coverage_state": str(cr_dir / _COVERAGE_STATE_FILENAME),
             "cache_key": cache_key,
         })
 
@@ -7754,16 +7818,15 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
         final["critic_status"] = "fail_closed"
         final["critic_errors"] = errors
         try:
-            with open(output_path, "w") as f:
-                json.dump(final, f, indent=2)
+            _write_coverage_section(cr_dir, "final", final)
         except OSError as exc:
-            print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
+            print(f"Error writing coverage.json.final: {exc}", file=sys.stderr)
             return 1
         _emit_coverage_critic_failed_finding(cr_dir, errors, now_iso)
         return _emit_summary({
             "status": "fail_closed",
             "errors": errors[:10],
-            "output_path": str(output_path),
+            "coverage_state": str(cr_dir / _COVERAGE_STATE_FILENAME),
         })
 
     if read_error is not None:
@@ -7782,10 +7845,9 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
     final["critic_errors"] = errors
     final["model"] = model
     try:
-        with open(output_path, "w") as f:
-            json.dump(final, f, indent=2)
+        _write_coverage_section(cr_dir, "final", final)
     except OSError as exc:
-        print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
+        print(f"Error writing coverage.json.final: {exc}", file=sys.stderr)
         return 1
     if cache_key:
         _write_cached_coverage_critic(cache_dir, cache_key, final)
@@ -7793,7 +7855,7 @@ def cmd_coverage_critic_consolidate(args: argparse.Namespace) -> int:
         "status": "ok",
         "addition_count": len(accepted),
         "rejected": len(errors),
-        "output_path": str(output_path),
+        "coverage_state": str(cr_dir / _COVERAGE_STATE_FILENAME),
     })
 
 
@@ -7851,20 +7913,22 @@ def _emit_coverage_critic_failed_finding(
 # ---------------------------------------------------------------------------
 #
 # Stage_15c_verify_coverage runs immediately after stage_15b_coverage_critic_
-# consolidate writes coverage_plan.json. Its job is the deterministic check
-# the LLM critic stage cannot self-enforce: that the final plan honors the
-# closed-vocabulary, additive-only, best-effort-only-critic, evidence-required,
-# and 5-cap constraints documented in PLN-725 §"Coverage Critic Contract".
+# consolidate writes ``coverage.json.final``. Its job is the deterministic
+# check the LLM critic stage cannot self-enforce: that the final plan honors
+# the closed-vocabulary, additive-only, best-effort-only-critic, evidence-
+# required, and 5-cap constraints documented in PLN-725 §"Coverage Critic
+# Contract".
 #
-# Verdict shape (`coverage_verify.json`):
+# Verdict shape (Phase C v2.27.0: ``coverage.json.verify`` section; pre-
+# v2.27.0: standalone ``coverage_verify.json``):
 #   {"verdict": "PASS", "violations": [], "checked_at": ...}
 #   {"verdict": "BLOCKING", "violations": [{"check": "...", "message": "..."}], ...}
 #
 # Phase 6 rollout: BLOCKING is encoded in the artifact and surfaces as a HIGH
 # system-marker finding, but exit code stays 0 and ``on_failure: continue``
 # so the walker doesn't halt — downstream stages (spawn_reviewers, arbitrate-
-# budget) don't yet read coverage_plan.json. Phase 7 will gate those stages
-# on a PASS verdict; until then the verifier is observational telemetry.
+# budget) read ``coverage.json.final`` as of Phase 7. Phase 7 gates those
+# stages on the verdict; the verifier itself stays observational.
 
 COVERAGE_VERIFY_MARKER = "coverage-verify-blocking"
 
@@ -7912,8 +7976,10 @@ def verify_coverage_plan(
     Empty list means PASS. Pure function — no I/O.
 
     Args:
-        plan: the final coverage_plan.json (post-consolidate)
-        plan_initial: the pre-critic coverage_plan_initial.json
+        plan: the final coverage plan (post-consolidate; from
+            ``coverage.json.final`` in Phase C / v2.27.0)
+        plan_initial: the pre-critic coverage plan (from
+            ``coverage.json.initial`` in Phase C / v2.27.0)
         available_reviewers: roster of allowed reviewers, or None when
             the roster wasn't produced (no-roster skip path). When None
             or empty, the closed-vocabulary check is bypassed — there's
@@ -8027,7 +8093,7 @@ def verify_coverage_plan(
 
     # closed_vocabulary — only enforced when a roster is present and
     # non-empty, AND only against source="critic" entries. The core/rule
-    # reviewer labels in coverage_plan.json (e.g. ``bug_hunter_a``,
+    # reviewer labels in the final plan (e.g. ``bug_hunter_a``,
     # ``unified_auditor``) are plugin-internal identifiers that the
     # spawn_reviewers stage translates to actual reviewer prompts —
     # they do NOT need to appear in the project's `.claude/agents/`
@@ -8139,7 +8205,7 @@ def _emit_coverage_verify_blocking_finding(
         "file": None,
         "line": None,
         "issue": (
-            "Coverage verifier returned BLOCKING; coverage_plan.json fails "
+            "Coverage verifier returned BLOCKING; coverage.json.final fails "
             "the closed-vocabulary, additive-only, or best-effort-only contract."
         ),
         "explanation": (
@@ -8152,10 +8218,10 @@ def _emit_coverage_verify_blocking_finding(
         ),
         "recommendation": (
             "Re-run the review. If the failure persists, inspect "
-            "coverage_verify.json for the per-check violations; common "
-            "causes include roster drift (AVAILABLE list changed mid-run), "
-            "an unexpected critic schema bypass, or a deletion sneaking "
-            "into the merge."
+            "coverage.json's `.verify` section for the per-check "
+            "violations; common causes include roster drift (AVAILABLE "
+            "list changed mid-run), an unexpected critic schema bypass, "
+            "or a deletion sneaking into the merge."
         ),
         "confidence": 1.0,
         "rationale_summary": "; ".join(summary)[:1000],
@@ -8175,27 +8241,32 @@ def cmd_verify_coverage(args: argparse.Namespace) -> int:
     """PLN-725 Phase 6 / stage_15c_verify_coverage: deterministic verifier
     for the final coverage plan.
 
-    Reads ``coverage_plan.json`` (final), ``coverage_plan_initial.json``
-    (pre-critic), and ``available_reviewers.json`` (roster, optional).
-    Computes a list of violations against the closed-vocabulary,
-    additive-only, best-effort-only-critic, evidence-required, 5-cap,
-    and no-duplicates contracts. Writes ``coverage_verify.json`` with
-    the verdict and violations, and on BLOCKING also emits an
-    ``agent_coverage-verify-blocking.json`` system finding.
+    Reads the final plan from ``coverage.json``'s ``.final`` section
+    and the pre-critic plan from ``.initial`` (Phase C, v2.27.0;
+    pre-v2.27.0 read standalone ``coverage_plan.json`` /
+    ``coverage_plan_initial.json``, still accepted as legacy
+    explicit-path fallbacks via ``--coverage-plan`` /
+    ``--coverage-plan-initial``). Optionally reads
+    ``available_reviewers.json`` (roster). Computes a list of
+    violations against the closed-vocabulary, additive-only,
+    best-effort-only-critic, evidence-required, 5-cap, and
+    no-duplicates contracts. Writes the verdict into
+    ``coverage.json``'s ``.verify`` section, and on BLOCKING also emits
+    an ``agent_coverage-verify-blocking.json`` system finding.
 
     Exit code is 0 on PASS and BLOCKING (the walker is observational —
     halting on BLOCKING would break the Phase 4/5 telemetry posture
     for any review surfacing a violation). Phase 7 (v2.20.0) gates
     ``stage_16_arbitrate_budget`` on the verdict by reading the
     artifact, not the exit code. Returns 1 only on a write failure to
-    ``coverage_verify.json`` itself.
+    ``coverage.json.verify`` itself.
 
-    Missing or unreadable verifier inputs (``coverage_plan.json``,
-    ``coverage_plan_initial.json``) BLOCK with an ``input`` check
-    (v2.20.1). The earlier behavior — PASS with an advisory ``input``
-    violation — made "no plan was verified" indistinguishable from a
-    real PASS in the artifact, and Phase 7's gate would have silently
-    bypassed the cap on every upstream-aborted run.
+    Missing or unreadable verifier inputs (the ``.final`` or
+    ``.initial`` section) BLOCK with an ``input`` check (v2.20.1). The
+    earlier behavior — PASS with an advisory ``input`` violation —
+    made "no plan was verified" indistinguishable from a real PASS in
+    the artifact, and Phase 7's gate would have silently bypassed the
+    cap on every upstream-aborted run.
 
     Roster semantics: missing file → no project agents configured
     (closed-vocabulary check is bypassed; verdict reflects only the
@@ -8204,7 +8275,7 @@ def cmd_verify_coverage(args: argparse.Namespace) -> int:
     (v2.20.1) — distinguishable from absent so an operator config
     error is surfaced.
 
-    Skip semantics: when ``coverage_plan.json`` has
+    Skip semantics: when the final plan has
     ``critic_status: "skipped"`` (--no-critic, no-roster, or
     no-candidates path), the verifier still runs the shape +
     additivity + no-duplicates checks. The closed-vocabulary check is
@@ -8212,16 +8283,12 @@ def cmd_verify_coverage(args: argparse.Namespace) -> int:
     roster to enforce against.
     """
     cr_dir = Path(args.cr_dir)
-    plan_path = Path(args.coverage_plan)
-    plan_initial_path = Path(args.coverage_plan_initial)
+    plan_path_arg = getattr(args, "coverage_plan", None)
+    plan_initial_path_arg = getattr(args, "coverage_plan_initial", None)
     available_path = (
         Path(args.available_reviewers)
         if getattr(args, "available_reviewers", None)
         else None
-    )
-    output_path = (
-        Path(args.output) if getattr(args, "output", None)
-        else cr_dir / "coverage_verify.json"
     )
 
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -8233,52 +8300,71 @@ def cmd_verify_coverage(args: argparse.Namespace) -> int:
             "checked_at": now_iso,
         }
         try:
-            with open(output_path, "w") as f:
-                json.dump(result, f, indent=2)
+            _write_coverage_section(cr_dir, "verify", result)
         except OSError as exc:
-            print(f"Error writing coverage_verify: {exc}", file=sys.stderr)
+            print(f"Error writing coverage.json.verify: {exc}", file=sys.stderr)
             return 1
         if verdict == "BLOCKING":
             _emit_coverage_verify_blocking_finding(cr_dir, violations, now_iso)
         summary = {
             "verdict": verdict,
             "violation_count": len(violations),
-            "output_path": str(output_path),
+            "coverage_state": str(cr_dir / _COVERAGE_STATE_FILENAME),
         }
         json.dump(summary, sys.stdout, indent=2)
         sys.stdout.write("\n")
         return 0
 
-    # Missing or unreadable verifier inputs now BLOCK. The earlier
-    # version treated them as PASS with an advisory ``input`` violation,
-    # but that made "no plan was verified" indistinguishable from a real
-    # PASS in the artifact downstream (Phase 7 arbitrate-budget will gate
-    # on the verdict — a silent PASS-on-missing-input would bypass the
-    # cap on every aborted-upstream run). Exit code stays 0 so the walker
-    # doesn't halt — observational semantics are about the WALKER, the
-    # verdict is about the ARTIFACT consumer.
-    try:
-        with open(plan_path) as f:
-            plan = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        return _write_verdict("BLOCKING", [{
-            "check": "input",
-            "message": f"coverage_plan unreadable: {exc}",
-        }])
+    # Phase C: prefer coverage.json sections; fall back to explicit
+    # paths for legacy callers. Missing or unreadable verifier inputs
+    # BLOCK with an ``input`` check. The earlier version treated them
+    # as PASS with an advisory ``input`` violation, but that made
+    # "no plan was verified" indistinguishable from a real PASS in the
+    # artifact downstream (Phase 7 arbitrate-budget gates on the verdict
+    # — a silent PASS-on-missing-input would bypass the cap on every
+    # aborted-upstream run). Exit code stays 0 so the walker doesn't
+    # halt — observational semantics are about the WALKER, the verdict
+    # is about the ARTIFACT consumer.
+    plan: Any
+    if plan_path_arg:
+        try:
+            with open(Path(plan_path_arg)) as f:
+                plan = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            return _write_verdict("BLOCKING", [{
+                "check": "input",
+                "message": f"coverage_plan unreadable: {exc}",
+            }])
+    else:
+        plan = _read_coverage_state(cr_dir).get("final")
+        if plan is None:
+            return _write_verdict("BLOCKING", [{
+                "check": "input",
+                "message": "coverage.json.final missing",
+            }])
     if not isinstance(plan, dict):
         return _write_verdict("BLOCKING", [{
             "check": "shape",
             "message": "coverage_plan is not a JSON object",
         }])
 
-    try:
-        with open(plan_initial_path) as f:
-            plan_initial = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        return _write_verdict("BLOCKING", [{
-            "check": "input",
-            "message": f"coverage_plan_initial unreadable: {exc}",
-        }])
+    plan_initial: Any
+    if plan_initial_path_arg:
+        try:
+            with open(Path(plan_initial_path_arg)) as f:
+                plan_initial = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            return _write_verdict("BLOCKING", [{
+                "check": "input",
+                "message": f"coverage_plan_initial unreadable: {exc}",
+            }])
+    else:
+        plan_initial = _read_coverage_state(cr_dir).get("initial")
+        if plan_initial is None:
+            return _write_verdict("BLOCKING", [{
+                "check": "input",
+                "message": "coverage.json.initial missing",
+            }])
     if not isinstance(plan_initial, dict):
         return _write_verdict("BLOCKING", [{
             "check": "input",
@@ -9068,53 +9154,114 @@ def _write_and_emit_manifest(
 
 
 # ---------------------------------------------------------------------------
-# Phase D: spawn-state aggregate (replaces route.json + spawn_spec.json +
-# spawn_verification.json). Three distinct stages write to three sections of
-# one ``spawn.json`` file via atomic read-modify-write: ``route`` (Gate B's
-# model routing decision), ``spec`` (stage_19b's flat agent descriptor list),
-# and ``verification`` (stage_20b's runtime tally). The presenter reads all
-# three sections from the single file via ``_read_spawn_state``.
+# State-aggregate helpers: shared read/write contract for the ``spawn.json``
+# (Phase D) and ``coverage.json`` (Phase C) consolidated artifacts. Each
+# aggregate has a fixed section vocabulary; each section is updated by
+# exactly one stage. The writer uses atomic read-modify-write (tmp +
+# ``os.replace``) so a crash mid-write leaves the prior state intact.
+# ``_write_state_sections`` (plural) is the atomic batched variant — used
+# by the cache-hit and skipped paths in coverage-critic-prepare which
+# must materialize multiple sections without leaving the aggregate in a
+# half-written shape if the second write fails.
 # ---------------------------------------------------------------------------
 
 
 _SPAWN_STATE_FILENAME = "spawn.json"
 _SPAWN_STATE_SECTIONS: frozenset[str] = frozenset({"route", "spec", "verification"})
 
+_COVERAGE_STATE_FILENAME = "coverage.json"
+_COVERAGE_STATE_SECTIONS: frozenset[str] = frozenset({"initial", "critic", "final", "verify"})
+
+_STATE_SECTION_VOCAB: dict[str, frozenset[str]] = {
+    _SPAWN_STATE_FILENAME: _SPAWN_STATE_SECTIONS,
+    _COVERAGE_STATE_FILENAME: _COVERAGE_STATE_SECTIONS,
+}
+
+
+def _read_state_aggregate(cr_dir: Path, filename: str) -> dict[str, Any]:
+    """Return the parsed contents of ``<cr_dir>/<filename>`` or ``{}``.
+
+    Tolerates missing / malformed / non-dict so callers can chain
+    ``state.get(section)`` without isinstance checks. Used directly by
+    presenters and verifiers whose degraded-output paths fire on the
+    same shape (a missing section is structurally indistinguishable
+    from a missing file).
+    """
+    raw = _read_optional_json(cr_dir / filename, {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def _write_state_sections(
+    cr_dir: Path, filename: str, updates: dict[str, dict[str, Any]],
+) -> None:
+    """Atomically merge one or more sections into ``<cr_dir>/<filename>``.
+
+    Read-modify-write via tmp + ``os.replace``: read the current state
+    (or ``{}`` if absent), apply every ``(section, payload)`` in
+    ``updates``, write the merged state to ``<filename>.tmp``, rename
+    over ``<filename>``. POSIX guarantees the rename is atomic — a crash
+    mid-write either leaves the prior state intact or installs the full
+    update, never a half-written shape.
+
+    Single-call multi-section semantics matter for skip/cache-hit paths
+    that must publish both ``.final`` and ``.critic`` (or similar) as a
+    unit: an OSError between two single-section writes would leave the
+    aggregate readable but inconsistent (one section updated, the other
+    stale), and the next stage's consumers would see a contradiction.
+    """
+    vocab = _STATE_SECTION_VOCAB.get(filename)
+    if vocab is None:
+        raise ValueError(f"unknown state aggregate {filename!r}")
+    bad = [s for s in updates if s not in vocab]
+    if bad:
+        raise ValueError(
+            f"unknown {filename} section(s) {bad!r}; expected subset of "
+            f"{sorted(vocab)}",
+        )
+    cr_dir.mkdir(parents=True, exist_ok=True)
+    state = _read_state_aggregate(cr_dir, filename)
+    state.update(updates)
+    path = cr_dir / filename
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, indent=2))
+    os.replace(str(tmp), str(path))
+
 
 def _read_spawn_state(cr_dir: Path) -> dict[str, Any]:
-    """Return the parsed contents of ``<cr_dir>/spawn.json`` or ``{}``.
-
-    Tolerates missing/malformed/non-dict so consumers can chain
-    ``state.get("route", {})``, ``state.get("spec")``, etc. without
-    isinstance checks at every call site. The presenter's degraded-output
-    paths (no spec, no verification) drive directly off the same shape.
-    """
-    raw = _read_optional_json(cr_dir / _SPAWN_STATE_FILENAME, {})
-    return raw if isinstance(raw, dict) else {}
+    """Return the parsed contents of ``<cr_dir>/spawn.json`` or ``{}``."""
+    return _read_state_aggregate(cr_dir, _SPAWN_STATE_FILENAME)
 
 
 def _write_spawn_section(
     cr_dir: Path, section: str, payload: dict[str, Any],
 ) -> None:
-    """Atomically update one section of ``spawn.json`` without clobbering others.
+    """Atomically update one ``spawn.json`` section."""
+    _write_state_sections(cr_dir, _SPAWN_STATE_FILENAME, {section: payload})
 
-    Read-modify-write via tmp + rename: read the current state (or ``{}`` if
-    absent), replace the named section, write to ``spawn.json.tmp``, rename
-    over ``spawn.json``. The rename is atomic on POSIX, so a crash mid-write
-    leaves the prior state intact rather than a half-written file.
+
+def _read_coverage_state(cr_dir: Path) -> dict[str, Any]:
+    """Return the parsed contents of ``<cr_dir>/coverage.json`` or ``{}``."""
+    return _read_state_aggregate(cr_dir, _COVERAGE_STATE_FILENAME)
+
+
+def _write_coverage_section(
+    cr_dir: Path, section: str, payload: dict[str, Any],
+) -> None:
+    """Atomically update one ``coverage.json`` section."""
+    _write_state_sections(cr_dir, _COVERAGE_STATE_FILENAME, {section: payload})
+
+
+def _write_coverage_sections(
+    cr_dir: Path, updates: dict[str, dict[str, Any]],
+) -> None:
+    """Atomically update multiple ``coverage.json`` sections in one write.
+
+    Used by the skip / cache-hit paths in coverage-critic-prepare so
+    ``.final`` and ``.critic`` land as a unit; sequencing two
+    single-section writes would leave the aggregate inconsistent if the
+    second write failed mid-OSError.
     """
-    if section not in _SPAWN_STATE_SECTIONS:
-        raise ValueError(
-            f"unknown spawn.json section {section!r}; expected one of "
-            f"{sorted(_SPAWN_STATE_SECTIONS)}",
-        )
-    cr_dir.mkdir(parents=True, exist_ok=True)
-    state = _read_spawn_state(cr_dir)
-    state[section] = payload
-    path = cr_dir / _SPAWN_STATE_FILENAME
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, indent=2))
-    os.replace(str(tmp), str(path))
+    _write_state_sections(cr_dir, _COVERAGE_STATE_FILENAME, updates)
 
 
 def _read_simple_cache_entry(
@@ -9409,7 +9556,18 @@ def _build_run_plan_stages(
 
 
 def _build_validation_gates(cr_dir: str) -> list[dict[str, Any]]:
-    """Return canonical inter-stage validation gates."""
+    """Return canonical inter-stage validation gates.
+
+    The ``outputs`` field lists files that must exist after the gate's
+    anchor stage. The optional ``required_sections`` field maps a file
+    path to a list of top-level dict keys that must be present in that
+    file — the gate enforcer must check each section, not just file
+    existence. ``coverage.json`` exists from ``stage_14`` onward
+    (sections accumulate), so a bare file-existence check after
+    ``stage_16`` would fire-true even if stages 15/15b/15c/16 failed to
+    populate their sections. ``required_sections`` distinguishes "any
+    coverage state on disk" from "post-arbitrate ``final`` plan present."
+    """
     return [
         {
             "after_stage": "stage_05_parse_diff",
@@ -9420,7 +9578,10 @@ def _build_validation_gates(cr_dir: str) -> list[dict[str, Any]]:
         {
             "after_stage": "stage_16_arbitrate_budget",
             "gate": "coverage_plan_well_formed",
-            "outputs": [f"{cr_dir}/coverage_plan.json"],
+            "outputs": [f"{cr_dir}/coverage.json"],
+            "required_sections": {
+                f"{cr_dir}/coverage.json": ["final"],
+            },
             "on_failure_action": "abort",
         },
         {
@@ -9591,6 +9752,10 @@ def _read_coverage_verify_verdict(path: Path | None) -> tuple[str | None, list[d
     Verdict is ``"PASS"``, ``"BLOCKING"``, or ``None`` if the file is
     missing/unreadable (treated as PASS by callers — verification is
     observational; an absent verifier output must not block arbitration).
+
+    Legacy explicit-path read; Phase C consumers should call
+    ``_normalize_coverage_verify_doc`` on ``coverage.json.verify``
+    directly instead.
     """
     if path is None or not path.exists():
         return None, []
@@ -9599,6 +9764,17 @@ def _read_coverage_verify_verdict(path: Path | None) -> tuple[str | None, list[d
             doc = json.load(f)
     except (OSError, json.JSONDecodeError):
         return None, []
+    return _normalize_coverage_verify_doc(doc)
+
+
+def _normalize_coverage_verify_doc(doc: Any) -> tuple[str | None, list[dict[str, str]]]:
+    """Coerce a parsed coverage-verify section/file into ``(verdict, violations)``.
+
+    Tolerates a non-dict input (returns ``(None, [])`` so callers treat it
+    as PASS — verifier is observational). Used by both the legacy
+    file-path reader and the Phase C section reader so the shape
+    handling lives in one place.
+    """
     if not isinstance(doc, dict):
         return None, []
     verdict = doc.get("verdict")
@@ -9620,14 +9796,18 @@ def _read_coverage_verify_verdict(path: Path | None) -> tuple[str | None, list[d
 def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     """Apply budget arbitration to a coverage plan (PLN-719 Section 5).
 
-    Reads a coverage_plan_initial.json (or any JSON object with ``required``
-    and ``best_effort`` arrays) plus diff_data.json and produces the final
-    coverage_plan.json. Emits coverage-gap findings for required reviewers
+    Reads the post-consolidate plan from ``coverage.json``'s ``.final``
+    section, applies the budget cap, and writes the arbitrated plan
+    back into the same ``.final`` section (Phase C, v2.27.0; pre-v2.27.0
+    read/wrote a standalone ``coverage_plan.json``, still accepted as
+    a legacy explicit-path fallback via ``--coverage-plan`` /
+    ``--output``). Emits coverage-gap findings for required reviewers
     that exceed the cap.
 
-    PLN-725 Phase 7: when ``--coverage-verify`` is supplied and that
-    file's verdict is ``"BLOCKING"``, arbitration short-circuits.
-    The input plan is written through to ``coverage_plan.json`` as-is
+    PLN-725 Phase 7: when the verifier's verdict (read from
+    ``coverage.json.verify`` by default, or ``--coverage-verify`` for
+    legacy callers) is ``"BLOCKING"``, arbitration short-circuits. The
+    input plan is written through to ``coverage.json.final`` as-is
     (preserving the rule floor — no cap, no pruning, no dropped
     required) with ``budget.gated_by_verify: true`` so downstream
     consumers can see why the cap wasn't applied. The same shape is
@@ -9636,14 +9816,29 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     don't need to branch on a different schema. The BLOCKING finding
     is already emitted by ``stage_15c_verify_coverage``
     (``agent_coverage-verify-blocking.json``); arbitrate-budget does
-    not duplicate it. A missing ``coverage_verify.json`` (verifier
-    didn't run, or upstream stage aborted) is treated as PASS — the
-    verifier is observational, an absent artifact must not block
-    arbitration.
+    not duplicate it. A missing verify section/file (verifier didn't
+    run, or upstream stage aborted) is treated as PASS — the verifier
+    is observational, an absent artifact must not block arbitration.
     """
-    coverage_plan_in = _read_optional_json(Path(args.coverage_plan), None)
+    cr_dir = Path(args.cr_dir) if getattr(args, "cr_dir", None) else None
+    plan_path_arg = getattr(args, "coverage_plan", None)
+    output_path_arg = getattr(args, "output", None)
+
+    # Phase C: read input plan from coverage.json.final by default;
+    # legacy callers may pass --coverage-plan as an explicit path.
+    coverage_plan_in: Any
+    if plan_path_arg:
+        coverage_plan_in = _read_optional_json(Path(plan_path_arg), None)
+    elif cr_dir is not None:
+        coverage_plan_in = _read_coverage_state(cr_dir).get("final")
+    else:
+        coverage_plan_in = None
     if not isinstance(coverage_plan_in, dict):
-        print(f"Error: --coverage-plan {args.coverage_plan} not found or malformed", file=sys.stderr)
+        print(
+            "Error: input coverage plan not found or malformed "
+            f"({'--coverage-plan ' + str(plan_path_arg) if plan_path_arg else 'coverage.json.final'})",
+            file=sys.stderr,
+        )
         return 1
 
     diff_data = _read_optional_json(Path(args.diff_data), {}) or {}
@@ -9651,6 +9846,55 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     if cap <= 0:
         print(f"Error: --cap must be > 0, got {cap}", file=sys.stderr)
         return 1
+
+    # Phase C: resolve output target. Section write (coverage.json.final)
+    # is the default when --cr-dir is set and --output is not. The
+    # legacy --output path keeps working for callers (tests, ad-hoc
+    # CLI use) that pass an explicit destination.
+    output_path = Path(output_path_arg) if output_path_arg else None
+    if output_path is None and plan_path_arg is not None and cr_dir is None:
+        # Legacy default — colocate with the input path (pre-Phase-C
+        # behavior when neither --cr-dir nor --output was supplied).
+        output_path = Path(plan_path_arg).with_name("coverage_plan.json")
+
+    def _persist_plan(plan: dict[str, Any]) -> int:
+        if output_path is not None:
+            try:
+                with open(output_path, "w") as f:
+                    json.dump(plan, f, indent=2)
+            except OSError as exc:
+                print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
+                return 1
+            return 0
+        assert cr_dir is not None  # exhaustive — checked above
+        try:
+            _write_coverage_section(cr_dir, "final", plan)
+        except OSError as exc:
+            print(f"Error writing coverage.json.final: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    def _gaps_target(findings: list[dict[str, Any]]) -> tuple[int, Path]:
+        # coverage_gaps.json stays standalone (multi-writer). Resolve
+        # its path relative to the same directory as the output plan.
+        if output_path is not None:
+            gaps_path = output_path.with_name("coverage_gaps.json")
+        else:
+            assert cr_dir is not None
+            gaps_path = cr_dir / "coverage_gaps.json"
+        try:
+            with open(gaps_path, "w") as f:
+                json.dump({"findings": findings}, f, indent=2)
+        except OSError as exc:
+            print(f"Error writing coverage_gaps: {exc}", file=sys.stderr)
+            return 1, gaps_path
+        return 0, gaps_path
+
+    def _plan_target_str() -> str:
+        if output_path is not None:
+            return str(output_path)
+        assert cr_dir is not None
+        return str(cr_dir / _COVERAGE_STATE_FILENAME)
 
     required: list[dict[str, Any]] = list(coverage_plan_in.get("required", []) or [])
     best_effort: list[dict[str, Any]] = list(coverage_plan_in.get("best_effort", []) or [])
@@ -9661,11 +9905,15 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     # BLOCKING verdict. Note: the verifier itself stays observational
     # (exit 0 on BLOCKING) — arbitrate-budget is where the verdict
     # first translates into pipeline behavior change.
-    verify_path = (
-        Path(args.coverage_verify) if getattr(args, "coverage_verify", None)
-        else None
-    )
-    verdict, violations = _read_coverage_verify_verdict(verify_path)
+    verify_path_arg = getattr(args, "coverage_verify", None)
+    if verify_path_arg:
+        verdict, violations = _read_coverage_verify_verdict(Path(verify_path_arg))
+    elif cr_dir is not None:
+        verdict, violations = _normalize_coverage_verify_doc(
+            _read_coverage_state(cr_dir).get("verify"),
+        )
+    else:
+        verdict, violations = None, []
     now_iso_gate = datetime.now(timezone.utc).isoformat()
     if verdict == "BLOCKING":
         final_plan: dict[str, Any] = {
@@ -9685,29 +9933,18 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
             "arbitrate_status": "blocked_by_verify",
             "generated_at": now_iso_gate,
         }
-        output_path = (
-            Path(args.output) if args.output
-            else Path(args.coverage_plan).with_name("coverage_plan.json")
-        )
-        try:
-            with open(output_path, "w") as f:
-                json.dump(final_plan, f, indent=2)
-        except OSError as exc:
-            print(f"Error writing coverage_plan: {exc}", file=sys.stderr)
-            return 1
-        gaps_path = output_path.with_name("coverage_gaps.json")
+        rc = _persist_plan(final_plan)
+        if rc != 0:
+            return rc
         # Empty findings; the canonical BLOCKING finding is already
         # in agent_coverage-verify-blocking.json from stage_15c.
-        try:
-            with open(gaps_path, "w") as f:
-                json.dump({"findings": []}, f, indent=2)
-        except OSError as exc:
-            print(f"Error writing coverage_gaps: {exc}", file=sys.stderr)
-            return 1
+        rc, gaps_path = _gaps_target([])
+        if rc != 0:
+            return rc
         json.dump(
             {
                 "status": "blocked_by_verify",
-                "coverage_plan": str(output_path),
+                "coverage_plan": _plan_target_str(),
                 "coverage_gaps": str(gaps_path),
                 "required_count": len(required),
                 "best_effort_count": len(best_effort),
@@ -9776,17 +10013,16 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         "dropped_required": dropped_required,
     }
 
-    output_path = Path(args.output) if args.output else Path(args.coverage_plan).with_name("coverage_plan.json")
-    with open(output_path, "w") as f:
-        json.dump(final_plan, f, indent=2)
-
-    gaps_path = output_path.with_name("coverage_gaps.json")
-    with open(gaps_path, "w") as f:
-        json.dump({"findings": coverage_gaps}, f, indent=2)
+    rc = _persist_plan(final_plan)
+    if rc != 0:
+        return rc
+    rc, gaps_path = _gaps_target(coverage_gaps)
+    if rc != 0:
+        return rc
 
     json.dump(
         {
-            "coverage_plan": str(output_path),
+            "coverage_plan": _plan_target_str(),
             "coverage_gaps": str(gaps_path),
             "required_count": len(required),
             "best_effort_count": len(best_effort_final),
@@ -9806,14 +10042,16 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
 # Subcommand: derive-spawn-spec (PLN-725 Phase 8)
 # ---------------------------------------------------------------------------
 #
-# Reads the post-arbitrate coverage_plan.json + partitions.json and the
-# route section of spawn.json (written by Gate B's ``cmd_route --cr-dir``),
-# then writes the flat list of agent descriptors into ``spawn.json`` under
-# the ``spec`` section. The orchestrator (start.md "Reviewer Fleet" section)
-# dispatches Task calls from that list. Before Phase 8, stage_20 walked a
-# static table hard-coded into the command markdown; the coverage_plan was
+# Reads the post-arbitrate ``coverage.json.final`` + ``partitions.json``
+# and the ``route`` section of ``spawn.json`` (written by Gate B's
+# ``cmd_route --cr-dir``), then writes the flat list of agent
+# descriptors into ``spawn.json`` under the ``spec`` section. The
+# orchestrator (start.md "Reviewer Fleet" section) dispatches Task
+# calls from that list. Before Phase 8, stage_20 walked a static table
+# hard-coded into the command markdown; the coverage plan was
 # effectively ignored at spawn time. This stage closes the loop so the
-# deterministic coverage signal (PLN-725) actually shapes the spawned fleet.
+# deterministic coverage signal (PLN-725) actually shapes the spawned
+# fleet.
 #
 # The spec is observational: the orchestrator may fall back to the static
 # table if ``spawn.json`` is absent, its ``spec`` section is missing, or
@@ -9822,13 +10060,13 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
 
 # Canonical role → AGENT_ID + partitioning + patches-file mapping. The
 # reviewer names on the left are the SPAWNABLE subset of
-# ``COVERAGE_CORE_REQUIRED`` (snake_case identifiers used in
-# coverage_plan.json); the deferred subset lives in
-# ``_SPAWN_DEFERRED_ROLES`` below. The two dicts together must cover
-# every entry in ``COVERAGE_CORE_REQUIRED`` — adding a new core role
-# means choosing which dict it belongs in. The AGENT_ID strings on the
-# right are the display IDs used in agent_*.json filenames (matching
-# the static table in start.md).
+# ``COVERAGE_CORE_REQUIRED`` (snake_case identifiers carried in the
+# final plan); the deferred subset lives in ``_SPAWN_DEFERRED_ROLES``
+# below. The two dicts together must cover every entry in
+# ``COVERAGE_CORE_REQUIRED`` — adding a new core role means choosing
+# which dict it belongs in. The AGENT_ID strings on the right are the
+# display IDs used in agent_*.json filenames (matching the static
+# table in start.md).
 _SPAWN_CORE_ROLES: dict[str, dict[str, Any]] = {
     "bug_hunter_a": {
         "agent_id_prefix": "bha_p",
@@ -10148,13 +10386,13 @@ def _spawn_spec_fallback(
 def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     """Translate the post-arbitrate coverage plan into a flat spawn spec.
 
-    PLN-725 Phase 8. Reads ``coverage_plan.json`` (post-arbitrate),
+    PLN-725 Phase 8. Reads ``coverage.json.final`` (post-arbitrate),
     ``partitions.json`` (post-partition), and the ``route`` section of
     ``spawn.json`` (post-route — written by Gate B's ``cmd_route --cr-dir``)
     and writes the ``spec`` section of ``spawn.json`` enumerating every
     agent the orchestrator should spawn at ``stage_20_spawn_reviewers``.
-    Legacy callers may still supply ``--route`` to point at a standalone
-    routing file; the spawn-state route section is the default.
+    Callers may override either source with ``--coverage-plan`` /
+    ``--route`` explicit file paths.
 
     Fast-path passthrough: when ``route.fast_path`` is true, the spec
     emits exactly one agent (``agent_id: "fast"``) and the bucket walk
@@ -10176,7 +10414,15 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     cr_dir = Path(args.cr_dir)
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    coverage_plan = _read_optional_json(Path(args.coverage_plan), None)
+    # Phase C (v2.27.0): post-arbitrate plan lives in
+    # ``coverage.json.final``. The legacy ``--coverage-plan`` path is
+    # honored as an override for callers that pass an explicit plan
+    # file; when absent, fall through to the coverage-state aggregate.
+    coverage_plan_arg = getattr(args, "coverage_plan", None)
+    if coverage_plan_arg:
+        coverage_plan = _read_optional_json(Path(coverage_plan_arg), None)
+    else:
+        coverage_plan = _read_coverage_state(cr_dir).get("final")
     if not isinstance(coverage_plan, dict):
         spec = _spawn_spec_fallback(
             "coverage_plan_missing_or_malformed", cr_dir, now_iso,
@@ -11537,7 +11783,9 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
     setup_data = _read_optional_json(cr_dir / "setup.json", {}) or {}
     scope_data = _read_optional_json(cr_dir / "scope.json", {}) or {}
     intent_data = _read_optional_json(cr_dir / "intent.json", {}) or {}
-    coverage_plan = _read_optional_json(cr_dir / "coverage_plan.json", None)
+    # Phase C (v2.27.0): coverage plan is the ``.final`` section of
+    # coverage.json. Pre-v2.27.0 was a standalone ``coverage_plan.json``.
+    coverage_plan = _read_coverage_state(cr_dir).get("final")
     if not isinstance(coverage_plan, dict):
         coverage_plan = _empty_coverage_plan()
 
