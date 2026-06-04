@@ -555,13 +555,11 @@
         "--coverage-plan",
         "{cr_dir}/coverage_plan.json",
         "--partitions",
-        "{cr_dir}/partitions.json",
-        "--route",
-        "{cr_dir}/route.json"
+        "{cr_dir}/partitions.json"
       ],
       "stdout": null,
       "expected_outputs": [
-        "{cr_dir}/spawn_spec.json"
+        "{cr_dir}/spawn.json"
       ],
       "depends_on": [
         "stage_16_arbitrate_budget"
@@ -593,7 +591,7 @@
       ],
       "stdout": null,
       "expected_outputs": [
-        "{cr_dir}/spawn_verification.json"
+        "{cr_dir}/spawn.json"
       ],
       "depends_on": [
         "stage_19b_derive_spawn_spec",

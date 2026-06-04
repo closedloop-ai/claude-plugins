@@ -557,13 +557,11 @@
       "--coverage-plan",
       "/tmp/cr_dir/coverage_plan.json",
       "--partitions",
-      "/tmp/cr_dir/partitions.json",
-      "--route",
-      "/tmp/cr_dir/route.json"
+      "/tmp/cr_dir/partitions.json"
     ],
     "stdout": null,
     "expected_outputs": [
-      "/tmp/cr_dir/spawn_spec.json"
+      "/tmp/cr_dir/spawn.json"
     ],
     "depends_on": [
       "stage_16_arbitrate_budget"
@@ -595,7 +593,7 @@
     ],
     "stdout": null,
     "expected_outputs": [
-      "/tmp/cr_dir/spawn_verification.json"
+      "/tmp/cr_dir/spawn.json"
     ],
     "depends_on": [
       "stage_19b_derive_spawn_spec",

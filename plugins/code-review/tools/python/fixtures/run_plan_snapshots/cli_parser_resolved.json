@@ -137,6 +137,13 @@
             "refactor",
             "mixed"
           ]
+        },
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null
         }
       ]
     },
@@ -1626,14 +1633,6 @@
             "--route"
           ],
           "dest": "route",
-          "default": null,
-          "required": true
-        },
-        {
-          "flags": [
-            "--output"
-          ],
-          "dest": "output",
           "default": null
         }
       ]

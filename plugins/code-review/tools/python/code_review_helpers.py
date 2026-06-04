@@ -1191,7 +1191,19 @@ def _load_critic_gates(path: str | None) -> dict[str, Any]:
 
 
 def cmd_route(args: argparse.Namespace) -> int:
-    """Execute route subcommand."""
+    """Execute route subcommand.
+
+    PLN-725 Phase D (v2.26.0): writes ``<cr_dir>/spawn.json.route`` directly
+    via ``--cr-dir`` instead of streaming the routing block to stdout. The
+    payload is the same as the legacy ``route.json`` shape so downstream
+    consumers (cmd_derive_spawn_spec, cmd_render_fleet_summary) read from
+    ``state["route"]`` instead of opening a separate file.
+
+    The routing block is also emitted to stdout unconditionally — this
+    preserves the legacy ``helpers route ... > route.json`` shell idiom
+    for callers that haven't switched to ``--cr-dir`` and gives operators
+    visibility regardless of which path they take.
+    """
     diff_data_path: str | None = getattr(args, "diff_data", None)
     diff_data = json.load(open(diff_data_path)) if diff_data_path else json.load(sys.stdin)
     files_to_review: list[str] = diff_data.get("files_to_review", [])
@@ -1264,21 +1276,23 @@ def cmd_route(args: argparse.Namespace) -> int:
 
     fast_path = total_loc <= FAST_PATH_MAX_LOC
 
-    json.dump(
-        {
-            "size_category": size_category,
-            "total_loc": total_loc,
-            "fast_path": fast_path,
-            "models": models,
-            "high_risk_files": high_risk_files,
-            "domain_critics": selected_domain_critics,
-            "max_bha_agents": max_bha_agents,
-        },
-        sys.stdout,
-        indent=2,
-    )
-    sys.stdout.write("\n")
-    return 0
+    route_payload: dict[str, Any] = {
+        "size_category": size_category,
+        "total_loc": total_loc,
+        "fast_path": fast_path,
+        "models": models,
+        "high_risk_files": high_risk_files,
+        "domain_critics": selected_domain_critics,
+        "max_bha_agents": max_bha_agents,
+    }
+
+    # Phase D: when --cr-dir is supplied, write the routing block into
+    # ``spawn.json.route`` via atomic section update so a later stage's
+    # write to a different section can't clobber it.
+    cr_dir_arg: str | None = getattr(args, "cr_dir", None)
+    if cr_dir_arg:
+        _write_spawn_section(Path(cr_dir_arg), "route", route_payload)
+    return _emit_summary(route_payload)
 
 
 # ---------------------------------------------------------------------------
@@ -9053,6 +9067,56 @@ def _write_and_emit_manifest(
     return _emit_summary(manifest)
 
 
+# ---------------------------------------------------------------------------
+# Phase D: spawn-state aggregate (replaces route.json + spawn_spec.json +
+# spawn_verification.json). Three distinct stages write to three sections of
+# one ``spawn.json`` file via atomic read-modify-write: ``route`` (Gate B's
+# model routing decision), ``spec`` (stage_19b's flat agent descriptor list),
+# and ``verification`` (stage_20b's runtime tally). The presenter reads all
+# three sections from the single file via ``_read_spawn_state``.
+# ---------------------------------------------------------------------------
+
+
+_SPAWN_STATE_FILENAME = "spawn.json"
+_SPAWN_STATE_SECTIONS: frozenset[str] = frozenset({"route", "spec", "verification"})
+
+
+def _read_spawn_state(cr_dir: Path) -> dict[str, Any]:
+    """Return the parsed contents of ``<cr_dir>/spawn.json`` or ``{}``.
+
+    Tolerates missing/malformed/non-dict so consumers can chain
+    ``state.get("route", {})``, ``state.get("spec")``, etc. without
+    isinstance checks at every call site. The presenter's degraded-output
+    paths (no spec, no verification) drive directly off the same shape.
+    """
+    raw = _read_optional_json(cr_dir / _SPAWN_STATE_FILENAME, {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def _write_spawn_section(
+    cr_dir: Path, section: str, payload: dict[str, Any],
+) -> None:
+    """Atomically update one section of ``spawn.json`` without clobbering others.
+
+    Read-modify-write via tmp + rename: read the current state (or ``{}`` if
+    absent), replace the named section, write to ``spawn.json.tmp``, rename
+    over ``spawn.json``. The rename is atomic on POSIX, so a crash mid-write
+    leaves the prior state intact rather than a half-written file.
+    """
+    if section not in _SPAWN_STATE_SECTIONS:
+        raise ValueError(
+            f"unknown spawn.json section {section!r}; expected one of "
+            f"{sorted(_SPAWN_STATE_SECTIONS)}",
+        )
+    cr_dir.mkdir(parents=True, exist_ok=True)
+    state = _read_spawn_state(cr_dir)
+    state[section] = payload
+    path = cr_dir / _SPAWN_STATE_FILENAME
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, indent=2))
+    os.replace(str(tmp), str(path))
+
+
 def _read_simple_cache_entry(
     cache_dir: Path | None,
     path: Path,
@@ -9742,17 +9806,19 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
 # Subcommand: derive-spawn-spec (PLN-725 Phase 8)
 # ---------------------------------------------------------------------------
 #
-# Reads the post-arbitrate coverage_plan.json + partitions.json + route.json
-# and emits ``spawn_spec.json`` — a flat list of agent descriptors the
-# orchestrator (start.md "Reviewer Fleet" section) dispatches Task calls
-# from. Before Phase 8, stage_20 walked a static table hard-coded into the
-# command markdown; the coverage_plan was effectively ignored at spawn
-# time. This stage closes the loop so the deterministic coverage signal
-# (PLN-725) actually shapes the spawned fleet.
+# Reads the post-arbitrate coverage_plan.json + partitions.json and the
+# route section of spawn.json (written by Gate B's ``cmd_route --cr-dir``),
+# then writes the flat list of agent descriptors into ``spawn.json`` under
+# the ``spec`` section. The orchestrator (start.md "Reviewer Fleet" section)
+# dispatches Task calls from that list. Before Phase 8, stage_20 walked a
+# static table hard-coded into the command markdown; the coverage_plan was
+# effectively ignored at spawn time. This stage closes the loop so the
+# deterministic coverage signal (PLN-725) actually shapes the spawned fleet.
 #
 # The spec is observational: the orchestrator may fall back to the static
-# table if ``spawn_spec.json`` is absent or its ``arbitrate_status`` field
-# is ``"fallback"`` — a derive failure must never break review.
+# table if ``spawn.json`` is absent, its ``spec`` section is missing, or
+# the section's ``arbitrate_status`` field is ``"fallback"`` — a derive
+# failure must never break review.
 
 # Canonical role → AGENT_ID + partitioning + patches-file mapping. The
 # reviewer names on the left are the SPAWNABLE subset of
@@ -9796,11 +9862,11 @@ _SPAWN_DEFERRED_ROLES: dict[str, str] = {
 
 
 def _spawn_resolve_models(route: dict[str, Any]) -> dict[str, Any]:
-    """Return the ``models`` block from route.json with safe defaults.
+    """Return the ``models`` block from ``spawn.json.route`` with safe defaults.
 
-    A missing or malformed route file falls back to the same canonical
+    A missing or malformed route section falls back to the same canonical
     defaults ``cmd_route`` emits. The orchestrator can read the model
-    string straight from the spawn-spec without re-parsing route.json.
+    string straight from the spawn-spec without re-reading ``spawn.json.route``.
     """
     models_raw = route.get("models") if isinstance(route, dict) else None
     models = models_raw if isinstance(models_raw, dict) else {}
@@ -9822,7 +9888,7 @@ def _spawn_bha_model(
 
     Matches ``stage_20`` model selection: test-only partitions take the
     Sonnet ``test_only`` slot; everything else takes the Opus default.
-    The route.json shape is ``{"bug_hunter_a": {"default": ..., "test_only": ...}}``;
+    The ``spawn.json.route`` shape is ``{"bug_hunter_a": {"default": ..., "test_only": ...}}``;
     we tolerate a plain string for back-compat (treat as the default).
     """
     bha_models = models.get("bug_hunter_a")
@@ -10083,9 +10149,12 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     """Translate the post-arbitrate coverage plan into a flat spawn spec.
 
     PLN-725 Phase 8. Reads ``coverage_plan.json`` (post-arbitrate),
-    ``partitions.json`` (post-partition), and ``route.json`` (post-route)
-    and writes ``spawn_spec.json`` enumerating every agent the
-    orchestrator should spawn at ``stage_20_spawn_reviewers``.
+    ``partitions.json`` (post-partition), and the ``route`` section of
+    ``spawn.json`` (post-route — written by Gate B's ``cmd_route --cr-dir``)
+    and writes the ``spec`` section of ``spawn.json`` enumerating every
+    agent the orchestrator should spawn at ``stage_20_spawn_reviewers``.
+    Legacy callers may still supply ``--route`` to point at a standalone
+    routing file; the spawn-state route section is the default.
 
     Fast-path passthrough: when ``route.fast_path`` is true, the spec
     emits exactly one agent (``agent_id: "fast"``) and the bucket walk
@@ -10107,19 +10176,22 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     cr_dir = Path(args.cr_dir)
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    output_path = (
-        Path(args.output) if args.output
-        else cr_dir / "spawn_spec.json"
-    )
-
     coverage_plan = _read_optional_json(Path(args.coverage_plan), None)
     if not isinstance(coverage_plan, dict):
         spec = _spawn_spec_fallback(
             "coverage_plan_missing_or_malformed", cr_dir, now_iso,
         )
-        return _write_spawn_spec(spec, output_path)
+        return _write_spawn_spec(spec, cr_dir)
 
-    route = _read_optional_json(Path(args.route), {}) or {}
+    # Phase D (v2.26.0): route now lives in spawn.json.route. The legacy
+    # ``--route`` path is honored as an override for callers (mostly tests)
+    # that pass an explicit route file. When absent or unreadable, fall
+    # through to the spawn-state aggregate.
+    route_arg = getattr(args, "route", None)
+    if route_arg:
+        route = _read_optional_json(Path(route_arg), {}) or {}
+    else:
+        route = _read_spawn_state(cr_dir).get("route", {}) or {}
     if not isinstance(route, dict):
         route = {}
     models = _spawn_resolve_models(route)
@@ -10163,7 +10235,7 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
             },
             "generated_at": now_iso,
         }
-        return _write_spawn_spec(spec, output_path)
+        return _write_spawn_spec(spec, cr_dir)
 
     # Distinguish missing partitions.json (upstream stage_17 failure)
     # from valid empty partitions (all files cached). A missing file
@@ -10179,7 +10251,7 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
         spec = _spawn_spec_fallback(
             "partitions_missing_or_malformed", cr_dir, now_iso,
         )
-        return _write_spawn_spec(spec, output_path)
+        return _write_spawn_spec(spec, cr_dir)
     if isinstance(partitions_blob, dict):
         partitions = partitions_blob.get("partitions", []) or []
     elif isinstance(partitions_blob, list):
@@ -10190,7 +10262,7 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
         spec = _spawn_spec_fallback(
             "partitions_missing_or_malformed", cr_dir, now_iso,
         )
-        return _write_spawn_spec(spec, output_path)
+        return _write_spawn_spec(spec, cr_dir)
     partitions = [p for p in partitions if isinstance(p, dict)]
 
     # PLN-725 Phase 8 — BLOCKING sanitization. The Phase 7 BLOCKING
@@ -10298,7 +10370,7 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
         },
         "generated_at": now_iso,
     }
-    return _write_spawn_spec(spec, output_path)
+    return _write_spawn_spec(spec, cr_dir)
 
 
 def _build_spawn_required_gap_findings(
@@ -10374,17 +10446,24 @@ def _append_to_coverage_gaps(
         print(f"Warning: could not append spawn coverage gaps: {exc}", file=sys.stderr)
 
 
-def _write_spawn_spec(spec: dict[str, Any], output_path: Path) -> int:
-    """Write spawn_spec.json + emit a short summary to stdout."""
+def _write_spawn_spec(spec: dict[str, Any], cr_dir: Path) -> int:
+    """Write the spec into spawn.json.spec and emit a short summary to stdout.
+
+    Phase D (v2.26.0): the canonical write target is now the ``spec`` section
+    of ``<cr_dir>/spawn.json`` via the atomic ``_write_spawn_section`` helper,
+    not a standalone ``spawn_spec.json``. The stdout summary still surfaces
+    the same telemetry the legacy ``spawn_spec.json`` write target reported,
+    but now points at ``<cr_dir>/spawn.json`` so operators reading the
+    summary know where to look.
+    """
     try:
-        with open(output_path, "w") as f:
-            json.dump(spec, f, indent=2)
+        _write_spawn_section(cr_dir, "spec", spec)
     except OSError as exc:
-        print(f"Error writing spawn_spec: {exc}", file=sys.stderr)
+        print(f"Error writing spawn.json.spec: {exc}", file=sys.stderr)
         return 1
     json.dump(
         {
-            "spawn_spec": str(output_path),
+            "spawn_state": str(cr_dir / _SPAWN_STATE_FILENAME),
             "fast_path": spec["fast_path"],
             "gated_by_verify": spec["gated_by_verify"],
             "arbitrate_status": spec["arbitrate_status"],
@@ -10430,24 +10509,26 @@ def cmd_verify_spawn(args: argparse.Namespace) -> int:
     omissions, not coverage gaps.
 
     Reads:
-      - ``<cr_dir>/spawn_spec.json`` (derived by stage_19b)
+      - ``<cr_dir>/spawn.json`` ``.spec`` section (derived by stage_19b)
       - All ``<cr_dir>/agent_*.json`` files (written by stage_20)
 
     Writes:
-      - ``<cr_dir>/spawn_verification.json`` (telemetry only)
+      - ``<cr_dir>/spawn.json`` ``.verification`` section (telemetry only)
       - Appends coverage-gap findings to ``<cr_dir>/coverage_gaps.json``
 
-    Fallback behavior: when spawn_spec.json is missing, marks
-    ``arbitrate_status: "fallback"``, or has no agents (e.g.
-    fast-path collapse), the stage no-ops and returns 0 — the
-    static-table path doesn't have a spec to verify against.
+    Fallback behavior: when ``spawn.json`` is missing, its ``.spec``
+    section is absent, marks ``arbitrate_status: "fallback"``, or has
+    no agents (e.g. fast-path collapse), the stage no-ops and returns
+    0 — the static-table path doesn't have a spec to verify against.
 
     ``on_failure: continue`` at the walker — a verification failure
     must never block review.
     """
     cr_dir = Path(args.cr_dir)
-    spec_path = cr_dir / "spawn_spec.json"
-    spec = _read_optional_json(spec_path, None)
+    # Phase D (v2.26.0): spec is the .spec section of spawn.json instead of
+    # a standalone spawn_spec.json file. Same downstream semantics.
+    state = _read_spawn_state(cr_dir)
+    spec = state.get("spec")
     now_iso = datetime.now(timezone.utc).isoformat()
 
     def _emit_no_op(reason: str) -> int:
@@ -10460,17 +10541,10 @@ def cmd_verify_spawn(args: argparse.Namespace) -> int:
             "generated_at": now_iso,
         }
         try:
-            (cr_dir / "spawn_verification.json").write_text(
-                json.dumps(verification, indent=2),
-            )
+            _write_spawn_section(cr_dir, "verification", verification)
         except OSError as exc:
-            print(f"Warning: could not write spawn_verification: {exc}", file=sys.stderr)
-        json.dump(
-            {"verified": False, "reason": reason},
-            sys.stdout, indent=2,
-        )
-        sys.stdout.write("\n")
-        return 0
+            print(f"Warning: could not write spawn.json.verification: {exc}", file=sys.stderr)
+        return _emit_summary({"verified": False, "reason": reason})
 
     if not isinstance(spec, dict):
         return _emit_no_op("spec_missing")
@@ -10556,26 +10630,19 @@ def cmd_verify_spawn(args: argparse.Namespace) -> int:
         "generated_at": now_iso,
     }
     try:
-        (cr_dir / "spawn_verification.json").write_text(
-            json.dumps(verification, indent=2),
-        )
+        _write_spawn_section(cr_dir, "verification", verification)
     except OSError as exc:
-        print(f"Error writing spawn_verification: {exc}", file=sys.stderr)
+        print(f"Error writing spawn.json.verification: {exc}", file=sys.stderr)
         return 1
-    json.dump(
-        {
-            "verified": True,
-            "intended_count": verification["intended_count"],
-            "present_count": verification["present_count"],
-            "missing_required_count": len(missing_required),
-            "missing_best_effort_count": (
-                len(missing_agents) - len(missing_required)
-            ),
-        },
-        sys.stdout, indent=2,
-    )
-    sys.stdout.write("\n")
-    return 0
+    return _emit_summary({
+        "verified": True,
+        "intended_count": verification["intended_count"],
+        "present_count": verification["present_count"],
+        "missing_required_count": len(missing_required),
+        "missing_best_effort_count": (
+            len(missing_agents) - len(missing_required)
+        ),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -10744,7 +10811,7 @@ def _render_model_summary(
     """
     agents = spec.get("agents") or []
     if not isinstance(agents, list):
-        return "see route.json"
+        return "see `spawn.json.route`"
 
     # Collect per-role model assignments. Use dict-by-role-of-set so
     # mixed assignments (BHA Opus on impl, Sonnet on test-only)
@@ -10785,7 +10852,7 @@ def _render_model_summary(
                     unique.append(m)
             summary_parts.append(f"{label}={'/'.join(unique)}")
             continue
-        # Fallback to route.json defaults when the spec has no
+        # Fallback to spawn.json.route defaults when the spec has no
         # descriptor for this slot (partial spec / fallback paths).
         models_dict = route.get("models")
         if not isinstance(models_dict, dict):
@@ -10805,7 +10872,7 @@ def _render_model_summary(
             if m not in unique_critic:
                 unique_critic.append(m)
         summary_parts.append(f"Critics={'/'.join(unique_critic)}")
-    return ", ".join(summary_parts) if summary_parts else "see route.json"
+    return ", ".join(summary_parts) if summary_parts else "see `spawn.json.route`"
 
 
 def _render_fleet_notes(
@@ -10917,28 +10984,35 @@ def _render_fleet_notes(
 def cmd_render_fleet_summary(args: argparse.Namespace) -> int:
     """Render the operator-facing Reviewer Fleet markdown block.
 
-    PLN-725 Phase 9. Reads ``<cr-dir>/spawn_spec.json`` (Phase 8 v2.22.0),
-    ``<cr-dir>/spawn_verification.json`` (v2.22.3), and
-    ``<cr-dir>/route.json``, then emits a self-contained markdown
-    block to stdout (or ``--output``). The block replaces the
+    PLN-725 Phase 9. Reads ``<cr-dir>/spawn.json`` and pulls the
+    ``.spec`` (Phase 8 v2.22.0), ``.verification`` (v2.22.3), and
+    ``.route`` (Phase D v2.26.0) sections, then emits a self-contained
+    markdown block to stdout (or ``--output``). The block replaces the
     presenters' previous static "Reviewers" + "Model Routing" lines
     so the operator-facing summary reflects the actual deterministic
     coverage selection — including BLOCKING sanitization,
     budget-capped BHA partitions, runtime crashes, and the rule vs
     critic provenance distinction on domain agents.
 
-    Fallback behavior: when ``spawn_spec.json`` is missing or marks
-    ``arbitrate_status: "fallback"``, the helper emits a minimal
-    block that says "spawn-spec unavailable" + the fallback_reason
-    and instructs the presenter to walk the static reviewer table.
+    Fallback behavior: when ``spawn.json`` is missing, its ``.spec``
+    section is absent, or the section marks ``arbitrate_status:
+    "fallback"``, the helper emits a minimal block that says
+    "spawn-spec unavailable" + the fallback_reason and instructs the
+    presenter to walk the static reviewer table.
     The presenters' existing fallback path remains the source of
     truth for that case — Phase 9 doesn't try to reconstruct fleet
     composition from agent_*.json glob (the legacy heuristic).
     """
     cr_dir = Path(args.cr_dir)
-    spec = _read_optional_json(cr_dir / "spawn_spec.json", None)
-    verification = _read_optional_json(cr_dir / "spawn_verification.json", None)
-    route = _read_optional_json(cr_dir / "route.json", {}) or {}
+    # Phase D (v2.26.0): all three sources live in spawn.json under .route,
+    # .spec, and .verification. Each ``.get()`` falls through to None/{} so
+    # the existing degraded-output paths (no spec → "spawn-spec unavailable",
+    # no verification → "runtime tally unavailable", no route → omit Model
+    # Routing line) continue to fire on the same semantics.
+    state = _read_spawn_state(cr_dir)
+    spec = state.get("spec")
+    verification = state.get("verification")
+    route = state.get("route") or {}
     if not isinstance(route, dict):
         route = {}
 
@@ -10950,7 +11024,7 @@ def cmd_render_fleet_summary(args: argparse.Namespace) -> int:
             "reviewer table (legacy fleet derivation).",
         )
         out_lines.append(
-            "**Model Routing:** (see `route.json`)",
+            "**Model Routing:** (see `spawn.json.route`)",
         )
         return _write_fleet_summary(out_lines, args)
 
@@ -10960,7 +11034,7 @@ def cmd_render_fleet_summary(args: argparse.Namespace) -> int:
             f"**Reviewer Fleet:** spawn-spec fell back (`{reason}`); the "
             "orchestrator walked the static reviewer table for this run.",
         )
-        out_lines.append("**Model Routing:** (see `route.json`)")
+        out_lines.append("**Model Routing:** (see `spawn.json.route`)")
         return _write_fleet_summary(out_lines, args)
 
     fast_path = spec.get("fast_path") is True
@@ -10978,10 +11052,10 @@ def cmd_render_fleet_summary(args: argparse.Namespace) -> int:
 
     # Model Routing — standard flow only; fast-path already emitted
     # its own Fast-path-mode routing line above. Derived from
-    # spawn_spec.agents[].model so the operator sees the models
-    # actually used at dispatch, not the route.json defaults. Three
-    # cases this matters:
-    #   - test-only BHA partition ran on Sonnet but route.json's
+    # spec.agents[].model so the operator sees the models actually
+    # used at dispatch, not the spawn.json.route defaults. Three cases
+    # this matters:
+    #   - test-only BHA partition ran on Sonnet but route's
     #     bug_hunter_a.default still says Opus → pre-v2.23.2 the
     #     summary said "BHA=opus", misleading the operator about
     #     what model produced the partition's findings.
@@ -10990,7 +11064,7 @@ def cmd_render_fleet_summary(args: argparse.Namespace) -> int:
     #     was silently dropped because only the dict shape was
     #     consulted.
     #   - Domain critic models → spec carries them per descriptor;
-    #     route.json never had them.
+    #     spawn.json.route never had them.
     # route.size_category is still used as the header label.
     if not fast_path:
         size_category = str(route.get("size_category", "")).strip()

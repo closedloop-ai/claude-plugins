@@ -878,6 +878,112 @@ class TestRoute:
         assert result["fast_path"] is True
 
 
+class TestCmdRouteCrDir:
+    """Phase D (v2.26.0) — ``cmd_route --cr-dir`` is the canonical
+    production path: it writes the routing block into
+    ``<cr_dir>/spawn.json`` under the ``.route`` section via the
+    atomic ``_write_spawn_section`` helper instead of streaming the
+    payload to stdout and relying on the orchestrator's shell
+    redirect (the race class fixed in v2.25.1). All existing
+    TestRoute coverage exercises the legacy stdout-only path; this
+    class pins the file-write side-effect, the stdout-still-fires
+    contract, and the atomicity guarantee against a pre-existing
+    section.
+    """
+
+    @staticmethod
+    def _run_with_cr_dir(
+        cr_dir: Path,
+        diff_data: dict[str, Any],
+        intent: str = "mixed",
+    ) -> dict[str, Any]:
+        import io
+        import sys as _sys
+
+        old_stdin = _sys.stdin
+        old_stdout = _sys.stdout
+        _sys.stdin = io.StringIO(json.dumps(diff_data))
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(
+                critic_gates=None, intent=intent, cr_dir=str(cr_dir),
+            )
+            cmd_route(ns)
+            _sys.stdout.seek(0)
+            return json.load(_sys.stdout)
+        finally:
+            _sys.stdin = old_stdin
+            _sys.stdout = old_stdout
+
+    def test_writes_route_section_to_spawn_json(self, tmp_path: Path) -> None:
+        """``--cr-dir`` materializes ``spawn.json`` and populates the
+        ``.route`` section with the canonical route shape — same keys
+        the legacy ``> route.json`` redirect produced.
+        """
+        data = _make_diff_data(
+            files=["a.ts"],
+            loc={"a.ts": {"added": 100, "removed": 50}},
+        )
+        data["total_loc"] = 150
+        self._run_with_cr_dir(tmp_path, data)
+        spawn_path = tmp_path / "spawn.json"
+        assert spawn_path.exists(), "spawn.json missing — cr-dir branch did not fire"
+        state = json.loads(spawn_path.read_text())
+        route = state.get("route")
+        assert isinstance(route, dict), "spawn.json.route missing or wrong shape"
+        # Canonical route shape — same keys cmd_route prints to stdout.
+        for key in (
+            "size_category", "total_loc", "fast_path", "models",
+            "high_risk_files", "domain_critics", "max_bha_agents",
+        ):
+            assert key in route, f"spawn.json.route missing key {key!r}"
+        assert route["size_category"] == "Small"
+        assert route["models"]["bug_hunter_a"]["default"] == "opus"
+
+    def test_stdout_still_emits_with_cr_dir(self, tmp_path: Path) -> None:
+        """Stdout fires unconditionally — the legacy
+        ``helpers route ... > route.json`` shell idiom still works
+        for callers that haven't switched to ``--cr-dir`` and
+        operators reading the routing block from the orchestrator
+        log don't see a regression.
+        """
+        data = _make_diff_data(
+            files=["a.ts"],
+            loc={"a.ts": {"added": 100, "removed": 50}},
+        )
+        data["total_loc"] = 150
+        stdout_payload = self._run_with_cr_dir(tmp_path, data)
+        # Same payload should appear on stdout AND in spawn.json.route.
+        spawn_route = json.loads(
+            (tmp_path / "spawn.json").read_text(),
+        )["route"]
+        assert stdout_payload == spawn_route
+
+    def test_preserves_existing_sections(self, tmp_path: Path) -> None:
+        """Atomic section update must not clobber other sections.
+        Seeding a stale ``spec`` section before running cmd_route
+        and confirming it survives the route write proves the
+        read-modify-write contract holds — the same property the
+        three-stage Phase D pipeline depends on.
+        """
+        seed_spec = {"arbitrate_status": "ok", "agents": [], "skipped": []}
+        (tmp_path / "spawn.json").write_text(
+            json.dumps({"spec": seed_spec}),
+        )
+        data = _make_diff_data(
+            files=["a.ts"],
+            loc={"a.ts": {"added": 100, "removed": 50}},
+        )
+        data["total_loc"] = 150
+        self._run_with_cr_dir(tmp_path, data)
+        state = json.loads((tmp_path / "spawn.json").read_text())
+        assert state.get("spec") == seed_spec, (
+            "cmd_route clobbered the pre-existing .spec section — "
+            "section write is not properly read-modify-write"
+        )
+        assert isinstance(state.get("route"), dict)
+
+
 # ---------------------------------------------------------------------------
 # Partition post-processing
 # ---------------------------------------------------------------------------
@@ -15369,36 +15475,39 @@ def _run_derive_spawn_spec(
     p_path = tmp_path / "partitions.json"
     if partitions is not None:
         p_path.write_text(json.dumps(partitions))
-    r_path = tmp_path / "route.json"
+    # Phase D (v2.26.0): route lives in spawn.json.route, not route.json.
+    # Seed it via the section helper so future read-modify-write writes
+    # from cmd_derive_spawn_spec preserve it.
     if route is not None:
-        r_path.write_text(json.dumps(route))
+        (tmp_path / "spawn.json").write_text(json.dumps({"route": route}))
 
     ns = argparse.Namespace(
         cr_dir=str(tmp_path),
         coverage_plan=str(cp_path),
         partitions=str(p_path),
-        route=str(r_path),
-        output=None,
+        route=None,
     )
     captured = run_with_stdout_capture(cmd_derive_spawn_spec, ns)
     summary = json.loads(captured) if captured else {}
-    # ``run_with_stdout_capture`` swallows the return value; assert here
-    # by reading the on-disk artifact, which is the same invariant the
-    # production walker checks (expected_outputs: [<cr_dir>/spawn_spec.json]).
-    spec_path = tmp_path / "spawn_spec.json"
-    assert spec_path.exists(), "spawn_spec.json missing — cmd_derive_spawn_spec failed silently"
-    spec = json.loads(spec_path.read_text())
+    # Read the spec section from the post-cmd spawn.json. The production
+    # walker checks expected_outputs: [<cr_dir>/spawn.json].
+    spawn_path = tmp_path / "spawn.json"
+    assert spawn_path.exists(), "spawn.json missing — cmd_derive_spawn_spec failed silently"
+    state = json.loads(spawn_path.read_text())
+    spec = state.get("spec", {})
+    assert spec, "spawn.json.spec missing — cmd_derive_spawn_spec did not write the spec section"
     return summary, spec
 
 
 class TestPLN725Phase8DeriveSpawnSpec:
     """PLN-725 Phase 8 — translation from coverage_plan.json (post-
-    arbitrate) into spawn_spec.json (the flat agent descriptor list the
-    stage_20 orchestrator dispatches Tasks from). Before Phase 8, the
-    coverage plan was effectively ignored at spawn time: stage_20 walked
-    a static reviewer table baked into start.md. These tests pin the
-    bucket-to-spec mapping, the fast-path passthrough, the BLOCKING-
-    verify propagation, and the fallback sentinels.
+    arbitrate) into ``spawn.json``'s ``spec`` section (the flat agent
+    descriptor list the stage_20 orchestrator dispatches Tasks from).
+    Phase D (v2.26.0) consolidated the legacy standalone
+    ``spawn_spec.json`` artifact into a section of ``spawn.json``;
+    Phase 8's bucket logic, fast-path passthrough, BLOCKING-verify
+    propagation, and fallback sentinels are unchanged. These tests pin
+    each of those.
     """
 
     @staticmethod
@@ -15710,10 +15819,10 @@ class TestPLN725Phase8DeriveSpawnSpec:
     def test_route_models_overrides_default(
         self, tmp_path: Path,
     ) -> None:
-        """The route.json ``models`` block is the single source of
-        truth for per-agent model selection; the spec must echo
-        operator overrides (e.g. premise on Sonnet for a "feat" intent)
-        rather than re-deriving them in the orchestrator.
+        """The ``spawn.json.route`` ``models`` block is the single
+        source of truth for per-agent model selection; the spec must
+        echo operator overrides (e.g. premise on Sonnet for a "feat"
+        intent) rather than re-deriving them in the orchestrator.
         """
         route = self._route()
         route["models"]["premise_reviewer"] = "sonnet"
@@ -15729,11 +15838,12 @@ class TestPLN725Phase8DeriveSpawnSpec:
     def test_missing_route_uses_safe_defaults(
         self, tmp_path: Path,
     ) -> None:
-        """A missing route.json must NOT abort the spec — fall back to
-        the canonical defaults ``cmd_route`` emits. The orchestrator
-        treats absence the same as a route with no overrides, so a
-        route failure degrades gracefully into the default model
-        routing rather than failing the spawn-spec derivation.
+        """A missing ``spawn.json.route`` section must NOT abort the
+        spec — fall back to the canonical defaults ``cmd_route`` emits.
+        The orchestrator treats absence the same as a route with no
+        overrides, so a route failure degrades gracefully into the
+        default model routing rather than failing the spawn-spec
+        derivation.
         """
         _, spec = _run_derive_spawn_spec(
             tmp_path,
@@ -15788,8 +15898,8 @@ class TestPLN725Phase8DeriveSpawnSpec:
         cp.write_text(json.dumps([]))  # valid JSON, wrong shape
         p = tmp_path / "partitions.json"
         p.write_text(json.dumps(self._two_partitions()))
-        r = tmp_path / "route.json"
-        r.write_text(json.dumps(self._route()))
+        # Phase D (v2.26.0): route lives in spawn.json.route, not route.json.
+        (tmp_path / "spawn.json").write_text(json.dumps({"route": self._route()}))
 
         from code_review_helpers import cmd_derive_spawn_spec
         from golden_fixture_harness import run_with_stdout_capture
@@ -15798,11 +15908,11 @@ class TestPLN725Phase8DeriveSpawnSpec:
             cr_dir=str(tmp_path),
             coverage_plan=str(cp),
             partitions=str(p),
-            route=str(r),
-            output=None,
+            route=None,
         )
         run_with_stdout_capture(cmd_derive_spawn_spec, ns)
-        spec = json.loads((tmp_path / "spawn_spec.json").read_text())
+        state = json.loads((tmp_path / "spawn.json").read_text())
+        spec = state["spec"]
         assert spec["arbitrate_status"] == "fallback"
         assert spec["fallback_reason"] == "coverage_plan_missing_or_malformed"
         assert spec["agents"] == []
@@ -16211,9 +16321,10 @@ class TestPLN725Phase8RequiredCoverageGaps:
 
 class TestPLN725Phase8VerifySpawn:
     """PLN-725 Phase 8 / v2.22.3 stage_20b_verify_spawn. Reads
-    spawn_spec.json + globs agent_*.json; emits coverage-gap
-    findings for required agents missing on-disk outputs. The
-    runtime symmetric pair to stage_19b's required-skip findings.
+    ``spawn.json``'s ``.spec`` section (Phase D consolidated the legacy
+    ``spawn_spec.json`` here) and globs ``agent_*.json``; emits
+    coverage-gap findings for required agents missing on-disk outputs.
+    The runtime symmetric pair to stage_19b's required-skip findings.
     """
 
     @staticmethod
@@ -16223,7 +16334,9 @@ class TestPLN725Phase8VerifySpawn:
 
         ns = argparse.Namespace(cr_dir=str(tmp_path))
         run_with_stdout_capture(cmd_verify_spawn, ns)
-        return json.loads((tmp_path / "spawn_verification.json").read_text())
+        # Phase D (v2.26.0): verification lives in spawn.json.verification.
+        state = json.loads((tmp_path / "spawn.json").read_text())
+        return state.get("verification", {})
 
     @staticmethod
     def _spec(agents: list[dict[str, Any]]) -> dict[str, Any]:
@@ -16253,7 +16366,7 @@ class TestPLN725Phase8VerifySpawn:
             {"agent_id": "auditor", "reviewer": "unified_auditor",
              "bucket": "required", "source": "core"},
         ])
-        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+        (tmp_path / "spawn.json").write_text(json.dumps({"spec": spec}))
         (tmp_path / "agent_bhb.json").write_text("{}")
         (tmp_path / "agent_auditor.json").write_text("{}")
         verification = self._run(tmp_path)
@@ -16274,7 +16387,7 @@ class TestPLN725Phase8VerifySpawn:
             {"agent_id": "auditor", "reviewer": "unified_auditor",
              "bucket": "required", "source": "core"},
         ])
-        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+        (tmp_path / "spawn.json").write_text(json.dumps({"spec": spec}))
         # Only bhb wrote its output; auditor crashed at runtime.
         (tmp_path / "agent_bhb.json").write_text("{}")
 
@@ -16299,7 +16412,7 @@ class TestPLN725Phase8VerifySpawn:
             {"agent_id": "domain_0", "reviewer": "graphql-architect",
              "bucket": "best_effort", "source": "critic"},
         ])
-        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+        (tmp_path / "spawn.json").write_text(json.dumps({"spec": spec}))
         (tmp_path / "agent_bhb.json").write_text("{}")
         # domain_0 didn't write — budget-driven.
 
@@ -16326,19 +16439,20 @@ class TestPLN725Phase8VerifySpawn:
                       "from_required": 0, "from_best_effort": 0},
             "generated_at": "",
         }
-        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+        (tmp_path / "spawn.json").write_text(json.dumps({"spec": spec}))
         verification = self._run(tmp_path)
         assert verification["verified"] is False
         assert verification["reason"] == "spec_fallback"
         assert not (tmp_path / "coverage_gaps.json").exists()
 
     def test_missing_spec_no_ops(self, tmp_path: Path) -> None:
-        """spawn_spec.json absent (stage_19b didn't run / crashed) →
-        no-op with reason ``spec_missing``. The pipeline continues;
-        finalize-result still produces a usable envelope from
-        whatever findings did make it through.
+        """``spawn.json`` absent or ``.spec`` section missing
+        (stage_19b didn't run / crashed) → no-op with reason
+        ``spec_missing``. The pipeline continues; finalize-result
+        still produces a usable envelope from whatever findings did
+        make it through.
         """
-        # No spawn_spec.json written.
+        # No spawn.json written.
         verification = self._run(tmp_path)
         assert verification["verified"] is False
         assert verification["reason"] == "spec_missing"
@@ -16378,9 +16492,10 @@ class TestPLN725Phase8StageGraph:
         # partitions.json fall through to the fallback sentinel.
         assert "stage_16_arbitrate_budget" in s["depends_on"]
         assert "stage_17_partition" not in s["depends_on"]
-        # Expected output is the spawn_spec.json artifact.
+        # Phase D (v2.26.0): spec lives in spawn.json.spec; the canonical
+        # expected output is the consolidated spawn-state aggregate.
         assert any(
-            "spawn_spec.json" in str(out) for out in s["expected_outputs"]
+            "spawn.json" in str(out) for out in s["expected_outputs"]
         )
 
     def test_fast_path_reaches_stage_20_without_stage_17(
@@ -16415,9 +16530,9 @@ class TestPLN725Phase8StageGraph:
     def test_stage_20_depends_on_derive_spawn_spec(
         self, tmp_path: Path,
     ) -> None:
-        """stage_20 reads spawn_spec.json — the dep must be explicit so
-        a partial run that skips stage_19b can't reach stage_20 with a
-        missing or stale spec.
+        """stage_20 reads ``spawn.json``'s ``.spec`` section — the dep
+        must be explicit so a partial run that skips stage_19b can't
+        reach stage_20 with a missing or stale spec.
         """
         plan = self._plan(tmp_path)
         stages = {s["id"]: s for s in plan["stages"]}
@@ -16449,11 +16564,11 @@ class TestPLN725Phase8StageGraph:
     def test_stage_20b_verify_spawn_present_and_wired(
         self, tmp_path: Path,
     ) -> None:
-        """The runtime symmetric pair to stage_19b. Reads spawn_spec.json
-        + globs agent_*.json after stage_20 finishes; emits coverage-gap
-        findings for missing required agents. Must run before
-        stage_21_collect_findings so finalize-result picks up the gaps
-        from coverage_gaps.json.
+        """The runtime symmetric pair to stage_19b. Reads ``spawn.json``'s
+        ``.spec`` section and globs ``agent_*.json`` after stage_20
+        finishes; emits coverage-gap findings for missing required
+        agents. Must run before stage_21_collect_findings so
+        finalize-result picks up the gaps from coverage_gaps.json.
         """
         plan = self._plan(tmp_path)
         stages = {s["id"]: s for s in plan["stages"]}
@@ -16464,8 +16579,9 @@ class TestPLN725Phase8StageGraph:
         # Must depend on both the spec producer and the spawn stage.
         assert "stage_19b_derive_spawn_spec" in s["depends_on"]
         assert "stage_20_spawn_reviewers" in s["depends_on"]
+        # Phase D (v2.26.0): verification lives in spawn.json.verification.
         assert any(
-            "spawn_verification.json" in str(out)
+            "spawn.json" in str(out)
             for out in s["expected_outputs"]
         )
 
@@ -16497,12 +16613,19 @@ def _seed_phase9_inputs(
     seeds a focused subset rather than constructing a full-blown
     end-to-end run.
     """
-    if spec is not None:
-        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
-    if verification is not None:
-        (tmp_path / "spawn_verification.json").write_text(json.dumps(verification))
+    # Phase D (v2.26.0): the three sections live in one spawn.json file.
+    # Seed only what the caller asked for; missing sections drive the
+    # presenter's degraded-output paths via state.get("route"/"spec"/
+    # "verification") returning None.
+    state: dict[str, Any] = {}
     if route is not None:
-        (tmp_path / "route.json").write_text(json.dumps(route))
+        state["route"] = route
+    if spec is not None:
+        state["spec"] = spec
+    if verification is not None:
+        state["verification"] = verification
+    if state:
+        (tmp_path / "spawn.json").write_text(json.dumps(state))
 
 
 def _run_render_fleet_summary(tmp_path: Path) -> str:
@@ -16722,8 +16845,8 @@ class TestPLN725Phase9RenderFleetSummaryHappyPath:
     def test_fast_path_branch(self, tmp_path: Path) -> None:
         """Fast-path runs collapse the standard-flow logic into a
         single one-line block. The model is read from the spec's
-        fast_path_reviewer slot (which mirrors route.json). As of
-        v2.23.2 the fast-path branch also falls through to the
+        fast_path_reviewer slot (which mirrors ``spawn.json.route``).
+        As of v2.23.2 the fast-path branch also falls through to the
         shared Fleet / Notes block so a fast-path run with a
         missing ``agent_fast.json`` shows ``1 intended | 0 ran``
         instead of looking like a clean run.
@@ -16991,10 +17114,10 @@ class TestPLN725Phase9RenderFleetSummaryFallbacks:
     def test_missing_route_uses_safe_defaults(
         self, tmp_path: Path,
     ) -> None:
-        """A missing route.json must NOT abort the renderer — the
-        Reviewers line is independent of route, and the Model
-        Routing line is omitted when route is unavailable rather
-        than fabricating a model summary.
+        """A missing ``spawn.json.route`` section must NOT abort the
+        renderer — the Reviewers line is independent of route, and
+        the Model Routing line is omitted when route is unavailable
+        rather than fabricating a model summary.
         """
         _seed_phase9_inputs(
             tmp_path, spec=_standard_spec(),
@@ -17127,7 +17250,7 @@ class TestPLN725Phase9FastPathFleetTally:
 
 class TestPLN725Phase9ModelRoutingFromSpec:
     """PLN-725 Phase 9 / v2.23.2 — Model Routing summary built from
-    ``spawn_spec.agents[].model`` (not route.json defaults). Three
+    ``spec.agents[].model`` (not ``spawn.json.route`` defaults). Three
     cases this matters: test-only BHA partitions running on Sonnet
     (route default says Opus); the plain-string form of
     ``route.models.bug_hunter_a`` (previously silently dropped);
@@ -17138,7 +17261,7 @@ class TestPLN725Phase9ModelRoutingFromSpec:
         """A run with one impl-BHA partition (Opus) and one
         test-only BHA partition (Sonnet) renders as
         ``BHA=opus/sonnet`` so the operator can see the mix at a
-        glance rather than seeing only route.json's default.
+        glance rather than seeing only ``spawn.json.route``'s default.
         """
         spec = _standard_spec()
         # Append a test-only BHA partition on Sonnet to the
@@ -17159,9 +17282,9 @@ class TestPLN725Phase9ModelRoutingFromSpec:
         self, tmp_path: Path,
     ) -> None:
         """If the spec's BHB descriptor carries a model that
-        diverges from route.json's bug_hunter_b slot (operator
-        override, partial route, etc.), the summary echoes the
-        spec value — that's what actually dispatched.
+        diverges from ``spawn.json.route``'s bug_hunter_b slot
+        (operator override, partial route, etc.), the summary
+        echoes the spec value — that's what actually dispatched.
         """
         spec = _standard_spec()
         # Override the BHB model in the spec to something that
@@ -17242,7 +17365,9 @@ class TestPLN725Phase9VerifySpawnIntendedScoping:
 
         ns = argparse.Namespace(cr_dir=str(tmp_path))
         run_with_stdout_capture(cmd_verify_spawn, ns)
-        return json.loads((tmp_path / "spawn_verification.json").read_text())
+        # Phase D (v2.26.0): verification lives in spawn.json.verification.
+        state = json.loads((tmp_path / "spawn.json").read_text())
+        return state.get("verification", {})
 
     def test_non_spec_agent_files_excluded_from_present_count(
         self, tmp_path: Path,
@@ -17262,7 +17387,7 @@ class TestPLN725Phase9VerifySpawnIntendedScoping:
                       "from_required": 2, "from_best_effort": 0,
                       "required_coverage_gaps": 0},
         }
-        (tmp_path / "spawn_spec.json").write_text(json.dumps(spec))
+        (tmp_path / "spawn.json").write_text(json.dumps({"spec": spec}))
         # Two on-disk outputs match the spec.
         (tmp_path / "agent_bhb.json").write_text("{}")
         (tmp_path / "agent_auditor.json").write_text("{}")
