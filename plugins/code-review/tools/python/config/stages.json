@@ -98,8 +98,7 @@
         "<DIFF_TIP>",
         "--base-ref",
         "<BASE_REF>",
-        "--original-scope",
-        "<DIFF_SCOPE>",
+        "--original-scope=<DIFF_SCOPE>",
         "--full-review",
         "{flags_full_review}",
         "--since-last-review",
@@ -122,8 +121,7 @@
       "kind": "helper",
       "subcommand": "parse-diff",
       "args": [
-        "--scope",
-        "<DIFF_SCOPE>"
+        "--scope=<DIFF_SCOPE>"
       ],
       "stdout": "{cr_dir}/diff_data.json",
       "expected_outputs": [
@@ -141,8 +139,7 @@
       "kind": "helper",
       "subcommand": "extract-patches",
       "args": [
-        "--diff-scope",
-        "<DIFF_SCOPE>",
+        "--diff-scope=<DIFF_SCOPE>",
         "--diff-data",
         "{cr_dir}/diff_data.json",
         "--cr-dir",
@@ -514,8 +511,7 @@
       "args": [
         "--diff-data",
         "{cr_dir}/diff_data.json",
-        "--diff-scope",
-        "<DIFF_SCOPE>",
+        "--diff-scope=<DIFF_SCOPE>",
         "--cr-dir",
         "{cr_dir}"
       ],

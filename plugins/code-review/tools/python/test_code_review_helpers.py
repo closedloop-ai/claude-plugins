@@ -18094,6 +18094,73 @@ class TestCRSPhaseADeclarativeStagesConfig:
         )
         assert actual == expected
 
+    def test_scope_flags_use_equals_form_so_leading_dash_values_parse(self) -> None:
+        """Staged scope resolves DIFF_SCOPE to the literal ``--cached``.
+
+        Space-separated argparse (``--scope --cached``) makes argparse
+        consume the next token as the option name and fail with
+        ``expected one argument``, killing the staged pipeline at the
+        first ``on_failure: abort`` stage. The ``=`` form
+        (``--scope=--cached``) binds unambiguously. This test pins the
+        ``=`` form across every stage that consumes ``<DIFF_SCOPE>`` so
+        the v1.5.5 regression cannot reappear.
+        """
+        from code_review_helpers import _build_run_plan_stages, _register_subparsers
+        stages = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        by_id = {s["id"]: s for s in stages}
+        scope_consumers = {
+            "stage_07_auto_incremental": "--original-scope",
+            "stage_05_parse_diff": "--scope",
+            "stage_06_extract_patches": "--diff-scope",
+            "stage_17_partition": "--diff-scope",
+        }
+        for stage_id, flag in scope_consumers.items():
+            args = by_id[stage_id]["args"]
+            joined = next((a for a in args if a.startswith(f"{flag}=")), None)
+            assert joined is not None, (
+                f"{stage_id} args must carry {flag}=<DIFF_SCOPE> (= form); got {args!r}"
+            )
+            assert "<DIFF_SCOPE>" in joined, (
+                f"{stage_id} {flag} must template <DIFF_SCOPE>; got {joined!r}"
+            )
+            # The space-separated form (two adjacent tokens) is what broke
+            # /start staged; pin that it's absent.
+            assert flag not in args, (
+                f"{stage_id} args still carry bare {flag!r}; switch to {flag}=<DIFF_SCOPE>"
+            )
+
+        # End-to-end: every scope-consuming subparser must accept its
+        # joined form with diff_scope resolved to "--cached" (the staged
+        # value). This is the exact failure mode the v1.5.5 fix addressed.
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command", required=True)
+        _register_subparsers(subparsers)
+        for stage_id, flag in scope_consumers.items():
+            joined = next(a for a in by_id[stage_id]["args"] if a.startswith(f"{flag}="))
+            resolved = joined.replace("<DIFF_SCOPE>", "--cached")
+            subcommand = by_id[stage_id]["subcommand"]
+            # Strip the joined arg from the rest of the stage's args, then
+            # build a minimal argv with required positionals filled in.
+            extra: list[str] = []
+            for a in by_id[stage_id]["args"]:
+                if a == joined:
+                    extra.append(resolved)
+                elif "{cr_dir}" in a:
+                    extra.append(a.replace("{cr_dir}", "/tmp/cr_dir"))
+                elif a.startswith("<") or a.startswith("{"):
+                    # Placeholder; supply a benign default per known shape.
+                    extra.append("placeholder")
+                else:
+                    extra.append(a)
+            argv = [subcommand, *extra]
+            try:
+                parser.parse_args(argv)
+            except SystemExit as exc:
+                raise AssertionError(
+                    f"{stage_id} ({subcommand}) failed argparse with diff_scope=--cached: "
+                    f"argv={argv!r}, exit={exc.code}",
+                ) from exc
+
     def test_pr_flag_omitted_when_pr_number_is_none(self) -> None:
         """The @pr_flag splat must produce zero args when pr_number is None."""
         from code_review_helpers import _build_run_plan_stages
