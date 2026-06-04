@@ -18996,3 +18996,192 @@ class TestPLN807DepthTierFiltering:
         captured = capsys.readouterr()
         assert rc == 1
         assert "exhaustive" in captured.err
+
+
+class TestPLN807Phase2TierPropagation:
+    """PLN-807 Phase 2: tier propagation through template variables and review_state.
+
+    Tier flows into the stages.json template context as ``{depth}``,
+    gets persisted into ``review_state.json`` entries on write, and
+    gates ``review_state`` reuse on read — a cached shallow review must
+    not satisfy a subsequent standard or deep invocation.
+    """
+
+    def test_depth_template_var_substitutes(self, tmp_path: Path) -> None:
+        """Stage_27_review_state_write must receive --depth resolved
+        from the invocation's depth flag."""
+        _, run_plan = invoke_prepare_run(tmp_path, depth="deep")
+        stage = next(
+            s for s in run_plan["stages"]
+            if s["id"] == "stage_27_review_state_write"
+        )
+        # The arg list is flat: ['--cache-dir', '<CACHE_DIR>', '--key', ..., '--depth', 'deep'].
+        assert "--depth" in stage["args"]
+        depth_idx = stage["args"].index("--depth")
+        assert stage["args"][depth_idx + 1] == "deep"
+
+    def test_depth_template_var_substitutes_shallow(self, tmp_path: Path) -> None:
+        _, run_plan = invoke_prepare_run(tmp_path, depth="shallow")
+        stage = next(
+            s for s in run_plan["stages"]
+            if s["id"] == "stage_27_review_state_write"
+        )
+        depth_idx = stage["args"].index("--depth")
+        assert stage["args"][depth_idx + 1] == "shallow"
+
+    # --- review_state write/read tier persistence ---
+
+    def _ns_write(
+        self, tmp_path: Path, sha: str, key: str = "feat:main",
+        depth: str | None = None,
+    ) -> argparse.Namespace:
+        return argparse.Namespace(
+            cache_dir=str(tmp_path), key=key, sha=sha, depth=depth,
+        )
+
+    def _ns_read(
+        self, tmp_path: Path, key: str = "feat:main",
+        depth: str | None = None,
+    ) -> argparse.Namespace:
+        return argparse.Namespace(
+            cache_dir=str(tmp_path), key=key, depth=depth,
+        )
+
+    def test_write_persists_tier_when_depth_given(
+        self, tmp_path: Path,
+    ) -> None:
+        rc = cmd_review_state_write(self._ns_write(tmp_path, "abc", depth="deep"))
+        assert rc == 0
+        state = _load_review_state(tmp_path)
+        assert state["reviews"]["feat:main"]["tier"] == "deep"
+
+    def test_write_omits_tier_when_depth_absent(
+        self, tmp_path: Path,
+    ) -> None:
+        """Backwards compatibility: bare write (no --depth) must not
+        inject a tier field, so existing operators' state files stay
+        schema-compatible with pre-PLN-807 readers."""
+        rc = cmd_review_state_write(self._ns_write(tmp_path, "abc"))
+        assert rc == 0
+        state = _load_review_state(tmp_path)
+        assert "tier" not in state["reviews"]["feat:main"]
+
+    def test_write_rejects_invalid_depth(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        rc = cmd_review_state_write(
+            self._ns_write(tmp_path, "abc", depth="hyper"),
+        )
+        assert rc == 1
+        assert "hyper" in capsys.readouterr().err
+
+    def test_read_returns_entry_when_no_depth_filter(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Legacy callers (no --depth) get pre-PLN-807 behavior."""
+        cmd_review_state_write(self._ns_write(tmp_path, "abc", depth="shallow"))
+        capsys.readouterr()  # drain the write print
+        rc = cmd_review_state_read(self._ns_read(tmp_path))
+        assert rc == 0
+        out = capsys.readouterr().out.strip()
+        assert json.loads(out)["sha"] == "abc"
+
+    def test_read_returns_entry_when_cached_tier_satisfies(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """standard cached + standard invocation → cache hit.
+        deep cached + standard invocation → cache hit (deep is stronger)."""
+        cmd_review_state_write(self._ns_write(tmp_path, "abc", depth="deep"))
+        capsys.readouterr()
+        rc = cmd_review_state_read(self._ns_read(tmp_path, depth="standard"))
+        assert rc == 0
+        out = capsys.readouterr().out.strip()
+        assert json.loads(out)["sha"] == "abc"
+
+    def test_read_returns_empty_when_cached_tier_too_weak(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """shallow cached + standard invocation → cache miss.
+        Forces the standard upgrade to actually run premise + critics."""
+        cmd_review_state_write(self._ns_write(tmp_path, "abc", depth="shallow"))
+        capsys.readouterr()
+        rc = cmd_review_state_read(self._ns_read(tmp_path, depth="standard"))
+        assert rc == 0
+        assert capsys.readouterr().out.strip() == "{}"
+
+    def test_read_returns_empty_when_standard_cached_deep_invoked(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        cmd_review_state_write(self._ns_write(tmp_path, "abc", depth="standard"))
+        capsys.readouterr()
+        rc = cmd_review_state_read(self._ns_read(tmp_path, depth="deep"))
+        assert rc == 0
+        assert capsys.readouterr().out.strip() == "{}"
+
+    def test_read_shallow_invocation_accepts_any_cached_tier(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        for cached in ("shallow", "standard", "deep"):
+            tmp = tmp_path / cached
+            tmp.mkdir()
+            cmd_review_state_write(self._ns_write(tmp, "abc", depth=cached))
+            capsys.readouterr()
+            cmd_review_state_read(self._ns_read(tmp, depth="shallow"))
+            out = capsys.readouterr().out.strip()
+            assert json.loads(out)["sha"] == "abc", (
+                f"shallow invocation must accept cached={cached}"
+            )
+
+    def test_read_legacy_entry_treated_as_standard(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Pre-PLN-807 entries (no ``tier`` field) are treated as
+        standard-equivalent: they satisfy shallow/standard invocations
+        but fail deep."""
+        # Write a legacy entry without going through cmd_review_state_write
+        _write_review_state(
+            tmp_path,
+            {"reviews": {"feat:main": {"sha": "abc", "success": True}}},
+        )
+        # shallow + legacy → hit
+        cmd_review_state_read(self._ns_read(tmp_path, depth="shallow"))
+        assert json.loads(capsys.readouterr().out.strip())["sha"] == "abc"
+        # standard + legacy → hit
+        cmd_review_state_read(self._ns_read(tmp_path, depth="standard"))
+        assert json.loads(capsys.readouterr().out.strip())["sha"] == "abc"
+        # deep + legacy → miss (legacy can't prove it ran impact analyzer)
+        cmd_review_state_read(self._ns_read(tmp_path, depth="deep"))
+        assert capsys.readouterr().out.strip() == "{}"
+
+    def test_read_rejects_invalid_depth(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        rc = cmd_review_state_read(self._ns_read(tmp_path, depth="hyper"))
+        assert rc == 1
+        assert "hyper" in capsys.readouterr().err
+
+    def test_entry_satisfies_depth_truth_table(self) -> None:
+        from code_review_helpers import _entry_satisfies_depth
+
+        # Cached → Invocation matrix
+        cases = [
+            # (cached_tier, invocation_tier, expected)
+            ("shallow", "shallow", True),
+            ("shallow", "standard", False),
+            ("shallow", "deep", False),
+            ("standard", "shallow", True),
+            ("standard", "standard", True),
+            ("standard", "deep", False),
+            ("deep", "shallow", True),
+            ("deep", "standard", True),
+            ("deep", "deep", True),
+            (None, "shallow", True),       # legacy entry, standard-equiv
+            (None, "standard", True),
+            (None, "deep", False),
+            ("standard", None, True),       # legacy caller, no filter
+            (None, None, True),
+        ]
+        for cached, invocation, expected in cases:
+            assert _entry_satisfies_depth(cached, invocation) is expected, (
+                f"cached={cached!r}, invocation={invocation!r} should be {expected}"
+            )

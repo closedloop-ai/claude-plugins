@@ -920,6 +920,18 @@
           "dest": "key",
           "default": null,
           "required": true
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "dest": "depth",
+          "default": null,
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ]
         }
       ]
     },
@@ -956,6 +968,18 @@
           ],
           "dest": "ref",
           "default": null
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "dest": "depth",
+          "default": null,
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ]
         }
       ]
     },

@@ -854,6 +854,17 @@
           ],
           "required": true,
           "help": "State key (branch:base_ref)"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ],
+          "help": "New invocation tier; a cached entry weaker than this returns {} (cache miss)"
         }
       ]
     },
@@ -887,6 +898,17 @@
             "--ref"
           ],
           "help": "Git ref to resolve to SHA (alternative to --sha)"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ],
+          "help": "Tier this review ran at (persisted so future runs can detect tier transitions)"
         }
       ]
     },

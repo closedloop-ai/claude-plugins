@@ -781,7 +781,9 @@
       "--key",
       "<STATE_KEY>",
       "--ref",
-      "<DIFF_TIP>"
+      "<DIFF_TIP>",
+      "--depth",
+      "standard"
     ],
     "stdout": null,
     "expected_outputs": [],

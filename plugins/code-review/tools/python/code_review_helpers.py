@@ -4032,10 +4032,45 @@ def _write_review_state(cache_dir: Path, state: dict[str, Any]) -> None:
     os.replace(str(tmp_path), str(state_path))
 
 
+def _entry_satisfies_depth(
+    entry_tier: str | None, invocation_tier: str | None,
+) -> bool:
+    """Return True when a cached review_state entry is at least as strong as the new invocation.
+
+    Cached tier must rank ≥ invocation tier:
+      - shallow invocation can reuse any cached tier (shallow, standard, deep)
+      - standard invocation requires cached tier in {standard, deep}
+      - deep invocation requires cached tier == deep
+
+    Stale entries written before PLN-807 carry no ``tier`` field; they
+    are treated as standard-equivalent (the pre-PLN-807 default), which
+    preserves prior cache behavior for shallow/standard but conservatively
+    rejects deep reuse.
+    """
+    if invocation_tier is None:
+        return True  # tier-unaware caller — preserve legacy behavior
+    cached_rank = _DEPTH_RANK.get(entry_tier or _DEFAULT_MIN_DEPTH, 2)
+    return cached_rank >= _DEPTH_RANK[invocation_tier]
+
+
 def cmd_review_state_read(args: argparse.Namespace) -> int:
-    """Read review state for a branch:base key. Outputs JSON or empty."""
+    """Read review state for a branch:base key. Outputs JSON or empty.
+
+    The optional ``--depth`` arg gates the result on tier sufficiency:
+    a cached entry whose stored ``tier`` is weaker than the new
+    invocation depth returns ``{}`` (treated as a cache miss), forcing
+    the upgrade to actually run. See ``_entry_satisfies_depth`` for the
+    ranking rules.
+    """
     cache_dir = Path(args.cache_dir)
     key = args.key
+    invocation_depth: str | None = getattr(args, "depth", None)
+    if invocation_depth is not None and invocation_depth not in _VALID_MIN_DEPTHS:
+        print(
+            f"Error: --depth must be one of {sorted(_VALID_MIN_DEPTHS)}, got {invocation_depth!r}",
+            file=sys.stderr,
+        )
+        return 1
     lock_path = cache_dir / CACHE_LOCK_FILENAME
 
     try:
@@ -4044,7 +4079,10 @@ def cmd_review_state_read(args: argparse.Namespace) -> int:
             reviews = state.get("reviews", {})
             entry = reviews.get(key)
 
-            if entry and isinstance(entry, dict):
+            if (
+                entry and isinstance(entry, dict)
+                and _entry_satisfies_depth(entry.get("tier"), invocation_depth)
+            ):
                 json.dump(entry, sys.stdout)
                 sys.stdout.write("\n")
             else:
@@ -4057,11 +4095,21 @@ def cmd_review_state_read(args: argparse.Namespace) -> int:
 
 
 def cmd_review_state_write(args: argparse.Namespace) -> int:
-    """Write review state entry. Atomic write via tmp+rename."""
+    """Write review state entry. Atomic write via tmp+rename.
+
+    The optional ``--depth`` arg persists the invocation tier alongside
+    the SHA so a later run can detect tier transitions: a cached
+    ``shallow`` result MUST NOT be reused to skip a follow-up
+    ``standard`` or ``deep`` review — those would have spawned premise
+    and the critic gates that shallow skipped, so the cached SHA
+    represents a strictly weaker review. Stale entries (pre-PLN-807,
+    no ``tier`` field) are treated as standard-equivalent on read.
+    """
     cache_dir = Path(args.cache_dir)
     key = args.key
     sha: str | None = getattr(args, "sha", None)
     ref: str | None = getattr(args, "ref", None)
+    depth: str | None = getattr(args, "depth", None)
 
     if not sha and not ref:
         print("Error: one of --sha or --ref is required", file=sys.stderr)
@@ -4074,17 +4122,27 @@ def cmd_review_state_write(args: argparse.Namespace) -> int:
             print(f"Error: git rev-parse {ref} failed: {exc}", file=sys.stderr)
             return 1
 
+    if depth is not None and depth not in _VALID_MIN_DEPTHS:
+        print(
+            f"Error: --depth must be one of {sorted(_VALID_MIN_DEPTHS)}, got {depth!r}",
+            file=sys.stderr,
+        )
+        return 1
+
     lock_path = cache_dir / CACHE_LOCK_FILENAME
 
     try:
         with _manifest_lock(lock_path, exclusive=True):
             state = _load_review_state(cache_dir)
             reviews = state.setdefault("reviews", {})
-            reviews[key] = {
+            entry: dict[str, Any] = {
                 "sha": sha,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "success": True,
             }
+            if depth is not None:
+                entry["tier"] = depth
+            reviews[key] = entry
             _write_review_state(cache_dir, state)
             print(f"Review state written: {key} -> {sha}")
     except Exception as exc:
@@ -9108,6 +9166,7 @@ _STAGES_TEMPLATE_KEYS: frozenset[str] = frozenset({
     "flags_base_ref_override",
     "flags_full_review",
     "flags_since_last_review",
+    "depth",
 })
 
 # Valid arg splat markers (resolved separately from template substitution).
@@ -9256,6 +9315,7 @@ def _build_run_plan_stages(
         "flags_base_ref_override": flags.get("base_ref_override", "") or "",
         "flags_full_review": "true" if flags.get("full_review") else "false",
         "flags_since_last_review": "true" if flags.get("since_last_review") else "false",
+        "depth": depth,
     }
     # argparse declares --pr-number as type=int, which rejects empty strings.
     # When no PR is active, omit the flag entirely so argparse defaults (None) apply.
