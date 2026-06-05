@@ -1161,6 +1161,17 @@
           ],
           "default": "local",
           "help": "Review mode (local or github)"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ],
+          "help": "Invocation tier; gates cached review_state entries via _entry_satisfies_depth so a weaker cached tier cannot seed a stronger run's incremental scope"
         }
       ]
     },

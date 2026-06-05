@@ -108,7 +108,9 @@
         "--since-last-review",
         "{flags_since_last_review}",
         "--mode",
-        "{mode}"
+        "{mode}",
+        "--depth",
+        "{depth}"
       ],
       "stdout": "{cr_dir}/auto_incremental.json",
       "expected_outputs": [
@@ -590,7 +592,7 @@
         "{cr_dir}/spawn.json"
       ],
       "depends_on": [
-        "stage_17_partition"
+        "stage_19_cache_check"
       ],
       "on_failure": "continue",
       "enabled": true,

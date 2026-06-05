@@ -36,4 +36,4 @@ If the PR is > 3000 LOC, touches schema/migrations, or modifies public API surfa
 
 ## Execution
 
-Follow `start.md` from "0a. Resolve plugin root" through every gate and stage, with `DEPTH = "shallow"` substituted into every helper invocation. The run plan emitted by `prepare-run --depth shallow` will include only the shallow stages (12-14 stages instead of the standard 37); the walker behavior is otherwise unchanged. `stage_19c_derive_static_spec` runs in place of `stage_19b_derive_spawn_spec` and produces an `arbitrate_status: "static"` spec with BHA × N + BHB + unified_auditor.
+Follow `start.md` from "0a. Resolve plugin root" through every gate and stage, with `DEPTH = "shallow"` substituted into every helper invocation. The run plan emitted by `prepare-run --depth shallow` includes the core pipeline minus 10 standard-only stages (signal extraction, coverage planning/critic, budget arbitrate, derive/verify spawn-spec). The walker behavior is otherwise unchanged. `stage_19c_derive_static_spec` runs in place of `stage_19b_derive_spawn_spec` and produces an `arbitrate_status: "static"` spec with BHA × N + BHB + unified_auditor.

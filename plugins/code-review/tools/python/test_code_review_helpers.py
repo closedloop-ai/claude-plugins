@@ -18363,6 +18363,8 @@ class TestCRSPhaseAStageTemplateValidator:
             "args": ["--cr-dir", "{cr_dir}", "@pr_flag", "--mode", "{mode}"],
             "expected_outputs": ["{cr_dir}/foo.json"],
             "stdout": "{cr_dir}/bar.json",
+            # PLN-807: every stage needs an explicit tier tag at load time.
+            "min_depth": "shallow",
         }]}
         _validate_stages_config(good)  # no raise
 
@@ -18372,6 +18374,7 @@ class TestCRSPhaseAStageTemplateValidator:
         bad = {"stages": [{
             "id": "stage_99_demo",
             "args": ["--cr-dir", "{cr_dir}", "--bad", "{wrong_key}"],
+            "min_depth": "shallow",
         }]}
         with pytest.raises(ValueError, match=r"stage_99_demo\.args\[3\]"):
             _validate_stages_config(bad)
@@ -19561,7 +19564,8 @@ class TestPLN807Phase4BudgetArithmetic:
             "best_effort": [],
         }
         _, final, _ = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
-        # 5k LOC → BHA gets 3 partitions (per _max_bha_partitions_by_loc).
+        # 10 files × 300 LOC = 3000 LOC → BHA gets 3 partitions
+        # (per _max_bha_partitions_by_loc with REBALANCE_LOC_BUDGET=1200).
         assert final["budget"]["bha_partitions"] >= 3, (
             f"BHA crushed to {final['budget']['bha_partitions']}; "
             "should have its LOC-derived target reserved before critics"
@@ -19597,9 +19601,16 @@ class TestPLN807Phase4BudgetArithmetic:
         gaps = json.loads(gaps_path.read_text())
         assert gaps["findings"] == []
 
-    def test_critic_cap_emits_coverage_gap_for_required(self, tmp_path: Path) -> None:
-        """Required-bucket critics dropped by the 5-cap surface as
-        coverage-gap findings so operators see the cap fired."""
+    def test_critic_cap_does_not_emit_coverage_gap_for_required(
+        self, tmp_path: Path,
+    ) -> None:
+        """Required-bucket critics dropped by the 5-cap surface in
+        ``deferred_for_budget`` with ``defer_reason: "domain_critic_cap"``,
+        NOT as coverage-gap findings. Rule 1 of
+        ``_compute_canonical_verdict`` would otherwise turn the cap into
+        an auto-CHANGES_REQUESTED block for any repo whose
+        ``critic-gates.json`` resolves more than 5 required domain
+        critics. Matches the BLOCKING-branch behavior."""
         diff = _make_diff_data(files=["src/app.ts"])
         plan = {
             "required": [
@@ -19612,19 +19623,22 @@ class TestPLN807Phase4BudgetArithmetic:
         }
         _, final, gaps = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
         assert final["budget"]["domain_critic_cap_fired"] is True
-        # _make_coverage_gap_finding surfaces the reason in the
-        # explanation text — "domain critic cap" maps from the
-        # ``domain_critic_cap`` reason via _make_coverage_gap_finding's
-        # human-readable expansion.
-        cap_gap_findings = [
-            f for f in gaps["findings"]
-            if "domain critic cap" in (f.get("explanation") or "").lower()
+        # No coverage-gap findings emitted for cap-deferred required.
+        assert gaps["findings"] == []
+        # But the 2 deferred required critics ARE annotated in
+        # deferred_for_budget with the cap reason so operators can see
+        # which critics got pushed off.
+        cap_deferred = [
+            e for e in final["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
         ]
-        # 7 required critics, 5 selected → 2 dropped by cap → 2 findings.
-        assert len(cap_gap_findings) == 2, (
-            f"expected 2 cap-related findings, got: "
-            f"{[f.get('issue') for f in gaps['findings']]}"
-        )
+        assert len(cap_deferred) == 2
+        cap_deferred_names = {e["reviewer"] for e in cap_deferred}
+        # The two deferred entries are the lowest-priority/alphabetically-last
+        # required critics from the input (top-5 by priority asc + name asc
+        # kept). With identical priorities, alphabetical chooses
+        # req_critic_5 and req_critic_6 to be deferred.
+        assert cap_deferred_names == {"req_critic_5", "req_critic_6"}
 
     def test_critic_cap_best_effort_no_coverage_gap(self, tmp_path: Path) -> None:
         """Cap-deferred best-effort critics only appear in
@@ -19804,7 +19818,9 @@ class TestPLN807Phase5TierMismatchNudge:
         findings = self._run("shallow", diff)
         assert len(findings) == 1
         assert findings[0]["system_marker"] == "tier_mismatch_nudge"
-        assert findings[0]["severity"] == "LOW"
+        # MEDIUM (not LOW) because validate's SEVERITY_NORMALIZE maps
+        # "low" → "DISCARD" — a LOW nudge would never reach the operator.
+        assert findings[0]["severity"] == "MEDIUM"
         assert "3500 LOC" in findings[0]["explanation"]
 
     def test_loc_below_threshold_no_fire(self) -> None:
@@ -19973,3 +19989,265 @@ class TestPLN807Phase5TierMismatchNudge:
         assert "--depth" in stage["args"]
         i = stage["args"].index("--depth")
         assert stage["args"][i + 1] == "shallow"
+
+
+class TestPLN807ReviewFixes:
+    """PLN-807 review-feedback follow-ups (PR #144 review).
+
+    Locks in the behavior changes from the post-merge-review pass so
+    the policy is enforced rather than just documented.
+    """
+
+    # ---------- Cap-deferred required critics no longer block ----------
+
+    def test_cap_deferred_required_routed_to_deferred_for_budget(
+        self, tmp_path: Path,
+    ) -> None:
+        """Required critics dropped by DOMAIN_CRITIC_CAP land in
+        deferred_for_budget with defer_reason, NOT in coverage_gaps."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+            ] + [
+                {"reviewer": f"req_critic_{i}", "source": "rule", "priority": 1}
+                for i in range(8)
+            ],
+            "best_effort": [],
+        }
+        _, final, gaps = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        # No coverage gaps emitted by the cap.
+        assert gaps["findings"] == []
+        # All 3 deferred required critics are marked with the cap reason.
+        cap_deferred = [
+            e for e in final["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
+        ]
+        assert len(cap_deferred) == 3
+        assert final["budget"]["domain_critic_cap_fired"] is True
+        # And the plan's verdict is NOT auto-CHANGES_REQUESTED via Rule 1.
+        from code_review_helpers import _compute_canonical_verdict
+        verdict, _ = _compute_canonical_verdict([], gaps["findings"])
+        assert verdict == "APPROVED", (
+            f"cap-deferred required critics must not auto-block; got {verdict}"
+        )
+
+    def test_cap_does_not_block_on_blocking_branch_either(
+        self, tmp_path: Path,
+    ) -> None:
+        """BLOCKING-branch behavior unchanged: cap fires, deferred goes
+        to deferred_for_budget, dropped_required stays empty."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+            ] + [
+                {"reviewer": f"r_{i}", "source": "rule", "priority": 1}
+                for i in range(9)
+            ],
+            "best_effort": [],
+        }
+        _, final, gaps = _run_arbitrate_budget(
+            tmp_path, plan, diff, cap=20,
+            verify_doc={"verdict": "BLOCKING", "violations": []},
+        )
+        assert final["arbitrate_status"] == "blocked_by_verify"
+        assert final["dropped_required"] == []
+        assert gaps["findings"] == []
+        cap_def = [
+            e for e in final["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
+        ]
+        assert len(cap_def) == 4  # 9 required → 5 selected + 4 deferred
+
+    # ---------- Path-aware schema/migration matcher ----------
+
+    def test_root_level_migrations_path_fires_nudge(self) -> None:
+        from code_review_helpers import (
+            _check_tier_mismatch_nudge, _matches_schema_or_migration_path,
+        )
+
+        assert _matches_schema_or_migration_path("migrations/0001.sql")
+        assert _matches_schema_or_migration_path("schemas/user.py")
+        assert _matches_schema_or_migration_path("models/user.rb")
+
+        diff = _make_diff_data(
+            files=["migrations/0001_add_users.sql"],
+            loc={"migrations/0001_add_users.sql": {"added": 10, "removed": 0}},
+        )
+        assert _check_tier_mismatch_nudge(diff, "shallow") != []
+
+    def test_nested_migrations_path_still_fires(self) -> None:
+        from code_review_helpers import _matches_schema_or_migration_path
+
+        assert _matches_schema_or_migration_path("apps/web/db/migrations/2024_x.sql")
+
+    def test_random_path_with_migration_substring_does_not_fire(self) -> None:
+        """Path-aware matcher does not false-positive on substrings
+        outside a directory boundary."""
+        from code_review_helpers import _matches_schema_or_migration_path
+
+        assert not _matches_schema_or_migration_path("src/migration_history.txt")
+        assert not _matches_schema_or_migration_path("src/model_loader.py")
+
+    def test_schema_filename_matches_at_any_depth(self) -> None:
+        from code_review_helpers import _matches_schema_or_migration_path
+
+        assert _matches_schema_or_migration_path("schema.prisma")
+        assert _matches_schema_or_migration_path("apps/web/prisma/schema.prisma")
+
+    # ---------- arbitrate_status: "static" in canonical enum ----------
+
+    def test_static_in_canonical_arbitrate_statuses(self) -> None:
+        from code_review_schema import SPAWN_SPEC_ARBITRATE_STATUSES
+
+        assert "static" in SPAWN_SPEC_ARBITRATE_STATUSES
+        # Sanity: the historical statuses are still there too.
+        assert {"ok", "blocked_by_verify", "fallback"}.issubset(
+            SPAWN_SPEC_ARBITRATE_STATUSES,
+        )
+
+    # ---------- Stage validator requires explicit min_depth ----------
+
+    def test_validate_stages_rejects_missing_min_depth(self) -> None:
+        from code_review_helpers import _validate_stages_config
+
+        bad = {"stages": [{
+            "id": "stage_untaged",
+            "args": [],
+            "expected_outputs": [],
+            "stdout": None,
+        }]}
+        with pytest.raises(ValueError, match="missing required ``min_depth``"):
+            _validate_stages_config(bad)
+
+    # ---------- Validation helper DRY ----------
+
+    def test_validate_invocation_depth_helper(self) -> None:
+        from code_review_helpers import _validate_invocation_depth
+
+        ok, err = _validate_invocation_depth(None)
+        assert ok and err is None
+        ok, err = _validate_invocation_depth("standard")
+        assert ok and err is None
+        ok, err = _validate_invocation_depth("hyper")
+        assert not ok
+        assert err is not None and "hyper" in err
+
+    # ---------- Auto-incremental tier gate ----------
+
+    def _make_auto_inc_args(
+        self, *, cache_dir: Path, key: str, diff_tip: str,
+        full_review: str = "false", since_last_review: str = "false",
+        mode: str = "local", depth: str | None = None,
+        original_scope: str = "origin/main..HEAD",
+    ) -> argparse.Namespace:
+        return argparse.Namespace(
+            cache_dir=str(cache_dir),
+            key=key,
+            diff_tip=diff_tip,
+            base_ref="main",
+            original_scope=original_scope,
+            full_review=full_review,
+            since_last_review=since_last_review,
+            mode=mode,
+            depth=depth,
+        )
+
+    def test_auto_incremental_skips_when_cached_tier_weaker(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A cached shallow entry must not seed a standard run's
+        incremental scope."""
+        from code_review_helpers import (
+            _write_review_state, cmd_auto_incremental,
+        )
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        state = {"reviews": {"feat:main": {
+            "sha": "abc123", "tier": "shallow", "success": True,
+        }}}
+        _write_review_state(cache_dir, state)
+        ns = self._make_auto_inc_args(
+            cache_dir=cache_dir, key="feat:main", diff_tip="HEAD",
+            depth="standard",
+        )
+        rc = cmd_auto_incremental(ns)
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out.strip())
+        assert out["diff_scope"] is None
+        assert "tier upgrade" in out["review_mode_line"]
+
+    def test_since_last_review_rejects_weaker_cached_tier(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from code_review_helpers import (
+            _write_review_state, cmd_auto_incremental,
+        )
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        _write_review_state(cache_dir, {"reviews": {"feat:main": {
+            "sha": "abc123", "tier": "shallow", "success": True,
+        }}})
+        ns = self._make_auto_inc_args(
+            cache_dir=cache_dir, key="feat:main", diff_tip="HEAD",
+            since_last_review="true", depth="deep",
+        )
+        rc = cmd_auto_incremental(ns)
+        assert rc == 1
+        assert "weaker than current invocation" in capsys.readouterr().err
+
+    def test_auto_incremental_without_depth_preserves_legacy_behavior(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """When --depth is absent (legacy caller), no tier gating."""
+        from code_review_helpers import (
+            _write_review_state, cmd_auto_incremental,
+        )
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        _write_review_state(cache_dir, {"reviews": {"feat:main": {
+            "sha": "abc123", "tier": "shallow", "success": True,
+        }}})
+        ns = self._make_auto_inc_args(
+            cache_dir=cache_dir, key="feat:main", diff_tip="HEAD", depth=None,
+        )
+        rc = cmd_auto_incremental(ns)
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out.strip())
+        # Output is mode-detail (either auto-incremental success or
+        # ancestry check fail); the important invariant is that the
+        # "tier upgrade" skip path did NOT fire.
+        assert "tier upgrade" not in (out.get("review_mode_line") or "")
+
+    # ---------- stage_19c depends on stage_19_cache_check (fast-path safe) ----------
+
+    def test_stage_19c_does_not_hard_depend_on_partition(
+        self, tmp_path: Path,
+    ) -> None:
+        """Fast-path branches skip stage_17_partition; stage_19c must
+        not require it as a dependency or it would skip too, leaving
+        no spec written for shallow + fast-path."""
+        _, run_plan = invoke_prepare_run(tmp_path, depth="shallow")
+        stage = next(
+            s for s in run_plan["stages"]
+            if s["id"] == "stage_19c_derive_static_spec"
+        )
+        assert "stage_17_partition" not in stage["depends_on"]
+
+    # ---------- stage_07 passes --depth ----------
+
+    def test_stage_07_auto_incremental_passes_depth(
+        self, tmp_path: Path,
+    ) -> None:
+        _, run_plan = invoke_prepare_run(tmp_path, depth="deep")
+        stage = next(
+            s for s in run_plan["stages"]
+            if s["id"] == "stage_07_auto_incremental"
+        )
+        assert "--depth" in stage["args"]
+        i = stage["args"].index("--depth")
+        assert stage["args"][i + 1] == "deep"

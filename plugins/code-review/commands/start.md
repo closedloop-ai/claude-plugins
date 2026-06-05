@@ -82,12 +82,16 @@ HYGIENE_ONLY = false
 BASE_REF_OVERRIDE = ""
 SINCE_LAST_REVIEW = false
 FULL_REVIEW = false
+DEPTH = "standard"
 
 If "--github" present:           MODE = "github"; remove
 If "--hygiene-only" present:     HYGIENE_ONLY = true; remove
 If "--base <ref>" present:       BASE_REF_OVERRIDE = <ref>; remove both tokens
 If "--since-last-review" present: SINCE_LAST_REVIEW = true; remove
 If "--full-review" present:       FULL_REVIEW = true; remove
+If "--depth <tier>" present:     DEPTH = <tier>; remove both tokens
+                                  Valid <tier> values: shallow, standard, deep.
+                                  Reject any other value with an error.
 ```
 
 Flag incompatibility checks (emit error and exit immediately):
@@ -95,6 +99,9 @@ Flag incompatibility checks (emit error and exit immediately):
 - `--since-last-review` with `staged` — requires branch scope
 - `--since-last-review` with `--github` — local-only flag
 - `--since-last-review` with `--full-review` — contradictory
+- `--depth <tier>` with any value outside `shallow|standard|deep` — invalid tier
+
+**Important:** both tokens of `--depth <tier>` MUST be removed from `$ARGUMENTS` before computing `SCOPE_ARGS` below. Leaving `--depth` or its value in the trailing args would either pollute the scope (where they'd be interpreted as paths) or be passed verbatim into `--scope-args`, where `resolve-scope` would reject them.
 
 The remaining `$ARGUMENTS` (after flag removal) is `SCOPE_ARGS`. Detect `PR_NUMBER` if `SCOPE_ARGS` is a single integer.
 
@@ -129,7 +136,7 @@ python3 <HELPERS> prepare-run \
 
 `<DEPTH>` is `shallow`, `standard`, or `deep` — parsed from the `--depth` flag in this command's arguments (default `standard` when absent). Tier filtering happens here: `prepare-run` emits only the stages whose `min_depth`/`max_depth` band brackets the invocation tier. Standard runs see the full 37-stage pipeline; shallow swaps `stage_19b_derive_spawn_spec` for `stage_19c_derive_static_spec` and skips signal extraction (stages 11/11b), coverage planning (stages 14/14a/15/15b/15c), budget arbitrate (16), and spawn verify (20b).
 
-Reads `<CR_DIR>/setup.json` and writes `<CR_DIR>/run_plan.json` containing `review_id`, `flags`, `stages` (the 30-stage pipeline), and `validation_gates`. Read the run plan with the Read tool. Cache `STAGES`, `GATES`, `FLAGS` from the JSON.
+Reads `<CR_DIR>/setup.json` and writes `<CR_DIR>/run_plan.json` containing `review_id`, `flags`, `stages` (the tier-filtered pipeline — 37 stages for `standard` / `deep`, ~27 stages for `shallow`), and `validation_gates`. Read the run plan with the Read tool. Cache `STAGES`, `GATES`, `FLAGS` from the JSON.
 
 **0c. Create the TodoWrite list.** Depends on MODE and HYGIENE_ONLY:
 

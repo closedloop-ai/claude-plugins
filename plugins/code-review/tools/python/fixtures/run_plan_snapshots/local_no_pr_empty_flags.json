@@ -105,7 +105,9 @@
       "--since-last-review",
       "false",
       "--mode",
-      "local"
+      "local",
+      "--depth",
+      "standard"
     ],
     "stdout": "/tmp/cr_dir/auto_incremental.json",
     "expected_outputs": [

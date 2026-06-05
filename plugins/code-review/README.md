@@ -16,7 +16,7 @@ A multi-agent code review plugin for Claude Code that performs deep, partitioned
 
 ```
 plugins/code-review/
-  .claude-plugin/plugin.json         Plugin manifest (version 2.6.0)
+  .claude-plugin/plugin.json         Plugin manifest (see `version` field)
   SCHEMA.md                          Canonical Finding + ResultEnvelope schema (PLN-719); §12 documents the golden fixture harness
   agents/
     code-review-worker.md            Background worker agent used by every reviewer fleet spawn (Read, Write, Grep, Glob; permissions-stable across sessions)

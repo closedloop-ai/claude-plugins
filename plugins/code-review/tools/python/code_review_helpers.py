@@ -684,13 +684,22 @@ def _check_sensitive_files(
 
 _TIER_MISMATCH_NUDGE_LOC_THRESHOLD = 3000
 
-_TIER_MISMATCH_NUDGE_SCHEMA_PATTERNS = (
-    "/migrations/",
-    "/schemas/",
-    "/models/",
+# Path segments that signal schema / migration territory. Matched
+# against any ``/``-separated segment of the file path so root-level
+# paths (``migrations/0001.sql``, ``schemas/user.py``,
+# ``models/user.rb``) fire the heuristic alongside nested ones.
+_TIER_MISMATCH_NUDGE_SCHEMA_DIR_SEGMENTS = frozenset({
+    "migrations",
+    "schemas",
+    "models",
+})
+
+# Special filenames that often indicate schema state regardless of
+# directory placement (Prisma, raw SQL, etc.).
+_TIER_MISMATCH_NUDGE_SCHEMA_FILENAMES = frozenset({
     "schema.prisma",
     "schema.sql",
-)
+})
 
 _TIER_MISMATCH_NUDGE_PUBLIC_API_FILES = frozenset({
     "plugin.json",
@@ -700,6 +709,24 @@ _TIER_MISMATCH_NUDGE_PUBLIC_API_FILES = frozenset({
     "index.js",
     "__init__.py",
 })
+
+
+def _matches_schema_or_migration_path(filepath: str) -> bool:
+    """Path-aware schema/migration matcher.
+
+    Splits on ``/`` and looks for any directory segment in the
+    schema-dir set. Catches both root-level (``migrations/0001.sql``)
+    and nested (``apps/web/db/migrations/2024_x.sql``) layouts. Also
+    matches the basename against the schema-filename set so
+    ``schema.prisma`` fires regardless of placement.
+    """
+    p = filepath.replace("\\", "/")
+    parts = [seg for seg in p.split("/") if seg]
+    if Path(p).name in _TIER_MISMATCH_NUDGE_SCHEMA_FILENAMES:
+        return True
+    return any(
+        seg in _TIER_MISMATCH_NUDGE_SCHEMA_DIR_SEGMENTS for seg in parts[:-1]
+    )
 
 
 def _check_tier_mismatch_nudge(
@@ -737,10 +764,7 @@ def _check_tier_mismatch_nudge(
             f"diff size ({total_loc} LOC) exceeds {_TIER_MISMATCH_NUDGE_LOC_THRESHOLD} LOC"
         )
 
-    schema_hits = [
-        f for f in files
-        if any(p in f for p in _TIER_MISMATCH_NUDGE_SCHEMA_PATTERNS)
-    ]
+    schema_hits = [f for f in files if _matches_schema_or_migration_path(f)]
     if schema_hits:
         sample = ", ".join(schema_hits[:3])
         more = f" (+{len(schema_hits) - 3} more)" if len(schema_hits) > 3 else ""
@@ -758,13 +782,19 @@ def _check_tier_mismatch_nudge(
     if not reasons:
         return []
 
+    # MEDIUM severity (not LOW) so the finding survives validate's
+    # SEVERITY_NORMALIZE map (which DISCARDs "low"). MEDIUM is the
+    # lowest severity that reaches the operator. Category "Coverage"
+    # rather than "Premise" so it does not contribute to the cumulative
+    # Premise MEDIUM gate (Rule 4 of _compute_canonical_verdict) and
+    # cannot accidentally escalate the verdict on its own.
     return [{
         "reviewer": "hygiene",
         "source": "hygiene",
         "finding_scope": "system",
         "system_marker": "tier_mismatch_nudge",
         "category": "Coverage",
-        "severity": "LOW",
+        "severity": "MEDIUM",
         "file": None,
         "line": None,
         "issue": "Shallow review skipped premise_reviewer and repo-specific critics; PR characteristics suggest a standard or deep review.",
@@ -793,11 +823,9 @@ def cmd_hygiene(args: argparse.Namespace) -> int:
     patch_lines: dict[str, dict[str, dict[str, str]]] = diff_data.get("patch_lines", {})
     workdir: str | None = args.workdir
     depth: str | None = getattr(args, "depth", None)
-    if depth is not None and depth not in _VALID_MIN_DEPTHS:
-        print(
-            f"Error: --depth must be one of {sorted(_VALID_MIN_DEPTHS)}, got {depth!r}",
-            file=sys.stderr,
-        )
+    ok, err = _validate_invocation_depth(depth)
+    if not ok:
+        print(err, file=sys.stderr)
         return 1
 
     findings: list[dict[str, Any]] = []
@@ -4180,11 +4208,9 @@ def cmd_review_state_read(args: argparse.Namespace) -> int:
     cache_dir = Path(args.cache_dir)
     key = args.key
     invocation_depth: str | None = getattr(args, "depth", None)
-    if invocation_depth is not None and invocation_depth not in _VALID_MIN_DEPTHS:
-        print(
-            f"Error: --depth must be one of {sorted(_VALID_MIN_DEPTHS)}, got {invocation_depth!r}",
-            file=sys.stderr,
-        )
+    ok, err = _validate_invocation_depth(invocation_depth)
+    if not ok:
+        print(err, file=sys.stderr)
         return 1
     lock_path = cache_dir / CACHE_LOCK_FILENAME
 
@@ -4237,11 +4263,9 @@ def cmd_review_state_write(args: argparse.Namespace) -> int:
             print(f"Error: git rev-parse {ref} failed: {exc}", file=sys.stderr)
             return 1
 
-    if depth is not None and depth not in _VALID_MIN_DEPTHS:
-        print(
-            f"Error: --depth must be one of {sorted(_VALID_MIN_DEPTHS)}, got {depth!r}",
-            file=sys.stderr,
-        )
+    ok, err = _validate_invocation_depth(depth)
+    if not ok:
+        print(err, file=sys.stderr)
         return 1
 
     lock_path = cache_dir / CACHE_LOCK_FILENAME
@@ -4687,7 +4711,16 @@ def cmd_compute_hashes(args: argparse.Namespace) -> int:
 
 
 def cmd_auto_incremental(args: argparse.Namespace) -> int:  # noqa: PLR0911
-    """Evaluate auto-incremental eligibility. Outputs JSON with diff_scope and review_mode_line."""
+    """Evaluate auto-incremental eligibility. Outputs JSON with diff_scope and review_mode_line.
+
+    PLN-807 tier-gated cache: when ``--depth`` is provided, a cached
+    review whose stored ``tier`` is weaker than the invocation tier is
+    treated as a cache miss for incremental purposes. Without this
+    gate, a cached shallow review's SHA could seed a follow-up standard
+    or deep run's incremental diff, skipping every file changed between
+    the two — none of which received premise/critic coverage on the
+    shallow run.
+    """
     cache_dir: str = args.cache_dir
     key: str = args.key
     diff_tip: str = args.diff_tip
@@ -4695,6 +4728,11 @@ def cmd_auto_incremental(args: argparse.Namespace) -> int:  # noqa: PLR0911
     full_review: bool = args.full_review.lower() == "true" if args.full_review else False
     since_last_review: bool = args.since_last_review.lower() == "true" if args.since_last_review else False
     mode: str = args.mode
+    invocation_depth: str | None = getattr(args, "depth", None) or None
+    ok, err = _validate_invocation_depth(invocation_depth)
+    if not ok:
+        print(err, file=sys.stderr)
+        return 1
 
     # --full-review forces full diff
     if full_review:
@@ -4716,6 +4754,14 @@ def cmd_auto_incremental(args: argparse.Namespace) -> int:  # noqa: PLR0911
         last_sha: str = entry.get("sha", "")
         if not last_sha:
             print(f"ERROR: --since-last-review: no previous review found for {key}", file=sys.stderr)
+            return 1
+        if not _entry_satisfies_depth(entry.get("tier"), invocation_depth):
+            print(
+                f"ERROR: --since-last-review: cached review for {key} ran at tier "
+                f"{entry.get('tier') or 'unknown'!r}, weaker than current invocation "
+                f"{invocation_depth!r}; run without --since-last-review to do a full diff",
+                file=sys.stderr,
+            )
             return 1
         try:
             _run_git(["merge-base", "--is-ancestor", last_sha, diff_tip])
@@ -4752,6 +4798,22 @@ def cmd_auto_incremental(args: argparse.Namespace) -> int:  # noqa: PLR0911
         reviews = state.get("reviews", {})
         entry = reviews.get(key, {})
         last_sha = entry.get("sha", "")
+        if last_sha and not _entry_satisfies_depth(
+            entry.get("tier"), invocation_depth,
+        ):
+            json.dump(
+                {
+                    "diff_scope": None,
+                    "review_mode_line": (
+                        f"Review mode: Auto incremental skipped: reason=tier upgrade "
+                        f"(cached={entry.get('tier') or 'legacy'!r}, "
+                        f"now={invocation_depth!r}), using full diff"
+                    ),
+                },
+                sys.stdout,
+            )
+            sys.stdout.write("\n")
+            return 0
 
         if last_sha:
             # Check ancestry
@@ -9345,11 +9407,20 @@ def _validate_stages_config(config: dict[str, Any]) -> None:
         stdout = stage.get("stdout")
         if isinstance(stdout, str):
             _validate_template_string(stdout, f"{sid}.stdout")
-        # ``min_depth`` / ``max_depth`` are optional in the schema
-        # (defaults: standard / deep) but when present MUST be one of the
-        # canonical tier names so a typo (e.g. "shallw") doesn't silently
-        # drop the stage out of every run plan. Also enforce a sane band
-        # (min <= max) at load time to catch swapped values.
+        # ``min_depth`` is REQUIRED on every stage entry — every existing
+        # stage was explicitly tagged in PLN-807 Phase 1, and the
+        # test_every_stage_has_explicit_min_depth invariant requires it
+        # at fixture-load. Enforcing the same constraint here means a
+        # new stage added to stages.json without a tier tag fails loud
+        # at config-load instead of silently inheriting the implicit
+        # ``standard`` default. ``max_depth`` stays optional (most
+        # stages run through to deep); ``min_depth >= max_depth`` is
+        # the floor.
+        if "min_depth" not in stage:
+            raise ValueError(
+                f"stages.json {sid}: missing required ``min_depth`` field; "
+                f"tag as one of {sorted(_VALID_MIN_DEPTHS)}",
+            )
         for field in ("min_depth", "max_depth"):
             if field in stage:
                 val = stage[field]
@@ -9358,7 +9429,7 @@ def _validate_stages_config(config: dict[str, Any]) -> None:
                         f"stages.json {sid}.{field}: invalid tier {val!r}; "
                         f"must be one of {sorted(_VALID_MIN_DEPTHS)}",
                     )
-        lo = stage.get("min_depth", _DEFAULT_MIN_DEPTH)
+        lo = stage["min_depth"]
         hi = stage.get("max_depth", _DEFAULT_MAX_DEPTH)
         if _DEPTH_RANK[lo] > _DEPTH_RANK[hi]:
             raise ValueError(
@@ -9621,9 +9692,18 @@ def cmd_evaluate_gate(args: argparse.Namespace) -> int:
     LLM following ``start.md`` step 7) shells out to this subcommand
     after each stage finishes, passing ``--cr-dir`` and the just-
     completed stage id as ``--after-stage``. The helper looks up the
-    gate dict from the canonical ``_build_validation_gates`` table —
-    the same table ``prepare-run`` writes into ``run_plan.json`` — so
-    a single source of truth governs both planning and enforcement.
+    gate dict from the canonical ``_build_validation_gates`` table.
+    The same table is the SOURCE that ``prepare-run`` writes into
+    ``run_plan.json`` (after PLN-807 also filtering it to drop gates
+    whose anchor stage is tier-filtered) — so a single source of truth
+    governs both planning and enforcement. This helper consults the
+    unfiltered table directly; if the walker calls it with an
+    ``--after-stage`` whose gate was tier-filtered out of the run plan,
+    the helper still evaluates that gate and either passes (anchor
+    stage didn't write its output, but that's expected) or fails. The
+    walker should not invoke this helper for tier-filtered stages —
+    the run plan's ``validation_gates`` array is the authoritative
+    list for any given invocation.
 
     Exit codes:
         0 — gate passed (no matching gate for this anchor is also pass:
@@ -9680,11 +9760,9 @@ def cmd_prepare_run(args: argparse.Namespace) -> int:
         return False
 
     depth = (getattr(args, "depth", None) or _DEFAULT_INVOCATION_DEPTH).lower()
-    if depth not in _VALID_MIN_DEPTHS:
-        print(
-            f"Error: --depth must be one of {sorted(_VALID_MIN_DEPTHS)}, got {depth!r}",
-            file=sys.stderr,
-        )
+    ok, err = _validate_invocation_depth(depth)
+    if not ok:
+        print(err, file=sys.stderr)
         return 1
 
     flags = {
@@ -9757,6 +9835,27 @@ DOMAIN_CRITIC_CAP = 5
 # deferred by the per-source cap from entries deferred by the total
 # cap (which carry no explicit reason — that's the historical default).
 _DEFER_REASON_DOMAIN_CRITIC_CAP = "domain_critic_cap"
+
+
+def _validate_invocation_depth(depth: str | None) -> tuple[bool, str | None]:
+    """Validate an optional ``--depth`` argument against the canonical tier set.
+
+    Returns ``(ok, error_msg)``. ``ok`` is True when ``depth`` is None
+    (no filter) or matches one of ``_VALID_MIN_DEPTHS``. ``error_msg``
+    is the rendered diagnostic ready for ``print(... file=sys.stderr)``
+    when ``ok`` is False. Centralizes the validation block that
+    otherwise duplicates across every cmd_* that accepts ``--depth``
+    (cmd_hygiene, cmd_prepare_run, cmd_review_state_read/write,
+    cmd_auto_incremental).
+    """
+    if depth is None:
+        return True, None
+    if depth in _VALID_MIN_DEPTHS:
+        return True, None
+    return False, (
+        f"Error: --depth must be one of {sorted(_VALID_MIN_DEPTHS)}, "
+        f"got {depth!r}"
+    )
 
 
 def _annotate_defer_reason(
@@ -10035,26 +10134,18 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         )
         # BHA is source: "core" and survives derive-spawn-spec's
         # gated_by_verify plan sanitization (rule/critic entries are
-        # moved to skipped[], core is preserved). Computing
-        # bha_partitions with the same floor-honoring formula as the
-        # PASS path keeps the core reviewer floor alive on a BLOCKING
-        # verdict; hardcoding it to 0 would drop BHA via the
-        # bha_partitions_cap chain in derive-spawn-spec, contradicting
-        # start.md's "review is not halted by the BLOCKING verdict,
-        # only annotated" contract. Docs-only PRs still get 0 because
-        # the BHA floor is 0 for them on the PASS path too.
+        # moved to skipped[], core is preserved). PLN-807 Phase 4
+        # aligned this with the PASS path's BHA-first allocation:
+        # compute the LOC-derived target up front rather than from
+        # leftover capacity, so a BLOCKING verdict on a critic-heavy
+        # plan does not crush BHA to its floor=1 the same way the
+        # pre-PLN-807 PASS path did. Docs-only PRs still get 0.
         if _is_docs_only(diff_data):
             blocking_bha_partitions = 0
         else:
-            bha_floor_blocking = BUDGET_BHA_FLOOR_DEFAULT
-            max_bha_blocking = _max_bha_partitions_by_loc(diff_data)
-            leftover_blocking = max(
-                0,
-                cap - len(required_blocking) - len(best_effort_blocking),
-            )
             blocking_bha_partitions = max(
-                bha_floor_blocking,
-                min(leftover_blocking, max_bha_blocking),
+                BUDGET_BHA_FLOOR_DEFAULT,
+                _max_bha_partitions_by_loc(diff_data),
             )
         final_plan: dict[str, Any] = {
             "required": required_blocking,
@@ -10114,33 +10205,32 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     # and BHA picked up the leftover (which crushed BHA to its floor=1
     # on critic-heavy reviews). With BHA reserved up front, a
     # ``critic-gates.json`` with 17 triggers no longer eats BHA's
-    # coverage budget.
+    # coverage budget. ``_max_bha_partitions_by_loc`` already caps at
+    # ``DEFAULT_MAX_BHA_AGENTS`` internally, so no second min() is
+    # needed.
     if _is_docs_only(diff_data):
         bha_target = 0
     else:
-        bha_target = max(
-            bha_floor, min(max_bha, DEFAULT_MAX_BHA_AGENTS),
-        )
+        bha_target = max(bha_floor, max_bha)
 
     # PLN-807 Phase 4 Step 2: apply DOMAIN_CRITIC_CAP across BOTH buckets.
     # Required critics get priority over best-effort, sorted within
-    # bucket by (priority asc, reviewer name asc). Excess required
-    # critics emit coverage-gap findings AND land in
-    # ``deferred_for_budget`` with ``defer_reason: "domain_critic_cap"``.
+    # bucket by (priority asc, reviewer name asc). Cap-deferred entries
+    # — from EITHER bucket — land in ``deferred_for_budget`` with
+    # ``defer_reason: "domain_critic_cap"`` and DO NOT emit coverage-gap
+    # findings. The cap is a hardcoded per-source soft limit (5),
+    # independent of ``--cap``; surfacing required cap drops via
+    # coverage gaps would trip ``_compute_canonical_verdict`` Rule 1
+    # (any required gap → CHANGES_REQUESTED) and effectively block any
+    # repo whose ``critic-gates.json`` resolves more than 5 required
+    # domain critics on a single PR. The BLOCKING branch already does
+    # the right thing (deferred, no gap); this matches that behavior on
+    # the PASS path.
     sel_req_critics, sel_be_critics, def_req_critics, def_be_critics = (
         _select_domain_critics(
             required_critics_in, best_effort_critics_in, DOMAIN_CRITIC_CAP,
         )
     )
-    for idx, entry in enumerate(def_req_critics):
-        coverage_gaps.append(
-            _make_coverage_gap_finding(
-                entry,
-                reason=_DEFER_REASON_DOMAIN_CRITIC_CAP,
-                index=idx,
-                emitted_at=now_iso,
-            ),
-        )
 
     # PLN-807 Phase 4 Step 3: required overflow against the reduced
     # available_for_critics. Required-bucket critics already capped at
@@ -10209,11 +10299,14 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         best_effort_final = best_effort_sorted
 
     # Annotate cap-deferred entries so operators can tell which bucket
-    # capacity rejected them. Budget-deferred entries carry no
-    # ``defer_reason`` — that's the historical default and the absence
-    # is the signal.
+    # capacity rejected them. Both required-bucket and best-effort-bucket
+    # cap drops surface here so the plan exposes the cap decision
+    # completely (a downstream operator/telemetry reader can enumerate
+    # everything the cap dropped without consulting another file).
+    # Budget-deferred entries carry no ``defer_reason`` — that's the
+    # historical default and the absence is the signal.
     deferred_cap_marked = _annotate_defer_reason(
-        def_be_critics, _DEFER_REASON_DOMAIN_CRITIC_CAP,
+        def_req_critics + def_be_critics, _DEFER_REASON_DOMAIN_CRITIC_CAP,
     )
     deferred_for_budget = deferred_cap_marked + deferred_by_budget
 

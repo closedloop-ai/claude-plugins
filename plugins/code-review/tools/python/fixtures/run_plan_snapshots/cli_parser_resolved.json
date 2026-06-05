@@ -1255,6 +1255,18 @@
           ],
           "dest": "mode",
           "default": "local"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "dest": "depth",
+          "default": null,
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ]
         }
       ]
     },

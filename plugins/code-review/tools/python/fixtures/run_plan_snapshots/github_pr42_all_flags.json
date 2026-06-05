@@ -109,7 +109,9 @@
       "--since-last-review",
       "true",
       "--mode",
-      "github"
+      "github",
+      "--depth",
+      "standard"
     ],
     "stdout": "/tmp/cr_dir/auto_incremental.json",
     "expected_outputs": [
