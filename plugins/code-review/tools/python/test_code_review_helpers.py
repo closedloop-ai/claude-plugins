@@ -19755,3 +19755,221 @@ class TestPLN807Phase4BudgetArithmetic:
         assert out[0]["defer_reason"] == "domain_critic_cap"
         # Original not mutated
         assert "defer_reason" not in entry
+
+
+class TestPLN807Phase5TierMismatchNudge:
+    """PLN-807 Phase 5: hygiene-stage tier-mismatch nudge.
+
+    When shallow runs on a PR that would have benefited from premise
+    or critic-gates entries, a single LOW system-scoped finding is
+    emitted so the user can see what was skipped. Heuristics:
+      - diff > 3000 LOC
+      - schema/migration paths
+      - public API surface files (plugin.json, index.ts, __init__.py, etc.)
+
+    No nudge fires when depth != shallow (the user already engaged
+    those reviewers).
+    """
+
+    def _run(
+        self, depth: str | None, diff_data: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        from code_review_helpers import _check_tier_mismatch_nudge
+
+        return _check_tier_mismatch_nudge(diff_data, depth)
+
+    def test_no_nudge_in_standard(self) -> None:
+        diff = _make_diff_data(files=["src/large_refactor.ts"], loc={
+            "src/large_refactor.ts": {"added": 4000, "removed": 0}
+        })
+        assert self._run("standard", diff) == []
+
+    def test_no_nudge_in_deep(self) -> None:
+        diff = _make_diff_data(files=["src/large_refactor.ts"], loc={
+            "src/large_refactor.ts": {"added": 4000, "removed": 0}
+        })
+        assert self._run("deep", diff) == []
+
+    def test_no_nudge_when_depth_none(self) -> None:
+        """Tier-unaware caller (None) — preserve legacy behavior (no nudge)."""
+        diff = _make_diff_data(files=["src/large_refactor.ts"], loc={
+            "src/large_refactor.ts": {"added": 4000, "removed": 0}
+        })
+        assert self._run(None, diff) == []
+
+    def test_loc_threshold_fires(self) -> None:
+        diff = _make_diff_data(files=["src/big.ts"], loc={
+            "src/big.ts": {"added": 3500, "removed": 0}
+        })
+        findings = self._run("shallow", diff)
+        assert len(findings) == 1
+        assert findings[0]["system_marker"] == "tier_mismatch_nudge"
+        assert findings[0]["severity"] == "LOW"
+        assert "3500 LOC" in findings[0]["explanation"]
+
+    def test_loc_below_threshold_no_fire(self) -> None:
+        diff = _make_diff_data(files=["src/small.ts"], loc={
+            "src/small.ts": {"added": 100, "removed": 0}
+        })
+        findings = self._run("shallow", diff)
+        assert findings == []
+
+    def test_schema_migration_path_fires(self) -> None:
+        diff = _make_diff_data(
+            files=["db/migrations/0042_add_user_email.sql", "src/app.ts"],
+            loc={
+                "db/migrations/0042_add_user_email.sql": {"added": 10, "removed": 0},
+                "src/app.ts": {"added": 5, "removed": 0},
+            },
+        )
+        findings = self._run("shallow", diff)
+        assert len(findings) == 1
+        assert "migrations" in findings[0]["explanation"]
+
+    def test_schema_dir_fires(self) -> None:
+        diff = _make_diff_data(
+            files=["app/schemas/user.py"],
+            loc={"app/schemas/user.py": {"added": 30, "removed": 0}},
+        )
+        findings = self._run("shallow", diff)
+        assert len(findings) == 1
+
+    def test_models_dir_fires(self) -> None:
+        diff = _make_diff_data(
+            files=["app/models/user.rb"],
+            loc={"app/models/user.rb": {"added": 30, "removed": 0}},
+        )
+        findings = self._run("shallow", diff)
+        assert len(findings) == 1
+
+    def test_plugin_json_fires(self) -> None:
+        diff = _make_diff_data(
+            files=["plugins/code-review/.claude-plugin/plugin.json"],
+            loc={
+                "plugins/code-review/.claude-plugin/plugin.json": {
+                    "added": 1, "removed": 1,
+                }
+            },
+        )
+        findings = self._run("shallow", diff)
+        assert len(findings) == 1
+        assert "plugin.json" in findings[0]["explanation"]
+
+    def test_init_py_with_new_exports_fires(self) -> None:
+        diff = _make_diff_data(
+            files=["mypackage/__init__.py"],
+            loc={"mypackage/__init__.py": {"added": 5, "removed": 0}},
+        )
+        findings = self._run("shallow", diff)
+        assert len(findings) == 1
+        assert "__init__.py" in findings[0]["explanation"]
+
+    def test_no_nudge_on_typical_small_pr(self) -> None:
+        """Boring bugfix to one source file — no nudge."""
+        diff = _make_diff_data(
+            files=["src/handlers/user.ts"],
+            loc={"src/handlers/user.ts": {"added": 50, "removed": 30}},
+        )
+        findings = self._run("shallow", diff)
+        assert findings == []
+
+    def test_single_nudge_when_multiple_heuristics_fire(self) -> None:
+        """Multiple heuristics → still ONE finding (consolidated)."""
+        diff = _make_diff_data(
+            files=[
+                "db/migrations/0001.sql",
+                "src/index.ts",
+                "src/big.ts",
+            ],
+            loc={
+                "db/migrations/0001.sql": {"added": 50, "removed": 0},
+                "src/index.ts": {"added": 5, "removed": 0},
+                "src/big.ts": {"added": 4000, "removed": 0},
+            },
+        )
+        findings = self._run("shallow", diff)
+        assert len(findings) == 1
+        # All three reasons surfaced in the single finding.
+        explanation = findings[0]["explanation"]
+        assert "LOC" in explanation
+        assert "migrations" in explanation
+        assert "index.ts" in explanation
+
+    def test_finding_is_system_scoped_no_file_line(self) -> None:
+        diff = _make_diff_data(
+            files=["plugins/x/plugin.json"],
+            loc={"plugins/x/plugin.json": {"added": 1, "removed": 1}},
+        )
+        findings = self._run("shallow", diff)
+        assert findings[0]["finding_scope"] == "system"
+        assert findings[0]["file"] is None
+        assert findings[0]["line"] is None
+
+    def test_recommendation_suggests_higher_tiers(self) -> None:
+        diff = _make_diff_data(
+            files=["plugins/x/plugin.json"],
+            loc={"plugins/x/plugin.json": {"added": 1, "removed": 1}},
+        )
+        findings = self._run("shallow", diff)
+        rec = findings[0]["recommendation"]
+        assert "--depth standard" in rec
+        assert "deep" in rec
+
+    def test_cmd_hygiene_propagates_depth(self, tmp_path: Path) -> None:
+        """cmd_hygiene reads --depth and emits the nudge when shallow."""
+        from code_review_helpers import cmd_hygiene
+        import io as _io
+        import sys as _sys
+
+        diff_data = _make_diff_data(
+            files=["plugins/x/plugin.json"],
+            loc={"plugins/x/plugin.json": {"added": 1, "removed": 1}},
+        )
+        diff_path = tmp_path / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+
+        ns = argparse.Namespace(
+            diff_data=str(diff_path),
+            workdir=None,
+            depth="shallow",
+        )
+        old_stdout = _sys.stdout
+        _sys.stdout = _io.StringIO()
+        try:
+            rc = cmd_hygiene(ns)
+            _sys.stdout.seek(0)
+            out = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+        assert rc == 0
+        nudge = [f for f in out["findings"] if f.get("system_marker") == "tier_mismatch_nudge"]
+        assert len(nudge) == 1
+
+    def test_cmd_hygiene_rejects_invalid_depth(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from code_review_helpers import cmd_hygiene
+
+        diff_data = _make_diff_data(files=["src/x.ts"])
+        diff_path = tmp_path / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+        ns = argparse.Namespace(
+            diff_data=str(diff_path),
+            workdir=None,
+            depth="exhaustive",
+        )
+        rc = cmd_hygiene(ns)
+        assert rc == 1
+        assert "exhaustive" in capsys.readouterr().err
+
+    def test_stage_12_hygiene_passes_depth(self, tmp_path: Path) -> None:
+        """The stage_12 entry must pass --depth {depth} so the nudge
+        check can fire."""
+        _, run_plan = invoke_prepare_run(tmp_path, depth="shallow")
+        stage = next(
+            s for s in run_plan["stages"]
+            if s["id"] == "stage_12_hygiene"
+        )
+        assert "--depth" in stage["args"]
+        i = stage["args"].index("--depth")
+        assert stage["args"][i + 1] == "shallow"

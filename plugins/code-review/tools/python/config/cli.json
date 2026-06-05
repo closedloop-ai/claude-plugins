@@ -36,6 +36,17 @@
             "--workdir"
           ],
           "help": "Git working directory for check-ignore"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ],
+          "help": "Invocation tier; shallow emits a tier-mismatch nudge when LOC/schema/public-API heuristics suggest standard or deep would have caught more"
         }
       ]
     },

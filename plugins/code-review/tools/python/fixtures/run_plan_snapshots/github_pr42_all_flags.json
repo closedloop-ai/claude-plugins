@@ -239,7 +239,9 @@
     "subcommand": "hygiene",
     "args": [
       "--diff-data",
-      "/tmp/cr_dir/diff_data.json"
+      "/tmp/cr_dir/diff_data.json",
+      "--depth",
+      "standard"
     ],
     "stdout": "/tmp/cr_dir/hygiene.json",
     "expected_outputs": [

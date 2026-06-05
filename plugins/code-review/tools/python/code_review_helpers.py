@@ -682,6 +682,108 @@ def _check_sensitive_files(
     }]
 
 
+_TIER_MISMATCH_NUDGE_LOC_THRESHOLD = 3000
+
+_TIER_MISMATCH_NUDGE_SCHEMA_PATTERNS = (
+    "/migrations/",
+    "/schemas/",
+    "/models/",
+    "schema.prisma",
+    "schema.sql",
+)
+
+_TIER_MISMATCH_NUDGE_PUBLIC_API_FILES = frozenset({
+    "plugin.json",
+    "package.json",
+    "index.ts",
+    "index.tsx",
+    "index.js",
+    "__init__.py",
+})
+
+
+def _check_tier_mismatch_nudge(
+    diff_data: dict[str, Any], depth: str | None,
+) -> list[dict[str, Any]]:
+    """Emit a single LOW system-scoped finding when shallow runs on a
+    PR that would benefit from a higher-tier review (PLN-807 Phase 5).
+
+    Three heuristics fire independently; any one is enough:
+
+      - Diff > 3000 LOC — premise reviewer's value scales with diff
+        size; large refactors warrant the deeper architectural look.
+      - Schema/migration paths in the diff — premise + repo-specific
+        critics typically catch ORM-vs-schema drift and irreversible
+        migrations that shallow's pure bug-finding fleet misses.
+      - Public API surface (plugin.json, index.ts/__init__.py with new
+        exports, package.json) — Impact-analyzer territory in deep; at
+        minimum, premise should run.
+
+    Runs only when depth=='shallow'. All other tiers no-op. The
+    finding's marker (``tier_mismatch_nudge``) makes it easy to
+    auto-dismiss or filter out at the operator's discretion; severity
+    is fixed at LOW so it never escalates the verdict.
+    """
+    if depth != "shallow":
+        return []
+
+    files: list[str] = list(diff_data.get("files_to_review", []) or [])
+    total_loc = int(diff_data.get("total_loc") or 0)
+
+    reasons: list[str] = []
+
+    if total_loc > _TIER_MISMATCH_NUDGE_LOC_THRESHOLD:
+        reasons.append(
+            f"diff size ({total_loc} LOC) exceeds {_TIER_MISMATCH_NUDGE_LOC_THRESHOLD} LOC"
+        )
+
+    schema_hits = [
+        f for f in files
+        if any(p in f for p in _TIER_MISMATCH_NUDGE_SCHEMA_PATTERNS)
+    ]
+    if schema_hits:
+        sample = ", ".join(schema_hits[:3])
+        more = f" (+{len(schema_hits) - 3} more)" if len(schema_hits) > 3 else ""
+        reasons.append(f"schema/migration path{'s' if len(schema_hits) > 1 else ''} touched: {sample}{more}")
+
+    api_hits = [
+        f for f in files
+        if Path(f).name in _TIER_MISMATCH_NUDGE_PUBLIC_API_FILES
+    ]
+    if api_hits:
+        sample = ", ".join(api_hits[:3])
+        more = f" (+{len(api_hits) - 3} more)" if len(api_hits) > 3 else ""
+        reasons.append(f"public API surface{'s' if len(api_hits) > 1 else ''} touched: {sample}{more}")
+
+    if not reasons:
+        return []
+
+    return [{
+        "reviewer": "hygiene",
+        "source": "hygiene",
+        "finding_scope": "system",
+        "system_marker": "tier_mismatch_nudge",
+        "category": "Coverage",
+        "severity": "LOW",
+        "file": None,
+        "line": None,
+        "issue": "Shallow review skipped premise_reviewer and repo-specific critics; PR characteristics suggest a standard or deep review.",
+        "explanation": (
+            "PLN-807 shallow tier intentionally drops premise_reviewer + "
+            "critic-gates entries to lower cost. The following heuristics "
+            "fired on this PR: " + "; ".join(reasons) + ". The skipped "
+            "reviewers commonly catch issues those patterns introduce."
+        ),
+        "recommendation": (
+            "Re-run with `/code-review start --depth standard` (or `deep` "
+            "if Impact Analysis is wanted) to engage the full reviewer "
+            "fleet."
+        ),
+        "confidence": 1.0,
+        "rationale_summary": "; ".join(reasons)[:1000],
+    }]
+
+
 def cmd_hygiene(args: argparse.Namespace) -> int:
     """Execute hygiene subcommand."""
     diff_data_path: str | None = getattr(args, "diff_data", None)
@@ -690,6 +792,13 @@ def cmd_hygiene(args: argparse.Namespace) -> int:
     changed_ranges: dict[str, dict[str, list[list[int]]]] = diff_data.get("changed_ranges", {})
     patch_lines: dict[str, dict[str, dict[str, str]]] = diff_data.get("patch_lines", {})
     workdir: str | None = args.workdir
+    depth: str | None = getattr(args, "depth", None)
+    if depth is not None and depth not in _VALID_MIN_DEPTHS:
+        print(
+            f"Error: --depth must be one of {sorted(_VALID_MIN_DEPTHS)}, got {depth!r}",
+            file=sys.stderr,
+        )
+        return 1
 
     findings: list[dict[str, Any]] = []
 
@@ -708,6 +817,12 @@ def cmd_hygiene(args: argparse.Namespace) -> int:
         findings.extend(_check_gitignore_drift(filepath, status, workdir))
         # Check 4: Sensitive files
         findings.extend(_check_sensitive_files(filepath, status, changed_ranges))
+
+    # PLN-807 Phase 5: tier-mismatch nudge. Runs once per invocation
+    # (not per file) because the heuristics are diff-level. Adds a
+    # single LOW finding when shallow was chosen but heuristics suggest
+    # a higher tier would have caught more.
+    findings.extend(_check_tier_mismatch_nudge(diff_data, depth))
 
     # Promote to canonical schema (PLN-719 Foundation Section 1).
     now_iso = datetime.now(timezone.utc).isoformat()
