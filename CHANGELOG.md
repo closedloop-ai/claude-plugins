@@ -4,6 +4,32 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.29.0
+
+PLN-807: depth-tiered code review commands (shallow / standard / deep) plus a standard-mode budget arithmetic refinement that reserves BHA partitions before allocating critics. MINOR bump — new commands, new schema fields, and a behavior change in `arbitrate-budget` that only narrows the fleet when `critic-gates.json` triggers more than 5 entries (sparse rosters are unchanged).
+
+#### Added
+- `/shallow` and `/deep` commands as thin wrappers around `/start` with `--depth` pre-bound. `/shallow` runs the built-in fleet only (BHA + BHB + unified_auditor + verifier; no premise, no `critic-gates.json` entries, no signal extraction). `/deep` runs the standard fleet plus any reviewer tagged `min_depth: deep` in `stages.json` (reserved for the FEA-1401 Impact Analyzer slot — today equivalent to standard).
+- `--depth shallow|standard|deep` flag on the `prepare-run`, `hygiene`, `review-state-read`, and `review-state-write` helper subcommands. Default `standard`. `start.md` documents the tier behavior in a new "Depth Tiers" section and threads `--depth <DEPTH>` through the canonical `prepare-run` invocation.
+- `min_depth` and `max_depth` fields on `stages.json` entries. The run-plan builder emits only stages whose tier band brackets the invocation depth. Most stages need only `min_depth` (defaulting to `standard` for backwards compatibility); a stage that REPLACES another at a lower tier pins both bounds.
+- `cmd_derive_static_spec` (`derive-static-spec` helper subcommand) and a new `stage_19c_derive_static_spec` (`min_depth: shallow` + `max_depth: shallow`) that runs only in shallow. Writes `spawn.json.spec` with `arbitrate_status: "static"` carrying the shallow fleet (BHA × N partitions + BHB + unified_auditor). Reuses `_derive_spawn_agents_from_plan` so BHA partition expansion, docs-only handling, dedup, and patches-file naming match the standard path exactly. Fast-path passthrough applies in shallow too.
+- `DOMAIN_CRITIC_CAP = 5` constant and `_select_domain_critics` helper. The total domain-critic count across both required and best-effort buckets is capped at 5. Selection order: required critics by (priority ascending, reviewer name ascending), then best-effort critics by the same key fill remainder.
+- `defer_reason` field on `deferred_for_budget` entries. Cap-deferred entries carry `defer_reason: "domain_critic_cap"`; budget-deferred entries carry no `defer_reason` (historical default preserved).
+- `domain_critic_cap` and `domain_critic_cap_fired` fields on the coverage plan's `budget` block expose the cap constant and whether it fired this run.
+- `tier` field on `review_state.json` entries. `review-state-read --depth <tier>` returns `{}` when the cached entry's tier is weaker than the invocation tier, forcing the upgrade to actually run premise and critics. Stale entries without a `tier` field are treated as standard-equivalent (legacy behavior preserved for shallow/standard; deep invocations require an explicit `tier: "deep"` write).
+- `_check_tier_mismatch_nudge` helper in `cmd_hygiene`. When `--depth shallow` is invoked on a PR that would benefit from a higher tier, hygiene emits a single LOW system-scoped finding (`system_marker: "tier_mismatch_nudge"`) consolidating all firing heuristics. Heuristics: diff > 3000 LOC; schema/migration paths (`/migrations/`, `/schemas/`, `/models/`, `schema.prisma`, `schema.sql`); public API surface files (`plugin.json`, `package.json`, `index.ts`, `index.tsx`, `index.js`, `__init__.py`).
+- `{depth}` template variable on `stages.json` args so any stage can substitute the invocation tier directly. `stage_27_review_state_write` now passes `--depth {depth}` (persisting the tier that ran); `stage_12_hygiene` now passes `--depth {depth}` (so the nudge can fire).
+- `_filter_stages_by_depth`, `_filter_validation_gates_by_stages`, `_entry_satisfies_depth`, `_is_critic_entry`, and `_annotate_defer_reason` helpers exposed for tests and downstream consumers.
+
+#### Changed
+- `cmd_arbitrate_budget` reordered: the BHA partition target is computed FIRST from `_max_bha_partitions_by_loc(diff_data)` and reserved before any critic allocation. Pre-PLN-807 the order was reversed (required overflow → best_effort prune → BHA from leftover), which crushed BHA to its floor=1 partition when `critic-gates.json` produced many triggers on a large-LOC PR. With BHA reserved up front, BHA's coverage budget is no longer eaten by critic-roster growth.
+- `cmd_arbitrate_budget` BLOCKING-verdict branch now applies the domain-critic cap. Preserves the "no required drops on BLOCKING" semantics: required critics in excess of cap land in `deferred_for_budget` (with `defer_reason: "domain_critic_cap"`), not in `dropped_required`.
+- Run-plan builder rewrites `depends_on` on each surviving stage to drop entries that reference tier-filtered stages, so the orchestrator never sees dangling-stage references. Validation gates are filtered alongside stages: a gate whose `after_stage` is tier-filtered is also dropped.
+- `cmd_review_state_write` and `cmd_review_state_read` validate `--depth` against the canonical tier set (`shallow|standard|deep`) and exit 1 on invalid values.
+- `_validate_stages_config` rejects invalid `min_depth` / `max_depth` values at config-load time and enforces `min_depth <= max_depth` so a swapped band can't make a stage unreachable.
+- `start.md` argument-hint, Usage block, and a new "Depth Tiers" section document the `--depth` flag, the per-tier fleet composition, the tier-mismatch nudge, and the cache transition semantics. The `prepare-run` bash snippet now includes `--depth <DEPTH>` with a paragraph explaining the filter behavior.
+- `plugins/code-review/README.md` documents the three tiers, the standard-mode budget arithmetic, the `DOMAIN_CRITIC_CAP`, the tier-mismatch nudge heuristics, and the tier-aware `review_state.json` cache semantics.
+
 ### code-review v2.28.1
 
 #### Fixed (cr-52603 review-feedback follow-ups for v2.28.0)
