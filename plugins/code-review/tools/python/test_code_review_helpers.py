@@ -19438,3 +19438,320 @@ class TestPLN807Phase3StaticSpawnSpec:
         with pytest.raises(ValueError, match="min_depth.*max_depth"):
             code_review_helpers._load_stages_config()
         code_review_helpers._load_stages_config.cache_clear()
+
+
+class TestPLN807Phase4BudgetArithmetic:
+    """PLN-807 Phase 4: BHA-first allocation + DOMAIN_CRITIC_CAP=5.
+
+    Pre-PLN-807 order: required overflow → best_effort prune → BHA last.
+    Result: critic-heavy plans crushed BHA to its floor=1 partition even
+    on large diffs.
+
+    New order: BHA reserved FIRST (from LOC-derived target), critic cap
+    applied across both buckets, then required overflow targets critics
+    before core, then best_effort fills remainder. PRs with sparse
+    critics see identical output.
+    """
+
+    # ---------- _select_domain_critics helper ----------
+
+    def test_select_under_cap_returns_everything(self) -> None:
+        from code_review_helpers import _select_domain_critics
+
+        req = [{"reviewer": "a", "source": "rule"}]
+        be = [{"reviewer": "b", "source": "critic", "priority": 2}]
+        sel_req, sel_be, def_req, def_be = _select_domain_critics(req, be, 5)
+        assert sel_req == req
+        assert sel_be == be
+        assert def_req == []
+        assert def_be == []
+
+    def test_select_required_critics_get_priority_over_best_effort(self) -> None:
+        from code_review_helpers import _select_domain_critics
+
+        req = [
+            {"reviewer": f"req_{i}", "source": "rule", "priority": 1}
+            for i in range(7)
+        ]
+        be = [
+            {"reviewer": f"be_{i}", "source": "critic", "priority": 1}
+            for i in range(3)
+        ]
+        sel_req, sel_be, def_req, def_be = _select_domain_critics(req, be, 5)
+        # 5 required taken; rest deferred. No best-effort selected.
+        assert len(sel_req) == 5
+        assert sel_be == []
+        assert len(def_req) == 2
+        assert def_be == be
+
+    def test_select_fills_remainder_from_best_effort(self) -> None:
+        from code_review_helpers import _select_domain_critics
+
+        req = [{"reviewer": f"req_{i}", "source": "rule", "priority": 1} for i in range(2)]
+        be = [{"reviewer": f"be_{i}", "source": "critic", "priority": 1} for i in range(5)]
+        sel_req, sel_be, def_req, def_be = _select_domain_critics(req, be, 5)
+        assert len(sel_req) == 2
+        assert len(sel_be) == 3
+        assert def_req == []
+        assert len(def_be) == 2
+
+    def test_select_alphabetical_tie_break_stable(self) -> None:
+        """Same priority → alphabetical reviewer name. Plan edits that
+        don't change names produce identical selections (cache-friendly).
+        """
+        from code_review_helpers import _select_domain_critics
+
+        # All same priority, names out of order.
+        be = [
+            {"reviewer": "zulu",  "source": "critic", "priority": 1},
+            {"reviewer": "alpha", "source": "critic", "priority": 1},
+            {"reviewer": "mike",  "source": "critic", "priority": 1},
+            {"reviewer": "bravo", "source": "critic", "priority": 1},
+            {"reviewer": "charlie", "source": "critic", "priority": 1},
+            {"reviewer": "delta", "source": "critic", "priority": 1},
+        ]
+        sel_req, sel_be, _, _ = _select_domain_critics([], be, 5)
+        names = [e["reviewer"] for e in sel_be]
+        assert names == ["alpha", "bravo", "charlie", "delta", "mike"]
+
+    def test_select_priority_overrides_alphabetical(self) -> None:
+        from code_review_helpers import _select_domain_critics
+
+        be = [
+            {"reviewer": "zulu",  "source": "critic", "priority": 0},   # highest
+            {"reviewer": "alpha", "source": "critic", "priority": 5},   # lowest
+            {"reviewer": "mike",  "source": "critic", "priority": 1},
+        ]
+        sel_req, sel_be, _, _ = _select_domain_critics([], be, 2)
+        names = [e["reviewer"] for e in sel_be]
+        assert names == ["zulu", "mike"]
+
+    def test_select_zero_cap_defers_everything(self) -> None:
+        from code_review_helpers import _select_domain_critics
+
+        req = [{"reviewer": "a", "source": "rule"}]
+        be = [{"reviewer": "b", "source": "critic"}]
+        sel_req, sel_be, def_req, def_be = _select_domain_critics(req, be, 0)
+        assert sel_req == []
+        assert sel_be == []
+        assert def_req == req
+        assert def_be == be
+
+    # ---------- BHA-first allocation ----------
+
+    def test_bha_target_reserved_before_critics(self, tmp_path: Path) -> None:
+        """The motivating bug: 8 critics + 3k LOC PR. Pre-PLN-807 this
+        crushed BHA to floor=1. After PLN-807, BHA gets its full LOC-derived
+        target (3 partitions at 3k LOC) and the cap deferrals trim critics."""
+        files = [f"src/f_{i}.ts" for i in range(10)]
+        diff = _make_diff_data(
+            files=files,
+            loc={f: {"added": 300, "removed": 0} for f in files},
+        )
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "unified_auditor", "source": "core"},
+                {"reviewer": "premise_reviewer", "source": "core"},
+            ] + [
+                {"reviewer": f"critic_{i}", "source": "rule", "priority": 1}
+                for i in range(8)
+            ],
+            "best_effort": [],
+        }
+        _, final, _ = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        # 5k LOC → BHA gets 3 partitions (per _max_bha_partitions_by_loc).
+        assert final["budget"]["bha_partitions"] >= 3, (
+            f"BHA crushed to {final['budget']['bha_partitions']}; "
+            "should have its LOC-derived target reserved before critics"
+        )
+        # Critics capped at 5.
+        critic_count = sum(
+            1 for e in final["required"]
+            if e.get("source") in {"rule", "critic"}
+        )
+        assert critic_count == 5
+
+    def test_sparse_critics_unchanged_behavior(self, tmp_path: Path) -> None:
+        """Backwards compatibility: PRs with ≤ DOMAIN_CRITIC_CAP critics
+        see identical fleet to pre-PLN-807."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "unified_auditor", "source": "core"},
+                {"reviewer": "premise_reviewer", "source": "core"},
+                {"reviewer": "auth-security-expert", "source": "rule", "priority": 1},
+            ],
+            "best_effort": [],
+        }
+        _, final, _ = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        # All 5 entries survive.
+        assert len(final["required"]) == 5
+        assert final["budget"]["domain_critic_cap_fired"] is False
+        assert final["deferred_for_budget"] == []
+        # No coverage_gap findings emitted.
+        gaps_path = tmp_path / "coverage_gaps.json"
+        gaps = json.loads(gaps_path.read_text())
+        assert gaps["findings"] == []
+
+    def test_critic_cap_emits_coverage_gap_for_required(self, tmp_path: Path) -> None:
+        """Required-bucket critics dropped by the 5-cap surface as
+        coverage-gap findings so operators see the cap fired."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+            ] + [
+                {"reviewer": f"req_critic_{i}", "source": "rule", "priority": 1}
+                for i in range(7)
+            ],
+            "best_effort": [],
+        }
+        _, final, gaps = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        assert final["budget"]["domain_critic_cap_fired"] is True
+        # _make_coverage_gap_finding surfaces the reason in the
+        # explanation text — "domain critic cap" maps from the
+        # ``domain_critic_cap`` reason via _make_coverage_gap_finding's
+        # human-readable expansion.
+        cap_gap_findings = [
+            f for f in gaps["findings"]
+            if "domain critic cap" in (f.get("explanation") or "").lower()
+        ]
+        # 7 required critics, 5 selected → 2 dropped by cap → 2 findings.
+        assert len(cap_gap_findings) == 2, (
+            f"expected 2 cap-related findings, got: "
+            f"{[f.get('issue') for f in gaps['findings']]}"
+        )
+
+    def test_critic_cap_best_effort_no_coverage_gap(self, tmp_path: Path) -> None:
+        """Cap-deferred best-effort critics only appear in
+        ``deferred_for_budget`` — no coverage-gap finding, because the
+        best-effort bucket is opportunistic by definition."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [],
+            "best_effort": [
+                {"reviewer": f"be_critic_{i}", "source": "critic", "priority": 1}
+                for i in range(8)
+            ],
+        }
+        _, final, gaps = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        # 5 selected, 3 deferred by cap.
+        assert len(final["best_effort"]) == 5
+        deferred_by_cap = [
+            e for e in final["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
+        ]
+        assert len(deferred_by_cap) == 3
+        # Best-effort cap-defers don't fire coverage-gap findings.
+        assert gaps["findings"] == []
+
+    def test_docs_only_pr_bha_zero(self, tmp_path: Path) -> None:
+        """Docs-only PRs keep BHA at 0 regardless of LOC. PLN-807 must
+        not regress this."""
+        diff = _make_diff_data(files=["README.md", "docs/guide.md"])
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {"reviewer": "unified_auditor", "source": "core"},
+            ],
+            "best_effort": [],
+        }
+        _, final, _ = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        assert final["budget"]["bha_partitions"] == 0
+
+    def test_blocking_branch_applies_critic_cap_no_dropped_required(
+        self, tmp_path: Path,
+    ) -> None:
+        """BLOCKING verdict: cap fires, but required critics in excess
+        of cap land in deferred_for_budget (not dropped_required) so
+        the no-required-drops-on-BLOCKING contract is preserved."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+            ] + [
+                {"reviewer": f"req_critic_{i}", "source": "rule", "priority": 1}
+                for i in range(9)
+            ],
+            "best_effort": [],
+        }
+        verify_doc = {
+            "verdict": "BLOCKING",
+            "violations": [{"check": "evidence", "message": "test"}],
+        }
+        _, final, gaps = _run_arbitrate_budget(
+            tmp_path, plan, diff, cap=20, verify_doc=verify_doc,
+        )
+        # arbitrate_status preserved
+        assert final["arbitrate_status"] == "blocked_by_verify"
+        # Critics capped to 5
+        critic_count = sum(
+            1 for e in final["required"]
+            if e.get("source") in {"rule", "critic"}
+        )
+        assert critic_count == 5
+        # Required critics in excess → deferred_for_budget with cap reason
+        cap_deferred = [
+            e for e in final["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
+        ]
+        assert len(cap_deferred) == 4
+        # NEVER drop required on BLOCKING
+        assert final["dropped_required"] == []
+        # No coverage_gap findings emitted on BLOCKING branch
+        assert gaps["findings"] == []
+
+    def test_budget_record_captures_cap_metadata(self, tmp_path: Path) -> None:
+        """The budget block exposes the constant + whether it fired, so
+        operators reading the plan see both bounds."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [],
+            "best_effort": [
+                {"reviewer": f"be_{i}", "source": "critic", "priority": 1}
+                for i in range(3)
+            ],
+        }
+        _, final, _ = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        assert final["budget"]["domain_critic_cap"] == 5
+        assert final["budget"]["domain_critic_cap_fired"] is False
+
+    def test_cap_deferred_entries_annotated_with_defer_reason(
+        self, tmp_path: Path,
+    ) -> None:
+        """deferred_for_budget entries carry defer_reason='domain_critic_cap'
+        when the cap rejected them; budget-deferred entries have no
+        ``defer_reason`` (historical default preserved)."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+            ],
+            "best_effort": [
+                {"reviewer": f"be_{i}", "source": "critic", "priority": 1}
+                for i in range(7)
+            ],
+        }
+        _, final, _ = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        cap_marked = [
+            e for e in final["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
+        ]
+        # 7 best-effort critics; 5 selected, 2 deferred by cap.
+        assert len(cap_marked) == 2
+
+    def test_annotate_defer_reason_preserves_original_fields(self) -> None:
+        from code_review_helpers import _annotate_defer_reason
+
+        entry = {"reviewer": "x", "source": "rule", "priority": 1}
+        out = _annotate_defer_reason([entry], "domain_critic_cap")
+        assert out[0]["reviewer"] == "x"
+        assert out[0]["source"] == "rule"
+        assert out[0]["priority"] == 1
+        assert out[0]["defer_reason"] == "domain_critic_cap"
+        # Original not mutated
+        assert "defer_reason" not in entry

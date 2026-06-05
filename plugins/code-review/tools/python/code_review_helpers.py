@@ -9631,6 +9631,100 @@ def cmd_prepare_run(args: argparse.Namespace) -> int:
 BUDGET_TOTAL_CAP_DEFAULT = 20
 BUDGET_BHA_FLOOR_DEFAULT = 1
 
+# PLN-807: per-source cap on domain critic entries (rule + critic origin
+# combined). Independent of the total-fleet cap. Bounds critic-roster
+# growth so BHA's coverage budget can't be eaten by a long
+# ``critic-gates.json``. Hardcoded for now; if operators ask for
+# configurability later, expose via ``.closedloop-ai/settings/code-review.json``.
+DOMAIN_CRITIC_CAP = 5
+
+# PLN-807: critic-cap defer reason marker. Differentiates entries
+# deferred by the per-source cap from entries deferred by the total
+# cap (which carry no explicit reason — that's the historical default).
+_DEFER_REASON_DOMAIN_CRITIC_CAP = "domain_critic_cap"
+
+
+def _annotate_defer_reason(
+    entries: list[dict[str, Any]], reason: str,
+) -> list[dict[str, Any]]:
+    """Return shallow-copies of ``entries`` with ``defer_reason`` set.
+
+    Used by the budget arithmetic to distinguish cap-deferred from
+    budget-deferred entries in ``deferred_for_budget``. Operators reading
+    the coverage plan see the reason on each entry; a missing
+    ``defer_reason`` means "deferred by total cap" (the historical
+    default — kept for backward compat with pre-PLN-807 readers).
+    """
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        annotated = dict(entry)
+        annotated["defer_reason"] = reason
+        out.append(annotated)
+    return out
+
+
+def _is_critic_entry(entry: dict[str, Any]) -> bool:
+    """A plan entry counts as a domain critic when its ``source`` is one of
+    the operator-facing critic origins. ``rule`` = deterministically matched
+    from ``critic-gates.json``'s ``coverage[]`` (including migrated
+    ``moduleCritics[]`` entries); ``critic`` = LLM-proposed by
+    ``coverage_critic_consolidate``. Both are subject to ``DOMAIN_CRITIC_CAP``.
+    Core entries (``source: "core"``) are never capped — BHB, auditor,
+    premise are operator-implicit baseline reviewers.
+    """
+    if not isinstance(entry, dict):
+        return False
+    return entry.get("source") in {"rule", "critic"}
+
+
+def _select_domain_critics(
+    required_critics: list[dict[str, Any]],
+    best_effort_critics: list[dict[str, Any]],
+    cap: int,
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
+    """Apply ``DOMAIN_CRITIC_CAP`` to critic entries across both buckets.
+
+    Selection order: required critics by ``(priority asc, reviewer asc)``,
+    then best-effort critics by the same key fill remainder. The
+    alphabetical secondary sort is cache-friendly — the same plan with
+    edits elsewhere in ``critic-gates.json`` produces the same selection
+    even when entries shift declaration position.
+
+    Returns ``(selected_required, selected_best_effort, deferred_required,
+    deferred_best_effort)``. Deferred required entries are surfaced
+    via coverage-gap findings by the caller; deferred best-effort
+    entries only appear in ``deferred_for_budget``.
+    """
+    def sort_key(e: dict[str, Any]) -> tuple[int, str]:
+        try:
+            priority = int(e.get("priority", 2))
+        except (TypeError, ValueError):
+            priority = 2
+        return (priority, str(e.get("reviewer", "") or ""))
+
+    req_sorted = sorted(required_critics, key=sort_key)
+    be_sorted = sorted(best_effort_critics, key=sort_key)
+
+    if cap <= 0:
+        return [], [], list(req_sorted), list(be_sorted)
+    if len(req_sorted) >= cap:
+        return req_sorted[:cap], [], req_sorted[cap:], list(be_sorted)
+
+    remaining = cap - len(req_sorted)
+    return (
+        list(req_sorted),
+        be_sorted[:remaining],
+        [],
+        be_sorted[remaining:],
+    )
+
 
 def _is_docs_only(diff_data: dict[str, Any]) -> bool:
     """Return True when every file in the diff has a docs/markdown extension."""
@@ -9788,6 +9882,15 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     best_effort: list[dict[str, Any]] = list(coverage_plan_in.get("best_effort", []) or [])
     deprecation_warnings: list[str] = list(coverage_plan_in.get("deprecation_warnings", []) or [])
 
+    # PLN-807 Phase 4: separate critic entries (source: rule|critic)
+    # from non-critic entries in both buckets so the cap and the
+    # BHA-first allocation can target critics independently of core
+    # reviewers (BHB, auditor, premise, BHA-as-entry, etc.).
+    required_critics_in = [e for e in required if _is_critic_entry(e)]
+    required_non_critic = [e for e in required if not _is_critic_entry(e)]
+    best_effort_critics_in = [e for e in best_effort if _is_critic_entry(e)]
+    best_effort_non_critic = [e for e in best_effort if not _is_critic_entry(e)]
+
     # PLN-725 Phase 7 BLOCKING gate. Short-circuit BEFORE any budget
     # arithmetic so the input plan flows through untouched on a
     # BLOCKING verdict. Note: the verifier itself stays observational
@@ -9798,6 +9901,23 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     )
     now_iso_gate = datetime.now(timezone.utc).isoformat()
     if verdict == "BLOCKING":
+        # Apply the critic cap on the BLOCKING path too (PLN-807),
+        # preserving the "no required drops on BLOCKING" semantics:
+        # required critics in excess of the cap land in
+        # ``deferred_for_budget`` (not ``dropped_required``), marked
+        # with ``defer_reason: "domain_critic_cap"``.
+        sel_req_critics, sel_be_critics, def_req_critics, def_be_critics = (
+            _select_domain_critics(
+                required_critics_in, best_effort_critics_in,
+                DOMAIN_CRITIC_CAP,
+            )
+        )
+        required_blocking = required_non_critic + sel_req_critics
+        best_effort_blocking = sel_be_critics + best_effort_non_critic
+        deferred_blocking = _annotate_defer_reason(
+            def_req_critics + def_be_critics,
+            _DEFER_REASON_DOMAIN_CRITIC_CAP,
+        )
         # BHA is source: "core" and survives derive-spawn-spec's
         # gated_by_verify plan sanitization (rule/critic entries are
         # moved to skipped[], core is preserved). Computing
@@ -9814,22 +9934,25 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
             bha_floor_blocking = BUDGET_BHA_FLOOR_DEFAULT
             max_bha_blocking = _max_bha_partitions_by_loc(diff_data)
             leftover_blocking = max(
-                0, cap - len(required) - len(best_effort),
+                0,
+                cap - len(required_blocking) - len(best_effort_blocking),
             )
             blocking_bha_partitions = max(
                 bha_floor_blocking,
                 min(leftover_blocking, max_bha_blocking),
             )
         final_plan: dict[str, Any] = {
-            "required": required,
-            "best_effort": best_effort,
-            "deferred_for_budget": [],
+            "required": required_blocking,
+            "best_effort": best_effort_blocking,
+            "deferred_for_budget": deferred_blocking,
             "deprecation_warnings": deprecation_warnings,
             "budget": {
                 "total_cap": cap,
-                "required_count": len(required),
-                "best_effort_count": len(best_effort),
+                "required_count": len(required_blocking),
+                "best_effort_count": len(best_effort_blocking),
                 "bha_partitions": blocking_bha_partitions,
+                "domain_critic_cap": DOMAIN_CRITIC_CAP,
+                "domain_critic_cap_fired": bool(def_req_critics or def_be_critics),
                 "gated_by_verify": True,
                 "verify_violations": violations,
             },
@@ -9841,7 +9964,10 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         if rc != 0:
             return rc
         # Empty findings; the canonical BLOCKING finding is already
-        # in agent_coverage-verify-blocking.json from stage_15c.
+        # in agent_coverage-verify-blocking.json from stage_15c. The
+        # required critics deferred by the cap do NOT emit coverage
+        # gaps on the BLOCKING branch because the canonical BLOCKING
+        # finding already signals that arbitration is bypassed.
         rc, gaps_path = _gaps_target([])
         if rc != 0:
             return rc
@@ -9850,8 +9976,8 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
                 "status": "blocked_by_verify",
                 "coverage_plan": _plan_target_str(),
                 "coverage_gaps": str(gaps_path),
-                "required_count": len(required),
-                "best_effort_count": len(best_effort),
+                "required_count": len(required_blocking),
+                "best_effort_count": len(best_effort_blocking),
                 "verify_violation_count": len(violations),
             },
             sys.stdout,
@@ -9867,41 +9993,116 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     coverage_gaps: list[dict[str, Any]] = []
     dropped_required: list[dict[str, Any]] = []
 
-    # Step 1: handle required overflow (fail-closed).
-    if len(required) + bha_floor > cap:
-        keep_count = max(0, cap - bha_floor)
-        dropped_required = required[keep_count:]
-        required = required[:keep_count]
-        for idx, entry in enumerate(dropped_required):
-            coverage_gaps.append(
-                _make_coverage_gap_finding(
-                    entry,
-                    reason="budget_exceeded",
-                    index=idx,
-                    emitted_at=now_iso,
-                ),
-            )
+    # PLN-807 Phase 4 Step 1: compute the BHA partition target FIRST so
+    # the bug-finding budget is reserved before any critic allocation.
+    # Pre-PLN-807 the order was reversed: critics consumed cap first
+    # and BHA picked up the leftover (which crushed BHA to its floor=1
+    # on critic-heavy reviews). With BHA reserved up front, a
+    # ``critic-gates.json`` with 17 triggers no longer eats BHA's
+    # coverage budget.
+    if _is_docs_only(diff_data):
+        bha_target = 0
+    else:
+        bha_target = max(
+            bha_floor, min(max_bha, DEFAULT_MAX_BHA_AGENTS),
+        )
 
-    # Step 2: prune best-effort (lowest priority first).
-    best_effort_sorted = sorted(
-        best_effort,
-        key=lambda e: int(e.get("priority", 2)),
+    # PLN-807 Phase 4 Step 2: apply DOMAIN_CRITIC_CAP across BOTH buckets.
+    # Required critics get priority over best-effort, sorted within
+    # bucket by (priority asc, reviewer name asc). Excess required
+    # critics emit coverage-gap findings AND land in
+    # ``deferred_for_budget`` with ``defer_reason: "domain_critic_cap"``.
+    sel_req_critics, sel_be_critics, def_req_critics, def_be_critics = (
+        _select_domain_critics(
+            required_critics_in, best_effort_critics_in, DOMAIN_CRITIC_CAP,
+        )
     )
-    target_bha = max(bha_floor, 1) if not _is_docs_only(diff_data) else 0
-    remaining = max(0, cap - len(required) - target_bha)
+    for idx, entry in enumerate(def_req_critics):
+        coverage_gaps.append(
+            _make_coverage_gap_finding(
+                entry,
+                reason=_DEFER_REASON_DOMAIN_CRITIC_CAP,
+                index=idx,
+                emitted_at=now_iso,
+            ),
+        )
+
+    # PLN-807 Phase 4 Step 3: required overflow against the reduced
+    # available_for_critics. Required-bucket critics already capped at
+    # DOMAIN_CRITIC_CAP, so this branch normally doesn't fire — but it
+    # remains the safety net for the cap=tiny edge case (a smaller
+    # ``--cap`` override could leave less than required_non_critic +
+    # bha_target slots). Drop selected critics FIRST, then non-critic
+    # required (which includes core reviewers — operators shouldn't
+    # lose BHB/auditor/premise to budget overflow before they lose a
+    # non-essential critic).
+    required = required_non_critic + sel_req_critics
+    required_overflow = len(required) + bha_target - cap
+    if required_overflow > 0:
+        # Drop selected required critics first.
+        drop_critics_n = min(required_overflow, len(sel_req_critics))
+        if drop_critics_n:
+            dropped_critics = sel_req_critics[-drop_critics_n:]
+            sel_req_critics = sel_req_critics[:-drop_critics_n]
+            for idx, entry in enumerate(
+                dropped_critics, start=len(coverage_gaps),
+            ):
+                coverage_gaps.append(
+                    _make_coverage_gap_finding(
+                        entry,
+                        reason="budget_exceeded",
+                        index=idx,
+                        emitted_at=now_iso,
+                    ),
+                )
+            dropped_required.extend(dropped_critics)
+            required_overflow -= drop_critics_n
+        # If still over, drop non-critic required tail (rare).
+        if required_overflow > 0:
+            drop_core_n = min(required_overflow, len(required_non_critic))
+            if drop_core_n:
+                dropped_core = required_non_critic[-drop_core_n:]
+                required_non_critic = required_non_critic[:-drop_core_n]
+                for idx, entry in enumerate(
+                    dropped_core, start=len(coverage_gaps),
+                ):
+                    coverage_gaps.append(
+                        _make_coverage_gap_finding(
+                            entry,
+                            reason="budget_exceeded",
+                            index=idx,
+                            emitted_at=now_iso,
+                        ),
+                    )
+                dropped_required.extend(dropped_core)
+        required = required_non_critic + sel_req_critics
+
+    # PLN-807 Phase 4 Step 4: best-effort prune against remaining cap.
+    # Includes both surviving best-effort critics and best-effort
+    # non-critic entries, sorted together by priority asc.
+    best_effort_combined = sel_be_critics + best_effort_non_critic
+    best_effort_sorted = sorted(
+        best_effort_combined,
+        key=lambda e: int(e.get("priority", 2)) if isinstance(e, dict) else 2,
+    )
+    remaining = max(0, cap - len(required) - bha_target)
     if len(best_effort_sorted) > remaining:
-        deferred_for_budget = best_effort_sorted[remaining:]
+        deferred_by_budget = best_effort_sorted[remaining:]
         best_effort_final = best_effort_sorted[:remaining]
     else:
-        deferred_for_budget = []
+        deferred_by_budget = []
         best_effort_final = best_effort_sorted
 
-    # Step 3: compute final BHA partition count.
-    if _is_docs_only(diff_data):
-        bha_partitions = 0
-    else:
-        leftover = max(0, cap - len(required) - len(best_effort_final))
-        bha_partitions = max(bha_floor, min(leftover, max_bha))
+    # Annotate cap-deferred entries so operators can tell which bucket
+    # capacity rejected them. Budget-deferred entries carry no
+    # ``defer_reason`` — that's the historical default and the absence
+    # is the signal.
+    deferred_cap_marked = _annotate_defer_reason(
+        def_be_critics, _DEFER_REASON_DOMAIN_CRITIC_CAP,
+    )
+    deferred_for_budget = deferred_cap_marked + deferred_by_budget
+
+    bha_partitions = bha_target
 
     final_plan: dict[str, Any] = {
         "required": required,
@@ -9913,6 +10114,8 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
             "required_count": len(required),
             "best_effort_count": len(best_effort_final),
             "bha_partitions": bha_partitions,
+            "domain_critic_cap": DOMAIN_CRITIC_CAP,
+            "domain_critic_cap_fired": bool(def_req_critics or def_be_critics),
         },
         "dropped_required": dropped_required,
     }
