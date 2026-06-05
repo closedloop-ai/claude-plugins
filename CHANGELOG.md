@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.31.0
+
+MINOR bump — optional `codebase-memory-mcp` knowledge-graph integration for the cross-file reviewers. When the `codebase-memory-mcp` server is connected and the repo is already indexed, the Impact Analyzer and Bug Hunter B prefer graph queries (`search_graph`, `trace_path`, `get_code_snippet`) over grep for cross-file usage discovery — catching re-exports, aliased imports, and dynamic dispatch that grep misses, and resolving service/API implementations by qualified name instead of Glob-guessing the file. The integration auto-detects via `index_status` and falls back to grep silently when the server is absent or the repo is unindexed, so behavior is unchanged when the MCP is not installed. Reviews never trigger indexing. The verifier contract is untouched: the Impact Analyzer still records a `grep_query_used` (and `callsite_snippet` + hash) for every finding regardless of discovery substrate.
+
+#### Added
+- `agents/code-review-worker.md` frontmatter `tools` allowlist gains six read-only `mcp__codebase-memory-mcp__*` tools (`index_status`, `search_graph`, `trace_path`, `get_code_snippet`, `search_code`, `query_graph`). Write/index graph tools are deliberately excluded so reviewers can never index or mutate the graph. Without this allowlist entry the tools would be uncallable by every reviewer regardless of prompt wording.
+- `tools/prompts/shared_prompt.txt` gains an "Optional: codebase knowledge graph" protocol (read once by all reviewer roles): probe `index_status` first, use the graph only when the repo is indexed, never call `index_repository`, and fall back to Grep/Glob silently otherwise.
+
+#### Changed
+- `tools/prompts/impact_analyzer_prompt.txt` Inputs and Step 2 now describe graph-preferred caller enumeration with grep fallback, and restate that `grep_query_used` plus `callsite_snippet`/hash remain mandatory regardless of substrate so the verifier's grep-replay audit keeps working. The Constraints tool list and the local `<untrusted_content_policy>` are extended to name the graph tools (graph-returned source is untrusted input, same as Read/Grep).
+- `tools/prompts/shared_prompt.txt` untrusted-content policy now names `mcp__codebase-memory-mcp__*` outputs (`get_code_snippet`, `search_code`) alongside Read/Grep as data, not instructions.
+- `commands/start.md` Bug Hunter B suffix and the fast-path PASS 2 block direct DRY/API-contract/import lookups through the graph protocol when available, with silent grep fallback; the Impact Analyzer dispatch suffix adds the same graph guidance and tool-list note. The deep-tier description's "greps the codebase" wording is corrected to "via the knowledge graph when indexed, else grep".
+
 ### code-review v2.30.5
 
 PATCH bump — marketplace-cache fallback for `${CLAUDE_PLUGIN_ROOT}` resolution. Closes the gap operators were hitting when running `/code-review` from a non-monorepo repo in a session where the marketplace plugin is installed but the env var did not get exposed: previously stage 0b's outcome 3 hard-failed in that case, even though `~/.claude/plugins/cache/closedloop-ai/code-review/<version>/` was sitting right there and would have worked.

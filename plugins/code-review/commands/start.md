@@ -33,7 +33,7 @@ The `--depth` flag selects which reviewer fleet runs. Default `standard`. Bare `
 
 - **shallow** — hygiene + BHA (partitioned at >5000 LOC) + BHB + unified_auditor + verifier. Skips signal extraction, coverage planning/critic, premise_reviewer, and all `critic-gates.json` entries. Static spawn spec; no routing/critic decisions. Hygiene emits a `tier_mismatch_nudge` MEDIUM finding (category `Coverage`) when the PR's diff size, schema/migration paths, or public API surface suggest standard would catch more.
 - **standard** — current behavior. Full fleet with signal-driven routing, coverage critic, premise, repo-specific critic activation via `critic-gates.json`. Budget arithmetic reserves BHA partitions FIRST (Phase 4) and caps total domain critics at `DOMAIN_CRITIC_CAP = 5` across both required and best-effort buckets. Required critics dropped by the cap emit coverage-gap findings.
-- **deep** — standard plus the **Impact Analyzer** (FEA-1401), a cross-file blast-radius reviewer that runs when signal extraction detects `exported_symbol_change` or `symbol_deletion`. The analyzer identifies changed exported symbols, greps the codebase for external usages outside the diff, and emits findings with `external_impact[]` listing every callsite that breaks under the new signature. Cost-capped at 30 symbols × 50 callsites with a 5-minute wall budget; deferred symbols surface in the Coverage Plan footer. Findings carry `category: "ImpactAnalysis"` and are verifier-audited per-entry (cited callsites read, snippet-hash compared, grep replayed). ≥2 verified BLOCKING/HIGH Impact findings escalate the verdict to `NEEDS_ATTENTION` (Rule 6).
+- **deep** — standard plus the **Impact Analyzer** (FEA-1401), a cross-file blast-radius reviewer that runs when signal extraction detects `exported_symbol_change` or `symbol_deletion`. The analyzer identifies changed exported symbols, finds external usages outside the diff (via the `codebase-memory-mcp` knowledge graph when the repo is indexed, else grep), and emits findings with `external_impact[]` listing every callsite that breaks under the new signature. Cost-capped at 30 symbols × 50 callsites with a 5-minute wall budget; deferred symbols surface in the Coverage Plan footer. Findings carry `category: "ImpactAnalysis"` and are verifier-audited per-entry (cited callsites read, snippet-hash compared, grep replayed). ≥2 verified BLOCKING/HIGH Impact findings escalate the verdict to `NEEDS_ATTENTION` (Rule 6).
 
 Tier transitions are detected via `review_state.json`: a cached `shallow` review does not satisfy a subsequent `standard` invocation — the deeper run actually executes the previously skipped reviewers.
 
@@ -527,6 +527,14 @@ Focus areas:
 
 For DRY claims, one concrete example of prior art is sufficient (cite file path + function name).
 
+CODEBASE KNOWLEDGE GRAPH (optional, preferred when available): follow the "Optional:
+codebase knowledge graph" protocol in {CR_DIR}/shared_prompt.txt. When the repo is indexed,
+prefer the graph for your cross-file work — `get_code_snippet(qualified_name)` to read the
+exact service/API implementation instead of Glob-guessing its file, `search_graph(name_pattern)`
+for DRY/duplicate lookups, and the graph's symbol resolution for import validation. Fall back
+to Grep/Glob silently when the graph is unavailable or the repo is not indexed. Findings still
+cite a concrete file:line you confirmed.
+
 IMPORTANT: Read the repository root CLAUDE.md file before starting your review. Use it for
 DRY detection (check Learned Patterns for known conventions) and pattern consistency checks.
 ```
@@ -650,10 +658,17 @@ have ≥1 concrete external usage with cited breakage. If grep returns
 zero external usages OR every usage is guarded, do not emit a finding
 for that symbol.
 
+When the codebase knowledge graph is available (see the Inputs section
+of impact_analyzer_prompt.txt and the protocol in shared_prompt.txt),
+prefer `search_graph`/`trace_path` to enumerate callers, but still record
+a real `grep_query_used` and read each `callsite_snippet` — the verifier
+replays grep, so grep stays the proof of record.
+
 Respond ONLY with:
   DONE findings={count} file={output_file_path}
 
-Use Read, Grep, and Glob. Do NOT use Bash.
+Use Read, Grep, and Glob — plus the read-only mcp__codebase-memory-mcp__*
+graph tools when available. Do NOT use Bash.
 ```
 
 ### Spawn + Collection Contract (standard flow)
@@ -728,6 +743,11 @@ Focus areas:
 - Import validation: Verify imports resolve to real modules.
 
 For DRY claims, one concrete example of prior art is sufficient (cite file path + function name).
+
+CODEBASE KNOWLEDGE GRAPH (optional, preferred when available): follow the "Optional:
+codebase knowledge graph" protocol in {CR_DIR}/shared_prompt.txt — when the repo is indexed,
+prefer `get_code_snippet`/`search_graph`/`trace_path` for the cross-file lookups above; fall
+back to Grep/Glob silently otherwise.
 
 IMPORTANT: Read the repository root CLAUDE.md file before starting your review. Use it for
 DRY detection (check Learned Patterns for known conventions) and pattern consistency checks.
