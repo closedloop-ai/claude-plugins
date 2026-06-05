@@ -244,6 +244,116 @@ Premise findings whose certificate can't be re-validated → REJECTED
 with `rejection_class: "evidence_not_found"` (the underlying claim
 chain failed).
 
+## Impact Analyzer findings (FEA-1401 / PLN-726)
+
+For findings where `category == "ImpactAnalysis"` AND `external_impact[]`
+is non-empty, run an additional **per-callsite audit** alongside the
+six checks. The audit's job is to reject hallucinated cross-file
+blast-radius claims while preserving the real ones.
+
+### Anchor existence (analog of Check 1)
+
+The Impact finding's anchor (`finding.file:line`) is where the symbol
+*changed*, not where it breaks. Verify the anchor exists in the diff
+exactly like any other finding — same EXISTENCE CHECK rules.
+
+### Symbol-change confirmation
+
+Read the anchor file:line and confirm the diff actually exhibits the
+`change_nature` value from the embedded `reasoning_certificate`
+(`fields.change_nature`). E.g., if the certificate claims
+`signature_change`, the patch hunks at the anchor must show parameter
+additions/removals/type changes. If they don't, the underlying
+identification step failed → REJECTED,
+`rejection_class: "evidence_not_found"`.
+
+### Per-entry callsite audit
+
+For EACH entry in `finding.external_impact[]`:
+
+  1. Read the cited `external_impact[i].file` at line
+     `external_impact[i].line` (read ±20 lines for context).
+  2. **Snippet hash check.** If
+     `external_impact[i].callsite_snippet_hash` is present, hash the
+     line you read using the **same algorithm the Impact Analyzer
+     used: sha256 of the UTF-8 encoded line**
+     (`hashlib.sha256(line.encode("utf-8")).hexdigest()` in Python).
+     This matches the convention for `evidence[].snippet_hash`. A
+     hash match wins regardless of line drift; a hash mismatch
+     means the callsite changed under the reviewer's feet — treat
+     as drift, continue with content match against
+     `callsite_snippet`.
+  3. **Content match.** Compare the line content (whitespace-
+     tolerant) against `external_impact[i].callsite_snippet`. If
+     they don't match within ±3 lines of drift, the entry is
+     unverified.
+  4. **`impact_type` check.** Verify the cited line actually
+     exhibits the claimed `impact_type`. E.g., for
+     `signature_mismatch` the callsite must have an arg-count or
+     type-mismatch problem against the new signature; for
+     `deleted_reference` the cited file must reference a name that
+     no longer exists at the anchor.
+  5. **Guard check (suppression).** Look for an upstream guard,
+     feature flag, try/except, or compatibility shim that absorbs
+     the breakage at THIS callsite. If a guard exists, the entry is
+     unverified (the Impact reviewer should have listed it in
+     `GUARDED USAGES` and excluded it from `external_impact[]`).
+
+Emit one `evidence_checks[]` entry per external_impact[] entry:
+
+```
+{
+  "claim": "external impact at <file:line> verified",
+  "expected": "<callsite_snippet from external_impact[i]>",
+  "actual_read": "<verbatim text you read>",
+  "verified": true | false,
+  "source": "<file:line>",
+  "snippet_hash_matched": true | false
+}
+```
+
+### Grep-query replay (first 5 only — cost cap)
+
+For the FIRST FIVE Impact findings in the batch, replay
+`finding.grep_query_used` exactly (same flags, same query string).
+Compare your replay's file:line hits against
+`reasoning_certificate.fields.external_usages_found`:
+
+  - **Replay returns substantially the same hits** (≥80% overlap by
+    file:line) → continue.
+  - **Replay returns fewer than 50% of the listed usages OR returns
+    hits NOT on the list when the listed count is small** → strong
+    hallucination signal. REJECTED,
+    `rejection_class: "evidence_not_found"`. Document the diff in
+    `verifier_reasoning`.
+  - **Replay fails (malformed query)** → REJECTED,
+    `rejection_class: "evidence_not_found"` — the reviewer cannot
+    cite work it cannot reproduce.
+
+Findings #6+ in a batch only do the well-formedness check on
+`grep_query_used` (must be non-empty, parseable) — skip the replay
+to stay within verifier cost caps.
+
+### Verdict dispatch for Impact findings
+
+After running the per-entry audit:
+
+  - **All `external_impact[]` entries verified** AND symbol-change
+    confirmed AND grep replay (if applicable) substantially matches →
+    CONFIRMED.
+  - **Some entries verified, others not** → DOWNGRADE. Severity drops
+    one tier (BLOCKING → HIGH, HIGH → MEDIUM). The verifier-side
+    code path will trim the un-verified entries from
+    `external_impact[]` before persisting. Document in
+    `verifier_reasoning` which entries were rejected.
+  - **No entries verified OR symbol-change refutation OR grep-replay
+    refutation** → REJECTED with
+    `rejection_class: "evidence_not_found"`.
+
+A single hallucinated entry is NOT enough to reject the whole
+finding — DOWNGRADE is the correct outcome when the symbol change is
+real and SOME callsites were verified.
+
 ## Output
 
 Write a single JSON object to `output_path` (from the input file). The

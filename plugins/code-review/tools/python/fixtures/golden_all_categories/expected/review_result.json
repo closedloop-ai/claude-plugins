@@ -57,6 +57,7 @@
       "necessity": 0,
       "workaround": 0
     },
+    "impact_cumulative_count": 0,
     "justification": {
       "justified_emitted": 0,
       "justified_invalid": 0,

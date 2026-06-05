@@ -336,7 +336,9 @@
       "--extract-signals",
       "/tmp/cr_dir/extract_signals.json",
       "--critic-gates",
-      ".closedloop-ai/settings/critic-gates.json"
+      ".closedloop-ai/settings/critic-gates.json",
+      "--depth",
+      "standard"
     ],
     "stdout": null,
     "expected_outputs": [

@@ -39,6 +39,7 @@ from code_review_schema import (
     CACHE_NAMESPACE_SIGNALS,
     CACHE_NAMESPACE_VERIFICATIONS,
     COVERAGE_CHANGE_CLASSES,
+    COVERAGE_CORE_CONDITIONAL,
     COVERAGE_CORE_REQUIRED,
     COVERAGE_DETERMINISTIC_TRIGGERS,
     COVERAGE_SCOPES,
@@ -2572,6 +2573,7 @@ _VERDICT_JUSTIFICATION_RATE_ALERT_DEFAULT = 0.30
 _VERDICT_THRESHOLD_KEYS: tuple[str, ...] = (
     "premise_cumulative_medium",
     "justification_rate_alert",
+    "impact_cumulative",
 )
 
 
@@ -2615,6 +2617,8 @@ def _load_verdict_thresholds(path: Path | None) -> dict[str, Any]:
         gate. Default 3.
       - ``justification_rate_alert`` (float, [0.0, 1.0]): threshold above
         which the justification-rate footer flips to ALERT. Default 0.30.
+      - ``impact_cumulative`` (int, ≥ 1): BLOCKING/HIGH ImpactAnalysis
+        cumulative gate (FEA-1401 Rule 6). Default 2.
 
     Unknown keys are ignored. Invalid entries (wrong type, out of range)
     fall back to the default — the file is operator-authored and should
@@ -2624,6 +2628,7 @@ def _load_verdict_thresholds(path: Path | None) -> dict[str, Any]:
     defaults: dict[str, Any] = {
         "premise_cumulative_medium": _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
         "justification_rate_alert": _VERDICT_JUSTIFICATION_RATE_ALERT_DEFAULT,
+        "impact_cumulative": _VERDICT_IMPACT_THRESHOLD_DEFAULT,
     }
     data, out = _load_optional_settings_dict(path, defaults)
     if data is None:
@@ -2639,6 +2644,9 @@ def _load_verdict_thresholds(path: Path | None) -> dict[str, Any]:
         and 0.0 <= float(raw_jr) <= 1.0
     ):
         out["justification_rate_alert"] = float(raw_jr)
+    raw_ic = data.get("impact_cumulative")
+    if isinstance(raw_ic, int) and not isinstance(raw_ic, bool) and raw_ic >= 1:
+        out["impact_cumulative"] = raw_ic
     return out
 
 _VERIFICATION_GATE_KEYS: tuple[str, ...] = (
@@ -3119,6 +3127,19 @@ def _merge_verifier_fields(
     Rule 2 still short-circuits on the unrewritten BLOCKING. PR #111
     review HIGH #1 surfaced the same bug for the sensitive-path cap;
     DOWNGRADE has the identical shape.
+
+    FEA-1401 DOWNGRADE-trim for ImpactAnalysis findings: per the
+    verifier prompt's per-entry audit section ("DOWNGRADE — severity
+    drops one tier ... un-verified entries trimmed"), an
+    ImpactAnalysis finding downgraded by the verifier must have its
+    ``external_impact[]`` filtered to drop entries whose
+    corresponding ``evidence_checks[]`` entry came back
+    ``verified: false``. Match by the evidence_check's ``source``
+    field ("<file>:<line>") against each external_impact entry's
+    own ``file:line``. Without this trim, downstream consumers
+    (``/fix``'s callsite update flow, the presenter's sub-bullet
+    rendering) act on hallucinated callsites the verifier flagged
+    as un-reproducible.
     """
     if "verifier_verdict" in verdict_data:
         verdict = verdict_data["verifier_verdict"]
@@ -3128,6 +3149,7 @@ def _merge_verifier_fields(
                 vs = verdict_data.get("verifier_severity")
                 if isinstance(vs, str) and vs in SEVERITIES:
                     finding["severity"] = vs
+                _trim_unverified_external_impact(finding, verdict_data)
     for key in (
         "verifier_severity",
         "verifier_confidence",
@@ -3141,6 +3163,66 @@ def _merge_verifier_fields(
     checks = verdict_data.get("evidence_checks")
     if isinstance(checks, list):
         finding["evidence_checks"] = checks
+
+
+def _trim_unverified_external_impact(
+    finding: dict[str, Any], verdict_data: dict[str, Any],
+) -> None:
+    """Drop ``external_impact[]`` entries the verifier flagged unverified.
+
+    Helper for ``_merge_verifier_fields`` DOWNGRADE handling — see the
+    parent function's FEA-1401 docstring section for rationale. No-op
+    when the finding is not an ImpactAnalysis category, has no
+    ``external_impact[]``, or the verdict carries no
+    ``evidence_checks[]`` to consult.
+
+    Matching policy: an evidence_check matches an external_impact
+    entry when (a) the check's ``source`` equals ``"<file>:<line>"``
+    of the entry AND (b) the check's ``claim`` begins with the prefix
+    the verifier prompt uses for per-callsite audits
+    (``"external impact at"``). Both conditions defend against
+    pre-existing evidence_checks emitted for other audit paths
+    (Justification, anchor existence) that happen to cite a
+    file:line collision.
+    """
+    if finding.get("category") != "ImpactAnalysis":
+        return
+    impacts = finding.get("external_impact")
+    if not isinstance(impacts, list) or not impacts:
+        return
+    checks = verdict_data.get("evidence_checks")
+    if not isinstance(checks, list):
+        return
+    unverified_sources: set[str] = set()
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        if check.get("verified") is not False:
+            continue
+        claim = check.get("claim")
+        if not isinstance(claim, str) or not claim.startswith(
+            "external impact at",
+        ):
+            continue
+        source = check.get("source")
+        if isinstance(source, str):
+            unverified_sources.add(source)
+    if not unverified_sources:
+        return
+    filtered: list[dict[str, Any]] = []
+    for entry in impacts:
+        if not isinstance(entry, dict):
+            filtered.append(entry)
+            continue
+        file_val = entry.get("file")
+        line_val = entry.get("line")
+        if not isinstance(file_val, str) or not isinstance(line_val, int):
+            filtered.append(entry)
+            continue
+        if f"{file_val}:{line_val}" in unverified_sources:
+            continue
+        filtered.append(entry)
+    finding["external_impact"] = filtered
 
 
 # ---------------------------------------------------------------------------
@@ -3906,6 +3988,9 @@ def _cmd_cache_update_v2(  # noqa: PLR0913
 # ---------------------------------------------------------------------------
 
 
+_EXTERNAL_IMPACT_DISPLAY_CAP = 10
+
+
 def _format_comment_body(finding: dict[str, Any]) -> str:
     """Render a finding dict into the inline comment markdown body."""
     severity = finding.get("severity", "MEDIUM")
@@ -3914,12 +3999,49 @@ def _format_comment_body(finding: dict[str, Any]) -> str:
     recommendation = finding.get("recommendation", "")
     code_snippet = finding.get("code_snippet", "")
     other_locations: list[dict[str, Any]] = finding.get("other_locations", [])
+    external_impact: list[dict[str, Any]] = finding.get("external_impact", [])
 
     parts: list[str] = [f"**[{severity}]** {category}", "", issue]
 
     if recommendation:
         parts.append("")
         parts.append(f"**Recommendation:** {recommendation}")
+
+    # FEA-1401: render ImpactAnalysis external_impact[] sub-bullets so
+    # GitHub reviewers see the callsite blast radius alongside the anchor
+    # finding (parity with the local presenter's rendering — see
+    # plugins/code-review/skills/present-local/SKILL.md). Sort by
+    # (file, line) ascending, cap at _EXTERNAL_IMPACT_DISPLAY_CAP with
+    # an overflow pointer to review_result.json.
+    if (
+        category == "ImpactAnalysis"
+        and isinstance(external_impact, list)
+        and external_impact
+    ):
+        normalized: list[dict[str, Any]] = [
+            e for e in external_impact if isinstance(e, dict)
+        ]
+        normalized.sort(
+            key=lambda e: (str(e.get("file", "")), int(e.get("line", 0) or 0)),
+        )
+        parts.append("")
+        parts.append(f"**Affected callsites** ({len(normalized)}):")
+        for entry in normalized[:_EXTERNAL_IMPACT_DISPLAY_CAP]:
+            entry_file = entry.get("file", "")
+            entry_line = entry.get("line", 0)
+            entry_desc = entry.get("description", "")
+            entry_kind = entry.get("impact_type", "")
+            kind_part = f" ({entry_kind})" if entry_kind else ""
+            desc_part = f" — {entry_desc}" if entry_desc else ""
+            parts.append(
+                f"- `{entry_file}:{entry_line}`{desc_part}{kind_part}",
+            )
+        if len(normalized) > _EXTERNAL_IMPACT_DISPLAY_CAP:
+            overflow = len(normalized) - _EXTERNAL_IMPACT_DISPLAY_CAP
+            parts.append(
+                f"- (+{overflow} more — see "
+                f"`review_result.json` finding.external_impact[])",
+            )
 
     if code_snippet:
         # Detect language from the file extension
@@ -6557,6 +6679,7 @@ def resolve_coverage(
     diff_data: dict[str, Any],
     extract_signals: dict[str, Any] | None = None,
     scope_filter: str = "code-review",
+    invocation_depth: str | None = None,
 ) -> dict[str, Any]:
     """Pure resolver from rules + diff state → Coverage Plan.
 
@@ -6574,10 +6697,18 @@ def resolve_coverage(
         already prevents required rules from depending on them).
       - ``scope_filter``: ``code-review`` (default) or ``plan-review``;
         rules with ``scope: "both"`` always pass.
+      - ``invocation_depth``: tier of the invoking run
+        (``shallow|standard|deep``); defaults to standard when None.
+        Gates ``COVERAGE_CORE_CONDITIONAL`` reviewers — entries with
+        ``min_depth`` above the invocation depth are filtered out.
 
     Returns a dict with ``required``, ``best_effort``, ``warnings``,
     ``stats``. Always-add core reviewers (``COVERAGE_CORE_REQUIRED``)
-    appear in ``required`` regardless of rule matches.
+    appear in ``required`` regardless of rule matches; conditional
+    core reviewers (``COVERAGE_CORE_CONDITIONAL``) appear in
+    ``best_effort`` only when their tier band brackets
+    ``invocation_depth`` AND at least one of their signal triggers
+    fires.
 
     Determinism enforcement: a rule with ``required: true`` whose
     triggers are entirely LLM-driven (only ``signal`` triggers) is
@@ -6615,6 +6746,45 @@ def resolve_coverage(
             "source": "core",
         })
         seen_required.add(core_name)
+
+    # FEA-1401 / PLN-726: conditional core reviewers gated by tier band
+    # AND signal trigger. Eligibility requires BOTH (a)
+    # ``_DEPTH_RANK[invocation_depth] >= _DEPTH_RANK[entry["min_depth"]]``
+    # AND (b) at least one trigger fires. Today every entry has
+    # ``required: False`` (Impact Analyzer's signal triggers are LLM-
+    # driven; the PLN-725 determinism enforcement bars LLM-only triggers
+    # from solely driving required selection). All eligible conditional
+    # core reviewers land in ``best_effort`` with ``source: "core"`` so
+    # downstream consumers can distinguish them from project-specific
+    # critic-gates.json matches (``source: "rule"``).
+    depth_for_band = invocation_depth or _DEFAULT_INVOCATION_DEPTH
+    if depth_for_band in _DEPTH_RANK:
+        invocation_rank = _DEPTH_RANK[depth_for_band]
+        for entry in COVERAGE_CORE_CONDITIONAL:
+            reviewer = entry["reviewer"]
+            if reviewer in seen_required or reviewer in seen_best_effort:
+                continue
+            min_depth = entry.get("min_depth", _DEFAULT_MIN_DEPTH)
+            if _DEPTH_RANK.get(min_depth, 0) > invocation_rank:
+                continue
+            matched_trigger: dict[str, Any] | None = None
+            for trigger in entry.get("triggers", ()):
+                trigger_dict = dict(trigger) if isinstance(trigger, dict) else None
+                if trigger_dict is None:
+                    continue
+                if _trigger_fires(
+                    trigger_dict, files, patch_lines, change_classes, signals,
+                ):
+                    matched_trigger = trigger_dict
+                    break
+            if matched_trigger is None:
+                continue
+            best_effort.append({
+                "reviewer": reviewer,
+                "trigger": matched_trigger,
+                "source": entry.get("source", "core"),
+            })
+            seen_best_effort.add(reviewer)
 
     rules_evaluated = 0
     rules_matched = 0
@@ -6740,6 +6910,12 @@ def cmd_resolve_coverage(args: argparse.Namespace) -> int:
         print(f"Error: invalid scope {scope_filter!r}", file=sys.stderr)
         return 1
 
+    invocation_depth: str | None = getattr(args, "depth", None) or None
+    ok, err = _validate_invocation_depth(invocation_depth)
+    if not ok:
+        print(err, file=sys.stderr)
+        return 1
+
     try:
         cr_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -6784,6 +6960,7 @@ def cmd_resolve_coverage(args: argparse.Namespace) -> int:
         diff_data=diff_data,
         extract_signals=extract_signals,
         scope_filter=scope_filter,
+        invocation_depth=invocation_depth,
     )
 
     output: dict[str, Any] = dict(plan)
@@ -8861,6 +9038,58 @@ _CANONICAL_TO_LEGACY_VERDICT: dict[str, str] = {
 }
 
 
+def _count_gateable_impact(verified: list[dict[str, Any]]) -> int:
+    """Return the count Rule 6's Impact gate fires on.
+
+    FEA-1401 / PLN-726 OQ#6 defined a separate Impact gate: when ≥2
+    BLOCKING or HIGH findings carry ``category: "ImpactAnalysis"``,
+    the verdict escalates to NEEDS_ATTENTION even if no single finding
+    would have triggered Rule 2 or Rule 3 on its own.
+
+    Counting policy mirrors ``_count_gateable_premise_medium``:
+
+      - Only ``verified[]`` findings (justified/rejected/coverage_gap
+        buckets are bucketed elsewhere; Impact findings flow through
+        the same canonical verification path as every other reviewer).
+      - JUSTIFIED-VALID dismissals are excluded (the author's defense
+        was audited and accepted; the concern is waived).
+      - Severity is read post-DOWNGRADE — the verifier's per-entry
+        external_impact[] audit can rewrite severity (e.g. partial
+        hallucination DOWNGRADEs HIGH → MEDIUM). A MEDIUM-after-
+        downgrade Impact finding does NOT contribute to the gate.
+
+    Rule 2 (BLOCKING any-category, → CHANGES_REQUESTED) and Rule 3
+    (HIGH any-category, → NEEDS_ATTENTION) fire BEFORE this gate.
+    Under current precedence the gate is effectively subsumed: a
+    single BLOCKING/HIGH ImpactAnalysis finding already trips Rule 2
+    or Rule 3. PLN-726 OQ#6 specified the gate anyway as a defensive
+    safety net for two scenarios: (a) future code paths that
+    short-circuit Rule 2/3 for sensitivity-tier or shadow-mode
+    reasons but still need cross-file blast-radius to escalate, and
+    (b) a future Rule 2/3 refactor that narrows the categories they
+    consider. The gate's logic is decoupled from precedence so it
+    remains valid under either evolution. In current production it
+    fires rarely; the helper exists so telemetry can report the
+    count (``stats.impact_cumulative_count``).
+    """
+    count = 0
+    for finding in verified:
+        if str(finding.get("category", "")) != "ImpactAnalysis":
+            continue
+        if str(finding.get("severity", "")) not in {"BLOCKING", "HIGH"}:
+            continue
+        if finding.get("verifier_verdict") == "JUSTIFIED-VALID":
+            continue
+        count += 1
+    return count
+
+
+# FEA-1401 / PLN-726 OQ#6: Impact gate threshold. Two BLOCKING/HIGH
+# Impact findings is the minimum that suggests systemic cross-file
+# breakage rather than a single isolated callsite.
+_VERDICT_IMPACT_THRESHOLD_DEFAULT = 2
+
+
 def _count_gateable_premise_medium(verified: list[dict[str, Any]]) -> int:
     """Return the count Rule 4's Premise-MEDIUM gate fires on.
 
@@ -8912,15 +9141,20 @@ def _compute_canonical_verdict(
     Returns (canonical_verdict, reason). PLN-722 added two rules: the
     ``force_human_review`` short-circuit (rule 2.5 — mandatory_human_review_
     paths) and the TENTATIVE → NEEDS_ATTENTION fall-through (rule 3.5).
-    PLN-721 fills in Rule 4: cumulative Premise MEDIUM gate. Rule 6
-    (Impact analysis count) is still placeholder until plan 06 lands.
+    PLN-721 fills in Rule 4: cumulative Premise MEDIUM gate. PLN-726
+    (FEA-1401) fills in Rule 6: cumulative Impact gate (≥2 BLOCKING/HIGH
+    ImpactAnalysis findings → NEEDS_ATTENTION).
 
     ``thresholds`` (PLN-721): optional dict from ``_load_verdict_thresholds``;
-    callers that do not pass it get the built-in default (3) so existing
-    test fixtures and back-compat callers keep working.
+    callers that do not pass it get the built-in defaults
+    (``premise_cumulative_medium`` = 3, ``impact_cumulative`` = 2; see
+    ``_VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT`` and
+    ``_VERDICT_IMPACT_THRESHOLD_DEFAULT``) so existing test fixtures
+    and back-compat callers keep working.
     """
     thresholds = thresholds or {
         "premise_cumulative_medium": _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
+        "impact_cumulative": _VERDICT_IMPACT_THRESHOLD_DEFAULT,
     }
 
     def _short(text: str) -> str:
@@ -8990,7 +9224,29 @@ def _compute_canonical_verdict(
             f"(threshold {premise_medium_threshold})",
         )
 
-    # Rule 6 (plan 06 Impact count) remains placeholder until that plan lands.
+    # Rule 6 (FEA-1401 / PLN-726 OQ#6): cumulative Impact gate. ≥2
+    # BLOCKING/HIGH ImpactAnalysis findings → NEEDS_ATTENTION. Under
+    # current precedence this is unreachable: Rule 2 (any BLOCKING →
+    # CHANGES_REQUESTED) and Rule 3 (any HIGH → NEEDS_ATTENTION) fire
+    # first, so by the time control reaches here ``impact_count`` is
+    # always 0. Kept in place per PLN-726 OQ#6 as a documented
+    # safety-net for future refactors that narrow Rules 2/3 (e.g.
+    # excluding ImpactAnalysis from the any-category gate to let
+    # cross-file blast-radius be governed by a category-specific
+    # threshold). The threshold is configurable via
+    # verdict-thresholds.json (``impact_cumulative``); defaults to 2.
+    impact_threshold = int(
+        thresholds.get(
+            "impact_cumulative",
+            _VERDICT_IMPACT_THRESHOLD_DEFAULT,
+        ),
+    )
+    impact_count = _count_gateable_impact(verified)
+    if impact_count >= impact_threshold:
+        return "NEEDS_ATTENTION", _short(
+            f"{impact_count} BLOCKING/HIGH ImpactAnalysis findings "
+            f"(threshold {impact_threshold})",
+        )
 
     return "APPROVED", ""
 
@@ -10294,18 +10550,39 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     # PLN-807 Phase 4 Step 4: best-effort prune against remaining cap.
     # Includes both surviving best-effort critics and best-effort
     # non-critic entries, sorted together by priority asc.
+    #
+    # FEA-1401 follow-up: ``source: "core"`` best_effort entries
+    # (Impact Analyzer today; future ``COVERAGE_CORE_CONDITIONAL``
+    # entries) are reserved BEFORE the prune runs. They got into
+    # best_effort via a tier+signal gate the operator explicitly
+    # opted into (``/start --depth deep``), and silently dropping
+    # them in favor of project-level critic-source entries would
+    # invert the operator's stated intent. Treat them like required
+    # core reviewers for capacity purposes: they always survive the
+    # prune; if pathological capacity (cap tighter than core_required +
+    # bha_target + core_best_effort) forces an over-allocation,
+    # honor the operator's intent and let the spawn-spec exceed cap
+    # rather than dropping the opted-in core reviewer.
     best_effort_combined = sel_be_critics + best_effort_non_critic
-    best_effort_sorted = sorted(
-        best_effort_combined,
+    be_core = [
+        e for e in best_effort_combined
+        if isinstance(e, dict) and e.get("source") == "core"
+    ]
+    be_rest = [
+        e for e in best_effort_combined
+        if not (isinstance(e, dict) and e.get("source") == "core")
+    ]
+    be_rest_sorted = sorted(
+        be_rest,
         key=lambda e: int(e.get("priority", 2)) if isinstance(e, dict) else 2,
     )
-    remaining = max(0, cap - len(required) - bha_target)
-    if len(best_effort_sorted) > remaining:
-        deferred_by_budget = best_effort_sorted[remaining:]
-        best_effort_final = best_effort_sorted[:remaining]
+    remaining_for_rest = max(0, cap - len(required) - bha_target - len(be_core))
+    if len(be_rest_sorted) > remaining_for_rest:
+        deferred_by_budget = be_rest_sorted[remaining_for_rest:]
+        best_effort_final = be_core + be_rest_sorted[:remaining_for_rest]
     else:
         deferred_by_budget = []
-        best_effort_final = best_effort_sorted
+        best_effort_final = be_core + be_rest_sorted
 
     # Annotate cap-deferred entries so operators can tell which bucket
     # capacity rejected them. Both required-bucket and best-effort-bucket
@@ -10410,6 +10687,16 @@ _SPAWN_CORE_ROLES: dict[str, dict[str, Any]] = {
         "partitioned": False,
         "patches_template": "patches_all.txt",
     },
+    # FEA-1401 Impact Analyzer. Conditional core reviewer (declared in
+    # COVERAGE_CORE_CONDITIONAL); only lands in coverage plans when the
+    # invocation depth is ``deep`` AND a signal trigger fires. The
+    # spawn-spec walker treats it like any other core role once it
+    # appears in the plan.
+    "impact": {
+        "agent_id": "impact",
+        "partitioned": False,
+        "patches_template": "patches_all.txt",
+    },
 }
 
 # Roles that are reserved in the coverage plan but not yet spawnable. The
@@ -10438,6 +10725,10 @@ def _spawn_resolve_models(route: dict[str, Any]) -> dict[str, Any]:
         "unified_auditor": models.get("unified_auditor", "sonnet"),
         "premise_reviewer": models.get("premise_reviewer", "sonnet"),
         "fast_path_reviewer": models.get("fast_path_reviewer", "sonnet"),
+        # FEA-1401 Impact Analyzer defaults to Opus for cross-file
+        # reasoning. Operators can override via spawn.json.route.models
+        # when running a cost-sensitive deep review.
+        "impact": models.get("impact", "opus"),
     }
 
 
@@ -11305,6 +11596,7 @@ _FLEET_DISPLAY_NAMES: dict[str, str] = {
     "premise_reviewer": "Premise Reviewer",
     "fast_path_reviewer": "Fast Path Reviewer",
     "test_quality": "Test Quality",
+    "impact": "Impact Analyzer",
 }
 
 
@@ -11973,6 +12265,12 @@ def _stats_from_findings(
         # _count_gateable_premise_medium is the single source of truth
         # for that policy (excludes JUSTIFIED-VALID / JUSTIFIED-INVALID).
         "premise_cumulative_medium_count": _count_gateable_premise_medium(verified),
+        # FEA-1401 Rule 6: Impact Analyzer gate count. Mirrors
+        # premise_cumulative_medium_count — single source of truth is
+        # _count_gateable_impact. Present-local SKILL.md's Verifier Stats
+        # block reads `stats.impact_cumulative_count` directly from this
+        # dict; without this key the footer line renders as None.
+        "impact_cumulative_count": _count_gateable_impact(verified),
         "agent_failures": [],
     }
 
@@ -12263,16 +12561,21 @@ def cmd_prep_assets(args: argparse.Namespace) -> int:
     bha_src = plugin_root / "tools" / "prompts" / "bha_suffix.txt"
     verifier_src = plugin_root / "tools" / "prompts" / "verifier_prompt.txt"
     premise_src = plugin_root / "tools" / "prompts" / "premise_prompt.txt"
+    # FEA-1401: Impact Analyzer prompt is per-run-cached on the same
+    # contract as premise/verifier (prompt edits invalidate the cache).
+    impact_src = plugin_root / "tools" / "prompts" / "impact_analyzer_prompt.txt"
 
     shared_dst = cr_dir / "shared_prompt.txt"
     bha_dst = cr_dir / "bha_suffix.txt"
     verifier_dst = cr_dir / "verifier_prompt.txt"
     premise_dst = cr_dir / "premise_prompt.txt"
+    impact_dst = cr_dir / "impact_analyzer_prompt.txt"
 
     shutil.copy2(shared_src, shared_dst)
     shutil.copy2(bha_src, bha_dst)
     shutil.copy2(verifier_src, verifier_dst)
     shutil.copy2(premise_src, premise_dst)
+    shutil.copy2(impact_src, impact_dst)
 
     json.dump(
         {
@@ -12280,6 +12583,7 @@ def cmd_prep_assets(args: argparse.Namespace) -> int:
             "bha_suffix": str(bha_dst),
             "verifier_prompt": str(verifier_dst),
             "premise_prompt": str(premise_dst),
+            "impact_analyzer_prompt": str(impact_dst),
         },
         sys.stdout,
         indent=2,
