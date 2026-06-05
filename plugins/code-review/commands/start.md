@@ -1,6 +1,6 @@
 ---
 description: Run comprehensive code review — locally or on GitHub PRs with inline comments
-argument-hint: "[scope] [--github] [--hygiene-only] [--base <ref>] [--since-last-review] [--full-review]"
+argument-hint: "[scope] [--github] [--hygiene-only] [--base <ref>] [--since-last-review] [--full-review] [--depth shallow|standard|deep]"
 ---
 
 # Comprehensive Code Review
@@ -23,7 +23,19 @@ Run a multi-agent code review with partitioned deep review, deterministic hygien
 /start --base develop               # Diff against a specific base branch
 /start --since-last-review          # Review only changes since last successful review
 /start --full-review                # Force full diff (disable auto-incremental)
+/start --depth shallow              # Built-ins only (no premise, no critic-gates); see Depth Tiers below
+/start --depth deep                 # Standard + future heavy reviewers (Impact Analyzer slot)
 ```
+
+## Depth Tiers (PLN-807)
+
+The `--depth` flag selects which reviewer fleet runs. Default `standard`. Bare `/start` invocations preserve historical behavior.
+
+- **shallow** — hygiene + BHA (partitioned at >5000 LOC) + BHB + unified_auditor + verifier. Skips signal extraction, coverage planning/critic, premise_reviewer, and all `critic-gates.json` entries. Static spawn spec; no routing/critic decisions. Hygiene emits a `tier_mismatch_nudge` LOW finding when the PR's diff size, schema/migration paths, or public API surface suggest standard would catch more.
+- **standard** — current behavior. Full fleet with signal-driven routing, coverage critic, premise, repo-specific critic activation via `critic-gates.json`. Budget arithmetic reserves BHA partitions FIRST (Phase 4) and caps total domain critics at `DOMAIN_CRITIC_CAP = 5` across both required and best-effort buckets. Required critics dropped by the cap emit coverage-gap findings.
+- **deep** — standard plus future heavy reviewers gated by `min_depth: deep` in `stages.json`. Reserved for FEA-1401 Impact Analyzer; today behaves identically to standard.
+
+Tier transitions are detected via `review_state.json`: a cached `shallow` review does not satisfy a subsequent `standard` invocation — the deeper run actually executes the previously skipped reviewers.
 
 ## GitHub Mode Constraints
 
@@ -111,8 +123,11 @@ python3 <HELPERS> prepare-run \
   --full-review <FULL_REVIEW> \
   --base-ref-override "<BASE_REF_OVERRIDE>" \
   --scope-args "<SCOPE_ARGS>" \
+  --depth <DEPTH> \
   [--pr-number <PR_NUMBER>]
 ```
+
+`<DEPTH>` is `shallow`, `standard`, or `deep` — parsed from the `--depth` flag in this command's arguments (default `standard` when absent). Tier filtering happens here: `prepare-run` emits only the stages whose `min_depth`/`max_depth` band brackets the invocation tier. Standard runs see the full 37-stage pipeline; shallow swaps `stage_19b_derive_spawn_spec` for `stage_19c_derive_static_spec` and skips signal extraction (stages 11/11b), coverage planning (stages 14/14a/15/15b/15c), budget arbitrate (16), and spawn verify (20b).
 
 Reads `<CR_DIR>/setup.json` and writes `<CR_DIR>/run_plan.json` containing `review_id`, `flags`, `stages` (the 30-stage pipeline), and `validation_gates`. Read the run plan with the Read tool. Cache `STAGES`, `GATES`, `FLAGS` from the JSON.
 
