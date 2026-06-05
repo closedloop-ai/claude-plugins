@@ -3127,6 +3127,19 @@ def _merge_verifier_fields(
     Rule 2 still short-circuits on the unrewritten BLOCKING. PR #111
     review HIGH #1 surfaced the same bug for the sensitive-path cap;
     DOWNGRADE has the identical shape.
+
+    FEA-1401 DOWNGRADE-trim for ImpactAnalysis findings: per the
+    verifier prompt's per-entry audit section ("DOWNGRADE — severity
+    drops one tier ... un-verified entries trimmed"), an
+    ImpactAnalysis finding downgraded by the verifier must have its
+    ``external_impact[]`` filtered to drop entries whose
+    corresponding ``evidence_checks[]`` entry came back
+    ``verified: false``. Match by the evidence_check's ``source``
+    field ("<file>:<line>") against each external_impact entry's
+    own ``file:line``. Without this trim, downstream consumers
+    (``/fix``'s callsite update flow, the presenter's sub-bullet
+    rendering) act on hallucinated callsites the verifier flagged
+    as un-reproducible.
     """
     if "verifier_verdict" in verdict_data:
         verdict = verdict_data["verifier_verdict"]
@@ -3136,6 +3149,7 @@ def _merge_verifier_fields(
                 vs = verdict_data.get("verifier_severity")
                 if isinstance(vs, str) and vs in SEVERITIES:
                     finding["severity"] = vs
+                _trim_unverified_external_impact(finding, verdict_data)
     for key in (
         "verifier_severity",
         "verifier_confidence",
@@ -3149,6 +3163,66 @@ def _merge_verifier_fields(
     checks = verdict_data.get("evidence_checks")
     if isinstance(checks, list):
         finding["evidence_checks"] = checks
+
+
+def _trim_unverified_external_impact(
+    finding: dict[str, Any], verdict_data: dict[str, Any],
+) -> None:
+    """Drop ``external_impact[]`` entries the verifier flagged unverified.
+
+    Helper for ``_merge_verifier_fields`` DOWNGRADE handling — see the
+    parent function's FEA-1401 docstring section for rationale. No-op
+    when the finding is not an ImpactAnalysis category, has no
+    ``external_impact[]``, or the verdict carries no
+    ``evidence_checks[]`` to consult.
+
+    Matching policy: an evidence_check matches an external_impact
+    entry when (a) the check's ``source`` equals ``"<file>:<line>"``
+    of the entry AND (b) the check's ``claim`` begins with the prefix
+    the verifier prompt uses for per-callsite audits
+    (``"external impact at"``). Both conditions defend against
+    pre-existing evidence_checks emitted for other audit paths
+    (Justification, anchor existence) that happen to cite a
+    file:line collision.
+    """
+    if finding.get("category") != "ImpactAnalysis":
+        return
+    impacts = finding.get("external_impact")
+    if not isinstance(impacts, list) or not impacts:
+        return
+    checks = verdict_data.get("evidence_checks")
+    if not isinstance(checks, list):
+        return
+    unverified_sources: set[str] = set()
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        if check.get("verified") is not False:
+            continue
+        claim = check.get("claim")
+        if not isinstance(claim, str) or not claim.startswith(
+            "external impact at",
+        ):
+            continue
+        source = check.get("source")
+        if isinstance(source, str):
+            unverified_sources.add(source)
+    if not unverified_sources:
+        return
+    filtered: list[dict[str, Any]] = []
+    for entry in impacts:
+        if not isinstance(entry, dict):
+            filtered.append(entry)
+            continue
+        file_val = entry.get("file")
+        line_val = entry.get("line")
+        if not isinstance(file_val, str) or not isinstance(line_val, int):
+            filtered.append(entry)
+            continue
+        if f"{file_val}:{line_val}" in unverified_sources:
+            continue
+        filtered.append(entry)
+    finding["external_impact"] = filtered
 
 
 # ---------------------------------------------------------------------------

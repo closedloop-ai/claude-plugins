@@ -275,10 +275,14 @@ For EACH entry in `finding.external_impact[]`:
      `external_impact[i].line` (read ±20 lines for context).
   2. **Snippet hash check.** If
      `external_impact[i].callsite_snippet_hash` is present, hash the
-     line you read and compare. A hash match wins regardless of line
-     drift; a hash mismatch means the callsite changed under the
-     reviewer's feet — treat as drift, continue with content match
-     against `callsite_snippet`.
+     line you read using the **same algorithm the Impact Analyzer
+     used: sha256 of the UTF-8 encoded line**
+     (`hashlib.sha256(line.encode("utf-8")).hexdigest()` in Python).
+     This matches the convention for `evidence[].snippet_hash`. A
+     hash match wins regardless of line drift; a hash mismatch
+     means the callsite changed under the reviewer's feet — treat
+     as drift, continue with content match against
+     `callsite_snippet`.
   3. **Content match.** Compare the line content (whitespace-
      tolerant) against `external_impact[i].callsite_snippet`. If
      they don't match within ±3 lines of drift, the entry is

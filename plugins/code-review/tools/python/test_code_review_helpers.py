@@ -20262,6 +20262,28 @@ class TestPLN807ReviewFixes:
 # ---------------------------------------------------------------------------
 
 
+def _make_impact_finding(
+    severity: str, *, verdict: str | None = None,
+) -> dict[str, Any]:
+    """Module-level helper for ImpactAnalysis finding fixtures.
+
+    Used by ``TestFEA1401VerdictRule``, ``TestFEA1401Telemetry``, and
+    ``TestFEA1401DowngradeTrim``. Consolidates what used to be three
+    near-identical class methods so the canonical shape is defined
+    once. Keep the id deterministic (severity-based) so set-equality
+    assertions over multi-finding scenarios remain stable.
+    """
+    f = minimal_diff_finding(
+        id=f"impact_f{severity[0].lower()}",
+        reviewer="impact",
+        category="ImpactAnalysis",
+        severity=severity,
+    )
+    if verdict is not None:
+        f["verifier_verdict"] = verdict
+    return f
+
+
 class TestFEA1401SignalTaxonomy:
     """Verify the two new Impact Analyzer trigger signals are present in
     the canonical taxonomy with the contract the trigger evaluation
@@ -20560,15 +20582,7 @@ class TestFEA1401VerdictRule:
     def _impact_finding(
         self, severity: str, *, verdict: str | None = None,
     ) -> dict[str, Any]:
-        f = minimal_diff_finding(
-            id=f"impact_f{severity[0].lower()}",
-            reviewer="impact",
-            category="ImpactAnalysis",
-            severity=severity,
-        )
-        if verdict is not None:
-            f["verifier_verdict"] = verdict
-        return f
+        return _make_impact_finding(severity, verdict=verdict)
 
     def test_count_helper_counts_blocking_and_high(self) -> None:
         from code_review_helpers import _count_gateable_impact
@@ -20625,26 +20639,25 @@ class TestFEA1401VerdictRule:
         verdict, _ = _compute_canonical_verdict(verified, [])
         assert verdict == "APPROVED"
 
-    def test_rule_6_fires_when_threshold_lowered(self) -> None:
+    def test_thresholds_dict_flows_through_compute_canonical_verdict(
+        self,
+    ) -> None:
         from code_review_helpers import _compute_canonical_verdict
 
-        # Demonstrate the rule machinery actually fires when a
-        # configurable threshold makes it reachable. Threshold = 1
-        # means a single BLOCKING/HIGH Impact finding would trigger
-        # Rule 6 — except Rule 2 fires on BLOCKING first
-        # (CHANGES_REQUESTED is stronger than Rule 6's NEEDS_ATTENTION),
-        # so we use a HIGH Impact finding and bypass Rule 3 by
-        # constructing the inputs such that Rule 3 wouldn't fire.
-        # Rule 3 fires on ANY HIGH severity — so we can't actually
-        # bypass it without a verifier-side severity rewrite. Instead
-        # we use a `verifier_verdict: "JUSTIFIED-INVALID"` finding,
-        # which `_count_gateable_impact` does NOT exclude (only
-        # JUSTIFIED-VALID is excluded), demonstrating the helper's
-        # count is correct. Since Rule 3 fires before Rule 6 either
-        # way, we assert the verdict is NEEDS_ATTENTION regardless of
-        # which rule produced it — pinning that the Impact gate
-        # threshold flows through `_compute_canonical_verdict` via
-        # the thresholds dict.
+        # Pins that ``_compute_canonical_verdict`` accepts and reads
+        # the ``impact_cumulative`` key from a caller-supplied
+        # thresholds dict (the helper's machinery is wired correctly
+        # end-to-end). This test does NOT isolate Rule 6: with a
+        # single HIGH ImpactAnalysis finding, Rule 3 (HIGH any-
+        # category → NEEDS_ATTENTION) fires before Rule 6 has a
+        # chance to evaluate. The verdict is the same either way
+        # (NEEDS_ATTENTION), so the assertion holds, but a future
+        # contributor removing Rule 6 entirely would NOT see this
+        # test fail. Rule 6's isolation is structurally blocked
+        # under current Rule 2/3 precedence (documented in
+        # ``_count_gateable_impact``); the dedicated isolation test
+        # would require a Rule 2/3 refactor that narrows their
+        # category coverage.
         verified = [self._impact_finding("HIGH")]
         verdict, reason = _compute_canonical_verdict(
             verified, [], thresholds={
@@ -20653,10 +20666,7 @@ class TestFEA1401VerdictRule:
             },
         )
         assert verdict == "NEEDS_ATTENTION"
-        # Either Rule 3 (HIGH any-category) or Rule 6 (Impact gate)
-        # produced this; both are valid. The reason text confirms one
-        # of the two fired with the expected attribution.
-        assert reason
+        assert reason  # non-empty reason from whichever rule fired
 
     def test_rule_3_subsumes_high_impact_findings(self) -> None:
         from code_review_helpers import _compute_canonical_verdict
@@ -20679,6 +20689,164 @@ class TestFEA1401VerdictRule:
         verified = [self._impact_finding("BLOCKING")]
         verdict, _ = _compute_canonical_verdict(verified, [])
         assert verdict == "CHANGES_REQUESTED"
+
+
+class TestFEA1401DowngradeTrim:
+    """Pin the verifier_prompt.txt FEA-1401 DOWNGRADE-trim contract:
+    when an ImpactAnalysis finding is downgraded and its
+    ``evidence_checks[]`` flag a subset of ``external_impact[]`` entries
+    as unverified, those entries MUST be removed from the persisted
+    finding before downstream consumers (/fix, presenter) act on them.
+    """
+
+    def _impact_with_callsites(
+        self, *callsites: tuple[str, int],
+    ) -> dict[str, Any]:
+        finding = _make_impact_finding("HIGH")
+        finding["external_impact"] = [
+            {
+                "file": f,
+                "line": ln,
+                "impact_type": "signature_mismatch",
+                "description": f"breaking callsite at {f}:{ln}",
+                "callsite_snippet": "foo(bar)",
+                "callsite_snippet_hash": "abcdef",
+                "confidence": 0.9,
+            }
+            for f, ln in callsites
+        ]
+        return finding
+
+    def _evidence_check(
+        self, file: str, line: int, *, verified: bool,
+    ) -> dict[str, Any]:
+        return {
+            "claim": f"external impact at {file}:{line} verified",
+            "expected": "foo(bar)",
+            "actual_read": "foo(bar)" if verified else "<not found>",
+            "verified": verified,
+            "source": f"{file}:{line}",
+            "snippet_hash_matched": verified,
+        }
+
+    def test_downgrade_trims_unverified_external_impact_entries(
+        self,
+    ) -> None:
+        from code_review_helpers import _merge_verifier_fields
+
+        # Reviewer claimed three callsites; verifier confirmed two,
+        # rejected the third. DOWNGRADE persists only the verified
+        # callsites in external_impact[].
+        finding = self._impact_with_callsites(
+            ("src/a.ts", 10),
+            ("src/b.ts", 20),
+            ("src/c.ts", 30),
+        )
+        verdict_data = {
+            "verifier_verdict": "DOWNGRADE",
+            "verifier_severity": "MEDIUM",
+            "evidence_checks": [
+                self._evidence_check("src/a.ts", 10, verified=True),
+                self._evidence_check("src/b.ts", 20, verified=False),
+                self._evidence_check("src/c.ts", 30, verified=True),
+            ],
+        }
+        _merge_verifier_fields(finding, verdict_data)
+        assert finding["severity"] == "MEDIUM"
+        retained = {(e["file"], e["line"]) for e in finding["external_impact"]}
+        assert retained == {("src/a.ts", 10), ("src/c.ts", 30)}, (
+            "DOWNGRADE must drop the entries whose evidence_checks "
+            "came back verified=false; b.ts:20 should not survive."
+        )
+
+    def test_downgrade_no_trim_when_all_entries_verified(self) -> None:
+        from code_review_helpers import _merge_verifier_fields
+
+        # A DOWNGRADE driven by severity-overstatement (not by
+        # entry-level rejection) keeps every external_impact entry.
+        finding = self._impact_with_callsites(
+            ("src/a.ts", 10), ("src/b.ts", 20),
+        )
+        verdict_data = {
+            "verifier_verdict": "DOWNGRADE",
+            "verifier_severity": "MEDIUM",
+            "evidence_checks": [
+                self._evidence_check("src/a.ts", 10, verified=True),
+                self._evidence_check("src/b.ts", 20, verified=True),
+            ],
+        }
+        _merge_verifier_fields(finding, verdict_data)
+        assert len(finding["external_impact"]) == 2
+
+    def test_confirmed_verdict_does_not_trim(self) -> None:
+        from code_review_helpers import _merge_verifier_fields
+
+        # The trim path is gated on DOWNGRADE specifically; CONFIRMED
+        # findings retain external_impact even if a stray
+        # evidence_check is verified=false (e.g. a justification
+        # audit entry that doesn't pertain to a callsite).
+        finding = self._impact_with_callsites(("src/a.ts", 10))
+        verdict_data = {
+            "verifier_verdict": "CONFIRMED",
+            "evidence_checks": [
+                self._evidence_check("src/a.ts", 10, verified=False),
+            ],
+        }
+        _merge_verifier_fields(finding, verdict_data)
+        assert len(finding["external_impact"]) == 1
+
+    def test_trim_ignores_non_callsite_evidence_checks(self) -> None:
+        from code_review_helpers import _merge_verifier_fields
+
+        # Evidence checks for unrelated claims (anchor existence,
+        # justification audits) must not affect the trim — the
+        # implementation matches by the "external impact at" claim
+        # prefix specifically.
+        finding = self._impact_with_callsites(("src/a.ts", 10))
+        verdict_data = {
+            "verifier_verdict": "DOWNGRADE",
+            "verifier_severity": "MEDIUM",
+            "evidence_checks": [
+                self._evidence_check("src/a.ts", 10, verified=True),
+                {
+                    "claim": "snippet exists at src/a.ts:10",
+                    "verified": False,
+                    "source": "src/a.ts:10",
+                    "actual_read": "",
+                },
+            ],
+        }
+        _merge_verifier_fields(finding, verdict_data)
+        assert len(finding["external_impact"]) == 1
+
+    def test_trim_skips_non_impact_findings(self) -> None:
+        from code_review_helpers import _merge_verifier_fields
+
+        # Only ImpactAnalysis findings carry external_impact[]; other
+        # categories have no payload to trim. The helper is a no-op
+        # for them even when evidence_checks are present.
+        finding = minimal_diff_finding(
+            id="bha_p0_f0", reviewer="bha_p0",
+            category="Correctness", severity="HIGH",
+        )
+        # Manually add an external_impact-shaped list to defend
+        # against an accidental shape leak.
+        finding["external_impact"] = [
+            {"file": "src/a.ts", "line": 10, "impact_type": "x",
+             "description": "", "callsite_snippet": "",
+             "callsite_snippet_hash": "", "confidence": 0.9},
+        ]
+        verdict_data = {
+            "verifier_verdict": "DOWNGRADE",
+            "verifier_severity": "MEDIUM",
+            "evidence_checks": [
+                self._evidence_check("src/a.ts", 10, verified=False),
+            ],
+        }
+        _merge_verifier_fields(finding, verdict_data)
+        # The non-Impact finding's array survives untouched — the
+        # trim is scoped to category == "ImpactAnalysis".
+        assert len(finding["external_impact"]) == 1
 
 
 class TestFEA1401StageWiring:
@@ -20723,12 +20891,7 @@ class TestFEA1401Telemetry:
     "telemetry reports the count" claim is false."""
 
     def _impact_finding(self, severity: str) -> dict[str, Any]:
-        return minimal_diff_finding(
-            id=f"impact_f{severity[0].lower()}",
-            reviewer="impact",
-            category="ImpactAnalysis",
-            severity=severity,
-        )
+        return _make_impact_finding(severity)
 
     def test_stats_includes_impact_cumulative_count(self) -> None:
         from code_review_helpers import _stats_from_findings
@@ -20867,62 +21030,64 @@ class TestFEA1401BudgetExemption:
         )
 
     def test_budget_prune_preserves_core_be_when_capacity_tight(
-        self,
+        self, tmp_path: Path,
     ) -> None:
-        # End-to-end exercise of the prune exemption: feed
-        # cmd_arbitrate_budget a plan with one core best_effort entry
-        # and enough critic entries to overflow the cap. Assert that
-        # the core entry survives and a critic entry is the one
-        # deferred. Tight cap (4) forces the prune to fire.
-        from code_review_helpers import cmd_arbitrate_budget
-
-        cr_dir = Path(__file__).parent / "fixtures" / "tmp_arbitrate"
-        cr_dir.mkdir(parents=True, exist_ok=True)
-        # Minimum fixture set for cmd_arbitrate_budget.
-        coverage_initial = {
+        # End-to-end exercise of the prune exemption via the canonical
+        # ``_run_arbitrate_budget`` driver — which seeds the plan into
+        # ``coverage.json.final`` (where ``cmd_arbitrate_budget``
+        # actually reads it from). Tight cap forces the prune branch.
+        #
+        # Capacity arithmetic:
+        #   required = 5 core (BHA, BHB, auditor, premise, test_quality)
+        #   bha_target = 1 (loc=100 → 1 partition)
+        #   cap = 8 leaves 2 best_effort slots
+        # The plan supplies 1 core best_effort entry (impact) plus 3
+        # critic-source entries. With the v2.30.1 exemption, ``impact``
+        # is reserved BEFORE the prune, leaving 1 slot for the
+        # 3 critic entries (lowest priority survives, 2 deferred).
+        coverage_plan_in = {
             "required": [
-                {"reviewer": "bug_hunter_a", "trigger": {"type": "always"}, "source": "core"},
-                {"reviewer": "bug_hunter_b", "trigger": {"type": "always"}, "source": "core"},
+                {"reviewer": r, "trigger": {"type": "always"}, "source": "core"}
+                for r in (
+                    "bug_hunter_a", "bug_hunter_b", "unified_auditor",
+                    "premise_reviewer", "test_quality",
+                )
             ],
             "best_effort": [
                 self._impact_entry(),
                 self._critic_entry("ts-expert", priority=2),
                 self._critic_entry("graphql-architect", priority=3),
+                self._critic_entry("rust-pro", priority=3),
             ],
             "deferred_for_budget": [],
             "deprecation_warnings": [],
             "warnings": [],
             "stats": {},
         }
-        from code_review_helpers import _write_coverage_section
-        _write_coverage_section(cr_dir, "initial", coverage_initial)
-        (cr_dir / "diff_data.json").write_text(json.dumps(
-            {"files_to_review": ["src/a.ts"], "patch_lines": {},
-             "loc": {"src/a.ts": {"added": 100, "removed": 0}}},
-        ))
-        # Tight cap forces the prune to fire on best_effort entries.
-        ns = argparse.Namespace(
-            cr_dir=str(cr_dir),
-            diff_data=str(cr_dir / "diff_data.json"),
-            cap=4,
-            cr_dir_param=None,
+        diff_data = {
+            "files_to_review": ["src/a.ts"], "patch_lines": {},
+            "loc": {"src/a.ts": {"added": 100, "removed": 0}},
+        }
+        _, final_plan, _ = _run_arbitrate_budget(
+            tmp_path, coverage_plan_in, diff_data, cap=8,
         )
-        rc = cmd_arbitrate_budget(ns)
-        assert rc in (0, 1)  # PASS or BLOCKING-verdict branch both acceptable
-
-        coverage = json.loads((cr_dir / "coverage.json").read_text())
-        final = coverage.get("final") or coverage.get("initial")
-        be_reviewers = {e["reviewer"] for e in final["best_effort"]}
+        be_reviewers = {e["reviewer"] for e in final_plan["best_effort"]}
         # The Impact reviewer (source: "core") MUST survive the prune
         # even when critic entries compete for capacity.
         assert "impact" in be_reviewers, (
             "Impact Analyzer is core best_effort; the budget prune must "
             "reserve it before competing critic entries are allocated."
         )
-
-        # Cleanup
-        import shutil
-        shutil.rmtree(cr_dir, ignore_errors=True)
+        # And the prune must have actually fired — at least one critic
+        # entry should be deferred. This pins the contract: the
+        # exemption preserves the core entry by displacing a competing
+        # critic-source entry, not by silently raising the cap.
+        deferred = {
+            e["reviewer"] for e in final_plan.get("deferred_for_budget", [])
+        }
+        assert deferred & {
+            "ts-expert", "graphql-architect", "rust-pro",
+        }, "At least one critic entry must be deferred by the budget prune"
 
 
 class TestFEA1401PrepAssets:
