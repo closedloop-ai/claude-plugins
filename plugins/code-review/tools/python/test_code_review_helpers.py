@@ -3905,6 +3905,97 @@ class TestCmdPostComments:
         assert "`b.ts:20` — same pattern" in body
         assert "`c.ts:30`" in body
 
+    def test_impact_analysis_renders_external_impact_subbullets(self) -> None:
+        finding: dict[str, Any] = {
+            "file": "lib/api.ts",
+            "line": 42,
+            "severity": "HIGH",
+            "category": "ImpactAnalysis",
+            "issue": "Signature change breaks 3 callsites",
+            "recommendation": "Update callers to pass the new param",
+            "external_impact": [
+                {
+                    "file": "src/b.ts",
+                    "line": 99,
+                    "impact_type": "signature_mismatch",
+                    "description": "missing new arg",
+                },
+                {
+                    "file": "src/a.ts",
+                    "line": 10,
+                    "impact_type": "signature_mismatch",
+                    "description": "missing new arg",
+                },
+                {
+                    "file": "src/a.ts",
+                    "line": 5,
+                    "impact_type": "type_incompatibility",
+                    "description": "expects old type",
+                },
+            ],
+        }
+        body = _format_comment_body(finding)
+        assert "**Affected callsites** (3):" in body
+        # Sorted by (file, line) ascending: src/a.ts:5, src/a.ts:10, src/b.ts:99
+        a5 = body.index("`src/a.ts:5`")
+        a10 = body.index("`src/a.ts:10`")
+        b99 = body.index("`src/b.ts:99`")
+        assert a5 < a10 < b99
+        assert "expects old type (type_incompatibility)" in body
+        assert "missing new arg (signature_mismatch)" in body
+
+    def test_impact_analysis_caps_at_ten_with_overflow_pointer(self) -> None:
+        external_impact = [
+            {
+                "file": "src/x.ts",
+                "line": i,
+                "impact_type": "signature_mismatch",
+                "description": f"callsite {i}",
+            }
+            for i in range(1, 16)
+        ]
+        finding: dict[str, Any] = {
+            "file": "lib/api.ts",
+            "line": 1,
+            "severity": "BLOCKING",
+            "category": "ImpactAnalysis",
+            "issue": "breaks 15 callsites",
+            "external_impact": external_impact,
+        }
+        body = _format_comment_body(finding)
+        assert "**Affected callsites** (15):" in body
+        # First 10 rendered, lines 11-15 only mentioned via overflow line
+        for i in range(1, 11):
+            assert f"`src/x.ts:{i}`" in body
+        assert "(+5 more — see `review_result.json`" in body
+
+    def test_non_impact_category_omits_external_impact(self) -> None:
+        finding: dict[str, Any] = {
+            "file": "a.ts",
+            "line": 10,
+            "severity": "HIGH",
+            "category": "Correctness",
+            "issue": "bug",
+            "external_impact": [
+                {"file": "b.ts", "line": 20, "impact_type": "signature_mismatch"},
+            ],
+        }
+        body = _format_comment_body(finding)
+        assert "Affected callsites" not in body
+        assert "b.ts:20" not in body
+
+    def test_impact_analysis_empty_external_impact_omitted(self) -> None:
+        finding: dict[str, Any] = {
+            "file": "a.ts",
+            "line": 10,
+            "severity": "MEDIUM",
+            "category": "ImpactAnalysis",
+            "issue": "no callsites affected",
+            "external_impact": [],
+        }
+        body = _format_comment_body(finding)
+        assert "Affected callsites" not in body
+
     def test_missing_file_returns_error(self, tmp_path: Path) -> None:
         import argparse
         ns = argparse.Namespace(

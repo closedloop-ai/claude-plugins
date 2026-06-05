@@ -3988,6 +3988,9 @@ def _cmd_cache_update_v2(  # noqa: PLR0913
 # ---------------------------------------------------------------------------
 
 
+_EXTERNAL_IMPACT_DISPLAY_CAP = 10
+
+
 def _format_comment_body(finding: dict[str, Any]) -> str:
     """Render a finding dict into the inline comment markdown body."""
     severity = finding.get("severity", "MEDIUM")
@@ -3996,12 +3999,49 @@ def _format_comment_body(finding: dict[str, Any]) -> str:
     recommendation = finding.get("recommendation", "")
     code_snippet = finding.get("code_snippet", "")
     other_locations: list[dict[str, Any]] = finding.get("other_locations", [])
+    external_impact: list[dict[str, Any]] = finding.get("external_impact", [])
 
     parts: list[str] = [f"**[{severity}]** {category}", "", issue]
 
     if recommendation:
         parts.append("")
         parts.append(f"**Recommendation:** {recommendation}")
+
+    # FEA-1401: render ImpactAnalysis external_impact[] sub-bullets so
+    # GitHub reviewers see the callsite blast radius alongside the anchor
+    # finding (parity with the local presenter's rendering — see
+    # plugins/code-review/skills/present-local/SKILL.md). Sort by
+    # (file, line) ascending, cap at _EXTERNAL_IMPACT_DISPLAY_CAP with
+    # an overflow pointer to review_result.json.
+    if (
+        category == "ImpactAnalysis"
+        and isinstance(external_impact, list)
+        and external_impact
+    ):
+        normalized: list[dict[str, Any]] = [
+            e for e in external_impact if isinstance(e, dict)
+        ]
+        normalized.sort(
+            key=lambda e: (str(e.get("file", "")), int(e.get("line", 0) or 0)),
+        )
+        parts.append("")
+        parts.append(f"**Affected callsites** ({len(normalized)}):")
+        for entry in normalized[:_EXTERNAL_IMPACT_DISPLAY_CAP]:
+            entry_file = entry.get("file", "")
+            entry_line = entry.get("line", 0)
+            entry_desc = entry.get("description", "")
+            entry_kind = entry.get("impact_type", "")
+            kind_part = f" ({entry_kind})" if entry_kind else ""
+            desc_part = f" — {entry_desc}" if entry_desc else ""
+            parts.append(
+                f"- `{entry_file}:{entry_line}`{desc_part}{kind_part}",
+            )
+        if len(normalized) > _EXTERNAL_IMPACT_DISPLAY_CAP:
+            overflow = len(normalized) - _EXTERNAL_IMPACT_DISPLAY_CAP
+            parts.append(
+                f"- (+{overflow} more — see "
+                f"`review_result.json` finding.external_impact[])",
+            )
 
     if code_snippet:
         # Detect language from the file extension
@@ -9185,13 +9225,16 @@ def _compute_canonical_verdict(
         )
 
     # Rule 6 (FEA-1401 / PLN-726 OQ#6): cumulative Impact gate. ≥2
-    # BLOCKING/HIGH ImpactAnalysis findings → NEEDS_ATTENTION even if
-    # no individual finding would have tripped Rule 2 (BLOCKING) or
-    # Rule 3 (HIGH any-category). Rules 2 and 3 fire first, so this
-    # gate matters in the narrow case where Impact findings split
-    # BLOCKING vs HIGH severity across separate symbols. The threshold
-    # is configurable via verdict-thresholds.json
-    # (``impact_cumulative``) but defaults to 2.
+    # BLOCKING/HIGH ImpactAnalysis findings → NEEDS_ATTENTION. Under
+    # current precedence this is unreachable: Rule 2 (any BLOCKING →
+    # CHANGES_REQUESTED) and Rule 3 (any HIGH → NEEDS_ATTENTION) fire
+    # first, so by the time control reaches here ``impact_count`` is
+    # always 0. Kept in place per PLN-726 OQ#6 as a documented
+    # safety-net for future refactors that narrow Rules 2/3 (e.g.
+    # excluding ImpactAnalysis from the any-category gate to let
+    # cross-file blast-radius be governed by a category-specific
+    # threshold). The threshold is configurable via
+    # verdict-thresholds.json (``impact_cumulative``); defaults to 2.
     impact_threshold = int(
         thresholds.get(
             "impact_cumulative",

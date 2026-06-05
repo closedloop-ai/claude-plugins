@@ -162,11 +162,15 @@ The `findings` array contains the envelope's `verified[]` only (NOT `rejected[]`
 array (file/line/impact_type/description/callsite_snippet/
 callsite_snippet_hash/confidence per entry) and a `grep_query_used`
 string. Both fields are part of the canonical finding shape and are
-preserved through validate verbatim. The `post-comments` workflow
-renders `external_impact[]` as a sub-bullet list inside the inline
-comment body so reviewers see the callsite blast radius alongside the
-anchor finding. No special handling is required from this prompt —
-the existing `findings[]` envelope is the single source of truth.
+preserved through validate verbatim. `cmd_post_comments`
+(`_format_comment_body`) renders `external_impact[]` as an
+`**Affected callsites** (N):` sub-bullet list inside the inline
+comment body (sorted by `(file, line)` ascending, capped at 10 with
+an overflow pointer to `review_result.json`) so GitHub reviewers see
+the callsite blast radius alongside the anchor finding — parity with
+the local presenter (`skills/present-local/SKILL.md`). No special
+handling is required from this prompt — the existing `findings[]`
+envelope is the single source of truth.
 
 ### 6c: Write Dismissed and Pending Findings (PLN-722)
 

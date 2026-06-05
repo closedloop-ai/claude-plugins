@@ -4,6 +4,22 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.30.4
+
+PATCH bump — PR #146 review-feedback follow-ups for v2.30.3. Closes the GitHub-vs-local presenter parity gap that v2.30.0 documented but never implemented, restores the `### code-review v2.30.1` heading that the `/update-documentation` run for v2.30.2 swallowed, and corrects the Rule 6 inline comment so it stops claiming a reachability case that current Rule 2/3 precedence excludes.
+
+#### Fixed
+- `cmd_post_comments._format_comment_body` now renders `external_impact[]` as an `**Affected callsites** (N):` sub-bullet list for findings with `category: "ImpactAnalysis"`. Entries sort by `(file, line)` ascending, cap at 10 with an overflow pointer to `review_result.json`, and include the `impact_type` enum value in parentheses after each callsite. Without this, the v2.30.0 `prompts/github-review.md` claim that "the post-comments workflow renders external_impact[] as a sub-bullet list" was unfulfilled — GitHub reviewers silently lost the callsite blast radius that local reviewers got via the present-local skill. Parity with `skills/present-local/SKILL.md`'s rendering shape.
+- `_compute_canonical_verdict` Rule 6 inline comment no longer claims the gate "matters in the narrow case where Impact findings split BLOCKING vs HIGH severity across separate symbols". Under current precedence, Rules 2 (any BLOCKING → CHANGES_REQUESTED) and 3 (any HIGH → NEEDS_ATTENTION) fire first across all categories, so by the time control reaches Rule 6 the BLOCKING/HIGH-Impact count is always 0 and the gate is structurally unreachable. The new text describes Rule 6 as a documented safety-net retained per PLN-726 OQ#6 for future refactors that narrow Rules 2/3 (e.g. excluding ImpactAnalysis from the any-category gate).
+- CHANGELOG.md `### code-review v2.30.1` heading restored — the v2.30.2 `/update-documentation` run swallowed it the same way the v2.30.1 run swallowed v2.29.2, leaving v2.30.1's paragraph and Fixed/Added sections rendering inside the v2.30.2 heading. Same bug class as the v2.29.2 fix in v2.30.1 (the skill writes adjacent same-plugin entries without re-asserting the preceding heading).
+- `prompts/github-review.md` Impact Analyzer paragraph now cites the canonical implementation (`cmd_post_comments._format_comment_body`) and names the exact sub-bullet shape, sort order, and 10-entry cap so the documented contract matches the code.
+
+#### Added
+- `TestCmdPostComments.test_impact_analysis_renders_external_impact_subbullets` covers the new ImpactAnalysis rendering path: assertion shape, `(file, line)` sort order, and `impact_type` inclusion.
+- `TestCmdPostComments.test_impact_analysis_caps_at_ten_with_overflow_pointer` covers the 10-entry display cap and the overflow-pointer text.
+- `TestCmdPostComments.test_non_impact_category_omits_external_impact` covers the category gate (no sub-bullets rendered for non-ImpactAnalysis findings even when an `external_impact[]` happens to be present on the dict).
+- `TestCmdPostComments.test_impact_analysis_empty_external_impact_omitted` covers the empty-list short-circuit (no header rendered when the analyzer found no breaking callsites).
+
 ### code-review v2.30.3
 
 PATCH bump — cr-95440 review-feedback follow-ups for v2.30.0 / v2.30.1. Fixes two real bugs: the v2.30.1 budget-exemption test passed vacuously (wrong coverage section seeded), and the v2.30.0 verifier prompt promised DOWNGRADE would trim un-verified `external_impact[]` entries that the consolidation code never actually trimmed. Plus prompt hardening and test cleanup.
@@ -29,6 +45,8 @@ PATCH bump — dogfood-feedback follow-ups. Documents the in-repo plugin-tree fa
 #### Changed
 - `commands/start.md` stage 0b now documents three explicit resolution outcomes for `${CLAUDE_PLUGIN_ROOT}`: (1) the normal marketplace-cached case where the env var resolves; (2) the in-repo dogfood case where the env var is empty AND `plugins/code-review/.claude-plugin/plugin.json` exists at the cwd — the orchestrator should set `PLUGIN_ROOT = <pwd>/plugins/code-review` so the run exercises the in-repo helpers being reviewed, not a stale marketplace copy; (3) the genuine misconfiguration case where the env var is empty AND no in-repo tree exists — hard-fail with an actionable error message rather than producing malformed paths every helper invocation would crash on. Previously the prompt assumed the env var always resolved, leaving the orchestrator to ad-hoc-discover the fallback (which it did correctly, but unobservably).
 - `code_review_schema.py` adds a multi-line comment block adjacent to `VERDICTS` documenting why `review_result.json.verdict` IS the canonical verdict (no parallel `canonical_verdict` field), while `verdict.json` carries both keys (legacy `approve|needs_attention|decline` for run-loop.sh AND canonical for envelope-aware consumers). Inspectors reading `review_result.json` via jq and seeing `"canonical_verdict": null` should know the field is absent by design, not unset.
+
+### code-review v2.30.1
 
 PATCH bump — review-feedback follow-ups for v2.30.0. Wires up the telemetry plumbing the Verifier Stats footer already referenced, parses the configurable Rule 6 threshold, exempts conditional core reviewers from the domain-critic budget prune, documents the missing `deferred_symbols[]` output contract, and tightens v2.30.0's test cleanup.
 
