@@ -66,6 +66,7 @@ def invoke_prepare_run(
     base_ref_override: str = "",
     scope_args: str = "",
     pr_number: int | None = None,
+    depth: str = "standard",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Invoke ``cmd_prepare_run`` and return ``(summary, run_plan)``.
 
@@ -90,6 +91,7 @@ def invoke_prepare_run(
         base_ref_override=base_ref_override,
         scope_args=scope_args,
         pr_number=pr_number,
+        depth=depth,
         output=str(output) if output is not None else None,
     )
     captured = run_with_stdout_capture(cmd_prepare_run, ns)

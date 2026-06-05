@@ -682,6 +682,138 @@ def _check_sensitive_files(
     }]
 
 
+_TIER_MISMATCH_NUDGE_LOC_THRESHOLD = 3000
+
+# Path segments that signal schema / migration territory. Matched
+# against any ``/``-separated segment of the file path so root-level
+# paths (``migrations/0001.sql``, ``schemas/user.py``,
+# ``models/user.rb``) fire the heuristic alongside nested ones.
+_TIER_MISMATCH_NUDGE_SCHEMA_DIR_SEGMENTS = frozenset({
+    "migrations",
+    "schemas",
+    "models",
+})
+
+# Special filenames that often indicate schema state regardless of
+# directory placement (Prisma, raw SQL, etc.).
+_TIER_MISMATCH_NUDGE_SCHEMA_FILENAMES = frozenset({
+    "schema.prisma",
+    "schema.sql",
+})
+
+_TIER_MISMATCH_NUDGE_PUBLIC_API_FILES = frozenset({
+    "plugin.json",
+    "package.json",
+    "index.ts",
+    "index.tsx",
+    "index.js",
+    "__init__.py",
+})
+
+
+def _matches_schema_or_migration_path(filepath: str) -> bool:
+    """Path-aware schema/migration matcher.
+
+    Splits on ``/`` and looks for any directory segment in the
+    schema-dir set. Catches both root-level (``migrations/0001.sql``)
+    and nested (``apps/web/db/migrations/2024_x.sql``) layouts. Also
+    matches the basename against the schema-filename set so
+    ``schema.prisma`` fires regardless of placement.
+    """
+    p = filepath.replace("\\", "/")
+    parts = [seg for seg in p.split("/") if seg]
+    if Path(p).name in _TIER_MISMATCH_NUDGE_SCHEMA_FILENAMES:
+        return True
+    return any(
+        seg in _TIER_MISMATCH_NUDGE_SCHEMA_DIR_SEGMENTS for seg in parts[:-1]
+    )
+
+
+def _check_tier_mismatch_nudge(
+    diff_data: dict[str, Any], depth: str | None,
+) -> list[dict[str, Any]]:
+    """Emit a single LOW system-scoped finding when shallow runs on a
+    PR that would benefit from a higher-tier review (PLN-807 Phase 5).
+
+    Three heuristics fire independently; any one is enough:
+
+      - Diff > 3000 LOC — premise reviewer's value scales with diff
+        size; large refactors warrant the deeper architectural look.
+      - Schema/migration paths in the diff — premise + repo-specific
+        critics typically catch ORM-vs-schema drift and irreversible
+        migrations that shallow's pure bug-finding fleet misses.
+      - Public API surface (plugin.json, index.ts/__init__.py with new
+        exports, package.json) — Impact-analyzer territory in deep; at
+        minimum, premise should run.
+
+    Runs only when depth=='shallow'. All other tiers no-op. The
+    finding's marker (``tier_mismatch_nudge``) makes it easy to
+    auto-dismiss or filter out at the operator's discretion; severity
+    is fixed at LOW so it never escalates the verdict.
+    """
+    if depth != "shallow":
+        return []
+
+    files: list[str] = list(diff_data.get("files_to_review", []) or [])
+    total_loc = int(diff_data.get("total_loc") or 0)
+
+    reasons: list[str] = []
+
+    if total_loc > _TIER_MISMATCH_NUDGE_LOC_THRESHOLD:
+        reasons.append(
+            f"diff size ({total_loc} LOC) exceeds {_TIER_MISMATCH_NUDGE_LOC_THRESHOLD} LOC"
+        )
+
+    schema_hits = [f for f in files if _matches_schema_or_migration_path(f)]
+    if schema_hits:
+        sample = ", ".join(schema_hits[:3])
+        more = f" (+{len(schema_hits) - 3} more)" if len(schema_hits) > 3 else ""
+        reasons.append(f"schema/migration path{'s' if len(schema_hits) > 1 else ''} touched: {sample}{more}")
+
+    api_hits = [
+        f for f in files
+        if Path(f).name in _TIER_MISMATCH_NUDGE_PUBLIC_API_FILES
+    ]
+    if api_hits:
+        sample = ", ".join(api_hits[:3])
+        more = f" (+{len(api_hits) - 3} more)" if len(api_hits) > 3 else ""
+        reasons.append(f"public API surface{'s' if len(api_hits) > 1 else ''} touched: {sample}{more}")
+
+    if not reasons:
+        return []
+
+    # MEDIUM severity (not LOW) so the finding survives validate's
+    # SEVERITY_NORMALIZE map (which DISCARDs "low"). MEDIUM is the
+    # lowest severity that reaches the operator. Category "Coverage"
+    # rather than "Premise" so it does not contribute to the cumulative
+    # Premise MEDIUM gate (Rule 4 of _compute_canonical_verdict) and
+    # cannot accidentally escalate the verdict on its own.
+    return [{
+        "reviewer": "hygiene",
+        "source": "hygiene",
+        "finding_scope": "system",
+        "system_marker": "tier_mismatch_nudge",
+        "category": "Coverage",
+        "severity": "MEDIUM",
+        "file": None,
+        "line": None,
+        "issue": "Shallow review skipped premise_reviewer and repo-specific critics; PR characteristics suggest a standard or deep review.",
+        "explanation": (
+            "PLN-807 shallow tier intentionally drops premise_reviewer + "
+            "critic-gates entries to lower cost. The following heuristics "
+            "fired on this PR: " + "; ".join(reasons) + ". The skipped "
+            "reviewers commonly catch issues those patterns introduce."
+        ),
+        "recommendation": (
+            "Re-run with `/code-review start --depth standard` (or `deep` "
+            "if Impact Analysis is wanted) to engage the full reviewer "
+            "fleet."
+        ),
+        "confidence": 1.0,
+        "rationale_summary": "; ".join(reasons)[:1000],
+    }]
+
+
 def cmd_hygiene(args: argparse.Namespace) -> int:
     """Execute hygiene subcommand."""
     diff_data_path: str | None = getattr(args, "diff_data", None)
@@ -690,6 +822,11 @@ def cmd_hygiene(args: argparse.Namespace) -> int:
     changed_ranges: dict[str, dict[str, list[list[int]]]] = diff_data.get("changed_ranges", {})
     patch_lines: dict[str, dict[str, dict[str, str]]] = diff_data.get("patch_lines", {})
     workdir: str | None = args.workdir
+    depth: str | None = getattr(args, "depth", None)
+    ok, err = _validate_invocation_depth(depth)
+    if not ok:
+        print(err, file=sys.stderr)
+        return 1
 
     findings: list[dict[str, Any]] = []
 
@@ -708,6 +845,12 @@ def cmd_hygiene(args: argparse.Namespace) -> int:
         findings.extend(_check_gitignore_drift(filepath, status, workdir))
         # Check 4: Sensitive files
         findings.extend(_check_sensitive_files(filepath, status, changed_ranges))
+
+    # PLN-807 Phase 5: tier-mismatch nudge. Runs once per invocation
+    # (not per file) because the heuristics are diff-level. Adds a
+    # single LOW finding when shallow was chosen but heuristics suggest
+    # a higher tier would have caught more.
+    findings.extend(_check_tier_mismatch_nudge(diff_data, depth))
 
     # Promote to canonical schema (PLN-719 Foundation Section 1).
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -4032,10 +4175,43 @@ def _write_review_state(cache_dir: Path, state: dict[str, Any]) -> None:
     os.replace(str(tmp_path), str(state_path))
 
 
+def _entry_satisfies_depth(
+    entry_tier: str | None, invocation_tier: str | None,
+) -> bool:
+    """Return True when a cached review_state entry is at least as strong as the new invocation.
+
+    Cached tier must rank ≥ invocation tier:
+      - shallow invocation can reuse any cached tier (shallow, standard, deep)
+      - standard invocation requires cached tier in {standard, deep}
+      - deep invocation requires cached tier == deep
+
+    Stale entries written before PLN-807 carry no ``tier`` field; they
+    are treated as standard-equivalent (the pre-PLN-807 default), which
+    preserves prior cache behavior for shallow/standard but conservatively
+    rejects deep reuse.
+    """
+    if invocation_tier is None:
+        return True  # tier-unaware caller — preserve legacy behavior
+    cached_rank = _DEPTH_RANK.get(entry_tier or _DEFAULT_MIN_DEPTH, 2)
+    return cached_rank >= _DEPTH_RANK[invocation_tier]
+
+
 def cmd_review_state_read(args: argparse.Namespace) -> int:
-    """Read review state for a branch:base key. Outputs JSON or empty."""
+    """Read review state for a branch:base key. Outputs JSON or empty.
+
+    The optional ``--depth`` arg gates the result on tier sufficiency:
+    a cached entry whose stored ``tier`` is weaker than the new
+    invocation depth returns ``{}`` (treated as a cache miss), forcing
+    the upgrade to actually run. See ``_entry_satisfies_depth`` for the
+    ranking rules.
+    """
     cache_dir = Path(args.cache_dir)
     key = args.key
+    invocation_depth: str | None = getattr(args, "depth", None)
+    ok, err = _validate_invocation_depth(invocation_depth)
+    if not ok:
+        print(err, file=sys.stderr)
+        return 1
     lock_path = cache_dir / CACHE_LOCK_FILENAME
 
     try:
@@ -4044,7 +4220,10 @@ def cmd_review_state_read(args: argparse.Namespace) -> int:
             reviews = state.get("reviews", {})
             entry = reviews.get(key)
 
-            if entry and isinstance(entry, dict):
+            if (
+                entry and isinstance(entry, dict)
+                and _entry_satisfies_depth(entry.get("tier"), invocation_depth)
+            ):
                 json.dump(entry, sys.stdout)
                 sys.stdout.write("\n")
             else:
@@ -4057,11 +4236,21 @@ def cmd_review_state_read(args: argparse.Namespace) -> int:
 
 
 def cmd_review_state_write(args: argparse.Namespace) -> int:
-    """Write review state entry. Atomic write via tmp+rename."""
+    """Write review state entry. Atomic write via tmp+rename.
+
+    The optional ``--depth`` arg persists the invocation tier alongside
+    the SHA so a later run can detect tier transitions: a cached
+    ``shallow`` result MUST NOT be reused to skip a follow-up
+    ``standard`` or ``deep`` review — those would have spawned premise
+    and the critic gates that shallow skipped, so the cached SHA
+    represents a strictly weaker review. Stale entries (pre-PLN-807,
+    no ``tier`` field) are treated as standard-equivalent on read.
+    """
     cache_dir = Path(args.cache_dir)
     key = args.key
     sha: str | None = getattr(args, "sha", None)
     ref: str | None = getattr(args, "ref", None)
+    depth: str | None = getattr(args, "depth", None)
 
     if not sha and not ref:
         print("Error: one of --sha or --ref is required", file=sys.stderr)
@@ -4074,17 +4263,25 @@ def cmd_review_state_write(args: argparse.Namespace) -> int:
             print(f"Error: git rev-parse {ref} failed: {exc}", file=sys.stderr)
             return 1
 
+    ok, err = _validate_invocation_depth(depth)
+    if not ok:
+        print(err, file=sys.stderr)
+        return 1
+
     lock_path = cache_dir / CACHE_LOCK_FILENAME
 
     try:
         with _manifest_lock(lock_path, exclusive=True):
             state = _load_review_state(cache_dir)
             reviews = state.setdefault("reviews", {})
-            reviews[key] = {
+            entry: dict[str, Any] = {
                 "sha": sha,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "success": True,
             }
+            if depth is not None:
+                entry["tier"] = depth
+            reviews[key] = entry
             _write_review_state(cache_dir, state)
             print(f"Review state written: {key} -> {sha}")
     except Exception as exc:
@@ -4514,7 +4711,16 @@ def cmd_compute_hashes(args: argparse.Namespace) -> int:
 
 
 def cmd_auto_incremental(args: argparse.Namespace) -> int:  # noqa: PLR0911
-    """Evaluate auto-incremental eligibility. Outputs JSON with diff_scope and review_mode_line."""
+    """Evaluate auto-incremental eligibility. Outputs JSON with diff_scope and review_mode_line.
+
+    PLN-807 tier-gated cache: when ``--depth`` is provided, a cached
+    review whose stored ``tier`` is weaker than the invocation tier is
+    treated as a cache miss for incremental purposes. Without this
+    gate, a cached shallow review's SHA could seed a follow-up standard
+    or deep run's incremental diff, skipping every file changed between
+    the two — none of which received premise/critic coverage on the
+    shallow run.
+    """
     cache_dir: str = args.cache_dir
     key: str = args.key
     diff_tip: str = args.diff_tip
@@ -4522,6 +4728,11 @@ def cmd_auto_incremental(args: argparse.Namespace) -> int:  # noqa: PLR0911
     full_review: bool = args.full_review.lower() == "true" if args.full_review else False
     since_last_review: bool = args.since_last_review.lower() == "true" if args.since_last_review else False
     mode: str = args.mode
+    invocation_depth: str | None = getattr(args, "depth", None) or None
+    ok, err = _validate_invocation_depth(invocation_depth)
+    if not ok:
+        print(err, file=sys.stderr)
+        return 1
 
     # --full-review forces full diff
     if full_review:
@@ -4543,6 +4754,14 @@ def cmd_auto_incremental(args: argparse.Namespace) -> int:  # noqa: PLR0911
         last_sha: str = entry.get("sha", "")
         if not last_sha:
             print(f"ERROR: --since-last-review: no previous review found for {key}", file=sys.stderr)
+            return 1
+        if not _entry_satisfies_depth(entry.get("tier"), invocation_depth):
+            print(
+                f"ERROR: --since-last-review: cached review for {key} ran at tier "
+                f"{entry.get('tier') or 'unknown'!r}, weaker than current invocation "
+                f"{invocation_depth!r}; run without --since-last-review to do a full diff",
+                file=sys.stderr,
+            )
             return 1
         try:
             _run_git(["merge-base", "--is-ancestor", last_sha, diff_tip])
@@ -4579,6 +4798,22 @@ def cmd_auto_incremental(args: argparse.Namespace) -> int:  # noqa: PLR0911
         reviews = state.get("reviews", {})
         entry = reviews.get(key, {})
         last_sha = entry.get("sha", "")
+        if last_sha and not _entry_satisfies_depth(
+            entry.get("tier"), invocation_depth,
+        ):
+            json.dump(
+                {
+                    "diff_scope": None,
+                    "review_mode_line": (
+                        f"Review mode: Auto incremental skipped: reason=tier upgrade "
+                        f"(cached={entry.get('tier') or 'legacy'!r}, "
+                        f"now={invocation_depth!r}), using full diff"
+                    ),
+                },
+                sys.stdout,
+            )
+            sys.stdout.write("\n")
+            return 0
 
         if last_sha:
             # Check ancestry
@@ -9108,10 +9343,27 @@ _STAGES_TEMPLATE_KEYS: frozenset[str] = frozenset({
     "flags_base_ref_override",
     "flags_full_review",
     "flags_since_last_review",
+    "depth",
 })
 
 # Valid arg splat markers (resolved separately from template substitution).
 _STAGES_SPLAT_MARKERS: frozenset[str] = frozenset({"@pr_flag"})
+
+# Valid ``min_depth`` / ``max_depth`` values on stages.json entries. Each
+# stage declares the tier band at which it runs; the run-plan builder
+# filters by ``min_depth <= invocation_tier <= max_depth``. Most stages
+# only need ``min_depth`` (and inherit the default ``max_depth = "deep"``),
+# but a stage that REPLACES another at a lower tier (e.g.
+# ``stage_19c_derive_static_spec`` replaces ``stage_19b_derive_spawn_spec``
+# in shallow) sets both bounds to scope its activation tightly.
+# ``min_depth`` default ``"standard"`` keeps untagged new stages out of
+# shallow; ``max_depth`` default ``"deep"`` keeps them running through
+# the highest tier.
+_VALID_MIN_DEPTHS: frozenset[str] = frozenset({"shallow", "standard", "deep"})
+_DEPTH_RANK: dict[str, int] = {"shallow": 1, "standard": 2, "deep": 3}
+_DEFAULT_MIN_DEPTH: str = "standard"
+_DEFAULT_MAX_DEPTH: str = "deep"
+_DEFAULT_INVOCATION_DEPTH: str = "standard"
 
 # Single brace-or-key matcher: every ``{`` and every ``}`` MUST be part of a
 # ``{identifier}`` pair, and the identifier MUST be in _STAGES_TEMPLATE_KEYS.
@@ -9140,7 +9392,7 @@ def _validate_template_string(value: str, where: str) -> None:
 
 
 def _validate_stages_config(config: dict[str, Any]) -> None:
-    """Validate every templatable string in stages.json once at load time."""
+    """Validate every templatable string and tier marker in stages.json once at load time."""
     for stage in config.get("stages", []):
         sid = stage.get("id", "<unknown>")
         for i, arg in enumerate(stage.get("args", []) or []):
@@ -9155,6 +9407,75 @@ def _validate_stages_config(config: dict[str, Any]) -> None:
         stdout = stage.get("stdout")
         if isinstance(stdout, str):
             _validate_template_string(stdout, f"{sid}.stdout")
+        # ``min_depth`` is REQUIRED on every stage entry — every existing
+        # stage was explicitly tagged in PLN-807 Phase 1, and the
+        # test_every_stage_has_explicit_min_depth invariant requires it
+        # at fixture-load. Enforcing the same constraint here means a
+        # new stage added to stages.json without a tier tag fails loud
+        # at config-load instead of silently inheriting the implicit
+        # ``standard`` default. ``max_depth`` stays optional (most
+        # stages run through to deep); ``min_depth >= max_depth`` is
+        # the floor.
+        if "min_depth" not in stage:
+            raise ValueError(
+                f"stages.json {sid}: missing required ``min_depth`` field; "
+                f"tag as one of {sorted(_VALID_MIN_DEPTHS)}",
+            )
+        for field in ("min_depth", "max_depth"):
+            if field in stage:
+                val = stage[field]
+                if val not in _VALID_MIN_DEPTHS:
+                    raise ValueError(
+                        f"stages.json {sid}.{field}: invalid tier {val!r}; "
+                        f"must be one of {sorted(_VALID_MIN_DEPTHS)}",
+                    )
+        lo = stage["min_depth"]
+        hi = stage.get("max_depth", _DEFAULT_MAX_DEPTH)
+        if _DEPTH_RANK[lo] > _DEPTH_RANK[hi]:
+            raise ValueError(
+                f"stages.json {sid}: min_depth={lo!r} > max_depth={hi!r}",
+            )
+
+
+def _filter_stages_by_depth(
+    stages: list[dict[str, Any]], invocation_tier: str,
+) -> list[dict[str, Any]]:
+    """Return only stages whose tier band brackets ``invocation_tier``.
+
+    Tier ranking: ``shallow < standard < deep``. A stage runs iff
+    ``min_depth <= invocation_tier <= max_depth``. ``min_depth`` defaults
+    to ``"standard"`` (a new stage stays out of shallow until explicitly
+    opted in); ``max_depth`` defaults to ``"deep"`` (a new stage runs at
+    the highest tier by default).
+
+    Most stages only need ``min_depth``. A stage that REPLACES another
+    at a lower tier — e.g. ``stage_19c_derive_static_spec`` replacing
+    ``stage_19b_derive_spawn_spec`` in shallow — pins both bounds so
+    only one of the alternatives runs per invocation.
+    """
+    tier_rank = _DEPTH_RANK[invocation_tier]
+    return [
+        s for s in stages
+        if (
+            _DEPTH_RANK.get(s.get("min_depth", _DEFAULT_MIN_DEPTH), 2) <= tier_rank
+            and tier_rank <= _DEPTH_RANK.get(s.get("max_depth", _DEFAULT_MAX_DEPTH), 3)
+        )
+    ]
+
+
+def _filter_validation_gates_by_stages(
+    gates: list[dict[str, Any]], stage_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Drop validation gates whose ``after_stage`` anchor isn't in the run plan.
+
+    When shallow filters out ``stage_16_arbitrate_budget``, the gate
+    anchored on that stage has nothing to fire after — left in place it
+    would fail-closed on ``missing section-bearing file`` because
+    ``coverage.json.final`` is never written. Filtering the gate out
+    instead is the correct behavior: the stage didn't run, so its
+    post-condition has no meaning.
+    """
+    return [g for g in gates if g.get("after_stage") in stage_ids]
 
 
 @functools.lru_cache(maxsize=1)
@@ -9170,6 +9491,7 @@ def _build_run_plan_stages(
     mode: str,
     pr_number: int | None,
     flags: dict[str, Any],
+    depth: str = _DEFAULT_INVOCATION_DEPTH,
 ) -> list[dict[str, Any]]:
     """Return the canonical pipeline by loading config/stages.json and substituting runtime values.
 
@@ -9198,6 +9520,7 @@ def _build_run_plan_stages(
         "flags_base_ref_override": flags.get("base_ref_override", "") or "",
         "flags_full_review": "true" if flags.get("full_review") else "false",
         "flags_since_last_review": "true" if flags.get("since_last_review") else "false",
+        "depth": depth,
     }
     # argparse declares --pr-number as type=int, which rejects empty strings.
     # When no PR is active, omit the flag entirely so argparse defaults (None) apply.
@@ -9212,8 +9535,10 @@ def _build_run_plan_stages(
                 out.append(arg.format(**ctx))
         return out
 
+    raw_stages = _filter_stages_by_depth(_load_stages_config()["stages"], depth)
+    surviving_ids = {s["id"] for s in raw_stages}
     out_stages: list[dict[str, Any]] = []
-    for template in _load_stages_config()["stages"]:
+    for template in raw_stages:
         # Deep-copy: _load_stages_config is lru_cached, so its returned dict's
         # nested lists (depends_on, agent_specs, expected_outputs) are shared
         # across every call. A shallow ``dict(template)`` would leave callers
@@ -9227,6 +9552,17 @@ def _build_run_plan_stages(
             stage["expected_outputs"] = [p.format(**ctx) for p in stage["expected_outputs"]]
         if isinstance(stage.get("stdout"), str):
             stage["stdout"] = stage["stdout"].format(**ctx)
+        # Drop dangling depends_on entries — a stage referencing a
+        # tier-filtered predecessor must not surface that reference to
+        # the orchestrator. ``stage_20_spawn_reviewers`` for example
+        # depends on both ``stage_19b_derive_spawn_spec`` and
+        # ``stage_19c_derive_static_spec``; only one survives the filter
+        # per invocation, and the other would otherwise look like an
+        # unknown-stage reference to depends-on consistency checks.
+        if "depends_on" in stage and isinstance(stage["depends_on"], list):
+            stage["depends_on"] = [
+                d for d in stage["depends_on"] if d in surviving_ids
+            ]
         out_stages.append(stage)
     return out_stages
 
@@ -9356,9 +9692,18 @@ def cmd_evaluate_gate(args: argparse.Namespace) -> int:
     LLM following ``start.md`` step 7) shells out to this subcommand
     after each stage finishes, passing ``--cr-dir`` and the just-
     completed stage id as ``--after-stage``. The helper looks up the
-    gate dict from the canonical ``_build_validation_gates`` table —
-    the same table ``prepare-run`` writes into ``run_plan.json`` — so
-    a single source of truth governs both planning and enforcement.
+    gate dict from the canonical ``_build_validation_gates`` table.
+    The same table is the SOURCE that ``prepare-run`` writes into
+    ``run_plan.json`` (after PLN-807 also filtering it to drop gates
+    whose anchor stage is tier-filtered) — so a single source of truth
+    governs both planning and enforcement. This helper consults the
+    unfiltered table directly; if the walker calls it with an
+    ``--after-stage`` whose gate was tier-filtered out of the run plan,
+    the helper still evaluates that gate and either passes (anchor
+    stage didn't write its output, but that's expected) or fails. The
+    walker should not invoke this helper for tier-filtered stages —
+    the run plan's ``validation_gates`` array is the authoritative
+    list for any given invocation.
 
     Exit codes:
         0 — gate passed (no matching gate for this anchor is also pass:
@@ -9414,6 +9759,12 @@ def cmd_prepare_run(args: argparse.Namespace) -> int:
             return val.strip().lower() in ("true", "1", "yes")
         return False
 
+    depth = (getattr(args, "depth", None) or _DEFAULT_INVOCATION_DEPTH).lower()
+    ok, err = _validate_invocation_depth(depth)
+    if not ok:
+        print(err, file=sys.stderr)
+        return 1
+
     flags = {
         "hygiene_only": _flag("hygiene_only"),
         "since_last_review": _flag("since_last_review"),
@@ -9421,17 +9772,25 @@ def cmd_prepare_run(args: argparse.Namespace) -> int:
         "base_ref_override": args.base_ref_override or "",
         "scope_args": args.scope_args or "",
         "pr_number": args.pr_number,
+        "depth": depth,
     }
+
+    stages = _build_run_plan_stages(cr_dir, mode, args.pr_number, flags, depth)
+    stage_ids = {s["id"] for s in stages}
+    gates = _filter_validation_gates_by_stages(
+        _build_validation_gates(cr_dir), stage_ids,
+    )
 
     run_plan: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "review_id": str(uuid.uuid4()),
         "cr_dir": cr_dir,
         "mode": mode,
+        "depth": depth,
         "flags": flags,
         "scope": {},  # populated by stage_03_resolve_scope at runtime
-        "stages": _build_run_plan_stages(cr_dir, mode, args.pr_number, flags),
-        "validation_gates": _build_validation_gates(cr_dir),
+        "stages": stages,
+        "validation_gates": gates,
         "telemetry": {
             "expected_total_duration_ms": 0,
             "estimated_cost_usd": 0.0,
@@ -9464,6 +9823,121 @@ def cmd_prepare_run(args: argparse.Namespace) -> int:
 # Hard cap on total agent fleet size (foundation Section 5).
 BUDGET_TOTAL_CAP_DEFAULT = 20
 BUDGET_BHA_FLOOR_DEFAULT = 1
+
+# PLN-807: per-source cap on domain critic entries (rule + critic origin
+# combined). Independent of the total-fleet cap. Bounds critic-roster
+# growth so BHA's coverage budget can't be eaten by a long
+# ``critic-gates.json``. Hardcoded for now; if operators ask for
+# configurability later, expose via ``.closedloop-ai/settings/code-review.json``.
+DOMAIN_CRITIC_CAP = 5
+
+# PLN-807: critic-cap defer reason marker. Differentiates entries
+# deferred by the per-source cap from entries deferred by the total
+# cap (which carry no explicit reason — that's the historical default).
+_DEFER_REASON_DOMAIN_CRITIC_CAP = "domain_critic_cap"
+
+
+def _validate_invocation_depth(depth: str | None) -> tuple[bool, str | None]:
+    """Validate an optional ``--depth`` argument against the canonical tier set.
+
+    Returns ``(ok, error_msg)``. ``ok`` is True when ``depth`` is None
+    (no filter) or matches one of ``_VALID_MIN_DEPTHS``. ``error_msg``
+    is the rendered diagnostic ready for ``print(... file=sys.stderr)``
+    when ``ok`` is False. Centralizes the validation block that
+    otherwise duplicates across every cmd_* that accepts ``--depth``
+    (cmd_hygiene, cmd_prepare_run, cmd_review_state_read/write,
+    cmd_auto_incremental).
+    """
+    if depth is None:
+        return True, None
+    if depth in _VALID_MIN_DEPTHS:
+        return True, None
+    return False, (
+        f"Error: --depth must be one of {sorted(_VALID_MIN_DEPTHS)}, "
+        f"got {depth!r}"
+    )
+
+
+def _annotate_defer_reason(
+    entries: list[dict[str, Any]], reason: str,
+) -> list[dict[str, Any]]:
+    """Return shallow-copies of ``entries`` with ``defer_reason`` set.
+
+    Used by the budget arithmetic to distinguish cap-deferred from
+    budget-deferred entries in ``deferred_for_budget``. Operators reading
+    the coverage plan see the reason on each entry; a missing
+    ``defer_reason`` means "deferred by total cap" (the historical
+    default — kept for backward compat with pre-PLN-807 readers).
+    """
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        annotated = dict(entry)
+        annotated["defer_reason"] = reason
+        out.append(annotated)
+    return out
+
+
+def _is_critic_entry(entry: dict[str, Any]) -> bool:
+    """A plan entry counts as a domain critic when its ``source`` is one of
+    the operator-facing critic origins. ``rule`` = deterministically matched
+    from ``critic-gates.json``'s ``coverage[]`` (including migrated
+    ``moduleCritics[]`` entries); ``critic`` = LLM-proposed by
+    ``coverage_critic_consolidate``. Both are subject to ``DOMAIN_CRITIC_CAP``.
+    Core entries (``source: "core"``) are never capped — BHB, auditor,
+    premise are operator-implicit baseline reviewers.
+    """
+    if not isinstance(entry, dict):
+        return False
+    return entry.get("source") in {"rule", "critic"}
+
+
+def _select_domain_critics(
+    required_critics: list[dict[str, Any]],
+    best_effort_critics: list[dict[str, Any]],
+    cap: int,
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
+    """Apply ``DOMAIN_CRITIC_CAP`` to critic entries across both buckets.
+
+    Selection order: required critics by ``(priority asc, reviewer asc)``,
+    then best-effort critics by the same key fill remainder. The
+    alphabetical secondary sort is cache-friendly — the same plan with
+    edits elsewhere in ``critic-gates.json`` produces the same selection
+    even when entries shift declaration position.
+
+    Returns ``(selected_required, selected_best_effort, deferred_required,
+    deferred_best_effort)``. Deferred required entries are surfaced
+    via coverage-gap findings by the caller; deferred best-effort
+    entries only appear in ``deferred_for_budget``.
+    """
+    def sort_key(e: dict[str, Any]) -> tuple[int, str]:
+        try:
+            priority = int(e.get("priority", 2))
+        except (TypeError, ValueError):
+            priority = 2
+        return (priority, str(e.get("reviewer", "") or ""))
+
+    req_sorted = sorted(required_critics, key=sort_key)
+    be_sorted = sorted(best_effort_critics, key=sort_key)
+
+    if cap <= 0:
+        return [], [], list(req_sorted), list(be_sorted)
+    if len(req_sorted) >= cap:
+        return req_sorted[:cap], [], req_sorted[cap:], list(be_sorted)
+
+    remaining = cap - len(req_sorted)
+    return (
+        list(req_sorted),
+        be_sorted[:remaining],
+        [],
+        be_sorted[remaining:],
+    )
 
 
 def _is_docs_only(diff_data: dict[str, Any]) -> bool:
@@ -9622,6 +10096,15 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     best_effort: list[dict[str, Any]] = list(coverage_plan_in.get("best_effort", []) or [])
     deprecation_warnings: list[str] = list(coverage_plan_in.get("deprecation_warnings", []) or [])
 
+    # PLN-807 Phase 4: separate critic entries (source: rule|critic)
+    # from non-critic entries in both buckets so the cap and the
+    # BHA-first allocation can target critics independently of core
+    # reviewers (BHB, auditor, premise, BHA-as-entry, etc.).
+    required_critics_in = [e for e in required if _is_critic_entry(e)]
+    required_non_critic = [e for e in required if not _is_critic_entry(e)]
+    best_effort_critics_in = [e for e in best_effort if _is_critic_entry(e)]
+    best_effort_non_critic = [e for e in best_effort if not _is_critic_entry(e)]
+
     # PLN-725 Phase 7 BLOCKING gate. Short-circuit BEFORE any budget
     # arithmetic so the input plan flows through untouched on a
     # BLOCKING verdict. Note: the verifier itself stays observational
@@ -9632,38 +10115,50 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     )
     now_iso_gate = datetime.now(timezone.utc).isoformat()
     if verdict == "BLOCKING":
+        # Apply the critic cap on the BLOCKING path too (PLN-807),
+        # preserving the "no required drops on BLOCKING" semantics:
+        # required critics in excess of the cap land in
+        # ``deferred_for_budget`` (not ``dropped_required``), marked
+        # with ``defer_reason: "domain_critic_cap"``.
+        sel_req_critics, sel_be_critics, def_req_critics, def_be_critics = (
+            _select_domain_critics(
+                required_critics_in, best_effort_critics_in,
+                DOMAIN_CRITIC_CAP,
+            )
+        )
+        required_blocking = required_non_critic + sel_req_critics
+        best_effort_blocking = sel_be_critics + best_effort_non_critic
+        deferred_blocking = _annotate_defer_reason(
+            def_req_critics + def_be_critics,
+            _DEFER_REASON_DOMAIN_CRITIC_CAP,
+        )
         # BHA is source: "core" and survives derive-spawn-spec's
         # gated_by_verify plan sanitization (rule/critic entries are
-        # moved to skipped[], core is preserved). Computing
-        # bha_partitions with the same floor-honoring formula as the
-        # PASS path keeps the core reviewer floor alive on a BLOCKING
-        # verdict; hardcoding it to 0 would drop BHA via the
-        # bha_partitions_cap chain in derive-spawn-spec, contradicting
-        # start.md's "review is not halted by the BLOCKING verdict,
-        # only annotated" contract. Docs-only PRs still get 0 because
-        # the BHA floor is 0 for them on the PASS path too.
+        # moved to skipped[], core is preserved). PLN-807 Phase 4
+        # aligned this with the PASS path's BHA-first allocation:
+        # compute the LOC-derived target up front rather than from
+        # leftover capacity, so a BLOCKING verdict on a critic-heavy
+        # plan does not crush BHA to its floor=1 the same way the
+        # pre-PLN-807 PASS path did. Docs-only PRs still get 0.
         if _is_docs_only(diff_data):
             blocking_bha_partitions = 0
         else:
-            bha_floor_blocking = BUDGET_BHA_FLOOR_DEFAULT
-            max_bha_blocking = _max_bha_partitions_by_loc(diff_data)
-            leftover_blocking = max(
-                0, cap - len(required) - len(best_effort),
-            )
             blocking_bha_partitions = max(
-                bha_floor_blocking,
-                min(leftover_blocking, max_bha_blocking),
+                BUDGET_BHA_FLOOR_DEFAULT,
+                _max_bha_partitions_by_loc(diff_data),
             )
         final_plan: dict[str, Any] = {
-            "required": required,
-            "best_effort": best_effort,
-            "deferred_for_budget": [],
+            "required": required_blocking,
+            "best_effort": best_effort_blocking,
+            "deferred_for_budget": deferred_blocking,
             "deprecation_warnings": deprecation_warnings,
             "budget": {
                 "total_cap": cap,
-                "required_count": len(required),
-                "best_effort_count": len(best_effort),
+                "required_count": len(required_blocking),
+                "best_effort_count": len(best_effort_blocking),
                 "bha_partitions": blocking_bha_partitions,
+                "domain_critic_cap": DOMAIN_CRITIC_CAP,
+                "domain_critic_cap_fired": bool(def_req_critics or def_be_critics),
                 "gated_by_verify": True,
                 "verify_violations": violations,
             },
@@ -9675,7 +10170,10 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         if rc != 0:
             return rc
         # Empty findings; the canonical BLOCKING finding is already
-        # in agent_coverage-verify-blocking.json from stage_15c.
+        # in agent_coverage-verify-blocking.json from stage_15c. The
+        # required critics deferred by the cap do NOT emit coverage
+        # gaps on the BLOCKING branch because the canonical BLOCKING
+        # finding already signals that arbitration is bypassed.
         rc, gaps_path = _gaps_target([])
         if rc != 0:
             return rc
@@ -9684,8 +10182,8 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
                 "status": "blocked_by_verify",
                 "coverage_plan": _plan_target_str(),
                 "coverage_gaps": str(gaps_path),
-                "required_count": len(required),
-                "best_effort_count": len(best_effort),
+                "required_count": len(required_blocking),
+                "best_effort_count": len(best_effort_blocking),
                 "verify_violation_count": len(violations),
             },
             sys.stdout,
@@ -9701,41 +10199,118 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     coverage_gaps: list[dict[str, Any]] = []
     dropped_required: list[dict[str, Any]] = []
 
-    # Step 1: handle required overflow (fail-closed).
-    if len(required) + bha_floor > cap:
-        keep_count = max(0, cap - bha_floor)
-        dropped_required = required[keep_count:]
-        required = required[:keep_count]
-        for idx, entry in enumerate(dropped_required):
-            coverage_gaps.append(
-                _make_coverage_gap_finding(
-                    entry,
-                    reason="budget_exceeded",
-                    index=idx,
-                    emitted_at=now_iso,
-                ),
-            )
+    # PLN-807 Phase 4 Step 1: compute the BHA partition target FIRST so
+    # the bug-finding budget is reserved before any critic allocation.
+    # Pre-PLN-807 the order was reversed: critics consumed cap first
+    # and BHA picked up the leftover (which crushed BHA to its floor=1
+    # on critic-heavy reviews). With BHA reserved up front, a
+    # ``critic-gates.json`` with 17 triggers no longer eats BHA's
+    # coverage budget. ``_max_bha_partitions_by_loc`` already caps at
+    # ``DEFAULT_MAX_BHA_AGENTS`` internally, so no second min() is
+    # needed.
+    if _is_docs_only(diff_data):
+        bha_target = 0
+    else:
+        bha_target = max(bha_floor, max_bha)
 
-    # Step 2: prune best-effort (lowest priority first).
-    best_effort_sorted = sorted(
-        best_effort,
-        key=lambda e: int(e.get("priority", 2)),
+    # PLN-807 Phase 4 Step 2: apply DOMAIN_CRITIC_CAP across BOTH buckets.
+    # Required critics get priority over best-effort, sorted within
+    # bucket by (priority asc, reviewer name asc). Cap-deferred entries
+    # — from EITHER bucket — land in ``deferred_for_budget`` with
+    # ``defer_reason: "domain_critic_cap"`` and DO NOT emit coverage-gap
+    # findings. The cap is a hardcoded per-source soft limit (5),
+    # independent of ``--cap``; surfacing required cap drops via
+    # coverage gaps would trip ``_compute_canonical_verdict`` Rule 1
+    # (any required gap → CHANGES_REQUESTED) and effectively block any
+    # repo whose ``critic-gates.json`` resolves more than 5 required
+    # domain critics on a single PR. The BLOCKING branch already does
+    # the right thing (deferred, no gap); this matches that behavior on
+    # the PASS path.
+    sel_req_critics, sel_be_critics, def_req_critics, def_be_critics = (
+        _select_domain_critics(
+            required_critics_in, best_effort_critics_in, DOMAIN_CRITIC_CAP,
+        )
     )
-    target_bha = max(bha_floor, 1) if not _is_docs_only(diff_data) else 0
-    remaining = max(0, cap - len(required) - target_bha)
+
+    # PLN-807 Phase 4 Step 3: required overflow against the reduced
+    # available_for_critics. Required-bucket critics already capped at
+    # DOMAIN_CRITIC_CAP, so this branch normally doesn't fire — but it
+    # remains the safety net for the cap=tiny edge case (a smaller
+    # ``--cap`` override could leave less than required_non_critic +
+    # bha_target slots). Drop selected critics FIRST, then non-critic
+    # required (which includes core reviewers — operators shouldn't
+    # lose BHB/auditor/premise to budget overflow before they lose a
+    # non-essential critic).
+    required = required_non_critic + sel_req_critics
+    required_overflow = len(required) + bha_target - cap
+    if required_overflow > 0:
+        # Drop selected required critics first.
+        drop_critics_n = min(required_overflow, len(sel_req_critics))
+        if drop_critics_n:
+            dropped_critics = sel_req_critics[-drop_critics_n:]
+            sel_req_critics = sel_req_critics[:-drop_critics_n]
+            for idx, entry in enumerate(
+                dropped_critics, start=len(coverage_gaps),
+            ):
+                coverage_gaps.append(
+                    _make_coverage_gap_finding(
+                        entry,
+                        reason="budget_exceeded",
+                        index=idx,
+                        emitted_at=now_iso,
+                    ),
+                )
+            dropped_required.extend(dropped_critics)
+            required_overflow -= drop_critics_n
+        # If still over, drop non-critic required tail (rare).
+        if required_overflow > 0:
+            drop_core_n = min(required_overflow, len(required_non_critic))
+            if drop_core_n:
+                dropped_core = required_non_critic[-drop_core_n:]
+                required_non_critic = required_non_critic[:-drop_core_n]
+                for idx, entry in enumerate(
+                    dropped_core, start=len(coverage_gaps),
+                ):
+                    coverage_gaps.append(
+                        _make_coverage_gap_finding(
+                            entry,
+                            reason="budget_exceeded",
+                            index=idx,
+                            emitted_at=now_iso,
+                        ),
+                    )
+                dropped_required.extend(dropped_core)
+        required = required_non_critic + sel_req_critics
+
+    # PLN-807 Phase 4 Step 4: best-effort prune against remaining cap.
+    # Includes both surviving best-effort critics and best-effort
+    # non-critic entries, sorted together by priority asc.
+    best_effort_combined = sel_be_critics + best_effort_non_critic
+    best_effort_sorted = sorted(
+        best_effort_combined,
+        key=lambda e: int(e.get("priority", 2)) if isinstance(e, dict) else 2,
+    )
+    remaining = max(0, cap - len(required) - bha_target)
     if len(best_effort_sorted) > remaining:
-        deferred_for_budget = best_effort_sorted[remaining:]
+        deferred_by_budget = best_effort_sorted[remaining:]
         best_effort_final = best_effort_sorted[:remaining]
     else:
-        deferred_for_budget = []
+        deferred_by_budget = []
         best_effort_final = best_effort_sorted
 
-    # Step 3: compute final BHA partition count.
-    if _is_docs_only(diff_data):
-        bha_partitions = 0
-    else:
-        leftover = max(0, cap - len(required) - len(best_effort_final))
-        bha_partitions = max(bha_floor, min(leftover, max_bha))
+    # Annotate cap-deferred entries so operators can tell which bucket
+    # capacity rejected them. Both required-bucket and best-effort-bucket
+    # cap drops surface here so the plan exposes the cap decision
+    # completely (a downstream operator/telemetry reader can enumerate
+    # everything the cap dropped without consulting another file).
+    # Budget-deferred entries carry no ``defer_reason`` — that's the
+    # historical default and the absence is the signal.
+    deferred_cap_marked = _annotate_defer_reason(
+        def_req_critics + def_be_critics, _DEFER_REASON_DOMAIN_CRITIC_CAP,
+    )
+    deferred_for_budget = deferred_cap_marked + deferred_by_budget
+
+    bha_partitions = bha_target
 
     final_plan: dict[str, Any] = {
         "required": required,
@@ -9747,6 +10322,8 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
             "required_count": len(required),
             "best_effort_count": len(best_effort_final),
             "bha_partitions": bha_partitions,
+            "domain_critic_cap": DOMAIN_CRITIC_CAP,
+            "domain_critic_cap_fired": bool(def_req_critics or def_be_critics),
         },
         "dropped_required": dropped_required,
     }
@@ -10311,6 +10888,119 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
             "from_required": from_required,
             "from_best_effort": from_best_effort,
             "required_coverage_gaps": len(spawn_gap_findings),
+        },
+        "generated_at": now_iso,
+    }
+    return _write_spawn_spec(spec, cr_dir)
+
+
+def cmd_derive_static_spec(args: argparse.Namespace) -> int:
+    """Emit a static spawn spec for shallow-tier reviews (PLN-807).
+
+    Shallow skips ``stage_15*`` (coverage critic), ``stage_16``
+    (arbitrate-budget), and ``stage_19b_derive_spawn_spec`` because the
+    routing/critic layer has nothing to decide — the fleet is fixed:
+    BHA × N partitions + BHB + unified_auditor. This subcommand writes
+    that fleet directly into ``spawn.json.spec`` so ``stage_20`` can
+    spawn it via the same orchestration path standard runs use.
+
+    ``arbitrate_status: "static"`` differentiates this spec from
+    ``"fallback"`` (a derive failure) — stage_20 treats both
+    identically (use the spec verbatim, skip the bucket walk), but the
+    distinct status preserves telemetry so operators can tell "user
+    explicitly chose shallow" from "the standard derive crashed".
+
+    Fast-path passthrough mirrors ``cmd_derive_spawn_spec``: when
+    ``route.fast_path`` is true the spec emits one ``fast`` agent and
+    the bucket walk is skipped. The fast-path branch behaves
+    identically across tiers — it's a small-PR optimization, not a
+    tier opinion.
+
+    Failure modes: missing/malformed ``partitions.json`` emits a
+    ``"fallback"`` sentinel (same as ``cmd_derive_spawn_spec``) so the
+    orchestrator walks the static reviewer table — review must never be
+    blocked by an upstream stage's output failure.
+    """
+    cr_dir = Path(args.cr_dir)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    route = _read_spawn_state(cr_dir).get("route", {}) or {}
+    if not isinstance(route, dict):
+        route = {}
+    models = _spawn_resolve_models(route)
+    fast_path = bool(route.get("fast_path", False))
+
+    if fast_path:
+        spec = {
+            "fast_path": True,
+            "gated_by_verify": False,
+            "arbitrate_status": "static",
+            "cr_dir": str(cr_dir),
+            "agents": [{
+                "agent_id": "fast",
+                "reviewer": "fast_path_reviewer",
+                "model": str(models.get("fast_path_reviewer", "sonnet")),
+                "partitioned": False,
+                "patches_file": "patches_all.txt",
+                "source": "fast_path",
+                "bucket": "fast_path",
+            }],
+            "skipped": [],
+            "stats": {
+                "agent_count": 1,
+                "bha_count": 0,
+                "domain_critic_count": 0,
+                "from_required": 0,
+                "from_best_effort": 0,
+            },
+            "generated_at": now_iso,
+        }
+        return _write_spawn_spec(spec, cr_dir)
+
+    partitions_path = Path(args.partitions)
+    partitions_blob = _read_optional_json(partitions_path, None)
+    if not isinstance(partitions_blob, dict):
+        spec = _spawn_spec_fallback(
+            "partitions_missing_or_malformed", cr_dir, now_iso,
+        )
+        return _write_spawn_spec(spec, cr_dir)
+    partitions = [
+        p for p in (partitions_blob.get("partitions") or []) if isinstance(p, dict)
+    ]
+
+    # Synthetic plan: shallow fleet is exactly BHA + BHB + unified_auditor.
+    # Reusing _derive_spawn_agents_from_plan keeps BHA partition expansion,
+    # docs-only (no_partitions) handling, dedup, and patches-file naming
+    # in one place instead of duplicating per-tier logic.
+    static_plan: dict[str, Any] = {
+        "required": [
+            {"reviewer": "bug_hunter_a", "source": "core"},
+            {"reviewer": "bug_hunter_b", "source": "core"},
+            {"reviewer": "unified_auditor", "source": "core"},
+        ],
+        "best_effort": [],
+    }
+
+    agents, skipped = _derive_spawn_agents_from_plan(
+        static_plan, partitions, models,
+        bha_partitions_cap=DEFAULT_MAX_BHA_AGENTS,
+    )
+
+    bha_count = sum(1 for a in agents if a["reviewer"] == "bug_hunter_a")
+    spec = {
+        "fast_path": False,
+        "gated_by_verify": False,
+        "arbitrate_status": "static",
+        "cr_dir": str(cr_dir),
+        "agents": agents,
+        "skipped": skipped,
+        "stats": {
+            "agent_count": len(agents),
+            "bha_count": bha_count,
+            "domain_critic_count": 0,
+            "from_required": len(agents),
+            "from_best_effort": 0,
+            "required_coverage_gaps": 0,
         },
         "generated_at": now_iso,
     }

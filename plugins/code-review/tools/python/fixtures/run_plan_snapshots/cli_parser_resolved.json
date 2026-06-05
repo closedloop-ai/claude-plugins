@@ -38,6 +38,18 @@
           ],
           "dest": "workdir",
           "default": null
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "dest": "depth",
+          "default": null,
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ]
         }
       ]
     },
@@ -920,6 +932,18 @@
           "dest": "key",
           "default": null,
           "required": true
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "dest": "depth",
+          "default": null,
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ]
         }
       ]
     },
@@ -956,6 +980,18 @@
           ],
           "dest": "ref",
           "default": null
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "dest": "depth",
+          "default": null,
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ]
         }
       ]
     },
@@ -1219,6 +1255,18 @@
           ],
           "dest": "mode",
           "default": "local"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "dest": "depth",
+          "default": null,
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ]
         }
       ]
     },
@@ -1497,6 +1545,28 @@
       ]
     },
     {
+      "name": "derive-static-spec",
+      "func": "cmd_derive_static_spec",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--partitions"
+          ],
+          "dest": "partitions",
+          "default": null,
+          "required": true
+        }
+      ]
+    },
+    {
       "name": "verify-spawn",
       "func": "cmd_verify_spawn",
       "args": [
@@ -1597,6 +1667,18 @@
           "dest": "pr_number",
           "default": null,
           "type": "int"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "dest": "depth",
+          "default": "standard",
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ]
         },
         {
           "flags": [

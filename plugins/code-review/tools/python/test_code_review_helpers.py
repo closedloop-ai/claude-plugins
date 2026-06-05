@@ -18363,6 +18363,8 @@ class TestCRSPhaseAStageTemplateValidator:
             "args": ["--cr-dir", "{cr_dir}", "@pr_flag", "--mode", "{mode}"],
             "expected_outputs": ["{cr_dir}/foo.json"],
             "stdout": "{cr_dir}/bar.json",
+            # PLN-807: every stage needs an explicit tier tag at load time.
+            "min_depth": "shallow",
         }]}
         _validate_stages_config(good)  # no raise
 
@@ -18372,6 +18374,7 @@ class TestCRSPhaseAStageTemplateValidator:
         bad = {"stages": [{
             "id": "stage_99_demo",
             "args": ["--cr-dir", "{cr_dir}", "--bad", "{wrong_key}"],
+            "min_depth": "shallow",
         }]}
         with pytest.raises(ValueError, match=r"stage_99_demo\.args\[3\]"):
             _validate_stages_config(bad)
@@ -18788,3 +18791,1463 @@ class TestRunPlanStdoutRedirectRaceClass:
         stages = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
         by_id = {s["id"]: s for s in stages}
         assert by_id["stage_08_fetch_intent"]["stdout"] is None
+
+
+class TestPLN807DepthTierFiltering:
+    """PLN-807 Phase 1: ``min_depth`` field on stages + run-plan filtering.
+
+    Standard mode is the default; bare invocations must produce identical
+    output to today. Shallow mode skips signal extraction, coverage
+    planning, budget arbitration, and the spawn-spec derive/verify pair.
+    Deep mode runs the same set as standard today (reserved for future
+    Impact Analyzer entries with ``min_depth: deep``).
+    """
+
+    # Stages tagged ``min_depth: standard`` — skipped in shallow.
+    EXPECTED_STANDARD_ONLY = {
+        "stage_11_extract_signals",
+        "stage_11b_extract_signals_consolidate",
+        "stage_14_resolve_coverage",
+        "stage_14a_load_available_reviewers",
+        "stage_15_coverage_critic",
+        "stage_15b_coverage_critic_consolidate",
+        "stage_15c_verify_coverage",
+        "stage_16_arbitrate_budget",
+        "stage_19b_derive_spawn_spec",
+        "stage_20b_verify_spawn",
+    }
+
+    def test_every_stage_has_explicit_min_depth(self) -> None:
+        """Every stage entry must carry an explicit tier marker.
+
+        The schema defaults absent ``min_depth`` to ``"standard"``, but
+        leaving the field implicit lets future stage additions slip into
+        a tier accidentally. This test enforces intent at config-load.
+        """
+        from code_review_helpers import _load_stages_config
+
+        for stage in _load_stages_config()["stages"]:
+            assert "min_depth" in stage, (
+                f"{stage['id']}: missing explicit min_depth; "
+                f"tag as 'shallow' or 'standard' in stages.json"
+            )
+            assert stage["min_depth"] in {"shallow", "standard", "deep"}, (
+                f"{stage['id']}.min_depth={stage['min_depth']!r} is invalid"
+            )
+
+    def test_standard_only_stages_match_plan(self) -> None:
+        """Pin the exact set of standard-only stages from PLN-807."""
+        from code_review_helpers import _load_stages_config
+
+        standard_ids = {
+            s["id"] for s in _load_stages_config()["stages"]
+            if s.get("min_depth") == "standard"
+        }
+        assert standard_ids == self.EXPECTED_STANDARD_ONLY
+
+    def test_shallow_filters_out_standard_stages(self) -> None:
+        from code_review_helpers import _build_run_plan_stages
+
+        stages = _build_run_plan_stages(
+            "/tmp/cr_dir", "local", None, {}, depth="shallow",
+        )
+        ids = {s["id"] for s in stages}
+        for sid in self.EXPECTED_STANDARD_ONLY:
+            assert sid not in ids, (
+                f"{sid} should be filtered out of shallow run plans"
+            )
+
+    def test_shallow_preserves_core_pipeline(self) -> None:
+        """The reviewer fleet, verifier, finalize, and present stages
+        must still run in shallow — otherwise the review wouldn't actually happen."""
+        from code_review_helpers import _build_run_plan_stages
+
+        stages = _build_run_plan_stages(
+            "/tmp/cr_dir", "local", None, {}, depth="shallow",
+        )
+        ids = {s["id"] for s in stages}
+        for sid in (
+            "stage_01_setup",
+            "stage_05_parse_diff",
+            "stage_12_hygiene",
+            "stage_17_partition",
+            "stage_20_spawn_reviewers",
+            "stage_22_validate",
+            "stage_23_verify_findings",
+            "stage_25_finalize_result",
+            "stage_28_verdict",
+            "stage_30_footer",
+        ):
+            assert sid in ids, (
+                f"{sid} must remain in shallow — it's part of the core "
+                f"review pipeline that all tiers share"
+            )
+
+    def _non_shallow_only_stage_ids(self) -> set[str]:
+        """Helper: stage ids whose ``max_depth`` permits standard/deep.
+
+        Some stages (e.g. ``stage_19c_derive_static_spec`` — Phase 3)
+        carry ``max_depth: shallow`` so they REPLACE a different stage
+        at a lower tier and must not appear in standard/deep run plans.
+        """
+        from code_review_helpers import _DEPTH_RANK, _load_stages_config
+
+        return {
+            s["id"] for s in _load_stages_config()["stages"]
+            if _DEPTH_RANK.get(s.get("max_depth", "deep"), 3) >= 2
+        }
+
+    def test_standard_runs_every_enabled_stage(self) -> None:
+        """Standard tier must include every stage whose tier band
+        admits standard. The static-spec stage (max_depth: shallow) is
+        excluded — its dynamic equivalent runs in standard instead.
+        """
+        from code_review_helpers import _build_run_plan_stages
+
+        standard_stages = _build_run_plan_stages(
+            "/tmp/cr_dir", "local", None, {}, depth="standard",
+        )
+        assert {s["id"] for s in standard_stages} == self._non_shallow_only_stage_ids()
+
+    def test_deep_runs_every_current_stage(self) -> None:
+        """Deep tier today is equivalent to standard — no min_depth: deep
+        entries exist yet. The static-spec stage (max_depth: shallow) is
+        excluded here too. This pins the contract so the Impact Analyzer
+        follow-up plan has a visible target to extend."""
+        from code_review_helpers import _build_run_plan_stages
+
+        deep_stages = _build_run_plan_stages(
+            "/tmp/cr_dir", "local", None, {}, depth="deep",
+        )
+        assert {s["id"] for s in deep_stages} == self._non_shallow_only_stage_ids()
+
+    def test_default_depth_is_standard(self) -> None:
+        """A bare _build_run_plan_stages call (no depth arg) behaves
+        identically to depth=standard so existing tests stay valid
+        without modification."""
+        from code_review_helpers import _build_run_plan_stages
+
+        default = _build_run_plan_stages("/tmp/cr_dir", "local", None, {})
+        explicit = _build_run_plan_stages(
+            "/tmp/cr_dir", "local", None, {}, depth="standard",
+        )
+        assert [s["id"] for s in default] == [s["id"] for s in explicit]
+
+    def test_invalid_depth_raises(self) -> None:
+        from code_review_helpers import _filter_stages_by_depth
+
+        with pytest.raises(KeyError):
+            _filter_stages_by_depth([], "shallw")  # typo
+
+    def test_unknown_min_depth_in_stages_json_rejected_at_load(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A typo in stages.json's min_depth must fail loud at load time,
+        not silently default-route the stage."""
+        import code_review_helpers
+
+        bad_config = tmp_path / "stages.json"
+        bad_config.write_text(json.dumps({
+            "stages": [
+                {
+                    "id": "stage_typo",
+                    "kind": "helper",
+                    "subcommand": "noop",
+                    "args": [],
+                    "min_depth": "shallw",
+                    "depends_on": [],
+                    "on_failure": "abort",
+                    "enabled": True,
+                },
+            ],
+        }))
+        monkeypatch.setattr(
+            code_review_helpers, "_STAGES_CONFIG_PATH", bad_config,
+        )
+        code_review_helpers._load_stages_config.cache_clear()
+        with pytest.raises(ValueError, match="invalid tier"):
+            code_review_helpers._load_stages_config()
+        code_review_helpers._load_stages_config.cache_clear()
+
+    def test_validation_gates_filtered_to_present_stages(
+        self, tmp_path: Path,
+    ) -> None:
+        """The stage_16_arbitrate_budget gate must not appear in a
+        shallow run plan, because the anchor stage was filtered out and
+        the post-condition has no meaning."""
+        _, run_plan = invoke_prepare_run(tmp_path, depth="shallow")
+        gate_anchors = {g["after_stage"] for g in run_plan["validation_gates"]}
+        assert "stage_16_arbitrate_budget" not in gate_anchors
+        # But the parse-diff gate must survive — its anchor runs in shallow.
+        assert "stage_05_parse_diff" in gate_anchors
+
+    def test_run_plan_records_depth(self, tmp_path: Path) -> None:
+        _, run_plan = invoke_prepare_run(tmp_path, depth="deep")
+        assert run_plan["depth"] == "deep"
+        assert run_plan["flags"]["depth"] == "deep"
+
+    def test_cmd_prepare_run_rejects_invalid_depth(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from code_review_helpers import cmd_prepare_run
+
+        ns = argparse.Namespace(
+            cr_dir=str(tmp_path),
+            mode="local",
+            hygiene_only=False,
+            since_last_review=False,
+            full_review=False,
+            base_ref_override="",
+            scope_args="",
+            pr_number=None,
+            depth="exhaustive",
+            output=None,
+        )
+        rc = cmd_prepare_run(ns)
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert "exhaustive" in captured.err
+
+
+class TestPLN807Phase2TierPropagation:
+    """PLN-807 Phase 2: tier propagation through template variables and review_state.
+
+    Tier flows into the stages.json template context as ``{depth}``,
+    gets persisted into ``review_state.json`` entries on write, and
+    gates ``review_state`` reuse on read — a cached shallow review must
+    not satisfy a subsequent standard or deep invocation.
+    """
+
+    def test_depth_template_var_substitutes(self, tmp_path: Path) -> None:
+        """Stage_27_review_state_write must receive --depth resolved
+        from the invocation's depth flag."""
+        _, run_plan = invoke_prepare_run(tmp_path, depth="deep")
+        stage = next(
+            s for s in run_plan["stages"]
+            if s["id"] == "stage_27_review_state_write"
+        )
+        # The arg list is flat: ['--cache-dir', '<CACHE_DIR>', '--key', ..., '--depth', 'deep'].
+        assert "--depth" in stage["args"]
+        depth_idx = stage["args"].index("--depth")
+        assert stage["args"][depth_idx + 1] == "deep"
+
+    def test_depth_template_var_substitutes_shallow(self, tmp_path: Path) -> None:
+        _, run_plan = invoke_prepare_run(tmp_path, depth="shallow")
+        stage = next(
+            s for s in run_plan["stages"]
+            if s["id"] == "stage_27_review_state_write"
+        )
+        depth_idx = stage["args"].index("--depth")
+        assert stage["args"][depth_idx + 1] == "shallow"
+
+    # --- review_state write/read tier persistence ---
+
+    def _ns_write(
+        self, tmp_path: Path, sha: str, key: str = "feat:main",
+        depth: str | None = None,
+    ) -> argparse.Namespace:
+        return argparse.Namespace(
+            cache_dir=str(tmp_path), key=key, sha=sha, depth=depth,
+        )
+
+    def _ns_read(
+        self, tmp_path: Path, key: str = "feat:main",
+        depth: str | None = None,
+    ) -> argparse.Namespace:
+        return argparse.Namespace(
+            cache_dir=str(tmp_path), key=key, depth=depth,
+        )
+
+    def test_write_persists_tier_when_depth_given(
+        self, tmp_path: Path,
+    ) -> None:
+        rc = cmd_review_state_write(self._ns_write(tmp_path, "abc", depth="deep"))
+        assert rc == 0
+        state = _load_review_state(tmp_path)
+        assert state["reviews"]["feat:main"]["tier"] == "deep"
+
+    def test_write_omits_tier_when_depth_absent(
+        self, tmp_path: Path,
+    ) -> None:
+        """Backwards compatibility: bare write (no --depth) must not
+        inject a tier field, so existing operators' state files stay
+        schema-compatible with pre-PLN-807 readers."""
+        rc = cmd_review_state_write(self._ns_write(tmp_path, "abc"))
+        assert rc == 0
+        state = _load_review_state(tmp_path)
+        assert "tier" not in state["reviews"]["feat:main"]
+
+    def test_write_rejects_invalid_depth(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        rc = cmd_review_state_write(
+            self._ns_write(tmp_path, "abc", depth="hyper"),
+        )
+        assert rc == 1
+        assert "hyper" in capsys.readouterr().err
+
+    def test_read_returns_entry_when_no_depth_filter(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Legacy callers (no --depth) get pre-PLN-807 behavior."""
+        cmd_review_state_write(self._ns_write(tmp_path, "abc", depth="shallow"))
+        capsys.readouterr()  # drain the write print
+        rc = cmd_review_state_read(self._ns_read(tmp_path))
+        assert rc == 0
+        out = capsys.readouterr().out.strip()
+        assert json.loads(out)["sha"] == "abc"
+
+    def test_read_returns_entry_when_cached_tier_satisfies(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """standard cached + standard invocation → cache hit.
+        deep cached + standard invocation → cache hit (deep is stronger)."""
+        cmd_review_state_write(self._ns_write(tmp_path, "abc", depth="deep"))
+        capsys.readouterr()
+        rc = cmd_review_state_read(self._ns_read(tmp_path, depth="standard"))
+        assert rc == 0
+        out = capsys.readouterr().out.strip()
+        assert json.loads(out)["sha"] == "abc"
+
+    def test_read_returns_empty_when_cached_tier_too_weak(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """shallow cached + standard invocation → cache miss.
+        Forces the standard upgrade to actually run premise + critics."""
+        cmd_review_state_write(self._ns_write(tmp_path, "abc", depth="shallow"))
+        capsys.readouterr()
+        rc = cmd_review_state_read(self._ns_read(tmp_path, depth="standard"))
+        assert rc == 0
+        assert capsys.readouterr().out.strip() == "{}"
+
+    def test_read_returns_empty_when_standard_cached_deep_invoked(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        cmd_review_state_write(self._ns_write(tmp_path, "abc", depth="standard"))
+        capsys.readouterr()
+        rc = cmd_review_state_read(self._ns_read(tmp_path, depth="deep"))
+        assert rc == 0
+        assert capsys.readouterr().out.strip() == "{}"
+
+    def test_read_shallow_invocation_accepts_any_cached_tier(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        for cached in ("shallow", "standard", "deep"):
+            tmp = tmp_path / cached
+            tmp.mkdir()
+            cmd_review_state_write(self._ns_write(tmp, "abc", depth=cached))
+            capsys.readouterr()
+            cmd_review_state_read(self._ns_read(tmp, depth="shallow"))
+            out = capsys.readouterr().out.strip()
+            assert json.loads(out)["sha"] == "abc", (
+                f"shallow invocation must accept cached={cached}"
+            )
+
+    def test_read_legacy_entry_treated_as_standard(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Pre-PLN-807 entries (no ``tier`` field) are treated as
+        standard-equivalent: they satisfy shallow/standard invocations
+        but fail deep."""
+        # Write a legacy entry without going through cmd_review_state_write
+        _write_review_state(
+            tmp_path,
+            {"reviews": {"feat:main": {"sha": "abc", "success": True}}},
+        )
+        # shallow + legacy → hit
+        cmd_review_state_read(self._ns_read(tmp_path, depth="shallow"))
+        assert json.loads(capsys.readouterr().out.strip())["sha"] == "abc"
+        # standard + legacy → hit
+        cmd_review_state_read(self._ns_read(tmp_path, depth="standard"))
+        assert json.loads(capsys.readouterr().out.strip())["sha"] == "abc"
+        # deep + legacy → miss (legacy can't prove it ran impact analyzer)
+        cmd_review_state_read(self._ns_read(tmp_path, depth="deep"))
+        assert capsys.readouterr().out.strip() == "{}"
+
+    def test_read_rejects_invalid_depth(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        rc = cmd_review_state_read(self._ns_read(tmp_path, depth="hyper"))
+        assert rc == 1
+        assert "hyper" in capsys.readouterr().err
+
+    def test_entry_satisfies_depth_truth_table(self) -> None:
+        from code_review_helpers import _entry_satisfies_depth
+
+        # Cached → Invocation matrix
+        cases = [
+            # (cached_tier, invocation_tier, expected)
+            ("shallow", "shallow", True),
+            ("shallow", "standard", False),
+            ("shallow", "deep", False),
+            ("standard", "shallow", True),
+            ("standard", "standard", True),
+            ("standard", "deep", False),
+            ("deep", "shallow", True),
+            ("deep", "standard", True),
+            ("deep", "deep", True),
+            (None, "shallow", True),       # legacy entry, standard-equiv
+            (None, "standard", True),
+            (None, "deep", False),
+            ("standard", None, True),       # legacy caller, no filter
+            (None, None, True),
+        ]
+        for cached, invocation, expected in cases:
+            assert _entry_satisfies_depth(cached, invocation) is expected, (
+                f"cached={cached!r}, invocation={invocation!r} should be {expected}"
+            )
+
+
+class TestPLN807Phase3StaticSpawnSpec:
+    """PLN-807 Phase 3: ``cmd_derive_static_spec`` for shallow tier.
+
+    Produces the shallow fleet (BHA × N + BHB + unified_auditor) directly
+    into spawn.json.spec without consulting coverage planning. Reuses
+    ``_derive_spawn_agents_from_plan`` so BHA partition expansion,
+    docs-only handling, and patches-file naming match the standard path
+    exactly.
+    """
+
+    def _invoke(
+        self, tmp_path: Path,
+        partitions: list[dict[str, Any]] | None,
+        route: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        from code_review_helpers import (
+            _write_spawn_section, cmd_derive_static_spec,
+        )
+
+        p_path = tmp_path / "partitions.json"
+        if partitions is not None:
+            p_path.write_text(json.dumps({"partitions": partitions}))
+        if route is not None:
+            _write_spawn_section(tmp_path, "route", route)
+
+        ns = argparse.Namespace(
+            cr_dir=str(tmp_path),
+            partitions=str(p_path),
+        )
+        cmd_derive_static_spec(ns)
+        spawn_path = tmp_path / "spawn.json"
+        assert spawn_path.exists(), "spawn.json missing"
+        state = json.loads(spawn_path.read_text())
+        spec = state.get("spec", {})
+        assert spec, "spawn.json.spec missing"
+        return spec
+
+    # ---------- Fleet composition ----------
+
+    def test_emits_static_arbitrate_status(self, tmp_path: Path) -> None:
+        """The arbitrate_status: 'static' value (distinct from 'fallback')
+        is the telemetry signal that distinguishes shallow's explicit
+        choice from a derive-spawn-spec failure."""
+        spec = self._invoke(
+            tmp_path,
+            partitions=[{"id": 0, "is_test_only": False}],
+            route={"max_bha_agents": 5, "fast_path": False},
+        )
+        assert spec["arbitrate_status"] == "static"
+
+    def test_emits_bha_bhb_auditor_only(self, tmp_path: Path) -> None:
+        spec = self._invoke(
+            tmp_path,
+            partitions=[
+                {"id": 0, "is_test_only": False},
+                {"id": 1, "is_test_only": False},
+            ],
+            route={"max_bha_agents": 5, "fast_path": False},
+        )
+        reviewers = {a["reviewer"] for a in spec["agents"]}
+        assert reviewers == {"bug_hunter_a", "bug_hunter_b", "unified_auditor"}
+        # No premise. No domain critics.
+        assert "premise_reviewer" not in reviewers
+        assert spec["stats"]["domain_critic_count"] == 0
+
+    def test_bha_expands_per_partition(self, tmp_path: Path) -> None:
+        spec = self._invoke(
+            tmp_path,
+            partitions=[
+                {"id": 0, "is_test_only": False},
+                {"id": 1, "is_test_only": False},
+                {"id": 2, "is_test_only": False},
+            ],
+            route={"max_bha_agents": 5, "fast_path": False},
+        )
+        bha_agents = [a for a in spec["agents"] if a["reviewer"] == "bug_hunter_a"]
+        assert len(bha_agents) == 3
+        assert {a["partition_id"] for a in bha_agents} == {0, 1, 2}
+        assert spec["stats"]["bha_count"] == 3
+
+    def test_bha_test_only_partition_uses_sonnet(self, tmp_path: Path) -> None:
+        """Match standard's model selection — test-only partitions
+        drop to sonnet via the existing _spawn_bha_model rule."""
+        spec = self._invoke(
+            tmp_path,
+            partitions=[
+                {"id": 0, "is_test_only": True},
+            ],
+            route={"max_bha_agents": 5, "fast_path": False},
+        )
+        bha = next(a for a in spec["agents"] if a["reviewer"] == "bug_hunter_a")
+        assert bha["model"] == "sonnet"
+
+    def test_empty_partitions_records_no_partitions_skip(
+        self, tmp_path: Path,
+    ) -> None:
+        """Docs-only / all-cached: partitions.json is empty. BHA is
+        recorded as skipped with reason 'no_partitions' (matching the
+        standard path), BHB and auditor still spawn."""
+        spec = self._invoke(
+            tmp_path,
+            partitions=[],
+            route={"max_bha_agents": 5, "fast_path": False},
+        )
+        # No BHA spawned
+        assert spec["stats"]["bha_count"] == 0
+        # But BHB + auditor still present
+        reviewers = {a["reviewer"] for a in spec["agents"]}
+        assert reviewers == {"bug_hunter_b", "unified_auditor"}
+        # Skipped recorded
+        skipped_reasons = {s["reason"] for s in spec["skipped"]}
+        assert "no_partitions" in skipped_reasons
+
+    def test_bha_capped_at_default_max_agents(self, tmp_path: Path) -> None:
+        """When partitioner emits more than DEFAULT_MAX_BHA_AGENTS=5,
+        excess partitions land in skipped[budget_capped]. Mirrors the
+        standard path's safety guard."""
+        from code_review_helpers import DEFAULT_MAX_BHA_AGENTS
+        spec = self._invoke(
+            tmp_path,
+            partitions=[
+                {"id": i, "is_test_only": False}
+                for i in range(DEFAULT_MAX_BHA_AGENTS + 2)
+            ],
+            route={"max_bha_agents": 5, "fast_path": False},
+        )
+        assert spec["stats"]["bha_count"] == DEFAULT_MAX_BHA_AGENTS
+        # The 2 excess partitions show up in skipped
+        capped = [s for s in spec["skipped"] if s.get("reason") == "budget_capped"]
+        assert len(capped) == 2
+
+    def test_fast_path_emits_single_fast_agent(self, tmp_path: Path) -> None:
+        """Fast-path optimization applies in shallow too — small PRs
+        collapse to one fast_path_reviewer agent."""
+        spec = self._invoke(
+            tmp_path,
+            partitions=[{"id": 0, "is_test_only": False}],
+            route={"fast_path": True, "max_bha_agents": 5},
+        )
+        assert spec["fast_path"] is True
+        assert spec["arbitrate_status"] == "static"
+        assert len(spec["agents"]) == 1
+        assert spec["agents"][0]["reviewer"] == "fast_path_reviewer"
+        assert spec["agents"][0]["agent_id"] == "fast"
+
+    def test_missing_partitions_emits_fallback(self, tmp_path: Path) -> None:
+        """No partitions.json on disk → fallback sentinel (same as
+        cmd_derive_spawn_spec) so the orchestrator walks the static
+        reviewer table — review must not be blocked by an upstream
+        stage's failure."""
+        spec = self._invoke(
+            tmp_path,
+            partitions=None,
+            route={"fast_path": False, "max_bha_agents": 5},
+        )
+        assert spec["arbitrate_status"] == "fallback"
+        assert spec["fallback_reason"] == "partitions_missing_or_malformed"
+
+    # ---------- Tier filter integration ----------
+
+    def test_stage_19c_runs_only_in_shallow(self, tmp_path: Path) -> None:
+        """The new stage must be present in shallow run plans but
+        absent from standard and deep. This enforces the
+        ``max_depth: shallow`` band on the stages.json entry."""
+        for tier, should_have_static in (
+            ("shallow", True),
+            ("standard", False),
+            ("deep", False),
+        ):
+            t = tmp_path / tier
+            t.mkdir()
+            _, run_plan = invoke_prepare_run(t, depth=tier)
+            ids = {s["id"] for s in run_plan["stages"]}
+            if should_have_static:
+                assert "stage_19c_derive_static_spec" in ids, (
+                    f"shallow must include the static-spec stage, got {sorted(ids)}"
+                )
+                assert "stage_19b_derive_spawn_spec" not in ids, (
+                    "shallow must NOT include the dynamic derive stage"
+                )
+            else:
+                assert "stage_19c_derive_static_spec" not in ids, (
+                    f"{tier} must not include the shallow-only static-spec stage"
+                )
+                assert "stage_19b_derive_spawn_spec" in ids, (
+                    f"{tier} must include the dynamic derive stage"
+                )
+
+    def test_max_depth_field_validation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A typo in max_depth must fail loud at config-load time."""
+        import code_review_helpers
+
+        bad_config = tmp_path / "stages.json"
+        bad_config.write_text(json.dumps({
+            "stages": [{
+                "id": "stage_typo",
+                "kind": "helper",
+                "subcommand": "noop",
+                "args": [],
+                "min_depth": "shallow",
+                "max_depth": "shallw",
+                "depends_on": [],
+                "on_failure": "abort",
+                "enabled": True,
+            }],
+        }))
+        monkeypatch.setattr(
+            code_review_helpers, "_STAGES_CONFIG_PATH", bad_config,
+        )
+        code_review_helpers._load_stages_config.cache_clear()
+        with pytest.raises(ValueError, match="invalid tier"):
+            code_review_helpers._load_stages_config()
+        code_review_helpers._load_stages_config.cache_clear()
+
+    def test_swapped_band_rejected_at_load(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """min_depth > max_depth makes the stage unreachable. Reject."""
+        import code_review_helpers
+
+        bad_config = tmp_path / "stages.json"
+        bad_config.write_text(json.dumps({
+            "stages": [{
+                "id": "stage_typo",
+                "kind": "helper",
+                "subcommand": "noop",
+                "args": [],
+                "min_depth": "deep",
+                "max_depth": "shallow",
+                "depends_on": [],
+                "on_failure": "abort",
+                "enabled": True,
+            }],
+        }))
+        monkeypatch.setattr(
+            code_review_helpers, "_STAGES_CONFIG_PATH", bad_config,
+        )
+        code_review_helpers._load_stages_config.cache_clear()
+        with pytest.raises(ValueError, match="min_depth.*max_depth"):
+            code_review_helpers._load_stages_config()
+        code_review_helpers._load_stages_config.cache_clear()
+
+
+class TestPLN807Phase4BudgetArithmetic:
+    """PLN-807 Phase 4: BHA-first allocation + DOMAIN_CRITIC_CAP=5.
+
+    Pre-PLN-807 order: required overflow → best_effort prune → BHA last.
+    Result: critic-heavy plans crushed BHA to its floor=1 partition even
+    on large diffs.
+
+    New order: BHA reserved FIRST (from LOC-derived target), critic cap
+    applied across both buckets, then required overflow targets critics
+    before core, then best_effort fills remainder. PRs with sparse
+    critics see identical output.
+    """
+
+    # ---------- _select_domain_critics helper ----------
+
+    def test_select_under_cap_returns_everything(self) -> None:
+        from code_review_helpers import _select_domain_critics
+
+        req = [{"reviewer": "a", "source": "rule"}]
+        be = [{"reviewer": "b", "source": "critic", "priority": 2}]
+        sel_req, sel_be, def_req, def_be = _select_domain_critics(req, be, 5)
+        assert sel_req == req
+        assert sel_be == be
+        assert def_req == []
+        assert def_be == []
+
+    def test_select_required_critics_get_priority_over_best_effort(self) -> None:
+        from code_review_helpers import _select_domain_critics
+
+        req = [
+            {"reviewer": f"req_{i}", "source": "rule", "priority": 1}
+            for i in range(7)
+        ]
+        be = [
+            {"reviewer": f"be_{i}", "source": "critic", "priority": 1}
+            for i in range(3)
+        ]
+        sel_req, sel_be, def_req, def_be = _select_domain_critics(req, be, 5)
+        # 5 required taken; rest deferred. No best-effort selected.
+        assert len(sel_req) == 5
+        assert sel_be == []
+        assert len(def_req) == 2
+        assert def_be == be
+
+    def test_select_fills_remainder_from_best_effort(self) -> None:
+        from code_review_helpers import _select_domain_critics
+
+        req = [{"reviewer": f"req_{i}", "source": "rule", "priority": 1} for i in range(2)]
+        be = [{"reviewer": f"be_{i}", "source": "critic", "priority": 1} for i in range(5)]
+        sel_req, sel_be, def_req, def_be = _select_domain_critics(req, be, 5)
+        assert len(sel_req) == 2
+        assert len(sel_be) == 3
+        assert def_req == []
+        assert len(def_be) == 2
+
+    def test_select_alphabetical_tie_break_stable(self) -> None:
+        """Same priority → alphabetical reviewer name. Plan edits that
+        don't change names produce identical selections (cache-friendly).
+        """
+        from code_review_helpers import _select_domain_critics
+
+        # All same priority, names out of order.
+        be = [
+            {"reviewer": "zulu",  "source": "critic", "priority": 1},
+            {"reviewer": "alpha", "source": "critic", "priority": 1},
+            {"reviewer": "mike",  "source": "critic", "priority": 1},
+            {"reviewer": "bravo", "source": "critic", "priority": 1},
+            {"reviewer": "charlie", "source": "critic", "priority": 1},
+            {"reviewer": "delta", "source": "critic", "priority": 1},
+        ]
+        sel_req, sel_be, _, _ = _select_domain_critics([], be, 5)
+        names = [e["reviewer"] for e in sel_be]
+        assert names == ["alpha", "bravo", "charlie", "delta", "mike"]
+
+    def test_select_priority_overrides_alphabetical(self) -> None:
+        from code_review_helpers import _select_domain_critics
+
+        be = [
+            {"reviewer": "zulu",  "source": "critic", "priority": 0},   # highest
+            {"reviewer": "alpha", "source": "critic", "priority": 5},   # lowest
+            {"reviewer": "mike",  "source": "critic", "priority": 1},
+        ]
+        sel_req, sel_be, _, _ = _select_domain_critics([], be, 2)
+        names = [e["reviewer"] for e in sel_be]
+        assert names == ["zulu", "mike"]
+
+    def test_select_zero_cap_defers_everything(self) -> None:
+        from code_review_helpers import _select_domain_critics
+
+        req = [{"reviewer": "a", "source": "rule"}]
+        be = [{"reviewer": "b", "source": "critic"}]
+        sel_req, sel_be, def_req, def_be = _select_domain_critics(req, be, 0)
+        assert sel_req == []
+        assert sel_be == []
+        assert def_req == req
+        assert def_be == be
+
+    # ---------- BHA-first allocation ----------
+
+    def test_bha_target_reserved_before_critics(self, tmp_path: Path) -> None:
+        """The motivating bug: 8 critics + 3k LOC PR. Pre-PLN-807 this
+        crushed BHA to floor=1. After PLN-807, BHA gets its full LOC-derived
+        target (3 partitions at 3k LOC) and the cap deferrals trim critics."""
+        files = [f"src/f_{i}.ts" for i in range(10)]
+        diff = _make_diff_data(
+            files=files,
+            loc={f: {"added": 300, "removed": 0} for f in files},
+        )
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "unified_auditor", "source": "core"},
+                {"reviewer": "premise_reviewer", "source": "core"},
+            ] + [
+                {"reviewer": f"critic_{i}", "source": "rule", "priority": 1}
+                for i in range(8)
+            ],
+            "best_effort": [],
+        }
+        _, final, _ = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        # 10 files × 300 LOC = 3000 LOC → BHA gets 3 partitions
+        # (per _max_bha_partitions_by_loc with REBALANCE_LOC_BUDGET=1200).
+        assert final["budget"]["bha_partitions"] >= 3, (
+            f"BHA crushed to {final['budget']['bha_partitions']}; "
+            "should have its LOC-derived target reserved before critics"
+        )
+        # Critics capped at 5.
+        critic_count = sum(
+            1 for e in final["required"]
+            if e.get("source") in {"rule", "critic"}
+        )
+        assert critic_count == 5
+
+    def test_sparse_critics_unchanged_behavior(self, tmp_path: Path) -> None:
+        """Backwards compatibility: PRs with ≤ DOMAIN_CRITIC_CAP critics
+        see identical fleet to pre-PLN-807."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "unified_auditor", "source": "core"},
+                {"reviewer": "premise_reviewer", "source": "core"},
+                {"reviewer": "auth-security-expert", "source": "rule", "priority": 1},
+            ],
+            "best_effort": [],
+        }
+        _, final, _ = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        # All 5 entries survive.
+        assert len(final["required"]) == 5
+        assert final["budget"]["domain_critic_cap_fired"] is False
+        assert final["deferred_for_budget"] == []
+        # No coverage_gap findings emitted.
+        gaps_path = tmp_path / "coverage_gaps.json"
+        gaps = json.loads(gaps_path.read_text())
+        assert gaps["findings"] == []
+
+    def test_critic_cap_does_not_emit_coverage_gap_for_required(
+        self, tmp_path: Path,
+    ) -> None:
+        """Required-bucket critics dropped by the 5-cap surface in
+        ``deferred_for_budget`` with ``defer_reason: "domain_critic_cap"``,
+        NOT as coverage-gap findings. Rule 1 of
+        ``_compute_canonical_verdict`` would otherwise turn the cap into
+        an auto-CHANGES_REQUESTED block for any repo whose
+        ``critic-gates.json`` resolves more than 5 required domain
+        critics. Matches the BLOCKING-branch behavior."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+            ] + [
+                {"reviewer": f"req_critic_{i}", "source": "rule", "priority": 1}
+                for i in range(7)
+            ],
+            "best_effort": [],
+        }
+        _, final, gaps = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        assert final["budget"]["domain_critic_cap_fired"] is True
+        # No coverage-gap findings emitted for cap-deferred required.
+        assert gaps["findings"] == []
+        # But the 2 deferred required critics ARE annotated in
+        # deferred_for_budget with the cap reason so operators can see
+        # which critics got pushed off.
+        cap_deferred = [
+            e for e in final["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
+        ]
+        assert len(cap_deferred) == 2
+        cap_deferred_names = {e["reviewer"] for e in cap_deferred}
+        # The two deferred entries are the lowest-priority/alphabetically-last
+        # required critics from the input (top-5 by priority asc + name asc
+        # kept). With identical priorities, alphabetical chooses
+        # req_critic_5 and req_critic_6 to be deferred.
+        assert cap_deferred_names == {"req_critic_5", "req_critic_6"}
+
+    def test_critic_cap_best_effort_no_coverage_gap(self, tmp_path: Path) -> None:
+        """Cap-deferred best-effort critics only appear in
+        ``deferred_for_budget`` — no coverage-gap finding, because the
+        best-effort bucket is opportunistic by definition."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [],
+            "best_effort": [
+                {"reviewer": f"be_critic_{i}", "source": "critic", "priority": 1}
+                for i in range(8)
+            ],
+        }
+        _, final, gaps = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        # 5 selected, 3 deferred by cap.
+        assert len(final["best_effort"]) == 5
+        deferred_by_cap = [
+            e for e in final["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
+        ]
+        assert len(deferred_by_cap) == 3
+        # Best-effort cap-defers don't fire coverage-gap findings.
+        assert gaps["findings"] == []
+
+    def test_docs_only_pr_bha_zero(self, tmp_path: Path) -> None:
+        """Docs-only PRs keep BHA at 0 regardless of LOC. PLN-807 must
+        not regress this."""
+        diff = _make_diff_data(files=["README.md", "docs/guide.md"])
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {"reviewer": "unified_auditor", "source": "core"},
+            ],
+            "best_effort": [],
+        }
+        _, final, _ = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        assert final["budget"]["bha_partitions"] == 0
+
+    def test_blocking_branch_applies_critic_cap_no_dropped_required(
+        self, tmp_path: Path,
+    ) -> None:
+        """BLOCKING verdict: cap fires, but required critics in excess
+        of cap land in deferred_for_budget (not dropped_required) so
+        the no-required-drops-on-BLOCKING contract is preserved."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+            ] + [
+                {"reviewer": f"req_critic_{i}", "source": "rule", "priority": 1}
+                for i in range(9)
+            ],
+            "best_effort": [],
+        }
+        verify_doc = {
+            "verdict": "BLOCKING",
+            "violations": [{"check": "evidence", "message": "test"}],
+        }
+        _, final, gaps = _run_arbitrate_budget(
+            tmp_path, plan, diff, cap=20, verify_doc=verify_doc,
+        )
+        # arbitrate_status preserved
+        assert final["arbitrate_status"] == "blocked_by_verify"
+        # Critics capped to 5
+        critic_count = sum(
+            1 for e in final["required"]
+            if e.get("source") in {"rule", "critic"}
+        )
+        assert critic_count == 5
+        # Required critics in excess → deferred_for_budget with cap reason
+        cap_deferred = [
+            e for e in final["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
+        ]
+        assert len(cap_deferred) == 4
+        # NEVER drop required on BLOCKING
+        assert final["dropped_required"] == []
+        # No coverage_gap findings emitted on BLOCKING branch
+        assert gaps["findings"] == []
+
+    def test_budget_record_captures_cap_metadata(self, tmp_path: Path) -> None:
+        """The budget block exposes the constant + whether it fired, so
+        operators reading the plan see both bounds."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [],
+            "best_effort": [
+                {"reviewer": f"be_{i}", "source": "critic", "priority": 1}
+                for i in range(3)
+            ],
+        }
+        _, final, _ = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        assert final["budget"]["domain_critic_cap"] == 5
+        assert final["budget"]["domain_critic_cap_fired"] is False
+
+    def test_cap_deferred_entries_annotated_with_defer_reason(
+        self, tmp_path: Path,
+    ) -> None:
+        """deferred_for_budget entries carry defer_reason='domain_critic_cap'
+        when the cap rejected them; budget-deferred entries have no
+        ``defer_reason`` (historical default preserved)."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+            ],
+            "best_effort": [
+                {"reviewer": f"be_{i}", "source": "critic", "priority": 1}
+                for i in range(7)
+            ],
+        }
+        _, final, _ = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        cap_marked = [
+            e for e in final["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
+        ]
+        # 7 best-effort critics; 5 selected, 2 deferred by cap.
+        assert len(cap_marked) == 2
+
+    def test_annotate_defer_reason_preserves_original_fields(self) -> None:
+        from code_review_helpers import _annotate_defer_reason
+
+        entry = {"reviewer": "x", "source": "rule", "priority": 1}
+        out = _annotate_defer_reason([entry], "domain_critic_cap")
+        assert out[0]["reviewer"] == "x"
+        assert out[0]["source"] == "rule"
+        assert out[0]["priority"] == 1
+        assert out[0]["defer_reason"] == "domain_critic_cap"
+        # Original not mutated
+        assert "defer_reason" not in entry
+
+
+class TestPLN807Phase5TierMismatchNudge:
+    """PLN-807 Phase 5: hygiene-stage tier-mismatch nudge.
+
+    When shallow runs on a PR that would have benefited from premise
+    or critic-gates entries, a single LOW system-scoped finding is
+    emitted so the user can see what was skipped. Heuristics:
+      - diff > 3000 LOC
+      - schema/migration paths
+      - public API surface files (plugin.json, index.ts, __init__.py, etc.)
+
+    No nudge fires when depth != shallow (the user already engaged
+    those reviewers).
+    """
+
+    def _run(
+        self, depth: str | None, diff_data: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        from code_review_helpers import _check_tier_mismatch_nudge
+
+        return _check_tier_mismatch_nudge(diff_data, depth)
+
+    def test_no_nudge_in_standard(self) -> None:
+        diff = _make_diff_data(files=["src/large_refactor.ts"], loc={
+            "src/large_refactor.ts": {"added": 4000, "removed": 0}
+        })
+        assert self._run("standard", diff) == []
+
+    def test_no_nudge_in_deep(self) -> None:
+        diff = _make_diff_data(files=["src/large_refactor.ts"], loc={
+            "src/large_refactor.ts": {"added": 4000, "removed": 0}
+        })
+        assert self._run("deep", diff) == []
+
+    def test_no_nudge_when_depth_none(self) -> None:
+        """Tier-unaware caller (None) — preserve legacy behavior (no nudge)."""
+        diff = _make_diff_data(files=["src/large_refactor.ts"], loc={
+            "src/large_refactor.ts": {"added": 4000, "removed": 0}
+        })
+        assert self._run(None, diff) == []
+
+    def test_loc_threshold_fires(self) -> None:
+        diff = _make_diff_data(files=["src/big.ts"], loc={
+            "src/big.ts": {"added": 3500, "removed": 0}
+        })
+        findings = self._run("shallow", diff)
+        assert len(findings) == 1
+        assert findings[0]["system_marker"] == "tier_mismatch_nudge"
+        # MEDIUM (not LOW) because validate's SEVERITY_NORMALIZE maps
+        # "low" → "DISCARD" — a LOW nudge would never reach the operator.
+        assert findings[0]["severity"] == "MEDIUM"
+        assert "3500 LOC" in findings[0]["explanation"]
+
+    def test_loc_below_threshold_no_fire(self) -> None:
+        diff = _make_diff_data(files=["src/small.ts"], loc={
+            "src/small.ts": {"added": 100, "removed": 0}
+        })
+        findings = self._run("shallow", diff)
+        assert findings == []
+
+    def test_schema_migration_path_fires(self) -> None:
+        diff = _make_diff_data(
+            files=["db/migrations/0042_add_user_email.sql", "src/app.ts"],
+            loc={
+                "db/migrations/0042_add_user_email.sql": {"added": 10, "removed": 0},
+                "src/app.ts": {"added": 5, "removed": 0},
+            },
+        )
+        findings = self._run("shallow", diff)
+        assert len(findings) == 1
+        assert "migrations" in findings[0]["explanation"]
+
+    def test_schema_dir_fires(self) -> None:
+        diff = _make_diff_data(
+            files=["app/schemas/user.py"],
+            loc={"app/schemas/user.py": {"added": 30, "removed": 0}},
+        )
+        findings = self._run("shallow", diff)
+        assert len(findings) == 1
+
+    def test_models_dir_fires(self) -> None:
+        diff = _make_diff_data(
+            files=["app/models/user.rb"],
+            loc={"app/models/user.rb": {"added": 30, "removed": 0}},
+        )
+        findings = self._run("shallow", diff)
+        assert len(findings) == 1
+
+    def test_plugin_json_fires(self) -> None:
+        diff = _make_diff_data(
+            files=["plugins/code-review/.claude-plugin/plugin.json"],
+            loc={
+                "plugins/code-review/.claude-plugin/plugin.json": {
+                    "added": 1, "removed": 1,
+                }
+            },
+        )
+        findings = self._run("shallow", diff)
+        assert len(findings) == 1
+        assert "plugin.json" in findings[0]["explanation"]
+
+    def test_init_py_with_new_exports_fires(self) -> None:
+        diff = _make_diff_data(
+            files=["mypackage/__init__.py"],
+            loc={"mypackage/__init__.py": {"added": 5, "removed": 0}},
+        )
+        findings = self._run("shallow", diff)
+        assert len(findings) == 1
+        assert "__init__.py" in findings[0]["explanation"]
+
+    def test_no_nudge_on_typical_small_pr(self) -> None:
+        """Boring bugfix to one source file — no nudge."""
+        diff = _make_diff_data(
+            files=["src/handlers/user.ts"],
+            loc={"src/handlers/user.ts": {"added": 50, "removed": 30}},
+        )
+        findings = self._run("shallow", diff)
+        assert findings == []
+
+    def test_single_nudge_when_multiple_heuristics_fire(self) -> None:
+        """Multiple heuristics → still ONE finding (consolidated)."""
+        diff = _make_diff_data(
+            files=[
+                "db/migrations/0001.sql",
+                "src/index.ts",
+                "src/big.ts",
+            ],
+            loc={
+                "db/migrations/0001.sql": {"added": 50, "removed": 0},
+                "src/index.ts": {"added": 5, "removed": 0},
+                "src/big.ts": {"added": 4000, "removed": 0},
+            },
+        )
+        findings = self._run("shallow", diff)
+        assert len(findings) == 1
+        # All three reasons surfaced in the single finding.
+        explanation = findings[0]["explanation"]
+        assert "LOC" in explanation
+        assert "migrations" in explanation
+        assert "index.ts" in explanation
+
+    def test_finding_is_system_scoped_no_file_line(self) -> None:
+        diff = _make_diff_data(
+            files=["plugins/x/plugin.json"],
+            loc={"plugins/x/plugin.json": {"added": 1, "removed": 1}},
+        )
+        findings = self._run("shallow", diff)
+        assert findings[0]["finding_scope"] == "system"
+        assert findings[0]["file"] is None
+        assert findings[0]["line"] is None
+
+    def test_recommendation_suggests_higher_tiers(self) -> None:
+        diff = _make_diff_data(
+            files=["plugins/x/plugin.json"],
+            loc={"plugins/x/plugin.json": {"added": 1, "removed": 1}},
+        )
+        findings = self._run("shallow", diff)
+        rec = findings[0]["recommendation"]
+        assert "--depth standard" in rec
+        assert "deep" in rec
+
+    def test_cmd_hygiene_propagates_depth(self, tmp_path: Path) -> None:
+        """cmd_hygiene reads --depth and emits the nudge when shallow."""
+        from code_review_helpers import cmd_hygiene
+        import io as _io
+        import sys as _sys
+
+        diff_data = _make_diff_data(
+            files=["plugins/x/plugin.json"],
+            loc={"plugins/x/plugin.json": {"added": 1, "removed": 1}},
+        )
+        diff_path = tmp_path / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+
+        ns = argparse.Namespace(
+            diff_data=str(diff_path),
+            workdir=None,
+            depth="shallow",
+        )
+        old_stdout = _sys.stdout
+        _sys.stdout = _io.StringIO()
+        try:
+            rc = cmd_hygiene(ns)
+            _sys.stdout.seek(0)
+            out = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+        assert rc == 0
+        nudge = [f for f in out["findings"] if f.get("system_marker") == "tier_mismatch_nudge"]
+        assert len(nudge) == 1
+
+    def test_cmd_hygiene_rejects_invalid_depth(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from code_review_helpers import cmd_hygiene
+
+        diff_data = _make_diff_data(files=["src/x.ts"])
+        diff_path = tmp_path / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+        ns = argparse.Namespace(
+            diff_data=str(diff_path),
+            workdir=None,
+            depth="exhaustive",
+        )
+        rc = cmd_hygiene(ns)
+        assert rc == 1
+        assert "exhaustive" in capsys.readouterr().err
+
+    def test_stage_12_hygiene_passes_depth(self, tmp_path: Path) -> None:
+        """The stage_12 entry must pass --depth {depth} so the nudge
+        check can fire."""
+        _, run_plan = invoke_prepare_run(tmp_path, depth="shallow")
+        stage = next(
+            s for s in run_plan["stages"]
+            if s["id"] == "stage_12_hygiene"
+        )
+        assert "--depth" in stage["args"]
+        i = stage["args"].index("--depth")
+        assert stage["args"][i + 1] == "shallow"
+
+
+class TestPLN807ReviewFixes:
+    """PLN-807 review-feedback follow-ups (PR #144 review).
+
+    Locks in the behavior changes from the post-merge-review pass so
+    the policy is enforced rather than just documented.
+    """
+
+    # ---------- Cap-deferred required critics no longer block ----------
+
+    def test_cap_deferred_required_routed_to_deferred_for_budget(
+        self, tmp_path: Path,
+    ) -> None:
+        """Required critics dropped by DOMAIN_CRITIC_CAP land in
+        deferred_for_budget with defer_reason, NOT in coverage_gaps."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+            ] + [
+                {"reviewer": f"req_critic_{i}", "source": "rule", "priority": 1}
+                for i in range(8)
+            ],
+            "best_effort": [],
+        }
+        _, final, gaps = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
+        # No coverage gaps emitted by the cap.
+        assert gaps["findings"] == []
+        # All 3 deferred required critics are marked with the cap reason.
+        cap_deferred = [
+            e for e in final["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
+        ]
+        assert len(cap_deferred) == 3
+        assert final["budget"]["domain_critic_cap_fired"] is True
+        # And the plan's verdict is NOT auto-CHANGES_REQUESTED via Rule 1.
+        from code_review_helpers import _compute_canonical_verdict
+        verdict, _ = _compute_canonical_verdict([], gaps["findings"])
+        assert verdict == "APPROVED", (
+            f"cap-deferred required critics must not auto-block; got {verdict}"
+        )
+
+    def test_cap_does_not_block_on_blocking_branch_either(
+        self, tmp_path: Path,
+    ) -> None:
+        """BLOCKING-branch behavior unchanged: cap fires, deferred goes
+        to deferred_for_budget, dropped_required stays empty."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+            ] + [
+                {"reviewer": f"r_{i}", "source": "rule", "priority": 1}
+                for i in range(9)
+            ],
+            "best_effort": [],
+        }
+        _, final, gaps = _run_arbitrate_budget(
+            tmp_path, plan, diff, cap=20,
+            verify_doc={"verdict": "BLOCKING", "violations": []},
+        )
+        assert final["arbitrate_status"] == "blocked_by_verify"
+        assert final["dropped_required"] == []
+        assert gaps["findings"] == []
+        cap_def = [
+            e for e in final["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
+        ]
+        assert len(cap_def) == 4  # 9 required → 5 selected + 4 deferred
+
+    # ---------- Path-aware schema/migration matcher ----------
+
+    def test_root_level_migrations_path_fires_nudge(self) -> None:
+        from code_review_helpers import (
+            _check_tier_mismatch_nudge, _matches_schema_or_migration_path,
+        )
+
+        assert _matches_schema_or_migration_path("migrations/0001.sql")
+        assert _matches_schema_or_migration_path("schemas/user.py")
+        assert _matches_schema_or_migration_path("models/user.rb")
+
+        diff = _make_diff_data(
+            files=["migrations/0001_add_users.sql"],
+            loc={"migrations/0001_add_users.sql": {"added": 10, "removed": 0}},
+        )
+        assert _check_tier_mismatch_nudge(diff, "shallow") != []
+
+    def test_nested_migrations_path_still_fires(self) -> None:
+        from code_review_helpers import _matches_schema_or_migration_path
+
+        assert _matches_schema_or_migration_path("apps/web/db/migrations/2024_x.sql")
+
+    def test_random_path_with_migration_substring_does_not_fire(self) -> None:
+        """Path-aware matcher does not false-positive on substrings
+        outside a directory boundary."""
+        from code_review_helpers import _matches_schema_or_migration_path
+
+        assert not _matches_schema_or_migration_path("src/migration_history.txt")
+        assert not _matches_schema_or_migration_path("src/model_loader.py")
+
+    def test_schema_filename_matches_at_any_depth(self) -> None:
+        from code_review_helpers import _matches_schema_or_migration_path
+
+        assert _matches_schema_or_migration_path("schema.prisma")
+        assert _matches_schema_or_migration_path("apps/web/prisma/schema.prisma")
+
+    # ---------- arbitrate_status: "static" in canonical enum ----------
+
+    def test_static_in_canonical_arbitrate_statuses(self) -> None:
+        from code_review_schema import SPAWN_SPEC_ARBITRATE_STATUSES
+
+        assert "static" in SPAWN_SPEC_ARBITRATE_STATUSES
+        # Sanity: the historical statuses are still there too.
+        assert {"ok", "blocked_by_verify", "fallback"}.issubset(
+            SPAWN_SPEC_ARBITRATE_STATUSES,
+        )
+
+    # ---------- Stage validator requires explicit min_depth ----------
+
+    def test_validate_stages_rejects_missing_min_depth(self) -> None:
+        from code_review_helpers import _validate_stages_config
+
+        bad = {"stages": [{
+            "id": "stage_untaged",
+            "args": [],
+            "expected_outputs": [],
+            "stdout": None,
+        }]}
+        with pytest.raises(ValueError, match="missing required ``min_depth``"):
+            _validate_stages_config(bad)
+
+    # ---------- Validation helper DRY ----------
+
+    def test_validate_invocation_depth_helper(self) -> None:
+        from code_review_helpers import _validate_invocation_depth
+
+        ok, err = _validate_invocation_depth(None)
+        assert ok and err is None
+        ok, err = _validate_invocation_depth("standard")
+        assert ok and err is None
+        ok, err = _validate_invocation_depth("hyper")
+        assert not ok
+        assert err is not None and "hyper" in err
+
+    # ---------- Auto-incremental tier gate ----------
+
+    def _make_auto_inc_args(
+        self, *, cache_dir: Path, key: str, diff_tip: str,
+        full_review: str = "false", since_last_review: str = "false",
+        mode: str = "local", depth: str | None = None,
+        original_scope: str = "origin/main..HEAD",
+    ) -> argparse.Namespace:
+        return argparse.Namespace(
+            cache_dir=str(cache_dir),
+            key=key,
+            diff_tip=diff_tip,
+            base_ref="main",
+            original_scope=original_scope,
+            full_review=full_review,
+            since_last_review=since_last_review,
+            mode=mode,
+            depth=depth,
+        )
+
+    def test_auto_incremental_skips_when_cached_tier_weaker(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A cached shallow entry must not seed a standard run's
+        incremental scope."""
+        from code_review_helpers import (
+            _write_review_state, cmd_auto_incremental,
+        )
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        state = {"reviews": {"feat:main": {
+            "sha": "abc123", "tier": "shallow", "success": True,
+        }}}
+        _write_review_state(cache_dir, state)
+        ns = self._make_auto_inc_args(
+            cache_dir=cache_dir, key="feat:main", diff_tip="HEAD",
+            depth="standard",
+        )
+        rc = cmd_auto_incremental(ns)
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out.strip())
+        assert out["diff_scope"] is None
+        assert "tier upgrade" in out["review_mode_line"]
+
+    def test_since_last_review_rejects_weaker_cached_tier(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from code_review_helpers import (
+            _write_review_state, cmd_auto_incremental,
+        )
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        _write_review_state(cache_dir, {"reviews": {"feat:main": {
+            "sha": "abc123", "tier": "shallow", "success": True,
+        }}})
+        ns = self._make_auto_inc_args(
+            cache_dir=cache_dir, key="feat:main", diff_tip="HEAD",
+            since_last_review="true", depth="deep",
+        )
+        rc = cmd_auto_incremental(ns)
+        assert rc == 1
+        assert "weaker than current invocation" in capsys.readouterr().err
+
+    def test_auto_incremental_without_depth_preserves_legacy_behavior(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """When --depth is absent (legacy caller), no tier gating."""
+        from code_review_helpers import (
+            _write_review_state, cmd_auto_incremental,
+        )
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        _write_review_state(cache_dir, {"reviews": {"feat:main": {
+            "sha": "abc123", "tier": "shallow", "success": True,
+        }}})
+        ns = self._make_auto_inc_args(
+            cache_dir=cache_dir, key="feat:main", diff_tip="HEAD", depth=None,
+        )
+        rc = cmd_auto_incremental(ns)
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out.strip())
+        # Output is mode-detail (either auto-incremental success or
+        # ancestry check fail); the important invariant is that the
+        # "tier upgrade" skip path did NOT fire.
+        assert "tier upgrade" not in (out.get("review_mode_line") or "")
+
+    # ---------- stage_19c depends on stage_19_cache_check (fast-path safe) ----------
+
+    def test_stage_19c_does_not_hard_depend_on_partition(
+        self, tmp_path: Path,
+    ) -> None:
+        """Fast-path branches skip stage_17_partition; stage_19c must
+        not require it as a dependency or it would skip too, leaving
+        no spec written for shallow + fast-path."""
+        _, run_plan = invoke_prepare_run(tmp_path, depth="shallow")
+        stage = next(
+            s for s in run_plan["stages"]
+            if s["id"] == "stage_19c_derive_static_spec"
+        )
+        assert "stage_17_partition" not in stage["depends_on"]
+
+    # ---------- stage_07 passes --depth ----------
+
+    def test_stage_07_auto_incremental_passes_depth(
+        self, tmp_path: Path,
+    ) -> None:
+        _, run_plan = invoke_prepare_run(tmp_path, depth="deep")
+        stage = next(
+            s for s in run_plan["stages"]
+            if s["id"] == "stage_07_auto_incremental"
+        )
+        assert "--depth" in stage["args"]
+        i = stage["args"].index("--depth")
+        assert stage["args"][i + 1] == "deep"

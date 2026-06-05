@@ -161,11 +161,18 @@ COVERAGE_CORE_REQUIRED: tuple[str, ...] = (
 # Top-level ``arbitrate_status``. ``ok`` = normal arbitration ran;
 # ``blocked_by_verify`` = the verify-stage BLOCKING gate fired upstream
 # and the plan passed through unbudgeted; ``fallback`` = derive failed
-# and the orchestrator must walk the static reviewer table in start.md.
+# and the orchestrator must walk the static reviewer table in start.md;
+# ``static`` (PLN-807) = the user explicitly chose shallow tier, the
+# spec was emitted by ``cmd_derive_static_spec`` without consulting a
+# coverage plan, and stage_20 treats it identically to ``fallback``
+# (use the spec verbatim, skip the bucket walk) — the distinct status
+# is a telemetry signal that distinguishes user intent from upstream
+# failure.
 SPAWN_SPEC_ARBITRATE_STATUSES: frozenset[str] = frozenset({
     "ok",
     "blocked_by_verify",
     "fallback",
+    "static",
 })
 
 # Per-agent ``source`` field. Selects the prompt-suffix dispatch in

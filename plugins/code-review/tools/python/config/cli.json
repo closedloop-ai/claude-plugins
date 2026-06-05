@@ -36,6 +36,17 @@
             "--workdir"
           ],
           "help": "Git working directory for check-ignore"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ],
+          "help": "Invocation tier; shallow emits a tier-mismatch nudge when LOC/schema/public-API heuristics suggest standard or deep would have caught more"
         }
       ]
     },
@@ -854,6 +865,17 @@
           ],
           "required": true,
           "help": "State key (branch:base_ref)"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ],
+          "help": "New invocation tier; a cached entry weaker than this returns {} (cache miss)"
         }
       ]
     },
@@ -887,6 +909,17 @@
             "--ref"
           ],
           "help": "Git ref to resolve to SHA (alternative to --sha)"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ],
+          "help": "Tier this review ran at (persisted so future runs can detect tier transitions)"
         }
       ]
     },
@@ -1128,6 +1161,17 @@
           ],
           "default": "local",
           "help": "Review mode (local or github)"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ],
+          "help": "Invocation tier; gates cached review_state entries via _entry_satisfies_depth so a weaker cached tier cannot seed a stronger run's incremental scope"
         }
       ]
     },
@@ -1389,6 +1433,27 @@
       ]
     },
     {
+      "name": "derive-static-spec",
+      "help": "Emit a static spawn.json.spec for shallow-tier runs (BHA × N partitions + BHB + unified_auditor); arbitrate_status=\"static\"",
+      "func": "cmd_derive_static_spec",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "Session CR_DIR path"
+        },
+        {
+          "flags": [
+            "--partitions"
+          ],
+          "required": true,
+          "help": "Path to partitions.json"
+        }
+      ]
+    },
+    {
       "name": "verify-spawn",
       "help": "Compare spawn.json.spec.agents[] against on-disk agent_*.json; emit coverage-gap findings for missing required agents and write the tally to spawn.json.verification",
       "func": "cmd_verify_spawn",
@@ -1486,6 +1551,18 @@
           ],
           "type": "int",
           "help": "PR number for github mode"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "default": "standard",
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ],
+          "help": "Review depth tier (shallow=built-ins only, standard=current behavior, deep=reserved for future heavy reviewers)"
         },
         {
           "flags": [

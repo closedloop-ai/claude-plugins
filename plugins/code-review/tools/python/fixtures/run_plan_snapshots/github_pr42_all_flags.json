@@ -15,7 +15,8 @@
     ],
     "depends_on": [],
     "on_failure": "abort",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_02_prep_assets",
@@ -36,7 +37,8 @@
       "stage_01_setup"
     ],
     "on_failure": "abort",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_03_resolve_scope",
@@ -62,7 +64,8 @@
       "stage_02_prep_assets"
     ],
     "on_failure": "abort",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_04_finalize_cache",
@@ -84,7 +87,8 @@
       "stage_03_resolve_scope"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_07_auto_incremental",
@@ -105,7 +109,9 @@
       "--since-last-review",
       "true",
       "--mode",
-      "github"
+      "github",
+      "--depth",
+      "standard"
     ],
     "stdout": "/tmp/cr_dir/auto_incremental.json",
     "expected_outputs": [
@@ -115,7 +121,8 @@
       "stage_04_finalize_cache"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_05_parse_diff",
@@ -133,7 +140,8 @@
       "stage_07_auto_incremental"
     ],
     "on_failure": "abort",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_06_extract_patches",
@@ -154,7 +162,8 @@
       "stage_05_parse_diff"
     ],
     "on_failure": "abort",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_08_fetch_intent",
@@ -180,7 +189,8 @@
       "stage_03_resolve_scope"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_09_detect_injection",
@@ -200,7 +210,8 @@
       "stage_08_fetch_intent"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_10_classify_intent",
@@ -221,7 +232,8 @@
       "stage_05_parse_diff"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_12_hygiene",
@@ -229,7 +241,9 @@
     "subcommand": "hygiene",
     "args": [
       "--diff-data",
-      "/tmp/cr_dir/diff_data.json"
+      "/tmp/cr_dir/diff_data.json",
+      "--depth",
+      "standard"
     ],
     "stdout": "/tmp/cr_dir/hygiene.json",
     "expected_outputs": [
@@ -239,7 +253,8 @@
       "stage_05_parse_diff"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_11_extract_signals",
@@ -266,7 +281,8 @@
       "stage_10_classify_intent"
     ],
     "on_failure": "continue_with_coverage_gap",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "standard"
   },
   {
     "id": "stage_11b_extract_signals_consolidate",
@@ -290,7 +306,8 @@
       "stage_11_extract_signals"
     ],
     "on_failure": "continue_with_coverage_gap",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "standard"
   },
   {
     "id": "stage_13_validate_companions",
@@ -310,7 +327,8 @@
       "stage_05_parse_diff"
     ],
     "on_failure": "continue",
-    "enabled": false
+    "enabled": false,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_14_resolve_coverage",
@@ -334,7 +352,8 @@
       "stage_11b_extract_signals_consolidate"
     ],
     "on_failure": "continue_with_coverage_gap",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "standard"
   },
   {
     "id": "stage_14a_load_available_reviewers",
@@ -350,7 +369,8 @@
     ],
     "depends_on": [],
     "on_failure": "continue_with_coverage_gap",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "standard"
   },
   {
     "id": "stage_15_coverage_critic",
@@ -379,7 +399,8 @@
       "stage_14a_load_available_reviewers"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "standard"
   },
   {
     "id": "stage_15b_coverage_critic_consolidate",
@@ -403,7 +424,8 @@
       "stage_15_coverage_critic"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "standard"
   },
   {
     "id": "stage_15c_verify_coverage",
@@ -423,7 +445,8 @@
       "stage_15b_coverage_critic_consolidate"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "standard"
   },
   {
     "id": "stage_16_arbitrate_budget",
@@ -444,7 +467,8 @@
       "stage_15c_verify_coverage"
     ],
     "on_failure": "abort",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "standard"
   },
   {
     "id": "stage_18_compute_hashes",
@@ -473,7 +497,8 @@
       "stage_03_resolve_scope"
     ],
     "on_failure": "abort",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_19_cache_check",
@@ -506,7 +531,8 @@
       "stage_04_finalize_cache"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_17_partition",
@@ -529,7 +555,8 @@
       "stage_19_cache_check"
     ],
     "on_failure": "abort",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_19b_derive_spawn_spec",
@@ -549,7 +576,8 @@
       "stage_16_arbitrate_budget"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "standard"
   },
   {
     "id": "stage_20_spawn_reviewers",
@@ -563,7 +591,8 @@
       "stage_19b_derive_spawn_spec"
     ],
     "on_failure": "continue_with_coverage_gap",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_20b_verify_spawn",
@@ -582,7 +611,8 @@
       "stage_20_spawn_reviewers"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "standard"
   },
   {
     "id": "stage_21_collect_findings",
@@ -603,7 +633,8 @@
       "stage_20b_verify_spawn"
     ],
     "on_failure": "abort",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_22_validate",
@@ -623,7 +654,8 @@
       "stage_21_collect_findings"
     ],
     "on_failure": "abort",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_22b_verify_prepare",
@@ -647,7 +679,8 @@
       "stage_22_validate"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_23_verify_findings",
@@ -660,7 +693,8 @@
       "stage_22b_verify_prepare"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_24a_verify_consolidate",
@@ -686,7 +720,8 @@
       "stage_23_verify_findings"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_25_finalize_result",
@@ -712,7 +747,8 @@
       "stage_24a_verify_consolidate"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_26_cache_update",
@@ -744,7 +780,8 @@
       "stage_25_finalize_result"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_27_review_state_write",
@@ -756,7 +793,9 @@
       "--key",
       "<STATE_KEY>",
       "--ref",
-      "<DIFF_TIP>"
+      "<DIFF_TIP>",
+      "--depth",
+      "standard"
     ],
     "stdout": null,
     "expected_outputs": [],
@@ -764,7 +803,8 @@
       "stage_25_finalize_result"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_28_verdict",
@@ -784,7 +824,8 @@
       "stage_25_finalize_result"
     ],
     "on_failure": "abort",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_29_present",
@@ -797,7 +838,8 @@
       "stage_28_verdict"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   },
   {
     "id": "stage_30_footer",
@@ -819,6 +861,7 @@
       "stage_29_present"
     ],
     "on_failure": "continue",
-    "enabled": true
+    "enabled": true,
+    "min_depth": "shallow"
   }
 ]
