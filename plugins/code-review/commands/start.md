@@ -111,7 +111,7 @@ The remaining `$ARGUMENTS` (after flag removal) is `SCOPE_ARGS`. Detect `PR_NUMB
 echo "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py"
 ```
 
-**Three resolution outcomes:**
+**Four resolution outcomes — try in order:**
 
 1. **Normal case** — output is a real path ending in `/tools/python/code_review_helpers.py` and the file at that path exists. Track it as `HELPERS` and `PLUGIN_ROOT = ${CLAUDE_PLUGIN_ROOT}`.
 
@@ -123,7 +123,15 @@ echo "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py"
 
    If that succeeds, set `PLUGIN_ROOT = <pwd>/plugins/code-review` and `HELPERS = <PLUGIN_ROOT>/tools/python/code_review_helpers.py`. This branch deliberately runs the in-repo helpers against the in-repo branch (correct for dogfooding — the run exercises the helpers actually being reviewed, not the cached marketplace version).
 
-3. **Misconfiguration** — `${CLAUDE_PLUGIN_ROOT}` is empty AND no `plugins/code-review/.claude-plugin/plugin.json` exists at the cwd. The plugin is not installed, not cached, and not in the current repo. Hard-fail with: `Error: ${CLAUDE_PLUGIN_ROOT} is empty and no in-repo plugin tree at ./plugins/code-review/. Install the code-review plugin via the marketplace, or cd to the claude-plugins monorepo root.` Do NOT attempt the run — every helper invocation would crash on a malformed path.
+3. **Marketplace cache fallback** — `${CLAUDE_PLUGIN_ROOT}` is empty AND outcome 2 did not apply (no in-repo tree at cwd) AND a populated marketplace cache exists at `~/.claude/plugins/cache/closedloop-ai/code-review/<version>/`. Common case: operator runs `/code-review` from a non-monorepo repo in a session where the marketplace plugin is installed but Claude Code did not populate `${CLAUDE_PLUGIN_ROOT}` (env-var exposure varies across IDEs/CLI configurations). Resolve to the highest-semver cached version:
+
+   ```bash
+   ls -d "$HOME/.claude/plugins/cache/closedloop-ai/code-review/"*/ 2>/dev/null | sort -V | tail -1
+   ```
+
+   If the output is non-empty AND `<dir>/tools/python/code_review_helpers.py` exists, set `PLUGIN_ROOT = <dir>` (trim the trailing slash) and `HELPERS = <PLUGIN_ROOT>/tools/python/code_review_helpers.py`. Then echo a single-line stderr notice to the operator so the fallback is observable: `Notice: CLAUDE_PLUGIN_ROOT empty; resolved to marketplace cache <PLUGIN_ROOT>`. If the cache directory exists but no version subdirectory contains `tools/python/code_review_helpers.py` (stale or partial install), fall through to outcome 4.
+
+4. **Misconfiguration** — `${CLAUDE_PLUGIN_ROOT}` is empty AND no in-repo tree exists AND no usable marketplace cache exists. The plugin is not installed anywhere reachable. Hard-fail with: `Error: ${CLAUDE_PLUGIN_ROOT} is empty, no in-repo plugin tree at ./plugins/code-review/, and no marketplace cache at ~/.claude/plugins/cache/closedloop-ai/code-review/. Install the code-review plugin via the marketplace, or cd to the claude-plugins monorepo root.` Do NOT attempt the run — every helper invocation would crash on a malformed path.
 
 Then create a session-scoped `CR_DIR` and emit the run plan.
 

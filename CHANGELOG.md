@@ -4,7 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### code-review v2.30.4
+### code-review v2.30.5
+
+PATCH bump — marketplace-cache fallback for `${CLAUDE_PLUGIN_ROOT}` resolution. Closes the gap operators were hitting when running `/code-review` from a non-monorepo repo in a session where the marketplace plugin is installed but the env var did not get exposed: previously stage 0b's outcome 3 hard-failed in that case, even though `~/.claude/plugins/cache/closedloop-ai/code-review/<version>/` was sitting right there and would have worked.
+
+#### Changed
+- `commands/start.md` stage 0b grows a new outcome 3 (marketplace-cache fallback) inserted between the in-repo dogfood case (outcome 2) and the misconfiguration hard-fail (now outcome 4). When the env var is empty AND no in-repo tree exists at cwd, probe `~/.claude/plugins/cache/closedloop-ai/code-review/*/` and pick the highest-semver subdirectory via `ls -d ... | sort -V | tail -1`. If the resolved directory contains `tools/python/code_review_helpers.py`, use it as `PLUGIN_ROOT` and emit a one-line stderr notice (`Notice: CLAUDE_PLUGIN_ROOT empty; resolved to marketplace cache <PLUGIN_ROOT>`) so the fallback is observable in the run log — operators reading transcripts can tell which plugin version actually ran. Falls through to the hard-fail when the cache directory is missing OR present but stale (no version subdirectory contains the helpers script).
+- `commands/start.md` outcome 4 (misconfiguration hard-fail) error message updated to acknowledge all three failed probes: env var empty, no in-repo tree, no marketplace cache. Previously the message only cited the env var and the in-repo path, leaving operators with a populated cache to wonder why the documented "marketplace install" remediation wasn't being honored.
 
 PATCH bump — PR #146 review-feedback follow-ups for v2.30.3. Closes the GitHub-vs-local presenter parity gap that v2.30.0 documented but never implemented, restores the `### code-review v2.30.1` heading that the `/update-documentation` run for v2.30.2 swallowed, and corrects the Rule 6 inline comment so it stops claiming a reachability case that current Rule 2/3 precedence excludes.
 
