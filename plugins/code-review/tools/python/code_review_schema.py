@@ -286,6 +286,24 @@ VERDICTS: frozenset[str] = frozenset({
     "CHANGES_REQUESTED",
 })
 
+# Naming note (intentional asymmetry across artifacts):
+#
+#   - ``review_result.json.verdict`` IS the canonical verdict
+#     (member of ``VERDICTS`` above). There is NO parallel
+#     ``review_result.json.canonical_verdict`` field — the envelope's
+#     ``verdict`` is the single source of truth for downstream
+#     consumers (present-local skill, github-review.md, /fix).
+#   - ``verdict.json`` (the stage_28_verdict artifact written by
+#     ``cmd_verdict``) carries BOTH ``verdict`` (the legacy enum
+#     ``approve|needs_attention|decline`` consumed by run-loop.sh)
+#     AND ``canonical_verdict`` (the canonical enum). The dual-key
+#     shape exists ONLY to bridge the bash run-loop's legacy
+#     vocabulary with the canonical envelope vocabulary.
+#
+# A future contributor inspecting ``review_result.json`` and seeing
+# ``"canonical_verdict": null`` via ``jq`` should know: the field is
+# absent, by design, NOT unset. Read ``review_result.json.verdict``.
+
 VERIFIER_VERDICTS: frozenset[str] = frozenset({
     "CONFIRMED",
     "DOWNGRADE",

@@ -4,7 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### code-review v2.30.1
+### code-review v2.30.2
+
+PATCH bump — dogfood-feedback follow-ups. Documents the in-repo plugin-tree fallback path that operators dogfooding the plugin against its own branch already discovered manually, and pins the intentional verdict-field-naming asymmetry between `review_result.json` and `verdict.json` so future inspectors don't read the absent `canonical_verdict` field as a bug.
+
+#### Changed
+- `commands/start.md` stage 0b now documents three explicit resolution outcomes for `${CLAUDE_PLUGIN_ROOT}`: (1) the normal marketplace-cached case where the env var resolves; (2) the in-repo dogfood case where the env var is empty AND `plugins/code-review/.claude-plugin/plugin.json` exists at the cwd — the orchestrator should set `PLUGIN_ROOT = <pwd>/plugins/code-review` so the run exercises the in-repo helpers being reviewed, not a stale marketplace copy; (3) the genuine misconfiguration case where the env var is empty AND no in-repo tree exists — hard-fail with an actionable error message rather than producing malformed paths every helper invocation would crash on. Previously the prompt assumed the env var always resolved, leaving the orchestrator to ad-hoc-discover the fallback (which it did correctly, but unobservably).
+- `code_review_schema.py` adds a multi-line comment block adjacent to `VERDICTS` documenting why `review_result.json.verdict` IS the canonical verdict (no parallel `canonical_verdict` field), while `verdict.json` carries both keys (legacy `approve|needs_attention|decline` for run-loop.sh AND canonical for envelope-aware consumers). Inspectors reading `review_result.json` via jq and seeing `"canonical_verdict": null` should know the field is absent by design, not unset.
 
 PATCH bump — review-feedback follow-ups for v2.30.0. Wires up the telemetry plumbing the Verifier Stats footer already referenced, parses the configurable Rule 6 threshold, exempts conditional core reviewers from the domain-critic budget prune, documents the missing `deferred_symbols[]` output contract, and tightens v2.30.0's test cleanup.
 
