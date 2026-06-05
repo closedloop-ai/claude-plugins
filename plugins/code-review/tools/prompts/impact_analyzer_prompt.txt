@@ -271,6 +271,52 @@ finding's `external_impact[]` is the structured payload that the
 verifier audits and `/fix` consumes. Do not emit prose, headers, or
 fences outside the JSON object array.
 
+### Deferred symbols (cost-cap reporting)
+
+In addition to the `findings` array, your output JSON MUST include a
+top-level `deferred_symbols` array reporting every candidate symbol
+the diff exposed beyond the 30-symbol analysis cap (or that you
+declined to analyze for any cost-cap reason). The local presenter
+reads this array directly to render the "Deferred Impact symbols"
+footer block; without it operators have no signal that cost caps
+fired.
+
+When no symbols were deferred (typical case — the diff exposed ≤ 30
+candidate symbols and you analyzed them all), emit
+`"deferred_symbols": []`.
+
+Per-entry shape:
+
+```
+{
+  "symbol": "<exported symbol name>",
+  "file": "<repo-relative path of the diff anchor>",
+  "line": <int — diff line where the symbol changed>,
+  "change_nature": "<one of: signature_change | type_narrowing | "
+                   "semantics_change | deletion | rename | "
+                   "constant_value_change | visibility_change>",
+  "reason": "<cap_30_symbols | cap_50_callsites | cap_grep_ops "
+            "| cap_read_ops | cap_time_budget>"
+}
+```
+
+Sort `deferred_symbols[]` by `(file, line)` ascending so consecutive
+runs on the same diff produce byte-identical output.
+
+### Full output envelope
+
+```
+{
+  "findings": [ /* canonical findings, see shared_prompt.txt */ ],
+  "deferred_symbols": [ /* shape above; [] when no cap fired */ ]
+}
+```
+
+The `findings` key is required even when empty (`[]`). Both top-level
+keys are read by downstream consumers — omitting either fails the
+downstream validator or renders the presenter block empty when it
+should show a cap-fired report.
+
 ## Worked Examples
 
 ### Example 1: Function signature change with 3 breaking callsites

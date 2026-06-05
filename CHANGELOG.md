@@ -4,6 +4,28 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.30.1
+
+PATCH bump — review-feedback follow-ups for v2.30.0. Wires up the telemetry plumbing the Verifier Stats footer already referenced, parses the configurable Rule 6 threshold, exempts conditional core reviewers from the domain-critic budget prune, documents the missing `deferred_symbols[]` output contract, and tightens v2.30.0's test cleanup.
+
+#### Fixed
+- `_stats_from_findings` now populates `stats.impact_cumulative_count` via `_count_gateable_impact(verified)`. v2.30.0 added the SKILL.md Verifier Stats footer line and Rule 6 docstring's "telemetry reports the count" claim but never wired the key into the stats dict; the footer was rendering None.
+- `_load_verdict_thresholds` now parses `impact_cumulative` from `verdict-thresholds.json` with the same validation contract as `premise_cumulative_medium` (int, ≥ 1, not bool; invalid values fall back to the default). The Rule 6 docstring claimed the threshold was operator-configurable but the loader never read it.
+- `_compute_canonical_verdict` thresholds-fallback dict now seeds `impact_cumulative` to `_VERDICT_IMPACT_THRESHOLD_DEFAULT` so a caller that omits the thresholds argument still gets Rule 6 evaluated against the documented default (2). Previously the fallback only seeded `premise_cumulative_medium`, and Rule 6's `thresholds.get("impact_cumulative", _VERDICT_IMPACT_THRESHOLD_DEFAULT)` accidentally worked through the local default — fragile and inconsistent with Rule 4's wiring.
+- `_compute_canonical_verdict` docstring updated to list both threshold defaults (`premise_cumulative_medium=3`, `impact_cumulative=2`) and cite the canonical constants, replacing the previous "built-in default (3)" line that omitted the new threshold.
+- `cmd_arbitrate_budget` best-effort prune now reserves `source: "core"` entries BEFORE pruning critic-source entries against remaining capacity. Without this, a deep run on a repo with a critic-heavy `critic-gates.json` could silently drop the Impact Analyzer in favor of project-specific critics. Core best-effort entries got into the plan via a tier+signal gate the operator explicitly opted into; treating them like required core for capacity purposes honors that intent. When capacity is genuinely tight, the spawn-spec exceeds cap rather than dropping the opted-in reviewer.
+- `impact_analyzer_prompt.txt` now documents the `deferred_symbols[]` output contract the local presenter has been reading from `agent_impact.json`. Adds a top-level `deferred_symbols` array (entries shape `{symbol, file, line, change_nature, reason}`) and the full output envelope (`{findings, deferred_symbols}`). Without this, the SKILL.md "Deferred Impact symbols" footer block could only render when the reviewer happened to emit a structurally compatible array — a contract gap.
+- `TestFEA1401SignalTaxonomy._taxonomy()` delegates to the canonical `load_signal_taxonomy()` helper (matching the pattern in `TestSignalExtractionValidator._taxonomy()`) instead of re-reading `signal_taxonomy.json` inline. The duplicate inline loader would drift the moment `load_signal_taxonomy` gained validation.
+- `TestFEA1401PrepAssets::test_prep_assets_copies_impact_prompt` no longer computes a discarded `plugin_root` via `Path(__file__).resolve().parents[1]` before overwriting it on the next line with the correct three-parent ascent. Removed the dead assignment and the stale resolution comment.
+- `test_rule_6_fires_when_unreachable_by_prior_rules` renamed to `test_rule_6_is_noop_for_medium_impact_under_current_precedence` so the name reflects what the test actually asserts (the rule is a no-op for MEDIUM-only Impact findings under current Rule 2/3 precedence). A new companion test `test_rule_6_fires_when_threshold_lowered` proves the rule machinery itself works when a configurable threshold makes it reachable.
+- CHANGELOG.md `### code-review v2.29.2` heading restored — the `/update-documentation` skill's previous run accidentally swallowed it so the v2.29.2 section body was rendering inside the v2.30.0 heading.
+
+#### Added
+- `TestFEA1401StageWiring` covers `stage_14_resolve_coverage` threading `--depth deep` and `--depth standard` end-to-end (mirrors the `test_stage_07_auto_incremental_passes_depth` pattern). Without this test the wiring change in v2.30.0's stages.json had no targeted regression guard.
+- `TestFEA1401Telemetry` covers the `stats.impact_cumulative_count` key (populated value matches `_count_gateable_impact`; zero when no Impact findings present).
+- `TestFEA1401VerdictThresholds` covers the new `impact_cumulative` threshold parse path (default-when-no-config, valid operator override, invalid-value fallback for 0 / string / bool).
+- `TestFEA1401BudgetExemption` covers the core-best-effort prune exemption end-to-end via `cmd_arbitrate_budget`.
+
 ### code-review v2.30.0
 
 FEA-1401 / PLN-726 Component A — Cross-File Impact Analyzer. MINOR bump — new core reviewer, new schema registry (`COVERAGE_CORE_CONDITIONAL`), new signal taxonomy entries, new verdict rule, new per-run prompt asset. Opt-in via `/start --depth deep` (or `/deep`); zero impact on shallow or standard runs.
@@ -34,6 +56,8 @@ FEA-1401 / PLN-726 Component A — Cross-File Impact Analyzer. MINOR bump — ne
 - `shared_prompt.txt` output_format documents `external_impact[]` and `grep_query_used` as optional canonical fields. Reviewers that don't emit them omit them; the Impact Analyzer MUST emit both. Includes the full per-entry shape (file/line/`impact_type`/description/`callsite_snippet`/`callsite_snippet_hash`/confidence) and the seven-value `impact_type` enum.
 - `prompts/github-review.md` `code-review-findings.json` writer documentation now notes that ImpactAnalysis findings carry `external_impact[]` and `grep_query_used` through validate verbatim; the existing post-comments workflow handles rendering inline.
 - `_compute_canonical_verdict` docstring updated: Rule 6 is no longer a placeholder; the Impact-gate threshold (default 2) is now a real participant in verdict computation alongside Rule 4's Premise-MEDIUM cumulative gate.
+
+### code-review v2.29.2
 
 PATCH bump — documentation/comment accuracy fixes plus one test-helper consolidation and two test-isolation fixes. No production behavior change.
 

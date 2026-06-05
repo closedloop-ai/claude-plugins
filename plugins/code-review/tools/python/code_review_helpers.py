@@ -2573,6 +2573,7 @@ _VERDICT_JUSTIFICATION_RATE_ALERT_DEFAULT = 0.30
 _VERDICT_THRESHOLD_KEYS: tuple[str, ...] = (
     "premise_cumulative_medium",
     "justification_rate_alert",
+    "impact_cumulative",
 )
 
 
@@ -2616,6 +2617,8 @@ def _load_verdict_thresholds(path: Path | None) -> dict[str, Any]:
         gate. Default 3.
       - ``justification_rate_alert`` (float, [0.0, 1.0]): threshold above
         which the justification-rate footer flips to ALERT. Default 0.30.
+      - ``impact_cumulative`` (int, ≥ 1): BLOCKING/HIGH ImpactAnalysis
+        cumulative gate (FEA-1401 Rule 6). Default 2.
 
     Unknown keys are ignored. Invalid entries (wrong type, out of range)
     fall back to the default — the file is operator-authored and should
@@ -2625,6 +2628,7 @@ def _load_verdict_thresholds(path: Path | None) -> dict[str, Any]:
     defaults: dict[str, Any] = {
         "premise_cumulative_medium": _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
         "justification_rate_alert": _VERDICT_JUSTIFICATION_RATE_ALERT_DEFAULT,
+        "impact_cumulative": _VERDICT_IMPACT_THRESHOLD_DEFAULT,
     }
     data, out = _load_optional_settings_dict(path, defaults)
     if data is None:
@@ -2640,6 +2644,9 @@ def _load_verdict_thresholds(path: Path | None) -> dict[str, Any]:
         and 0.0 <= float(raw_jr) <= 1.0
     ):
         out["justification_rate_alert"] = float(raw_jr)
+    raw_ic = data.get("impact_cumulative")
+    if isinstance(raw_ic, int) and not isinstance(raw_ic, bool) and raw_ic >= 1:
+        out["impact_cumulative"] = raw_ic
     return out
 
 _VERIFICATION_GATE_KEYS: tuple[str, ...] = (
@@ -9025,11 +9032,15 @@ def _compute_canonical_verdict(
     ImpactAnalysis findings → NEEDS_ATTENTION).
 
     ``thresholds`` (PLN-721): optional dict from ``_load_verdict_thresholds``;
-    callers that do not pass it get the built-in default (3) so existing
-    test fixtures and back-compat callers keep working.
+    callers that do not pass it get the built-in defaults
+    (``premise_cumulative_medium`` = 3, ``impact_cumulative`` = 2; see
+    ``_VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT`` and
+    ``_VERDICT_IMPACT_THRESHOLD_DEFAULT``) so existing test fixtures
+    and back-compat callers keep working.
     """
     thresholds = thresholds or {
         "premise_cumulative_medium": _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
+        "impact_cumulative": _VERDICT_IMPACT_THRESHOLD_DEFAULT,
     }
 
     def _short(text: str) -> str:
@@ -10422,18 +10433,39 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     # PLN-807 Phase 4 Step 4: best-effort prune against remaining cap.
     # Includes both surviving best-effort critics and best-effort
     # non-critic entries, sorted together by priority asc.
+    #
+    # FEA-1401 follow-up: ``source: "core"`` best_effort entries
+    # (Impact Analyzer today; future ``COVERAGE_CORE_CONDITIONAL``
+    # entries) are reserved BEFORE the prune runs. They got into
+    # best_effort via a tier+signal gate the operator explicitly
+    # opted into (``/start --depth deep``), and silently dropping
+    # them in favor of project-level critic-source entries would
+    # invert the operator's stated intent. Treat them like required
+    # core reviewers for capacity purposes: they always survive the
+    # prune; if pathological capacity (cap tighter than core_required +
+    # bha_target + core_best_effort) forces an over-allocation,
+    # honor the operator's intent and let the spawn-spec exceed cap
+    # rather than dropping the opted-in core reviewer.
     best_effort_combined = sel_be_critics + best_effort_non_critic
-    best_effort_sorted = sorted(
-        best_effort_combined,
+    be_core = [
+        e for e in best_effort_combined
+        if isinstance(e, dict) and e.get("source") == "core"
+    ]
+    be_rest = [
+        e for e in best_effort_combined
+        if not (isinstance(e, dict) and e.get("source") == "core")
+    ]
+    be_rest_sorted = sorted(
+        be_rest,
         key=lambda e: int(e.get("priority", 2)) if isinstance(e, dict) else 2,
     )
-    remaining = max(0, cap - len(required) - bha_target)
-    if len(best_effort_sorted) > remaining:
-        deferred_by_budget = best_effort_sorted[remaining:]
-        best_effort_final = best_effort_sorted[:remaining]
+    remaining_for_rest = max(0, cap - len(required) - bha_target - len(be_core))
+    if len(be_rest_sorted) > remaining_for_rest:
+        deferred_by_budget = be_rest_sorted[remaining_for_rest:]
+        best_effort_final = be_core + be_rest_sorted[:remaining_for_rest]
     else:
         deferred_by_budget = []
-        best_effort_final = best_effort_sorted
+        best_effort_final = be_core + be_rest_sorted
 
     # Annotate cap-deferred entries so operators can tell which bucket
     # capacity rejected them. Both required-bucket and best-effort-bucket
@@ -12116,6 +12148,12 @@ def _stats_from_findings(
         # _count_gateable_premise_medium is the single source of truth
         # for that policy (excludes JUSTIFIED-VALID / JUSTIFIED-INVALID).
         "premise_cumulative_medium_count": _count_gateable_premise_medium(verified),
+        # FEA-1401 Rule 6: Impact Analyzer gate count. Mirrors
+        # premise_cumulative_medium_count — single source of truth is
+        # _count_gateable_impact. Present-local SKILL.md's Verifier Stats
+        # block reads `stats.impact_cumulative_count` directly from this
+        # dict; without this key the footer line renders as None.
+        "impact_cumulative_count": _count_gateable_impact(verified),
         "agent_failures": [],
     }
 
