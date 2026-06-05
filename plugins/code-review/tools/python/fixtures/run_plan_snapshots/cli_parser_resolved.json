@@ -1521,6 +1521,28 @@
       ]
     },
     {
+      "name": "derive-static-spec",
+      "func": "cmd_derive_static_spec",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--partitions"
+          ],
+          "dest": "partitions",
+          "default": null,
+          "required": true
+        }
+      ]
+    },
+    {
       "name": "verify-spawn",
       "func": "cmd_verify_spawn",
       "args": [

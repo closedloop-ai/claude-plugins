@@ -574,6 +574,28 @@
       "min_depth": "standard"
     },
     {
+      "id": "stage_19c_derive_static_spec",
+      "kind": "helper",
+      "subcommand": "derive-static-spec",
+      "args": [
+        "--cr-dir",
+        "{cr_dir}",
+        "--partitions",
+        "{cr_dir}/partitions.json"
+      ],
+      "stdout": null,
+      "expected_outputs": [
+        "{cr_dir}/spawn.json"
+      ],
+      "depends_on": [
+        "stage_17_partition"
+      ],
+      "on_failure": "continue",
+      "enabled": true,
+      "min_depth": "shallow",
+      "max_depth": "shallow"
+    },
+    {
       "id": "stage_20_spawn_reviewers",
       "kind": "agent_fleet",
       "agent_specs": [],
@@ -582,7 +604,8 @@
       ],
       "depends_on": [
         "stage_17_partition",
-        "stage_19b_derive_spawn_spec"
+        "stage_19b_derive_spawn_spec",
+        "stage_19c_derive_static_spec"
       ],
       "on_failure": "continue_with_coverage_gap",
       "enabled": true,

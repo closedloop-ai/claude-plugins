@@ -1411,6 +1411,27 @@
       ]
     },
     {
+      "name": "derive-static-spec",
+      "help": "Emit a static spawn.json.spec for shallow-tier runs (BHA × N partitions + BHB + unified_auditor); arbitrate_status=\"static\"",
+      "func": "cmd_derive_static_spec",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "Session CR_DIR path"
+        },
+        {
+          "flags": [
+            "--partitions"
+          ],
+          "required": true,
+          "help": "Path to partitions.json"
+        }
+      ]
+    },
+    {
       "name": "verify-spawn",
       "help": "Compare spawn.json.spec.agents[] against on-disk agent_*.json; emit coverage-gap findings for missing required agents and write the tally to spawn.json.verification",
       "func": "cmd_verify_spawn",

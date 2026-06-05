@@ -18880,35 +18880,43 @@ class TestPLN807DepthTierFiltering:
                 f"review pipeline that all tiers share"
             )
 
-    def test_standard_runs_every_enabled_stage(self) -> None:
-        """Standard tier must include the full 37-stage pipeline.
+    def _non_shallow_only_stage_ids(self) -> set[str]:
+        """Helper: stage ids whose ``max_depth`` permits standard/deep.
 
-        Backwards compatibility: bare ``/code-review start`` defaults to
-        standard, and standard must produce identical output to today.
+        Some stages (e.g. ``stage_19c_derive_static_spec`` — Phase 3)
+        carry ``max_depth: shallow`` so they REPLACE a different stage
+        at a lower tier and must not appear in standard/deep run plans.
         """
-        from code_review_helpers import (
-            _build_run_plan_stages, _load_stages_config,
-        )
+        from code_review_helpers import _DEPTH_RANK, _load_stages_config
+
+        return {
+            s["id"] for s in _load_stages_config()["stages"]
+            if _DEPTH_RANK.get(s.get("max_depth", "deep"), 3) >= 2
+        }
+
+    def test_standard_runs_every_enabled_stage(self) -> None:
+        """Standard tier must include every stage whose tier band
+        admits standard. The static-spec stage (max_depth: shallow) is
+        excluded — its dynamic equivalent runs in standard instead.
+        """
+        from code_review_helpers import _build_run_plan_stages
 
         standard_stages = _build_run_plan_stages(
             "/tmp/cr_dir", "local", None, {}, depth="standard",
         )
-        all_stages = _load_stages_config()["stages"]
-        assert {s["id"] for s in standard_stages} == {s["id"] for s in all_stages}
+        assert {s["id"] for s in standard_stages} == self._non_shallow_only_stage_ids()
 
     def test_deep_runs_every_current_stage(self) -> None:
         """Deep tier today is equivalent to standard — no min_depth: deep
-        entries exist yet. This pins that contract so the Impact Analyzer
+        entries exist yet. The static-spec stage (max_depth: shallow) is
+        excluded here too. This pins the contract so the Impact Analyzer
         follow-up plan has a visible target to extend."""
-        from code_review_helpers import (
-            _build_run_plan_stages, _load_stages_config,
-        )
+        from code_review_helpers import _build_run_plan_stages
 
         deep_stages = _build_run_plan_stages(
             "/tmp/cr_dir", "local", None, {}, depth="deep",
         )
-        all_stages = _load_stages_config()["stages"]
-        assert {s["id"] for s in deep_stages} == {s["id"] for s in all_stages}
+        assert {s["id"] for s in deep_stages} == self._non_shallow_only_stage_ids()
 
     def test_default_depth_is_standard(self) -> None:
         """A bare _build_run_plan_stages call (no depth arg) behaves
@@ -19185,3 +19193,248 @@ class TestPLN807Phase2TierPropagation:
             assert _entry_satisfies_depth(cached, invocation) is expected, (
                 f"cached={cached!r}, invocation={invocation!r} should be {expected}"
             )
+
+
+class TestPLN807Phase3StaticSpawnSpec:
+    """PLN-807 Phase 3: ``cmd_derive_static_spec`` for shallow tier.
+
+    Produces the shallow fleet (BHA × N + BHB + unified_auditor) directly
+    into spawn.json.spec without consulting coverage planning. Reuses
+    ``_derive_spawn_agents_from_plan`` so BHA partition expansion,
+    docs-only handling, and patches-file naming match the standard path
+    exactly.
+    """
+
+    def _invoke(
+        self, tmp_path: Path,
+        partitions: list[dict[str, Any]] | None,
+        route: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        from code_review_helpers import (
+            _write_spawn_section, cmd_derive_static_spec,
+        )
+
+        p_path = tmp_path / "partitions.json"
+        if partitions is not None:
+            p_path.write_text(json.dumps({"partitions": partitions}))
+        if route is not None:
+            _write_spawn_section(tmp_path, "route", route)
+
+        ns = argparse.Namespace(
+            cr_dir=str(tmp_path),
+            partitions=str(p_path),
+        )
+        cmd_derive_static_spec(ns)
+        spawn_path = tmp_path / "spawn.json"
+        assert spawn_path.exists(), "spawn.json missing"
+        state = json.loads(spawn_path.read_text())
+        spec = state.get("spec", {})
+        assert spec, "spawn.json.spec missing"
+        return spec
+
+    # ---------- Fleet composition ----------
+
+    def test_emits_static_arbitrate_status(self, tmp_path: Path) -> None:
+        """The arbitrate_status: 'static' value (distinct from 'fallback')
+        is the telemetry signal that distinguishes shallow's explicit
+        choice from a derive-spawn-spec failure."""
+        spec = self._invoke(
+            tmp_path,
+            partitions=[{"id": 0, "is_test_only": False}],
+            route={"max_bha_agents": 5, "fast_path": False},
+        )
+        assert spec["arbitrate_status"] == "static"
+
+    def test_emits_bha_bhb_auditor_only(self, tmp_path: Path) -> None:
+        spec = self._invoke(
+            tmp_path,
+            partitions=[
+                {"id": 0, "is_test_only": False},
+                {"id": 1, "is_test_only": False},
+            ],
+            route={"max_bha_agents": 5, "fast_path": False},
+        )
+        reviewers = {a["reviewer"] for a in spec["agents"]}
+        assert reviewers == {"bug_hunter_a", "bug_hunter_b", "unified_auditor"}
+        # No premise. No domain critics.
+        assert "premise_reviewer" not in reviewers
+        assert spec["stats"]["domain_critic_count"] == 0
+
+    def test_bha_expands_per_partition(self, tmp_path: Path) -> None:
+        spec = self._invoke(
+            tmp_path,
+            partitions=[
+                {"id": 0, "is_test_only": False},
+                {"id": 1, "is_test_only": False},
+                {"id": 2, "is_test_only": False},
+            ],
+            route={"max_bha_agents": 5, "fast_path": False},
+        )
+        bha_agents = [a for a in spec["agents"] if a["reviewer"] == "bug_hunter_a"]
+        assert len(bha_agents) == 3
+        assert {a["partition_id"] for a in bha_agents} == {0, 1, 2}
+        assert spec["stats"]["bha_count"] == 3
+
+    def test_bha_test_only_partition_uses_sonnet(self, tmp_path: Path) -> None:
+        """Match standard's model selection — test-only partitions
+        drop to sonnet via the existing _spawn_bha_model rule."""
+        spec = self._invoke(
+            tmp_path,
+            partitions=[
+                {"id": 0, "is_test_only": True},
+            ],
+            route={"max_bha_agents": 5, "fast_path": False},
+        )
+        bha = next(a for a in spec["agents"] if a["reviewer"] == "bug_hunter_a")
+        assert bha["model"] == "sonnet"
+
+    def test_empty_partitions_records_no_partitions_skip(
+        self, tmp_path: Path,
+    ) -> None:
+        """Docs-only / all-cached: partitions.json is empty. BHA is
+        recorded as skipped with reason 'no_partitions' (matching the
+        standard path), BHB and auditor still spawn."""
+        spec = self._invoke(
+            tmp_path,
+            partitions=[],
+            route={"max_bha_agents": 5, "fast_path": False},
+        )
+        # No BHA spawned
+        assert spec["stats"]["bha_count"] == 0
+        # But BHB + auditor still present
+        reviewers = {a["reviewer"] for a in spec["agents"]}
+        assert reviewers == {"bug_hunter_b", "unified_auditor"}
+        # Skipped recorded
+        skipped_reasons = {s["reason"] for s in spec["skipped"]}
+        assert "no_partitions" in skipped_reasons
+
+    def test_bha_capped_at_default_max_agents(self, tmp_path: Path) -> None:
+        """When partitioner emits more than DEFAULT_MAX_BHA_AGENTS=5,
+        excess partitions land in skipped[budget_capped]. Mirrors the
+        standard path's safety guard."""
+        from code_review_helpers import DEFAULT_MAX_BHA_AGENTS
+        spec = self._invoke(
+            tmp_path,
+            partitions=[
+                {"id": i, "is_test_only": False}
+                for i in range(DEFAULT_MAX_BHA_AGENTS + 2)
+            ],
+            route={"max_bha_agents": 5, "fast_path": False},
+        )
+        assert spec["stats"]["bha_count"] == DEFAULT_MAX_BHA_AGENTS
+        # The 2 excess partitions show up in skipped
+        capped = [s for s in spec["skipped"] if s.get("reason") == "budget_capped"]
+        assert len(capped) == 2
+
+    def test_fast_path_emits_single_fast_agent(self, tmp_path: Path) -> None:
+        """Fast-path optimization applies in shallow too — small PRs
+        collapse to one fast_path_reviewer agent."""
+        spec = self._invoke(
+            tmp_path,
+            partitions=[{"id": 0, "is_test_only": False}],
+            route={"fast_path": True, "max_bha_agents": 5},
+        )
+        assert spec["fast_path"] is True
+        assert spec["arbitrate_status"] == "static"
+        assert len(spec["agents"]) == 1
+        assert spec["agents"][0]["reviewer"] == "fast_path_reviewer"
+        assert spec["agents"][0]["agent_id"] == "fast"
+
+    def test_missing_partitions_emits_fallback(self, tmp_path: Path) -> None:
+        """No partitions.json on disk → fallback sentinel (same as
+        cmd_derive_spawn_spec) so the orchestrator walks the static
+        reviewer table — review must not be blocked by an upstream
+        stage's failure."""
+        spec = self._invoke(
+            tmp_path,
+            partitions=None,
+            route={"fast_path": False, "max_bha_agents": 5},
+        )
+        assert spec["arbitrate_status"] == "fallback"
+        assert spec["fallback_reason"] == "partitions_missing_or_malformed"
+
+    # ---------- Tier filter integration ----------
+
+    def test_stage_19c_runs_only_in_shallow(self, tmp_path: Path) -> None:
+        """The new stage must be present in shallow run plans but
+        absent from standard and deep. This enforces the
+        ``max_depth: shallow`` band on the stages.json entry."""
+        for tier, should_have_static in (
+            ("shallow", True),
+            ("standard", False),
+            ("deep", False),
+        ):
+            t = tmp_path / tier
+            t.mkdir()
+            _, run_plan = invoke_prepare_run(t, depth=tier)
+            ids = {s["id"] for s in run_plan["stages"]}
+            if should_have_static:
+                assert "stage_19c_derive_static_spec" in ids, (
+                    f"shallow must include the static-spec stage, got {sorted(ids)}"
+                )
+                assert "stage_19b_derive_spawn_spec" not in ids, (
+                    "shallow must NOT include the dynamic derive stage"
+                )
+            else:
+                assert "stage_19c_derive_static_spec" not in ids, (
+                    f"{tier} must not include the shallow-only static-spec stage"
+                )
+                assert "stage_19b_derive_spawn_spec" in ids, (
+                    f"{tier} must include the dynamic derive stage"
+                )
+
+    def test_max_depth_field_validation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A typo in max_depth must fail loud at config-load time."""
+        import code_review_helpers
+
+        bad_config = tmp_path / "stages.json"
+        bad_config.write_text(json.dumps({
+            "stages": [{
+                "id": "stage_typo",
+                "kind": "helper",
+                "subcommand": "noop",
+                "args": [],
+                "min_depth": "shallow",
+                "max_depth": "shallw",
+                "depends_on": [],
+                "on_failure": "abort",
+                "enabled": True,
+            }],
+        }))
+        monkeypatch.setattr(
+            code_review_helpers, "_STAGES_CONFIG_PATH", bad_config,
+        )
+        code_review_helpers._load_stages_config.cache_clear()
+        with pytest.raises(ValueError, match="invalid tier"):
+            code_review_helpers._load_stages_config()
+        code_review_helpers._load_stages_config.cache_clear()
+
+    def test_swapped_band_rejected_at_load(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """min_depth > max_depth makes the stage unreachable. Reject."""
+        import code_review_helpers
+
+        bad_config = tmp_path / "stages.json"
+        bad_config.write_text(json.dumps({
+            "stages": [{
+                "id": "stage_typo",
+                "kind": "helper",
+                "subcommand": "noop",
+                "args": [],
+                "min_depth": "deep",
+                "max_depth": "shallow",
+                "depends_on": [],
+                "on_failure": "abort",
+                "enabled": True,
+            }],
+        }))
+        monkeypatch.setattr(
+            code_review_helpers, "_STAGES_CONFIG_PATH", bad_config,
+        )
+        code_review_helpers._load_stages_config.cache_clear()
+        with pytest.raises(ValueError, match="min_depth.*max_depth"):
+            code_review_helpers._load_stages_config()
+        code_review_helpers._load_stages_config.cache_clear()

@@ -9172,15 +9172,20 @@ _STAGES_TEMPLATE_KEYS: frozenset[str] = frozenset({
 # Valid arg splat markers (resolved separately from template substitution).
 _STAGES_SPLAT_MARKERS: frozenset[str] = frozenset({"@pr_flag"})
 
-# Valid ``min_depth`` values on stages.json entries. Each stage declares the
-# minimum invocation tier at which it runs; the run-plan builder filters by
-# ``_DEPTH_RANK[invocation_tier] >= _DEPTH_RANK[stage.min_depth]``. A stage
-# without an explicit ``min_depth`` defaults to ``"standard"`` so that
-# adding a new stage without thinking about tiering doesn't accidentally
-# leak it into shallow.
+# Valid ``min_depth`` / ``max_depth`` values on stages.json entries. Each
+# stage declares the tier band at which it runs; the run-plan builder
+# filters by ``min_depth <= invocation_tier <= max_depth``. Most stages
+# only need ``min_depth`` (and inherit the default ``max_depth = "deep"``),
+# but a stage that REPLACES another at a lower tier (e.g.
+# ``stage_19c_derive_static_spec`` replaces ``stage_19b_derive_spawn_spec``
+# in shallow) sets both bounds to scope its activation tightly.
+# ``min_depth`` default ``"standard"`` keeps untagged new stages out of
+# shallow; ``max_depth`` default ``"deep"`` keeps them running through
+# the highest tier.
 _VALID_MIN_DEPTHS: frozenset[str] = frozenset({"shallow", "standard", "deep"})
 _DEPTH_RANK: dict[str, int] = {"shallow": 1, "standard": 2, "deep": 3}
 _DEFAULT_MIN_DEPTH: str = "standard"
+_DEFAULT_MAX_DEPTH: str = "deep"
 _DEFAULT_INVOCATION_DEPTH: str = "standard"
 
 # Single brace-or-key matcher: every ``{`` and every ``}`` MUST be part of a
@@ -9225,36 +9230,50 @@ def _validate_stages_config(config: dict[str, Any]) -> None:
         stdout = stage.get("stdout")
         if isinstance(stdout, str):
             _validate_template_string(stdout, f"{sid}.stdout")
-        # ``min_depth`` is optional in the schema (defaults to "standard")
-        # but when present MUST be one of the canonical tier names so a
-        # typo (e.g. "shallw") doesn't silently drop the stage out of
-        # every run plan.
-        if "min_depth" in stage:
-            md = stage["min_depth"]
-            if md not in _VALID_MIN_DEPTHS:
-                raise ValueError(
-                    f"stages.json {sid}.min_depth: invalid tier {md!r}; "
-                    f"must be one of {sorted(_VALID_MIN_DEPTHS)}",
-                )
+        # ``min_depth`` / ``max_depth`` are optional in the schema
+        # (defaults: standard / deep) but when present MUST be one of the
+        # canonical tier names so a typo (e.g. "shallw") doesn't silently
+        # drop the stage out of every run plan. Also enforce a sane band
+        # (min <= max) at load time to catch swapped values.
+        for field in ("min_depth", "max_depth"):
+            if field in stage:
+                val = stage[field]
+                if val not in _VALID_MIN_DEPTHS:
+                    raise ValueError(
+                        f"stages.json {sid}.{field}: invalid tier {val!r}; "
+                        f"must be one of {sorted(_VALID_MIN_DEPTHS)}",
+                    )
+        lo = stage.get("min_depth", _DEFAULT_MIN_DEPTH)
+        hi = stage.get("max_depth", _DEFAULT_MAX_DEPTH)
+        if _DEPTH_RANK[lo] > _DEPTH_RANK[hi]:
+            raise ValueError(
+                f"stages.json {sid}: min_depth={lo!r} > max_depth={hi!r}",
+            )
 
 
 def _filter_stages_by_depth(
     stages: list[dict[str, Any]], invocation_tier: str,
 ) -> list[dict[str, Any]]:
-    """Return only stages whose ``min_depth`` is satisfied by ``invocation_tier``.
+    """Return only stages whose tier band brackets ``invocation_tier``.
 
-    Tier ranking: ``shallow < standard < deep``. A stage with
-    ``min_depth: shallow`` runs in all tiers; ``min_depth: standard``
-    runs in standard and deep; ``min_depth: deep`` runs only in deep.
+    Tier ranking: ``shallow < standard < deep``. A stage runs iff
+    ``min_depth <= invocation_tier <= max_depth``. ``min_depth`` defaults
+    to ``"standard"`` (a new stage stays out of shallow until explicitly
+    opted in); ``max_depth`` defaults to ``"deep"`` (a new stage runs at
+    the highest tier by default).
 
-    Stages without an explicit ``min_depth`` default to ``"standard"`` —
-    a new stage added without thinking about tiering stays out of
-    shallow until explicitly opted in.
+    Most stages only need ``min_depth``. A stage that REPLACES another
+    at a lower tier — e.g. ``stage_19c_derive_static_spec`` replacing
+    ``stage_19b_derive_spawn_spec`` in shallow — pins both bounds so
+    only one of the alternatives runs per invocation.
     """
     tier_rank = _DEPTH_RANK[invocation_tier]
     return [
         s for s in stages
-        if _DEPTH_RANK.get(s.get("min_depth", _DEFAULT_MIN_DEPTH), 2) <= tier_rank
+        if (
+            _DEPTH_RANK.get(s.get("min_depth", _DEFAULT_MIN_DEPTH), 2) <= tier_rank
+            and tier_rank <= _DEPTH_RANK.get(s.get("max_depth", _DEFAULT_MAX_DEPTH), 3)
+        )
     ]
 
 
@@ -9331,6 +9350,7 @@ def _build_run_plan_stages(
         return out
 
     raw_stages = _filter_stages_by_depth(_load_stages_config()["stages"], depth)
+    surviving_ids = {s["id"] for s in raw_stages}
     out_stages: list[dict[str, Any]] = []
     for template in raw_stages:
         # Deep-copy: _load_stages_config is lru_cached, so its returned dict's
@@ -9346,6 +9366,17 @@ def _build_run_plan_stages(
             stage["expected_outputs"] = [p.format(**ctx) for p in stage["expected_outputs"]]
         if isinstance(stage.get("stdout"), str):
             stage["stdout"] = stage["stdout"].format(**ctx)
+        # Drop dangling depends_on entries — a stage referencing a
+        # tier-filtered predecessor must not surface that reference to
+        # the orchestrator. ``stage_20_spawn_reviewers`` for example
+        # depends on both ``stage_19b_derive_spawn_spec`` and
+        # ``stage_19c_derive_static_spec``; only one survives the filter
+        # per invocation, and the other would otherwise look like an
+        # unknown-stage reference to depends-on consistency checks.
+        if "depends_on" in stage and isinstance(stage["depends_on"], list):
+            stage["depends_on"] = [
+                d for d in stage["depends_on"] if d in surviving_ids
+            ]
         out_stages.append(stage)
     return out_stages
 
@@ -10446,6 +10477,119 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
             "from_required": from_required,
             "from_best_effort": from_best_effort,
             "required_coverage_gaps": len(spawn_gap_findings),
+        },
+        "generated_at": now_iso,
+    }
+    return _write_spawn_spec(spec, cr_dir)
+
+
+def cmd_derive_static_spec(args: argparse.Namespace) -> int:
+    """Emit a static spawn spec for shallow-tier reviews (PLN-807).
+
+    Shallow skips ``stage_15*`` (coverage critic), ``stage_16``
+    (arbitrate-budget), and ``stage_19b_derive_spawn_spec`` because the
+    routing/critic layer has nothing to decide — the fleet is fixed:
+    BHA × N partitions + BHB + unified_auditor. This subcommand writes
+    that fleet directly into ``spawn.json.spec`` so ``stage_20`` can
+    spawn it via the same orchestration path standard runs use.
+
+    ``arbitrate_status: "static"`` differentiates this spec from
+    ``"fallback"`` (a derive failure) — stage_20 treats both
+    identically (use the spec verbatim, skip the bucket walk), but the
+    distinct status preserves telemetry so operators can tell "user
+    explicitly chose shallow" from "the standard derive crashed".
+
+    Fast-path passthrough mirrors ``cmd_derive_spawn_spec``: when
+    ``route.fast_path`` is true the spec emits one ``fast`` agent and
+    the bucket walk is skipped. The fast-path branch behaves
+    identically across tiers — it's a small-PR optimization, not a
+    tier opinion.
+
+    Failure modes: missing/malformed ``partitions.json`` emits a
+    ``"fallback"`` sentinel (same as ``cmd_derive_spawn_spec``) so the
+    orchestrator walks the static reviewer table — review must never be
+    blocked by an upstream stage's output failure.
+    """
+    cr_dir = Path(args.cr_dir)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    route = _read_spawn_state(cr_dir).get("route", {}) or {}
+    if not isinstance(route, dict):
+        route = {}
+    models = _spawn_resolve_models(route)
+    fast_path = bool(route.get("fast_path", False))
+
+    if fast_path:
+        spec = {
+            "fast_path": True,
+            "gated_by_verify": False,
+            "arbitrate_status": "static",
+            "cr_dir": str(cr_dir),
+            "agents": [{
+                "agent_id": "fast",
+                "reviewer": "fast_path_reviewer",
+                "model": str(models.get("fast_path_reviewer", "sonnet")),
+                "partitioned": False,
+                "patches_file": "patches_all.txt",
+                "source": "fast_path",
+                "bucket": "fast_path",
+            }],
+            "skipped": [],
+            "stats": {
+                "agent_count": 1,
+                "bha_count": 0,
+                "domain_critic_count": 0,
+                "from_required": 0,
+                "from_best_effort": 0,
+            },
+            "generated_at": now_iso,
+        }
+        return _write_spawn_spec(spec, cr_dir)
+
+    partitions_path = Path(args.partitions)
+    partitions_blob = _read_optional_json(partitions_path, None)
+    if not isinstance(partitions_blob, dict):
+        spec = _spawn_spec_fallback(
+            "partitions_missing_or_malformed", cr_dir, now_iso,
+        )
+        return _write_spawn_spec(spec, cr_dir)
+    partitions = [
+        p for p in (partitions_blob.get("partitions") or []) if isinstance(p, dict)
+    ]
+
+    # Synthetic plan: shallow fleet is exactly BHA + BHB + unified_auditor.
+    # Reusing _derive_spawn_agents_from_plan keeps BHA partition expansion,
+    # docs-only (no_partitions) handling, dedup, and patches-file naming
+    # in one place instead of duplicating per-tier logic.
+    static_plan: dict[str, Any] = {
+        "required": [
+            {"reviewer": "bug_hunter_a", "source": "core"},
+            {"reviewer": "bug_hunter_b", "source": "core"},
+            {"reviewer": "unified_auditor", "source": "core"},
+        ],
+        "best_effort": [],
+    }
+
+    agents, skipped = _derive_spawn_agents_from_plan(
+        static_plan, partitions, models,
+        bha_partitions_cap=DEFAULT_MAX_BHA_AGENTS,
+    )
+
+    bha_count = sum(1 for a in agents if a["reviewer"] == "bug_hunter_a")
+    spec = {
+        "fast_path": False,
+        "gated_by_verify": False,
+        "arbitrate_status": "static",
+        "cr_dir": str(cr_dir),
+        "agents": agents,
+        "skipped": skipped,
+        "stats": {
+            "agent_count": len(agents),
+            "bha_count": bha_count,
+            "domain_critic_count": 0,
+            "from_required": len(agents),
+            "from_best_effort": 0,
+            "required_coverage_gaps": 0,
         },
         "generated_at": now_iso,
     }
