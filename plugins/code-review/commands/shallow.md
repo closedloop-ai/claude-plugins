@@ -32,7 +32,7 @@ This command is shorthand for `/start --depth shallow`. Follow every instruction
 
 ## When NOT to use
 
-If the PR is > 3000 LOC, touches schema/migrations, or modifies public API surfaces (plugin.json, index.ts, __init__.py), shallow will emit a `tier_mismatch_nudge` LOW finding suggesting `--depth standard`. Pay attention to that nudge — those are the cases shallow's missing reviewers commonly catch.
+If the PR is > 3000 LOC, touches schema/migrations, or modifies public API surfaces (plugin.json, index.ts, __init__.py), shallow will emit a `tier_mismatch_nudge` MEDIUM finding (category `Coverage`) suggesting `--depth standard`. Pay attention to that nudge — those are the cases shallow's missing reviewers commonly catch.
 
 ## Execution
 

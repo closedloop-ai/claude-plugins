@@ -31,7 +31,7 @@ Run a multi-agent code review with partitioned deep review, deterministic hygien
 
 The `--depth` flag selects which reviewer fleet runs. Default `standard`. Bare `/start` invocations preserve historical behavior.
 
-- **shallow** — hygiene + BHA (partitioned at >5000 LOC) + BHB + unified_auditor + verifier. Skips signal extraction, coverage planning/critic, premise_reviewer, and all `critic-gates.json` entries. Static spawn spec; no routing/critic decisions. Hygiene emits a `tier_mismatch_nudge` LOW finding when the PR's diff size, schema/migration paths, or public API surface suggest standard would catch more.
+- **shallow** — hygiene + BHA (partitioned at >5000 LOC) + BHB + unified_auditor + verifier. Skips signal extraction, coverage planning/critic, premise_reviewer, and all `critic-gates.json` entries. Static spawn spec; no routing/critic decisions. Hygiene emits a `tier_mismatch_nudge` MEDIUM finding (category `Coverage`) when the PR's diff size, schema/migration paths, or public API surface suggest standard would catch more.
 - **standard** — current behavior. Full fleet with signal-driven routing, coverage critic, premise, repo-specific critic activation via `critic-gates.json`. Budget arithmetic reserves BHA partitions FIRST (Phase 4) and caps total domain critics at `DOMAIN_CRITIC_CAP = 5` across both required and best-effort buckets. Required critics dropped by the cap emit coverage-gap findings.
 - **deep** — standard plus future heavy reviewers gated by `min_depth: deep` in `stages.json`. Reserved for FEA-1401 Impact Analyzer; today behaves identically to standard.
 

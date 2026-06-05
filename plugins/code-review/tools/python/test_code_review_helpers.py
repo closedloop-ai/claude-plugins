@@ -5517,19 +5517,9 @@ class TestComputeHashes:
 
 class TestAutoIncremental:
     def _make_args(self, tmp_path: Path, **overrides: Any) -> Any:
-        import argparse
+        from conftest import make_auto_incremental_args
 
-        defaults: dict[str, Any] = {
-            "cache_dir": str(tmp_path),
-            "key": "branch:main",
-            "diff_tip": "HEAD",
-            "original_scope": "main...HEAD",
-            "full_review": "false",
-            "since_last_review": "false",
-            "mode": "local",
-        }
-        defaults.update(overrides)
-        return argparse.Namespace(**defaults)
+        return make_auto_incremental_args(tmp_path, **overrides)
 
     def test_full_review_flag(self, tmp_path: Path, capsys: Any) -> None:
         ns = self._make_args(tmp_path, full_review="true")
@@ -19775,8 +19765,11 @@ class TestPLN807Phase5TierMismatchNudge:
     """PLN-807 Phase 5: hygiene-stage tier-mismatch nudge.
 
     When shallow runs on a PR that would have benefited from premise
-    or critic-gates entries, a single LOW system-scoped finding is
-    emitted so the user can see what was skipped. Heuristics:
+    or critic-gates entries, a single MEDIUM system-scoped finding
+    (category ``Coverage``) is emitted so the user can see what was
+    skipped. MEDIUM rather than LOW because validate's
+    SEVERITY_NORMALIZE map DISCARDs ``"low"`` — a LOW nudge would
+    never reach the operator. Heuristics:
       - diff > 3000 LOC
       - schema/migration paths
       - public API surface files (plugin.json, index.ts, __init__.py, etc.)
@@ -20136,32 +20129,24 @@ class TestPLN807ReviewFixes:
 
     # ---------- Auto-incremental tier gate ----------
 
-    def _make_auto_inc_args(
-        self, *, cache_dir: Path, key: str, diff_tip: str,
-        full_review: str = "false", since_last_review: str = "false",
-        mode: str = "local", depth: str | None = None,
-        original_scope: str = "origin/main..HEAD",
-    ) -> argparse.Namespace:
-        return argparse.Namespace(
-            cache_dir=str(cache_dir),
-            key=key,
-            diff_tip=diff_tip,
-            base_ref="main",
-            original_scope=original_scope,
-            full_review=full_review,
-            since_last_review=since_last_review,
-            mode=mode,
-            depth=depth,
-        )
-
     def test_auto_incremental_skips_when_cached_tier_weaker(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A cached shallow entry must not seed a standard run's
         incremental scope."""
         from code_review_helpers import (
             _write_review_state, cmd_auto_incremental,
         )
+        from conftest import make_auto_incremental_args
+
+        # The tier-gate branch lives inside ``if mode == "local" and
+        # auto_enabled and cache_dir:`` where ``auto_enabled`` is
+        # ``os.environ.get("CR_AUTO_INCREMENTAL", "1") == "1"``. CI or
+        # a developer shell with ``CR_AUTO_INCREMENTAL=0`` would skip
+        # the entire block and the test's assertion against
+        # ``"tier upgrade"`` would fail spuriously.
+        monkeypatch.setenv("CR_AUTO_INCREMENTAL", "1")
 
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
@@ -20169,8 +20154,8 @@ class TestPLN807ReviewFixes:
             "sha": "abc123", "tier": "shallow", "success": True,
         }}}
         _write_review_state(cache_dir, state)
-        ns = self._make_auto_inc_args(
-            cache_dir=cache_dir, key="feat:main", diff_tip="HEAD",
+        ns = make_auto_incremental_args(
+            cache_dir, key="feat:main", diff_tip="HEAD",
             depth="standard",
         )
         rc = cmd_auto_incremental(ns)
@@ -20185,14 +20170,15 @@ class TestPLN807ReviewFixes:
         from code_review_helpers import (
             _write_review_state, cmd_auto_incremental,
         )
+        from conftest import make_auto_incremental_args
 
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
         _write_review_state(cache_dir, {"reviews": {"feat:main": {
             "sha": "abc123", "tier": "shallow", "success": True,
         }}})
-        ns = self._make_auto_inc_args(
-            cache_dir=cache_dir, key="feat:main", diff_tip="HEAD",
+        ns = make_auto_incremental_args(
+            cache_dir, key="feat:main", diff_tip="HEAD",
             since_last_review="true", depth="deep",
         )
         rc = cmd_auto_incremental(ns)
@@ -20201,26 +20187,38 @@ class TestPLN807ReviewFixes:
 
     def test_auto_incremental_without_depth_preserves_legacy_behavior(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When --depth is absent (legacy caller), no tier gating."""
+        from unittest.mock import patch
+
         from code_review_helpers import (
             _write_review_state, cmd_auto_incremental,
         )
+        from conftest import make_auto_incremental_args
+
+        monkeypatch.setenv("CR_AUTO_INCREMENTAL", "1")
 
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
         _write_review_state(cache_dir, {"reviews": {"feat:main": {
             "sha": "abc123", "tier": "shallow", "success": True,
         }}})
-        ns = self._make_auto_inc_args(
-            cache_dir=cache_dir, key="feat:main", diff_tip="HEAD", depth=None,
+        ns = make_auto_incremental_args(
+            cache_dir, key="feat:main", diff_tip="HEAD", depth=None,
         )
-        rc = cmd_auto_incremental(ns)
+        # Mock ``_run_git`` so the ancestry check succeeds deterministically
+        # regardless of the test environment's git state. Without this, a
+        # synthetic SHA like ``"abc123"`` raises ``CalledProcessError`` (git
+        # present) or ``FileNotFoundError`` (git absent), and the test would
+        # exercise the wrong branch — or fail outright. Matches the pattern
+        # in every other cmd_auto_incremental test that reaches this path.
+        with patch("code_review_helpers._run_git", return_value=""):
+            rc = cmd_auto_incremental(ns)
         assert rc == 0
         out = json.loads(capsys.readouterr().out.strip())
-        # Output is mode-detail (either auto-incremental success or
-        # ancestry check fail); the important invariant is that the
-        # "tier upgrade" skip path did NOT fire.
+        # The important invariant: the "tier upgrade" skip path did NOT
+        # fire (depth=None bypasses tier gating regardless of cached tier).
         assert "tier upgrade" not in (out.get("review_mode_line") or "")
 
     # ---------- stage_19c depends on stage_19_cache_check (fast-path safe) ----------
