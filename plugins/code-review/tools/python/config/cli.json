@@ -393,6 +393,13 @@
           "default": "code-review",
           "choices": "$$COVERAGE_SCOPES_SORTED",
           "help": "Rule scope filter (default: code-review)"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "choices": ["shallow", "standard", "deep"],
+          "help": "Invocation tier (FEA-1401). Gates COVERAGE_CORE_CONDITIONAL reviewers like the Impact Analyzer."
         }
       ]
     },

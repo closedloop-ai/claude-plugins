@@ -78,17 +78,39 @@ Then continue with:
 **Recommendation:** [fix]
 ```
 
+**Impact Analyzer findings (FEA-1401):** when a finding has
+`category: "ImpactAnalysis"` AND non-empty `external_impact[]`,
+append an **Affected callsites** block AFTER `Recommendation`:
+
+```markdown
+### Issue Title
+**File:** `path/file.ts:line`
+**Reported by:** Impact Analyzer
+**Issue:** [description]
+**Recommendation:** [fix]
+
+**Affected callsites** ({len(external_impact)}):
+- `{external_impact[i].file}:{external_impact[i].line}` — {external_impact[i].description} ({external_impact[i].impact_type})
+- ...
+```
+
+Sort `external_impact[]` entries by `(file, line)` ascending. Cap at
+10 displayed; if more, append a pointer line:
+`(+{N-10} more — see review_result.json finding.external_impact[])`.
+
 ---
 
 ## HIGH ([count])
 
-[List all high priority issues — same format]
+[List all high priority issues — same format, including the
+Impact Analyzer **Affected callsites** block when applicable]
 
 ---
 
 ## MEDIUM ([count])
 
-[List all medium priority issues — same format]
+[List all medium priority issues — same format, including the
+Impact Analyzer **Affected callsites** block when applicable]
 
 ---
 
@@ -180,7 +202,22 @@ Reviewers (FP rate / overrides):
   {reviewer}: {fp_rate:.2f} / {re_asserted}{ "  ⚠ override" if re_asserted > 0 else "" }
 Justification rate: {stats.justification.rate:.2f} (threshold {threshold} — {ALERT|OK})
 Premise MEDIUM cumulative: {stats.premise_cumulative_medium_count} (gate threshold {premise_cumulative_medium})
+Impact gateable count:     {stats.impact_cumulative_count} (gate threshold {impact_cumulative})
 Partition mode: {verify_manifest.partition_mode} ({verify_manifest.partition_count} partitions)
+```
+
+**Deferred Impact symbols (FEA-1401)** — render this block ONLY when
+the Impact Analyzer's `agent_impact.json` carries a non-empty
+`deferred_symbols[]` list (cost cap fired, more candidate symbols
+existed than the 30-symbol limit allowed). Render after the Partition
+mode line. If the file is absent (Impact didn't spawn) or
+`deferred_symbols[]` is empty, omit entirely.
+
+```
+=== Deferred Impact symbols ({len(deferred_symbols)}) ===
+{deferred_symbols[i].symbol} at {deferred_symbols[i].file}:{deferred_symbols[i].line} — {deferred_symbols[i].change_nature}
+...
+ℹ️ These symbols were identified as candidates but not analyzed due to the 30-symbol cap. Consider re-running on a narrower scope to cover them.
 ```
 
 Render the **Partition mode** line by reading `<CR_DIR>/verify_manifest.json` → `partition_mode` ("unified" | "partitioned" | "unknown") and `partition_count` (int). The Reviewers block above keys off the `reviewer` field which `cmd_collect_findings` derives from the agent filename (`agent_bha_p0.json` → `reviewer='bha_p0'`), so BHA naturally appears as one bucket per partition under partitioned mode and a single `bha_p0` bucket under unified mode (only one partition exists). Defensive: if `verify_manifest.json` is missing (pre-PLN-774 cache or hygiene-only run), omit this line — do NOT fabricate a value.

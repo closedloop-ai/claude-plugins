@@ -157,6 +157,17 @@ Write `.closedloop-ai/code-review-findings.json`:
 
 The `findings` array contains the envelope's `verified[]` only (NOT `rejected[]`, `justified[]`, or `pending_verification[]` — those have separate files; see 6c and 6d). When no envelope exists (verifier disabled / shadow mode), fall back to the legacy validate output. The workflow's `post-comments` step handles formatting, dedup against existing comments, and error handling.
 
+**Impact Analyzer findings (FEA-1401).** Findings with
+`category: "ImpactAnalysis"` carry a populated `external_impact[]`
+array (file/line/impact_type/description/callsite_snippet/
+callsite_snippet_hash/confidence per entry) and a `grep_query_used`
+string. Both fields are part of the canonical finding shape and are
+preserved through validate verbatim. The `post-comments` workflow
+renders `external_impact[]` as a sub-bullet list inside the inline
+comment body so reviewers see the callsite blast radius alongside the
+anchor finding. No special handling is required from this prompt —
+the existing `findings[]` envelope is the single source of truth.
+
 ### 6c: Write Dismissed and Pending Findings (PLN-722)
 
 Read `$CR_DIR/review_result.json` (the canonical envelope). If absent, skip this step entirely — the run pre-dates PLN-722 or `stage_24a_verify_consolidate` did not produce output, and the dismissed-findings UX is meaningless without verifier verdicts.

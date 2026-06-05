@@ -203,14 +203,39 @@ pipeline; you may emit them when relevant, otherwise omit):
     may set it for finer-grained labels.
   - "reasoning_certificate": object — Premise findings MUST emit this
     with a shape matching their subcategory (premise_prompt.txt
-    documents the required fields). Other reviewers may emit one too
-    (kinds: impact, test_quality, sibling_pattern, bha, bhb, auditor)
-    but it is not required.
+    documents the required fields). The Impact Analyzer MUST emit
+    `{kind: "impact", fields: {...}}` per impact_analyzer_prompt.txt.
+    Other reviewers (BHA, BHB, auditor, test_quality, sibling_pattern)
+    may emit one too but it is not required.
   - "justified": bool (default false) and "justification": object —
     set together when the author left an inline comment defending the
     code that addresses the specific concern. The verifier independently
     audits these (JUSTIFIED-VALID / JUSTIFIED-INVALID); do NOT discard a
     finding because the author defended it.
+  - "external_impact": array of objects — populated ONLY by the Impact
+    Analyzer (FEA-1401, category "ImpactAnalysis"). Each entry
+    describes one external callsite that breaks under the diff's
+    symbol change:
+        {
+          "file": "<repo-relative path>",
+          "line": <int>,
+          "impact_type": "<signature_mismatch | type_incompatibility "
+                         "| semantic_drift | deleted_reference "
+                         "| stale_string_reference | behavioral_change "
+                         "| guard_needed>",
+          "description": "<one-clause: what breaks, why>",
+          "callsite_snippet": "<exact source line at file:line>",
+          "callsite_snippet_hash": "<deterministic hex digest>",
+          "confidence": <float 0..1>
+        }
+    The anchor of the finding (its own ``file``/``line``) is still the
+    diff line where the symbol changed; ``external_impact[]`` entries
+    can cite any repo file. Validate bypasses the line-in-changed-range
+    rule for these informational attachments.
+  - "grep_query_used": string — required alongside ``external_impact[]``
+    on Impact Analyzer findings. The verifier replays this exact query
+    to detect hallucinated callsite lists; substantially different
+    replay results → REJECTED.
 
 If you find NO issues, write: {"findings": []}
 

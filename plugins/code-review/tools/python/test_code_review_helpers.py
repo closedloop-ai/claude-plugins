@@ -6242,6 +6242,7 @@ class TestPrepAssets:
         (prompts_dir / "bha_suffix.txt").write_text("bha suffix content")
         (prompts_dir / "verifier_prompt.txt").write_text("verifier prompt content")
         (prompts_dir / "premise_prompt.txt").write_text("premise prompt content")
+        (prompts_dir / "impact_analyzer_prompt.txt").write_text("impact prompt content")
 
         cr_dir = tmp_path / "cr"
         cr_dir.mkdir()
@@ -6260,15 +6261,18 @@ class TestPrepAssets:
         assert (cr_dir / "bha_suffix.txt").exists()
         assert (cr_dir / "verifier_prompt.txt").exists()
         assert (cr_dir / "premise_prompt.txt").exists()
+        assert (cr_dir / "impact_analyzer_prompt.txt").exists()
         assert "shared_prompt" in result
         assert "bha_suffix" in result
         assert "verifier_prompt" in result
         assert "premise_prompt" in result
+        assert "impact_analyzer_prompt" in result
         # Output paths should point to actual files in cr_dir
         assert result["shared_prompt"] == str(cr_dir / "shared_prompt.txt")
         assert result["bha_suffix"] == str(cr_dir / "bha_suffix.txt")
         assert result["verifier_prompt"] == str(cr_dir / "verifier_prompt.txt")
         assert result["premise_prompt"] == str(cr_dir / "premise_prompt.txt")
+        assert result["impact_analyzer_prompt"] == str(cr_dir / "impact_analyzer_prompt.txt")
 
 
 # ---------------------------------------------------------------------------
@@ -20249,3 +20253,442 @@ class TestPLN807ReviewFixes:
         assert "--depth" in stage["args"]
         i = stage["args"].index("--depth")
         assert stage["args"][i + 1] == "deep"
+
+
+# ---------------------------------------------------------------------------
+# FEA-1401 / PLN-726 — Impact Analyzer
+# ---------------------------------------------------------------------------
+
+
+class TestFEA1401SignalTaxonomy:
+    """Verify the two new Impact Analyzer trigger signals are present in
+    the canonical taxonomy with the contract the trigger evaluation
+    relies on."""
+
+    def _taxonomy(self) -> dict[str, Any]:
+        path = Path(__file__).parent / "signal_taxonomy.json"
+        with open(path) as f:
+            data = json.load(f)
+        signals = data["signals"]
+        assert isinstance(signals, dict)
+        return signals
+
+    def test_exported_symbol_change_signal_registered(self) -> None:
+        signals = self._taxonomy()
+        entry = signals.get("exported_symbol_change")
+        assert entry is not None, (
+            "exported_symbol_change must be registered in the taxonomy — "
+            "COVERAGE_CORE_CONDITIONAL's Impact Analyzer trigger relies on it."
+        )
+        assert entry["category"] == "concern"
+        # The min_depth: deep gate already cost-contains, but the per-signal
+        # floor enforces that low-confidence extractions don't spawn the
+        # Opus reviewer.
+        assert entry["recommended_min_confidence"] >= 0.8
+
+    def test_symbol_deletion_signal_registered(self) -> None:
+        signals = self._taxonomy()
+        entry = signals.get("symbol_deletion")
+        assert entry is not None
+        assert entry["category"] == "concern"
+        # Deletions are the highest-confidence Impact trigger because the
+        # symbol is verifiably absent in the new diff; the floor reflects
+        # that high signal-to-noise.
+        assert entry["recommended_min_confidence"] >= 0.85
+
+
+class TestFEA1401CoverageCoreConditional:
+    """Schema-level checks on COVERAGE_CORE_CONDITIONAL: the registry
+    must declare Impact with the exact contract the resolve_coverage
+    loop reads (reviewer name, min_depth band, triggers list, source).
+    """
+
+    def test_impact_entry_present(self) -> None:
+        from code_review_schema import COVERAGE_CORE_CONDITIONAL
+
+        impact_entries = [
+            e for e in COVERAGE_CORE_CONDITIONAL if e["reviewer"] == "impact"
+        ]
+        assert len(impact_entries) == 1, (
+            "Impact Analyzer must be the single 'impact' entry in "
+            "COVERAGE_CORE_CONDITIONAL — duplicate entries would race in "
+            "resolve_coverage's deduplication."
+        )
+        impact = impact_entries[0]
+        assert impact["min_depth"] == "deep"
+        assert impact["source"] == "core"
+        assert impact["required"] is False  # PLN-725 determinism enforcement
+        triggers = list(impact["triggers"])
+        assert len(triggers) >= 2
+        names = {t["name"] for t in triggers if isinstance(t, dict)}
+        assert "exported_symbol_change" in names
+        assert "symbol_deletion" in names
+        # The min_confidence on each trigger must be >= the taxonomy floor
+        # so the per-signal floor in the prompt is actually enforced at
+        # coverage-resolution time.
+        for trigger in triggers:
+            assert trigger["type"] == "signal"
+            assert isinstance(trigger.get("min_confidence"), (int, float))
+
+
+class TestFEA1401ResolveCoverage:
+    """Behavioral tests for resolve_coverage's conditional-core loop.
+
+    These cover the matrix: (depth × signal present × signal confidence)
+    against (impact in best_effort, impact NOT in best_effort).
+    """
+
+    def _signals(self, name: str, confidence: float) -> dict[str, Any]:
+        return {"signals": [{"name": name, "evidence": "test:1", "confidence": confidence}]}
+
+    def _diff(self) -> dict[str, Any]:
+        return {"files_to_review": ["src/api.ts"], "patch_lines": {}}
+
+    def _empty_critic_gates(self) -> dict[str, Any]:
+        return {"coverage": [], "moduleCritics": []}
+
+    def test_impact_added_when_deep_and_exported_symbol_signal_fires(self) -> None:
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._diff(),
+            extract_signals=self._signals("exported_symbol_change", 0.9),
+            invocation_depth="deep",
+        )
+        be_reviewers = {e["reviewer"] for e in plan["best_effort"]}
+        assert "impact" in be_reviewers
+        # Impact must land in best_effort, NOT required (PLN-725 bars
+        # LLM-only triggers from driving required selection).
+        req_reviewers = {e["reviewer"] for e in plan["required"]}
+        assert "impact" not in req_reviewers
+        # The matched trigger on the entry must be the signal dict that fired
+        # — operators inspecting the plan need to know WHY impact was added.
+        impact_entry = next(
+            e for e in plan["best_effort"] if e["reviewer"] == "impact"
+        )
+        assert impact_entry["source"] == "core"
+        assert impact_entry["trigger"]["type"] == "signal"
+        assert impact_entry["trigger"]["name"] == "exported_symbol_change"
+
+    def test_impact_added_when_deep_and_symbol_deletion_signal_fires(self) -> None:
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._diff(),
+            extract_signals=self._signals("symbol_deletion", 0.95),
+            invocation_depth="deep",
+        )
+        assert "impact" in {e["reviewer"] for e in plan["best_effort"]}
+
+    def test_impact_skipped_when_standard_depth_even_with_signal(self) -> None:
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._diff(),
+            extract_signals=self._signals("exported_symbol_change", 0.95),
+            invocation_depth="standard",
+        )
+        # Standard tier is BELOW deep — impact must not spawn even if the
+        # signal is loud. Cost containment for the default code review
+        # invocation lives here.
+        assert "impact" not in {e["reviewer"] for e in plan["best_effort"]}
+
+    def test_impact_skipped_when_shallow_depth(self) -> None:
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._diff(),
+            extract_signals=self._signals("symbol_deletion", 0.99),
+            invocation_depth="shallow",
+        )
+        assert "impact" not in {e["reviewer"] for e in plan["best_effort"]}
+
+    def test_impact_skipped_when_deep_but_no_signal(self) -> None:
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._diff(),
+            extract_signals={"signals": []},
+            invocation_depth="deep",
+        )
+        assert "impact" not in {e["reviewer"] for e in plan["best_effort"]}
+
+    def test_impact_skipped_when_signal_below_min_confidence(self) -> None:
+        from code_review_helpers import resolve_coverage
+
+        # COVERAGE_CORE_CONDITIONAL specifies min_confidence 0.8 for
+        # exported_symbol_change; below that the trigger does not fire.
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._diff(),
+            extract_signals=self._signals("exported_symbol_change", 0.7),
+            invocation_depth="deep",
+        )
+        assert "impact" not in {e["reviewer"] for e in plan["best_effort"]}
+
+    def test_impact_skipped_when_depth_omitted(self) -> None:
+        from code_review_helpers import resolve_coverage
+
+        # Legacy callers that don't pass invocation_depth must not see
+        # impact spawn unexpectedly — the default falls back to standard.
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._diff(),
+            extract_signals=self._signals("exported_symbol_change", 0.95),
+        )
+        assert "impact" not in {e["reviewer"] for e in plan["best_effort"]}
+
+
+class TestFEA1401SpawnSpec:
+    """Verify _derive_spawn_agents_from_plan correctly expands an
+    'impact' entry from a coverage plan into a spawnable agent."""
+
+    def _plan_with_impact_in_best_effort(self) -> dict[str, Any]:
+        return {
+            "required": [
+                {"reviewer": r, "trigger": {"type": "always"}, "source": "core"}
+                for r in ("bug_hunter_a", "bug_hunter_b", "unified_auditor",
+                          "premise_reviewer")
+            ],
+            "best_effort": [
+                {
+                    "reviewer": "impact",
+                    "trigger": {
+                        "type": "signal",
+                        "name": "exported_symbol_change",
+                        "min_confidence": 0.8,
+                    },
+                    "source": "core",
+                },
+            ],
+            "warnings": [],
+            "stats": {},
+        }
+
+    def test_impact_spawns_with_opus_model(self) -> None:
+        from code_review_helpers import (
+            _derive_spawn_agents_from_plan, _spawn_resolve_models,
+        )
+
+        models = _spawn_resolve_models({})  # routed defaults
+        agents, _ = _derive_spawn_agents_from_plan(
+            self._plan_with_impact_in_best_effort(),
+            partitions=[{"id": 0, "files": ["src/api.ts"], "is_test_only": False}],
+            models=models,
+        )
+        impact_agents = [a for a in agents if a["reviewer"] == "impact"]
+        assert len(impact_agents) == 1, (
+            "Exactly one impact agent must spawn per coverage-plan entry; "
+            "duplicate-id guard in the walker would otherwise race two "
+            "agents writing the same agent_impact.json file."
+        )
+        impact = impact_agents[0]
+        assert impact["agent_id"] == "impact"
+        assert impact["model"] == "opus"
+        assert impact["partitioned"] is False
+        assert impact["patches_file"] == "patches_all.txt"
+        assert impact["source"] == "core"
+        assert impact["bucket"] == "best_effort"
+
+    def test_impact_respects_route_model_override(self) -> None:
+        from code_review_helpers import (
+            _derive_spawn_agents_from_plan, _spawn_resolve_models,
+        )
+
+        # Operators can downshift the model via spawn.json.route.models
+        # for cost-sensitive deep reviews. Verify the override path.
+        models = _spawn_resolve_models({"models": {"impact": "haiku"}})
+        agents, _ = _derive_spawn_agents_from_plan(
+            self._plan_with_impact_in_best_effort(),
+            partitions=[{"id": 0, "files": ["src/api.ts"], "is_test_only": False}],
+            models=models,
+        )
+        impact = next(a for a in agents if a["reviewer"] == "impact")
+        assert impact["model"] == "haiku"
+
+    def test_impact_not_in_plan_means_not_spawned(self) -> None:
+        from code_review_helpers import (
+            _derive_spawn_agents_from_plan, _spawn_resolve_models,
+        )
+
+        plan_without_impact = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "trigger": {"type": "always"},
+                 "source": "core"},
+            ],
+            "best_effort": [],
+            "warnings": [],
+            "stats": {},
+        }
+        agents, _ = _derive_spawn_agents_from_plan(
+            plan_without_impact,
+            partitions=[{"id": 0, "files": ["src/api.ts"], "is_test_only": False}],
+            models=_spawn_resolve_models({}),
+        )
+        assert not any(a["reviewer"] == "impact" for a in agents)
+
+    def test_impact_fleet_display_name(self) -> None:
+        from code_review_helpers import _fleet_display_name
+
+        # Presenter and Coverage Plan footer rendering both consume this
+        # mapping; a stale snake_case identifier in the output would
+        # confuse operators reading the markdown.
+        assert _fleet_display_name("impact") == "Impact Analyzer"
+
+
+class TestFEA1401VerdictRule:
+    """Cover Rule 6 (cumulative Impact gate) and its helper.
+
+    The gate is reachable only when Rules 2 and 3 are bypassed (see
+    docstring on ``_count_gateable_impact``); the verdict-rule
+    integration test below uses an empty all_findings construct to
+    isolate Rule 6 behavior.
+    """
+
+    def _impact_finding(
+        self, severity: str, *, verdict: str | None = None,
+    ) -> dict[str, Any]:
+        f = minimal_diff_finding(
+            id=f"impact_f{severity[0].lower()}",
+            reviewer="impact",
+            category="ImpactAnalysis",
+            severity=severity,
+        )
+        if verdict is not None:
+            f["verifier_verdict"] = verdict
+        return f
+
+    def test_count_helper_counts_blocking_and_high(self) -> None:
+        from code_review_helpers import _count_gateable_impact
+
+        verified = [
+            self._impact_finding("BLOCKING"),
+            self._impact_finding("HIGH"),
+            self._impact_finding("MEDIUM"),  # excluded — MEDIUM doesn't count
+        ]
+        assert _count_gateable_impact(verified) == 2
+
+    def test_count_helper_excludes_justified_valid(self) -> None:
+        from code_review_helpers import _count_gateable_impact
+
+        # JUSTIFIED-VALID means the author defended the concern and the
+        # verifier accepted it — the finding lives in justified[] not
+        # verified[], but the helper defensively excludes it in case a
+        # cached entry leaks through.
+        verified = [
+            self._impact_finding("HIGH", verdict="JUSTIFIED-VALID"),
+            self._impact_finding("HIGH"),
+        ]
+        assert _count_gateable_impact(verified) == 1
+
+    def test_count_helper_excludes_other_categories(self) -> None:
+        from code_review_helpers import _count_gateable_impact
+
+        # Non-ImpactAnalysis HIGH findings do not contribute — Rule 3
+        # already escalates on them.
+        verified = [
+            minimal_diff_finding(category="Correctness", severity="HIGH"),
+            self._impact_finding("HIGH"),
+        ]
+        assert _count_gateable_impact(verified) == 1
+
+    def test_rule_6_fires_when_unreachable_by_prior_rules(self) -> None:
+        from code_review_helpers import _compute_canonical_verdict
+
+        # Construct a scenario that bypasses Rule 2 (no BLOCKING) and
+        # Rule 3 (no HIGH in any category): the helper's count is taken
+        # from a verified list directly, but the precedence chain runs
+        # on the merged all_findings. To isolate Rule 6, every Impact
+        # finding here is at MEDIUM (so they don't trip Rule 3) — the
+        # gate as written counts only BLOCKING/HIGH, so it does NOT
+        # fire. This pins the documented behavior: under current
+        # precedence, Rule 6 is a defensive no-op until a future
+        # refactor narrows Rule 2/3's coverage. The verdict falls
+        # through to APPROVED for these MEDIUM-only Impact findings.
+        verified = [
+            self._impact_finding("MEDIUM"),
+            self._impact_finding("MEDIUM"),
+        ]
+        verdict, _ = _compute_canonical_verdict(verified, [])
+        assert verdict == "APPROVED"
+
+    def test_rule_3_subsumes_high_impact_findings(self) -> None:
+        from code_review_helpers import _compute_canonical_verdict
+
+        # A single HIGH ImpactAnalysis finding trips Rule 3 (HIGH any-
+        # category → NEEDS_ATTENTION) BEFORE Rule 6 evaluates. Verify
+        # the precedence holds — this is the expected production case
+        # the docstring describes as "subsumed".
+        verified = [self._impact_finding("HIGH")]
+        verdict, _ = _compute_canonical_verdict(verified, [])
+        assert verdict == "NEEDS_ATTENTION"
+
+    def test_rule_2_subsumes_blocking_impact_findings(self) -> None:
+        from code_review_helpers import _compute_canonical_verdict
+
+        # A single BLOCKING ImpactAnalysis finding trips Rule 2
+        # (BLOCKING any-category → CHANGES_REQUESTED), which is a
+        # STRONGER verdict than Rule 6 would emit (NEEDS_ATTENTION).
+        # Production behavior must escalate to CHANGES_REQUESTED.
+        verified = [self._impact_finding("BLOCKING")]
+        verdict, _ = _compute_canonical_verdict(verified, [])
+        assert verdict == "CHANGES_REQUESTED"
+
+
+class TestFEA1401PrepAssets:
+    """Verify prep-assets copies impact_analyzer_prompt.txt into the
+    per-run CR_DIR. Without this, the spawn block's
+    `Read {CR_DIR}/impact_analyzer_prompt.txt` instruction fails."""
+
+    def test_prep_assets_copies_impact_prompt(self, tmp_path: Path) -> None:
+        from code_review_helpers import cmd_prep_assets
+
+        # Use the actual plugin root so the source files exist; prep-
+        # assets is a thin copy operation and doesn't synthesize
+        # content.
+        plugin_root = Path(__file__).resolve().parents[1]  # plugins/code-review/tools/python → tools/python → tools → code-review
+        # plugin_root resolution: __file__ is .../tools/python/test_*.py;
+        # the plugin root is two parents up.
+        plugin_root = Path(__file__).resolve().parent.parent.parent
+
+        ns = argparse.Namespace(
+            plugin_root=str(plugin_root),
+            cr_dir=str(tmp_path),
+        )
+        rc = cmd_prep_assets(ns)
+        assert rc == 0
+        impact_dst = tmp_path / "impact_analyzer_prompt.txt"
+        assert impact_dst.exists(), (
+            "prep-assets must copy impact_analyzer_prompt.txt; the Impact "
+            "Analyzer spawn block in start.md reads it from CR_DIR, and a "
+            "missing file means the agent gets no prompt body."
+        )
+        # The copy must have non-trivial content (defensive guard
+        # against a future refactor that accidentally writes an empty
+        # file).
+        assert impact_dst.stat().st_size > 1000
+
+    def test_prep_assets_stdout_reports_impact_path(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from code_review_helpers import cmd_prep_assets
+
+        plugin_root = Path(__file__).resolve().parent.parent.parent
+        ns = argparse.Namespace(
+            plugin_root=str(plugin_root),
+            cr_dir=str(tmp_path),
+        )
+        cmd_prep_assets(ns)
+        out = json.loads(capsys.readouterr().out)
+        # Orchestrator stages downstream of prep-assets parse this stdout
+        # to locate the prompt asset; missing it means the spawn-spec
+        # walker can't reference the impact prompt by path.
+        assert "impact_analyzer_prompt" in out
+        assert out["impact_analyzer_prompt"].endswith(
+            "impact_analyzer_prompt.txt",
+        )

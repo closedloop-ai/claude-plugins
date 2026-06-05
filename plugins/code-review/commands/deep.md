@@ -1,9 +1,9 @@
 ---
-description: Deep code review — standard fleet plus any reviewers tagged min_depth=deep (reserved for FEA-1401 Impact Analyzer)
+description: Deep code review — standard fleet plus Impact Analyzer (FEA-1401) when changed exported symbols are detected
 argument-hint: "[scope] [--github] [--base <ref>] [--since-last-review] [--full-review]"
 ---
 
-# Deep Code Review (PLN-807)
+# Deep Code Review (PLN-807 + FEA-1401)
 
 This command is shorthand for `/start --depth deep`. Follow every instruction in `${CLAUDE_PLUGIN_ROOT}/commands/start.md` verbatim, with one binding:
 
@@ -11,19 +11,21 @@ This command is shorthand for `/start --depth deep`. Follow every instruction in
 
 ## What deep does
 
-Today deep produces the same fleet as standard — no stage has `min_depth: deep` yet. The slot exists so future heavy reviewers (FEA-1401 Impact Analyzer being the next planned occupant) can ship behind an explicit opt-in without forcing the cost onto every standard review.
+Deep produces the standard fleet plus the **Impact Analyzer** (FEA-1401) when signal extraction detects `exported_symbol_change` or `symbol_deletion` in the diff. The analyzer identifies changed exported symbols (function signatures, type definitions, exported constants, class API, schema fields, deletions), greps the codebase for external usages outside the diff, and emits findings whose `external_impact[]` array lists every callsite that breaks under the new signature.
 
 | Component | shallow | standard | deep |
 |---|---|---|---|
 | All standard reviewers | (subset) | ✓ | ✓ |
-| `impact_analyzer` (future, FEA-1401) | ✗ | ✗ | ✓ |
+| Impact Analyzer (FEA-1401) | ✗ | ✗ | ✓ (when triggered) |
 
-The `min_depth: deep` band on a stages.json entry is the seam future heavy reviewers slot into.
+The Impact Analyzer is **conditional**: it only spawns when at least one trigger signal fires above the recommended confidence floor (`exported_symbol_change ≥ 0.8`, `symbol_deletion ≥ 0.85`). A deep run on a docs-only diff or an internal refactor that exposes no new external surface will skip the analyzer entirely. Findings carry `category: "ImpactAnalysis"` and are verifier-audited per callsite (snippet-hash check, grep query replayed for the first 5 findings per batch). ≥2 verified BLOCKING/HIGH Impact findings escalate the verdict to `NEEDS_ATTENTION` (Rule 6).
+
+Cost containment: 30 symbols × 50 callsites per symbol hard cap, 5-minute wall budget, 100 grep ops (soft), 250 read ops (soft). Deferred symbols beyond cap surface in the Coverage Plan footer so operators see what was sampled vs analyzed.
 
 ## When to use
 
-- Architectural refactors where cross-file impact matters and the Impact Analyzer's per-callsite analysis is wanted (once shipped).
-- Releases where review cost is acceptable relative to risk.
+- Architectural refactors where cross-file impact matters and per-callsite blast-radius analysis is worth ~$0.25–$2 of Opus cost.
+- Releases where review cost is acceptable relative to risk (public API surface changes, migrations, library upgrades).
 - Cases where shallow or standard already ran and surfaced a `tier_mismatch_nudge` suggesting deep would have caught more.
 
 ## Cache semantics

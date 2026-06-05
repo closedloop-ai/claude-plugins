@@ -39,6 +39,7 @@ from code_review_schema import (
     CACHE_NAMESPACE_SIGNALS,
     CACHE_NAMESPACE_VERIFICATIONS,
     COVERAGE_CHANGE_CLASSES,
+    COVERAGE_CORE_CONDITIONAL,
     COVERAGE_CORE_REQUIRED,
     COVERAGE_DETERMINISTIC_TRIGGERS,
     COVERAGE_SCOPES,
@@ -6557,6 +6558,7 @@ def resolve_coverage(
     diff_data: dict[str, Any],
     extract_signals: dict[str, Any] | None = None,
     scope_filter: str = "code-review",
+    invocation_depth: str | None = None,
 ) -> dict[str, Any]:
     """Pure resolver from rules + diff state → Coverage Plan.
 
@@ -6574,10 +6576,18 @@ def resolve_coverage(
         already prevents required rules from depending on them).
       - ``scope_filter``: ``code-review`` (default) or ``plan-review``;
         rules with ``scope: "both"`` always pass.
+      - ``invocation_depth``: tier of the invoking run
+        (``shallow|standard|deep``); defaults to standard when None.
+        Gates ``COVERAGE_CORE_CONDITIONAL`` reviewers — entries with
+        ``min_depth`` above the invocation depth are filtered out.
 
     Returns a dict with ``required``, ``best_effort``, ``warnings``,
     ``stats``. Always-add core reviewers (``COVERAGE_CORE_REQUIRED``)
-    appear in ``required`` regardless of rule matches.
+    appear in ``required`` regardless of rule matches; conditional
+    core reviewers (``COVERAGE_CORE_CONDITIONAL``) appear in
+    ``best_effort`` only when their tier band brackets
+    ``invocation_depth`` AND at least one of their signal triggers
+    fires.
 
     Determinism enforcement: a rule with ``required: true`` whose
     triggers are entirely LLM-driven (only ``signal`` triggers) is
@@ -6615,6 +6625,45 @@ def resolve_coverage(
             "source": "core",
         })
         seen_required.add(core_name)
+
+    # FEA-1401 / PLN-726: conditional core reviewers gated by tier band
+    # AND signal trigger. Eligibility requires BOTH (a)
+    # ``_DEPTH_RANK[invocation_depth] >= _DEPTH_RANK[entry["min_depth"]]``
+    # AND (b) at least one trigger fires. Today every entry has
+    # ``required: False`` (Impact Analyzer's signal triggers are LLM-
+    # driven; the PLN-725 determinism enforcement bars LLM-only triggers
+    # from solely driving required selection). All eligible conditional
+    # core reviewers land in ``best_effort`` with ``source: "core"`` so
+    # downstream consumers can distinguish them from project-specific
+    # critic-gates.json matches (``source: "rule"``).
+    depth_for_band = invocation_depth or _DEFAULT_INVOCATION_DEPTH
+    if depth_for_band in _DEPTH_RANK:
+        invocation_rank = _DEPTH_RANK[depth_for_band]
+        for entry in COVERAGE_CORE_CONDITIONAL:
+            reviewer = entry["reviewer"]
+            if reviewer in seen_required or reviewer in seen_best_effort:
+                continue
+            min_depth = entry.get("min_depth", _DEFAULT_MIN_DEPTH)
+            if _DEPTH_RANK.get(min_depth, 0) > invocation_rank:
+                continue
+            matched_trigger: dict[str, Any] | None = None
+            for trigger in entry.get("triggers", ()):
+                trigger_dict = dict(trigger) if isinstance(trigger, dict) else None
+                if trigger_dict is None:
+                    continue
+                if _trigger_fires(
+                    trigger_dict, files, patch_lines, change_classes, signals,
+                ):
+                    matched_trigger = trigger_dict
+                    break
+            if matched_trigger is None:
+                continue
+            best_effort.append({
+                "reviewer": reviewer,
+                "trigger": matched_trigger,
+                "source": entry.get("source", "core"),
+            })
+            seen_best_effort.add(reviewer)
 
     rules_evaluated = 0
     rules_matched = 0
@@ -6740,6 +6789,12 @@ def cmd_resolve_coverage(args: argparse.Namespace) -> int:
         print(f"Error: invalid scope {scope_filter!r}", file=sys.stderr)
         return 1
 
+    invocation_depth: str | None = getattr(args, "depth", None) or None
+    ok, err = _validate_invocation_depth(invocation_depth)
+    if not ok:
+        print(err, file=sys.stderr)
+        return 1
+
     try:
         cr_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -6784,6 +6839,7 @@ def cmd_resolve_coverage(args: argparse.Namespace) -> int:
         diff_data=diff_data,
         extract_signals=extract_signals,
         scope_filter=scope_filter,
+        invocation_depth=invocation_depth,
     )
 
     output: dict[str, Any] = dict(plan)
@@ -8861,6 +8917,58 @@ _CANONICAL_TO_LEGACY_VERDICT: dict[str, str] = {
 }
 
 
+def _count_gateable_impact(verified: list[dict[str, Any]]) -> int:
+    """Return the count Rule 6's Impact gate fires on.
+
+    FEA-1401 / PLN-726 OQ#6 defined a separate Impact gate: when ≥2
+    BLOCKING or HIGH findings carry ``category: "ImpactAnalysis"``,
+    the verdict escalates to NEEDS_ATTENTION even if no single finding
+    would have triggered Rule 2 or Rule 3 on its own.
+
+    Counting policy mirrors ``_count_gateable_premise_medium``:
+
+      - Only ``verified[]`` findings (justified/rejected/coverage_gap
+        buckets are bucketed elsewhere; Impact findings flow through
+        the same canonical verification path as every other reviewer).
+      - JUSTIFIED-VALID dismissals are excluded (the author's defense
+        was audited and accepted; the concern is waived).
+      - Severity is read post-DOWNGRADE — the verifier's per-entry
+        external_impact[] audit can rewrite severity (e.g. partial
+        hallucination DOWNGRADEs HIGH → MEDIUM). A MEDIUM-after-
+        downgrade Impact finding does NOT contribute to the gate.
+
+    Rule 2 (BLOCKING any-category, → CHANGES_REQUESTED) and Rule 3
+    (HIGH any-category, → NEEDS_ATTENTION) fire BEFORE this gate.
+    Under current precedence the gate is effectively subsumed: a
+    single BLOCKING/HIGH ImpactAnalysis finding already trips Rule 2
+    or Rule 3. PLN-726 OQ#6 specified the gate anyway as a defensive
+    safety net for two scenarios: (a) future code paths that
+    short-circuit Rule 2/3 for sensitivity-tier or shadow-mode
+    reasons but still need cross-file blast-radius to escalate, and
+    (b) a future Rule 2/3 refactor that narrows the categories they
+    consider. The gate's logic is decoupled from precedence so it
+    remains valid under either evolution. In current production it
+    fires rarely; the helper exists so telemetry can report the
+    count (``stats.impact_cumulative_count``).
+    """
+    count = 0
+    for finding in verified:
+        if str(finding.get("category", "")) != "ImpactAnalysis":
+            continue
+        if str(finding.get("severity", "")) not in {"BLOCKING", "HIGH"}:
+            continue
+        if finding.get("verifier_verdict") == "JUSTIFIED-VALID":
+            continue
+        count += 1
+    return count
+
+
+# FEA-1401 / PLN-726 OQ#6: Impact gate threshold. Two BLOCKING/HIGH
+# Impact findings is the minimum that suggests systemic cross-file
+# breakage rather than a single isolated callsite.
+_VERDICT_IMPACT_THRESHOLD_DEFAULT = 2
+
+
 def _count_gateable_premise_medium(verified: list[dict[str, Any]]) -> int:
     """Return the count Rule 4's Premise-MEDIUM gate fires on.
 
@@ -8912,8 +9020,9 @@ def _compute_canonical_verdict(
     Returns (canonical_verdict, reason). PLN-722 added two rules: the
     ``force_human_review`` short-circuit (rule 2.5 — mandatory_human_review_
     paths) and the TENTATIVE → NEEDS_ATTENTION fall-through (rule 3.5).
-    PLN-721 fills in Rule 4: cumulative Premise MEDIUM gate. Rule 6
-    (Impact analysis count) is still placeholder until plan 06 lands.
+    PLN-721 fills in Rule 4: cumulative Premise MEDIUM gate. PLN-726
+    (FEA-1401) fills in Rule 6: cumulative Impact gate (≥2 BLOCKING/HIGH
+    ImpactAnalysis findings → NEEDS_ATTENTION).
 
     ``thresholds`` (PLN-721): optional dict from ``_load_verdict_thresholds``;
     callers that do not pass it get the built-in default (3) so existing
@@ -8990,7 +9099,26 @@ def _compute_canonical_verdict(
             f"(threshold {premise_medium_threshold})",
         )
 
-    # Rule 6 (plan 06 Impact count) remains placeholder until that plan lands.
+    # Rule 6 (FEA-1401 / PLN-726 OQ#6): cumulative Impact gate. ≥2
+    # BLOCKING/HIGH ImpactAnalysis findings → NEEDS_ATTENTION even if
+    # no individual finding would have tripped Rule 2 (BLOCKING) or
+    # Rule 3 (HIGH any-category). Rules 2 and 3 fire first, so this
+    # gate matters in the narrow case where Impact findings split
+    # BLOCKING vs HIGH severity across separate symbols. The threshold
+    # is configurable via verdict-thresholds.json
+    # (``impact_cumulative``) but defaults to 2.
+    impact_threshold = int(
+        thresholds.get(
+            "impact_cumulative",
+            _VERDICT_IMPACT_THRESHOLD_DEFAULT,
+        ),
+    )
+    impact_count = _count_gateable_impact(verified)
+    if impact_count >= impact_threshold:
+        return "NEEDS_ATTENTION", _short(
+            f"{impact_count} BLOCKING/HIGH ImpactAnalysis findings "
+            f"(threshold {impact_threshold})",
+        )
 
     return "APPROVED", ""
 
@@ -10410,6 +10538,16 @@ _SPAWN_CORE_ROLES: dict[str, dict[str, Any]] = {
         "partitioned": False,
         "patches_template": "patches_all.txt",
     },
+    # FEA-1401 Impact Analyzer. Conditional core reviewer (declared in
+    # COVERAGE_CORE_CONDITIONAL); only lands in coverage plans when the
+    # invocation depth is ``deep`` AND a signal trigger fires. The
+    # spawn-spec walker treats it like any other core role once it
+    # appears in the plan.
+    "impact": {
+        "agent_id": "impact",
+        "partitioned": False,
+        "patches_template": "patches_all.txt",
+    },
 }
 
 # Roles that are reserved in the coverage plan but not yet spawnable. The
@@ -10438,6 +10576,10 @@ def _spawn_resolve_models(route: dict[str, Any]) -> dict[str, Any]:
         "unified_auditor": models.get("unified_auditor", "sonnet"),
         "premise_reviewer": models.get("premise_reviewer", "sonnet"),
         "fast_path_reviewer": models.get("fast_path_reviewer", "sonnet"),
+        # FEA-1401 Impact Analyzer defaults to Opus for cross-file
+        # reasoning. Operators can override via spawn.json.route.models
+        # when running a cost-sensitive deep review.
+        "impact": models.get("impact", "opus"),
     }
 
 
@@ -11305,6 +11447,7 @@ _FLEET_DISPLAY_NAMES: dict[str, str] = {
     "premise_reviewer": "Premise Reviewer",
     "fast_path_reviewer": "Fast Path Reviewer",
     "test_quality": "Test Quality",
+    "impact": "Impact Analyzer",
 }
 
 
@@ -12263,16 +12406,21 @@ def cmd_prep_assets(args: argparse.Namespace) -> int:
     bha_src = plugin_root / "tools" / "prompts" / "bha_suffix.txt"
     verifier_src = plugin_root / "tools" / "prompts" / "verifier_prompt.txt"
     premise_src = plugin_root / "tools" / "prompts" / "premise_prompt.txt"
+    # FEA-1401: Impact Analyzer prompt is per-run-cached on the same
+    # contract as premise/verifier (prompt edits invalidate the cache).
+    impact_src = plugin_root / "tools" / "prompts" / "impact_analyzer_prompt.txt"
 
     shared_dst = cr_dir / "shared_prompt.txt"
     bha_dst = cr_dir / "bha_suffix.txt"
     verifier_dst = cr_dir / "verifier_prompt.txt"
     premise_dst = cr_dir / "premise_prompt.txt"
+    impact_dst = cr_dir / "impact_analyzer_prompt.txt"
 
     shutil.copy2(shared_src, shared_dst)
     shutil.copy2(bha_src, bha_dst)
     shutil.copy2(verifier_src, verifier_dst)
     shutil.copy2(premise_src, premise_dst)
+    shutil.copy2(impact_src, impact_dst)
 
     json.dump(
         {
@@ -12280,6 +12428,7 @@ def cmd_prep_assets(args: argparse.Namespace) -> int:
             "bha_suffix": str(bha_dst),
             "verifier_prompt": str(verifier_dst),
             "premise_prompt": str(premise_dst),
+            "impact_analyzer_prompt": str(impact_dst),
         },
         sys.stdout,
         indent=2,

@@ -150,6 +150,54 @@ COVERAGE_CORE_REQUIRED: tuple[str, ...] = (
 )
 
 
+# Conditional core reviewers (FEA-1401 / PLN-726). Core reviewers that
+# ship with the plugin (not project-specific like critic-gates.json
+# entries) but are gated by tier band AND signal-trigger evaluation.
+# Added to the Coverage Plan's ``best_effort`` bucket only when BOTH
+# the invocation depth meets ``min_depth`` AND at least one trigger
+# fires against the extracted signals.
+#
+# Entry shape:
+#   - reviewer:  reviewer name; must also be registered in
+#                ``_SPAWN_CORE_ROLES`` and the start.md per-agent
+#                spawn block lookup.
+#   - triggers:  list of trigger dicts evaluated via
+#                ``_trigger_fires``. Any trigger firing is sufficient.
+#   - min_depth: lowest invocation tier at which this reviewer is
+#                eligible. Compared via ``_DEPTH_RANK``.
+#   - required:  always False today (LLM-driven signal triggers may
+#                not drive REQUIRED selection per PLN-725
+#                determinism enforcement). Reserved for future
+#                deterministic-trigger conditional core reviewers.
+#   - source:    bucket-entry ``source`` field; always ``"core"`` so
+#                the entry is distinguishable from project-specific
+#                ``critic-gates.json`` matches.
+#
+# The Impact Analyzer (FEA-1401) is the first entry: opus-grade
+# cross-file reviewer, runs only in ``--depth deep`` when the diff
+# emits ``exported_symbol_change`` or ``symbol_deletion`` signals.
+COVERAGE_CORE_CONDITIONAL: tuple[dict[str, Any], ...] = (
+    {
+        "reviewer": "impact",
+        "triggers": (
+            {
+                "type": "signal",
+                "name": "exported_symbol_change",
+                "min_confidence": 0.8,
+            },
+            {
+                "type": "signal",
+                "name": "symbol_deletion",
+                "min_confidence": 0.85,
+            },
+        ),
+        "min_depth": "deep",
+        "required": False,
+        "source": "core",
+    },
+)
+
+
 # ---------------------------------------------------------------------------
 # PLN-725 — Reviewer spawn spec
 # ---------------------------------------------------------------------------

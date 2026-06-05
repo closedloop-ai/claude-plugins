@@ -426,6 +426,18 @@
             "code-review",
             "plan-review"
           ]
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "dest": "depth",
+          "default": null,
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ]
         }
       ]
     },
