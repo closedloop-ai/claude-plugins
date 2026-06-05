@@ -102,6 +102,38 @@ def invoke_prepare_run(
     return summary, run_plan
 
 
+def make_auto_incremental_args(
+    cache_dir: Path,
+    **overrides: Any,
+) -> argparse.Namespace:
+    """Factory for ``cmd_auto_incremental`` argparse.Namespace.
+
+    Shared between ``TestAutoIncremental`` and ``TestPLN807ReviewFixes``
+    so the Namespace shape stays in lock-step with the cmd's expected
+    fields. When ``cmd_auto_incremental`` gains a new arg, this one
+    factory is updated rather than two parallel ones drifting
+    independently.
+
+    Defaults match the legacy local-mode invocation; pass overrides
+    (e.g. ``depth="standard"``, ``mode="github"``,
+    ``original_scope="origin/main..HEAD"``) to exercise specific
+    branches.
+    """
+    defaults: dict[str, Any] = {
+        "cache_dir": str(cache_dir),
+        "key": "branch:main",
+        "diff_tip": "HEAD",
+        "original_scope": "main...HEAD",
+        "full_review": "false",
+        "since_last_review": "false",
+        "mode": "local",
+        "base_ref": "main",
+        "depth": None,
+    }
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
 def minimal_diff_finding(**overrides: Any) -> dict[str, Any]:
     """Return a canonical diff-scoped finding with sensible defaults.
 

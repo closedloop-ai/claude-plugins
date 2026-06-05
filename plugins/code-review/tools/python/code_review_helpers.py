@@ -732,8 +732,8 @@ def _matches_schema_or_migration_path(filepath: str) -> bool:
 def _check_tier_mismatch_nudge(
     diff_data: dict[str, Any], depth: str | None,
 ) -> list[dict[str, Any]]:
-    """Emit a single LOW system-scoped finding when shallow runs on a
-    PR that would benefit from a higher-tier review (PLN-807 Phase 5).
+    """Emit a single MEDIUM system-scoped finding when shallow runs on
+    a PR that would benefit from a higher-tier review (PLN-807 Phase 5).
 
     Three heuristics fire independently; any one is enough:
 
@@ -748,8 +748,12 @@ def _check_tier_mismatch_nudge(
 
     Runs only when depth=='shallow'. All other tiers no-op. The
     finding's marker (``tier_mismatch_nudge``) makes it easy to
-    auto-dismiss or filter out at the operator's discretion; severity
-    is fixed at LOW so it never escalates the verdict.
+    auto-dismiss or filter out at the operator's discretion. Severity
+    is MEDIUM — the lowest tier that survives validate's
+    SEVERITY_NORMALIZE map (which DISCARDs "low"). Category "Coverage"
+    rather than "Premise" keeps it out of the cumulative Premise
+    MEDIUM gate (Rule 4 of _compute_canonical_verdict) so it cannot
+    escalate the verdict on its own.
     """
     if depth != "shallow":
         return []
@@ -848,8 +852,8 @@ def cmd_hygiene(args: argparse.Namespace) -> int:
 
     # PLN-807 Phase 5: tier-mismatch nudge. Runs once per invocation
     # (not per file) because the heuristics are diff-level. Adds a
-    # single LOW finding when shallow was chosen but heuristics suggest
-    # a higher tier would have caught more.
+    # single MEDIUM finding when shallow was chosen but heuristics
+    # suggest a higher tier would have caught more.
     findings.extend(_check_tier_mismatch_nudge(diff_data, depth))
 
     # Promote to canonical schema (PLN-719 Foundation Section 1).
@@ -9414,8 +9418,9 @@ def _validate_stages_config(config: dict[str, Any]) -> None:
         # new stage added to stages.json without a tier tag fails loud
         # at config-load instead of silently inheriting the implicit
         # ``standard`` default. ``max_depth`` stays optional (most
-        # stages run through to deep); ``min_depth >= max_depth`` is
-        # the floor.
+        # stages run through to deep). The band constraint enforced at
+        # load time is ``min_depth <= max_depth`` (catches swapped
+        # values like ``min=deep, max=shallow``).
         if "min_depth" not in stage:
             raise ValueError(
                 f"stages.json {sid}: missing required ``min_depth`` field; "
@@ -9912,9 +9917,13 @@ def _select_domain_critics(
     even when entries shift declaration position.
 
     Returns ``(selected_required, selected_best_effort, deferred_required,
-    deferred_best_effort)``. Deferred required entries are surfaced
-    via coverage-gap findings by the caller; deferred best-effort
-    entries only appear in ``deferred_for_budget``.
+    deferred_best_effort)``. Cap-deferred entries from EITHER bucket
+    land in ``deferred_for_budget`` with
+    ``defer_reason: "domain_critic_cap"``; the caller does NOT emit
+    coverage-gap findings for cap-deferred required critics (doing so
+    would trip ``_compute_canonical_verdict`` Rule 1 on any repo whose
+    ``critic-gates.json`` resolves more than ``cap`` required domain
+    critics).
     """
     def sort_key(e: dict[str, Any]) -> tuple[int, str]:
         try:

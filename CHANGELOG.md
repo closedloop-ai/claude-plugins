@@ -4,6 +4,23 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.29.2
+
+PATCH bump — documentation/comment accuracy fixes plus one test-helper consolidation and two test-isolation fixes. No production behavior change.
+
+#### Fixed
+- `_check_tier_mismatch_nudge` docstring now describes the MEDIUM severity actually emitted (previously said "Emit a single LOW system-scoped finding" and "severity is fixed at LOW"). Updated text explains the SEVERITY_NORMALIZE rationale (`"low"` → `"DISCARD"`) and notes the `Coverage` category keeps the finding out of Rule 4's cumulative Premise gate.
+- `cmd_hygiene` inline comment "single LOW finding" updated to "single MEDIUM finding" so it matches the emitted severity.
+- `start.md` and `shallow.md` Depth Tiers descriptions now describe the `tier_mismatch_nudge` finding as MEDIUM (category `Coverage`) instead of LOW.
+- `TestPLN807Phase5TierMismatchNudge` class docstring updated to match the MEDIUM assertion the same PR introduced and to record the SEVERITY_NORMALIZE rationale alongside it.
+- `_select_domain_critics` docstring no longer claims the caller surfaces deferred required entries as coverage-gap findings — that emission was removed in v2.29.1. New text describes the actual contract: cap-deferred entries from EITHER bucket land in `deferred_for_budget` with `defer_reason: "domain_critic_cap"`, and the caller does NOT emit coverage-gap findings (doing so would trip `_compute_canonical_verdict` Rule 1).
+- `_validate_stages_config` inline comment corrected: said `min_depth >= max_depth` is "the floor", but the load-time invariant is `min_depth <= max_depth` (`>=` describes the error condition the validator raises on, not the valid band).
+- `test_auto_incremental_skips_when_cached_tier_weaker` now sets `CR_AUTO_INCREMENTAL=1` via `monkeypatch.setenv` before invoking `cmd_auto_incremental`. Without this, a shell with `CR_AUTO_INCREMENTAL=0` would skip the entire tier-gate branch and the test's "tier upgrade" assertion would fail spuriously.
+- `test_auto_incremental_without_depth_preserves_legacy_behavior` now mocks `code_review_helpers._run_git` via `patch(..., return_value="")` so the ancestry check passes deterministically regardless of the test environment's git state. Previously the synthetic `last_sha="abc123"` would raise `CalledProcessError` (git present) or propagate `FileNotFoundError` (git absent) instead of exercising the intended depth-bypass branch.
+
+#### Changed
+- `make_auto_incremental_args` factory in `conftest.py` replaces the two parallel `cmd_auto_incremental` Namespace factories that previously lived in `TestAutoIncremental._make_args` and `TestPLN807ReviewFixes._make_auto_inc_args`. Both classes now delegate to the shared factory; new `depth` and `base_ref` defaults live in one place, so a future field addition updates one factory instead of two.
+
 ### code-review v2.29.1
 
 PR #144 review-feedback follow-ups. PATCH bump — no schema additions; one behavior change (cap-deferred required critics no longer block) and a cluster of correctness, schema-contract, and documentation fixes.
