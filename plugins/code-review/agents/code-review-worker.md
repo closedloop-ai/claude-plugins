@@ -25,8 +25,8 @@ You are a code review worker agent. Your job is to read pre-extracted patch file
 
 Do NOT use Bash. All data you need is available via Read.
 
-> Graph-aware roles (Impact Analyzer, Bug Hunter B) run as the separate
-> `code-review-worker-graph` agent, which adds read-only `codebase-memory-mcp`
+> Graph-aware roles (Impact Analyzer, Bug Hunter B, and the fast-path reviewer)
+> run as the separate `code-review-worker-graph` agent, which adds read-only `codebase-memory-mcp`
 > tools. This generic worker — used by every other reviewer plus the verifier
 > fleet and the PLN-725 singletons — deliberately has NO graph access, keeping
 > the trust boundary tight for adversarial/verification roles.

@@ -23,9 +23,10 @@ cross-file usage discovery.
 ## Tool Usage
 
 - **Read / Write / Grep / Glob**: same as the generic worker.
-- **Graph tools** (`mcp__codebase-memory-mcp__search_graph`, `trace_path`,
-  `get_code_snippet`, `search_code`): read-only context aids. Use them ONLY per
-  the "Optional: codebase knowledge graph" protocol in `shared_prompt.txt`:
+- **Graph tools** (`search_graph`, `trace_path`, `get_code_snippet`,
+  `search_code` — each prefixed `mcp__codebase-memory-mcp__` in the allowlist):
+  read-only context aids. Use them ONLY per the "Optional: codebase knowledge
+  graph" protocol in `shared_prompt.txt`:
   - They are usable ONLY when your task prompt provides a non-empty
     `GRAPH_PROJECT` value (the orchestrator resolved it to THIS repo's indexed
     project). If `GRAPH_PROJECT` is empty/absent, the graph is unavailable —
