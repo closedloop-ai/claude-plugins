@@ -20375,6 +20375,26 @@ def _make_impact_finding(
     return f
 
 
+def _impact_evidence_check(
+    file: str, line: int, *, verified: bool,
+) -> dict[str, Any]:
+    """Module-level verifier evidence_check fixture for ImpactAnalysis tests.
+
+    Shared by ``TestFEA1401DowngradeTrim`` and ``TestFEA1401GraphProvenance``,
+    which both exercise ``_merge_verifier_fields``'s per-callsite trim. The
+    ``"external impact at"`` claim prefix and the ``<file>:<line>`` source are
+    the exact shape ``_trim_unverified_external_impact`` matches on.
+    """
+    return {
+        "claim": f"external impact at {file}:{line} verified",
+        "expected": "foo(bar)",
+        "actual_read": "foo(bar)" if verified else "<not found>",
+        "verified": verified,
+        "source": f"{file}:{line}",
+        "snippet_hash_matched": verified,
+    }
+
+
 class TestFEA1401SignalTaxonomy:
     """Verify the two new Impact Analyzer trigger signals are present in
     the canonical taxonomy with the contract the trigger evaluation
@@ -20808,18 +20828,6 @@ class TestFEA1401DowngradeTrim:
         ]
         return finding
 
-    def _evidence_check(
-        self, file: str, line: int, *, verified: bool,
-    ) -> dict[str, Any]:
-        return {
-            "claim": f"external impact at {file}:{line} verified",
-            "expected": "foo(bar)",
-            "actual_read": "foo(bar)" if verified else "<not found>",
-            "verified": verified,
-            "source": f"{file}:{line}",
-            "snippet_hash_matched": verified,
-        }
-
     def test_downgrade_trims_unverified_external_impact_entries(
         self,
     ) -> None:
@@ -20837,9 +20845,9 @@ class TestFEA1401DowngradeTrim:
             "verifier_verdict": "DOWNGRADE",
             "verifier_severity": "MEDIUM",
             "evidence_checks": [
-                self._evidence_check("src/a.ts", 10, verified=True),
-                self._evidence_check("src/b.ts", 20, verified=False),
-                self._evidence_check("src/c.ts", 30, verified=True),
+                _impact_evidence_check("src/a.ts", 10, verified=True),
+                _impact_evidence_check("src/b.ts", 20, verified=False),
+                _impact_evidence_check("src/c.ts", 30, verified=True),
             ],
         }
         _merge_verifier_fields(finding, verdict_data)
@@ -20862,8 +20870,8 @@ class TestFEA1401DowngradeTrim:
             "verifier_verdict": "DOWNGRADE",
             "verifier_severity": "MEDIUM",
             "evidence_checks": [
-                self._evidence_check("src/a.ts", 10, verified=True),
-                self._evidence_check("src/b.ts", 20, verified=True),
+                _impact_evidence_check("src/a.ts", 10, verified=True),
+                _impact_evidence_check("src/b.ts", 20, verified=True),
             ],
         }
         _merge_verifier_fields(finding, verdict_data)
@@ -20880,7 +20888,7 @@ class TestFEA1401DowngradeTrim:
         verdict_data = {
             "verifier_verdict": "CONFIRMED",
             "evidence_checks": [
-                self._evidence_check("src/a.ts", 10, verified=False),
+                _impact_evidence_check("src/a.ts", 10, verified=False),
             ],
         }
         _merge_verifier_fields(finding, verdict_data)
@@ -20898,7 +20906,7 @@ class TestFEA1401DowngradeTrim:
             "verifier_verdict": "DOWNGRADE",
             "verifier_severity": "MEDIUM",
             "evidence_checks": [
-                self._evidence_check("src/a.ts", 10, verified=True),
+                _impact_evidence_check("src/a.ts", 10, verified=True),
                 {
                     "claim": "snippet exists at src/a.ts:10",
                     "verified": False,
@@ -20931,13 +20939,120 @@ class TestFEA1401DowngradeTrim:
             "verifier_verdict": "DOWNGRADE",
             "verifier_severity": "MEDIUM",
             "evidence_checks": [
-                self._evidence_check("src/a.ts", 10, verified=False),
+                _impact_evidence_check("src/a.ts", 10, verified=False),
             ],
         }
         _merge_verifier_fields(finding, verdict_data)
         # The non-Impact finding's array survives untouched — the
         # trim is scoped to category == "ImpactAnalysis".
         assert len(finding["external_impact"]) == 1
+
+
+class TestFEA1401GraphProvenance:
+    """Pin the FEA-1401 graph-integration contract: external_impact[]
+    entries carry a ``discovery`` provenance tag (``grep`` | ``graph``),
+    and the DOWNGRADE-trim audit is substrate-agnostic — a
+    ``discovery: "graph"`` callsite (an alias/re-export/dynamic-dispatch
+    usage grep cannot reproduce) is verified by the per-entry file-read +
+    hash audit exactly like a grep entry, and is trimmed only when its
+    own evidence_check comes back unverified.
+    """
+
+    def _impact(self, *entries: dict[str, Any]) -> dict[str, Any]:
+        finding = _make_impact_finding("HIGH")
+        finding["external_impact"] = list(entries)
+        return finding
+
+    def _entry(self, file: str, line: int, discovery: str) -> dict[str, Any]:
+        return {
+            "file": file,
+            "line": line,
+            "impact_type": "signature_mismatch",
+            "description": f"{discovery} callsite at {file}:{line}",
+            "callsite_snippet": "foo(bar)",
+            "callsite_snippet_hash": "abcdef",
+            "discovery": discovery,
+            "confidence": 0.9,
+        }
+
+    def test_downgrade_noop_preserves_graph_provenance(self) -> None:
+        from code_review_helpers import _merge_verifier_fields
+
+        # Exercises the trim path on a DOWNGRADE where every entry verified:
+        # _trim_unverified_external_impact actually runs (unlike a CONFIRMED
+        # verdict, which never calls it) but drops nothing, and both entries
+        # survive with their discovery tags intact. Using CONFIRMED here would
+        # pass vacuously — the trim is gated to DOWNGRADE, so a regression that
+        # also trimmed on CONFIRMED would go undetected. Complements
+        # test_downgrade_no_trim_when_all_entries_verified by asserting on the
+        # provenance field a graph-discovered callsite carries.
+        finding = self._impact(
+            self._entry("src/a.ts", 10, "grep"),
+            self._entry("src/jobs/sync.ts", 30, "graph"),
+        )
+        verdict_data = {
+            "verifier_verdict": "DOWNGRADE",
+            "verifier_severity": "MEDIUM",
+            "evidence_checks": [
+                _impact_evidence_check("src/a.ts", 10, verified=True),
+                _impact_evidence_check("src/jobs/sync.ts", 30, verified=True),
+            ],
+        }
+        _merge_verifier_fields(finding, verdict_data)
+        retained = {
+            (e["file"], e["line"], e["discovery"])
+            for e in finding["external_impact"]
+        }
+        assert retained == {
+            ("src/a.ts", 10, "grep"),
+            ("src/jobs/sync.ts", 30, "graph"),
+        }
+
+    def test_downgrade_trims_unverified_graph_entry_keeps_grep(self) -> None:
+        from code_review_helpers import _merge_verifier_fields
+
+        # Substrate-agnostic trim: the graph entry whose evidence_check
+        # failed is dropped; the verified grep entry survives. Provenance
+        # does NOT exempt a graph entry from per-entry verification.
+        finding = self._impact(
+            self._entry("src/a.ts", 10, "grep"),
+            self._entry("src/jobs/sync.ts", 30, "graph"),
+        )
+        verdict_data = {
+            "verifier_verdict": "DOWNGRADE",
+            "verifier_severity": "MEDIUM",
+            "evidence_checks": [
+                _impact_evidence_check("src/a.ts", 10, verified=True),
+                _impact_evidence_check("src/jobs/sync.ts", 30, verified=False),
+            ],
+        }
+        _merge_verifier_fields(finding, verdict_data)
+        retained = {(e["file"], e["line"]) for e in finding["external_impact"]}
+        assert retained == {("src/a.ts", 10)}
+
+    def test_downgrade_trims_unverified_grep_keeps_graph(self) -> None:
+        from code_review_helpers import _merge_verifier_fields
+
+        # The mirror case: a graph-verified callsite survives even when a
+        # grep entry is rejected — the graph substrate is first-class.
+        finding = self._impact(
+            self._entry("src/a.ts", 10, "grep"),
+            self._entry("src/jobs/sync.ts", 30, "graph"),
+        )
+        verdict_data = {
+            "verifier_verdict": "DOWNGRADE",
+            "verifier_severity": "MEDIUM",
+            "evidence_checks": [
+                _impact_evidence_check("src/a.ts", 10, verified=False),
+                _impact_evidence_check("src/jobs/sync.ts", 30, verified=True),
+            ],
+        }
+        _merge_verifier_fields(finding, verdict_data)
+        retained = {
+            (e["file"], e["line"], e["discovery"])
+            for e in finding["external_impact"]
+        }
+        assert retained == {("src/jobs/sync.ts", 30, "graph")}
 
 
 class TestFEA1401StageWiring:

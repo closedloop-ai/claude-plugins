@@ -9,6 +9,7 @@ import pytest
 
 from code_review_schema import (
     CATEGORIES,
+    EXTERNAL_IMPACT_DISCOVERY,
     FINDING_SCOPES,
     SCHEMA_VERSION,
     SEVERITIES,
@@ -926,3 +927,114 @@ def test_telemetry_json_schema_declares_required_keys():
         "tokens", "cache_hit_rate", "agent_failures", "schema_versions_seen",
     ):
         assert key in tele["required"], f"telemetry JSON Schema missing required {key!r}"
+
+
+# ---------------------------------------------------------------------------
+# external_impact[].discovery provenance (FEA-1401 graph integration)
+# ---------------------------------------------------------------------------
+
+
+def _impact_finding_with_impacts(*impacts: dict) -> dict:
+    f = _minimal_diff_finding(
+        id="impact_f0",
+        reviewer="impact",
+        category="ImpactAnalysis",
+        severity="HIGH",
+    )
+    f["external_impact"] = list(impacts)
+    f["grep_query_used"] = r"\bgetUser\s*\("
+    return f
+
+
+def _impact_entry(discovery: str | None) -> dict:
+    entry = {
+        "file": "src/handlers/userHandler.ts",
+        "line": 18,
+        "impact_type": "signature_mismatch",
+        "description": "one-arg call breaks under new required param",
+        "callsite_snippet": "getUser(req.params.id)",
+        "callsite_snippet_hash": "deadbeef",
+        "confidence": 0.95,
+    }
+    if discovery is not None:
+        entry["discovery"] = discovery
+    return entry
+
+
+def test_external_impact_discovery_vocabulary():
+    # The closed vocabulary the verifier's substrate-aware audit keys on.
+    assert EXTERNAL_IMPACT_DISCOVERY == {"grep", "graph"}
+
+
+def test_external_impact_discovery_grep_valid():
+    f = _impact_finding_with_impacts(_impact_entry("grep"))
+    assert validate_finding(f) == []
+
+
+def test_external_impact_discovery_graph_valid():
+    f = _impact_finding_with_impacts(_impact_entry("graph"))
+    assert validate_finding(f) == []
+
+
+def test_external_impact_discovery_omitted_valid():
+    # discovery is optional; absence means the default ("grep").
+    f = _impact_finding_with_impacts(_impact_entry(None))
+    assert validate_finding(f) == []
+
+
+def test_external_impact_discovery_invalid_rejected():
+    f = _impact_finding_with_impacts(_impact_entry("ast"))
+    errors = validate_finding(f)
+    assert any("discovery" in e and "ast" in e for e in errors), errors
+
+
+def test_external_impact_discovery_mixed_substrates_valid():
+    f = _impact_finding_with_impacts(
+        _impact_entry("grep"), _impact_entry("graph"),
+    )
+    assert validate_finding(f) == []
+
+
+def _impact_entry_with_file(file: str) -> dict:
+    entry = _impact_entry("graph")
+    entry["file"] = file
+    return entry
+
+
+def test_external_impact_repo_relative_path_valid():
+    f = _impact_finding_with_impacts(
+        _impact_entry_with_file("src/handlers/userHandler.ts"),
+    )
+    assert validate_finding(f) == []
+
+
+@pytest.mark.parametrize(
+    "bad_path",
+    [
+        "/etc/passwd",                 # absolute POSIX
+        "../../.env",                  # parent traversal
+        "src/../../secrets.py",        # embedded traversal
+        "C:/Users/x/secret.txt",       # Windows drive letter
+        r"C:\Users\x\secret.txt",      # Windows drive + backslashes
+        "..",                          # bare parent
+    ],
+)
+def test_external_impact_unsafe_path_rejected(bad_path: str):
+    # The graph substrate can introduce out-of-checkout paths; the
+    # deterministic gate must reject them before the verifier's per-callsite
+    # audit Reads them verbatim.
+    f = _impact_finding_with_impacts(_impact_entry_with_file(bad_path))
+    errors = validate_finding(f)
+    assert any("safe repo-relative path" in e for e in errors), (bad_path, errors)
+
+
+def test_external_impact_unsafe_path_does_not_block_safe_sibling():
+    # Each entry is gated independently — one bad path errors without
+    # suppressing validation of the good entries.
+    f = _impact_finding_with_impacts(
+        _impact_entry_with_file("src/a.ts"),
+        _impact_entry_with_file("/etc/passwd"),
+    )
+    errors = validate_finding(f)
+    assert any("external_impact[1].file" in e for e in errors), errors
+    assert not any("external_impact[0].file" in e for e in errors), errors

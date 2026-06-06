@@ -239,6 +239,16 @@ SPAWN_SPEC_SOURCES: frozenset[str] = frozenset({
     "fast_path",
 })
 
+# Provenance values for ``external_impact[].discovery`` (FEA-1401 graph
+# integration). ``grep`` (default) entries are reproducible via the
+# verifier's grep-replay of ``grep_query_used``; ``graph`` entries were
+# found only via codebase-memory-mcp and are verified per-entry by
+# file-read + snippet-hash, exempt from the grep-replay completeness gate.
+EXTERNAL_IMPACT_DISCOVERY: frozenset[str] = frozenset({
+    "grep",
+    "graph",
+})
+
 # Per-agent ``bucket`` field. Mirrors the source bucket in
 # coverage_plan.json so presenters can group spawned agents by the rule
 # tier that selected them.
@@ -800,6 +810,12 @@ class ExternalImpact:
     callsite_snippet: str
     callsite_snippet_hash: str
     confidence: float
+    # Provenance of how the callsite was found (FEA-1401 graph integration).
+    # "grep" (default) → reproducible by replaying grep_query_used.
+    # "graph" → found only via codebase-memory-mcp (alias/re-export/dynamic
+    # dispatch grep cannot surface); verified by per-entry file-read + hash,
+    # exempt from the verifier's grep-replay completeness check.
+    discovery: str = "grep"
 
 
 @dataclass
@@ -984,6 +1000,42 @@ def validate_finding(finding: dict[str, Any]) -> list[str]:
     cs = finding.get("code_snippet")
     if cs is None:
         _err("missing code_snippet (use '' for system-scoped)")
+
+    # external_impact[] entry validation (FEA-1401 graph integration).
+    # The entry shape is otherwise informational (the JSON schema is
+    # array-only), but two fields get a deterministic gate:
+    #   1. discovery — closed vocabulary, so a typo can't slip a
+    #      graph-discovered callsite past the verifier's substrate-aware audit.
+    #   2. file path safety — the graph substrate broadened where these paths
+    #      come from (grep is confined to cwd; graph results are not), so a
+    #      deterministic in-repo check backstops the agent's prompt-level path
+    #      validation. An absolute or `..`-escaping path that survived to here
+    #      would be Read verbatim by the verifier's per-callsite audit (a plain
+    #      worker with unsandboxed Read), exposing out-of-checkout file content.
+    impacts = finding.get("external_impact")
+    if isinstance(impacts, list):
+        for i, entry in enumerate(impacts):
+            if not isinstance(entry, dict):
+                continue
+            disc = entry.get("discovery")
+            if disc is not None and disc not in EXTERNAL_IMPACT_DISCOVERY:
+                _err(
+                    f"external_impact[{i}].discovery {disc!r} not in "
+                    f"{sorted(EXTERNAL_IMPACT_DISCOVERY)}",
+                )
+            file_val = entry.get("file")
+            if isinstance(file_val, str) and file_val:
+                norm = file_val.replace("\\", "/")
+                if (
+                    norm.startswith("/")
+                    or ".." in norm.split("/")
+                    or re.match(r"^[A-Za-z]:", norm) is not None
+                ):
+                    _err(
+                        f"external_impact[{i}].file {file_val!r} must be a "
+                        "safe repo-relative path (no absolute paths, drive "
+                        "letters, or '..' traversal)",
+                    )
 
     return errors
 
