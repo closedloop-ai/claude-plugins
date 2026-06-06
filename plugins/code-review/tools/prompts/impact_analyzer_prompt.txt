@@ -61,32 +61,44 @@ the diff under review. Identify EVERY exported symbol whose surface
 changes.
 
 Then investigate the rest of the repository to find external usages.
-Two discovery substrates, in preference order:
+Two discovery substrates, used together:
 
-  1. **Codebase knowledge graph (preferred when available).** Follow the
+  1. **Grep/Glob (always — the verifier's proof of record).** Construct a
+     grep query per Step 2 and run it. Every callsite grep finds is a
+     `discovery: "grep"` usage. This is the substrate the verifier
+     replays, so it always runs.
+  2. **Codebase knowledge graph (additive, when available).** Follow the
      "Optional: codebase knowledge graph" protocol in
-     `{CR_DIR}/shared_prompt.txt`: probe `index_status` once; if the repo
-     is indexed, use `search_graph` (find the symbol by name / qualified
-     name) and `trace_path(mode=calls)` (enumerate callers) to find
-     external usages precisely — this catches re-exports, aliased
-     imports, and dynamic dispatch that grep misses, and avoids the
-     false matches a common-word grep produces. Use `get_code_snippet`
-     to read a caller's exact source by qualified name.
-  2. **Grep/Glob (fallback, and always for the verifier contract).** When
-     the graph is unavailable or the repo is not indexed, use Grep/Glob
-     exactly as Step 2 below describes.
+     `{CR_DIR}/shared_prompt.txt`. The graph is available ONLY when your
+     task prompt supplies a non-empty `GRAPH_PROJECT`; if it is empty,
+     skip this substrate entirely (grep-only). When available, pass
+     `project=<GRAPH_PROJECT>` on every call and use
+     `search_graph(qn_pattern=<symbol>, project=<GRAPH_PROJECT>)` plus
+     `trace_path(<symbol>, mode=calls, project=<GRAPH_PROJECT>)` to
+     enumerate callers, and `get_code_snippet` to read them. A caller the
+     graph surfaces but grep CANNOT (aliased import, re-export,
+     dynamic dispatch) is a `discovery: "graph"` usage — exactly the
+     blast radius grep misses. Validate every returned path is inside
+     this checkout before citing it (per the shared protocol).
 
 Do NOT use Bash. Respect repository `.gitignore` (Glob already does).
 
-**Verifier contract — non-negotiable regardless of substrate.** Even when
-you discover callsites via the graph, you MUST still populate
-`grep_query_used` with a real grep query that finds those same external
-usages (construct it per Step 2), and you MUST read each cited callsite's
-exact source line into `callsite_snippet` + compute `callsite_snippet_hash`.
-The verifier replays `grep_query_used` and re-hashes the snippet to audit
-your findings; a finding whose `grep_query_used` is empty, fabricated, or
-does not actually surface the cited callsites will be REJECTED. The graph
-speeds discovery; grep remains the proof of record.
+**Verifier contract — how the two substrates are audited.** The verifier
+replays `grep_query_used` and compares its hits ONLY against your
+grep-discovered usages (`external_usages_found` in the certificate), so:
+  - `grep_query_used` MUST be a real query that finds your
+    `discovery: "grep"` callsites. Required whenever ≥1 grep usage exists;
+    an empty/fabricated query that does not surface them → REJECTED.
+  - `discovery: "graph"` callsites are NOT put in `external_usages_found`
+    and are NOT expected in the replay (grep cannot reach them). They are
+    validated independently: you MUST read each one's exact source line
+    into `callsite_snippet` + compute `callsite_snippet_hash`, and the
+    verifier re-reads the file:line and re-hashes to confirm. A graph
+    callsite you cannot back with a real, hash-matching source line will
+    be dropped as unverified.
+Either way, `callsite_snippet` + `callsite_snippet_hash` are mandatory on
+EVERY entry. The graph widens coverage; grep + snippet-hash remain the
+proof.
 
 ## Algorithm
 
@@ -124,13 +136,21 @@ underscored, inside `__init__` blocks not in `__all__`, etc.). Ignore
 
 For each candidate symbol:
 
-  - **If the knowledge graph is available** (per the Inputs section),
-    enumerate callers first with `search_graph(qn_pattern=<symbol>)` +
-    `trace_path(<symbol>, mode=calls)`, then still construct the grep
-    query below so `grep_query_used` is populated for the verifier — the
-    graph tells you which callers exist; the grep query is the
-    reproducible proof. Cross-check the two: if grep surfaces callsites
-    the graph did not (or vice-versa), trust the union and read each.
+  - Construct and run the Grep query first (see below). Tag every callsite
+    it surfaces `discovery: "grep"`. Record the query in `grep_query_used`
+    and the grep hits in the certificate's `external_usages_found` — this
+    is the set the verifier replays.
+  - **If the knowledge graph is available** (`GRAPH_PROJECT` non-empty,
+    per the Inputs section), ALSO enumerate callers with
+    `search_graph(qn_pattern=<symbol>, project=<GRAPH_PROJECT>)` +
+    `trace_path(<symbol>, mode=calls, project=<GRAPH_PROJECT>)`. Any caller
+    the graph finds that your grep query ALSO surfaces stays
+    `discovery: "grep"` (the graph just confirmed it). Any caller the graph
+    finds that grep CANNOT surface — verify the path is inside this
+    checkout, then tag it `discovery: "graph"` and record it in the
+    certificate's `graph_discovered_usages`, NOT in `external_usages_found`
+    (keeping the grep-replay set clean). Read each one's source line for
+    `callsite_snippet`/hash like any other entry.
   - Construct a Grep query that finds usages **outside the diff**.
     Prefer unambiguous identifiers (`FooBar`, `parseCacheKey`) over
     common words. For ambiguous names (`get`, `update`), narrow with
@@ -201,10 +221,10 @@ You may emit a finding ONLY when ALL hold:
   - The diff itself shows the symbol change (you can cite it at
     `file:line`).
 
-If your Grep returns zero external usages, **DO NOT EMIT A FINDING**.
-A symbol with no external callers cannot have cross-file impact. Log
-the symbol as analyzed (so cost-cap deferred-symbol accounting is
-correct) but emit nothing.
+If neither Grep nor the graph returns any external usage, **DO NOT
+EMIT A FINDING**. A symbol with no external callers cannot have
+cross-file impact. Log the symbol as analyzed (so cost-cap
+deferred-symbol accounting is correct) but emit nothing.
 
 If every external usage is guarded, **DO NOT EMIT A FINDING**. List
 the guarded usages in the certificate so the verifier can audit, but
@@ -226,7 +246,15 @@ Every emitted finding MUST attach a `reasoning_certificate` of
     "grep_query_used": "<exact grep query — must match the "
                        "top-level grep_query_used field>",
     "external_usages_found": [
-      "<file:line — one-clause description>",
+      "<file:line — one-clause description (GREP-discovered "
+      "usages only; this is the set the verifier replays grep "
+      "against)>",
+      ...
+    ],
+    "graph_discovered_usages": [
+      "<file:line — one-clause description (usages found ONLY via "
+      "the knowledge graph that grep cannot surface; empty [] when "
+      "the graph was unavailable or added nothing)>",
       ...
     ],
     "compatibility_analysis": [
@@ -248,9 +276,13 @@ Every emitted finding MUST attach a `reasoning_certificate` of
 }
 ```
 
-Place ALL external usages you considered into
-`external_usages_found`, including compatible ones. The verifier
-audits the list to verify you didn't miss a breakage.
+Place all GREP-discovered usages you considered (including compatible
+ones) into `external_usages_found` — the verifier replays
+`grep_query_used` against this list to verify you didn't miss a
+breakage. Place usages found ONLY via the graph (grep cannot reach
+them) into `graph_discovered_usages`. Keeping the two lists separate is
+what lets the grep replay stay clean while graph-only callsites are
+still verified per-entry by file-read + hash.
 
 ## external_impact[] entry shape
 
@@ -265,6 +297,7 @@ callsite that breaks. Shape:
   "description": "<one-clause: what breaks, why>",
   "callsite_snippet": "<the exact source line at file:line>",
   "callsite_snippet_hash": "<sha256 hex digest of UTF-8 encoded callsite_snippet>",
+  "discovery": "grep",
   "confidence": 0.95
 }
 ```
@@ -272,6 +305,14 @@ callsite that breaks. Shape:
 `confidence` reflects how certain you are that THIS specific callsite
 breaks (not the symbol-level certainty). Use the same calibration as
 the shared-prompt confidence rubric.
+
+`discovery` is `"grep"` (default) when your `grep_query_used` surfaces
+this callsite, or `"graph"` when only the knowledge graph found it
+(alias / re-export / dynamic dispatch). Tag it honestly: a `"grep"`
+entry that the verifier's replay cannot reproduce is treated as a
+hallucination, while a `"graph"` entry is verified purely by the
+file-read + `callsite_snippet_hash` audit. When the graph was
+unavailable (`GRAPH_PROJECT` empty), every entry is `"grep"`.
 
 ## Cost Caps (HARD)
 
@@ -475,11 +516,46 @@ the union of breaking callsites. Severity `HIGH`. Recommendation
 text should call out the rename specifically: "Update callsites to
 use the new name `SESSION_COOKIE_NAME`."
 
+### Example 5: Graph-discovered alias callsite that grep misses
+
+`GRAPH_PROJECT` is `acme-web` (the graph is available). The diff at
+`src/api/user.ts:42` changes `function getUser(id: string)` to
+`function getUser(id: string, options: UserOptions)` — no default.
+
+Step 1: Identified symbol `getUser`, change_nature `signature_change`.
+
+Step 2:
+  - Grep query: `\bgetUser\s*\(`. Returns 2 direct callsites:
+    `src/handlers/userHandler.ts:18`, `tests/api/user.test.ts:55`.
+    Both tagged `discovery: "grep"`; both go in `external_usages_found`.
+  - Graph: `trace_path("getUser", mode=calls, project="acme-web")`
+    returns a THIRD caller — `src/jobs/sync.ts:30` — which calls the
+    function through a re-exported alias `const fetchUser = getUser`
+    then `fetchUser(uid)`. A `\bgetUser\s*\(` grep never matches
+    `fetchUser(uid)`, so grep missed it. Validate `src/jobs/sync.ts`
+    opens inside the checkout (it does). Tag it `discovery: "graph"`;
+    record it in `graph_discovered_usages`, NOT `external_usages_found`.
+
+Step 3: Read all three. All call with one argument; the new required
+`options` breaks each. 3× `breaks_syntactically`
+(`impact_type: "signature_mismatch"`).
+
+Step 4: Emit ONE finding anchored at `src/api/user.ts:42` with three
+`external_impact[]` entries — two `discovery: "grep"`, one
+`discovery: "graph"` (the `sync.ts:30` alias). The verifier replays
+`\bgetUser\s*\(` and matches the two grep entries; it verifies the
+graph entry by reading `sync.ts:30` and matching its
+`callsite_snippet_hash`. All three confirmed → severity `HIGH`. The
+alias callsite — the one grep alone would have silently dropped — is
+the whole reason the graph substrate earns its place.
+
 ## Final reminders
 
   - **Skepticism, not paranoia.** If you can't cite a concrete
-    breaking callsite, don't emit. The verifier will replay your grep
-    and reject hallucinated external_impact entries.
+    breaking callsite, don't emit. The verifier replays your grep
+    against the `discovery: "grep"` entries and re-reads + re-hashes
+    every entry (grep AND graph); hallucinated or unbacked callsites of
+    either kind are rejected.
   - **Anchor at the change, not the break.** Putting the anchor on a
     callsite makes the finding look like the callsite's bug. It isn't
     — it's the upstream change's blast radius. Anchor in the diff.

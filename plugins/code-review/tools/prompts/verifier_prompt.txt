@@ -269,6 +269,14 @@ identification step failed → REJECTED,
 
 ### Per-entry callsite audit
 
+This audit is substrate-agnostic: it verifies EVERY entry the same way
+whether the reviewer found it via grep or via the knowledge graph
+(`external_impact[i].discovery` ∈ {`"grep"`, `"graph"`}, default
+`"grep"`). Reading the cited file:line and matching the snippet hash is
+the canonical proof — a `discovery: "graph"` entry (an alias,
+re-export, or dynamic-dispatch caller grep cannot surface) is verified
+HERE, not in the grep replay below.
+
 For EACH entry in `finding.external_impact[]`:
 
   1. Read the cited `external_impact[i].file` at line
@@ -314,41 +322,59 @@ Emit one `evidence_checks[]` entry per external_impact[] entry:
 
 ### Grep-query replay (first 5 only — cost cap)
 
+The replay audits ONLY the grep-discovered usages — it compares your
+replay against `reasoning_certificate.fields.external_usages_found`,
+which by contract lists grep-reproducible usages only. Graph-discovered
+usages live in `reasoning_certificate.fields.graph_discovered_usages`
+(and their `external_impact[]` entries carry `discovery: "graph"`); they
+are NOT expected in the replay and their absence is NEVER a hallucination
+signal — they were already verified by the per-entry read + hash audit
+above.
+
 For the FIRST FIVE Impact findings in the batch, replay
 `finding.grep_query_used` exactly (same flags, same query string).
-Compare your replay's file:line hits against
-`reasoning_certificate.fields.external_usages_found`:
+Compare your replay's file:line hits against `external_usages_found`:
 
+  - **`external_usages_found` is empty** (every `external_impact[]`
+    entry is `discovery: "graph"`) → there are no grep claims to
+    reproduce. Skip the overlap gate; rely on the per-entry audit.
+    `grep_query_used` may be empty/null in this all-graph case.
   - **Replay returns substantially the same hits** (≥80% overlap by
     file:line) → continue.
   - **Replay returns fewer than 50% of the listed usages OR returns
     hits NOT on the list when the listed count is small** → strong
     hallucination signal. REJECTED,
     `rejection_class: "evidence_not_found"`. Document the diff in
-    `verifier_reasoning`.
-  - **Replay fails (malformed query)** → REJECTED,
-    `rejection_class: "evidence_not_found"` — the reviewer cannot
-    cite work it cannot reproduce.
+    `verifier_reasoning`. (Judge overlap against `external_usages_found`
+    only — do NOT count graph-discovered usages as "missing" replay
+    hits.)
+  - **Replay fails (malformed query) while `external_usages_found` is
+    non-empty** → REJECTED, `rejection_class: "evidence_not_found"` —
+    the reviewer cannot reproduce grep work it claimed.
 
 Findings #6+ in a batch only do the well-formedness check on
-`grep_query_used` (must be non-empty, parseable) — skip the replay
-to stay within verifier cost caps.
+`grep_query_used` (non-empty + parseable, UNLESS `external_usages_found`
+is empty) — skip the replay to stay within verifier cost caps.
 
 ### Verdict dispatch for Impact findings
 
 After running the per-entry audit:
 
-  - **All `external_impact[]` entries verified** AND symbol-change
-    confirmed AND grep replay (if applicable) substantially matches →
-    CONFIRMED.
+  - **All `external_impact[]` entries verified** (per-entry read + hash,
+    for grep AND graph entries alike) AND symbol-change confirmed AND
+    grep replay over `external_usages_found` (if applicable) substantially
+    matches → CONFIRMED.
   - **Some entries verified, others not** → DOWNGRADE. Severity drops
     one tier (BLOCKING → HIGH, HIGH → MEDIUM). The verifier-side
     code path will trim the un-verified entries from
     `external_impact[]` before persisting. Document in
-    `verifier_reasoning` which entries were rejected.
+    `verifier_reasoning` which entries were rejected. (A
+    `discovery: "graph"` entry that fails its read/hash audit is trimmed
+    here just like a failed grep entry — provenance does not exempt an
+    entry from per-entry verification.)
   - **No entries verified OR symbol-change refutation OR grep-replay
-    refutation** → REJECTED with
-    `rejection_class: "evidence_not_found"`.
+    refutation against a non-empty `external_usages_found`** → REJECTED
+    with `rejection_class: "evidence_not_found"`.
 
 A single hallucinated entry is NOT enough to reject the whole
 finding — DOWNGRADE is the correct outcome when the symbol change is

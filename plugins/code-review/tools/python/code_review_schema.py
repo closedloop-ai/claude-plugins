@@ -239,6 +239,16 @@ SPAWN_SPEC_SOURCES: frozenset[str] = frozenset({
     "fast_path",
 })
 
+# Provenance values for ``external_impact[].discovery`` (FEA-1401 graph
+# integration). ``grep`` (default) entries are reproducible via the
+# verifier's grep-replay of ``grep_query_used``; ``graph`` entries were
+# found only via codebase-memory-mcp and are verified per-entry by
+# file-read + snippet-hash, exempt from the grep-replay completeness gate.
+EXTERNAL_IMPACT_DISCOVERY: frozenset[str] = frozenset({
+    "grep",
+    "graph",
+})
+
 # Per-agent ``bucket`` field. Mirrors the source bucket in
 # coverage_plan.json so presenters can group spawned agents by the rule
 # tier that selected them.
@@ -800,6 +810,12 @@ class ExternalImpact:
     callsite_snippet: str
     callsite_snippet_hash: str
     confidence: float
+    # Provenance of how the callsite was found (FEA-1401 graph integration).
+    # "grep" (default) → reproducible by replaying grep_query_used.
+    # "graph" → found only via codebase-memory-mcp (alias/re-export/dynamic
+    # dispatch grep cannot surface); verified by per-entry file-read + hash,
+    # exempt from the verifier's grep-replay completeness check.
+    discovery: str = "grep"
 
 
 @dataclass
@@ -984,6 +1000,22 @@ def validate_finding(finding: dict[str, Any]) -> list[str]:
     cs = finding.get("code_snippet")
     if cs is None:
         _err("missing code_snippet (use '' for system-scoped)")
+
+    # external_impact[].discovery provenance (FEA-1401 graph integration).
+    # Entry shape is otherwise informational (JSON schema is array-only); we
+    # only gate the closed-vocabulary discovery field so a typo can't slip a
+    # graph-discovered callsite past the verifier's substrate-aware audit.
+    impacts = finding.get("external_impact")
+    if isinstance(impacts, list):
+        for i, entry in enumerate(impacts):
+            if not isinstance(entry, dict):
+                continue
+            disc = entry.get("discovery")
+            if disc is not None and disc not in EXTERNAL_IMPACT_DISCOVERY:
+                _err(
+                    f"external_impact[{i}].discovery {disc!r} not in "
+                    f"{sorted(EXTERNAL_IMPACT_DISCOVERY)}",
+                )
 
     return errors
 

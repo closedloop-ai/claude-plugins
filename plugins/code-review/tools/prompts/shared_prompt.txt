@@ -25,22 +25,31 @@ TOOL USAGE:
 
 OPTIONAL — CODEBASE KNOWLEDGE GRAPH:
 Some reviewer roles (the Impact Analyzer and Bug Hunter B) are told by their
-role prompt to prefer the codebase knowledge graph for cross-file lookups when
-it is available. If — and ONLY if — your role prompt directs you to use it:
-- DETECT FIRST: call `mcp__codebase-memory-mcp__index_status` once. Treat the
-  graph as available only when the tool answers AND reports this repo as
-  indexed. If the tool is unavailable (the MCP server is not connected), errors,
-  or reports the repo as not indexed, silently fall back to Grep/Glob — do NOT
-  mention the absence in your findings, and do NOT change what you report.
-- NEVER index: do not call `index_repository` or any write/index tool (they are
-  not in your allowlist). Reviews must never block on indexing a repo.
-- WHEN AVAILABLE, prefer these read-only tools for cross-file work:
-  - `search_graph` (name/qualified-name/label patterns) to locate symbols.
+role prompt to prefer the `codebase-memory-mcp` knowledge graph for cross-file
+lookups when it is available. If — and ONLY if — your role prompt directs you to
+use it AND your task prompt supplies a non-empty `GRAPH_PROJECT` value:
+- AVAILABILITY is decided FOR you. The orchestrator already called
+  `list_projects` and resolved the project indexed for THIS repo; it passed the
+  result as `GRAPH_PROJECT`. If `GRAPH_PROJECT` is empty or absent, the graph is
+  unavailable (server not connected, or this repo is not indexed) — silently
+  fall back to Grep/Glob. Do NOT mention the absence in findings, and do NOT
+  change what you report. Reviews never index a repo.
+- SCOPE EVERY CALL TO THIS REPO. Pass `project=<GRAPH_PROJECT>` on every graph
+  call. NEVER omit it and NEVER substitute another project name — the server may
+  hold multiple indexed repos, and an unscoped or wrong-project query can pull a
+  DIFFERENT repository's source into your findings (and from there into posted
+  PR comments). That is a data-leak; treat the project scope as mandatory.
+- VALIDATE RETURNED PATHS. Before citing any file a graph tool returns, confirm
+  it is inside this checkout: it must be openable with Read at its repo-relative
+  path. Discard (never cite) any absolute path outside the working directory or
+  any path that escapes the repo via `..`.
+- WHEN AVAILABLE, prefer these read-only tools for cross-file work (all take
+  `project=<GRAPH_PROJECT>`):
+  - `search_graph` (query / name_pattern / qn_pattern / label) to locate symbols.
   - `trace_path` (mode=calls | data_flow | cross_service) to find callers and
     call chains.
   - `get_code_snippet` to read a symbol's source by qualified name.
-  - `search_code` for graph-augmented text search; `query_graph` for complex
-    structural queries.
+  - `search_code` for graph-augmented text search (supports `path_filter`).
 - The graph is a context aid, not an evidence substitute: every finding still
   cites a concrete file:line you confirmed, and any field a role prompt requires
   for verifier replay (e.g. `grep_query_used`) is still mandatory.
@@ -250,16 +259,29 @@ pipeline; you may emit them when relevant, otherwise omit):
           "description": "<one-clause: what breaks, why>",
           "callsite_snippet": "<exact source line at file:line>",
           "callsite_snippet_hash": "<deterministic hex digest>",
+          "discovery": "<grep | graph>",
           "confidence": <float 0..1>
         }
     The anchor of the finding (its own ``file``/``line``) is still the
     diff line where the symbol changed; ``external_impact[]`` entries
     can cite any repo file. Validate bypasses the line-in-changed-range
     rule for these informational attachments.
+    ``discovery`` records HOW the callsite was found: ``"grep"`` (the
+    default — reproducible by replaying ``grep_query_used``) or
+    ``"graph"`` (found via the codebase knowledge graph; e.g. an alias,
+    re-export, or dynamic-dispatch caller that grep cannot surface). Both
+    are verified the same way — the verifier reads the cited file:line and
+    matches ``callsite_snippet_hash`` — but ``"graph"`` entries are exempt
+    from the grep-replay completeness check (see ``grep_query_used``).
   - "grep_query_used": string — required alongside ``external_impact[]``
-    on Impact Analyzer findings. The verifier replays this exact query
-    to detect hallucinated callsite lists; substantially different
-    replay results → REJECTED.
+    on Impact Analyzer findings whenever at least one entry has
+    ``discovery: "grep"``. The verifier replays this exact query and
+    compares its hits against the grep-discovered usages only
+    (``reasoning_certificate.fields.external_usages_found``); a
+    substantially different replay → REJECTED. ``discovery: "graph"``
+    callsites are NOT expected in the replay (grep cannot reach them) —
+    they are validated solely by the per-entry file-read + snippet-hash
+    audit.
 
 If you find NO issues, write: {"findings": []}
 

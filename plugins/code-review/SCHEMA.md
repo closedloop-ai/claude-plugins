@@ -85,6 +85,7 @@ shape. Producers may emit dicts directly; the Python convenience type lives in
       "description": "<one sentence>",
       "callsite_snippet": "<verbatim>",
       "callsite_snippet_hash": "<sha256>",
+      "discovery": "grep | graph",
       "confidence": 0.0..1.0
     }
   ],
