@@ -993,3 +993,48 @@ def test_external_impact_discovery_mixed_substrates_valid():
         _impact_entry("grep"), _impact_entry("graph"),
     )
     assert validate_finding(f) == []
+
+
+def _impact_entry_with_file(file: str) -> dict:
+    entry = _impact_entry("graph")
+    entry["file"] = file
+    return entry
+
+
+def test_external_impact_repo_relative_path_valid():
+    f = _impact_finding_with_impacts(
+        _impact_entry_with_file("src/handlers/userHandler.ts"),
+    )
+    assert validate_finding(f) == []
+
+
+@pytest.mark.parametrize(
+    "bad_path",
+    [
+        "/etc/passwd",                 # absolute POSIX
+        "../../.env",                  # parent traversal
+        "src/../../secrets.py",        # embedded traversal
+        "C:/Users/x/secret.txt",       # Windows drive letter
+        r"C:\Users\x\secret.txt",      # Windows drive + backslashes
+        "..",                          # bare parent
+    ],
+)
+def test_external_impact_unsafe_path_rejected(bad_path: str):
+    # The graph substrate can introduce out-of-checkout paths; the
+    # deterministic gate must reject them before the verifier's per-callsite
+    # audit Reads them verbatim.
+    f = _impact_finding_with_impacts(_impact_entry_with_file(bad_path))
+    errors = validate_finding(f)
+    assert any("safe repo-relative path" in e for e in errors), (bad_path, errors)
+
+
+def test_external_impact_unsafe_path_does_not_block_safe_sibling():
+    # Each entry is gated independently — one bad path errors without
+    # suppressing validation of the good entries.
+    f = _impact_finding_with_impacts(
+        _impact_entry_with_file("src/a.ts"),
+        _impact_entry_with_file("/etc/passwd"),
+    )
+    errors = validate_finding(f)
+    assert any("external_impact[1].file" in e for e in errors), errors
+    assert not any("external_impact[0].file" in e for e in errors), errors

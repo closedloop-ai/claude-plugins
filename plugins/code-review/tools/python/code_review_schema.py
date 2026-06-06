@@ -1001,10 +1001,17 @@ def validate_finding(finding: dict[str, Any]) -> list[str]:
     if cs is None:
         _err("missing code_snippet (use '' for system-scoped)")
 
-    # external_impact[].discovery provenance (FEA-1401 graph integration).
-    # Entry shape is otherwise informational (JSON schema is array-only); we
-    # only gate the closed-vocabulary discovery field so a typo can't slip a
-    # graph-discovered callsite past the verifier's substrate-aware audit.
+    # external_impact[] entry validation (FEA-1401 graph integration).
+    # The entry shape is otherwise informational (the JSON schema is
+    # array-only), but two fields get a deterministic gate:
+    #   1. discovery — closed vocabulary, so a typo can't slip a
+    #      graph-discovered callsite past the verifier's substrate-aware audit.
+    #   2. file path safety — the graph substrate broadened where these paths
+    #      come from (grep is confined to cwd; graph results are not), so a
+    #      deterministic in-repo check backstops the agent's prompt-level path
+    #      validation. An absolute or `..`-escaping path that survived to here
+    #      would be Read verbatim by the verifier's per-callsite audit (a plain
+    #      worker with unsandboxed Read), exposing out-of-checkout file content.
     impacts = finding.get("external_impact")
     if isinstance(impacts, list):
         for i, entry in enumerate(impacts):
@@ -1016,6 +1023,19 @@ def validate_finding(finding: dict[str, Any]) -> list[str]:
                     f"external_impact[{i}].discovery {disc!r} not in "
                     f"{sorted(EXTERNAL_IMPACT_DISCOVERY)}",
                 )
+            file_val = entry.get("file")
+            if isinstance(file_val, str) and file_val:
+                norm = file_val.replace("\\", "/")
+                if (
+                    norm.startswith("/")
+                    or ".." in norm.split("/")
+                    or re.match(r"^[A-Za-z]:", norm) is not None
+                ):
+                    _err(
+                        f"external_impact[{i}].file {file_val!r} must be a "
+                        "safe repo-relative path (no absolute paths, drive "
+                        "letters, or '..' traversal)",
+                    )
 
     return errors
 
