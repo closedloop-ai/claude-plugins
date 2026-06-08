@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.12.5
+
+#### Added
+- `AdapterName` and `MethodName` `StrEnum`s in `harness/types.py` defining the closed set of harness runners and dispatchable methods the CLI accepts.
+
+#### Changed
+- `harness/cli.py` validates the adapter-name and method-name arguments against the closed enums at the CLI boundary, and `harness/registry.py` keys adapters by `AdapterName` instead of arbitrary strings.
+
+#### Fixed
+- `test_harness_cli.py` asserts the mock `AdapterName` superset used by the subprocess bootstrap stays a superset of the canonical enum, so a future enum member addition or rename fails the tests instead of silently diverging.
+- `test_harness_registry.py` covers the multi-adapter `get_adapter` error message (the sorted comma-joined registry listing), a path the closed two-member enum otherwise leaves unexercised.
+
 ### code-review v2.31.1
 
 PATCH bump — fix GitHub-mode inline comments silently dropping when a PR moves or renames files. GitHub's `pulls/{pr}/comments` API rejects any inline comment whose line is not part of the PR diff with a 422; reviewers flagging lines outside the changed hunks (common on moved/renamed files) therefore failed to post and survived only in the summary.

@@ -13,6 +13,8 @@ _AnotherFakeAdapterClass) and pytest fixtures are defined in conftest.py.
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from harness.adapter import HarnessAdapter
@@ -226,3 +228,31 @@ def test_get_adapter_error_message_content(
         assert substring in error_message, (
             f"Expected {substring!r} in error message, got: {error_message!r}"
         )
+
+
+def test_get_adapter_error_lists_all_registered_adapters(FakeAdapter, AnotherFakeAdapter) -> None:
+    """With more than one adapter registered, the error message lists every
+    registered name in sorted order (AC-005).
+
+    The closed two-member ``AdapterName`` set leaves no unregistered member to
+    look up once both CLAUDE and CODEX are registered, so ``ERROR_MESSAGE_CASES``
+    above can only exercise the 0-or-1-adapter registry. This case covers the
+    multi-name ``', '.join(sorted(_REGISTRY))`` path in ``get_adapter`` directly:
+    ``get_adapter`` keys purely on registry membership, so an unregistered
+    sentinel name still triggers the join over the populated registry.
+    """
+    _REGISTRY.clear()
+    _REGISTRY[FakeAdapter.name] = FakeAdapter  # AdapterName.CLAUDE
+    _REGISTRY[AnotherFakeAdapter.name] = AnotherFakeAdapter  # AdapterName.CODEX
+
+    # No third AdapterName member exists; cast an unregistered sentinel so the
+    # lookup misses and the registry-wide join is exercised.
+    unknown = cast(AdapterName, "unregistered-adapter")
+    with pytest.raises(KeyError) as exc_info:
+        get_adapter(unknown)
+
+    error_message = str(exc_info.value)
+    assert AdapterName.CLAUDE.value in error_message
+    assert AdapterName.CODEX.value in error_message
+    # Registered names are comma-joined in sorted order.
+    assert f"{AdapterName.CLAUDE.value}, {AdapterName.CODEX.value}" in error_message

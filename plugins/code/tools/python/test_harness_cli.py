@@ -53,6 +53,15 @@ class _MockAdapterName(StrEnum):
     CODEX = "codex"
     FAKE = "fake"
 
+# SSOT drift guard: the mock MUST stay a superset of the canonical AdapterName
+# (the only synthetic addition is FAKE). _htypes.AdapterName is still the real
+# enum here, before the reassignment below. If AdapterName ever gains or renames
+# a member, this fails the subprocess loudly instead of letting the stale copy
+# diverge silently behind the always-"fake" test path.
+assert {{m.value for m in _htypes.AdapterName}} <= {{m.value for m in _MockAdapterName}}, (
+    "_MockAdapterName drifted from harness.types.AdapterName; update the bootstrap superset"
+)
+
 _htypes.AdapterName = _MockAdapterName
 
 class _SubprocessFakeAdapter(HarnessAdapter):
