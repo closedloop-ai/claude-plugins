@@ -45,7 +45,7 @@ The renderer consumes `<CR_DIR>/spawn.json` (sections: `spec` — intended fleet
 
 Embed the renderer's output verbatim where the prior static Reviewers/Model Routing block would have appeared (between the `**Files Reviewed:**` line and the next `---` separator). Do NOT hand-author a separate Reviewers line — the renderer is the single source of truth for fleet composition.
 
-**Fallback:** if the renderer reports `spawn-spec unavailable` or `spawn-spec fell back`, the orchestrator walked the static reviewer table in `start.md` for this run. The renderer says so explicitly; embed its line as-is and rely on the static `## Reviewer Fleet` section in `start.md` for what the fleet looked like at dispatch time.
+**Fallback:** if the renderer reports `spawn-spec unavailable` or `spawn-spec fell back`, the orchestrator walked the static reviewer table in the `code-review:spawn-reviewers` skill for this run. The renderer says so explicitly; embed its line as-is and rely on the static reviewer table in the `code-review:spawn-reviewers` skill for what the fleet looked like at dispatch time.
 
 **Fast-path runs** are handled by the renderer too — it emits the `Fast Path Reviewer (single-agent mode)` line + the resolved fast-path model. No branch needed in this skill.
 
