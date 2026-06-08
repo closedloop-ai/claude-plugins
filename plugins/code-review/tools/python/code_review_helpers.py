@@ -4219,7 +4219,7 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
                 print(f"  Skipped {path}:{line} — line not in diff (422), summary-only")
                 skipped_out_of_hunk += 1
             elif "401" in err_text or "403" in err_text:
-                print(f"  Skipped {path}:{line} — auth error")
+                print(f"  Failed {path}:{line} — auth error")
                 failed += 1
             else:
                 print(f"  Failed {path}:{line} — {api_result.stderr.strip()}")

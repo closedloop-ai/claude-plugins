@@ -3787,9 +3787,33 @@ class TestCmdPostComments:
             mock_run.side_effect = [success, fail_422]
             rc = self._run(path)
         assert rc == 0
+        # 1 GET + 1 POST (the POST is attempted, then 422'd into the skip bucket).
+        assert mock_run.call_count == 2
         out = capsys.readouterr().out
         assert "out-of-hunk=1" in out
         assert "failed 0" in out
+
+    def test_auth_error_counted_as_failure(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A 401/403 is a genuine failure (not a skip) — the message and the
+        tally must agree so an operator isn't misled into ignoring an auth
+        problem."""
+        findings = [
+            {"file": "a.ts", "line": 10, "severity": "HIGH", "category": "Bug", "issue": "first"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        success = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        fail_401 = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="HTTP 401: Bad credentials")
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [success, fail_401]
+            rc = self._run(path)
+        assert rc == 0
+        # 1 GET + 1 POST (the POST is attempted and fails auth).
+        assert mock_run.call_count == 2
+        out = capsys.readouterr().out
+        assert "failed 1" in out
+        assert "out-of-hunk=0" in out
 
     def test_out_of_hunk_kept_skips_inline_post(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
