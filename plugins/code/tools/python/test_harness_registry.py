@@ -18,6 +18,7 @@ import pytest
 from harness.adapter import HarnessAdapter
 from harness.registry import _REGISTRY, get_adapter, register
 from harness.types import (
+    AdapterName,
     Command,
     InvocationRequest,
     TerminalFailure,
@@ -48,13 +49,13 @@ def _clean_registry():
 class _MissingAllMethods(HarnessAdapter):
     """Subclass that implements none of the six abstract methods."""
 
-    name = "missing-all"
+    name = AdapterName.CLAUDE
 
 
 class _MissingFiveMethods(HarnessAdapter):
     """Subclass that implements only supports(), omitting five methods."""
 
-    name = "missing-five"
+    name = AdapterName.CLAUDE
 
     def supports(self, command: Command) -> bool:
         return True
@@ -63,7 +64,7 @@ class _MissingFiveMethods(HarnessAdapter):
 class _MissingOneLast(HarnessAdapter):
     """Subclass that omits only classify_terminal_failure."""
 
-    name = "missing-one"
+    name = AdapterName.CLAUDE
 
     def supports(self, command: Command) -> bool:
         return True
@@ -167,7 +168,7 @@ def test_register_as_class_decorator(FakeAdapter) -> None:
 
     @register
     class DecoratedAdapter(HarnessAdapter):
-        name = "decorated"
+        name = AdapterName.CODEX
 
         def supports(self, command: Command) -> bool:
             return True
@@ -187,7 +188,7 @@ def test_register_as_class_decorator(FakeAdapter) -> None:
         def classify_terminal_failure(self, raw_output, stderr, exit_code) -> TerminalFailure:
             return TerminalFailure(status="RUNNER_ERROR", subcode="NON_ZERO_EXIT", message=stderr or "fail")
 
-    assert get_adapter("decorated") is DecoratedAdapter
+    assert get_adapter(AdapterName.CODEX) is DecoratedAdapter
 
 
 # ---------------------------------------------------------------------------
@@ -195,16 +196,18 @@ def test_register_as_class_decorator(FakeAdapter) -> None:
 # ---------------------------------------------------------------------------
 
 # Each case: (names_to_register, lookup_name, expected_substrings_in_error)
+# The registry is keyed by AdapterName, so both registered names and the
+# (unregistered) lookup name are members of the closed AdapterName set.
 ERROR_MESSAGE_CASES = [
-    (["fake"], "missing", ["fake"]),
-    (["fake", "another-fake"], "unknown", ["fake", "another-fake"]),
-    ([], "anything", ["(none)"]),
+    ([AdapterName.CLAUDE], AdapterName.CODEX, [AdapterName.CLAUDE.value]),
+    ([AdapterName.CODEX], AdapterName.CLAUDE, [AdapterName.CODEX.value]),
+    ([], AdapterName.CLAUDE, ["(none)"]),
 ]
 
 
 @pytest.mark.parametrize("registered_names,lookup_name,expected_substrings", ERROR_MESSAGE_CASES)
 def test_get_adapter_error_message_content(
-    FakeAdapter, AnotherFakeAdapter, registered_names: list[str], lookup_name: str, expected_substrings: list[str]
+    FakeAdapter, AnotherFakeAdapter, registered_names: list[AdapterName], lookup_name: AdapterName, expected_substrings: list[str]
 ) -> None:
     """get_adapter error message contains expected substrings for different registry states (AC-005)."""
     name_to_cls = {

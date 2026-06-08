@@ -17,14 +17,18 @@ from __future__ import annotations
 import pytest
 
 from harness.types import (
+    AdapterName,
     CodeReviewFixRequest,
     CodeReviewStartRequest,
     Command,
     ExportLearningsRequest,
+    MethodName,
     PlanExecuteRequest,
     ProcessLearningsRequest,
     TerminalFailure,
     TurnResult,
+    adapter_name_from_str,
+    method_name_from_str,
     request_from_json,
     terminal_failure_from_json,
     terminal_failure_to_json,
@@ -56,6 +60,79 @@ def test_command_enum_values(member: Command, expected_value: str) -> None:
 def test_command_enum_has_exactly_five_members() -> None:
     """Command enum contains exactly five members."""
     assert len(Command) == 5
+
+
+# ---------------------------------------------------------------------------
+# AdapterName / MethodName enum values and string conversion helpers
+# ---------------------------------------------------------------------------
+
+ADAPTER_NAME_MEMBER_CASES = [
+    (AdapterName.CLAUDE, "claude"),
+    (AdapterName.CODEX, "codex"),
+]
+
+METHOD_NAME_MEMBER_CASES = [
+    (MethodName.BUILD_ENTRY_PROMPT, "build_entry_prompt"),
+    (MethodName.BUILD_ARGV, "build_argv"),
+    (MethodName.PARSE_SESSION_ID, "parse_session_id"),
+    (MethodName.PARSE_TURN_RESULT, "parse_turn_result"),
+    (MethodName.CLASSIFY_TERMINAL_FAILURE, "classify_terminal_failure"),
+]
+
+
+@pytest.mark.parametrize("member,expected_value", ADAPTER_NAME_MEMBER_CASES)
+def test_adapter_name_enum_values(member: AdapterName, expected_value: str) -> None:
+    """Each AdapterName member has the expected string value."""
+    assert member == expected_value
+    assert str(member) == expected_value
+
+
+@pytest.mark.parametrize("member,expected_value", METHOD_NAME_MEMBER_CASES)
+def test_method_name_enum_values(member: MethodName, expected_value: str) -> None:
+    """Each MethodName member has the expected string value."""
+    assert member == expected_value
+    assert str(member) == expected_value
+
+
+# Each case: (helper, valid_value, expected_member)
+VALID_CONVERSION_CASES = [
+    (adapter_name_from_str, "claude", AdapterName.CLAUDE),
+    (adapter_name_from_str, "codex", AdapterName.CODEX),
+    (method_name_from_str, "build_argv", MethodName.BUILD_ARGV),
+    (method_name_from_str, "parse_turn_result", MethodName.PARSE_TURN_RESULT),
+]
+
+
+@pytest.mark.parametrize("helper,value,expected", VALID_CONVERSION_CASES)
+def test_str_to_enum_valid(helper, value, expected) -> None:
+    """The conversion helpers return the matching enum member for valid values."""
+    result = helper(value)
+    assert result is expected
+
+
+# Each case: (helper, invalid_value, category_label, expected_supported_substring)
+INVALID_CONVERSION_CASES = [
+    (adapter_name_from_str, "cursor", "adapter", "claude"),
+    (adapter_name_from_str, "", "adapter", "codex"),
+    (adapter_name_from_str, "Claude", "adapter", "claude"),  # case-sensitive
+    (method_name_from_str, "nonexistent", "method", "build_argv"),
+    (method_name_from_str, "BUILD_ARGV", "method", "build_argv"),  # case-sensitive
+]
+
+
+@pytest.mark.parametrize(
+    "helper,value,category,supported_substring", INVALID_CONVERSION_CASES
+)
+def test_str_to_enum_invalid_raises_descriptive_error(
+    helper, value, category, supported_substring
+) -> None:
+    """Invalid values raise ValueError naming the value, category, and allowed set."""
+    with pytest.raises(ValueError) as exc_info:
+        helper(value)
+    message = str(exc_info.value)
+    assert repr(value) in message
+    assert category in message
+    assert supported_substring in message
 
 
 # ---------------------------------------------------------------------------

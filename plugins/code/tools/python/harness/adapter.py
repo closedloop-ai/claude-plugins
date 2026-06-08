@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from typing import ClassVar
 
 from harness.types import (
+    AdapterName,
     Command,
     InvocationRequest,
     TerminalFailure,
@@ -24,8 +25,10 @@ class HarnessAdapter(ABC):
 
     Class-level attributes
     ----------------------
-    name : str
-        Registry key used by ``register()`` / ``get_adapter()``.
+    name : AdapterName
+        Registry key used by ``register()`` / ``get_adapter()``. Constrained to
+        the closed ``AdapterName`` set so every production adapter registers
+        under a known runner name rather than an arbitrary string.
 
     Abstract methods
     ----------------
@@ -43,7 +46,7 @@ class HarnessAdapter(ABC):
         Classify a failed harness invocation as a TerminalFailure.
     """
 
-    name: ClassVar[str]
+    name: ClassVar[AdapterName]
 
     @abstractmethod
     def supports(self, command: Command) -> bool:

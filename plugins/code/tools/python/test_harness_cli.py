@@ -12,6 +12,12 @@ The fake adapter is injected into the subprocess via Python's ``-c`` flag, which
 registers the adapter in the subprocess's registry before calling ``harness.cli.main()``.
 This avoids the need for a separate helper script while keeping each case self-contained.
 
+Because the CLI now validates the adapter-name argument against the closed
+``AdapterName`` enum, the bootstrap mocks that enum with a superset that adds a
+``FAKE`` member. ``adapter_name_from_str`` resolves ``AdapterName`` from the
+``harness.types`` module namespace at call time, so reassigning it there is
+enough to let the fake harness through the boundary.
+
 Uses a table-driven (pytest.mark.parametrize) approach throughout.
 Shared fixtures (FakeAdapter, AnotherFakeAdapter) are defined in conftest.py.
 """
@@ -33,13 +39,24 @@ HARNESS_DIR = str(Path(__file__).parent)
 
 _BOOTSTRAP = """\
 import sys
+from enum import StrEnum
 sys.path.insert(0, {harness_dir!r})
+import harness.types as _htypes
 from harness.adapter import HarnessAdapter
 from harness.registry import register
 from harness.types import Command, InvocationRequest, TurnResult, TerminalFailure
 
+# Mock the closed AdapterName enum with a superset that adds a test harness so
+# the fake adapter passes the CLI's adapter-name validation boundary.
+class _MockAdapterName(StrEnum):
+    CLAUDE = "claude"
+    CODEX = "codex"
+    FAKE = "fake"
+
+_htypes.AdapterName = _MockAdapterName
+
 class _SubprocessFakeAdapter(HarnessAdapter):
-    name = "fake"
+    name = _MockAdapterName.FAKE
 
     def supports(self, command: Command) -> bool:
         return True

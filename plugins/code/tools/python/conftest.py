@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from harness.adapter import HarnessAdapter  # noqa: E402
 from harness.types import (  # noqa: E402
+    AdapterName,
     Command,
     InvocationRequest,
     TerminalFailure,
@@ -35,7 +36,7 @@ class _FakeAdapterClass(HarnessAdapter):
     harness subprocess.
     """
 
-    name = "fake"
+    name = AdapterName.CLAUDE
 
     def supports(self, command: Command) -> bool:
         return True
@@ -74,7 +75,7 @@ class _FakeAdapterClass(HarnessAdapter):
 class _AnotherFakeAdapterClass(HarnessAdapter):
     """A second concrete HarnessAdapter for multi-adapter registry tests."""
 
-    name = "another-fake"
+    name = AdapterName.CODEX
 
     def supports(self, command: Command) -> bool:
         return False

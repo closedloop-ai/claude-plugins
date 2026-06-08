@@ -6,14 +6,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from harness.types import AdapterName
+
 if TYPE_CHECKING:
     from harness.adapter import HarnessAdapter
 
 # Module-level registry: maps adapter name -> adapter class.
-_REGISTRY: dict[str, type["HarnessAdapter"]] = {}
+_REGISTRY: dict[AdapterName, type[HarnessAdapter]] = {}
 
 
-def register(adapter_cls: type["HarnessAdapter"]) -> type["HarnessAdapter"]:
+def register(adapter_cls: type[HarnessAdapter]) -> type[HarnessAdapter]:
     """Register an adapter class under its ``name`` attribute.
 
     Can be used as a class decorator::
@@ -37,13 +39,13 @@ def register(adapter_cls: type["HarnessAdapter"]) -> type["HarnessAdapter"]:
     return adapter_cls
 
 
-def get_adapter(name: str) -> type["HarnessAdapter"]:
+def get_adapter(name: AdapterName) -> type[HarnessAdapter]:
     """Return the registered adapter class for ``name``.
 
     Parameters
     ----------
     name:
-        The adapter's ``name`` attribute value.
+        The adapter's ``name`` attribute value, a member of ``AdapterName``.
 
     Raises
     ------
@@ -55,7 +57,6 @@ def get_adapter(name: str) -> type["HarnessAdapter"]:
     if name not in _REGISTRY:
         available = ", ".join(sorted(_REGISTRY)) or "(none)"
         raise KeyError(
-            f"No adapter registered with name {name!r}. "
-            f"Available adapters: {available}"
+            f"No adapter registered with name {name!r}. Available adapters: {available}"
         )
     return _REGISTRY[name]

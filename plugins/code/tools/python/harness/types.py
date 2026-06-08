@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass
 from enum import StrEnum
-from typing import Literal, Union
+from typing import Literal, TypeVar, Union
 
 
 # ---------------------------------------------------------------------------
@@ -28,6 +28,70 @@ class Command(StrEnum):
     EXPORT_LEARNINGS = "export_learnings"
     CODE_REVIEW_START = "code_review_start"
     CODE_REVIEW_FIX = "code_review_fix"
+
+
+# ---------------------------------------------------------------------------
+# CLI argument enums (closed categories validated at the CLI boundary)
+# ---------------------------------------------------------------------------
+
+class AdapterName(StrEnum):
+    """Closed set of harness runners the CLI is allowed to dispatch to.
+
+    Validated at the CLI boundary via :func:`adapter_name_from_str` and used as
+    the type of :attr:`HarnessAdapter.name`, so the registry key for any
+    production adapter is one of these members rather than an arbitrary string.
+    """
+
+    CLAUDE = "claude"
+    CODEX = "codex"
+
+
+class MethodName(StrEnum):
+    """Adapter methods the CLI can dispatch to.
+
+    Mirrors the methods handled in ``harness.cli._dispatch``; converting the raw
+    CLI argument to this enum lets the dispatcher use an exhaustive match/case
+    that pyright can verify.
+    """
+
+    BUILD_ENTRY_PROMPT = "build_entry_prompt"
+    BUILD_ARGV = "build_argv"
+    PARSE_SESSION_ID = "parse_session_id"
+    PARSE_TURN_RESULT = "parse_turn_result"
+    CLASSIFY_TERMINAL_FAILURE = "classify_terminal_failure"
+
+
+_StrEnumT = TypeVar("_StrEnumT", bound=StrEnum)
+
+
+def _str_enum_from_value(enum_cls: type[_StrEnumT], value: str, category: str) -> _StrEnumT:
+    """Convert a raw string to a member of ``enum_cls`` or raise a clear error.
+
+    Shared by :func:`adapter_name_from_str` and :func:`method_name_from_str` so
+    the "validate a stringly-typed CLI argument against a closed category"
+    behavior lives in exactly one place (SSOT).
+
+    Raises:
+        ValueError: if ``value`` is not a member of ``enum_cls``. The message
+            names every supported value so the caller knows the allowed set.
+    """
+    try:
+        return enum_cls(value)
+    except ValueError:
+        supported = ", ".join(member.value for member in enum_cls)
+        raise ValueError(
+            f"Unknown {category} {value!r}. Supported {category}s: {supported}"
+        ) from None
+
+
+def adapter_name_from_str(value: str) -> AdapterName:
+    """Validate a raw adapter-name CLI argument against the ``AdapterName`` set."""
+    return _str_enum_from_value(AdapterName, value, "adapter")
+
+
+def method_name_from_str(value: str) -> MethodName:
+    """Validate a raw method-name CLI argument against the ``MethodName`` set."""
+    return _str_enum_from_value(MethodName, value, "method")
 
 
 # ---------------------------------------------------------------------------

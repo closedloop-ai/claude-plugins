@@ -22,63 +22,73 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import NoReturn
+from typing import NoReturn, assert_never
 
 from harness.registry import get_adapter
 from harness.types import (
+    AdapterName,
+    MethodName,
+    adapter_name_from_str,
+    method_name_from_str,
     request_from_json,
     terminal_failure_to_json,
     turn_result_to_json,
 )
 
 
-def _dispatch(adapter_name: str, method_name: str, payload: dict[str, object]) -> dict[str, object]:
+def _dispatch(
+    adapter_name: AdapterName,
+    method_name: MethodName,
+    payload: dict[str, object],
+) -> dict[str, object]:
     """Look up the adapter, deserialize the request, call the method.
 
-    Raises KeyError if the adapter or method is not found.
+    Both ``adapter_name`` and ``method_name`` arrive already validated as their
+    respective enums (see :func:`adapter_name_from_str` /
+    :func:`method_name_from_str`), so the only remaining failure mode here is a
+    valid-but-unregistered adapter name.
+
+    Raises KeyError if no adapter is registered under ``adapter_name``.
     """
     adapter_cls = get_adapter(adapter_name)
     adapter = adapter_cls()
 
-    if method_name == "build_entry_prompt":
-        raw_add_dirs = payload.get("add_dirs", [])
-        add_dirs = list(raw_add_dirs) if isinstance(raw_add_dirs, list) else []
-        result = adapter.build_entry_prompt(
-            workdir=str(payload.get("workdir", "")),
-            prompt_name=str(payload.get("prompt_name", "")),
-            prd=str(payload.get("prd", "")),
-            add_dirs=add_dirs,
-        )
-        return {"result": result}
+    match method_name:
+        case MethodName.BUILD_ENTRY_PROMPT:
+            raw_add_dirs = payload.get("add_dirs", [])
+            add_dirs = list(raw_add_dirs) if isinstance(raw_add_dirs, list) else []
+            result = adapter.build_entry_prompt(
+                workdir=str(payload.get("workdir", "")),
+                prompt_name=str(payload.get("prompt_name", "")),
+                prd=str(payload.get("prd", "")),
+                add_dirs=add_dirs,
+            )
+            return {"result": result}
 
-    if method_name == "build_argv":
-        request = request_from_json(payload)
-        argv = adapter.build_argv(request)
-        return {"argv": argv}
+        case MethodName.BUILD_ARGV:
+            request = request_from_json(payload)
+            argv = adapter.build_argv(request)
+            return {"argv": argv}
 
-    if method_name == "parse_session_id":
-        raw_output = str(payload.get("raw_output", ""))
-        session_id = adapter.parse_session_id(raw_output)
-        return {"session_id": session_id}
+        case MethodName.PARSE_SESSION_ID:
+            raw_output = str(payload.get("raw_output", ""))
+            session_id = adapter.parse_session_id(raw_output)
+            return {"session_id": session_id}
 
-    if method_name == "parse_turn_result":
-        raw_output = str(payload.get("raw_output", ""))
-        turn_result = adapter.parse_turn_result(raw_output)
-        return turn_result_to_json(turn_result)
+        case MethodName.PARSE_TURN_RESULT:
+            raw_output = str(payload.get("raw_output", ""))
+            turn_result = adapter.parse_turn_result(raw_output)
+            return turn_result_to_json(turn_result)
 
-    if method_name == "classify_terminal_failure":
-        raw_output = str(payload.get("raw_output", ""))
-        stderr = str(payload.get("stderr", ""))
-        raw_exit = payload.get("exit_code", 1)
-        exit_code = raw_exit if isinstance(raw_exit, int) else int(str(raw_exit))
-        failure = adapter.classify_terminal_failure(raw_output, stderr, exit_code)
-        return terminal_failure_to_json(failure)
+        case MethodName.CLASSIFY_TERMINAL_FAILURE:
+            raw_output = str(payload.get("raw_output", ""))
+            stderr = str(payload.get("stderr", ""))
+            raw_exit = payload.get("exit_code", 1)
+            exit_code = raw_exit if isinstance(raw_exit, int) else int(str(raw_exit))
+            failure = adapter.classify_terminal_failure(raw_output, stderr, exit_code)
+            return terminal_failure_to_json(failure)
 
-    raise KeyError(
-        f"Unknown method {method_name!r}. Supported methods: "
-        "build_entry_prompt, build_argv, parse_session_id, "
-        "parse_turn_result, classify_terminal_failure"
-    )
+    assert_never(method_name)
 
 
 def _error_exit(msg: str) -> NoReturn:
@@ -98,8 +108,11 @@ def main() -> None:
     if len(sys.argv) != 3:
         _error_exit("Usage: python -m harness.cli <adapter_name> <method_name>")
 
-    adapter_name = sys.argv[1]
-    method_name = sys.argv[2]
+    try:
+        adapter_name = adapter_name_from_str(sys.argv[1])
+        method_name = method_name_from_str(sys.argv[2])
+    except ValueError as exc:
+        _error_exit(str(exc))
 
     raw_stdin = sys.stdin.read()
     if not raw_stdin.strip():

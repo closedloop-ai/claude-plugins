@@ -1,22 +1,27 @@
 """
 harness -- Harness-agnostic orchestration contract for the code plugin.
 
-Re-exports types (Command, request/result dataclasses, JSON helpers),
-the HarnessAdapter ABC, and the adapter registry (register / get_adapter).
+Re-exports types (Command/AdapterName/MethodName enums, request/result
+dataclasses, JSON and CLI-argument helpers), the HarnessAdapter ABC, and the
+adapter registry (register / get_adapter).
 """
 
 from harness.adapter import HarnessAdapter
 from harness.registry import get_adapter, register
 from harness.types import (
+    AdapterName,
     CodeReviewFixRequest,
     CodeReviewStartRequest,
     Command,
     ExportLearningsRequest,
     InvocationRequest,
+    MethodName,
     PlanExecuteRequest,
     ProcessLearningsRequest,
     TerminalFailure,
     TurnResult,
+    adapter_name_from_str,
+    method_name_from_str,
     request_from_json,
     terminal_failure_from_json,
     terminal_failure_to_json,
@@ -25,8 +30,13 @@ from harness.types import (
 )
 
 __all__ = [
-    # Enum
+    # Enums
     "Command",
+    "AdapterName",
+    "MethodName",
+    # CLI argument conversion helpers
+    "adapter_name_from_str",
+    "method_name_from_str",
     # Request dataclasses
     "PlanExecuteRequest",
     "ProcessLearningsRequest",
