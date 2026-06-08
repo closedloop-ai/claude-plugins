@@ -20,6 +20,7 @@ PLUGIN_ROOT="$(dirname "$SCRIPT_DIR")"
 PRD_FILE=""
 PLAN_FILE=""
 MAX_ITERATIONS=10
+REVIEW_CYCLES=""
 PROMPT_NAME=""
 WORKDIR=""
 ADD_DIRS=()
@@ -148,6 +149,15 @@ while [[ $ARG_INDEX -lt $ARG_COUNT ]]; do
                 exit 1
             fi
             MAX_ITERATIONS="${ARGS[$ARG_INDEX]}"
+            ARG_INDEX=$((ARG_INDEX + 1))
+            ;;
+        --review-cycles)
+            ARG_INDEX=$((ARG_INDEX + 1))
+            if [[ $ARG_INDEX -ge $ARG_COUNT ]]; then
+                echo "Error: --review-cycles requires a value" >&2
+                exit 1
+            fi
+            REVIEW_CYCLES="${ARGS[$ARG_INDEX]}"
             ARG_INDEX=$((ARG_INDEX + 1))
             ;;
         --prompt)
@@ -355,6 +365,13 @@ CLOSEDLOOP_ADD_DIRS="$add_dirs_joined"
 CLOSEDLOOP_ADD_DIR_NAMES="$add_dir_names_joined"
 CLOSEDLOOP_REPO_MAP="$repo_map_joined"
 EOF
+
+# Pass --review-cycles <n> through to run-loop.sh's post-loop review-fix
+# cycle budget (read as POST_LOOP_REVIEW_CYCLES). Only write the key when the
+# flag was supplied so run-loop.sh's built-in default still applies otherwise.
+if [[ -n "$REVIEW_CYCLES" ]]; then
+    echo "POST_LOOP_REVIEW_CYCLES=$REVIEW_CYCLES" >> "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
+fi
 
 # Re-append run-loop-managed keys captured above.
 if [[ -n "$EXISTING_START_SHA" ]]; then
