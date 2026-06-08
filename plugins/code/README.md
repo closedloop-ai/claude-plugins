@@ -75,6 +75,41 @@ State is maintained in `$CLOSEDLOOP_WORKDIR/state.json` at each phase transition
 
 The command runs inside a ClosedLoop loop — the external loop runner (`run-loop.sh`) relaunches it with fresh context on each iteration until `<promise>COMPLETE</promise>` is output.
 
+### `/code:create-plan`
+
+**Description:** Create an implementation plan (planning only).
+
+**Usage:**
+```
+/code:create-plan [working-directory] [--prd <requirements-file>] [--plan <plan-file>] [--add-dir <path>]
+```
+
+- `working-directory`: Path to the work directory containing the PRD (defaults to current directory)
+- `--prd <file>`: Explicitly specify the requirements file (auto-detected if omitted)
+- `--plan <file>`: Target plan file
+- `--add-dir <path>`: Additional directory to make available to the session
+
+**What it does:**
+
+Runs `setup-closedloop.sh` with the `plan-prompt` orchestrator prompt (`prompts/plan-prompt.md`) for a single-shot, in-session planning run — there is no external loop. The orchestrator runs PLAN ONLY (phases 0.9–2.7), delegating all project file reading to subagents. When the plan is finalized (`plan.json` + `plan.md` ready and validated), it writes `state.json` with `status: COMPLETED`, outputs `<promise>PLAN_COMPLETE</promise>`, and stops without proceeding to implementation.
+
+### `/code:execute-implementation`
+
+**Description:** Execute an implementation plan (implementation only).
+
+**Usage:**
+```
+/code:execute-implementation [working-directory] [--add-dir <path>] [--review-cycles <n>]
+```
+
+- `working-directory`: Path to the work directory containing `plan.json` (defaults to current directory)
+- `--add-dir <path>`: Additional directory to make available to the session
+- `--review-cycles <n>`: Number of in-session review rounds
+
+**What it does:**
+
+Runs `setup-closedloop.sh` with the `execute-prompt` orchestrator prompt (`prompts/execute-prompt.md`) for a single-shot, in-session implementation run. The orchestrator runs IMPLEMENTATION ONLY (phases 3–7 plus in-session review rounds) and requires an existing `plan.json` — if none exists it HARD STOPS and points to `/code:create-plan`, never drafting a plan itself. When implementation is genuinely finished (all tasks complete, build validation passes), it writes `state.json` with `status: COMPLETED` and outputs `<promise>IMPLEMENTATION_COMPLETE</promise>`. If tasks remain or validation fails, it ends without the promise so a re-invocation resumes the remaining work.
+
 ### `/code:amend-plan`
 
 **Description:** Discuss and apply amendments to a `plan.json` implementation plan.

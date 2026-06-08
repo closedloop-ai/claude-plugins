@@ -107,12 +107,23 @@ START_SHA=$(grep '^CLOSEDLOOP_START_SHA=' "$CLOSEDLOOP_WORKDIR/.closedloop-ai/co
 ```
 Always quote `"$CLOSEDLOOP_WORKDIR"` in shell snippets to handle workdir paths that contain spaces. Include `"startSha": "$START_SHA"` in this initial state.json write. On every subsequent state.json write, re-include `"startSha": "$START_SHA"` from working memory — do NOT re-read config.env or state.json. If config.env is absent or `CLOSEDLOOP_START_SHA` is empty, set `startSha` to `""`.
 
+**Multi-repo detection (MANDATORY, immediately after startSha init, first iteration only):** The planning agents do NOT reliably self-detect multi-repo mode from injected environment context — you MUST detect it deterministically here and pass it as an explicit instruction. Source the multi-repo values from config.env with a single Bash call and store them in working memory for the rest of the run:
+```bash
+ADD_DIRS=$(grep '^CLOSEDLOOP_ADD_DIRS=' "$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env" 2>/dev/null | cut -d= -f2- | head -n1 | tr -d '"')
+REPO_MAP=$(grep '^CLOSEDLOOP_REPO_MAP=' "$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env" 2>/dev/null | cut -d= -f2- | head -n1 | tr -d '"')
+```
+If `ADD_DIRS` is non-empty, this is a **MULTI-REPO run**. Whenever a phase below says "include the MULTI_REPO_DIRECTIVE", prepend this block (with `$REPO_MAP` substituted) to that agent's prompt:
+
+> **MULTI-REPO MODE — this plan spans multiple repositories.** `CLOSEDLOOP_REPO_MAP=$REPO_MAP` (pipe-separated `name=path` entries; the primary repo is `$CLOSEDLOOP_WORKDIR`). You MUST follow your "Multi-Repository Plans" / multi-repo section: explore EVERY repo in the map (not just the primary) and produce multi-repo output — `code-map-{name}.json` per secondary repo (pre-explorer), and the `repositories` field plus `@{repo-name}:path` file references in plan.json (plan-draft-writer). Do NOT produce a single-repo plan.
+
+If `ADD_DIRS` is empty, this is a single-repo run: omit the MULTI_REPO_DIRECTIVE entirely from every launch.
+
 Here are the key phases you must complete:
 
 **PHASE 0.9: PRE-EXPLORATION**
 
 - Skip if plan.json exists or `CLOSEDLOOP_PLAN_FILE` is set
-- Otherwise: Launch @code:pre-explorer with `WORKDIR=$CLOSEDLOOP_WORKDIR` to explore codebase and write requirements-extract.json, code-map.json, investigation-log.md
+- Otherwise: Launch @code:pre-explorer with `WORKDIR=$CLOSEDLOOP_WORKDIR` to explore codebase and write requirements-extract.json, code-map.json, investigation-log.md. **If this is a MULTI-REPO run, include the MULTI_REPO_DIRECTIVE in the prompt** (the agent must also write `code-map-{name}.json` for each secondary repo).
 
 **PHASE 1: PLANNING**
 
@@ -121,7 +132,7 @@ Here are the key phases you must complete:
 - **If plan.json does NOT exist:**
   - If `CLOSEDLOOP_PLAN_FILE` is set: Set `plan_was_imported = true`. Launch @code:plan-importer with `WORKDIR`. After completion, activate `code:plan-validate` skill. Proceed to Phase 1.1.
   - Else if `$CLOSEDLOOP_WORKDIR/plan-source.md` exists (`ls "$CLOSEDLOOP_WORKDIR/plan-source.md"` returns 0): Set `CLOSEDLOOP_PLAN_FILE="$CLOSEDLOOP_WORKDIR/plan-source.md"`. Set `plan_was_imported = true`. Launch @code:plan-importer with `WORKDIR`. After completion, activate `code:plan-validate` skill. Proceed to Phase 1.1.
-  - Otherwise: Set `plan_was_created = true`. Launch @code:plan-draft-writer with `WORKDIR=$CLOSEDLOOP_WORKDIR` (mention pre-computed context files if available). Once agent outputs `<promise>PLAN_VALIDATED</promise>`, run **PLAN_VALIDATION_SEQUENCE**.
+  - Otherwise: Set `plan_was_created = true`. Launch @code:plan-draft-writer with `WORKDIR=$CLOSEDLOOP_WORKDIR` (mention pre-computed context files if available). **If this is a MULTI-REPO run, include the MULTI_REPO_DIRECTIVE in the prompt** (the agent must emit the `repositories` field and `@{repo-name}:path` references). Once agent outputs `<promise>PLAN_VALIDATED</promise>`, run **PLAN_VALIDATION_SEQUENCE**.
 - **If plan.json EXISTS:**
   - First, check if plan.json contains valid JSON: `python3 -m json.tool "$CLOSEDLOOP_WORKDIR/plan.json" > /dev/null 2>&1`
   - If plan.json is NOT valid JSON (exit code non-zero — raw markdown written by an older gateway): Run `mv "$CLOSEDLOOP_WORKDIR/plan.json" "$CLOSEDLOOP_WORKDIR/plan-source.md"` to rename it. Set `CLOSEDLOOP_PLAN_FILE="$CLOSEDLOOP_WORKDIR/plan-source.md"`. Set `plan_was_imported = true`. Launch @code:plan-importer with `WORKDIR`. After completion, activate `code:plan-validate` skill. Proceed to Phase 1.1.

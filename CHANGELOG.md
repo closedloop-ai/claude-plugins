@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.3.0
+
+Split the single closed-loop orchestrator into two standalone single-shot commands, so planning and implementation can run as separate in-session phases instead of only through the external run-loop. The new commands share the existing subagent fleet and phase model but each scopes itself to one half of the workflow and stops with its own promise marker.
+
+#### Added
+- New `/code:create-plan` command — a planning-only orchestrator that runs phases 0.9–2.7, writes `state.json` with `status: COMPLETED`, and emits `<promise>PLAN_COMPLETE</promise>`. It never proceeds to implementation. Backed by the new `prompts/plan-prompt.md`, selected via `setup-closedloop.sh --prompt plan-prompt`.
+- New `/code:execute-implementation` command — an implementation-only orchestrator that runs phases 3–7 plus in-session review rounds (with a `--review-cycles <n>` argument), requires an existing finalized `plan.json`, and emits `<promise>IMPLEMENTATION_COMPLETE</promise>`. If no `plan.json` exists it hard-stops and points the user to `/code:create-plan`. Backed by the new `prompts/execute-prompt.md`, selected via `setup-closedloop.sh --prompt execute-prompt`.
+- New `prompts/plan-prompt.md` and `prompts/execute-prompt.md` orchestrator prompts, each defining a scoped ORCHESTRATOR identity (delegate-only, no file reads) for its half of the workflow.
+
+#### Changed
+- `prompts/prompt.md` now performs mandatory deterministic multi-repo detection immediately after `startSha` init (first iteration only), sourcing `CLOSEDLOOP_ADD_DIRS` and `CLOSEDLOOP_REPO_MAP` from `config.env`. When `ADD_DIRS` is non-empty the orchestrator prepends an explicit `MULTI_REPO_DIRECTIVE` to the pre-explorer and plan-draft-writer launches (requiring per-secondary-repo `code-map-{name}.json` output and the `repositories` field plus `@{repo-name}:path` references in `plan.json`), rather than relying on the planning agents to self-detect multi-repo mode.
+
 ### code-review v2.31.1
 
 PATCH bump — fix GitHub-mode inline comments silently dropping when a PR moves or renames files. GitHub's `pulls/{pr}/comments` API rejects any inline comment whose line is not part of the PR diff with a 422; reviewers flagging lines outside the changed hunks (common on moved/renamed files) therefore failed to post and survived only in the summary.
