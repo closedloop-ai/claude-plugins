@@ -368,7 +368,7 @@ python "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py" render-fleet-
 
 The renderer reads `<CR_DIR>/spawn.json` (sections: `spec` — intended fleet from stage_19b; `verification` — runtime tally from stage_20b; `route` — model assignments from Gate B) and emits the **Reviewers**, **Model Routing**, **Fleet** (`N intended | N ran | N required missing`), and a conditional **Notes** block. The notes surface non-default outcomes (BLOCKING sanitization, runtime missing required, BHA budget cap, PLN-723 deferral, malformed-plan required skips) — operators reading the summary comment see these without having to dig into `coverage_gaps.json` or `spawn.json.verification`.
 
-**Fallback:** if the renderer reports `spawn-spec unavailable` or `spawn-spec fell back`, embed its line as-is — the orchestrator walked the static fleet for this run and the static `## Reviewer Fleet` section of `start.md` is the source of truth for fleet composition.
+**Fallback:** if the renderer reports `spawn-spec unavailable` or `spawn-spec fell back`, embed its line as-is — the orchestrator walked the static fleet for this run and the static reviewer table in the `code-review:spawn-reviewers` skill is the source of truth for fleet composition.
 
 **Fast-path runs** are handled by the renderer — it emits the `Fast Path Reviewer (single-agent mode)` line + the resolved fast-path model. No branch needed in this presenter.
 

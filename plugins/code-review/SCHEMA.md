@@ -42,7 +42,7 @@ shape. Producers may emit dicts directly; the Python convenience type lives in
 
   // ── Severity ──────────────────────────────────────────────
   "severity": "BLOCKING | HIGH | MEDIUM",
-  "priority": 0 | 1 | 2,
+  "priority": 0 | 1 | 2 | 3,
   "confidence": 0.0..1.0,
 
   // ── Content ───────────────────────────────────────────────
@@ -365,8 +365,8 @@ constants in `code_review_schema.py`):
 
 | Field | Values | Notes |
 | --- | --- | --- |
-| `arbitrate_status` | `ok`, `blocked_by_verify`, `fallback` | `ok` = normal arbitration ran; `blocked_by_verify` = Phase 7 BLOCKING gate fired upstream and the plan passed through unchanged; `fallback` = derive failed, orchestrator must walk static table |
-| `source` | `core`, `rule`, `critic`, `fast_path` | Selects the prompt-suffix dispatch in `start.md` (`source: "core"` further branches on `reviewer`; `rule` and `critic` both map to the Domain Critic suffix — `rule` for deterministically matched critic-gates rules including migrated `moduleCritics[]`, `critic` for LLM-proposed additions) |
+| `arbitrate_status` | `ok`, `blocked_by_verify`, `fallback`, `static` | `ok` = normal arbitration ran; `blocked_by_verify` = Phase 7 BLOCKING gate fired upstream and the plan passed through unchanged; `fallback` = derive failed, orchestrator must walk the static reviewer table in the `code-review:spawn-reviewers` skill; `static` (PLN-807) = shallow tier — the spec was emitted by `derive-static-spec` (fixed BHA + BHB + unified_auditor fleet) without consulting a coverage plan, and `stage_20` treats it identically to `fallback` (use the spec verbatim, skip the bucket walk); the distinct status is a telemetry signal that distinguishes user intent (shallow) from upstream derive failure |
+| `source` | `core`, `rule`, `critic`, `fast_path` | Selects the prompt-suffix dispatch in the `code-review:spawn-reviewers` skill (`source: "core"` further branches on `reviewer`; `rule` and `critic` both map to the Domain Critic suffix — `rule` for deterministically matched critic-gates rules including migrated `moduleCritics[]`, `critic` for LLM-proposed additions) |
 | `bucket` | `required`, `best_effort`, `fast_path` | Mirrors the source bucket in `coverage_plan.json` |
 | `skipped[].reason` | `deferred_pln723`, `no_partitions`, `unknown_reviewer`, `missing_reviewer_name`, `duplicate_agent_id`, `budget_capped`, `gated_by_verify` | Reasons surfaced so operators see why a reviewer was omitted |
 | `fallback_reason` | `coverage_plan_missing_or_malformed`, `partitions_missing_or_malformed` | Only set when `arbitrate_status == "fallback"`; names the specific upstream-artifact failure |
@@ -374,7 +374,8 @@ constants in `code_review_schema.py`):
 **Fallback sentinel invariant:** when `arbitrate_status == "fallback"`,
 `agents[]` is empty and `fallback_reason` is set. The orchestrator must
 treat this as "ignore the spec; walk the static reviewer table in
-start.md" — a derive failure must never block review.
+the `code-review:spawn-reviewers` skill" — a derive failure must never
+block review.
 
 **BLOCKING propagation invariant:** when `gated_by_verify == true`,
 `agents[]` is populated from a SANITIZED plan — only `source: "core"`

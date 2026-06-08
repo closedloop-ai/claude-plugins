@@ -10677,10 +10677,10 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
 # and the ``route`` section of ``spawn.json`` (written by Gate B's
 # ``cmd_route --cr-dir``), then writes the flat list of agent
 # descriptors into ``spawn.json`` under the ``spec`` section. The
-# orchestrator (start.md "Reviewer Fleet" section) dispatches Task calls
-# from that list — this closes the loop so the deterministic coverage
-# signal (PLN-725) shapes the spawned fleet rather than walking a static
-# hard-coded table.
+# orchestrator (the code-review:spawn-reviewers skill) dispatches Task
+# calls from that list — this closes the loop so the deterministic
+# coverage signal (PLN-725) shapes the spawned fleet rather than walking
+# a static hard-coded table.
 #
 # The spec is observational: the orchestrator may fall back to the static
 # table if ``spawn.json`` is absent, its ``spec`` section is missing, or
@@ -10695,7 +10695,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
 # ``COVERAGE_CORE_REQUIRED`` — adding a new core role means choosing
 # which dict it belongs in. The AGENT_ID strings on the right are the
 # display IDs used in agent_*.json filenames (matching the static
-# table in start.md).
+# reviewer table in the code-review:spawn-reviewers skill).
 _SPAWN_CORE_ROLES: dict[str, dict[str, Any]] = {
     "bug_hunter_a": {
         "agent_id_prefix": "bha_p",
@@ -10999,7 +10999,8 @@ def _spawn_spec_fallback(
 
     Used when the inputs are missing or malformed. The orchestrator
     treats ``arbitrate_status == "fallback"`` as "ignore the spec; walk
-    the start.md static reviewer table." This preserves review even when
+    the static reviewer table in the code-review:spawn-reviewers skill."
+    This preserves review even when
     the spawn-spec derivation can't run.
     """
     return {
@@ -11032,7 +11033,8 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
 
     Fast-path passthrough: when ``route.fast_path`` is true, the spec
     emits exactly one agent (``agent_id: "fast"``) and the bucket walk
-    is skipped — matching the Fast Path branch in start.md.
+    is skipped — matching the Fast Path branch in the
+    code-review:spawn-reviewers skill.
 
     BLOCKING verdict propagation: when ``coverage_plan.budget.gated_by_verify``
     is true (set by ``arbitrate-budget`` on a BLOCKING verify verdict),
@@ -11044,8 +11046,9 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
 
     Failure modes: any unreadable input emits a fallback spec
     (``arbitrate_status: "fallback"``) and returns 0. The orchestrator
-    falls back to the start.md static reviewer table on the fallback
-    sentinel — a derive failure must never block review.
+    falls back to the static reviewer table in the
+    code-review:spawn-reviewers skill on the fallback sentinel — a derive
+    failure must never block review.
     """
     cr_dir = Path(args.cr_dir)
     now_iso = datetime.now(timezone.utc).isoformat()
