@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.33.0
+
+MINOR bump — continue the orchestrator slim-down (Phase 2) by relocating the two remaining agent-dispatch sections out of the `/start` command into dedicated skills. `commands/start.md` drops from ~587 to ~463 lines; the dispatch protocols now load into orchestrator context only when their stages are reached, not throughout the run.
+
+#### Added
+- New `verify-findings` skill owning the finding-verifier fleet dispatch at `stage_23_verify_findings` (PLN-722): reading `verify_manifest.json`, spawning one falsify-oriented verifier per `to_verify[]` entry, skipping `cache_hits[]`, and the no-retry collection contract that degrades missing outputs to `pending_verification[]`.
+- New `singleton-dispatch` skill owning the PLN-725 single-agent dispatch for `stage_11_extract_signals` and `stage_15_coverage_critic`: the `status` gate (`cache_hit` / `skipped` / `needs_agent`), the synchronous singleton spawn, the by-convention `pln725_*.json` write target, and the fail-closed semantics.
+
+#### Changed
+- The `/start` command's `agent_fleet` dispatch for `stage_23` now invokes the `verify-findings` skill, and walker-contract step 6 invokes the `singleton-dispatch` skill; execution-model, walker-contract, and per-stage references were repointed accordingly. Content relocated verbatim — no change to dispatch behavior.
+
 ### code-review v2.32.0
 
 MINOR bump — relocate the reviewer-fleet dispatch out of the `/start` orchestrator into a dedicated `spawn-reviewers` skill, plus security hardening of the reviewer prompts and schema-doc fixes. The orchestrator command is now a lean spine that walks the declarative run plan and invokes the skill at the spawn stage, so the fleet-dispatch content no longer loads into orchestrator context during the deterministic pipeline prefix or on hygiene-only / full-cache-hit runs that never reach the spawn stage.
