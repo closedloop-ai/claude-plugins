@@ -1,6 +1,6 @@
 ---
 name: singleton-dispatch
-description: PLN-725 single-agent dispatch for stage_11_extract_signals and stage_15_coverage_critic. After each prepare stage writes its manifest, this skill reads the status field (cache_hit / skipped / needs_agent) and, only on needs_agent, spawns one synchronous singleton Task that writes the by-convention pln725_*.json output the sibling consolidate stage consumes. Invoke from walker-contract step 6 immediately after stage_11_extract_signals or stage_15_coverage_critic finishes. Do NOT use for the reviewer fleet (stage_20) or the verifier fleet (stage_23) — those have their own skills.
+description: PLN-725 single-agent dispatch for stage_11_extract_signals and stage_15_coverage_critic. After each prepare stage writes its manifest, this skill reads the status field (cache_hit / skipped / needs_agent) and, only on needs_agent, spawns one synchronous singleton Task that writes the by-convention pln725_*.json output the sibling consolidate stage consumes. Invoke from walker-contract step 6 immediately after stage_11_extract_signals or stage_15_coverage_critic finishes. Do NOT use for the reviewer fleet (stage_20 — see the spawn-reviewers skill) or the verifier fleet (stage_23 — see the verify-findings skill).
 ---
 
 # PLN-725 Single-Agent Dispatch (stage_11 / stage_15)
