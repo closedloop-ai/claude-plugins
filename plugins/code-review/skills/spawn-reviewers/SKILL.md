@@ -1,13 +1,13 @@
 ---
 name: spawn-reviewers
-description: Spawn and collect the reviewer fleet at stage_20_spawn_reviewers. Consumes spawn.json.spec (the authoritative spawn spec from derive-spawn-spec / derive-static-spec), resolves GRAPH_PROJECT, builds per-agent prompts from the per-agent template + role suffixes (Bug Hunter A/B, Unified Auditor, Domain Critics, Premise, Impact Analyzer), handles the standard, fast-path, all-cached-BHA, and gated-by-verify cases, and runs the spawn/collection contract and agent-failure recovery. Falls back to the static reviewer table when spawn.json marks arbitrate_status:"fallback". Invoke when stage_20_spawn_reviewers is reached (both MODE=local and MODE=github). Do NOT use for the verifier fleet (stage_23) or the PLN-725 singletons (stage_11/stage_15) — those have their own dispatch sections in start.md.
+description: Spawn and collect the reviewer fleet at stage_20_spawn_reviewers. Consumes spawn.json.spec (the authoritative spawn spec from derive-spawn-spec / derive-static-spec), resolves GRAPH_PROJECT, builds per-agent prompts from the per-agent template + role suffixes (Bug Hunter A/B, Unified Auditor, Domain Critics, Premise, Impact Analyzer), handles the standard, fast-path, all-cached-BHA, and gated-by-verify cases, and runs the spawn/collection contract and agent-failure recovery. Falls back to the static reviewer table when spawn.json marks arbitrate_status:"fallback". Invoke when stage_20_spawn_reviewers is reached (both MODE=local and MODE=github). Do NOT use for the verifier fleet (stage_23 — see the verify-findings skill) or the PLN-725 singletons (stage_11/stage_15 — see the singleton-dispatch skill).
 ---
 
 # Reviewer Fleet Dispatch (stage_20_spawn_reviewers)
 
 This skill is the canonical reviewer-fleet dispatcher for `/code-review` at `stage_20_spawn_reviewers`. It is split out of `commands/start.md` so the orchestration spine stays lean; the orchestrator invokes it when the walker reaches `stage_20_spawn_reviewers`. The content below is authoritative for both `MODE=local` and `MODE=github` — fleet spawning is mode-agnostic.
 
-The verifier fleet (`stage_23`) and the PLN-725 single-agent dispatch (`stage_11` / `stage_15`) are **not** in this skill — they remain in `start.md`.
+The verifier fleet (`stage_23`) and the PLN-725 single-agent dispatch (`stage_11` / `stage_15`) are **not** in this skill — they are owned by the `code-review:verify-findings` and `code-review:singleton-dispatch` skills respectively.
 
 ---
 

@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.33.0
+
+MINOR bump — relocate the two remaining agent-dispatch sections out of the `/start` command into dedicated skills. `commands/start.md` drops from ~587 to ~463 lines; the dispatch protocols now enter orchestrator context only when their stages are reached.
+
+#### Added
+- New `verify-findings` skill: the finding-verifier fleet dispatch for `stage_23_verify_findings`. Reads `verify_manifest.json`, spawns one falsify-oriented verifier per `to_verify[]` entry, skips `cache_hits[]`, and degrades missing verifier outputs to `pending_verification[]`.
+- New `singleton-dispatch` skill: the PLN-725 single-agent dispatch for `stage_11_extract_signals` and `stage_15_coverage_critic`. Covers the `cache_hit` / `skipped` / `needs_agent` status gate, the synchronous singleton spawn, the by-convention `pln725_*.json` write target, and fail-closed semantics. The `skipped` status documents all three `coverage-critic-prepare` reasons (`no-critic`, `no-roster`, `no-candidates`).
+
+#### Changed
+- The `/start` command now invokes the `verify-findings` skill for `stage_23` and the `singleton-dispatch` skill for the PLN-725 stages instead of inline sections; the `spawn-reviewers` skill, walker contract, execution model, and per-stage notes were repointed accordingly. Dispatch content was relocated verbatim — no change to dispatch behavior.
+
 ### code-review v2.32.0
 
 MINOR bump — relocate the reviewer-fleet dispatch out of the `/start` orchestrator into a dedicated `spawn-reviewers` skill, plus security hardening of the reviewer prompts and schema-doc fixes. The orchestrator command is now a lean spine that walks the declarative run plan and invokes the skill at the spawn stage, so the fleet-dispatch content no longer loads into orchestrator context during the deterministic pipeline prefix or on hygiene-only / full-cache-hit runs that never reach the spawn stage.

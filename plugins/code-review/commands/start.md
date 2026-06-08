@@ -53,7 +53,7 @@ The review pipeline is driven by a **declarative run plan** emitted by the `prep
 
 The walk is hybrid:
 - **Deterministic helper stages** (most of the plan) — invoke the named `code_review_helpers.py` subcommand with the plan's args after token substitution. No prose decisions.
-- **Agent fleet stages** — spawn parallel sub-agent Tasks. `stage_20_spawn_reviewers` invokes the `code-review:spawn-reviewers` skill; `stage_23_verify_findings` uses the per-agent prompt template in the "Verifier Fleet" section of this file.
+- **Agent fleet stages** — spawn parallel sub-agent Tasks. `stage_20_spawn_reviewers` invokes the `code-review:spawn-reviewers` skill; `stage_23_verify_findings` invokes the `code-review:verify-findings` skill.
 - **Present stage** (`stage_29_present`) — invoke the `code-review:present-local` skill (MODE=local) or follow `github-review.md` (MODE=github).
 
 Four runtime gates modify walker default behavior (they are runtime-driven and either replace the default walk or add a condition on top of a plan stage):
@@ -62,7 +62,7 @@ Four runtime gates modify walker default behavior (they are runtime-driven and e
 3. **Gate C** — before `stage_26_cache_update`, skip if `fast_path == true` OR `CACHE_DIR` is empty.
 4. **Gate D** — before `stage_27_review_state_write`, skip unless `MODE == "local"`, `CACHE_DIR` is set, AND all reviewer agents succeeded.
 
-Read this entire file before starting. The agent templates and present format are referenced by stage id below.
+Read this entire file before starting. Agent-fleet dispatch (stages 11/15/20/23) lives in dedicated skills invoked by stage id; the present format and remaining per-stage notes are referenced by stage id below.
 
 **CRITICAL — No shell variables in Bash commands.** Claude Code prompts for manual approval on every `$VAR` expansion in paths. Substitute all resolved values directly into every Bash command. The only real env var is `${CLAUDE_PLUGIN_ROOT}` (resolved once in stage 0).
 
@@ -223,7 +223,7 @@ If a token's source file does not exist yet (a prior stage that produces it was 
 
 4. **Dispatch by `stage.kind`.**
    - **`helper`**: invoke `python3 <HELPERS> <stage.subcommand> <resolved args>`. If `stage.stdout` is set, redirect stdout to that file (`> <stage.stdout>`). If `stage.expected_outputs` is non-empty after the call, confirm at least one of those paths exists.
-   - **`agent_fleet`**: `stage_20` → invoke the `code-review:spawn-reviewers` skill; `stage_23` → dispatch to the "Verifier Fleet" section below.
+   - **`agent_fleet`**: `stage_20` → invoke the `code-review:spawn-reviewers` skill; `stage_23` → invoke the `code-review:verify-findings` skill.
    - **`present`**: invoke the `code-review:present-local` skill (MODE=local) or follow `github-review.md` Steps 6 and 8 (MODE=github). Gate A hygiene-only early-exit uses the "Hygiene Findings Format (Gate A render target)" section below (mode-agnostic), NOT the skill.
 
 5. **Honor `on_failure`** when the dispatched call fails or `expected_outputs` is missing:
@@ -231,7 +231,7 @@ If a token's source file does not exist yet (a prior stage that produces it was 
    - `continue` — log a warning and proceed to the next stage.
    - `continue_with_coverage_gap` — emit a `system_marker: "agent-failure"` finding (shape: the canonical `agent-failure` row in SCHEMA.md §3) and proceed. For `stage_20`, per-agent failures are handled inside the `code-review:spawn-reviewers` skill (Agent Failure Recovery — retry/log/skip steps only); the machine-readable coverage artifact for any skipped *required* reviewer is then materialized deterministically by `stage_20b_verify_spawn` as a `spawn_missing_required_agent` coverage-gap finding in `coverage_gaps.json` — so missing reviewer coverage is never silently dropped even though the orchestrator does not hand-author the finding.
 
-6. **PLN-725 singleton agent dispatch.** When the stage just finished is `stage_11_extract_signals` or `stage_15_coverage_critic`, read the manifest it just wrote and run the protocol in the "PLN-725 Single-Agent Dispatch" section below before proceeding to the next stage. The manifest's `status` field decides whether an agent spawn is needed — `cache_hit` / `skipped` skips, `needs_agent` spawns. The downstream sibling stage (`stage_11b` / `stage_15b`) walks normally as the next array entry; its `cmd` no-ops on `cache_hit` / `skipped` manifests so the walker doesn't need to branch.
+6. **PLN-725 singleton agent dispatch.** When the stage just finished is `stage_11_extract_signals` or `stage_15_coverage_critic`, read the manifest it just wrote and run the protocol in the `code-review:singleton-dispatch` skill before proceeding to the next stage. The manifest's `status` field decides whether an agent spawn is needed — `cache_hit` / `skipped` skips, `needs_agent` spawns. The downstream sibling stage (`stage_11b` / `stage_15b`) walks normally as the next array entry; its `cmd` no-ops on `cache_hit` / `skipped` manifests so the walker doesn't need to branch.
 
 7. **Run gates.** After completing a stage, scan `GATES` for any entry whose `after_stage` matches the stage just finished. For each match, shell out to the canonical enforcer:
 
@@ -340,11 +340,11 @@ These notes annotate the run-plan stages with anything not obvious from the plan
 - **stage_07_auto_incremental**: runs **before** `stage_05_parse_diff` (its array position is between `stage_04_finalize_cache` and `stage_05_parse_diff`). This ordering matters: any `diff_scope` override must be applied to the cached `<DIFF_SCOPE>` token BEFORE parse-diff and extract-patches materialize `diff_data.json` and `patches_all.txt`, otherwise downstream stages see full-PR diff data alongside a narrowed token. The stage retains its `_07_` id as a stable label; execution order follows array position. Writes `<CR_DIR>/auto_incremental.json` with optional `diff_scope` (override) and `review_mode_line`. If `diff_scope` is non-null, update the cached `<DIFF_SCOPE>` token. Print `review_mode_line` (always) and, if `pr_auto_detected` was true in `scope.json`, print `"Auto-detected PR #<PR_NUMBER> for branch <REVIEW_BRANCH>."`.
 - **stage_08_fetch_intent**: the helper writes `intent_context.json` into `cr_dir` itself; its stdout is a small `{path, source}` summary that the walker discards. The run plan's `stdout` field is `None` here because redirecting stdout to `intent_context.json` would corrupt the file by overwriting the helper's structured payload with the summary.
 - **stage_09_detect_injection** (PLN-720): scores PR title/body/commits against the canonical 9-pattern catalogue and writes `<CR_DIR>/injection_report.json`. On severity ≥ Medium (score ≥ 30), rewrites `<CR_DIR>/intent_context.json` in place with `quarantine: true` and redacted fields. On severity ≥ High (score ≥ 70), also writes `<CR_DIR>/agent_injection-detector.json` containing a canonical `InjectionAttempt` finding — the `agent_*.json` naming makes `cmd_collect_findings` pick it up via the standard glob with no extra wiring. Always appends one JSONL entry to `.closedloop-ai/injection-log.jsonl` (90-day TTL, swept on read). `on_failure: continue` is intentional — a detector crash must never abort the pipeline. The Premise dispatch in the `code-review:spawn-reviewers` skill prepends a quarantine preamble when `intent_context.json.quarantine == true`.
-- **stage_11_extract_signals** (PLN-725 Phase 1, wired in Phase 4): runs `extract-signals-prepare`. Writes `<CR_DIR>/extract_signals_manifest.json` describing the cache outcome. On `status: "cache_hit"`, prepare wrote `<CR_DIR>/extract_signals.json` itself — no agent runs, downstream `stage_11b` no-ops. On `status: "needs_agent"`, the walker invokes the "PLN-725 Single-Agent Dispatch" protocol with the manifest's `input_path`, `prompt_path`, and target `pln725_extract_signals.json`. `on_failure: continue_with_coverage_gap` — a signal-extraction failure degrades to the fail-closed default signal set (every taxonomy signal at 0.5 confidence); the required-floor of coverage is unaffected because required rules cannot key solely on LLM signals.
+- **stage_11_extract_signals** (PLN-725 Phase 1, wired in Phase 4): runs `extract-signals-prepare`. Writes `<CR_DIR>/extract_signals_manifest.json` describing the cache outcome. On `status: "cache_hit"`, prepare wrote `<CR_DIR>/extract_signals.json` itself — no agent runs, downstream `stage_11b` no-ops. On `status: "needs_agent"`, the walker invokes the `code-review:singleton-dispatch` skill with the manifest's `input_path`, `prompt_path`, and target `pln725_extract_signals.json`. `on_failure: continue_with_coverage_gap` — a signal-extraction failure degrades to the fail-closed default signal set (every taxonomy signal at 0.5 confidence); the required-floor of coverage is unaffected because required rules cannot key solely on LLM signals.
 - **stage_11b_extract_signals_consolidate** (PLN-725 Phase 4): runs `extract-signals-consolidate` against `<CR_DIR>/pln725_extract_signals.json`. Validates the agent output against the taxonomy contract and writes the canonical `<CR_DIR>/extract_signals.json`. No-ops when the prepare manifest's `status` is `"cache_hit"` so the walker can drive this unconditionally without inspecting prepare's status. Fail-closed on validation rejection — writes the default signal set + emits a `signal-extraction-failed` finding to `agent_signal-extraction-failed.json`.
 - **stage_14_resolve_coverage** (PLN-725): runs `resolve-coverage` against `coverage` rules + `extract_signals.json` + diff data. Writes the deterministic pre-critic plan into `<CR_DIR>/coverage.json` (`initial` section). `depends_on: ["stage_11b_extract_signals_consolidate"]` so the signals input is guaranteed to exist. `on_failure: continue_with_coverage_gap` — downstream stages read `coverage.json.initial` directly.
 - **stage_14a_load_available_reviewers** (PLN-725 Phase 5): runs `load-available-reviewers`. Scans `.claude/agents/*.md` (default `--agents-dir`), parses YAML frontmatter for each file's `name` field, writes a flat sorted+dedup JSON list to `<CR_DIR>/available_reviewers.json` — the AVAILABLE roster `stage_15_coverage_critic` enforces against. Independent of stage_14 (no shared data), but slotted between 14 and 15 so the data dependency is explicit on the wire. Empty `.claude/agents/` or missing dir produces an empty roster + exit 0 — stage_15 then falls through to its Phase 4 no-roster skipped semantics. Warnings (unreadable files, missing frontmatter, duplicate names) print to stderr per file but never abort the scan. `on_failure: continue_with_coverage_gap` — a write failure on the roster degrades safely.
-- **stage_15_coverage_critic** (PLN-725): runs `coverage-critic-prepare`. Writes the prep manifest into `<CR_DIR>/coverage.json` (`critic` section). On `status: "cache_hit"` (a prior run produced the same coverage plan), prepare wrote the cached plan into `<CR_DIR>/coverage.json` (`final` section) and downstream `stage_15b` no-ops. On `status: "skipped"`, prepare also wrote the initial plan unchanged into `coverage.json.final` — the walker MUST NOT dispatch the singleton critic, no matter which of these skip reasons fired: `"no-critic"` (operator passed `--no-critic`), `"no-roster"` (loaded `available_reviewers.json` is empty — no project agents are configured), or `"no-candidates"` (roster is non-empty but every reviewer is already in the initial plan — nothing left for the critic to propose). Stage_15b is a no-op on any `"skipped"` manifest. On `status: "needs_agent"`, the walker invokes the "PLN-725 Single-Agent Dispatch" protocol with the manifest's paths and target `pln725_coverage_critic.json`. `on_failure: continue` — coverage-critic failure surfaces as `critic_status: "fail_closed"` on the final plan; the deterministic floor from stage_14 still routes reviewers correctly.
+- **stage_15_coverage_critic** (PLN-725): runs `coverage-critic-prepare`. Writes the prep manifest into `<CR_DIR>/coverage.json` (`critic` section). On `status: "cache_hit"` (a prior run produced the same coverage plan), prepare wrote the cached plan into `<CR_DIR>/coverage.json` (`final` section) and downstream `stage_15b` no-ops. On `status: "skipped"`, prepare also wrote the initial plan unchanged into `coverage.json.final` — the walker MUST NOT dispatch the singleton critic, no matter which of these skip reasons fired: `"no-critic"` (operator passed `--no-critic`), `"no-roster"` (loaded `available_reviewers.json` is empty — no project agents are configured), or `"no-candidates"` (roster is non-empty but every reviewer is already in the initial plan — nothing left for the critic to propose). Stage_15b is a no-op on any `"skipped"` manifest. On `status: "needs_agent"`, the walker invokes the `code-review:singleton-dispatch` skill with the manifest's paths and target `pln725_coverage_critic.json`. `on_failure: continue` — coverage-critic failure surfaces as `critic_status: "fail_closed"` on the final plan; the deterministic floor from stage_14 still routes reviewers correctly.
 - **stage_15b_coverage_critic_consolidate** (PLN-725): runs `coverage-critic-consolidate` against `<CR_DIR>/pln725_coverage_critic.json`. Validates the agent output against the AVAILABLE / additive-only / best-effort-only / evidence / dedup / 5-cap constraints and merges accepted additions into `<CR_DIR>/coverage.json` (`final` section). No-ops when the prepare manifest's `status` (from `coverage.json.critic`) is `"cache_hit"` or `"skipped"`. Fail-closed on all-rejected — writes the initial plan unchanged into `.final` + emits a `coverage-critic-failed` finding to `agent_coverage-critic-failed.json`.
 - **stage_15c_verify_coverage** (PLN-725): runs `verify-coverage`. Deterministic post-LLM verifier — reads `<CR_DIR>/coverage.json` (`final` section — post-consolidate; `initial` section — pre-critic) and `<CR_DIR>/available_reviewers.json` (roster), then checks the shape, additive-only, closed-vocabulary, best-effort-only-critic, evidence-required, 5-cap, and no-duplicates contracts. Writes the verdict into `coverage.json` (`verify` section) with `verdict: "PASS"` or `verdict: "BLOCKING"` and a `violations[]` list keyed by check name. On BLOCKING also emits a HIGH system-marker finding to `<CR_DIR>/agent_coverage-verify-blocking.json` (with `source: "coverage-verifier"`, the canonical value in `SOURCES`) so the run summary surfaces the failure. The verifier itself stays observational — exit 0 on both verdicts and `on_failure: continue`. A BLOCKING verdict gates `stage_16_arbitrate_budget`: arbitrate-budget reads this section and short-circuits — the input plan flows through unchanged with `budget.gated_by_verify: true`. The BLOCKING verdict also propagates into `stage_20_spawn_reviewers` via `stage_19b_derive_spawn_spec`: the spawn-spec carries the `gated_by_verify` flag so the orchestrator can surface in the present step that arbitration was bypassed. Spawn-spec derivation still runs against the (unbudgeted) input plan — review is not halted by the BLOCKING verdict, only annotated. Input semantics: missing or unreadable `coverage.json.final` / `coverage.json.initial` sections BLOCK with check `input` so an upstream abort is never confused with a real PASS. Roster semantics: missing or empty roster bypasses the closed-vocabulary check (no-roster skip path); present-but-malformed roster BLOCKs with check `roster` (distinct from absent so an operator config error is surfaced). The `closed_vocabulary` check scopes to `source: "critic"` entries only — core/rule reviewer labels are plugin-internal identifiers that the spawner translates at dispatch time. The `additive` check is bucket-aware: `initial.required ⊆ final.required` enforced separately from best-effort preservation, so a required→best_effort demotion BLOCKs as a silent-coverage-downgrade. The `shape` check validates each entry as a dict with a non-empty `reviewer` string; shape failures short-circuit downstream checks to avoid cascading misleading violations.
 - **stage_16_arbitrate_budget** (PLN-719 Section 5): runs `arbitrate-budget` against `<CR_DIR>/coverage.json` (`final` section — post-consolidate input) and writes the arbitrated plan back into the same `.final` section plus `<CR_DIR>/coverage_gaps.json` (multi-writer findings file). PASS verdict from `coverage.json.verify` → arbitration applies the total-reviewer cap (default `BUDGET_TOTAL_CAP_DEFAULT`), fails-closed on required-overflow (drops excess required reviewers + emits `budget-exceeded` system findings per drop), prunes lowest-priority best-effort, and computes the final `bha_partitions` count. BLOCKING verdict → arbitration is bypassed entirely; the input plan flows through unchanged with `budget.gated_by_verify: true` and `arbitrate_status: "blocked_by_verify"`. No new finding is emitted for the gate — the canonical BLOCKING finding already lives in `agent_coverage-verify-blocking.json` from stage_15c, and double-counting would inflate the run summary. Missing `coverage.json.verify` (verifier didn't run, upstream aborted) is treated as PASS so the arbitration path remains operable when verify telemetry is degraded. `on_failure: abort` — a real I/O or shape error here halts the pipeline; the BLOCKING short-circuit is exit 0, not a failure. **Note:** `stage_20_spawn_reviewers` consumes `spawn.json` (`spec` section, derived by `stage_19b_derive_spawn_spec` from this stage's output) and falls back to the static reviewer table in the `code-review:spawn-reviewers` skill only when the spec is missing or marks `arbitrate_status: "fallback"`.
@@ -356,7 +356,7 @@ These notes annotate the run-plan stages with anything not obvious from the plan
 - **stage_20b_verify_spawn** (PLN-725): runs `verify-spawn`. Reads `<CR_DIR>/spawn.json` (`spec` section) and globs `<CR_DIR>/agent_*.json`; for every descriptor with `bucket: "required"` that has no on-disk output, appends a coverage-gap finding to `<CR_DIR>/coverage_gaps.json` (reason `spawn_missing_required_agent`) and records the omission in `<CR_DIR>/spawn.json` (`verification` section). Missing best-effort descriptors are recorded for telemetry but emit no finding — best-effort omissions are budget-driven, not coverage gaps. No-ops cleanly when the spec is missing (`spec_missing`), marks fallback (`spec_fallback`), or contains no agents (`spec_empty`). `on_failure: continue` — a verification bug must never block review; worst case is missing telemetry, not a halted pipeline. Wired before `stage_21_collect_findings` so the gap findings land in `coverage_gaps.json` in time for `cmd_finalize_result` to merge them into the canonical envelope.
 - **stage_22_validate**: writes `<CR_DIR>/findings_validated.json` via `> <CR_DIR>/findings_validated.json` redirection. Validates finding scope and applies the out-of-hunk confidence gate. P2+ findings whose `line` falls outside the file's changed range survive when `confidence > out_of_hunk_confidence_floor` (default `0.80`, operator-tunable via `.closedloop-ai/settings/code-review.json:out_of_hunk_confidence_floor`, range `[0.0, 1.0]`) — this admits legitimate companion-change findings (e.g. a signature change in the diff window leaving stale sibling call sites just outside it) while still filtering low-confidence noise. Survivors get tagged `out_of_hunk_kept: true` so presenters can label them as companion-change without re-deriving hunk membership; the validate-stats block exposes `kept_out_of_hunk` and `discarded_out_of_hunk_low_confidence`. The comparison is strict `>`, so setting the floor to `1.0` is a kill switch (nothing can clear); setting it to `0.0` lets every out-of-hunk P2+ through (lean on the PLN-722 verifier downstream). Per-finding verification (stage_23) still applies on top, so noise that surfaces here gets a second-pass CONFIRMED/REJECTED verdict.
 - **stage_22b_verify_prepare** (PLN-722): tier-selects findings for verification per the canonical table — BLOCKING/HIGH always; MEDIUM with confidence < 0.85 yes; MEDIUM with confidence ≥ 0.85 no; LOW (P3) no; `category: "Hygiene"` no; `source: "injection-detector"` no; `category: "Premise"` always (strict adversarial framing). Ranks the eligible set by `severity_weight × confidence`, caps at `VERIFY_MAX_VERIFICATIONS = 50`, and writes (a) `<CR_DIR>/verify_manifest.json` with `to_verify[]` + `skipped_no_verification[]` + `deferred_budget[]` + `cache_hits[]`, and (b) `<CR_DIR>/verifier_inputs/<finding_id>.json` per eligible finding. When `--cache-dir` is set, fresh verifier outputs from a prior run for the same `(finding_id, code_snippet_hash, model, prompt_hash)` tuple are pre-materialized at `agent_verifier_<finding_id>.json` and skipped from `to_verify[]` (logged under `cache_hits[]`). `on_failure: continue` is intentional — verify-prepare failure degrades to "no verifier this run", not a pipeline abort.
-- **stage_23_verify_findings** (PLN-722): agent_fleet stage. Dispatch to the "Verifier Fleet" section below. Each spawned agent reads its `verifier_inputs/<finding_id>.json` (containing the finding + the `verifier_prompt_path` + the canonical `output_path`) and emits one verdict file at `<CR_DIR>/agent_verifier_<finding_id>.json`. `on_failure: continue` so a single agent crash never aborts review.
+- **stage_23_verify_findings** (PLN-722): agent_fleet stage. Invoke the `code-review:verify-findings` skill. Each spawned agent reads its `verifier_inputs/<finding_id>.json` (containing the finding + the `verifier_prompt_path` + the canonical `output_path`) and emits one verdict file at `<CR_DIR>/agent_verifier_<finding_id>.json`. `on_failure: continue` so a single agent crash never aborts review.
 - **stage_24a_verify_consolidate** (PLN-722, extended in PLN-721): merges all `agent_verifier_*.json` outputs back into the validated set, applies sensitive-path escalation from `.closedloop-ai/settings/verification-gates.json` (rules: REJECTED on `sensitive_paths` + BLOCKING/HIGH → TENTATIVE with severity capped at HIGH; any finding on `tentative_on_paths` → TENTATIVE; any finding on `mandatory_human_review_paths` → TENTATIVE + `force_human_review: true`), routes JUSTIFIED-VALID verdicts to a new `justified[]` bucket and JUSTIFIED-INVALID verdicts back into `verified[]` (the audited justification was refuted; the original concern stands), and writes `<CR_DIR>/findings_verified.json` with the bucket-split shape `{verified[], rejected[], pending_verification[], justified[], force_human_review}`. `tentative_on_paths` lifts JUSTIFIED-VALID/INVALID to TENTATIVE on the same operator-policy contract as the other verdicts. When `--cache-dir` is set, fresh verifier outputs are written back to the `verifications/` namespace (30-day TTL) for re-use on subsequent runs. Missing fleet outputs degrade to `pending_verification[]`; `on_failure: continue`.
 - **stage_25_finalize_result** (PLN-722 + PLN-721): writes `<CR_DIR>/review_result.json` (the canonical envelope) BEFORE running schema validation. PLN-722: prefers `<CR_DIR>/findings_verified.json` (verify-consolidate output) when present and honors its `force_human_review` flag in the verdict computation; falls back to `findings_validated.json` (everything to `verified[]`) when verify-consolidate didn't run. PLN-721: pipes the consolidate `justified[]` bucket into the envelope, and loads operator-overridable thresholds from `.closedloop-ai/settings/verdict-thresholds.json` (defaults to `premise_cumulative_medium=3`; absent/malformed → built-in default) so `_compute_canonical_verdict` Rule 4 can fire (≥ 3 MEDIUM Premise findings in `verified[]` → NEEDS_ATTENTION). A non-zero exit signals reviewer-emitted category/field drift (e.g. a category not in the canonical enum) but does not block the pipeline — `on_failure: continue` lets `stage_28_verdict` read the structurally complete envelope. Surface the stderr text in the present step so operators can correct prompts/schema; do not abort.
 - **stage_26_cache_update**: gated by **Gate C**.
@@ -369,7 +369,7 @@ These notes annotate the run-plan stages with anything not obvious from the plan
 
 When the walker reaches `stage_20_spawn_reviewers`, invoke the `code-review:spawn-reviewers` skill. The skill owns the full reviewer-fleet dispatch: spawn-spec consumption (`spawn.json.spec`, the authoritative path), GRAPH_PROJECT resolution, the per-agent prompt template and role suffixes (Bug Hunter A/B, Unified Auditor, Domain Critics, Premise, Impact Analyzer), the context-budget constraints, the standard / fast-path / all-cached-BHA / gated-by-verify branches, the static-table fallback (`arbitrate_status: "fallback"`), the spawn + collection contract, and agent-failure recovery.
 
-Fleet spawning is mode-agnostic — the skill is invoked for both `MODE=local` and `MODE=github`. The verifier fleet (`stage_23`) and the PLN-725 single-agent dispatch (`stage_11` / `stage_15`) are **not** in this skill; their dispatch sections remain below.
+Fleet spawning is mode-agnostic — the skill is invoked for both `MODE=local` and `MODE=github`. The verifier fleet (`stage_23`) and the PLN-725 single-agent dispatch (`stage_11` / `stage_15`) are **not** in this skill; they are owned by the `code-review:verify-findings` and `code-review:singleton-dispatch` skills respectively.
 
 Decomposition rationale: ~470 lines of reviewer-fleet dispatch content was extracted as a skill so the orchestration spine stays lean and the content no longer loads into orchestrator context during the deterministic prefix (stages 0-19) or on hygiene-only / full-cache-hit runs that never reach `stage_20`.
 
@@ -379,141 +379,17 @@ Decomposition rationale: ~470 lines of reviewer-fleet dispatch content was extra
 
 ## Verifier Fleet (stage_23_verify_findings)
 
-This stage runs when the walker reaches `stage_23`. It implements PLN-722's finding-verification pass: each eligible finding gets an independent second opinion from a verifier agent prompted to *falsify* (not confirm) the original claim. Findings that survive land in `verified[]`; findings rejected with positive evidence land in `rejected[]` and surface in the "Dismissed Findings" section so humans can falsify the dismissal.
+When the walker reaches `stage_23_verify_findings`, invoke the `code-review:verify-findings` skill. The skill owns the full finding-verifier dispatch: reading `verify_manifest.json`, spawning one falsify-oriented verifier Task per `to_verify[]` entry (skipping `cache_hits[]`), the no-retry collection contract, and the `pending_verification[]` degradation when a verifier output is missing.
 
-### Inputs
-
-`stage_22b_verify_prepare` already wrote `<CR_DIR>/verify_manifest.json` and one input file per eligible finding at `<CR_DIR>/verifier_inputs/<finding_id>.json`. Read the manifest:
-
-```
-{
-  "to_verify": [{"finding_id", "model", "input_path", "output_path", ...}, ...],
-  "skipped_no_verification": [...],
-  "deferred_budget": [...],
-  "cache_hits": [...]
-}
-```
-
-`cache_hits[]` entries have already been materialized at their `output_path`; do NOT respawn them. Only entries in `to_verify[]` need fleet dispatch.
-
-### Spawn contract
-
-For each entry in `verify_manifest.json.to_verify[]`:
-
-1. Spawn one background `Task` with `subagent_type: "code-review:code-review-worker"`. The agent's tool allowlist (`Read`, `Write`, `Grep`, `Glob`) is identical to the Reviewer Fleet's — no permission changes needed.
-2. Prompt template:
-   ```
-   You are the FINDING VERIFIER. Read your prompt at:
-     {VERIFIER_PROMPT_PATH}
-
-   Your input file is at:
-     {INPUT_PATH}
-
-   Read it for the finding to verify, the canonical output path, and the
-   per-output JSON shape. Write your verdict JSON to the output path the
-   input file specifies. Do not write anywhere else.
-   ```
-   Substitute the resolved paths from the manifest entry (the verifier prompt is at `<CR_DIR>/verifier_prompt.txt`, copied by `stage_02_prep_assets`).
-3. Set `model` to the entry's `model` field (currently uniform `sonnet`; future revisions may split by original-reviewer model for cross-model independence).
-
-### Collection contract
-
-- Call `TaskOutput` (block: true) for every spawned verifier agent before letting the walker proceed past `stage_23`.
-- A missing `agent_verifier_<finding_id>.json` is NOT a fatal error — `cmd_verify_consolidate` tags it as `pending_verification[]` so operators see what didn't get verified.
-- Do NOT retry verifier agents in the walker. If a verifier fails, the finding's downstream handling already covers the gap (pending) — and verifier retries would burn tokens on a finding already flagged for human review.
-- `stage_23.on_failure == "continue"`: a fleet-wide failure does NOT abort the pipeline; `verify-consolidate` and `finalize-result` produce a usable envelope even when zero verifier outputs land on disk.
-
-### Cache hits (skip spawn)
-
-Entries in `verify_manifest.json.cache_hits[]` are already on disk at `agent_verifier_<finding_id>.json`. Skip them. They flow into `verify-consolidate` the same way fresh fleet outputs do.
-
-### What you do NOT do
-
-- Do not read finding source files in the orchestrator (verifier agents read files via Read/Grep themselves).
-- Do not parse `agent_verifier_*.json` in the orchestrator — `cmd_verify_consolidate` (stage_24a) reads them.
-- Do not regenerate `verify_manifest.json` in the walker — `cmd_verify_prepare` (stage_22b) is the only writer.
+<!-- replaced-by-skill: code-review:verify-findings — DO NOT add inline verifier-fleet dispatch content here -->
 
 ---
 
 ## PLN-725 Single-Agent Dispatch
 
-Walker contract step 6 points here. Two stages (`stage_11_extract_signals`, `stage_15_coverage_critic`) emit a manifest whose `status` field decides whether a singleton LLM agent must be spawned. This section codifies the dispatch — the same protocol applies to both stages with different paths.
+Walker-contract step 6 points here. When the stage just finished is `stage_11_extract_signals` or `stage_15_coverage_critic`, invoke the `code-review:singleton-dispatch` skill. The skill owns the full protocol: reading the prepare manifest's `status` (`cache_hit` / `skipped` → no dispatch; `needs_agent` → spawn one synchronous singleton Task), the by-convention `pln725_*.json` agent write target, and the fail-closed semantics the sibling consolidate stage relies on.
 
-### When to dispatch
-
-After the prepare stage finishes, read its manifest:
-
-| Stage | Manifest location |
-|---|---|
-| `stage_11_extract_signals` | `<CR_DIR>/extract_signals_manifest.json` |
-| `stage_15_coverage_critic` | `<CR_DIR>/coverage.json` (`critic` section) |
-
-Parse `status`:
-
-| `status` | Action |
-|---|---|
-| `"cache_hit"` | **Skip dispatch.** Prepare already wrote the canonical output (`extract_signals.json` for stage_11; `coverage.json.final` for stage_15). The downstream sibling consolidate stage will no-op. |
-| `"skipped"` | **Skip dispatch.** Only emitted by `coverage-critic-prepare --no-critic`; prepare wrote `coverage.json.final` with `critic_status: "skipped"`. The downstream sibling consolidate stage will no-op. |
-| `"needs_agent"` | **Spawn the singleton agent below.** |
-
-### Spawn contract
-
-For `status: "needs_agent"`, the manifest carries the inputs the agent needs:
-
-| Field | Use |
-|---|---|
-| `prompt_path` | The agent's system prompt path — pass as `{PROMPT_PATH}` below; the agent reads it itself. |
-| `input_path` | The bounded input bundle (taxonomy + diff summary + AVAILABLE list / etc.) — pass as `{INPUT_PATH}`; the agent reads it itself. |
-| `model` | Model tier for the dispatch (`haiku` for signal-extraction, `sonnet` for coverage-critic). |
-
-The manifest's `output_path` / `coverage_state` field is the **canonical sibling consolidate output** (`extract_signals.json` for stage_11; `<CR_DIR>/coverage.json` — the `final` section — for stage_15), NOT where the agent writes. The agent's write target is fixed by convention:
-
-| Stage | Agent writes to |
-|---|---|
-| `stage_11_extract_signals` | `<CR_DIR>/pln725_extract_signals.json` |
-| `stage_15_coverage_critic` | `<CR_DIR>/pln725_coverage_critic.json` |
-
-These paths match the `--agent-output` arg the sibling stage's `args` declare, so the consolidate cmd finds the file with no walker substitution.
-
-Spawn one synchronous `Task` (do **not** set `run_in_background: true`). Unlike the reviewer / verifier fleets — which spawn many background tasks and collect them with `TaskOutput` — the PLN-725 dispatch is a singleton that the walker waits on inline. A synchronous Task returns after the agent finishes; there is no task handle to pass to `TaskOutput` and no wait step needed:
-
-1. `subagent_type: "code-review:code-review-worker"` (same allowlist as the verifier fleet — Read, Write, Grep, Glob).
-2. `model` set to the manifest's `model` field.
-3. Prompt template:
-   ```
-   You are the PLN-725 SINGLE-AGENT DISPATCH ({STAGE_LABEL}). Your system
-   prompt is at:
-     {PROMPT_PATH}
-
-   Read it. Your input bundle is at:
-     {INPUT_PATH}
-
-   Read the bundle for the contract you are validating against. Write
-   your output JSON to:
-     {OUTPUT_PATH}
-
-   Do not write anywhere else. Do not read source files in the
-   repository unless the system prompt explicitly says so.
-   ```
-   Placeholder substitution map (do NOT substitute every placeholder from the manifest — `output_path` in the manifest is the consolidate target, not the agent target):
-
-   | Placeholder | Source |
-   |---|---|
-   | `{PROMPT_PATH}` | `manifest.prompt_path` |
-   | `{INPUT_PATH}` | `manifest.input_path` |
-   | `{OUTPUT_PATH}` | The by-convention agent write target from the table above — `<CR_DIR>/pln725_extract_signals.json` (stage_11) or `<CR_DIR>/pln725_coverage_critic.json` (stage_15). **NOT** `manifest.output_path`. |
-   | `{STAGE_LABEL}` | `"signal-extraction"` for stage_11, `"coverage-critic"` for stage_15. |
-4. After the Task returns, advance the walker to the sibling consolidate stage. No `TaskOutput` call — that's for background tasks; synchronous Tasks complete before control returns to the walker.
-
-### Failure semantics
-
-- A missing `pln725_*.json` output after the Task returns is NOT a fatal error. The sibling consolidate stage detects the missing file and fails closed — extract-signals emits the fail-closed default signal set + a `signal-extraction-failed` finding; coverage-critic leaves the initial plan as final + a `coverage-critic-failed` finding.
-- Do not retry the singleton agent in the walker. The fail-closed downstream handling is the canonical recovery path — retrying would burn tokens on a request that already failed.
-- Do not parse the agent output in the orchestrator. The sibling consolidate stage is the only reader; orchestrator parsing would duplicate the validation contract.
-
-### Cache hits and the `--no-critic` flag
-
-Both `"cache_hit"` and `"skipped"` mean prepare wrote the canonical output file itself. The walker advances to the sibling consolidate stage as normal; the sibling stage's `cmd` detects the manifest status, writes a one-line no-op JSON to stdout, and returns 0. No orchestrator-side branching needed.
+<!-- replaced-by-skill: code-review:singleton-dispatch — DO NOT add inline singleton-dispatch content here -->
 
 ---
 
