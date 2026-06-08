@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### code v1.3.0
+### code v1.13.0
 
 Split the single closed-loop orchestrator into two standalone single-shot commands, so planning and implementation can run as separate in-session phases instead of only through the external run-loop. The new commands share the existing subagent fleet and phase model but each scopes itself to one half of the workflow and stops with its own promise marker.
 
@@ -15,6 +15,10 @@ Split the single closed-loop orchestrator into two standalone single-shot comman
 
 #### Changed
 - `prompts/prompt.md` now performs mandatory deterministic multi-repo detection immediately after `startSha` init (first iteration only), sourcing `CLOSEDLOOP_ADD_DIRS` and `CLOSEDLOOP_REPO_MAP` from `config.env`. When `ADD_DIRS` is non-empty the orchestrator prepends an explicit `MULTI_REPO_DIRECTIVE` to the pre-explorer and plan-draft-writer launches (requiring per-secondary-repo `code-map-{name}.json` output and the `repositories` field plus `@{repo-name}:path` references in `plan.json`), rather than relying on the planning agents to self-detect multi-repo mode.
+
+#### Fixed
+- `setup-closedloop.sh` now accepts `--review-cycles <n>` as a parsed option and writes it to `config.env` as `POST_LOOP_REVIEW_CYCLES` for `run-loop.sh`. Previously the flag fell through to the unknown-option catch-all and its bare numeric value was appended to `WORKDIR`, corrupting the working directory and aborting startup before the orchestrator loaded.
+- `prompts/plan-prompt.md` Phase 2.7 decision-table mismatch hard-stop now directs the user to `/code:create-plan` to resume; it previously referenced the non-existent `/code:plan` command.
 
 ### code-review v2.31.1
 
