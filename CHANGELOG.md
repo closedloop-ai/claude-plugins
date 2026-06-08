@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.31.1
+
+PATCH bump — fix GitHub-mode inline comments silently dropping when a PR moves or renames files. GitHub's `pulls/{pr}/comments` API rejects any inline comment whose line is not part of the PR diff with a 422; reviewers flagging lines outside the changed hunks (common on moved/renamed files) therefore failed to post and survived only in the summary.
+
+#### Fixed
+- `cmd_post_comments` no longer attempts an inline post for findings the validator tagged `out_of_hunk_kept` — those lines are outside the diff and cannot be anchored — and now treats a runtime 422 ("line not in diff") as a non-inline skip rather than a failure, covering moved/renamed files where the diff parser and GitHub disagree on what is in-diff. The affected findings still appear in the summary comment, and the posting tally gains an `out-of-hunk=` counter so the case is visible instead of reported as a failure.
+
+#### Changed
+- `prompts/github-review.md` step 6b documents that the post-comments step owns out-of-hunk suppression, so the findings file must still include every verified finding for the summary's findings list.
+
 ### code-review v2.31.0
 
 MINOR bump — optional `codebase-memory-mcp` knowledge-graph integration for the cross-file reviewers (Impact Analyzer and Bug Hunter B), with a provenance-aware verifier so graph-only callsites are first-class. When the MCP server is connected and this repo is indexed, the graph-aware reviewers use `search_graph`/`trace_path`/`get_code_snippet` to find cross-file usages grep cannot reach — aliased imports, re-exports, dynamic dispatch — and to resolve service/API implementations by qualified name instead of Glob-guessing the file. The integration falls back to grep silently when the server is absent or the repo is unindexed, so behavior is unchanged when the MCP is not installed; reviews never trigger indexing.
