@@ -27,7 +27,7 @@ Parse `status`:
 | `status` | Action |
 |---|---|
 | `"cache_hit"` | **Skip dispatch.** Prepare already wrote the canonical output (`extract_signals.json` for stage_11; `coverage.json.final` for stage_15). The downstream sibling consolidate stage will no-op. |
-| `"skipped"` | **Skip dispatch.** Only emitted by `coverage-critic-prepare --no-critic`; prepare wrote `coverage.json.final` with `critic_status: "skipped"`. The downstream sibling consolidate stage will no-op. |
+| `"skipped"` | **Skip dispatch.** Emitted by `coverage-critic-prepare` for any of three reasons (carried in the manifest's `reason` field): `no-critic` (operator passed `--no-critic`), `no-roster` (loaded `available_reviewers.json` is empty — no project agents configured), or `no-candidates` (roster is non-empty but every reviewer is already in the initial plan — nothing left for the critic to propose). In all three, prepare wrote `coverage.json.final` with `critic_status: "skipped"`. The downstream sibling consolidate stage will no-op. |
 | `"needs_agent"` | **Spawn the singleton agent below.** |
 
 ### Spawn contract
@@ -85,6 +85,6 @@ Spawn one synchronous `Task` (do **not** set `run_in_background: true`). Unlike 
 - Do not retry the singleton agent in the walker. The fail-closed downstream handling is the canonical recovery path — retrying would burn tokens on a request that already failed.
 - Do not parse the agent output in the orchestrator. The sibling consolidate stage is the only reader; orchestrator parsing would duplicate the validation contract.
 
-### Cache hits and the `--no-critic` flag
+### Cache hits and the skip reasons
 
-Both `"cache_hit"` and `"skipped"` mean prepare wrote the canonical output file itself. The walker advances to the sibling consolidate stage as normal; the sibling stage's `cmd` detects the manifest status, writes a one-line no-op JSON to stdout, and returns 0. No orchestrator-side branching needed.
+Both `"cache_hit"` and `"skipped"` (any of `no-critic` / `no-roster` / `no-candidates`) mean prepare wrote the canonical output file itself. The walker advances to the sibling consolidate stage as normal; the sibling stage's `cmd` detects the manifest status, writes a one-line no-op JSON to stdout, and returns 0. No orchestrator-side branching needed.

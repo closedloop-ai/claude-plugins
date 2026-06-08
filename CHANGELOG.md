@@ -6,14 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### code-review v2.33.0
 
-MINOR bump — continue the orchestrator slim-down (Phase 2) by relocating the two remaining agent-dispatch sections out of the `/start` command into dedicated skills. `commands/start.md` drops from ~587 to ~463 lines; the dispatch protocols now load into orchestrator context only when their stages are reached, not throughout the run.
+MINOR bump — relocate the two remaining agent-dispatch sections out of the `/start` command into dedicated skills. `commands/start.md` drops from ~587 to ~463 lines; the dispatch protocols now enter orchestrator context only when their stages are reached.
 
 #### Added
-- New `verify-findings` skill owning the finding-verifier fleet dispatch at `stage_23_verify_findings` (PLN-722): reading `verify_manifest.json`, spawning one falsify-oriented verifier per `to_verify[]` entry, skipping `cache_hits[]`, and the no-retry collection contract that degrades missing outputs to `pending_verification[]`.
-- New `singleton-dispatch` skill owning the PLN-725 single-agent dispatch for `stage_11_extract_signals` and `stage_15_coverage_critic`: the `status` gate (`cache_hit` / `skipped` / `needs_agent`), the synchronous singleton spawn, the by-convention `pln725_*.json` write target, and the fail-closed semantics.
+- New `verify-findings` skill: the finding-verifier fleet dispatch for `stage_23_verify_findings`. Reads `verify_manifest.json`, spawns one falsify-oriented verifier per `to_verify[]` entry, skips `cache_hits[]`, and degrades missing verifier outputs to `pending_verification[]`.
+- New `singleton-dispatch` skill: the PLN-725 single-agent dispatch for `stage_11_extract_signals` and `stage_15_coverage_critic`. Covers the `cache_hit` / `skipped` / `needs_agent` status gate, the synchronous singleton spawn, the by-convention `pln725_*.json` write target, and fail-closed semantics. The `skipped` status documents all three `coverage-critic-prepare` reasons (`no-critic`, `no-roster`, `no-candidates`).
 
 #### Changed
-- The `/start` command's `agent_fleet` dispatch for `stage_23` now invokes the `verify-findings` skill, and walker-contract step 6 invokes the `singleton-dispatch` skill; execution-model, walker-contract, and per-stage references were repointed accordingly. Content relocated verbatim — no change to dispatch behavior.
+- The `/start` command now invokes the `verify-findings` skill for `stage_23` and the `singleton-dispatch` skill for the PLN-725 stages instead of inline sections; the `spawn-reviewers` skill, walker contract, execution model, and per-stage notes were repointed accordingly. Dispatch content was relocated verbatim — no change to dispatch behavior.
 
 ### code-review v2.32.0
 
