@@ -3771,6 +3771,77 @@ class TestCmdPostComments:
         assert rc == 0
         assert mock_run.call_count == 3
 
+    def test_422_counted_as_skip_not_failure(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A 422 (line not in diff) is a non-inline skip, not a failure — the
+        finding still surfaces in the summary. Reviewers flagging unchanged
+        lines on moved/renamed files must not be reported as posting failures."""
+        findings = [
+            {"file": "a.ts", "line": 10, "severity": "HIGH", "category": "Bug", "issue": "first"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        success = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        fail_422 = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="422 Validation Failed")
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [success, fail_422]
+            rc = self._run(path)
+        assert rc == 0
+        # 1 GET + 1 POST (the POST is attempted, then 422'd into the skip bucket).
+        assert mock_run.call_count == 2
+        out = capsys.readouterr().out
+        assert "out-of-hunk=1" in out
+        assert "failed 0" in out
+
+    def test_auth_error_counted_as_failure(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A 401/403 is a genuine failure (not a skip) — the message and the
+        tally must agree so an operator isn't misled into ignoring an auth
+        problem."""
+        findings = [
+            {"file": "a.ts", "line": 10, "severity": "HIGH", "category": "Bug", "issue": "first"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        success = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        fail_401 = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="HTTP 401: Bad credentials")
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [success, fail_401]
+            rc = self._run(path)
+        assert rc == 0
+        # 1 GET + 1 POST (the POST is attempted and fails auth).
+        assert mock_run.call_count == 2
+        out = capsys.readouterr().out
+        assert "failed 1" in out
+        assert "out-of-hunk=0" in out
+
+    def test_out_of_hunk_kept_skips_inline_post(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Findings tagged ``out_of_hunk_kept`` reference lines outside the diff
+        and would 422; the poster must skip them up front (no API call) and
+        count them as non-inline skips, leaving them for the summary."""
+        findings = [
+            {"file": "a.ts", "line": 1, "severity": "MEDIUM", "category": "Bug",
+             "issue": "companion change", "out_of_hunk_kept": True},
+            {"file": "b.ts", "line": 20, "severity": "HIGH", "category": "Bug",
+             "issue": "real inline"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="[]", stderr=""
+            )
+            rc = self._run(path)
+        assert rc == 0
+        # 1 GET + 1 POST (only b.ts:20 is posted; the out-of-hunk finding never
+        # reaches the API).
+        assert mock_run.call_count == 2
+        out = capsys.readouterr().out
+        assert "Posted 1" in out
+        assert "out-of-hunk=1" in out
+        assert "failed 0" in out
+
     def test_null_line_does_not_crash(self, tmp_path: Path) -> None:
         """PLN-719: schema permits ``line: int | None`` for system + pr_metadata
         scopes. cmd_post_comments must skip those rather than crash on

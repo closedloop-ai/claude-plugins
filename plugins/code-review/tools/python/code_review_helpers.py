@@ -4084,7 +4084,18 @@ def _gh_api(
 
 
 def cmd_post_comments(args: argparse.Namespace) -> int:
-    """Post inline review comments to a GitHub PR."""
+    """Post inline review comments to a GitHub PR.
+
+    Out-of-hunk findings are never posted inline. GitHub's
+    ``pulls/{pr}/comments`` API rejects any comment whose line is not part of
+    the PR diff with a 422, which is exactly the case for companion-change
+    findings the validator kept (``out_of_hunk_kept: True``) and for findings
+    on moved/renamed files whose pre-existing lines are outside every diff
+    hunk. Those findings are dropped from inline posting and surface in the
+    summary comment instead (the summary renders all validated findings). They
+    are pre-skipped when tagged, and a runtime 422 is treated as a non-inline
+    skip rather than a failure to cover parser/GitHub diff disagreements.
+    """
     try:
         with open(args.findings) as f:
             data: dict[str, Any] = json.load(f)
@@ -4133,12 +4144,20 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
     posted = 0
     skipped_dedup = 0
     skipped_no_inline = 0
+    skipped_out_of_hunk = 0
     failed = 0
 
     for finding in findings:
         # Skip findings explicitly marked as non-inline
         if finding.get("inline") is False:
             skipped_no_inline += 1
+            continue
+
+        # Out-of-hunk findings (companion-change survivors the validator tagged)
+        # reference lines outside every diff hunk, so GitHub would 422 the inline
+        # post. Surface them in the summary only and skip the API call.
+        if finding.get("out_of_hunk_kept") is True:
+            skipped_out_of_hunk += 1
             continue
 
         path = finding.get("file") or ""
@@ -4192,18 +4211,29 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
             stdout_lower = (api_result.stdout or "").lower()
             err_text = stderr_lower + stdout_lower
             if "422" in err_text or "validation failed" in err_text:
-                print(f"  Skipped {path}:{line} — line not in diff (422)")
+                # Line is not part of the PR diff — GitHub cannot anchor an
+                # inline comment here (out-of-hunk finding the validator counted
+                # as in-range, or a parser/GitHub diff disagreement on
+                # moved/renamed files). The finding still appears in the summary;
+                # count as a non-inline skip, not a failure.
+                print(f"  Skipped {path}:{line} — line not in diff (422), summary-only")
+                skipped_out_of_hunk += 1
             elif "401" in err_text or "403" in err_text:
-                print(f"  Skipped {path}:{line} — auth error")
+                print(f"  Failed {path}:{line} — auth error")
+                failed += 1
             else:
                 print(f"  Failed {path}:{line} — {api_result.stderr.strip()}")
-            failed += 1
+                failed += 1
             continue
 
         posted += 1
 
-    total_skipped = skipped_dedup + skipped_no_inline
-    print(f"Posted {posted}, skipped {total_skipped} (dedup={skipped_dedup}, non-inline={skipped_no_inline}), failed {failed}")
+    total_skipped = skipped_dedup + skipped_no_inline + skipped_out_of_hunk
+    print(
+        f"Posted {posted}, skipped {total_skipped} "
+        f"(dedup={skipped_dedup}, non-inline={skipped_no_inline}, "
+        f"out-of-hunk={skipped_out_of_hunk}), failed {failed}"
+    )
     return 0
 
 

@@ -157,6 +157,8 @@ Write `.closedloop-ai/code-review-findings.json`:
 
 The `findings` array contains the envelope's `verified[]` only (NOT `rejected[]`, `justified[]`, or `pending_verification[]` — those have separate files; see 6c and 6d). When no envelope exists (verifier disabled / shadow mode), fall back to the legacy validate output. The workflow's `post-comments` step handles formatting, dedup against existing comments, and error handling.
 
+Write all verified findings verbatim — do NOT pre-filter out-of-hunk ones. `post-comments` skips findings tagged `out_of_hunk_kept` (and any line GitHub rejects with a 422 as out-of-diff) from inline posting and lets them surface in the summary instead, so they must remain in the findings file for the summary's findings list.
+
 **Impact Analyzer findings (FEA-1401).** Findings with
 `category: "ImpactAnalysis"` carry a populated `external_impact[]`
 array (file/line/impact_type/description/callsite_snippet/
