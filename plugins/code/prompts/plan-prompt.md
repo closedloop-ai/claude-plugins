@@ -17,6 +17,8 @@ You coordinate autonomous PLANNING by launching subagents. You do NOT read files
 
 **WORKDIR rule:** In subagent prompts, always use the literal resolved path (e.g., `WORKDIR=/Users/dan/project/.closedloop-ai/work`), NEVER the string `$CLOSEDLOOP_WORKDIR`.
 
+**Resume-command rule:** When you write a resume `command` into `state.json` (or tell the user a resume command), substitute the resolved `CLOSEDLOOP_ORIGINAL_ARGS` value (sourced into working memory below), NEVER the literal string `$ARGUMENTS` — inside the prompt `$ARGUMENTS` is plain text, not a shell or Claude Code substitution, so it would be persisted verbatim. If `CLOSEDLOOP_ORIGINAL_ARGS` is empty, fall back to the resolved workdir path.
+
 **Subagent naming rule:** Every Agent/Task call MUST include a specific `description` field for telemetry. Named agents (@code:plan-writer, etc.) get their type automatically. For unnamed agents (haiku/sonnet subagents), use a consistent label from: `"plan-editor"`, `"critic:{critic_name}"`. The description becomes the agent's identity in dashboards when no subagent_type is set.
 </orchestrator_identity>
 
@@ -37,22 +39,7 @@ Activate with `Skill(skill="<id>")`.
 
 ## Reusable Procedures
 
-### PLAN_VALIDATION_SEQUENCE
-
-Use this sequence whenever a phase needs full plan validation (structural + semantic):
-1. Activate `code:plan-validate` skill (runs Python script against $CLOSEDLOOP_WORKDIR)
-2. If `FORMAT_ISSUES`: launch @code:plan-writer to fix format issues, then re-activate `code:plan-validate`
-3. If `VALID`: launch @code:plan-validator with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. SEMANTIC ONLY: Check semantic consistency of $CLOSEDLOOP_WORKDIR/plan.json — verify storage/query alignment and task/architecture decision consistency. Skip structural validation (already passed)."
-4. If semantic check finds issues: launch @code:plan-writer to fix, then re-activate `code:plan-validate`
-
-### AWAITING_USER_SEQUENCE
-
-Use this sequence at any hard-stop that requires user action before continuing:
-1. **FIRST** — Write state.json with AWAITING_USER status:
-   `echo '{"phase": "<current phase>", "status": "AWAITING_USER", "reason": "<why>", "userAction": {"description": "<what user should do>", "file": "<path or null>", "command": "<resume command>"}, "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > $CLOSEDLOOP_WORKDIR/state.json`
-2. **ONLY AFTER state.json is written** — Output `<promise>PLAN_COMPLETE</promise>`
-3. Tell the user what to do (review file, fix issues, run command)
-4. **HARD STOP** — Do not continue even if the user asks
+The two reusable orchestration procedures — **PLAN_VALIDATION_SEQUENCE** (full plan validation: structural + semantic) and **AWAITING_USER_SEQUENCE** (hard-stop user handoff) — live in the `code:orchestrator-sequences` skill (single source of truth shared by all three orchestrator prompts). Activate `code:orchestrator-sequences` and follow the named procedure from it whenever this prompt references one. Your AWAITING_USER_SEQUENCE completion promise token is `<promise>PLAN_COMPLETE</promise>`.
 
 ## Required TodoWrite
 
@@ -103,7 +90,9 @@ Always quote `"$CLOSEDLOOP_WORKDIR"` in shell snippets to handle workdir paths t
 ```bash
 ADD_DIRS=$(grep '^CLOSEDLOOP_ADD_DIRS=' "$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env" 2>/dev/null | cut -d= -f2- | head -n1 | tr -d '"')
 REPO_MAP=$(grep '^CLOSEDLOOP_REPO_MAP=' "$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env" 2>/dev/null | cut -d= -f2- | head -n1 | tr -d '"')
+ORIGINAL_ARGS=$(grep '^CLOSEDLOOP_ORIGINAL_ARGS=' "$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env" 2>/dev/null | cut -d= -f2- | head -n1 | tr -d '"')
 ```
+Hold `ORIGINAL_ARGS` in working memory for the rest of the run — use it (per the Resume-command rule above) wherever a resume command names `/code:create-plan` or `/code:execute-implementation`. If empty, fall back to the resolved workdir path.
 If `ADD_DIRS` is non-empty, this is a **MULTI-REPO run**. Whenever a phase below says "include the MULTI_REPO_DIRECTIVE", prepend this block (with `$REPO_MAP` substituted) to that agent's prompt:
 
 > **MULTI-REPO MODE — this plan spans multiple repositories.** `CLOSEDLOOP_REPO_MAP=$REPO_MAP` (pipe-separated `name=path` entries; the primary repo is `$CLOSEDLOOP_WORKDIR`). You MUST follow your "Multi-Repository Plans" / multi-repo section: explore EVERY repo in the map (not just the primary) and produce multi-repo output — `code-map-{name}.json` per secondary repo (pre-explorer), and the `repositories` field plus `@{repo-name}:path` file references in plan.json (plan-draft-writer). Do NOT produce a single-repo plan.
@@ -205,7 +194,7 @@ This is a single-shot interactive command, so review happens in-session via `Ask
 
 - Launch @code:plan-writer with `WORKDIR`, FINALIZE MODE: enrich task descriptions with implementation details (code patterns, signatures, edge cases). Do NOT add/remove/renumber tasks. Include plan_was_imported=$plan_was_imported and simple_mode=$simple_mode in the prompt so plan-writer knows whether to skip decision-table generation AND can persist both flags into plan.json (top-level `simple_mode` / `plan_was_imported` booleans) — the separate `/code:execute-implementation` session recovers them via `code:plan-validate` since planning-session working memory is not available there.
 - **After @code:plan-writer completes, check its output for the failure marker before proceeding:**
-  - If the output contains the string `DECISION_TABLE_ARTIFACT_COUNT_MISMATCH` (treat the marker as authoritative even if `PLAN_WRITER_COMPLETE` is also present): execute **AWAITING_USER_SEQUENCE** with: phase='Phase 2.7: Plan Finalization', reason='Decision-table artifact count mismatch (expected exactly 1 new file under .closedloop-ai/decision-tables/)', file='$CLOSEDLOOP_WORKDIR/.closedloop-ai/decision-tables/', command='/code:create-plan $ARGUMENTS'. Tell the user: 'Plan-writer found 0 or more than 1 new decision-table files. Inspect .closedloop-ai/decision-tables/, decide which file to keep as the canonical artifact, set plan.json.decisionTable.path to its relative path, and run /code:create-plan $ARGUMENTS to continue.' **HARD STOP.**
+  - If the output contains the string `DECISION_TABLE_ARTIFACT_COUNT_MISMATCH` (treat the marker as authoritative even if `PLAN_WRITER_COMPLETE` is also present): execute **AWAITING_USER_SEQUENCE** with: phase='Phase 2.7: Plan Finalization', reason='Decision-table artifact count mismatch (expected exactly 1 new file under .closedloop-ai/decision-tables/)', file='$CLOSEDLOOP_WORKDIR/.closedloop-ai/decision-tables/', command='/code:create-plan <ORIGINAL_ARGS>' (substitute the resolved `CLOSEDLOOP_ORIGINAL_ARGS` value per the Resume-command rule; fall back to the resolved workdir if empty). Tell the user: 'Plan-writer found 0 or more than 1 new decision-table files. Inspect .closedloop-ai/decision-tables/, decide which file to keep as the canonical artifact, set plan.json.decisionTable.path to its relative path, and run `/code:create-plan <ORIGINAL_ARGS>` to continue.' **HARD STOP.**
   - If the output does NOT contain the marker, proceed normally (verify PLAN_WRITER_COMPLETE was emitted, then continue to Phase 2.8).
 - After plan-writer completes (outputs `<promise>PLAN_WRITER_COMPLETE</promise>`), run **PLAN_VALIDATION_SEQUENCE**
 - Proceed to Phase 2.8
@@ -218,7 +207,7 @@ This is a single-shot interactive command, so review happens in-session via `Ask
   `echo '{"phase": "Phase 2.8: Plan completion", "status": "COMPLETED", "planStatus": "PLAN_COMPLETE", "startSha": "'$START_SHA'", "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > $CLOSEDLOOP_WORKDIR/state.json`
 - Run the telemetry line: `bash "$CLAUDE_PLUGIN_ROOT/scripts/record_phase.sh" 2>/dev/null || true`
 - **ONLY AFTER state.json is written** — output `<promise>PLAN_COMPLETE</promise>`
-- Tell the user: the plan is ready at `$CLOSEDLOOP_WORKDIR/plan.md`. Run `/code:code` (or resume via the loop) to implement it.
+- Tell the user: the plan is ready at `$CLOSEDLOOP_WORKDIR/plan.md`. Run `/code:execute-implementation <ORIGINAL_ARGS>` for a single-shot in-session implementation, or `/code:code` (via the external loop) for the full orchestrated workflow. (Substitute the resolved `CLOSEDLOOP_ORIGINAL_ARGS` value per the Resume-command rule; fall back to the resolved workdir if empty.)
 
 ## Rules
 
@@ -229,4 +218,4 @@ This is a single-shot interactive command, so review happens in-session via `Ask
 - Output `<promise>PLAN_COMPLETE</promise>` only when the plan is finalized and validated.
 - Run self-checks before tool use and before promise output.
 - Always write state.json before any promise.
-- NEVER proceed to implementation (phases 3–7) — that is the job of `/code:code`.
+- NEVER proceed to implementation (phases 3–7) — that is the job of `/code:execute-implementation` (single-shot, in-session) or `/code:code` (the external full loop).

@@ -28,6 +28,28 @@ ARG_INDEX=0
 ARG_COUNT=${#ARGS[@]}
 CONSUMED_PATH_VALUE=""
 
+# Capture the user-facing original args = all args EXCEPT the internal
+# `--prompt <name>` pair the slash-command appends. Orchestrator prompts persist
+# this into state.json resume commands (CLOSEDLOOP_ORIGINAL_ARGS, written below).
+# Without it, prompt files emit the literal token `$ARGUMENTS`, which is a Claude
+# Code slash-command substitution (resolved only in commands/*.md bang lines), not
+# a shell/exported var — so it never expands at prompt time and lands verbatim in
+# the machine-readable userAction.command field.
+ORIGINAL_ARGS=()
+_oa_skip_next=0
+for _oa_token in "$@"; do
+    if [[ $_oa_skip_next -eq 1 ]]; then
+        _oa_skip_next=0
+        continue
+    fi
+    case "$_oa_token" in
+        --prompt)   _oa_skip_next=1; continue ;;
+        --prompt=*) continue ;;
+    esac
+    ORIGINAL_ARGS+=("$_oa_token")
+done
+ORIGINAL_ARGS_JOINED="${ORIGINAL_ARGS[*]}"
+
 consume_joined_path_value() {
     CONSUMED_PATH_VALUE=""
 
@@ -347,6 +369,7 @@ CLOSEDLOOP_PLAN_FILE="${PLAN_FILE:-${CLOSEDLOOP_PLAN_FILE:-}}"
 CLOSEDLOOP_MAX_ITERATIONS="$MAX_ITERATIONS"
 CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
 CLOSEDLOOP_PROMPT_FILE="$CLOSEDLOOP_PROMPT_FILE"
+CLOSEDLOOP_ORIGINAL_ARGS="$ORIGINAL_ARGS_JOINED"
 EOF
 
 # Build pipe-joined multi-repo variables (empty strings when no extra repos)

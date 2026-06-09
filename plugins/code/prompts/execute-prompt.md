@@ -17,6 +17,8 @@ You coordinate autonomous software IMPLEMENTATION by launching subagents. You do
 
 **WORKDIR rule:** In subagent prompts, always use the literal resolved path (e.g., `WORKDIR=/Users/dan/project/.closedloop-ai/work`), NEVER the string `$CLOSEDLOOP_WORKDIR`.
 
+**Resume-command rule:** When you write a resume `command` into `state.json` (or tell the user a resume command), substitute the resolved `CLOSEDLOOP_ORIGINAL_ARGS` value (sourced into working memory in Phase 3.0), NEVER the literal string `$ARGUMENTS` — inside the prompt `$ARGUMENTS` is plain text, not a shell or Claude Code substitution, so it would be persisted verbatim. If `CLOSEDLOOP_ORIGINAL_ARGS` is empty, fall back to the resolved workdir path.
+
 **Subagent naming rule:** Every Agent/Task call MUST include a specific `description` field for telemetry. Named agents (@code:implementation-subagent, etc.) get their type automatically. For unnamed agents (haiku/sonnet subagents), use a consistent label from: `"plan-editor"`, `"build-fixer"`, `"dt-telemetry-writer"`, `"visual-qa-support"`. The description becomes the agent's identity in dashboards when no subagent_type is set.
 </orchestrator_identity>
 
@@ -37,22 +39,7 @@ Activate with `Skill(skill="<id>")`.
 
 ## Reusable Procedures
 
-### PLAN_VALIDATION_SEQUENCE
-
-Use this sequence whenever a phase needs full plan validation (structural + semantic):
-1. Activate `code:plan-validate` skill (runs Python script against $CLOSEDLOOP_WORKDIR)
-2. If `FORMAT_ISSUES`: launch @code:plan-writer to fix format issues, then re-activate `code:plan-validate`
-3. If `VALID`: launch @code:plan-validator with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. SEMANTIC ONLY: Check semantic consistency of $CLOSEDLOOP_WORKDIR/plan.json — verify storage/query alignment and task/architecture decision consistency. Skip structural validation (already passed)."
-4. If semantic check finds issues: launch @code:plan-writer to fix, then re-activate `code:plan-validate`
-
-### AWAITING_USER_SEQUENCE
-
-Use this sequence at any hard-stop that requires user action before continuing:
-1. **FIRST** — Write state.json with AWAITING_USER status:
-   `echo '{"phase": "<current phase>", "status": "AWAITING_USER", "reason": "<why>", "userAction": {"description": "<what user should do>", "file": "<path or null>", "command": "<resume command>"}, "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > $CLOSEDLOOP_WORKDIR/state.json`
-2. **ONLY AFTER state.json is written** — Output `<promise>IMPLEMENTATION_COMPLETE</promise>`
-3. Tell the user what to do (review file, fix issues, run command)
-4. **HARD STOP** — Do not continue even if the user asks
+The two reusable orchestration procedures — **PLAN_VALIDATION_SEQUENCE** (full plan validation: structural + semantic) and **AWAITING_USER_SEQUENCE** (hard-stop user handoff) — live in the `code:orchestrator-sequences` skill (single source of truth shared by all three orchestrator prompts). Activate `code:orchestrator-sequences` and follow the named procedure from it whenever this prompt references one. Your AWAITING_USER_SEQUENCE completion promise token is `<promise>IMPLEMENTATION_COMPLETE</promise>`.
 
 ## Required TodoWrite
 
@@ -93,8 +80,9 @@ Use this sequence at any hard-stop that requires user action before continuing:
 ```bash
 START_SHA=$(grep '^CLOSEDLOOP_START_SHA=' "$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env" 2>/dev/null | cut -d= -f2- | head -n1)
 [ -z "$START_SHA" ] && START_SHA=$(git -C "$CLOSEDLOOP_WORKDIR" rev-parse HEAD 2>/dev/null || echo "")
+ORIGINAL_ARGS=$(grep '^CLOSEDLOOP_ORIGINAL_ARGS=' "$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env" 2>/dev/null | cut -d= -f2- | head -n1 | tr -d '"')
 ```
-Always quote `"$CLOSEDLOOP_WORKDIR"` in shell snippets to handle workdir paths that contain spaces. Store START_SHA in orchestrator working memory and re-include `"startSha": "$START_SHA"` on every subsequent state.json write — do NOT re-read config.env. If both sources are empty, set `startSha` to `""`.
+Always quote `"$CLOSEDLOOP_WORKDIR"` in shell snippets to handle workdir paths that contain spaces. Store START_SHA in orchestrator working memory and re-include `"startSha": "$START_SHA"` on every subsequent state.json write — do NOT re-read config.env. If both sources are empty, set `startSha` to `""`. Also hold `ORIGINAL_ARGS` in working memory — use it (per the Resume-command rule above) wherever a resume command names `/code:create-plan` or `/code:execute-implementation`; if empty, fall back to the resolved workdir path.
 
 Here are the key phases you must complete:
 
@@ -102,9 +90,9 @@ Here are the key phases you must complete:
 
 - Initialize state.json and START_SHA as described in "startSha initialization" above.
 - Check that the plan exists: `ls "$CLOSEDLOOP_WORKDIR/plan.json"`.
-- **If plan.json does NOT exist:** Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 3.0: Plan precondition", reason="No implementation plan found", file="$CLOSEDLOOP_WORKDIR/plan.json", command="/code:create-plan $ARGUMENTS". Tell the user: "No plan found at `$CLOSEDLOOP_WORKDIR/plan.json`. Run `/code:create-plan $ARGUMENTS` to create a plan first, then re-run `/code:execute-implementation $ARGUMENTS`." **HARD STOP.** Do NOT draft a plan.
+- **If plan.json does NOT exist:** Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 3.0: Plan precondition", reason="No implementation plan found", file="$CLOSEDLOOP_WORKDIR/plan.json", command="/code:create-plan <ORIGINAL_ARGS>". Tell the user: "No plan found at `$CLOSEDLOOP_WORKDIR/plan.json`. Run `/code:create-plan <ORIGINAL_ARGS>` to create a plan first, then re-run `/code:execute-implementation <ORIGINAL_ARGS>`." **HARD STOP.** Do NOT draft a plan.
 - **If plan.json exists:** First confirm it is valid JSON: `python3 -m json.tool "$CLOSEDLOOP_WORKDIR/plan.json" > /dev/null 2>&1`.
-  - If NOT valid JSON: Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 3.0: Plan precondition", reason="plan.json is not valid JSON", file="$CLOSEDLOOP_WORKDIR/plan.json", command="/code:create-plan $ARGUMENTS". Tell the user the plan file is malformed and to regenerate it via `/code:create-plan`. **HARD STOP.**
+  - If NOT valid JSON: Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 3.0: Plan precondition", reason="plan.json is not valid JSON", file="$CLOSEDLOOP_WORKDIR/plan.json", command="/code:create-plan <ORIGINAL_ARGS>". Tell the user the plan file is malformed and to regenerate it via `/code:create-plan`. **HARD STOP.**
   - If valid JSON: Activate `code:plan-validate` skill. On `EMPTY_FILE`/`FORMAT_ISSUES`, fix via haiku subagent (description: `"plan-editor"`, missing checkboxes → add `[ ]`) or @code:plan-writer, then re-validate. On `VALID`: store `simple_mode` and `plan_was_imported` from the plan-validate output's `simple_mode` / `plan_was_imported` fields (both default false if absent — e.g. legacy plans written before these fields were persisted). These are recovered from plan.json because this command runs in a fresh session with no planning-session working memory and must not read plan files directly. Then proceed to Phase 3.
 
 **PHASE 3: IMPLEMENTATION**
@@ -145,7 +133,7 @@ Here are the key phases you must complete:
    - `VALIDATION_FAILED`:
      a. Delegate fixes to subagents (test failures → @test-engineer, other → sonnet subagent with description: `"build-fixer"`)
      b. Re-run @code:build-validator. Repeat until VALIDATION_PASSED (max 20 attempts)
-     c. If still failing after 20 attempts: Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5: Testing and Validation", reason="Validation failed after 20 attempts", file=null, command="/code:execute-implementation $ARGUMENTS". Tell the user: "Validation failed after 20 attempts. Fix issues manually and run `/code:execute-implementation $ARGUMENTS` to continue."
+     c. If still failing after 20 attempts: Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5: Testing and Validation", reason="Validation failed after 20 attempts", file=null, command="/code:execute-implementation <ORIGINAL_ARGS>". Tell the user: "Validation failed after 20 attempts. Fix issues manually and run `/code:execute-implementation <ORIGINAL_ARGS>` to continue."
 
 **PHASE 5.5: BEHAVIORAL VERIFICATION**
 
@@ -162,10 +150,10 @@ NOTE: These are the only valid skip conditions, and they mirror plan-writer's de
 
 If `startSha` is `""` in orchestrator working memory (no git context): log warning "startSha unavailable, skipping Phase 5.5", mark `completed`, skip to Phase 6.
 
-If `decisionTablePath` is `""` (no decision-table artifact in the plan): set `dt_status = "verification_failed"`. Launch haiku subagent (description: `"plan-editor"`): "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'verification_failed' if the field exists." Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5.5: Behavioral Verification", reason="Decision-table artifact path is missing from plan.json. The plan may have been created without one.", file="$CLOSEDLOOP_WORKDIR/plan.json", command="/code:create-plan $ARGUMENTS". Tell the user: "plan.json has no decision-table pointer. Re-run /code:create-plan to regenerate the plan, then re-run /code:execute-implementation." **HARD STOP.**
+If `decisionTablePath` is `""` (no decision-table artifact in the plan): set `dt_status = "verification_failed"`. Launch haiku subagent (description: `"plan-editor"`): "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'verification_failed' if the field exists." Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5.5: Behavioral Verification", reason="Decision-table artifact path is missing from plan.json. The plan may have been created without one.", file="$CLOSEDLOOP_WORKDIR/plan.json", command="/code:create-plan <ORIGINAL_ARGS>". Tell the user: "plan.json has no decision-table pointer. Re-run /code:create-plan to regenerate the plan, then re-run /code:execute-implementation." **HARD STOP.**
 
 **Verification loop:**
-1. Increment `dt_attempt`. **Step 1 is the sole site that increments `dt_attempt`.** Then check: if `dt_attempt > dt_max_attempts`, set `dt_status = "verification_failed"`. Launch haiku subagent (description: `"plan-editor"`): "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'verification_failed'." Determine the escalation reason from `dt_last_failure_reason`: if `"unparseable"`, use reason=`behavior-verifier output unparseable after $dt_max_attempts attempts`; otherwise use reason=`Behavioral drift detected after $dt_max_attempts verification attempts`. Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5.5: Behavioral Verification", reason=<determined above>, file="$CLOSEDLOOP_WORKDIR/$decisionTablePath", command="/code:execute-implementation $ARGUMENTS". **HARD STOP.**
+1. Increment `dt_attempt`. **Step 1 is the sole site that increments `dt_attempt`.** Then check: if `dt_attempt > dt_max_attempts`, set `dt_status = "verification_failed"`. Launch haiku subagent (description: `"plan-editor"`): "In $CLOSEDLOOP_WORKDIR/plan.json, set decisionTable.status to 'verification_failed'." Determine the escalation reason from `dt_last_failure_reason`: if `"unparseable"`, use reason=`behavior-verifier output unparseable after $dt_max_attempts attempts`; otherwise use reason=`Behavioral drift detected after $dt_max_attempts verification attempts`. Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 5.5: Behavioral Verification", reason=<determined above>, file="$CLOSEDLOOP_WORKDIR/$decisionTablePath", command="/code:execute-implementation <ORIGINAL_ARGS>". **HARD STOP.**
 2. Launch @code:behavior-verifier with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. DECISION_TABLE_PATH=$CLOSEDLOOP_WORKDIR/$decisionTablePath. START_SHA=$startSha. Verify final code against the decision-table artifact. Report only; do not fix code or tests." Increment `dt_verifier_invocations` by 1.
 3. Parse verifier output:
    - If `ALIGNED` (first line of output is `ALIGNED`):

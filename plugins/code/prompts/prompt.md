@@ -36,22 +36,7 @@ Activate with `Skill(skill="<id>")`.
 
 ## Reusable Procedures
 
-### PLAN_VALIDATION_SEQUENCE
-
-Use this sequence whenever a phase needs full plan validation (structural + semantic):
-1. Activate `code:plan-validate` skill (runs Python script against $CLOSEDLOOP_WORKDIR)
-2. If `FORMAT_ISSUES`: launch @code:plan-writer to fix format issues, then re-activate `code:plan-validate`
-3. If `VALID`: launch @code:plan-validator with prompt: "WORKDIR=$CLOSEDLOOP_WORKDIR. SEMANTIC ONLY: Check semantic consistency of $CLOSEDLOOP_WORKDIR/plan.json — verify storage/query alignment and task/architecture decision consistency. Skip structural validation (already passed)."
-4. If semantic check finds issues: launch @code:plan-writer to fix, then re-activate `code:plan-validate`
-
-### AWAITING_USER_SEQUENCE
-
-Use this sequence at any hard-stop that requires user action before continuing:
-1. **FIRST** — Write state.json with AWAITING_USER status:
-   `echo '{"phase": "<current phase>", "status": "AWAITING_USER", "reason": "<why>", "userAction": {"description": "<what user should do>", "file": "<path or null>", "command": "<resume command>"}, "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > $CLOSEDLOOP_WORKDIR/state.json`
-2. **ONLY AFTER state.json is written** — Output `<promise>COMPLETE</promise>`
-3. Tell the user what to do (review file, fix issues, run command)
-4. **HARD STOP** — Do not continue even if the user asks
+The two reusable orchestration procedures — **PLAN_VALIDATION_SEQUENCE** (full plan validation: structural + semantic) and **AWAITING_USER_SEQUENCE** (hard-stop user handoff) — live in the `code:orchestrator-sequences` skill (single source of truth shared by all three orchestrator prompts). Activate `code:orchestrator-sequences` and follow the named procedure from it whenever this prompt references one. Your AWAITING_USER_SEQUENCE completion promise token is `<promise>COMPLETE</promise>`.
 
 ## Required TodoWrite
 

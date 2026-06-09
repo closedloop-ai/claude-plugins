@@ -295,6 +295,10 @@ Dynamically locates files within the Claude Code plugins cache directory (`~/.cl
 
 A 4-phase protocol for orchestrators to refine subagent queries through follow-up questions. Phases: Initial Dispatch, Sufficiency Evaluation (4-question checklist), Refinement Request (continue via SendMessage with targeted follow-ups), and Loop (up to 3 cycles). Used when initial subagent responses may miss important adjacent context.
 
+### `orchestrator-sequences`
+
+Single source of truth for the two reusable orchestration procedures shared by all three orchestrator prompts (`prompt.md`, `plan-prompt.md`, `execute-prompt.md`), which each load standalone and cannot reference one another at runtime. **`PLAN_VALIDATION_SEQUENCE`** runs full plan validation — activate `code:plan-validate` for structural checks, route `FORMAT_ISSUES` to `plan-writer`, then run `plan-validator` in semantic-only mode. **`AWAITING_USER_SEQUENCE`** standardizes every hard-stop: write `state.json` with `AWAITING_USER` status first, then emit the prompt's completion promise (`PLAN_COMPLETE`, `IMPLEMENTATION_COMPLETE`, or `COMPLETE`), tell the user what to do, and hard stop.
+
 ### `codex-review`
 
 Runs Codex to review a plan file and returns structured feedback with a verdict. Called once per debate round by the `plan-with-codex` command via `debate-loop.sh`. Supports session resume across rounds using a Codex thread ID. Returns `VERDICT:APPROVED` or `VERDICT:NEEDS_CHANGES` plus a `CODEX_SESSION` token. Emits `CODEX_FAILED` or `CODEX_EMPTY` tokens on error so the orchestrator can ask the user to retry or abort.
