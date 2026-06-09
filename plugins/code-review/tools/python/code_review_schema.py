@@ -159,8 +159,8 @@ COVERAGE_CORE_REQUIRED: tuple[str, ...] = (
 #
 # Entry shape:
 #   - reviewer:  reviewer name; must also be registered in
-#                ``_SPAWN_CORE_ROLES`` and the start.md per-agent
-#                spawn block lookup.
+#                ``_SPAWN_CORE_ROLES`` and the per-agent spawn block
+#                lookup in the code-review:spawn-reviewers skill.
 #   - triggers:  list of trigger dicts evaluated via
 #                ``_trigger_fires``. Any trigger firing is sufficient.
 #   - min_depth: lowest invocation tier at which this reviewer is
@@ -209,7 +209,8 @@ COVERAGE_CORE_CONDITIONAL: tuple[dict[str, Any], ...] = (
 # Top-level ``arbitrate_status``. ``ok`` = normal arbitration ran;
 # ``blocked_by_verify`` = the verify-stage BLOCKING gate fired upstream
 # and the plan passed through unbudgeted; ``fallback`` = derive failed
-# and the orchestrator must walk the static reviewer table in start.md;
+# and the orchestrator must walk the static reviewer table in the
+# code-review:spawn-reviewers skill;
 # ``static`` (PLN-807) = the user explicitly chose shallow tier, the
 # spec was emitted by ``cmd_derive_static_spec`` without consulting a
 # coverage plan, and stage_20 treats it identically to ``fallback``
@@ -223,10 +224,11 @@ SPAWN_SPEC_ARBITRATE_STATUSES: frozenset[str] = frozenset({
     "static",
 })
 
-# Per-agent ``source`` field. Selects the prompt-suffix dispatch in
-# start.md; ``source: "core"`` further branches on the ``reviewer``
-# field (bug_hunter_a → BHA, bug_hunter_b → BHB, unified_auditor →
-# Auditor, premise_reviewer → Premise). Non-core domain reviewers
+# Per-agent ``source`` field. Selects the prompt-suffix dispatch in the
+# code-review:spawn-reviewers skill; ``source: "core"`` further branches
+# on the ``reviewer`` field (bug_hunter_a → BHA, bug_hunter_b → BHB,
+# unified_auditor → Auditor, premise_reviewer → Premise). Non-core
+# domain reviewers
 # carry their plan-entry source through: ``"rule"`` means the entry
 # came from a deterministically matched critic-gates.json rule
 # (including migrated moduleCritics[] entries); ``"critic"`` means the

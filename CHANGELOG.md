@@ -20,6 +20,34 @@ Split the single closed-loop orchestrator into two standalone single-shot comman
 - `setup-closedloop.sh` now recognizes `--review-cycles <n>` as a parsed option that consumes its value. Previously the flag fell through to the unknown-option catch-all and its bare numeric value was appended to `WORKDIR`, corrupting the working directory and aborting startup before the orchestrator loaded. The value is read directly by the implementation orchestrator (`prompts/execute-prompt.md` Phase 6.5) from the command arguments; it is not persisted to `config.env`.
 - `prompts/execute-prompt.md` Phase 6.5 now runs the in-session review through the `/code-review:start` command via the SlashCommand tool (added to the orchestrator's allowed tools), instead of activating it as a `Skill`. `code-review:start` is a slash command rather than a skill, so the previous `Skill(...)` form could not invoke the review round.
 
+### code-review v2.33.0
+
+MINOR bump — relocate the two remaining agent-dispatch sections out of the `/start` command into dedicated skills. `commands/start.md` drops from ~587 to ~463 lines; the dispatch protocols now enter orchestrator context only when their stages are reached.
+
+#### Added
+- New `verify-findings` skill: the finding-verifier fleet dispatch for `stage_23_verify_findings`. Reads `verify_manifest.json`, spawns one falsify-oriented verifier per `to_verify[]` entry, skips `cache_hits[]`, and degrades missing verifier outputs to `pending_verification[]`.
+- New `singleton-dispatch` skill: the PLN-725 single-agent dispatch for `stage_11_extract_signals` and `stage_15_coverage_critic`. Covers the `cache_hit` / `skipped` / `needs_agent` status gate, the synchronous singleton spawn, the by-convention `pln725_*.json` write target, and fail-closed semantics. The `skipped` status documents all three `coverage-critic-prepare` reasons (`no-critic`, `no-roster`, `no-candidates`).
+
+#### Changed
+- The `/start` command now invokes the `verify-findings` skill for `stage_23` and the `singleton-dispatch` skill for the PLN-725 stages instead of inline sections; the `spawn-reviewers` skill, walker contract, execution model, and per-stage notes were repointed accordingly. Dispatch content was relocated verbatim — no change to dispatch behavior.
+
+### code-review v2.32.0
+
+MINOR bump — relocate the reviewer-fleet dispatch out of the `/start` orchestrator into a dedicated `spawn-reviewers` skill, plus security hardening of the reviewer prompts and schema-doc fixes. The orchestrator command is now a lean spine that walks the declarative run plan and invokes the skill at the spawn stage, so the fleet-dispatch content no longer loads into orchestrator context during the deterministic pipeline prefix or on hygiene-only / full-cache-hit runs that never reach the spawn stage.
+
+#### Added
+- New `spawn-reviewers` skill that owns the full reviewer-fleet dispatch at `stage_20_spawn_reviewers`: spawn-spec consumption, GRAPH_PROJECT resolution, the per-agent prompt template and role suffixes (Bug Hunter A/B, Unified Auditor, Domain Critics, Premise, Impact Analyzer), the standard / fast-path / all-cached / gated-by-verify branches, the static-table fallback, the spawn + collection contract, and agent-failure recovery. The content is relocated verbatim from `commands/start.md`, which drops from ~1046 to ~587 lines.
+
+#### Changed
+- The `/start` command's `agent_fleet` dispatch for `stage_20_spawn_reviewers` now invokes the `spawn-reviewers` skill instead of an inline section; walker-contract, execution-model, and per-stage references were repointed accordingly.
+- Reviewer agents now read `shared_prompt.txt` (including the untrusted-content policy) before the patches file, and the diff/patch text is explicitly labelled untrusted data so a reviewer-targeted prompt injection in PR content cannot be encountered before the policy is loaded.
+- Domain-critic names from `critic-gates.json` are validated against a restricted grammar (with a safe fallback) and rendered as quoted data rather than interpolated into instruction text, preventing prompt-directive injection through a critic name.
+
+#### Fixed
+- `SCHEMA.md` §1 Finding example now lists `priority: 0 | 1 | 2 | 3`, matching the `PRIORITIES` constant in `code_review_schema.py` (the `3` / P3 tier was previously omitted from the doc).
+- `SCHEMA.md` closed-vocabulary table now documents the `static` value of `arbitrate_status` (emitted by the shallow-tier static spawn spec), which the constant already permitted.
+- Documentation and source-comment references to the reviewer-fleet dispatch and static reviewer table now point at the `spawn-reviewers` skill rather than `start.md`.
+
 ### code-review v2.31.1
 
 PATCH bump — fix GitHub-mode inline comments silently dropping when a PR moves or renames files. GitHub's `pulls/{pr}/comments` API rejects any inline comment whose line is not part of the PR diff with a 422; reviewers flagging lines outside the changed hunks (common on moved/renamed files) therefore failed to post and survived only in the summary.
