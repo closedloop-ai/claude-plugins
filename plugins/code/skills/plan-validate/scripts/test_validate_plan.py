@@ -1,4 +1,6 @@
 """Tests for validate_plan.py."""
+import pytest
+
 from validate_plan import extract_data, validate_schema_fields
 
 
@@ -92,3 +94,68 @@ def test_extract_data_decision_table_absent() -> None:
 
     assert result["decision_table_path"] == ""
     assert result["decision_table_status"] == ""
+
+
+# (input plan overrides, expected simple_mode, expected plan_was_imported)
+# Covers: both true, both false, absent (legacy plans → default False), and
+# non-bool values (int/string) — these must NOT coerce to True; fail-safe is False.
+# extract_data is the recovery channel the fresh execute-implementation session
+# reads to decide whether to skip Phase 5.5.
+_MODE_FLAG_CASES = [
+    ({"simple_mode": True, "plan_was_imported": True}, True, True),
+    ({"simple_mode": False, "plan_was_imported": False}, False, False),
+    ({}, False, False),
+    ({"simple_mode": True}, True, False),
+    ({"plan_was_imported": True}, False, True),
+    # Non-boolean values must NOT coerce to True — int 1 is not JSON true.
+    ({"simple_mode": 1, "plan_was_imported": 0}, False, False),
+]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_simple", "expected_imported"), _MODE_FLAG_CASES
+)
+def test_extract_data_surfaces_mode_flags(
+    overrides: dict, expected_simple: bool, expected_imported: bool
+) -> None:
+    """extract_data surfaces simple_mode/plan_was_imported as booleans (default False)."""
+    plan = _minimal_plan()
+    plan.update(overrides)
+
+    result = extract_data(plan)
+
+    assert result["simple_mode"] is expected_simple
+    assert result["plan_was_imported"] is expected_imported
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value"),
+    [
+        ("simple_mode", "false"),
+        ("simple_mode", "true"),
+        ("simple_mode", 1),
+        ("simple_mode", 0),
+        ("plan_was_imported", "false"),
+        ("plan_was_imported", 1),
+    ],
+)
+def test_validate_schema_rejects_non_boolean_mode_flags(field: str, bad_value: object) -> None:
+    """validate_schema_fields must reject non-boolean simple_mode / plan_was_imported."""
+    plan = _minimal_plan()
+    plan[field] = bad_value
+    issues = validate_schema_fields(plan)
+    assert any(field in msg and "boolean" in msg for msg in issues), issues
+
+
+def test_validate_schema_accepts_boolean_mode_flags() -> None:
+    """validate_schema_fields must accept boolean true/false for the mode flags."""
+    plan = _minimal_plan()
+    plan["simple_mode"] = True
+    plan["plan_was_imported"] = False
+    assert validate_schema_fields(plan) == []
+
+
+def test_validate_schema_accepts_absent_mode_flags() -> None:
+    """validate_schema_fields must pass when both mode flags are omitted (legacy plans)."""
+    plan = _minimal_plan()
+    assert validate_schema_fields(plan) == []

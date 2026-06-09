@@ -173,6 +173,14 @@
       "items": {
         "$ref": "#/$defs/amendment"
       }
+    },
+    "simple_mode": {
+      "type": "boolean",
+      "description": "True when plan-evaluator deemed the plan eligible for simple mode (decision-table generation and Phase 5.5 behavioral verification are skipped). Persisted by plan-writer at finalization so the separate execute-implementation session can recover it without reading plan-evaluation.json."
+    },
+    "plan_was_imported": {
+      "type": "boolean",
+      "description": "True when the plan was imported rather than drafted from a PRD (decision-table generation and Phase 5.5 behavioral verification are skipped). Set in three cases by plan-prompt.md Phase 1: (1) CLOSEDLOOP_PLAN_FILE is provided (the --plan flag), (2) $CLOSEDLOOP_WORKDIR/plan-source.md is auto-detected, or (3) an existing plan.json was not valid JSON and was migrated to plan-source.md. Persisted by plan-writer at finalization so the separate execute-implementation session can recover it without reading planning-session working memory."
     }
   },
   "$defs": {

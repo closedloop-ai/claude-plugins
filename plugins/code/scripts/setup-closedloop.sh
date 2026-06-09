@@ -28,6 +28,28 @@ ARG_INDEX=0
 ARG_COUNT=${#ARGS[@]}
 CONSUMED_PATH_VALUE=""
 
+# Capture the user-facing original args = all args EXCEPT the internal
+# `--prompt <name>` pair the slash-command appends. Orchestrator prompts persist
+# this into state.json resume commands (CLOSEDLOOP_ORIGINAL_ARGS, written below).
+# Without it, prompt files emit the literal token `$ARGUMENTS`, which is a Claude
+# Code slash-command substitution (resolved only in commands/*.md bang lines), not
+# a shell/exported var — so it never expands at prompt time and lands verbatim in
+# the machine-readable userAction.command field.
+ORIGINAL_ARGS=()
+_oa_skip_next=0
+for _oa_token in "$@"; do
+    if [[ $_oa_skip_next -eq 1 ]]; then
+        _oa_skip_next=0
+        continue
+    fi
+    case "$_oa_token" in
+        --prompt)   _oa_skip_next=1; continue ;;
+        --prompt=*) continue ;;
+    esac
+    ORIGINAL_ARGS+=("$_oa_token")
+done
+ORIGINAL_ARGS_JOINED="${ORIGINAL_ARGS[*]}"
+
 consume_joined_path_value() {
     CONSUMED_PATH_VALUE=""
 
@@ -148,6 +170,22 @@ while [[ $ARG_INDEX -lt $ARG_COUNT ]]; do
                 exit 1
             fi
             MAX_ITERATIONS="${ARGS[$ARG_INDEX]}"
+            ARG_INDEX=$((ARG_INDEX + 1))
+            ;;
+        --review-cycles)
+            ARG_INDEX=$((ARG_INDEX + 1))
+            if [[ $ARG_INDEX -ge $ARG_COUNT ]]; then
+                echo "Error: --review-cycles requires a value" >&2
+                exit 1
+            fi
+            if [[ "${ARGS[$ARG_INDEX]}" == -* ]]; then
+                echo "Error: --review-cycles requires a value, got flag '${ARGS[$ARG_INDEX]}'" >&2
+                exit 1
+            fi
+            # Value is consumed (skipped) here but intentionally not stored: the
+            # slash-command orchestrator reads --review-cycles from the command
+            # arguments directly (prompts/execute-prompt.md Phase 6.5). We only
+            # advance past the value so it is not treated as the WORKDIR positional.
             ARG_INDEX=$((ARG_INDEX + 1))
             ;;
         --prompt)
@@ -335,6 +373,7 @@ CLOSEDLOOP_PLAN_FILE="${PLAN_FILE:-${CLOSEDLOOP_PLAN_FILE:-}}"
 CLOSEDLOOP_MAX_ITERATIONS="$MAX_ITERATIONS"
 CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
 CLOSEDLOOP_PROMPT_FILE="$CLOSEDLOOP_PROMPT_FILE"
+CLOSEDLOOP_ORIGINAL_ARGS="$ORIGINAL_ARGS_JOINED"
 EOF
 
 # Build pipe-joined multi-repo variables (empty strings when no extra repos)
@@ -355,6 +394,12 @@ CLOSEDLOOP_ADD_DIRS="$add_dirs_joined"
 CLOSEDLOOP_ADD_DIR_NAMES="$add_dir_names_joined"
 CLOSEDLOOP_REPO_MAP="$repo_map_joined"
 EOF
+
+# NOTE: --review-cycles is parsed above only to consume the flag+value (so it is
+# not mistaken for the WORKDIR positional). The slash-command orchestrator reads
+# --review-cycles directly from the command arguments (see prompts/execute-prompt.md
+# Phase 6.5); it is intentionally NOT persisted to config.env. The legacy
+# run-loop.sh post-loop path keeps its own POST_LOOP_REVIEW_CYCLES env default.
 
 # Re-append run-loop-managed keys captured above.
 if [[ -n "$EXISTING_START_SHA" ]]; then
