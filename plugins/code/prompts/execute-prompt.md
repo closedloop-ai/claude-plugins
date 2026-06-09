@@ -7,7 +7,7 @@ You coordinate autonomous software IMPLEMENTATION by launching subagents. You do
 
 **Scope:** This is a single-shot, in-session IMPLEMENTATION run (phases 3–7 plus in-session review rounds). There is NO external loop. A finalized `plan.json` MUST already exist — if it does not, you HARD STOP and point the user to `/code:create-plan` (Phase 3.0). When Phase 7 finishes you write `state.json` with `status: COMPLETED` and output `<promise>IMPLEMENTATION_COMPLETE</promise>`. Never draft or finalize a plan — that is the job of `/code:create-plan`.
 
-**Allowed tools:** Bash (`ls`, `echo`, `mkdir`, `git`, `jq`, scripts), Task (subagents), TodoWrite, AskUserQuestion, SendMessage (continue subagents)
+**Allowed tools:** Bash (`ls`, `echo`, `mkdir`, `git`, `jq`, scripts), Task (subagents), TodoWrite, AskUserQuestion, SendMessage (continue subagents), SlashCommand (run `/code-review:start` in Phase 6.5)
 **NEVER use:** Read, Grep, Glob, Edit, Write. NEVER read PRDs, plan.json, code, or any files in $CLOSEDLOOP_WORKDIR.
 
 **Async wait rule (SendMessage):** When you use SendMessage to continue a subagent, SendMessage returns immediately with a queued acknowledgment — the subagent runs in the background. Do NOT proceed to the next step until you receive a `<task-notification>` confirming the subagent has finished.
@@ -30,7 +30,7 @@ Activate with `Skill(skill="<id>")`.
 | `code:build-status-cache` | Phase 7 build check; also stamp after Phase 5 passes | `BUILD_CACHE_HIT` / `BUILD_CACHE_MISS` |
 | `code:iterative-retrieval` | Complex subagent calls where initial response may be incomplete (not for simple queries) | 4-phase protocol: Dispatch → Evaluate → Refine → Loop |
 | `code:decision-table` | Phase 5.5 (verification-only via behavior-verifier) | Activated by subagents, not directly by orchestrator |
-| `code-review:start` | Phase 6.5 review round (in-session review) | Writes verdict + findings under `.closedloop-ai/code-review/cr-*` |
+| `code-review:start` (command — run via SlashCommand, NOT `Skill`) | Phase 6.5 review round (in-session review) | Writes verdict + findings under `.closedloop-ai/code-review/cr-*` |
 | `code-review:fix` | Phase 6.5 fix round (apply review findings) | Writes `fix_result.json` under the CR dir |
 
 **plan-validate vs plan-validator:** Use `code:plan-validate` skill for structural checks. Only launch @code:plan-validator agent after phases that modify plan content (none in this command, except a Phase 3.0 format fix) with "SEMANTIC ONLY" prompt.
@@ -224,7 +224,7 @@ If `CHANGED` is `0`, log "No code changes — skipping review rounds" and procee
 
 **Review loop (while `cycle <= max_cycles`):**
 1. Update state.json with `"reviewCycle": cycle`.
-2. **Run review:** Activate `code-review:start` skill with arguments `--base $startSha`. (This writes a fresh session directory under `$CLOSEDLOOP_WORKDIR/.closedloop-ai/code-review/cr-*`.)
+2. **Run review:** Run the `/code-review:start --base $startSha` command via the SlashCommand tool (`code-review:start` is a slash command, not a `Skill`). (This writes a fresh session directory under `$CLOSEDLOOP_WORKDIR/.closedloop-ai/code-review/cr-*`.)
 3. **Read the verdict** via Bash (no file reads into orchestrator context beyond these scalars):
    ```bash
    CR_DIR=$(ls -td "$CLOSEDLOOP_WORKDIR"/.closedloop-ai/code-review/cr-* 2>/dev/null | head -1)

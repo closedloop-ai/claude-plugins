@@ -20,7 +20,6 @@ PLUGIN_ROOT="$(dirname "$SCRIPT_DIR")"
 PRD_FILE=""
 PLAN_FILE=""
 MAX_ITERATIONS=10
-REVIEW_CYCLES=""
 PROMPT_NAME=""
 WORKDIR=""
 ADD_DIRS=()
@@ -157,7 +156,10 @@ while [[ $ARG_INDEX -lt $ARG_COUNT ]]; do
                 echo "Error: --review-cycles requires a value" >&2
                 exit 1
             fi
-            REVIEW_CYCLES="${ARGS[$ARG_INDEX]}"
+            # Value is consumed (skipped) here but intentionally not stored: the
+            # slash-command orchestrator reads --review-cycles from the command
+            # arguments directly (prompts/execute-prompt.md Phase 6.5). We only
+            # advance past the value so it is not treated as the WORKDIR positional.
             ARG_INDEX=$((ARG_INDEX + 1))
             ;;
         --prompt)
@@ -366,12 +368,11 @@ CLOSEDLOOP_ADD_DIR_NAMES="$add_dir_names_joined"
 CLOSEDLOOP_REPO_MAP="$repo_map_joined"
 EOF
 
-# Pass --review-cycles <n> through to run-loop.sh's post-loop review-fix
-# cycle budget (read as POST_LOOP_REVIEW_CYCLES). Only write the key when the
-# flag was supplied so run-loop.sh's built-in default still applies otherwise.
-if [[ -n "$REVIEW_CYCLES" ]]; then
-    echo "POST_LOOP_REVIEW_CYCLES=$REVIEW_CYCLES" >> "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
-fi
+# NOTE: --review-cycles is parsed above only to consume the flag+value (so it is
+# not mistaken for the WORKDIR positional). The slash-command orchestrator reads
+# --review-cycles directly from the command arguments (see prompts/execute-prompt.md
+# Phase 6.5); it is intentionally NOT persisted to config.env. The legacy
+# run-loop.sh post-loop path keeps its own POST_LOOP_REVIEW_CYCLES env default.
 
 # Re-append run-loop-managed keys captured above.
 if [[ -n "$EXISTING_START_SHA" ]]; then

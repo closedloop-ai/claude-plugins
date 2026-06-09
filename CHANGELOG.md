@@ -17,8 +17,8 @@ Split the single closed-loop orchestrator into two standalone single-shot comman
 - `prompts/prompt.md` now performs mandatory deterministic multi-repo detection immediately after `startSha` init (first iteration only), sourcing `CLOSEDLOOP_ADD_DIRS` and `CLOSEDLOOP_REPO_MAP` from `config.env`. When `ADD_DIRS` is non-empty the orchestrator prepends an explicit `MULTI_REPO_DIRECTIVE` to the pre-explorer and plan-draft-writer launches (requiring per-secondary-repo `code-map-{name}.json` output and the `repositories` field plus `@{repo-name}:path` references in `plan.json`), rather than relying on the planning agents to self-detect multi-repo mode.
 
 #### Fixed
-- `setup-closedloop.sh` now accepts `--review-cycles <n>` as a parsed option and writes it to `config.env` as `POST_LOOP_REVIEW_CYCLES` for `run-loop.sh`. Previously the flag fell through to the unknown-option catch-all and its bare numeric value was appended to `WORKDIR`, corrupting the working directory and aborting startup before the orchestrator loaded.
-- `prompts/plan-prompt.md` Phase 2.7 decision-table mismatch hard-stop now directs the user to `/code:create-plan` to resume; it previously referenced the non-existent `/code:plan` command.
+- `setup-closedloop.sh` now recognizes `--review-cycles <n>` as a parsed option that consumes its value. Previously the flag fell through to the unknown-option catch-all and its bare numeric value was appended to `WORKDIR`, corrupting the working directory and aborting startup before the orchestrator loaded. The value is read directly by the implementation orchestrator (`prompts/execute-prompt.md` Phase 6.5) from the command arguments; it is not persisted to `config.env`.
+- `prompts/execute-prompt.md` Phase 6.5 now runs the in-session review through the `/code-review:start` command via the SlashCommand tool (added to the orchestrator's allowed tools), instead of activating it as a `Skill`. `code-review:start` is a slash command rather than a skill, so the previous `Skill(...)` form could not invoke the review round.
 
 ### code-review v2.31.1
 
