@@ -178,6 +178,10 @@ while [[ $ARG_INDEX -lt $ARG_COUNT ]]; do
                 echo "Error: --review-cycles requires a value" >&2
                 exit 1
             fi
+            if [[ "${ARGS[$ARG_INDEX]}" == -* ]]; then
+                echo "Error: --review-cycles requires a value, got flag '${ARGS[$ARG_INDEX]}'" >&2
+                exit 1
+            fi
             # Value is consumed (skipped) here but intentionally not stored: the
             # slash-command orchestrator reads --review-cycles from the command
             # arguments directly (prompts/execute-prompt.md Phase 6.5). We only

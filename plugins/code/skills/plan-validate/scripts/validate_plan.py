@@ -324,6 +324,10 @@ def validate_schema_fields(data: dict) -> list[str]:
                     "decisionTable.status must be one of pending|aligned|aligned_with_clarifications|verification_failed"
                 )
 
+    for bool_field in ("simple_mode", "plan_was_imported"):
+        if bool_field in data and not isinstance(data[bool_field], bool):
+            issues.append(f"Field '{bool_field}' must be a boolean when present")
+
     return issues
 
 
@@ -506,8 +510,8 @@ def extract_data(data: dict) -> dict:
     # recovers these from plan.json via this output to decide whether to skip Phase 5.5
     # (behavioral verification). Default False keeps legacy plans (written before these
     # fields existed) safe: they fall through to running Phase 5.5 rather than skipping.
-    simple_mode = bool(data.get("simple_mode", False))
-    plan_was_imported = bool(data.get("plan_was_imported", False))
+    simple_mode = data.get("simple_mode") is True
+    plan_was_imported = data.get("plan_was_imported") is True
 
     return {
         "status": "VALID",

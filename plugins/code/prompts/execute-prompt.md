@@ -216,9 +216,14 @@ If `CHANGED` is `0`, log "No code changes — skipping review rounds" and procee
 3. **Read the verdict** via Bash (no file reads into orchestrator context beyond these scalars):
    ```bash
    CR_DIR=$(ls -td "$CLOSEDLOOP_WORKDIR"/.closedloop-ai/code-review/cr-* 2>/dev/null | head -1)
-   VERDICT=$(jq -r '.verdict // "approve"' "$CR_DIR/verdict.json" 2>/dev/null || echo "approve")
+   if [ -z "$CR_DIR" ] || [ ! -f "$CR_DIR/verdict.json" ]; then
+     VERDICT="__review_failed__"
+   else
+     VERDICT=$(jq -r '.verdict // "__review_failed__"' "$CR_DIR/verdict.json" 2>/dev/null || echo "__review_failed__")
+   fi
    ```
-4. If `VERDICT` is `approve` (or `CR_DIR` is empty): log "Code review passed", proceed to Phase 7.
+4. If `VERDICT` is `__review_failed__`: log "Code review failed to produce a verdict (run round $cycle)." Increment `consecutive_failures`. If `consecutive_failures >= 2`, log "Code review failed twice — skipping remaining review rounds" and proceed to Phase 7. Otherwise increment `cycle` and loop back to step 1.
+   If `VERDICT` is `approve`: log "Code review passed", proceed to Phase 7.
 5. Otherwise (issues found): Activate `code-review:fix` skill with arguments `$CR_DIR --apply`. Then read the fix outcome:
    ```bash
    MANUAL=$(jq -r '.manual_surface // 0' "$CR_DIR/fix_result.json" 2>/dev/null || echo 0)
