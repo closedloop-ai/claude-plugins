@@ -173,6 +173,14 @@
       "items": {
         "$ref": "#/$defs/amendment"
       }
+    },
+    "simple_mode": {
+      "type": "boolean",
+      "description": "True when plan-evaluator deemed the plan eligible for simple mode (decision-table generation and Phase 5.5 behavioral verification are skipped). Persisted by plan-writer at finalization so the separate execute-implementation session can recover it without reading plan-evaluation.json."
+    },
+    "plan_was_imported": {
+      "type": "boolean",
+      "description": "True when the plan was imported via --plan rather than drafted from a PRD (decision-table generation and Phase 5.5 behavioral verification are skipped). Persisted by plan-writer at finalization so the separate execute-implementation session can recover it without reading planning-session working memory."
     }
   },
   "$defs": {

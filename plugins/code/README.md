@@ -33,7 +33,8 @@ graph TD
     P14 --> P25["Phase 2.5: Critic Validation"]
     P25 --> P26["Phase 2.6: Plan Refinement"]
     P26 --> P27["Phase 2.7: Plan Finalization"]
-    P27 --> P3["Phase 3: Implementation"]
+    P27 --> P28["Phase 2.8: Plan Completion"]
+    P28 --> P3["Phase 3: Implementation"]
     P3 --> P4["Phase 4: Code Simplification"]
     P4 --> P5["Phase 5: Testing & Code Review"]
     P5 --> P55["Phase 5.5: Behavioral Verification"]
@@ -91,7 +92,7 @@ The command runs inside a ClosedLoop loop — the external loop runner (`run-loo
 
 **What it does:**
 
-Runs `setup-closedloop.sh` with the `plan-prompt` orchestrator prompt (`prompts/plan-prompt.md`) for a single-shot, in-session planning run — there is no external loop. The orchestrator runs PLAN ONLY (phases 0.9–2.7), delegating all project file reading to subagents. When the plan is finalized (`plan.json` + `plan.md` ready and validated), it writes `state.json` with `status: COMPLETED`, outputs `<promise>PLAN_COMPLETE</promise>`, and stops without proceeding to implementation.
+Runs `setup-closedloop.sh` with the `plan-prompt` orchestrator prompt (`prompts/plan-prompt.md`) for a single-shot, in-session planning run — there is no external loop. The orchestrator runs PLAN ONLY (phases 0.9–2.8), delegating all project file reading to subagents. When the plan is finalized (`plan.json` + `plan.md` ready and validated), it writes `state.json` with `status: COMPLETED`, outputs `<promise>PLAN_COMPLETE</promise>`, and stops without proceeding to implementation.
 
 ### `/code:execute-implementation`
 

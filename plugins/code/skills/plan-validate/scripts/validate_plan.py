@@ -501,6 +501,14 @@ def extract_data(data: dict) -> dict:
     dt_path = decision_table.get("path", "") if isinstance(decision_table, dict) else ""
     dt_status = decision_table.get("status", "") if isinstance(decision_table, dict) else ""
 
+    # Mode flags persisted by plan-writer at finalization. The execute-implementation
+    # session runs in a fresh context with no planning-session working memory, so it
+    # recovers these from plan.json via this output to decide whether to skip Phase 5.5
+    # (behavioral verification). Default False keeps legacy plans (written before these
+    # fields existed) safe: they fall through to running Phase 5.5 rather than skipping.
+    simple_mode = bool(data.get("simple_mode", False))
+    plan_was_imported = bool(data.get("plan_was_imported", False))
+
     return {
         "status": "VALID",
         "issues": [],
@@ -515,6 +523,8 @@ def extract_data(data: dict) -> dict:
         "manual_tasks": manual,
         "decision_table_path": dt_path,
         "decision_table_status": dt_status,
+        "simple_mode": simple_mode,
+        "plan_was_imported": plan_was_imported,
     }
 
 

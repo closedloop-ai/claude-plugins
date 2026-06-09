@@ -1,4 +1,6 @@
 """Tests for validate_plan.py."""
+import pytest
+
 from validate_plan import extract_data, validate_schema_fields
 
 
@@ -92,3 +94,33 @@ def test_extract_data_decision_table_absent() -> None:
 
     assert result["decision_table_path"] == ""
     assert result["decision_table_status"] == ""
+
+
+# (input plan overrides, expected simple_mode, expected plan_was_imported)
+# Covers: both true, both false, absent (legacy plans → default False), and
+# non-bool values coerced via bool(). extract_data is the recovery channel the
+# fresh execute-implementation session reads to decide whether to skip Phase 5.5.
+_MODE_FLAG_CASES = [
+    ({"simple_mode": True, "plan_was_imported": True}, True, True),
+    ({"simple_mode": False, "plan_was_imported": False}, False, False),
+    ({}, False, False),
+    ({"simple_mode": True}, True, False),
+    ({"plan_was_imported": True}, False, True),
+    ({"simple_mode": 1, "plan_was_imported": 0}, True, False),
+]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_simple", "expected_imported"), _MODE_FLAG_CASES
+)
+def test_extract_data_surfaces_mode_flags(
+    overrides: dict, expected_simple: bool, expected_imported: bool
+) -> None:
+    """extract_data surfaces simple_mode/plan_was_imported as booleans (default False)."""
+    plan = _minimal_plan()
+    plan.update(overrides)
+
+    result = extract_data(plan)
+
+    assert result["simple_mode"] is expected_simple
+    assert result["plan_was_imported"] is expected_imported

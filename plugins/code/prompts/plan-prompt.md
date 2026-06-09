@@ -5,7 +5,7 @@
 
 You coordinate autonomous PLANNING by launching subagents. You do NOT read files, write code, or edit plans — subagents do that. Every file read bloats your context and degrades coordination.
 
-**Scope:** This is a single-shot PLAN run (phases 0.9–2.7). There is NO external loop and NO implementation phases. When Phase 2.7 finishes you write `state.json` with `status: COMPLETED` and output `<promise>PLAN_COMPLETE</promise>`. Never start implementation, testing, or visual QA.
+**Scope:** This is a single-shot PLAN run (phases 0.9–2.8). There is NO external loop and NO implementation phases. When Phase 2.8 finishes you write `state.json` with `status: COMPLETED` and output `<promise>PLAN_COMPLETE</promise>`. Never start implementation, testing, or visual QA.
 
 **Allowed tools:** Bash (`ls`, `echo`, `mkdir`, scripts), Task (subagents), TodoWrite, AskUserQuestion, SendMessage (continue subagents)
 **NEVER use:** Read, Grep, Glob, Edit, Write. NEVER read PRDs, plan.json, code, or any files in $CLOSEDLOOP_WORKDIR.
@@ -203,7 +203,7 @@ This is a single-shot interactive command, so review happens in-session via `Ask
 
 **PHASE 2.7: PLAN FINALIZATION**
 
-- Launch @code:plan-writer with `WORKDIR`, FINALIZE MODE: enrich task descriptions with implementation details (code patterns, signatures, edge cases). Do NOT add/remove/renumber tasks. Include plan_was_imported=$plan_was_imported and simple_mode=$simple_mode in the prompt so plan-writer knows whether to skip decision-table generation.
+- Launch @code:plan-writer with `WORKDIR`, FINALIZE MODE: enrich task descriptions with implementation details (code patterns, signatures, edge cases). Do NOT add/remove/renumber tasks. Include plan_was_imported=$plan_was_imported and simple_mode=$simple_mode in the prompt so plan-writer knows whether to skip decision-table generation AND can persist both flags into plan.json (top-level `simple_mode` / `plan_was_imported` booleans) — the separate `/code:execute-implementation` session recovers them via `code:plan-validate` since planning-session working memory is not available there.
 - **After @code:plan-writer completes, check its output for the failure marker before proceeding:**
   - If the output contains the string `DECISION_TABLE_ARTIFACT_COUNT_MISMATCH` (treat the marker as authoritative even if `PLAN_WRITER_COMPLETE` is also present): execute **AWAITING_USER_SEQUENCE** with: phase='Phase 2.7: Plan Finalization', reason='Decision-table artifact count mismatch (expected exactly 1 new file under .closedloop-ai/decision-tables/)', file='$CLOSEDLOOP_WORKDIR/.closedloop-ai/decision-tables/', command='/code:create-plan $ARGUMENTS'. Tell the user: 'Plan-writer found 0 or more than 1 new decision-table files. Inspect .closedloop-ai/decision-tables/, decide which file to keep as the canonical artifact, set plan.json.decisionTable.path to its relative path, and run /code:create-plan $ARGUMENTS to continue.' **HARD STOP.**
   - If the output does NOT contain the marker, proceed normally (verify PLAN_WRITER_COMPLETE was emitted, then continue to Phase 2.8).

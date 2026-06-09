@@ -178,6 +178,7 @@ When the orchestrator prompt contains **"FINALIZE MODE"**, flesh out the existin
    - Edge cases to handle
 4. **Update plan.json**: Modify both the `content` markdown field and structured fields
 5. **Update plan.md**: Write the updated `content` field value
+5b. **Persist mode flags**: Write the `simple_mode` and `plan_was_imported` booleans you received in the prompt into `plan.json` as top-level JSON-only fields (`"simple_mode": <bool>`, `"plan_was_imported": <bool>`). Always write both, even when `false`, so every finalized plan carries them. These are JSON-only — do NOT add them to the `content` markdown or regenerate plan.md for these fields. The separate `/code:execute-implementation` session recovers them via `code:plan-validate` to decide whether to skip Phase 5.5 (the planning session's working memory is not available there).
 6. **Generate decision-table artifact**: When `plan_was_imported=false` and `simple_mode=false`, use the following four-step algorithm to generate and capture the artifact path:
 
    1. **Snapshot before**: Before activating the skill, capture the current file set under `.closedloop-ai/decision-tables/` into a shell variable:

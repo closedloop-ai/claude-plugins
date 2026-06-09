@@ -105,7 +105,7 @@ Here are the key phases you must complete:
 - **If plan.json does NOT exist:** Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 3.0: Plan precondition", reason="No implementation plan found", file="$CLOSEDLOOP_WORKDIR/plan.json", command="/code:create-plan $ARGUMENTS". Tell the user: "No plan found at `$CLOSEDLOOP_WORKDIR/plan.json`. Run `/code:create-plan $ARGUMENTS` to create a plan first, then re-run `/code:execute-implementation $ARGUMENTS`." **HARD STOP.** Do NOT draft a plan.
 - **If plan.json exists:** First confirm it is valid JSON: `python3 -m json.tool "$CLOSEDLOOP_WORKDIR/plan.json" > /dev/null 2>&1`.
   - If NOT valid JSON: Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 3.0: Plan precondition", reason="plan.json is not valid JSON", file="$CLOSEDLOOP_WORKDIR/plan.json", command="/code:create-plan $ARGUMENTS". Tell the user the plan file is malformed and to regenerate it via `/code:create-plan`. **HARD STOP.**
-  - If valid JSON: Activate `code:plan-validate` skill. On `EMPTY_FILE`/`FORMAT_ISSUES`, fix via haiku subagent (description: `"plan-editor"`, missing checkboxes → add `[ ]`) or @code:plan-writer, then re-validate. On `VALID`: store `simple_mode` (from plan-evaluation, default false if absent), `plan_was_imported` (default false — this command never imports), and proceed to Phase 3.
+  - If valid JSON: Activate `code:plan-validate` skill. On `EMPTY_FILE`/`FORMAT_ISSUES`, fix via haiku subagent (description: `"plan-editor"`, missing checkboxes → add `[ ]`) or @code:plan-writer, then re-validate. On `VALID`: store `simple_mode` and `plan_was_imported` from the plan-validate output's `simple_mode` / `plan_was_imported` fields (both default false if absent — e.g. legacy plans written before these fields were persisted). These are recovered from plan.json because this command runs in a fresh session with no planning-session working memory and must not read plan files directly. Then proceed to Phase 3.
 
 **PHASE 3: IMPLEMENTATION**
 
@@ -150,9 +150,9 @@ Here are the key phases you must complete:
 **PHASE 5.5: BEHAVIORAL VERIFICATION**
 
 **Skip conditions (check in order):**
-- If `simple_mode = true`: mark Phase 5.5 as `completed`, skip to Phase 6.
+- If `simple_mode = true` OR `plan_was_imported = true`: mark Phase 5.5 as `completed`, skip to Phase 6.
 
-NOTE: This is the only valid skip condition. If it does not apply, Phase 5.5 MUST run regardless of the decisionTable field state. An empty or missing `decision_table_path` in plan-validate output when not in simple mode indicates a `/code:create-plan` Phase 2.7 regression and must escalate, not skip.
+NOTE: These are the only valid skip conditions, and they mirror plan-writer's decision-table generation rule (`code:plan-writer` skips generating the decision-table artifact exactly when `simple_mode=true` or `plan_was_imported=true`). The invariant: Phase 5.5 needs the decision table, so it must skip precisely when the table was never generated. If neither flag is true, Phase 5.5 MUST run regardless of the decisionTable field state. An empty or missing `decision_table_path` in plan-validate output when neither skip flag is set indicates a `/code:create-plan` Phase 2.7 regression and must escalate, not skip.
 
 **Setup (values from orchestrator working memory and last plan-validate output -- no file reads):**
 - `decisionTablePath` = `decision_table_path` field from last `code:plan-validate` skill output

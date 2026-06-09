@@ -1,7 +1,7 @@
 ---
 description: "Execute an implementation plan"
 argument-hint: [working-directory] [--add-dir <path>] [--review-cycles <n>]
-allowed-tools: Bash, Edit, Write, Task, TodoWrite, SendMessage, AskUserQuestion
+allowed-tools: Bash, Edit, Write, Task, TodoWrite, SendMessage, AskUserQuestion, SlashCommand
 ---
 
 # Bootstrap ClosedLoop (Implementation Only)
