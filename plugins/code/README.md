@@ -439,11 +439,11 @@ Stamps the cross-repo cache after Phase 1.4 coordinator completes. Hashes peer-r
 
 ### `closedloop_env.sh`
 
-Shared library (sourced, not executed) that hydrates `CLOSEDLOOP_*` environment variables from a session `config.env`. Exposes `load_closedloop_env <config-file>`, which sources the config but lets any pre-existing non-empty `CLOSEDLOOP_RUN_ID`, `CLOSEDLOOP_ITERATION`, and `CLOSEDLOOP_COMMAND` values take precedence (the environment is the source of truth; `config.env` is the fallback). No-op when the config file is absent. Single source of truth for `record_iteration.sh` and `record_phase.sh`.
+Shared library (sourced, not executed) that hydrates `CLOSEDLOOP_*` environment variables from a session `config.env`. Exposes `load_closedloop_env <config-file>`, which parses the file line-by-line for the three allowlisted keys (`CLOSEDLOOP_RUN_ID`, `CLOSEDLOOP_ITERATION`, `CLOSEDLOOP_COMMAND`) rather than sourcing it — so a malformed or hostile `config.env` can never execute arbitrary shell — and lets any pre-existing non-empty value take precedence (the environment is the source of truth; `config.env` is the fallback). No-op when the config file is absent. Single source of truth for `record_iteration.sh` and `record_phase.sh`.
 
 ### `record_iteration.sh`
 
-Appends a single synthetic `iteration` event to `perf.jsonl` for native (in-session) command runs that lack the external loop's per-iteration accounting. Hydrates run context via `closedloop_env.sh`, derives `status`/`claude_exit_code` from `state.json` (`error`/`1` unless status is `COMPLETED`), computes duration from the matching `run` event's `started_at`, and emits a JSON line with `event`, `run_id`, `iteration`, `started_at`, `ended_at`, `duration_s`, `claude_exit_code`, `status`, and `command` fields.
+Appends a single synthetic `iteration` event to `perf.jsonl` for native (in-session) command runs that lack the external loop's per-iteration accounting. Hydrates run context via `closedloop_env.sh`, derives `status`/`claude_exit_code` from `state.json` (`error`/`1` when `state.json` is missing or has not reached `COMPLETED`, otherwise `ok`/`0`), computes duration from the matching `run` event's `started_at`, and emits a JSON line with `event`, `run_id`, `iteration`, `started_at`, `ended_at`, `duration_s`, `claude_exit_code`, `status`, and `command` fields.
 
 ### `record_phase.sh`
 

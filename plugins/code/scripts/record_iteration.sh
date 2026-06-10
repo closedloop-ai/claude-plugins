@@ -35,6 +35,11 @@ if [[ -f "$STATE_FILE" ]]; then
     STATUS="error"
     CLAUDE_EXIT_CODE=1
   fi
+else
+  # A missing state.json means the session never recorded completion — treat
+  # it as an error rather than silently emitting a success iteration event.
+  STATUS="error"
+  CLAUDE_EXIT_CODE=1
 fi
 
 ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)

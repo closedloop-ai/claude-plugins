@@ -75,13 +75,17 @@ if [[ -z "$RUN_ID" ]]; then
 fi
 
 CONFIG_TMP="${CONFIG_FILE}.tmp.$$"
+CONFIG_NEW="${CONFIG_FILE}.new.$$"
 grep -v -E '^(CLOSEDLOOP_RUN_ID|CLOSEDLOOP_ITERATION|CLOSEDLOOP_COMMAND)=' "$CONFIG_FILE" > "$CONFIG_TMP" 2>/dev/null || true
+# Build the new file fully, then atomically rename it over the original so an
+# interruption mid-write can never leave config.env empty or half-written.
 {
   cat "$CONFIG_TMP"
   printf 'CLOSEDLOOP_RUN_ID=%q\n' "$RUN_ID"
   printf 'CLOSEDLOOP_ITERATION=0\n'
   printf 'CLOSEDLOOP_COMMAND=%q\n' "$CLOSEDLOOP_COMMAND_VALUE"
-} > "$CONFIG_FILE"
+} > "$CONFIG_NEW"
+mv "$CONFIG_NEW" "$CONFIG_FILE"
 rm -f "$CONFIG_TMP" 2>/dev/null || true
 
 export CLOSEDLOOP_WORKDIR="$WORKDIR"

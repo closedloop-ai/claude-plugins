@@ -7,6 +7,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from conftest import write_config_env
+
 
 HOOK_PATH = (
     Path(__file__).resolve().parents[2] / "hooks" / "user-prompt-expansion-hook.sh"
@@ -25,6 +27,11 @@ def run_hook(
         **os.environ,
         "CLAUDE_PLUGIN_ROOT": str(Path(__file__).resolve().parents[2]),
     }
+    # Isolate from ambient run context so the hook's seeding behavior is driven
+    # only by config.env and the test inputs (mirrors test_record_iteration.py).
+    env.pop("CLOSEDLOOP_RUN_ID", None)
+    env.pop("CLOSEDLOOP_ITERATION", None)
+    env.pop("CLOSEDLOOP_COMMAND", None)
     if include_workdir_env:
         env["CLOSEDLOOP_WORKDIR"] = str(workdir)
     else:
@@ -126,19 +133,9 @@ def test_execute_implementation_appends_schema_compatible_run_event(
 
 
 def test_existing_run_id_is_restored_instead_of_replaced(tmp_path: Path) -> None:
-    closedloop_dir = tmp_path / ".closedloop-ai"
-    closedloop_dir.mkdir()
-    config_path = closedloop_dir / "config.env"
-    config_path.write_text(
-        "\n".join(
-            [
-                f"CLOSEDLOOP_WORKDIR={tmp_path}",
-                "CLOSEDLOOP_RUN_ID=existing-run-123",
-                "CLOSEDLOOP_ITERATION=7",
-                "CLOSEDLOOP_COMMAND=OLD",
-                "",
-            ]
-        )
+    config_path = tmp_path / ".closedloop-ai" / "config.env"
+    write_config_env(
+        tmp_path, run_id="existing-run-123", iteration=7, command="OLD"
     )
 
     result = run_hook(tmp_path, "create-plan")
