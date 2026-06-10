@@ -6,7 +6,6 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "record_phase.sh"
 
@@ -22,7 +21,7 @@ def run_record_phase(
     *,
     run_id: str = "test-run-001",
     command: str = "test-command",
-    extra_env: Optional[dict[str, str]] = None,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Invoke record_phase.sh with the given environment and workdir."""
     env = {
@@ -89,6 +88,45 @@ class TestRecordPhaseCommandField:
             f"Expected command='interactive', got: '{record['command']}'"
         )
 
+    def test_run_metadata_falls_back_to_config_env(self, tmp_path: Path) -> None:
+        """Missing env metadata is recovered from .closedloop-ai/config.env."""
+        _write_state(tmp_path)
+        closedloop_dir = tmp_path / ".closedloop-ai"
+        closedloop_dir.mkdir()
+        (closedloop_dir / "config.env").write_text(
+            "\n".join(
+                [
+                    f"CLOSEDLOOP_WORKDIR={tmp_path}",
+                    "CLOSEDLOOP_RUN_ID=config-run-123",
+                    "CLOSEDLOOP_ITERATION=5",
+                    "CLOSEDLOOP_COMMAND=PLAN",
+                    "",
+                ]
+            )
+        )
+        env = {
+            **os.environ,
+            "CLOSEDLOOP_WORKDIR": str(tmp_path),
+        }
+        env.pop("CLOSEDLOOP_RUN_ID", None)
+        env.pop("CLOSEDLOOP_ITERATION", None)
+        env.pop("CLOSEDLOOP_COMMAND", None)
+
+        result = subprocess.run(
+            ["bash", str(SCRIPT_PATH), str(tmp_path)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=env,
+        )
+
+        assert result.returncode == 0, f"Script failed: {result.stderr}"
+        record = json.loads((tmp_path / "perf.jsonl").read_text().strip())
+        assert record["run_id"] == "config-run-123"
+        assert record["run_id"] != "unknown"
+        assert record["iteration"] == 5
+        assert record["command"] == "PLAN"
+
 
 class TestRecordPhaseOutput:
     """Tests that record_phase.sh produces correct JSON structure (T-4.3 / AC-002)."""
@@ -135,7 +173,16 @@ class TestRecordPhaseOutput:
         _write_state(tmp_path)
         run_record_phase(tmp_path)
         record = json.loads((tmp_path / "perf.jsonl").read_text().strip())
-        required = {"event", "run_id", "iteration", "phase", "status", "start_sha", "started_at", "command"}
+        required = {
+            "event",
+            "run_id",
+            "iteration",
+            "phase",
+            "status",
+            "start_sha",
+            "started_at",
+            "command",
+        }
         missing = required - set(record.keys())
         assert not missing, f"Missing required fields: {missing}"
 

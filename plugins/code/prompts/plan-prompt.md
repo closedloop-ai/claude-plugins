@@ -206,6 +206,7 @@ This is a single-shot interactive command, so review happens in-session via `Ask
 - Write state.json **first**, then the promise:
   `echo '{"phase": "Phase 2.8: Plan completion", "status": "COMPLETED", "planStatus": "PLAN_COMPLETE", "startSha": "'$START_SHA'", "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > $CLOSEDLOOP_WORKDIR/state.json`
 - Run the telemetry line: `bash "$CLAUDE_PLUGIN_ROOT/scripts/record_phase.sh" 2>/dev/null || true`
+- Record the native-command iteration: `bash "$CLAUDE_PLUGIN_ROOT/scripts/record_iteration.sh" 2>/dev/null || true`
 - **ONLY AFTER state.json is written** — output `<promise>PLAN_COMPLETE</promise>`
 - Tell the user: the plan is ready at `$CLOSEDLOOP_WORKDIR/plan.md`. Run `/code:execute-implementation <ORIGINAL_ARGS>` for a single-shot in-session implementation, or `/code:code` (via the external loop) for the full orchestrated workflow. (Substitute the resolved `CLOSEDLOOP_ORIGINAL_ARGS` value per the Resume-command rule; fall back to the resolved workdir if empty.)
 

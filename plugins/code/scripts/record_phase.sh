@@ -18,6 +18,30 @@ fi
 
 STATE_FILE="$WORKDIR/state.json"
 PERF_FILE="$WORKDIR/perf.jsonl"
+CONFIG_FILE="$WORKDIR/.closedloop-ai/config.env"
+
+if [[ -f "$CONFIG_FILE" ]] && {
+  [[ -z "${CLOSEDLOOP_RUN_ID:-}" ]] || [[ -z "${CLOSEDLOOP_ITERATION:-}" ]] || [[ -z "${CLOSEDLOOP_COMMAND:-}" ]]
+}; then
+  ENV_RUN_ID="${CLOSEDLOOP_RUN_ID:-}"
+  ENV_ITERATION="${CLOSEDLOOP_ITERATION:-}"
+  ENV_COMMAND="${CLOSEDLOOP_COMMAND:-}"
+
+  set +u
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE"
+  set -u
+
+  if [[ -n "$ENV_RUN_ID" ]]; then
+    CLOSEDLOOP_RUN_ID="$ENV_RUN_ID"
+  fi
+  if [[ -n "$ENV_ITERATION" ]]; then
+    CLOSEDLOOP_ITERATION="$ENV_ITERATION"
+  fi
+  if [[ -n "$ENV_COMMAND" ]]; then
+    CLOSEDLOOP_COMMAND="$ENV_COMMAND"
+  fi
+fi
 
 if [[ ! -f "$STATE_FILE" ]]; then
   exit 0

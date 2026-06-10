@@ -1,0 +1,113 @@
+"""Tests for native PLAN/EXECUTE UserPromptExpansion observability setup."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from pathlib import Path
+
+
+HOOK_PATH = (
+    Path(__file__).resolve().parents[2] / "hooks" / "user-prompt-expansion-hook.sh"
+)
+
+
+def run_hook(workdir: Path, command_name: str) -> subprocess.CompletedProcess[str]:
+    env = {
+        **os.environ,
+        "CLOSEDLOOP_WORKDIR": str(workdir),
+        "CLAUDE_PLUGIN_ROOT": str(Path(__file__).resolve().parents[2]),
+    }
+    payload = {"command_name": command_name}
+    return subprocess.run(
+        ["bash", str(HOOK_PATH)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env=env,
+    )
+
+
+def read_config_env(config_path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in config_path.read_text().splitlines():
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value
+    return values
+
+
+def test_create_plan_generates_run_id_and_persists_metadata(tmp_path: Path) -> None:
+    closedloop_dir = tmp_path / ".closedloop-ai"
+    closedloop_dir.mkdir()
+    config_path = closedloop_dir / "config.env"
+    config_path.write_text(f"CLOSEDLOOP_WORKDIR={tmp_path}\n")
+
+    result = run_hook(tmp_path, "create-plan")
+
+    assert result.returncode == 0, result.stderr
+    config = read_config_env(config_path)
+    assert config["CLOSEDLOOP_WORKDIR"] == str(tmp_path)
+    assert config["CLOSEDLOOP_RUN_ID"] != "unknown"
+    assert config["CLOSEDLOOP_RUN_ID"]
+    assert config["CLOSEDLOOP_ITERATION"] == "0"
+    assert config["CLOSEDLOOP_COMMAND"] == "PLAN"
+
+
+def test_execute_implementation_appends_schema_compatible_run_event(
+    tmp_path: Path,
+) -> None:
+    closedloop_dir = tmp_path / ".closedloop-ai"
+    closedloop_dir.mkdir()
+    config_path = closedloop_dir / "config.env"
+    config_path.write_text(f"CLOSEDLOOP_WORKDIR={tmp_path}\n")
+
+    result = run_hook(tmp_path, "execute-implementation")
+
+    assert result.returncode == 0, result.stderr
+    config = read_config_env(config_path)
+    perf_lines = (tmp_path / "perf.jsonl").read_text().splitlines()
+    assert len(perf_lines) == 1
+    event = json.loads(perf_lines[0])
+    assert event["event"] == "run"
+    assert event["run_id"] == config["CLOSEDLOOP_RUN_ID"]
+    assert event["run_id"] != "unknown"
+    assert event["command"] == "EXECUTE"
+    assert "started_at" in event
+    assert "repo" in event
+    assert "branch" in event
+
+
+def test_existing_run_id_is_restored_instead_of_replaced(tmp_path: Path) -> None:
+    closedloop_dir = tmp_path / ".closedloop-ai"
+    closedloop_dir.mkdir()
+    config_path = closedloop_dir / "config.env"
+    config_path.write_text(
+        "\n".join(
+            [
+                f"CLOSEDLOOP_WORKDIR={tmp_path}",
+                "CLOSEDLOOP_RUN_ID=existing-run-123",
+                "CLOSEDLOOP_ITERATION=7",
+                "CLOSEDLOOP_COMMAND=OLD",
+                "",
+            ]
+        )
+    )
+
+    result = run_hook(tmp_path, "create-plan")
+
+    assert result.returncode == 0, result.stderr
+    config = read_config_env(config_path)
+    assert config["CLOSEDLOOP_RUN_ID"] == "existing-run-123"
+    assert config["CLOSEDLOOP_ITERATION"] == "0"
+    assert config["CLOSEDLOOP_COMMAND"] == "PLAN"
+
+
+def test_hook_fails_open_when_config_env_is_missing(tmp_path: Path) -> None:
+    result = run_hook(tmp_path, "create-plan")
+
+    assert result.returncode == 0
+    assert not (tmp_path / "perf.jsonl").exists()
