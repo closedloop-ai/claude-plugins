@@ -16,6 +16,9 @@ def run_record_iteration(workdir: Path) -> subprocess.CompletedProcess[str]:
         **os.environ,
         "CLOSEDLOOP_WORKDIR": str(workdir),
     }
+    env.pop("CLOSEDLOOP_RUN_ID", None)
+    env.pop("CLOSEDLOOP_ITERATION", None)
+    env.pop("CLOSEDLOOP_COMMAND", None)
     return subprocess.run(
         ["bash", str(SCRIPT_PATH), str(workdir)],
         capture_output=True,

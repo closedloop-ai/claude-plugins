@@ -321,6 +321,10 @@ Creates a PID-to-session-ID mapping file at `.closedloop-ai/pid-{PPID}.session`.
 
 Cleans up session-level artifacts: removes the session workdir mapping file, cleans up stale PID-to-session mappings (processes that no longer exist), removes session-specific files older than 24 hours, and cleans up orphaned `.agent-types` directories.
 
+### `user-prompt-expansion-hook.sh` (UserPromptExpansion, matches create-plan/execute-implementation)
+
+Initializes native PLAN/EXECUTE perf metadata for the `/code:create-plan` and `/code:execute-implementation` commands (which run in-session without the external `run-loop.sh`). Resolves the session `config.env` from the command's workdir, derives a `CLOSEDLOOP_COMMAND` value (`PLAN` or `EXECUTE`), assigns or reuses a `CLOSEDLOOP_RUN_ID`, sets `CLOSEDLOOP_ITERATION=0`, persists those values back into `config.env`, and invokes `record_run.sh` so the in-session run is attributable in `perf.jsonl`. Fails open on every error so prompt expansion never blocks the user command.
+
 ### `subagent-start-hook.sh` (SubagentStart)
 
 Runs when any subagent starts. Performs three tasks:
@@ -432,6 +436,14 @@ Stamps the critic cache after Phase 2.5 reviews complete. Hashes `plan.json` (an
 ### `stamp_cross_repo_cache.sh`
 
 Stamps the cross-repo cache after Phase 1.4 coordinator completes. Hashes peer-repo HEADs from `.workspace-repos.json` (falling back to `.cross-repo-needs.json`) and writes to `{WORKDIR}/.cross-repo-hash` so subsequent iterations skip cross-repo discovery via the `code:cross-repo-cache` skill.
+
+### `closedloop_env.sh`
+
+Shared library (sourced, not executed) that hydrates `CLOSEDLOOP_*` environment variables from a session `config.env`. Exposes `load_closedloop_env <config-file>`, which sources the config but lets any pre-existing non-empty `CLOSEDLOOP_RUN_ID`, `CLOSEDLOOP_ITERATION`, and `CLOSEDLOOP_COMMAND` values take precedence (the environment is the source of truth; `config.env` is the fallback). No-op when the config file is absent. Single source of truth for `record_iteration.sh` and `record_phase.sh`.
+
+### `record_iteration.sh`
+
+Appends a single synthetic `iteration` event to `perf.jsonl` for native (in-session) command runs that lack the external loop's per-iteration accounting. Hydrates run context via `closedloop_env.sh`, derives `status`/`claude_exit_code` from `state.json` (`error`/`1` unless status is `COMPLETED`), computes duration from the matching `run` event's `started_at`, and emits a JSON line with `event`, `run_id`, `iteration`, `started_at`, `ended_at`, `duration_s`, `claude_exit_code`, `status`, and `command` fields.
 
 ### `record_phase.sh`
 

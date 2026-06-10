@@ -13,13 +13,27 @@ HOOK_PATH = (
 )
 
 
-def run_hook(workdir: Path, command_name: str) -> subprocess.CompletedProcess[str]:
+def run_hook(
+    workdir: Path,
+    command_name: str,
+    *,
+    cwd: Path | None = None,
+    command_arguments: str | None = None,
+    include_workdir_env: bool = True,
+) -> subprocess.CompletedProcess[str]:
     env = {
         **os.environ,
-        "CLOSEDLOOP_WORKDIR": str(workdir),
         "CLAUDE_PLUGIN_ROOT": str(Path(__file__).resolve().parents[2]),
     }
+    if include_workdir_env:
+        env["CLOSEDLOOP_WORKDIR"] = str(workdir)
+    else:
+        env.pop("CLOSEDLOOP_WORKDIR", None)
     payload = {"command_name": command_name}
+    if cwd is not None:
+        payload["cwd"] = str(cwd)
+    if command_arguments is not None:
+        payload["command_arguments"] = command_arguments
     return subprocess.run(
         ["bash", str(HOOK_PATH)],
         input=json.dumps(payload),
@@ -55,6 +69,36 @@ def test_create_plan_generates_run_id_and_persists_metadata(tmp_path: Path) -> N
     assert config["CLOSEDLOOP_RUN_ID"]
     assert config["CLOSEDLOOP_ITERATION"] == "0"
     assert config["CLOSEDLOOP_COMMAND"] == "PLAN"
+
+
+def test_create_plan_uses_explicit_workdir_argument_without_env(
+    tmp_path: Path,
+) -> None:
+    launch_cwd = tmp_path / "launch"
+    workdir = tmp_path / "target workdir"
+    launch_cwd.mkdir()
+    closedloop_dir = workdir / ".closedloop-ai"
+    closedloop_dir.mkdir(parents=True)
+    config_path = closedloop_dir / "config.env"
+    escaped_workdir = str(workdir).replace(" ", "\\ ")
+    config_path.write_text(f"CLOSEDLOOP_WORKDIR={escaped_workdir}\n")
+
+    result = run_hook(
+        workdir,
+        "create-plan",
+        cwd=launch_cwd,
+        command_arguments=str(workdir),
+        include_workdir_env=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    config = read_config_env(config_path)
+    assert config["CLOSEDLOOP_WORKDIR"] == escaped_workdir
+    assert config["CLOSEDLOOP_RUN_ID"] != "unknown"
+    assert config["CLOSEDLOOP_ITERATION"] == "0"
+    assert config["CLOSEDLOOP_COMMAND"] == "PLAN"
+    assert not (launch_cwd / "perf.jsonl").exists()
+    assert (workdir / "perf.jsonl").exists()
 
 
 def test_execute_implementation_appends_schema_compatible_run_event(

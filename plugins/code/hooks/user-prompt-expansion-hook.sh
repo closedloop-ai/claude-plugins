@@ -10,6 +10,10 @@ CLOSEDLOOP_STATE_DIR=".closedloop-ai"
 INPUT=$(cat)
 COMMAND_NAME=$(echo "$INPUT" | jq -r '.command_name // empty')
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
+COMMAND_ARGS=$(echo "$INPUT" | jq -r '
+  .command_arguments // .arguments // .args // empty
+  | if type == "array" then map(tostring) | join(" ") else tostring end
+')
 
 case "$COMMAND_NAME" in
   create-plan|code:create-plan)
@@ -24,11 +28,34 @@ case "$COMMAND_NAME" in
 esac
 
 CONFIG_FILE=""
-if [[ -n "${CLOSEDLOOP_WORKDIR:-}" ]] && [[ -f "${CLOSEDLOOP_WORKDIR}/${CLOSEDLOOP_STATE_DIR}/config.env" ]]; then
-  CONFIG_FILE="${CLOSEDLOOP_WORKDIR}/${CLOSEDLOOP_STATE_DIR}/config.env"
-elif [[ -n "$CWD" ]] && [[ -f "$CWD/${CLOSEDLOOP_STATE_DIR}/config.env" ]]; then
-  CONFIG_FILE="$CWD/${CLOSEDLOOP_STATE_DIR}/config.env"
+
+try_config_candidate() {
+  local candidate="$1"
+  if [[ -z "$CONFIG_FILE" && -n "$candidate" && -f "${candidate}/${CLOSEDLOOP_STATE_DIR}/config.env" ]]; then
+    CONFIG_FILE="${candidate}/${CLOSEDLOOP_STATE_DIR}/config.env"
+  fi
+}
+
+try_config_candidate "${CLOSEDLOOP_WORKDIR:-}"
+while IFS= read -r candidate; do
+  try_config_candidate "$candidate"
+done < <(
+  echo "$INPUT" | jq -r '
+    [
+      .workdir?,
+      .working_directory?,
+      .target_workdir?,
+      .command?.workdir?,
+      .command?.working_directory?
+    ]
+    | .[]
+    | select(type == "string" and length > 0)
+  '
+)
+if [[ -z "$CONFIG_FILE" && -n "$COMMAND_ARGS" && "$COMMAND_ARGS" != --* ]]; then
+  try_config_candidate "${COMMAND_ARGS%% --*}"
 fi
+try_config_candidate "$CWD"
 
 if [[ -z "$CONFIG_FILE" ]]; then
   exit 0
