@@ -25,6 +25,9 @@ trap 'exit 0' ERR
 
 # Single source of truth for the state directory name
 CLOSEDLOOP_STATE_DIR=".closedloop-ai"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts" && pwd)"
+# shellcheck source=../scripts/closedloop_env.sh
+source "$SCRIPT_DIR/closedloop_env.sh"
 
 # Read hook input from stdin (JSON)
 INPUT=$(</dev/stdin)
@@ -57,15 +60,6 @@ if [[ -z "$TOOL_USE_ID" ]]; then
     exit 0
 fi
 
-# Sanitize CLOSEDLOOP_ITERATION: must be a non-negative integer or jq's
-# --argjson will fail and abort this hook (silently, via `trap exit 0 ERR`),
-# losing the sentinel. Default invalid values to 0 — telemetry remains
-# attributable to the run even when iteration is unset/malformed.
-ITERATION="${CLOSEDLOOP_ITERATION:-0}"
-if ! [[ "$ITERATION" =~ ^[0-9]+$ ]]; then
-    ITERATION=0
-fi
-
 # Discover WORKDIR via session_id mapping (same pattern as pretooluse-hook.sh and subagent-start-hook.sh)
 CLOSEDLOOP_WORKDIR=""
 if [[ -n "$SESSION_ID" ]]; then
@@ -78,6 +72,16 @@ fi
 # Exit early if not in a closedloop session
 if [[ -z "$CLOSEDLOOP_WORKDIR" ]]; then
     exit 0
+fi
+
+CLOSEDLOOP_CONFIG="$CLOSEDLOOP_WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
+load_closedloop_env "$CLOSEDLOOP_CONFIG"
+
+# Sanitize CLOSEDLOOP_ITERATION after hydrating persisted metadata: must be a
+# non-negative integer or jq's --argjson will fail and abort this hook silently.
+ITERATION="${CLOSEDLOOP_ITERATION:-0}"
+if ! [[ "$ITERATION" =~ ^[0-9]+$ ]]; then
+    ITERATION=0
 fi
 
 # Write sentinel file: $CLOSEDLOOP_WORKDIR/.tool-calls/{TOOL_USE_ID}

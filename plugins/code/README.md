@@ -321,6 +321,10 @@ Creates a PID-to-session-ID mapping file at `.closedloop-ai/pid-{PPID}.session`.
 
 Cleans up session-level artifacts: removes the session workdir mapping file, cleans up stale PID-to-session mappings (processes that no longer exist), removes session-specific files older than 24 hours, and cleans up orphaned `.agent-types` directories.
 
+### `user-prompt-expansion-hook.sh` (UserPromptExpansion, matches create-plan/execute-implementation)
+
+Initializes native PLAN/EXECUTE perf metadata for the `/code:create-plan` and `/code:execute-implementation` commands (which run in-session without the external `run-loop.sh`). Resolves the session `config.env` from the command's workdir, documented `command_args`, legacy argument fields, or `cwd`; derives a `CLOSEDLOOP_COMMAND` value (`PLAN` or `EXECUTE`); assigns or reuses a `CLOSEDLOOP_RUN_ID`; sets `CLOSEDLOOP_ITERATION=0`; persists those values back into `config.env`; and invokes `record_run.sh` so the in-session run is attributable in `perf.jsonl`. It parses `config.env` as data rather than sourcing shell, and fails open on every error so prompt expansion never blocks the user command.
+
 ### `subagent-start-hook.sh` (SubagentStart)
 
 Runs when any subagent starts. Performs three tasks:
@@ -354,7 +358,7 @@ Injects tool-specific learnings just before tool execution. Filters `org-pattern
 
 ### `pre-tool-use-hook.sh` (PreToolUse)
 
-Writes per-tool-call sentinel files to `{WORKDIR}/.tool-calls/` so post-tool handling can compute duration and attribution. Emits `spawn` perf events for `Agent` tool calls. Registered separately from `pretooluse-hook.sh` and designed to fail open.
+Writes per-tool-call sentinel files to `{WORKDIR}/.tool-calls/` so post-tool handling can compute duration and attribution. After resolving the session workdir, it hydrates persisted native run metadata from `.closedloop-ai/config.env` so `tool` and `spawn` rows share the same run id, command, and iteration as the native command. Emits `spawn` perf events for `Agent` tool calls. Registered separately from `pretooluse-hook.sh` and designed to fail open.
 
 ### `post-tool-use-hook.sh` (PostToolUse)
 
@@ -432,6 +436,18 @@ Stamps the critic cache after Phase 2.5 reviews complete. Hashes `plan.json` (an
 ### `stamp_cross_repo_cache.sh`
 
 Stamps the cross-repo cache after Phase 1.4 coordinator completes. Hashes peer-repo HEADs from `.workspace-repos.json` (falling back to `.cross-repo-needs.json`) and writes to `{WORKDIR}/.cross-repo-hash` so subsequent iterations skip cross-repo discovery via the `code:cross-repo-cache` skill.
+
+### `closedloop_env.sh`
+
+Shared library (sourced, not executed) that hydrates `CLOSEDLOOP_*` environment variables from a session `config.env`. Exposes `load_closedloop_env <config-file>`, which parses the file line-by-line for the allowlisted keys (`CLOSEDLOOP_WORKDIR`, `CLOSEDLOOP_RUN_ID`, `CLOSEDLOOP_ITERATION`, `CLOSEDLOOP_COMMAND`) rather than sourcing it — so a malformed or hostile `config.env` can never execute arbitrary shell — and lets any pre-existing non-empty value take precedence (the environment is the source of truth; `config.env` is the fallback). No-op when the config file is absent. Single source of truth for native telemetry scripts and hooks that need persisted run metadata.
+
+### `record_iteration.sh`
+
+Appends a single synthetic `iteration` event to `perf.jsonl` for native (in-session) command runs that lack the external loop's per-iteration accounting. Hydrates run context via `closedloop_env.sh`, derives `status`/`claude_exit_code` from `state.json` (`error`/`1` when `state.json` is missing or has not reached `COMPLETED`, otherwise `ok`/`0`), computes duration from the matching `run` event's `started_at`, and emits a JSON line with `event`, `run_id`, `iteration`, `started_at`, `ended_at`, `duration_s`, `claude_exit_code`, `status`, and `command` fields.
+
+### `record_native_iteration_once.sh`
+
+Idempotent wrapper around `record_iteration.sh` for native terminal paths. Fingerprints the current terminal `state.json` snapshot and records an iteration only when that snapshot has not already been recorded, allowing shared hard-stop and completion prompt paths to call it defensively without duplicate `iteration` rows.
 
 ### `record_phase.sh`
 

@@ -4,6 +4,36 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.13.3
+
+#### Added
+- New `record_native_iteration_once.sh` helper records native terminal iteration telemetry idempotently from the current terminal `state.json` snapshot, preventing duplicate rows when multiple terminal branches invoke telemetry for the same state.
+- Regression coverage for native prompt expansion payloads, hostile `config.env` parsing, persisted tool/spawn telemetry attribution, idempotent native iteration recording, and prompt terminal telemetry contracts.
+
+#### Changed
+- Native terminal prompt paths now call `record_native_iteration_once.sh` after terminal `state.json` writes, covering `/code:code`, `/code:create-plan`, `/code:execute-implementation`, the plan review Stop path, and shared hard-stop handoffs.
+- `closedloop_env.sh` now safely hydrates `CLOSEDLOOP_WORKDIR` in addition to run id, iteration, and command metadata, while preserving environment-value precedence and avoiding shell execution.
+- `pre-tool-use-hook.sh` now hydrates persisted native run metadata from `.closedloop-ai/config.env` before writing tool sentinels or Agent spawn events.
+
+#### Fixed
+- `user-prompt-expansion-hook.sh` now prefers the documented `command_args` payload field while preserving legacy argument fields.
+- `user-prompt-expansion-hook.sh` no longer sources workspace `config.env`, so repo-controlled config values are parsed as data instead of executed as shell.
+- `record_iteration.sh` now parses UTC `started_at` timestamps with `date -j -u -f` on macOS so native iteration durations are not offset by the local timezone.
+
+### code v1.13.2
+
+Give the native in-session `/code:create-plan` and `/code:execute-implementation` commands the same perf/telemetry trail the external run-loop already produces. Previously only `run-loop.sh` wrote `run` and `iteration` events to `perf.jsonl`; the single-shot commands left no iteration record, so native runs were invisible to downstream telemetry.
+
+#### Added
+- New `UserPromptExpansion` hook in `hooks.json` matching `create-plan|execute-implementation`, backed by the new `hooks/user-prompt-expansion-hook.sh`. The hook seeds native PLAN/EXECUTE perf metadata: it resolves the run's `config.env` from candidate sources (`CLOSEDLOOP_WORKDIR`, input JSON workdir fields, the command's first argument, then `cwd`), writes `CLOSEDLOOP_RUN_ID`, `CLOSEDLOOP_ITERATION=0`, and `CLOSEDLOOP_COMMAND` (`PLAN` or `EXECUTE`) into both `config.env` and the environment, and records the run-start event via `record_run.sh`. The `config.env` rewrite is staged to a temp file and atomically renamed into place so an interruption can never leave the file empty. It fails open on every error so prompt expansion never blocks the command.
+- New `scripts/record_iteration.sh` — appends one synthetic native-command `iteration` event to `perf.jsonl`. It derives `status`/`claude_exit_code` (`ok`/0 vs `error`/1) from `state.json` — a missing `state.json`, or one that has not reached `COMPLETED`, is recorded as `error`/1 — and computes `duration_s` from the matching `run` event's `started_at`.
+- New `scripts/closedloop_env.sh` — shared `load_closedloop_env` helper that hydrates `CLOSEDLOOP_RUN_ID`, `CLOSEDLOOP_ITERATION`, and `CLOSEDLOOP_COMMAND` from `config.env` while letting non-empty environment values win (the environment is the source of truth; `config.env` is the fallback). It parses the file line-by-line for those three allowlisted keys rather than sourcing it, so a malformed or hostile `config.env` can never execute arbitrary shell. It is the single source of truth for both `record_iteration.sh` and `record_phase.sh`, and is a no-op when the config file is absent.
+
+#### Changed
+- `scripts/record_phase.sh` now sources `closedloop_env.sh` and hydrates env vars from `config.env` before recording, so native phase telemetry picks up the run metadata the expansion hook seeded.
+- `prompts/plan-prompt.md` (Phase 2.8 completion) now runs `record_iteration.sh` after `record_phase.sh`, so a completed plan-only session emits an iteration event.
+- `prompts/execute-prompt.md` (completion) now runs `record_iteration.sh` before emitting `<promise>IMPLEMENTATION_COMPLETE</promise>`, so a completed implementation session emits an iteration event.
+
 ### code v1.13.0
 
 Split the single closed-loop orchestrator into two standalone single-shot commands, so planning and implementation can run as separate in-session phases instead of only through the external run-loop. The new commands share the existing subagent fleet and phase model but each scopes itself to one half of the workflow and stops with its own promise marker.

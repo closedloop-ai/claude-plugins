@@ -16,8 +16,15 @@ if [[ -z "$WORKDIR" ]]; then
   exit 1
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=closedloop_env.sh
+source "$SCRIPT_DIR/closedloop_env.sh"
+
 STATE_FILE="$WORKDIR/state.json"
 PERF_FILE="$WORKDIR/perf.jsonl"
+CONFIG_FILE="$WORKDIR/.closedloop-ai/config.env"
+
+load_closedloop_env "$CONFIG_FILE"
 
 if [[ ! -f "$STATE_FILE" ]]; then
   exit 0

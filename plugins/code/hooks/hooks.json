@@ -14,6 +14,14 @@
         ]
       }
     ],
+    "UserPromptExpansion": [
+      {
+        "matcher": "create-plan|execute-implementation",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-expansion-hook.sh" }
+        ]
+      }
+    ],
     "SubagentStart": [
       {
         "hooks": [
