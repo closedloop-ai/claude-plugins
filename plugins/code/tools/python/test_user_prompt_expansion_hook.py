@@ -37,7 +37,7 @@ def run_hook(
         env["CLOSEDLOOP_WORKDIR"] = str(workdir)
     else:
         env.pop("CLOSEDLOOP_WORKDIR", None)
-    payload = {"command_name": command_name}
+    payload: dict[str, str | list[str]] = {"command_name": command_name}
     if cwd is not None:
         payload["cwd"] = str(cwd)
     if command_args is not None:
