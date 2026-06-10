@@ -6,12 +6,15 @@
 trap 'exit 0' ERR
 
 CLOSEDLOOP_STATE_DIR=".closedloop-ai"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts" && pwd)"
+# shellcheck source=../scripts/closedloop_env.sh
+source "$SCRIPT_DIR/closedloop_env.sh"
 
 INPUT=$(cat)
 COMMAND_NAME=$(echo "$INPUT" | jq -r '.command_name // empty')
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 COMMAND_ARGS=$(echo "$INPUT" | jq -r '
-  .command_arguments // .arguments // .args // empty
+  .command_args // .command_arguments // .arguments // .args // empty
   | if type == "array" then map(tostring) | join(" ") else tostring end
 ')
 
@@ -61,8 +64,7 @@ if [[ -z "$CONFIG_FILE" ]]; then
   exit 0
 fi
 
-# shellcheck disable=SC1090
-source "$CONFIG_FILE"
+load_closedloop_env "$CONFIG_FILE"
 
 WORKDIR="${CLOSEDLOOP_WORKDIR:-}"
 if [[ -z "$WORKDIR" ]]; then
@@ -93,7 +95,6 @@ export CLOSEDLOOP_RUN_ID="$RUN_ID"
 export CLOSEDLOOP_ITERATION=0
 export CLOSEDLOOP_COMMAND="$CLOSEDLOOP_COMMAND_VALUE"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts" && pwd)"
 bash "$SCRIPT_DIR/record_run.sh" "$WORKDIR" 2>/dev/null || true
 
 exit 0

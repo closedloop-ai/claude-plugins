@@ -4,6 +4,22 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.13.3
+
+#### Added
+- New `record_native_iteration_once.sh` helper records native terminal iteration telemetry idempotently from the current terminal `state.json` snapshot, preventing duplicate rows when multiple terminal branches invoke telemetry for the same state.
+- Regression coverage for native prompt expansion payloads, hostile `config.env` parsing, persisted tool/spawn telemetry attribution, idempotent native iteration recording, and prompt terminal telemetry contracts.
+
+#### Changed
+- Native terminal prompt paths now call `record_native_iteration_once.sh` after terminal `state.json` writes, covering `/code:code`, `/code:create-plan`, `/code:execute-implementation`, the plan review Stop path, and shared hard-stop handoffs.
+- `closedloop_env.sh` now safely hydrates `CLOSEDLOOP_WORKDIR` in addition to run id, iteration, and command metadata, while preserving environment-value precedence and avoiding shell execution.
+- `pre-tool-use-hook.sh` now hydrates persisted native run metadata from `.closedloop-ai/config.env` before writing tool sentinels or Agent spawn events.
+
+#### Fixed
+- `user-prompt-expansion-hook.sh` now prefers the documented `command_args` payload field while preserving legacy argument fields.
+- `user-prompt-expansion-hook.sh` no longer sources workspace `config.env`, so repo-controlled config values are parsed as data instead of executed as shell.
+- `record_iteration.sh` now parses UTC `started_at` timestamps with `date -j -u -f` on macOS so native iteration durations are not offset by the local timezone.
+
 ### code v1.13.2
 
 Give the native in-session `/code:create-plan` and `/code:execute-implementation` commands the same perf/telemetry trail the external run-loop already produces. Previously only `run-loop.sh` wrote `run` and `iteration` events to `perf.jsonl`; the single-shot commands left no iteration record, so native runs were invisible to downstream telemetry.

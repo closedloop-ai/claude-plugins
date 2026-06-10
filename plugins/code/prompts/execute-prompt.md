@@ -261,7 +261,7 @@ The review/fix skills self-verify and own their own diffs — do NOT hand-edit f
   2. Update state.json with `"reason": "Pending tasks remain"` and `"pendingTasks": [...]` (base schema + fields)
   3. **Do NOT output `<promise>IMPLEMENTATION_COMPLETE</promise>`** — end naturally; re-invoking the command resumes the remaining tasks
 
-- **If all clear:** Write state.json with `"status": "COMPLETED"`, run `bash "$CLAUDE_PLUGIN_ROOT/scripts/record_iteration.sh" 2>/dev/null || true`, THEN output `<promise>IMPLEMENTATION_COMPLETE</promise>`. Never output the promise without writing state.json first. Tell the user implementation is complete.
+- **If all clear:** Write state.json with `"status": "COMPLETED"`, run `bash "$CLAUDE_PLUGIN_ROOT/scripts/record_native_iteration_once.sh" "$CLOSEDLOOP_WORKDIR" 2>/dev/null || true`, THEN output `<promise>IMPLEMENTATION_COMPLETE</promise>`. Never output the promise without writing state.json first. Tell the user implementation is complete.
 
 **RULES:**
 1. Follow phases sequentially.

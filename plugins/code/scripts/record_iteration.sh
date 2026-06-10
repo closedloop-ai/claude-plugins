@@ -51,8 +51,8 @@ if [[ -f "$PERF_FILE" ]]; then
   RUN_STARTED_AT=$(jq -r --arg run_id "$RUN_ID" 'select(.event == "run" and .run_id == $run_id) | .started_at // empty' "$PERF_FILE" 2>/dev/null | head -n1 || true)
   if [[ -n "$RUN_STARTED_AT" ]]; then
     STARTED_AT="$RUN_STARTED_AT"
-    if date -j -f "%Y-%m-%dT%H:%M:%SZ" "$RUN_STARTED_AT" +%s >/dev/null 2>&1; then
-      START_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$RUN_STARTED_AT" +%s)
+    if date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$RUN_STARTED_AT" +%s >/dev/null 2>&1; then
+      START_EPOCH=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$RUN_STARTED_AT" +%s)
     elif date -d "$RUN_STARTED_AT" +%s >/dev/null 2>&1; then
       START_EPOCH=$(date -d "$RUN_STARTED_AT" +%s)
     fi

@@ -320,7 +320,7 @@ The haiku writes one line and exits. The orchestrator does NOT read the file bac
   2. Update state.json with `"reason": "Pending tasks remain"` and `"pendingTasks": [...]` (base schema + fields)
   3. **Do NOT output `<promise>COMPLETE</promise>`** — end naturally, loop will restart
 
-- **If all clear:** Write state.json with `"status": "COMPLETED"`, THEN output `<promise>COMPLETE</promise>`. Never output the promise without writing state.json first.
+- **If all clear:** Write state.json with `"status": "COMPLETED"`, run `bash "$CLAUDE_PLUGIN_ROOT/scripts/record_native_iteration_once.sh" "$CLOSEDLOOP_WORKDIR" 2>/dev/null || true`, THEN output `<promise>COMPLETE</promise>`. Never output the promise without writing state.json first.
 
 **RULES:**
 1. Follow phases sequentially. Wait for human approval at Phase 1.1 before continuing.

@@ -134,7 +134,7 @@ This is a single-shot interactive command, so review happens in-session via `Ask
   - Options:
     - **Approve** — "Continue to critic review and finalization." → proceed to Phase 1.2.
     - **Revise** — "Re-draft the plan with my feedback." → collect the user's free-text feedback from the answer, launch @code:plan-draft-writer again with `WORKDIR` and that feedback (**include the MULTI_REPO_DIRECTIVE if this is a MULTI-REPO run**), wait for `<promise>PLAN_VALIDATED</promise>`, run **PLAN_VALIDATION_SEQUENCE**, then return to this INTERACTIVE REVIEW step.
-    - **Stop** — "Stop here; I'll continue later." → write state.json with `status: COMPLETED`, `planStatus: PLAN_COMPLETE`, then output `<promise>PLAN_COMPLETE</promise>` and HARD STOP. Tell the user the plan is at `$CLOSEDLOOP_WORKDIR/plan.md`.
+    - **Stop** — "Stop here; I'll continue later." → write state.json with `status: COMPLETED`, `planStatus: PLAN_COMPLETE`, run `bash "$CLAUDE_PLUGIN_ROOT/scripts/record_native_iteration_once.sh" "$CLOSEDLOOP_WORKDIR" 2>/dev/null || true`, then output `<promise>PLAN_COMPLETE</promise>` and HARD STOP. Tell the user the plan is at `$CLOSEDLOOP_WORKDIR/plan.md`.
 
 **PHASE 1.2: PROCESS ANSWERED QUESTIONS**
 
@@ -206,7 +206,7 @@ This is a single-shot interactive command, so review happens in-session via `Ask
 - Write state.json **first**, then the promise:
   `echo '{"phase": "Phase 2.8: Plan completion", "status": "COMPLETED", "planStatus": "PLAN_COMPLETE", "startSha": "'$START_SHA'", "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > $CLOSEDLOOP_WORKDIR/state.json`
 - Run the telemetry line: `bash "$CLAUDE_PLUGIN_ROOT/scripts/record_phase.sh" 2>/dev/null || true`
-- Record the native-command iteration: `bash "$CLAUDE_PLUGIN_ROOT/scripts/record_iteration.sh" 2>/dev/null || true`
+- Record the native-command iteration once: `bash "$CLAUDE_PLUGIN_ROOT/scripts/record_native_iteration_once.sh" "$CLOSEDLOOP_WORKDIR" 2>/dev/null || true`
 - **ONLY AFTER state.json is written** — output `<promise>PLAN_COMPLETE</promise>`
 - Tell the user: the plan is ready at `$CLOSEDLOOP_WORKDIR/plan.md`. Run `/code:execute-implementation <ORIGINAL_ARGS>` for a single-shot in-session implementation, or `/code:code` (via the external loop) for the full orchestrated workflow. (Substitute the resolved `CLOSEDLOOP_ORIGINAL_ARGS` value per the Resume-command rule; fall back to the resolved workdir if empty.)
 

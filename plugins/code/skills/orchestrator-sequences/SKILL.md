@@ -25,6 +25,8 @@ Use this sequence whenever a phase needs full plan validation (structural + sema
 Use this sequence at any hard-stop that requires user action before continuing. The caller supplies the per-site `phase`, `reason`, `file` (path or null), and `command` (the resume command — built from the resolved `CLOSEDLOOP_ORIGINAL_ARGS` value, never the literal string `$ARGUMENTS`):
 1. **FIRST** — Write state.json with AWAITING_USER status:
    `echo '{"phase": "<current phase>", "status": "AWAITING_USER", "reason": "<why>", "userAction": {"description": "<what user should do>", "file": "<path or null>", "command": "<resume command>"}, "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > $CLOSEDLOOP_WORKDIR/state.json`
-2. **ONLY AFTER state.json is written** — Output your command's completion promise: `<promise>PLAN_COMPLETE</promise>` for `/code:create-plan`, `<promise>IMPLEMENTATION_COMPLETE</promise>` for `/code:execute-implementation`, or `<promise>COMPLETE</promise>` for the full `/code:code` loop. Use the single promise token defined by your own prompt.
-3. Tell the user what to do (review file, fix issues, run command)
-4. **HARD STOP** — Do not continue even if the user asks
+2. Record the native-command terminal iteration once:
+   `bash "$CLAUDE_PLUGIN_ROOT/scripts/record_native_iteration_once.sh" "$CLOSEDLOOP_WORKDIR" 2>/dev/null || true`
+3. **ONLY AFTER state.json is written** — Output your command's completion promise: `<promise>PLAN_COMPLETE</promise>` for `/code:create-plan`, `<promise>IMPLEMENTATION_COMPLETE</promise>` for `/code:execute-implementation`, or `<promise>COMPLETE</promise>` for the full `/code:code` loop. Use the single promise token defined by your own prompt.
+4. Tell the user what to do (review file, fix issues, run command)
+5. **HARD STOP** — Do not continue even if the user asks

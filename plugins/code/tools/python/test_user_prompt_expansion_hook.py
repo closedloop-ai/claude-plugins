@@ -20,6 +20,7 @@ def run_hook(
     command_name: str,
     *,
     cwd: Path | None = None,
+    command_args: str | list[str] | None = None,
     command_arguments: str | None = None,
     include_workdir_env: bool = True,
 ) -> subprocess.CompletedProcess[str]:
@@ -39,6 +40,8 @@ def run_hook(
     payload = {"command_name": command_name}
     if cwd is not None:
         payload["cwd"] = str(cwd)
+    if command_args is not None:
+        payload["command_args"] = command_args
     if command_arguments is not None:
         payload["command_arguments"] = command_arguments
     return subprocess.run(
@@ -106,6 +109,67 @@ def test_create_plan_uses_explicit_workdir_argument_without_env(
     assert config["CLOSEDLOOP_COMMAND"] == "PLAN"
     assert not (launch_cwd / "perf.jsonl").exists()
     assert (workdir / "perf.jsonl").exists()
+
+
+def test_create_plan_uses_command_args_payload_without_env(
+    tmp_path: Path,
+) -> None:
+    launch_cwd = tmp_path / "launch"
+    workdir = tmp_path / "target workdir"
+    launch_cwd.mkdir()
+    closedloop_dir = workdir / ".closedloop-ai"
+    closedloop_dir.mkdir(parents=True)
+    config_path = closedloop_dir / "config.env"
+    escaped_workdir = str(workdir).replace(" ", "\\ ")
+    config_path.write_text(f"CLOSEDLOOP_WORKDIR={escaped_workdir}\n")
+
+    result = run_hook(
+        workdir,
+        "code:create-plan",
+        cwd=launch_cwd,
+        command_args=str(workdir),
+        include_workdir_env=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    config = read_config_env(config_path)
+    assert config["CLOSEDLOOP_WORKDIR"] == escaped_workdir
+    assert config["CLOSEDLOOP_RUN_ID"] != "unknown"
+    assert config["CLOSEDLOOP_ITERATION"] == "0"
+    assert config["CLOSEDLOOP_COMMAND"] == "PLAN"
+    assert not (launch_cwd / "perf.jsonl").exists()
+    assert (workdir / "perf.jsonl").exists()
+
+
+def test_config_env_is_parsed_without_executing_shell(tmp_path: Path) -> None:
+    marker = tmp_path / "sourced-marker"
+    config_path = tmp_path / ".closedloop-ai" / "config.env"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        "\n".join(
+            [
+                f"CLOSEDLOOP_WORKDIR={tmp_path}",
+                f"CLOSEDLOOP_RUN_ID=$(touch {marker})",
+                "CLOSEDLOOP_ITERATION=5",
+                "CLOSEDLOOP_COMMAND=OLD",
+                "",
+            ]
+        )
+    )
+
+    result = run_hook(
+        tmp_path,
+        "create-plan",
+        cwd=tmp_path,
+        include_workdir_env=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists()
+    config = read_config_env(config_path)
+    assert config["CLOSEDLOOP_RUN_ID"].startswith("\\$\\(")
+    assert config["CLOSEDLOOP_ITERATION"] == "0"
+    assert config["CLOSEDLOOP_COMMAND"] == "PLAN"
 
 
 def test_execute_implementation_appends_schema_compatible_run_event(
