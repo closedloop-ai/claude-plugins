@@ -74,6 +74,16 @@ function checkRefsBlock(block: unknown, label: string, errors: string[]): void {
   if (!isStringArray(block["refs"] ?? [])) {
     errors.push(`${label}.refs must be a list of strings`);
   }
+  const selectors = block["selectors"];
+  if (selectors !== null && selectors !== undefined && !isStringArray(selectors)) {
+    errors.push(`${label}.selectors must be a list of CSS selector strings when present`);
+  }
+}
+
+function checkScreenshot(value: unknown, label: string, errors: string[]): void {
+  if (value !== null && value !== undefined && !isNonEmptyString(value)) {
+    errors.push(`${label}.screenshot must be a non-empty string path when present`);
+  }
 }
 
 function checkReuse(reuse: unknown, label: string, errors: string[]): void {
@@ -170,6 +180,7 @@ export function validateFindings(doc: unknown): string[] {
       if (!isNonEmptyString(theme["title"])) {
         errors.push(`themes[${i}].title must be a non-empty string`);
       }
+      checkScreenshot(theme["screenshot"], `themes[${i}]`, errors);
     });
   }
 
@@ -209,6 +220,7 @@ export function validateFindings(doc: unknown): string[] {
       }
       checkRefsBlock(finding["state"], `${label}.state`, errors);
       checkRefsBlock(finding["spec"], `${label}.spec`, errors);
+      checkScreenshot(finding["screenshot"], label, errors);
       checkReuse(finding["reuse"], `${label}.reuse`, errors);
       const decision = finding["decision"] ?? { state: "pending" };
       if (!isObject(decision) || !oneOf(decision["state"], DECISION_STATES)) {

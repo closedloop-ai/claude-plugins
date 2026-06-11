@@ -83,6 +83,21 @@ Slices the unit's CSS to referenced rules, extracts colors/spacing/typography/ic
 
 For each selected unit, spawn a `design-unit-analyst` agent (parallel, batches of 4-6) with: `UNIT_ID`, `UNIT_NAME`, `UNIT_TYPE`, `MANIFEST_PATH`, `DESIGN_EXTRACT_DIR`, `WEBUI_REPO`, `CURRENT_IMPL_HINTS`, `COMPONENT_INDEX`, `VISUAL_SPEC` (the A4 path), `DEPRECATED_UNITS`, `SCHEMA_VALIDATOR` (= `scripts/dist/validate-findings.mjs`), `OUTPUT_PATH = <workdir>/findings/<unit-id>.json`. Analysts emit schema-validated findings.json (themes, categorized findings incl. token-drift, reuse resolutions, pending decisions) and must validate before returning. If an analyst fails or its output fails validation, re-run once; then record the unit for the report's Not Analyzed list.
 
+### A5.5 Capture highlighted design shots (best effort, after analysts)
+
+The export is a runnable app, so each decision can show exactly what it is about. Per analyzed unit:
+
+```bash
+node scripts/dist/capture-design-shots.mjs --extract-dir <workdir>/extracted \
+    --entry <registry html, e.g. ui_kits/app/index.html> \
+    --findings <workdir>/findings/<unit-id>.json --shots-dir <workdir>/shots \
+    --repo <repo> --nav-text "<sidebar label, e.g. Sessions>" [--eval "<js>"]
+```
+
+Serves the export locally, loads it in headless Chromium (Playwright resolved from the target repo's node_modules; web-ui repos in scope already depend on @playwright/test), navigates via the sidebar label (or an `--eval` expression using the export's `window.cl*` helpers for detail views), outlines each finding's `spec.selectors` matches in red, and screenshots the regions. It patches the findings document in place: `finding.screenshot` per captured finding, `theme.screenshot` falling back to the unit base shot. Exit 3 means Playwright is unavailable: skip and continue (the review page degrades to the unit screenshot strip); exit 2 means the page never mounted: note it and continue. Run this BEFORE A6 so the renderer can embed the shots.
+
+**Shot verification (required when captures succeeded).** A wrong screenshot is worse than none: it would anchor the reviewer's decision to the wrong element. After capture, spawn ONE cheap multimodal agent per unit that Reads each captured `shots/CHG-*.png` alongside the finding's title and summary and answers: does the highlighted region plausibly show what the finding describes? Mismatches (or empty/blank highlights) are corrected by removing that finding's `screenshot` field so the card falls back to no image, and noted in the hand-off. Spot-check at minimum the theme-level shots, since those carry the most reviewer weight.
+
 ### A6. Render
 
 ```bash

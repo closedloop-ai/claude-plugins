@@ -172,6 +172,24 @@ function radioGroup(name: string, preAccept = false): string {
   );
 }
 
+
+let cardShotBudget = 60;
+
+/** Embed a captured card screenshot as a data uri (size and count capped). */
+function cardShotHtml(path: unknown): string {
+  if (typeof path !== "string" || path.length === 0 || cardShotBudget <= 0) return "";
+  let data: Buffer;
+  try {
+    data = readFileSync(path);
+  } catch {
+    return "";
+  }
+  if (data.length > MAX_SCREENSHOT_BYTES) return "";
+  cardShotBudget -= 1;
+  const uri = `data:image/png;base64,${data.toString("base64")}`;
+  return `<div class="card-shot"><img src="${uri}" alt="design region for this decision"></div>`;
+}
+
 function findingCardHtml(
   finding: JsonObject,
   unitName: string,
@@ -223,6 +241,7 @@ function findingCardHtml(
     `<span class="unit-name">${escapeHtml(unitName)}</span>`,
     badge(category, `cat-${category}`),
     "</div>",
+    cardShotHtml(finding["screenshot"]),
     `<div class="finding-intent">Intent: ${badge(intent, `intent-${intent}`)} &mdash; ${escapeHtml(intentRationale)}</div>`,
     `<div class="finding-state"><strong>State:</strong> ${refsHtml(stateBlock)}</div>`,
     `<div class="finding-spec"><strong>Spec:</strong> ${refsHtml(specBlock)}</div>`,
@@ -271,6 +290,7 @@ function themeCardHtml(
     `<span class="theme-title">${escapeHtml(title)}</span>` +
     `<span class="unit-name">${escapeHtml(unitName)}</span>` +
     `</div>` +
+    cardShotHtml(theme["screenshot"]) +
     `<ul class="theme-members">${memberSummaries}</ul>` +
     radioGroup(radioName) +
     `<details class="theme-details">` +
@@ -330,6 +350,10 @@ section > h2 { font-size: 16px; font-weight: 700; color: #374151; margin-bottom:
                      padding-bottom: 4px; }
 .screenshots-strip img { height: 120px; border-radius: 6px; border: 1px solid #e5e7eb;
                          object-fit: cover; cursor: zoom-in; }
+
+/* Captured card shots */
+.card-shot img { max-height: 220px; max-width: 100%; border-radius: 6px;
+                 border: 1px solid #e5e7eb; cursor: zoom-in; margin: 6px 0 10px; }
 
 /* Screenshot lightbox */
 .lightbox { display: none; position: fixed; inset: 0; z-index: 100;
@@ -497,7 +521,7 @@ const JS = String.raw`
   var lightbox = document.getElementById('lightbox');
   var lightboxImg = document.getElementById('lightbox-img');
   if (lightbox && lightboxImg) {
-    document.querySelectorAll('.screenshots-strip img').forEach(function(img) {
+    document.querySelectorAll('.screenshots-strip img, .card-shot img').forEach(function(img) {
       img.addEventListener('click', function() {
         lightboxImg.src = img.src;
         lightbox.classList.add('open');

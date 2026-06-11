@@ -166,6 +166,26 @@ describe("renderReviewHtml", () => {
     expect(overrideBlock).toContain('value="undecided" checked');
   });
 
+  it("embeds captured card shots on theme and finding cards", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rrh-"));
+    const shot = join(dir, "CHG-sessions-page-01.png");
+    writeFileSync(shot, Buffer.from(Array.from({ length: 80 }, (_, i) => i % 256)));
+    const doc = validFindings() as JsonObject & { findings: JsonObject[]; themes: JsonObject[] };
+    (doc.findings as JsonObject[])[1]!.screenshot = shot; // standalone finding
+    (doc.themes as JsonObject[])[0]!.screenshot = shot;
+    const f = writeDoc(dir, "sessions.json", doc);
+    const out = join(dir, "review.html");
+
+    run(["--findings", f, "--out", out]);
+
+    const html = readFileSync(out, "utf-8");
+    const occurrences = html.split('class="card-shot"').length - 1;
+    expect(occurrences).toBeGreaterThanOrEqual(2); // theme card + standalone finding card
+    expect(html).toContain('alt="design region for this decision"');
+    // lightbox binding covers card shots
+    expect(html).toContain(".screenshots-strip img, .card-shot img");
+  });
+
   it("page includes a screenshot lightbox wired to strip thumbnails", () => {
     const dir = mkdtempSync(join(tmpdir(), "rrh-"));
     const pngPath = join(dir, "shot.png");

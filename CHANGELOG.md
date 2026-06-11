@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.18.0
+
+#### Added
+- Design-inventory theme and finding cards now show what each decision is about: a new `capture-design-shots` tool serves the extracted export locally, loads it in headless Chromium (Playwright resolved at runtime from the target repo's node_modules, degrading gracefully when unavailable), navigates to the unit's screen, outlines the elements each finding cites in `spec.selectors`, and screenshots the regions. Captured shots are written into the findings document (`finding.screenshot`, with `theme.screenshot` falling back to the unit base shot) and embedded on the review page's cards, wired to the existing lightbox. The analyst contract now records 1-3 anchoring CSS selectors per finding, and the skill mandates a multimodal verification pass that strips any screenshot whose highlight does not match its finding.
+
 ### code v1.17.2
 
 #### Added

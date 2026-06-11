@@ -70,6 +70,25 @@ describe("validateFindings", () => {
     arr(doc.findings)[1]!.id = arr(doc.findings)[0]!.id;
     expect(validateFindings(doc).some((e) => e.includes("duplicate finding id"))).toBe(true);
   });
+
+  it("accepts optional selectors and screenshot fields", () => {
+    const doc = validFindings();
+    obj(arr(doc.findings)[0]!.spec).selectors = [".sess-topbar", ".sess-awaiting-chip"];
+    arr(doc.findings)[0]!.screenshot = "shots/CHG-sessions-page-01.png";
+    arr(doc.themes)[0]!.screenshot = "shots/thm-artifact-table.png";
+    expect(validateFindings(doc)).toEqual([]);
+  });
+
+  it("rejects malformed selectors and screenshot fields", () => {
+    const doc = validFindings();
+    obj(arr(doc.findings)[0]!.spec).selectors = ".not-a-list";
+    arr(doc.findings)[1]!.screenshot = "";
+    arr(doc.themes)[0]!.screenshot = 7;
+    const errors = validateFindings(doc);
+    expect(errors.some((e) => e.includes("spec.selectors must be a list"))).toBe(true);
+    expect(errors.some((e) => e.includes("findings[1].screenshot"))).toBe(true);
+    expect(errors.some((e) => e.includes("themes[0].screenshot"))).toBe(true);
+  });
 });
 
 describe("validateDecisions", () => {

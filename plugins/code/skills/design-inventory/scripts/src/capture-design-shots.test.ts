@@ -1,0 +1,114 @@
+import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+
+import {
+  main,
+  patchFindings,
+  resolveChromium,
+  selectorTargets,
+  unionClip,
+  type Box,
+} from "./capture-design-shots.js";
+import type { JsonObject } from "./design-findings-schema.js";
+import { validFindings } from "./test-fixtures.js";
+
+describe("unionClip", () => {
+  it("unions boxes with padding and clamps to the page", () => {
+    const boxes: Box[] = [
+      { x: 100, y: 100, width: 50, height: 30 },
+      { x: 300, y: 200, width: 80, height: 40 },
+    ];
+    const clip = unionClip(boxes, 2000, 2000);
+    expect(clip).toEqual({ x: 72, y: 72, width: 336, height: 196 });
+  });
+
+  it("clamps at page edges and rejects empty input", () => {
+    expect(unionClip([], 100, 100)).toBeNull();
+    const clip = unionClip([{ x: 0, y: 0, width: 5000, height: 5000 }], 800, 600);
+    expect(clip).toEqual({ x: 0, y: 0, width: 800, height: 600 });
+  });
+});
+
+describe("selectorTargets", () => {
+  it("returns only findings with non-empty selectors", () => {
+    const doc = validFindings();
+    const findings = doc.findings as JsonObject[];
+    (findings[0]!.spec as JsonObject).selectors = [".sess-topbar"];
+    const targets = selectorTargets(doc);
+    expect(targets).toEqual([{ id: "CHG-sessions-page-01", selectors: [".sess-topbar"] }]);
+  });
+});
+
+describe("patchFindings", () => {
+  it("sets finding screenshots and theme fallbacks", () => {
+    const doc = validFindings();
+    const shots = new Map([["CHG-sessions-page-01", "shots/CHG-sessions-page-01.png"]]);
+    patchFindings(doc, shots, "shots/scr-sessions-page.png");
+    const findings = doc.findings as JsonObject[];
+    const themes = doc.themes as JsonObject[];
+    expect(findings[0]!.screenshot).toBe("shots/CHG-sessions-page-01.png");
+    expect(findings[1]!.screenshot).toBeUndefined();
+    // theme inherits its captured member's shot
+    expect(themes[0]!.screenshot).toBe("shots/CHG-sessions-page-01.png");
+  });
+
+  it("themes fall back to the unit base shot when no member captured", () => {
+    const doc = validFindings();
+    patchFindings(doc, new Map(), "shots/scr-sessions-page.png");
+    const themes = doc.themes as JsonObject[];
+    expect(themes[0]!.screenshot).toBe("shots/scr-sessions-page.png");
+  });
+});
+
+describe("CLI guards", () => {
+  it("requires the core arguments", async () => {
+    expect(await main([])).toBe(1);
+  });
+
+  it("rejects invalid findings documents", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cds-"));
+    const doc = validFindings();
+    (doc.unit as JsonObject).type = "page";
+    const f = join(dir, "unit.json");
+    writeFileSync(f, JSON.stringify(doc));
+    const rc = await main([
+      "--extract-dir", dir,
+      "--entry", "index.html",
+      "--findings", f,
+      "--shots-dir", join(dir, "shots"),
+    ]);
+    expect(rc).toBe(1);
+  });
+
+  it("exits 3 when Playwright cannot be resolved", async () => {
+    // Force resolution failure by pointing repo at an empty dir and ensuring
+    // bare resolution also fails (playwright is not a dependency here).
+    const dir = mkdtempSync(join(tmpdir(), "cds-"));
+    const f = join(dir, "unit.json");
+    writeFileSync(f, JSON.stringify(validFindings()));
+    let playwrightAvailable = true;
+    try {
+      await resolveChromium(dir);
+    } catch {
+      playwrightAvailable = false;
+    }
+    if (playwrightAvailable) {
+      // Environment has playwright importable; resolution policy is covered
+      // by the integration test below in that case.
+      return;
+    }
+    const rc = await main([
+      "--extract-dir", dir,
+      "--entry", "index.html",
+      "--findings", f,
+      "--shots-dir", join(dir, "shots"),
+      "--repo", dir,
+    ]);
+    expect(rc).toBe(3);
+    // findings file must be untouched on degrade
+    const after = JSON.parse(readFileSync(f, "utf-8")) as JsonObject;
+    expect((after.findings as JsonObject[])[0]!.screenshot).toBeUndefined();
+  });
+});

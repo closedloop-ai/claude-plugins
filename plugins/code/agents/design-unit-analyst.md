@@ -53,7 +53,8 @@ You analyze exactly ONE design unit from a Claude Design export and compare it a
 6. **Component reuse mapping.** For every UI element the design ADDS to this unit (and every element of a `new` unit), resolve against `COMPONENT_INDEX` to exactly one of: reuse (exact component + import path + story) or new-component (proposed name + closest existing). Elements the unit already renders today are unchanged baseline - do not call them out. Record per-finding `reuse` blocks and the unit-level `component_reuse` table.
 7. **Themes.** Group findings that stand or fall together under a shared theme (e.g. "adopt shared artifact-table layout"). A reviewer decides themes first; only attach a finding to a theme when declining the theme would genuinely moot the finding. Standalone findings keep `theme: null`.
 8. **Token drift.** If `VISUAL_SPEC` is provided, convert each `token_drift` entry into a `token-drift` finding: state = the nearest design-system token (or "no token"), spec = the raw value and where it appears, intent per rule 6. Skip values already covered by an accepted visual finding.
-9. Attach spec-overlay text relevant to your unit verbatim in `unit.spec_overlay_notes`.
+9. **Selectors for visual anchoring.** In each finding's `spec` block, include `selectors`: 1-3 CSS class selectors taken verbatim from the design source that visually anchor the change (e.g. `.sess-topbar`, `.sess-awaiting-chip`). The orchestrator uses them to capture highlighted screenshots of the live design, so prefer the most specific stable class on the changed element; omit the field when no stable class exists (e.g. pure behavior with no dedicated element).
+10. Attach spec-overlay text relevant to your unit verbatim in `unit.spec_overlay_notes`.
 
 ## Output: findings.json (schema_version 1)
 
@@ -76,7 +77,7 @@ Write `OUTPUT_PATH` as JSON with this shape (authoritative schema: `design-findi
     "id": "CHG-sessions-page-01", "title": "...", "category": "visual",
     "intent": "likely-intentional", "intent_rationale": "...", "theme": "thm-artifact-table",
     "state": {"summary": "...", "refs": ["apps/app/...page.tsx:86"]},
-    "spec": {"summary": "...", "refs": ["ui_kits/app/SessionsPage.jsx:1430"]},
+    "spec": {"summary": "...", "refs": ["ui_kits/app/SessionsPage.jsx:1430"], "selectors": [".sess-topbar"]},
     "reuse": {"resolution": "new-component", "proposed_name": "ArtifactTopbar", "closest_existing": "TableViewMenu"},
     "decision": {"state": "pending"},
     "summary": "one-line decision text"
