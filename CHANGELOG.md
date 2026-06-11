@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.18.3
+
+#### Fixed
+- Design-inventory workdirs that resolve inside the repo working tree are now excluded via .git/info/exclude before extraction, so extracted exports, findings, and shots cannot be staged by accident.
+- Stage C now requires design packs to actually be committed (with a `!.closedloop-ai/design-packs/` gitignore exception added when the repo ignores `.closedloop-ai/*` wholesale); previously a ticket could reference a pack path that existed only on the operator's machine.
+
 ### code v1.18.2
 
 #### Changed

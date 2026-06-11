@@ -52,7 +52,7 @@ All tools are TypeScript (sources in `scripts/src/`, tests in vitest) compiled t
 node scripts/dist/design-export-extract.mjs <export.zip> --workdir <workdir>
 ```
 
-Zip-slip safe; rejects archives over 500 MB; prints the manifest path (exit 2 = unsafe archive, stop and tell the user). The manifest's `units` array is typed: `screen | region | component` (`scr- | rgn- | cmp-` ids) with `files`, `primary`, and evidence, so an export containing only a nav bar or a single chat dialog still yields analyzable units.
+Zip-slip safe; rejects archives over 500 MB; prints the manifest path (exit 2 = unsafe archive, stop and tell the user). Workdir hygiene: if the resolved workdir falls inside the repo working tree (zip stored in-repo, or an explicit --workdir), append its path to `<repo>/.git/info/exclude` before extracting so the 40+ MB of extracted export, findings, and shots can never be staged by accident; info/exclude is local-only and leaves no repo diff. The manifest's `units` array is typed: `screen | region | component` (`scr- | rgn- | cmp-` ids) with `files`, `primary`, and evidence, so an export containing only a nav bar or a single chat dialog still yields analyzable units.
 
 ### A2. Repo inventories (deterministic, always rebuilt)
 
@@ -152,6 +152,8 @@ Shared-work tickets: collect Dependencies across packs, dedupe, and create one F
 ### C3. Attach the design pack
 
 The MCP server has `download-attachment` but no upload tool, so use the repo-stored fallback: copy the pack to `<repo>/.closedloop-ai/design-packs/<FEA-slug>/` and update the ticket body's Design Pack path via `create-document-version`. If/when an attachment-upload tool exists, attach the pack zip to the FEA instead.
+
+Durability requirement: packs MUST be committed, or the ticket references a path that exists only on this machine and an implementing agent in a fresh worktree finds nothing. Repos commonly ignore `.closedloop-ai/*` wholesale, so: (1) ensure `.gitignore` carries the exception `!.closedloop-ai/design-packs/` (add it if missing), (2) commit the packs plus the gitignore exception on a branch as part of the Stage C change set, and tell the user it needs to merge before implementation loops run. The inventory caches next door (route-map.json, component-index.json) stay ignored on purpose; they are regenerated every run.
 
 ### C4. Report
 
