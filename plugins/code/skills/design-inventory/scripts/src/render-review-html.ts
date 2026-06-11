@@ -329,7 +329,15 @@ section > h2 { font-size: 16px; font-weight: 700; color: #374151; margin-bottom:
 .screenshots-strip { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 12px;
                      padding-bottom: 4px; }
 .screenshots-strip img { height: 120px; border-radius: 6px; border: 1px solid #e5e7eb;
-                         object-fit: cover; }
+                         object-fit: cover; cursor: zoom-in; }
+
+/* Screenshot lightbox */
+.lightbox { display: none; position: fixed; inset: 0; z-index: 100;
+            background: rgba(15,23,42,.88); align-items: center;
+            justify-content: center; cursor: zoom-out; }
+.lightbox.open { display: flex; }
+.lightbox img { max-width: 95vw; max-height: 95vh; border-radius: 8px;
+                box-shadow: 0 8px 40px rgba(0,0,0,.5); }
 
 /* Theme cards */
 .theme-card { background: #fff; border-radius: 10px; padding: 16px;
@@ -484,6 +492,28 @@ const JS = String.raw`
     a.click();
     setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
   });
+
+  // Screenshot lightbox: click a thumbnail to view full size, click or Escape to close.
+  var lightbox = document.getElementById('lightbox');
+  var lightboxImg = document.getElementById('lightbox-img');
+  if (lightbox && lightboxImg) {
+    document.querySelectorAll('.screenshots-strip img').forEach(function(img) {
+      img.addEventListener('click', function() {
+        lightboxImg.src = img.src;
+        lightbox.classList.add('open');
+      });
+    });
+    lightbox.addEventListener('click', function() {
+      lightbox.classList.remove('open');
+      lightboxImg.src = '';
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && lightbox.classList.contains('open')) {
+        lightbox.classList.remove('open');
+        lightboxImg.src = '';
+      }
+    });
+  }
 })();
 `;
 
@@ -664,6 +694,8 @@ ${screenshotsStripHtml}
   ${findingsSection}
 </section>
 </main>
+
+<div class="lightbox" id="lightbox"><img id="lightbox-img" alt="screenshot enlarged"></div>
 
 <script>
 ${JS}

@@ -166,6 +166,25 @@ describe("renderReviewHtml", () => {
     expect(overrideBlock).toContain('value="undecided" checked');
   });
 
+  it("page includes a screenshot lightbox wired to strip thumbnails", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rrh-"));
+    const pngPath = join(dir, "shot.png");
+    writeFileSync(pngPath, Buffer.from(Array.from({ length: 100 }, (_, i) => i % 256)));
+    const doc = validFindings() as JsonObject & { unit: JsonObject };
+    (doc["unit"] as JsonObject)["reference_screenshots"] = ["shot.png"];
+    const f = writeDoc(dir, "sessions.json", doc);
+    const out = join(dir, "review.html");
+
+    run(["--findings", f, "--out", out, "--screenshots-dir", dir]);
+
+    const html = readFileSync(out, "utf-8");
+    expect(html).toContain('<div class="lightbox" id="lightbox">');
+    expect(html).toContain("cursor: zoom-in");
+    expect(html).toContain(".screenshots-strip img");
+    expect(html).toContain("lightbox.classList.add('open')");
+    expect(html).toContain("e.key === 'Escape'");
+  });
+
   it("screenshot embedded as base64", () => {
     // A PNG screenshot should be embedded as a data-uri.
     const dir = mkdtempSync(join(tmpdir(), "rrh-"));

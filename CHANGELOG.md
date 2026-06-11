@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.17.2
+
+#### Added
+- Design-inventory review page screenshots are now zoomable: clicking a thumbnail opens the full-resolution embedded image in a lightbox overlay; click anywhere or press Escape to close.
+
 ### code v1.17.1
 
 #### Fixed
