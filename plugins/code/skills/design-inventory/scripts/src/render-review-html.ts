@@ -231,6 +231,10 @@ function findingCardHtml(
   ];
   if (includeRadios) {
     lines.push(radioGroup(fid, preAccept));
+  } else if (insideTheme) {
+    // Hidden until the theme's "Override per finding" checkbox is checked;
+    // starts Undecided because an override is an explicit per-finding act.
+    lines.push(`<div class="override-radios">${radioGroup(fid)}</div>`);
   }
   lines.push("</div>");
   return lines.join("\n");

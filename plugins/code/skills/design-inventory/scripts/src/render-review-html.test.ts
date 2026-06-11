@@ -143,6 +143,29 @@ describe("renderReviewHtml", () => {
     expect(html).toContain("CHG-sessions-page-01");
   });
 
+  it("theme member cards carry hidden override radio groups", () => {
+    // The "Override per finding" checkbox reveals .override-radios per member;
+    // without the radio group in the markup the checkbox would toggle nothing
+    // and overridden members could never be exported.
+    const dir = mkdtempSync(join(tmpdir(), "rrh-"));
+    const f = writeDoc(dir, "sessions.json", validFindings());
+    const out = join(dir, "review.html");
+
+    run(["--findings", f, "--out", out]);
+
+    const html = readFileSync(out, "utf-8");
+    const memberCard = html.slice(html.indexOf("theme-member-card"));
+    expect(memberCard).toContain('<div class="override-radios">');
+    // The member's radio group uses the finding id as the radio name and
+    // starts Undecided (overrides are explicit; no pre-acceptance here).
+    const overrideBlock = memberCard.slice(
+      memberCard.indexOf('<div class="override-radios">'),
+      memberCard.indexOf("</div></div>") + 12,
+    );
+    expect(overrideBlock).toContain('name="CHG-sessions-page-01"');
+    expect(overrideBlock).toContain('value="undecided" checked');
+  });
+
   it("screenshot embedded as base64", () => {
     // A PNG screenshot should be embedded as a data-uri.
     const dir = mkdtempSync(join(tmpdir(), "rrh-"));

@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.17.1
+
+#### Fixed
+- The design-inventory review page's "Override per finding" checkbox now actually reveals per-member Accept/Decline/Undecided radios inside theme details. Member cards previously rendered without the hidden override radio group the toggle and export logic looked for, so theme members could never be individually overridden.
+
 ### code v1.17.0
 
 #### Added
