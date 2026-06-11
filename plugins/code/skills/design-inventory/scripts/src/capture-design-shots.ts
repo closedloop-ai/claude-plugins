@@ -96,8 +96,34 @@ export function selectorTargets(doc: JsonObject): Array<{ id: string; selectors:
 }
 
 /**
+ * Theme-level capture targets: the union of every member finding's selectors,
+ * so a multi-part theme's screenshot highlights everything it covers instead
+ * of anchoring the reviewer to its first member.
+ */
+export function themeTargets(doc: JsonObject): Array<{ id: string; selectors: string[] }> {
+  const findings = Array.isArray(doc["findings"]) ? (doc["findings"] as JsonObject[]) : [];
+  const themes = Array.isArray(doc["themes"]) ? (doc["themes"] as JsonObject[]) : [];
+  const targets: Array<{ id: string; selectors: string[] }> = [];
+  for (const theme of themes) {
+    const tid = theme["id"];
+    if (typeof tid !== "string") continue;
+    const selectors = new Set<string>();
+    for (const finding of findings) {
+      if (finding["theme"] !== tid) continue;
+      const spec = finding["spec"];
+      if (typeof spec !== "object" || spec === null) continue;
+      const own = (spec as JsonObject)["selectors"];
+      if (Array.isArray(own)) own.forEach((s) => selectors.add(String(s)));
+    }
+    if (selectors.size > 0) targets.push({ id: tid, selectors: [...selectors] });
+  }
+  return targets;
+}
+
+/**
  * Apply capture results to the findings document: per-finding screenshots,
- * theme screenshots (first captured member, else the unit base shot).
+ * theme screenshots (theme union shot, else first captured member, else the
+ * unit base shot).
  */
 export function patchFindings(
   doc: JsonObject,
@@ -112,9 +138,9 @@ export function patchFindings(
   }
   const themes = Array.isArray(doc["themes"]) ? (doc["themes"] as JsonObject[]) : [];
   for (const theme of themes) {
-    const tid = theme["id"];
+    const tid = String(theme["id"] ?? "");
     const member = findings.find((f) => f["theme"] === tid && typeof f["screenshot"] === "string");
-    const shot = member ? String(member["screenshot"]) : baseShot;
+    const shot = shots.get(tid) ?? (member ? String(member["screenshot"]) : baseShot);
     if (shot) theme["screenshot"] = shot;
   }
 }
@@ -320,7 +346,7 @@ export async function main(argv: string[]): Promise<number> {
     return 1;
   }
   const unitId = String((doc["unit"] as JsonObject)["id"]);
-  const targets = selectorTargets(doc);
+  const targets = [...selectorTargets(doc), ...themeTargets(doc)];
 
   let chromium: unknown;
   try {

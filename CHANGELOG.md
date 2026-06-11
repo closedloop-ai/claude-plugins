@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.18.1
+
+#### Changed
+- Design-inventory theme cards now capture a union shot: one screenshot with every member finding's selectors highlighted together, so a multi-part theme (e.g. topbar + table + pager) no longer anchors the reviewer to its first member only. Theme screenshot preference is union shot, then first captured member, then the unit base shot.
+- Review-page traceability ids (thm-/CHG-) are de-emphasized: they now trail their titles and summaries in small light type instead of leading them in prominent monospace, so decision text scans first.
+
 ### code v1.18.0
 
 #### Added

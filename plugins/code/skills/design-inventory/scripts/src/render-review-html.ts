@@ -236,10 +236,10 @@ function findingCardHtml(
   const lines: string[] = [
     `<div class="finding-card${hiddenClass}"${dataAttrs}>`,
     '<div class="finding-header">',
-    `<span class="finding-id">${escapeHtml(fid)}</span>`,
     `<span class="finding-title">${escapeHtml(title)}</span>`,
     `<span class="unit-name">${escapeHtml(unitName)}</span>`,
     badge(category, `cat-${category}`),
+    `<span class="finding-id">${escapeHtml(fid)}</span>`,
     "</div>",
     cardShotHtml(finding["screenshot"]),
     `<div class="finding-intent">Intent: ${badge(intent, `intent-${intent}`)} &mdash; ${escapeHtml(intentRationale)}</div>`,
@@ -270,7 +270,7 @@ function themeCardHtml(
   const memberSummaries = memberFindings
     .map(
       (f) =>
-        `<li><code>${escapeHtml(String(f["id"] ?? ""))}</code> ${escapeHtml(String(f["summary"] ?? ""))}</li>`,
+        `<li>${escapeHtml(String(f["summary"] ?? ""))} <code class="member-id">${escapeHtml(String(f["id"] ?? ""))}</code></li>`,
     )
     .join("");
 
@@ -286,9 +286,9 @@ function themeCardHtml(
   return (
     `<div class="theme-card" data-tid="${escapeHtml(tid)}">` +
     `<div class="theme-header">` +
-    `<span class="theme-id">${escapeHtml(tid)}</span>` +
     `<span class="theme-title">${escapeHtml(title)}</span>` +
     `<span class="unit-name">${escapeHtml(unitName)}</span>` +
+    `<span class="theme-id">${escapeHtml(tid)}</span>` +
     `</div>` +
     cardShotHtml(theme["screenshot"]) +
     `<ul class="theme-members">${memberSummaries}</ul>` +
@@ -368,10 +368,11 @@ section > h2 { font-size: 16px; font-weight: 700; color: #374151; margin-bottom:
               margin-bottom: 14px; border: 1px solid #e5e7eb;
               box-shadow: 0 1px 3px rgba(0,0,0,.05); }
 .theme-header { display: flex; gap: 10px; align-items: baseline; margin-bottom: 10px; flex-wrap: wrap; }
-.theme-id { font-family: monospace; font-size: 12px; color: #6b7280; }
+.theme-id { font-family: monospace; font-size: 11px; color: #c4c8cf; margin-left: auto; }
 .theme-title { font-weight: 700; font-size: 15px; }
 .theme-members { margin: 8px 0 10px 16px; font-size: 13px; color: #4b5563; }
 .theme-members li { margin-bottom: 3px; }
+.member-id { font-size: 10px; color: #c4c8cf; }
 .theme-details { margin-top: 10px; }
 .theme-details summary { cursor: pointer; font-size: 13px; color: #6b7280; user-select: none; }
 .override-label { font-size: 12px; cursor: pointer; }
@@ -384,7 +385,7 @@ section > h2 { font-size: 16px; font-weight: 700; color: #374151; margin-bottom:
                 box-shadow: 0 1px 3px rgba(0,0,0,.05); }
 .finding-card[data-unit] { }
 .finding-header { display: flex; gap: 8px; align-items: baseline; margin-bottom: 8px; flex-wrap: wrap; }
-.finding-id { font-family: monospace; font-size: 12px; color: #6b7280; }
+.finding-id { font-family: monospace; font-size: 11px; color: #c4c8cf; margin-left: auto; }
 .finding-title { font-weight: 700; font-size: 15px; flex: 1; }
 .unit-name { font-size: 12px; color: #9ca3af; }
 .finding-intent { font-size: 13px; margin-bottom: 6px; color: #374151; }

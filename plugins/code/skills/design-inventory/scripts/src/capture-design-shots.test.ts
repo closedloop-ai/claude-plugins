@@ -8,6 +8,7 @@ import {
   patchFindings,
   resolveChromium,
   selectorTargets,
+  themeTargets,
   unionClip,
   type Box,
 } from "./capture-design-shots.js";
@@ -41,7 +42,39 @@ describe("selectorTargets", () => {
   });
 });
 
+describe("themeTargets", () => {
+  it("unions member selectors per theme, deduped", () => {
+    const doc = validFindings();
+    const findings = doc.findings as JsonObject[];
+    (findings[0]!.spec as JsonObject).selectors = [".sess-topbar", ".sess-stat-row"];
+    findings[1]!.theme = "thm-artifact-table";
+    (findings[1]!.spec as JsonObject).selectors = [".sess-topbar", ".sess-table-wrap"];
+    const targets = themeTargets(doc);
+    expect(targets).toEqual([
+      {
+        id: "thm-artifact-table",
+        selectors: [".sess-topbar", ".sess-stat-row", ".sess-table-wrap"],
+      },
+    ]);
+  });
+
+  it("omits themes whose members have no selectors", () => {
+    expect(themeTargets(validFindings())).toEqual([]);
+  });
+});
+
 describe("patchFindings", () => {
+  it("prefers the theme union shot over member and base shots", () => {
+    const doc = validFindings();
+    const shots = new Map([
+      ["CHG-sessions-page-01", "shots/CHG-sessions-page-01.png"],
+      ["thm-artifact-table", "shots/thm-artifact-table.png"],
+    ]);
+    patchFindings(doc, shots, "shots/base.png");
+    const themes = doc.themes as JsonObject[];
+    expect(themes[0]!.screenshot).toBe("shots/thm-artifact-table.png");
+  });
+
   it("sets finding screenshots and theme fallbacks", () => {
     const doc = validFindings();
     const shots = new Map([["CHG-sessions-page-01", "shots/CHG-sessions-page-01.png"]]);
