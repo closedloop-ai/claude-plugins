@@ -83,7 +83,7 @@ All commits MUST follow the conventions in `CONTRIBUTING.md`. Specifically:
 
 ### Version Bumps (Required)
 
-**Any change to a plugin's files MUST include a version bump in that plugin's `plugin.json`.** This is not optional -- the version must be updated in the same commit as the code change. Semver rules: PATCH for bug fixes/prompt wording, MINOR for new agents/skills/commands, MAJOR for breaking changes to orchestration/hook API/skill interfaces.
+**Any branch that changes a plugin's files MUST bump that plugin's `plugin.json` version exactly ONCE relative to `main`.** Bump once per branch/PR, not once per commit: pick the right semver level for the branch's overall change and keep it for the life of the branch (CI compares base vs HEAD). Semver rules: PATCH for bug fixes/prompt wording, MINOR for new agents/skills/commands, MAJOR for breaking changes to orchestration/hook API/skill interfaces.
 
 ### Documentation (CHANGELOG.md, README.md)
 

@@ -4,44 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### code v1.18.3
-
-#### Fixed
-- Design-inventory workdirs that resolve inside the repo working tree are now excluded via .git/info/exclude before extraction, so extracted exports, findings, and shots cannot be staged by accident.
-- Stage C now requires design packs to actually be committed (with a `!.closedloop-ai/design-packs/` gitignore exception added when the repo ignores `.closedloop-ai/*` wholesale); previously a ticket could reference a pack path that existed only on the operator's machine.
-
-### code v1.18.2
-
-#### Changed
-- The design-inventory skill now documents Stage C invocation fully: what --tickets, --decisions, and --project take, the file-based Stage B handoff (any session, any operator, workdir as pipeline state, copy decisions.json into the workdir), and the duplicate-document check required before re-running ticket creation.
-
-### code v1.18.1
-
-#### Changed
-- Design-inventory theme cards now capture a union shot: one screenshot with every member finding's selectors highlighted together, so a multi-part theme (e.g. topbar + table + pager) no longer anchors the reviewer to its first member only. Theme screenshot preference is union shot, then first captured member, then the unit base shot.
-- Review-page traceability ids (thm-/CHG-) are de-emphasized: they now trail their titles and summaries in small light type instead of leading them in prominent monospace, so decision text scans first.
-
-### code v1.18.0
+### code v1.14.0
 
 #### Added
-- Design-inventory theme and finding cards now show what each decision is about: a new `capture-design-shots` tool serves the extracted export locally, loads it in headless Chromium (Playwright resolved at runtime from the target repo's node_modules, degrading gracefully when unavailable), navigates to the unit's screen, outlines the elements each finding cites in `spec.selectors`, and screenshots the regions. Captured shots are written into the findings document (`finding.screenshot`, with `theme.screenshot` falling back to the unit base shot) and embedded on the review page's cards, wired to the existing lightbox. The analyst contract now records 1-3 anchoring CSS selectors per finding, and the skill mandates a multimodal verification pass that strips any screenshot whose highlight does not match its finding.
-
-### code v1.17.2
-
-#### Added
-- Design-inventory review page screenshots are now zoomable: clicking a thumbnail opens the full-resolution embedded image in a lightbox overlay; click anywhere or press Escape to close.
-
-### code v1.17.1
-
-#### Fixed
-- The design-inventory review page's "Override per finding" checkbox now actually reveals per-member Accept/Decline/Undecided radios inside theme details. Member cards previously rendered without the hidden override radio group the toggle and export logic looked for, so theme members could never be individually overridden.
-
-### code v1.17.0
-
-#### Added
-- New `design-inventory` skill: a staged Claude Design handoff pipeline. Stage A decomposes a design export zip deterministically (typed design units covering screens, persistent chrome regions, and standalone components; interaction signals including scroll sync and pointer-drag scrubbing; doc headers; spec overlays; large-file splitting) and fans out per-unit analysts that compare the design against the current web-ui, producing schema-validated `findings.json` documents plus a rendered report and a self-contained HTML review page. Stage B is a human review gate that emits `decisions.json` (themes decided first with per-finding overrides, likely-intentional findings pre-accepted under a veto model). Stage C generates DRAFT feature tickets only for accepted units, each with a design pack (sliced design source, reference screenshots, decision-applied findings, token-resolved visual spec) and a ticket body carrying acceptance criteria, an explicit declined-changes list, a component reuse table, and dependency callouts.
-- New `design-unit-analyst` agent: analyzes one design unit (screen, region, component, or flow) state-vs-spec with per-type comparison targets, maps every added UI element to an exact existing Storybook component or a net-new proposal, converts machine-extracted token drift into findings, and must pass the schema validator before returning.
-- TypeScript toolchain for the skill's scripts: eight CLIs (`design-export-extract`, `build-route-map`, `build-component-index`, `extract-visual-spec`, `validate-findings`, `render-report`, `render-review-html`, `build-design-pack`) written in strict TypeScript with co-located vitest suites and esbuild-bundled `dist/*.mjs` committed so running them requires only Node 18+. The component index enrichment resolves source paths, prop names, and cva variants in a single pruned filesystem walk; the route map derives Next.js app/pages router tables plus a chrome map from layout files. Repo-side inventories are keyed by repo constants only and never by export contents; the deprecated-screen list is read from `.closedloop-ai/design-inventory/deprecated-screens.json` in the target repo.
+- New `design-inventory` skill: a staged Claude Design handoff pipeline. Stage A decomposes a design export zip deterministically (typed design units covering screens, persistent chrome regions, and standalone components; interaction signals including scroll sync and pointer-drag scrubbing; doc headers; spec overlays; large-file splitting) and fans out per-unit analysts that compare the design against the current web-ui, producing schema-validated `findings.json` documents plus a rendered report and a self-contained HTML review page. Stage B is a human review gate that emits `decisions.json` (themes decided first with per-finding override radios, likely-intentional findings pre-accepted under a veto model, traceability ids de-emphasized behind decision text). Stage C generates DRAFT feature tickets only for accepted units, each with a committed design pack (sliced design source, reference screenshots, decision-applied findings, token-resolved visual spec) and a ticket body carrying acceptance criteria, an explicit declined-changes list, a component reuse table, and dependency callouts; Stage C invocation, file-based review handoff, and duplicate-document checks are documented in the skill.
+- New `design-unit-analyst` agent: analyzes one design unit (screen, region, component, or flow) state-vs-spec with per-type comparison targets, maps every added UI element to an exact existing Storybook component or a net-new proposal, converts machine-extracted token drift into findings, cites 1-3 anchoring CSS selectors per finding, and must pass the schema validator before returning.
+- New `capture-design-shots` tool: serves the extracted export locally, loads it in headless Chromium (Playwright resolved at runtime from the target repo's node_modules, degrading gracefully when unavailable), navigates to the unit's screen, outlines each finding's `spec.selectors` matches plus a per-theme union of member selectors, and screenshots the regions; shots are embedded on review-page cards with lightbox zoom, and the skill mandates a multimodal verification pass that strips any screenshot whose highlight does not match its finding.
+- TypeScript toolchain for the skill's scripts: nine CLIs (`design-export-extract`, `build-route-map`, `build-component-index`, `extract-visual-spec`, `validate-findings`, `render-report`, `render-review-html`, `build-design-pack`, `capture-design-shots`) in strict TypeScript with co-located vitest suites and esbuild-bundled `dist/*.mjs` committed so running them requires only Node 18+. The component index enrichment resolves source paths, prop names, and cva variants in a single pruned filesystem walk; the route map derives Next.js app/pages router tables plus a chrome map from layout files. Repo-side inventories are keyed by repo constants only and never by export contents; the deprecated-screen list is read from `.closedloop-ai/design-inventory/deprecated-screens.json` in the target repo; workdirs that resolve inside the repo working tree are excluded via .git/info/exclude before extraction.
 
 ### code v1.13.3
 
