@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.18.2
+
+#### Changed
+- The design-inventory skill now documents Stage C invocation fully: what --tickets, --decisions, and --project take, the file-based Stage B handoff (any session, any operator, workdir as pipeline state, copy decisions.json into the workdir), and the duplicate-document check required before re-running ticket creation.
+
 ### code v1.18.1
 
 #### Changed

@@ -19,6 +19,14 @@ Claude Design mocks frequently contain vibe-coded changes the designer never int
 
 Stage A is one invocation: extraction, repo inventories, visual specs, parallel analysts, report + review page. Stage B is human review of the generated review.html (or an interactive triage session; see Stage B). Stage C runs only with a decisions.json.
 
+Stage C arguments:
+
+- `--tickets <workdir>`: selects ticket-generation mode and points at the Stage A workdir, which holds everything Stage C consumes (findings/, specs/, shots/, extracted/). The workdir IS the pipeline state; no chat-session continuity is required, so Stage C may run days later, in a different session, or by a different person than the reviewer.
+- `--decisions <path>`: the decisions.json exported from review.html (typically the reviewer's Downloads folder) or written by an interactive triage session. Validate it before anything else; abort on schema errors. Convention: copy it to `<workdir>/decisions.json` so the whole run lives in one directory and "continue the design review in <workdir>" is enough context later.
+- `--project <PRO-slug>`: the ClosedLoop project that receives the DRAFT feature documents.
+
+Re-running Stage C: pack generation is deterministic and safe to repeat, but document creation is not idempotent. Before creating each FEA, check the target project for an existing document with the same title (or a prior Stage C report in the workdir) and skip those units instead of minting duplicates.
+
 ## Inputs
 
 - **Export zip** (Stage A, required): the Claude Design export. Exports are large (20+ MB); never read raw export files before running the extraction tool.
