@@ -100,3 +100,27 @@ jobs:
           python-version: "3.13"
       - run: uv sync --frozen --group dev
       - run: uv run pytest plugins/
+
+  design-inventory-ts:
+    name: TypeScript (design-inventory)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/code/skills/design-inventory/scripts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: plugins/code/skills/design-inventory/scripts/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Verify committed dist bundles are up to date
+        run: |
+          npm run build
+          if ! git diff --exit-code -- dist; then
+            echo "::error::scripts/dist is stale. Run 'npm run build' in plugins/code/skills/design-inventory/scripts and commit the result."
+            exit 1
+          fi

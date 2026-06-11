@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.17.0
+
+#### Added
+- New `design-inventory` skill: a staged Claude Design handoff pipeline. Stage A decomposes a design export zip deterministically (typed design units covering screens, persistent chrome regions, and standalone components; interaction signals including scroll sync and pointer-drag scrubbing; doc headers; spec overlays; large-file splitting) and fans out per-unit analysts that compare the design against the current web-ui, producing schema-validated `findings.json` documents plus a rendered report and a self-contained HTML review page. Stage B is a human review gate that emits `decisions.json` (themes decided first with per-finding overrides, likely-intentional findings pre-accepted under a veto model). Stage C generates DRAFT feature tickets only for accepted units, each with a design pack (sliced design source, reference screenshots, decision-applied findings, token-resolved visual spec) and a ticket body carrying acceptance criteria, an explicit declined-changes list, a component reuse table, and dependency callouts.
+- New `design-unit-analyst` agent: analyzes one design unit (screen, region, component, or flow) state-vs-spec with per-type comparison targets, maps every added UI element to an exact existing Storybook component or a net-new proposal, converts machine-extracted token drift into findings, and must pass the schema validator before returning.
+- TypeScript toolchain for the skill's scripts: eight CLIs (`design-export-extract`, `build-route-map`, `build-component-index`, `extract-visual-spec`, `validate-findings`, `render-report`, `render-review-html`, `build-design-pack`) written in strict TypeScript with co-located vitest suites and esbuild-bundled `dist/*.mjs` committed so running them requires only Node 18+. The component index enrichment resolves source paths, prop names, and cva variants in a single pruned filesystem walk; the route map derives Next.js app/pages router tables plus a chrome map from layout files. Repo-side inventories are keyed by repo constants only and never by export contents; the deprecated-screen list is read from `.closedloop-ai/design-inventory/deprecated-screens.json` in the target repo.
+
 ### code v1.13.3
 
 #### Added

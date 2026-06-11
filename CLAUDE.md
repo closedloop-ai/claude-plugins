@@ -23,6 +23,13 @@ pytest plugins/code/tools/python/test_count_tokens.py -k test_name  # single tes
 # divergence can mask reportOptionalMemberAccess and similar diagnostics)
 uv run ruff check .
 uv run pyright
+
+# TypeScript tool scripts (currently plugins/code/skills/design-inventory/scripts)
+cd plugins/code/skills/design-inventory/scripts
+npm ci             # once
+npm test           # vitest
+npm run typecheck  # tsc --noEmit
+npm run build      # rebuild committed dist/*.mjs after editing src/
 ```
 
 ## Architecture
@@ -55,9 +62,13 @@ Registered in `plugins/code/hooks/hooks.json` across 5 lifecycle events: `Sessio
 
 Token-Oriented Object Notation — ~40% token reduction vs JSON, used for `org-patterns.toon` learning store. See the `self-learning:toon-format` skill for syntax rules.
 
-### Python Tools
+### Tool Scripts (TypeScript policy)
 
-Tool scripts in `plugins/<name>/tools/python/` are standalone CLIs — they do not import each other. The one exception is a **shared schema/library module** that defines wire-format contracts (e.g. `plugins/code-review/tools/python/code_review_schema.py`): tool scripts within the same plugin may import canonical types, constants, and validators from such a module. The shared module itself must not call into any tool script. Tests are co-located (`test_*.py`); shared test factories belong in `conftest.py`.
+**Team policy: no new Python.** New tool scripts are TypeScript; existing Python tools remain until ported. The reference TS toolchain lives at `plugins/code/skills/design-inventory/scripts/`: strict `tsconfig` (`noUncheckedIndexedAccess`), sources in `src/` with co-located vitest suites (`*.test.ts`), esbuild-bundled CLIs committed under `dist/*.mjs` so consumers need only Node 18+ (runtime deps like fflate are bundled; prefer node stdlib). After editing sources run `npm run build` and commit `dist/` — CI fails on stale bundles. CLI entries use `parseArgs` + the shared `runWhenMain` helper; shared wire-format contracts live in a schema module (`design-findings-schema.ts`) that tool scripts may import but which never calls into a tool script.
+
+### Python Tools (legacy)
+
+Existing tool scripts in `plugins/<name>/tools/python/` are standalone CLIs — they do not import each other. The one exception is a **shared schema/library module** that defines wire-format contracts (e.g. `plugins/code-review/tools/python/code_review_schema.py`): tool scripts within the same plugin may import canonical types, constants, and validators from such a module. The shared module itself must not call into any tool script. Tests are co-located (`test_*.py`); shared test factories belong in `conftest.py`. Do not add new Python tools; port opportunistically when touching an area.
 
 ## Conventions
 
