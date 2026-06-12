@@ -30,7 +30,7 @@ import {
 import { runWhenMain } from "./cli.js";
 
 // ---------------------------------------------------------------------------
-// Loading helpers (mirrors render-review-doc.ts patterns)
+// Loading helpers
 // ---------------------------------------------------------------------------
 
 function loadFindingsPaths(paths: string[]): string[] {

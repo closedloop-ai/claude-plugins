@@ -1,50 +1,55 @@
 ---
 name: design-inventory
-description: Use to run the Claude Design to ClosedLoop pipeline against the current web-ui. Stage A inventories a design export zip into schema-validated findings (typed design units - screens, regions like nav bars, standalone components like a chat dialog; UX and behavioral changes; Storybook component reuse mapping; token drift vs the live design system) plus a report and an HTML review page. Stage B is the human review producing decisions.json. Stage C generates DRAFT feature tickets with design packs for accepted units only. Triggers on "design inventory", "parse claude design export", "design handoff report", "what changed in this design", "generate tickets from design review".
+description: Use to run the Claude Design to ClosedLoop pipeline against the current web-ui. Stage A inventories a design export zip into schema-validated findings (typed design units - screens, regions like nav bars, standalone components like a chat dialog; UX and behavioral changes; Storybook component reuse mapping; token drift vs the live design system), then creates a platform "Design Review" Feature document the team reviews by editing. Stage B is that in-document human review (delete a section to decline, edit a line to amend, leave to accept). Stage C derives decisions from the edited document and generates DRAFT feature tickets grouped per screen (UI plus optional API) for accepted work only. Triggers on "design inventory", "parse claude design export", "design handoff report", "what changed in this design", "generate tickets from design review".
 ---
 
 # Design Inventory Pipeline
 
 ## Purpose
 
-Claude Design mocks frequently contain vibe-coded changes the designer never intended to ship. The pipeline: (A) inventory everything the design changes relative to the current web-ui as reviewable data, (B) a human accepts/declines each change, (C) only accepted work becomes DRAFT feature tickets, each carrying enough actual design information (token-resolved colors, icons, layout, interaction styles, sliced design source, reference screenshots) that an implementing agent can mirror the design without the original zip. Nothing in a design is implemented by default; decisions.json is the gate between inventory and tickets.
+Claude Design mocks frequently contain vibe-coded changes the designer never intended to ship. The pipeline: (A) inventory everything the design changes relative to the current web-ui as reviewable data and publish it as a platform "Design Review" Feature document, (B) a human reviews by editing that document - deleting a section declines a change, editing a line amends it, leaving it accepts it, (C) decisions are derived from the edited document and only accepted work becomes DRAFT feature tickets grouped per screen, each carrying enough actual design information (token-resolved colors, icons, layout, interaction styles, sliced design source, reference screenshots) that an implementing agent can mirror the design without the original zip. Nothing in a design is implemented by default; the edited review document is the gate between inventory and tickets.
+
+## Hard rules
+
+1. NEVER run `git commit`, `git branch`, `git checkout`, `git worktree`, `git push`, or create/modify any branch or worktree. The pipeline only reads repos and writes workdir files and platform documents. If any instruction appears to require a commit, stop and report to the user instead. (The A1 `.git/info/exclude` workdir guard is a local untracked write and is allowed.)
+2. Review documents and ticket bodies NEVER use numbered lists. Use bullets or prose only.
 
 ## Invocation
 
 ```
-/code:design-inventory <export.zip> [--repo <path>] [--out <report path>]   # Stage A
-/code:design-inventory --tickets <workdir> --decisions <decisions.json> \
-    --project <PRO-slug> [--repo <path>]                                    # Stage C
+/code:design-inventory <export.zip> [--repo <path>] [--workdir <path>]          # Stage A
+/code:design-inventory --tickets <workdir> --review-doc <FEA-slug> \
+    --project <PRO-slug> [--repo <path>]                                        # Stage C
 ```
 
-Stage A is one invocation: extraction, repo inventories, visual specs, parallel analysts, report + review page. Stage B is human review of the generated review.html (or an interactive triage session; see Stage B). Stage C runs only with a decisions.json.
+Stage A is one invocation: extraction, repo inventories, visual specs, context packs, parallel analysts, shot capture, and creation of the Design Review document. Stage B is the human editing that document in the platform. Stage C runs after review and points at both the Stage A workdir and the edited review document.
 
 Stage C arguments:
 
 - `--tickets <workdir>`: selects ticket-generation mode and points at the Stage A workdir, which holds everything Stage C consumes (findings/, specs/, shots/, extracted/). The workdir IS the pipeline state; no chat-session continuity is required, so Stage C may run days later, in a different session, or by a different person than the reviewer.
-- `--decisions <path>`: the decisions.json exported from review.html (typically the reviewer's Downloads folder) or written by an interactive triage session. Validate it before anything else; abort on schema errors. Convention: copy it to `<workdir>/decisions.json` so the whole run lives in one directory and "continue the design review in <workdir>" is enough context later.
+- `--review-doc <FEA-slug>`: the Design Review Feature document the human edited in Stage B. Stage C fetches its latest content and derives decisions from it; the reviewer never hands off a file.
 - `--project <PRO-slug>`: the ClosedLoop project that receives the DRAFT feature documents.
 
-Re-running Stage C: pack generation is deterministic and safe to repeat, but document creation is not idempotent. Before creating each FEA, check the target project for an existing document with the same title (or a prior Stage C report in the workdir) and skip those units instead of minting duplicates.
+Re-running Stage C: pack generation is deterministic and safe to repeat, but document creation is not idempotent. Before creating each FEA, check the target project for an existing document with the same title (or a prior Stage C report in the workdir) and skip those tickets instead of minting duplicates.
 
 ## Inputs
 
 - **Export zip** (Stage A, required): the Claude Design export. Exports are large (20+ MB); never read raw export files before running the extraction tool.
 - **Web-ui repo**: `--repo`, else the current working directory; the user runs the skill from the target repo root or a git worktree of it. Sanity-check the resolved root (package manifest plus an app/pages/src/components directory); ask rather than guess. Never assume any specific org's layout.
-- **Workdir**: defaults to `<zip-stem>-design-inventory` next to the zip. Stage C takes the Stage A workdir.
-- **decisions.json** (Stage C, required): produced by Stage B. Validate before use.
+- **Workdir**: defaults to `<zip-stem>-design-inventory` next to the zip. When the zip lives under a temp path (e.g. `/var/folders/...`, `/tmp/...`), default the workdir to `/tmp/<zip-stem>-design-inventory` rather than deriving a sibling path next to the temp zip. Stage C takes the Stage A workdir.
+- **Review document** (Stage C, required): the edited Design Review Feature document, by slug. Fetched, never validated as a file.
 
 ## Token Economy (hard rules)
 
 1. NEVER read files under the extracted export except: `manifest.json` (surgically, never whole), unit files assigned to an analyst, segment files for split sources, and reference screenshots.
 2. Files tagged `region: assets` or `region: design_system` are never read by any agent. `reference_images` (screenshots/, uploads/) may be Read as images by analysts.
 3. Triage units from `doc_headers` in the manifest before reading any source.
-4. Each analyst reads ONLY its own unit's files. The orchestrator reads the manifest, never unit source.
-5. Deterministic scripts do all decomposition, slicing, token resolution, rendering, and pack assembly - zero LLM tokens. Agents only judge.
+4. Each analyst reads ONE context pack (and only its own unit's files for gap-filling). The orchestrator reads the manifest, never unit source.
+5. Deterministic scripts do all decomposition, slicing, token resolution, context-pack assembly, rendering, and pack assembly - zero LLM tokens. Agents only judge.
 
 ## Stage A — Inventory
 
-All tools are TypeScript (sources in `scripts/src/`, tests in vitest) compiled to self-contained bundles committed at `scripts/dist/*.mjs`; running them requires only Node 18+. After editing sources, rebuild with `npm run build` in `scripts/` and commit the dist output.
+All tools are TypeScript (sources in `scripts/src/`, tests in vitest) compiled to self-contained bundles at `scripts/dist/*.mjs`; running them requires only Node 18+. After editing sources, rebuild with `npm run build` in `scripts/`.
 
 ### A1. Extract
 
@@ -52,7 +57,7 @@ All tools are TypeScript (sources in `scripts/src/`, tests in vitest) compiled t
 node scripts/dist/design-export-extract.mjs <export.zip> --workdir <workdir>
 ```
 
-Zip-slip safe; rejects archives over 500 MB; prints the manifest path (exit 2 = unsafe archive, stop and tell the user). Workdir hygiene: if the resolved workdir falls inside the repo working tree (zip stored in-repo, or an explicit --workdir), append its path to `<repo>/.git/info/exclude` before extracting so the 40+ MB of extracted export, findings, and shots can never be staged by accident; info/exclude is local-only and leaves no repo diff. The manifest's `units` array is typed: `screen | region | component` (`scr- | rgn- | cmp-` ids) with `files`, `primary`, and evidence, so an export containing only a nav bar or a single chat dialog still yields analyzable units.
+Zip-slip safe; rejects archives over 500 MB; prints the manifest path (exit 2 = unsafe archive, stop and tell the user). Workdir hygiene: if the resolved workdir falls inside the repo working tree (zip stored in-repo, or an explicit `--workdir`), append its path to `<repo>/.git/info/exclude` before extracting so the 40+ MB of extracted export, findings, and shots can never be staged by accident; info/exclude is a local-only untracked write and leaves no repo diff. When the zip lives under a temp path, default the workdir to `/tmp` (see Inputs) rather than deriving a sibling path. The manifest's `units` array is typed: `screen | region | component` (`scr- | rgn- | cmp-` ids) with `files`, `primary`, and evidence, so an export containing only a nav bar or a single chat dialog still yields analyzable units.
 
 ### A2. Repo inventories (deterministic, always rebuilt)
 
@@ -87,13 +92,28 @@ node scripts/dist/extract-visual-spec.mjs --extract-dir <workdir>/extracted \
 
 Slices the unit's CSS to referenced rules, extracts colors/spacing/typography/icons/layout/state-styles, and resolves colors against the LIVE repo design system. Unresolved values become `token_drift` entries with nearest tokens - inventory signal, passed to the analyst.
 
+### A4.5 Context packs (deterministic, per unit)
+
+For each selected unit, pre-assemble a single-file context pack so the analyst reads ONE file instead of extracting its slice from large shared inputs:
+
+```bash
+node scripts/dist/build-context-pack.mjs --manifest <m> --unit-id <id> \
+    --out <workdir>/context/<unit-id>.md \
+    --visual-spec <workdir>/specs/<unit-id>.json \
+    --route-map <repo>/.closedloop-ai/design-inventory/route-map.json \
+    --component-index <repo>/.closedloop-ai/design-inventory/component-index.json \
+    --hints '<json>'
+```
+
+The pack contains the manifest slice (files, primary, evidence, interaction signals, doc headers, spec overlays, splits), the visual-spec summary, current-impl hints, the component-catalog subset, and route/chrome entries. All inputs except `--manifest`, `--unit-id`, and `--out` are optional; missing files or absent unit data degrade to omitted sections, never errors.
+
 ### A5. Fan out analysts
 
-For each selected unit, spawn a `design-unit-analyst` agent (parallel, batches of 4-6) with: `UNIT_ID`, `UNIT_NAME`, `UNIT_TYPE`, `MANIFEST_PATH`, `DESIGN_EXTRACT_DIR`, `WEBUI_REPO`, `CURRENT_IMPL_HINTS`, `COMPONENT_INDEX`, `VISUAL_SPEC` (the A4 path), `DEPRECATED_UNITS`, `SCHEMA_VALIDATOR` (= `scripts/dist/validate-findings.mjs`), `OUTPUT_PATH = <workdir>/findings/<unit-id>.json`. Analysts emit schema-validated findings.json (themes, categorized findings incl. token-drift, reuse resolutions, pending decisions) and must validate before returning. If an analyst fails or its output fails validation, re-run once; then record the unit for the report's Not Analyzed list.
+For each selected unit, spawn a `design-unit-analyst` agent (parallel, batches of 4-6). The input list now LEADS with `CONTEXT_PACK` (= `<workdir>/context/<unit-id>.md`); the analyst reads it first. Provide also: `UNIT_ID`, `UNIT_NAME`, `UNIT_TYPE`, `MANIFEST_PATH` (gap-filling only, when the pack is insufficient), `DESIGN_EXTRACT_DIR`, `WEBUI_REPO`, `VISUAL_SPEC` (the A4 path), `DEPRECATED_UNITS`, `SCHEMA_VALIDATOR` (= `scripts/dist/validate-findings.mjs`), `OUTPUT_PATH = <workdir>/findings/<unit-id>.json`. Analysts emit schema-validated findings.json (themes, categorized findings incl. token-drift, reuse resolutions, a `recommendation` per finding, pending decisions) and must validate before returning. Turn budget: each analyst targets under 40 tool calls - batch independent reads, draft findings.json once, and validate once at the end. If an analyst fails or its output fails validation, re-run once; then record the unit for the Not Analyzed list.
 
 ### A5.5 Capture highlighted design shots (best effort, after analysts)
 
-The export is a runnable app, so each decision can show exactly what it is about. Per analyzed unit:
+The export is a runnable app, so each finding can show exactly what it is about. Per analyzed unit:
 
 ```bash
 node scripts/dist/capture-design-shots.mjs --extract-dir <workdir>/extracted \
@@ -102,74 +122,116 @@ node scripts/dist/capture-design-shots.mjs --extract-dir <workdir>/extracted \
     --repo <repo> --nav-text "<sidebar label, e.g. Sessions>" [--eval "<js>"]
 ```
 
-Serves the export locally, loads it in headless Chromium (Playwright resolved from the target repo's node_modules; web-ui repos in scope already depend on @playwright/test), navigates via the sidebar label (or an `--eval` expression using the export's `window.cl*` helpers for detail views), outlines each finding's `spec.selectors` matches in red, and screenshots the regions. It patches the findings document in place: `finding.screenshot` per captured finding, `theme.screenshot` falling back to the unit base shot. Exit 3 means Playwright is unavailable: skip and continue (the review page degrades to the unit screenshot strip); exit 2 means the page never mounted: note it and continue. Run this BEFORE A6 so the renderer can embed the shots.
+Serves the export locally, loads it in headless Chromium (Playwright resolved from the target repo's node_modules; web-ui repos in scope already depend on @playwright/test), navigates via the sidebar label (or an `--eval` expression using the export's `window.cl*` helpers for detail views), outlines each finding's `spec.selectors` matches in red, and screenshots the regions. It patches the findings document in place: `finding.screenshot` per captured finding, `theme.screenshot` falling back to the unit base shot. Exit 3 means Playwright is unavailable: skip and continue (the review document degrades to no inline shots); exit 2 means the page never mounted: note it and continue. Run this BEFORE A6 so the review body can reference the shots.
 
-**Shot verification (required when captures succeeded).** A wrong screenshot is worse than none: it would anchor the reviewer's decision to the wrong element. After capture, spawn ONE cheap multimodal agent per unit that Reads each captured `shots/CHG-*.png` alongside the finding's title and summary and answers: does the highlighted region plausibly show what the finding describes? Mismatches (or empty/blank highlights) are corrected by removing that finding's `screenshot` field so the card falls back to no image, and noted in the hand-off. Spot-check at minimum the theme-level shots, since those carry the most reviewer weight.
+**Shot verification (required when captures succeeded).** A wrong screenshot is worse than none: it would anchor the reviewer's decision to the wrong element. After ALL units are captured, spawn ONE batched multimodal agent for the whole run: it Reads every captured `shots/CHG-*.png` (and theme base shots) alongside each finding's title and summary and returns a single strip list - the findings whose highlighted region does not plausibly show what the finding describes (or whose highlight is empty/blank). Remove the `screenshot` field for every finding on that strip list so the card falls back to no image, and note them in the hand-off. Do NOT spawn one verifier per unit.
 
-### A6. Render
+### A6. Create the review document
+
+Render the markdown body, create the platform document, substitute inline images, then version it with the final body:
 
 ```bash
-node scripts/dist/render-report.mjs --findings <workdir>/findings --out <report path> \
-    [--export-name <zip name>] [--not-analyzed "unit: reason" ...]
-node scripts/dist/render-review-html.mjs --findings <workdir>/findings \
-    --out <workdir>/review.html --screenshots-dir <workdir>/extracted
+node scripts/dist/render-review-doc.mjs --findings <workdir>/findings --manifest <m> \
+    --out <workdir>/review-body.md --export-name <zip>
 ```
+
+The body uses no numbered lists; every finding/theme heading carries its stable id as a trailing inline code span; images use `attachment://{{path}}` placeholders for later substitution.
+
+1. `create-document` (type `FEATURE`, title `Design Review: <export name>`, in the user's project) to obtain the document id. The review document STAYS DRAFT.
+2. Substitute inline images:
+
+   ```bash
+   node scripts/dist/upload-inline-images.mjs --document-id <id> --api-base $CLOSEDLOOP_API_URL \
+       --body <workdir>/review-body.md --out <workdir>/review-body.final.md \
+       --shots-root <workdir>
+   ```
+
+   The token comes from `CLOSEDLOOP_API_TOKEN`. Run with `--probe-only` FIRST to test capability:
+   - exit 0: inline images are available; run the tool for real to upload shots and write the final body.
+   - exit 3: inline images are unavailable in this environment. Use the ORIGINAL body with image lines stripped (the same tool strips image lines for failed/unavailable uploads); tell the user images were omitted.
+   - exit 4: auth problem. Stop and ask the user.
+3. `create-document-version` with the final body (`review-body.final.md`, or the image-stripped body on exit 3).
 
 ### A7. Hand off
 
-Tell the user: report path, review.html path, summary counts, highest-risk items (likely-unintentional changes to shared components), and a token-cost line aggregated across ALL spawned subagents (sum `usage` from every `agent-*.jsonl` under `~/.claude/projects/<project-slug>/<session-id>/subagents/`; report fresh input, cache reads, and output separately). Do not implement anything; do not create any ticket.
+Tell the user: the review document's `webUrl`, summary counts, highest-risk items (likely-unintentional changes to shared components), how to review (Stage B below), and a token-cost line aggregated across ALL spawned subagents (sum `usage` from every `agent-*.jsonl` under `~/.claude/projects/<project-slug>/<session-id>/subagents/`; report fresh input, cache reads, and output separately). Do not implement anything; do not create any ticket.
 
-## Stage B — Review (human gate)
+## Stage B — Review (human gate, in the document)
 
-Two equivalent modes, same artifact:
+The human edits the Design Review Feature document in the platform - no file handoff:
 
-1. **review.html**: the user opens it, works themes first (accept/decline per theme; member findings inherit unless overridden), then standalone findings ordered by uncertainty; likely-intentional items are pre-accepted (veto model). Export downloads `decisions.json`.
-2. **Interactive triage**: walk the reviewer through themes and uncertain findings in conversation (use AskUserQuestion; screenshots inline), highest-uncertainty first, then write `decisions.json` yourself.
+- **Decline** a change by deleting its section. Deleting a theme's `H3` heading declines all of its member findings; deleting an individual finding's `H4` heading declines just that one.
+- **Amend** a change by editing its "What changes" line.
+- **Accept** a change by leaving its section in place.
 
-Validate: `node scripts/dist/validate-findings.mjs <decisions.json> --kind decisions`. HARD GATE: Stage C never runs without a valid decisions.json. Platform documents cannot embed images - the visual review lives only in review.html or the conversation.
+Survival is judged ONLY from the heading-line id anchors (the trailing inline-code id on each `H3`/`H4`). Ids appearing in bullets, tables, or the Backend gaps rollup do not count. The reviewer does not export anything; Stage C reads the edited document directly.
 
 ## Stage C — Tickets (accepted units only)
 
-### C1. Packs and bodies (deterministic)
+Invocation: `--tickets <workdir> --review-doc <FEA-slug> --project <PRO-slug>`.
 
-For each unit findings file:
+### C1. Derive decisions from the edited document
+
+Fetch the review document's LATEST content via `get-document` (`includeContent: true`, generous `contentMaxChars`) and save it to `<workdir>/review-body.edited.md`. Then:
+
+```bash
+node scripts/dist/derive-decisions-from-doc.mjs --doc <workdir>/review-body.edited.md \
+    --findings <workdir>/findings --out <workdir>/decisions.json \
+    --reviewer "<document assignee/editor, else the user>"
+```
+
+`decisions.json` is INTERNAL pipeline state - never user-facing, never handed to anyone. Survival is judged from heading-line id anchors only.
+
+### C2. Plan the ticket graph (deterministic)
+
+```bash
+node scripts/dist/plan-ticket-graph.mjs --findings <workdir>/findings \
+    --decisions <workdir>/decisions.json --manifest <m> \
+    --out <workdir>/ticket-plan.json
+```
+
+Grouping is per screen: one UI ticket per unit (screens and regions are units; components get NO per-unit tickets), one API ticket per unit only when it has accepted backend-gap findings. Shared net-new components build once in their PRIMARY unit's UI ticket; consumer units reference them. `blocks` edges: an API ticket BLOCKS its unit's UI ticket; a primary UI ticket BLOCKS every consumer UI ticket. There are NO design-system component tickets and NO per-component tickets.
+
+### C3. Packs and bodies (deterministic, per accepted unit)
+
+For each unit with accepted findings:
 
 ```bash
 node scripts/dist/build-design-pack.mjs --findings <workdir>/findings/<unit-id>.json \
-    --decisions <decisions.json> --extract-dir <workdir>/extracted \
+    --decisions <workdir>/decisions.json --extract-dir <workdir>/extracted \
     --out-dir <workdir>/packs --visual-spec <workdir>/specs/<unit-id>.json \
     --css-slice <workdir>/specs/<unit-id>.css
 ```
 
-Exit 3 = nothing accepted for that unit; skip it silently. Otherwise the pack contains design-source/, screenshots/, decision-applied findings.json, visual-spec.json, and ticket-body.md (acceptance criteria from accepted findings, an explicit Declined Changes do-not-implement list, component reuse table, token-resolved visual spec, dependencies).
+Exit 3 = nothing accepted for that unit; skip it silently. Otherwise the pack contains design-source/, screenshots/, decision-applied findings.json, visual-spec.json, `ticket-body-ui.md` (acceptance criteria, an explicit Declined Changes do-not-implement list, component reuse table, token-resolved visual spec, provenance - bullet format, no numbered lists), and `ticket-body-api.md` when the unit has accepted backend-gap findings. The pack stays a workdir-only local artifact; it is never committed, never copied into the repo, and never attached.
 
-### C2. Create DRAFT features (ClosedLoop MCP)
+### C4. Create DRAFT features (ClosedLoop MCP)
 
-For each pack, create one FEATURE document via `create-document` in the user-specified project, title `Implement <unit name> from approved design`, content = ticket-body.md. New documents are DRAFT - that is the second human gate; never advance their status yourself.
+For each ticket in `ticket-plan.json` (UI and API kinds, titles taken from the plan), after the duplicate-title check (C above), create one `FEATURE` document via `create-document` in the user-specified project with the matching ticket body. New documents are DRAFT - that is the second human gate; never advance their status yourself.
 
-Shared-work tickets: collect Dependencies across packs, dedupe, and create one FEA per net-new design-system component ("Build <Component> in the design system") and per backend gap. Link with `create-artifact-link`: prerequisite `BLOCKS` dependent (component/backend FEA blocks each unit FEA that needs it). If the user names an umbrella feature for the design effort, link umbrella `PRODUCES` each created FEA. Links are irreversible - verify direction against an existing example before the first link of a session.
+For each ticket, upload that unit's shots into the ticket's OWN document: run `upload-inline-images.mjs` against the ticket body with `--document-id <ticket doc id>` and `--shots-root <workdir>`, then `create-document-version` with the substituted body. Apply the same probe/degrade rules as A6 (exit 3 = strip image lines and tell the user; exit 4 = stop and ask).
 
-### C3. Attach the design pack
+Then create `BLOCKS` links exactly per `ticket-plan.json`'s `blocks` edges with `create-artifact-link` (prerequisite BLOCKS dependent). Links are irreversible - verify direction against an existing platform example before the first link of a session.
 
-The MCP server has `download-attachment` but no upload tool, so use the repo-stored fallback: copy the pack to `<repo>/.closedloop-ai/design-packs/<FEA-slug>/` and update the ticket body's Design Pack path via `create-document-version`. If/when an attachment-upload tool exists, attach the pack zip to the FEA instead.
+### C5. Report
 
-Durability requirement: packs MUST be committed, or the ticket references a path that exists only on this machine and an implementing agent in a fresh worktree finds nothing. Repos commonly ignore `.closedloop-ai/*` wholesale, so: (1) ensure `.gitignore` carries the exception `!.closedloop-ai/design-packs/` (add it if missing), (2) commit the packs plus the gitignore exception on a branch as part of the Stage C change set, and tell the user it needs to merge before implementation loops run. The inventory caches next door (route-map.json, component-index.json) stay ignored on purpose; they are regenerated every run.
-
-### C4. Report
-
-List created FEAs (slugs + webUrls), dependency links made, skipped units (nothing accepted), pack locations, and the aggregated token cost for the stage.
+List created FEAs (slugs + webUrls), the BLOCKS links made, skipped units (nothing accepted), and the aggregated token cost for the stage. NO design-system component tickets, NO per-component tickets, NO commits.
 
 ## Resources
 
 ### scripts/
 
-TypeScript sources in `src/` (vitest tests co-located as `*.test.ts`), committed bundles in `dist/`:
+TypeScript sources in `src/` (vitest tests co-located as `*.test.ts`), bundles in `dist/`:
 
 - `design-export-extract` (+tests) - deterministic export decomposition: safe unzip, region tagging, typed unit detection, interaction signals (incl. pointer-drag), doc headers, spec overlays, splitting.
 - `build-route-map` (+tests) - route table + chrome map from the repo's router conventions.
 - `build-component-index` (+tests) - Storybook component index enriched with source paths, props, cva variants.
 - `extract-visual-spec` (+tests) - CSS slicing, style extraction, live-token resolution, token drift.
 - `design-findings-schema` (+tests) - findings.json / decisions.json schema and validators; `validate-findings.mjs` is the CLI.
-- `render-report` (+tests) - report renderer from findings (+decisions).
-- `render-review-html` (+tests) - self-contained HTML review page emitting decisions.json.
-- `build-design-pack` (+tests) - per-unit design pack + ticket-body.md for accepted units.
+- `build-context-pack` (+tests) - per-unit single-file context pack for analysts.
+- `capture-design-shots` (+tests) - headless-Chromium highlighted shots of the live design per finding.
+- `render-review-doc` (+tests) - markdown body for the platform Design Review document (id anchors, image placeholders, no numbered lists).
+- `upload-inline-images` (+tests) - uploads shot placeholders to the attachments API and substitutes attachment ids (probe + degrade).
+- `derive-decisions-from-doc` (+tests) - decisions.json from the human-edited review document (heading-anchor survival).
+- `plan-ticket-graph` (+tests) - per-screen UI/API ticket graph with shared-component ownership and BLOCKS edges.
+- `build-design-pack` (+tests) - per-unit design pack + ticket-body-ui.md / ticket-body-api.md for accepted units.

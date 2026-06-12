@@ -120,7 +120,8 @@ jobs:
       - name: Verify committed dist bundles are up to date
         run: |
           npm run build
-          if ! git diff --exit-code -- dist; then
-            echo "::error::scripts/dist is stale. Run 'npm run build' in plugins/code/skills/design-inventory/scripts and commit the result."
+          if ! git diff --exit-code -- dist || [ -n "$(git status --porcelain -- dist)" ]; then
+            git status --porcelain -- dist
+            echo "::error::scripts/dist is stale or contains untracked bundles. Run 'npm run build' in plugins/code/skills/design-inventory/scripts and commit the result."
             exit 1
           fi

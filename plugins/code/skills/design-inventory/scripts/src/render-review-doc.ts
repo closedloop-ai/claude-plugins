@@ -21,7 +21,7 @@ import { validateFindings, type JsonObject } from "./design-findings-schema.js";
 import { runWhenMain } from "./cli.js";
 
 // ---------------------------------------------------------------------------
-// Loading helpers (mirrors render-report.ts patterns)
+// Loading helpers
 // ---------------------------------------------------------------------------
 
 function loadFindingsPaths(paths: string[]): string[] {
