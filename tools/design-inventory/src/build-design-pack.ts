@@ -15,17 +15,52 @@
  * - visual-spec.json: the token-resolved visual spec, when provided.
  * - ticket-body-ui.md: ticket body for the UI implementation ticket (always
  *   written when there are accepted non-backend-gap findings). Contains
- *   acceptance criteria (bullet format), declined list, component reuse table,
- *   visual spec, and a Provenance section. Does NOT contain backend-gap
- *   criteria or numbered lists.
+ *   acceptance criteria (bullet format) with per-criterion State/Spec/Refs
+ *   sub-bullets (the refs carry file:line locations into the embedded design
+ *   source where the geometry lives), inline screenshot placeholders, a declined
+ *   list, a component reuse table, a visual spec, a Provenance section, and an
+ *   embedded "Design Source (embedded)" section that inlines the unit's design
+ *   file(s) and sliced CSS so the ticket is SELF-CONTAINED (implementable from
+ *   the ticket alone, with no access to the workdir, the export, or any pack).
+ *   Does NOT contain backend-gap criteria or numbered lists.
  * - ticket-body-api.md: ticket body for the backend ticket (written only when
  *   there are accepted backend-gap findings). Contains backend-gap criteria
- *   with state/spec detail.
+ *   with State/Spec/Refs detail, plus the same embedded design source so the
+ *   data contract can be derived from what the UI actually reads.
+ *
+ * Design source delivery (--source-mode): "embed" (default) inlines the source
+ * as fenced code blocks; "reference" instead lists each design-source file and
+ * the CSS slice as document attachments the orchestrator uploads from the
+ * pack's design-source/ directory (used when the platform exposes an
+ * attachment-upload tool). Reference mode never reads or size-budgets the
+ * source files. Everything else (criteria detail, placeholders, visual spec,
+ * declined list) is identical in both modes.
+ *
+ * Embedded design source budget: the embedded "Design Source (embedded)" section
+ * is capped at a deterministic EMBED_BUDGET_CHARS (90,000) characters total
+ * across ALL embedded code blocks (every design-source file plus the sliced
+ * CSS). Files are embedded in order until the remaining budget runs out; a file
+ * that would exceed the remaining budget is truncated at a line boundary and a
+ * visible "[truncated: N more lines, M more characters]" marker is appended so
+ * the body stays bounded and reproducible regardless of source size.
+ *
+ * Inline image placeholders: per-finding `attachment://{{path}}` image
+ * placeholders (and a unit base/theme shot at the top of the body) are emitted
+ * for the orchestrator's C4 step to substitute (map mode) or strip (strip mode)
+ * via apply-inline-images. The placeholder syntax matches exactly what
+ * apply-inline-images consumes, and the placeholder paths are RELATIVE:
+ * findings docs commonly carry absolute screenshot paths (capture-design-shots
+ * records the --shots-dir form it was given), which apply-inline-images rejects
+ * in map mode. Pass --shots-root (the run workdir) so absolute paths under it
+ * are relativized; absolute paths elsewhere fall back to the tail starting at
+ * the last "shots/" segment, and a path with no safe relative form omits the
+ * placeholder entirely.
  *
  * Usage:
  *     node build-design-pack.mjs --findings unit.json --decisions decisions.json \
  *         --extract-dir DIR --out-dir packs/ [--visual-spec spec.json] \
- *         [--css-slice slice.css] [--export-zip-name <name>]
+ *         [--css-slice slice.css] [--export-zip-name <name>] [--shots-root DIR] \
+ *         [--source-mode embed|reference]
  *
  * Prints the pack directory on success. Exit codes: 0 ok, 1 input/validation
  * error, 3 nothing accepted for this unit (no pack written).
@@ -46,6 +81,7 @@ import {
   validateFindings,
   type JsonObject,
 } from "./design-findings-schema.js";
+import { normalizeShotPath } from "./shot-path.js";
 import { runWhenMain } from "./cli.js";
 
 const ACCEPTED_STATES = new Set(["accepted", "edited"]);
@@ -177,13 +213,297 @@ function renderVisualSpec(visual: JsonObject): string[] {
   return lines;
 }
 
+const CODE_FENCE_LANG: Record<string, string> = {
+  ".jsx": "jsx",
+  ".tsx": "tsx",
+  ".js": "javascript",
+  ".ts": "typescript",
+  ".css": "css",
+  ".scss": "scss",
+  ".html": "html",
+  ".json": "json",
+  ".svg": "html",
+};
+
+function fenceLang(rel: string): string {
+  const dot = rel.lastIndexOf(".");
+  const ext = dot >= 0 ? rel.slice(dot).toLowerCase() : "";
+  return CODE_FENCE_LANG[ext] ?? "";
+}
+
+// Deterministic total budget for the embedded "Design Source (embedded)"
+// section: at most this many characters across ALL embedded code blocks (every
+// design-source file plus the sliced CSS). Files are embedded in order until
+// the budget is exhausted; a file that would exceed the remaining budget is
+// truncated at a line boundary with a visible marker. This keeps a ticket body
+// bounded and reproducible regardless of how large the source is.
+const EMBED_BUDGET_CHARS = 90_000;
+
+/** A design-source (or CSS slice) text ready to embed, with its display label. */
+interface EmbedSource {
+  /** Heading for the block, e.g. "`ui_kits/app/SessionsPage.jsx`" or the CSS label. */
+  label: string;
+  /** Code-fence language hint (jsx/tsx/css/...); "" when unknown. */
+  lang: string;
+  /** Full file text. */
+  text: string;
+}
+
+/**
+ * Read the unit's design-source files (validated, from the extract dir) and the
+ * sliced CSS into in-memory EmbedSource entries. Done once in main() so the body
+ * renderers stay pure and the same texts back both the UI and API bodies.
+ */
+function readEmbedSources(
+  unit: JsonObject,
+  extractDirPath: string,
+  cssSlicePath: string | undefined,
+): EmbedSource[] {
+  const sources: EmbedSource[] = [];
+  const designSources = Array.isArray(unit["design_sources"])
+    ? (unit["design_sources"] as string[])
+    : [];
+  for (const rel of designSources) {
+    if (!validateManifestPath(rel)) continue;
+    const src = join(extractDirPath, rel);
+    if (!(existsSync(src) && statSync(src).isFile())) continue;
+    sources.push({ label: `\`${rel}\``, lang: fenceLang(rel), text: readFileSync(src, "utf-8") });
+  }
+  if (cssSlicePath && existsSync(cssSlicePath) && statSync(cssSlicePath).isFile()) {
+    sources.push({
+      label: "Sliced CSS (`design-slice.css`)",
+      lang: "css",
+      text: readFileSync(cssSlicePath, "utf-8"),
+    });
+  }
+  return sources;
+}
+
+/**
+ * Truncate `text` to fit `budget` characters at a line boundary and append a
+ * visible marker counting the dropped lines and characters. When the whole text
+ * fits, returns it unchanged with truncated=false.
+ */
+function truncateToBudget(text: string, budget: number): { text: string; truncated: boolean } {
+  if (text.length <= budget) return { text, truncated: false };
+  const lines = text.split("\n");
+  const kept: string[] = [];
+  let used = 0;
+  let i = 0;
+  for (; i < lines.length; i++) {
+    // +1 for the newline that re-joins this line to the next.
+    const cost = lines[i]!.length + 1;
+    if (used + cost > budget) break;
+    kept.push(lines[i]!);
+    used += cost;
+  }
+  const droppedLines = lines.length - kept.length;
+  const droppedChars = text.length - kept.join("\n").length;
+  const body = kept.join("\n");
+  const marker = `[truncated: ${droppedLines} more lines, ${droppedChars} more characters]`;
+  return { text: body === "" ? marker : `${body}\n${marker}`, truncated: true };
+}
+
+/**
+ * Render the embedded "Design Source (embedded)" appendix from pre-read sources.
+ *
+ * Inlines the unit's design source file(s) and the sliced CSS directly into the
+ * ticket body so the ticket is SELF-CONTAINED: an implementing agent in a fresh
+ * worktree, with only the ticket, has the lossless visual/structural reference
+ * and never needs the original export, the workdir, or a never-delivered pack.
+ *
+ * A deterministic EMBED_BUDGET_CHARS budget is shared across every embedded
+ * block; a file that would exceed the remaining budget is truncated at a line
+ * boundary with a visible marker. Four-backtick fences guard against
+ * three-backtick sequences inside the source breaking out of the block. Returns
+ * [] when no readable source exists.
+ */
+function renderDesignSourceAppendix(sources: EmbedSource[]): string[] {
+  if (sources.length === 0) return [];
+  const blocks: string[] = [];
+  let remaining = EMBED_BUDGET_CHARS;
+  for (const source of sources) {
+    const { text, truncated } = truncateToBudget(source.text, remaining);
+    remaining -= text.length;
+    if (remaining < 0) remaining = 0;
+    blocks.push(`### ${source.label}`, "");
+    blocks.push("````" + source.lang, text, "````");
+    if (truncated) {
+      blocks.push("", "_(embedded source truncated to stay within the ticket budget)_");
+    }
+    blocks.push("");
+  }
+  return [
+    "## Design Source (embedded)",
+    "",
+    "The design prototype source for this unit is embedded below so this ticket is " +
+    "self-contained: implement from the ticket alone, with no access to the original " +
+    "export, the run workdir, or any external pack. This is a REFERENCE, not the spec:",
+    "",
+    "- Scope is the Acceptance Criteria above, never the source. Anything in the Declined " +
+    "Changes list still appears in this source; do not implement it.",
+    "- This is a standalone prototype (mock data, `window.*` globals, hardcoded values). " +
+    "Mirror the structure, layout, and visual styling; wire real data per the Acceptance " +
+    "Criteria and the backend ticket. Resolve raw color and spacing values to the tokens in " +
+    "the Visual Spec above; never copy a raw value the spec maps to a token.",
+    "",
+    ...blocks,
+  ];
+}
+
+/** How the ticket body delivers the design source. */
+export const SourceMode = {
+  /** Inline the source as budgeted fenced code blocks (default; self-contained body). */
+  Embed: "embed",
+  /** Reference the source as document attachments the orchestrator uploads. */
+  Reference: "reference",
+} as const;
+export type SourceMode = (typeof SourceMode)[keyof typeof SourceMode];
+
+/**
+ * Render the "Design Source (attached)" section for --source-mode reference.
+ *
+ * Instead of embedding code, lists each design-source file and the CSS slice as
+ * attachments on the ticket document; the orchestrator uploads them from the
+ * pack's design-source/ directory under these exact names. Never reads file
+ * contents (no budget, no truncation) -- it only checks which files exist so the
+ * list matches what the orchestrator will actually upload. Returns [] when no
+ * source exists.
+ */
+function renderDesignSourceReference(
+  unit: JsonObject,
+  extractDirPath: string,
+  cssSlicePath: string | undefined,
+): string[] {
+  const names: string[] = [];
+  const designSources = Array.isArray(unit["design_sources"])
+    ? (unit["design_sources"] as string[])
+    : [];
+  for (const rel of designSources) {
+    if (!validateManifestPath(rel)) continue;
+    const src = join(extractDirPath, rel);
+    if (!(existsSync(src) && statSync(src).isFile())) continue;
+    names.push(rel);
+  }
+  if (cssSlicePath && existsSync(cssSlicePath) && statSync(cssSlicePath).isFile()) {
+    names.push("design-slice.css");
+  }
+  if (names.length === 0) return [];
+  return [
+    "## Design Source (attached)",
+    "",
+    "The design prototype source for this unit is attached to this document rather than " +
+    "embedded in the body. Retrieve each file with the platform's download-attachment tool " +
+    "(use list-attachments on this document to get the attachment ids). This is a " +
+    "REFERENCE, not the spec:",
+    "",
+    "- Scope is governed by the Acceptance Criteria above and the Declined Changes list, " +
+    "never by the source. Anything declined still appears in the attached source; do not " +
+    "implement it.",
+    "- The source is a standalone prototype (mock data, `window.*` globals, hardcoded " +
+    "values). Mirror the structure, layout, and visual styling; wire real data per the " +
+    "Acceptance Criteria and the backend ticket. Resolve raw color and spacing values to " +
+    "the tokens in the Visual Spec above; never copy a raw value the spec maps to a token.",
+    "",
+    ...names.map((n) => `- attached to this document as \`${n}\``),
+    "",
+  ];
+}
+
+/**
+ * Build an inline image placeholder line for a screenshot path, using EXACTLY
+ * the `![alt](attachment://{{path}})` syntax apply-inline-images consumes. The
+ * orchestrator's C4 step later substitutes the path with an attachment id (map
+ * mode) or strips the line (strip mode).
+ *
+ * The raw path is normalized via normalizeShotPath (absolute paths are the
+ * common case in findings docs because capture-design-shots records whatever
+ * --shots-dir form it was given). Returns null when no placeholder-safe
+ * relative form exists; the caller omits the line, because apply-inline-images
+ * would reject (strip) an absolute or ".."-containing path in map mode anyway.
+ */
+function imagePlaceholder(path: string, alt: string, shotsRoot?: string): string | null {
+  const normalized = normalizeShotPath(path, shotsRoot);
+  if (normalized === null) return null;
+  return `![${alt}](attachment://{{${normalized}}})`;
+}
+
+/**
+ * Emit the per-criterion sub-bullets for a finding: State, Spec, and a combined
+ * Refs line. State/Spec carry the visual geometry; Refs join state.refs +
+ * spec.refs, which point file:line into the embedded design source. Indented two
+ * spaces so they nest under the criterion bullet.
+ */
+function criterionDetailLines(finding: JsonObject): string[] {
+  const out: string[] = [];
+  const state = (finding["state"] as JsonObject | undefined) ?? {};
+  const spec = (finding["spec"] as JsonObject | undefined) ?? {};
+  if (state["summary"]) {
+    out.push(`  - State: ${String(state["summary"])}`);
+  }
+  if (spec["summary"]) {
+    out.push(`  - Spec: ${String(spec["summary"])}`);
+  }
+  const stateRefs = Array.isArray(state["refs"]) ? (state["refs"] as string[]) : [];
+  const specRefs = Array.isArray(spec["refs"]) ? (spec["refs"] as string[]) : [];
+  const refs = [...stateRefs, ...specRefs].filter((r) => typeof r === "string" && r.length > 0);
+  if (refs.length > 0) {
+    out.push(`  - Refs: ${refs.map((r) => `\`${r}\``).join(", ")}`);
+  }
+  return out;
+}
+
+/**
+ * Emit a finding's criterion bullet, its State/Spec/Refs sub-bullets, and -- for
+ * non-backend findings with a string `screenshot` -- an inline image placeholder
+ * sub-bullet. The placeholder is consumed by apply-inline-images at C4; its path
+ * is relativized against shotsRoot (omitted when no safe relative form exists).
+ */
+function criterionBlock(
+  finding: JsonObject,
+  decisions: Record<string, JsonObject>,
+  withScreenshot: boolean,
+  shotsRoot?: string,
+): string[] {
+  const out: string[] = [`- (${String(finding["id"])}) ${criterionText(finding, decisions)}`];
+  out.push(...criterionDetailLines(finding));
+  const screenshot = finding["screenshot"];
+  if (withScreenshot && typeof screenshot === "string" && screenshot.length > 0) {
+    const placeholder = imagePlaceholder(
+      screenshot,
+      `${String(finding["id"])} design region`,
+      shotsRoot,
+    );
+    if (placeholder !== null) {
+      out.push(`  ${placeholder}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Find the unit base/theme shot from the findings doc, when one was captured.
+ * The capture step propagates the unit base shot onto theme.screenshot, so the
+ * first theme with a screenshot is the best available top-of-body shot.
+ */
+function unitBaseShot(doc: JsonObject): string | null {
+  const themes = Array.isArray(doc["themes"]) ? (doc["themes"] as JsonObject[]) : [];
+  for (const theme of themes) {
+    const shot = theme["screenshot"];
+    if (typeof shot === "string" && shot.length > 0) return shot;
+  }
+  return null;
+}
+
 /**
  * Render the UI ticket body (ticket-body-ui.md).
  *
  * Covers all accepted non-backend-gap findings. Uses bullet acceptance criteria
- * (never numbered lists). Includes declined list, component reuse table, visual
- * spec, and a Provenance section. Does NOT include backend-gap criteria and
- * does NOT include a Dependencies section with backend lines.
+ * (never numbered lists) with State/Spec/Refs sub-bullets and inline screenshot
+ * placeholders. Includes declined list, component reuse table, visual spec, the
+ * design source (embedded or attached per designSourceSection/sourceMode), and a
+ * Provenance section. Does NOT include backend-gap criteria and does NOT include
+ * a Dependencies section with backend lines.
  */
 function renderUiTicketBody(
   doc: JsonObject,
@@ -193,6 +513,9 @@ function renderUiTicketBody(
   pending: JsonObject[],
   visual: JsonObject | null,
   exportZipName: string | undefined,
+  designSourceSection: string[],
+  sourceMode: SourceMode,
+  shotsRoot?: string,
 ): string {
   const unit = doc["unit"] as JsonObject;
   const impl = unit["current_impl"] as JsonObject;
@@ -214,9 +537,11 @@ function renderUiTicketBody(
     stateLine += ` Route: \`${String(impl["route"])}\`.`;
   }
   lines.push(stateLine);
+  const sourceWhere = sourceMode === SourceMode.Reference
+    ? "attached to this document; see the Design Source section below"
+    : "embedded for reference in the Design Source section below";
   lines.push(
-    `Design source (visual reference, in the attached design pack): ` +
-    `\`${String(unit["primary_source"])}\`.`
+    `Design source (${sourceWhere}): \`${String(unit["primary_source"])}\`.`
   );
   if (unit["duplication_note"]) {
     lines.push(`Note: ${String(unit["duplication_note"])}`);
@@ -227,19 +552,30 @@ function renderUiTicketBody(
     lines.push("");
   }
 
+  const baseShot = unitBaseShot(doc);
+  const basePlaceholder = baseShot
+    ? imagePlaceholder(baseShot, `${String(unit["name"])} design`, shotsRoot)
+    : null;
+  if (basePlaceholder !== null) {
+    lines.push(basePlaceholder);
+    lines.push("");
+  }
+
   lines.push("## Acceptance Criteria (reviewed and accepted)");
   lines.push("");
   for (const finding of acceptedNonBackend) {
-    lines.push(`- (${String(finding["id"])}) ${criterionText(finding, decisions)}`);
+    lines.push(...criterionBlock(finding, decisions, true, shotsRoot));
   }
   lines.push("");
 
   if (declined.length > 0) {
     lines.push("## Declined Changes — DO NOT IMPLEMENT");
     lines.push("");
+    const sourceCarrier = sourceMode === SourceMode.Reference
+      ? "The design source attached to this document still contains these."
+      : "The embedded design source below still contains these.";
     lines.push(
-      "The attached design source still contains these. They were reviewed and " +
-      "declined; do not mirror them:"
+      `${sourceCarrier} They were reviewed and declined; do not mirror them:`
     );
     lines.push("");
     for (const finding of declined) {
@@ -323,12 +659,16 @@ function renderUiTicketBody(
     lines.push("");
   }
 
+  lines.push(...designSourceSection);
+
   lines.push("## Provenance");
   lines.push("");
   const exportRef = exportZipName ? `from ${exportZipName}` : "from the design export";
+  const sourceForm = sourceMode === SourceMode.Reference ? "attached" : "embedded";
   lines.push(
-    `Generated by design-inventory Stage A ${exportRef}. ` +
-    "Analysis artifacts live in the run workdir and are regenerable."
+    `Generated by design-inventory Stage C ${exportRef}; this ticket is self-contained ` +
+    `(${sourceForm} design source, refs, visual spec); the run workdir is a regenerable ` +
+    "convenience, not a dependency."
   );
   lines.push("");
   return lines.join("\n");
@@ -337,14 +677,17 @@ function renderUiTicketBody(
 /**
  * Render the API ticket body (ticket-body-api.md).
  *
- * Covers accepted backend-gap findings only. Includes state/spec summaries and
- * declined backend-gap findings when present.
+ * Covers accepted backend-gap findings only. Includes State/Spec/Refs detail and
+ * declined backend-gap findings when present, plus the same design source as
+ * the UI body (embedded or attached per designSourceSection/sourceMode).
  */
 function renderApiTicketBody(
   doc: JsonObject,
   decisions: Record<string, JsonObject>,
   acceptedBackend: JsonObject[],
   declinedBackend: JsonObject[],
+  designSourceSection: string[],
+  sourceMode: SourceMode,
 ): string {
   const unit = doc["unit"] as JsonObject;
   const impl = unit["current_impl"] as JsonObject;
@@ -367,15 +710,8 @@ function renderApiTicketBody(
   lines.push("## Acceptance Criteria (backend-gap)");
   lines.push("");
   for (const finding of acceptedBackend) {
-    lines.push(`- (${String(finding["id"])}) ${criterionText(finding, decisions)}`);
-    const state = (finding["state"] as JsonObject | undefined) ?? {};
-    const spec = (finding["spec"] as JsonObject | undefined) ?? {};
-    if (state["summary"]) {
-      lines.push(`  - State: ${String(state["summary"])}`);
-    }
-    if (spec["summary"]) {
-      lines.push(`  - Spec: ${String(spec["summary"])}`);
-    }
+    // Backend findings carry no screenshot placeholder (no UI region to show).
+    lines.push(...criterionBlock(finding, decisions, false));
   }
   lines.push("");
 
@@ -386,6 +722,19 @@ function renderApiTicketBody(
       lines.push(`- (${String(finding["id"])}) ${String(finding["summary"])}`);
     }
     lines.push("");
+  }
+
+  if (designSourceSection.length > 0) {
+    const sourceWhere = sourceMode === SourceMode.Reference
+      ? "attached to this document (see the Design Source section below)"
+      : "embedded below";
+    lines.push(
+      `The UI prototype source that consumes this backend is ${sourceWhere}. Use it to ` +
+      "derive the exact field names, shapes, and enum values the frontend reads, so the " +
+      "data contract matches what the design renders.",
+      "",
+    );
+    lines.push(...designSourceSection);
   }
 
   return lines.join("\n");
@@ -402,6 +751,8 @@ export function main(argv: string[]): number {
       "visual-spec": { type: "string" },
       "css-slice": { type: "string" },
       "export-zip-name": { type: "string" },
+      "shots-root": { type: "string" },
+      "source-mode": { type: "string", default: SourceMode.Embed },
     },
   });
 
@@ -414,6 +765,15 @@ export function main(argv: string[]): number {
     console.error("error: --findings, --decisions, --extract-dir, and --out-dir are required");
     return 1;
   }
+
+  const sourceModeRaw = values["source-mode"] ?? SourceMode.Embed;
+  if (sourceModeRaw !== SourceMode.Embed && sourceModeRaw !== SourceMode.Reference) {
+    console.error(
+      `error: --source-mode must be '${SourceMode.Embed}' or '${SourceMode.Reference}'`
+    );
+    return 1;
+  }
+  const sourceMode: SourceMode = sourceModeRaw;
 
   let doc: unknown;
   let decisionsDoc: unknown;
@@ -529,6 +889,14 @@ export function main(argv: string[]): number {
   }
 
   const exportZipName = values["export-zip-name"];
+  const shotsRoot = values["shots-root"];
+
+  // Render the Design Source section once; both bodies carry the same section.
+  // Embed mode reads the design-source texts + CSS slice (budgeted); reference
+  // mode only lists attachment names and never reads file contents.
+  const designSourceSection = sourceMode === SourceMode.Reference
+    ? renderDesignSourceReference(unit, extractDirPath, cssSlicePath)
+    : renderDesignSourceAppendix(readEmbedSources(unit, extractDirPath, cssSlicePath));
 
   // Write ticket-body-ui.md when there are accepted non-backend-gap findings
   if (acceptedNonBackend.length > 0) {
@@ -540,6 +908,9 @@ export function main(argv: string[]): number {
       pending,
       visual,
       exportZipName,
+      designSourceSection,
+      sourceMode,
+      shotsRoot,
     );
     writeFileSync(join(packDir, "ticket-body-ui.md"), uiBody, "utf-8");
   }
@@ -551,6 +922,8 @@ export function main(argv: string[]): number {
       decisions,
       acceptedBackend,
       declinedBackend,
+      designSourceSection,
+      sourceMode,
     );
     writeFileSync(join(packDir, "ticket-body-api.md"), apiBody, "utf-8");
   }

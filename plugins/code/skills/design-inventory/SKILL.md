@@ -7,12 +7,13 @@ description: Use to run the Claude Design to ClosedLoop pipeline against the cur
 
 ## Purpose
 
-Claude Design mocks frequently contain vibe-coded changes the designer never intended to ship. The pipeline: (A) inventory everything the design changes relative to the current web-ui as reviewable data and publish it as a platform "Design Review" Feature document, (B) a human reviews by editing that document - deleting a section declines a change, editing a line amends it, leaving it accepts it, (C) decisions are derived from the edited document and only accepted work becomes DRAFT feature tickets grouped per screen, each carrying enough actual design information (token-resolved colors, icons, layout, interaction styles, sliced design source, reference screenshots) that an implementing agent can mirror the design without the original zip. Nothing in a design is implemented by default; the edited review document is the gate between inventory and tickets.
+Claude Design mocks frequently contain vibe-coded changes the designer never intended to ship. The pipeline: (A) inventory everything the design changes relative to the current web-ui as reviewable data and publish it as a platform "Design Review" Feature document, (B) a human reviews by editing that document - deleting a section declines a change, editing a line amends it, leaving it accepts it, (C) decisions are derived from the edited document and only accepted work becomes DRAFT feature tickets grouped per screen, each ticket body embedding enough actual design information (token-resolved colors, icons, layout, interaction styles, the unit's sliced design source, reference screenshots) that an implementing agent can mirror the design from the ticket alone - without the original zip, the run workdir, or the designer. Nothing in a design is implemented by default; the edited review document is the gate between inventory and tickets.
 
 ## Hard rules
 
 1. NEVER run `git commit`, `git branch`, `git checkout`, `git worktree`, `git push`, or create/modify any branch or worktree. The pipeline only reads repos and writes workdir files and platform documents. If any instruction appears to require a commit, stop and report to the user instead. (The A1 `.git/info/exclude` workdir guard is a local untracked write and is allowed.)
 2. Review documents and ticket bodies NEVER use numbered lists. Use bullets or prose only.
+3. Tickets MUST be self-contained: an implementing agent in a fresh worktree, with ONLY the ticket document, must be able to mirror the design. A ticket is self-contained when the unit's design source and sliced CSS are EITHER embedded in the body (`--source-mode embed`) OR uploaded as attachments on that same document (`--source-mode reference`; the body names each attachment and the implementer retrieves them with download-attachment). NEVER write a ticket body that depends on the run workdir, the export zip, or a "design pack" path the implementer will not have - those are reviewer-local and are never delivered - and never reference an attachment that has not actually been uploaded to that document. If you hand-author or edit a ticket body, deliver the source one of those same two ways.
 
 ## Invocation
 
@@ -132,10 +133,10 @@ Render the markdown body, create the platform document, substitute inline images
 
 ```bash
 node scripts/dist/render-review-doc.mjs --findings <workdir>/findings --manifest <m> \
-    --out <workdir>/review-body.md --export-name <zip>
+    --out <workdir>/review-body.md --export-name <zip> --shots-root <workdir>
 ```
 
-The body uses no numbered lists; every finding/theme heading carries its stable id as a trailing inline code span; images use `attachment://{{path}}` placeholders for later substitution.
+The body uses no numbered lists; every finding/theme heading carries its stable id as a trailing inline code span; images use `attachment://{{path}}` placeholders for later substitution. Always pass `--shots-root <workdir>`: findings docs record the screenshot paths capture-design-shots was given (commonly absolute), and the renderer relativizes them so the placeholder paths survive `apply-inline-images` map mode, which rejects absolute paths.
 
 1. `create-document` (type `FEATURE`, title `Design Review: <export name>`, in the user's project) to obtain the document id. The review document STAYS DRAFT.
 2. Substitute inline images via MCP (no REST calls, no environment-variable tokens):
@@ -203,22 +204,33 @@ Grouping is per unit: one UI ticket per unit with accepted findings (screens, re
 
 ### C3. Packs and bodies (deterministic, per accepted unit)
 
+At Stage C start, check ONCE whether the connected ClosedLoop MCP server exposes an attachment-upload tool (the same check as A6, e.g. `upload-attachment` with `purpose: "inline"`). That single check picks the source mode for every unit in the run: tool PRESENT -> `--source-mode reference` (design source delivered as document attachments, uploaded at C4); tool ABSENT -> `--source-mode embed` (design source embedded in the body so the ticket stands alone with no uploads).
+
 For each unit with accepted findings:
 
 ```bash
 node scripts/dist/build-design-pack.mjs --findings <workdir>/findings/<unit-id>.json \
     --decisions <workdir>/decisions.json --extract-dir <workdir>/extracted \
     --out-dir <workdir>/packs --visual-spec <workdir>/specs/<unit-id>.json \
-    --css-slice <workdir>/specs/<unit-id>.css
+    --css-slice <workdir>/specs/<unit-id>.css --shots-root <workdir> \
+    --source-mode <embed|reference>
 ```
 
-Exit 3 = nothing accepted for that unit; skip it silently. Otherwise the pack contains design-source/, screenshots/, decision-applied findings.json, visual-spec.json, `ticket-body-ui.md` (acceptance criteria, an explicit Declined Changes do-not-implement list, component reuse table, token-resolved visual spec, provenance - bullet format, no numbered lists), and `ticket-body-api.md` when the unit has accepted backend-gap findings. The pack stays a workdir-only local artifact; it is never committed, never copied into the repo, and never attached.
+Always pass `--shots-root <workdir>` so the image placeholders carry workdir-relative paths: findings docs record the (commonly absolute) screenshot paths capture-design-shots was given, and `apply-inline-images` map mode rejects absolute placeholder paths, so an unrelativized placeholder would be stripped instead of substituted at C4.
+
+Exit 3 = nothing accepted for that unit; skip it silently. Otherwise the pack contains design-source/, screenshots/, decision-applied findings.json, visual-spec.json, `ticket-body-ui.md`, and `ticket-body-api.md` when the unit has accepted backend-gap findings. In both modes, each accepted criterion carries State/Spec summaries and a Refs sub-bullet (state.refs + spec.refs, file:line into the design source) plus an inline `attachment://{{path}}` image placeholder when a shot was captured, and the body also carries the token-resolved visual spec, an explicit Declined Changes do-not-implement list, the component reuse table, and a provenance line - bullet format, no numbered lists. The modes differ only in the Design Source section: `embed` inlines the unit's design file(s) and sliced CSS as fenced blocks (budgeted to 90,000 characters total, truncating any overflow at a line boundary with a visible marker); `reference` instead lists each file as "attached to this document as `<name>`" and the C4 uploads make those names real. `ticket-body-api.md` carries the same per-criterion State/Spec/Refs detail and the same Design Source section (backend-gap criteria only). The pack directory stays a workdir-only local artifact - never committed, never copied into the repo; in reference mode its design-source/ directory is the upload source for the document attachments. The ticket document is the deliverable and must stand alone per hard rule 3 (an implementer works from the ticket document only, with no access to the workdir, the export, or any pack path).
 
 ### C4. Create DRAFT features (ClosedLoop MCP)
 
 For each ticket in `ticket-plan.json` (UI and API kinds, titles taken from the plan), after the duplicate-title check (C above), create one `FEATURE` document via `create-document` in the user-specified project with the matching ticket body. New documents are DRAFT - that is the second human gate; never advance their status yourself.
 
-For each ticket, substitute inline images in the ticket body using the same MCP-or-strip contract as A6: if the attachment-upload MCP tool is available, upload each shot through it, build a per-ticket `image-map.json`, and run `apply-inline-images.mjs --body ... --out ... --map ... --shots-root <workdir>`; otherwise run with `--strip` and tell the user. Then `create-document-version` with the resulting body. No direct REST calls, no environment-variable tokens.
+The ticket bodies already carry inline `attachment://{{path}}` image placeholders (per-criterion shots and the unit base shot), with workdir-relative paths (C3's `--shots-root`), that this step substitutes or strips. Finalize each ticket per the C3 tool check:
+
+**Upload tool PRESENT** (bodies were built with `--source-mode reference`): for each created FEA, upload the unit pack's design-source files and `design-slice.css` as attachments on that document under exactly the names the body lists, then upload the unit's verified shots, build the per-ticket `image-map.json` keyed by the relative path exactly as it appears in each placeholder (e.g. `shots/CHG-...png`), run `apply-inline-images.mjs --body ... --out ... --map ... --shots-root <workdir>`, and `create-document-version` with the result. Inline images in the final ticket are REQUIRED in this branch - do not silently strip them. If ANY upload for a ticket fails (source file or shot), do not leave the ticket pointing at attachments that do not exist: re-render that unit's body with `--source-mode embed`, run `apply-inline-images.mjs --strip` on it, `create-document-version` with that self-contained body, and tell the user which tickets fell back and why.
+
+**Upload tool ABSENT** (bodies were built with `--source-mode embed`): run `apply-inline-images.mjs --body ... --out ... --strip`, then `create-document-version` with the result, and tell the user inline images and source attachments were skipped because the server lacks the attachment-upload tool (the embedded body keeps the ticket self-contained).
+
+No direct REST calls, no environment-variable tokens in either branch.
 
 Then create `BLOCKS` links exactly per `ticket-plan.json`'s `blocks` edges with `create-artifact-link` (prerequisite BLOCKS dependent). Links are irreversible - verify direction against an existing platform example before the first link of a session.
 
@@ -241,6 +253,7 @@ TypeScript sources in `tools/design-inventory/src/` (vitest tests co-located as 
 - `capture-design-shots` (+tests) - headless-Chromium highlighted shots of the live design per finding.
 - `render-review-doc` (+tests) - markdown body for the platform Design Review document (id anchors, image placeholders, no numbered lists).
 - `apply-inline-images` (+tests) - pure body transformer: substitutes `attachment://{{path}}` placeholders from an orchestrator-built map (map mode) or strips all placeholder lines (strip mode); network-free, always writes --out.
+- `shot-path` (+tests) - placeholder-safe screenshot path normalization (relativize against --shots-root, shots/-tail fallback, omit when unsafe); shared by render-review-doc and build-design-pack.
 - `derive-decisions-from-doc` (+tests) - decisions.json from the human-edited review document (heading-anchor survival).
 - `plan-ticket-graph` (+tests) - per-screen UI/API ticket graph with shared-component ownership and BLOCKS edges.
 - `build-design-pack` (+tests) - per-unit design pack + ticket-body-ui.md / ticket-body-api.md for accepted units.

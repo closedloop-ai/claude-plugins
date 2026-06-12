@@ -191,6 +191,64 @@ describe("render-review-doc", () => {
     expect(text).toContain("![design region](attachment://{{screenshots/sessions-topbar.png}})");
   });
 
+  it("absolute screenshot paths are relativized against --shots-root", () => {
+    const { tmpPath, manifestPath, outPath } = setupEnv();
+    const workdir = join(tmpPath, "workdir");
+
+    const doc = fixtureWithScreenshot();
+    const first = (doc["findings"] as JsonObject[])[0] as JsonObject;
+    first["screenshot"] = join(workdir, "shots/CHG-sessions-page-01.png");
+    const theme = (doc["themes"] as JsonObject[])[0] as JsonObject;
+    theme["screenshot"] = join(workdir, "shots/thm-artifact-table.png");
+
+    const findingsDirAbs = join(tmpPath, "findings-abs");
+    mkdirSync(findingsDirAbs, { recursive: true });
+    writeFileSync(join(findingsDirAbs, "scr-sessions-page.json"), JSON.stringify(doc), "utf-8");
+    writeFileSync(join(findingsDirAbs, "scr-legacy-page.json"), JSON.stringify(deprecatedDoc()), "utf-8");
+
+    const rc = main([
+      "--findings", findingsDirAbs,
+      "--manifest", manifestPath,
+      "--out", outPath,
+      "--shots-root", workdir,
+    ]);
+    expect(rc).toBe(0);
+    const text = readFileSync(outPath, "utf-8");
+    expect(text).toContain("![design region](attachment://{{shots/CHG-sessions-page-01.png}})");
+    expect(text).toContain("![design region](attachment://{{shots/thm-artifact-table.png}})");
+    // No absolute placeholder path survives (apply-inline-images would strip it).
+    expect(text).not.toMatch(/attachment:\/\/\{\{\//);
+  });
+
+  it("absolute screenshot path outside --shots-root falls back to the shots/ tail; no shots/ segment omits the image", () => {
+    const { tmpPath, manifestPath, outPath } = setupEnv();
+
+    const doc = fixtureWithScreenshot();
+    const first = (doc["findings"] as JsonObject[])[0] as JsonObject;
+    first["screenshot"] = "/elsewhere/run/shots/CHG-sessions-page-01.png";
+    const theme = (doc["themes"] as JsonObject[])[0] as JsonObject;
+    theme["screenshot"] = "/elsewhere/captures/thm-artifact-table.png"; // no shots/ segment
+
+    const findingsDirOut = join(tmpPath, "findings-out");
+    mkdirSync(findingsDirOut, { recursive: true });
+    writeFileSync(join(findingsDirOut, "scr-sessions-page.json"), JSON.stringify(doc), "utf-8");
+    writeFileSync(join(findingsDirOut, "scr-legacy-page.json"), JSON.stringify(deprecatedDoc()), "utf-8");
+
+    const rc = main([
+      "--findings", findingsDirOut,
+      "--manifest", manifestPath,
+      "--out", outPath,
+      "--shots-root", join(tmpPath, "workdir"),
+    ]);
+    expect(rc).toBe(0);
+    const text = readFileSync(outPath, "utf-8");
+    // Outside-root path falls back to the shots/ tail.
+    expect(text).toContain("![design region](attachment://{{shots/CHG-sessions-page-01.png}})");
+    // No safe relative form -> image line omitted entirely.
+    expect(text).not.toContain("thm-artifact-table.png");
+    expect(text).not.toMatch(/attachment:\/\/\{\{\//);
+  });
+
   it("recommendation derived from intent when recommendation field is absent", () => {
     const { tmpPath, manifestPath, outPath } = setupEnv();
 

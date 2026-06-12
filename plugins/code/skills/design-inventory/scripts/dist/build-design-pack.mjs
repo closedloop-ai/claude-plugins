@@ -2,7 +2,7 @@
 
 // src/build-design-pack.ts
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, normalize } from "node:path";
+import { dirname, isAbsolute as isAbsolute2, join, normalize } from "node:path";
 import { parseArgs } from "node:util";
 
 // src/design-findings-schema.ts
@@ -288,6 +288,31 @@ function effectiveDecision(finding, decisions) {
   return "pending";
 }
 
+// src/shot-path.ts
+import { isAbsolute, relative, resolve } from "node:path";
+function pathSegments(p) {
+  return p.split(/[\\/]/).filter((segment) => segment.length > 0);
+}
+function shotsTail(p) {
+  const parts = pathSegments(p);
+  const idx = parts.lastIndexOf("shots");
+  if (idx < 0) return null;
+  return parts.slice(idx).join("/");
+}
+function normalizeShotPath(shotPath, shotsRoot) {
+  if (!isAbsolute(shotPath)) {
+    if (!pathSegments(shotPath).includes("..")) return shotPath;
+    return shotsTail(shotPath);
+  }
+  if (shotsRoot) {
+    const rel = relative(resolve(shotsRoot), resolve(shotPath));
+    if (rel !== "" && !isAbsolute(rel) && !pathSegments(rel).includes("..")) {
+      return rel.split("\\").join("/");
+    }
+  }
+  return shotsTail(shotPath);
+}
+
 // src/cli.ts
 import { pathToFileURL } from "node:url";
 function runWhenMain(metaUrl, main2) {
@@ -306,7 +331,7 @@ function runWhenMain(metaUrl, main2) {
 // src/build-design-pack.ts
 var ACCEPTED_STATES = /* @__PURE__ */ new Set(["accepted", "edited"]);
 function validateManifestPath(rel) {
-  if (isAbsolute(rel)) return false;
+  if (isAbsolute2(rel)) return false;
   const norm = normalize(rel);
   const parts = norm.split(/[\\/]/);
   return !parts.includes("..");
@@ -402,7 +427,165 @@ function renderVisualSpec(visual) {
   lines.push("");
   return lines;
 }
-function renderUiTicketBody(doc, decisions, acceptedNonBackend, declined, pending, visual, exportZipName) {
+var CODE_FENCE_LANG = {
+  ".jsx": "jsx",
+  ".tsx": "tsx",
+  ".js": "javascript",
+  ".ts": "typescript",
+  ".css": "css",
+  ".scss": "scss",
+  ".html": "html",
+  ".json": "json",
+  ".svg": "html"
+};
+function fenceLang(rel) {
+  const dot = rel.lastIndexOf(".");
+  const ext = dot >= 0 ? rel.slice(dot).toLowerCase() : "";
+  return CODE_FENCE_LANG[ext] ?? "";
+}
+var EMBED_BUDGET_CHARS = 9e4;
+function readEmbedSources(unit, extractDirPath, cssSlicePath) {
+  const sources = [];
+  const designSources = Array.isArray(unit["design_sources"]) ? unit["design_sources"] : [];
+  for (const rel of designSources) {
+    if (!validateManifestPath(rel)) continue;
+    const src = join(extractDirPath, rel);
+    if (!(existsSync(src) && statSync(src).isFile())) continue;
+    sources.push({ label: `\`${rel}\``, lang: fenceLang(rel), text: readFileSync(src, "utf-8") });
+  }
+  if (cssSlicePath && existsSync(cssSlicePath) && statSync(cssSlicePath).isFile()) {
+    sources.push({
+      label: "Sliced CSS (`design-slice.css`)",
+      lang: "css",
+      text: readFileSync(cssSlicePath, "utf-8")
+    });
+  }
+  return sources;
+}
+function truncateToBudget(text, budget) {
+  if (text.length <= budget) return { text, truncated: false };
+  const lines = text.split("\n");
+  const kept = [];
+  let used = 0;
+  let i = 0;
+  for (; i < lines.length; i++) {
+    const cost = lines[i].length + 1;
+    if (used + cost > budget) break;
+    kept.push(lines[i]);
+    used += cost;
+  }
+  const droppedLines = lines.length - kept.length;
+  const droppedChars = text.length - kept.join("\n").length;
+  const body = kept.join("\n");
+  const marker = `[truncated: ${droppedLines} more lines, ${droppedChars} more characters]`;
+  return { text: body === "" ? marker : `${body}
+${marker}`, truncated: true };
+}
+function renderDesignSourceAppendix(sources) {
+  if (sources.length === 0) return [];
+  const blocks = [];
+  let remaining = EMBED_BUDGET_CHARS;
+  for (const source of sources) {
+    const { text, truncated } = truncateToBudget(source.text, remaining);
+    remaining -= text.length;
+    if (remaining < 0) remaining = 0;
+    blocks.push(`### ${source.label}`, "");
+    blocks.push("````" + source.lang, text, "````");
+    if (truncated) {
+      blocks.push("", "_(embedded source truncated to stay within the ticket budget)_");
+    }
+    blocks.push("");
+  }
+  return [
+    "## Design Source (embedded)",
+    "",
+    "The design prototype source for this unit is embedded below so this ticket is self-contained: implement from the ticket alone, with no access to the original export, the run workdir, or any external pack. This is a REFERENCE, not the spec:",
+    "",
+    "- Scope is the Acceptance Criteria above, never the source. Anything in the Declined Changes list still appears in this source; do not implement it.",
+    "- This is a standalone prototype (mock data, `window.*` globals, hardcoded values). Mirror the structure, layout, and visual styling; wire real data per the Acceptance Criteria and the backend ticket. Resolve raw color and spacing values to the tokens in the Visual Spec above; never copy a raw value the spec maps to a token.",
+    "",
+    ...blocks
+  ];
+}
+var SourceMode = {
+  /** Inline the source as budgeted fenced code blocks (default; self-contained body). */
+  Embed: "embed",
+  /** Reference the source as document attachments the orchestrator uploads. */
+  Reference: "reference"
+};
+function renderDesignSourceReference(unit, extractDirPath, cssSlicePath) {
+  const names = [];
+  const designSources = Array.isArray(unit["design_sources"]) ? unit["design_sources"] : [];
+  for (const rel of designSources) {
+    if (!validateManifestPath(rel)) continue;
+    const src = join(extractDirPath, rel);
+    if (!(existsSync(src) && statSync(src).isFile())) continue;
+    names.push(rel);
+  }
+  if (cssSlicePath && existsSync(cssSlicePath) && statSync(cssSlicePath).isFile()) {
+    names.push("design-slice.css");
+  }
+  if (names.length === 0) return [];
+  return [
+    "## Design Source (attached)",
+    "",
+    "The design prototype source for this unit is attached to this document rather than embedded in the body. Retrieve each file with the platform's download-attachment tool (use list-attachments on this document to get the attachment ids). This is a REFERENCE, not the spec:",
+    "",
+    "- Scope is governed by the Acceptance Criteria above and the Declined Changes list, never by the source. Anything declined still appears in the attached source; do not implement it.",
+    "- The source is a standalone prototype (mock data, `window.*` globals, hardcoded values). Mirror the structure, layout, and visual styling; wire real data per the Acceptance Criteria and the backend ticket. Resolve raw color and spacing values to the tokens in the Visual Spec above; never copy a raw value the spec maps to a token.",
+    "",
+    ...names.map((n) => `- attached to this document as \`${n}\``),
+    ""
+  ];
+}
+function imagePlaceholder(path, alt, shotsRoot) {
+  const normalized = normalizeShotPath(path, shotsRoot);
+  if (normalized === null) return null;
+  return `![${alt}](attachment://{{${normalized}}})`;
+}
+function criterionDetailLines(finding) {
+  const out = [];
+  const state = finding["state"] ?? {};
+  const spec = finding["spec"] ?? {};
+  if (state["summary"]) {
+    out.push(`  - State: ${String(state["summary"])}`);
+  }
+  if (spec["summary"]) {
+    out.push(`  - Spec: ${String(spec["summary"])}`);
+  }
+  const stateRefs = Array.isArray(state["refs"]) ? state["refs"] : [];
+  const specRefs = Array.isArray(spec["refs"]) ? spec["refs"] : [];
+  const refs = [...stateRefs, ...specRefs].filter((r) => typeof r === "string" && r.length > 0);
+  if (refs.length > 0) {
+    out.push(`  - Refs: ${refs.map((r) => `\`${r}\``).join(", ")}`);
+  }
+  return out;
+}
+function criterionBlock(finding, decisions, withScreenshot, shotsRoot) {
+  const out = [`- (${String(finding["id"])}) ${criterionText(finding, decisions)}`];
+  out.push(...criterionDetailLines(finding));
+  const screenshot = finding["screenshot"];
+  if (withScreenshot && typeof screenshot === "string" && screenshot.length > 0) {
+    const placeholder = imagePlaceholder(
+      screenshot,
+      `${String(finding["id"])} design region`,
+      shotsRoot
+    );
+    if (placeholder !== null) {
+      out.push(`  ${placeholder}`);
+    }
+  }
+  return out;
+}
+function unitBaseShot(doc) {
+  const themes = Array.isArray(doc["themes"]) ? doc["themes"] : [];
+  for (const theme of themes) {
+    const shot = theme["screenshot"];
+    if (typeof shot === "string" && shot.length > 0) return shot;
+  }
+  return null;
+}
+function renderUiTicketBody(doc, decisions, acceptedNonBackend, declined, pending, visual, exportZipName, designSourceSection, sourceMode, shotsRoot) {
   const unit = doc["unit"];
   const impl = unit["current_impl"];
   const flag = unit["feature_flag"] ?? {};
@@ -419,8 +602,9 @@ function renderUiTicketBody(doc, decisions, acceptedNonBackend, declined, pendin
     stateLine += ` Route: \`${String(impl["route"])}\`.`;
   }
   lines.push(stateLine);
+  const sourceWhere = sourceMode === SourceMode.Reference ? "attached to this document; see the Design Source section below" : "embedded for reference in the Design Source section below";
   lines.push(
-    `Design source (visual reference, in the attached design pack): \`${String(unit["primary_source"])}\`.`
+    `Design source (${sourceWhere}): \`${String(unit["primary_source"])}\`.`
   );
   if (unit["duplication_note"]) {
     lines.push(`Note: ${String(unit["duplication_note"])}`);
@@ -430,17 +614,24 @@ function renderUiTicketBody(doc, decisions, acceptedNonBackend, declined, pendin
     lines.push(`**REQUIRES FEATURE FLAG:** ${flag["flag"] ? String(flag["flag"]) : "create a new flag"}`);
     lines.push("");
   }
+  const baseShot = unitBaseShot(doc);
+  const basePlaceholder = baseShot ? imagePlaceholder(baseShot, `${String(unit["name"])} design`, shotsRoot) : null;
+  if (basePlaceholder !== null) {
+    lines.push(basePlaceholder);
+    lines.push("");
+  }
   lines.push("## Acceptance Criteria (reviewed and accepted)");
   lines.push("");
   for (const finding of acceptedNonBackend) {
-    lines.push(`- (${String(finding["id"])}) ${criterionText(finding, decisions)}`);
+    lines.push(...criterionBlock(finding, decisions, true, shotsRoot));
   }
   lines.push("");
   if (declined.length > 0) {
     lines.push("## Declined Changes \u2014 DO NOT IMPLEMENT");
     lines.push("");
+    const sourceCarrier = sourceMode === SourceMode.Reference ? "The design source attached to this document still contains these." : "The embedded design source below still contains these.";
     lines.push(
-      "The attached design source still contains these. They were reviewed and declined; do not mirror them:"
+      `${sourceCarrier} They were reviewed and declined; do not mirror them:`
     );
     lines.push("");
     for (const finding of declined) {
@@ -512,16 +703,18 @@ function renderUiTicketBody(doc, decisions, acceptedNonBackend, declined, pendin
     }
     lines.push("");
   }
+  lines.push(...designSourceSection);
   lines.push("## Provenance");
   lines.push("");
   const exportRef = exportZipName ? `from ${exportZipName}` : "from the design export";
+  const sourceForm = sourceMode === SourceMode.Reference ? "attached" : "embedded";
   lines.push(
-    `Generated by design-inventory Stage A ${exportRef}. Analysis artifacts live in the run workdir and are regenerable.`
+    `Generated by design-inventory Stage C ${exportRef}; this ticket is self-contained (${sourceForm} design source, refs, visual spec); the run workdir is a regenerable convenience, not a dependency.`
   );
   lines.push("");
   return lines.join("\n");
 }
-function renderApiTicketBody(doc, decisions, acceptedBackend, declinedBackend) {
+function renderApiTicketBody(doc, decisions, acceptedBackend, declinedBackend, designSourceSection, sourceMode) {
   const unit = doc["unit"];
   const impl = unit["current_impl"];
   const lines = [
@@ -539,15 +732,7 @@ function renderApiTicketBody(doc, decisions, acceptedBackend, declinedBackend) {
   lines.push("## Acceptance Criteria (backend-gap)");
   lines.push("");
   for (const finding of acceptedBackend) {
-    lines.push(`- (${String(finding["id"])}) ${criterionText(finding, decisions)}`);
-    const state = finding["state"] ?? {};
-    const spec = finding["spec"] ?? {};
-    if (state["summary"]) {
-      lines.push(`  - State: ${String(state["summary"])}`);
-    }
-    if (spec["summary"]) {
-      lines.push(`  - Spec: ${String(spec["summary"])}`);
-    }
+    lines.push(...criterionBlock(finding, decisions, false));
   }
   lines.push("");
   if (declinedBackend.length > 0) {
@@ -557,6 +742,14 @@ function renderApiTicketBody(doc, decisions, acceptedBackend, declinedBackend) {
       lines.push(`- (${String(finding["id"])}) ${String(finding["summary"])}`);
     }
     lines.push("");
+  }
+  if (designSourceSection.length > 0) {
+    const sourceWhere = sourceMode === SourceMode.Reference ? "attached to this document (see the Design Source section below)" : "embedded below";
+    lines.push(
+      `The UI prototype source that consumes this backend is ${sourceWhere}. Use it to derive the exact field names, shapes, and enum values the frontend reads, so the data contract matches what the design renders.`,
+      ""
+    );
+    lines.push(...designSourceSection);
   }
   return lines.join("\n");
 }
@@ -570,7 +763,9 @@ function main(argv) {
       "out-dir": { type: "string" },
       "visual-spec": { type: "string" },
       "css-slice": { type: "string" },
-      "export-zip-name": { type: "string" }
+      "export-zip-name": { type: "string" },
+      "shots-root": { type: "string" },
+      "source-mode": { type: "string", default: SourceMode.Embed }
     }
   });
   const findingsPath = values["findings"];
@@ -581,6 +776,14 @@ function main(argv) {
     console.error("error: --findings, --decisions, --extract-dir, and --out-dir are required");
     return 1;
   }
+  const sourceModeRaw = values["source-mode"] ?? SourceMode.Embed;
+  if (sourceModeRaw !== SourceMode.Embed && sourceModeRaw !== SourceMode.Reference) {
+    console.error(
+      `error: --source-mode must be '${SourceMode.Embed}' or '${SourceMode.Reference}'`
+    );
+    return 1;
+  }
+  const sourceMode = sourceModeRaw;
   let doc;
   let decisionsDoc;
   try {
@@ -666,6 +869,8 @@ function main(argv) {
     writeFileSync(join(packDir, "visual-spec.json"), JSON.stringify(visual, null, 1), "utf-8");
   }
   const exportZipName = values["export-zip-name"];
+  const shotsRoot = values["shots-root"];
+  const designSourceSection = sourceMode === SourceMode.Reference ? renderDesignSourceReference(unit, extractDirPath, cssSlicePath) : renderDesignSourceAppendix(readEmbedSources(unit, extractDirPath, cssSlicePath));
   if (acceptedNonBackend.length > 0) {
     const uiBody = renderUiTicketBody(
       doc,
@@ -674,7 +879,10 @@ function main(argv) {
       declined,
       pending,
       visual,
-      exportZipName
+      exportZipName,
+      designSourceSection,
+      sourceMode,
+      shotsRoot
     );
     writeFileSync(join(packDir, "ticket-body-ui.md"), uiBody, "utf-8");
   }
@@ -683,7 +891,9 @@ function main(argv) {
       doc,
       decisions,
       acceptedBackend,
-      declinedBackend
+      declinedBackend,
+      designSourceSection,
+      sourceMode
     );
     writeFileSync(join(packDir, "ticket-body-api.md"), apiBody, "utf-8");
   }
@@ -699,6 +909,7 @@ function main(argv) {
 }
 runWhenMain(import.meta.url, main);
 export {
+  SourceMode,
   main,
   validateManifestPath
 };

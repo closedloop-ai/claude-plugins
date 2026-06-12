@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { main, validateManifestPath } from "./build-design-pack.js";
+import { applyInlineImages } from "./apply-inline-images.js";
 import { validDecisions, validFindings } from "./test-fixtures.js";
 import type { JsonObject } from "./design-findings-schema.js";
 
@@ -47,6 +48,39 @@ function runPack(
 }
 
 describe("build-design-pack", () => {
+  it("UI body is self-contained: embeds design source, no 'attached pack' wording", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-selfcontained-"));
+    const cssPath = join(tmpPath, "slice.css");
+    writeFileSync(cssPath, ".sd { color: red }", "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(validFindings()), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const outDir = join(tmpPath, "packs");
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+      "--css-slice", cssPath,
+    ]);
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(outDir, "scr-sessions-page", "ticket-body-ui.md"), "utf-8");
+    // The ticket embeds the design source so it is implementable from the ticket alone.
+    expect(uiBody).toContain("## Design Source (embedded)");
+    expect(uiBody).toContain("### `ui_kits/app/SessionsPage.jsx`");
+    expect(uiBody).toContain("old jsx"); // actual source content embedded, not just a fence label
+    expect(uiBody).toContain("### Sliced CSS (`design-slice.css`)");
+    expect(uiBody).toContain(".sd { color: red }");
+    // Four-backtick fences guard against in-source code fences breaking out.
+    expect(uiBody).toContain("````jsx");
+    expect(uiBody).toContain("````css");
+    // It must never point at an artifact the skill guarantees never to deliver.
+    expect(uiBody).not.toContain("attached design pack");
+    expect(uiBody).not.toContain("attached design source");
+  });
+
   it("pack structure and ticket body", () => {
     const tmpPath = mkdtempSync(join(tmpdir(), "bdp-"));
     const visual: JsonObject = {
@@ -280,7 +314,9 @@ describe("build-design-pack", () => {
     expect(rc).toBe(0);
     const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
     expect(uiBody).toContain("## Provenance");
-    expect(uiBody).toContain("design-inventory Stage A");
+    expect(uiBody).toContain("design-inventory Stage C");
+    expect(uiBody).toContain("this ticket is self-contained");
+    expect(uiBody).toContain("regenerable convenience, not a dependency");
     // Old Design Pack section should not be present
     expect(uiBody).not.toContain("## Design Pack");
   });
@@ -737,5 +773,482 @@ describe("build-design-pack", () => {
 
     expect(rcB).toBe(3);
     expect(errMsgB).toContain("pending");
+  });
+
+  // -------------------------------------------------------------------------
+  // FEA-1793: self-contained ticket bodies
+  // -------------------------------------------------------------------------
+
+  it("UI body criteria carry State/Spec/Refs sub-bullets", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-substate-"));
+    const { rc, pack } = runPack(tmpPath, validDecisions());
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+    const criteria = uiBody.split("## Acceptance Criteria")[1]!.split("\n## ")[0]!;
+    // CHG-sessions-page-01 is accepted via its theme. Its state/spec/refs come
+    // straight from the findings fixture.
+    expect(criteria).toContain("(CHG-sessions-page-01)");
+    expect(criteria).toContain("- State: Header + Card shell");
+    expect(criteria).toContain("- Spec: sticky sess-topbar");
+    // Refs join state.refs + spec.refs (file:line into the design source).
+    expect(criteria).toContain("- Refs:");
+    expect(criteria).toContain("apps/app/.../page.tsx:86");
+    expect(criteria).toContain("ui_kits/app/SessionsPage.jsx:1430");
+  });
+
+  it("API body criteria carry State/Spec/Refs sub-bullets", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-apisub-"));
+    const doc = validFindings();
+    const findings = doc["findings"] as JsonObject[];
+    findings.push({
+      id: "CHG-sessions-page-03",
+      title: "API endpoint needed",
+      category: "backend-gap",
+      intent: "likely-intentional",
+      intent_rationale: "backend needed",
+      theme: null,
+      state: { summary: "No endpoint exists", refs: ["apps/api/routes/sessions.ts:12"] },
+      spec: { summary: "POST /api/sessions returns rows", refs: ["ui_kits/app/SessionsPage.jsx:900"] },
+      decision: { state: "accepted" },
+      summary: "Add POST /api/sessions endpoint",
+    });
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const outDir = join(tmpPath, "packs");
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    expect(rc).toBe(0);
+    const apiBody = readFileSync(join(outDir, "scr-sessions-page", "ticket-body-api.md"), "utf-8");
+    expect(apiBody).toContain("- State: No endpoint exists");
+    expect(apiBody).toContain("- Spec: POST /api/sessions returns rows");
+    expect(apiBody).toContain("- Refs:");
+    expect(apiBody).toContain("apps/api/routes/sessions.ts:12");
+    expect(apiBody).toContain("ui_kits/app/SessionsPage.jsx:900");
+  });
+
+  it("findings with a screenshot get an inline image placeholder; those without do not", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-shots-"));
+    const doc = validFindings();
+    const findings = doc["findings"] as JsonObject[];
+    // CHG-sessions-page-01 gets a captured screenshot; -02 (declined) has none.
+    findings[0]!["screenshot"] = "shots/CHG-sessions-page-01.png";
+    // Add an accepted standalone visual finding with NO screenshot.
+    findings.push({
+      id: "CHG-sessions-page-05",
+      title: "Spacing tweak",
+      category: "visual",
+      intent: "likely-intentional",
+      intent_rationale: "designer note",
+      theme: null,
+      state: { summary: "8px gap", refs: [] },
+      spec: { summary: "12px gap", refs: [] },
+      decision: { state: "pending" },
+      summary: "Increase row gap to 12px",
+    });
+    const decisions = validDecisions();
+    (decisions["decisions"] as JsonObject)["CHG-sessions-page-05"] = { state: "accepted" };
+
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(decisions), "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const outDir = join(tmpPath, "packs");
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(outDir, "scr-sessions-page", "ticket-body-ui.md"), "utf-8");
+    // Placeholder uses EXACTLY apply-inline-images' attachment://{{path}} syntax.
+    expect(uiBody).toContain("attachment://{{shots/CHG-sessions-page-01.png}}");
+    // The screenshot-less accepted finding emits a criterion but no placeholder line for it.
+    expect(uiBody).toContain("(CHG-sessions-page-05)");
+    expect(uiBody).not.toContain("attachment://{{shots/CHG-sessions-page-05");
+  });
+
+  it("unit base/theme shot placeholder appears near the top of the UI body", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-baseshot-"));
+    const doc = validFindings();
+    // The capture step propagates the unit base shot onto theme.screenshot.
+    (doc["themes"] as JsonObject[])[0]!["screenshot"] = "shots/scr-sessions-page-base.png";
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const outDir = join(tmpPath, "packs");
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(outDir, "scr-sessions-page", "ticket-body-ui.md"), "utf-8");
+    const beforeCriteria = uiBody.split("## Acceptance Criteria")[0]!;
+    // The base shot placeholder is above the Acceptance Criteria heading.
+    expect(beforeCriteria).toContain("attachment://{{shots/scr-sessions-page-base.png}}");
+  });
+
+  it("embedded design source section uses fenced blocks with real content", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-embed-"));
+    const cssPath = join(tmpPath, "slice.css");
+    writeFileSync(cssPath, ".topbar { position: sticky }", "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(validFindings()), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const outDir = join(tmpPath, "packs");
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+      "--css-slice", cssPath,
+    ]);
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(outDir, "scr-sessions-page", "ticket-body-ui.md"), "utf-8");
+    expect(uiBody).toContain("## Design Source (embedded)");
+    expect(uiBody).toContain("````jsx");
+    expect(uiBody).toContain("old jsx"); // SessionsPage.jsx content from makeExtractDir
+    expect(uiBody).toContain("````css");
+    expect(uiBody).toContain(".topbar { position: sticky }");
+  });
+
+  it("embedded source over the budget is truncated with a visible marker", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-trunc-"));
+    const extractDir = join(tmpPath, "extracted");
+    mkdirSync(join(extractDir, "ui_kits/app"), { recursive: true });
+    // Generate > 90,000 chars across many lines so the budget truncates it.
+    const bigLine = "const x = 1; // padding to exceed the embed budget line";
+    const big = Array.from({ length: 3000 }, (_, i) => `${bigLine} ${i}`).join("\n");
+    expect(big.length).toBeGreaterThan(90_000);
+    writeFileSync(join(extractDir, "ui_kits/app/SessionsPage.jsx"), big, "utf-8");
+    writeFileSync(join(extractDir, "SessionsPage.jsx"), "tiny", "utf-8");
+    mkdirSync(join(extractDir, "screenshots"), { recursive: true });
+    writeFileSync(join(extractDir, "screenshots/real-sessions.png"), "png", "utf-8");
+
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(validFindings()), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const outDir = join(tmpPath, "packs");
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(outDir, "scr-sessions-page", "ticket-body-ui.md"), "utf-8");
+    // The truncation marker reports dropped lines and characters.
+    expect(uiBody).toMatch(/\[truncated: \d+ more lines, \d+ more characters\]/);
+    // The whole big source is NOT embedded verbatim: the budget caps the section.
+    const embedded = uiBody.split("## Design Source (embedded)")[1] ?? "";
+    expect(embedded.length).toBeLessThan(big.length);
+  });
+
+  it("no generated body contains the phrase 'attached design pack'", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-nophrase-"));
+    const doc = validFindings();
+    const findings = doc["findings"] as JsonObject[];
+    findings.push({
+      id: "CHG-sessions-page-03",
+      title: "API endpoint needed",
+      category: "backend-gap",
+      intent: "likely-intentional",
+      intent_rationale: "backend needed",
+      theme: null,
+      state: { summary: "No endpoint", refs: [] },
+      spec: { summary: "POST /api/sessions", refs: [] },
+      decision: { state: "accepted" },
+      summary: "Add POST /api/sessions endpoint",
+    });
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const outDir = join(tmpPath, "packs");
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    expect(rc).toBe(0);
+    const pack = join(outDir, "scr-sessions-page");
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+    const apiBody = readFileSync(join(pack, "ticket-body-api.md"), "utf-8");
+    expect(uiBody).not.toContain("attached design pack");
+    expect(apiBody).not.toContain("attached design pack");
+  });
+
+  it("generated placeholders are consumable by applyInlineImages (map substitutes, strip removes)", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-applyimg-"));
+    const doc = validFindings();
+    // ABSOLUTE screenshot path: the common real-world form (capture-design-shots
+    // records the absolute --shots-dir orchestrators pass).
+    const workdir = join(tmpPath, "workdir");
+    (doc["findings"] as JsonObject[])[0]!["screenshot"] =
+      join(workdir, "shots/CHG-sessions-page-01.png");
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const outDir = join(tmpPath, "packs");
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+      "--shots-root", workdir,
+    ]);
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(outDir, "scr-sessions-page", "ticket-body-ui.md"), "utf-8");
+    // The emitted placeholder path is the workdir-relative form.
+    expect(uiBody).toContain("attachment://{{shots/CHG-sessions-page-01.png}}");
+
+    // Map mode end to end: the relative placeholder path resolves to its
+    // attachment id (a raw absolute path would have been rejected and stripped).
+    const map = new Map<string, string>([["shots/CHG-sessions-page-01.png", "att-uuid-123"]]);
+    const mapped = applyInlineImages(uiBody, "map", map);
+    expect(mapped.result.substituted).toBe(1);
+    expect(mapped.result.stripped).toEqual([]);
+    expect(mapped.body).toContain("attachment://att-uuid-123");
+    expect(mapped.body).not.toContain("attachment://{{shots/CHG-sessions-page-01.png}}");
+
+    // Strip mode: the placeholder line is removed entirely.
+    const stripped = applyInlineImages(uiBody, "strip", new Map());
+    expect(stripped.result.stripped).toContain("shots/CHG-sessions-page-01.png");
+    expect(stripped.body).not.toContain("attachment://");
+  });
+
+  // -------------------------------------------------------------------------
+  // Placeholder path normalization (--shots-root)
+  // -------------------------------------------------------------------------
+
+  function runWithScreenshots(
+    tmpPath: string,
+    findingShot: string,
+    themeShot: string,
+    shotsRoot?: string,
+  ): string {
+    const doc = validFindings();
+    (doc["findings"] as JsonObject[])[0]!["screenshot"] = findingShot;
+    (doc["themes"] as JsonObject[])[0]!["screenshot"] = themeShot;
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const outDir = join(tmpPath, "packs");
+    const argv = [
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ];
+    if (shotsRoot !== undefined) {
+      argv.push("--shots-root", shotsRoot);
+    }
+    expect(main(argv)).toBe(0);
+    return readFileSync(join(outDir, "scr-sessions-page", "ticket-body-ui.md"), "utf-8");
+  }
+
+  it("absolute screenshot paths under --shots-root are relativized in placeholders", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-absroot-"));
+    const workdir = join(tmpPath, "workdir");
+    const uiBody = runWithScreenshots(
+      tmpPath,
+      join(workdir, "shots/CHG-sessions-page-01.png"),
+      join(workdir, "shots/scr-sessions-page-base.png"),
+      workdir,
+    );
+    expect(uiBody).toContain("attachment://{{shots/CHG-sessions-page-01.png}}");
+    expect(uiBody).toContain("attachment://{{shots/scr-sessions-page-base.png}}");
+    // No absolute path survives into any placeholder.
+    expect(uiBody).not.toContain(`attachment://{{${workdir}`);
+    expect(uiBody).not.toMatch(/attachment:\/\/\{\{\//);
+  });
+
+  it("absolute screenshot path outside --shots-root falls back to the shots/ tail", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-absout-"));
+    const uiBody = runWithScreenshots(
+      tmpPath,
+      "/elsewhere/run/shots/CHG-sessions-page-01.png",
+      "/elsewhere/run/shots/scr-sessions-page-base.png",
+      join(tmpPath, "workdir"),
+    );
+    expect(uiBody).toContain("attachment://{{shots/CHG-sessions-page-01.png}}");
+    expect(uiBody).toContain("attachment://{{shots/scr-sessions-page-base.png}}");
+    expect(uiBody).not.toMatch(/attachment:\/\/\{\{\//);
+  });
+
+  it("absolute screenshot path with no shots/ segment omits the placeholder", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-absnone-"));
+    const uiBody = runWithScreenshots(
+      tmpPath,
+      "/elsewhere/captures/CHG-sessions-page-01.png",
+      "/elsewhere/captures/base.png",
+      join(tmpPath, "workdir"),
+    );
+    // No placeholder at all: a missing image beats a guaranteed-stripped line.
+    expect(uiBody).not.toContain("attachment://");
+    // The criterion itself is still present.
+    expect(uiBody).toContain("(CHG-sessions-page-01)");
+  });
+
+  it("relative screenshot paths pass through unchanged without --shots-root", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-relpass-"));
+    const uiBody = runWithScreenshots(
+      tmpPath,
+      "shots/CHG-sessions-page-01.png",
+      "shots/scr-sessions-page-base.png",
+    );
+    expect(uiBody).toContain("attachment://{{shots/CHG-sessions-page-01.png}}");
+    expect(uiBody).toContain("attachment://{{shots/scr-sessions-page-base.png}}");
+  });
+
+  // -------------------------------------------------------------------------
+  // --source-mode embed|reference
+  // -------------------------------------------------------------------------
+
+  function runWithSourceMode(
+    tmpPath: string,
+    sourceMode: string | undefined,
+    withBackendGap = false,
+  ): { rc: number; pack: string } {
+    const doc = validFindings();
+    if (withBackendGap) {
+      (doc["findings"] as JsonObject[]).push({
+        id: "CHG-sessions-page-03",
+        title: "API endpoint needed",
+        category: "backend-gap",
+        intent: "likely-intentional",
+        intent_rationale: "backend needed",
+        theme: null,
+        state: { summary: "No endpoint", refs: [] },
+        spec: { summary: "POST /api/sessions", refs: [] },
+        decision: { state: "accepted" },
+        summary: "Add POST /api/sessions endpoint",
+      });
+    }
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const cssPath = join(tmpPath, "slice.css");
+    writeFileSync(cssPath, ".sd { color: red }", "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const outDir = join(tmpPath, "packs");
+    const argv = [
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+      "--css-slice", cssPath,
+    ];
+    if (sourceMode !== undefined) {
+      argv.push("--source-mode", sourceMode);
+    }
+    return { rc: main(argv), pack: join(outDir, "scr-sessions-page") };
+  }
+
+  it("--source-mode embed matches the default embedded behavior", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-modeembed-"));
+    const { rc, pack } = runWithSourceMode(tmpPath, "embed");
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+    expect(uiBody).toContain("## Design Source (embedded)");
+    expect(uiBody).toContain("````jsx");
+    expect(uiBody).toContain("old jsx");
+    expect(uiBody).not.toContain("## Design Source (attached)");
+  });
+
+  it("--source-mode reference lists attachments instead of embedding code", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-moderef-"));
+    const { rc, pack } = runWithSourceMode(tmpPath, "reference", true);
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+    expect(uiBody).toContain("## Design Source (attached)");
+    expect(uiBody).toContain("attached to this document as `ui_kits/app/SessionsPage.jsx`");
+    expect(uiBody).toContain("attached to this document as `SessionsPage.jsx`");
+    expect(uiBody).toContain("attached to this document as `design-slice.css`");
+    expect(uiBody).toContain("download-attachment");
+    // Scope is still governed by the criteria and the declined list.
+    expect(uiBody).toContain("Scope is governed by the Acceptance Criteria above and the Declined Changes list");
+    // No embedded code: no fences, no file content.
+    expect(uiBody).not.toContain("## Design Source (embedded)");
+    expect(uiBody).not.toContain("````");
+    expect(uiBody).not.toContain("old jsx");
+    expect(uiBody).not.toContain(".sd { color: red }");
+    // Everything else is intact: criteria detail and visual reference framing.
+    expect(uiBody).toContain("- State: Header + Card shell");
+    expect(uiBody).toContain("- Spec: sticky sess-topbar");
+    expect(uiBody).toContain("- Refs:");
+    // The API body carries the same attached-source section.
+    const apiBody = readFileSync(join(pack, "ticket-body-api.md"), "utf-8");
+    expect(apiBody).toContain("## Design Source (attached)");
+    expect(apiBody).toContain("attached to this document");
+    expect(apiBody).not.toContain("````");
+
+    // The pack's design-source/ dir (the orchestrator's upload source) is intact.
+    expect(existsSync(join(pack, "design-source/ui_kits/app/SessionsPage.jsx"))).toBe(true);
+    expect(existsSync(join(pack, "design-source/design-slice.css"))).toBe(true);
+  });
+
+  it("reference mode does not read or size-budget the source files", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-modenoread-"));
+    const extractDir = join(tmpPath, "extracted");
+    mkdirSync(join(extractDir, "ui_kits/app"), { recursive: true });
+    // A file far over the embed budget: embed mode would truncate it; reference
+    // mode must list it untouched with no marker and none of its content.
+    const big = Array.from({ length: 5000 }, (_, i) => `const sentinel${i} = 1; // pad`).join("\n");
+    expect(big.length).toBeGreaterThan(90_000);
+    writeFileSync(join(extractDir, "ui_kits/app/SessionsPage.jsx"), big, "utf-8");
+    writeFileSync(join(extractDir, "SessionsPage.jsx"), "tiny sentinel", "utf-8");
+    mkdirSync(join(extractDir, "screenshots"), { recursive: true });
+    writeFileSync(join(extractDir, "screenshots/real-sessions.png"), "png", "utf-8");
+
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(validFindings()), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const outDir = join(tmpPath, "packs");
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+      "--source-mode", "reference",
+    ]);
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(outDir, "scr-sessions-page", "ticket-body-ui.md"), "utf-8");
+    expect(uiBody).toContain("attached to this document as `ui_kits/app/SessionsPage.jsx`");
+    expect(uiBody).not.toContain("sentinel");
+    expect(uiBody).not.toContain("[truncated:");
+  });
+
+  it("unknown --source-mode value exits 1", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-modebad-"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { rc } = runWithSourceMode(tmpPath, "attach");
+    const errMsg = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    errSpy.mockRestore();
+    expect(rc).toBe(1);
+    expect(errMsg).toContain("--source-mode");
   });
 });
