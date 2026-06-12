@@ -76,17 +76,18 @@ describe("build-design-pack", () => {
       "CHG-sessions-page-02": "declined", // explicit decline
     });
 
-    const body = readFileSync(join(pack, "ticket-body.md"), "utf-8");
-    expect(body).toContain("# Implement Sessions Page from approved design");
-    const afterCriteria = body.split("## Acceptance Criteria")[1]!.split("##")[0]!;
+    // UI body exists and has the right content
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+    expect(uiBody).toContain("# Implement Sessions Page from approved design");
+    const afterCriteria = uiBody.split("## Acceptance Criteria")[1]!.split("##")[0]!;
     expect(afterCriteria).toContain("(CHG-sessions-page-01)");
-    expect(body).toContain("## Declined Changes — DO NOT IMPLEMENT");
-    const afterDeclined = body.split("Declined Changes")[1]!;
+    expect(uiBody).toContain("## Declined Changes — DO NOT IMPLEMENT");
+    const afterDeclined = uiBody.split("Declined Changes")[1]!;
     expect(afterDeclined).toContain("CHG-sessions-page-02");
-    expect(body).toContain("| `#112233` | `--primary` |");
-    expect(body).toContain("`--destructive` (d=1.0)");
-    expect(body).toContain("Design-system ticket required: build `ArtifactTopbar`");
-    expect(body).toContain("Icons (lucide names): hand");
+    expect(uiBody).toContain("| `#112233` | `--primary` |");
+    expect(uiBody).toContain("`--destructive` (d=1.0)");
+    expect(uiBody).toContain("Design-system ticket required: build `ArtifactTopbar`");
+    expect(uiBody).toContain("Icons (lucide names): hand");
   });
 
   it("edited decision overrides summary", () => {
@@ -98,8 +99,8 @@ describe("build-design-pack", () => {
     };
     const { rc, pack } = runPack(tmpPath, decisions);
     expect(rc).toBe(0);
-    const body = readFileSync(join(pack, "ticket-body.md"), "utf-8");
-    expect(body).toContain("Topbar yes, but keep the existing Card wrapper");
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+    expect(uiBody).toContain("Topbar yes, but keep the existing Card wrapper");
   });
 
   it("nothing accepted writes no pack", () => {
@@ -130,5 +131,175 @@ describe("build-design-pack", () => {
       "--out-dir", join(tmpPath, "packs"),
     ]);
     expect(rc).toBe(1);
+  });
+
+  it("UI body uses bullet criteria (no numbered list)", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-"));
+    const { rc, pack } = runPack(tmpPath, validDecisions());
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+    // No numbered list lines like "1. ..." in acceptance criteria
+    const criteriaSection = uiBody.split("## Acceptance Criteria")[1]!.split("##")[0]!;
+    expect(/^\d+\. /m.test(criteriaSection)).toBe(false);
+    // But bullet lines exist
+    expect(/^- /m.test(criteriaSection)).toBe(true);
+  });
+
+  it("UI body does not contain backend-gap criterion", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-"));
+    // Add a backend-gap finding that gets accepted
+    const findingsPath = join(tmpPath, "unit.json");
+    const doc = validFindings();
+    const findings = doc["findings"] as JsonObject[];
+    findings.push({
+      id: "CHG-sessions-page-03",
+      title: "API endpoint needed",
+      category: "backend-gap",
+      intent: "likely-intentional",
+      intent_rationale: "backend needed",
+      theme: null,
+      state: { summary: "No endpoint", refs: [] },
+      spec: { summary: "POST /api/sessions", refs: [] },
+      decision: { state: "accepted" },
+      summary: "Add POST /api/sessions endpoint",
+    });
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const outDir = join(tmpPath, "packs");
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    expect(rc).toBe(0);
+    const pack = join(outDir, "scr-sessions-page");
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+    // Backend-gap finding id must not appear in UI body criteria
+    expect(uiBody).not.toContain("CHG-sessions-page-03");
+    // UI body must not contain the backend-gap criterion text
+    expect(uiBody).not.toContain("POST /api/sessions");
+  });
+
+  it("API body created when accepted backend-gap findings exist", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-"));
+    const findingsPath = join(tmpPath, "unit.json");
+    const doc = validFindings();
+    const findings = doc["findings"] as JsonObject[];
+    findings.push({
+      id: "CHG-sessions-page-03",
+      title: "API endpoint needed",
+      category: "backend-gap",
+      intent: "likely-intentional",
+      intent_rationale: "backend needed",
+      theme: null,
+      state: { summary: "No endpoint exists", refs: [] },
+      spec: { summary: "POST /api/sessions", refs: [] },
+      decision: { state: "accepted" },
+      summary: "Add POST /api/sessions endpoint",
+    });
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const outDir = join(tmpPath, "packs");
+    main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    const pack = join(outDir, "scr-sessions-page");
+    expect(existsSync(join(pack, "ticket-body-api.md"))).toBe(true);
+    const apiBody = readFileSync(join(pack, "ticket-body-api.md"), "utf-8");
+    expect(apiBody).toContain("# Backend for Sessions Page");
+    expect(apiBody).toContain("CHG-sessions-page-03");
+    expect(apiBody).toContain("POST /api/sessions");
+    expect(apiBody).toContain("No endpoint exists");
+  });
+
+  it("API body NOT created when no accepted backend-gap findings", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-"));
+    const { rc, pack } = runPack(tmpPath, validDecisions());
+    expect(rc).toBe(0);
+    // validFindings has no backend-gap findings
+    expect(existsSync(join(pack, "ticket-body-api.md"))).toBe(false);
+  });
+
+  it("neither body contains .closedloop-ai/design-packs path", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-"));
+    const { rc, pack } = runPack(tmpPath, validDecisions());
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+    expect(uiBody).not.toContain(".closedloop-ai/design-packs");
+    expect(uiBody).not.toContain("commit");
+  });
+
+  it("API body criteria list does not contain non-backend-gap findings", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-"));
+    const findingsPath = join(tmpPath, "unit.json");
+    const doc = validFindings();
+    const findings = doc["findings"] as JsonObject[];
+    findings.push({
+      id: "CHG-sessions-page-03",
+      title: "API endpoint needed",
+      category: "backend-gap",
+      intent: "likely-intentional",
+      intent_rationale: "backend needed",
+      theme: null,
+      state: { summary: "No endpoint", refs: [] },
+      spec: { summary: "POST /api/sessions", refs: [] },
+      decision: { state: "accepted" },
+      summary: "Add POST /api/sessions endpoint",
+    });
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const outDir = join(tmpPath, "packs");
+    main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    const pack = join(outDir, "scr-sessions-page");
+    const apiBody = readFileSync(join(pack, "ticket-body-api.md"), "utf-8");
+    // Non-backend-gap finding id must not appear in API body criteria
+    expect(apiBody).not.toContain("CHG-sessions-page-01");
+  });
+
+  it("UI body contains Provenance section (no repo paths)", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-"));
+    const { rc, pack } = runPack(tmpPath, validDecisions());
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+    expect(uiBody).toContain("## Provenance");
+    expect(uiBody).toContain("design-inventory Stage A");
+    // Old Design Pack section should not be present
+    expect(uiBody).not.toContain("## Design Pack");
+  });
+
+  it("export-zip-name appears in Provenance section", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-"));
+    const extractDir = makeExtractDir(tmpPath);
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(validFindings()), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const outDir = join(tmpPath, "packs");
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+      "--export-zip-name", "my-design-export-v3.zip",
+    ]);
+    expect(rc).toBe(0);
+    const pack = join(outDir, "scr-sessions-page");
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+    expect(uiBody).toContain("my-design-export-v3.zip");
   });
 });
