@@ -2,7 +2,7 @@
 
 // src/build-design-pack.ts
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, normalize } from "node:path";
+import { dirname, isAbsolute as isAbsolute2, join, normalize } from "node:path";
 import { parseArgs } from "node:util";
 
 // src/design-findings-schema.ts
@@ -288,6 +288,31 @@ function effectiveDecision(finding, decisions) {
   return "pending";
 }
 
+// src/shot-path.ts
+import { isAbsolute, relative, resolve } from "node:path";
+function pathSegments(p) {
+  return p.split(/[\\/]/).filter((segment) => segment.length > 0);
+}
+function shotsTail(p) {
+  const parts = pathSegments(p);
+  const idx = parts.lastIndexOf("shots");
+  if (idx < 0) return null;
+  return parts.slice(idx).join("/");
+}
+function normalizeShotPath(shotPath, shotsRoot) {
+  if (!isAbsolute(shotPath)) {
+    if (!pathSegments(shotPath).includes("..")) return shotPath;
+    return shotsTail(shotPath);
+  }
+  if (shotsRoot) {
+    const rel = relative(resolve(shotsRoot), resolve(shotPath));
+    if (rel !== "" && !isAbsolute(rel) && !pathSegments(rel).includes("..")) {
+      return rel.split("\\").join("/");
+    }
+  }
+  return shotsTail(shotPath);
+}
+
 // src/cli.ts
 import { pathToFileURL } from "node:url";
 function runWhenMain(metaUrl, main2) {
@@ -306,7 +331,7 @@ function runWhenMain(metaUrl, main2) {
 // src/build-design-pack.ts
 var ACCEPTED_STATES = /* @__PURE__ */ new Set(["accepted", "edited"]);
 function validateManifestPath(rel) {
-  if (isAbsolute(rel)) return false;
+  if (isAbsolute2(rel)) return false;
   const norm = normalize(rel);
   const parts = norm.split(/[\\/]/);
   return !parts.includes("..");
@@ -482,8 +507,10 @@ function renderDesignSourceAppendix(sources) {
     ...blocks
   ];
 }
-function imagePlaceholder(path, alt) {
-  return `![${alt}](attachment://{{${path}}})`;
+function imagePlaceholder(path, alt, shotsRoot) {
+  const normalized = normalizeShotPath(path, shotsRoot);
+  if (normalized === null) return null;
+  return `![${alt}](attachment://{{${normalized}}})`;
 }
 function criterionDetailLines(finding) {
   const out = [];
@@ -503,12 +530,19 @@ function criterionDetailLines(finding) {
   }
   return out;
 }
-function criterionBlock(finding, decisions, withScreenshot) {
+function criterionBlock(finding, decisions, withScreenshot, shotsRoot) {
   const out = [`- (${String(finding["id"])}) ${criterionText(finding, decisions)}`];
   out.push(...criterionDetailLines(finding));
   const screenshot = finding["screenshot"];
   if (withScreenshot && typeof screenshot === "string" && screenshot.length > 0) {
-    out.push(`  ${imagePlaceholder(screenshot, `${String(finding["id"])} design region`)}`);
+    const placeholder = imagePlaceholder(
+      screenshot,
+      `${String(finding["id"])} design region`,
+      shotsRoot
+    );
+    if (placeholder !== null) {
+      out.push(`  ${placeholder}`);
+    }
   }
   return out;
 }
@@ -520,7 +554,7 @@ function unitBaseShot(doc) {
   }
   return null;
 }
-function renderUiTicketBody(doc, decisions, acceptedNonBackend, declined, pending, visual, exportZipName, embedSources) {
+function renderUiTicketBody(doc, decisions, acceptedNonBackend, declined, pending, visual, exportZipName, embedSources, shotsRoot) {
   const unit = doc["unit"];
   const impl = unit["current_impl"];
   const flag = unit["feature_flag"] ?? {};
@@ -549,14 +583,15 @@ function renderUiTicketBody(doc, decisions, acceptedNonBackend, declined, pendin
     lines.push("");
   }
   const baseShot = unitBaseShot(doc);
-  if (baseShot) {
-    lines.push(imagePlaceholder(baseShot, `${String(unit["name"])} design`));
+  const basePlaceholder = baseShot ? imagePlaceholder(baseShot, `${String(unit["name"])} design`, shotsRoot) : null;
+  if (basePlaceholder !== null) {
+    lines.push(basePlaceholder);
     lines.push("");
   }
   lines.push("## Acceptance Criteria (reviewed and accepted)");
   lines.push("");
   for (const finding of acceptedNonBackend) {
-    lines.push(...criterionBlock(finding, decisions, true));
+    lines.push(...criterionBlock(finding, decisions, true, shotsRoot));
   }
   lines.push("");
   if (declined.length > 0) {
@@ -694,7 +729,8 @@ function main(argv) {
       "out-dir": { type: "string" },
       "visual-spec": { type: "string" },
       "css-slice": { type: "string" },
-      "export-zip-name": { type: "string" }
+      "export-zip-name": { type: "string" },
+      "shots-root": { type: "string" }
     }
   });
   const findingsPath = values["findings"];
@@ -790,6 +826,7 @@ function main(argv) {
     writeFileSync(join(packDir, "visual-spec.json"), JSON.stringify(visual, null, 1), "utf-8");
   }
   const exportZipName = values["export-zip-name"];
+  const shotsRoot = values["shots-root"];
   const embedSources = readEmbedSources(unit, extractDirPath, cssSlicePath);
   if (acceptedNonBackend.length > 0) {
     const uiBody = renderUiTicketBody(
@@ -800,7 +837,8 @@ function main(argv) {
       pending,
       visual,
       exportZipName,
-      embedSources
+      embedSources,
+      shotsRoot
     );
     writeFileSync(join(packDir, "ticket-body-ui.md"), uiBody, "utf-8");
   }

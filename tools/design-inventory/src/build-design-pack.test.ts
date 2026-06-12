@@ -998,7 +998,11 @@ describe("build-design-pack", () => {
   it("generated placeholders are consumable by applyInlineImages (map substitutes, strip removes)", () => {
     const tmpPath = mkdtempSync(join(tmpdir(), "bdp-applyimg-"));
     const doc = validFindings();
-    (doc["findings"] as JsonObject[])[0]!["screenshot"] = "shots/CHG-sessions-page-01.png";
+    // ABSOLUTE screenshot path: the common real-world form (capture-design-shots
+    // records the absolute --shots-dir orchestrators pass).
+    const workdir = join(tmpPath, "workdir");
+    (doc["findings"] as JsonObject[])[0]!["screenshot"] =
+      join(workdir, "shots/CHG-sessions-page-01.png");
     const findingsPath = join(tmpPath, "unit.json");
     writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
     const decisionsPath = join(tmpPath, "decisions.json");
@@ -1010,14 +1014,19 @@ describe("build-design-pack", () => {
       "--decisions", decisionsPath,
       "--extract-dir", extractDir,
       "--out-dir", outDir,
+      "--shots-root", workdir,
     ]);
     expect(rc).toBe(0);
     const uiBody = readFileSync(join(outDir, "scr-sessions-page", "ticket-body-ui.md"), "utf-8");
+    // The emitted placeholder path is the workdir-relative form.
+    expect(uiBody).toContain("attachment://{{shots/CHG-sessions-page-01.png}}");
 
-    // Map mode: the placeholder path resolves to its attachment id.
+    // Map mode end to end: the relative placeholder path resolves to its
+    // attachment id (a raw absolute path would have been rejected and stripped).
     const map = new Map<string, string>([["shots/CHG-sessions-page-01.png", "att-uuid-123"]]);
     const mapped = applyInlineImages(uiBody, "map", map);
     expect(mapped.result.substituted).toBe(1);
+    expect(mapped.result.stripped).toEqual([]);
     expect(mapped.body).toContain("attachment://att-uuid-123");
     expect(mapped.body).not.toContain("attachment://{{shots/CHG-sessions-page-01.png}}");
 
@@ -1025,5 +1034,91 @@ describe("build-design-pack", () => {
     const stripped = applyInlineImages(uiBody, "strip", new Map());
     expect(stripped.result.stripped).toContain("shots/CHG-sessions-page-01.png");
     expect(stripped.body).not.toContain("attachment://");
+  });
+
+  // -------------------------------------------------------------------------
+  // Placeholder path normalization (--shots-root)
+  // -------------------------------------------------------------------------
+
+  function runWithScreenshots(
+    tmpPath: string,
+    findingShot: string,
+    themeShot: string,
+    shotsRoot?: string,
+  ): string {
+    const doc = validFindings();
+    (doc["findings"] as JsonObject[])[0]!["screenshot"] = findingShot;
+    (doc["themes"] as JsonObject[])[0]!["screenshot"] = themeShot;
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const outDir = join(tmpPath, "packs");
+    const argv = [
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ];
+    if (shotsRoot !== undefined) {
+      argv.push("--shots-root", shotsRoot);
+    }
+    expect(main(argv)).toBe(0);
+    return readFileSync(join(outDir, "scr-sessions-page", "ticket-body-ui.md"), "utf-8");
+  }
+
+  it("absolute screenshot paths under --shots-root are relativized in placeholders", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-absroot-"));
+    const workdir = join(tmpPath, "workdir");
+    const uiBody = runWithScreenshots(
+      tmpPath,
+      join(workdir, "shots/CHG-sessions-page-01.png"),
+      join(workdir, "shots/scr-sessions-page-base.png"),
+      workdir,
+    );
+    expect(uiBody).toContain("attachment://{{shots/CHG-sessions-page-01.png}}");
+    expect(uiBody).toContain("attachment://{{shots/scr-sessions-page-base.png}}");
+    // No absolute path survives into any placeholder.
+    expect(uiBody).not.toContain(`attachment://{{${workdir}`);
+    expect(uiBody).not.toMatch(/attachment:\/\/\{\{\//);
+  });
+
+  it("absolute screenshot path outside --shots-root falls back to the shots/ tail", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-absout-"));
+    const uiBody = runWithScreenshots(
+      tmpPath,
+      "/elsewhere/run/shots/CHG-sessions-page-01.png",
+      "/elsewhere/run/shots/scr-sessions-page-base.png",
+      join(tmpPath, "workdir"),
+    );
+    expect(uiBody).toContain("attachment://{{shots/CHG-sessions-page-01.png}}");
+    expect(uiBody).toContain("attachment://{{shots/scr-sessions-page-base.png}}");
+    expect(uiBody).not.toMatch(/attachment:\/\/\{\{\//);
+  });
+
+  it("absolute screenshot path with no shots/ segment omits the placeholder", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-absnone-"));
+    const uiBody = runWithScreenshots(
+      tmpPath,
+      "/elsewhere/captures/CHG-sessions-page-01.png",
+      "/elsewhere/captures/base.png",
+      join(tmpPath, "workdir"),
+    );
+    // No placeholder at all: a missing image beats a guaranteed-stripped line.
+    expect(uiBody).not.toContain("attachment://");
+    // The criterion itself is still present.
+    expect(uiBody).toContain("(CHG-sessions-page-01)");
+  });
+
+  it("relative screenshot paths pass through unchanged without --shots-root", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-relpass-"));
+    const uiBody = runWithScreenshots(
+      tmpPath,
+      "shots/CHG-sessions-page-01.png",
+      "shots/scr-sessions-page-base.png",
+    );
+    expect(uiBody).toContain("attachment://{{shots/CHG-sessions-page-01.png}}");
+    expect(uiBody).toContain("attachment://{{shots/scr-sessions-page-base.png}}");
   });
 });

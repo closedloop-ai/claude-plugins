@@ -133,10 +133,10 @@ Render the markdown body, create the platform document, substitute inline images
 
 ```bash
 node scripts/dist/render-review-doc.mjs --findings <workdir>/findings --manifest <m> \
-    --out <workdir>/review-body.md --export-name <zip>
+    --out <workdir>/review-body.md --export-name <zip> --shots-root <workdir>
 ```
 
-The body uses no numbered lists; every finding/theme heading carries its stable id as a trailing inline code span; images use `attachment://{{path}}` placeholders for later substitution.
+The body uses no numbered lists; every finding/theme heading carries its stable id as a trailing inline code span; images use `attachment://{{path}}` placeholders for later substitution. Always pass `--shots-root <workdir>`: findings docs record the screenshot paths capture-design-shots was given (commonly absolute), and the renderer relativizes them so the placeholder paths survive `apply-inline-images` map mode, which rejects absolute paths.
 
 1. `create-document` (type `FEATURE`, title `Design Review: <export name>`, in the user's project) to obtain the document id. The review document STAYS DRAFT.
 2. Substitute inline images via MCP (no REST calls, no environment-variable tokens):
@@ -210,8 +210,10 @@ For each unit with accepted findings:
 node scripts/dist/build-design-pack.mjs --findings <workdir>/findings/<unit-id>.json \
     --decisions <workdir>/decisions.json --extract-dir <workdir>/extracted \
     --out-dir <workdir>/packs --visual-spec <workdir>/specs/<unit-id>.json \
-    --css-slice <workdir>/specs/<unit-id>.css
+    --css-slice <workdir>/specs/<unit-id>.css --shots-root <workdir>
 ```
+
+Always pass `--shots-root <workdir>` so the image placeholders carry workdir-relative paths: findings docs record the (commonly absolute) screenshot paths capture-design-shots was given, and `apply-inline-images` map mode rejects absolute placeholder paths, so an unrelativized placeholder would be stripped instead of substituted at C4.
 
 Exit 3 = nothing accepted for that unit; skip it silently. Otherwise the pack contains design-source/, screenshots/, decision-applied findings.json, visual-spec.json, `ticket-body-ui.md`, and `ticket-body-api.md` when the unit has accepted backend-gap findings. `ticket-body-ui.md` is SELF-CONTAINED: each accepted criterion carries State/Spec summaries and a Refs sub-bullet (state.refs + spec.refs, file:line into the design source) plus an inline `attachment://{{path}}` image placeholder when a shot was captured; the body then embeds the unit's design file(s) and sliced CSS in a "Design Source (embedded)" section (budgeted to 90,000 characters total across all embedded blocks, truncating any overflow at a line boundary with a visible marker), and also carries the token-resolved visual spec, an explicit Declined Changes do-not-implement list, the component reuse table, and a provenance line - bullet format, no numbered lists. `ticket-body-api.md` carries the same per-criterion State/Spec/Refs detail and the same embedded source (backend-gap criteria only). The pack directory stays a workdir-only local artifact - never committed, never copied into the repo, never attached; it is a convenience copy, while the ticket body is the deliverable and must stand alone (an implementer works from the ticket text only, with no access to the workdir, the export, or any pack).
 
@@ -219,7 +221,7 @@ Exit 3 = nothing accepted for that unit; skip it silently. Otherwise the pack co
 
 For each ticket in `ticket-plan.json` (UI and API kinds, titles taken from the plan), after the duplicate-title check (C above), create one `FEATURE` document via `create-document` in the user-specified project with the matching ticket body. New documents are DRAFT - that is the second human gate; never advance their status yourself.
 
-The ticket bodies already carry inline `attachment://{{path}}` image placeholders (per-criterion shots and the unit base shot) that this step substitutes or strips. For each ticket, substitute inline images in the ticket body using the same MCP-or-strip contract as A6: if the attachment-upload MCP tool is available, upload each shot through it, build a per-ticket `image-map.json`, and run `apply-inline-images.mjs --body ... --out ... --map ... --shots-root <workdir>`; otherwise run with `--strip` and tell the user. Then `create-document-version` with the resulting body. No direct REST calls, no environment-variable tokens.
+The ticket bodies already carry inline `attachment://{{path}}` image placeholders (per-criterion shots and the unit base shot), with workdir-relative paths (C3's `--shots-root`), that this step substitutes or strips. For each ticket, substitute inline images in the ticket body using the same MCP-or-strip contract as A6: if the attachment-upload MCP tool is available, upload each shot through it, build a per-ticket `image-map.json` keyed by the relative path exactly as it appears in the placeholder (e.g. `shots/CHG-...png`), and run `apply-inline-images.mjs --body ... --out ... --map ... --shots-root <workdir>`; otherwise run with `--strip` and tell the user. Then `create-document-version` with the resulting body. No direct REST calls, no environment-variable tokens.
 
 Then create `BLOCKS` links exactly per `ticket-plan.json`'s `blocks` edges with `create-artifact-link` (prerequisite BLOCKS dependent). Links are irreversible - verify direction against an existing platform example before the first link of a session.
 
@@ -242,6 +244,7 @@ TypeScript sources in `tools/design-inventory/src/` (vitest tests co-located as 
 - `capture-design-shots` (+tests) - headless-Chromium highlighted shots of the live design per finding.
 - `render-review-doc` (+tests) - markdown body for the platform Design Review document (id anchors, image placeholders, no numbered lists).
 - `apply-inline-images` (+tests) - pure body transformer: substitutes `attachment://{{path}}` placeholders from an orchestrator-built map (map mode) or strips all placeholder lines (strip mode); network-free, always writes --out.
+- `shot-path` (+tests) - placeholder-safe screenshot path normalization (relativize against --shots-root, shots/-tail fallback, omit when unsafe); shared by render-review-doc and build-design-pack.
 - `derive-decisions-from-doc` (+tests) - decisions.json from the human-edited review document (heading-anchor survival).
 - `plan-ticket-graph` (+tests) - per-screen UI/API ticket graph with shared-component ownership and BLOCKS edges.
 - `build-design-pack` (+tests) - per-unit design pack + ticket-body-ui.md / ticket-body-api.md for accepted units.

@@ -283,6 +283,31 @@ function checkThemeIdUniqueness(docs) {
   return 1;
 }
 
+// src/shot-path.ts
+import { isAbsolute, relative, resolve } from "node:path";
+function pathSegments(p) {
+  return p.split(/[\\/]/).filter((segment) => segment.length > 0);
+}
+function shotsTail(p) {
+  const parts = pathSegments(p);
+  const idx = parts.lastIndexOf("shots");
+  if (idx < 0) return null;
+  return parts.slice(idx).join("/");
+}
+function normalizeShotPath(shotPath, shotsRoot) {
+  if (!isAbsolute(shotPath)) {
+    if (!pathSegments(shotPath).includes("..")) return shotPath;
+    return shotsTail(shotPath);
+  }
+  if (shotsRoot) {
+    const rel = relative(resolve(shotsRoot), resolve(shotPath));
+    if (rel !== "" && !isAbsolute(rel) && !pathSegments(rel).includes("..")) {
+      return rel.split("\\").join("/");
+    }
+  }
+  return shotsTail(shotPath);
+}
+
 // src/cli.ts
 import { pathToFileURL } from "node:url";
 function runWhenMain(metaUrl, main2) {
@@ -416,7 +441,7 @@ function getRecommendation(finding) {
   }
   return derivedRecommendation(finding);
 }
-function renderFindingBlock(finding, level) {
+function renderFindingBlock(finding, level, shotsRoot) {
   const id = String(finding["id"]);
   const title = String(finding["title"]);
   const lines = [];
@@ -424,8 +449,11 @@ function renderFindingBlock(finding, level) {
   lines.push("");
   const screenshot = finding["screenshot"];
   if (typeof screenshot === "string" && screenshot.length > 0) {
-    lines.push(`![design region](attachment://{{${screenshot}}})`);
-    lines.push("");
+    const normalized = normalizeShotPath(screenshot, shotsRoot);
+    if (normalized !== null) {
+      lines.push(`![design region](attachment://{{${normalized}}})`);
+      lines.push("");
+    }
   }
   const rec = getRecommendation(finding);
   lines.push(`- **Recommended: ${rec.action}** - ${rec.rationale}`);
@@ -442,7 +470,7 @@ function renderFindingBlock(finding, level) {
   lines.push("");
   return lines;
 }
-function renderUnitSection(doc) {
+function renderUnitSection(doc, shotsRoot) {
   const unit = doc["unit"];
   const unitId = String(unit["id"]);
   const unitName = String(unit["name"]);
@@ -501,8 +529,11 @@ function renderUnitSection(doc) {
     lines.push("");
     const themeScreenshot = theme["screenshot"];
     if (typeof themeScreenshot === "string" && themeScreenshot.length > 0) {
-      lines.push(`![design region](attachment://{{${themeScreenshot}}})`);
-      lines.push("");
+      const normalized = normalizeShotPath(themeScreenshot, shotsRoot);
+      if (normalized !== null) {
+        lines.push(`![design region](attachment://{{${normalized}}})`);
+        lines.push("");
+      }
     }
     const themeDesc = theme["description"];
     if (typeof themeDesc === "string" && themeDesc.length > 0) {
@@ -511,15 +542,15 @@ function renderUnitSection(doc) {
     }
     const members = byTheme[tid] ?? [];
     for (const finding of members) {
-      lines.push(...renderFindingBlock(finding, "####"));
+      lines.push(...renderFindingBlock(finding, "####", shotsRoot));
     }
   }
   for (const finding of standaloneFindings) {
-    lines.push(...renderFindingBlock(finding, "###"));
+    lines.push(...renderFindingBlock(finding, "###", shotsRoot));
   }
   return lines;
 }
-function renderReviewDoc(docs, manifest, exportName) {
+function renderReviewDoc(docs, manifest, exportName, shotsRoot) {
   const out = [];
   out.push(`# Design Review: ${exportName}`);
   out.push("");
@@ -555,7 +586,7 @@ function renderReviewDoc(docs, manifest, exportName) {
   for (const mu of manifest.units) {
     const doc = docsByUnitId[mu.id];
     if (!doc) continue;
-    out.push(...renderUnitSection(doc));
+    out.push(...renderUnitSection(doc, shotsRoot));
     out.push("---");
     out.push("");
   }
@@ -609,7 +640,8 @@ function main(argv) {
       findings: { type: "string", multiple: true },
       manifest: { type: "string" },
       out: { type: "string" },
-      "export-name": { type: "string", default: "design export" }
+      "export-name": { type: "string", default: "design export" },
+      "shots-root": { type: "string" }
     }
   });
   const findingsPaths = values["findings"] ?? [];
@@ -654,7 +686,7 @@ function main(argv) {
   const themeGuardResult = checkThemeIdUniqueness(docs);
   if (themeGuardResult !== 0) return themeGuardResult;
   const exportName = String(values["export-name"] ?? "design export");
-  const body = renderReviewDoc(docs, manifest, exportName);
+  const body = renderReviewDoc(docs, manifest, exportName, values["shots-root"]);
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, body, "utf-8");
   console.log(outPath);

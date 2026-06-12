@@ -38,14 +38,20 @@
  *
  * Inline image placeholders: per-finding `attachment://{{path}}` image
  * placeholders (and a unit base/theme shot at the top of the body) are emitted
- * verbatim for the orchestrator's C4 step to substitute (map mode) or strip
- * (strip mode) via apply-inline-images. The placeholder syntax matches exactly
- * what apply-inline-images consumes.
+ * for the orchestrator's C4 step to substitute (map mode) or strip (strip mode)
+ * via apply-inline-images. The placeholder syntax matches exactly what
+ * apply-inline-images consumes, and the placeholder paths are RELATIVE:
+ * findings docs commonly carry absolute screenshot paths (capture-design-shots
+ * records the --shots-dir form it was given), which apply-inline-images rejects
+ * in map mode. Pass --shots-root (the run workdir) so absolute paths under it
+ * are relativized; absolute paths elsewhere fall back to the tail starting at
+ * the last "shots/" segment, and a path with no safe relative form omits the
+ * placeholder entirely.
  *
  * Usage:
  *     node build-design-pack.mjs --findings unit.json --decisions decisions.json \
  *         --extract-dir DIR --out-dir packs/ [--visual-spec spec.json] \
- *         [--css-slice slice.css] [--export-zip-name <name>]
+ *         [--css-slice slice.css] [--export-zip-name <name>] [--shots-root DIR]
  *
  * Prints the pack directory on success. Exit codes: 0 ok, 1 input/validation
  * error, 3 nothing accepted for this unit (no pack written).
@@ -66,6 +72,7 @@ import {
   validateFindings,
   type JsonObject,
 } from "./design-findings-schema.js";
+import { normalizeShotPath } from "./shot-path.js";
 import { runWhenMain } from "./cli.js";
 
 const ACCEPTED_STATES = new Set(["accepted", "edited"]);
@@ -340,9 +347,17 @@ function renderDesignSourceAppendix(sources: EmbedSource[]): string[] {
  * the `![alt](attachment://{{path}})` syntax apply-inline-images consumes. The
  * orchestrator's C4 step later substitutes the path with an attachment id (map
  * mode) or strips the line (strip mode).
+ *
+ * The raw path is normalized via normalizeShotPath (absolute paths are the
+ * common case in findings docs because capture-design-shots records whatever
+ * --shots-dir form it was given). Returns null when no placeholder-safe
+ * relative form exists; the caller omits the line, because apply-inline-images
+ * would reject (strip) an absolute or ".."-containing path in map mode anyway.
  */
-function imagePlaceholder(path: string, alt: string): string {
-  return `![${alt}](attachment://{{${path}}})`;
+function imagePlaceholder(path: string, alt: string, shotsRoot?: string): string | null {
+  const normalized = normalizeShotPath(path, shotsRoot);
+  if (normalized === null) return null;
+  return `![${alt}](attachment://{{${normalized}}})`;
 }
 
 /**
@@ -373,18 +388,27 @@ function criterionDetailLines(finding: JsonObject): string[] {
 /**
  * Emit a finding's criterion bullet, its State/Spec/Refs sub-bullets, and -- for
  * non-backend findings with a string `screenshot` -- an inline image placeholder
- * sub-bullet. The placeholder is consumed by apply-inline-images at C4.
+ * sub-bullet. The placeholder is consumed by apply-inline-images at C4; its path
+ * is relativized against shotsRoot (omitted when no safe relative form exists).
  */
 function criterionBlock(
   finding: JsonObject,
   decisions: Record<string, JsonObject>,
   withScreenshot: boolean,
+  shotsRoot?: string,
 ): string[] {
   const out: string[] = [`- (${String(finding["id"])}) ${criterionText(finding, decisions)}`];
   out.push(...criterionDetailLines(finding));
   const screenshot = finding["screenshot"];
   if (withScreenshot && typeof screenshot === "string" && screenshot.length > 0) {
-    out.push(`  ${imagePlaceholder(screenshot, `${String(finding["id"])} design region`)}`);
+    const placeholder = imagePlaceholder(
+      screenshot,
+      `${String(finding["id"])} design region`,
+      shotsRoot,
+    );
+    if (placeholder !== null) {
+      out.push(`  ${placeholder}`);
+    }
   }
   return out;
 }
@@ -421,6 +445,7 @@ function renderUiTicketBody(
   visual: JsonObject | null,
   exportZipName: string | undefined,
   embedSources: EmbedSource[],
+  shotsRoot?: string,
 ): string {
   const unit = doc["unit"] as JsonObject;
   const impl = unit["current_impl"] as JsonObject;
@@ -456,15 +481,18 @@ function renderUiTicketBody(
   }
 
   const baseShot = unitBaseShot(doc);
-  if (baseShot) {
-    lines.push(imagePlaceholder(baseShot, `${String(unit["name"])} design`));
+  const basePlaceholder = baseShot
+    ? imagePlaceholder(baseShot, `${String(unit["name"])} design`, shotsRoot)
+    : null;
+  if (basePlaceholder !== null) {
+    lines.push(basePlaceholder);
     lines.push("");
   }
 
   lines.push("## Acceptance Criteria (reviewed and accepted)");
   lines.push("");
   for (const finding of acceptedNonBackend) {
-    lines.push(...criterionBlock(finding, decisions, true));
+    lines.push(...criterionBlock(finding, decisions, true, shotsRoot));
   }
   lines.push("");
 
@@ -644,6 +672,7 @@ export function main(argv: string[]): number {
       "visual-spec": { type: "string" },
       "css-slice": { type: "string" },
       "export-zip-name": { type: "string" },
+      "shots-root": { type: "string" },
     },
   });
 
@@ -771,6 +800,7 @@ export function main(argv: string[]): number {
   }
 
   const exportZipName = values["export-zip-name"];
+  const shotsRoot = values["shots-root"];
 
   // Read the design-source texts + CSS slice once; both bodies embed the same
   // budgeted source so the tickets are self-contained.
@@ -787,6 +817,7 @@ export function main(argv: string[]): number {
       visual,
       exportZipName,
       embedSources,
+      shotsRoot,
     );
     writeFileSync(join(packDir, "ticket-body-ui.md"), uiBody, "utf-8");
   }

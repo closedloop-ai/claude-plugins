@@ -8,7 +8,15 @@
  *
  * Usage:
  *     node render-review-doc.mjs --findings <file-or-dir> [--findings ...] \
- *         --manifest <manifest.json> --out <body.md> [--export-name <name>]
+ *         --manifest <manifest.json> --out <body.md> [--export-name <name>] \
+ *         [--shots-root <dir>]
+ *
+ * Image placeholder paths are RELATIVE: findings docs commonly carry absolute
+ * screenshot paths (capture-design-shots records the --shots-dir form it was
+ * given), which apply-inline-images rejects in map mode. Pass --shots-root
+ * (the run workdir) so absolute paths under it are relativized; absolute paths
+ * elsewhere fall back to the tail starting at the last "shots/" segment, and a
+ * path with no safe relative form omits the image line entirely.
  *
  * Exit codes: 0 ok, 1 validation/input error.
  */
@@ -19,6 +27,7 @@ import { parseArgs } from "node:util";
 
 import { validateFindings, type JsonObject } from "./design-findings-schema.js";
 import { checkThemeIdUniqueness } from "./theme-id-guard.js";
+import { normalizeShotPath } from "./shot-path.js";
 import { runWhenMain } from "./cli.js";
 
 // ---------------------------------------------------------------------------
@@ -177,7 +186,11 @@ function getRecommendation(finding: JsonObject): { action: string; rationale: st
   return derivedRecommendation(finding);
 }
 
-function renderFindingBlock(finding: JsonObject, level: "#####" | "####" | "###"): string[] {
+function renderFindingBlock(
+  finding: JsonObject,
+  level: "#####" | "####" | "###",
+  shotsRoot?: string,
+): string[] {
   const id = String(finding["id"]);
   const title = String(finding["title"]);
   const lines: string[] = [];
@@ -187,8 +200,11 @@ function renderFindingBlock(finding: JsonObject, level: "#####" | "####" | "###"
 
   const screenshot = finding["screenshot"];
   if (typeof screenshot === "string" && screenshot.length > 0) {
-    lines.push(`![design region](attachment://{{${screenshot}}})`);
-    lines.push("");
+    const normalized = normalizeShotPath(screenshot, shotsRoot);
+    if (normalized !== null) {
+      lines.push(`![design region](attachment://{{${normalized}}})`);
+      lines.push("");
+    }
   }
 
   const rec = getRecommendation(finding);
@@ -212,7 +228,7 @@ function renderFindingBlock(finding: JsonObject, level: "#####" | "####" | "###"
   return lines;
 }
 
-function renderUnitSection(doc: JsonObject): string[] {
+function renderUnitSection(doc: JsonObject, shotsRoot?: string): string[] {
   const unit = doc["unit"] as JsonObject;
   const unitId = String(unit["id"]);
   const unitName = String(unit["name"]);
@@ -290,8 +306,11 @@ function renderUnitSection(doc: JsonObject): string[] {
 
     const themeScreenshot = theme["screenshot"];
     if (typeof themeScreenshot === "string" && themeScreenshot.length > 0) {
-      lines.push(`![design region](attachment://{{${themeScreenshot}}})`);
-      lines.push("");
+      const normalized = normalizeShotPath(themeScreenshot, shotsRoot);
+      if (normalized !== null) {
+        lines.push(`![design region](attachment://{{${normalized}}})`);
+        lines.push("");
+      }
     }
 
     const themeDesc = theme["description"];
@@ -302,13 +321,13 @@ function renderUnitSection(doc: JsonObject): string[] {
 
     const members = byTheme[tid] ?? [];
     for (const finding of members) {
-      lines.push(...renderFindingBlock(finding, "####"));
+      lines.push(...renderFindingBlock(finding, "####", shotsRoot));
     }
   }
 
   // Render standalone findings
   for (const finding of standaloneFindings) {
-    lines.push(...renderFindingBlock(finding, "###"));
+    lines.push(...renderFindingBlock(finding, "###", shotsRoot));
   }
 
   return lines;
@@ -322,6 +341,7 @@ function renderReviewDoc(
   docs: JsonObject[],
   manifest: Manifest,
   exportName: string,
+  shotsRoot?: string,
 ): string {
   const out: string[] = [];
 
@@ -369,7 +389,7 @@ function renderReviewDoc(
   for (const mu of manifest.units) {
     const doc = docsByUnitId[mu.id];
     if (!doc) continue;
-    out.push(...renderUnitSection(doc));
+    out.push(...renderUnitSection(doc, shotsRoot));
     out.push("---");
     out.push("");
   }
@@ -444,6 +464,7 @@ export function main(argv: string[]): number {
       manifest: { type: "string" },
       out: { type: "string" },
       "export-name": { type: "string", default: "design export" },
+      "shots-root": { type: "string" },
     },
   });
 
@@ -495,7 +516,7 @@ export function main(argv: string[]): number {
   if (themeGuardResult !== 0) return themeGuardResult;
 
   const exportName = String(values["export-name"] ?? "design export");
-  const body = renderReviewDoc(docs, manifest, exportName);
+  const body = renderReviewDoc(docs, manifest, exportName, values["shots-root"]);
 
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, body, "utf-8");
