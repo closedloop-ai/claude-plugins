@@ -62,7 +62,7 @@ The context pack folds in the orchestrator's current-impl hints and the componen
 
 ## Output: findings.json (schema_version 1)
 
-Write `OUTPUT_PATH` as JSON with this shape (authoritative schema: `design-findings-schema.ts` in the sources next to `SCHEMA_VALIDATOR`):
+Write `OUTPUT_PATH` as JSON with this shape (the example below plus `SCHEMA_VALIDATOR`'s error messages are your authority; the validator enforces the full schema):
 
 ```json
 {
