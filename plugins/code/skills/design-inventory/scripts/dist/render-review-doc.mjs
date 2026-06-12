@@ -243,6 +243,46 @@ function validateFindings(doc) {
   return errors;
 }
 
+// src/theme-id-guard.ts
+function findDuplicateThemeIds(docs) {
+  const themeToUnits = /* @__PURE__ */ new Map();
+  for (const doc of docs) {
+    const unit = doc["unit"];
+    const unitId = String(unit["id"]);
+    const themes = Array.isArray(doc["themes"]) ? doc["themes"] : [];
+    for (const theme of themes) {
+      const tid = String(theme["id"]);
+      let existing = themeToUnits.get(tid);
+      if (!existing) {
+        existing = [];
+        themeToUnits.set(tid, existing);
+      }
+      existing.push(unitId);
+    }
+  }
+  const violations = [];
+  for (const [themeId, unitIds] of themeToUnits) {
+    if (unitIds.length > 1) {
+      violations.push({ themeId, unitIds });
+    }
+  }
+  return violations;
+}
+function checkThemeIdUniqueness(docs) {
+  const violations = findDuplicateThemeIds(docs);
+  if (violations.length === 0) return 0;
+  console.error("error: duplicate theme ids detected across findings documents");
+  for (const v of violations) {
+    console.error(
+      `  theme id '${v.themeId}' is declared by units: ${v.unitIds.join(", ")}`
+    );
+  }
+  console.error(
+    "remediation: theme ids must be unit-scoped (recommended: thm-<unit-slug>-<topic>); rename in the affected findings.json and re-render"
+  );
+  return 1;
+}
+
 // src/cli.ts
 import { pathToFileURL } from "node:url";
 function runWhenMain(metaUrl, main2) {
@@ -611,6 +651,8 @@ function main(argv) {
     }
     return 1;
   }
+  const themeGuardResult = checkThemeIdUniqueness(docs);
+  if (themeGuardResult !== 0) return themeGuardResult;
   const exportName = String(values["export-name"] ?? "design export");
   const body = renderReviewDoc(docs, manifest, exportName);
   mkdirSync(dirname(outPath), { recursive: true });

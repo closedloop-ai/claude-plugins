@@ -2,7 +2,7 @@
 
 // src/build-design-pack.ts
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 
 // src/design-findings-schema.ts
@@ -396,7 +396,7 @@ function renderVisualSpec(visual) {
   lines.push("");
   return lines;
 }
-function renderUiTicketBody(doc, decisions, acceptedNonBackend, declined, visual, exportZipName) {
+function renderUiTicketBody(doc, decisions, acceptedNonBackend, declined, pending, visual, exportZipName) {
   const unit = doc["unit"];
   const impl = unit["current_impl"];
   const flag = unit["feature_flag"] ?? {};
@@ -438,6 +438,18 @@ function renderUiTicketBody(doc, decisions, acceptedNonBackend, declined, visual
     );
     lines.push("");
     for (const finding of declined) {
+      lines.push(`- (${String(finding["id"])}) ${String(finding["summary"])}`);
+    }
+    lines.push("");
+  }
+  if (pending.length > 0) {
+    lines.push("## Undecided Findings (excluded from this ticket's scope)");
+    lines.push("");
+    lines.push(
+      "These findings were left undecided during review and need a decision before they can be scheduled:"
+    );
+    lines.push("");
+    for (const finding of pending) {
       lines.push(`- (${String(finding["id"])}) ${String(finding["summary"])}`);
     }
     lines.push("");
@@ -588,9 +600,14 @@ function main(argv) {
   const findingsArr = Array.isArray(doc["findings"]) ? doc["findings"] : [];
   const accepted = findingsArr.filter((f) => ACCEPTED_STATES.has(effectiveDecision(f, decisions)));
   const declined = findingsArr.filter((f) => effectiveDecision(f, decisions) === "declined");
+  const pending = findingsArr.filter((f) => effectiveDecision(f, decisions) === "pending");
   if (accepted.length === 0) {
     const unit2 = doc["unit"];
-    console.error(`nothing accepted for unit ${String(unit2["id"])}; no pack written`);
+    const pendingClause = pending.length > 0 ? `; ${pending.length} finding(s) still pending` : "";
+    const declinedClause = declined.length > 0 ? `; ${declined.length} finding(s) declined` : "";
+    console.error(
+      `nothing accepted for unit ${String(unit2["id"])}; no pack written` + declinedClause + pendingClause
+    );
     return 3;
   }
   const acceptedNonBackend = accepted.filter((f) => f["category"] !== "backend-gap");
@@ -605,7 +622,9 @@ function main(argv) {
   for (const rel of designSources) {
     const src = join(extractDirPath, rel);
     if (existsSync(src) && statSync(src).isFile()) {
-      copyFileSync(src, join(sourceDir, basename(rel)));
+      const dest = join(sourceDir, rel);
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(src, dest);
     }
   }
   const cssSlicePath = values["css-slice"];
@@ -616,8 +635,9 @@ function main(argv) {
   for (const rel of refScreenshots) {
     const src = join(extractDirPath, rel);
     if (existsSync(src) && statSync(src).isFile()) {
-      mkdirSync(shotsDir, { recursive: true });
-      copyFileSync(src, join(shotsDir, basename(rel)));
+      const dest = join(shotsDir, rel);
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(src, dest);
     }
   }
   const resolvedDoc = JSON.parse(JSON.stringify(doc));
@@ -639,6 +659,7 @@ function main(argv) {
       decisions,
       acceptedNonBackend,
       declined,
+      pending,
       visual,
       exportZipName
     );
@@ -653,7 +674,14 @@ function main(argv) {
     );
     writeFileSync(join(packDir, "ticket-body-api.md"), apiBody, "utf-8");
   }
-  console.log(packDir);
+  const summary = {
+    pack: packDir,
+    accepted: accepted.length,
+    declined: declined.length,
+    pending: pending.length,
+    ...pending.length > 0 && { pending_ids: pending.map((f) => String(f["id"])) }
+  };
+  console.log(JSON.stringify(summary));
   return 0;
 }
 runWhenMain(import.meta.url, main);

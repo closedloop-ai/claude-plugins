@@ -361,4 +361,123 @@ describe("render-review-doc", () => {
     const text = readFileSync(out4, "utf-8");
     expect(text).toContain("**Recommended: Decline**");
   });
+
+  // ---------------------------------------------------------------------------
+  // Theme id uniqueness guard tests
+  // ---------------------------------------------------------------------------
+
+  it("exits 1 with both unit ids in error when two units share the same theme id", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "rrd-thm-dup-"));
+    const findingsDir = join(tmpPath, "findings");
+    mkdirSync(findingsDir, { recursive: true });
+
+    // Unit A: scr-sessions-page (from fixture, has thm-artifact-table)
+    const docA = validFindings();
+    writeFileSync(join(findingsDir, "scr-sessions-page.json"), JSON.stringify(docA), "utf-8");
+
+    // Unit B: a second unit that also uses thm-artifact-table (same id, different unit)
+    const docB: JsonObject = {
+      schema_version: 1,
+      unit: {
+        id: "scr-branches-page",
+        name: "Branches Page",
+        type: "screen",
+        classification: "existing-modified",
+        design_sources: ["ui_kits/app/BranchesPage.jsx"],
+        primary_source: "ui_kits/app/BranchesPage.jsx",
+        current_impl: { status: "found", paths: [] },
+        feature_flag: { required: false, flag: null, notes: "" },
+      },
+      // Deliberately reuses the same theme id as docA
+      themes: [{ id: "thm-artifact-table", title: "Adopt artifact table layout" }],
+      findings: [],
+      component_reuse: [],
+      visual_spec: null,
+    };
+    writeFileSync(join(findingsDir, "scr-branches-page.json"), JSON.stringify(docB), "utf-8");
+
+    const manifestPath = join(tmpPath, "manifest.json");
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        units: [
+          { id: "scr-sessions-page", name: "Sessions Page", type: "screen" },
+          { id: "scr-branches-page", name: "Branches Page", type: "screen" },
+        ],
+      }),
+      "utf-8",
+    );
+
+    const errorLines: string[] = [];
+    const origError = console.error.bind(console);
+    console.error = (...args: unknown[]) => errorLines.push(String(args[0]));
+    try {
+      const rc = main([
+        "--findings", findingsDir,
+        "--manifest", manifestPath,
+        "--out", join(tmpPath, "body.md"),
+      ]);
+      expect(rc).toBe(1);
+    } finally {
+      console.error = origError;
+    }
+
+    const combined = errorLines.join("\n");
+    expect(combined).toContain("thm-artifact-table");
+    expect(combined).toContain("scr-sessions-page");
+    expect(combined).toContain("scr-branches-page");
+  });
+
+  it("exits 0 when two units use unit-scoped theme ids (no collision)", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "rrd-thm-ok-"));
+    const findingsDir = join(tmpPath, "findings");
+    mkdirSync(findingsDir, { recursive: true });
+
+    // Unit A: sessions page with properly scoped theme id
+    const docA = validFindings();
+    // Override the theme id to be unit-scoped
+    (docA["themes"] as JsonObject[])[0]!["id"] = "thm-sessions-page-artifact-table";
+    // Fix the finding reference too
+    (docA["findings"] as JsonObject[])[0]!["theme"] = "thm-sessions-page-artifact-table";
+    writeFileSync(join(findingsDir, "scr-sessions-page.json"), JSON.stringify(docA), "utf-8");
+
+    // Unit B: different unit with its own scoped theme id
+    const docB: JsonObject = {
+      schema_version: 1,
+      unit: {
+        id: "scr-branches-page",
+        name: "Branches Page",
+        type: "screen",
+        classification: "existing-modified",
+        design_sources: ["ui_kits/app/BranchesPage.jsx"],
+        primary_source: "ui_kits/app/BranchesPage.jsx",
+        current_impl: { status: "found", paths: [] },
+        feature_flag: { required: false, flag: null, notes: "" },
+      },
+      themes: [{ id: "thm-branches-page-artifact-table", title: "Adopt artifact table layout" }],
+      findings: [],
+      component_reuse: [],
+      visual_spec: null,
+    };
+    writeFileSync(join(findingsDir, "scr-branches-page.json"), JSON.stringify(docB), "utf-8");
+
+    const manifestPath = join(tmpPath, "manifest.json");
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        units: [
+          { id: "scr-sessions-page", name: "Sessions Page", type: "screen" },
+          { id: "scr-branches-page", name: "Branches Page", type: "screen" },
+        ],
+      }),
+      "utf-8",
+    );
+
+    const rc = main([
+      "--findings", findingsDir,
+      "--manifest", manifestPath,
+      "--out", join(tmpPath, "body.md"),
+    ]);
+    expect(rc).toBe(0);
+  });
 });

@@ -26,7 +26,7 @@
 import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
 import { readFileSync, writeFileSync } from "node:fs";
-import { extname, join } from "node:path";
+import { extname, join, resolve, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -192,11 +192,38 @@ export async function resolveChromium(repo: string | null): Promise<unknown> {
   );
 }
 
+/**
+ * Resolve a URL path against a root directory and return the absolute file
+ * path only if it lies within the root. Returns null for any path that would
+ * escape the root (directory traversal, absolute paths, encoded traversal, etc.).
+ *
+ * The caller is expected to have already decoded percent-encoding before
+ * passing urlPath (the server does this via decodeURIComponent).
+ */
+export function containedPath(root: string, urlPath: string): string | null {
+  const normalizedRoot = resolve(root);
+  // For the root URL serve index.html; for everything else strip the leading slash.
+  const rel = urlPath === "/" ? "index.html" : urlPath.slice(1);
+  const candidate = resolve(join(normalizedRoot, rel));
+  // The relative path from root to candidate must not start with ".." (which
+  // would mean it escaped the root) and must not be absolute (Windows UNC).
+  const rel2 = relative(normalizedRoot, candidate);
+  if (rel2.startsWith("..") || sep !== "/" && rel2.startsWith(sep)) return null;
+  // candidate must be strictly inside normalizedRoot, not the root dir itself.
+  if (candidate === normalizedRoot) return null;
+  return candidate;
+}
+
 function serveDir(root: string): Promise<{ server: Server; port: number }> {
   return new Promise((resolvePromise) => {
     const server = createServer((req, res) => {
       const urlPath = decodeURIComponent((req.url ?? "/").split("?")[0] ?? "/");
-      const file = join(root, urlPath === "/" ? "index.html" : urlPath.slice(1));
+      const file = containedPath(root, urlPath);
+      if (file === null) {
+        res.writeHead(404);
+        res.end("not found");
+        return;
+      }
       try {
         const data = readFileSync(file);
         res.writeHead(200, {

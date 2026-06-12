@@ -28,6 +28,7 @@ import {
   validateFindings,
   type JsonObject,
 } from "./design-findings-schema.js";
+import { checkThemeIdUniqueness } from "./theme-id-guard.js";
 import { runWhenMain } from "./cli.js";
 
 const ACCEPTED_STATES = new Set(["accepted", "edited"]);
@@ -360,6 +361,10 @@ export function main(argv: string[]): number {
     }
     findingsDocs.push(doc as JsonObject);
   }
+
+  // Guard against cross-unit theme id collisions before planning
+  const themeGuardResult = checkThemeIdUniqueness(findingsDocs);
+  if (themeGuardResult !== 0) return themeGuardResult;
 
   // Load and validate decisions
   let decisionsDoc: unknown;

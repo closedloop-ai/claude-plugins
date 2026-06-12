@@ -15,12 +15,13 @@
  * Prints the output path on success. Exit codes: 0 ok, 1 bad repo path.
  */
 
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, posix, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { execFileSync } from "node:child_process";
 
 import { runWhenMain } from "./cli.js";
+import { walkFiles } from "./fs-walk.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -28,7 +29,6 @@ import { runWhenMain } from "./cli.js";
 
 const SKIP_MODULES_PREFIX = "@storybook";
 const SKIP_NAMES = new Set(["Meta", "StoryObj", "StoryFn"]);
-const EXCLUDED_DIRS = new Set(["node_modules", "dist"]);
 
 // Match:  import { A, B as C } from "mod";
 // Group 1: brace contents, Group 2: module path
@@ -61,44 +61,6 @@ interface ComponentEntry {
 interface ComponentIndex {
   commit: string | null;
   components: ComponentEntry[];
-}
-
-// ---------------------------------------------------------------------------
-// Filesystem walk
-// ---------------------------------------------------------------------------
-
-/**
- * Single filesystem pass over the repo, pruning excluded and dot directories.
- * Pruning at walk time matters: monorepos carry node_modules trees large
- * enough that even one recursive walk through them dominates the runtime.
- */
-export function walkFiles(repo: string): string[] {
-  const files: string[] = [];
-  function recurse(dir: string): void {
-    let entries: string[];
-    try {
-      entries = readdirSync(dir, { encoding: "utf-8" });
-    } catch {
-      return;
-    }
-    for (const name of entries) {
-      if (EXCLUDED_DIRS.has(name) || name.startsWith(".")) continue;
-      const full = join(dir, name);
-      let st;
-      try {
-        st = statSync(full);
-      } catch {
-        continue;
-      }
-      if (st.isDirectory()) {
-        recurse(full);
-      } else {
-        files.push(full);
-      }
-    }
-  }
-  recurse(repo);
-  return files;
 }
 
 // ---------------------------------------------------------------------------

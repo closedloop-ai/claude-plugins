@@ -18,6 +18,7 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 
 import { validateFindings, type JsonObject } from "./design-findings-schema.js";
+import { checkThemeIdUniqueness } from "./theme-id-guard.js";
 import { runWhenMain } from "./cli.js";
 
 // ---------------------------------------------------------------------------
@@ -489,6 +490,9 @@ export function main(argv: string[]): number {
     }
     return 1;
   }
+
+  const themeGuardResult = checkThemeIdUniqueness(docs);
+  if (themeGuardResult !== 0) return themeGuardResult;
 
   const exportName = String(values["export-name"] ?? "design export");
   const body = renderReviewDoc(docs, manifest, exportName);

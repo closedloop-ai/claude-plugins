@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  containedPath,
   main,
   patchFindings,
   resolveChromium,
@@ -14,6 +15,43 @@ import {
 } from "./capture-design-shots.js";
 import type { JsonObject } from "./design-findings-schema.js";
 import { validFindings } from "./test-fixtures.js";
+
+describe("containedPath", () => {
+  const root = "/srv/extract";
+
+  it("returns a path inside root for safe URLs", () => {
+    const p = containedPath(root, "/index.html");
+    expect(p).toBe("/srv/extract/index.html");
+  });
+
+  it("maps root URL to index.html", () => {
+    const p = containedPath(root, "/");
+    expect(p).toBe("/srv/extract/index.html");
+  });
+
+  it("returns null for directory traversal (..)", () => {
+    expect(containedPath(root, "/../../../../etc/passwd")).toBeNull();
+    expect(containedPath(root, "/../etc/passwd")).toBeNull();
+    expect(containedPath(root, "/foo/../../etc/passwd")).toBeNull();
+  });
+
+  it("returns null for percent-encoded traversal (%2e%2e)", () => {
+    // The server decodes with decodeURIComponent before calling containedPath.
+    const decoded = decodeURIComponent("/%2e%2e/etc/passwd");
+    expect(containedPath(root, decoded)).toBeNull();
+  });
+
+  it("returns null when the resolved path equals the root dir itself", () => {
+    // An attacker who somehow produces a path normalizing to the root directory
+    // should be rejected rather than served as a directory listing.
+    expect(containedPath(root, "/../extract")).toBeNull();
+  });
+
+  it("allows nested paths", () => {
+    const p = containedPath(root, "/assets/app.js");
+    expect(p).toBe("/srv/extract/assets/app.js");
+  });
+});
 
 describe("unionClip", () => {
   it("unions boxes with padding and clamps to the page", () => {

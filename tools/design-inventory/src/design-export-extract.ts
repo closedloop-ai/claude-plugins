@@ -151,35 +151,76 @@ export function slugify(name: string): string {
   return slug || "screen";
 }
 
-/** Extract the archive, rejecting zip-slip paths and zip bombs. */
-export function safeExtract(zipPath: string, extractDir: string): string[] {
-  const zipData = readFileSync(zipPath);
-  const entries = unzipSync(zipData);
+/** Check whether an entry name is free of zip-slip paths (absolute or ".."). */
+function isSafeEntryName(name: string): boolean {
+  if (name.startsWith("/") || name.startsWith("\\")) return false;
+  const parts = name.split("/");
+  if (parts.includes("..")) return false;
+  return true;
+}
 
-  // Compute total uncompressed size
-  let total = 0;
-  for (const [, data] of Object.entries(entries)) {
-    total += data.byteLength;
-  }
-  if (total > MAX_TOTAL_UNCOMPRESSED) {
-    throw new UnsafeArchiveError(
-      `archive expands to ${total} bytes (limit ${MAX_TOTAL_UNCOMPRESSED})`
-    );
-  }
+/**
+ * Extract the archive, rejecting zip-slip paths and zip bombs.
+ *
+ * The bomb guard is enforced via unzipSync's filter callback, which fires for
+ * each entry BEFORE decompression so a crafted archive cannot exhaust memory
+ * before the limit is checked. Unsafe paths (absolute or containing "..") are
+ * also rejected inside the filter, keeping the decompressor from ever
+ * inflating them. The post-decompression checks below remain as defense in
+ * depth.
+ *
+ * @param maxTotal - override the size limit (for testing); defaults to MAX_TOTAL_UNCOMPRESSED
+ */
+export function safeExtract(
+  zipPath: string,
+  extractDir: string,
+  maxTotal = MAX_TOTAL_UNCOMPRESSED,
+): string[] {
+  const zipData = readFileSync(zipPath);
+
+  // Accumulate declared originalSize values in the filter so we can reject
+  // entries before decompression. This prevents a crafted archive from OOMing
+  // the process while inflating.
+  let totalDeclared = 0;
+  let filterError: UnsafeArchiveError | null = null;
+
+  const entries = unzipSync(zipData, {
+    filter(file) {
+      // Stop decompressing if a previous filter call already found a violation.
+      if (filterError !== null) return false;
+
+      // Reject unsafe paths eagerly inside the filter.
+      if (!isSafeEntryName(file.name)) {
+        filterError = new UnsafeArchiveError(`unsafe path in archive: ${file.name}`);
+        return false;
+      }
+
+      // Accumulate the declared uncompressed size and enforce the limit.
+      totalDeclared += file.originalSize;
+      if (totalDeclared > maxTotal) {
+        filterError = new UnsafeArchiveError(
+          `archive expands to more than ${maxTotal} bytes (limit ${maxTotal})`,
+        );
+        return false;
+      }
+
+      return true;
+    },
+  });
+
+  // Re-throw any error raised inside the filter (fflate swallows it).
+  if (filterError !== null) throw filterError;
 
   const extracted: string[] = [];
   for (const [name, data] of Object.entries(entries)) {
     // Skip directory entries
     if (name.endsWith("/")) continue;
 
-    // Check for absolute paths or ".." parts
-    if (name.startsWith("/") || name.startsWith("\\")) {
+    // Defense-in-depth: recheck paths after decompression.
+    if (!isSafeEntryName(name)) {
       throw new UnsafeArchiveError(`unsafe path in archive: ${name}`);
     }
     const parts = name.split("/");
-    if (parts.includes("..")) {
-      throw new UnsafeArchiveError(`unsafe path in archive: ${name}`);
-    }
 
     const target = join(extractDir, ...parts);
     // Verify the resolved path is inside extract dir

@@ -415,3 +415,115 @@ describe("plan-ticket-graph CLI", () => {
     expect(rc).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Theme id uniqueness guard tests (plan-ticket-graph CLI)
+// ---------------------------------------------------------------------------
+
+describe("theme id uniqueness guard (plan-ticket-graph CLI)", () => {
+  function writeTmp(dir: string, name: string, obj: unknown): string {
+    const p = join(dir, name);
+    writeFileSync(p, JSON.stringify(obj), "utf-8");
+    return p;
+  }
+
+  function makeManifest(unitIds: string[]): JsonObject {
+    return { units: unitIds.map((id) => ({ id })) };
+  }
+
+  const decisionsDoc = {
+    schema_version: 1,
+    reviewer: "test",
+    decided_at: "2026-01-01T00:00:00Z",
+    decisions: {},
+  };
+
+  it("exits 1 with both unit ids when two units share the same theme id", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "ptg-thm-dup-"));
+
+    // Unit A: scr-sessions-page with thm-artifact-table (from fixture)
+    const docA = validFindings();
+    const fpA = join(tmp, "scr-sessions-page.json");
+    writeFileSync(fpA, JSON.stringify(docA), "utf-8");
+
+    // Unit B: different unit that also declares thm-artifact-table
+    const docB: JsonObject = {
+      schema_version: 1,
+      unit: {
+        id: "scr-branches-page",
+        name: "Branches Page",
+        type: "screen",
+        classification: "existing-modified",
+        design_sources: ["ui_kits/app/BranchesPage.jsx"],
+        primary_source: "ui_kits/app/BranchesPage.jsx",
+        current_impl: { status: "found", paths: [] },
+        feature_flag: { required: false, flag: null, notes: "" },
+      },
+      themes: [{ id: "thm-artifact-table", title: "Adopt artifact table" }],
+      findings: [],
+      component_reuse: [],
+      visual_spec: null,
+    };
+    const fpB = join(tmp, "scr-branches-page.json");
+    writeFileSync(fpB, JSON.stringify(docB), "utf-8");
+
+    const dp = writeTmp(tmp, "decisions.json", decisionsDoc);
+    const mp = writeTmp(tmp, "manifest.json", makeManifest(["scr-sessions-page", "scr-branches-page"]));
+    const outPath = join(tmp, "out.json");
+
+    const errorLines: string[] = [];
+    const origError = console.error.bind(console);
+    console.error = (...args: unknown[]) => errorLines.push(String(args[0]));
+    let rc: number;
+    try {
+      rc = main(["--findings", fpA, "--findings", fpB, "--decisions", dp, "--manifest", mp, "--out", outPath]);
+    } finally {
+      console.error = origError;
+    }
+
+    expect(rc!).toBe(1);
+    const combined = errorLines.join("\n");
+    expect(combined).toContain("thm-artifact-table");
+    expect(combined).toContain("scr-sessions-page");
+    expect(combined).toContain("scr-branches-page");
+  });
+
+  it("exits 0 when two units use unit-scoped theme ids (no collision)", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "ptg-thm-ok-"));
+
+    // Unit A: sessions page with unit-scoped theme id
+    const docA = validFindings();
+    (docA["themes"] as JsonObject[])[0]!["id"] = "thm-sessions-page-artifact-table";
+    (docA["findings"] as JsonObject[])[0]!["theme"] = "thm-sessions-page-artifact-table";
+    const fpA = join(tmp, "scr-sessions-page.json");
+    writeFileSync(fpA, JSON.stringify(docA), "utf-8");
+
+    // Unit B: different unit with its own scoped theme id
+    const docB: JsonObject = {
+      schema_version: 1,
+      unit: {
+        id: "scr-branches-page",
+        name: "Branches Page",
+        type: "screen",
+        classification: "existing-modified",
+        design_sources: ["ui_kits/app/BranchesPage.jsx"],
+        primary_source: "ui_kits/app/BranchesPage.jsx",
+        current_impl: { status: "found", paths: [] },
+        feature_flag: { required: false, flag: null, notes: "" },
+      },
+      themes: [{ id: "thm-branches-page-artifact-table", title: "Adopt artifact table" }],
+      findings: [],
+      component_reuse: [],
+      visual_spec: null,
+    };
+    const fpB = join(tmp, "scr-branches-page.json");
+    writeFileSync(fpB, JSON.stringify(docB), "utf-8");
+
+    const dp = writeTmp(tmp, "decisions.json", decisionsDoc);
+    const mp = writeTmp(tmp, "manifest.json", makeManifest(["scr-sessions-page", "scr-branches-page"]));
+    const outPath = join(tmp, "out.json");
+
+    const rc = main(["--findings", fpA, "--findings", fpB, "--decisions", dp, "--manifest", mp, "--out", outPath]);
+    expect(rc).toBe(0);
+  });
+});

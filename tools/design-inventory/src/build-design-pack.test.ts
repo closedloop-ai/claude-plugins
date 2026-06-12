@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { main } from "./build-design-pack.js";
 import { validDecisions, validFindings } from "./test-fixtures.js";
@@ -62,8 +62,11 @@ describe("build-design-pack", () => {
     };
     const { rc, pack } = runPack(tmpPath, validDecisions(), visual);
     expect(rc).toBe(0);
+    // Source files land at their relative path under design-source/
+    expect(existsSync(join(pack, "design-source/ui_kits/app/SessionsPage.jsx"))).toBe(true);
     expect(existsSync(join(pack, "design-source/SessionsPage.jsx"))).toBe(true);
-    expect(existsSync(join(pack, "screenshots/real-sessions.png"))).toBe(true);
+    // Screenshots land at their relative path under screenshots/
+    expect(existsSync(join(pack, "screenshots/screenshots/real-sessions.png"))).toBe(true);
     expect(existsSync(join(pack, "visual-spec.json"))).toBe(true);
 
     const resolved = JSON.parse(readFileSync(join(pack, "findings.json"), "utf-8")) as JsonObject;
@@ -301,5 +304,132 @@ describe("build-design-pack", () => {
     const pack = join(outDir, "scr-sessions-page");
     const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
     expect(uiBody).toContain("my-design-export-v3.zip");
+  });
+
+  it("collision: two design_sources with identical basenames land at distinct nested paths", () => {
+    // Both ui_kits/app/index.jsx and ui_kits/admin/index.jsx share basename "index.jsx".
+    // The old basename-only copy would let the second clobber the first.
+    // The fix preserves directory structure so both survive.
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-"));
+    const extractDir = join(tmpPath, "extracted");
+    mkdirSync(join(extractDir, "ui_kits/app"), { recursive: true });
+    mkdirSync(join(extractDir, "ui_kits/admin"), { recursive: true });
+    writeFileSync(join(extractDir, "ui_kits/app/index.jsx"), "app content", "utf-8");
+    writeFileSync(join(extractDir, "ui_kits/admin/index.jsx"), "admin content", "utf-8");
+
+    const doc = validFindings();
+    (doc["unit"] as JsonObject)["design_sources"] = [
+      "ui_kits/app/index.jsx",
+      "ui_kits/admin/index.jsx",
+    ];
+    (doc["unit"] as JsonObject)["primary_source"] = "ui_kits/app/index.jsx";
+
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const outDir = join(tmpPath, "packs");
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    expect(rc).toBe(0);
+    const pack = join(outDir, "scr-sessions-page");
+    // Both files must be present at their source-relative paths
+    expect(readFileSync(join(pack, "design-source/ui_kits/app/index.jsx"), "utf-8")).toBe("app content");
+    expect(readFileSync(join(pack, "design-source/ui_kits/admin/index.jsx"), "utf-8")).toBe("admin content");
+  });
+
+  it("pending findings appear in Undecided section and summary JSON, not in criteria", () => {
+    // validDecisions accepts thm-artifact-table (covers CHG-sessions-page-01) and
+    // declines CHG-sessions-page-02. Both findings start pending; theme acceptance
+    // resolves -01 to accepted. -02 is explicitly declined.
+    // Add a third finding with no decision (truly pending).
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-"));
+    const doc = validFindings();
+    const findings = doc["findings"] as JsonObject[];
+    findings.push({
+      id: "CHG-sessions-page-03",
+      title: "Color tweak",
+      category: "visual",
+      intent: "unclear",
+      intent_rationale: "not sure",
+      theme: null,
+      state: { summary: "Uses old brand color", refs: [] },
+      spec: { summary: "Uses new brand token", refs: [] },
+      decision: { state: "pending" },
+      summary: "Update brand color token",
+    });
+
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const outDir = join(tmpPath, "packs");
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    const logOutput = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    logSpy.mockRestore();
+
+    expect(rc).toBe(0);
+    const pack = join(outDir, "scr-sessions-page");
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+
+    // Pending finding must appear in Undecided section
+    expect(uiBody).toContain("## Undecided Findings");
+    expect(uiBody).toContain("CHG-sessions-page-03");
+    expect(uiBody).toContain("Update brand color token");
+
+    // Pending finding must NOT appear in Acceptance Criteria
+    const criteriaSection = uiBody.split("## Acceptance Criteria")[1]!.split("##")[0]!;
+    expect(criteriaSection).not.toContain("CHG-sessions-page-03");
+
+    // Summary JSON must include pending count and ids
+    const summary = JSON.parse(logOutput) as { pending: number; pending_ids: string[] };
+    expect(summary["pending"]).toBe(1);
+    expect(summary["pending_ids"]).toEqual(["CHG-sessions-page-03"]);
+  });
+
+  it("exit-3 message distinguishes all-declined from pending-remain", () => {
+    // Case A: everything is explicitly declined, no pending
+    const tmpPathA = mkdtempSync(join(tmpdir(), "bdp-"));
+    const decisionsA = validDecisions();
+    (decisionsA as JsonObject)["decisions"] = {
+      "thm-artifact-table": { state: "declined" },
+      "CHG-sessions-page-02": { state: "declined" },
+    };
+    const errSpyA = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const rcA = runPack(tmpPathA, decisionsA).rc;
+    const errMsgA = errSpyA.mock.calls.map((c) => String(c[0])).join("\n");
+    errSpyA.mockRestore();
+
+    expect(rcA).toBe(3);
+    expect(errMsgA).toContain("declined");
+    expect(errMsgA).not.toContain("pending");
+
+    // Case B: one finding pending (no explicit decision, no theme decision)
+    const tmpPathB = mkdtempSync(join(tmpdir(), "bdp-"));
+    const decisionsB = validDecisions();
+    // Override so CHG-sessions-page-01 has no theme or explicit decision (pending),
+    // and CHG-sessions-page-02 is declined
+    (decisionsB as JsonObject)["decisions"] = {
+      "CHG-sessions-page-02": { state: "declined" },
+    };
+    const errSpyB = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const rcB = runPack(tmpPathB, decisionsB).rc;
+    const errMsgB = errSpyB.mock.calls.map((c) => String(c[0])).join("\n");
+    errSpyB.mockRestore();
+
+    expect(rcB).toBe(3);
+    expect(errMsgB).toContain("pending");
   });
 });

@@ -21,12 +21,13 @@
  * Prints the output path on success. Exit codes: 0 ok, 1 input error.
  */
 
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, posix, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { execFileSync } from "node:child_process";
 
 import { runWhenMain } from "./cli.js";
+import { walkFiles } from "./fs-walk.js";
 
 // Patterns for import extraction
 const NAMED_IMPORT_RE = /import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/g;
@@ -252,46 +253,12 @@ function getHeadCommit(repo: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Filesystem walk (used for pages-router glob)
-// ---------------------------------------------------------------------------
-
-/** Recursively collect all files under dir. */
-function walkFiles(dir: string): string[] {
-  const results: string[] = [];
-  let entries: string[];
-  try {
-    entries = readdirSync(dir, { encoding: "utf-8" });
-  } catch {
-    return results;
-  }
-  for (const entry of entries) {
-    const full = join(dir, entry);
-    let st;
-    try {
-      st = statSync(full);
-    } catch {
-      continue;
-    }
-    if (st.isDirectory()) {
-      for (const f of walkFiles(full)) results.push(f);
-    } else {
-      results.push(full);
-    }
-  }
-  return results;
-}
-
-// ---------------------------------------------------------------------------
 // Core builder
 // ---------------------------------------------------------------------------
 
-/** Read a source file as UTF-8, replacing errors. */
+/** Read a source file as UTF-8. */
 function readText(filePath: string): string {
-  const buf = readFileSync(filePath);
-  // Node doesn't have a direct "replace errors" option in readFileSync,
-  // but latin1 -> utf8 conversion trick gives best-effort decoding.
-  // Use latin1 for initial decode then re-interpret as UTF-8 compatible string.
-  return buf.toString("utf8");
+  return readFileSync(filePath, "utf8");
 }
 
 /** Process a potential pages-router file and add to routes if applicable. */

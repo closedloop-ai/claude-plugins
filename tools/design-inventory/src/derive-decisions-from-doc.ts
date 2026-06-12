@@ -27,6 +27,7 @@ import {
   THEME_ID,
   type JsonObject,
 } from "./design-findings-schema.js";
+import { checkThemeIdUniqueness } from "./theme-id-guard.js";
 import { runWhenMain } from "./cli.js";
 
 // ---------------------------------------------------------------------------
@@ -314,6 +315,10 @@ export function main(argv: string[]): number {
     }
     return 1;
   }
+
+  // Guard against cross-unit theme id collisions before deriving
+  const themeGuardResult = checkThemeIdUniqueness(docs);
+  if (themeGuardResult !== 0) return themeGuardResult;
 
   // Derive decisions
   const decidedAt = new Date().toISOString();

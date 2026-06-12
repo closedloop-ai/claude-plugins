@@ -29,9 +29,9 @@ import { join, relative, dirname } from "node:path";
 import { parseArgs } from "node:util";
 
 import { runWhenMain } from "./cli.js";
+import { walkFiles } from "./fs-walk.js";
 
 export const SPEC_SCHEMA_VERSION = 1;
-const EXCLUDED_PARTS = new Set(["node_modules", "dist", ".next", ".turbo"]);
 
 const CLASS_ATTR = /class(?:Name)?\s*=\s*["'{]([^"'}]*)["'}]?/g;
 const CLASS_TOKEN = /[A-Za-z_][\w-]*/g;
@@ -213,26 +213,10 @@ export function collectColorLocations(
   return colors;
 }
 
-function rglob(dir: string, pattern: RegExp, excludeParts: Set<string>): string[] {
-  const results: string[] = [];
-  const entries = readdirSync(dir);
-  for (const entry of entries) {
-    if (excludeParts.has(entry)) continue;
-    const full = join(dir, entry);
-    const stat = statSync(full);
-    if (stat.isDirectory()) {
-      results.push(...rglob(full, pattern, excludeParts));
-    } else if (pattern.test(entry)) {
-      results.push(full);
-    }
-  }
-  return results;
-}
-
 export function loadRepoTokens(repo: string): { tokens: Map<string, string>; files: string[] } {
   const tokens = new Map<string, string>();
   const files: string[] = [];
-  const cssFiles = rglob(repo, /\.css$/, EXCLUDED_PARTS).sort();
+  const cssFiles = walkFiles(repo).filter((f) => f.endsWith(".css")).sort();
   for (const css of cssFiles) {
     let text: string;
     try {

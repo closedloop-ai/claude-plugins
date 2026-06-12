@@ -32,7 +32,7 @@
  */
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 
 import {
@@ -163,6 +163,7 @@ function renderUiTicketBody(
   decisions: Record<string, JsonObject>,
   acceptedNonBackend: JsonObject[],
   declined: JsonObject[],
+  pending: JsonObject[],
   visual: JsonObject | null,
   exportZipName: string | undefined,
 ): string {
@@ -215,6 +216,19 @@ function renderUiTicketBody(
     );
     lines.push("");
     for (const finding of declined) {
+      lines.push(`- (${String(finding["id"])}) ${String(finding["summary"])}`);
+    }
+    lines.push("");
+  }
+
+  if (pending.length > 0) {
+    lines.push("## Undecided Findings (excluded from this ticket's scope)");
+    lines.push("");
+    lines.push(
+      "These findings were left undecided during review and need a decision before they can be scheduled:"
+    );
+    lines.push("");
+    for (const finding of pending) {
       lines.push(`- (${String(finding["id"])}) ${String(finding["summary"])}`);
     }
     lines.push("");
@@ -400,10 +414,20 @@ export function main(argv: string[]): number {
 
   const accepted = findingsArr.filter((f) => ACCEPTED_STATES.has(effectiveDecision(f, decisions)));
   const declined = findingsArr.filter((f) => effectiveDecision(f, decisions) === "declined");
+  const pending = findingsArr.filter((f) => effectiveDecision(f, decisions) === "pending");
 
   if (accepted.length === 0) {
     const unit = (doc as JsonObject)["unit"] as JsonObject;
-    console.error(`nothing accepted for unit ${String(unit["id"])}; no pack written`);
+    const pendingClause = pending.length > 0
+      ? `; ${pending.length} finding(s) still pending`
+      : "";
+    const declinedClause = declined.length > 0
+      ? `; ${declined.length} finding(s) declined`
+      : "";
+    console.error(
+      `nothing accepted for unit ${String(unit["id"])}; no pack written` +
+      declinedClause + pendingClause
+    );
     return 3;
   }
 
@@ -423,7 +447,9 @@ export function main(argv: string[]): number {
   for (const rel of designSources) {
     const src = join(extractDirPath, rel);
     if (existsSync(src) && statSync(src).isFile()) {
-      copyFileSync(src, join(sourceDir, basename(rel)));
+      const dest = join(sourceDir, rel);
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(src, dest);
     }
   }
 
@@ -438,8 +464,9 @@ export function main(argv: string[]): number {
   for (const rel of refScreenshots) {
     const src = join(extractDirPath, rel);
     if (existsSync(src) && statSync(src).isFile()) {
-      mkdirSync(shotsDir, { recursive: true });
-      copyFileSync(src, join(shotsDir, basename(rel)));
+      const dest = join(shotsDir, rel);
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(src, dest);
     }
   }
 
@@ -469,6 +496,7 @@ export function main(argv: string[]): number {
       decisions,
       acceptedNonBackend,
       declined,
+      pending,
       visual,
       exportZipName,
     );
@@ -486,7 +514,14 @@ export function main(argv: string[]): number {
     writeFileSync(join(packDir, "ticket-body-api.md"), apiBody, "utf-8");
   }
 
-  console.log(packDir);
+  const summary = {
+    pack: packDir,
+    accepted: accepted.length,
+    declined: declined.length,
+    pending: pending.length,
+    ...(pending.length > 0 && { pending_ids: pending.map((f) => String(f["id"])) }),
+  };
+  console.log(JSON.stringify(summary));
   return 0;
 }
 

@@ -4,7 +4,7 @@
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { readFileSync, writeFileSync } from "node:fs";
-import { extname, join } from "node:path";
+import { extname, join, resolve, relative, sep } from "node:path";
 import { pathToFileURL as pathToFileURL2 } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -382,11 +382,25 @@ async function resolveChromium(repo) {
     "Playwright not found. Install it in the target repo (npm i -D playwright && npx playwright install chromium) or run from a repo that already has @playwright/test."
   );
 }
+function containedPath(root, urlPath) {
+  const normalizedRoot = resolve(root);
+  const rel = urlPath === "/" ? "index.html" : urlPath.slice(1);
+  const candidate = resolve(join(normalizedRoot, rel));
+  const rel2 = relative(normalizedRoot, candidate);
+  if (rel2.startsWith("..") || sep !== "/" && rel2.startsWith(sep)) return null;
+  if (candidate === normalizedRoot) return null;
+  return candidate;
+}
 function serveDir(root) {
   return new Promise((resolvePromise) => {
     const server = createServer((req, res) => {
       const urlPath = decodeURIComponent((req.url ?? "/").split("?")[0] ?? "/");
-      const file = join(root, urlPath === "/" ? "index.html" : urlPath.slice(1));
+      const file = containedPath(root, urlPath);
+      if (file === null) {
+        res.writeHead(404);
+        res.end("not found");
+        return;
+      }
       try {
         const data = readFileSync(file);
         res.writeHead(200, {
@@ -559,6 +573,7 @@ async function main(argv) {
 }
 runWhenMain(import.meta.url, main);
 export {
+  containedPath,
   main,
   patchFindings,
   resolveChromium,

@@ -18,6 +18,7 @@ import {
   routeToName,
   safeExtract,
   slugify,
+  MAX_TOTAL_UNCOMPRESSED,
 } from "./design-export-extract.js";
 
 // ---------------------------------------------------------------------------
@@ -210,6 +211,41 @@ describe("TestSafeExtract", () => {
     );
     expect(rels).toContain("src/pages/Sessions.tsx");
     expect(rels).toContain("index.html");
+  });
+
+  it("rejects zip bomb via pre-decompression filter (injectable maxTotal)", () => {
+    // Build a zip with two 8 KB entries that individually compress well.
+    // By injecting a small maxTotal (10_000 bytes) we confirm the filter fires
+    // BEFORE decompression and throws UnsafeArchiveError immediately, without
+    // ever needing to allocate the inflated content.
+    const dir = mkdtempSync(join(tmpdir(), "dee-safe-bomb-"));
+    const smallMax = 10_000;
+    // Two entries whose declared originalSize sums to > smallMax.
+    const entryContent = new Uint8Array(6_000).fill(65); // 6 KB of 'A'
+    const buf = zipSync({
+      "entry1.bin": entryContent,
+      "entry2.bin": entryContent,
+    });
+    const bombZip = join(dir, "bomb.zip");
+    writeFileSync(bombZip, buf);
+    const extractDir = join(dir, "extract");
+    mkdirSync(extractDir, { recursive: true });
+    expect(() => safeExtract(bombZip, extractDir, smallMax)).toThrow(UnsafeArchiveError);
+    expect(() => safeExtract(bombZip, extractDir, smallMax)).toThrow(`${smallMax}`);
+    // Sanity: with maxTotal equal to MAX_TOTAL_UNCOMPRESSED the same zip is fine.
+    expect(() => safeExtract(bombZip, extractDir, MAX_TOTAL_UNCOMPRESSED)).not.toThrow();
+  });
+
+  it("rejects oversized archive (existing guard)", () => {
+    // Verify the existing oversized-archive path still works via the filter.
+    const dir = mkdtempSync(join(tmpdir(), "dee-safe-oversized-"));
+    const smallMax = 500;
+    const buf = zipSync({ "big.txt": new Uint8Array(600).fill(65) });
+    const zipPath = join(dir, "big.zip");
+    writeFileSync(zipPath, buf);
+    const extractDir = join(dir, "extract");
+    mkdirSync(extractDir, { recursive: true });
+    expect(() => safeExtract(zipPath, extractDir, smallMax)).toThrow(UnsafeArchiveError);
   });
 });
 

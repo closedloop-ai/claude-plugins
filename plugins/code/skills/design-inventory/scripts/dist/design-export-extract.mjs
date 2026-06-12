@@ -570,28 +570,41 @@ function slugify(name) {
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   return slug || "screen";
 }
-function safeExtract(zipPath, extractDir) {
+function isSafeEntryName(name) {
+  if (name.startsWith("/") || name.startsWith("\\")) return false;
+  const parts = name.split("/");
+  if (parts.includes("..")) return false;
+  return true;
+}
+function safeExtract(zipPath, extractDir, maxTotal = MAX_TOTAL_UNCOMPRESSED) {
   const zipData = readFileSync(zipPath);
-  const entries = unzipSync(zipData);
-  let total = 0;
-  for (const [, data] of Object.entries(entries)) {
-    total += data.byteLength;
-  }
-  if (total > MAX_TOTAL_UNCOMPRESSED) {
-    throw new UnsafeArchiveError(
-      `archive expands to ${total} bytes (limit ${MAX_TOTAL_UNCOMPRESSED})`
-    );
-  }
+  let totalDeclared = 0;
+  let filterError = null;
+  const entries = unzipSync(zipData, {
+    filter(file) {
+      if (filterError !== null) return false;
+      if (!isSafeEntryName(file.name)) {
+        filterError = new UnsafeArchiveError(`unsafe path in archive: ${file.name}`);
+        return false;
+      }
+      totalDeclared += file.originalSize;
+      if (totalDeclared > maxTotal) {
+        filterError = new UnsafeArchiveError(
+          `archive expands to more than ${maxTotal} bytes (limit ${maxTotal})`
+        );
+        return false;
+      }
+      return true;
+    }
+  });
+  if (filterError !== null) throw filterError;
   const extracted = [];
   for (const [name, data] of Object.entries(entries)) {
     if (name.endsWith("/")) continue;
-    if (name.startsWith("/") || name.startsWith("\\")) {
+    if (!isSafeEntryName(name)) {
       throw new UnsafeArchiveError(`unsafe path in archive: ${name}`);
     }
     const parts = name.split("/");
-    if (parts.includes("..")) {
-      throw new UnsafeArchiveError(`unsafe path in archive: ${name}`);
-    }
     const target = join(extractDir, ...parts);
     const resolvedTarget = target;
     const resolvedExtract = extractDir;
