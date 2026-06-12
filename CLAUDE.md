@@ -24,12 +24,12 @@ pytest plugins/code/tools/python/test_count_tokens.py -k test_name  # single tes
 uv run ruff check .
 uv run pyright
 
-# TypeScript tool scripts (currently plugins/code/skills/design-inventory/scripts)
-cd plugins/code/skills/design-inventory/scripts
+# TypeScript tool scripts (toolchain lives at tools/design-inventory; bundles committed into plugin)
+cd tools/design-inventory
 npm ci             # once
 npm test           # vitest
 npm run typecheck  # tsc --noEmit
-npm run build      # rebuild committed dist/*.mjs after editing src/
+npm run build      # rebuild committed dist/*.mjs (written to plugins/code/skills/design-inventory/scripts/dist/)
 ```
 
 ## Architecture
@@ -64,7 +64,9 @@ Token-Oriented Object Notation — ~40% token reduction vs JSON, used for `org-p
 
 ### Tool Scripts (TypeScript policy)
 
-**Team policy: no new Python.** New tool scripts are TypeScript; existing Python tools remain until ported. The reference TS toolchain lives at `plugins/code/skills/design-inventory/scripts/`: strict `tsconfig` (`noUncheckedIndexedAccess`), sources in `src/` with co-located vitest suites (`*.test.ts`), esbuild-bundled CLIs committed under `dist/*.mjs` so consumers need only Node 18+ (runtime deps like fflate are bundled; prefer node stdlib). After editing sources run `npm run build` and commit `dist/` — CI fails on stale bundles. CLI entries use `parseArgs` + the shared `runWhenMain` helper; shared wire-format contracts live in a schema module (`design-findings-schema.ts`) that tool scripts may import but which never calls into a tool script.
+**Team policy: no new Python.** New tool scripts are TypeScript; existing Python tools remain until ported. The reference TS toolchain lives at `tools/design-inventory/`: strict `tsconfig` (`noUncheckedIndexedAccess`), sources in `src/` with co-located vitest suites (`*.test.ts`), esbuild-bundled CLIs committed under the owning plugin at `plugins/code/skills/design-inventory/scripts/dist/*.mjs` so consumers need only Node 18+ (runtime deps like fflate are bundled; prefer node stdlib). After editing sources run `npm run build` from `tools/design-inventory` and commit `dist/` — CI fails on stale bundles. CLI entries use `parseArgs` + the shared `runWhenMain` helper; shared wire-format contracts live in a schema module (`design-findings-schema.ts`) that tool scripts may import but which never calls into a tool script.
+
+**Plugin payload rule (official-repo pattern): plugins ship ONLY runtime payload.** A plugin directory must NEVER contain `package.json`, `package-lock.json`, `node_modules/`, or TypeScript sources — the plugin installer runs `npm install` when it finds a `package.json` plus lockfile anywhere inside the plugin tree, which dumps a large `node_modules` into every user's plugin cache. Dev toolchains (sources, tests, lockfiles, `node_modules`) live OUTSIDE the plugin tree (e.g. `tools/<name>/`); only the committed build output (e.g. `dist/*.mjs`) lives inside the plugin.
 
 ### Python Tools (legacy)
 

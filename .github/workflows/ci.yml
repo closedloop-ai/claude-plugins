@@ -106,22 +106,22 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: plugins/code/skills/design-inventory/scripts
+        working-directory: tools/design-inventory
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: plugins/code/skills/design-inventory/scripts/package-lock.json
+          cache-dependency-path: tools/design-inventory/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
       - name: Verify committed dist bundles are up to date
         run: |
           npm run build
-          if ! git diff --exit-code -- dist || [ -n "$(git status --porcelain -- dist)" ]; then
-            git status --porcelain -- dist
-            echo "::error::scripts/dist is stale or contains untracked bundles. Run 'npm run build' in plugins/code/skills/design-inventory/scripts and commit the result."
+          if ! git -C ../.. diff --exit-code -- plugins/code/skills/design-inventory/scripts/dist || [ -n "$(git -C ../.. status --porcelain -- plugins/code/skills/design-inventory/scripts/dist)" ]; then
+            git -C ../.. status --porcelain -- plugins/code/skills/design-inventory/scripts/dist
+            echo "::error::scripts/dist is stale or contains untracked bundles. Run 'npm run build' in tools/design-inventory and commit the result."
             exit 1
           fi

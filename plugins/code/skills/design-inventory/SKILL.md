@@ -49,7 +49,7 @@ Re-running Stage C: pack generation is deterministic and safe to repeat, but doc
 
 ## Stage A — Inventory
 
-All tools are TypeScript (sources in `scripts/src/`, tests in vitest) compiled to self-contained bundles at `scripts/dist/*.mjs`; running them requires only Node 18+. After editing sources, rebuild with `npm run build` in `scripts/`.
+All tools are TypeScript (sources in `tools/design-inventory/src/`, tests in vitest) compiled to self-contained bundles at `scripts/dist/*.mjs`; running them requires only Node 18+. After editing sources, rebuild with `npm run build` in `tools/design-inventory/`.
 
 ### A1. Extract
 
@@ -221,7 +221,7 @@ List created FEAs (slugs + webUrls), the BLOCKS links made, skipped units (nothi
 
 ### scripts/
 
-TypeScript sources in `src/` (vitest tests co-located as `*.test.ts`), bundles in `dist/`:
+TypeScript sources in `tools/design-inventory/src/` (vitest tests co-located as `*.test.ts`), committed bundles in `scripts/dist/`:
 
 - `design-export-extract` (+tests) - deterministic export decomposition: safe unzip, region tagging, typed unit detection, interaction signals (incl. pointer-drag), doc headers, spec overlays, splitting.
 - `build-route-map` (+tests) - route table + chrome map from the repo's router conventions.
