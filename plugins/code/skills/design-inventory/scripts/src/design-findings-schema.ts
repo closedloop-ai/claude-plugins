@@ -33,6 +33,7 @@ export const DECISION_STATES = ["pending", "accepted", "declined", "edited"] as 
 export const REVIEW_STATES = ["accepted", "declined", "edited"] as const;
 export const REUSE_RESOLUTIONS = ["reuse", "new-component", "not-applicable"] as const;
 export const IMPL_STATUSES = ["found", "not_found"] as const;
+export const RECOMMENDATION_ACTIONS = ["accept", "decline", "discuss"] as const;
 
 export const FINDING_ID = /^CHG-[a-z0-9][a-z0-9-]*-\d{2,}$/;
 export const THEME_ID = /^thm-[a-z0-9][a-z0-9-]*$/;
@@ -225,6 +226,21 @@ export function validateFindings(doc: unknown): string[] {
       const decision = finding["decision"] ?? { state: "pending" };
       if (!isObject(decision) || !oneOf(decision["state"], DECISION_STATES)) {
         errors.push(`${label}.decision.state must be one of ${DECISION_STATES.join(", ")}`);
+      }
+      const recommendation = finding["recommendation"];
+      if (recommendation !== null && recommendation !== undefined) {
+        if (!isObject(recommendation)) {
+          errors.push(`${label}.recommendation must be an object`);
+        } else {
+          if (!oneOf(recommendation["action"], RECOMMENDATION_ACTIONS)) {
+            errors.push(
+              `${label}.recommendation.action must be one of ${RECOMMENDATION_ACTIONS.join(", ")}`,
+            );
+          }
+          if (!isNonEmptyString(recommendation["rationale"])) {
+            errors.push(`${label}.recommendation.rationale must be a non-empty string`);
+          }
+        }
       }
     });
   }

@@ -40,6 +40,10 @@ export function validFindings(): JsonObject {
         },
         decision: { state: "pending" },
         summary: "Replace page header with sticky topbar",
+        recommendation: {
+          action: "accept",
+          rationale: "designer note explicitly calls for the sess-topbar",
+        },
       },
       {
         id: "CHG-sessions-page-02",

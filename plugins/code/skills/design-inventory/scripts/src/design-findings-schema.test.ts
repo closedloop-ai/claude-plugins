@@ -89,6 +89,37 @@ describe("validateFindings", () => {
     expect(errors.some((e) => e.includes("findings[1].screenshot"))).toBe(true);
     expect(errors.some((e) => e.includes("themes[0].screenshot"))).toBe(true);
   });
+
+  it("passes a valid document with a recommendation on the first finding", () => {
+    expect(validateFindings(validFindings())).toEqual([]);
+  });
+
+  it("rejects a bad recommendation action", () => {
+    const doc = validFindings();
+    obj(arr(doc.findings)[0]!.recommendation).action = "skip";
+    const errors = validateFindings(doc);
+    expect(errors.some((e) => e.includes("findings[0].recommendation.action must be one of"))).toBe(
+      true,
+    );
+  });
+
+  it("rejects an empty recommendation rationale", () => {
+    const doc = validFindings();
+    obj(arr(doc.findings)[0]!.recommendation).rationale = "  ";
+    const errors = validateFindings(doc);
+    expect(
+      errors.some((e) =>
+        e.includes("findings[0].recommendation.rationale must be a non-empty string"),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts a finding with no recommendation field", () => {
+    const doc = validFindings();
+    // Second finding has no recommendation by fixture design; validate is clean
+    expect(arr(doc.findings)[1]!.recommendation).toBeUndefined();
+    expect(validateFindings(doc)).toEqual([]);
+  });
 });
 
 describe("validateDecisions", () => {
