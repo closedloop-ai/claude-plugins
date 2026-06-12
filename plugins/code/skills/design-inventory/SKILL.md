@@ -62,11 +62,11 @@ Zip-slip safe; rejects archives over 500 MB; prints the manifest path (exit 2 = 
 ### A2. Repo inventories (deterministic, always rebuilt)
 
 ```bash
-node scripts/dist/build-route-map.mjs <repo>        # routes + chrome map (layouts)
-node scripts/dist/build-component-index.mjs <repo>  # Storybook index + props/variants
+node scripts/dist/build-route-map.mjs <repo> --out <workdir>/route-map.json
+node scripts/dist/build-component-index.mjs <repo> --out <workdir>/component-index.json
 ```
 
-Both write to `<repo>/.closedloop-ai/design-inventory/` and stamp the repo commit. They are keyed by repo constants only - NOTHING derived from the zip is a cache key (different designers export structurally different zips of the same product).
+Both require `--out` and write into the workdir. They stamp the repo commit and are rebuilt on every run. Outputs live in the workdir alongside all other pipeline artifacts; the repo working tree is never written by these tools. They are keyed by repo constants only - NOTHING derived from the zip is a cache key (different designers export structurally different zips of the same product).
 
 ### A3. Unit triage and matching (per run, never cached)
 
@@ -78,7 +78,7 @@ From the manifest `units` plus `doc_headers`, select units to analyze:
 
 Match each selected unit to current state:
 
-- screens -> `route-map.json` routes; regions -> the `chrome` section; components -> `component-index.json` candidates.
+- screens -> `<workdir>/route-map.json` routes; regions -> the `chrome` section; components -> `<workdir>/component-index.json` candidates.
 - Do obvious matches yourself from names/doc headers; spawn ONE read-only Explore-style agent only for ambiguous units (default Explore model tier suffices).
 - Deprecated marking: load `<repo>/.closedloop-ai/design-inventory/deprecated-screens.json` (JSON array of name/route fragments; if missing, nothing is deprecated - tell the user). Match fragments against BOTH unit names and matched routes.
 
@@ -100,8 +100,8 @@ For each selected unit, pre-assemble a single-file context pack so the analyst r
 node scripts/dist/build-context-pack.mjs --manifest <m> --unit-id <id> \
     --out <workdir>/context/<unit-id>.md \
     --visual-spec <workdir>/specs/<unit-id>.json \
-    --route-map <repo>/.closedloop-ai/design-inventory/route-map.json \
-    --component-index <repo>/.closedloop-ai/design-inventory/component-index.json \
+    --route-map <workdir>/route-map.json \
+    --component-index <workdir>/component-index.json \
     --hints '<json>'
 ```
 
@@ -109,7 +109,7 @@ The pack contains the manifest slice (files, primary, evidence, interaction sign
 
 ### A5. Fan out analysts
 
-For each selected unit, spawn a `design-unit-analyst` agent (parallel, batches of 4-6). The input list now LEADS with `CONTEXT_PACK` (= `<workdir>/context/<unit-id>.md`); the analyst reads it first. Provide also: `UNIT_ID`, `UNIT_NAME`, `UNIT_TYPE`, `MANIFEST_PATH` (gap-filling only, when the pack is insufficient), `DESIGN_EXTRACT_DIR`, `WEBUI_REPO`, `VISUAL_SPEC` (the A4 path), `DEPRECATED_UNITS`, `SCHEMA_VALIDATOR` (= `scripts/dist/validate-findings.mjs`), `OUTPUT_PATH = <workdir>/findings/<unit-id>.json`. Analysts emit schema-validated findings.json (themes, categorized findings incl. token-drift, reuse resolutions, a `recommendation` per finding, pending decisions) and must validate before returning. Analysts emit unit-scoped theme ids in the format `thm-<unit-slug>-<topic>` (e.g. `thm-sessions-page-artifact-table`); the render, derive-decisions, and plan-ticket-graph tools hard-fail with exit 1 if any theme id appears in more than one unit's findings. Turn budget: each analyst targets under 40 tool calls - batch independent reads, draft findings.json once, and validate once at the end. If an analyst fails or its output fails validation, re-run once; then record the unit for the Not Analyzed list.
+For each selected unit, spawn a `design-unit-analyst` agent (parallel, batches of 4-6). The input list now LEADS with `CONTEXT_PACK` (= `<workdir>/context/<unit-id>.md`); the analyst reads it first. Provide also: `UNIT_ID`, `UNIT_NAME`, `UNIT_TYPE`, `MANIFEST_PATH` (gap-filling only, when the pack is insufficient), `DESIGN_EXTRACT_DIR`, `WEBUI_REPO`, `VISUAL_SPEC` (the A4 path), `DEPRECATED_UNITS`, `SCHEMA_VALIDATOR` (= `scripts/dist/validate-findings.mjs`), `OUTPUT_PATH = <workdir>/findings/<unit-id>.json`. Analysts emit schema-validated findings.json (themes, categorized findings incl. token-drift, reuse resolutions, a `recommendation` per finding (renderer derives one from `intent` when a finding lacks it), pending decisions) and must validate before returning. Analysts emit unit-scoped theme ids in the format `thm-<unit-slug>-<topic>` (e.g. `thm-sessions-page-artifact-table`); the render, derive-decisions, and plan-ticket-graph tools hard-fail with exit 1 if any theme id appears in more than one unit's findings. Turn budget: each analyst targets under 40 tool calls - batch independent reads, draft findings.json once, and validate once at the end. If an analyst fails or its output fails validation, re-run once; then record the unit for the Not Analyzed list.
 
 ### A5.5 Capture highlighted design shots (best effort, after analysts)
 
@@ -138,19 +138,28 @@ node scripts/dist/render-review-doc.mjs --findings <workdir>/findings --manifest
 The body uses no numbered lists; every finding/theme heading carries its stable id as a trailing inline code span; images use `attachment://{{path}}` placeholders for later substitution.
 
 1. `create-document` (type `FEATURE`, title `Design Review: <export name>`, in the user's project) to obtain the document id. The review document STAYS DRAFT.
-2. Substitute inline images:
+2. Substitute inline images via MCP (no REST calls, no environment-variable tokens):
+
+   Check whether the connected ClosedLoop MCP server exposes an attachment-upload tool (e.g. `upload-attachment` with `purpose: "inline"`).
+
+   **If the tool IS available:** upload each verified shot through it, then build `<workdir>/image-map.json` from the returned attachment ids (`{ "<path-as-it-appears-in-placeholder>": "<attachment-uuid>", ... }`). Run:
 
    ```bash
-   node scripts/dist/upload-inline-images.mjs --document-id <id> --api-base $CLOSEDLOOP_API_URL \
+   node scripts/dist/apply-inline-images.mjs \
        --body <workdir>/review-body.md --out <workdir>/review-body.final.md \
-       --shots-root <workdir>
+       --map <workdir>/image-map.json --shots-root <workdir>
    ```
 
-   The token comes from `CLOSEDLOOP_API_TOKEN`. Run with `--probe-only` FIRST to test capability:
-   - exit 0: inline images are available; run the tool for real to upload shots and write the final body.
-   - exit 3: inline images are unavailable in this environment. Use the ORIGINAL body with image lines stripped (the same tool strips image lines for failed/unavailable uploads); tell the user images were omitted.
-   - exit 4: auth problem. Stop and ask the user.
-3. `create-document-version` with the final body (`review-body.final.md`, or the image-stripped body on exit 3).
+   **If the tool is ABSENT** (it is a named symphony-alpha dependency and is not yet deployed everywhere): run with `--strip` instead:
+
+   ```bash
+   node scripts/dist/apply-inline-images.mjs \
+       --body <workdir>/review-body.md --out <workdir>/review-body.final.md \
+       --strip
+   ```
+
+   Tell the user the review document was created without inline images because the attachment-upload MCP tool is not available in this environment. NEVER paste image bytes through chat context. NEVER make direct REST calls with user tokens. NEVER invent environment variables.
+3. `create-document-version` with the final body (`review-body.final.md` in both cases; `apply-inline-images.mjs` always writes the output file).
 
 ### A7. Hand off
 
@@ -190,7 +199,7 @@ node scripts/dist/plan-ticket-graph.mjs --findings <workdir>/findings \
     --out <workdir>/ticket-plan.json
 ```
 
-Grouping is per screen: one UI ticket per unit (screens and regions are units; components get NO per-unit tickets), one API ticket per unit only when it has accepted backend-gap findings. Shared net-new components build once in their PRIMARY unit's UI ticket; consumer units reference them. `blocks` edges: an API ticket BLOCKS its unit's UI ticket; a primary UI ticket BLOCKS every consumer UI ticket. There are NO design-system component tickets and NO per-component tickets.
+Grouping is per unit: one UI ticket per unit with accepted findings (screens, regions, AND standalone `cmp-` units; a designer publishing just a new component gets an "Implement <name> component from approved design" ticket whose scope is the design-system component plus its Storybook story), one API ticket per unit only when it has accepted backend-gap findings. Net-new components discovered WITHIN a screen's findings do not get their own tickets: shared ones build once in their PRIMARY unit's UI ticket and consumer units reference them. `blocks` edges: an API ticket BLOCKS its unit's UI ticket; a primary UI ticket BLOCKS every consumer UI ticket.
 
 ### C3. Packs and bodies (deterministic, per accepted unit)
 
@@ -209,7 +218,7 @@ Exit 3 = nothing accepted for that unit; skip it silently. Otherwise the pack co
 
 For each ticket in `ticket-plan.json` (UI and API kinds, titles taken from the plan), after the duplicate-title check (C above), create one `FEATURE` document via `create-document` in the user-specified project with the matching ticket body. New documents are DRAFT - that is the second human gate; never advance their status yourself.
 
-For each ticket, upload that unit's shots into the ticket's OWN document: run `upload-inline-images.mjs` against the ticket body with `--document-id <ticket doc id>` and `--shots-root <workdir>`, then `create-document-version` with the substituted body. Apply the same probe/degrade rules as A6 (exit 3 = strip image lines and tell the user; exit 4 = stop and ask).
+For each ticket, substitute inline images in the ticket body using the same MCP-or-strip contract as A6: if the attachment-upload MCP tool is available, upload each shot through it, build a per-ticket `image-map.json`, and run `apply-inline-images.mjs --body ... --out ... --map ... --shots-root <workdir>`; otherwise run with `--strip` and tell the user. Then `create-document-version` with the resulting body. No direct REST calls, no environment-variable tokens.
 
 Then create `BLOCKS` links exactly per `ticket-plan.json`'s `blocks` edges with `create-artifact-link` (prerequisite BLOCKS dependent). Links are irreversible - verify direction against an existing platform example before the first link of a session.
 
@@ -231,7 +240,7 @@ TypeScript sources in `tools/design-inventory/src/` (vitest tests co-located as 
 - `build-context-pack` (+tests) - per-unit single-file context pack for analysts.
 - `capture-design-shots` (+tests) - headless-Chromium highlighted shots of the live design per finding.
 - `render-review-doc` (+tests) - markdown body for the platform Design Review document (id anchors, image placeholders, no numbered lists).
-- `upload-inline-images` (+tests) - uploads shot placeholders to the attachments API and substitutes attachment ids (probe + degrade).
+- `apply-inline-images` (+tests) - pure body transformer: substitutes `attachment://{{path}}` placeholders from an orchestrator-built map (map mode) or strips all placeholder lines (strip mode); network-free, always writes --out.
 - `derive-decisions-from-doc` (+tests) - decisions.json from the human-edited review document (heading-anchor survival).
 - `plan-ticket-graph` (+tests) - per-screen UI/API ticket graph with shared-component ownership and BLOCKS edges.
 - `build-design-pack` (+tests) - per-unit design pack + ticket-body-ui.md / ticket-body-api.md for accepted units.

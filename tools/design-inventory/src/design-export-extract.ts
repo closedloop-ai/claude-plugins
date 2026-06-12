@@ -25,6 +25,7 @@
 
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
+import { tmpdir } from "node:os";
 import { parseArgs } from "node:util";
 import { unzipSync } from "fflate";
 import { runWhenMain } from "./cli.js";
@@ -81,6 +82,34 @@ const COMPONENT_FILE = /\.(?:jsx?|tsx?)$/;
 const OVERLAY_FILE_NAME = /(?:^|[-_./])(?:spec|notes?|annotations?|requirements)(?:[-_.s]|$)/i;
 const OVERLAY_COMMENT = /\b(?:product spec|designer note|design note|do not implement|out of scope|not for build)\b/i;
 const SPLIT_BOUNDARY = /^(?:export\s|function\s|async function\s|class\s|const\s+[A-Z]|\/\/\s*[-=]{3,}|\/\*|<script\b|<style\b|<section\b|<!DOCTYPE|<html\b)/;
+
+/**
+ * Return true if zipPath lives under a temp directory.
+ * Matches os.tmpdir(), /tmp, or /private/var/folders (macOS sandbox paths).
+ */
+export function isUnderTempDir(zipPath: string): boolean {
+  const normalized = zipPath.replace(/\\/g, "/");
+  const sysTmp = tmpdir().replace(/\\/g, "/");
+  if (normalized.startsWith(sysTmp + "/") || normalized === sysTmp) return true;
+  if (normalized.startsWith("/tmp/") || normalized === "/tmp") return true;
+  if (normalized.startsWith("/private/var/folders/")) return true;
+  return false;
+}
+
+/**
+ * Derive the default workdir for a zip.
+ *
+ * When the zip lives under a temp path (os.tmpdir(), /tmp, or
+ * /private/var/folders), the default workdir is /tmp/<stem>-design-inventory
+ * rather than a sibling of the zip. An explicit --workdir always wins.
+ */
+export function defaultWorkdir(zipPath: string): string {
+  const stem = basename(zipPath).replace(/\.[^.]+$/, "");
+  if (isUnderTempDir(zipPath)) {
+    return join("/tmp", `${stem}-design-inventory`);
+  }
+  return join(dirname(zipPath), `${stem}-design-inventory`);
+}
 
 export class UnsafeArchiveError extends Error {
   constructor(message: string) {
@@ -738,11 +767,10 @@ export function main(argv: string[]): number {
     return 1;
   }
 
-  const stem = basename(zipPath).replace(/\.[^.]+$/, "");
   const workdir =
     values.workdir !== undefined
       ? String(values.workdir)
-      : join(dirname(zipPath), `${stem}-design-inventory`);
+      : defaultWorkdir(zipPath);
 
   try {
     const manifestPath = buildManifest(zipPath, workdir, maxChunkBytes);

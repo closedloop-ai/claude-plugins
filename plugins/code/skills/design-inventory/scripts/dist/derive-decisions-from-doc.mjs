@@ -452,6 +452,11 @@ function deriveDecisions(findingsDocs, body, reviewer, decidedAt) {
         decisions[fid] = { state: "declined" };
         continue;
       }
+      const themeRef = typeof finding["theme"] === "string" ? finding["theme"] : null;
+      if (themeRef !== null && themeRef.length > 0 && !surviving.has(themeRef)) {
+        decisions[fid] = { state: "declined" };
+        continue;
+      }
       const section = sectionFor(body, fid);
       const whatChanges = section !== null ? extractWhatChanges(section) : null;
       const originalSummary = String(finding["summary"] ?? "");

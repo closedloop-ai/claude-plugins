@@ -345,7 +345,11 @@ function runWhenMain(metaUrl, main2) {
 
 // src/plan-ticket-graph.ts
 var ACCEPTED_STATES = /* @__PURE__ */ new Set(["accepted", "edited"]);
-var UNIT_TYPES_WITH_TICKETS = /* @__PURE__ */ new Set(["screen", "region"]);
+function uiTicketTitle(unitName, unitType) {
+  if (unitType === "component") return `Implement ${unitName} component from approved design`;
+  if (unitType === "flow") return `Implement ${unitName} flow from approved design`;
+  return `Implement ${unitName} UI from approved design`;
+}
 function loadJson(path) {
   return JSON.parse(readFileSync(path, "utf-8"));
 }
@@ -432,7 +436,6 @@ function buildTicketGraph(findingsDocs, decisions, manifestUnitIds) {
   }
   const componentPrimaryUnit = /* @__PURE__ */ new Map();
   for (const info of unitInfos) {
-    if (!UNIT_TYPES_WITH_TICKETS.has(info.unitType)) continue;
     for (const name of info.newComponentNames) {
       if (!componentPrimaryUnit.has(name)) {
         componentPrimaryUnit.set(name, info.unitId);
@@ -451,7 +454,6 @@ function buildTicketGraph(findingsDocs, decisions, manifestUnitIds) {
   }
   const uiTicketIdByUnit = /* @__PURE__ */ new Map();
   for (const info of unitInfos) {
-    if (!UNIT_TYPES_WITH_TICKETS.has(info.unitType)) continue;
     const uiId = `ui:${info.unitId}`;
     const apiId = `api:${info.unitId}`;
     if (info.acceptedNonBackend.length > 0) {
@@ -470,7 +472,7 @@ function buildTicketGraph(findingsDocs, decisions, manifestUnitIds) {
         id: uiId,
         kind: "ui",
         unit_id: info.unitId,
-        title: `Implement ${info.unitName} UI from approved design`,
+        title: uiTicketTitle(info.unitName, info.unitType),
         criteria
       };
       if (builds.length > 0) uiTicket.builds = builds;
@@ -493,7 +495,6 @@ function buildTicketGraph(findingsDocs, decisions, manifestUnitIds) {
     }
   }
   for (const info of unitInfos) {
-    if (!UNIT_TYPES_WITH_TICKETS.has(info.unitType)) continue;
     const primaryUiId = uiTicketIdByUnit.get(info.unitId);
     if (!primaryUiId) continue;
     for (const name of info.newComponentNames) {
@@ -501,7 +502,6 @@ function buildTicketGraph(findingsDocs, decisions, manifestUnitIds) {
       if (primary !== info.unitId) continue;
       for (const consumer of unitInfos) {
         if (consumer.unitId === info.unitId) continue;
-        if (!UNIT_TYPES_WITH_TICKETS.has(consumer.unitType)) continue;
         if (!consumer.newComponentNames.includes(name)) continue;
         const consumerUiId = uiTicketIdByUnit.get(consumer.unitId);
         if (consumerUiId) {

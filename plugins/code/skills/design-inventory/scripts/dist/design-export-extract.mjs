@@ -3,6 +3,7 @@
 // src/design-export-extract.ts
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
+import { tmpdir } from "node:os";
 import { parseArgs } from "node:util";
 
 // node_modules/fflate/esm/index.mjs
@@ -552,6 +553,21 @@ var COMPONENT_FILE = /\.(?:jsx?|tsx?)$/;
 var OVERLAY_FILE_NAME = /(?:^|[-_./])(?:spec|notes?|annotations?|requirements)(?:[-_.s]|$)/i;
 var OVERLAY_COMMENT = /\b(?:product spec|designer note|design note|do not implement|out of scope|not for build)\b/i;
 var SPLIT_BOUNDARY = /^(?:export\s|function\s|async function\s|class\s|const\s+[A-Z]|\/\/\s*[-=]{3,}|\/\*|<script\b|<style\b|<section\b|<!DOCTYPE|<html\b)/;
+function isUnderTempDir(zipPath) {
+  const normalized = zipPath.replace(/\\/g, "/");
+  const sysTmp = tmpdir().replace(/\\/g, "/");
+  if (normalized.startsWith(sysTmp + "/") || normalized === sysTmp) return true;
+  if (normalized.startsWith("/tmp/") || normalized === "/tmp") return true;
+  if (normalized.startsWith("/private/var/folders/")) return true;
+  return false;
+}
+function defaultWorkdir(zipPath) {
+  const stem = basename(zipPath).replace(/\.[^.]+$/, "");
+  if (isUnderTempDir(zipPath)) {
+    return join("/tmp", `${stem}-design-inventory`);
+  }
+  return join(dirname(zipPath), `${stem}-design-inventory`);
+}
 var UnsafeArchiveError = class extends Error {
   constructor(message) {
     super(message);
@@ -990,8 +1006,7 @@ function main(argv) {
     console.error(`error: not a zip archive: ${zipPath}`);
     return 1;
   }
-  const stem = basename(zipPath).replace(/\.[^.]+$/, "");
-  const workdir = values.workdir !== void 0 ? String(values.workdir) : join(dirname(zipPath), `${stem}-design-inventory`);
+  const workdir = values.workdir !== void 0 ? String(values.workdir) : defaultWorkdir(zipPath);
   try {
     const manifestPath = buildManifest(zipPath, workdir, maxChunkBytes);
     console.log(manifestPath);
@@ -1011,12 +1026,14 @@ export {
   UnsafeArchiveError,
   buildManifest,
   classifyRegion,
+  defaultWorkdir,
   detectOverlays,
   detectScreens,
   detectSignals,
   detectUnits,
   extractDocHeader,
   fileKind,
+  isUnderTempDir,
   localScriptSrcs,
   main,
   readText,

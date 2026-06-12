@@ -297,6 +297,103 @@ describe("integration: delete theme block -> theme and members declined", () => 
     // Standalone finding (H3) is still present and accepted
     expect(decisions["CHG-sessions-page-02"]).toEqual({ state: "accepted" });
   });
+
+  it("deleting ONLY the H3 theme heading line (partial) still declines members whose H4 blocks remain", () => {
+    const { bodyPath } = setupEnv();
+    let body = readFileSync(bodyPath, "utf-8");
+
+    // Remove only the H3 theme heading line, leaving the H4 member block intact.
+    // This simulates a partial/accidental edit where the heading line was deleted
+    // but the member finding blocks were not.
+    const lines = body.split("\n");
+    const filtered = lines.filter((line) => !/^###\s.*`thm-artifact-table`/.test(line));
+    body = filtered.join("\n");
+
+    // Sanity: the H4 member heading should still be present
+    const memberHeadingPresent = body
+      .split("\n")
+      .some((line) => /^####\s.*`CHG-sessions-page-01`/.test(line));
+    expect(memberHeadingPresent).toBe(true);
+
+    const doc = validFindings();
+    const output = deriveDecisions([doc], body, "tester@example.com", "2026-06-12T00:00:00Z");
+    const decisions = output["decisions"] as Record<string, JsonObject>;
+
+    // Theme heading was removed -> declined
+    expect(decisions["thm-artifact-table"]).toEqual({ state: "declined" });
+    // Member H4 survived but its theme heading did not -> must be declined
+    expect(decisions["CHG-sessions-page-01"]).toEqual({ state: "declined" });
+    // Standalone finding (its own H3) unaffected -> accepted
+    expect(decisions["CHG-sessions-page-02"]).toEqual({ state: "accepted" });
+  });
+});
+
+describe("integration: theme surviving + member deleted/edited", () => {
+  it("theme surviving + member H4 deleted -> that member declined, sibling accepted", () => {
+    const { bodyPath } = setupEnv();
+    let body = readFileSync(bodyPath, "utf-8");
+
+    // The fixture has one themed member (CHG-sessions-page-01) under thm-artifact-table.
+    // Delete that member's H4 section while keeping the theme H3.
+    const lines = body.split("\n");
+    let memberStart = -1;
+    let memberEnd = lines.length;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      if (/^####\s.*`CHG-sessions-page-01`/.test(line)) {
+        memberStart = i;
+        continue;
+      }
+      if (memberStart !== -1 && i > memberStart) {
+        // Next heading of same or higher level closes the section
+        if (/^#{2,4}\s/.test(line)) {
+          memberEnd = i;
+          break;
+        }
+      }
+    }
+    expect(memberStart).toBeGreaterThan(-1);
+
+    const trimmed = [...lines.slice(0, memberStart), ...lines.slice(memberEnd)];
+    body = trimmed.join("\n");
+
+    const doc = validFindings();
+    const output = deriveDecisions([doc], body, "tester@example.com", "2026-06-12T00:00:00Z");
+    const decisions = output["decisions"] as Record<string, JsonObject>;
+
+    // Theme heading survived
+    expect(decisions["thm-artifact-table"]).toEqual({ state: "accepted" });
+    // The member whose H4 was deleted -> declined
+    expect(decisions["CHG-sessions-page-01"]).toEqual({ state: "declined" });
+    // Standalone sibling still accepted
+    expect(decisions["CHG-sessions-page-02"]).toEqual({ state: "accepted" });
+  });
+
+  it("theme surviving + member What changes edited -> edited state", () => {
+    const { bodyPath } = setupEnv();
+    let body = readFileSync(bodyPath, "utf-8");
+
+    const originalSummary = "Replace page header with sticky topbar";
+    const editedSummary = "Replace page header with a floating topbar";
+
+    body = body.replace(
+      `- **What changes:** ${originalSummary}`,
+      `- **What changes:** ${editedSummary}`,
+    );
+    expect(body).toContain(editedSummary);
+
+    const doc = validFindings();
+    const output = deriveDecisions([doc], body, "tester@example.com", "2026-06-12T00:00:00Z");
+    const decisions = output["decisions"] as Record<string, JsonObject>;
+
+    // Theme survived, member survived with edited summary
+    expect(decisions["thm-artifact-table"]).toEqual({ state: "accepted" });
+    expect(decisions["CHG-sessions-page-01"]).toEqual({
+      state: "edited",
+      edited_summary: editedSummary,
+    });
+    expect(decisions["CHG-sessions-page-02"]).toEqual({ state: "accepted" });
+  });
 });
 
 describe("integration: edit What changes text -> edited state", () => {

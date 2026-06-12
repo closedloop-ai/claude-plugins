@@ -10,6 +10,18 @@
  * This module is the schema/library module: tool scripts in this directory
  * import constants and validators from it; it must not call into any tool
  * script.
+ *
+ * Layering note on `recommendation`:
+ *   The `recommendation` field on each finding is OPTIONAL in this schema for
+ *   backward compatibility with findings artifacts written before the field was
+ *   introduced, and to allow renderers to degrade gracefully when it is absent.
+ *   However, by the agent contract (design-unit-analyst), `recommendation` is
+ *   REQUIRED on every finding the analyst emits: analysts must include
+ *   `{ action: "accept"|"decline"|"discuss", rationale: string }` for every
+ *   finding before validating. Renderers that encounter a finding without a
+ *   `recommendation` derive a fallback action from the finding's `intent`
+ *   field (likely-intentional -> accept, likely-unintentional -> decline,
+ *   unclear -> discuss).
  */
 
 export const SCHEMA_VERSION = 1;

@@ -256,7 +256,13 @@ function main(argv) {
 `);
     return 1;
   }
-  const outPath = typeof values.out === "string" && values.out.length > 0 ? values.out : join2(repo, ".closedloop-ai", "design-inventory", "component-index.json");
+  if (typeof values.out !== "string" || values.out.length === 0) {
+    process.stderr.write(
+      "error: --out <path> is required\nusage: node build-component-index.mjs <repo> --out <path>\n"
+    );
+    return 1;
+  }
+  const outPath = values.out;
   mkdirSync(dirname(outPath), { recursive: true });
   const components = buildIndex(repo);
   const commit = gitHead(repo);

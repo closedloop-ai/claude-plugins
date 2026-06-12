@@ -86,6 +86,30 @@ function componentDoc(
   };
 }
 
+/** A minimal flow findings doc. */
+function flowDoc(
+  unitId: string,
+  unitName: string,
+  findings: JsonObject[] = [],
+): JsonObject {
+  return {
+    schema_version: 1,
+    unit: {
+      id: unitId,
+      name: unitName,
+      type: "flow",
+      classification: "existing-modified",
+      design_sources: ["dummy.jsx"],
+      primary_source: "dummy.jsx",
+      current_impl: { status: "found", paths: [] },
+    },
+    themes: [],
+    findings,
+    component_reuse: [],
+    visual_spec: null,
+  };
+}
+
 function makeFinding(
   id: string,
   category: string,
@@ -144,13 +168,65 @@ describe("buildTicketGraph", () => {
     expect(plan.tickets[0]!.id).toBe("ui:rgn-nav");
   });
 
-  it("produces ZERO tickets for component units", () => {
+  it("produces one UI ticket for a component unit with accepted findings", () => {
     const finding = makeFinding("CHG-cmp-btn-01", "visual");
+    const doc = componentDoc("cmp-btn", "Button", [finding]);
+    const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["cmp-btn"]);
+
+    expect(plan.tickets).toHaveLength(1);
+    const t = plan.tickets[0]!;
+    expect(t.kind).toBe("ui");
+    expect(t.id).toBe("ui:cmp-btn");
+    expect(t.title).toBe("Implement Button component from approved design");
+    expect(t.criteria).toEqual(["CHG-cmp-btn-01"]);
+    expect(plan.blocks).toHaveLength(0);
+  });
+
+  it("produces one UI ticket for a flow unit with accepted findings", () => {
+    const finding = makeFinding("CHG-flw-checkout-01", "behavioral");
+    const doc = flowDoc("flw-checkout", "Checkout Flow", [finding]);
+    const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["flw-checkout"]);
+
+    expect(plan.tickets).toHaveLength(1);
+    const t = plan.tickets[0]!;
+    expect(t.kind).toBe("ui");
+    expect(t.id).toBe("ui:flw-checkout");
+    expect(t.title).toBe("Implement Checkout Flow flow from approved design");
+    expect(t.criteria).toEqual(["CHG-flw-checkout-01"]);
+  });
+
+  it("component unit produces zero tickets when all findings are declined", () => {
+    const finding = makeFinding("CHG-cmp-btn-02", "visual", "declined");
     const doc = componentDoc("cmp-btn", "Button", [finding]);
     const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["cmp-btn"]);
 
     expect(plan.tickets).toHaveLength(0);
     expect(plan.blocks).toHaveLength(0);
+  });
+
+  it("component unit is the primary builder when it is first in manifest order", () => {
+    const reuse: JsonObject = { resolution: "new-component", proposed_name: "ChatDialog" };
+    const cmpFinding = makeFinding("CHG-cmp-chat-01", "visual", "accepted", reuse);
+    const scrFinding = makeFinding("CHG-scr-inbox-01", "visual", "accepted", reuse);
+    const cmpDocument = componentDoc("cmp-chat", "Chat Dialog", [cmpFinding]);
+    const scrDocument = screenDoc("scr-inbox", "Inbox", [scrFinding]);
+
+    // cmp-chat comes first in manifest order
+    const plan = buildTicketGraph([cmpDocument, scrDocument], allAcceptedDecisions(), [
+      "cmp-chat",
+      "scr-inbox",
+    ]);
+
+    const cmpTicket = plan.tickets.find((t) => t.id === "ui:cmp-chat") as import("./plan-ticket-graph.js").UiTicket | undefined;
+    const scrTicket = plan.tickets.find((t) => t.id === "ui:scr-inbox") as import("./plan-ticket-graph.js").UiTicket | undefined;
+    expect(cmpTicket).toBeDefined();
+    expect(scrTicket).toBeDefined();
+    // Component unit is the primary builder
+    expect(cmpTicket!.builds).toEqual(["ChatDialog"]);
+    expect(scrTicket!.uses).toEqual([{ component: "ChatDialog", built_by: "ui:cmp-chat" }]);
+    // Primary (component) blocks consumer (screen)
+    const block = plan.blocks.find((b) => b.from === "ui:cmp-chat" && b.to === "ui:scr-inbox");
+    expect(block).toBeDefined();
   });
 
   it("produces no ticket for units with zero accepted findings", () => {

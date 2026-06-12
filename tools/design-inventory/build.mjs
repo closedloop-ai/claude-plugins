@@ -1,10 +1,26 @@
 import { build } from "esbuild";
-import { readdirSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outdir = resolve(__dirname, "../../plugins/code/skills/design-inventory/scripts/dist");
+
+// Clean stale bundles before building so renamed/deleted sources leave no orphans.
+let cleaned = 0;
+try {
+  for (const f of readdirSync(outdir)) {
+    if (f.endsWith(".mjs")) {
+      rmSync(join(outdir, f));
+      cleaned++;
+    }
+  }
+} catch {
+  // outdir may not exist yet on a fresh checkout; that's fine
+}
+if (cleaned > 0) {
+  console.log(`cleaned ${cleaned} stale bundle(s) from ${outdir}`);
+}
 
 const entries = readdirSync(resolve(__dirname, "src"))
   .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.endsWith("test-fixtures.ts"))

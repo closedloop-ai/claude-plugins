@@ -2,7 +2,7 @@
 
 // src/build-route-map.ts
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join as join2, posix, relative, sep } from "node:path";
+import { dirname, posix, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { execFileSync } from "node:child_process";
 
@@ -264,7 +264,13 @@ function main(argv) {
 `);
     return 1;
   }
-  const outPath = typeof values.out === "string" && values.out.length > 0 ? values.out : join2(repo, ".closedloop-ai", "design-inventory", "route-map.json");
+  if (typeof values.out !== "string" || values.out.length === 0) {
+    process.stderr.write(
+      "error: --out <path> is required\nusage: node build-route-map.mjs <repo> --out <path>\n"
+    );
+    return 1;
+  }
+  const outPath = values.out;
   mkdirSync(dirname(outPath), { recursive: true });
   const data = buildRouteMap(repo);
   writeFileSync(outPath, JSON.stringify(data, null, 1), "utf-8");

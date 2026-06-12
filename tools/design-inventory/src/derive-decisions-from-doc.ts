@@ -199,9 +199,15 @@ function extractWhatChanges(section: string): string | null {
  *
  * For every finding id:
  *   - absent from surviving set -> declined
- *   - present -> locate section, check What changes text against finding.summary
+ *   - belongs to theme T AND T's heading is absent -> declined (regardless of
+ *     whether the finding's own H4 heading survived a partial deletion)
+ *   - present AND theme (if any) present -> locate section, check What changes
+ *     text against finding.summary
  *     - differs -> { state: "edited", edited_summary: <text> }
  *     - same (or What changes line missing) -> accepted
+ *
+ * Stage B contract: deleting a theme's H3 heading declines ALL member findings,
+ * even if their individual H4 blocks were not removed.
  */
 export function deriveDecisions(
   findingsDocs: JsonObject[],
@@ -227,12 +233,23 @@ export function deriveDecisions(
       const fid = String(finding["id"]);
       if (!fid) continue;
 
+      // Declined if the finding's own heading is absent
       if (!surviving.has(fid)) {
         decisions[fid] = { state: "declined" };
         continue;
       }
 
-      // Finding is present in surviving headings; check for edits
+      // Declined if the finding belongs to a theme whose heading is absent.
+      // This enforces the Stage B contract: deleting a theme block declines all
+      // members even when individual H4 headings happen to survive.
+      const themeRef = typeof finding["theme"] === "string" ? finding["theme"] : null;
+      if (themeRef !== null && themeRef.length > 0 && !surviving.has(themeRef)) {
+        decisions[fid] = { state: "declined" };
+        continue;
+      }
+
+      // Finding is present in surviving headings (and its theme, if any, also
+      // survived); check for edits to the What changes text.
       const section = sectionFor(body, fid);
       const whatChanges = section !== null ? extractWhatChanges(section) : null;
       const originalSummary = String(finding["summary"] ?? "");

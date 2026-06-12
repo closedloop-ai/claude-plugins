@@ -13,7 +13,9 @@ import {
   UnsafeArchiveError,
   buildManifest,
   classifyRegion,
+  defaultWorkdir,
   extractDocHeader,
+  isUnderTempDir,
   main,
   routeToName,
   safeExtract,
@@ -650,5 +652,60 @@ describe("TestSlugify", () => {
   it("slugify normalizes", () => {
     expect(slugify("Session Trace")).toBe("session-trace");
     expect(slugify("  ")).toBe("screen");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TestTempDirWorkdir (Fix #2: temp-zip workdir rule)
+// ---------------------------------------------------------------------------
+
+describe("TestTempDirWorkdir", () => {
+  it("isUnderTempDir returns true for os.tmpdir() path", () => {
+    const t = tmpdir();
+    expect(isUnderTempDir(join(t, "some-file.zip"))).toBe(true);
+  });
+
+  it("isUnderTempDir returns true for /tmp path", () => {
+    expect(isUnderTempDir("/tmp/design-export.zip")).toBe(true);
+  });
+
+  it("isUnderTempDir returns true for /private/var/folders macOS path", () => {
+    expect(isUnderTempDir("/private/var/folders/xx/abc123/T/design-export.zip")).toBe(true);
+  });
+
+  it("isUnderTempDir returns false for non-temp path", () => {
+    expect(isUnderTempDir("/home/user/projects/design-export.zip")).toBe(false);
+    expect(isUnderTempDir("/Users/someone/Downloads/design-export.zip")).toBe(false);
+  });
+
+  it("defaultWorkdir places workdir under /tmp when zip is in os.tmpdir()", () => {
+    const zipPath = join(tmpdir(), "my-export.zip");
+    const wd = defaultWorkdir(zipPath);
+    expect(wd.startsWith("/tmp/")).toBe(true);
+    expect(wd).toContain("my-export-design-inventory");
+  });
+
+  it("defaultWorkdir places workdir sibling to zip for non-temp path", () => {
+    const zipPath = "/home/user/projects/my-export.zip";
+    const wd = defaultWorkdir(zipPath);
+    expect(wd).toBe("/home/user/projects/my-export-design-inventory");
+  });
+
+  it("explicit --workdir overrides temp-zip rule", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ext-"));
+    // Create a real zip inside tmpdir so the auto-rule would fire
+    const zipPath = join(dir, "design-export.zip");
+    // Use the same makeZipBuffer helper already in scope above
+    writeFileSync(
+      zipPath,
+      makeZipBuffer({ "index.html": "<html></html>" }),
+    );
+    const explicitOut = join(dir, "my-custom-workdir");
+    // explicit --workdir must win over the temp-dir auto-rule
+    const rc = main([zipPath, "--workdir", explicitOut]);
+    expect(rc).toBe(0);
+    expect(() =>
+      readFileSync(join(explicitOut, "manifest.json"), "utf-8"),
+    ).not.toThrow();
   });
 });

@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { main } from "./build-design-pack.js";
+import { main, validateManifestPath } from "./build-design-pack.js";
 import { validDecisions, validFindings } from "./test-fixtures.js";
 import type { JsonObject } from "./design-findings-schema.js";
 
@@ -397,6 +397,312 @@ describe("build-design-pack", () => {
     const summary = JSON.parse(logOutput) as { pending: number; pending_ids: string[] };
     expect(summary["pending"]).toBe(1);
     expect(summary["pending_ids"]).toEqual(["CHG-sessions-page-03"]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Finding A: path-traversal validator (unit tests for the exported function)
+  // -------------------------------------------------------------------------
+  describe("validateManifestPath", () => {
+    it("accepts normal relative paths", () => {
+      expect(validateManifestPath("ui_kits/app/SessionsPage.jsx")).toBe(true);
+      expect(validateManifestPath("screenshots/real-sessions.png")).toBe(true);
+      expect(validateManifestPath("foo.jsx")).toBe(true);
+    });
+
+    it("rejects absolute paths", () => {
+      expect(validateManifestPath("/etc/passwd")).toBe(false);
+      expect(validateManifestPath("/tmp/evil.jsx")).toBe(false);
+    });
+
+    it("rejects paths starting with ../", () => {
+      expect(validateManifestPath("../outside.jsx")).toBe(false);
+      expect(validateManifestPath("../../etc/passwd")).toBe(false);
+    });
+
+    it("rejects paths with embedded .. segments", () => {
+      expect(validateManifestPath("foo/../../etc/passwd")).toBe(false);
+    });
+
+    it("accepts paths that include 'dotdot' as literal text but not .. traversal", () => {
+      expect(validateManifestPath("dotdot/file.jsx")).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Finding A: integration - unsafe manifest paths skipped with stderr warning
+  // -------------------------------------------------------------------------
+  it("traversal paths in design_sources and reference_screenshots are skipped with warning", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-traversal-"));
+    // Set up an "outside" file that a traversal could reach
+    writeFileSync(join(tmpPath, "secret.txt"), "should-not-be-copied", "utf-8");
+
+    const extractDir = join(tmpPath, "extracted");
+    mkdirSync(join(extractDir, "ui_kits/app"), { recursive: true });
+    writeFileSync(join(extractDir, "ui_kits/app/SessionsPage.jsx"), "jsx", "utf-8");
+    mkdirSync(join(extractDir, "screenshots"), { recursive: true });
+    writeFileSync(join(extractDir, "screenshots/real-sessions.png"), "png", "utf-8");
+
+    const doc = validFindings();
+    // Inject unsafe entries alongside a safe one
+    (doc["unit"] as JsonObject)["design_sources"] = [
+      "ui_kits/app/SessionsPage.jsx",   // safe
+      "../secret.txt",                   // traversal - must be skipped
+      "/etc/passwd",                     // absolute - must be skipped
+    ];
+    (doc["unit"] as JsonObject)["reference_screenshots"] = [
+      "screenshots/real-sessions.png",  // safe
+      "../secret.txt",                   // traversal - must be skipped
+    ];
+    (doc["unit"] as JsonObject)["primary_source"] = "ui_kits/app/SessionsPage.jsx";
+
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const outDir = join(tmpPath, "packs");
+
+    const stderrLines: string[] = [];
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation((s) => {
+      stderrLines.push(String(s));
+      return true;
+    });
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    stderrSpy.mockRestore();
+
+    expect(rc).toBe(0);
+    const pack = join(outDir, "scr-sessions-page");
+
+    // Safe source file was copied; unsafe ones were not
+    expect(existsSync(join(pack, "design-source/ui_kits/app/SessionsPage.jsx"))).toBe(true);
+    // No escaped write - the traversal path must not appear anywhere under the pack
+    expect(existsSync(join(pack, "design-source/../secret.txt"))).toBe(false);
+    expect(existsSync(join(pack, "design-source/secret.txt"))).toBe(false);
+
+    // Safe screenshot was copied; unsafe traversal was not
+    expect(existsSync(join(pack, "screenshots/screenshots/real-sessions.png"))).toBe(true);
+
+    // Warnings were emitted for each unsafe path
+    const warnings = stderrLines.join("\n");
+    expect(warnings).toContain("../secret.txt");
+    expect(warnings).toContain("/etc/passwd");
+  });
+
+  // -------------------------------------------------------------------------
+  // Finding B: declined/pending reuse excluded from Dependencies and main table
+  // -------------------------------------------------------------------------
+  it("declined finding's new-component reuse absent from Dependencies and main table", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-reuse-"));
+    const doc = validFindings();
+    // Add a declined finding that has new-component reuse
+    const findings = doc["findings"] as JsonObject[];
+    findings.push({
+      id: "CHG-sessions-page-04",
+      title: "New filter panel",
+      category: "visual",
+      intent: "likely-intentional",
+      intent_rationale: "designer added",
+      theme: null,
+      state: { summary: "No filter panel", refs: [] },
+      spec: { summary: "Filter panel with AdvancedFilter component", refs: [] },
+      reuse: {
+        resolution: "new-component",
+        proposed_name: "AdvancedFilter",
+        closest_existing: null,
+      },
+      decision: { state: "pending" },
+      summary: "Add filter panel with AdvancedFilter",
+    });
+    // Override decisions: decline the new finding
+    const decisions = validDecisions();
+    (decisions["decisions"] as JsonObject)["CHG-sessions-page-04"] = { state: "declined" };
+
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(decisions), "utf-8");
+    const extractDir = join(tmpPath, "extracted");
+    mkdirSync(join(extractDir, "ui_kits/app"), { recursive: true });
+    writeFileSync(join(extractDir, "ui_kits/app/SessionsPage.jsx"), "jsx", "utf-8");
+    writeFileSync(join(extractDir, "SessionsPage.jsx"), "jsx", "utf-8");
+    mkdirSync(join(extractDir, "screenshots"), { recursive: true });
+    writeFileSync(join(extractDir, "screenshots/real-sessions.png"), "png", "utf-8");
+    const outDir = join(tmpPath, "packs");
+
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    expect(rc).toBe(0);
+    const pack = join(outDir, "scr-sessions-page");
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+
+    // The unit-level catalog table (Status badge) must NOT appear in Dependencies
+    // (unit-level catalog rows are never decision-tracked)
+    expect(uiBody).not.toContain("Design-system ticket required: build `Status badge`");
+
+    // Declined finding's new-component must NOT appear in Dependencies
+    expect(uiBody).not.toContain("Design-system ticket required: build `AdvancedFilter`");
+
+    // The accepted finding's new-component (ArtifactTopbar) IS in Dependencies
+    expect(uiBody).toContain("Design-system ticket required: build `ArtifactTopbar`");
+
+    // Declined reuse must not appear in the main Component Reuse table header rows
+    // (the main table only contains accepted findings' reuse blocks)
+    const reuseSection = uiBody.split("## Component Reuse")[1]?.split("## ")[0] ?? "";
+    // The main table rows (before the catalog subsection) must not mention AdvancedFilter
+    const mainTablePart = reuseSection.split("### Catalog")[0] ?? reuseSection;
+    expect(mainTablePart).not.toContain("AdvancedFilter");
+  });
+
+  it("unit-level catalog reuse in informational subsection only, not in Dependencies", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-catalog-"));
+    // validFindings has component_reuse with "Status badge" / resolution: reuse
+    // Add a unit-level catalog entry with new-component to verify it never enters Dependencies
+    const doc = validFindings();
+    (doc["component_reuse"] as JsonObject[]).push({
+      element: "FilterBar",
+      resolution: "new-component",
+      proposed_name: "FilterBar",
+    });
+
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const extractDir = join(tmpPath, "extracted");
+    mkdirSync(join(extractDir, "ui_kits/app"), { recursive: true });
+    writeFileSync(join(extractDir, "ui_kits/app/SessionsPage.jsx"), "jsx", "utf-8");
+    writeFileSync(join(extractDir, "SessionsPage.jsx"), "jsx", "utf-8");
+    mkdirSync(join(extractDir, "screenshots"), { recursive: true });
+    writeFileSync(join(extractDir, "screenshots/real-sessions.png"), "png", "utf-8");
+    const outDir = join(tmpPath, "packs");
+
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    expect(rc).toBe(0);
+    const pack = join(outDir, "scr-sessions-page");
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+
+    // Unit-level catalog new-component must NOT be in Dependencies
+    expect(uiBody).not.toContain("Design-system ticket required: build `FilterBar`");
+
+    // Catalog subsection header must be present
+    expect(uiBody).toContain("Catalog (informational, not decision-tracked)");
+
+    // FilterBar appears under the catalog subsection
+    const catalogSection = uiBody.split("Catalog (informational, not decision-tracked)")[1] ?? "";
+    expect(catalogSection).toContain("FilterBar");
+  });
+
+  // -------------------------------------------------------------------------
+  // Finding C: replay removes stale outputs
+  // -------------------------------------------------------------------------
+  it("exit-3 run removes a pre-existing pack dir", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-exit3-"));
+    const outDir = join(tmpPath, "packs");
+    const pack = join(outDir, "scr-sessions-page");
+
+    // First run: accepted -> creates pack
+    const { rc: rc1 } = runPack(tmpPath, validDecisions());
+    expect(rc1).toBe(0);
+    expect(existsSync(pack)).toBe(true);
+
+    // Second run: decline everything -> exit 3, pack dir must be removed
+    const decisions2 = validDecisions();
+    (decisions2 as JsonObject)["decisions"] = {
+      "thm-artifact-table": { state: "declined" },
+      "CHG-sessions-page-02": { state: "declined" },
+    };
+    // Reuse same tmpPath so outDir is the same packs/ dir
+    const extractDir = join(tmpPath, "extracted");
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(validFindings()), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(decisions2), "utf-8");
+    const rc2 = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    expect(rc2).toBe(3);
+    expect(existsSync(pack)).toBe(false);
+  });
+
+  it("replay: accepted-then-declined backend gap leaves no ticket-body-api.md and no stale screenshots", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-replay-"));
+    const outDir = join(tmpPath, "packs");
+    const pack = join(outDir, "scr-sessions-page");
+
+    // Build a findings doc with an accepted backend-gap finding
+    const doc = validFindings();
+    const findings = doc["findings"] as JsonObject[];
+    findings.push({
+      id: "CHG-sessions-page-03",
+      title: "API endpoint needed",
+      category: "backend-gap",
+      intent: "likely-intentional",
+      intent_rationale: "backend needed",
+      theme: null,
+      state: { summary: "No endpoint", refs: [] },
+      spec: { summary: "POST /api/sessions", refs: [] },
+      decision: { state: "accepted" },
+      summary: "Add POST /api/sessions endpoint",
+    });
+
+    const extractDir = join(tmpPath, "extracted");
+    mkdirSync(join(extractDir, "ui_kits/app"), { recursive: true });
+    writeFileSync(join(extractDir, "ui_kits/app/SessionsPage.jsx"), "jsx-v1", "utf-8");
+    writeFileSync(join(extractDir, "SessionsPage.jsx"), "old jsx", "utf-8");
+    mkdirSync(join(extractDir, "screenshots"), { recursive: true });
+    writeFileSync(join(extractDir, "screenshots/real-sessions.png"), "png-data", "utf-8");
+
+    const findingsPath = join(tmpPath, "unit.json");
+    const decisionsPath = join(tmpPath, "decisions.json");
+
+    // Run 1: backend-gap finding is accepted
+    const decisions1 = validDecisions();
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    writeFileSync(decisionsPath, JSON.stringify(decisions1), "utf-8");
+    const rc1 = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    expect(rc1).toBe(0);
+    expect(existsSync(join(pack, "ticket-body-api.md"))).toBe(true);
+    expect(existsSync(join(pack, "screenshots/screenshots/real-sessions.png"))).toBe(true);
+
+    // Run 2: now decline the backend-gap finding (but keep the UI finding accepted)
+    const decisions2 = validDecisions();
+    (decisions2["decisions"] as JsonObject)["CHG-sessions-page-03"] = { state: "declined" };
+    writeFileSync(decisionsPath, JSON.stringify(decisions2), "utf-8");
+    const rc2 = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    expect(rc2).toBe(0);
+
+    // ticket-body-api.md must be gone (no accepted backend-gap findings)
+    expect(existsSync(join(pack, "ticket-body-api.md"))).toBe(false);
+
+    // Pack dir itself still exists (UI findings are accepted)
+    expect(existsSync(pack)).toBe(true);
+    expect(existsSync(join(pack, "ticket-body-ui.md"))).toBe(true);
   });
 
   it("exit-3 message distinguishes all-declined from pending-remain", () => {

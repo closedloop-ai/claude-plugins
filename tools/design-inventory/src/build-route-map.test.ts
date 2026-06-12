@@ -380,18 +380,32 @@ describe("buildRouteMap", () => {
 // ---------------------------------------------------------------------------
 
 describe("main (CLI)", () => {
-  it("returns 0 and writes the default file", () => {
+  it("returns 1 and prints usage when --out is absent", () => {
     const repo = tmpRepo();
-    const defaultOut = join(repo, ".closedloop-ai", "design-inventory", "route-map.json");
-    expect(main([repo])).toBe(0);
-    expect(() => readFileSync(defaultOut)).not.toThrow();
+    const stderrChunks: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: string | Uint8Array, ...args: unknown[]) => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return true;
+    };
+    const rc = main([repo]);
+    process.stderr.write = origWrite;
+    expect(rc).toBe(1);
+    expect(stderrChunks.join("")).toContain("--out");
+  });
+
+  it("returns 0 and writes the --out file", () => {
+    const repo = tmpRepo();
+    const out = join(mkdtempSync(join(tmpdir(), "out-")), "route-map.json");
+    expect(main([repo, "--out", out])).toBe(0);
+    expect(() => readFileSync(out)).not.toThrow();
   });
 
   it("written JSON is valid with routes/chrome/commit keys", () => {
     const repo = tmpRepo();
-    const defaultOut = join(repo, ".closedloop-ai", "design-inventory", "route-map.json");
-    main([repo]);
-    const data = JSON.parse(readFileSync(defaultOut, "utf-8")) as Record<string, unknown>;
+    const out = join(mkdtempSync(join(tmpdir(), "out-")), "route-map.json");
+    main([repo, "--out", out]);
+    const data = JSON.parse(readFileSync(out, "utf-8")) as Record<string, unknown>;
     expect(data).toHaveProperty("routes");
     expect(data).toHaveProperty("chrome");
     expect(data).toHaveProperty("commit");
@@ -406,21 +420,23 @@ describe("main (CLI)", () => {
 
   it("returns 1 for nonexistent repo", () => {
     const base = mkdtempSync(join(tmpdir(), "missing-"));
-    expect(main([join(base, "does-not-exist")])).toBe(1);
+    const out = join(mkdtempSync(join(tmpdir(), "out-")), "route-map.json");
+    expect(main([join(base, "does-not-exist"), "--out", out])).toBe(1);
   });
 
   it("returns 1 for a file instead of directory", () => {
     const base = mkdtempSync(join(tmpdir(), "file-"));
     const f = join(base, "file.txt");
     writeFileSync(f, "hello");
-    expect(main([f])).toBe(1);
+    const out = join(mkdtempSync(join(tmpdir(), "out-")), "route-map.json");
+    expect(main([f, "--out", out])).toBe(1);
   });
 
   it("output paths are POSIX-relative (no backslashes, not absolute)", () => {
     const repo = tmpRepo();
-    const defaultOut = join(repo, ".closedloop-ai", "design-inventory", "route-map.json");
-    main([repo]);
-    const data = JSON.parse(readFileSync(defaultOut, "utf-8")) as {
+    const out = join(mkdtempSync(join(tmpdir(), "out-")), "route-map.json");
+    main([repo, "--out", out]);
+    const data = JSON.parse(readFileSync(out, "utf-8")) as {
       routes: Record<string, { paths: string[] }>;
     };
     for (const entry of Object.values(data.routes)) {

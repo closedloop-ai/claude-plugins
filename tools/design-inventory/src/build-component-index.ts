@@ -7,12 +7,10 @@
  * variant keys when they can be resolved.
  *
  * Usage:
- *     node build-component-index.mjs <repo> [--out PATH]
+ *     node build-component-index.mjs <repo> --out PATH
  *
- * The default output path is:
- *     <repo>/.closedloop-ai/design-inventory/component-index.json
- *
- * Prints the output path on success. Exit codes: 0 ok, 1 bad repo path.
+ * --out is REQUIRED. Prints the output path on success.
+ * Exit codes: 0 ok, 1 bad repo path or missing --out.
  */
 
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -350,10 +348,13 @@ export function main(argv: string[]): number {
     return 1;
   }
 
-  const outPath =
-    typeof values.out === "string" && values.out.length > 0
-      ? values.out
-      : join(repo, ".closedloop-ai", "design-inventory", "component-index.json");
+  if (typeof values.out !== "string" || values.out.length === 0) {
+    process.stderr.write(
+      "error: --out <path> is required\nusage: node build-component-index.mjs <repo> --out <path>\n",
+    );
+    return 1;
+  }
+  const outPath = values.out;
 
   mkdirSync(dirname(outPath), { recursive: true });
 

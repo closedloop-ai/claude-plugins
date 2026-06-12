@@ -2,11 +2,16 @@
  * Plan the ticket dependency graph for a set of design-inventory findings (PLN-859 P4b).
  *
  * Grouping policy:
- * - One UI ticket per unit (screens and regions count as units; components get
- *   ZERO per-unit tickets).
+ * - One UI ticket per unit for EVERY unit type (screen, region, component, flow)
+ *   that has at least one accepted non-backend-gap finding.
+ *   Title templates by type:
+ *     screen/region : "Implement <name> UI from approved design"
+ *     component     : "Implement <name> component from approved design"
+ *     flow          : "Implement <name> flow from approved design"
  * - One API ticket per unit only when it has accepted backend-gap findings.
  * - Shared net-new components build once in their PRIMARY unit's UI ticket;
- *   consumer units reference it via `uses`.
+ *   consumer units reference it via `uses`. The primary is the first unit in
+ *   manifest order that needs the component (any unit type).
  * - blocks edges: API ticket BLOCKS its unit's UI ticket; primary UI ticket
  *   BLOCKS every consumer UI ticket (never self).
  *
@@ -33,8 +38,12 @@ import { runWhenMain } from "./cli.js";
 
 const ACCEPTED_STATES = new Set(["accepted", "edited"]);
 
-/** Unit types that get UI tickets. Components are excluded. */
-const UNIT_TYPES_WITH_TICKETS = new Set(["screen", "region"]);
+/** Derive the UI ticket title for a unit based on its type. */
+function uiTicketTitle(unitName: string, unitType: string): string {
+  if (unitType === "component") return `Implement ${unitName} component from approved design`;
+  if (unitType === "flow") return `Implement ${unitName} flow from approved design`;
+  return `Implement ${unitName} UI from approved design`;
+}
 
 function loadJson(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf-8"));
@@ -189,11 +198,11 @@ export function buildTicketGraph(
     });
   }
 
-  // Determine PRIMARY unit for each net-new component (first in manifest order that needs it)
+  // Determine PRIMARY unit for each net-new component (first in manifest order that needs it).
+  // Any unit type can be the primary builder.
   // Map: componentName -> primaryUnitId
   const componentPrimaryUnit = new Map<string, string>();
   for (const info of unitInfos) {
-    if (!UNIT_TYPES_WITH_TICKETS.has(info.unitType)) continue;
     for (const name of info.newComponentNames) {
       if (!componentPrimaryUnit.has(name)) {
         componentPrimaryUnit.set(name, info.unitId);
@@ -217,12 +226,10 @@ export function buildTicketGraph(
   const uiTicketIdByUnit = new Map<string, string>();
 
   for (const info of unitInfos) {
-    if (!UNIT_TYPES_WITH_TICKETS.has(info.unitType)) continue;
-
     const uiId = `ui:${info.unitId}`;
     const apiId = `api:${info.unitId}`;
 
-    // UI ticket
+    // UI ticket (all unit types)
     if (info.acceptedNonBackend.length > 0) {
       const criteria = info.acceptedNonBackend.map((f) => String(f["id"]));
 
@@ -243,7 +250,7 @@ export function buildTicketGraph(
         id: uiId,
         kind: "ui",
         unit_id: info.unitId,
-        title: `Implement ${info.unitName} UI from approved design`,
+        title: uiTicketTitle(info.unitName, info.unitType),
         criteria,
       };
       if (builds.length > 0) uiTicket.builds = builds;
@@ -273,7 +280,6 @@ export function buildTicketGraph(
 
   // Primary UI tickets block consumer UI tickets
   for (const info of unitInfos) {
-    if (!UNIT_TYPES_WITH_TICKETS.has(info.unitType)) continue;
     const primaryUiId = uiTicketIdByUnit.get(info.unitId);
     if (!primaryUiId) continue;
 
@@ -281,10 +287,9 @@ export function buildTicketGraph(
       const primary = componentPrimaryUnit.get(name);
       if (primary !== info.unitId) continue;
 
-      // This unit is the primary builder; find all consumers
+      // This unit is the primary builder; find all consumers (any unit type)
       for (const consumer of unitInfos) {
         if (consumer.unitId === info.unitId) continue;
-        if (!UNIT_TYPES_WITH_TICKETS.has(consumer.unitType)) continue;
         if (!consumer.newComponentNames.includes(name)) continue;
         const consumerUiId = uiTicketIdByUnit.get(consumer.unitId);
         if (consumerUiId) {

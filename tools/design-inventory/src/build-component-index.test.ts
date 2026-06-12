@@ -211,10 +211,25 @@ describe("TestEnrichment", () => {
 // ---------------------------------------------------------------------------
 
 describe("TestCli", () => {
-  it("writes default output, returns 0, prints output path", () => {
+  it("returns 1 and prints usage when --out is absent", () => {
     const base = mkdtempSync(join(tmpdir(), "ci-"));
     const repo = makeRepo(base);
-    const expected = join(repo, ".closedloop-ai", "design-inventory", "component-index.json");
+    const stderrChunks: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: string | Uint8Array, ...args: unknown[]) => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return true;
+    };
+    const rc = main([repo]);
+    process.stderr.write = origWrite;
+    expect(rc).toBe(1);
+    expect(stderrChunks.join("")).toContain("--out");
+  });
+
+  it("writes --out file, returns 0, prints output path", () => {
+    const base = mkdtempSync(join(tmpdir(), "ci-"));
+    const repo = makeRepo(base);
+    const expected = join(mkdtempSync(join(tmpdir(), "out-")), "component-index.json");
 
     // Capture stdout
     const written: string[] = [];
@@ -223,7 +238,7 @@ describe("TestCli", () => {
       written.push(typeof chunk === "string" ? chunk : chunk.toString());
       return true;
     };
-    const rc = main([repo]);
+    const rc = main([repo, "--out", expected]);
     process.stdout.write = origWrite;
 
     expect(rc).toBe(0);
@@ -239,7 +254,8 @@ describe("TestCli", () => {
 
   it("returns 1 on nonexistent repo", () => {
     const base = mkdtempSync(join(tmpdir(), "ci-"));
-    expect(main([join(base, "does-not-exist")])).toBe(1);
+    const out = join(mkdtempSync(join(tmpdir(), "out-")), "component-index.json");
+    expect(main([join(base, "does-not-exist"), "--out", out])).toBe(1);
   });
 
   it("respects --out custom path", () => {

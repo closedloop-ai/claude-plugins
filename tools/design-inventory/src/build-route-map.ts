@@ -16,9 +16,10 @@
  * app/ directories using the same route-prefix derivation.
  *
  * Usage:
- *     node build-route-map.mjs <repo> [--out PATH]
+ *     node build-route-map.mjs <repo> --out PATH
  *
- * Prints the output path on success. Exit codes: 0 ok, 1 input error.
+ * --out is REQUIRED. Prints the output path on success.
+ * Exit codes: 0 ok, 1 input error.
  */
 
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -390,10 +391,13 @@ export function main(argv: string[]): number {
     return 1;
   }
 
-  const outPath =
-    typeof values.out === "string" && values.out.length > 0
-      ? values.out
-      : join(repo, ".closedloop-ai", "design-inventory", "route-map.json");
+  if (typeof values.out !== "string" || values.out.length === 0) {
+    process.stderr.write(
+      "error: --out <path> is required\nusage: node build-route-map.mjs <repo> --out <path>\n",
+    );
+    return 1;
+  }
+  const outPath = values.out;
 
   mkdirSync(dirname(outPath), { recursive: true });
 

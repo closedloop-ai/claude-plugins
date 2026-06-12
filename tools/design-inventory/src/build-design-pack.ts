@@ -29,10 +29,15 @@
  *
  * Prints the pack directory on success. Exit codes: 0 ok, 1 input/validation
  * error, 3 nothing accepted for this unit (no pack written).
+ *
+ * Replay behavior: the unit's pack directory is removed at the start of each
+ * pack generation run (after input validation), including when the run exits
+ * with code 3 (nothing accepted). This ensures re-runs that decline everything
+ * leave no stale pack on disk.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, normalize } from "node:path";
 import { parseArgs } from "node:util";
 
 import {
@@ -44,6 +49,28 @@ import {
 import { runWhenMain } from "./cli.js";
 
 const ACCEPTED_STATES = new Set(["accepted", "edited"]);
+
+/**
+ * Validate that a path from a manifest (design_sources / reference_screenshots)
+ * is safe to use as a relative path under a controlled directory.
+ *
+ * Rejects:
+ * - absolute paths (isAbsolute)
+ * - any normalized path whose first segment is ".." (path traversal)
+ * - any path whose normalized form contains a ".." segment anywhere
+ *
+ * Returns true when the path is safe, false otherwise.
+ *
+ * Exported for unit tests.
+ */
+export function validateManifestPath(rel: string): boolean {
+  if (isAbsolute(rel)) return false;
+  const norm = normalize(rel);
+  // normalize("../foo") -> "../foo", normalize("foo/../bar") -> "bar"
+  // Split on both / and \ to handle Windows-style separators that normalize may produce.
+  const parts = norm.split(/[\\/]/);
+  return !parts.includes("..");
+}
 
 function loadJson(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf-8"));
@@ -234,54 +261,53 @@ function renderUiTicketBody(
     lines.push("");
   }
 
+  // Component Reuse: accepted findings' reuse blocks form the main (decision-tracked) table.
+  // Unit-level component_reuse catalog rows go into an informational subsection only --
+  // they are not decision-tracked and must not drive Dependencies.
   const reuseEntries = acceptedNonBackend.filter((f) => f["reuse"]);
-  const table = Array.isArray(doc["component_reuse"])
+  const catalogTable = Array.isArray(doc["component_reuse"])
     ? (doc["component_reuse"] as JsonObject[])
     : [];
-  if (reuseEntries.length > 0 || table.length > 0) {
+  if (reuseEntries.length > 0 || catalogTable.length > 0) {
     lines.push("## Component Reuse");
     lines.push("");
-    lines.push("| Element | Resolution |");
-    lines.push("|---|---|");
-    const seen = new Set<string>();
-    for (const finding of reuseEntries) {
-      const line = renderReuseLine(finding["reuse"] as JsonObject);
-      if (!seen.has(line)) {
-        seen.add(line);
-        lines.push(`| ${String(finding["title"])} | ${line} |`);
+    if (reuseEntries.length > 0) {
+      lines.push("| Element | Resolution |");
+      lines.push("|---|---|");
+      const seen = new Set<string>();
+      for (const finding of reuseEntries) {
+        const line = renderReuseLine(finding["reuse"] as JsonObject);
+        if (!seen.has(line)) {
+          seen.add(line);
+          lines.push(`| ${String(finding["title"])} | ${line} |`);
+        }
       }
+      lines.push("");
     }
-    for (const entry of table) {
-      const line = renderReuseLine(entry);
-      if (!seen.has(line)) {
-        seen.add(line);
-        lines.push(`| ${String(entry["element"])} | ${line} |`);
+    if (catalogTable.length > 0) {
+      lines.push("### Catalog (informational, not decision-tracked)");
+      lines.push("");
+      lines.push("| Element | Resolution |");
+      lines.push("|---|---|");
+      for (const entry of catalogTable) {
+        lines.push(`| ${String(entry["element"])} | ${renderReuseLine(entry)} |`);
       }
+      lines.push("");
     }
-    lines.push("");
   }
 
   if (visual) {
     lines.push(...renderVisualSpec(visual));
   }
 
-  // Dependencies: only design-system (new-component) entries; no backend lines
+  // Dependencies: ONLY from accepted findings' reuse blocks with resolution new-component.
+  // Unit-level catalog rows and declined/pending findings' reuse are excluded.
   const depsOrdered: string[] = [];
   const depsSet = new Set<string>();
   for (const finding of acceptedNonBackend) {
     const reuse = (finding["reuse"] as JsonObject | null | undefined) ?? {};
     if (reuse["resolution"] === "new-component") {
       const dep = `Design-system ticket required: build \`${String(reuse["proposed_name"])}\``;
-      if (!depsSet.has(dep)) {
-        depsSet.add(dep);
-        depsOrdered.push(dep);
-      }
-    }
-  }
-  for (const entry of table) {
-    if (entry["resolution"] === "new-component") {
-      const name = entry["proposed_name"] ? String(entry["proposed_name"]) : String(entry["element"]);
-      const dep = `Design-system ticket required: build \`${name}\``;
       if (!depsSet.has(dep)) {
         depsSet.add(dep);
         depsOrdered.push(dep);
@@ -416,8 +442,17 @@ export function main(argv: string[]): number {
   const declined = findingsArr.filter((f) => effectiveDecision(f, decisions) === "declined");
   const pending = findingsArr.filter((f) => effectiveDecision(f, decisions) === "pending");
 
+  const unit = (doc as JsonObject)["unit"] as JsonObject;
+  const packDir = join(outDirPath, String(unit["id"]));
+
+  // Remove any pre-existing pack dir before writing (Finding C: replay cleanup).
+  // This ensures stale outputs from prior runs are never left on disk, including
+  // when the current run produces nothing (exit 3).
+  if (existsSync(packDir)) {
+    rmSync(packDir, { recursive: true, force: true });
+  }
+
   if (accepted.length === 0) {
-    const unit = (doc as JsonObject)["unit"] as JsonObject;
     const pendingClause = pending.length > 0
       ? `; ${pending.length} finding(s) still pending`
       : "";
@@ -435,8 +470,6 @@ export function main(argv: string[]): number {
   const acceptedBackend = accepted.filter((f) => f["category"] === "backend-gap");
   const declinedBackend = declined.filter((f) => f["category"] === "backend-gap");
 
-  const unit = (doc as JsonObject)["unit"] as JsonObject;
-  const packDir = join(outDirPath, String(unit["id"]));
   const sourceDir = join(packDir, "design-source");
   const shotsDir = join(packDir, "screenshots");
   mkdirSync(sourceDir, { recursive: true });
@@ -445,6 +478,10 @@ export function main(argv: string[]): number {
     ? (unit["design_sources"] as string[])
     : [];
   for (const rel of designSources) {
+    if (!validateManifestPath(rel)) {
+      process.stderr.write(`warning: skipping unsafe design_sources path: ${rel}\n`);
+      continue;
+    }
     const src = join(extractDirPath, rel);
     if (existsSync(src) && statSync(src).isFile()) {
       const dest = join(sourceDir, rel);
@@ -462,6 +499,10 @@ export function main(argv: string[]): number {
     ? (unit["reference_screenshots"] as string[])
     : [];
   for (const rel of refScreenshots) {
+    if (!validateManifestPath(rel)) {
+      process.stderr.write(`warning: skipping unsafe reference_screenshots path: ${rel}\n`);
+      continue;
+    }
     const src = join(extractDirPath, rel);
     if (existsSync(src) && statSync(src).isFile()) {
       const dest = join(shotsDir, rel);
