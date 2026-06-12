@@ -245,6 +245,9 @@ Provides language-specific review patterns and edge case guidance for the `code-
 **`plan-agent`** (model: opus)
 Software architect agent for creating and revising implementation plans. Explores the codebase, designs a plan grounded in existing patterns, and writes it directly to a specified file on disk. Used by the `plan-with-codex` command; resumed across debate rounds via `SendMessage` to apply Codex feedback without losing architectural context.
 
+**`design-unit-analyst`** (model: sonnet)
+Per-design-unit state-vs-spec analyst for the `design-inventory` pipeline. Analyzes one design unit (screen, region, component, or flow) from a Claude Design export against the current web-ui codebase, classifies divergences (visual, behavioral, component reuse, backend gap, token drift), and writes a schema-validated `findings.json`. Read-only with respect to both codebases; never implements changes.
+
 ---
 
 ## Skills
@@ -306,6 +309,10 @@ Runs Codex to review a plan file and returns structured feedback with a verdict.
 ### `decision-table`
 
 Generates a repo-local decision-table artifact that makes control-flow and stateful edge cases reviewable. Used when the user wants a code-grounded table for current behavior, wants to compare current behavior against a plan or work item, or needs a control-flow artifact for recovery, retry, finalization, validation, state-machine, or review-heavy edge cases. Writes one artifact per work item under `.closedloop-ai/decision-tables/` (`<plan-id>.md` for plan-scoped work, `<short-work-name>.md` otherwise) using the format defined in `references/artifact-format.md`. Builds the `Current Code` table from code (not expectations), captures the target behavior in `Intended Change`, and freezes both once implementation begins; post-implementation drift is recorded in append-only `Verification Findings`, `Fixes Applied`, `Final Alignment Status`, and optional `Plan Clarifications` sections. Includes a behavioral edge-case expansion pass that explicitly models structured-result setup failures, library-managed lifecycle re-entry, time-bound credentials/signatures, durable finalization and replay eligibility, diagnostic reason taxonomies, and side-effect boundaries for validation failures.
+
+### `design-inventory`
+
+Staged pipeline for inventorying a Claude Design export into reviewable findings, a human decision gate, and DRAFT ticket generation. Stage A extracts the zip, runs parallel `design-unit-analyst` agents per unit (screens, regions, standalone components) from per-unit context packs, emits schema-validated findings (each with a recommended action), and publishes a platform "Design Review" Feature document with inline images. Stage B is the human editing that document - delete a section to decline, edit a line to amend, leave to accept - with survival judged from heading-line id anchors. Stage C derives decisions from the edited document and generates DRAFT feature tickets grouped per screen (UI plus optional API, with BLOCKS edges) and workdir-only design packs, only for accepted units. Invoked via the `code:design-inventory` skill when users request a design handoff, design inventory, or ticket generation from a design review. Scripts are TypeScript under `tools/design-inventory/src/` with built `dist/` bundles committed to `skills/design-inventory/scripts/dist/`.
 
 ---
 

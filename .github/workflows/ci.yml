@@ -100,3 +100,34 @@ jobs:
           python-version: "3.13"
       - run: uv sync --frozen --group dev
       - run: uv run pytest plugins/
+
+  design-inventory-ts:
+    name: TypeScript (design-inventory)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/design-inventory
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tools/design-inventory/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Verify committed dist bundles are up to date
+        run: |
+          DIST=plugins/code/skills/design-inventory/scripts/dist
+          tracked=$(git -C ../.. ls-files "$DIST/*.mjs" | wc -l)
+          if [ "$tracked" -lt 10 ]; then
+            echo "::error::only $tracked tracked bundles under $DIST; bundles are missing or ignored (root .gitignore dist/ rule?). The skill cannot run without them."
+            exit 1
+          fi
+          npm run build
+          if ! git -C ../.. diff --exit-code -- "$DIST" || [ -n "$(git -C ../.. status --porcelain -- "$DIST")" ]; then
+            git -C ../.. status --porcelain -- "$DIST"
+            echo "::error::scripts/dist is stale or contains untracked bundles. Run 'npm run build' in tools/design-inventory and commit the result."
+            exit 1
+          fi
