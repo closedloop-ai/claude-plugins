@@ -1121,4 +1121,134 @@ describe("build-design-pack", () => {
     expect(uiBody).toContain("attachment://{{shots/CHG-sessions-page-01.png}}");
     expect(uiBody).toContain("attachment://{{shots/scr-sessions-page-base.png}}");
   });
+
+  // -------------------------------------------------------------------------
+  // --source-mode embed|reference
+  // -------------------------------------------------------------------------
+
+  function runWithSourceMode(
+    tmpPath: string,
+    sourceMode: string | undefined,
+    withBackendGap = false,
+  ): { rc: number; pack: string } {
+    const doc = validFindings();
+    if (withBackendGap) {
+      (doc["findings"] as JsonObject[]).push({
+        id: "CHG-sessions-page-03",
+        title: "API endpoint needed",
+        category: "backend-gap",
+        intent: "likely-intentional",
+        intent_rationale: "backend needed",
+        theme: null,
+        state: { summary: "No endpoint", refs: [] },
+        spec: { summary: "POST /api/sessions", refs: [] },
+        decision: { state: "accepted" },
+        summary: "Add POST /api/sessions endpoint",
+      });
+    }
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const cssPath = join(tmpPath, "slice.css");
+    writeFileSync(cssPath, ".sd { color: red }", "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const outDir = join(tmpPath, "packs");
+    const argv = [
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+      "--css-slice", cssPath,
+    ];
+    if (sourceMode !== undefined) {
+      argv.push("--source-mode", sourceMode);
+    }
+    return { rc: main(argv), pack: join(outDir, "scr-sessions-page") };
+  }
+
+  it("--source-mode embed matches the default embedded behavior", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-modeembed-"));
+    const { rc, pack } = runWithSourceMode(tmpPath, "embed");
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+    expect(uiBody).toContain("## Design Source (embedded)");
+    expect(uiBody).toContain("````jsx");
+    expect(uiBody).toContain("old jsx");
+    expect(uiBody).not.toContain("## Design Source (attached)");
+  });
+
+  it("--source-mode reference lists attachments instead of embedding code", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-moderef-"));
+    const { rc, pack } = runWithSourceMode(tmpPath, "reference", true);
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+    expect(uiBody).toContain("## Design Source (attached)");
+    expect(uiBody).toContain("attached to this document as `ui_kits/app/SessionsPage.jsx`");
+    expect(uiBody).toContain("attached to this document as `SessionsPage.jsx`");
+    expect(uiBody).toContain("attached to this document as `design-slice.css`");
+    expect(uiBody).toContain("download-attachment");
+    // Scope is still governed by the criteria and the declined list.
+    expect(uiBody).toContain("Scope is governed by the Acceptance Criteria above and the Declined Changes list");
+    // No embedded code: no fences, no file content.
+    expect(uiBody).not.toContain("## Design Source (embedded)");
+    expect(uiBody).not.toContain("````");
+    expect(uiBody).not.toContain("old jsx");
+    expect(uiBody).not.toContain(".sd { color: red }");
+    // Everything else is intact: criteria detail and visual reference framing.
+    expect(uiBody).toContain("- State: Header + Card shell");
+    expect(uiBody).toContain("- Spec: sticky sess-topbar");
+    expect(uiBody).toContain("- Refs:");
+    // The API body carries the same attached-source section.
+    const apiBody = readFileSync(join(pack, "ticket-body-api.md"), "utf-8");
+    expect(apiBody).toContain("## Design Source (attached)");
+    expect(apiBody).toContain("attached to this document");
+    expect(apiBody).not.toContain("````");
+
+    // The pack's design-source/ dir (the orchestrator's upload source) is intact.
+    expect(existsSync(join(pack, "design-source/ui_kits/app/SessionsPage.jsx"))).toBe(true);
+    expect(existsSync(join(pack, "design-source/design-slice.css"))).toBe(true);
+  });
+
+  it("reference mode does not read or size-budget the source files", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-modenoread-"));
+    const extractDir = join(tmpPath, "extracted");
+    mkdirSync(join(extractDir, "ui_kits/app"), { recursive: true });
+    // A file far over the embed budget: embed mode would truncate it; reference
+    // mode must list it untouched with no marker and none of its content.
+    const big = Array.from({ length: 5000 }, (_, i) => `const sentinel${i} = 1; // pad`).join("\n");
+    expect(big.length).toBeGreaterThan(90_000);
+    writeFileSync(join(extractDir, "ui_kits/app/SessionsPage.jsx"), big, "utf-8");
+    writeFileSync(join(extractDir, "SessionsPage.jsx"), "tiny sentinel", "utf-8");
+    mkdirSync(join(extractDir, "screenshots"), { recursive: true });
+    writeFileSync(join(extractDir, "screenshots/real-sessions.png"), "png", "utf-8");
+
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(validFindings()), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const outDir = join(tmpPath, "packs");
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+      "--source-mode", "reference",
+    ]);
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(outDir, "scr-sessions-page", "ticket-body-ui.md"), "utf-8");
+    expect(uiBody).toContain("attached to this document as `ui_kits/app/SessionsPage.jsx`");
+    expect(uiBody).not.toContain("sentinel");
+    expect(uiBody).not.toContain("[truncated:");
+  });
+
+  it("unknown --source-mode value exits 1", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-modebad-"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { rc } = runWithSourceMode(tmpPath, "attach");
+    const errMsg = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    errSpy.mockRestore();
+    expect(rc).toBe(1);
+    expect(errMsg).toContain("--source-mode");
+  });
 });
