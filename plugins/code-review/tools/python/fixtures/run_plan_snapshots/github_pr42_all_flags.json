@@ -54,7 +54,9 @@
       "--scope-args",
       "origin/main..HEAD",
       "--base-ref-override",
-      "origin/main"
+      "origin/main",
+      "--hygiene-only",
+      "true"
     ],
     "stdout": "/tmp/cr_dir/scope.json",
     "expected_outputs": [
