@@ -21,7 +21,8 @@ The input file is JSON with shape:
   {
     "finding": { ... canonical finding ... },
     "verifier_prompt_path": "<this file>",
-    "output_path": "<where to write your verdict>"
+    "output_path": "<where to write your verdict>",
+    "review_root": "<absolute dir to read source from, or empty string>"
   }
 
 Read the input file. The `finding` field contains the full canonical
@@ -32,6 +33,27 @@ finding_scope, source). Some fields may be null — that is normal.
 Use Read and Grep for all source-file access. Do NOT use Bash. Do NOT use
 Edit or Write (you write only your single output JSON via the documented
 output_path).
+
+## Resolving file paths (review_root)
+
+Every file path in the finding (`finding.file`, each `finding.evidence[].file`,
+each `finding.external_impact[].file`) is **repo-relative**. Resolve them
+against `review_root` from the input file:
+
+  - **`review_root` is a non-empty path** (local PR review where the PR head
+    is checked out into a worktree, because the operator is on a different
+    branch): read every repo-relative source path as
+    `<review_root>/<finding.file>`, and pass `path: "<review_root>"` to Grep
+    and Glob so your searches scope to the code under review — NOT the
+    operator's working tree, which holds different content. Reading the
+    working tree here would make the snippet vanish and you would wrongly
+    REJECT on `evidence_not_found`.
+  - **`review_root` is empty or absent** (the normal case): read repo-relative
+    paths as-is from the current working directory.
+
+This only changes WHERE you read; it does not change the verdict logic or the
+shape of your output. Do not rewrite paths in your output — `evidence_checks[]`
+`source` and `finding_id` stay exactly as given.
 
 ## Justification Audit (PLN-721 — runs FIRST when applicable)
 

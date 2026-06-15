@@ -6250,6 +6250,19 @@ class TestResolveScope:
                 if isinstance(fetch_result, Exception):
                     raise fetch_result
                 return fetch_result
+            # PR-head worktree isolation probes (these tests focus on scope
+            # field resolution, not isolation): make the working tree already
+            # be the PR head with a clean tree so resolve-scope takes the
+            # no-worktree path. Same constant SHA for every ref → HEAD ==
+            # origin/<head>; empty status → clean; empty worktree list → no GC.
+            if cmd_list[:3] == ["git", "rev-parse", "--verify"]:
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0, stdout="deadbeefcafe\n",
+                )
+            if cmd_list[:2] == ["git", "status"]:
+                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
+            if cmd_list[:3] == ["git", "worktree", "list"]:
+                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
         return _side_effect
 
@@ -6381,6 +6394,181 @@ class TestResolveScope:
         assert result["diff_scope"] == "origin/develop...origin/feat-x"
         assert result["base_ref"] == "develop"
         assert result["pr_auto_detected"] is True
+
+
+class TestResolveScopeWorktree:
+    """PR-head worktree isolation for local PR review (cmd_resolve_scope).
+
+    Local ``/code-review <PR>`` computes its diff from the fetched remote
+    refs but reviewer/verifier agents read source via Read/Grep against the
+    working tree. When the operator is on a different branch, those reads
+    see the wrong content and the verifier rejects every finding on the
+    existence check. These tests pin that resolve-scope materializes a
+    detached worktree at the PR head SHA (surfaced as ``review_root``)
+    exactly when it is needed — and degrades cleanly otherwise.
+    """
+
+    def _invoke(
+        self,
+        *,
+        head_sha: str,
+        work_head: str,
+        tmp_path: Path,
+        mode: str = "local",
+        pr_number: int | None = 100,
+        hygiene_only: str = "false",
+        worktree_add_rc: int = 0,
+        dirty: bool = False,
+    ) -> tuple[int, str, list[list[str]]]:
+        """Run cmd_resolve_scope with mocked git; return (rc, stdout, git_calls)."""
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_resolve_scope
+
+        setup_path = tmp_path / "setup.json"
+        setup_path.write_text(json.dumps({"current_branch": "other-branch"}))
+
+        calls: list[list[str]] = []
+
+        def _side_effect(cmd, **_kwargs):  # noqa: ANN001, ANN202
+            cl = list(cmd)
+            calls.append(cl)
+            joined = " ".join(cl)
+            if cl[:2] == ["gh", "pr"] and "baseRefName" in joined:
+                return subprocess.CompletedProcess(
+                    args=cl, returncode=0, stdout="main\nfeat-x\n",
+                )
+            if cl[:2] == ["git", "fetch"]:
+                return subprocess.CompletedProcess(args=cl, returncode=0, stdout="")
+            if cl[:3] == ["git", "rev-parse", "--verify"]:
+                ref = cl[-1]
+                sha = {"origin/feat-x": head_sha, "HEAD": work_head}.get(ref, "")
+                return subprocess.CompletedProcess(
+                    args=cl, returncode=0, stdout=(sha + "\n") if sha else "",
+                )
+            if cl[:2] == ["git", "status"]:
+                return subprocess.CompletedProcess(
+                    args=cl, returncode=0,
+                    stdout=" M src/app.ts\n" if dirty else "",
+                )
+            if cl[:3] == ["git", "worktree", "list"]:
+                return subprocess.CompletedProcess(args=cl, returncode=0, stdout="")
+            if cl[:3] == ["git", "worktree", "add"]:
+                return subprocess.CompletedProcess(
+                    args=cl, returncode=worktree_add_rc, stdout="",
+                    stderr="boom" if worktree_add_rc else "",
+                )
+            # git worktree prune/remove + any other command succeed silently
+            return subprocess.CompletedProcess(
+                args=cl, returncode=0, stdout="", stderr="",
+            )
+
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = argparse.Namespace(
+                mode=mode, pr_number=pr_number, scope_args="",
+                base_ref_override=None, setup_json=str(setup_path),
+                hygiene_only=hygiene_only,
+            )
+            with patch(
+                "code_review_helpers.subprocess.run", side_effect=_side_effect,
+            ):
+                rc = cmd_resolve_scope(ns)
+            _sys.stdout.seek(0)
+            return rc, _sys.stdout.read(), calls
+        finally:
+            _sys.stdout = old_stdout
+
+    def _run(self, **kwargs: Any) -> dict[str, Any]:
+        rc, out, _calls = self._invoke(**kwargs)
+        assert rc == 0, f"expected success, got rc={rc}"
+        return json.loads(out)
+
+    def test_worktree_created_when_head_differs(self, tmp_path: Path) -> None:
+        rc, out, calls = self._invoke(
+            head_sha="aaa111", work_head="bbb222", tmp_path=tmp_path,
+        )
+        assert rc == 0
+        result = json.loads(out)
+        expected = os.path.abspath(os.path.join(str(tmp_path), "pr_head_worktree"))
+        assert result["scope_kind"] == "pr"
+        assert result["head_sha"] == "aaa111"
+        assert result["review_root"] == expected
+        assert result["worktree_path"] == expected
+        # The worktree MUST be created at the PR head SHA (aaa111), not the
+        # working-tree HEAD (bbb222) — pin the exact git command.
+        assert ["git", "worktree", "add", "--detach", expected, "aaa111"] in calls
+
+    def test_no_worktree_when_head_matches_clean_working_tree(
+        self, tmp_path: Path,
+    ) -> None:
+        result = self._run(head_sha="same999", work_head="same999", tmp_path=tmp_path)
+        assert result["head_sha"] == "same999"
+        assert result["review_root"] == ""
+        assert result["worktree_path"] == ""
+
+    def test_dirty_tree_isolates_even_when_head_matches(self, tmp_path: Path) -> None:
+        # HEAD == PR head but the tree has uncommitted changes → the working
+        # tree no longer reflects the PR head, so isolate anyway.
+        result = self._run(
+            head_sha="same999", work_head="same999", dirty=True, tmp_path=tmp_path,
+        )
+        expected = os.path.abspath(os.path.join(str(tmp_path), "pr_head_worktree"))
+        assert result["review_root"] == expected
+        assert result["worktree_path"] == expected
+
+    def test_no_worktree_for_hygiene_only(self, tmp_path: Path) -> None:
+        # Hygiene-only skips creation entirely (no agent reads, and Gate A
+        # exits before the footer teardown — a worktree would orphan).
+        result = self._run(
+            head_sha="aaa111", work_head="bbb222",
+            hygiene_only="true", tmp_path=tmp_path,
+        )
+        assert result["review_root"] == ""
+        assert result["worktree_path"] == ""
+
+    def test_no_worktree_in_github_mode_no_pr(self, tmp_path: Path) -> None:
+        # GitHub CI without a PR number → scope_kind "github_pending"; the
+        # guard fails on both mode and scope_kind.
+        result = self._run(
+            head_sha="aaa111", work_head="bbb222",
+            mode="github", pr_number=None, tmp_path=tmp_path,
+        )
+        assert result["review_root"] == ""
+        assert result["worktree_path"] == ""
+
+    def test_no_worktree_github_mode_with_pr_scope(self, tmp_path: Path) -> None:
+        # GitHub mode WITH a PR number → scope_kind "pr", so the no-worktree
+        # behavior is carried solely by the ``mode == "local"`` guard. This
+        # isolates the mode check from the scope_kind check, so a regression
+        # that dropped the mode guard would surface here (the runner already
+        # checks out the PR head in CI).
+        result = self._run(
+            head_sha="aaa111", work_head="bbb222",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert result["scope_kind"] == "pr"
+        assert result["review_root"] == ""
+        assert result["worktree_path"] == ""
+
+    def test_fail_closed_when_worktree_add_fails(self, tmp_path: Path) -> None:
+        # Head differs (isolation required) but ``git worktree add`` failed →
+        # abort (rc != 0) rather than silently read the wrong branch.
+        rc, _out, _calls = self._invoke(
+            head_sha="aaa111", work_head="bbb222",
+            worktree_add_rc=1, tmp_path=tmp_path,
+        )
+        assert rc == 1
+
+    def test_fail_closed_when_head_unresolvable(self, tmp_path: Path) -> None:
+        # PR head ref doesn't resolve (e.g. not fetched) and we're not already
+        # at it → cannot isolate, so abort rather than read the working tree.
+        rc, _out, _calls = self._invoke(
+            head_sha="", work_head="bbb222", tmp_path=tmp_path,
+        )
+        assert rc == 1
 
 
 # ---------------------------------------------------------------------------
@@ -8337,6 +8525,8 @@ class TestPrepareRun:
             "<PLUGIN_ROOT>",  # walker resolves for the python -m invocation
             "<START_TIME>",   # set by stage 0, passed to stage_30_footer
             "<INTENT>",       # consumed by the route gate, not helper args
+            "<REVIEW_ROOT>",  # consumed by the reviewer/verifier fleet stages
+                              # (from scope.json), not by any helper stage arg
         }
 
         _, plan = self._run(tmp_path)
@@ -8556,6 +8746,318 @@ def _run_verify_consolidate(
         return rc, consolidated
     finally:
         _sys.stdout = old_stdout
+
+
+class TestVerifyPrepareReviewRoot:
+    """``review_root`` from scope.json is threaded into every verifier input.
+
+    Local PR-head worktree isolation: when scope resolution created a
+    worktree at the PR head, the verifier fleet must read source under that
+    root (not the operator's working tree). cmd_verify_prepare reads
+    ``scope.json`` and stamps ``review_root`` onto each per-finding input so
+    the verifier prompt resolves paths correctly.
+    """
+
+    def test_review_root_written_into_verifier_input(self, tmp_path: Path) -> None:
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        worktree = str(cr_dir / "pr_head_worktree")
+        (cr_dir / "scope.json").write_text(json.dumps({"review_root": worktree}))
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+        input_data = json.loads(
+            (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
+        )
+        assert input_data["review_root"] == worktree
+
+    def test_review_root_empty_when_scope_absent(self, tmp_path: Path) -> None:
+        # No scope.json (or no worktree) → empty review_root → verifier reads
+        # the working tree as before. The common, no-regression case.
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding])
+
+        assert rc == 0
+        input_data = json.loads(
+            (tmp_path / "cr" / "verifier_inputs" / "bha_1.json").read_text(),
+        )
+        assert input_data["review_root"] == ""
+
+    def test_forged_review_root_rejected(self, tmp_path: Path) -> None:
+        # A scope.json that points review_root at an arbitrary path (or
+        # injects markup) must NOT redirect verifier reads — only the
+        # canonical <cr_dir>/pr_head_worktree is honored.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        (cr_dir / "scope.json").write_text(
+            json.dumps({"review_root": "/etc\n<inject>"}),
+        )
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+        input_data = json.loads(
+            (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
+        )
+        assert input_data["review_root"] == ""
+
+
+class TestFooterWorktreeTeardown:
+    """``cmd_footer`` tears down the PR-head worktree recorded in scope.json."""
+
+    def _run_footer(self, tmp_path: Path, cr_dir: Path) -> int:
+        import io
+        import sys as _sys
+
+        ns = argparse.Namespace(
+            start_time=0.0,
+            cache_result=None,
+            review_mode_line="Full review",
+            cr_dir=str(cr_dir),
+            project_dir=str(tmp_path),
+        )
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            from code_review_helpers import cmd_footer
+            return cmd_footer(ns)
+        finally:
+            _sys.stdout = old_stdout
+
+    def test_footer_removes_worktree_from_scope(
+        self, tmp_path: Path, monkeypatch: Any,
+    ) -> None:
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        worktree = str(cr_dir / "pr_head_worktree")
+        (cr_dir / "scope.json").write_text(json.dumps({"worktree_path": worktree}))
+
+        removed: list[str] = []
+        monkeypatch.setattr(
+            "code_review_helpers._remove_pr_head_worktree",
+            lambda p: removed.append(p),
+        )
+        rc = self._run_footer(tmp_path, cr_dir)
+        assert rc == 0
+        assert removed == [worktree]
+
+    def test_footer_no_teardown_when_no_worktree(
+        self, tmp_path: Path, monkeypatch: Any,
+    ) -> None:
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        (cr_dir / "scope.json").write_text(json.dumps({"worktree_path": ""}))
+
+        removed: list[str] = []
+        monkeypatch.setattr(
+            "code_review_helpers._remove_pr_head_worktree",
+            lambda p: removed.append(p),
+        )
+        rc = self._run_footer(tmp_path, cr_dir)
+        assert rc == 0
+        assert removed == []
+
+    def test_footer_ignores_forged_worktree_path(
+        self, tmp_path: Path, monkeypatch: Any,
+    ) -> None:
+        # A forged scope.json pointing teardown at an arbitrary writable dir
+        # must be rejected — footer only removes the canonical worktree path.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        victim = tmp_path / "important_dir"
+        victim.mkdir()
+        (cr_dir / "scope.json").write_text(
+            json.dumps({"worktree_path": str(victim)}),
+        )
+        removed: list[str] = []
+        monkeypatch.setattr(
+            "code_review_helpers._remove_pr_head_worktree",
+            lambda p: removed.append(p),
+        )
+        rc = self._run_footer(tmp_path, cr_dir)
+        assert rc == 0
+        assert removed == []
+
+
+class TestRemovePrHeadWorktree:
+    """``_remove_pr_head_worktree`` issues the git teardown commands."""
+
+    def test_invokes_worktree_remove_and_prune(self, tmp_path: Path) -> None:
+        from code_review_helpers import _remove_pr_head_worktree
+
+        calls: list[list[str]] = []
+
+        def _side_effect(cmd, **_kwargs):  # noqa: ANN001, ANN202
+            calls.append(list(cmd))
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
+
+        worktree = str(tmp_path / "pr_head_worktree")
+        with patch("code_review_helpers.subprocess.run", side_effect=_side_effect):
+            _remove_pr_head_worktree(worktree)
+
+        assert ["git", "worktree", "remove", "--force", worktree] in calls
+        assert ["git", "worktree", "prune"] in calls
+
+    def test_empty_path_is_noop(self) -> None:
+        from code_review_helpers import _remove_pr_head_worktree
+
+        with patch("code_review_helpers.subprocess.run") as run_mock:
+            _remove_pr_head_worktree("")
+        run_mock.assert_not_called()
+
+    def test_refuses_non_worktree_basename(self, tmp_path: Path) -> None:
+        # Defensive guard: never run the destructive teardown on a path whose
+        # basename is not ``pr_head_worktree``, even if a caller passes one.
+        from code_review_helpers import _remove_pr_head_worktree
+
+        with patch("code_review_helpers.subprocess.run") as run_mock:
+            _remove_pr_head_worktree(str(tmp_path / "some_other_dir"))
+        run_mock.assert_not_called()
+
+    def test_never_raises_when_git_exec_fails(self, tmp_path: Path) -> None:
+        # "Never raises" contract: if the OS denies the git exec, teardown
+        # must swallow it so cmd_footer still writes footer.json.
+        from code_review_helpers import _remove_pr_head_worktree
+
+        with patch(
+            "code_review_helpers.subprocess.run",
+            side_effect=FileNotFoundError("git not found"),
+        ):
+            # Must not raise.
+            _remove_pr_head_worktree(str(tmp_path / "pr_head_worktree"))
+
+
+class TestReviewDismissedPrepareReviewRoot:
+    """Dismissed-finding verifier inputs carry review_root (worktree isolation)."""
+
+    def test_review_root_written_into_dismissed_inputs(self, tmp_path: Path) -> None:
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_review_dismissed_prepare
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        worktree = str(cr_dir / "pr_head_worktree")
+        (cr_dir / "scope.json").write_text(json.dumps({"review_root": worktree}))
+        (cr_dir / "verifier_prompt.txt").write_text("stub")
+        (cr_dir / "review_result.json").write_text(json.dumps({
+            "rejected": [_make_validated_finding("bha_9", severity="HIGH")],
+        }))
+
+        ns = argparse.Namespace(cr_dir=str(cr_dir), prior_result=None)
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            rc = cmd_review_dismissed_prepare(ns)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert rc == 0
+        input_data = json.loads(
+            (cr_dir / "review_dismissed_inputs" / "bha_9.json").read_text(),
+        )
+        assert input_data["review_root"] == worktree
+
+
+class TestLocalPrWorktreeFlow:
+    """End-to-end: resolve-scope → verify-prepare → footer for a local PR review
+    on a different branch creates review_root, threads it to the verifier
+    input, and tears the worktree down."""
+
+    def test_review_root_flows_resolve_to_verify_to_footer(
+        self, tmp_path: Path, monkeypatch: Any,
+    ) -> None:
+        import io
+        import sys as _sys
+
+        from code_review_helpers import (
+            cmd_footer,
+            cmd_resolve_scope,
+            cmd_verify_prepare,
+        )
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        (cr_dir / "setup.json").write_text(json.dumps({"current_branch": "other"}))
+        (cr_dir / "verifier_prompt.txt").write_text("stub")
+        expected_root = os.path.abspath(str(cr_dir / "pr_head_worktree"))
+
+        def _git(cmd, **_kwargs):  # noqa: ANN001, ANN202
+            cl = list(cmd)
+            joined = " ".join(cl)
+            if cl[:2] == ["gh", "pr"] and "baseRefName" in joined:
+                return subprocess.CompletedProcess(
+                    args=cl, returncode=0, stdout="main\nfeat-x\n",
+                )
+            if cl[:3] == ["git", "rev-parse", "--verify"]:
+                ref = cl[-1]
+                sha = {"origin/feat-x": "headsha", "HEAD": "worksha"}.get(ref, "")
+                return subprocess.CompletedProcess(
+                    args=cl, returncode=0, stdout=(sha + "\n") if sha else "",
+                )
+            if cl[:3] == ["git", "worktree", "list"]:
+                return subprocess.CompletedProcess(args=cl, returncode=0, stdout="")
+            return subprocess.CompletedProcess(
+                args=cl, returncode=0, stdout="", stderr="",
+            )
+
+        # Stage 1: resolve-scope (PR #100, on a different branch) → scope.json
+        ns_scope = argparse.Namespace(
+            mode="local", pr_number=100, scope_args="",
+            base_ref_override=None, setup_json=str(cr_dir / "setup.json"),
+            hygiene_only="false",
+        )
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            with patch("code_review_helpers.subprocess.run", side_effect=_git):
+                rc = cmd_resolve_scope(ns_scope)
+            _sys.stdout.seek(0)
+            scope = json.loads(_sys.stdout.read())
+        finally:
+            _sys.stdout = old_stdout
+        assert rc == 0
+        assert scope["review_root"] == expected_root
+        (cr_dir / "scope.json").write_text(json.dumps(scope))
+
+        # Stage 2: verify-prepare threads review_root into the verifier input
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        findings_path = cr_dir / "findings_validated.json"
+        findings_path.write_text(json.dumps({"validated": [finding]}))
+        ns_vp = argparse.Namespace(
+            cr_dir=str(cr_dir), findings=str(findings_path),
+            cache_dir=None, prompt_hash="",
+        )
+        _sys.stdout = io.StringIO()
+        try:
+            assert cmd_verify_prepare(ns_vp) == 0
+        finally:
+            _sys.stdout = old_stdout
+        input_data = json.loads(
+            (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
+        )
+        assert input_data["review_root"] == expected_root
+
+        # Stage 3: footer tears the worktree down (path validated first)
+        removed: list[str] = []
+        monkeypatch.setattr(
+            "code_review_helpers._remove_pr_head_worktree",
+            lambda p: removed.append(p),
+        )
+        ns_footer = argparse.Namespace(
+            start_time=0.0, cache_result=None, review_mode_line="Full review",
+            cr_dir=str(cr_dir), project_dir=str(tmp_path),
+        )
+        _sys.stdout = io.StringIO()
+        try:
+            with patch("code_review_helpers.subprocess.run", side_effect=_git):
+                assert cmd_footer(ns_footer) == 0
+        finally:
+            _sys.stdout = old_stdout
+        assert removed == [expected_root]
 
 
 class TestValidatePreservesNewFields:
@@ -18541,7 +19043,7 @@ class TestCRSPhaseAStageTemplateValidator:
 class TestCRSPhaseACLIConfigLoader:
     """Phase A: _register_subparsers is now a loader over config/cli.json.
 
-    45 parsers / 198 args / 8 hand-curated $$ constant slots / 1 mutex group.
+    45 parsers / 193 args / 8 hand-curated $$ constant slots / 0 mutex groups.
     A captured snapshot pins the resolved parser spec (defaults, types,
     choices, required, action, func) so a regression in cli.json or in
     _resolve_cli_constant fails loud. Plus targeted tests for the constant

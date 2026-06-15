@@ -1099,6 +1099,13 @@
           "dest": "setup_json",
           "default": null,
           "required": true
+        },
+        {
+          "flags": [
+            "--hygiene-only"
+          ],
+          "dest": "hygiene_only",
+          "default": "false"
         }
       ]
     },

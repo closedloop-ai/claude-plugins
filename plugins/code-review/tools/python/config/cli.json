@@ -1014,6 +1014,13 @@
           ],
           "required": true,
           "help": "Path to setup.json"
+        },
+        {
+          "flags": [
+            "--hygiene-only"
+          ],
+          "default": "false",
+          "help": "When true, skip PR-head worktree creation (no agent reads on the hygiene-only fast path)."
         }
       ]
     },

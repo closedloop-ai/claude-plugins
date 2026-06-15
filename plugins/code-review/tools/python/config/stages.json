@@ -54,7 +54,9 @@
         "--scope-args",
         "{flags_scope_args}",
         "--base-ref-override",
-        "{flags_base_ref_override}"
+        "{flags_base_ref_override}",
+        "--hygiene-only",
+        "{flags_hygiene_only}"
       ],
       "stdout": "{cr_dir}/scope.json",
       "expected_outputs": [

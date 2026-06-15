@@ -274,6 +274,186 @@ def _resolve_pr_scope(
     }
 
 
+def _git_rev_parse(ref: str) -> str | None:
+    """Resolve *ref* to a commit SHA, or ``None`` if it does not exist.
+
+    Used to compare the PR head commit against the working-tree HEAD when
+    deciding whether local PR review needs a worktree. Never raises — an
+    unresolvable ref (e.g. ``origin/<branch>`` that was never fetched)
+    returns ``None`` so the caller falls back to reading the working tree.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", ref],
+            capture_output=True, text=True, check=True,
+        )
+        sha = result.stdout.strip()
+        return sha or None
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+
+
+def _expected_worktree_path(cr_dir: str | Path) -> str:
+    """The one legitimate PR-head worktree location for a run: ``<cr_dir>/pr_head_worktree``."""
+    return os.path.abspath(os.path.join(str(cr_dir), "pr_head_worktree"))
+
+
+def _validated_review_root(cr_dir: str | Path, raw: object) -> str:
+    """Return a trusted ``review_root`` / ``worktree_path`` or ``""``.
+
+    ``review_root`` is read from ``scope.json`` (operator-writable) and then
+    substituted into agent prompts, used as the base for file reads, and
+    (for ``worktree_path``) passed to a destructive ``rmtree`` teardown. The
+    ONLY legitimate value is the canonical worktree path under ``cr_dir``, so
+    accept exactly that and reject everything else — forged paths, newline /
+    angle-bracket prompt-injection markup, and ``..`` path escapes all fail
+    the equality check and collapse to ``""`` (read the working tree / skip
+    teardown). Returns the canonical path (not the raw input) so even a
+    benign ``..``-normalized match is laundered to the clean form.
+    """
+    if not isinstance(raw, str) or not raw:
+        return ""
+    expected = _expected_worktree_path(cr_dir)
+    return expected if os.path.abspath(raw) == expected else ""
+
+
+def _working_tree_clean() -> bool:
+    """True when there are no uncommitted changes to tracked files.
+
+    Untracked files are ignored — they do not change the content of the
+    tracked files a reviewer reads. Any failure to run git is treated as
+    "not clean" so the caller fails safe by isolating into a worktree.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True, text=True, check=True,
+        )
+        return result.stdout.strip() == ""
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return False
+
+
+def _git_worktree_quiet(args: list[str]) -> None:
+    """Run a best-effort ``git worktree`` cleanup command, swallowing exec errors.
+
+    The cleanup helpers document a "never raises" contract that
+    ``cmd_footer`` relies on (a teardown exception must not skip the
+    footer.json write). ``subprocess.run`` can still raise
+    ``FileNotFoundError`` / ``OSError`` if the OS denies the exec, so route
+    every fire-and-forget worktree command through here.
+    """
+    try:
+        subprocess.run(["git", "worktree", *args], capture_output=True, text=True)
+    except (FileNotFoundError, OSError):
+        pass
+
+
+def _gc_stale_pr_head_worktrees(current_cr_dir: str) -> None:
+    """Remove orphaned PR-head worktrees left by prior aborted runs.
+
+    Teardown normally happens in ``cmd_footer``, but the walker can abort
+    before the footer runs (an upstream ``on_failure: abort`` stage). Run
+    once before creating a fresh worktree, this reclaims any sibling
+    ``<cr_root>/cr-*/pr_head_worktree`` checkout that is not the current
+    run's. Scoped to the code-review CR root and to the ``pr_head_worktree``
+    basename so it can never remove an unrelated worktree. Best-effort;
+    never raises.
+    """
+    cr_root = os.path.dirname(os.path.abspath(current_cr_dir))
+    current_expected = _expected_worktree_path(current_cr_dir)
+    _git_worktree_quiet(["prune"])
+    try:
+        listing = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return
+    for raw_line in listing.splitlines():
+        if not raw_line.startswith("worktree "):
+            continue
+        abspath = os.path.abspath(raw_line[len("worktree "):].strip())
+        if os.path.basename(abspath) != "pr_head_worktree":
+            continue
+        if abspath == current_expected:
+            continue
+        # Only reclaim worktrees that live directly under THIS repo's
+        # code-review CR root (``<cr_root>/cr-*/pr_head_worktree``).
+        if os.path.dirname(os.path.dirname(abspath)) != cr_root:
+            continue
+        _remove_pr_head_worktree(abspath)
+
+
+def _create_pr_head_worktree(cr_dir: str, head_sha: str) -> str | None:
+    """Materialize a detached git worktree at *head_sha* under *cr_dir*.
+
+    Local PR review (``/code-review <PR>``) computes its diff from the
+    fetched remote refs (``origin/<base>...origin/<head>``) but reviewer
+    and verifier agents read source via Read/Grep against the working
+    tree. When the operator is on a different branch, those reads see the
+    wrong content and the verifier rejects every finding on the existence
+    check. This worktree gives agents a checkout of the PR head to read
+    from (passed through as ``review_root``).
+
+    Returns the absolute worktree path on success, or ``None`` on any
+    failure. The caller (``cmd_resolve_scope``) treats ``None`` as a
+    fail-closed condition — it aborts the review rather than silently
+    reading the operator's working tree against a remote PR diff.
+    Best-effort and idempotent: prunes stale registrations and
+    force-removes a leftover directory at the target path before creating a
+    fresh worktree.
+    """
+    worktree_path = _expected_worktree_path(cr_dir)
+    # Clean any stale registration / leftover dir from a crashed prior run
+    # so re-running against the same CR_DIR is idempotent.
+    _git_worktree_quiet(["prune"])
+    if os.path.exists(worktree_path):
+        _git_worktree_quiet(["remove", "--force", worktree_path])
+        if os.path.exists(worktree_path):
+            shutil.rmtree(worktree_path, ignore_errors=True)
+    try:
+        result = subprocess.run(
+            ["git", "worktree", "add", "--detach", worktree_path, head_sha],
+            capture_output=True, text=True,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        print(f"Warning: could not create PR-head worktree: {exc}", file=sys.stderr)
+        return None
+    if result.returncode != 0:
+        print(
+            "Warning: could not create PR-head worktree at "
+            f"{worktree_path}: {result.stderr.strip()}",
+            file=sys.stderr,
+        )
+        return None
+    return worktree_path
+
+
+def _remove_pr_head_worktree(worktree_path: str) -> None:
+    """Best-effort teardown of a PR-head worktree (see ``_create_pr_head_worktree``).
+
+    Called from ``cmd_footer`` and the startup GC. Never raises — a failed
+    teardown leaves a checkout under the gitignored CR_DIR that the next
+    run's ``git worktree prune`` reclaims.
+
+    Defensive guard: this runs ``git worktree remove --force`` and
+    ``shutil.rmtree`` (destructive), so it refuses any path whose basename
+    is not ``pr_head_worktree``. Every caller already passes a path
+    validated by ``_validated_review_root`` / ``_gc_stale_pr_head_worktrees``;
+    this guard is the last line so a future caller cannot weaponize it
+    against an arbitrary directory.
+    """
+    if not worktree_path:
+        return
+    if os.path.basename(os.path.normpath(worktree_path)) != "pr_head_worktree":
+        return
+    _git_worktree_quiet(["remove", "--force", worktree_path])
+    if os.path.isdir(worktree_path):
+        shutil.rmtree(worktree_path, ignore_errors=True)
+    _git_worktree_quiet(["prune"])
+
+
 def _parse_scope(scope: str) -> list[str]:
     """Split scope string into git diff arguments."""
     return scope.split()
@@ -1991,7 +2171,9 @@ def _override_cache_path(cache_dir: Path, finding_id: str) -> Path:
     return cache_dir / CACHE_NAMESPACE_OVERRIDES / f"{finding_id}.json"
 
 
-def _file_content_hash(cr_dir: Path, file: str | None, line: int | None) -> str:
+def _file_content_hash(
+    cr_dir: Path, file: str | None, line: int | None, review_root: str = "",
+) -> str:
     """SHA-256 of the cited file's content within ±20 lines of ``line``.
 
     Returns "" for system-scoped findings (no file/line). Returns "" when
@@ -2002,25 +2184,31 @@ def _file_content_hash(cr_dir: Path, file: str | None, line: int | None) -> str:
     The hash window matches the verifier's EXISTENCE-check window
     (verifier_prompt.txt §1) so an override is invalidated by exactly the
     kind of change that would force the verifier to re-evaluate.
+
+    ``review_root`` (when non-empty) is the PR-head worktree the run is
+    reviewing source from; resolve repo-relative paths under it so the
+    override hash anchors to the PR head, not the operator's working tree.
+    Callers MUST pass a value already vetted by ``_validated_review_root``.
     """
     if not file or not line:
         return ""
-    # Resolve against cr_dir's parent (the repo root); cr_dir lives at
-    # ``.closedloop-ai/code-review/cr-<N>`` so the repo root is three
-    # levels up. Callers in tests pass an absolute path to a tmp_path
-    # so this resolution does not need to be perfect — the helper just
-    # needs to find the file given a relative path from repo root.
     candidate = Path(file)
     if not candidate.is_absolute():
-        # cr_dir → repo root is three parents above (.closedloop-ai/code-review/cr-*).
-        # Fall back to cwd if the structure doesn't match.
-        repo_root = cr_dir
-        for _ in range(3):
-            if repo_root.parent != repo_root:
-                repo_root = repo_root.parent
-        candidate = repo_root / file
-        if not candidate.exists():
-            candidate = Path.cwd() / file
+        if review_root:
+            # Local PR-head worktree isolation: read the code under review.
+            candidate = Path(review_root) / file
+        else:
+            # Resolve against cr_dir's parent (the repo root); cr_dir lives
+            # at ``.closedloop-ai/code-review/cr-<N>`` so the repo root is
+            # three levels up. Fall back to cwd if the structure doesn't
+            # match. Tests pass an absolute path so this need not be perfect.
+            repo_root = cr_dir
+            for _ in range(3):
+                if repo_root.parent != repo_root:
+                    repo_root = repo_root.parent
+            candidate = repo_root / file
+            if not candidate.exists():
+                candidate = Path.cwd() / file
     try:
         with open(candidate) as fh:
             lines = fh.readlines()
@@ -2091,6 +2279,7 @@ def _override_is_expired(override: dict[str, Any]) -> bool:
 
 def _override_is_valid(
     override: dict[str, Any], finding: dict[str, Any], cr_dir: Path,
+    review_root: str = "",
 ) -> bool:
     """Override survives only while the cited file content matches.
 
@@ -2123,7 +2312,7 @@ def _override_is_valid(
         # a file-scoped finding it was never written against.
         return not finding.get("file") and not finding.get("line")
     current = _file_content_hash(
-        cr_dir, finding.get("file"), finding.get("line"),
+        cr_dir, finding.get("file"), finding.get("line"), review_root,
     )
     return current != "" and current == stored
 
@@ -2383,6 +2572,18 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
     findings_path = Path(args.findings)
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
     prompt_hash = str(getattr(args, "prompt_hash", "") or "")
+
+    # PR-head worktree isolation (local PR review). When scope resolution
+    # created a worktree at the PR head, every verifier must read source
+    # under that root instead of the working tree — otherwise the existence
+    # check fails and the finding is wrongly rejected. Empty when no
+    # worktree (the common case: read paths as-is from the working tree).
+    # Validated against the canonical path so a forged scope.json cannot
+    # redirect reads or inject prompt markup through this field.
+    scope_meta = _read_optional_json(cr_dir / "scope.json", {})
+    review_root = _validated_review_root(
+        cr_dir, scope_meta.get("review_root") if isinstance(scope_meta, dict) else None,
+    )
     # Read partitions.json (written by ``cmd_partition`` at stage_17)
     # so the verify manifest can surface partition mode + count for
     # downstream consumers (presenters, stats split). Defensive: absent
@@ -2461,7 +2662,7 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
         # (logged on the manifest); the verifier then runs normally.
         override = _load_override(cache_dir, fid)
         if override is not None:
-            if _override_is_valid(override, finding, cr_dir):
+            if _override_is_valid(override, finding, cr_dir, review_root):
                 if _synthesize_re_asserted_verifier_output(
                     finding, override, output_path,
                 ):
@@ -2498,6 +2699,7 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
                     "finding": finding,
                     "verifier_prompt_path": str(verifier_prompt_path),
                     "output_path": str(output_path),
+                    "review_root": review_root,
                 },
                 fh,
                 indent=2,
@@ -4537,6 +4739,9 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
     scope_args: str = args.scope_args or ""
     base_ref_override: str | None = args.base_ref_override
     setup_json_path: str = args.setup_json
+    hygiene_only: bool = (
+        str(getattr(args, "hygiene_only", "")).strip().lower() in ("true", "1", "yes")
+    )
 
     # Read current_branch from setup.json
     try:
@@ -4633,6 +4838,60 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
             diff_scope = f"origin/{base_ref_override}...HEAD"
         base_ref = base_ref_override
 
+    # Worktree isolation for local PR review. The diff is computed from the
+    # fetched remote refs (origin/<base>...origin/<head>), but reviewer and
+    # verifier agents read source via Read/Grep against the working tree. If
+    # the operator is on a different branch (or behind the pushed head), or
+    # the tree is dirty, those reads see the wrong content and the verifier
+    # rejects every finding on the existence check. Materialize a detached
+    # worktree at the PR head SHA and surface it as ``review_root`` so agents
+    # read the code they are actually reviewing.
+    #
+    # FAIL CLOSED: reading the working tree is safe ONLY when it already IS
+    # the PR head with no uncommitted modifications. In every other case we
+    # MUST isolate; if isolation cannot be established (head unresolvable, or
+    # ``git worktree add`` fails) we abort rather than silently review the
+    # wrong source against a remote PR diff. GitHub CI mode already checks
+    # out the PR head, so this is local-only. Hygiene-only runs read no
+    # source (and Gate A exits before the footer teardown), so they skip it.
+    head_sha = ""
+    review_root = ""
+    worktree_path = ""
+    if mode == "local" and scope_kind == "pr" and not hygiene_only:
+        cr_dir = os.path.dirname(os.path.abspath(setup_json_path))
+        # Reclaim orphaned worktrees from prior aborted runs before creating
+        # ours (the footer teardown can be skipped by an upstream abort).
+        _gc_stale_pr_head_worktrees(cr_dir)
+        head_sha = _git_rev_parse(diff_tip) or ""  # diff_tip == origin/<head_ref>
+        work_head = _git_rev_parse("HEAD") or ""
+        already_at_head = (
+            bool(head_sha) and head_sha == work_head and _working_tree_clean()
+        )
+        if not already_at_head:
+            if not head_sha:
+                print(
+                    f"Error: cannot resolve the PR head commit ({diff_tip!r}) "
+                    f"for local review of PR #{pr_number}. Fetch the PR head "
+                    "(git fetch origin <head-branch>) or check out its branch, "
+                    "then retry.",
+                    file=sys.stderr,
+                )
+                return 1
+            created = _create_pr_head_worktree(cr_dir, head_sha)
+            if not created:
+                print(
+                    "Error: failed to isolate the PR head "
+                    f"({head_sha}) into a worktree for local review of "
+                    f"PR #{pr_number}. Reviewing now would read the wrong "
+                    "branch's source against the PR diff. Check out the PR "
+                    "branch (so HEAD is the PR head with a clean tree) or "
+                    "resolve the git worktree error above, then retry.",
+                    file=sys.stderr,
+                )
+                return 1
+            review_root = created
+            worktree_path = created
+
     result_out = {
         "diff_scope": diff_scope,
         "base_ref": base_ref,
@@ -4643,6 +4902,9 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
         "path_filter": path_filter,
         "scope_kind": scope_kind,
         "pr_auto_detected": pr_auto_detected,
+        "head_sha": head_sha,
+        "review_root": review_root,
+        "worktree_path": worktree_path,
     }
     json.dump(result_out, sys.stdout, indent=2)
     sys.stdout.write("\n")
@@ -5215,6 +5477,22 @@ def cmd_footer(args: argparse.Namespace) -> int:
     )
 
     footer_line = f"**Review complete** — {elapsed_str} | {cache_str} | {mode_str} | {token_str}"
+
+    # Teardown: remove any PR-head worktree created during scope resolution
+    # (local PR review isolation). The path is validated against the
+    # canonical ``<cr_dir>/pr_head_worktree`` before this destructive
+    # (``git worktree remove --force`` + ``rmtree``) call, so a forged
+    # scope.json cannot point teardown at an arbitrary writable directory.
+    # Best-effort — a failed teardown only leaves a checkout under the
+    # gitignored CR_DIR for the next run's startup GC, and never affects
+    # footer output.
+    if cr_dir:
+        scope_meta = _read_optional_json(Path(cr_dir) / "scope.json", {})
+        wt = _validated_review_root(
+            cr_dir, scope_meta.get("worktree_path") if isinstance(scope_meta, dict) else None,
+        )
+        if wt:
+            _remove_pr_head_worktree(wt)
 
     json.dump({"footer_line": footer_line}, sys.stdout, indent=2)
     sys.stdout.write("\n")
@@ -8742,6 +9020,17 @@ def cmd_review_dismissed_prepare(args: argparse.Namespace) -> int:
         if isinstance(f, dict) and f.get("id")
     ]
 
+    # PR-head worktree isolation: the dismissed-finding verifiers read source
+    # too, so they must read under the same ``review_root`` as the primary
+    # verifier fleet — otherwise this second opinion reads the operator's
+    # working tree against a remote PR diff. Validated against the canonical
+    # path so a forged scope.json cannot redirect reads or inject markup.
+    dismissed_scope = _read_optional_json(cr_dir / "scope.json", {})
+    review_root = _validated_review_root(
+        cr_dir,
+        dismissed_scope.get("review_root") if isinstance(dismissed_scope, dict) else None,
+    )
+
     inputs_dir = cr_dir / "review_dismissed_inputs"
     inputs_dir.mkdir(parents=True, exist_ok=True)
     verifier_prompt_path = cr_dir / "verifier_prompt.txt"
@@ -8759,6 +9048,7 @@ def cmd_review_dismissed_prepare(args: argparse.Namespace) -> int:
                     "finding": finding,
                     "verifier_prompt_path": str(verifier_prompt_path),
                     "output_path": str(output_path),
+                    "review_root": review_root,
                 },
                 fh,
                 indent=2,
@@ -8818,6 +9108,16 @@ def cmd_review_dismissed_consolidate(args: argparse.Namespace) -> int:
         )
         return 1
 
+    # Same PR-head worktree isolation as the prepare step: the override
+    # anchor hash must be computed against the PR-head source so the next
+    # ``/start`` run's ``_override_is_valid`` (which hashes under its own
+    # review_root) compares like-for-like.
+    consolidate_scope = _read_optional_json(cr_dir / "scope.json", {})
+    review_root = _validated_review_root(
+        cr_dir,
+        consolidate_scope.get("review_root") if isinstance(consolidate_scope, dict) else None,
+    )
+
     prior_path = manifest.get("prior_result")
     prior_envelope = _read_optional_json(Path(prior_path), {}) if prior_path else {}
     prior_findings_by_id: dict[str, dict[str, Any]] = {}
@@ -8866,7 +9166,7 @@ def cmd_review_dismissed_consolidate(args: argparse.Namespace) -> int:
         # Non-REJECTED — auto-promote via override.
         prior = prior_findings_by_id.get(fid, {})
         file_hash = _file_content_hash(
-            cr_dir, prior.get("file"), prior.get("line"),
+            cr_dir, prior.get("file"), prior.get("line"), review_root,
         )
         payload = {
             "finding_id": fid,
@@ -8974,6 +9274,18 @@ def cmd_re_assert(args: argparse.Namespace) -> int:
         )
         return 1
 
+    # Anchor the override hash to the same source the next run's
+    # ``_override_is_valid`` will hash: the PR-head worktree when one is
+    # active. The worktree is ephemeral (torn down by the footer), so only
+    # use it while it still exists on disk; otherwise hash the working tree.
+    re_assert_scope = _read_optional_json(cr_dir / "scope.json", {})
+    review_root = _validated_review_root(
+        cr_dir,
+        re_assert_scope.get("review_root") if isinstance(re_assert_scope, dict) else None,
+    )
+    if review_root and not os.path.isdir(review_root):
+        review_root = ""
+
     now_iso = datetime.now(timezone.utc).isoformat()
     re_asserted: list[dict[str, Any]] = []
     already_verified: list[str] = []
@@ -9013,7 +9325,9 @@ def cmd_re_assert(args: argparse.Namespace) -> int:
         if not file_field or not line_field:
             file_hash = _OVERRIDE_SYSTEM_SCOPE_SENTINEL
         else:
-            file_hash = _file_content_hash(cr_dir, file_field, line_field)
+            file_hash = _file_content_hash(
+                cr_dir, file_field, line_field, review_root,
+            )
         payload = {
             "finding_id": fid,
             "file": file_field,
@@ -9633,6 +9947,7 @@ _STAGES_TEMPLATE_KEYS: frozenset[str] = frozenset({
     "flags_base_ref_override",
     "flags_full_review",
     "flags_since_last_review",
+    "flags_hygiene_only",
     "depth",
 })
 
@@ -9794,6 +10109,7 @@ def _build_run_plan_stages(
       {flags_base_ref_override}   -- flags["base_ref_override"] or ""
       {flags_full_review}         -- "true" | "false"
       {flags_since_last_review}   -- "true" | "false"
+      {flags_hygiene_only}        -- "true" | "false"
 
     Special arg marker resolved here:
       @pr_flag                    -- splat: ["--pr-number", str(pr_number)] when pr_number is truthy, else []
@@ -9811,6 +10127,7 @@ def _build_run_plan_stages(
         "flags_base_ref_override": flags.get("base_ref_override", "") or "",
         "flags_full_review": "true" if flags.get("full_review") else "false",
         "flags_since_last_review": "true" if flags.get("since_last_review") else "false",
+        "flags_hygiene_only": "true" if flags.get("hygiene_only") else "false",
         "depth": depth,
     }
     # argparse declares --pr-number as type=int, which rejects empty strings.

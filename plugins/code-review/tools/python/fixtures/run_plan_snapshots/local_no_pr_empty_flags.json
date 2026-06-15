@@ -52,7 +52,9 @@
       "--scope-args",
       "",
       "--base-ref-override",
-      ""
+      "",
+      "--hygiene-only",
+      "false"
     ],
     "stdout": "/tmp/cr_dir/scope.json",
     "expected_outputs": [

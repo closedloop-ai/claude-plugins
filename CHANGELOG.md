@@ -4,6 +4,20 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.34.0
+
+#### Fixed
+- Local PR review (`/code-review <PR>`) no longer dismisses every finding when the PR's head branch is not checked out (e.g. reviewing a PR while on another branch). The diff was computed from the fetched remote refs while reviewer and verifier agents read source from the working tree, so the verifier's existence check failed for every finding and rejected them all. Reviews now read source at the PR head.
+
+#### Added
+- PR-head worktree isolation for local PR review: `resolve-scope` materializes a detached git worktree at the PR head SHA under the session directory, recorded as `review_root` (and `worktree_path`/`head_sha`) in `scope.json`. Reviewer prompts and per-finding verifier inputs (including the dismissed-finding second-opinion fleet) read source under `review_root` so the content agents Read/Grep matches the code under review. Reading the working tree directly is used only when HEAD already is the PR head with a clean tree; when isolation is required but cannot be established, the run fails closed (aborts) rather than reviewing the wrong branch. Skipped for hygiene-only runs, staged/file/branch scope, and GitHub mode (where the runner already checks out the head).
+- `--hygiene-only` argument on the `resolve-scope` helper to skip worktree creation on the hygiene-only fast path.
+
+#### Changed
+- Graph-aware reviewers (Bug Hunter B, Impact Analyzer, fast-path) run grep-only (`GRAPH_PROJECT=""`) whenever a PR-head worktree is active, since the knowledge graph indexes the operator's checkout rather than the PR head being reviewed.
+- The PR-head worktree path read from `scope.json` is validated against the canonical `<cr_dir>/pr_head_worktree` before being used for reads or destructive teardown, and a startup garbage-collector reclaims worktrees orphaned by runs that aborted before the footer teardown.
+- Override content-hash validation resolves cited files under `review_root` so override re-assertion compares the PR head, not the working tree.
+
 ### code v1.14.0
 
 #### Added
