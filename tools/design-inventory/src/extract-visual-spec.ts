@@ -33,7 +33,16 @@ import { walkFiles } from "./fs-walk.js";
 
 export const SPEC_SCHEMA_VERSION = 1;
 
-const CLASS_ATTR = /class(?:Name)?\s*=\s*["'{]([^"'}]*)["'}]?/g;
+// Plain string-literal classNames: className="a b" or className='a b'.
+const CLASS_ATTR_STRING = /class(?:Name)?\s*=\s*(["'])([^"']*)\1/g;
+// Expression classNames: className={ ...anything... }. Captures the full brace
+// body so we can mine every quoted string literal inside (the conditional
+// modifier pattern, e.g. {"st-msg " + (cond ? "left st-hasav" : "right")}).
+// Allows one level of nested braces (template-literal interpolations, nested
+// objects) which covers the common cases.
+const CLASS_ATTR_EXPR = /class(?:Name)?\s*=\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g;
+// Quoted string literals inside an expression value (single, double, backtick).
+const STRING_LITERAL = /(["'`])((?:\\.|(?!\1)[^\\])*)\1/g;
 const CLASS_TOKEN = /[A-Za-z_][\w-]*/g;
 const CSS_RULE = /([^{}]+)\{([^{}]*)\}/g;
 const CSS_CLASS_IN_SELECTOR = /\.([A-Za-z_][\w-]*)/g;
@@ -131,27 +140,46 @@ function rgbDistance(a: [number, number, number], b: [number, number, number]): 
   );
 }
 
+function addClassTokens(value: string, tokens: Set<string>): void {
+  const tokenRe = new RegExp(CLASS_TOKEN.source, "g");
+  let tokenMatch: RegExpExecArray | null;
+  while ((tokenMatch = tokenRe.exec(value)) !== null) {
+    tokens.add(tokenMatch[0]);
+  }
+}
+
 export function collectClassTokens(jsxText: string): Set<string> {
   const tokens = new Set<string>();
-  let attrMatch: RegExpExecArray | null;
-  const attrRe = new RegExp(CLASS_ATTR.source, "g");
-  while ((attrMatch = attrRe.exec(jsxText)) !== null) {
-    const attr = attrMatch[1] ?? "";
-    const tokenRe = new RegExp(CLASS_TOKEN.source, "g");
-    let tokenMatch: RegExpExecArray | null;
-    while ((tokenMatch = tokenRe.exec(attr)) !== null) {
-      tokens.add(tokenMatch[0]);
+
+  // Plain string-literal classNames: className="a b" / className='a b'.
+  // The whole attribute value is class tokens; split on whitespace via CLASS_TOKEN.
+  const stringAttrRe = new RegExp(CLASS_ATTR_STRING.source, "g");
+  let stringMatch: RegExpExecArray | null;
+  while ((stringMatch = stringAttrRe.exec(jsxText)) !== null) {
+    addClassTokens(stringMatch[2] ?? "", tokens);
+  }
+
+  // Expression classNames: className={...}. Mine every quoted string literal
+  // inside the expression body and tokenize each as class tokens. This recovers
+  // the conditional modifier pattern, e.g.
+  //   className={"st-msg " + (cond ? "left st-hasav" : "right")}
+  // where the literals "st-msg ", "left st-hasav", and "right" all contribute
+  // class tokens. Over-inclusion (a stray non-class word from a text literal) is
+  // harmless for slicing: no CSS rule will match it. Under-inclusion drops real
+  // rules, so we bias to inclusion.
+  const exprAttrRe = new RegExp(CLASS_ATTR_EXPR.source, "g");
+  let exprMatch: RegExpExecArray | null;
+  while ((exprMatch = exprAttrRe.exec(jsxText)) !== null) {
+    const body = exprMatch[1] ?? "";
+    // String literals contribute static class names; expressions without any
+    // (e.g. className={styles.foo} or className={cls}) yield nothing to recover.
+    const literalRe = new RegExp(STRING_LITERAL.source, "g");
+    let literalMatch: RegExpExecArray | null;
+    while ((literalMatch = literalRe.exec(body)) !== null) {
+      addClassTokens(literalMatch[2] ?? "", tokens);
     }
   }
-  // Template-literal classes: best effort, pick string fragments too.
-  const fragmentRe = /["'`]([^"'`]*)["'`]/g;
-  let fragMatch: RegExpExecArray | null;
-  while ((fragMatch = fragmentRe.exec(jsxText)) !== null) {
-    const fragment = fragMatch[1] ?? "";
-    if (!fragment.includes(" ") && new RegExp(`^${CLASS_TOKEN.source}$`).test(fragment) && fragment.includes("-")) {
-      tokens.add(fragment);
-    }
-  }
+
   return tokens;
 }
 

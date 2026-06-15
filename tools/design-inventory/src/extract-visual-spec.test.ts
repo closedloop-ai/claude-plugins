@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildSpec,
+  collectClassTokens,
   hexToRgb,
   main,
   normalizeColor,
@@ -81,6 +82,32 @@ describe("TestNormalization", () => {
   });
 });
 
+describe("TestCollectClassTokens", () => {
+  it("plain_string_classname_tokens", () => {
+    const tokens = collectClassTokens('<div className="sess-topbar sticky flex" />');
+    expect(tokens.has("sess-topbar")).toBe(true);
+    expect(tokens.has("sticky")).toBe(true);
+    expect(tokens.has("flex")).toBe(true);
+  });
+
+  it("expression_conditional_classname_tokens", () => {
+    // Regression: the conditional modifier pattern. The old extractor stopped the
+    // attribute capture at the first quote inside {...} and dropped these tokens,
+    // so rules like .st-msg.left were sliced away from every ticket.
+    const jsx = '<div className={"st-msg " + (x ? "left st-hasav" : "right")}>hi</div>';
+    const tokens = collectClassTokens(jsx);
+    expect(tokens.has("st-msg")).toBe(true);
+    expect(tokens.has("left")).toBe(true);
+    expect(tokens.has("right")).toBe(true);
+    expect(tokens.has("st-hasav")).toBe(true);
+  });
+
+  it("expression_without_string_literals_yields_nothing", () => {
+    const tokens = collectClassTokens("<div className={styles.foo} />");
+    expect(tokens.size).toBe(0);
+  });
+});
+
 describe("TestCssSlice", () => {
   it("slice_keeps_only_used_classes_and_roots", () => {
     const rules = sliceCss(UNIT_CSS, new Set(["sess-topbar", "sess-awaiting-chip", "pin-btn"]));
@@ -90,6 +117,25 @@ describe("TestCssSlice", () => {
     expect(selectors.every((s) => !s.includes("unrelated-class"))).toBe(true);
     // media-query inner rule survives flattening
     expect(selectors.filter((s) => s === ".sess-topbar").length).toBe(2);
+  });
+
+  it("expression_classname_keeps_conditional_modifier_rules", () => {
+    // End-to-end: tokens mined from an expression className must let sliceCss keep
+    // the base rule and all compound modifier rules. Without the extraction fix
+    // these four rules were dropped from every slice (and thus every ticket).
+    const jsx = '<div className={"st-msg " + (x ? "left st-hasav" : "right")}>hi</div>';
+    const css =
+      ".st-msg{display:flex}" +
+      ".st-msg.left{justify-content:flex-start}" +
+      ".st-msg.right{justify-content:flex-end}" +
+      ".st-msg.st-hasav{gap:8px}";
+    const tokens = collectClassTokens(jsx);
+    const selectors = sliceCss(css, tokens).map(([s]) => s);
+    expect(selectors).toContain(".st-msg");
+    expect(selectors).toContain(".st-msg.left");
+    expect(selectors).toContain(".st-msg.right");
+    expect(selectors).toContain(".st-msg.st-hasav");
+    expect(selectors.length).toBe(4);
   });
 });
 

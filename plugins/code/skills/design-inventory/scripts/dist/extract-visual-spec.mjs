@@ -50,7 +50,9 @@ function walkFiles(root, opts) {
 
 // src/extract-visual-spec.ts
 var SPEC_SCHEMA_VERSION = 1;
-var CLASS_ATTR = /class(?:Name)?\s*=\s*["'{]([^"'}]*)["'}]?/g;
+var CLASS_ATTR_STRING = /class(?:Name)?\s*=\s*(["'])([^"']*)\1/g;
+var CLASS_ATTR_EXPR = /class(?:Name)?\s*=\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g;
+var STRING_LITERAL = /(["'`])((?:\\.|(?!\1)[^\\])*)\1/g;
 var CLASS_TOKEN = /[A-Za-z_][\w-]*/g;
 var CSS_RULE = /([^{}]+)\{([^{}]*)\}/g;
 var CSS_CLASS_IN_SELECTOR = /\.([A-Za-z_][\w-]*)/g;
@@ -96,24 +98,28 @@ function rgbDistance(a, b) {
     (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
   );
 }
+function addClassTokens(value, tokens) {
+  const tokenRe = new RegExp(CLASS_TOKEN.source, "g");
+  let tokenMatch;
+  while ((tokenMatch = tokenRe.exec(value)) !== null) {
+    tokens.add(tokenMatch[0]);
+  }
+}
 function collectClassTokens(jsxText) {
   const tokens = /* @__PURE__ */ new Set();
-  let attrMatch;
-  const attrRe = new RegExp(CLASS_ATTR.source, "g");
-  while ((attrMatch = attrRe.exec(jsxText)) !== null) {
-    const attr = attrMatch[1] ?? "";
-    const tokenRe = new RegExp(CLASS_TOKEN.source, "g");
-    let tokenMatch;
-    while ((tokenMatch = tokenRe.exec(attr)) !== null) {
-      tokens.add(tokenMatch[0]);
-    }
+  const stringAttrRe = new RegExp(CLASS_ATTR_STRING.source, "g");
+  let stringMatch;
+  while ((stringMatch = stringAttrRe.exec(jsxText)) !== null) {
+    addClassTokens(stringMatch[2] ?? "", tokens);
   }
-  const fragmentRe = /["'`]([^"'`]*)["'`]/g;
-  let fragMatch;
-  while ((fragMatch = fragmentRe.exec(jsxText)) !== null) {
-    const fragment = fragMatch[1] ?? "";
-    if (!fragment.includes(" ") && new RegExp(`^${CLASS_TOKEN.source}$`).test(fragment) && fragment.includes("-")) {
-      tokens.add(fragment);
+  const exprAttrRe = new RegExp(CLASS_ATTR_EXPR.source, "g");
+  let exprMatch;
+  while ((exprMatch = exprAttrRe.exec(jsxText)) !== null) {
+    const body = exprMatch[1] ?? "";
+    const literalRe = new RegExp(STRING_LITERAL.source, "g");
+    let literalMatch;
+    while ((literalMatch = literalRe.exec(body)) !== null) {
+      addClassTokens(literalMatch[2] ?? "", tokens);
     }
   }
   return tokens;
