@@ -363,6 +363,57 @@ function renderReuseLine(reuse) {
   }
   return String(reuse["resolution"] ?? "");
 }
+function renderInteractions(visual) {
+  const interactions = visual["interactions"] ?? {};
+  const stateRules = Array.isArray(interactions["state_rules"]) ? interactions["state_rules"] : [];
+  const transitions = Array.isArray(interactions["transitions"]) ? interactions["transitions"] : [];
+  const keyframes = Array.isArray(interactions["keyframes"]) ? interactions["keyframes"] : [];
+  if (stateRules.length === 0 && transitions.length === 0 && keyframes.length === 0) {
+    return [];
+  }
+  const lines = [
+    "## Interaction and State Styles",
+    "",
+    "Mirror this interaction behavior from the design. Resolve raw color and spacing values to the tokens in the Visual Spec above.",
+    ""
+  ];
+  if (stateRules.length > 0) {
+    const byPseudo = /* @__PURE__ */ new Map();
+    for (const rule of stateRules) {
+      const pseudo = String(rule["pseudo"]);
+      let bucket = byPseudo.get(pseudo);
+      if (!bucket) {
+        bucket = [];
+        byPseudo.set(pseudo, bucket);
+      }
+      bucket.push(rule);
+    }
+    lines.push("State styles (what each state does):", "");
+    for (const [pseudo, rulesForPseudo] of [...byPseudo.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      lines.push(`- \`:${pseudo}\``);
+      for (const rule of rulesForPseudo) {
+        lines.push("", "  ```css", `  ${String(rule["selector"])} { ${String(rule["declarations"])} }`, "  ```");
+      }
+      lines.push("");
+    }
+  }
+  if (transitions.length > 0 || keyframes.length > 0) {
+    lines.push("Transitions and animations:", "");
+    for (const entry of transitions) {
+      lines.push(`- \`${String(entry["selector"])}\` -> \`${String(entry["declaration"])}\``);
+    }
+    if (transitions.length > 0) {
+      lines.push("");
+    }
+    for (const frame of keyframes) {
+      lines.push(`- \`@keyframes ${String(frame["name"])}\``, "", "  ```css", `  @keyframes ${String(frame["name"])} { ${String(frame["body"])} }`, "  ```", "");
+    }
+  }
+  if (interactions["truncated"] === true) {
+    lines.push("_(interaction capture truncated to stay within the ticket budget)_", "");
+  }
+  return lines;
+}
 function renderVisualSpec(visual) {
   const lines = ["## Visual Spec (token-resolved)", ""];
   const colors = visual["colors"] ?? {};
@@ -407,12 +458,6 @@ function renderVisualSpec(visual) {
   if (utility.length > 0) {
     lines.push(`Utility classes in design: ${utility.join(" ")}`);
   }
-  const states = visual["state_styles"] ?? {};
-  if (Object.keys(states).length > 0) {
-    lines.push(
-      "State styles present: " + Object.entries(states).map(([k, v]) => `${k} (${Array.isArray(v) ? v.length : 0} selectors)`).join(", ")
-    );
-  }
   for (const propGroup of ["spacing", "typography"]) {
     const values = visual[propGroup] ?? {};
     if (Object.keys(values).length > 0) {
@@ -425,6 +470,7 @@ function renderVisualSpec(visual) {
     }
   }
   lines.push("");
+  lines.push(...renderInteractions(visual));
   return lines;
 }
 var CODE_FENCE_LANG = {

@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSpec,
   collectClassTokens,
+  extractInteractions,
   hexToRgb,
   main,
   normalizeColor,
@@ -184,6 +185,84 @@ describe("TestSpec", () => {
     expect(spec.spacing["border-radius"]).toContain("999px");
     expect(spec.typography["font-size"]).toContain("12px");
     expect((spec.spacing["margin"] ?? []).includes("40px")).toBe(false); // unrelated rule sliced away
+  });
+});
+
+const INTERACTIONS_JSX = `
+function Anim() {
+  return (
+    <div className="x y z">interactive</div>
+  );
+}
+`;
+
+const INTERACTIONS_CSS = `
+.x:hover { background: var(--card); }
+.y { transition: transform .2s ease; }
+.z { animation: flash 1.1s; }
+@keyframes flash { from { opacity: 0; } to { opacity: 1; } }
+.unused { color: red; }
+@keyframes unused-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+`;
+
+function interactionsSpecFor(tmpPath: string): ReturnType<typeof buildSpec>["spec"] {
+  const extractDir = join(tmpPath, "extracted");
+  mkdirSync(join(extractDir, "ui_kits/app"), { recursive: true });
+  writeFileSync(join(extractDir, "ui_kits/app/Anim.jsx"), INTERACTIONS_JSX, "utf-8");
+  writeFileSync(join(extractDir, "ui_kits/app/anim.css"), INTERACTIONS_CSS, "utf-8");
+  const repo = join(tmpPath, "repo");
+  mkdirSync(repo, { recursive: true });
+  const { spec } = buildSpec(extractDir, repo, ["ui_kits/app/Anim.jsx"]);
+  return spec;
+}
+
+describe("TestInteractions", () => {
+  it("captures state rule declarations, not just selectors", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "evs-int-"));
+    const spec = interactionsSpecFor(tmpPath);
+    const hoverRule = spec.interactions.state_rules.find((r) => r.selector === ".x:hover");
+    expect(hoverRule).toBeDefined();
+    expect(hoverRule?.pseudo).toBe("hover");
+    expect(hoverRule?.declarations).toContain("background: var(--card)");
+  });
+
+  it("captures transition declarations with their selector", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "evs-int-"));
+    const spec = interactionsSpecFor(tmpPath);
+    const transition = spec.interactions.transitions.find((t) => t.selector === ".y");
+    expect(transition).toBeDefined();
+    expect(transition?.declaration).toBe("transition: transform .2s ease");
+    // The animation shorthand on .z is also captured as a transition/animation decl.
+    expect(spec.interactions.transitions.some((t) => t.declaration.startsWith("animation:"))).toBe(true);
+  });
+
+  it("captures a referenced @keyframes body and skips unreferenced ones", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "evs-int-"));
+    const spec = interactionsSpecFor(tmpPath);
+    const flash = spec.interactions.keyframes.find((k) => k.name === "flash");
+    expect(flash).toBeDefined();
+    expect(flash?.body).toContain("opacity: 0");
+    expect(flash?.body).toContain("opacity: 1");
+    // unused-spin is not referenced by any animation declaration in the slice.
+    expect(spec.interactions.keyframes.some((k) => k.name === "unused-spin")).toBe(false);
+  });
+
+  it("flags truncation when the rule cap is exceeded", () => {
+    const rules: Array<[string, string]> = [];
+    for (let i = 0; i < 60; i++) {
+      rules.push([`.r${i}:hover`, `color: #${(i % 9) + 1}${(i % 9) + 1}${(i % 9) + 1}`]);
+    }
+    const interactions = extractInteractions(rules, "");
+    expect(interactions.truncated).toBe(true);
+    expect(interactions.state_rules.length).toBeLessThanOrEqual(40);
+  });
+
+  it("empty when the slice has no interaction CSS", () => {
+    const interactions = extractInteractions([[".plain", "color: red"]], "");
+    expect(interactions.state_rules).toEqual([]);
+    expect(interactions.transitions).toEqual([]);
+    expect(interactions.keyframes).toEqual([]);
+    expect(interactions.truncated).toBe(false);
   });
 });
 

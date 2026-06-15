@@ -69,6 +69,10 @@ var STATE_PSEUDOS = ["hover", "focus", "focus-visible", "active", "disabled"];
 var LAYOUT_CLASS_HINTS = /^(?:sticky|fixed|absolute|relative|flex|grid|overflow-|snap-|scroll-|inset-|z-\d)/;
 var MAX_LIST = 40;
 var MAX_LOCATIONS = 5;
+var MAX_INTERACTION_RULES = 40;
+var MAX_INTERACTION_CHARS = 8192;
+var ANIMATION_PROP_PREFIXES = ["transition", "animation"];
+var KEYFRAMES_RULE = /@(?:-\w+-)?keyframes\s+([\w-]+)\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g;
 function normalizeColor(value) {
   const v = value.trim().toLowerCase();
   if (v.startsWith("#")) {
@@ -321,6 +325,86 @@ function extractStateStyles(rules) {
   }
   return states;
 }
+function pseudoOf(selector) {
+  for (const pseudo of STATE_PSEUDOS) {
+    if (selector.includes(`:${pseudo}`)) {
+      return pseudo;
+    }
+  }
+  return null;
+}
+function animationNamesFrom(prop, value) {
+  if (prop !== "animation" && prop !== "animation-name") {
+    return [];
+  }
+  const names = [];
+  const tokenRe = new RegExp(CLASS_TOKEN.source, "g");
+  let tokenMatch;
+  while ((tokenMatch = tokenRe.exec(value)) !== null) {
+    names.push(tokenMatch[0]);
+  }
+  return names;
+}
+function extractInteractions(rules, rawCssText) {
+  const stateRules = [];
+  const transitions = [];
+  const referencedKeyframes = /* @__PURE__ */ new Set();
+  let charBudget = MAX_INTERACTION_CHARS;
+  let truncated = false;
+  const tryAdd = (cost) => {
+    const total = stateRules.length + transitions.length;
+    if (total >= MAX_INTERACTION_RULES || cost > charBudget) {
+      truncated = true;
+      return false;
+    }
+    charBudget -= cost;
+    return true;
+  };
+  for (const [selector, body] of rules) {
+    const pseudo = pseudoOf(selector);
+    if (pseudo !== null) {
+      const declarations = body.trim();
+      if (tryAdd(selector.length + declarations.length)) {
+        stateRules.push({ pseudo, selector, declarations });
+      }
+    }
+    const declRe = new RegExp(CSS_DECL.source, "g");
+    let declMatch;
+    while ((declMatch = declRe.exec(body)) !== null) {
+      const prop = (declMatch[1] ?? "").toLowerCase();
+      const value = (declMatch[2] ?? "").trim();
+      const isAnimation = ANIMATION_PROP_PREFIXES.some((p) => prop === p || prop.startsWith(`${p}-`));
+      if (!isAnimation) {
+        continue;
+      }
+      const declaration = `${prop}: ${value}`;
+      if (tryAdd(selector.length + declaration.length)) {
+        transitions.push({ selector, declaration });
+      }
+      for (const name of animationNamesFrom(prop, value)) {
+        referencedKeyframes.add(name);
+      }
+    }
+  }
+  const keyframes = [];
+  if (referencedKeyframes.size > 0) {
+    const keyframesRe = new RegExp(KEYFRAMES_RULE.source, "g");
+    let kfMatch;
+    const seen = /* @__PURE__ */ new Set();
+    while ((kfMatch = keyframesRe.exec(rawCssText)) !== null) {
+      const name = kfMatch[1] ?? "";
+      const body = (kfMatch[2] ?? "").trim();
+      if (!referencedKeyframes.has(name) || seen.has(name)) {
+        continue;
+      }
+      seen.add(name);
+      if (tryAdd(name.length + body.length)) {
+        keyframes.push({ name, body });
+      }
+    }
+  }
+  return { state_rules: stateRules, transitions, keyframes, truncated };
+}
 function extractIcons(jsxTexts) {
   const icons = /* @__PURE__ */ new Set();
   for (const text of jsxTexts) {
@@ -387,6 +471,7 @@ function buildSpec(extractDir, repo, unitFiles) {
   const { tokens, files: tokenFiles } = loadRepoTokens(repo);
   const { resolved, drift } = resolveColors(colors, tokens);
   const declarations = extractDeclarations(sliced);
+  const rawCssText = cssPairs.map(([, text]) => text).join("\n");
   const spec = {
     schema_version: SPEC_SCHEMA_VERSION,
     unit_files: unitFiles,
@@ -398,6 +483,7 @@ function buildSpec(extractDir, repo, unitFiles) {
     icons: extractIcons(jsxPairs.map(([, t]) => t)),
     layout: extractLayout(sliced, classTokens),
     state_styles: extractStateStyles(sliced),
+    interactions: extractInteractions(sliced, rawCssText),
     token_sources: { files: tokenFiles, tokens: tokens.size }
   };
   return { spec, sliceText };
@@ -459,6 +545,7 @@ export {
   collectColorLocations,
   extractDeclarations,
   extractIcons,
+  extractInteractions,
   extractLayout,
   extractStateStyles,
   hexToRgb,
