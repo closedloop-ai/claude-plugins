@@ -293,9 +293,49 @@ def _git_rev_parse(ref: str) -> str | None:
         return None
 
 
+# Startup-GC age guard: a PR-head worktree directory is reclaimed as an
+# abort-orphan only once it is older than this. Set far above any real
+# review wall-time (runs are minutes, not hours) so a concurrent in-flight
+# review's freshly-created worktree is never mistaken for an orphan.
+_PR_WORKTREE_STALE_SECONDS = 6 * 60 * 60
+
+
 def _expected_worktree_path(cr_dir: str | Path) -> str:
     """The one legitimate PR-head worktree location for a run: ``<cr_dir>/pr_head_worktree``."""
     return os.path.abspath(os.path.join(str(cr_dir), "pr_head_worktree"))
+
+
+def _validated_head_sha(raw: object) -> str:
+    """Return a hex commit SHA from operator-writable ``scope.json`` or ``""``.
+
+    ``head_sha`` is interpolated into ``git show <head_sha>:<file>`` for
+    worktree-free override hashing, so constrain it to a hex digest. This
+    rejects ref expressions and option-like values (e.g. a leading ``-``)
+    that could otherwise be mis-parsed by ``git show``.
+    """
+    if not isinstance(raw, str):
+        return ""
+    raw = raw.strip()
+    return raw if re.fullmatch(r"[0-9a-fA-F]{7,40}", raw) else ""
+
+
+def _git_show_lines(head_sha: str, file: str) -> list[str] | None:
+    """Return the lines of ``file`` at commit ``head_sha`` via ``git show``.
+
+    Lets override hashing anchor to the PR head without the worktree being
+    on disk (the worktree is torn down by the footer; ``cmd_re_assert`` runs
+    later). Returns ``None`` on any failure so the caller falls through.
+    """
+    if not head_sha or not file:
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{head_sha}:{file}"],
+            capture_output=True, text=True, check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+    return result.stdout.splitlines(keepends=True)
 
 
 def _validated_review_root(cr_dir: str | Path, raw: object) -> str:
@@ -359,9 +399,20 @@ def _gc_stale_pr_head_worktrees(current_cr_dir: str) -> None:
     run's. Scoped to the code-review CR root and to the ``pr_head_worktree``
     basename so it can never remove an unrelated worktree. Best-effort;
     never raises.
+
+    **Concurrency safety:** a present worktree directory is reclaimed ONLY
+    when it is older than ``_PR_WORKTREE_STALE_SECONDS``. A concurrent
+    in-flight review created its worktree moments ago (and only ever reads
+    from it, so the mtime stays at creation), so the age guard guarantees a
+    live sibling's checkout is never deleted out from under its agents.
+    Genuinely vanished registrations are reclaimed by ``git worktree
+    prune``; the age guard only governs directories that still exist.
     """
+    import time
+
     cr_root = os.path.dirname(os.path.abspath(current_cr_dir))
     current_expected = _expected_worktree_path(current_cr_dir)
+    now = time.time()
     _git_worktree_quiet(["prune"])
     try:
         listing = subprocess.run(
@@ -381,6 +432,14 @@ def _gc_stale_pr_head_worktrees(current_cr_dir: str) -> None:
         # Only reclaim worktrees that live directly under THIS repo's
         # code-review CR root (``<cr_root>/cr-*/pr_head_worktree``).
         if os.path.dirname(os.path.dirname(abspath)) != cr_root:
+            continue
+        # Age guard: never delete a directory recent enough to belong to a
+        # concurrent live review. (A vanished dir → ``getmtime`` raises →
+        # leave it for ``git worktree prune``.)
+        try:
+            if now - os.path.getmtime(abspath) < _PR_WORKTREE_STALE_SECONDS:
+                continue
+        except OSError:
             continue
         _remove_pr_head_worktree(abspath)
 
@@ -2173,6 +2232,7 @@ def _override_cache_path(cache_dir: Path, finding_id: str) -> Path:
 
 def _file_content_hash(
     cr_dir: Path, file: str | None, line: int | None, review_root: str = "",
+    head_sha: str = "",
 ) -> str:
     """SHA-256 of the cited file's content within ±20 lines of ``line``.
 
@@ -2185,18 +2245,29 @@ def _file_content_hash(
     (verifier_prompt.txt §1) so an override is invalidated by exactly the
     kind of change that would force the verifier to re-evaluate.
 
-    ``review_root`` (when non-empty) is the PR-head worktree the run is
-    reviewing source from; resolve repo-relative paths under it so the
-    override hash anchors to the PR head, not the operator's working tree.
-    Callers MUST pass a value already vetted by ``_validated_review_root``.
+    Source-of-truth precedence (all anchor to the PR head, so the writer
+    and a later reader compute the same hash regardless of worktree state):
+      1. ``review_root`` — read ``<review_root>/<file>`` when that worktree
+         is still on disk (the in-run path; reviewer/verifier read here too).
+      2. ``head_sha`` — ``git show <head_sha>:<file>`` when the worktree is
+         already torn down (e.g. ``cmd_re_assert`` after the footer ran).
+         The worktree is a detached checkout of ``head_sha``, so (1) and (2)
+         yield identical content.
+      3. working tree / repo root — the no-isolation default.
+    Callers MUST pass values already vetted by ``_validated_review_root`` /
+    ``_validated_head_sha``.
     """
     if not file or not line:
         return ""
+    lines: list[str] | None = None
     candidate = Path(file)
     if not candidate.is_absolute():
-        if review_root:
+        if review_root and (Path(review_root) / file).exists():
             # Local PR-head worktree isolation: read the code under review.
             candidate = Path(review_root) / file
+        elif head_sha:
+            # Worktree gone (or never on disk): hash the PR head via git.
+            lines = _git_show_lines(head_sha, file)
         else:
             # Resolve against cr_dir's parent (the repo root); cr_dir lives
             # at ``.closedloop-ai/code-review/cr-<N>`` so the repo root is
@@ -2209,11 +2280,12 @@ def _file_content_hash(
             candidate = repo_root / file
             if not candidate.exists():
                 candidate = Path.cwd() / file
-    try:
-        with open(candidate) as fh:
-            lines = fh.readlines()
-    except OSError:
-        return ""
+    if lines is None:
+        try:
+            with open(candidate) as fh:
+                lines = fh.readlines()
+        except OSError:
+            return ""
     if line < 1 or line > len(lines):
         return ""
     start = max(0, line - 1 - _OVERRIDE_CONTEXT_LINES)
@@ -2279,7 +2351,7 @@ def _override_is_expired(override: dict[str, Any]) -> bool:
 
 def _override_is_valid(
     override: dict[str, Any], finding: dict[str, Any], cr_dir: Path,
-    review_root: str = "",
+    review_root: str = "", head_sha: str = "",
 ) -> bool:
     """Override survives only while the cited file content matches.
 
@@ -2312,7 +2384,7 @@ def _override_is_valid(
         # a file-scoped finding it was never written against.
         return not finding.get("file") and not finding.get("line")
     current = _file_content_hash(
-        cr_dir, finding.get("file"), finding.get("line"), review_root,
+        cr_dir, finding.get("file"), finding.get("line"), review_root, head_sha,
     )
     return current != "" and current == stored
 
@@ -2584,6 +2656,9 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
     review_root = _validated_review_root(
         cr_dir, scope_meta.get("review_root") if isinstance(scope_meta, dict) else None,
     )
+    head_sha = _validated_head_sha(
+        scope_meta.get("head_sha") if isinstance(scope_meta, dict) else None,
+    )
     # Read partitions.json (written by ``cmd_partition`` at stage_17)
     # so the verify manifest can surface partition mode + count for
     # downstream consumers (presenters, stats split). Defensive: absent
@@ -2662,7 +2737,7 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
         # (logged on the manifest); the verifier then runs normally.
         override = _load_override(cache_dir, fid)
         if override is not None:
-            if _override_is_valid(override, finding, cr_dir, review_root):
+            if _override_is_valid(override, finding, cr_dir, review_root, head_sha):
                 if _synthesize_re_asserted_verifier_output(
                     finding, override, output_path,
                 ):
@@ -9117,6 +9192,9 @@ def cmd_review_dismissed_consolidate(args: argparse.Namespace) -> int:
         cr_dir,
         consolidate_scope.get("review_root") if isinstance(consolidate_scope, dict) else None,
     )
+    head_sha = _validated_head_sha(
+        consolidate_scope.get("head_sha") if isinstance(consolidate_scope, dict) else None,
+    )
 
     prior_path = manifest.get("prior_result")
     prior_envelope = _read_optional_json(Path(prior_path), {}) if prior_path else {}
@@ -9166,7 +9244,7 @@ def cmd_review_dismissed_consolidate(args: argparse.Namespace) -> int:
         # Non-REJECTED — auto-promote via override.
         prior = prior_findings_by_id.get(fid, {})
         file_hash = _file_content_hash(
-            cr_dir, prior.get("file"), prior.get("line"), review_root,
+            cr_dir, prior.get("file"), prior.get("line"), review_root, head_sha,
         )
         payload = {
             "finding_id": fid,
@@ -9275,16 +9353,20 @@ def cmd_re_assert(args: argparse.Namespace) -> int:
         return 1
 
     # Anchor the override hash to the same source the next run's
-    # ``_override_is_valid`` will hash: the PR-head worktree when one is
-    # active. The worktree is ephemeral (torn down by the footer), so only
-    # use it while it still exists on disk; otherwise hash the working tree.
+    # ``_override_is_valid`` will hash: the PR head. Prefer the worktree
+    # while it is still on disk, else hash the PR head via
+    # ``git show <head_sha>:<file>`` (the worktree is torn down by the
+    # footer, but ``head_sha`` persists in scope.json). Without the head_sha
+    # fallback the hash would anchor to the operator's working tree and the
+    # override would be silently dropped on the next run.
     re_assert_scope = _read_optional_json(cr_dir / "scope.json", {})
     review_root = _validated_review_root(
         cr_dir,
         re_assert_scope.get("review_root") if isinstance(re_assert_scope, dict) else None,
     )
-    if review_root and not os.path.isdir(review_root):
-        review_root = ""
+    head_sha = _validated_head_sha(
+        re_assert_scope.get("head_sha") if isinstance(re_assert_scope, dict) else None,
+    )
 
     now_iso = datetime.now(timezone.utc).isoformat()
     re_asserted: list[dict[str, Any]] = []
@@ -9326,7 +9408,7 @@ def cmd_re_assert(args: argparse.Namespace) -> int:
             file_hash = _OVERRIDE_SYSTEM_SCOPE_SENTINEL
         else:
             file_hash = _file_content_hash(
-                cr_dir, file_field, line_field, review_root,
+                cr_dir, file_field, line_field, review_root, head_sha,
             )
         payload = {
             "finding_id": fid,

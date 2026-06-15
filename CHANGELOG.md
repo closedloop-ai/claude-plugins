@@ -15,8 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - Graph-aware reviewers (Bug Hunter B, Impact Analyzer, fast-path) run grep-only (`GRAPH_PROJECT=""`) whenever a PR-head worktree is active, since the knowledge graph indexes the operator's checkout rather than the PR head being reviewed.
-- The PR-head worktree path read from `scope.json` is validated against the canonical `<cr_dir>/pr_head_worktree` before being used for reads or destructive teardown, and a startup garbage-collector reclaims worktrees orphaned by runs that aborted before the footer teardown.
-- Override content-hash validation resolves cited files under `review_root` so override re-assertion compares the PR head, not the working tree.
+- The PR-head worktree path read from `scope.json` is validated against the canonical `<cr_dir>/pr_head_worktree` before being used for reads or destructive teardown, and a startup garbage-collector reclaims worktrees orphaned by runs that aborted before the footer teardown — with an age guard so a concurrent in-flight review's worktree is never deleted.
+- Override content-hash validation anchors to the PR head — reading the worktree when present, else `git show <head_sha>:<file>` — so an override re-asserted after the worktree was torn down still matches on the next run instead of being silently dropped.
 
 ### code v1.14.0
 

@@ -8929,6 +8929,111 @@ class TestRemovePrHeadWorktree:
             _remove_pr_head_worktree(str(tmp_path / "pr_head_worktree"))
 
 
+class TestGcStalePrHeadWorktrees:
+    """Startup GC must reclaim abort-orphans WITHOUT deleting a concurrent
+    in-flight review's live worktree (PR #156 review)."""
+
+    def test_skips_recent_sibling_removes_old(
+        self, tmp_path: Path, monkeypatch: Any,
+    ) -> None:
+        import time
+
+        from code_review_helpers import (
+            _PR_WORKTREE_STALE_SECONDS,
+            _gc_stale_pr_head_worktrees,
+        )
+
+        current = tmp_path / "cr-current"
+        current.mkdir()
+        live = tmp_path / "cr-live" / "pr_head_worktree"
+        live.mkdir(parents=True)
+        old = tmp_path / "cr-old" / "pr_head_worktree"
+        old.mkdir(parents=True)
+
+        now = time.time()
+        os.utime(live, (now, now))  # a concurrent review created this moments ago
+        stale = now - _PR_WORKTREE_STALE_SECONDS - 3600
+        os.utime(old, (stale, stale))  # an abort-orphan from long ago
+
+        listing = f"worktree {live}\nworktree {old}\n"
+
+        def _side_effect(cmd, **_kwargs):  # noqa: ANN001, ANN202
+            cl = list(cmd)
+            if cl[:3] == ["git", "worktree", "list"]:
+                return subprocess.CompletedProcess(args=cl, returncode=0, stdout=listing)
+            return subprocess.CompletedProcess(args=cl, returncode=0, stdout="")
+
+        removed: list[str] = []
+        monkeypatch.setattr(
+            "code_review_helpers._remove_pr_head_worktree",
+            lambda p: removed.append(p),
+        )
+        with patch("code_review_helpers.subprocess.run", side_effect=_side_effect):
+            _gc_stale_pr_head_worktrees(str(current))
+
+        assert str(old) in removed, "abort-orphan should be reclaimed"
+        assert str(live) not in removed, "live concurrent worktree must NOT be deleted"
+
+
+class TestFileContentHashHeadSha:
+    """``_file_content_hash`` anchors the override hash to the PR head — via the
+    worktree when present, else ``git show <head_sha>:<file>`` (PR #156 review)."""
+
+    def test_uses_git_show_when_worktree_absent(self, tmp_path: Path) -> None:
+        import hashlib
+
+        from code_review_helpers import _file_content_hash
+
+        content = "line1\nline2\nTARGET\nline4\n"
+        head_sha = "abcdef1234"
+
+        def _side_effect(cmd, **_kwargs):  # noqa: ANN001, ANN202
+            cl = list(cmd)
+            if cl[:2] == ["git", "show"] and cl[2] == f"{head_sha}:src/app.ts":
+                return subprocess.CompletedProcess(args=cl, returncode=0, stdout=content)
+            return subprocess.CompletedProcess(args=cl, returncode=0, stdout="")
+
+        with patch("code_review_helpers.subprocess.run", side_effect=_side_effect):
+            h = _file_content_hash(
+                tmp_path / "cr", "src/app.ts", 3, review_root="", head_sha=head_sha,
+            )
+        expected = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()
+        assert h == expected
+
+    def test_review_root_takes_precedence_over_head_sha(self, tmp_path: Path) -> None:
+        import hashlib
+
+        from code_review_helpers import _file_content_hash
+
+        wt = tmp_path / "pr_head_worktree"
+        (wt / "src").mkdir(parents=True)
+        wt_content = "WT-A\nWT-B\nWT-C\n"
+        (wt / "src" / "app.ts").write_text(wt_content)
+
+        def _side_effect(cmd, **_kwargs):  # noqa: ANN001, ANN202
+            # git show returns DIFFERENT content — it must not be consulted.
+            return subprocess.CompletedProcess(
+                args=list(cmd), returncode=0, stdout="GITSHOW-DIFFERENT\n",
+            )
+
+        with patch("code_review_helpers.subprocess.run", side_effect=_side_effect):
+            h = _file_content_hash(
+                tmp_path / "cr", "src/app.ts", 2,
+                review_root=str(wt), head_sha="abcdef1234",
+            )
+        expected = hashlib.sha256(wt_content.encode("utf-8", "replace")).hexdigest()
+        assert h == expected
+
+    def test_validated_head_sha_rejects_non_hex(self) -> None:
+        from code_review_helpers import _validated_head_sha
+
+        assert _validated_head_sha("abcDEF1234") == "abcDEF1234"
+        assert _validated_head_sha("-rf") == ""
+        assert _validated_head_sha("origin/main") == ""
+        assert _validated_head_sha("") == ""
+        assert _validated_head_sha(None) == ""
+
+
 class TestReviewDismissedPrepareReviewRoot:
     """Dismissed-finding verifier inputs carry review_root (worktree isolation)."""
 
