@@ -33,7 +33,16 @@ import { walkFiles } from "./fs-walk.js";
 
 export const SPEC_SCHEMA_VERSION = 1;
 
-const CLASS_ATTR = /class(?:Name)?\s*=\s*["'{]([^"'}]*)["'}]?/g;
+// Plain string-literal classNames: className="a b" or className='a b'.
+const CLASS_ATTR_STRING = /class(?:Name)?\s*=\s*(["'])([^"']*)\1/g;
+// Expression classNames: className={ ...anything... }. Captures the full brace
+// body so we can mine every quoted string literal inside (the conditional
+// modifier pattern, e.g. {"st-msg " + (cond ? "left st-hasav" : "right")}).
+// Allows one level of nested braces (template-literal interpolations, nested
+// objects) which covers the common cases.
+const CLASS_ATTR_EXPR = /class(?:Name)?\s*=\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g;
+// Quoted string literals inside an expression value (single, double, backtick).
+const STRING_LITERAL = /(["'`])((?:\\.|(?!\1)[^\\])*)\1/g;
 const CLASS_TOKEN = /[A-Za-z_][\w-]*/g;
 const CSS_RULE = /([^{}]+)\{([^{}]*)\}/g;
 const CSS_CLASS_IN_SELECTOR = /\.([A-Za-z_][\w-]*)/g;
@@ -55,6 +64,21 @@ const LAYOUT_CLASS_HINTS = /^(?:sticky|fixed|absolute|relative|flex|grid|overflo
 const MAX_LIST = 40;
 const MAX_LOCATIONS = 5;
 
+// Interaction-capture bounds: the actual interaction CSS (state-style rule
+// bodies, transition/animation declarations, referenced @keyframes) is inlined
+// into the ticket body, so it must stay bounded. Cap both the number of rules
+// and the total text recorded; when either is hit, keep the first N and flag
+// truncation so the renderer can say so.
+const MAX_INTERACTION_RULES = 40;
+const MAX_INTERACTION_CHARS = 8192;
+// Animation/transition properties whose values we surface verbatim. Matched by
+// prefix so the shorthand and every longhand (transition-property,
+// animation-name, ...) are captured.
+const ANIMATION_PROP_PREFIXES = ["transition", "animation"] as const;
+// @keyframes NAME { ... }; the body capture allows nested {} (the from/to or
+// percentage frames each carry their own brace block).
+const KEYFRAMES_RULE = /@(?:-\w+-)?keyframes\s+([\w-]+)\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g;
+
 export interface ColorEntry {
   value: string;
   count: number;
@@ -68,6 +92,29 @@ export interface ResolvedColor extends ColorEntry {
 export interface DriftColor extends ColorEntry {
   nearest_token?: string;
   distance?: number;
+}
+
+export interface StateRule {
+  pseudo: string;
+  selector: string;
+  declarations: string;
+}
+
+export interface TransitionEntry {
+  selector: string;
+  declaration: string;
+}
+
+export interface KeyframesEntry {
+  name: string;
+  body: string;
+}
+
+export interface Interactions {
+  state_rules: StateRule[];
+  transitions: TransitionEntry[];
+  keyframes: KeyframesEntry[];
+  truncated: boolean;
 }
 
 export interface VisualSpec {
@@ -91,6 +138,7 @@ export interface VisualSpec {
     utility_classes: string[];
   };
   state_styles: Record<string, string[]>;
+  interactions: Interactions;
   token_sources: {
     files: string[];
     tokens: number;
@@ -131,27 +179,46 @@ function rgbDistance(a: [number, number, number], b: [number, number, number]): 
   );
 }
 
+function addClassTokens(value: string, tokens: Set<string>): void {
+  const tokenRe = new RegExp(CLASS_TOKEN.source, "g");
+  let tokenMatch: RegExpExecArray | null;
+  while ((tokenMatch = tokenRe.exec(value)) !== null) {
+    tokens.add(tokenMatch[0]);
+  }
+}
+
 export function collectClassTokens(jsxText: string): Set<string> {
   const tokens = new Set<string>();
-  let attrMatch: RegExpExecArray | null;
-  const attrRe = new RegExp(CLASS_ATTR.source, "g");
-  while ((attrMatch = attrRe.exec(jsxText)) !== null) {
-    const attr = attrMatch[1] ?? "";
-    const tokenRe = new RegExp(CLASS_TOKEN.source, "g");
-    let tokenMatch: RegExpExecArray | null;
-    while ((tokenMatch = tokenRe.exec(attr)) !== null) {
-      tokens.add(tokenMatch[0]);
+
+  // Plain string-literal classNames: className="a b" / className='a b'.
+  // The whole attribute value is class tokens; split on whitespace via CLASS_TOKEN.
+  const stringAttrRe = new RegExp(CLASS_ATTR_STRING.source, "g");
+  let stringMatch: RegExpExecArray | null;
+  while ((stringMatch = stringAttrRe.exec(jsxText)) !== null) {
+    addClassTokens(stringMatch[2] ?? "", tokens);
+  }
+
+  // Expression classNames: className={...}. Mine every quoted string literal
+  // inside the expression body and tokenize each as class tokens. This recovers
+  // the conditional modifier pattern, e.g.
+  //   className={"st-msg " + (cond ? "left st-hasav" : "right")}
+  // where the literals "st-msg ", "left st-hasav", and "right" all contribute
+  // class tokens. Over-inclusion (a stray non-class word from a text literal) is
+  // harmless for slicing: no CSS rule will match it. Under-inclusion drops real
+  // rules, so we bias to inclusion.
+  const exprAttrRe = new RegExp(CLASS_ATTR_EXPR.source, "g");
+  let exprMatch: RegExpExecArray | null;
+  while ((exprMatch = exprAttrRe.exec(jsxText)) !== null) {
+    const body = exprMatch[1] ?? "";
+    // String literals contribute static class names; expressions without any
+    // (e.g. className={styles.foo} or className={cls}) yield nothing to recover.
+    const literalRe = new RegExp(STRING_LITERAL.source, "g");
+    let literalMatch: RegExpExecArray | null;
+    while ((literalMatch = literalRe.exec(body)) !== null) {
+      addClassTokens(literalMatch[2] ?? "", tokens);
     }
   }
-  // Template-literal classes: best effort, pick string fragments too.
-  const fragmentRe = /["'`]([^"'`]*)["'`]/g;
-  let fragMatch: RegExpExecArray | null;
-  while ((fragMatch = fragmentRe.exec(jsxText)) !== null) {
-    const fragment = fragMatch[1] ?? "";
-    if (!fragment.includes(" ") && new RegExp(`^${CLASS_TOKEN.source}$`).test(fragment) && fragment.includes("-")) {
-      tokens.add(fragment);
-    }
-  }
+
   return tokens;
 }
 
@@ -368,6 +435,117 @@ export function extractStateStyles(rules: Array<[string, string]>): Record<strin
   return states;
 }
 
+function pseudoOf(selector: string): string | null {
+  for (const pseudo of STATE_PSEUDOS) {
+    if (selector.includes(`:${pseudo}`)) {
+      return pseudo;
+    }
+  }
+  return null;
+}
+
+/**
+ * Collect the animation-name(s) a transition/animation declaration references so
+ * the matching @keyframes block can be surfaced. The `animation` shorthand puts
+ * the name among other tokens (duration, timing, etc.); we take every identifier
+ * token as a candidate and let the @keyframes name lookup filter out the ones
+ * (durations, timing keywords) that match no defined keyframes block.
+ */
+function animationNamesFrom(prop: string, value: string): string[] {
+  if (prop !== "animation" && prop !== "animation-name") {
+    return [];
+  }
+  const names: string[] = [];
+  const tokenRe = new RegExp(CLASS_TOKEN.source, "g");
+  let tokenMatch: RegExpExecArray | null;
+  while ((tokenMatch = tokenRe.exec(value)) !== null) {
+    names.push(tokenMatch[0]);
+  }
+  return names;
+}
+
+/**
+ * Capture the actual interaction CSS the designer expressed -- not just that a
+ * state exists but what it does:
+ *
+ * - state_rules: every sliced rule whose selector carries a state pseudo
+ *   (:hover/:focus/:focus-visible/:active/:disabled), with its declaration block.
+ * - transitions: every `transition`/`animation` declaration (shorthand or
+ *   longhand) in the slice, paired with its selector.
+ * - keyframes: each @keyframes block in the slice that is referenced by an
+ *   `animation`/`animation-name` declaration, with its full body.
+ *
+ * Bounded by MAX_INTERACTION_RULES and MAX_INTERACTION_CHARS across the combined
+ * captured text; on overflow the first entries are kept and `truncated` is set.
+ */
+export function extractInteractions(
+  rules: Array<[string, string]>,
+  rawCssText: string
+): Interactions {
+  const stateRules: StateRule[] = [];
+  const transitions: TransitionEntry[] = [];
+  const referencedKeyframes = new Set<string>();
+  let charBudget = MAX_INTERACTION_CHARS;
+  let truncated = false;
+
+  const tryAdd = (cost: number): boolean => {
+    const total = stateRules.length + transitions.length;
+    if (total >= MAX_INTERACTION_RULES || cost > charBudget) {
+      truncated = true;
+      return false;
+    }
+    charBudget -= cost;
+    return true;
+  };
+
+  for (const [selector, body] of rules) {
+    const pseudo = pseudoOf(selector);
+    if (pseudo !== null) {
+      const declarations = body.trim();
+      if (tryAdd(selector.length + declarations.length)) {
+        stateRules.push({ pseudo, selector, declarations });
+      }
+    }
+    const declRe = new RegExp(CSS_DECL.source, "g");
+    let declMatch: RegExpExecArray | null;
+    while ((declMatch = declRe.exec(body)) !== null) {
+      const prop = (declMatch[1] ?? "").toLowerCase();
+      const value = (declMatch[2] ?? "").trim();
+      const isAnimation = ANIMATION_PROP_PREFIXES.some((p) => prop === p || prop.startsWith(`${p}-`));
+      if (!isAnimation) {
+        continue;
+      }
+      const declaration = `${prop}: ${value}`;
+      if (tryAdd(selector.length + declaration.length)) {
+        transitions.push({ selector, declaration });
+      }
+      for (const name of animationNamesFrom(prop, value)) {
+        referencedKeyframes.add(name);
+      }
+    }
+  }
+
+  const keyframes: KeyframesEntry[] = [];
+  if (referencedKeyframes.size > 0) {
+    const keyframesRe = new RegExp(KEYFRAMES_RULE.source, "g");
+    let kfMatch: RegExpExecArray | null;
+    const seen = new Set<string>();
+    while ((kfMatch = keyframesRe.exec(rawCssText)) !== null) {
+      const name = kfMatch[1] ?? "";
+      const body = (kfMatch[2] ?? "").trim();
+      if (!referencedKeyframes.has(name) || seen.has(name)) {
+        continue;
+      }
+      seen.add(name);
+      if (tryAdd(name.length + body.length)) {
+        keyframes.push({ name, body });
+      }
+    }
+  }
+
+  return { state_rules: stateRules, transitions, keyframes, truncated };
+}
+
 export function extractIcons(jsxTexts: string[]): string[] {
   const icons = new Set<string>();
   for (const text of jsxTexts) {
@@ -443,6 +621,10 @@ export function buildSpec(
   const { tokens, files: tokenFiles } = loadRepoTokens(repo);
   const { resolved, drift } = resolveColors(colors, tokens);
   const declarations = extractDeclarations(sliced);
+  // Keyframes blocks are not in the sliced rules (selectors starting with "@"
+  // are skipped by sliceCss), so resolve referenced @keyframes against the raw
+  // CSS text of the unit's stylesheets.
+  const rawCssText = cssPairs.map(([, text]) => text).join("\n");
 
   const spec: VisualSpec = {
     schema_version: SPEC_SCHEMA_VERSION,
@@ -455,6 +637,7 @@ export function buildSpec(
     icons: extractIcons(jsxPairs.map(([, t]) => t)),
     layout: extractLayout(sliced, classTokens),
     state_styles: extractStateStyles(sliced),
+    interactions: extractInteractions(sliced, rawCssText),
     token_sources: { files: tokenFiles, tokens: tokens.size },
   };
   return { spec, sliceText };

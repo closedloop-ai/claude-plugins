@@ -91,6 +91,18 @@ describe("build-design-pack", () => {
       icons: ["hand"],
       layout: { sticky: 1, flex: 2, utility_classes: ["sticky"] },
       state_styles: { hover: [".x:hover"] },
+      interactions: {
+        state_rules: [
+          { pseudo: "hover", selector: ".x:hover", declarations: "background: var(--card)" },
+        ],
+        transitions: [
+          { selector: ".y", declaration: "transition: transform .2s ease" },
+        ],
+        keyframes: [
+          { name: "flash", body: "from { opacity: 0; } to { opacity: 1; }" },
+        ],
+        truncated: false,
+      },
       spacing: { padding: ["8px 14px"] },
       typography: { "font-size": ["12px"] },
     };
@@ -125,6 +137,31 @@ describe("build-design-pack", () => {
     expect(uiBody).toContain("`--destructive` (d=1.0)");
     expect(uiBody).toContain("Design-system ticket required: build `ArtifactTopbar`");
     expect(uiBody).toContain("Icons (lucide names): hand");
+    // Interaction CSS is rendered verbatim, not reduced to a selector count.
+    expect(uiBody).toContain("## Interaction and State Styles");
+    expect(uiBody).toContain(".x:hover { background: var(--card) }");
+    expect(uiBody).toContain("transition: transform .2s ease");
+    expect(uiBody).toContain("@keyframes flash { from { opacity: 0; } to { opacity: 1; } }");
+    // The old bare count line is gone.
+    expect(uiBody).not.toContain("State styles present:");
+    expect(uiBody).not.toContain("(1 selectors)");
+  });
+
+  it("omits the interaction section when the spec has no interactions", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-no-int-"));
+    const visual: JsonObject = {
+      colors: { resolved: [], drift: [] },
+      icons: [],
+      layout: { sticky: 0, flex: 0, utility_classes: [] },
+      state_styles: {},
+      interactions: { state_rules: [], transitions: [], keyframes: [], truncated: false },
+      spacing: {},
+      typography: {},
+    };
+    const { rc, pack } = runPack(tmpPath, validDecisions(), visual);
+    expect(rc).toBe(0);
+    const uiBody = readFileSync(join(pack, "ticket-body-ui.md"), "utf-8");
+    expect(uiBody).not.toContain("## Interaction and State Styles");
   });
 
   it("edited decision overrides summary", () => {

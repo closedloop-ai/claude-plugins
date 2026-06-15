@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildSpec,
+  collectClassTokens,
+  extractInteractions,
   hexToRgb,
   main,
   normalizeColor,
@@ -81,6 +83,32 @@ describe("TestNormalization", () => {
   });
 });
 
+describe("TestCollectClassTokens", () => {
+  it("plain_string_classname_tokens", () => {
+    const tokens = collectClassTokens('<div className="sess-topbar sticky flex" />');
+    expect(tokens.has("sess-topbar")).toBe(true);
+    expect(tokens.has("sticky")).toBe(true);
+    expect(tokens.has("flex")).toBe(true);
+  });
+
+  it("expression_conditional_classname_tokens", () => {
+    // Regression: the conditional modifier pattern. The old extractor stopped the
+    // attribute capture at the first quote inside {...} and dropped these tokens,
+    // so rules like .st-msg.left were sliced away from every ticket.
+    const jsx = '<div className={"st-msg " + (x ? "left st-hasav" : "right")}>hi</div>';
+    const tokens = collectClassTokens(jsx);
+    expect(tokens.has("st-msg")).toBe(true);
+    expect(tokens.has("left")).toBe(true);
+    expect(tokens.has("right")).toBe(true);
+    expect(tokens.has("st-hasav")).toBe(true);
+  });
+
+  it("expression_without_string_literals_yields_nothing", () => {
+    const tokens = collectClassTokens("<div className={styles.foo} />");
+    expect(tokens.size).toBe(0);
+  });
+});
+
 describe("TestCssSlice", () => {
   it("slice_keeps_only_used_classes_and_roots", () => {
     const rules = sliceCss(UNIT_CSS, new Set(["sess-topbar", "sess-awaiting-chip", "pin-btn"]));
@@ -90,6 +118,25 @@ describe("TestCssSlice", () => {
     expect(selectors.every((s) => !s.includes("unrelated-class"))).toBe(true);
     // media-query inner rule survives flattening
     expect(selectors.filter((s) => s === ".sess-topbar").length).toBe(2);
+  });
+
+  it("expression_classname_keeps_conditional_modifier_rules", () => {
+    // End-to-end: tokens mined from an expression className must let sliceCss keep
+    // the base rule and all compound modifier rules. Without the extraction fix
+    // these four rules were dropped from every slice (and thus every ticket).
+    const jsx = '<div className={"st-msg " + (x ? "left st-hasav" : "right")}>hi</div>';
+    const css =
+      ".st-msg{display:flex}" +
+      ".st-msg.left{justify-content:flex-start}" +
+      ".st-msg.right{justify-content:flex-end}" +
+      ".st-msg.st-hasav{gap:8px}";
+    const tokens = collectClassTokens(jsx);
+    const selectors = sliceCss(css, tokens).map(([s]) => s);
+    expect(selectors).toContain(".st-msg");
+    expect(selectors).toContain(".st-msg.left");
+    expect(selectors).toContain(".st-msg.right");
+    expect(selectors).toContain(".st-msg.st-hasav");
+    expect(selectors.length).toBe(4);
   });
 });
 
@@ -138,6 +185,84 @@ describe("TestSpec", () => {
     expect(spec.spacing["border-radius"]).toContain("999px");
     expect(spec.typography["font-size"]).toContain("12px");
     expect((spec.spacing["margin"] ?? []).includes("40px")).toBe(false); // unrelated rule sliced away
+  });
+});
+
+const INTERACTIONS_JSX = `
+function Anim() {
+  return (
+    <div className="x y z">interactive</div>
+  );
+}
+`;
+
+const INTERACTIONS_CSS = `
+.x:hover { background: var(--card); }
+.y { transition: transform .2s ease; }
+.z { animation: flash 1.1s; }
+@keyframes flash { from { opacity: 0; } to { opacity: 1; } }
+.unused { color: red; }
+@keyframes unused-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+`;
+
+function interactionsSpecFor(tmpPath: string): ReturnType<typeof buildSpec>["spec"] {
+  const extractDir = join(tmpPath, "extracted");
+  mkdirSync(join(extractDir, "ui_kits/app"), { recursive: true });
+  writeFileSync(join(extractDir, "ui_kits/app/Anim.jsx"), INTERACTIONS_JSX, "utf-8");
+  writeFileSync(join(extractDir, "ui_kits/app/anim.css"), INTERACTIONS_CSS, "utf-8");
+  const repo = join(tmpPath, "repo");
+  mkdirSync(repo, { recursive: true });
+  const { spec } = buildSpec(extractDir, repo, ["ui_kits/app/Anim.jsx"]);
+  return spec;
+}
+
+describe("TestInteractions", () => {
+  it("captures state rule declarations, not just selectors", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "evs-int-"));
+    const spec = interactionsSpecFor(tmpPath);
+    const hoverRule = spec.interactions.state_rules.find((r) => r.selector === ".x:hover");
+    expect(hoverRule).toBeDefined();
+    expect(hoverRule?.pseudo).toBe("hover");
+    expect(hoverRule?.declarations).toContain("background: var(--card)");
+  });
+
+  it("captures transition declarations with their selector", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "evs-int-"));
+    const spec = interactionsSpecFor(tmpPath);
+    const transition = spec.interactions.transitions.find((t) => t.selector === ".y");
+    expect(transition).toBeDefined();
+    expect(transition?.declaration).toBe("transition: transform .2s ease");
+    // The animation shorthand on .z is also captured as a transition/animation decl.
+    expect(spec.interactions.transitions.some((t) => t.declaration.startsWith("animation:"))).toBe(true);
+  });
+
+  it("captures a referenced @keyframes body and skips unreferenced ones", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "evs-int-"));
+    const spec = interactionsSpecFor(tmpPath);
+    const flash = spec.interactions.keyframes.find((k) => k.name === "flash");
+    expect(flash).toBeDefined();
+    expect(flash?.body).toContain("opacity: 0");
+    expect(flash?.body).toContain("opacity: 1");
+    // unused-spin is not referenced by any animation declaration in the slice.
+    expect(spec.interactions.keyframes.some((k) => k.name === "unused-spin")).toBe(false);
+  });
+
+  it("flags truncation when the rule cap is exceeded", () => {
+    const rules: Array<[string, string]> = [];
+    for (let i = 0; i < 60; i++) {
+      rules.push([`.r${i}:hover`, `color: #${(i % 9) + 1}${(i % 9) + 1}${(i % 9) + 1}`]);
+    }
+    const interactions = extractInteractions(rules, "");
+    expect(interactions.truncated).toBe(true);
+    expect(interactions.state_rules.length).toBeLessThanOrEqual(40);
+  });
+
+  it("empty when the slice has no interaction CSS", () => {
+    const interactions = extractInteractions([[".plain", "color: red"]], "");
+    expect(interactions.state_rules).toEqual([]);
+    expect(interactions.transitions).toEqual([]);
+    expect(interactions.keyframes).toEqual([]);
+    expect(interactions.truncated).toBe(false);
   });
 });
 
