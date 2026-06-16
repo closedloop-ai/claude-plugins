@@ -21,6 +21,7 @@ var FINDING_CATEGORIES = [
   "backend-gap",
   "token-drift"
 ];
+var GAP_LAYERS = ["capture", "ingestion", "model", "serving", "unknown"];
 var INTENTS = ["likely-intentional", "likely-unintentional", "unclear"];
 var DECISION_STATES = ["pending", "accepted", "declined", "edited"];
 var REVIEW_STATES = ["accepted", "declined", "edited"];
@@ -89,6 +90,33 @@ function checkReuse(reuse, label, errors) {
   }
   if (resolution === "new-component" && !isNonEmptyString(reuse["proposed_name"])) {
     errors.push(`${label}.proposed_name required for resolution 'new-component'`);
+  }
+}
+function checkDataFlow(dataFlow, label, required, errors) {
+  if (dataFlow === null || dataFlow === void 0) {
+    if (required) {
+      errors.push(`${label}.data_flow is required for category 'backend-gap'`);
+    }
+    return;
+  }
+  if (!isObject(dataFlow)) {
+    errors.push(`${label}.data_flow must be an object`);
+    return;
+  }
+  if (!oneOf(dataFlow["gap_layer"], GAP_LAYERS)) {
+    errors.push(`${label}.data_flow.gap_layer must be one of ${GAP_LAYERS.join(", ")}`);
+  }
+  if (!isNonEmptyString(dataFlow["origin"])) {
+    errors.push(`${label}.data_flow.origin must be a non-empty string`);
+  }
+  if (typeof dataFlow["captured_today"] !== "boolean") {
+    errors.push(`${label}.data_flow.captured_today must be a boolean`);
+  }
+  if (typeof dataFlow["ingested_today"] !== "boolean") {
+    errors.push(`${label}.data_flow.ingested_today must be a boolean`);
+  }
+  if (!isStringArray(dataFlow["refs"] ?? [])) {
+    errors.push(`${label}.data_flow.refs must be a list of strings when present`);
   }
 }
 function validateFindings(doc) {
@@ -200,6 +228,7 @@ function validateFindings(doc) {
       checkRefsBlock(finding["spec"], `${label}.spec`, errors);
       checkScreenshot(finding["screenshot"], label, errors);
       checkReuse(finding["reuse"], `${label}.reuse`, errors);
+      checkDataFlow(finding["data_flow"], label, finding["category"] === "backend-gap", errors);
       const decision = finding["decision"] ?? { state: "pending" };
       if (!isObject(decision) || !oneOf(decision["state"], DECISION_STATES)) {
         errors.push(`${label}.decision.state must be one of ${DECISION_STATES.join(", ")}`);
@@ -760,6 +789,26 @@ function renderUiTicketBody(doc, decisions, acceptedNonBackend, declined, pendin
   lines.push("");
   return lines.join("\n");
 }
+function isCaptureIngestion(finding) {
+  const dataFlow = finding["data_flow"];
+  if (!dataFlow) return false;
+  const layer = String(dataFlow["gap_layer"]);
+  return layer === "capture" || layer === "ingestion";
+}
+function provenanceLines(finding) {
+  const dataFlow = finding["data_flow"];
+  if (!dataFlow) return [];
+  const captured = dataFlow["captured_today"] === true ? "yes" : "no";
+  const ingested = dataFlow["ingested_today"] === true ? "yes" : "no";
+  const out = [
+    `- (${String(finding["id"])}) layer: ${String(dataFlow["gap_layer"])}; origin: ${String(dataFlow["origin"])}; captured today: ${captured}, ingested today: ${ingested}`
+  ];
+  const refs = Array.isArray(dataFlow["refs"]) ? dataFlow["refs"].filter((r) => typeof r === "string" && r.length > 0) : [];
+  if (refs.length > 0) {
+    out.push(`  - refs: ${refs.map((r) => `\`${r}\``).join(", ")}`);
+  }
+  return out;
+}
 function renderApiTicketBody(doc, decisions, acceptedBackend, declinedBackend, designSourceSection, sourceMode) {
   const unit = doc["unit"];
   const impl = unit["current_impl"];
@@ -781,6 +830,21 @@ function renderApiTicketBody(doc, decisions, acceptedBackend, declinedBackend, d
     lines.push(...criterionBlock(finding, decisions, false));
   }
   lines.push("");
+  const provenance = acceptedBackend.filter((f) => f["data_flow"]);
+  if (provenance.length > 0) {
+    lines.push("## Data Provenance");
+    lines.push("");
+    for (const finding of provenance) {
+      lines.push(...provenanceLines(finding));
+    }
+    lines.push("");
+    if (acceptedBackend.some(isCaptureIngestion)) {
+      lines.push(
+        "A separate data-source ticket covers capturing and syncing this data; it is a related upstream ticket (the layers build in parallel and this view renders empty states until the data lands)."
+      );
+      lines.push("");
+    }
+  }
   if (declinedBackend.length > 0) {
     lines.push("## Declined Backend Changes \u2014 DO NOT IMPLEMENT");
     lines.push("");
@@ -793,6 +857,57 @@ function renderApiTicketBody(doc, decisions, acceptedBackend, declinedBackend, d
     const sourceWhere = sourceMode === SourceMode.Reference ? "attached to this document (see the Design Source section below)" : "embedded below";
     lines.push(
       `The UI prototype source that consumes this backend is ${sourceWhere}. Use it to derive the exact field names, shapes, and enum values the frontend reads, so the data contract matches what the design renders.`,
+      ""
+    );
+    lines.push(...designSourceSection);
+  }
+  return lines.join("\n");
+}
+function renderDataTicketBody(doc, decisions, captureIngestionFindings, designSourceSection, sourceMode) {
+  const unit = doc["unit"];
+  const impl = unit["current_impl"];
+  const lines = [
+    `# Capture and sync data for ${String(unit["name"])}`,
+    "",
+    "## State vs Spec",
+    ""
+  ];
+  const paths = Array.isArray(impl["paths"]) ? impl["paths"] : [];
+  const implDesc = paths.length > 0 ? paths.map((p) => `\`${p}\``).join(", ") : "no current implementation";
+  lines.push(
+    `Unit type: ${String(unit["type"])}. Classification: ${String(unit["classification"])}. Current implementation: ${implDesc}.`
+  );
+  lines.push("");
+  lines.push("## Data to capture and ingest");
+  lines.push("");
+  for (const finding of captureIngestionFindings) {
+    const dataFlow = finding["data_flow"] ?? {};
+    lines.push(`- (${String(finding["id"])}) ${criterionText(finding, decisions)}`);
+    lines.push(`  - Origin (source of truth): ${String(dataFlow["origin"])}`);
+    const missing = [];
+    if (dataFlow["captured_today"] !== true) {
+      missing.push("instrument the source so the raw data is captured");
+    }
+    if (dataFlow["ingested_today"] !== true) {
+      missing.push("add the sync/ingestion mapping that lands it in the platform DB");
+    }
+    if (missing.length > 0) {
+      lines.push(`  - Missing today: ${missing.join("; ")}`);
+    }
+    const refs = Array.isArray(dataFlow["refs"]) ? dataFlow["refs"].filter((r) => typeof r === "string" && r.length > 0) : [];
+    if (refs.length > 0) {
+      lines.push(`  - Pipeline refs: ${refs.map((r) => `\`${r}\``).join(", ")}`);
+    }
+  }
+  lines.push("");
+  lines.push(
+    "This ticket relates to the unit's API/serving ticket; the layers build in parallel and the UI renders empty states until this data lands."
+  );
+  lines.push("");
+  if (designSourceSection.length > 0) {
+    const sourceWhere = sourceMode === SourceMode.Reference ? "attached to this document (see the Design Source section below)" : "embedded below";
+    lines.push(
+      `The UI prototype source that needs this data is ${sourceWhere}. Use it to confirm exactly which fields the design reads, so the captured/synced shape matches.`,
       ""
     );
     lines.push(...designSourceSection);
@@ -867,6 +982,9 @@ function main(argv) {
   const acceptedNonBackend = accepted.filter((f) => f["category"] !== "backend-gap");
   const acceptedBackend = accepted.filter((f) => f["category"] === "backend-gap");
   const declinedBackend = declined.filter((f) => f["category"] === "backend-gap");
+  const captureIngestionBackend = acceptedBackend.filter(
+    (f) => f["data_flow"] && (f["data_flow"]["gap_layer"] === "capture" || f["data_flow"]["gap_layer"] === "ingestion")
+  );
   const sourceDir = join(packDir, "design-source");
   const shotsDir = join(packDir, "screenshots");
   mkdirSync(sourceDir, { recursive: true });
@@ -942,6 +1060,16 @@ function main(argv) {
       sourceMode
     );
     writeFileSync(join(packDir, "ticket-body-api.md"), apiBody, "utf-8");
+  }
+  if (captureIngestionBackend.length > 0) {
+    const dataBody = renderDataTicketBody(
+      doc,
+      decisions,
+      captureIngestionBackend,
+      designSourceSection,
+      sourceMode
+    );
+    writeFileSync(join(packDir, "ticket-body-data.md"), dataBody, "utf-8");
   }
   const summary = {
     pack: packDir,

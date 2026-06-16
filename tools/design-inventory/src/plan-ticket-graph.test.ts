@@ -134,6 +134,27 @@ function makeFinding(
   return finding;
 }
 
+/**
+ * A backend-gap finding carrying a data_flow at the given gap layer. capture and
+ * ingestion layers drive a separate data-source ticket; serving and model do not.
+ */
+function makeBackendGap(
+  id: string,
+  gapLayer: "capture" | "ingestion" | "model" | "serving" | "unknown",
+  decisionState: "accepted" | "declined" | "edited" = "accepted",
+): JsonObject {
+  const upstreamMissing = gapLayer === "capture" || gapLayer === "ingestion";
+  const finding = makeFinding(id, "backend-gap", decisionState);
+  finding["data_flow"] = {
+    gap_layer: gapLayer,
+    origin: "apps/desktop agent harness session telemetry",
+    captured_today: !upstreamMissing,
+    ingested_today: !upstreamMissing,
+    refs: ["apps/desktop/src/server/operations/run-session.ts"],
+  };
+  return finding;
+}
+
 function allAcceptedDecisions(): Record<string, JsonObject> {
   return {};
 }
@@ -272,14 +293,95 @@ describe("buildTicketGraph", () => {
     expect(plan.blocks).toHaveLength(0);
   });
 
-  it("API ticket BLOCKS UI ticket when both exist", () => {
+  it("API ticket RELATES_TO UI ticket when both exist", () => {
     const visual = makeFinding("CHG-scr-b-01", "visual");
-    const backend = makeFinding("CHG-scr-b-02", "backend-gap");
+    const backend = makeBackendGap("CHG-scr-b-02", "serving");
     const doc = screenDoc("scr-b", "B", [visual, backend]);
     const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["scr-b"]);
 
-    expect(plan.blocks).toHaveLength(1);
-    expect(plan.blocks[0]).toMatchObject({ from: "api:scr-b", to: "ui:scr-b" });
+    // serving-layer gap: api -> ui only, no data ticket. The api -> ui adjacency
+    // is a parallelizable RELATES_TO edge, not a hard block.
+    expect(plan.tickets.find((t) => t.kind === "data")).toBeUndefined();
+    expect(plan.blocks).toHaveLength(0);
+    expect(plan.relates).toHaveLength(1);
+    expect(plan.relates[0]).toMatchObject({ from: "api:scr-b", to: "ui:scr-b" });
+  });
+
+  it("emits a data ticket for a capture-layer backend gap with data->api->ui RELATES_TO edges", () => {
+    const visual = makeFinding("CHG-scr-cap-01", "visual");
+    const backend = makeBackendGap("CHG-scr-cap-02", "capture");
+    const doc = screenDoc("scr-cap", "Capture Screen", [visual, backend]);
+    const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["scr-cap"]);
+
+    const data = plan.tickets.find((t) => t.kind === "data");
+    const api = plan.tickets.find((t) => t.kind === "api");
+    const ui = plan.tickets.find((t) => t.kind === "ui");
+    expect(data).toBeDefined();
+    expect(data!.id).toBe("data:scr-cap");
+    expect(data!.unit_id).toBe("scr-cap");
+    expect(data!.title).toBe("Capture and sync data for Capture Screen");
+    expect(data!.criteria).toEqual(["CHG-scr-cap-02"]);
+    expect(api).toBeDefined();
+    expect(ui).toBeDefined();
+
+    // The pipeline adjacencies data -> api -> ui are parallelizable RELATES_TO
+    // edges, not hard blocks. No BLOCKS edge here (no shared component).
+    expect(plan.relates).toContainEqual(
+      expect.objectContaining({ from: "data:scr-cap", to: "api:scr-cap" }),
+    );
+    expect(plan.relates).toContainEqual(
+      expect.objectContaining({ from: "api:scr-cap", to: "ui:scr-cap" }),
+    );
+    expect(plan.blocks).toHaveLength(0);
+  });
+
+  it("emits a data ticket for an ingestion-layer backend gap", () => {
+    const backend = makeBackendGap("CHG-scr-ing-01", "ingestion");
+    const doc = screenDoc("scr-ing", "Ingest Screen", [backend]);
+    const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["scr-ing"]);
+
+    expect(plan.tickets.find((t) => t.kind === "data")).toBeDefined();
+    // No UI ticket (only a backend gap), so the only edge is data -> api (RELATES_TO).
+    expect(plan.tickets.find((t) => t.kind === "ui")).toBeUndefined();
+    expect(plan.relates).toContainEqual(
+      expect.objectContaining({ from: "data:scr-ing", to: "api:scr-ing" }),
+    );
+    expect(plan.relates.some((e) => e.to.startsWith("ui:"))).toBe(false);
+    expect(plan.blocks).toHaveLength(0);
+  });
+
+  it("does NOT emit a data ticket when the only backend gap is serving-layer", () => {
+    const backend = makeBackendGap("CHG-scr-srv-01", "serving");
+    const doc = screenDoc("scr-srv", "Serving Screen", [backend]);
+    const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["scr-srv"]);
+
+    expect(plan.tickets.find((t) => t.kind === "api")).toBeDefined();
+    expect(plan.tickets.find((t) => t.kind === "data")).toBeUndefined();
+    expect(plan.relates.some((e) => e.from.startsWith("data:"))).toBe(false);
+    expect(plan.blocks.some((b) => b.from.startsWith("data:"))).toBe(false);
+  });
+
+  it("does NOT emit a data ticket when the only backend gap is model-layer", () => {
+    const backend = makeBackendGap("CHG-scr-mdl-01", "model");
+    const doc = screenDoc("scr-mdl", "Model Screen", [backend]);
+    const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["scr-mdl"]);
+
+    expect(plan.tickets.find((t) => t.kind === "data")).toBeUndefined();
+  });
+
+  it("emits a data ticket once when capture and serving gaps coexist in one unit", () => {
+    const capture = makeBackendGap("CHG-scr-mix-01", "capture");
+    const serving = makeBackendGap("CHG-scr-mix-02", "serving");
+    const doc = screenDoc("scr-mix", "Mixed Screen", [capture, serving]);
+    const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["scr-mix"]);
+
+    const dataTickets = plan.tickets.filter((t) => t.kind === "data");
+    expect(dataTickets).toHaveLength(1);
+    // Only the capture-layer finding is the data ticket's criterion.
+    expect(dataTickets[0]!.criteria).toEqual(["CHG-scr-mix-01"]);
+    // The API ticket still carries BOTH backend gaps.
+    const api = plan.tickets.find((t) => t.kind === "api");
+    expect(api!.criteria).toEqual(["CHG-scr-mix-01", "CHG-scr-mix-02"]);
   });
 
   it("net-new component assigned to PRIMARY (first in manifest order) unit", () => {

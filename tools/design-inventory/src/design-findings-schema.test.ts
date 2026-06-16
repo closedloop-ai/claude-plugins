@@ -4,13 +4,19 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  GAP_LAYERS,
   effectiveDecision,
   validateDecisions,
   validateFindings,
   type JsonObject,
 } from "./design-findings-schema.js";
 import { main as validateMain } from "./validate-findings.js";
-import { validDecisions, validFindings } from "./test-fixtures.js";
+import {
+  backendGapFinding,
+  validDecisions,
+  validFindings,
+  validFindingsWithBackendGaps,
+} from "./test-fixtures.js";
 
 type Mutator = (doc: JsonObject) => void;
 
@@ -118,6 +124,93 @@ describe("validateFindings", () => {
     const doc = validFindings();
     // Second finding has no recommendation by fixture design; validate is clean
     expect(arr(doc.findings)[1]!.recommendation).toBeUndefined();
+    expect(validateFindings(doc)).toEqual([]);
+  });
+});
+
+describe("validateFindings data_flow provenance", () => {
+  // The data_flow block traces where a backend-gap's data comes from; it is
+  // REQUIRED on backend-gap findings and shape-checked (but optional) elsewhere.
+
+  it("exposes the gap layers in deepest-first order", () => {
+    expect(GAP_LAYERS).toEqual(["capture", "ingestion", "model", "serving", "unknown"]);
+  });
+
+  it("passes when every backend-gap carries a valid data_flow", () => {
+    expect(validateFindings(validFindingsWithBackendGaps())).toEqual([]);
+  });
+
+  it("requires data_flow on a backend-gap finding", () => {
+    const doc = validFindings();
+    const backend = backendGapFinding("CHG-sessions-page-03", "capture");
+    delete (backend as JsonObject)["data_flow"];
+    arr(doc.findings).push(backend);
+    const errors = validateFindings(doc);
+    expect(errors.some((e) => e.includes("data_flow is required for category 'backend-gap'"))).toBe(
+      true,
+    );
+  });
+
+  const badFlowCases: Array<[string, (flow: JsonObject) => void, string]> = [
+    ["unknown gap_layer", (flow) => (flow.gap_layer = "warehouse"), "gap_layer must be one of"],
+    ["empty origin", (flow) => (flow.origin = "  "), "origin must be a non-empty string"],
+    ["non-boolean captured_today", (flow) => (flow.captured_today = "no"), "captured_today must be a boolean"],
+    ["non-boolean ingested_today", (flow) => (flow.ingested_today = 1), "ingested_today must be a boolean"],
+    ["non-array refs", (flow) => (flow.refs = "apps/desktop"), "data_flow.refs must be a list of strings"],
+  ];
+
+  it.each(badFlowCases)("rejects %s on a backend-gap", (_name, mutate, fragment) => {
+    const doc = validFindings();
+    const backend = backendGapFinding("CHG-sessions-page-03", "serving");
+    mutate(backend["data_flow"] as JsonObject);
+    arr(doc.findings).push(backend);
+    const errors = validateFindings(doc);
+    expect(errors.some((e) => e.includes(fragment))).toBe(true);
+  });
+
+  it("rejects a backend-gap whose data_flow is not an object", () => {
+    const doc = validFindings();
+    const backend = backendGapFinding("CHG-sessions-page-03", "capture");
+    backend["data_flow"] = "capture-layer";
+    arr(doc.findings).push(backend);
+    expect(
+      validateFindings(doc).some((e) => e.includes("data_flow must be an object")),
+    ).toBe(true);
+  });
+
+  it("accepts a backend-gap data_flow with refs omitted", () => {
+    const doc = validFindings();
+    const backend = backendGapFinding("CHG-sessions-page-03", "ingestion");
+    delete (backend["data_flow"] as JsonObject)["refs"];
+    arr(doc.findings).push(backend);
+    expect(validateFindings(doc)).toEqual([]);
+  });
+
+  it("does NOT require data_flow on non-backend-gap findings", () => {
+    const doc = validFindings();
+    // The base fixture's findings are visual / component-divergence with no data_flow.
+    expect(arr(doc.findings)[0]!.data_flow).toBeUndefined();
+    expect(validateFindings(doc)).toEqual([]);
+  });
+
+  it("shape-checks a data_flow that appears on a non-backend-gap finding", () => {
+    const doc = validFindings();
+    // A stray malformed data_flow on a visual finding is still rejected.
+    arr(doc.findings)[0]!.data_flow = { gap_layer: "nope", origin: "", captured_today: 1 };
+    const errors = validateFindings(doc);
+    expect(errors.some((e) => e.includes("gap_layer must be one of"))).toBe(true);
+    expect(errors.some((e) => e.includes("origin must be a non-empty string"))).toBe(true);
+    expect(errors.some((e) => e.includes("captured_today must be a boolean"))).toBe(true);
+  });
+
+  it("accepts a well-formed data_flow on a non-backend-gap finding", () => {
+    const doc = validFindings();
+    arr(doc.findings)[0]!.data_flow = {
+      gap_layer: "serving",
+      origin: "platform DB",
+      captured_today: true,
+      ingested_today: true,
+    };
     expect(validateFindings(doc)).toEqual([]);
   });
 });
