@@ -48,7 +48,8 @@ export const FINDING_CATEGORIES = [
  *   serving   - the data exists in the platform DB but no API/endpoint serves it to the UI.
  *   unknown   - the provenance could not be traced.
  * A capture- or ingestion-layer gap means nobody tickets where the data comes
- * from; it becomes a separate data-source ticket that blocks the serving/API ticket.
+ * from; it becomes a separate data-source ticket related to the serving/API ticket
+ * (the layers build in parallel and the UI renders empty states until the data lands).
  */
 export const GAP_LAYERS = ["capture", "ingestion", "model", "serving", "unknown"] as const;
 export const INTENTS = ["likely-intentional", "likely-unintentional", "unclear"] as const;
