@@ -4,6 +4,8 @@ Run this pass before marking `Final Alignment Status: Aligned`. For every touche
 
 For every item: fix it, mark it already covered by a named row/test, mark not applicable with reason, or carry it into `Not aligned` with a concrete blocker. Do not mark `Aligned` while any item is merely assumed covered.
 
+Coverage-claim rule: any `covered`, `not applicable`, or `already covered` disposition in this pass must cite a specific test name and the wrong-input or negative case that test fails closed on. A coverage claim backed only by a happy-path assertion, or by no test at all (including for security findings), is treated as `Not aligned`, not as covered.
+
 ## Items
 
 1. **Unmodeled dependency throw/reject branch** that maps to the wrong external status, retryability, or message.
@@ -32,6 +34,9 @@ For every item: fix it, mark it already covered by a named row/test, mark not ap
 24. **Stale cached capability false negative or false positive** where supported-operation or peer-capability cache causes a required safety action to be skipped, dispatches an unsupported command without fallback, or never reconciles after authoritative peer evidence changes.
 25. **Legacy persisted record promoted or deleted without evidence** where missing provenance, source, trust, ownership, or capability fields default too optimistically, backfill without authoritative proof, downgrade unsafely, or treat manual/local records as managed remote records.
 26. **Distributed lifecycle gap** where register/create, approval/authorization, normal command, revoke/delete, offline/reconnect reconciliation, repeated action/idempotency, or stale UI/cache behavior lacks its own row and required test.
+27. **Derivation reads the incoming patch instead of merged state** where an upsert or partial update triggers a derived field, reducer, stamped value, or validation that consumes only the incoming patch rather than the post-merge result (existing state union patch), so a single-field or partial update that omits an identity or state field the derivation depends on produces a stale or wrong derived value.
+28. **Gate-versus-filter predicate divergence** where the same eligibility, completion, or terminal predicate is enforced at one site (a gate) but re-derived independently at another (a list filter, a terminal or disposition check, a batch or unscoped routing path, or an early short-circuit), and the two derivations can disagree because they do not share a helper.
+29. **Coverage claim without a fail-closed test** where a `covered`, `not applicable`, or `already covered` disposition cites no test, or cites only a happy-path assertion, instead of a named test that fails closed on the wrong-input or negative case (including security findings).
 
 ## Contract-Heavy Review Surface
 
@@ -72,4 +77,5 @@ For contract-heavy work, also explicitly review:
 - serverless async side effects that may be dropped unless awaited, scheduled with a platform primitive, or persisted
 - test oracle quality for canonicalization, signing, validation, and compatibility rows
 - duplicated policy logic or wire-contract constants that can drift between intended-parity entry paths
+- the same eligibility, completion, or terminal predicate enforced at a gate but re-derived independently at another site (predicate at a gate vs. re-derived in a list filter, scoped vs. unscoped routing, a terminal or disposition check, a batch path, or an early short-circuit), where the two can disagree unless they share a helper or are tied together by a parity test
 - whether `Final Alignment Status` is still defensible given the implemented compatibility and failure behavior

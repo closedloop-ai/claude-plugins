@@ -124,6 +124,7 @@ Guidelines:
 - Keep the same state axes and column meanings across `Current Code` and `Intended Change` within each behavior area.
 - Use additive rows rather than prose for behavior changes whenever possible.
 - For distributed workflows, include rows for how each replica/process learns about writes, how stale or offline replicas reconcile, and which durable source of truth wins.
+- When the same eligibility, completion, or terminal predicate is enforced at one site (a gate) but re-derived independently at another (a list filter, a terminal or disposition check, a batch or unscoped routing path, or an early short-circuit), include rows for both sites and confirm they share the predicate through a shared helper or a parity test, because the two derivations can disagree (for example a predicate at a gate vs. re-derived in a list filter, or scoped vs. unscoped routing).
 - Keep data visibility rows separate from side-effect rows such as notifications, dispatches, telemetry, cleanup, and deduplication.
 - For capability- or operation-gated behavior, include fresh cache, stale false negative, stale false positive, old peer, fallback, retry, and reconciliation rows.
 - For legacy persisted records missing new fields, include conservative defaults, evidence-backed promotion/backfill, downgrade behavior, and manual-record protection.

@@ -166,6 +166,10 @@ When a validated path, identity, endpoint, workspace, profile, tenant, account, 
 
 When a route or service updates a nested object, JSON blob, configuration record, metadata map, or persisted state bundle, include rows for omitted fields, explicit empty/null fields, single-field updates, and full replacement. State whether the operation merges with existing state or replaces it, and which existing fields must survive unknown or partial updates.
 
+When an upsert or partial update triggers a derivation, reducer, stamped field, or validation, that computation must consume the post-merge result (existing state union patch), not the incoming patch alone. A derivation that reads only the incoming patch sees an undefined or stale value for any field the patch omits, so include a row stating that the derivation reads merged state and which fields it depends on.
+
+**Tests:** require a single-field or partial-update test row proving the derivation reads merged state, for example a patch that omits an identity or state field the derivation depends on, and assert the derived value reflects the merged record rather than the incoming patch.
+
 ## Persistence access paths
 
 When adding persisted fields, tables, indexes, uniqueness constraints, or cleanup jobs, inventory the actual reads, writes, filters, sort orders, expiry scans, rate limits, and ownership checks that will use them. Distinguish query-critical indexes from write-only metadata, future-only fields, redundant left-prefix indexes, and indexes that need additional columns to match the real predicate. Remove or mark not-applicable any index not justified by a current query, rate limit, cleanup path, uniqueness guarantee, sort order, or documented near-term requirement.
