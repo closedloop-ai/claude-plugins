@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.14.4
+
+#### Changed
+- Hardened the `decision-table` skill so generated artifacts stop accepting unproven coverage claims. Every `Covered`, `not applicable`, or `already covered` disposition now must cite a specific test name and the wrong-input or negative case that test fails closed on; a claim backed only by a happy-path assertion or by no test at all (security findings included) is treated as `Not aligned`. Added a partial-update rule requiring upsert-triggered derivations, reducers, stamped fields, or validation to consume the post-merge result (existing state union patch) rather than the incoming patch alone, with a required single-field test row. Added gate-versus-filter parity guidance for predicates enforced at a gate but re-derived independently in a list filter, terminal/disposition check, batch/unscoped routing path, or early short-circuit, requiring a shared helper or parity test.
+
 ### code-review v2.34.0
 
 #### Fixed
