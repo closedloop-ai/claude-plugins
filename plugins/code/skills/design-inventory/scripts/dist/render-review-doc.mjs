@@ -21,6 +21,7 @@ var FINDING_CATEGORIES = [
   "backend-gap",
   "token-drift"
 ];
+var GAP_LAYERS = ["capture", "ingestion", "model", "serving", "unknown"];
 var INTENTS = ["likely-intentional", "likely-unintentional", "unclear"];
 var DECISION_STATES = ["pending", "accepted", "declined", "edited"];
 var REUSE_RESOLUTIONS = ["reuse", "new-component", "not-applicable"];
@@ -88,6 +89,33 @@ function checkReuse(reuse, label, errors) {
   }
   if (resolution === "new-component" && !isNonEmptyString(reuse["proposed_name"])) {
     errors.push(`${label}.proposed_name required for resolution 'new-component'`);
+  }
+}
+function checkDataFlow(dataFlow, label, required, errors) {
+  if (dataFlow === null || dataFlow === void 0) {
+    if (required) {
+      errors.push(`${label}.data_flow is required for category 'backend-gap'`);
+    }
+    return;
+  }
+  if (!isObject(dataFlow)) {
+    errors.push(`${label}.data_flow must be an object`);
+    return;
+  }
+  if (!oneOf(dataFlow["gap_layer"], GAP_LAYERS)) {
+    errors.push(`${label}.data_flow.gap_layer must be one of ${GAP_LAYERS.join(", ")}`);
+  }
+  if (!isNonEmptyString(dataFlow["origin"])) {
+    errors.push(`${label}.data_flow.origin must be a non-empty string`);
+  }
+  if (typeof dataFlow["captured_today"] !== "boolean") {
+    errors.push(`${label}.data_flow.captured_today must be a boolean`);
+  }
+  if (typeof dataFlow["ingested_today"] !== "boolean") {
+    errors.push(`${label}.data_flow.ingested_today must be a boolean`);
+  }
+  if (!isStringArray(dataFlow["refs"] ?? [])) {
+    errors.push(`${label}.data_flow.refs must be a list of strings when present`);
   }
 }
 function validateFindings(doc) {
@@ -199,6 +227,7 @@ function validateFindings(doc) {
       checkRefsBlock(finding["spec"], `${label}.spec`, errors);
       checkScreenshot(finding["screenshot"], label, errors);
       checkReuse(finding["reuse"], `${label}.reuse`, errors);
+      checkDataFlow(finding["data_flow"], label, finding["category"] === "backend-gap", errors);
       const decision = finding["decision"] ?? { state: "pending" };
       if (!isObject(decision) || !oneOf(decision["state"], DECISION_STATES)) {
         errors.push(`${label}.decision.state must be one of ${DECISION_STATES.join(", ")}`);

@@ -25,8 +25,14 @@
  *   Does NOT contain backend-gap criteria or numbered lists.
  * - ticket-body-api.md: ticket body for the backend ticket (written only when
  *   there are accepted backend-gap findings). Contains backend-gap criteria
- *   with State/Spec/Refs detail, plus the same embedded design source so the
- *   data contract can be derived from what the UI actually reads.
+ *   with State/Spec/Refs detail, a Data Provenance section tracing each gap to
+ *   its source of truth, plus the same embedded design source so the data
+ *   contract can be derived from what the UI actually reads.
+ * - ticket-body-data.md: ticket body for the data-source ticket (written only
+ *   when an accepted backend-gap is at the capture or ingestion layer -- the data
+ *   the UI needs is not produced/captured at its source or not synced into the
+ *   platform DB today). Covers capturing and syncing that data; it BLOCKS the
+ *   unit's API/serving ticket.
  *
  * Design source delivery (--source-mode): "embed" (default) inlines the source
  * as fenced code blocks; "reference" instead lists each design-source file and
@@ -740,12 +746,47 @@ function renderUiTicketBody(
   return lines.join("\n");
 }
 
+/** True when a backend-gap finding's data_flow sits at the capture/ingestion layer. */
+function isCaptureIngestion(finding: JsonObject): boolean {
+  const dataFlow = finding["data_flow"] as JsonObject | null | undefined;
+  if (!dataFlow) return false;
+  const layer = String(dataFlow["gap_layer"]);
+  return layer === "capture" || layer === "ingestion";
+}
+
+/**
+ * Render the per-finding Data Provenance bullet for the API body: the gap layer,
+ * the source-of-truth origin, and whether the data is captured / ingested today,
+ * with a refs sub-bullet when the finding traced the pipeline. Bullets only.
+ */
+function provenanceLines(finding: JsonObject): string[] {
+  const dataFlow = finding["data_flow"] as JsonObject | null | undefined;
+  if (!dataFlow) return [];
+  const captured = dataFlow["captured_today"] === true ? "yes" : "no";
+  const ingested = dataFlow["ingested_today"] === true ? "yes" : "no";
+  const out = [
+    `- (${String(finding["id"])}) layer: ${String(dataFlow["gap_layer"])}; ` +
+      `origin: ${String(dataFlow["origin"])}; ` +
+      `captured today: ${captured}, ingested today: ${ingested}`,
+  ];
+  const refs = Array.isArray(dataFlow["refs"])
+    ? (dataFlow["refs"] as string[]).filter((r) => typeof r === "string" && r.length > 0)
+    : [];
+  if (refs.length > 0) {
+    out.push(`  - refs: ${refs.map((r) => `\`${r}\``).join(", ")}`);
+  }
+  return out;
+}
+
 /**
  * Render the API ticket body (ticket-body-api.md).
  *
- * Covers accepted backend-gap findings only. Includes State/Spec/Refs detail and
- * declined backend-gap findings when present, plus the same design source as
- * the UI body (embedded or attached per designSourceSection/sourceMode).
+ * Covers accepted backend-gap findings only. Includes State/Spec/Refs detail, a
+ * Data Provenance section tracing each gap to its source of truth, and declined
+ * backend-gap findings when present, plus the same design source as the UI body
+ * (embedded or attached per designSourceSection/sourceMode). When any accepted
+ * backend-gap is at the capture/ingestion layer, a note flags that a separate
+ * data-source ticket covers capturing/syncing the data and BLOCKS this ticket.
  */
 function renderApiTicketBody(
   doc: JsonObject,
@@ -781,6 +822,26 @@ function renderApiTicketBody(
   }
   lines.push("");
 
+  // Data Provenance: trace each accepted backend-gap to its source of truth so
+  // the reader knows whether the data merely needs an endpoint or also needs to
+  // be captured and synced upstream first.
+  const provenance = acceptedBackend.filter((f) => f["data_flow"]);
+  if (provenance.length > 0) {
+    lines.push("## Data Provenance");
+    lines.push("");
+    for (const finding of provenance) {
+      lines.push(...provenanceLines(finding));
+    }
+    lines.push("");
+    if (acceptedBackend.some(isCaptureIngestion)) {
+      lines.push(
+        "A separate data-source ticket covers capturing and syncing this data and " +
+          "BLOCKS this ticket.",
+      );
+      lines.push("");
+    }
+  }
+
   if (declinedBackend.length > 0) {
     lines.push("## Declined Backend Changes — DO NOT IMPLEMENT");
     lines.push("");
@@ -798,6 +859,91 @@ function renderApiTicketBody(
       `The UI prototype source that consumes this backend is ${sourceWhere}. Use it to ` +
       "derive the exact field names, shapes, and enum values the frontend reads, so the " +
       "data contract matches what the design renders.",
+      "",
+    );
+    lines.push(...designSourceSection);
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Render the data-source ticket body (ticket-body-data.md).
+ *
+ * Written only when the unit has accepted backend-gap findings whose data_flow
+ * sits at the capture or ingestion layer -- the data the UI needs is not produced
+ * at its source or not synced into the platform DB today. This ticket covers
+ * capturing and syncing that data; the unit's API/serving ticket is BLOCKED on it.
+ *
+ * Lists, per capture/ingestion finding: its decision summary, its `origin`
+ * (source of truth), what is missing (captured today no -> instrument the source;
+ * ingested today no -> add the sync/ingestion mapping), and the pipeline refs.
+ * Bullets only, never numbered lists. Carries the same design source section as
+ * the other bodies for parity when it is wired through.
+ */
+function renderDataTicketBody(
+  doc: JsonObject,
+  decisions: Record<string, JsonObject>,
+  captureIngestionFindings: JsonObject[],
+  designSourceSection: string[],
+  sourceMode: SourceMode,
+): string {
+  const unit = doc["unit"] as JsonObject;
+  const impl = unit["current_impl"] as JsonObject;
+  const lines: string[] = [
+    `# Capture and sync data for ${String(unit["name"])}`,
+    "",
+    "## State vs Spec",
+    "",
+  ];
+  const paths = Array.isArray(impl["paths"]) ? (impl["paths"] as string[]) : [];
+  const implDesc = paths.length > 0
+    ? paths.map((p) => `\`${p}\``).join(", ")
+    : "no current implementation";
+  lines.push(
+    `Unit type: ${String(unit["type"])}. Classification: ${String(unit["classification"])}. ` +
+    `Current implementation: ${implDesc}.`
+  );
+  lines.push("");
+
+  lines.push("## Data to capture and ingest");
+  lines.push("");
+  for (const finding of captureIngestionFindings) {
+    const dataFlow = (finding["data_flow"] as JsonObject | undefined) ?? {};
+    lines.push(`- (${String(finding["id"])}) ${criterionText(finding, decisions)}`);
+    lines.push(`  - Origin (source of truth): ${String(dataFlow["origin"])}`);
+    const missing: string[] = [];
+    if (dataFlow["captured_today"] !== true) {
+      missing.push("instrument the source so the raw data is captured");
+    }
+    if (dataFlow["ingested_today"] !== true) {
+      missing.push("add the sync/ingestion mapping that lands it in the platform DB");
+    }
+    if (missing.length > 0) {
+      lines.push(`  - Missing today: ${missing.join("; ")}`);
+    }
+    const refs = Array.isArray(dataFlow["refs"])
+      ? (dataFlow["refs"] as string[]).filter((r) => typeof r === "string" && r.length > 0)
+      : [];
+    if (refs.length > 0) {
+      lines.push(`  - Pipeline refs: ${refs.map((r) => `\`${r}\``).join(", ")}`);
+    }
+  }
+  lines.push("");
+
+  lines.push(
+    "This ticket BLOCKS the unit's API/serving ticket: the data must be captured " +
+    "and synced into the platform before an endpoint can serve it to the UI.",
+  );
+  lines.push("");
+
+  if (designSourceSection.length > 0) {
+    const sourceWhere = sourceMode === SourceMode.Reference
+      ? "attached to this document (see the Design Source section below)"
+      : "embedded below";
+    lines.push(
+      `The UI prototype source that needs this data is ${sourceWhere}. Use it to confirm ` +
+      "exactly which fields the design reads, so the captured/synced shape matches.",
       "",
     );
     lines.push(...designSourceSection);
@@ -895,6 +1041,14 @@ export function main(argv: string[]): number {
   const acceptedNonBackend = accepted.filter((f) => f["category"] !== "backend-gap");
   const acceptedBackend = accepted.filter((f) => f["category"] === "backend-gap");
   const declinedBackend = declined.filter((f) => f["category"] === "backend-gap");
+  // Accepted backend-gap findings whose data is not captured/synced today: these
+  // need a separate data-source ticket that BLOCKS the API/serving ticket.
+  const captureIngestionBackend = acceptedBackend.filter(
+    (f) =>
+      f["data_flow"] &&
+      ((f["data_flow"] as JsonObject)["gap_layer"] === "capture" ||
+        (f["data_flow"] as JsonObject)["gap_layer"] === "ingestion"),
+  );
 
   const sourceDir = join(packDir, "design-source");
   const shotsDir = join(packDir, "screenshots");
@@ -992,6 +1146,20 @@ export function main(argv: string[]): number {
       sourceMode,
     );
     writeFileSync(join(packDir, "ticket-body-api.md"), apiBody, "utf-8");
+  }
+
+  // Write ticket-body-data.md only when an accepted backend-gap is at the
+  // capture/ingestion layer (data not produced/synced today). This data-source
+  // ticket BLOCKS the API/serving ticket above.
+  if (captureIngestionBackend.length > 0) {
+    const dataBody = renderDataTicketBody(
+      doc as JsonObject,
+      decisions,
+      captureIngestionBackend,
+      designSourceSection,
+      sourceMode,
+    );
+    writeFileSync(join(packDir, "ticket-body-data.md"), dataBody, "utf-8");
   }
 
   const summary = {

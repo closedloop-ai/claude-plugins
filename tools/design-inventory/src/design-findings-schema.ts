@@ -40,6 +40,17 @@ export const FINDING_CATEGORIES = [
   "backend-gap",
   "token-drift",
 ] as const;
+/**
+ * Pipeline layers a backend-gap can sit at, deepest-missing first.
+ *   capture   - the raw data is not produced/captured at its source today.
+ *   ingestion - the data is produced but no sync/ingestion path lands it in the platform DB.
+ *   model     - the data lands somewhere but the storage/domain model does not hold it.
+ *   serving   - the data exists in the platform DB but no API/endpoint serves it to the UI.
+ *   unknown   - the provenance could not be traced.
+ * A capture- or ingestion-layer gap means nobody tickets where the data comes
+ * from; it becomes a separate data-source ticket that blocks the serving/API ticket.
+ */
+export const GAP_LAYERS = ["capture", "ingestion", "model", "serving", "unknown"] as const;
 export const INTENTS = ["likely-intentional", "likely-unintentional", "unclear"] as const;
 export const DECISION_STATES = ["pending", "accepted", "declined", "edited"] as const;
 export const REVIEW_STATES = ["accepted", "declined", "edited"] as const;
@@ -119,6 +130,42 @@ function checkReuse(reuse: unknown, label: string, errors: string[]): void {
   }
   if (resolution === "new-component" && !isNonEmptyString(reuse["proposed_name"])) {
     errors.push(`${label}.proposed_name required for resolution 'new-component'`);
+  }
+}
+
+/**
+ * Validate a finding's `data_flow` provenance block. On a `backend-gap` finding
+ * this block is REQUIRED (`required: true`): it traces where the UI's missing
+ * data is produced, captured, and synced today, so the planner can decide
+ * whether a separate data-source ticket is needed. On any other category the
+ * block is OPTIONAL, but when present it is still shape-checked so a stray
+ * `data_flow` never carries a malformed value downstream.
+ */
+function checkDataFlow(dataFlow: unknown, label: string, required: boolean, errors: string[]): void {
+  if (dataFlow === null || dataFlow === undefined) {
+    if (required) {
+      errors.push(`${label}.data_flow is required for category 'backend-gap'`);
+    }
+    return;
+  }
+  if (!isObject(dataFlow)) {
+    errors.push(`${label}.data_flow must be an object`);
+    return;
+  }
+  if (!oneOf(dataFlow["gap_layer"], GAP_LAYERS)) {
+    errors.push(`${label}.data_flow.gap_layer must be one of ${GAP_LAYERS.join(", ")}`);
+  }
+  if (!isNonEmptyString(dataFlow["origin"])) {
+    errors.push(`${label}.data_flow.origin must be a non-empty string`);
+  }
+  if (typeof dataFlow["captured_today"] !== "boolean") {
+    errors.push(`${label}.data_flow.captured_today must be a boolean`);
+  }
+  if (typeof dataFlow["ingested_today"] !== "boolean") {
+    errors.push(`${label}.data_flow.ingested_today must be a boolean`);
+  }
+  if (!isStringArray(dataFlow["refs"] ?? [])) {
+    errors.push(`${label}.data_flow.refs must be a list of strings when present`);
   }
 }
 
@@ -235,6 +282,9 @@ export function validateFindings(doc: unknown): string[] {
       checkRefsBlock(finding["spec"], `${label}.spec`, errors);
       checkScreenshot(finding["screenshot"], label, errors);
       checkReuse(finding["reuse"], `${label}.reuse`, errors);
+      // data_flow provenance is required on backend-gap findings, shape-checked
+      // (but optional) on every other category.
+      checkDataFlow(finding["data_flow"], label, finding["category"] === "backend-gap", errors);
       const decision = finding["decision"] ?? { state: "pending" };
       if (!isObject(decision) || !oneOf(decision["state"], DECISION_STATES)) {
         errors.push(`${label}.decision.state must be one of ${DECISION_STATES.join(", ")}`);

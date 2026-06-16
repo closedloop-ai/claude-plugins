@@ -76,6 +76,70 @@ export function validFindings(): JsonObject {
   };
 }
 
+/**
+ * A backend-gap finding carrying a valid `data_flow` provenance block. Every
+ * backend-gap finding in the fixtures MUST set `data_flow` (the schema requires
+ * it), so tests build them through this helper. `gapLayer` selects the branch:
+ * "capture"/"ingestion" gaps set captured/ingested false and drive a separate
+ * data-source ticket; "serving"/"model" gaps leave the data already captured and
+ * ingested so no data-source ticket is emitted.
+ */
+export function backendGapFinding(
+  id: string,
+  gapLayer: "capture" | "ingestion" | "model" | "serving" | "unknown",
+  overrides: Partial<JsonObject> = {},
+): JsonObject {
+  const upstreamMissing = gapLayer === "capture" || gapLayer === "ingestion";
+  return {
+    id,
+    title: `Backend gap ${id}`,
+    category: "backend-gap",
+    intent: "likely-intentional",
+    intent_rationale: "the UI reads data the backend does not serve today",
+    theme: null,
+    state: { summary: "No endpoint serves this data", refs: [] },
+    spec: { summary: "UI reads a per-session token-cost figure", refs: [] },
+    data_flow: {
+      gap_layer: gapLayer,
+      origin: "apps/desktop agent harness session telemetry",
+      // capture/ingestion gaps: the raw data is not produced/synced yet.
+      captured_today: !upstreamMissing,
+      ingested_today: !upstreamMissing,
+      refs: ["apps/desktop/src/server/operations/run-session.ts"],
+    },
+    decision: { state: "pending" },
+    summary: `Capture and serve data for ${id}`,
+    recommendation: {
+      action: "accept",
+      rationale: "the design depends on data the platform does not provide yet",
+    },
+    ...overrides,
+  };
+}
+
+/**
+ * A findings doc that carries BOTH a capture-layer backend-gap (captured_today
+ * false, drives a data-source ticket) and a serving-layer backend-gap
+ * (captured_today/ingested_today true, no data-source ticket) so downstream
+ * tests can exercise both provenance branches. The base `validFindings()`
+ * fixture deliberately has no backend-gap findings so the many tests asserting
+ * its exact two-finding shape stay green.
+ */
+export function validFindingsWithBackendGaps(): JsonObject {
+  const doc = validFindings();
+  (doc["unit"] as JsonObject)["id"] = "scr-cost-page";
+  (doc["unit"] as JsonObject)["name"] = "Cost Page";
+  const findings = doc["findings"] as JsonObject[];
+  // Re-id the existing visual/component findings to match the new unit slug.
+  findings[0]!["id"] = "CHG-cost-page-01";
+  findings[1]!["id"] = "CHG-cost-page-02";
+  // Capture-layer gap: the raw figure is not produced at the source yet.
+  findings.push(backendGapFinding("CHG-cost-page-03", "capture"));
+  // Serving-layer gap: the data is captured and ingested; only an endpoint is missing.
+  findings.push(backendGapFinding("CHG-cost-page-04", "serving"));
+  return doc;
+}
+
 export function validDecisions(): JsonObject {
   return {
     schema_version: 1,

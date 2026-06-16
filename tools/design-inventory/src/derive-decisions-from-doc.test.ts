@@ -440,6 +440,13 @@ describe("integration: id in backend gaps rollup only -> still declined", () => 
       state: { summary: "no endpoint", refs: [] },
       spec: { summary: "GET /sessions stream", refs: [] },
       reuse: null,
+      // backend-gap findings now require a data_flow provenance block.
+      data_flow: {
+        gap_layer: "serving",
+        origin: "platform DB",
+        captured_today: true,
+        ingested_today: true,
+      },
       decision: { state: "pending" },
       summary: "Backend ticket for sessions stream endpoint",
     });

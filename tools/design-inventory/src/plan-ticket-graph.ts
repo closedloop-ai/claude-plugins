@@ -8,11 +8,20 @@
  *     screen/region : "Implement <name> UI from approved design"
  *     component     : "Implement <name> component from approved design"
  *     flow          : "Implement <name> flow from approved design"
- * - One API ticket per unit only when it has accepted backend-gap findings.
+ * - One API ticket per unit only when it has accepted backend-gap findings. An
+ *   API ticket stops at the SERVING layer: it assumes the data already exists
+ *   upstream and only needs an endpoint.
+ * - One DATA ticket per unit, additionally, when any accepted backend-gap finding
+ *   has `data_flow.gap_layer` of "capture" or "ingestion" -- i.e. the data is not
+ *   produced/captured at its source or not synced into the platform DB today.
+ *   Nobody tickets where the data comes from otherwise, so the API ticket alone
+ *   would be wrong. The data ticket covers capturing and syncing that data.
  * - Shared net-new components build once in their PRIMARY unit's UI ticket;
  *   consumer units reference it via `uses`. The primary is the first unit in
  *   manifest order that needs the component (any unit type).
- * - blocks edges: API ticket BLOCKS its unit's UI ticket; primary UI ticket
+ * - blocks edges form the chain data -> api -> ui: a DATA ticket BLOCKS its
+ *   unit's API ticket (the data must be captured/synced before an endpoint can
+ *   serve it), an API ticket BLOCKS its unit's UI ticket, and a primary UI ticket
  *   BLOCKS every consumer UI ticket (never self).
  *
  * Usage:
@@ -43,6 +52,20 @@ function uiTicketTitle(unitName: string, unitType: string): string {
   if (unitType === "component") return `Implement ${unitName} component from approved design`;
   if (unitType === "flow") return `Implement ${unitName} flow from approved design`;
   return `Implement ${unitName} UI from approved design`;
+}
+
+/** Derive the data-source ticket title for a unit. */
+function dataTicketTitle(unitName: string): string {
+  return `Capture and sync data for ${unitName}`;
+}
+
+/** Gap layers that require a separate upstream data-source ticket. */
+const DATA_SOURCE_LAYERS = new Set(["capture", "ingestion"]);
+
+/** True when a backend-gap finding's data_flow sits at the capture/ingestion layer. */
+function needsDataTicket(finding: JsonObject): boolean {
+  const dataFlow = finding["data_flow"] as JsonObject | null | undefined;
+  return !!dataFlow && DATA_SOURCE_LAYERS.has(String(dataFlow["gap_layer"]));
 }
 
 function loadJson(path: string): unknown {
@@ -88,7 +111,15 @@ export interface ApiTicket {
   criteria: string[];
 }
 
-export type Ticket = UiTicket | ApiTicket;
+export interface DataTicket {
+  id: string;
+  kind: "data";
+  unit_id: string;
+  title: string;
+  criteria: string[];
+}
+
+export type Ticket = UiTicket | ApiTicket | DataTicket;
 
 export interface BlockEdge {
   from: string;
@@ -228,6 +259,7 @@ export function buildTicketGraph(
   for (const info of unitInfos) {
     const uiId = `ui:${info.unitId}`;
     const apiId = `api:${info.unitId}`;
+    const dataId = `data:${info.unitId}`;
 
     // UI ticket (all unit types)
     if (info.acceptedNonBackend.length > 0) {
@@ -274,6 +306,24 @@ export function buildTicketGraph(
       // API ticket blocks UI ticket
       if (uiTicketIdByUnit.has(info.unitId)) {
         addBlock(apiId, uiTicketIdByUnit.get(info.unitId)!, "api must land before ui implementation");
+      }
+
+      // Data-source ticket: emitted only when an accepted backend-gap finding is
+      // at the capture/ingestion layer (the data is not produced/synced today).
+      // It covers capturing and syncing that data and BLOCKS the API ticket.
+      const captureIngestion = info.acceptedBackend.filter(needsDataTicket);
+      if (captureIngestion.length > 0) {
+        const dataTicket: DataTicket = {
+          id: dataId,
+          kind: "data",
+          unit_id: info.unitId,
+          title: dataTicketTitle(info.unitName),
+          criteria: captureIngestion.map((f) => String(f["id"])),
+        };
+        tickets.push(dataTicket);
+
+        // Data ticket blocks the API ticket (data -> api -> ui).
+        addBlock(dataId, apiId, "data must be captured and synced before the api can serve it");
       }
     }
   }
@@ -421,9 +471,10 @@ export function main(argv: string[]): number {
 
   const uiCount = plan.tickets.filter((t) => t.kind === "ui").length;
   const apiCount = plan.tickets.filter((t) => t.kind === "api").length;
+  const dataCount = plan.tickets.filter((t) => t.kind === "data").length;
   const blockCount = plan.blocks.length;
   console.log(
-    `${outPath} -- ui=${uiCount} api=${apiCount} blocks=${blockCount}`,
+    `${outPath} -- ui=${uiCount} api=${apiCount} data=${dataCount} blocks=${blockCount}`,
   );
   return 0;
 }

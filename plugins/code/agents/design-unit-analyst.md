@@ -51,7 +51,7 @@ The context pack folds in the orchestrator's current-impl hints and the componen
    - `visual` - layout, spacing, typography, color, copy, component swaps.
    - `behavioral` - scrolling, hover, drag/drop (incl. pointer-drag scrubbing), transitions, keyboard/focus, loading/empty states. The manifest's `interaction_signals` for your files is your checklist: every signal must be resolved against current behavior; a signal present in design but absent in current code is a behavioral change.
    - `component-divergence` - the design restyles or reimplements a shared component. Grep `WEBUI_REPO` for the shared component before concluding divergence; phrase the summary as a question ("did you mean to change X, or use the existing component?").
-   - `backend-gap` - UI implies data/endpoints/state the backend does not provide; name what needs a ticket and a stub.
+   - `backend-gap` - UI implies data/endpoints/state the backend does not provide; name what needs a ticket and a stub. Before classifying, TRACE the data to its SOURCE OF TRUTH by GREPPING the repo (never assume a specific app directory; stay org-agnostic): check the storage/domain model first (is there a table/field that holds this?), then the ingestion/sync path (does anything land this data in the platform DB?), then the origin/capture layer (where would the raw data be produced - client telemetry, an agent harness, webhooks, an external API?). Classify the deepest MISSING layer with `data_flow.gap_layer` (`capture | ingestion | model | serving | unknown`): if the raw data is not produced at its source today it is `capture`; if it is produced but nothing syncs it in, `ingestion`; if it lands but no table/field holds it, `model`; if it is stored but no endpoint serves it, `serving`. A capture or ingestion gap becomes a SEPARATE data-source ticket that blocks the API ticket, so name the `origin` concretely (the component that produces the data), not a vague "the backend". `data_flow` is REQUIRED on every backend-gap finding (see the output schema); set `captured_today` / `ingested_today` from what you actually found in the repo, and list the capture/ingestion/model pipeline files you grepped in `data_flow.refs`.
    - `token-drift` - values that do not resolve to the live design system (from `VISUAL_SPEC` when provided; see step 8).
 6. **Component reuse mapping.** For every UI element the design ADDS to this unit (and every element of a `new` unit), resolve against the context pack's component catalog (and the full `component-index.json` only to gap-fill) to exactly one of: reuse (exact component + import path + story) or new-component (proposed name + closest existing). Elements the unit already renders today are unchanged baseline - do not call them out. Record per-finding `reuse` blocks and the unit-level `component_reuse` table.
 7. **Themes.** Group findings that stand or fall together under a shared theme (e.g. "adopt shared artifact-table layout"). A reviewer decides themes first; only attach a finding to a theme when declining the theme would genuinely moot the finding. Standalone findings keep `theme: null`. Theme ids are **global** across the entire review document and ticket plan: two units must never share one. Use the format `thm-<unit-slug>-<topic>` (example for the sessions page: `thm-sessions-page-artifact-table`). The renderers hard-fail with exit 1 on cross-unit duplicates, so a colliding id will break the pipeline for all units.
@@ -86,6 +86,21 @@ Write `OUTPUT_PATH` as JSON with this shape (the example below plus `SCHEMA_VALI
     "recommendation": {"action": "accept", "rationale": "designer note in spec overlay calls for the shared artifact-table layout"},
     "decision": {"state": "pending"},
     "summary": "one-line decision text"
+  }, {
+    "id": "CHG-sessions-page-02", "title": "...", "category": "backend-gap",
+    "intent": "likely-intentional", "intent_rationale": "...", "theme": null,
+    "state": {"summary": "no endpoint serves per-session token cost", "refs": ["apps/api/...:12"]},
+    "spec": {"summary": "row shows token cost the UI reads", "refs": ["ui_kits/app/SessionsPage.jsx:900"]},
+    "data_flow": {
+      "gap_layer": "capture",
+      "origin": "<concrete source-of-truth component you grepped, e.g. the agent harness that runs the session>",
+      "captured_today": false,
+      "ingested_today": false,
+      "refs": ["<capture/ingestion/model pipeline paths you grepped>"]
+    },
+    "recommendation": {"action": "accept", "rationale": "..."},
+    "decision": {"state": "pending"},
+    "summary": "one-line decision text"
   }],
   "component_reuse": [{"element": "...", "resolution": "reuse", "component": "...", "import_path": "...", "story": "..."}],
   "visual_spec": null
@@ -93,6 +108,8 @@ Write `OUTPUT_PATH` as JSON with this shape (the example below plus `SCHEMA_VALI
 ```
 
 Finding ids are `CHG-<unit-slug>-<NN>` (zero-padded, document order). All `decision.state` values are `pending` - you never decide. For `existing-unchanged` and `deprecated-do-not-implement` units, emit the unit block with an empty findings list (deprecated units additionally get `spec_overlay_notes` or `duplication_note` stating they must not be implemented).
+
+`data_flow` is REQUIRED on every `backend-gap` finding and ignored on every other category. Its `gap_layer` is one of `capture | ingestion | model | serving | unknown` (the deepest missing layer per workflow step 5); `origin` is the concrete source-of-truth component you grepped (never a vague "the backend"); `captured_today` and `ingested_today` are booleans you set from what you actually found in the repo; `refs` (optional) lists the capture/ingestion/model pipeline paths you grepped. A `capture`- or `ingestion`-layer gap will become a SEPARATE data-source ticket that blocks the API ticket, so the `origin` must name the producing component concretely.
 
 ## Validate Before Returning (hard rule)
 

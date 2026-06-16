@@ -21,6 +21,7 @@ var FINDING_CATEGORIES = [
   "backend-gap",
   "token-drift"
 ];
+var GAP_LAYERS = ["capture", "ingestion", "model", "serving", "unknown"];
 var INTENTS = ["likely-intentional", "likely-unintentional", "unclear"];
 var DECISION_STATES = ["pending", "accepted", "declined", "edited"];
 var REVIEW_STATES = ["accepted", "declined", "edited"];
@@ -89,6 +90,33 @@ function checkReuse(reuse, label, errors) {
   }
   if (resolution === "new-component" && !isNonEmptyString(reuse["proposed_name"])) {
     errors.push(`${label}.proposed_name required for resolution 'new-component'`);
+  }
+}
+function checkDataFlow(dataFlow, label, required, errors) {
+  if (dataFlow === null || dataFlow === void 0) {
+    if (required) {
+      errors.push(`${label}.data_flow is required for category 'backend-gap'`);
+    }
+    return;
+  }
+  if (!isObject(dataFlow)) {
+    errors.push(`${label}.data_flow must be an object`);
+    return;
+  }
+  if (!oneOf(dataFlow["gap_layer"], GAP_LAYERS)) {
+    errors.push(`${label}.data_flow.gap_layer must be one of ${GAP_LAYERS.join(", ")}`);
+  }
+  if (!isNonEmptyString(dataFlow["origin"])) {
+    errors.push(`${label}.data_flow.origin must be a non-empty string`);
+  }
+  if (typeof dataFlow["captured_today"] !== "boolean") {
+    errors.push(`${label}.data_flow.captured_today must be a boolean`);
+  }
+  if (typeof dataFlow["ingested_today"] !== "boolean") {
+    errors.push(`${label}.data_flow.ingested_today must be a boolean`);
+  }
+  if (!isStringArray(dataFlow["refs"] ?? [])) {
+    errors.push(`${label}.data_flow.refs must be a list of strings when present`);
   }
 }
 function validateFindings(doc) {
@@ -200,6 +228,7 @@ function validateFindings(doc) {
       checkRefsBlock(finding["spec"], `${label}.spec`, errors);
       checkScreenshot(finding["screenshot"], label, errors);
       checkReuse(finding["reuse"], `${label}.reuse`, errors);
+      checkDataFlow(finding["data_flow"], label, finding["category"] === "backend-gap", errors);
       const decision = finding["decision"] ?? { state: "pending" };
       if (!isObject(decision) || !oneOf(decision["state"], DECISION_STATES)) {
         errors.push(`${label}.decision.state must be one of ${DECISION_STATES.join(", ")}`);
@@ -350,6 +379,14 @@ function uiTicketTitle(unitName, unitType) {
   if (unitType === "flow") return `Implement ${unitName} flow from approved design`;
   return `Implement ${unitName} UI from approved design`;
 }
+function dataTicketTitle(unitName) {
+  return `Capture and sync data for ${unitName}`;
+}
+var DATA_SOURCE_LAYERS = /* @__PURE__ */ new Set(["capture", "ingestion"]);
+function needsDataTicket(finding) {
+  const dataFlow = finding["data_flow"];
+  return !!dataFlow && DATA_SOURCE_LAYERS.has(String(dataFlow["gap_layer"]));
+}
 function loadJson(path) {
   return JSON.parse(readFileSync(path, "utf-8"));
 }
@@ -456,6 +493,7 @@ function buildTicketGraph(findingsDocs, decisions, manifestUnitIds) {
   for (const info of unitInfos) {
     const uiId = `ui:${info.unitId}`;
     const apiId = `api:${info.unitId}`;
+    const dataId = `data:${info.unitId}`;
     if (info.acceptedNonBackend.length > 0) {
       const criteria = info.acceptedNonBackend.map((f) => String(f["id"]));
       const builds = [];
@@ -491,6 +529,18 @@ function buildTicketGraph(findingsDocs, decisions, manifestUnitIds) {
       tickets.push(apiTicket);
       if (uiTicketIdByUnit.has(info.unitId)) {
         addBlock(apiId, uiTicketIdByUnit.get(info.unitId), "api must land before ui implementation");
+      }
+      const captureIngestion = info.acceptedBackend.filter(needsDataTicket);
+      if (captureIngestion.length > 0) {
+        const dataTicket = {
+          id: dataId,
+          kind: "data",
+          unit_id: info.unitId,
+          title: dataTicketTitle(info.unitName),
+          criteria: captureIngestion.map((f) => String(f["id"]))
+        };
+        tickets.push(dataTicket);
+        addBlock(dataId, apiId, "data must be captured and synced before the api can serve it");
       }
     }
   }
@@ -601,9 +651,10 @@ function main(argv) {
   writeFileSync(outPath, JSON.stringify(plan, null, 2), "utf-8");
   const uiCount = plan.tickets.filter((t) => t.kind === "ui").length;
   const apiCount = plan.tickets.filter((t) => t.kind === "api").length;
+  const dataCount = plan.tickets.filter((t) => t.kind === "data").length;
   const blockCount = plan.blocks.length;
   console.log(
-    `${outPath} -- ui=${uiCount} api=${apiCount} blocks=${blockCount}`
+    `${outPath} -- ui=${uiCount} api=${apiCount} data=${dataCount} blocks=${blockCount}`
   );
   return 0;
 }

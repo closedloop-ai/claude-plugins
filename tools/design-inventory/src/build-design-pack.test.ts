@@ -231,6 +231,12 @@ describe("build-design-pack", () => {
       category: "backend-gap",
       intent: "likely-intentional",
       intent_rationale: "backend needed",
+      data_flow: {
+        gap_layer: "serving",
+        origin: "platform DB",
+        captured_today: true,
+        ingested_today: true,
+      },
       theme: null,
       state: { summary: "No endpoint", refs: [] },
       spec: { summary: "POST /api/sessions", refs: [] },
@@ -268,6 +274,12 @@ describe("build-design-pack", () => {
       category: "backend-gap",
       intent: "likely-intentional",
       intent_rationale: "backend needed",
+      data_flow: {
+        gap_layer: "serving",
+        origin: "platform DB",
+        captured_today: true,
+        ingested_today: true,
+      },
       theme: null,
       state: { summary: "No endpoint exists", refs: [] },
       spec: { summary: "POST /api/sessions", refs: [] },
@@ -302,6 +314,175 @@ describe("build-design-pack", () => {
     expect(existsSync(join(pack, "ticket-body-api.md"))).toBe(false);
   });
 
+  // -------------------------------------------------------------------------
+  // Data provenance: data_flow on backend-gap findings drives a data-source ticket
+  // -------------------------------------------------------------------------
+
+  /** A backend-gap finding with a data_flow at the given gap layer. */
+  function backendGap(
+    id: string,
+    gapLayer: "capture" | "ingestion" | "model" | "serving" | "unknown",
+  ): JsonObject {
+    const upstreamMissing = gapLayer === "capture" || gapLayer === "ingestion";
+    return {
+      id,
+      title: `Backend gap ${id}`,
+      category: "backend-gap",
+      intent: "likely-intentional",
+      intent_rationale: "backend needed",
+      theme: null,
+      state: { summary: "No endpoint", refs: [] },
+      spec: { summary: "UI reads per-session cost", refs: [] },
+      data_flow: {
+        gap_layer: gapLayer,
+        origin: "apps/desktop agent harness session telemetry",
+        captured_today: !upstreamMissing,
+        ingested_today: !upstreamMissing,
+        refs: ["apps/desktop/src/server/operations/run-session.ts"],
+      },
+      decision: { state: "accepted" },
+      summary: `Capture and serve data for ${id}`,
+    };
+  }
+
+  function runPackWithBackendGap(
+    tmpPath: string,
+    gap: JsonObject,
+  ): { rc: number; pack: string } {
+    const doc = validFindings();
+    (doc["findings"] as JsonObject[]).push(gap);
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    const extractDir = makeExtractDir(tmpPath);
+    const outDir = join(tmpPath, "packs");
+    const rc = main([
+      "--findings", findingsPath,
+      "--decisions", decisionsPath,
+      "--extract-dir", extractDir,
+      "--out-dir", outDir,
+    ]);
+    return { rc, pack: join(outDir, "scr-sessions-page") };
+  }
+
+  it("API body contains a Data Provenance section tracing the gap to its origin", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-prov-"));
+    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGap("CHG-sessions-page-03", "capture"));
+    expect(rc).toBe(0);
+    const apiBody = readFileSync(join(pack, "ticket-body-api.md"), "utf-8");
+    expect(apiBody).toContain("## Data Provenance");
+    expect(apiBody).toContain(
+      "(CHG-sessions-page-03) layer: capture; origin: apps/desktop agent harness session telemetry; captured today: no, ingested today: no",
+    );
+    expect(apiBody).toContain("refs: `apps/desktop/src/server/operations/run-session.ts`");
+    // Capture/ingestion gap flags the separate data-source ticket that blocks this one.
+    expect(apiBody).toContain(
+      "A separate data-source ticket covers capturing and syncing this data and BLOCKS this ticket.",
+    );
+  });
+
+  it("API body Data Provenance reports a serving gap as already captured/ingested and adds no BLOCKS note", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-provserv-"));
+    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGap("CHG-sessions-page-03", "serving"));
+    expect(rc).toBe(0);
+    const apiBody = readFileSync(join(pack, "ticket-body-api.md"), "utf-8");
+    expect(apiBody).toContain("## Data Provenance");
+    expect(apiBody).toContain("layer: serving; ");
+    expect(apiBody).toContain("captured today: yes, ingested today: yes");
+    // No upstream gap -> no data-source ticket note.
+    expect(apiBody).not.toContain("A separate data-source ticket");
+  });
+
+  it("ticket-body-data.md is written for a capture-layer gap and names origin and BLOCKS note", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-data-"));
+    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGap("CHG-sessions-page-03", "capture"));
+    expect(rc).toBe(0);
+    expect(existsSync(join(pack, "ticket-body-data.md"))).toBe(true);
+    const dataBody = readFileSync(join(pack, "ticket-body-data.md"), "utf-8");
+    expect(dataBody).toContain("# Capture and sync data for Sessions Page");
+    expect(dataBody).toContain("## State vs Spec");
+    expect(dataBody).toContain("## Data to capture and ingest");
+    expect(dataBody).toContain("(CHG-sessions-page-03)");
+    // The data ticket names the source of truth (origin).
+    expect(dataBody).toContain("Origin (source of truth): apps/desktop agent harness session telemetry");
+    // captured_today no -> instrument the source; ingested_today no -> add the sync mapping.
+    expect(dataBody).toContain("instrument the source so the raw data is captured");
+    expect(dataBody).toContain("add the sync/ingestion mapping that lands it in the platform DB");
+    expect(dataBody).toContain("Pipeline refs: `apps/desktop/src/server/operations/run-session.ts`");
+    // The closing note: this ticket BLOCKS the API/serving ticket.
+    expect(dataBody).toContain("This ticket BLOCKS the unit's API/serving ticket");
+    // Bullets only, never numbered lists.
+    const dataSection = dataBody.split("## Data to capture and ingest")[1]!.split("\n## ")[0]!;
+    expect(/^\d+\. /m.test(dataSection)).toBe(false);
+    expect(/^- /m.test(dataSection)).toBe(true);
+  });
+
+  it("ticket-body-data.md is written for an ingestion-layer gap", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-dataing-"));
+    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGap("CHG-sessions-page-03", "ingestion"));
+    expect(rc).toBe(0);
+    expect(existsSync(join(pack, "ticket-body-data.md"))).toBe(true);
+  });
+
+  it("ticket-body-data.md is ABSENT for a serving-only gap (api body still written)", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-noserv-"));
+    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGap("CHG-sessions-page-03", "serving"));
+    expect(rc).toBe(0);
+    // The API/serving ticket is still produced...
+    expect(existsSync(join(pack, "ticket-body-api.md"))).toBe(true);
+    // ...but there is no separate data-source ticket.
+    expect(existsSync(join(pack, "ticket-body-data.md"))).toBe(false);
+  });
+
+  it("ticket-body-data.md is ABSENT for a model-only gap", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-nomodel-"));
+    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGap("CHG-sessions-page-03", "model"));
+    expect(rc).toBe(0);
+    expect(existsSync(join(pack, "ticket-body-data.md"))).toBe(false);
+  });
+
+  it("replay: accepted-then-declined capture gap removes a stale ticket-body-data.md", () => {
+    const tmpPath = mkdtempSync(join(tmpdir(), "bdp-datareplay-"));
+    const outDir = join(tmpPath, "packs");
+    const pack = join(outDir, "scr-sessions-page");
+    const doc = validFindings();
+    (doc["findings"] as JsonObject[]).push(backendGap("CHG-sessions-page-03", "capture"));
+    const findingsPath = join(tmpPath, "unit.json");
+    writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
+    const decisionsPath = join(tmpPath, "decisions.json");
+    const extractDir = makeExtractDir(tmpPath);
+
+    // Run 1: capture gap accepted -> data body written.
+    writeFileSync(decisionsPath, JSON.stringify(validDecisions()), "utf-8");
+    expect(
+      main([
+        "--findings", findingsPath,
+        "--decisions", decisionsPath,
+        "--extract-dir", extractDir,
+        "--out-dir", outDir,
+      ]),
+    ).toBe(0);
+    expect(existsSync(join(pack, "ticket-body-data.md"))).toBe(true);
+
+    // Run 2: decline the capture gap -> data body must be gone (pack dir is rebuilt).
+    const decisions2 = validDecisions();
+    (decisions2["decisions"] as JsonObject)["CHG-sessions-page-03"] = { state: "declined" };
+    writeFileSync(decisionsPath, JSON.stringify(decisions2), "utf-8");
+    expect(
+      main([
+        "--findings", findingsPath,
+        "--decisions", decisionsPath,
+        "--extract-dir", extractDir,
+        "--out-dir", outDir,
+      ]),
+    ).toBe(0);
+    expect(existsSync(join(pack, "ticket-body-data.md"))).toBe(false);
+    // The API body is also gone (no accepted backend-gap), UI body remains.
+    expect(existsSync(join(pack, "ticket-body-api.md"))).toBe(false);
+    expect(existsSync(join(pack, "ticket-body-ui.md"))).toBe(true);
+  });
+
   it("neither body contains .closedloop-ai/design-packs path", () => {
     const tmpPath = mkdtempSync(join(tmpdir(), "bdp-"));
     const { rc, pack } = runPack(tmpPath, validDecisions());
@@ -322,6 +503,12 @@ describe("build-design-pack", () => {
       category: "backend-gap",
       intent: "likely-intentional",
       intent_rationale: "backend needed",
+      data_flow: {
+        gap_layer: "serving",
+        origin: "platform DB",
+        captured_today: true,
+        ingested_today: true,
+      },
       theme: null,
       state: { summary: "No endpoint", refs: [] },
       spec: { summary: "POST /api/sessions", refs: [] },
@@ -727,6 +914,12 @@ describe("build-design-pack", () => {
       category: "backend-gap",
       intent: "likely-intentional",
       intent_rationale: "backend needed",
+      data_flow: {
+        gap_layer: "serving",
+        origin: "platform DB",
+        captured_today: true,
+        ingested_today: true,
+      },
       theme: null,
       state: { summary: "No endpoint", refs: [] },
       spec: { summary: "POST /api/sessions", refs: [] },
@@ -843,6 +1036,12 @@ describe("build-design-pack", () => {
       category: "backend-gap",
       intent: "likely-intentional",
       intent_rationale: "backend needed",
+      data_flow: {
+        gap_layer: "serving",
+        origin: "platform DB",
+        captured_today: true,
+        ingested_today: true,
+      },
       theme: null,
       state: { summary: "No endpoint exists", refs: ["apps/api/routes/sessions.ts:12"] },
       spec: { summary: "POST /api/sessions returns rows", refs: ["ui_kits/app/SessionsPage.jsx:900"] },
@@ -1006,6 +1205,12 @@ describe("build-design-pack", () => {
       category: "backend-gap",
       intent: "likely-intentional",
       intent_rationale: "backend needed",
+      data_flow: {
+        gap_layer: "serving",
+        origin: "platform DB",
+        captured_today: true,
+        ingested_today: true,
+      },
       theme: null,
       state: { summary: "No endpoint", refs: [] },
       spec: { summary: "POST /api/sessions", refs: [] },
@@ -1176,6 +1381,12 @@ describe("build-design-pack", () => {
         category: "backend-gap",
         intent: "likely-intentional",
         intent_rationale: "backend needed",
+        data_flow: {
+          gap_layer: "serving",
+          origin: "platform DB",
+          captured_today: true,
+          ingested_today: true,
+        },
         theme: null,
         state: { summary: "No endpoint", refs: [] },
         spec: { summary: "POST /api/sessions", refs: [] },
