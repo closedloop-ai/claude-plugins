@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildTicketGraph, main } from "./plan-ticket-graph.js";
 import type { JsonObject } from "./design-findings-schema.js";
-import { validFindings, validDecisions } from "./test-fixtures.js";
+import { validFindings, validDecisions, backendGapFinding } from "./test-fixtures.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -134,27 +134,6 @@ function makeFinding(
   return finding;
 }
 
-/**
- * A backend-gap finding carrying a data_flow at the given gap layer. capture and
- * ingestion layers drive a separate data-source ticket; serving and model do not.
- */
-function makeBackendGap(
-  id: string,
-  gapLayer: "capture" | "ingestion" | "model" | "serving" | "unknown",
-  decisionState: "accepted" | "declined" | "edited" = "accepted",
-): JsonObject {
-  const upstreamMissing = gapLayer === "capture" || gapLayer === "ingestion";
-  const finding = makeFinding(id, "backend-gap", decisionState);
-  finding["data_flow"] = {
-    gap_layer: gapLayer,
-    origin: "apps/desktop agent harness session telemetry",
-    captured_today: !upstreamMissing,
-    ingested_today: !upstreamMissing,
-    refs: ["apps/desktop/src/server/operations/run-session.ts"],
-  };
-  return finding;
-}
-
 function allAcceptedDecisions(): Record<string, JsonObject> {
   return {};
 }
@@ -260,7 +239,7 @@ describe("buildTicketGraph", () => {
 
   it("backend-gap findings go to API ticket, not UI ticket criteria", () => {
     const visual = makeFinding("CHG-scr-dash-01", "visual");
-    const backend = makeFinding("CHG-scr-dash-02", "backend-gap");
+    const backend = backendGapFinding("CHG-scr-dash-02", "serving", { decision: { state: "accepted" } });
     const doc = screenDoc("scr-dash", "Dashboard", [visual, backend]);
     const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["scr-dash"]);
 
@@ -283,7 +262,7 @@ describe("buildTicketGraph", () => {
   });
 
   it("UI ticket is absent when all accepted findings are backend-gap", () => {
-    const backend = makeFinding("CHG-scr-api-only-01", "backend-gap");
+    const backend = backendGapFinding("CHG-scr-api-only-01", "serving", { decision: { state: "accepted" } });
     const doc = screenDoc("scr-api-only", "ApiOnly", [backend]);
     const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["scr-api-only"]);
 
@@ -295,7 +274,7 @@ describe("buildTicketGraph", () => {
 
   it("API ticket RELATES_TO UI ticket when both exist", () => {
     const visual = makeFinding("CHG-scr-b-01", "visual");
-    const backend = makeBackendGap("CHG-scr-b-02", "serving");
+    const backend = backendGapFinding("CHG-scr-b-02", "serving", { decision: { state: "accepted" } });
     const doc = screenDoc("scr-b", "B", [visual, backend]);
     const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["scr-b"]);
 
@@ -309,7 +288,7 @@ describe("buildTicketGraph", () => {
 
   it("emits a data ticket for a capture-layer backend gap with data->api->ui RELATES_TO edges", () => {
     const visual = makeFinding("CHG-scr-cap-01", "visual");
-    const backend = makeBackendGap("CHG-scr-cap-02", "capture");
+    const backend = backendGapFinding("CHG-scr-cap-02", "capture", { decision: { state: "accepted" } });
     const doc = screenDoc("scr-cap", "Capture Screen", [visual, backend]);
     const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["scr-cap"]);
 
@@ -336,7 +315,7 @@ describe("buildTicketGraph", () => {
   });
 
   it("emits a data ticket for an ingestion-layer backend gap", () => {
-    const backend = makeBackendGap("CHG-scr-ing-01", "ingestion");
+    const backend = backendGapFinding("CHG-scr-ing-01", "ingestion", { decision: { state: "accepted" } });
     const doc = screenDoc("scr-ing", "Ingest Screen", [backend]);
     const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["scr-ing"]);
 
@@ -351,7 +330,7 @@ describe("buildTicketGraph", () => {
   });
 
   it("does NOT emit a data ticket when the only backend gap is serving-layer", () => {
-    const backend = makeBackendGap("CHG-scr-srv-01", "serving");
+    const backend = backendGapFinding("CHG-scr-srv-01", "serving", { decision: { state: "accepted" } });
     const doc = screenDoc("scr-srv", "Serving Screen", [backend]);
     const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["scr-srv"]);
 
@@ -362,7 +341,7 @@ describe("buildTicketGraph", () => {
   });
 
   it("does NOT emit a data ticket when the only backend gap is model-layer", () => {
-    const backend = makeBackendGap("CHG-scr-mdl-01", "model");
+    const backend = backendGapFinding("CHG-scr-mdl-01", "model", { decision: { state: "accepted" } });
     const doc = screenDoc("scr-mdl", "Model Screen", [backend]);
     const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["scr-mdl"]);
 
@@ -370,8 +349,8 @@ describe("buildTicketGraph", () => {
   });
 
   it("emits a data ticket once when capture and serving gaps coexist in one unit", () => {
-    const capture = makeBackendGap("CHG-scr-mix-01", "capture");
-    const serving = makeBackendGap("CHG-scr-mix-02", "serving");
+    const capture = backendGapFinding("CHG-scr-mix-01", "capture", { decision: { state: "accepted" } });
+    const serving = backendGapFinding("CHG-scr-mix-02", "serving", { decision: { state: "accepted" } });
     const doc = screenDoc("scr-mix", "Mixed Screen", [capture, serving]);
     const plan = buildTicketGraph([doc], allAcceptedDecisions(), ["scr-mix"]);
 

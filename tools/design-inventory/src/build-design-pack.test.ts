@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { main, validateManifestPath } from "./build-design-pack.js";
 import { applyInlineImages } from "./apply-inline-images.js";
-import { validDecisions, validFindings } from "./test-fixtures.js";
+import { validDecisions, validFindings, backendGapFinding } from "./test-fixtures.js";
 import type { JsonObject } from "./design-findings-schema.js";
 
 function makeExtractDir(tmpPath: string): string {
@@ -318,33 +318,6 @@ describe("build-design-pack", () => {
   // Data provenance: data_flow on backend-gap findings drives a data-source ticket
   // -------------------------------------------------------------------------
 
-  /** A backend-gap finding with a data_flow at the given gap layer. */
-  function backendGap(
-    id: string,
-    gapLayer: "capture" | "ingestion" | "model" | "serving" | "unknown",
-  ): JsonObject {
-    const upstreamMissing = gapLayer === "capture" || gapLayer === "ingestion";
-    return {
-      id,
-      title: `Backend gap ${id}`,
-      category: "backend-gap",
-      intent: "likely-intentional",
-      intent_rationale: "backend needed",
-      theme: null,
-      state: { summary: "No endpoint", refs: [] },
-      spec: { summary: "UI reads per-session cost", refs: [] },
-      data_flow: {
-        gap_layer: gapLayer,
-        origin: "apps/desktop agent harness session telemetry",
-        captured_today: !upstreamMissing,
-        ingested_today: !upstreamMissing,
-        refs: ["apps/desktop/src/server/operations/run-session.ts"],
-      },
-      decision: { state: "accepted" },
-      summary: `Capture and serve data for ${id}`,
-    };
-  }
-
   function runPackWithBackendGap(
     tmpPath: string,
     gap: JsonObject,
@@ -368,7 +341,7 @@ describe("build-design-pack", () => {
 
   it("API body contains a Data Provenance section tracing the gap to its origin", () => {
     const tmpPath = mkdtempSync(join(tmpdir(), "bdp-prov-"));
-    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGap("CHG-sessions-page-03", "capture"));
+    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGapFinding("CHG-sessions-page-03", "capture", { decision: { state: "accepted" } }));
     expect(rc).toBe(0);
     const apiBody = readFileSync(join(pack, "ticket-body-api.md"), "utf-8");
     expect(apiBody).toContain("## Data Provenance");
@@ -387,7 +360,7 @@ describe("build-design-pack", () => {
 
   it("API body Data Provenance reports a serving gap as already captured/ingested and adds no BLOCKS note", () => {
     const tmpPath = mkdtempSync(join(tmpdir(), "bdp-provserv-"));
-    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGap("CHG-sessions-page-03", "serving"));
+    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGapFinding("CHG-sessions-page-03", "serving", { decision: { state: "accepted" } }));
     expect(rc).toBe(0);
     const apiBody = readFileSync(join(pack, "ticket-body-api.md"), "utf-8");
     expect(apiBody).toContain("## Data Provenance");
@@ -399,7 +372,7 @@ describe("build-design-pack", () => {
 
   it("ticket-body-data.md is written for a capture-layer gap and names origin and a RELATES note", () => {
     const tmpPath = mkdtempSync(join(tmpdir(), "bdp-data-"));
-    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGap("CHG-sessions-page-03", "capture"));
+    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGapFinding("CHG-sessions-page-03", "capture", { decision: { state: "accepted" } }));
     expect(rc).toBe(0);
     expect(existsSync(join(pack, "ticket-body-data.md"))).toBe(true);
     const dataBody = readFileSync(join(pack, "ticket-body-data.md"), "utf-8");
@@ -428,14 +401,14 @@ describe("build-design-pack", () => {
 
   it("ticket-body-data.md is written for an ingestion-layer gap", () => {
     const tmpPath = mkdtempSync(join(tmpdir(), "bdp-dataing-"));
-    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGap("CHG-sessions-page-03", "ingestion"));
+    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGapFinding("CHG-sessions-page-03", "ingestion", { decision: { state: "accepted" } }));
     expect(rc).toBe(0);
     expect(existsSync(join(pack, "ticket-body-data.md"))).toBe(true);
   });
 
   it("ticket-body-data.md is ABSENT for a serving-only gap (api body still written)", () => {
     const tmpPath = mkdtempSync(join(tmpdir(), "bdp-noserv-"));
-    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGap("CHG-sessions-page-03", "serving"));
+    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGapFinding("CHG-sessions-page-03", "serving", { decision: { state: "accepted" } }));
     expect(rc).toBe(0);
     // The API/serving ticket is still produced...
     expect(existsSync(join(pack, "ticket-body-api.md"))).toBe(true);
@@ -445,7 +418,7 @@ describe("build-design-pack", () => {
 
   it("ticket-body-data.md is ABSENT for a model-only gap", () => {
     const tmpPath = mkdtempSync(join(tmpdir(), "bdp-nomodel-"));
-    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGap("CHG-sessions-page-03", "model"));
+    const { rc, pack } = runPackWithBackendGap(tmpPath, backendGapFinding("CHG-sessions-page-03", "model", { decision: { state: "accepted" } }));
     expect(rc).toBe(0);
     expect(existsSync(join(pack, "ticket-body-data.md"))).toBe(false);
   });
@@ -455,7 +428,7 @@ describe("build-design-pack", () => {
     const outDir = join(tmpPath, "packs");
     const pack = join(outDir, "scr-sessions-page");
     const doc = validFindings();
-    (doc["findings"] as JsonObject[]).push(backendGap("CHG-sessions-page-03", "capture"));
+    (doc["findings"] as JsonObject[]).push(backendGapFinding("CHG-sessions-page-03", "capture", { decision: { state: "accepted" } }));
     const findingsPath = join(tmpPath, "unit.json");
     writeFileSync(findingsPath, JSON.stringify(doc), "utf-8");
     const decisionsPath = join(tmpPath, "decisions.json");
