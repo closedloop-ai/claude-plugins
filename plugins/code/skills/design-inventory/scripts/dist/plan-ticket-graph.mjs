@@ -481,12 +481,23 @@ function buildTicketGraph(findingsDocs, decisions, manifestUnitIds) {
   }
   const tickets = [];
   const blocks = [];
+  const relates = [];
   const addedBlocks = /* @__PURE__ */ new Set();
+  const addedRelates = /* @__PURE__ */ new Set();
   function addBlock(from, to, reason) {
+    if (from === to) return;
     const key = `${from}|${to}`;
     if (!addedBlocks.has(key)) {
       addedBlocks.add(key);
       blocks.push({ from, to, reason });
+    }
+  }
+  function addRelate(from, to, reason) {
+    if (from === to) return;
+    const key = `${from}|${to}`;
+    if (!addedRelates.has(key)) {
+      addedRelates.add(key);
+      relates.push({ from, to, reason });
     }
   }
   const uiTicketIdByUnit = /* @__PURE__ */ new Map();
@@ -528,7 +539,11 @@ function buildTicketGraph(findingsDocs, decisions, manifestUnitIds) {
       };
       tickets.push(apiTicket);
       if (uiTicketIdByUnit.has(info.unitId)) {
-        addBlock(apiId, uiTicketIdByUnit.get(info.unitId), "api must land before ui implementation");
+        addRelate(
+          apiId,
+          uiTicketIdByUnit.get(info.unitId),
+          "api and ui build in parallel against the contract; ui renders empty states until the api lands"
+        );
       }
       const captureIngestion = info.acceptedBackend.filter(needsDataTicket);
       if (captureIngestion.length > 0) {
@@ -540,7 +555,11 @@ function buildTicketGraph(findingsDocs, decisions, manifestUnitIds) {
           criteria: captureIngestion.map((f) => String(f["id"]))
         };
         tickets.push(dataTicket);
-        addBlock(dataId, apiId, "data must be captured and synced before the api can serve it");
+        addRelate(
+          dataId,
+          apiId,
+          "data and api build in parallel; the api serves empty states until the data is captured and synced"
+        );
       }
     }
   }
@@ -564,7 +583,7 @@ function buildTicketGraph(findingsDocs, decisions, manifestUnitIds) {
       }
     }
   }
-  return { schema_version: 1, tickets, blocks };
+  return { schema_version: 1, tickets, blocks, relates };
 }
 function main(argv) {
   const { values, positionals } = parseArgs({
@@ -653,8 +672,9 @@ function main(argv) {
   const apiCount = plan.tickets.filter((t) => t.kind === "api").length;
   const dataCount = plan.tickets.filter((t) => t.kind === "data").length;
   const blockCount = plan.blocks.length;
+  const relateCount = plan.relates.length;
   console.log(
-    `${outPath} -- ui=${uiCount} api=${apiCount} data=${dataCount} blocks=${blockCount}`
+    `${outPath} -- ui=${uiCount} api=${apiCount} data=${dataCount} blocks=${blockCount} relates=${relateCount}`
   );
   return 0;
 }

@@ -376,10 +376,13 @@ describe("build-design-pack", () => {
       "(CHG-sessions-page-03) layer: capture; origin: apps/desktop agent harness session telemetry; captured today: no, ingested today: no",
     );
     expect(apiBody).toContain("refs: `apps/desktop/src/server/operations/run-session.ts`");
-    // Capture/ingestion gap flags the separate data-source ticket that blocks this one.
+    // Capture/ingestion gap flags the separate, RELATED data-source ticket; the
+    // layers build in parallel and the view renders empty states until data lands.
     expect(apiBody).toContain(
-      "A separate data-source ticket covers capturing and syncing this data and BLOCKS this ticket.",
+      "A separate data-source ticket covers capturing and syncing this data; it is a related upstream ticket (the layers build in parallel and this view renders empty states until the data lands).",
     );
+    // It must NOT make a false BLOCKS claim about the data/api relationship.
+    expect(apiBody).not.toContain("BLOCKS this ticket");
   });
 
   it("API body Data Provenance reports a serving gap as already captured/ingested and adds no BLOCKS note", () => {
@@ -394,7 +397,7 @@ describe("build-design-pack", () => {
     expect(apiBody).not.toContain("A separate data-source ticket");
   });
 
-  it("ticket-body-data.md is written for a capture-layer gap and names origin and BLOCKS note", () => {
+  it("ticket-body-data.md is written for a capture-layer gap and names origin and a RELATES note", () => {
     const tmpPath = mkdtempSync(join(tmpdir(), "bdp-data-"));
     const { rc, pack } = runPackWithBackendGap(tmpPath, backendGap("CHG-sessions-page-03", "capture"));
     expect(rc).toBe(0);
@@ -410,8 +413,13 @@ describe("build-design-pack", () => {
     expect(dataBody).toContain("instrument the source so the raw data is captured");
     expect(dataBody).toContain("add the sync/ingestion mapping that lands it in the platform DB");
     expect(dataBody).toContain("Pipeline refs: `apps/desktop/src/server/operations/run-session.ts`");
-    // The closing note: this ticket BLOCKS the API/serving ticket.
-    expect(dataBody).toContain("This ticket BLOCKS the unit's API/serving ticket");
+    // The closing note: this ticket RELATES to the API/serving ticket; the layers
+    // build in parallel and the UI renders empty states until the data lands.
+    expect(dataBody).toContain(
+      "This ticket relates to the unit's API/serving ticket; the layers build in parallel and the UI renders empty states until this data lands.",
+    );
+    // It must NOT make a false BLOCKS claim about the data/api relationship.
+    expect(dataBody).not.toContain("BLOCKS the unit's API/serving ticket");
     // Bullets only, never numbered lists.
     const dataSection = dataBody.split("## Data to capture and ingest")[1]!.split("\n## ")[0]!;
     expect(/^\d+\. /m.test(dataSection)).toBe(false);

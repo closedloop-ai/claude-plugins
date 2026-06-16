@@ -840,7 +840,7 @@ function renderApiTicketBody(doc, decisions, acceptedBackend, declinedBackend, d
     lines.push("");
     if (acceptedBackend.some(isCaptureIngestion)) {
       lines.push(
-        "A separate data-source ticket covers capturing and syncing this data and BLOCKS this ticket."
+        "A separate data-source ticket covers capturing and syncing this data; it is a related upstream ticket (the layers build in parallel and this view renders empty states until the data lands)."
       );
       lines.push("");
     }
@@ -901,7 +901,7 @@ function renderDataTicketBody(doc, decisions, captureIngestionFindings, designSo
   }
   lines.push("");
   lines.push(
-    "This ticket BLOCKS the unit's API/serving ticket: the data must be captured and synced into the platform before an endpoint can serve it to the UI."
+    "This ticket relates to the unit's API/serving ticket; the layers build in parallel and the UI renders empty states until this data lands."
   );
   lines.push("");
   if (designSourceSection.length > 0) {

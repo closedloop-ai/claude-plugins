@@ -19,10 +19,17 @@
  * - Shared net-new components build once in their PRIMARY unit's UI ticket;
  *   consumer units reference it via `uses`. The primary is the first unit in
  *   manifest order that needs the component (any unit type).
- * - blocks edges form the chain data -> api -> ui: a DATA ticket BLOCKS its
- *   unit's API ticket (the data must be captured/synced before an endpoint can
- *   serve it), an API ticket BLOCKS its unit's UI ticket, and a primary UI ticket
- *   BLOCKS every consumer UI ticket (never self).
+ * - Edge policy: the pipeline layers (data capture/ingestion -> api/serving -> ui)
+ *   are PARALLELIZABLE, not hard-sequenced. The api and ui can be built against the
+ *   contract and render empty / no-data states until the upstream data lands, and
+ *   the data model often lives inside the serving ticket, so a hard "data BLOCKS
+ *   api" edge over-constrains the adjacency and is directionally ambiguous. So the
+ *   pipeline-adjacency edges (data -> api and api -> ui) are RELATES_TO edges,
+ *   emitted in the `relates` array. BLOCKS is reserved ONLY for a genuine
+ *   build-time prerequisite: a net-new shared component built in its PRIMARY unit's
+ *   UI ticket literally cannot be imported until it exists, so the primary UI
+ *   ticket BLOCKS every consumer UI ticket (never self); those are the `blocks`
+ *   array.
  *
  * Usage:
  *     node plan-ticket-graph.mjs --findings <dir-or-files...> \
@@ -121,7 +128,7 @@ export interface DataTicket {
 
 export type Ticket = UiTicket | ApiTicket | DataTicket;
 
-export interface BlockEdge {
+export interface Edge {
   from: string;
   to: string;
   reason: string;
@@ -130,7 +137,10 @@ export interface BlockEdge {
 export interface TicketPlan {
   schema_version: 1;
   tickets: Ticket[];
-  blocks: BlockEdge[];
+  /** BLOCKS edges: genuine build-time prerequisites (shared-component primary -> consumer UI). */
+  blocks: Edge[];
+  /** RELATES_TO edges: parallelizable pipeline adjacencies (data -> api, api -> ui). */
+  relates: Edge[];
 }
 
 export function buildTicketGraph(
@@ -242,10 +252,14 @@ export function buildTicketGraph(
   }
 
   const tickets: Ticket[] = [];
-  const blocks: BlockEdge[] = [];
+  const blocks: Edge[] = [];
+  const relates: Edge[] = [];
   const addedBlocks = new Set<string>();
+  const addedRelates = new Set<string>();
 
+  // BLOCKS edge: a genuine build-time prerequisite. Deduped, never self.
   function addBlock(from: string, to: string, reason: string): void {
+    if (from === to) return;
     const key = `${from}|${to}`;
     if (!addedBlocks.has(key)) {
       addedBlocks.add(key);
@@ -253,7 +267,17 @@ export function buildTicketGraph(
     }
   }
 
-  // Track UI ticket id per unit for block edge construction
+  // RELATES_TO edge: a parallelizable pipeline adjacency. Deduped, never self.
+  function addRelate(from: string, to: string, reason: string): void {
+    if (from === to) return;
+    const key = `${from}|${to}`;
+    if (!addedRelates.has(key)) {
+      addedRelates.add(key);
+      relates.push({ from, to, reason });
+    }
+  }
+
+  // Track UI ticket id per unit for edge construction
   const uiTicketIdByUnit = new Map<string, string>();
 
   for (const info of unitInfos) {
@@ -303,14 +327,19 @@ export function buildTicketGraph(
       };
       tickets.push(apiTicket);
 
-      // API ticket blocks UI ticket
+      // API ticket RELATES_TO the UI ticket: the layers build in parallel and the
+      // UI renders empty states until the api lands; this is not a hard block.
       if (uiTicketIdByUnit.has(info.unitId)) {
-        addBlock(apiId, uiTicketIdByUnit.get(info.unitId)!, "api must land before ui implementation");
+        addRelate(
+          apiId,
+          uiTicketIdByUnit.get(info.unitId)!,
+          "api and ui build in parallel against the contract; ui renders empty states until the api lands",
+        );
       }
 
       // Data-source ticket: emitted only when an accepted backend-gap finding is
       // at the capture/ingestion layer (the data is not produced/synced today).
-      // It covers capturing and syncing that data and BLOCKS the API ticket.
+      // It covers capturing and syncing that data and RELATES_TO the API ticket.
       const captureIngestion = info.acceptedBackend.filter(needsDataTicket);
       if (captureIngestion.length > 0) {
         const dataTicket: DataTicket = {
@@ -322,8 +351,14 @@ export function buildTicketGraph(
         };
         tickets.push(dataTicket);
 
-        // Data ticket blocks the API ticket (data -> api -> ui).
-        addBlock(dataId, apiId, "data must be captured and synced before the api can serve it");
+        // Data ticket RELATES_TO the API ticket: the layers build in parallel and
+        // the api serves empty / no-data responses until the data lands; the data
+        // model often lives inside the serving ticket, so this is not a hard block.
+        addRelate(
+          dataId,
+          apiId,
+          "data and api build in parallel; the api serves empty states until the data is captured and synced",
+        );
       }
     }
   }
@@ -353,7 +388,7 @@ export function buildTicketGraph(
     }
   }
 
-  return { schema_version: 1, tickets, blocks };
+  return { schema_version: 1, tickets, blocks, relates };
 }
 
 export function main(argv: string[]): number {
@@ -473,8 +508,9 @@ export function main(argv: string[]): number {
   const apiCount = plan.tickets.filter((t) => t.kind === "api").length;
   const dataCount = plan.tickets.filter((t) => t.kind === "data").length;
   const blockCount = plan.blocks.length;
+  const relateCount = plan.relates.length;
   console.log(
-    `${outPath} -- ui=${uiCount} api=${apiCount} data=${dataCount} blocks=${blockCount}`,
+    `${outPath} -- ui=${uiCount} api=${apiCount} data=${dataCount} blocks=${blockCount} relates=${relateCount}`,
   );
   return 0;
 }

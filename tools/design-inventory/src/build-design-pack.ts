@@ -31,8 +31,9 @@
  * - ticket-body-data.md: ticket body for the data-source ticket (written only
  *   when an accepted backend-gap is at the capture or ingestion layer -- the data
  *   the UI needs is not produced/captured at its source or not synced into the
- *   platform DB today). Covers capturing and syncing that data; it BLOCKS the
- *   unit's API/serving ticket.
+ *   platform DB today). Covers capturing and syncing that data; it is a RELATED
+ *   upstream ticket to the unit's API/serving ticket (the layers build in parallel
+ *   and the UI renders empty states until this data lands), not a hard blocker.
  *
  * Design source delivery (--source-mode): "embed" (default) inlines the source
  * as fenced code blocks; "reference" instead lists each design-source file and
@@ -785,8 +786,9 @@ function provenanceLines(finding: JsonObject): string[] {
  * Data Provenance section tracing each gap to its source of truth, and declined
  * backend-gap findings when present, plus the same design source as the UI body
  * (embedded or attached per designSourceSection/sourceMode). When any accepted
- * backend-gap is at the capture/ingestion layer, a note flags that a separate
- * data-source ticket covers capturing/syncing the data and BLOCKS this ticket.
+ * backend-gap is at the capture/ingestion layer, a note flags that a separate,
+ * RELATED data-source ticket covers capturing/syncing the data; the layers build
+ * in parallel and this view renders empty states until that data lands.
  */
 function renderApiTicketBody(
   doc: JsonObject,
@@ -835,8 +837,9 @@ function renderApiTicketBody(
     lines.push("");
     if (acceptedBackend.some(isCaptureIngestion)) {
       lines.push(
-        "A separate data-source ticket covers capturing and syncing this data and " +
-          "BLOCKS this ticket.",
+        "A separate data-source ticket covers capturing and syncing this data; it is a " +
+          "related upstream ticket (the layers build in parallel and this view renders " +
+          "empty states until the data lands).",
       );
       lines.push("");
     }
@@ -873,7 +876,9 @@ function renderApiTicketBody(
  * Written only when the unit has accepted backend-gap findings whose data_flow
  * sits at the capture or ingestion layer -- the data the UI needs is not produced
  * at its source or not synced into the platform DB today. This ticket covers
- * capturing and syncing that data; the unit's API/serving ticket is BLOCKED on it.
+ * capturing and syncing that data; it RELATES to the unit's API/serving ticket
+ * (the layers build in parallel and the UI renders empty states until this data
+ * lands), rather than hard-blocking it.
  *
  * Lists, per capture/ingestion finding: its decision summary, its `origin`
  * (source of truth), what is missing (captured today no -> instrument the source;
@@ -932,8 +937,8 @@ function renderDataTicketBody(
   lines.push("");
 
   lines.push(
-    "This ticket BLOCKS the unit's API/serving ticket: the data must be captured " +
-    "and synced into the platform before an endpoint can serve it to the UI.",
+    "This ticket relates to the unit's API/serving ticket; the layers build in " +
+    "parallel and the UI renders empty states until this data lands.",
   );
   lines.push("");
 
@@ -1042,7 +1047,8 @@ export function main(argv: string[]): number {
   const acceptedBackend = accepted.filter((f) => f["category"] === "backend-gap");
   const declinedBackend = declined.filter((f) => f["category"] === "backend-gap");
   // Accepted backend-gap findings whose data is not captured/synced today: these
-  // need a separate data-source ticket that BLOCKS the API/serving ticket.
+  // need a separate data-source ticket that RELATES_TO the API/serving ticket
+  // (the layers build in parallel; not a hard block).
   const captureIngestionBackend = acceptedBackend.filter(
     (f) =>
       f["data_flow"] &&
@@ -1150,7 +1156,7 @@ export function main(argv: string[]): number {
 
   // Write ticket-body-data.md only when an accepted backend-gap is at the
   // capture/ingestion layer (data not produced/synced today). This data-source
-  // ticket BLOCKS the API/serving ticket above.
+  // ticket RELATES_TO the API/serving ticket above (the layers build in parallel).
   if (captureIngestionBackend.length > 0) {
     const dataBody = renderDataTicketBody(
       doc as JsonObject,
