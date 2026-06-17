@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.14.6
+
+#### Changed
+- Hardened the `decision-table` skill with evidence artifacts and role-aware adversarial verification. The artifact format now records receipts for high-yield claims such as changed exports/subpaths, CLI flags, filesystem writes, trusted/persisted fields, replay/idempotency, and integration-boundary coverage; `Covered` claims require named fail-closed tests while `not applicable` claims require source evidence such as grep, export, call-site, schema, or query inventories. The workflow now defines coordinator-run adversarial lanes for abuse/filesystem/input, published contract compatibility, input parsing, state/replay/idempotency, and test realism, with a subagent fallback that records sequential self-passes or blocks alignment when independent review was required but unavailable.
+
 ### code v1.14.4
 
 #### Changed

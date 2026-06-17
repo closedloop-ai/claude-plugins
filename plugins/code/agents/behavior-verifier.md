@@ -45,8 +45,9 @@ Mirrors run-loop.sh's union form, but live so it captures unstaged and staged ch
 
 - Artifact path is `$DECISION_TABLE_PATH` (already written; do not regenerate Current Code or Intended Change sections).
 - Changed-file set from Step 2 scopes which source files to read.
-- Skill must execute SKILL.md step 17 only: read final code against Intended Change rows and append Verification Findings and Final Alignment Status to the artifact. Verification Findings is the human/audit channel — free-form bullets per the artifact format.
-- Skill must NOT execute SKILL.md step 18 (fixing drift). Read-and-report only. All code/test fixes are routed by orchestrator Phase 5.5 after this agent returns MISALIGNED.
+- Skill must run verification-only behavior: read final code against Intended Change rows, evaluate required tests/evidence, run review-prevention checks, append Verification Findings and Final Alignment Status to the artifact, and update `Adversarial Review` when applicable. Verification Findings is the human/audit channel — free-form bullets per the artifact format.
+- This agent is a subagent and cannot spawn additional subagents. If adversarial lane review applies, run only assigned lanes or sequential self-passes and record that they were not independent. If independent adversarial review was required, record the blocker instead of claiming `Aligned`.
+- Skill must NOT fix drift, edit code, edit tests, or rewrite frozen Current Code / Intended Change sections. Read-and-report only. All code/test fixes are routed by orchestrator Phase 5.5 after this agent returns MISALIGNED.
 - Treat Current Code and Intended Change as frozen (do not rewrite).
 
 ## Step 4 — Parse and return structured verdict

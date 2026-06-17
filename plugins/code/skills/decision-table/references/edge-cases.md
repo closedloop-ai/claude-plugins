@@ -1,8 +1,14 @@
 # Behavioral Edge-Case Expansion
 
-For each intended row, run this expansion pass. Every category must be represented by rows or an explicit non-applicability note before marking `Final Alignment Status: Aligned`.
+For each intended row, run this expansion pass. Every category must be represented by rows or an explicit non-applicability note with source-backed evidence before marking `Final Alignment Status: Aligned`.
 
 Where a category lists test invariants, the test must prove the specific binding/fallback/diagnostic the row claims, not just trigger a generic rejection.
+
+Disposition standards:
+
+- `Covered` or `already covered` requires a named test plus the wrong-input or negative case that test fails closed on.
+- `Not applicable` requires source-backed evidence, such as grep output, export/package inventory, call-site inventory, schema/query inventory, or exact code references proving the surface is absent or out of scope.
+- Coverage for a CLI, route handler, package export, worker/job, replay path, ingest pipeline, attribution pipeline, or public API requires a test through that real boundary. A pure helper test only covers helper-local invariants unless paired with a real-boundary test proving production wiring.
 
 ## Structured-result contracts
 
@@ -25,6 +31,20 @@ When behavior depends on a literal string or key outside the immediate helper, i
 Include rows for the exact configured literal, absent or disabled literal, wrong but similar literal, legacy/old literal when compatibility is required, and unrelated internal labels that must not be accepted as the external contract. State the source of truth for each literal: plan or PRD text, repo constant, existing API contract, rollout configuration, documented client behavior, or user-provided deployment fact.
 
 **Tests:** require a positive exact-key case and at least one wrong-key or same-looking-key mutation. Mocks must fail closed: do not return enabled, valid, found, or accepted for arbitrary keys. For feature flags, enable only the expected key; for query/header/event/storage/cache/command/plugin identifiers, assert the exact key or name and its semantic role.
+
+## Published contract compatibility
+
+When the change touches a package export, package subpath, CLI command or flag, public route, shared type, output field, artifact schema, registry/marketplace metadata, persisted artifact, or documented integration contract, include rows for current consumers, old typed consumers, old serialized artifacts, legacy subpaths or aliases, missing newly required fields, unknown newly produced fields, and compatibility shims or explicit break decisions.
+
+Record evidence from package/export metadata, call-site or import greps, docs or registry metadata, and legacy artifact read paths. Do not assert "no consumers" or "not published" without evidence.
+
+**Tests:** require a current-shape positive case and at least one old/legacy/missing-field case when compatibility is required by repo guardrails or existing contracts. If a compatibility shim is intentionally absent, record the product or guardrail source that permits the break.
+
+## CLI and flag parsing robustness
+
+When behavior depends on a command-line flag, option, environment-style argument, or slash-command parameter, include rows for absent flag, valueless flag, explicit empty value, `0`, invalid number/string, repeated flag, unknown flag, negative value where applicable, `--flag=value`, `--flag value`, and positional-argument ambiguity. State which parser owns validation, which layer emits diagnostics, and whether defaults are applied before or after validation.
+
+**Tests:** require coverage through the real command boundary for valid input, valueless input, `0` or explicit empty input when semantically distinct, and at least one invalid value. Helper parser tests can supplement but cannot replace the boundary test when the CLI or command behavior is the external contract.
 
 ## Library-managed lifecycle re-entry
 
@@ -105,6 +125,14 @@ State which durable fields make the item eligible or ineligible for recovery, wh
 ## Shared durable resources
 
 When deleting, rotating, revoking, or clearing persisted keys, credentials, locks, cache entries, files, profiles, identities, or other durable resources, include rows for: no remaining references, another saved/profile reference, active runtime reference, stale reference, and unknown lookup failure. State whether the resource is reference-counted, ownership-scoped, shared, or safe to delete unconditionally.
+
+## Filesystem read/write safety
+
+When a flow reads from or writes to a user-provided, plan-provided, derived, downloaded, unpacked, or persisted path, include rows for raw input, normalized path, canonical/resolved path, parent traversal, symlink target, existing file, existing directory, missing parent, permissions failure, clobber/overwrite behavior, partial write, cleanup after write failure, unbounded or unexpectedly large reads, and race conditions between validation and use.
+
+State whether writes are atomic, whether existing files may be overwritten, whether symlinks are followed or rejected, which root or ownership boundary is enforced, and how canonical values are persisted or reported. For output paths, include explicit rows for `--out` or equivalent destinations when present.
+
+**Tests:** require a safe positive path, a blocked traversal or out-of-root path, and at least one symlink/clobber/bounded-read mutation when the platform and test harness can model it. If a mutation is impossible to test, record the source-backed reason in `Evidence Artifacts`.
 
 ## Profile or config cloning
 

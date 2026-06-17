@@ -2,9 +2,9 @@
 
 Run this pass before marking `Final Alignment Status: Aligned`. For every touched externally visible surface (route, handler, service, command, adapter, UI action, persisted-state update, shared helper), ask whether a code reviewer could still find any of the items below.
 
-For every item: fix it, mark it already covered by a named row/test, mark not applicable with reason, or carry it into `Not aligned` with a concrete blocker. Do not mark `Aligned` while any item is merely assumed covered.
+For every item: fix it, mark it already covered by a named row/test, mark not applicable with source-backed evidence, or carry it into `Not aligned` with a concrete blocker. Do not mark `Aligned` while any item is merely assumed covered.
 
-Coverage-claim rule: any `covered`, `not applicable`, or `already covered` disposition in this pass must cite a specific test name and the wrong-input or negative case that test fails closed on. A coverage claim backed only by a happy-path assertion, or by no test at all (including for security findings), is treated as `Not aligned`, not as covered.
+Coverage and evidence disposition rule: any `covered` or `already covered` disposition in this pass must cite a specific test name and the wrong-input or negative case that test fails closed on. A coverage claim backed only by a happy-path assertion, a pure helper test for an integration boundary, or no test at all (including for security findings), is treated as `Not aligned`, not as covered. Any `not applicable` disposition must cite source-backed evidence such as grep output, export/package inventory, call-site inventory, schema/query inventory, or code references proving the surface is absent or out of scope.
 
 ## Items
 
@@ -36,7 +36,9 @@ Coverage-claim rule: any `covered`, `not applicable`, or `already covered` dispo
 26. **Distributed lifecycle gap** where register/create, approval/authorization, normal command, revoke/delete, offline/reconnect reconciliation, repeated action/idempotency, or stale UI/cache behavior lacks its own row and required test.
 27. **Derivation reads the incoming patch instead of merged state** where an upsert or partial update triggers a derived field, reducer, stamped value, or validation that consumes only the incoming patch rather than the post-merge result (existing state union patch), so a single-field or partial update that omits an identity or state field the derivation depends on produces a stale or wrong derived value.
 28. **Gate-versus-filter predicate divergence** where the same eligibility, completion, or terminal predicate is enforced at one site (a gate) but re-derived independently at another (a list filter, a terminal or disposition check, a batch or unscoped routing path, or an early short-circuit), and the two derivations can disagree because they do not share a helper.
-29. **Coverage claim without a fail-closed test** where a `covered`, `not applicable`, or `already covered` disposition cites no test, or cites only a happy-path assertion, instead of a named test that fails closed on the wrong-input or negative case (including security findings).
+29. **Coverage claim without a fail-closed test** where a `covered` or `already covered` disposition cites no test, or cites only a happy-path assertion, instead of a named test that fails closed on the wrong-input or negative case (including security findings).
+30. **Integration-boundary coverage backed only by helper tests** where a CLI, route handler, package export, worker/job, replay path, ingest pipeline, attribution pipeline, or public API is claimed covered by a pure helper test that never exercises production wiring through the real boundary.
+31. **Non-applicability claim without source evidence** where a `not applicable` disposition says a surface has no consumers, no exported contract, no filesystem path, no legacy records, no compatibility path, or no untrusted input without grep output, export/package inventory, call-site inventory, schema/query inventory, or exact code references proving the claim.
 
 ## Contract-Heavy Review Surface
 
@@ -62,6 +64,8 @@ For contract-heavy work, also explicitly review:
 - payload fields whose omitted, `undefined`, `null`, empty, and explicit values are semantically distinct at the next boundary
 - exact external contract literals, including feature flag keys, rollout names, query parameters, cache segments, headers, storage keys, event names, command names, plugin identifiers, URL schemes, reason strings, and status values, and whether similarly named internal labels are intentionally distinct or shared through a constant
 - test mocks for those literals that must fail closed when the implementation uses the wrong key, name, identifier, or semantic role
+- evidence artifacts for high-yield negative claims, especially no consumers, no exported surface, no legacy reads, no path writes, no untrusted input, no replay path, and no compatibility requirement
+- test-boundary realism for coverage claims: externally visible behavior should be exercised through the real CLI, route, package export, worker/job, replay, ingest, attribution, or public API boundary when that boundary is the thing being claimed covered
 - destructive cleanup that deletes a shared durable resource still referenced by another profile, active runtime identity, fallback identity, retry path, or recovery path
 - path/identity/policy checks comparing raw spelling instead of normalized or canonical equivalents where equivalence matters
 - validation checks that run on raw input while a side effect, command, state transition, policy decision, boundary payload, or user-facing output consumes a trimmed, parsed, normalized, canonicalized, defaulted, or coerced value
