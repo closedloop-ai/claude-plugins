@@ -61,6 +61,19 @@ Or install interactively from within Claude Code:
 claude /plugin marketplace install closedloop
 ```
 
+### Codex example
+
+This PR adds Codex metadata for the `code-review` plugin as a first
+representative cross-harness install path:
+
+```bash
+codex plugin marketplace add https://github.com/closedloop-ai/claude-plugins
+```
+
+Then install **ClosedLoop Code Review** from the Codex Plugins UI. The same
+`.codex-plugin/plugin.json` and `.agents/plugins/marketplace.json` pattern can
+be repeated for the other ClosedLoop plugins.
+
 Then start using the plugins:
 
 ```bash
@@ -89,6 +102,20 @@ git config core.hooksPath .githooks
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, workflow, and code style guidelines.
+
+## Evals and production telemetry
+
+The `evals/code-review/` directory contains a small human-review eval set for
+review finding quality, finding verification, and inline PR comment drafting.
+The cases are harness-neutral so the same plugin behavior can be checked in
+Claude Code, Codex, or another agent workspace before release.
+
+If you publish plugins through Telvine, keep runtime telemetry metadata-only:
+`skill.invocation.start`, `skill.invocation.end`, and `skill.invocation.error`
+for skill behavior, plus `plugin.component.invoked` and
+`plugin.component.error` for commands, agents, tools, or other non-skill
+components. Do not emit prompts, repository file contents, connector payloads,
+tool arguments, GitHub tokens, inline comment bodies, or model outputs.
 
 ## Disclaimer
 Our claude code plugins are a low-key engineering preview of the agents that run the larger ClosedLoop platform. These agents should be used for testing in trusted environments.
