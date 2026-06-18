@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.34.1
+
+#### Fixed
+- GitHub-mode code review (`/code-review:shallow --github <pr>`) no longer exits before producing any review artifacts on the fast path. On small PRs the orchestrator routes to a single fast-path reviewer; it previously launched that reviewer as a background task and then ended its turn to wait for it, but under headless `claude -p` there is no asynchronous subagent-completion notification, so the run terminated (`terminal_reason: "completed"`) before the collect, validate, verify, finalize, and output stages executed, leaving the PR with an empty fallback summary and no `.closedloop-ai/code-review-*` artifacts. The `spawn-reviewers` skill now spawns and collects the single fast-path reviewer synchronously and documents the headless-mode constraint for both the fast path and the standard reviewer fleet, so the orchestrator never ends its turn while a reviewer is still running.
+
 ### code v1.14.7
 
 #### Changed
