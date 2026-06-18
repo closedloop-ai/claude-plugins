@@ -352,7 +352,7 @@ graph tools when GRAPH_PROJECT is non-empty. Do NOT use Bash.
 
 **Write-denied fallback:** If an agent's Write tool is denied (restrictive project permissions), the agent outputs findings in `<findings_json>` tags in its response with `DONE findings=N file=WRITE_DENIED`. When collecting, if a response contains `WRITE_DENIED`, extract the JSON from `<findings_json>` tags and write it to `<CR_DIR>/agent_{AGENT_ID}.json` yourself.
 
-**Collect all agents (MANDATORY):** Call `TaskOutput` (block: true) for every spawned agent. You MUST collect ALL agents before the walker proceeds past `stage_20`. Do NOT read disk files or start validation until every `TaskOutput` call has returned.
+**Collect all agents (MANDATORY):** Call `TaskOutput` (block: true) for every spawned agent. You MUST collect ALL agents before the walker proceeds past `stage_20`. Do NOT read disk files or start validation until every `TaskOutput` call has returned. In headless GitHub mode there is no asynchronous completion notification, so ending your turn to "wait" for a backgrounded agent terminates the run before stages 21 through 30 (see the "Headless mode warning" in the Fast Path section); the blocking `TaskOutput` calls are what keep the turn alive.
 
 Call all `TaskOutput` calls in a **single message** (parallel) so they resolve together. Check each response:
 1. `DONE findings=N file=...` (not WRITE_DENIED) — output file is on disk, nothing to do.
@@ -380,7 +380,7 @@ The fast-path spawns a single agent that performs all review passes in one run. 
 **Fast-Path Agent settings:**
 - `subagent_type`: `"code-review:code-review-worker-graph"` (the fast-path agent runs a BHB cross-file pass, so it gets the graph-aware worker; pass the resolved `GRAPH_PROJECT` into its prompt)
 - `model`: from `spawn.json.route -> models.fast_path_reviewer` (NOT hardcoded)
-- `run_in_background`: `true`
+- `run_in_background`: `false` (spawn the single fast-path agent SYNCHRONOUSLY; backgrounding one agent buys no parallelism and is fatal in headless mode, see "Fast-Path Spawn + Collection" below)
 - `AGENT_ID`: `"fast"`
 - `<output_file>`: `{CR_DIR}/agent_fast.json`
 - `<patches_file>`: `{CR_DIR}/patches_all.txt`
@@ -484,7 +484,9 @@ Standard severity/priority rules apply.
 If `domain_critics` is empty, remove the `{DOMAIN_CRITIC_PASS}` placeholder entirely.
 
 **Fast-Path Spawn + Collection:**
-- Spawn exactly one background task (`AGENT_ID: "fast"`).
+- Spawn exactly ONE agent (`AGENT_ID: "fast"`) and collect it SYNCHRONOUSLY (MANDATORY). Either spawn the Task with `run_in_background: false` (omitted is fine), in which case the call blocks and returns the `DONE`/findings status directly, or, if you do background it, your VERY NEXT action MUST be a blocking `TaskOutput` for `AGENT_ID: "fast"`. Do NOT emit a final summary, mark a todo complete, or end your turn until the fast-path agent has returned and the remaining stages (`stage_21_collect_findings` through `stage_30_footer`) have run. Backgrounding one agent provides no parallelism and, in headless mode, lets the run exit before those stages execute (see the headless warning below).
 - `DONE ... file=WRITE_DENIED` is a success path, not a failure. Extract `<findings_json>` from `TaskOutput` and write it to `<CR_DIR>/agent_fast.json`. Retry only when the task fails to return `DONE`, times out/crashes, or returns malformed findings with no usable output file.
 - On failure (not WRITE_DENIED): retry once with `model: "haiku"`, same `AGENT_ID: "fast"`, same output file `<CR_DIR>/agent_fast.json`. Delete any existing `agent_fast.json` before retrying. Do NOT create `agent_fast_retry.json`.
 - If retry also fails: warn and continue with zero fast-path findings.
+
+**Headless mode warning (applies to BOTH the standard flow and the fast path).** In GitHub mode the review runs under headless `claude -p`, where there is NO asynchronous subagent-completion notification: when the orchestrator's assistant turn ends with no pending synchronous tool call, the process terminates immediately (`terminal_reason: "completed"`). If you background a reviewer and then end your turn to "wait" for it, the run dies before `stage_21_collect_findings` through `stage_30_footer` execute, so no `.closedloop-ai/code-review-*` artifacts are written and the workflow posts an empty fallback summary. The synchronous spawn (fast path) and the blocking `TaskOutput` collection (standard flow) are what keep the turn alive until reviewers finish; never substitute either with "I'll continue when notified."
