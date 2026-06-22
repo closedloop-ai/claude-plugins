@@ -92,7 +92,7 @@ git rebase upstream/main
 
 - Each agent has a single, well-defined responsibility
 - Agent descriptions are callable by the orchestrator — keep them precise
-- Model selection: **opus** for creative/planning tasks, **sonnet** for implementation, **haiku** for lightweight coordination
+- Model selection: **opus** for creative/planning tasks, **sonnet** for most implementation, **haiku** for lightweight coordination. Deliberate exception: `implementation-subagent` uses **opus** for higher-quality multi-file code generation in the closed loop (accepted cost/latency tradeoff for the implementation worker)
 - Skills encapsulate reusable instruction sets; prefer skills over duplicating instructions across agents
 
 ### Self-Learning Integration

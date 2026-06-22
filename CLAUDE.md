@@ -32,7 +32,7 @@ Each plugin's manifest lives at `plugins/<name>/.claude-plugin/plugin.json` with
 
 ### Agent Definitions
 
-Markdown files with YAML frontmatter specifying `name`, `description`, `model`, `tools`, and `skills`. Model selection convention: **opus** for creative/planning, **sonnet** for implementation, **haiku** for lightweight coordination. Only reference tools listed in frontmatter — no hallucinated tool calls.
+Markdown files with YAML frontmatter specifying `name`, `description`, `model`, `tools`, and `skills`. Model selection convention: **opus** for creative/planning, **sonnet** for most implementation, **haiku** for lightweight coordination. Deliberate exception: `implementation-subagent` uses **opus** — multi-file code generation in the closed loop benefits from the stronger model, and the cost/latency tradeoff is accepted for the implementation worker. Only reference tools listed in frontmatter — no hallucinated tool calls.
 
 ### Skill Identifiers
 

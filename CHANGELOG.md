@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.12.0
+
+#### Changed
+- `implementation-subagent` now runs on **opus** (was sonnet) for higher-quality multi-file code generation in the closed loop. This is runtime-visible agent metadata — the implementation worker's model, cost, and latency change for consumers — so it ships as a MINOR bump. The model-selection convention in `CLAUDE.md` and `CONTRIBUTING.md` documents this as a deliberate exception to the general "sonnet for implementation" guidance.
+
 ### code v1.11.20
 
 #### Changed
