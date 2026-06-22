@@ -14,6 +14,9 @@ def _write_agent(
     name: str,
     description: str,
     tools: str | None = None,
+    skills: str | None = None,
+    file_patterns: str | None = None,
+    domains: str | None = None,
 ) -> None:
     lines = [
         "---",
@@ -24,6 +27,12 @@ def _write_agent(
     ]
     if tools is not None:
         lines.append(f"tools: {tools}")
+    if skills is not None:
+        lines.append(f"skills: {skills}")
+    if file_patterns is not None:
+        lines.append(f"file_patterns: {file_patterns}")
+    if domains is not None:
+        lines.append(f"domains: {domains}")
     lines.extend(["---", "", "Body"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -125,10 +134,18 @@ def test_prefers_current_or_workspace_plugin_agents_over_cached_duplicates(
     )
     rendered = render_discovery_output(repo_agents, plugin_agents)
 
+    payload = json.loads(rendered)
+
     assert repo_agents == []
     assert len(plugin_agents) == 1
     assert plugin_agents[0].description == "Local workspace implementation agent"
-    assert "@code:implementation-subagent | Local workspace implementation agent" in rendered
+    assert plugin_agents[0].trust_source == "workspace-plugin"
+    assert [a["invocation"] for a in payload["plugin_agents"]] == [
+        "code:implementation-subagent"
+    ]
+    assert payload["plugin_agents"][0]["description"] == (
+        "Local workspace implementation agent"
+    )
     assert "Cached implementation agent" not in rendered
 
 
@@ -188,3 +205,55 @@ def test_ignores_non_version_and_manifestless_cache_entries(tmp_path: Path) -> N
     )
 
     assert plugin_agents == []
+
+
+def test_emits_structured_implementation_capability_record(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    plugin_cache_root = tmp_path / "cache"
+
+    # Write-capable but NOT contract-honouring (no implementation-self-check skill).
+    _write_agent(
+        workspace_root / ".claude" / "agents" / "code-reviewer.md",
+        name="code-reviewer",
+        description="Reviews code",
+        tools="Read, Write, Edit",
+        skills="platform:claude-code-expert",
+    )
+    # Contract-honouring implementation agent with file patterns + domains.
+    _write_agent(
+        workspace_root / ".claude" / "agents" / "py-impl.md",
+        name="py-impl",
+        description="Implements Python",
+        tools="Read, Write, Edit, Skill",
+        skills="python-patterns, implementation-self-check",
+        file_patterns="**/*.py, **/test_*.py",
+        domains="python, tooling",
+    )
+    # Contract-honouring agent whose tools are inherited (cannot be classified
+    # from the tools string alone) must still be implementation_capable.
+    _write_agent(
+        workspace_root / ".claude" / "agents" / "inherited-impl.md",
+        name="inherited-impl",
+        description="Implements with inherited tools",
+        skills="implementation-self-check",
+    )
+
+    repo_agents, plugin_agents = discover_available_agents(
+        workspace_root=workspace_root,
+        plugin_root=None,
+        plugin_cache_root=plugin_cache_root,
+    )
+    payload = json.loads(render_discovery_output(repo_agents, plugin_agents))
+
+    by_invocation = {a["invocation"]: a for a in payload["repo_agents"]}
+
+    assert by_invocation["code-reviewer"]["implementation_capable"] is False
+    assert by_invocation["py-impl"]["implementation_capable"] is True
+    assert by_invocation["py-impl"]["file_patterns"] == "**/*.py, **/test_*.py"
+    assert by_invocation["py-impl"]["domains"] == "python, tooling"
+    assert by_invocation["py-impl"]["trust_source"] == "repo"
+    assert by_invocation["py-impl"]["fallback_rank"] == 0
+    # Inherited tools render as "inherited" but the skill marker still classifies
+    # the agent as implementation-capable.
+    assert by_invocation["inherited-impl"]["tools"] == "inherited"
+    assert by_invocation["inherited-impl"]["implementation_capable"] is True

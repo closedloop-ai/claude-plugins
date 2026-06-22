@@ -15,13 +15,41 @@ from typing import Iterable
 _VERSION_DIR_RE = re.compile(r"^\d+\.")
 
 
+# Agents honour the implementation contract (emit IMPLEMENTATION_VERIFIED, run
+# the four gates) by activating this shared skill. Selection keys on this marker
+# rather than on the freeform tools string, so write-capable critic/plan/review
+# agents and agents rendered as `tools: inherited` are classified correctly.
+_IMPLEMENTATION_SKILL = "implementation-self-check"
+
+# Lower rank = higher precedence when the orchestrator falls back to a generalist.
+_TRUST_RANK = {"repo": 0, "workspace-plugin": 1, "cache": 2}
+
+
 @dataclass(frozen=True)
 class AgentDescriptor:
-    """Minimal metadata needed for agent selection."""
+    """Structured implementation-capability record used for agent selection."""
 
     invocation: str
     description: str
     tools: str
+    implementation_capable: bool
+    file_patterns: str
+    domains: str
+    trust_source: str
+    fallback_rank: int
+
+    def as_record(self) -> dict[str, object]:
+        """Return the JSON record the orchestrator prompt consumes."""
+        return {
+            "invocation": self.invocation,
+            "description": self.description,
+            "tools": self.tools,
+            "implementation_capable": self.implementation_capable,
+            "file_patterns": self.file_patterns,
+            "domains": self.domains,
+            "trust_source": self.trust_source,
+            "fallback_rank": self.fallback_rank,
+        }
 
 
 def _parse_frontmatter(path: Path) -> dict[str, str] | None:
@@ -52,6 +80,23 @@ def _parse_frontmatter(path: Path) -> dict[str, str] | None:
     return metadata
 
 
+def _build_descriptor(
+    invocation: str, metadata: dict[str, str], trust_source: str
+) -> AgentDescriptor:
+    """Construct a structured capability record from parsed frontmatter."""
+    skills = metadata.get("skills", "")
+    return AgentDescriptor(
+        invocation=invocation,
+        description=metadata["description"],
+        tools=metadata.get("tools", "inherited"),
+        implementation_capable=_IMPLEMENTATION_SKILL in skills,
+        file_patterns=metadata.get("file_patterns", ""),
+        domains=metadata.get("domains", ""),
+        trust_source=trust_source,
+        fallback_rank=_TRUST_RANK.get(trust_source, len(_TRUST_RANK)),
+    )
+
+
 def _load_plugin_name(plugin_root: Path) -> str | None:
     manifest_path = plugin_root / ".claude-plugin" / "plugin.json"
     try:
@@ -75,13 +120,7 @@ def _discover_repo_agents(workspace_root: Path) -> list[AgentDescriptor]:
         metadata = _parse_frontmatter(path)
         if metadata is None:
             continue
-        agents.append(
-            AgentDescriptor(
-                invocation=metadata["name"],
-                description=metadata["description"],
-                tools=metadata.get("tools", "inherited"),
-            )
-        )
+        agents.append(_build_descriptor(metadata["name"], metadata, "repo"))
     return agents
 
 
@@ -145,10 +184,12 @@ def _iter_cached_plugin_roots(plugin_cache_root: Path) -> Iterable[Path]:
                 yield latest
 
 
-def _discover_plugin_agents(plugin_roots: Iterable[Path]) -> list[AgentDescriptor]:
+def _discover_plugin_agents(
+    plugin_roots: Iterable[tuple[Path, str]],
+) -> list[AgentDescriptor]:
     discovered: dict[str, AgentDescriptor] = {}
 
-    for plugin_root in plugin_roots:
+    for plugin_root, trust_source in plugin_roots:
         plugin_name = _load_plugin_name(plugin_root)
         agents_dir = plugin_root / "agents"
         if plugin_name is None or not agents_dir.is_dir():
@@ -160,13 +201,13 @@ def _discover_plugin_agents(plugin_roots: Iterable[Path]) -> list[AgentDescripto
                 continue
 
             invocation = f"{plugin_name}:{metadata['name']}"
+            # First match wins: roots are supplied in precedence order
+            # (current plugin, workspace plugins, then cache).
             if invocation in discovered:
                 continue
 
-            discovered[invocation] = AgentDescriptor(
-                invocation=invocation,
-                description=metadata["description"],
-                tools=metadata.get("tools", "inherited"),
+            discovered[invocation] = _build_descriptor(
+                invocation, metadata, trust_source
             )
 
     return sorted(discovered.values(), key=lambda agent: agent.invocation)
@@ -180,11 +221,16 @@ def discover_available_agents(
     """Discover repo-level and plugin agents with stable precedence."""
     repo_agents = _discover_repo_agents(workspace_root)
 
-    plugin_roots: list[Path] = []
+    plugin_roots: list[tuple[Path, str]] = []
     if plugin_root is not None:
-        plugin_roots.append(plugin_root)
-    plugin_roots.extend(_iter_workspace_plugin_roots(workspace_root))
-    plugin_roots.extend(_iter_cached_plugin_roots(plugin_cache_root))
+        plugin_roots.append((plugin_root, "workspace-plugin"))
+    plugin_roots.extend(
+        (root, "workspace-plugin")
+        for root in _iter_workspace_plugin_roots(workspace_root)
+    )
+    plugin_roots.extend(
+        (root, "cache") for root in _iter_cached_plugin_roots(plugin_cache_root)
+    )
 
     plugin_agents = _discover_plugin_agents(plugin_roots)
     return repo_agents, plugin_agents
@@ -193,26 +239,17 @@ def discover_available_agents(
 def render_discovery_output(
     repo_agents: list[AgentDescriptor], plugin_agents: list[AgentDescriptor]
 ) -> str:
-    """Render the text block consumed by the orchestrator prompt."""
-    lines = ["=== Repo-level agents ==="]
-    if repo_agents:
-        for agent in repo_agents:
-            lines.append(
-                f"  @{agent.invocation} | {agent.description} | tools: {agent.tools}"
-            )
-    else:
-        lines.append("  (none found)")
+    """Render the structured capability record consumed by the orchestrator.
 
-    lines.append("=== Plugin agents ===")
-    if plugin_agents:
-        for agent in plugin_agents:
-            lines.append(
-                f"  @{agent.invocation} | {agent.description} | tools: {agent.tools}"
-            )
-    else:
-        lines.append("  (none found)")
-
-    return "\n".join(lines)
+    Emits JSON so the prompt consumes typed fields (``implementation_capable``,
+    ``file_patterns``, ``domains``, ``trust_source``, ``fallback_rank``) instead
+    of parsing a freeform description/tools string.
+    """
+    payload = {
+        "repo_agents": [agent.as_record() for agent in repo_agents],
+        "plugin_agents": [agent.as_record() for agent in plugin_agents],
+    }
+    return json.dumps(payload, indent=2)
 
 
 def _parse_args() -> argparse.Namespace:

@@ -216,29 +216,47 @@ python3 "${CLAUDE_PLUGIN_ROOT}/tools/python/discover_available_agents.py" \
   --plugin-root "$CLAUDE_PLUGIN_ROOT"
 ```
 
-This produces a list like:
-```
-=== Repo-level agents ===
-  @agent-definition-expert | Reviews Claude Code agents... | tools: Read, Write, Edit, Grep, Glob, Bash, Skill
-  @python-script-reviewer | Reviews Python scripts... | tools: Read, Write, Edit, Grep, Glob, Bash, Skill
-  ...
-=== Plugin agents ===
-  @bootstrap:agent-prompt-generator | Generates bootstrap agent prompts... | tools: inherited
-  @code:implementation-subagent | Implements missing requirements for a task from the implementation plan. | tools: Read, Write, Edit, Glob, Grep, Bash
-  ...
+This produces a structured JSON capability record:
+```json
+{
+  "repo_agents": [
+    {
+      "invocation": "python-script-reviewer",
+      "description": "Reviews Python scripts...",
+      "tools": "Read, Write, Edit, Grep, Glob, Bash, Skill",
+      "implementation_capable": true,
+      "file_patterns": "**/*.py, **/test_*.py",
+      "domains": "python, tooling",
+      "trust_source": "repo",
+      "fallback_rank": 0
+    }
+  ],
+  "plugin_agents": [
+    {
+      "invocation": "code:implementation-subagent",
+      "description": "Implements missing requirements for a task...",
+      "tools": "Read, Write, Edit, Glob, Grep, Bash",
+      "implementation_capable": true,
+      "file_patterns": "",
+      "domains": "",
+      "trust_source": "workspace-plugin",
+      "fallback_rank": 1
+    }
+  ]
+}
 ```
 
-The discovery script scans repo agents from `.claude/agents/`, local plugin agents from `plugins/*/agents/` when working in this monorepo, and installed plugin agents from `~/.claude/plugins/cache/`.
+The discovery script scans repo agents from `.claude/agents/`, local plugin agents from `plugins/*/agents/` when working in this monorepo, and installed plugin agents from `~/.claude/plugins/cache/`. The `implementation_capable` flag is `true` only for agents that activate the shared `implementation-self-check` skill — i.e. agents that honor the `IMPLEMENTATION_VERIFIED` contract and the four-gate self-verification. It is derived from the skill marker, **not** the `tools` string, so write-capable plan/build/review agents (which do not implement the contract) are correctly excluded, and contract-honoring agents rendered as `tools: inherited` are correctly included.
 
 **Agent selection (per-task, LLM-decided):**
 
-For each task, after verification identifies NOT_IMPLEMENTED requirements, choose the best agent:
+For each task, after verification identifies NOT_IMPLEMENTED requirements, choose the best agent by consuming the structured record (do NOT pattern-match on the freeform description or tools string):
 
-1. Consider the task description, the `files:` list, and the `missing:` requirements from verification output
-2. Review `available_agents` in working memory — pick the agent whose description is the **best domain match** for this task
-3. An agent is eligible for implementation only if its tools include **Write or Edit** (read-only agents cannot implement)
-4. If no specialist is a clear match, use the broadest write-capable agent from `available_agents`; if `@code:implementation-subagent` is present, prefer it as the generalist fallback
-5. Prefer specificity: a domain specialist that fits the task well will outperform the generalist
+1. **Eligibility:** consider ONLY agents whose `implementation_capable` is `true`. An agent that is write-capable but not implementation-capable (e.g. a code reviewer) must never be selected — it does not emit `IMPLEMENTATION_VERIFIED` or run the gates.
+2. **Domain/file match (PLN-626):** among eligible agents, prefer the one whose `file_patterns` match the task's `files:` list (glob match), then whose `domains`/`description` best fit the task's `missing:` requirements.
+3. **Generalist fallback:** if no specialist matches, pick the eligible agent with the lowest `fallback_rank` (lower `trust_source` rank = more trusted); if `code:implementation-subagent` is eligible, prefer it as the generalist fallback.
+4. **Hard fallback:** if `available_agents` is empty, has no `implementation_capable` agent, or was not produced (discovery failed/unparseable), use `@code:implementation-subagent` directly. See the discovery command note above.
+5. Prefer specificity: a domain specialist that fits the task well will outperform the generalist.
 
 - For each task in `pending_tasks`:
   1. **Update state.json** with task-level tracking (see State Tracking section above)
