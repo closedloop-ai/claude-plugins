@@ -12,9 +12,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 
 from validate_judge_report import (  # type: ignore[import-not-found]
+    BUDGET_SKIP_REASON,
     DEFAULT_FILENAMES,
     JUDGE_REGISTRY,
-    SKIP_SENTINEL,
+    RECOGNIZED_SKIP_REASONS,
     VALID_SUFFIXES,
     CaseScore,
     MetricStatistics,
@@ -69,7 +70,7 @@ def _make_skipped_casescore(case_id: str, via: str = "top_level") -> dict:
 
     Args:
         case_id: The judge case_id
-        via: Where to place the SKIP_SENTINEL justification:
+        via: Where to place the recognized skip justification:
              'top_level' - in the CaseScore.justification field (empty metrics)
              'metric'    - in a metric's justification field
     """
@@ -78,7 +79,7 @@ def _make_skipped_casescore(case_id: str, via: str = "top_level") -> dict:
             "type": "case_score",
             "case_id": case_id,
             "final_status": 3,
-            "justification": f"{SKIP_SENTINEL} judge not applicable for this run",
+            "justification": BUDGET_SKIP_REASON,
             "metrics": [],
         }
     else:
@@ -91,7 +92,7 @@ def _make_skipped_casescore(case_id: str, via: str = "top_level") -> dict:
                     "metric_name": "skip_reason",
                     "threshold": None,
                     "score": 0.0,
-                    "justification": f"{SKIP_SENTINEL} judge not applicable for this run",
+                    "justification": BUDGET_SKIP_REASON,
                 }
             ],
         }
@@ -1059,17 +1060,17 @@ class TestSkippedJudges:
     """Tests for skipped judge tolerance (final_status=3 with 'Skipped:' justification)."""
 
     def test_is_skipped_returns_true_for_status3_with_top_level_justification(self) -> None:
-        """CaseScore.is_skipped() returns True for final_status=3 with top-level 'Skipped:' justification."""
+        """CaseScore.is_skipped() returns True for final_status=3 with the recognized top-level skip reason."""
         case = CaseScore(
             case_id="test-judge",
             final_status=3,
-            justification="Skipped: not applicable",
+            justification=BUDGET_SKIP_REASON,
             metrics=[],
         )
         assert case.is_skipped() is True
 
     def test_is_skipped_returns_true_for_status3_with_metric_justification(self) -> None:
-        """CaseScore.is_skipped() returns True for final_status=3 with metric-level 'Skipped:' justification."""
+        """CaseScore.is_skipped() returns True for final_status=3 with the recognized metric-level skip reason."""
         case = CaseScore(
             case_id="test-judge",
             final_status=3,
@@ -1078,7 +1079,7 @@ class TestSkippedJudges:
                     metric_name="skip_reason",
                     threshold=None,
                     score=0.0,
-                    justification="Skipped: not applicable",
+                    justification=BUDGET_SKIP_REASON,
                 )
             ],
         )
@@ -1089,13 +1090,13 @@ class TestSkippedJudges:
         case = CaseScore(
             case_id="test-judge",
             final_status=1,
-            justification="Skipped: not applicable",
+            justification=BUDGET_SKIP_REASON,
             metrics=[],
         )
         assert case.is_skipped() is False
 
     def test_is_skipped_returns_false_for_status3_without_skipped_text(self) -> None:
-        """CaseScore.is_skipped() returns False for final_status=3 without 'Skipped:' text."""
+        """CaseScore.is_skipped() returns False for final_status=3 without a 'Skipped:' justification."""
         case = CaseScore(
             case_id="test-judge",
             final_status=3,
@@ -1103,6 +1104,75 @@ class TestSkippedJudges:
             metrics=[],
         )
         assert case.is_skipped() is False
+
+    def test_is_skipped_returns_false_for_unrecognized_skipped_text_top_level(self) -> None:
+        """An arbitrary 'Skipped: ...' top-level justification is NOT a recognized skip.
+
+        Only the fixed budget-overflow reason qualifies; unrelated 'Skipped:' text must
+        fall through to the normal metrics requirement so real errors are not masked.
+        """
+        case = CaseScore(
+            case_id="test-judge",
+            final_status=3,
+            justification="Skipped: judge not applicable for this run",
+            metrics=[],
+        )
+        assert case.is_skipped() is False
+
+    def test_is_skipped_returns_false_for_unrecognized_skipped_text_metric(self) -> None:
+        """An arbitrary 'Skipped: ...' metric justification is NOT a recognized skip."""
+        case = CaseScore(
+            case_id="test-judge",
+            final_status=3,
+            metrics=[
+                MetricStatistics(
+                    metric_name="skip_reason",
+                    threshold=None,
+                    score=0.0,
+                    justification="Skipped: some unrelated reason",
+                )
+            ],
+        )
+        assert case.is_skipped() is False
+
+    def test_budget_skip_reason_is_in_recognized_set(self) -> None:
+        """The canonical budget skip reason is a member of the recognized taxonomy."""
+        assert BUDGET_SKIP_REASON in RECOGNIZED_SKIP_REASONS
+
+    def test_unrecognized_skipped_judge_fails_validation(self, tmp_path: Path) -> None:
+        """A final_status=3 judge with empty metrics and unrelated 'Skipped:' text fails validation.
+
+        Such a CaseScore is not a recognized budget skip, so the empty-metrics
+        exemption must not apply — validation must flag it as having no metrics.
+        """
+        plan_judges = sorted(JUDGE_REGISTRY["plan"])
+        stats = []
+        for i, judge_id in enumerate(plan_judges):
+            if i == 0:
+                stats.append(
+                    {
+                        "type": "case_score",
+                        "case_id": judge_id,
+                        "final_status": 3,
+                        "justification": "Skipped: judge not applicable for this run",
+                        "metrics": [],
+                    }
+                )
+            else:
+                stats.append(create_valid_casescore(judge_id))
+
+        report = {
+            "report_id": "run-20250211-plan-judges",
+            "timestamp": "2025-02-11T12:00:00Z",
+            "stats": stats,
+        }
+
+        report_path = tmp_path / "plan-judges.json"
+        report_path.write_text(json.dumps(report, indent=2))
+
+        valid, message = validate_report(report_path, category="plan")
+        assert valid is False
+        assert "has no metrics" in message
 
     def test_is_skipped_returns_false_for_status3_with_no_justification(self) -> None:
         """CaseScore.is_skipped() returns False for final_status=3 with no justification text."""

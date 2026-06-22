@@ -25,7 +25,17 @@ except ImportError:
     sys.exit(1)
 
 
-SKIP_SENTINEL = "Skipped:"
+# Canonical justification string emitted by run-judges when a judge is skipped
+# because its prompt would overflow the 128K context budget. A final_status=3
+# CaseScore counts as a recognized skip only when its justification matches one of
+# these reasons EXACTLY — not merely a bare "Skipped:" prefix. Matching the full
+# reason prevents unrelated error CaseScores that happen to contain "Skipped:" from
+# being silently exempted from the metrics check.
+BUDGET_SKIP_REASON = "Skipped: artifact exceeded context budget after compression"
+
+# Recognized skip taxonomy. Extend this set when run-judges defines additional
+# fixed skip reasons; arbitrary "Skipped: ..." text is intentionally NOT matched.
+RECOGNIZED_SKIP_REASONS: frozenset[str] = frozenset({BUDGET_SKIP_REASON})
 
 
 class MetricStatistics(BaseModel):
@@ -58,17 +68,20 @@ class CaseScore(BaseModel):
         return v
 
     def is_skipped(self) -> bool:
-        """Return True if this judge was skipped.
+        """Return True if this judge was skipped for a recognized reason.
 
-        A judge is considered skipped when final_status=3 and its justification
-        (either the top-level field or any metric's justification) contains 'Skipped:'.
-        Skipped judges are treated as valid entries but exempt from the metrics check.
+        A judge is considered skipped only when final_status=3 and its
+        justification (either the top-level field or any metric's justification)
+        exactly matches one of the fixed reasons in RECOGNIZED_SKIP_REASONS.
+        Recognized skips are valid entries exempt from the metrics check. An
+        arbitrary "Skipped: ..." string is NOT treated as a skip — it falls
+        through to the normal metrics requirement so genuine errors are not masked.
         """
         if self.final_status != 3:
             return False
-        if self.justification is not None and SKIP_SENTINEL in self.justification:
+        if self.justification is not None and self.justification in RECOGNIZED_SKIP_REASONS:
             return True
-        return any(SKIP_SENTINEL in m.justification for m in self.metrics)
+        return any(m.justification in RECOGNIZED_SKIP_REASONS for m in self.metrics)
 
 
 def compute_average_excluding_errors(scores: List[CaseScore]) -> Optional[float]:
