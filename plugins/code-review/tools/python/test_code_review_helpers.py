@@ -7383,13 +7383,16 @@ def _run_verify_prepare(
     cr_dir: Path | None = None,
     no_verify: bool = False,
     no_verify_reason: str = "",
+    settings: Path | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """Invoke ``cmd_verify_prepare`` with stdout captured into a dict.
 
     PR #114 review fix — ``cr_dir``, ``no_verify``, and ``no_verify_reason``
     were inlined per-test before; the helper now owns them so the
     TestOverrideCache and TestNoVerifyBypass classes can stop duplicating
-    the stdout-capture + Namespace dance.
+    the stdout-capture + Namespace dance. ``settings`` points at a
+    ``code-review.json`` so PR #125 review can exercise ``verify_batch_size``
+    resolution; ``None`` lets the resolver fall back to its default path.
     """
     import io
     import sys as _sys
@@ -7412,6 +7415,7 @@ def _run_verify_prepare(
             prompt_hash=prompt_hash,
             no_verify=no_verify,
             no_verify_reason=no_verify_reason,
+            settings=str(settings) if settings else None,
         )
         rc = cmd_verify_prepare(ns)
         _sys.stdout.seek(0)
@@ -9890,10 +9894,15 @@ class TestLoadCodeReviewSettings:
 
     def test_missing_file_returns_defaults(self, tmp_path: Path) -> None:
         from code_review_helpers import (
-            BHA_UNIFIED_THRESHOLD_LOC, _load_code_review_settings,
+            BHA_UNIFIED_THRESHOLD_LOC,
+            VERIFY_BATCH_SIZE_DEFAULT,
+            _load_code_review_settings,
         )
         out = _load_code_review_settings(tmp_path / "does-not-exist.json")
-        assert out == {"bha_unified_threshold_loc": BHA_UNIFIED_THRESHOLD_LOC}
+        assert out == {
+            "bha_unified_threshold_loc": BHA_UNIFIED_THRESHOLD_LOC,
+            "verify_batch_size": VERIFY_BATCH_SIZE_DEFAULT,
+        }
 
     def test_operator_override_honored(self, tmp_path: Path) -> None:
         from code_review_helpers import _load_code_review_settings
@@ -9940,6 +9949,92 @@ class TestLoadCodeReviewSettings:
         path.write_text(json.dumps({"bha_unified_threshold_loc": True}))
         out = _load_code_review_settings(path)
         assert out["bha_unified_threshold_loc"] == BHA_UNIFIED_THRESHOLD_LOC
+
+    # PR #125 review (thadeusb) — ``verify_batch_size`` must be read and
+    # clamped in code (not just asserted in walker prose) the same way
+    # ``bha_unified_threshold_loc`` is.
+
+    def test_verify_batch_size_in_range_honored(self, tmp_path: Path) -> None:
+        from code_review_helpers import _load_code_review_settings
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"verify_batch_size": 8}))
+        out = _load_code_review_settings(path)
+        assert out["verify_batch_size"] == 8
+
+    def test_verify_batch_size_boundaries_honored(self, tmp_path: Path) -> None:
+        """Both clamp endpoints (1 and 20) are valid operator values."""
+        from code_review_helpers import _load_code_review_settings
+        for value in (1, 20):
+            path = tmp_path / "code-review.json"
+            path.write_text(json.dumps({"verify_batch_size": value}))
+            out = _load_code_review_settings(path)
+            assert out["verify_batch_size"] == value
+
+    def test_verify_batch_size_zero_falls_back(self, tmp_path: Path) -> None:
+        """``0`` is below the min — there is no such thing as a zero-finding
+        batch, so it falls back to the default rather than disabling the pass."""
+        from code_review_helpers import (
+            VERIFY_BATCH_SIZE_DEFAULT, _load_code_review_settings,
+        )
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"verify_batch_size": 0}))
+        out = _load_code_review_settings(path)
+        assert out["verify_batch_size"] == VERIFY_BATCH_SIZE_DEFAULT
+
+    def test_verify_batch_size_above_max_falls_back(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            VERIFY_BATCH_SIZE_DEFAULT, _load_code_review_settings,
+        )
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"verify_batch_size": 99}))
+        out = _load_code_review_settings(path)
+        assert out["verify_batch_size"] == VERIFY_BATCH_SIZE_DEFAULT
+
+    def test_verify_batch_size_numeric_string_falls_back(self, tmp_path: Path) -> None:
+        """A quoted ``"5"`` is a string, not an int — falls back."""
+        from code_review_helpers import (
+            VERIFY_BATCH_SIZE_DEFAULT, _load_code_review_settings,
+        )
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"verify_batch_size": "5"}))
+        out = _load_code_review_settings(path)
+        assert out["verify_batch_size"] == VERIFY_BATCH_SIZE_DEFAULT
+
+    def test_verify_batch_size_bool_falls_back(self, tmp_path: Path) -> None:
+        from code_review_helpers import (
+            VERIFY_BATCH_SIZE_DEFAULT, _load_code_review_settings,
+        )
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"verify_batch_size": True}))
+        out = _load_code_review_settings(path)
+        assert out["verify_batch_size"] == VERIFY_BATCH_SIZE_DEFAULT
+
+
+class TestVerifyManifestBatchSize:
+    """``cmd_verify_prepare`` resolves + clamps ``verify_batch_size`` and
+    surfaces it in ``verify_manifest.json`` so the walker batches on the
+    authoritative value (PR #125 review)."""
+
+    def test_manifest_carries_default_when_no_settings(self, tmp_path: Path) -> None:
+        from code_review_helpers import VERIFY_BATCH_SIZE_DEFAULT
+        finding = _make_validated_finding("bha_f0", severity="HIGH", confidence=0.9)
+        _, manifest = _run_verify_prepare(tmp_path, [finding])
+        assert manifest["verify_batch_size"] == VERIFY_BATCH_SIZE_DEFAULT
+
+    def test_manifest_carries_operator_value(self, tmp_path: Path) -> None:
+        settings = tmp_path / "code-review.json"
+        settings.write_text(json.dumps({"verify_batch_size": 3}))
+        finding = _make_validated_finding("bha_f0", severity="HIGH", confidence=0.9)
+        _, manifest = _run_verify_prepare(tmp_path, [finding], settings=settings)
+        assert manifest["verify_batch_size"] == 3
+
+    def test_manifest_clamps_out_of_range(self, tmp_path: Path) -> None:
+        from code_review_helpers import VERIFY_BATCH_SIZE_DEFAULT
+        settings = tmp_path / "code-review.json"
+        settings.write_text(json.dumps({"verify_batch_size": 0}))
+        finding = _make_validated_finding("bha_f0", severity="HIGH", confidence=0.9)
+        _, manifest = _run_verify_prepare(tmp_path, [finding], settings=settings)
+        assert manifest["verify_batch_size"] == VERIFY_BATCH_SIZE_DEFAULT
 
 
 class TestVerifyManifestPartitionPropagation:

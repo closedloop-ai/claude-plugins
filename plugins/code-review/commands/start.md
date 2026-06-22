@@ -672,7 +672,19 @@ This stage runs when the walker reaches `stage_23`. It implements PLN-722's find
 
 ### Spawn contract
 
-Group entries in `verify_manifest.json.to_verify[]` into batches of up to `VERIFY_BATCH_SIZE` findings each (default `5`). Batching amortizes the per-agent bootstrap cost and lets the verifier reuse codebase context across findings that touch the same files.
+> **Independence trade-off — read before tuning the batch size.** The whole
+> point of this pass is an *independent* second opinion per finding. Packing
+> N findings into one agent means those N verdicts share a single agent
+> context, so they are no longer independent: one lazy, biased, or anchored
+> pass now taints every finding in the batch instead of one. Batching trades
+> the per-finding falsification guarantee for token/spawn savings — it does
+> not preserve it. When that guarantee matters more than cost, set
+> `verify_batch_size` to `1` (see "Batch size" below) to restore one
+> independent agent per finding.
+
+Read the resolved, already-clamped batch size from `verify_manifest.json.verify_batch_size` (written by `cmd_verify_prepare` — see "Batch size" below; do NOT re-parse the settings file in the walker).
+
+**Group `verify_manifest.json.to_verify[]` by `model` first, then slice each model-group into batches of up to `verify_batch_size` findings.** Grouping by model before slicing guarantees a batch never mixes models, so step 3's single-model assumption holds even after the planned cross-model split (a different verifier model per original reviewer) lands. Today every entry is `sonnet`, so this is a single group. Batching amortizes the per-agent bootstrap cost and lets the verifier reuse codebase context across findings that touch the same files.
 
 For each batch:
 
@@ -694,15 +706,15 @@ For each batch:
    Process each finding independently. Write one output file per finding
    at the path each input file specifies. Do not write anywhere else.
    ```
-   Substitute the resolved paths from the manifest entries (the verifier prompt is at `<CR_DIR>/verifier_prompt.txt`, copied by `stage_02_prep_assets`).
-3. Set `model` to the batch entries' `model` field (currently uniform `sonnet`; all entries in a batch share the same model).
+   Substitute the resolved paths from the manifest entries (the verifier prompt is at `<CR_DIR>/verifier_prompt.txt`, copied by `stage_02_prep_assets`). That prompt is batch-aware: it processes each input file in turn, runs the full protocol against each independently, and writes one verdict file per finding.
+3. Set `model` to the batch's shared `model` field. Because the batch was sliced within a single model-group (see grouping above), all entries share one model by construction — currently uniform `sonnet`.
 
-`VERIFY_BATCH_SIZE` is configurable via `.closedloop-ai/settings/code-review.json` key `verify_batch_size` (integer, min 1, max 20, default 5). Set to `1` to restore one-agent-per-finding behavior.
+**Batch size.** `verify_batch_size` is operator-tunable via `.closedloop-ai/settings/code-review.json`. `cmd_verify_prepare` reads it through `_load_code_review_settings`, which clamps it to the integer range `[1, 20]` (default `5`); a non-integer, boolean, or out-of-range value (e.g. `0` or the string `"5"`) falls back to the default exactly the way `bha_unified_threshold_loc` does. The clamped result is surfaced in the manifest as `verify_batch_size` — the walker uses that, never the raw file. Set it to `1` to restore one-agent-per-finding (fully independent) verification.
 
 ### Collection contract
 
 - Call `TaskOutput` (block: true) for every spawned verifier batch agent before letting the walker proceed past `stage_23`.
-- A missing `agent_verifier_<finding_id>.json` is NOT a fatal error — `cmd_verify_consolidate` tags it as `pending_verification[]` so operators see what didn't get verified. When a batch agent fails, ALL findings in that batch degrade to `pending_verification[]`.
+- A missing `agent_verifier_<finding_id>.json` is NOT a fatal error — `cmd_verify_consolidate` tags that finding as `pending_verification[]` so operators see what didn't get verified. Consolidation keys on **per-finding output files, not on batch success**: if a batch agent writes verdicts for some of its findings and then crashes or times out, the verdicts already on disk are consolidated (and cached) normally, and only the findings with no output file degrade to `pending_verification[]`. Partial batch progress is preserved by design — recovering the verdicts a failed batch did finish is strictly better than discarding the whole batch. (Consequence: a verdict written just before a crash is trusted like any other. The batch-aware verifier prompt writes one finding's output completely before starting the next, so each verdict file is atomic; the failure mode is a *missing* file, never a half-written one.)
 - Do NOT retry verifier agents in the walker. If a verifier fails, the finding's downstream handling already covers the gap (pending) — and verifier retries would burn tokens on a finding already flagged for human review.
 - `stage_23.on_failure == "continue"`: a fleet-wide failure does NOT abort the pipeline; `verify-consolidate` and `finalize-result` produce a usable envelope even when zero verifier outputs land on disk.
 

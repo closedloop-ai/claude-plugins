@@ -1613,6 +1613,17 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 VERIFY_MAX_VERIFICATIONS = 50
 
+# Verifier Fleet batching (stage_23). The walker groups ``to_verify[]`` into
+# batches of up to this many findings per spawned agent to amortize the
+# per-agent bootstrap cost. Operator-tunable via ``code-review.json`` key
+# ``verify_batch_size``; ``_load_code_review_settings`` clamps it to
+# ``[VERIFY_BATCH_SIZE_MIN, VERIFY_BATCH_SIZE_MAX]`` and ``cmd_verify_prepare``
+# surfaces the clamped value in the manifest. ``1`` restores fully
+# independent one-agent-per-finding verification.
+VERIFY_BATCH_SIZE_DEFAULT = 5
+VERIFY_BATCH_SIZE_MIN = 1
+VERIFY_BATCH_SIZE_MAX = 20
+
 # Severity → weight for ranking when MAX_VERIFICATIONS is exceeded. Higher
 # = more likely to retain a verification slot.
 _VERIFY_SEVERITY_WEIGHT: dict[str, float] = {
@@ -2092,6 +2103,7 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
             "skipped_no_verification": [...],
             "deferred_budget": [...],
             "max_verifications": int,
+            "verify_batch_size": int,  # clamped [1, 20]; walker batches on this
             "total_eligible": int,
             "verifier_prompt_path": str
           }``
@@ -2109,6 +2121,19 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
     findings_path = Path(args.findings)
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
     prompt_hash = str(getattr(args, "prompt_hash", "") or "")
+    # Resolve the Verifier Fleet batch size here (the only writer of the
+    # manifest) so the clamp lives in code, not in walker prose. A bad
+    # value (0, "5", 99, negative) falls back to the default — see
+    # _load_code_review_settings. The walker reads the clamped result from
+    # the manifest's ``verify_batch_size`` and never re-parses the file.
+    settings_path = Path(
+        getattr(args, "settings", None) or _CODE_REVIEW_SETTINGS_DEFAULT_PATH,
+    )
+    verify_batch_size = int(
+        _load_code_review_settings(settings_path).get(
+            "verify_batch_size", VERIFY_BATCH_SIZE_DEFAULT,
+        ),
+    )
     no_verify: bool = bool(getattr(args, "no_verify", False))
     no_verify_reason: str = str(getattr(args, "no_verify_reason", "") or "")
     # PLN-774 — Read partitions.json (written by ``cmd_partition`` at
@@ -2288,6 +2313,10 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
         "partition_mode": partition_mode,
         "partition_count": partition_count,
         "max_verifications": VERIFY_MAX_VERIFICATIONS,
+        # Resolved, already-clamped Verifier Fleet batch size. The walker
+        # batches ``to_verify[]`` using THIS value (never the raw settings
+        # file) so the [1, 20] clamp is authoritative and single-sourced.
+        "verify_batch_size": verify_batch_size,
         "total_eligible": (
             len(to_verify) + len(deferred) + len(cache_hits) + len(override_hits)
         ),
@@ -2483,13 +2512,20 @@ def _load_code_review_settings(path: Path | None) -> dict[str, Any]:
         cross-region invariants stay visible to one reviewer. Default
         :data:`BHA_UNIFIED_THRESHOLD_LOC` (5000). Setting the value to 0
         forces the historical always-partition behavior (kill switch).
+      - ``verify_batch_size`` (int): number of findings the Verifier Fleet
+        packs into one agent at stage_23. Clamped to
+        ``[VERIFY_BATCH_SIZE_MIN, VERIFY_BATCH_SIZE_MAX]`` (1–20); default
+        :data:`VERIFY_BATCH_SIZE_DEFAULT` (5). ``1`` restores fully
+        independent one-agent-per-finding verification.
 
-    Unknown keys are ignored. Invalid entries (wrong type, negative)
-    fall back to the default — the file is operator-authored and should
-    not crash the pipeline on a typo.
+    Unknown keys are ignored. Invalid entries (wrong type, negative,
+    out of range, or a numeric string like ``"5"``) fall back to the
+    default — the file is operator-authored and should not crash the
+    pipeline on a typo.
     """
     defaults: dict[str, Any] = {
         "bha_unified_threshold_loc": BHA_UNIFIED_THRESHOLD_LOC,
+        "verify_batch_size": VERIFY_BATCH_SIZE_DEFAULT,
     }
     data, out = _load_optional_settings_dict(path, defaults)
     if data is None:
@@ -2501,6 +2537,13 @@ def _load_code_review_settings(path: Path | None) -> dict[str, Any]:
         and raw_threshold >= 0
     ):
         out["bha_unified_threshold_loc"] = raw_threshold
+    raw_batch = data.get("verify_batch_size")
+    if (
+        isinstance(raw_batch, int)
+        and not isinstance(raw_batch, bool)
+        and VERIFY_BATCH_SIZE_MIN <= raw_batch <= VERIFY_BATCH_SIZE_MAX
+    ):
+        out["verify_batch_size"] = raw_batch
     return out
 
 
