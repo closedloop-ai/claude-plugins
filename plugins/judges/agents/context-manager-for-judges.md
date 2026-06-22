@@ -78,7 +78,12 @@ Before any artifact collection, determine the token budget for this run:
 ```bash
 ESTIMATED_OVERHEAD=98000
 
-if [[ -n "$CLOSEDLOOP_CONTEXT_LIMIT" ]]; then
+# CLOSEDLOOP_CONTEXT_LIMIT is optional. Treat it as a token limit only when it is a
+# positive decimal integer; any other value (empty, non-numeric, zero, negative) falls
+# back to the default 200K-window behavior instead of corrupting the arithmetic below
+# or aborting the shell under `set -e`. This mirrors the guard in the run-judges budget
+# snippet (skills/run-judges/SKILL.md, Step 0.5 Sub-step A).
+if [[ "${CLOSEDLOOP_CONTEXT_LIMIT:-}" =~ ^[1-9][0-9]*$ ]]; then
   DYNAMIC_BUDGET=$(( CLOSEDLOOP_CONTEXT_LIMIT - ESTIMATED_OVERHEAD ))
   if (( DYNAMIC_BUDGET < 0 )); then
     DYNAMIC_BUDGET=0
@@ -95,9 +100,12 @@ if [[ -n "$CLOSEDLOOP_CONTEXT_LIMIT" ]]; then
   fi
   echo "Dynamic token budget: $TOKEN_BUDGET (context_limit=$CLOSEDLOOP_CONTEXT_LIMIT, overhead=$ESTIMATED_OVERHEAD, 128k_mode=$CONTEXT_128K_MODE)"
 else
+  if [[ -n "${CLOSEDLOOP_CONTEXT_LIMIT:-}" ]]; then
+    echo "WARNING: CLOSEDLOOP_CONTEXT_LIMIT='$CLOSEDLOOP_CONTEXT_LIMIT' is not a positive integer; ignoring and using default token budget." >&2
+  fi
   TOKEN_BUDGET=30000
   CONTEXT_128K_MODE=false
-  echo "Token budget: $TOKEN_BUDGET (CLOSEDLOOP_CONTEXT_LIMIT not set, using default, 128k_mode=$CONTEXT_128K_MODE)"
+  echo "Token budget: $TOKEN_BUDGET (CLOSEDLOOP_CONTEXT_LIMIT unset or invalid, using default, 128k_mode=$CONTEXT_128K_MODE)"
 fi
 ```
 

@@ -572,28 +572,48 @@ The run-judges skill supports three artifact types with different judge configur
 
 **For plan and code artifact types** (context-manager produces a context file):
 
+Resolve `CONTEXT_FILE` using the **same path order as the mapper** so the budget check reads the canonical context file the judges will actually load. For plan mode this is `plan-context.json`. For code mode the canonical location is `.closedloop-ai/context/code-context.json`, with the root `code-context.json` kept only as a one-run legacy fallback — checking root first would let a normal code run miss `metadata.context_128k_mode` and launch judges without the overflow guard.
+
 ```bash
-CONTEXT_FILE="$CLOSEDLOOP_WORKDIR/plan-context.json"   # or code-context.json
+# Plan mode:
+CONTEXT_FILE="$CLOSEDLOOP_WORKDIR/plan-context.json"
+
+# Code mode: prefer the canonical path, fall back to legacy root only for old runs.
+if [ "$ARTIFACT_TYPE" = "code" ]; then
+  if [ -f "$CLOSEDLOOP_WORKDIR/.closedloop-ai/context/code-context.json" ]; then
+    CONTEXT_FILE="$CLOSEDLOOP_WORKDIR/.closedloop-ai/context/code-context.json"
+  else
+    CONTEXT_FILE="$CLOSEDLOOP_WORKDIR/code-context.json"   # legacy fallback
+  fi
+fi
+
 # Read metadata from context file
 CONTEXT_128K_MODE=$(jq -r '.metadata.context_128k_mode // false' "$CONTEXT_FILE")
 CONTEXT_TOKEN_BUDGET=$(jq -r '.metadata.token_budget // 30000' "$CONTEXT_FILE")
 echo "128K mode: $CONTEXT_128K_MODE, token_budget from context manager: $CONTEXT_TOKEN_BUDGET"
 ```
 
-If `$CONTEXT_FILE` does not exist (context manager produced no output), default `CONTEXT_128K_MODE=false` and skip the budget check entirely — proceed to judge execution as normal.
+If neither candidate `$CONTEXT_FILE` exists (context manager produced no output), default `CONTEXT_128K_MODE=false` and skip the budget check entirely — proceed to judge execution as normal.
 
 **For PRD and feature artifact types** (no context manager runs):
 
 ```bash
-# Derive 128K mode directly from CLOSEDLOOP_CONTEXT_LIMIT (mirrors context-manager logic)
+# Derive 128K mode directly from CLOSEDLOOP_CONTEXT_LIMIT (mirrors context-manager logic).
+# CLOSEDLOOP_CONTEXT_LIMIT is optional: treat it as a token limit only when it is a
+# positive decimal integer. Any other value (empty, non-numeric, zero, negative) must
+# fall back to the default 200K-window behavior rather than corrupting the arithmetic
+# below or aborting the shell under `set -e`.
 ESTIMATED_OVERHEAD=98000
-if [[ -n "$CLOSEDLOOP_CONTEXT_LIMIT" ]] && (( CLOSEDLOOP_CONTEXT_LIMIT < 200000 )); then
+if [[ "${CLOSEDLOOP_CONTEXT_LIMIT:-}" =~ ^[1-9][0-9]*$ ]] && (( CLOSEDLOOP_CONTEXT_LIMIT < 200000 )); then
   CONTEXT_128K_MODE=true
   DYNAMIC_BUDGET=$(( CLOSEDLOOP_CONTEXT_LIMIT - ESTIMATED_OVERHEAD ))
   if (( DYNAMIC_BUDGET < 0 )); then DYNAMIC_BUDGET=0; fi
   if (( DYNAMIC_BUDGET > 30000 )); then DYNAMIC_BUDGET=30000; fi
   CONTEXT_TOKEN_BUDGET=$DYNAMIC_BUDGET
 else
+  if [[ -n "${CLOSEDLOOP_CONTEXT_LIMIT:-}" ]] && ! [[ "$CLOSEDLOOP_CONTEXT_LIMIT" =~ ^[1-9][0-9]*$ ]]; then
+    echo "WARNING: CLOSEDLOOP_CONTEXT_LIMIT='$CLOSEDLOOP_CONTEXT_LIMIT' is not a positive integer; ignoring and using default token budget." >&2
+  fi
   CONTEXT_128K_MODE=false
   CONTEXT_TOKEN_BUDGET=30000
 fi
@@ -604,47 +624,40 @@ echo "128K mode: $CONTEXT_128K_MODE, estimated token_budget: $CONTEXT_TOKEN_BUDG
 
 **Only execute Sub-step B and C when `CONTEXT_128K_MODE=true`.** When `CONTEXT_128K_MODE=false`, skip the budget check entirely and proceed to Step 1 without any filtering.
 
-When 128K mode is active, estimate the token footprint for a typical judge prompt:
+When 128K mode is active, estimate the token footprint for a typical judge prompt. The estimate must reflect the **actual mapped artifacts the judge will load**, not just the `judge-input.json` envelope — the envelope is a thin descriptor of relative paths, so a small envelope can point at a large PRD/feature file or context bundle that overflows the window. `scripts/estimate_judge_budget.py` resolves every referenced artifact (`primary_artifact.path` plus each `supporting_artifacts[].path`) relative to the workdir, sums their bytes together with the preamble files, applies the `/4` chars→tokens heuristic, and reserves headroom for system overhead and model output:
 
 ```bash
-# Estimate preamble token count (common_input_preamble.md + artifact_preamble.md)
-PREAMBLE_CHARS=$(wc -c < "$COMMON_PREAMBLE_PATH")
-ARTIFACT_PREAMBLE_CHARS=$(wc -c < "$ARTIFACT_PREAMBLE_PATH")
-TOTAL_PREAMBLE_CHARS=$(( PREAMBLE_CHARS + ARTIFACT_PREAMBLE_CHARS ))
+# Reserve a safety margin for system overhead and model output (the "output reserve").
+SAFETY_MARGIN=8000
 
-# Estimate judge-input.json token count
-JUDGE_INPUT_CHARS=$(wc -c < "$CLOSEDLOOP_WORKDIR/judge-input.json")
+BUDGET_JSON=$(uv run "${CLAUDE_PLUGIN_ROOT}/skills/run-judges/scripts/estimate_judge_budget.py" \
+  --workdir "$CLOSEDLOOP_WORKDIR" \
+  --budget "$CONTEXT_TOKEN_BUDGET" \
+  --output-reserve "$SAFETY_MARGIN" \
+  --preamble "$COMMON_PREAMBLE_PATH" \
+  --preamble "$ARTIFACT_PREAMBLE_PATH")
 
-# Token estimate: characters / 4 (conservative heuristic)
-PREAMBLE_TOKENS=$(( TOTAL_PREAMBLE_CHARS / 4 ))
-JUDGE_INPUT_TOKENS=$(( JUDGE_INPUT_CHARS / 4 ))
+JUDGE_PROMPT_TOKENS=$(echo "$BUDGET_JSON" | jq -r '.estimated_tokens')
+AVAILABLE_FOR_JUDGE=$(echo "$BUDGET_JSON" | jq -r '.available_for_judge')
+SKIP_ALL_JUDGES=$(echo "$BUDGET_JSON" | jq -r '.skip_all_judges')
 
-# Total estimated prompt tokens for each judge
-JUDGE_PROMPT_TOKENS=$(( PREAMBLE_TOKENS + JUDGE_INPUT_TOKENS ))
-
-echo "Estimated judge prompt size: ${JUDGE_PROMPT_TOKENS} tokens (preamble=${PREAMBLE_TOKENS}, judge-input=${JUDGE_INPUT_TOKENS})"
-echo "Available context budget: ${CONTEXT_TOKEN_BUDGET} tokens"
+echo "Estimated judge prompt size: ${JUDGE_PROMPT_TOKENS} tokens (from preambles + mapped artifacts)"
+echo "Available context budget: ${AVAILABLE_FOR_JUDGE} tokens (CONTEXT_TOKEN_BUDGET minus output reserve)"
 ```
 
-Use `wc -c` (byte count) as a quick proxy for character count; the `/4` heuristic is the same fallback used by `context-manager-for-judges` when `count_tokens.py` is unavailable. This estimate is intentionally conservative.
+The `/4` heuristic (byte count as a proxy for characters) is the same fallback used by `context-manager-for-judges` when `count_tokens.py` is unavailable. The estimate is intentionally conservative. Any referenced artifact path that does not exist is reported in the script's `missing_artifacts` field rather than silently counted.
 
-The per-judge prompt size is treated as **uniform across all judges in a run** because all judges in a given artifact-type mode read the same preamble files and the same `judge-input.json`. A single estimate is computed once and reused for each judge in the batch loop.
+The per-judge prompt size is treated as **uniform across all judges in a run** because all judges in a given artifact-type mode read the same preamble files and the same set of mapped artifacts. A single estimate is computed once and reused for each judge in the batch loop.
 
 #### Sub-step C: Filter Judges by Context Budget
 
-Compare the estimated prompt tokens to `CONTEXT_TOKEN_BUDGET`:
+The estimate from Sub-step B already compares against `CONTEXT_TOKEN_BUDGET` minus the output reserve and returns `skip_all_judges` (`true`/`false`):
 
 ```bash
-# Reserve a safety margin for system overhead and model output
-SAFETY_MARGIN=8000
-AVAILABLE_FOR_JUDGE=$(( CONTEXT_TOKEN_BUDGET - SAFETY_MARGIN ))
-
-if (( JUDGE_PROMPT_TOKENS > AVAILABLE_FOR_JUDGE )); then
+if [ "$SKIP_ALL_JUDGES" = "true" ]; then
   echo "WARNING: 128K context mode — estimated judge prompt (${JUDGE_PROMPT_TOKENS} tokens) exceeds available budget (${AVAILABLE_FOR_JUDGE} tokens). All judges will be skipped."
-  SKIP_ALL_JUDGES=true
 else
   echo "Context budget sufficient: ${JUDGE_PROMPT_TOKENS} tokens fits within ${AVAILABLE_FOR_JUDGE} token budget."
-  SKIP_ALL_JUDGES=false
 fi
 ```
 
