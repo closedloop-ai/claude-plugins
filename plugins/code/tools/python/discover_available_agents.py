@@ -5,9 +5,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+
+# Cache layout is <cache>/<owner>/<plugin>/<version>/.claude-plugin/plugin.json.
+# Only directories whose name starts with a digit are treated as version dirs.
+_VERSION_DIR_RE = re.compile(r"^\d+\.")
 
 
 @dataclass(frozen=True)
@@ -90,19 +95,54 @@ def _iter_workspace_plugin_roots(workspace_root: Path) -> Iterable[Path]:
             yield plugin_root
 
 
+def _parse_version(name: str) -> tuple[int, ...]:
+    """Parse a version directory name into an integer tuple for comparison."""
+    parts = re.findall(r"\d+", name)
+    return tuple(int(p) for p in parts) if parts else (0,)
+
+
+def _latest_version_root(plugin_dir: Path) -> Path | None:
+    """Return the highest-semver version dir under a plugin that holds a manifest."""
+    candidates: list[tuple[tuple[int, ...], Path]] = []
+    try:
+        version_dirs = list(plugin_dir.iterdir())
+    except OSError:
+        return None
+
+    for version_dir in version_dirs:
+        if not version_dir.is_dir() or not _VERSION_DIR_RE.match(version_dir.name):
+            continue
+        if (version_dir / ".claude-plugin" / "plugin.json").is_file():
+            candidates.append((_parse_version(version_dir.name), version_dir))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    return candidates[-1][1]
+
+
 def _iter_cached_plugin_roots(plugin_cache_root: Path) -> Iterable[Path]:
+    """Yield the latest cached version root for each ``<owner>/<plugin>``.
+
+    Traverses only the expected cache layout
+    (``<cache>/<owner>/<plugin>/<version>/.claude-plugin/plugin.json``) instead
+    of recursively walking the whole cache tree, and selects the highest
+    semantic version per plugin so stale cached versions are never surfaced.
+    The fixed three-level descent bounds traversal regardless of how deep or
+    oversized the cache tree happens to be.
+    """
     if not plugin_cache_root.is_dir():
         return
 
-    seen: set[Path] = set()
-    for manifest_path in sorted(plugin_cache_root.rglob("plugin.json")):
-        if manifest_path.parent.name != ".claude-plugin":
+    for owner_dir in sorted(plugin_cache_root.iterdir()):
+        if not owner_dir.is_dir():
             continue
-        plugin_root = manifest_path.parent.parent
-        if plugin_root in seen:
-            continue
-        seen.add(plugin_root)
-        yield plugin_root
+        for plugin_dir in sorted(owner_dir.iterdir()):
+            if not plugin_dir.is_dir():
+                continue
+            latest = _latest_version_root(plugin_dir)
+            if latest is not None:
+                yield latest
 
 
 def _discover_plugin_agents(plugin_roots: Iterable[Path]) -> list[AgentDescriptor]:
