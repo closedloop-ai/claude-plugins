@@ -23,6 +23,9 @@ __pycache__/
 # Claude Code session lock file (PID/sessionId/acquiredAt, regenerated per run)
 .claude/scheduled_tasks.lock
 
+# Per-PR code review artifacts (regenerated per review; not tracked metadata)
+.claude/code-review-*
+
 # ClosedLoop session-level artifacts (cleaned up by SessionEnd hook)
 .claude/closedloop-loop.local.md
 .closedloop/
