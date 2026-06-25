@@ -145,7 +145,6 @@ COVERAGE_CORE_REQUIRED: tuple[str, ...] = (
     "bug_hunter_a",
     "bug_hunter_b",
     "unified_auditor",
-    "premise_reviewer",
     "test_quality",
 )
 
@@ -227,7 +226,7 @@ SPAWN_SPEC_ARBITRATE_STATUSES: frozenset[str] = frozenset({
 # Per-agent ``source`` field. Selects the prompt-suffix dispatch in the
 # code-review:spawn-reviewers skill; ``source: "core"`` further branches
 # on the ``reviewer`` field (bug_hunter_a → BHA, bug_hunter_b → BHB,
-# unified_auditor → Auditor, premise_reviewer → Premise). Non-core
+# unified_auditor → Auditor). Non-core
 # domain reviewers
 # carry their plan-entry source through: ``"rule"`` means the entry
 # came from a deterministically matched critic-gates.json rule
@@ -405,7 +404,7 @@ STAGE_DETERMINISM_TIERS: dict[str, str] = {
     "verify-coverage": DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE,
     # Plan 01 injection detection — LLM-driven on raw text.
     "detect-injection": DETERMINISM_TIER_LLM_DRIVEN,
-    # All reviewer agents (bha/bhb/auditor/premise/test_quality/impact) are
+    # All reviewer agents (bha/bhb/auditor/test_quality/impact) are
     # LLM-driven; tracked by agent_id rather than by subcommand.
 }
 

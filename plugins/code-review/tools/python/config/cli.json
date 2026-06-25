@@ -1026,7 +1026,7 @@
     },
     {
       "name": "fetch-intent",
-      "help": "Fetch intent context for premise review",
+      "help": "Fetch intent context (PR description / commit messages) for injection detection and intent classification",
       "func": "cmd_fetch_intent",
       "args": [
         {
@@ -1092,12 +1092,6 @@
             "--verifier-prompt"
           ],
           "help": "Path to verifier_prompt.txt. When provided, folds into prompt_hash so cache keys invalidate on verifier prompt edits."
-        },
-        {
-          "flags": [
-            "--premise-prompt"
-          ],
-          "help": "Path to premise_prompt.txt. When provided, folds into prompt_hash so cache keys invalidate on premise prompt edits."
         },
         {
           "flags": [

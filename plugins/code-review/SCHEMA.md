@@ -22,7 +22,7 @@ shape. Producers may emit dicts directly; the Python convenience type lives in
   "id": "<reviewer_id>_f<index>",
 
   // ── Provenance ────────────────────────────────────────────
-  "reviewer": "bug_hunter_a | bug_hunter_b | unified_auditor | premise | test_quality | impact | coverage-verifier | injection-detector | companion-validator | hygiene | <named-critic-id>",
+  "reviewer": "bug_hunter_a | bug_hunter_b | unified_auditor | test_quality | impact | coverage-verifier | injection-detector | companion-validator | hygiene | <named-critic-id>",
   "reviewer_trigger": {
     "type": "core | always | extension | path_pattern | content_signal | change_class | signal | partition",
     "evidence": "<trigger-specific evidence; required for non-core triggers>"
@@ -255,7 +255,7 @@ The validator rejects unknown values.
 Format: `<reviewer_id>_f<index>` where `reviewer_id` matches `^[a-z][a-z0-9_-]*$`
 and `index` is the zero-based emission order within that reviewer's output.
 
-Examples: `bha_p2_f3`, `premise_f0`, `impact_f7`, `coverage-verifier_f1`,
+Examples: `bha_p2_f3`, `bhb_f0`, `impact_f7`, `coverage-verifier_f1`,
 `injection-detector_f0`.
 
 Stability: deterministic across re-runs of the same reviewer on the same input.
@@ -321,8 +321,8 @@ ignored at spawn time.
   // ── Agents to spawn ──────────────────────────────────────
   "agents": [
     {
-      "agent_id": "bha_p0 | bhb | auditor | premise | domain_<N> | fast",
-      "reviewer": "bug_hunter_a | bug_hunter_b | unified_auditor | premise_reviewer | <critic-name> | fast_path_reviewer",
+      "agent_id": "bha_p0 | bhb | auditor | domain_<N> | fast",
+      "reviewer": "bug_hunter_a | bug_hunter_b | unified_auditor | <critic-name> | fast_path_reviewer",
       "model": "<model id>",
       "partitioned": true,             // only BHA partitions
       "partition_id": 0,               // only when partitioned
@@ -382,7 +382,7 @@ block review.
 entries survive; every `rule` and `critic` entry from the verifier-
 rejected plan is dropped into `skipped[]` with
 `reason: "gated_by_verify"` and the entry's original source preserved.
-This keeps the canonical static fleet (BHB, Auditor, Premise, BHA per
+This keeps the canonical static fleet (BHB, Auditor, BHA per
 partition) running so review still produces output, while refusing to
 action the closed-vocabulary / shape / evidence / cap violations the
 verifier flagged. The canonical BLOCKING finding already lives in
@@ -423,9 +423,9 @@ crashed at runtime. Both producers write to `coverage_gaps.json` so
 ```jsonc
 {
   "verified": true,
-  "present_count": 5,
-  "intended_count": 5,
-  "present_agents": ["auditor", "bha_p0", "bhb", "domain_0", "premise"],
+  "present_count": 4,
+  "intended_count": 4,
+  "present_agents": ["auditor", "bha_p0", "bhb", "domain_0"],
   "missing_agents": [],            // every missing descriptor (required + best_effort)
   "missing_required": [],          // subset of missing_agents with bucket == "required"
   "missing_required_gaps": 0,      // coverage_gaps.json findings appended

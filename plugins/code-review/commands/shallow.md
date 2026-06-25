@@ -19,7 +19,6 @@ This command is shorthand for `/start --depth shallow`. Follow every instruction
 | bug_hunter_a (partitioned at >5000 LOC) | ✓ | ✓ | ✓ |
 | bug_hunter_b | ✓ | ✓ | ✓ |
 | unified_auditor | ✓ | ✓ | ✓ |
-| premise_reviewer | ✗ | ✓ | ✓ |
 | critic-gates.json domain critics | ✗ | ✓ (≤5) | ✓ (≤5) |
 | Verifier | ✓ | ✓ | ✓ |
 | fast_path_reviewer (auto on tiny PRs) | ✓ (auto) | ✓ (auto) | ✓ (auto) |
