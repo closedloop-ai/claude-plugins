@@ -5575,7 +5575,7 @@ class TestComputeHashes:
         actual = json.loads(capsys.readouterr().out.strip())["prompt_hash"]
         assert actual == expected
 
-    def test_omitting_premise_prompt_matches_pre_pln_721_hash(
+    def test_premise_prompt_excluded_from_hash_computation(
         self, tmp_path: Path, capsys: Any,
     ) -> None:
         """The prompt hash folds shared || bha || verifier || schema_version
@@ -18551,7 +18551,7 @@ class TestPLN725Phase9RenderFleetSummaryNotes:
         verification = _clean_verification()
         verification["present_count"] = 3
         verification["missing_required"] = [
-            {"agent_id": "premise", "reviewer": "premise_reviewer",
+            {"agent_id": "auditor", "reviewer": "unified_auditor",
              "bucket": "required", "source": "core"},
         ]
         verification["missing_required_gaps"] = 1
@@ -20551,7 +20551,6 @@ class TestPLN807Phase4BudgetArithmetic:
                 {"reviewer": "bug_hunter_a", "source": "core"},
                 {"reviewer": "bug_hunter_b", "source": "core"},
                 {"reviewer": "unified_auditor", "source": "core"},
-                {"reviewer": "premise_reviewer", "source": "core"},
             ] + [
                 {"reviewer": f"critic_{i}", "source": "rule", "priority": 1}
                 for i in range(8)
@@ -20581,14 +20580,13 @@ class TestPLN807Phase4BudgetArithmetic:
                 {"reviewer": "bug_hunter_a", "source": "core"},
                 {"reviewer": "bug_hunter_b", "source": "core"},
                 {"reviewer": "unified_auditor", "source": "core"},
-                {"reviewer": "premise_reviewer", "source": "core"},
                 {"reviewer": "auth-security-expert", "source": "rule", "priority": 1},
             ],
             "best_effort": [],
         }
         _, final, _ = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
-        # All 5 entries survive.
-        assert len(final["required"]) == 5
+        # All 4 entries survive.
+        assert len(final["required"]) == 4
         assert final["budget"]["domain_critic_cap_fired"] is False
         assert final["deferred_for_budget"] == []
         # No coverage_gap findings emitted.
@@ -21500,8 +21498,7 @@ class TestFEA1401SpawnSpec:
         return {
             "required": [
                 {"reviewer": r, "trigger": {"type": "always"}, "source": "core"}
-                for r in ("bug_hunter_a", "bug_hunter_b", "unified_auditor",
-                          "premise_reviewer")
+                for r in ("bug_hunter_a", "bug_hunter_b", "unified_auditor")
             ],
             "best_effort": [
                 {
@@ -22152,19 +22149,19 @@ class TestFEA1401BudgetExemption:
         # actually reads it from). Tight cap forces the prune branch.
         #
         # Capacity arithmetic:
-        #   required = 5 core (BHA, BHB, auditor, premise, test_quality)
+        #   required = 4 core (BHA, BHB, auditor, test_quality)
         #   bha_target = 1 (loc=100 → 1 partition)
-        #   cap = 8 leaves 2 best_effort slots
+        #   cap = 8 leaves 3 best_effort slots
         # The plan supplies 1 core best_effort entry (impact) plus 3
         # critic-source entries. With the v2.30.1 exemption, ``impact``
-        # is reserved BEFORE the prune, leaving 1 slot for the
-        # 3 critic entries (lowest priority survives, 2 deferred).
+        # is reserved BEFORE the prune, leaving 2 slots for the
+        # 3 critic entries (highest-priority survive, 1 deferred).
         coverage_plan_in = {
             "required": [
                 {"reviewer": r, "trigger": {"type": "always"}, "source": "core"}
                 for r in (
                     "bug_hunter_a", "bug_hunter_b", "unified_auditor",
-                    "premise_reviewer", "test_quality",
+                    "test_quality",
                 )
             ],
             "best_effort": [

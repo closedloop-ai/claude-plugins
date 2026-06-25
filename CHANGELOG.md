@@ -12,6 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - Standard reviews now cap domain critics at 3 (deep keeps 5). `cmd_arbitrate_budget` reads the invocation `--depth` (plumbed through `stage_16` and `cli.json`) and applies the tighter per-source cap for the standard and shallow tiers, so a standard run keeps only the three highest-priority relevant critics instead of filling the fleet to the full cap on every PR. An unspecified depth retains the previous cap of 5.
 
+#### Fixed
+- Corrected the `/start` and `/shallow` command docs to match the v2.36.0 fleet changes: the standard-tier descriptions and tier tables now state the depth-aware critic cap (≤3 standard, ≤5 deep), and the `/shallow` description no longer lists the removed premise reviewer.
+
 ### code-review v2.35.0
 
 #### Added
