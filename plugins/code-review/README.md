@@ -125,6 +125,28 @@ Runs a comprehensive code review. Invokes the full pipeline: diff parsing, hygie
 
 Thin command-file wrappers around `/start` with `--depth` pre-bound. `/shallow` invokes the built-in fleet only (BHA + BHB + unified_auditor + verifier; no premise, no `critic-gates.json` entries, no signal extraction). `/deep` invokes the standard fleet plus any reviewer tagged `min_depth: deep` in `stages.json` (reserved for the FEA-1401 Impact Analyzer slot — today equivalent to standard).
 
+### `/cost`
+
+Attributes the token cost of code-review runs from Claude Code session transcripts (`review_result.json`'s `telemetry` block carries no token data — usage lives only in the transcripts). Reports total/mean/median/p90 spend, the main-orchestrator-vs-fleet split, cost by token kind (cache read, 1h/5m cache write, output, input), cost by depth tier (`deep`/`standard`/`shallow`), and cost per reviewer role with `$/run`. Establish a baseline before a change and compare after to measure the dollar impact of a cost-reduction change. Costs are estimates (raw transcript tokens × public Anthropic list prices).
+
+**Syntax:**
+
+```
+/cost [--session <file.jsonl>] [--project <dir>] [--scan] [--depth deep|standard|shallow] [--baseline <file.json>] [--save <file.json>] [--json]
+```
+
+| Flag | Description |
+|---|---|
+| `--scan` | Scan every code-review session under `~/.claude/projects` (default when no args given) |
+| `--session <file.jsonl>` | Attribute cost for one specific session transcript |
+| `--project <dir>` | Attribute cost for every code-review session in one project directory |
+| `--depth deep\|standard\|shallow` | Filter to a single depth tier so baseline/compare is like-for-like |
+| `--save <file.json>` | Save the aggregate as a JSON baseline |
+| `--baseline <file.json>` | Compare current spend against a saved baseline (prints mean-cost and per-role `$/run` deltas) |
+| `--json` | Emit the full machine-readable aggregate (per-session rows included) |
+
+The command runs a bundled Node analyzer (`scripts/dist/cost-report.mjs`, Node 18+, no install). Sources live outside the plugin at `tools/code-review-cost/`.
+
 ### Depth Tiers (PLN-807)
 
 Three tiers select which reviewer fleet runs:
