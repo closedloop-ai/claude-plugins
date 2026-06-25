@@ -1,6 +1,6 @@
 ---
 description: Attribute the token cost of code-review runs from session transcripts — total spend, main-vs-fleet split, cost by token kind, cost by depth tier, and cost per reviewer role. Establish a baseline and measure the impact of cost-reduction changes.
-argument-hint: "[--session <file.jsonl>] [--scan] [--depth deep|standard|shallow] [--baseline <file.json>] [--save <file.json>] [--json]"
+argument-hint: "[--session <file.jsonl>] [--project <dir>] [--scan] [--depth deep|standard|shallow] [--baseline <file.json>] [--save <file.json>] [--json]"
 ---
 
 # Code-Review Cost Report
