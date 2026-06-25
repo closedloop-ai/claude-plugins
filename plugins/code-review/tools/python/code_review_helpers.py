@@ -10521,6 +10521,32 @@ BUDGET_BHA_FLOOR_DEFAULT = 1
 # configurability later, expose via ``.closedloop-ai/settings/code-review.json``.
 DOMAIN_CRITIC_CAP = 5
 
+# Standard reviews cap domain critics tighter than deep. A standard run does
+# not warrant the full breadth of repo-specific + LLM-proposed critics; the
+# fleet ballooned to the cap on every PR regardless of how many critics were
+# genuinely relevant, so standard now keeps only the top STANDARD_DOMAIN_CRITIC_CAP
+# by (priority asc, reviewer asc). Deep retains the full DOMAIN_CRITIC_CAP for
+# breadth. Relevance itself is already enforced upstream (rule entries are
+# pattern-matched from critic-gates.json; ``critic`` entries are LLM-proposed
+# for the diff) — this cap bounds how many of those relevant critics actually
+# spawn.
+STANDARD_DOMAIN_CRITIC_CAP = 3
+
+
+def _domain_critic_cap_for_depth(depth: str | None) -> int:
+    """Return the per-source domain-critic cap for an invocation depth.
+
+    ``standard`` (and ``shallow``, which normally skips arbitration anyway)
+    cap at ``STANDARD_DOMAIN_CRITIC_CAP``; ``deep`` and any unspecified depth
+    keep the full ``DOMAIN_CRITIC_CAP``. Defaulting ``None``/unknown to the
+    full cap preserves legacy behavior for callers that do not plumb depth
+    (the stage now passes ``--depth``, so a real standard run reaches the
+    tighter cap).
+    """
+    if depth in ("standard", "shallow"):
+        return STANDARD_DOMAIN_CRITIC_CAP
+    return DOMAIN_CRITIC_CAP
+
 # PLN-807: critic-cap defer reason marker. Differentiates entries
 # deferred by the per-source cap from entries deferred by the total
 # cap (which carry no explicit reason — that's the historical default).
@@ -10764,6 +10790,14 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         print(f"Error: --cap must be > 0, got {cap}", file=sys.stderr)
         return 1
 
+    # Depth-aware domain-critic cap (standard tightens to 3; deep keeps 5).
+    depth: str | None = getattr(args, "depth", None) or None
+    ok, err = _validate_invocation_depth(depth)
+    if not ok:
+        print(err, file=sys.stderr)
+        return 1
+    critic_cap = _domain_critic_cap_for_depth(depth)
+
     def _persist_plan(plan: dict[str, Any]) -> int:
         try:
             _write_coverage_section(cr_dir, "final", plan)
@@ -10817,7 +10851,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         sel_req_critics, sel_be_critics, def_req_critics, def_be_critics = (
             _select_domain_critics(
                 required_critics_in, best_effort_critics_in,
-                DOMAIN_CRITIC_CAP,
+                critic_cap,
             )
         )
         required_blocking = required_non_critic + sel_req_critics
@@ -10851,7 +10885,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
                 "required_count": len(required_blocking),
                 "best_effort_count": len(best_effort_blocking),
                 "bha_partitions": blocking_bha_partitions,
-                "domain_critic_cap": DOMAIN_CRITIC_CAP,
+                "domain_critic_cap": critic_cap,
                 "domain_critic_cap_fired": bool(def_req_critics or def_be_critics),
                 "gated_by_verify": True,
                 "verify_violations": violations,
@@ -10922,7 +10956,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     # the PASS path.
     sel_req_critics, sel_be_critics, def_req_critics, def_be_critics = (
         _select_domain_critics(
-            required_critics_in, best_effort_critics_in, DOMAIN_CRITIC_CAP,
+            required_critics_in, best_effort_critics_in, critic_cap,
         )
     )
 
@@ -11037,7 +11071,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
             "required_count": len(required),
             "best_effort_count": len(best_effort_final),
             "bha_partitions": bha_partitions,
-            "domain_critic_cap": DOMAIN_CRITIC_CAP,
+            "domain_critic_cap": critic_cap,
             "domain_critic_cap_fired": bool(def_req_critics or def_be_critics),
         },
         "dropped_required": dropped_required,

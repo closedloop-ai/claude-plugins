@@ -1422,6 +1422,17 @@
           "default": "$$BUDGET_TOTAL_CAP_DEFAULT",
           "type": "int",
           "help": "Total reviewer cap"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ],
+          "help": "Invocation tier; standard tightens the per-source domain-critic cap (deep keeps the full cap)"
         }
       ]
     },

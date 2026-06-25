@@ -454,7 +454,9 @@
       "--cr-dir",
       "/tmp/cr_dir",
       "--diff-data",
-      "/tmp/cr_dir/diff_data.json"
+      "/tmp/cr_dir/diff_data.json",
+      "--depth",
+      "standard"
     ],
     "stdout": null,
     "expected_outputs": [

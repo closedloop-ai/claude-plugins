@@ -1538,6 +1538,18 @@
           "dest": "cap",
           "default": 20,
           "type": "int"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "dest": "depth",
+          "default": null,
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ]
         }
       ]
     },

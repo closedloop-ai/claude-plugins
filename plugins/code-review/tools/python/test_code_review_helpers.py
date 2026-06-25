@@ -7661,6 +7661,7 @@ def _run_arbitrate_budget(
     diff_data: dict[str, Any],
     *,
     cap: int = 20,
+    depth: str | None = None,
     verify_doc: dict[str, Any] | None = None,
     include_verify_flag: bool = True,  # noqa: ARG001 - retained for caller signature
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -7706,6 +7707,7 @@ def _run_arbitrate_budget(
             cr_dir=str(tmp_path),
             diff_data=str(dd_path),
             cap=cap,
+            depth=depth,
         )
         cmd_arbitrate_budget(ns)
         _sys.stdout.seek(0)
@@ -7803,6 +7805,54 @@ class TestArbitrateBudget:
         summary, plan, gaps = self._run(tmp_path, plan_in, diff, cap=20)
         # 1 required + bha_floor=1 → bha_partitions >= 1.
         assert plan["budget"]["bha_partitions"] >= 1
+
+    def _critic_plan(self, n: int) -> dict[str, Any]:
+        """A plan of ``n`` required domain critics (source='rule')."""
+        return {
+            "required": [
+                {"reviewer": f"domain-{i}", "priority": 1, "source": "rule"}
+                for i in range(n)
+            ],
+            "best_effort": [],
+        }
+
+    def test_standard_depth_caps_domain_critics_at_three(self, tmp_path: Path) -> None:
+        # 5 relevant required critics; a standard run keeps only 3, deferring
+        # the other 2 with the domain_critic_cap reason (NOT as coverage gaps).
+        diff = _make_diff_data(files=["src/app.ts"])
+        _, plan, gaps = _run_arbitrate_budget(
+            tmp_path, self._critic_plan(5), diff, cap=20, depth="standard",
+        )
+        selected = [r for r in plan["required"] if r.get("source") == "rule"]
+        assert len(selected) == 3
+        assert plan["budget"]["domain_critic_cap"] == 3
+        assert plan["budget"]["domain_critic_cap_fired"] is True
+        capped = [
+            e for e in plan["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
+        ]
+        assert len(capped) == 2
+        # cap-deferred critics must NOT surface as coverage-gap findings.
+        assert gaps["findings"] == []
+
+    def test_deep_depth_keeps_full_critic_cap(self, tmp_path: Path) -> None:
+        # The same 5 critics all survive on a deep run (cap stays at 5).
+        diff = _make_diff_data(files=["src/app.ts"])
+        _, plan, _ = _run_arbitrate_budget(
+            tmp_path, self._critic_plan(5), diff, cap=20, depth="deep",
+        )
+        selected = [r for r in plan["required"] if r.get("source") == "rule"]
+        assert len(selected) == 5
+        assert plan["budget"]["domain_critic_cap"] == 5
+        assert plan["budget"]["domain_critic_cap_fired"] is False
+
+    def test_absent_depth_preserves_legacy_cap(self, tmp_path: Path) -> None:
+        # Callers that don't plumb depth keep the historical cap of 5.
+        diff = _make_diff_data(files=["src/app.ts"])
+        _, plan, _ = _run_arbitrate_budget(
+            tmp_path, self._critic_plan(5), diff, cap=20, depth=None,
+        )
+        assert plan["budget"]["domain_critic_cap"] == 5
 
     def test_invalid_cap_returns_error(self, tmp_path: Path) -> None:
         diff = _make_diff_data(files=["src/app.ts"])
