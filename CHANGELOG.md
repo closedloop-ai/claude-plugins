@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.35.0
+
+#### Added
+- New `/code-review:cost` command and a committed `cost-report` tool that attribute the token cost of code-review runs from Claude Code session transcripts (the review pipeline's `review_result.json` telemetry carries no token data, so cost is reconstructed from the transcripts). It reports total spend, the main-orchestrator vs subagent-fleet split, cost by token kind (cache read, 1h/5m cache write, output, input), cost by depth tier (deep/standard/shallow), and cost per reviewer role with per-run figures. Depth is resolved from the command variant and any `--depth` argument so `/code-review:start` runs are classified accurately. Supports `--session`, `--project`, and `--scan` inputs, a `--depth` filter for like-for-like comparison, `--json` output, and `--save`/`--baseline` modes that capture a baseline aggregate and report the cost delta of a later change. Tool sources and vitest suites live under `tools/code-review-cost/`; the bundled CLI is committed at `plugins/code-review/scripts/dist/cost-report.mjs` and runs on Node 18+ with no install.
+
 ### code-review v2.34.1
 
 #### Fixed
