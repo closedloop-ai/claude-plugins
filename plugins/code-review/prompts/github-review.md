@@ -302,6 +302,8 @@ Read `$CR_DIR/review_result.json` → `stats.verification`. If the block is not 
 
 The Reviewer column keys off the `reviewer` field, which `cmd_collect_findings` derives from the agent filename (`agent_bha_p0.json` → `reviewer='bha_p0'`). Under partitioned mode the table shows one BHA row per partition (`bha_p0`, `bha_p1`, …); under unified mode it shows a single `bha_p0` row because only one partition exists.
 
+**Impact gateable count**: {stats.impact_cumulative_count} (gate threshold {impact_cumulative}) — read from `stats`. The envelope's sole operator-tunable verdict-gate count (the cumulative Impact gate; FEA-1401 / PLN-726 OQ#6).
+
 **Partition mode** ({verify_manifest.partition_mode}, {verify_manifest.partition_count} partitions) — read from `<CR_DIR>/verify_manifest.json`. Omit this line when the manifest file is absent (hygiene-only run or pre-PLN-774 cache).
 
 </details>

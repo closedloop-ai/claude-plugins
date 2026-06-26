@@ -1,9 +1,13 @@
 # PLN-719 Section 10 fixture: schema round-trip exemplar.
 # A single finding with every optional schema field populated
 # (evidence[], reasoning_certificate, other_locations) so the produced
-# envelope exercises the maximal v1 shape. The harness's always-on
-# validate_result_envelope call pins the round-trip contract.
-description: "Maximal v1 finding shape — every optional field populated for round-trip."
+# envelope exercises the maximal finding shape. The input finding declares
+# schema_version 1; the SCHEMA_VERSION 1->2 bump restamps the envelope to the
+# current version (2) while each finding's own stamp is preserved — so this
+# fixture doubles as a v1-finding backward-compat probe: the current validator
+# still round-trips a finding that declares schema_version 1. The harness's
+# always-on validate_result_envelope call pins the round-trip contract.
+description: "Maximal finding shape (every optional field populated) declaring schema_version 1, round-tripped through the current schema_version-2 envelope — also pins v1-finding backward-compat."
 mode: github
 diff_tip: "deadbeef"
 expected_verdict: NEEDS_ATTENTION
