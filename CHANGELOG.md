@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.37.0
+
+#### Changed
+- The review orchestrator (`/start`, `/deep`, `/shallow`) now runs on Sonnet via a `model: sonnet` line in each command's frontmatter. The walk is mechanical (run helper, read JSON, honor gates), so the orchestration spine no longer consumes Opus tokens for what is the majority of a review's turns. Spawned reviewer and verifier subagents keep their own route-assigned models (Bug Hunter A defaults Opus, domain critics Sonnet, Impact Analyzer Opus) because a subagent's `model` outranks the session model — the Sonnet spine never downgrades a reviewer. If an org `availableModels` allowlist excludes Sonnet, the session keeps its current model and the run still completes.
+- Added turn-and-context discipline rules to the walker contract in `start.md`. The orchestrator never reads `diff_data.json` or `patches_*.txt` into its own context (they are passed to helpers and reviewers as file-path arguments); consecutive deterministic helper stages with no gate, branch, or stdout dependency between them may be chained in a single shell invocation to cut turn count; and intermediate stage progress is no longer narrated as prose. These reduce the cache-read cost that dominates orchestrator spend.
+
 ### code-review v2.36.0
 
 #### Removed
