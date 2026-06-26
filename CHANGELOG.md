@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.36.0
+
+#### Removed
+- Removed the premise reviewer from the reviewer fleet. It no longer spawns on any tier: dropped from `COVERAGE_CORE_REQUIRED`, the `cmd_route` model map (with the BHA budget math adjusted to `9 - 2 - critics`), `_SPAWN_CORE_ROLES`, `_spawn_resolve_models`, and the fleet display/model-summary rendering. The `premise_prompt.txt` asset and its `--premise-prompt` wiring (the `compute-hashes` prompt-hash fold and the `stage_18` argument) are removed, and the `spawn-reviewers` skill, `start.md`, `shallow.md`, and `SCHEMA.md` no longer spawn or document it. Removing the premise prompt from the prompt hash invalidates the Bug Hunter A and verification caches once on rollout. The `Premise` finding category and its verdict gates, telemetry sub-blocks, and verifier handling are retained for now (no reviewer emits `Premise` findings after this change).
+
+#### Changed
+- Standard reviews now cap domain critics at 3 (deep keeps 5). `cmd_arbitrate_budget` reads the invocation `--depth` (plumbed through `stage_16` and `cli.json`) and applies the tighter per-source cap for the standard and shallow tiers, so a standard run keeps only the three highest-priority relevant critics instead of filling the fleet to the full cap on every PR. An unspecified depth retains the previous cap of 5.
+
+#### Fixed
+- Corrected the `/start` and `/shallow` command docs to match the v2.36.0 fleet changes: the standard-tier descriptions and tier tables now state the depth-aware critic cap (≤3 standard, ≤5 deep), and the `/shallow` description no longer lists the removed premise reviewer.
+
 ### code-review v2.35.0
 
 #### Added

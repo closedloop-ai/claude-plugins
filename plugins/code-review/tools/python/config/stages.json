@@ -458,7 +458,9 @@
         "--cr-dir",
         "{cr_dir}",
         "--diff-data",
-        "{cr_dir}/diff_data.json"
+        "{cr_dir}/diff_data.json",
+        "--depth",
+        "{depth}"
       ],
       "stdout": null,
       "expected_outputs": [
@@ -483,8 +485,6 @@
         "{cr_dir}/bha_suffix.txt",
         "--verifier-prompt",
         "{cr_dir}/verifier_prompt.txt",
-        "--premise-prompt",
-        "{cr_dir}/premise_prompt.txt",
         "--diff-tip",
         "<DIFF_TIP>",
         "--base-ref",

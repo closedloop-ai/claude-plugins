@@ -797,7 +797,7 @@ class TestRoute:
         data = _make_diff_data(files=["a.ts"])
         data["total_loc"] = 100
         result = self._run_route(data)
-        assert result["max_bha_agents"] == 6  # 9 - BHB - Auditor - Premise
+        assert result["max_bha_agents"] == 7  # 9 - BHB - Auditor
 
     def test_max_bha_agents_with_domain_critic(self, tmp_path: Path) -> None:
         gates = {
@@ -815,25 +815,7 @@ class TestRoute:
         data["total_loc"] = 10
         result = self._run_route(data, str(gates_path))
         assert len(result["domain_critics"]) == 1
-        assert result["max_bha_agents"] == 5  # 9 - BHB - Auditor - Premise - 1 domain
-
-    def test_premise_opus_for_fix(self) -> None:
-        data = _make_diff_data(files=["a.ts"])
-        data["total_loc"] = 100
-        result = self._run_route(data, intent="fix")
-        assert result["models"]["premise_reviewer"] == "opus"
-
-    def test_premise_sonnet_for_feature(self) -> None:
-        data = _make_diff_data(files=["a.ts"])
-        data["total_loc"] = 100
-        result = self._run_route(data, intent="feature")
-        assert result["models"]["premise_reviewer"] == "sonnet"
-
-    def test_premise_opus_default(self) -> None:
-        data = _make_diff_data(files=["a.ts"])
-        data["total_loc"] = 100
-        result = self._run_route(data)
-        assert result["models"]["premise_reviewer"] == "opus"
+        assert result["max_bha_agents"] == 6  # 9 - BHB - Auditor - 1 domain
 
     def test_fast_path_small_diff(self) -> None:
         files = ["a.ts", "b.ts", "c.ts"]
@@ -5593,55 +5575,13 @@ class TestComputeHashes:
         actual = json.loads(capsys.readouterr().out.strip())["prompt_hash"]
         assert actual == expected
 
-    def test_premise_prompt_changes_hash(
+    def test_premise_prompt_excluded_from_hash_computation(
         self, tmp_path: Path, capsys: Any,
     ) -> None:
-        """PLN-721: editing ``premise_prompt.txt`` must bust the prompt
-        hash on the same contract as verifier_prompt. Without this, the
-        BHA cache + verifications/ cache would serve stale results after
-        a premise prompt rev — the same shape of bug PR #111 review HIGH
-        #3 surfaced for the verifier.
-        """
-        import argparse
-
-        shared_prompt = tmp_path / "shared_prompt.txt"
-        shared_prompt.write_bytes(b"shared")
-        bha_suffix = tmp_path / "bha_suffix.txt"
-        bha_suffix.write_bytes(b"bha")
-        verifier_prompt = tmp_path / "verifier_prompt.txt"
-        verifier_prompt.write_bytes(b"verifier")
-        premise_prompt = tmp_path / "premise_prompt.txt"
-        premise_prompt.write_bytes(b"premise v1")
-        premise_prompt_v2 = tmp_path / "premise_prompt_v2.txt"
-        premise_prompt_v2.write_bytes(b"premise v2 - changed instructions")
-
-        def _hash_with(premise_path: str | None) -> str:
-            with patch("code_review_helpers._run_git", return_value=""):
-                ns = argparse.Namespace(
-                    shared_prompt=str(shared_prompt),
-                    bha_suffix=str(bha_suffix),
-                    verifier_prompt=str(verifier_prompt),
-                    premise_prompt=premise_path,
-                    diff_tip="HEAD", base_ref="main",
-                )
-                assert cmd_compute_hashes(ns) == 0
-            return json.loads(capsys.readouterr().out.strip())["prompt_hash"]
-
-        h_v1 = _hash_with(str(premise_prompt))
-        h_v2 = _hash_with(str(premise_prompt_v2))
-        assert h_v1 != h_v2, (
-            "Editing premise_prompt.txt must produce a different prompt_hash "
-            "so the BHA + verifications caches invalidate."
-        )
-
-    def test_omitting_premise_prompt_matches_pre_pln_721_hash(
-        self, tmp_path: Path, capsys: Any,
-    ) -> None:
-        """Back-compat: a pre-PLN-721 caller (no ``--premise-prompt``) must
-        produce the same hash as v2.8.1 byte-identically so existing
-        cache entries stay valid across the upgrade. Without this, the
-        v2.9.0 rollout would force every cache namespace to miss on the
-        first run after upgrade.
+        """The prompt hash folds shared || bha || verifier || schema_version
+        only. The premise reviewer was removed, so no premise prompt is
+        folded; this pins the canonical hash shape and guards against an
+        accidental reintroduction that would bust every cache namespace.
         """
         import argparse
         import hashlib
@@ -6591,7 +6531,6 @@ class TestPrepAssets:
         (prompts_dir / "shared_prompt.txt").write_text("shared prompt content")
         (prompts_dir / "bha_suffix.txt").write_text("bha suffix content")
         (prompts_dir / "verifier_prompt.txt").write_text("verifier prompt content")
-        (prompts_dir / "premise_prompt.txt").write_text("premise prompt content")
         (prompts_dir / "impact_analyzer_prompt.txt").write_text("impact prompt content")
 
         cr_dir = tmp_path / "cr"
@@ -6610,18 +6549,17 @@ class TestPrepAssets:
         assert (cr_dir / "shared_prompt.txt").exists()
         assert (cr_dir / "bha_suffix.txt").exists()
         assert (cr_dir / "verifier_prompt.txt").exists()
-        assert (cr_dir / "premise_prompt.txt").exists()
         assert (cr_dir / "impact_analyzer_prompt.txt").exists()
+        assert not (cr_dir / "premise_prompt.txt").exists()
         assert "shared_prompt" in result
         assert "bha_suffix" in result
         assert "verifier_prompt" in result
-        assert "premise_prompt" in result
+        assert "premise_prompt" not in result
         assert "impact_analyzer_prompt" in result
         # Output paths should point to actual files in cr_dir
         assert result["shared_prompt"] == str(cr_dir / "shared_prompt.txt")
         assert result["bha_suffix"] == str(cr_dir / "bha_suffix.txt")
         assert result["verifier_prompt"] == str(cr_dir / "verifier_prompt.txt")
-        assert result["premise_prompt"] == str(cr_dir / "premise_prompt.txt")
         assert result["impact_analyzer_prompt"] == str(cr_dir / "impact_analyzer_prompt.txt")
 
 
@@ -7661,6 +7599,7 @@ def _run_arbitrate_budget(
     diff_data: dict[str, Any],
     *,
     cap: int = 20,
+    depth: str | None = None,
     verify_doc: dict[str, Any] | None = None,
     include_verify_flag: bool = True,  # noqa: ARG001 - retained for caller signature
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -7706,6 +7645,7 @@ def _run_arbitrate_budget(
             cr_dir=str(tmp_path),
             diff_data=str(dd_path),
             cap=cap,
+            depth=depth,
         )
         cmd_arbitrate_budget(ns)
         _sys.stdout.seek(0)
@@ -7803,6 +7743,54 @@ class TestArbitrateBudget:
         summary, plan, gaps = self._run(tmp_path, plan_in, diff, cap=20)
         # 1 required + bha_floor=1 → bha_partitions >= 1.
         assert plan["budget"]["bha_partitions"] >= 1
+
+    def _critic_plan(self, n: int) -> dict[str, Any]:
+        """A plan of ``n`` required domain critics (source='rule')."""
+        return {
+            "required": [
+                {"reviewer": f"domain-{i}", "priority": 1, "source": "rule"}
+                for i in range(n)
+            ],
+            "best_effort": [],
+        }
+
+    def test_standard_depth_caps_domain_critics_at_three(self, tmp_path: Path) -> None:
+        # 5 relevant required critics; a standard run keeps only 3, deferring
+        # the other 2 with the domain_critic_cap reason (NOT as coverage gaps).
+        diff = _make_diff_data(files=["src/app.ts"])
+        _, plan, gaps = _run_arbitrate_budget(
+            tmp_path, self._critic_plan(5), diff, cap=20, depth="standard",
+        )
+        selected = [r for r in plan["required"] if r.get("source") == "rule"]
+        assert len(selected) == 3
+        assert plan["budget"]["domain_critic_cap"] == 3
+        assert plan["budget"]["domain_critic_cap_fired"] is True
+        capped = [
+            e for e in plan["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
+        ]
+        assert len(capped) == 2
+        # cap-deferred critics must NOT surface as coverage-gap findings.
+        assert gaps["findings"] == []
+
+    def test_deep_depth_keeps_full_critic_cap(self, tmp_path: Path) -> None:
+        # The same 5 critics all survive on a deep run (cap stays at 5).
+        diff = _make_diff_data(files=["src/app.ts"])
+        _, plan, _ = _run_arbitrate_budget(
+            tmp_path, self._critic_plan(5), diff, cap=20, depth="deep",
+        )
+        selected = [r for r in plan["required"] if r.get("source") == "rule"]
+        assert len(selected) == 5
+        assert plan["budget"]["domain_critic_cap"] == 5
+        assert plan["budget"]["domain_critic_cap_fired"] is False
+
+    def test_absent_depth_preserves_legacy_cap(self, tmp_path: Path) -> None:
+        # Callers that don't plumb depth keep the historical cap of 5.
+        diff = _make_diff_data(files=["src/app.ts"])
+        _, plan, _ = _run_arbitrate_budget(
+            tmp_path, self._critic_plan(5), diff, cap=20, depth=None,
+        )
+        assert plan["budget"]["domain_critic_cap"] == 5
 
     def test_invalid_cap_returns_error(self, tmp_path: Path) -> None:
         diff = _make_diff_data(files=["src/app.ts"])
@@ -8083,25 +8071,17 @@ class TestPrepareRun:
             "envelope is built from the bucket-split output"
         )
 
-    def test_pln_721_premise_prompt_folds_into_compute_hashes(
+    def test_compute_hashes_does_not_fold_premise_prompt(
         self, tmp_path: Path,
     ) -> None:
-        """PLN-721 contract: stage_18 passes --premise-prompt to compute-
-        hashes so editing premise_prompt.txt busts the prompt hash on the
-        same contract as verifier_prompt.txt. Without this, the BHA + the
-        verifications/ cache would serve stale results after a premise
-        prompt rev — same shape of bug PR #111 review HIGH #3 surfaced
-        for the verifier (PLN-722 v2.8.1)."""
+        """The premise reviewer was removed, so stage_18 no longer passes
+        --premise-prompt to compute-hashes. The prompt hash folds shared +
+        bha + verifier only; --verifier-prompt must still be wired."""
         _, plan = self._run(tmp_path)
         by_id = {s["id"]: s for s in plan["stages"]}
         stage_18 = by_id["stage_18_compute_hashes"]
-        assert "--premise-prompt" in stage_18["args"], (
-            "stage_18_compute_hashes must pass --premise-prompt so the "
-            "prompt hash invalidates on premise_prompt.txt edits"
-        )
-        # Ensure the value following --premise-prompt points at CR_DIR
-        idx = stage_18["args"].index("--premise-prompt")
-        assert stage_18["args"][idx + 1].endswith("premise_prompt.txt")
+        assert "--premise-prompt" not in stage_18["args"]
+        assert "--verifier-prompt" in stage_18["args"]
 
     def test_foundation_stages_enabled(self, tmp_path: Path) -> None:
         """Foundation-owned stages whose inputs always exist must be enabled."""
@@ -16803,7 +16783,6 @@ class TestPLN725Phase8DeriveSpawnSpec:
                 {"reviewer": "bug_hunter_a", "source": "core"},
                 {"reviewer": "bug_hunter_b", "source": "core"},
                 {"reviewer": "unified_auditor", "source": "core"},
-                {"reviewer": "premise_reviewer", "source": "core"},
                 {"reviewer": "test_quality", "source": "core"},
             ],
             "best_effort": [],
@@ -16829,7 +16808,6 @@ class TestPLN725Phase8DeriveSpawnSpec:
                 "bug_hunter_a": {"default": "opus", "test_only": "sonnet"},
                 "bug_hunter_b": "sonnet",
                 "unified_auditor": "sonnet",
-                "premise_reviewer": "opus",
                 "fast_path_reviewer": "sonnet",
             },
         }
@@ -16837,9 +16815,9 @@ class TestPLN725Phase8DeriveSpawnSpec:
     def test_core_required_expands_to_canonical_agent_ids(
         self, tmp_path: Path,
     ) -> None:
-        """The five COVERAGE_CORE_REQUIRED reviewers map to the
+        """The COVERAGE_CORE_REQUIRED reviewers map to the
         canonical AGENT_IDs the orchestrator already knows (bha_p<N>,
-        bhb, auditor, premise, plus the deferred test_quality slot in
+        bhb, auditor, plus the deferred test_quality slot in
         skipped[]). BHA expands one agent per partition.
         """
         summary, spec = _run_derive_spawn_spec(
@@ -16850,10 +16828,10 @@ class TestPLN725Phase8DeriveSpawnSpec:
         )
 
         assert summary["fast_path"] is False
-        assert summary["agent_count"] == 5  # 2 BHA + BHB + Auditor + Premise
+        assert summary["agent_count"] == 4  # 2 BHA + BHB + Auditor
 
         ids = {a["agent_id"]: a for a in spec["agents"]}
-        assert set(ids) == {"bha_p0", "bha_p1", "bhb", "auditor", "premise"}
+        assert set(ids) == {"bha_p0", "bha_p1", "bhb", "auditor"}
 
         # BHA partitions get per-partition is_test_only routing and
         # use partition-specific patches files.
@@ -16873,7 +16851,6 @@ class TestPLN725Phase8DeriveSpawnSpec:
         assert ids["bhb"]["partitioned"] is False
         assert ids["bhb"]["patches_file"] == "patches_all.txt"
         assert ids["auditor"]["patches_file"] == "patches_all.txt"
-        assert ids["premise"]["model"] == "opus"
 
         # test_quality is the PLN-723 placeholder — surfaced in skipped[]
         # so operators can see the deferral, not silently dropped.
@@ -16881,10 +16858,10 @@ class TestPLN725Phase8DeriveSpawnSpec:
         assert len(deferred) == 1
         assert deferred[0]["reason"] == "deferred_pln723"
 
-        # All five agents came from required[]; pin the bucket counter
+        # All four agents came from required[]; pin the bucket counter
         # so future plan-shape changes can't silently mis-attribute the
         # tier they were selected from.
-        assert spec["stats"]["from_required"] == 5
+        assert spec["stats"]["from_required"] == 4
         assert spec["stats"]["from_best_effort"] == 0
 
     def test_critic_best_effort_becomes_domain_critic(
@@ -16913,10 +16890,10 @@ class TestPLN725Phase8DeriveSpawnSpec:
         assert critics[0]["reviewer"] == "graphql-architect"
         assert spec["stats"]["domain_critic_count"] == 2
         # Bucket attribution: both critics came from best_effort[]. The
-        # four core required reviewers (BHA expands to 2 agents, plus
-        # BHB/Auditor/Premise) still come from required[].
+        # three core required reviewers (BHA expands to 2 agents, plus
+        # BHB/Auditor) still come from required[].
         assert spec["stats"]["from_best_effort"] == 2
-        assert spec["stats"]["from_required"] == 5
+        assert spec["stats"]["from_required"] == 4
 
     def test_fast_path_skips_bucket_walk(self, tmp_path: Path) -> None:
         """When route.fast_path is true, the spec emits exactly one
@@ -16959,7 +16936,7 @@ class TestPLN725Phase8DeriveSpawnSpec:
         # halt" semantics. The canonical BLOCKING finding already lives
         # in agent_coverage-verify-blocking.json so the operator sees
         # the gate; spawn-spec doesn't double-emit.
-        assert spec["stats"]["agent_count"] == 5
+        assert spec["stats"]["agent_count"] == 4
 
     def test_bha_skipped_when_partitions_empty(
         self, tmp_path: Path,
@@ -16982,7 +16959,7 @@ class TestPLN725Phase8DeriveSpawnSpec:
         assert len(bha_skipped) == 1
         assert bha_skipped[0]["reason"] == "no_partitions"
         # Non-partitioned core roles still spawn even when BHA is skipped.
-        assert {"bhb", "auditor", "premise"} <= {
+        assert {"bhb", "auditor"} <= {
             a["agent_id"] for a in spec["agents"]
         }
 
@@ -17107,17 +17084,18 @@ class TestPLN725Phase8DeriveSpawnSpec:
     ) -> None:
         """The ``spawn.json.route`` ``models`` block is the single
         source of truth for per-agent model selection; the spec must
-        echo operator overrides (e.g. premise on Sonnet for a "feat"
-        intent) rather than re-deriving them in the orchestrator.
+        echo operator overrides (e.g. the auditor on Opus for a
+        risk-sensitive run) rather than re-deriving them in the
+        orchestrator.
         """
         route = self._route()
-        route["models"]["premise_reviewer"] = "sonnet"
+        route["models"]["unified_auditor"] = "opus"
         route["models"]["bug_hunter_a"] = {"default": "sonnet", "test_only": "haiku"}
         _, spec = _run_derive_spawn_spec(
             tmp_path, self._core_plan(), self._two_partitions(), route,
         )
         ids = {a["agent_id"]: a for a in spec["agents"]}
-        assert ids["premise"]["model"] == "sonnet"
+        assert ids["auditor"]["model"] == "opus"
         assert ids["bha_p0"]["model"] == "sonnet"
         assert ids["bha_p1"]["model"] == "haiku"  # test-only partition
 
@@ -17143,7 +17121,7 @@ class TestPLN725Phase8DeriveSpawnSpec:
         assert ids["bha_p1"]["model"] == "sonnet"
         # Other roles default to sonnet.
         assert ids["bhb"]["model"] == "sonnet"
-        assert ids["premise"]["model"] == "sonnet"
+        assert ids["auditor"]["model"] == "sonnet"
 
     def test_missing_partitions_file_emits_fallback_sentinel(
         self, tmp_path: Path,
@@ -17290,7 +17268,6 @@ class TestPLN725Phase8DeriveSpawnSpecBudgetCap:
                 "bug_hunter_a": {"default": "opus", "test_only": "sonnet"},
                 "bug_hunter_b": "sonnet",
                 "unified_auditor": "sonnet",
-                "premise_reviewer": "opus",
                 "fast_path_reviewer": "sonnet",
             },
         }
@@ -18193,14 +18170,13 @@ def _run_render_fleet_summary(tmp_path: Path) -> str:
 
 
 def _standard_spec() -> dict[str, Any]:
-    """The canonical happy-path 5-agent spec used as a baseline.
+    """The canonical happy-path 4-agent spec used as a baseline.
 
-    Four core reviewers (BHA on partition 0, BHB, Auditor, Premise)
-    plus one operator-configured domain critic from a critic-gates
-    rule. The fifth agent makes the `× N` BHA-multiplier path
-    distinct from the domain-critic provenance path in the rendered
-    output, and pins that the canonical-fleet docstring matches the
-    actual fixture (cr-83787 caught the mismatch).
+    Three core reviewers (BHA on partition 0, BHB, Auditor) plus one
+    operator-configured domain critic from a critic-gates rule. The
+    domain critic makes the `× N` BHA-multiplier path distinct from the
+    domain-critic provenance path in the rendered output, and pins that
+    the canonical-fleet docstring matches the actual fixture.
     """
     return {
         "fast_path": False,
@@ -18221,10 +18197,6 @@ def _standard_spec() -> dict[str, Any]:
              "model": "sonnet", "partitioned": False,
              "patches_file": "patches_all.txt",
              "source": "core", "bucket": "required"},
-            {"agent_id": "premise", "reviewer": "premise_reviewer",
-             "model": "opus", "partitioned": False,
-             "patches_file": "patches_all.txt",
-             "source": "core", "bucket": "required"},
             {"agent_id": "domain_0", "reviewer": "ts-expert",
              "model": "sonnet", "partitioned": False,
              "patches_file": "patches_all.txt",
@@ -18232,8 +18204,8 @@ def _standard_spec() -> dict[str, Any]:
         ],
         "skipped": [],
         "stats": {
-            "agent_count": 5, "bha_count": 1, "domain_critic_count": 1,
-            "from_required": 5, "from_best_effort": 0,
+            "agent_count": 4, "bha_count": 1, "domain_critic_count": 1,
+            "from_required": 4, "from_best_effort": 0,
             "required_coverage_gaps": 0,
         },
     }
@@ -18242,9 +18214,9 @@ def _standard_spec() -> dict[str, Any]:
 def _clean_verification() -> dict[str, Any]:
     return {
         "verified": True,
-        "present_count": 5,
-        "intended_count": 5,
-        "present_agents": ["auditor", "bha_p0", "bhb", "domain_0", "premise"],
+        "present_count": 4,
+        "intended_count": 4,
+        "present_agents": ["auditor", "bha_p0", "bhb", "domain_0"],
         "missing_agents": [],
         "missing_required": [],
         "missing_required_gaps": 0,
@@ -18258,7 +18230,6 @@ def _standard_route() -> dict[str, Any]:
             "bug_hunter_a": {"default": "opus", "test_only": "sonnet"},
             "bug_hunter_b": "sonnet",
             "unified_auditor": "sonnet",
-            "premise_reviewer": "opus",
             "fast_path_reviewer": "sonnet",
         },
     }
@@ -18272,8 +18243,8 @@ class TestPLN725Phase9RenderFleetSummaryHappyPath:
     fleet description.
     """
 
-    def test_canonical_5_agent_standard_flow(self, tmp_path: Path) -> None:
-        """The four core reviewers + one BHA partition + one
+    def test_canonical_4_agent_standard_flow(self, tmp_path: Path) -> None:
+        """The three core reviewers + one BHA partition + one
         operator-configured domain critic renders the canonical
         Reviewers line with the static-table-equivalent copy plus
         the inline critic name. Fleet line shows runtime tally.
@@ -18285,15 +18256,15 @@ class TestPLN725Phase9RenderFleetSummaryHappyPath:
             route=_standard_route(),
         )
         out = _run_render_fleet_summary(tmp_path)
-        # All four core display names appear, in order, on the
+        # All three core display names appear, in order, on the
         # Reviewers line — followed by the inline critic name with
         # provenance suffix.
         assert (
             "**Reviewers:** Bug Hunter A, Bug Hunter B, Unified Auditor, "
-            "Premise Reviewer, domain critic: ts-expert (1 rule-resolved)"
+            "domain critic: ts-expert (1 rule-resolved)"
         ) in out
-        assert "**Model Routing:** Medium — BHA=opus, BHB=sonnet, Auditor=sonnet, Premise=opus" in out
-        assert "**Fleet:** 5 intended | 5 ran | 0 required missing" in out
+        assert "**Model Routing:** Medium — BHA=opus, BHB=sonnet, Auditor=sonnet, Critics=sonnet" in out
+        assert "**Fleet:** 4 intended | 4 ran | 0 required missing" in out
         # No notes block when fleet ran clean.
         assert "🛡️" not in out
         assert "⚠️" not in out
@@ -18306,9 +18277,9 @@ class TestPLN725Phase9RenderFleetSummaryHappyPath:
         partition count at a glance.
         """
         spec = _standard_spec()
-        # Add a second BHA partition (standard fixture has 5 agents
-        # — one BHA + three non-partitioned core + one rule-resolved
-        # critic; this brings it to 6 with two BHA).
+        # Add a second BHA partition (standard fixture has 4 agents
+        # — one BHA + two non-partitioned core + one rule-resolved
+        # critic; this brings it to 5 with two BHA).
         spec["agents"].insert(1, {
             "agent_id": "bha_p1", "reviewer": "bug_hunter_a",
             "model": "sonnet", "partitioned": True, "partition_id": 1,
@@ -18316,7 +18287,7 @@ class TestPLN725Phase9RenderFleetSummaryHappyPath:
             "source": "core", "bucket": "required",
         })
         spec["stats"]["bha_count"] = 2
-        spec["stats"]["agent_count"] = 6
+        spec["stats"]["agent_count"] = 5
         _seed_phase9_inputs(tmp_path, spec=spec, route=_standard_route())
         out = _run_render_fleet_summary(tmp_path)
         assert "Bug Hunter A × 2" in out
@@ -18463,7 +18434,8 @@ class TestPLN725Phase9RenderFleetSummaryNotes:
     ) -> None:
         spec = _standard_spec()
         verification = _clean_verification()
-        verification["present_count"] = 4
+        verification["present_count"] = 3
+        verification["present_agents"] = ["bha_p0", "bhb", "domain_0"]
         verification["missing_agents"] = [
             {"agent_id": "auditor", "reviewer": "unified_auditor",
              "bucket": "required", "source": "core"},
@@ -18475,7 +18447,7 @@ class TestPLN725Phase9RenderFleetSummaryNotes:
             route=_standard_route(),
         )
         out = _run_render_fleet_summary(tmp_path)
-        assert "**Fleet:** 5 intended | 4 ran | 1 required missing" in out
+        assert "**Fleet:** 4 intended | 3 ran | 1 required missing" in out
         assert "1 required reviewer(s) did not produce output" in out
         assert "Unified Auditor" in out  # display name, not snake_case
         assert "coverage_gaps.json" in out
@@ -18579,7 +18551,7 @@ class TestPLN725Phase9RenderFleetSummaryNotes:
         verification = _clean_verification()
         verification["present_count"] = 3
         verification["missing_required"] = [
-            {"agent_id": "premise", "reviewer": "premise_reviewer",
+            {"agent_id": "auditor", "reviewer": "unified_auditor",
              "bucket": "required", "source": "core"},
         ]
         verification["missing_required_gaps"] = 1
@@ -18650,7 +18622,7 @@ class TestPLN725Phase9RenderFleetSummaryFallbacks:
             route=_standard_route(),
         )
         out = _run_render_fleet_summary(tmp_path)
-        assert "5 intended (runtime tally unavailable)" in out
+        assert "4 intended (runtime tally unavailable)" in out
         # Notes that don't depend on verification (e.g. PLN-723) still fire.
         assert "required missing" not in out
 
@@ -18710,7 +18682,7 @@ class TestPLN725Phase9RenderFleetSummaryOutputContract:
         assert output_path.exists()
         contents = output_path.read_text()
         assert "**Reviewers:** Bug Hunter A" in contents
-        assert "**Fleet:** 5 intended | 5 ran | 0 required missing" in contents
+        assert "**Fleet:** 4 intended | 4 ran | 0 required missing" in contents
 
     def test_default_path_writes_to_stdout_only(self, tmp_path: Path) -> None:
         """Without ``--output``, the rendered markdown goes to
@@ -18985,7 +18957,7 @@ class TestPLN725Phase9MalformedTelemetry:
             route=_standard_route(),
         )
         out = _run_render_fleet_summary(tmp_path)
-        assert "**Fleet:** 5 intended | 0 ran" in out
+        assert "**Fleet:** 4 intended | 0 ran" in out
 
     def test_fast_path_handles_non_dict_route_models(
         self, tmp_path: Path,
@@ -20579,7 +20551,6 @@ class TestPLN807Phase4BudgetArithmetic:
                 {"reviewer": "bug_hunter_a", "source": "core"},
                 {"reviewer": "bug_hunter_b", "source": "core"},
                 {"reviewer": "unified_auditor", "source": "core"},
-                {"reviewer": "premise_reviewer", "source": "core"},
             ] + [
                 {"reviewer": f"critic_{i}", "source": "rule", "priority": 1}
                 for i in range(8)
@@ -20609,14 +20580,13 @@ class TestPLN807Phase4BudgetArithmetic:
                 {"reviewer": "bug_hunter_a", "source": "core"},
                 {"reviewer": "bug_hunter_b", "source": "core"},
                 {"reviewer": "unified_auditor", "source": "core"},
-                {"reviewer": "premise_reviewer", "source": "core"},
                 {"reviewer": "auth-security-expert", "source": "rule", "priority": 1},
             ],
             "best_effort": [],
         }
         _, final, _ = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
-        # All 5 entries survive.
-        assert len(final["required"]) == 5
+        # All 4 entries survive.
+        assert len(final["required"]) == 4
         assert final["budget"]["domain_critic_cap_fired"] is False
         assert final["deferred_for_budget"] == []
         # No coverage_gap findings emitted.
@@ -21528,8 +21498,7 @@ class TestFEA1401SpawnSpec:
         return {
             "required": [
                 {"reviewer": r, "trigger": {"type": "always"}, "source": "core"}
-                for r in ("bug_hunter_a", "bug_hunter_b", "unified_auditor",
-                          "premise_reviewer")
+                for r in ("bug_hunter_a", "bug_hunter_b", "unified_auditor")
             ],
             "best_effort": [
                 {
@@ -22180,19 +22149,19 @@ class TestFEA1401BudgetExemption:
         # actually reads it from). Tight cap forces the prune branch.
         #
         # Capacity arithmetic:
-        #   required = 5 core (BHA, BHB, auditor, premise, test_quality)
+        #   required = 4 core (BHA, BHB, auditor, test_quality)
         #   bha_target = 1 (loc=100 → 1 partition)
-        #   cap = 8 leaves 2 best_effort slots
+        #   cap = 8 leaves 3 best_effort slots
         # The plan supplies 1 core best_effort entry (impact) plus 3
         # critic-source entries. With the v2.30.1 exemption, ``impact``
-        # is reserved BEFORE the prune, leaving 1 slot for the
-        # 3 critic entries (lowest priority survives, 2 deferred).
+        # is reserved BEFORE the prune, leaving 2 slots for the
+        # 3 critic entries (highest-priority survive, 1 deferred).
         coverage_plan_in = {
             "required": [
                 {"reviewer": r, "trigger": {"type": "always"}, "source": "core"}
                 for r in (
                     "bug_hunter_a", "bug_hunter_b", "unified_auditor",
-                    "premise_reviewer", "test_quality",
+                    "test_quality",
                 )
             ],
             "best_effort": [

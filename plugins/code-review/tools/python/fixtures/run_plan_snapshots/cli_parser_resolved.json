@@ -1189,13 +1189,6 @@
         },
         {
           "flags": [
-            "--premise-prompt"
-          ],
-          "dest": "premise_prompt",
-          "default": null
-        },
-        {
-          "flags": [
             "--diff-tip"
           ],
           "dest": "diff_tip",
@@ -1538,6 +1531,18 @@
           "dest": "cap",
           "default": 20,
           "type": "int"
+        },
+        {
+          "flags": [
+            "--depth"
+          ],
+          "dest": "depth",
+          "default": null,
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ]
         }
       ]
     },

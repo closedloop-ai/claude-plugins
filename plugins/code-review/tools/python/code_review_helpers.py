@@ -977,14 +977,13 @@ def _check_tier_mismatch_nudge(
 
     Three heuristics fire independently; any one is enough:
 
-      - Diff > 3000 LOC — premise reviewer's value scales with diff
-        size; large refactors warrant the deeper architectural look.
-      - Schema/migration paths in the diff — premise + repo-specific
-        critics typically catch ORM-vs-schema drift and irreversible
-        migrations that shallow's pure bug-finding fleet misses.
+      - Diff > 3000 LOC — large refactors warrant a deeper review and
+        the repo-specific critic coverage shallow skips.
+      - Schema/migration paths in the diff — repo-specific critics
+        typically catch ORM-vs-schema drift and irreversible migrations
+        that shallow's pure bug-finding fleet misses.
       - Public API surface (plugin.json, index.ts/__init__.py with new
-        exports, package.json) — Impact-analyzer territory in deep; at
-        minimum, premise should run.
+        exports, package.json) — Impact-analyzer territory in deep.
 
     Runs only when depth=='shallow'. All other tiers no-op. The
     finding's marker (``tier_mismatch_nudge``) makes it easy to
@@ -1041,10 +1040,10 @@ def _check_tier_mismatch_nudge(
         "severity": "MEDIUM",
         "file": None,
         "line": None,
-        "issue": "Shallow review skipped premise_reviewer and repo-specific critics; PR characteristics suggest a standard or deep review.",
+        "issue": "Shallow review skipped repo-specific critics; PR characteristics suggest a standard or deep review.",
         "explanation": (
-            "PLN-807 shallow tier intentionally drops premise_reviewer + "
-            "critic-gates entries to lower cost. The following heuristics "
+            "PLN-807 shallow tier intentionally drops critic-gates "
+            "entries to lower cost. The following heuristics "
             "fired on this PR: " + "; ".join(reasons) + ". The skipped "
             "reviewers commonly catch issues those patterns introduce."
         ),
@@ -1581,13 +1580,10 @@ def cmd_route(args: argparse.Namespace) -> int:
         size_category = "Large"
 
     # Model routing — BHA impl uses Opus, test-only uses Sonnet; other agents always Sonnet
-    intent: str = getattr(args, "intent", "mixed") or "mixed"
-    premise_model = "opus" if intent in ("fix", "refactor", "mixed") else "sonnet"
     models: dict[str, Any] = {
         "bug_hunter_a": {"default": "opus", "test_only": "sonnet"},
         "bug_hunter_b": "sonnet",
         "unified_auditor": "sonnet",
-        "premise_reviewer": premise_model,
         "fast_path_reviewer": "sonnet",
     }
 
@@ -1628,7 +1624,7 @@ def cmd_route(args: argparse.Namespace) -> int:
 
     selected_domain_critics = sorted(set(selected_domain_critics))[:max_domain_critics]
 
-    max_bha_agents = 9 - 3 - len(selected_domain_critics)  # 3 = BHB + Auditor + Premise
+    max_bha_agents = 9 - 2 - len(selected_domain_critics)  # 2 = BHB + Auditor
 
     fast_path = total_loc <= FAST_PATH_MAX_LOC
 
@@ -4674,8 +4670,8 @@ def cmd_review_state_write(args: argparse.Namespace) -> int:
     The optional ``--depth`` arg persists the invocation tier alongside
     the SHA so a later run can detect tier transitions: a cached
     ``shallow`` result MUST NOT be reused to skip a follow-up
-    ``standard`` or ``deep`` review — those would have spawned premise
-    and the critic gates that shallow skipped, so the cached SHA
+    ``standard`` or ``deep`` review — those would have spawned the
+    critic gates that shallow skipped, so the cached SHA
     represents a strictly weaker review. Stale entries (pre-PLN-807,
     no ``tier`` field) are treated as standard-equivalent on read.
     """
@@ -4992,7 +4988,7 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
 
 
 def cmd_fetch_intent(args: argparse.Namespace) -> int:
-    """Fetch intent context (PR description or commit messages) for premise review."""
+    """Fetch intent context (PR description or commit messages) for injection detection and intent classification."""
     pr_number: int | None = args.pr_number
     base_ref: str = args.base_ref
     diff_tip: str = args.diff_tip
@@ -5123,17 +5119,15 @@ def cmd_compute_hashes(args: argparse.Namespace) -> int:
 
     The prompt hash folds the canonical schema_version per PLN-719
     Section 9 (any MAJOR schema bump invalidates all caches) plus the
-    verifier and premise prompt bytes, so editing ``verifier_prompt.txt``
-    or ``premise_prompt.txt`` busts every cache namespace that keys on
-    ``<PROMPT_HASH>`` (BHA cache and the ``verifications/`` namespace).
-    Coarse but correct: prompt revs are rare, and the over-invalidation
-    cost (re-pay the BHA reviewer pass) is bounded by how often the
-    prompts actually change.
+    verifier prompt bytes, so editing ``verifier_prompt.txt`` busts every
+    cache namespace that keys on ``<PROMPT_HASH>`` (BHA cache and the
+    ``verifications/`` namespace). Coarse but correct: prompt revs are
+    rare, and the over-invalidation cost (re-pay the BHA reviewer pass)
+    is bounded by how often the prompts actually change.
     """
     shared_prompt: str = args.shared_prompt
     bha_suffix: str = args.bha_suffix
     verifier_prompt: str | None = getattr(args, "verifier_prompt", None)
-    premise_prompt: str | None = getattr(args, "premise_prompt", None)
     diff_tip: str = args.diff_tip
     base_ref: str = args.base_ref
 
@@ -5160,22 +5154,9 @@ def cmd_compute_hashes(args: argparse.Namespace) -> int:
         except OSError as exc:
             print(f"Error: cannot read verifier prompt: {exc}", file=sys.stderr)
             return 1
-    # premise_prompt.txt is optional with the same back-compat contract
-    # as verifier_prompt.
-    premise_bytes: bytes | None = None
-    if premise_prompt:
-        try:
-            with open(premise_prompt, "rb") as f:
-                premise_bytes = f.read()
-        except OSError as exc:
-            print(f"Error: cannot read premise prompt: {exc}", file=sys.stderr)
-            return 1
-
     hash_parts = [shared_bytes, bha_bytes]
     if verifier_bytes is not None:
         hash_parts.append(verifier_bytes)
-    if premise_bytes is not None:
-        hash_parts.append(premise_bytes)
     prompt_hash = compute_canonical_prompt_hash(hash_parts)
 
     # Compute context key via git merge-base
@@ -5211,7 +5192,7 @@ def cmd_auto_incremental(args: argparse.Namespace) -> int:  # noqa: PLR0911
     treated as a cache miss for incremental purposes. Without this
     gate, a cached shallow review's SHA could seed a follow-up standard
     or deep run's incremental diff, skipping every file changed between
-    the two — none of which received premise/critic coverage on the
+    the two — none of which received critic coverage on the
     shallow run.
     """
     cache_dir: str = args.cache_dir
@@ -6052,7 +6033,7 @@ def cmd_detect_injection(args: argparse.Namespace) -> int:
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # Quarantine: rewrite intent_context.json on severity ≥ Medium so
-    # downstream readers (cmd_classify_intent, Premise prompt assembly) see
+    # downstream readers (cmd_classify_intent) see
     # the quarantine flag and redacted content. Selective redaction:
     # title and commits are preserved when their per-section score is 0
     # (clean → keep verbatim). body is *always* redacted on quarantine —
@@ -6243,9 +6224,9 @@ def _signal_extraction_prompt_hash(path: Path) -> str:
 
     Self-contained inside the signals/ namespace rather than folded into
     the canonical ``compute-hashes`` output. The other namespace prompt
-    hashes (shared, BHA suffix, verifier, premise) are concerns of those
+    hashes (shared, BHA suffix, verifier) are concerns of those
     pipelines; mixing them into the signal-extraction key would over-
-    invalidate (e.g. a premise-prompt edit would bust signal caches).
+    invalidate (e.g. a verifier-prompt edit would bust signal caches).
     Mirrors the taxonomy hash pattern in this same module.
     """
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -7693,7 +7674,7 @@ def _coverage_critic_prompt_hash(path: Path) -> str:
 
     Mirrors ``_signal_extraction_prompt_hash``: lives inside the
     coverage_critic/ namespace, not the canonical compute-hashes
-    output. A premise/verifier/BHA prompt edit should not invalidate
+    output. A verifier/BHA prompt edit should not invalidate
     coverage-critic caches.
     """
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -10521,6 +10502,32 @@ BUDGET_BHA_FLOOR_DEFAULT = 1
 # configurability later, expose via ``.closedloop-ai/settings/code-review.json``.
 DOMAIN_CRITIC_CAP = 5
 
+# Standard reviews cap domain critics tighter than deep. A standard run does
+# not warrant the full breadth of repo-specific + LLM-proposed critics; the
+# fleet ballooned to the cap on every PR regardless of how many critics were
+# genuinely relevant, so standard now keeps only the top STANDARD_DOMAIN_CRITIC_CAP
+# by (priority asc, reviewer asc). Deep retains the full DOMAIN_CRITIC_CAP for
+# breadth. Relevance itself is already enforced upstream (rule entries are
+# pattern-matched from critic-gates.json; ``critic`` entries are LLM-proposed
+# for the diff) — this cap bounds how many of those relevant critics actually
+# spawn.
+STANDARD_DOMAIN_CRITIC_CAP = 3
+
+
+def _domain_critic_cap_for_depth(depth: str | None) -> int:
+    """Return the per-source domain-critic cap for an invocation depth.
+
+    ``standard`` (and ``shallow``, which normally skips arbitration anyway)
+    cap at ``STANDARD_DOMAIN_CRITIC_CAP``; ``deep`` and any unspecified depth
+    keep the full ``DOMAIN_CRITIC_CAP``. Defaulting ``None``/unknown to the
+    full cap preserves legacy behavior for callers that do not plumb depth
+    (the stage now passes ``--depth``, so a real standard run reaches the
+    tighter cap).
+    """
+    if depth in ("standard", "shallow"):
+        return STANDARD_DOMAIN_CRITIC_CAP
+    return DOMAIN_CRITIC_CAP
+
 # PLN-807: critic-cap defer reason marker. Differentiates entries
 # deferred by the per-source cap from entries deferred by the total
 # cap (which carry no explicit reason — that's the historical default).
@@ -10575,8 +10582,8 @@ def _is_critic_entry(entry: dict[str, Any]) -> bool:
     from ``critic-gates.json``'s ``coverage[]`` (including migrated
     ``moduleCritics[]`` entries); ``critic`` = LLM-proposed by
     ``coverage_critic_consolidate``. Both are subject to ``DOMAIN_CRITIC_CAP``.
-    Core entries (``source: "core"``) are never capped — BHB, auditor,
-    premise are operator-implicit baseline reviewers.
+    Core entries (``source: "core"``) are never capped — BHB and auditor
+    are operator-implicit baseline reviewers.
     """
     if not isinstance(entry, dict):
         return False
@@ -10764,6 +10771,14 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         print(f"Error: --cap must be > 0, got {cap}", file=sys.stderr)
         return 1
 
+    # Depth-aware domain-critic cap (standard tightens to 3; deep keeps 5).
+    depth: str | None = getattr(args, "depth", None) or None
+    ok, err = _validate_invocation_depth(depth)
+    if not ok:
+        print(err, file=sys.stderr)
+        return 1
+    critic_cap = _domain_critic_cap_for_depth(depth)
+
     def _persist_plan(plan: dict[str, Any]) -> int:
         try:
             _write_coverage_section(cr_dir, "final", plan)
@@ -10793,7 +10808,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     # PLN-807 Phase 4: separate critic entries (source: rule|critic)
     # from non-critic entries in both buckets so the cap and the
     # BHA-first allocation can target critics independently of core
-    # reviewers (BHB, auditor, premise, BHA-as-entry, etc.).
+    # reviewers (BHB, auditor, BHA-as-entry, etc.).
     required_critics_in = [e for e in required if _is_critic_entry(e)]
     required_non_critic = [e for e in required if not _is_critic_entry(e)]
     best_effort_critics_in = [e for e in best_effort if _is_critic_entry(e)]
@@ -10817,7 +10832,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         sel_req_critics, sel_be_critics, def_req_critics, def_be_critics = (
             _select_domain_critics(
                 required_critics_in, best_effort_critics_in,
-                DOMAIN_CRITIC_CAP,
+                critic_cap,
             )
         )
         required_blocking = required_non_critic + sel_req_critics
@@ -10851,7 +10866,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
                 "required_count": len(required_blocking),
                 "best_effort_count": len(best_effort_blocking),
                 "bha_partitions": blocking_bha_partitions,
-                "domain_critic_cap": DOMAIN_CRITIC_CAP,
+                "domain_critic_cap": critic_cap,
                 "domain_critic_cap_fired": bool(def_req_critics or def_be_critics),
                 "gated_by_verify": True,
                 "verify_violations": violations,
@@ -10922,7 +10937,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     # the PASS path.
     sel_req_critics, sel_be_critics, def_req_critics, def_be_critics = (
         _select_domain_critics(
-            required_critics_in, best_effort_critics_in, DOMAIN_CRITIC_CAP,
+            required_critics_in, best_effort_critics_in, critic_cap,
         )
     )
 
@@ -10933,7 +10948,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     # ``--cap`` override could leave less than required_non_critic +
     # bha_target slots). Drop selected critics FIRST, then non-critic
     # required (which includes core reviewers — operators shouldn't
-    # lose BHB/auditor/premise to budget overflow before they lose a
+    # lose BHB/auditor to budget overflow before they lose a
     # non-essential critic).
     required = required_non_critic + sel_req_critics
     required_overflow = len(required) + bha_target - cap
@@ -11037,7 +11052,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
             "required_count": len(required),
             "best_effort_count": len(best_effort_final),
             "bha_partitions": bha_partitions,
-            "domain_critic_cap": DOMAIN_CRITIC_CAP,
+            "domain_critic_cap": critic_cap,
             "domain_critic_cap_fired": bool(def_req_critics or def_be_critics),
         },
         "dropped_required": dropped_required,
@@ -11111,11 +11126,6 @@ _SPAWN_CORE_ROLES: dict[str, dict[str, Any]] = {
         "partitioned": False,
         "patches_template": "patches_all.txt",
     },
-    "premise_reviewer": {
-        "agent_id": "premise",
-        "partitioned": False,
-        "patches_template": "patches_all.txt",
-    },
     # FEA-1401 Impact Analyzer. Conditional core reviewer (declared in
     # COVERAGE_CORE_CONDITIONAL); only lands in coverage plans when the
     # invocation depth is ``deep`` AND a signal trigger fires. The
@@ -11152,7 +11162,6 @@ def _spawn_resolve_models(route: dict[str, Any]) -> dict[str, Any]:
         ),
         "bug_hunter_b": models.get("bug_hunter_b", "sonnet"),
         "unified_auditor": models.get("unified_auditor", "sonnet"),
-        "premise_reviewer": models.get("premise_reviewer", "sonnet"),
         "fast_path_reviewer": models.get("fast_path_reviewer", "sonnet"),
         # FEA-1401 Impact Analyzer defaults to Opus for cross-file
         # reasoning. Operators can override via spawn.json.route.models
@@ -11533,7 +11542,7 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     # failure to operators; we sanitize the plan by dropping everything
     # that isn't ``source: "core"`` so only the canonical static fleet
     # runs. The "review still runs against the plan" intent is preserved
-    # (core BHA/BHB/Auditor/Premise still spawn).
+    # (core BHA/BHB/Auditor still spawn).
     plan_for_spawn = coverage_plan
     sanitized_extras: list[dict[str, Any]] = []
     if gated_by_verify:
@@ -12025,7 +12034,6 @@ _FLEET_DISPLAY_NAMES: dict[str, str] = {
     "bug_hunter_a": "Bug Hunter A",
     "bug_hunter_b": "Bug Hunter B",
     "unified_auditor": "Unified Auditor",
-    "premise_reviewer": "Premise Reviewer",
     "fast_path_reviewer": "Fast Path Reviewer",
     "test_quality": "Test Quality",
     "impact": "Impact Analyzer",
@@ -12101,10 +12109,10 @@ def _render_fleet_breakdown(spec: dict[str, Any]) -> list[str]:
         if isinstance(a, dict) and a.get("source") == "critic"
     ]
     # Core non-partitioned reviewers actually present (the canonical
-    # trio is BHB / Auditor / Premise but sanitization or fallback
-    # paths may drop entries).
+    # pair is BHB / Auditor but sanitization or fallback paths may drop
+    # entries).
     core_non_partitioned: list[str] = []
-    for reviewer in ("bug_hunter_b", "unified_auditor", "premise_reviewer"):
+    for reviewer in ("bug_hunter_b", "unified_auditor"):
         if any(
             isinstance(a, dict) and a.get("reviewer") == reviewer
             for a in agents
@@ -12189,12 +12197,11 @@ def _render_model_summary(
     summary_parts: list[str] = []
     # Render canonical core slots in fixed order; mirror the
     # display-name table so the summary key matches the Reviewers
-    # line shorthand (BHA / BHB / Auditor / Premise).
+    # line shorthand (BHA / BHB / Auditor).
     for reviewer, label in (
         ("bug_hunter_a", "BHA"),
         ("bug_hunter_b", "BHB"),
         ("unified_auditor", "Auditor"),
-        ("premise_reviewer", "Premise"),
     ):
         seen = role_models.get(reviewer)
         if seen:
@@ -12982,9 +12989,7 @@ def cmd_prep_assets(args: argparse.Namespace) -> int:
     PLN-722 added ``verifier_prompt.txt`` to the per-run asset set. The
     Verifier Fleet (stage_23) reads it from CR_DIR rather than from the
     plugin root so verify-* runs after a plugin upgrade still use the
-    prompt that the prompt-hash was computed against. PLN-721 adds
-    ``premise_prompt.txt`` on the same contract — the Premise Reviewer
-    reads it from CR_DIR.
+    prompt that the prompt-hash was computed against.
     """
     plugin_root = Path(args.plugin_root)
     cr_dir = Path(args.cr_dir)
@@ -12992,21 +12997,18 @@ def cmd_prep_assets(args: argparse.Namespace) -> int:
     shared_src = plugin_root / "tools" / "prompts" / "shared_prompt.txt"
     bha_src = plugin_root / "tools" / "prompts" / "bha_suffix.txt"
     verifier_src = plugin_root / "tools" / "prompts" / "verifier_prompt.txt"
-    premise_src = plugin_root / "tools" / "prompts" / "premise_prompt.txt"
     # FEA-1401: Impact Analyzer prompt is per-run-cached on the same
-    # contract as premise/verifier (prompt edits invalidate the cache).
+    # contract as the verifier (prompt edits invalidate the cache).
     impact_src = plugin_root / "tools" / "prompts" / "impact_analyzer_prompt.txt"
 
     shared_dst = cr_dir / "shared_prompt.txt"
     bha_dst = cr_dir / "bha_suffix.txt"
     verifier_dst = cr_dir / "verifier_prompt.txt"
-    premise_dst = cr_dir / "premise_prompt.txt"
     impact_dst = cr_dir / "impact_analyzer_prompt.txt"
 
     shutil.copy2(shared_src, shared_dst)
     shutil.copy2(bha_src, bha_dst)
     shutil.copy2(verifier_src, verifier_dst)
-    shutil.copy2(premise_src, premise_dst)
     shutil.copy2(impact_src, impact_dst)
 
     json.dump(
@@ -13014,7 +13016,6 @@ def cmd_prep_assets(args: argparse.Namespace) -> int:
             "shared_prompt": str(shared_dst),
             "bha_suffix": str(bha_dst),
             "verifier_prompt": str(verifier_dst),
-            "premise_prompt": str(premise_dst),
             "impact_analyzer_prompt": str(impact_dst),
         },
         sys.stdout,
