@@ -12,6 +12,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - Bumped `SCHEMA_VERSION` 1 → 2 for the `Finding` + `ResultEnvelope` contract to reflect the removed `Premise` category and telemetry keys. Because the schema version is folded into the prompt/cache hash, this invalidates the Bug Hunter A and verification caches once on rollout. `verdict-thresholds.json` now exposes only `impact_cumulative` (the FEA-1401 Rule 6 Impact gate), and `stats` retains `impact_cumulative_count` in place of the removed premise count.
 
+### code-review v2.37.1
+
+#### Fixed
+- Removed the `model: sonnet` frontmatter override from the `/start`, `/deep`, and `/shallow` commands (added in v2.37.0). A per-command model override inherits the session's context-window tier, so on a 1M-context session the orchestrator resolved to Sonnet-with-1M, which bills as extra pay-as-you-go API usage outside a Pro/Max subscription — the opposite of the intended saving, with no per-command way to opt out. The orchestrator now runs on the session model again; the turn-and-context discipline rules from v2.37.0 (which are model-independent) are retained, and `start.md`/`README.md` now document running `/code-review` from a standard-context Sonnet session as the way to get the cheaper orchestrator.
+
 ### code-review v2.37.0
 
 #### Changed

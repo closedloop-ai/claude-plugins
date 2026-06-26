@@ -1,7 +1,6 @@
 ---
 description: Run comprehensive code review — locally or on GitHub PRs with inline comments
 argument-hint: "[scope] [--github] [--hygiene-only] [--base <ref>] [--since-last-review] [--full-review] [--depth shallow|standard|deep]"
-model: sonnet
 ---
 
 # Comprehensive Code Review
@@ -57,7 +56,7 @@ The walk is hybrid:
 - **Agent fleet stages** — spawn parallel sub-agent Tasks. `stage_20_spawn_reviewers` invokes the `code-review:spawn-reviewers` skill; `stage_23_verify_findings` invokes the `code-review:verify-findings` skill.
 - **Present stage** (`stage_29_present`) — invoke the `code-review:present-local` skill (MODE=local) or follow `github-review.md` (MODE=github).
 
-**Model split (cost).** The orchestrator runs on **Sonnet** (`model: sonnet` in this command's frontmatter) — the walk is mechanical (run helper, read JSON, honor gates), so it needs no Opus reasoning, and the spine is ~65% of historical review cost at ~180 turns/deep-review dominated by cache reads. The judgment lives in the **subagents**, which keep their own route-assigned models regardless of the orchestrator's: BHA defaults Opus (Sonnet on test-only partitions), domain critics Sonnet, Impact Analyzer Opus, verifiers per the verify skill. A subagent's `model` (definition frontmatter or per-Task override from `spawn.json.spec`) outranks the session model, so the Sonnet spine never downgrades a reviewer. If an org `availableModels` allowlist excludes Sonnet, the session keeps its current model and the run still completes — the split is an optimization, not a hard dependency.
+**Orchestrator model (cost).** The orchestrator runs on the **session model** — there is intentionally no `model:` frontmatter override. The walk is mechanical (run helper, read JSON, honor gates) with no Opus-grade reasoning, so it is safe on a cheaper model; the judgment lives in the **subagents**, which keep their own route-assigned models regardless (BHA Opus / Sonnet on test-only partitions, domain critics Sonnet, Impact Analyzer Opus, verifiers per the verify skill). The spine is ~65% of historical review cost (~180 turns/deep-review, cache-read dominated), so for the cheapest run invoke `/code-review` from a standard-context **Sonnet** session (`/model sonnet`) — the reviewers stay on their assigned models either way. A `model: sonnet` frontmatter override is **deliberately avoided**: a per-command model override inherits the session's context-window tier, so on a **1M-context** session it resolves to Sonnet-with-1M and bills as extra pay-as-you-go API usage outside a Pro/Max subscription (a known Claude Code limitation with no per-command opt-out) — which would invert the saving.
 
 **Turn & context discipline (cost).** Cache cost scales with carried context × turn count, so keep both small:
 - **Never read large artifacts into the orchestrator's context.** `diff_data.json`, `patches_*.txt`, and per-file diffs are passed to helpers and reviewers as **file-path arguments**, never `cat`/`Read` into the walk. Reviewers read patches themselves (see the spawn skill's anti-inline rule). The only large file the orchestrator reads is `review_result.json` at the present stage, once, with the per-section display caps the present skill already applies.
