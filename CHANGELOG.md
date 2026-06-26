@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v2.37.1
+
+#### Fixed
+- Removed the `model: sonnet` frontmatter override from the `/start`, `/deep`, and `/shallow` commands (added in v2.37.0). A per-command model override inherits the session's context-window tier, so on a 1M-context session the orchestrator resolved to Sonnet-with-1M, which bills as extra pay-as-you-go API usage outside a Pro/Max subscription — the opposite of the intended saving, with no per-command way to opt out. The orchestrator now runs on the session model again; the turn-and-context discipline rules from v2.37.0 (which are model-independent) are retained, and `start.md`/`README.md` now document running `/code-review` from a standard-context Sonnet session as the way to get the cheaper orchestrator.
+
 ### code-review v2.37.0
 
 #### Changed

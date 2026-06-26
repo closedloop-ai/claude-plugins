@@ -1,7 +1,6 @@
 ---
 description: Shallow code review — built-in reviewers only (BHA + BHB + auditor + verifier); no critic-gates, no signal extraction
 argument-hint: "[scope] [--github] [--base <ref>] [--since-last-review] [--full-review]"
-model: sonnet
 ---
 
 # Shallow Code Review (PLN-807)
