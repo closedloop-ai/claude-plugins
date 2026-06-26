@@ -2,6 +2,7 @@
 name: code-review-worker
 description: Worker agent for partitioned code review tasks. Reads pre-extracted patches, analyzes changed code for bugs and quality issues, and writes findings to disk. Use when spawning background review agents that need file access.
 tools: Read, Write, Grep, Glob
+effort: high  # pinned so a lowered session effort can't cut reviewer reasoning depth (no per-Task override; frontmatter is the only lever). Not redundant with the default — do not remove. Rationale: start.md "Orchestrator model (cost)".
 ---
 
 # Code Review Worker

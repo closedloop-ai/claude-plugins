@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - Bumped `SCHEMA_VERSION` 1 → 2 for the `Finding` + `ResultEnvelope` contract to reflect the removed `Premise` category and telemetry keys. Because the schema version is folded into the prompt/cache hash, this invalidates the Bug Hunter A and verification caches once on rollout. `verdict-thresholds.json` now exposes only `impact_cumulative` (the FEA-1401 Rule 6 Impact gate), and `stats` retains `impact_cumulative_count` in place of the removed premise count.
+- Pinned `effort: high` in the `code-review-worker` and `code-review-worker-graph` subagent definitions so the reviewer fleet's reasoning depth no longer drops when `/code-review` is run from a lower session effort level. Reasoning effort, unlike `model`, has no per-invocation override — a spawned reviewer otherwise inherits the session effort — so pinning it in frontmatter holds every reviewer at `high` regardless of the session level (`high` is valid on both Opus and Sonnet, the route-assigned reviewer models). `start.md` and `README.md` now document the effort axis alongside the existing session-model cost guidance.
 
 ### code-review v2.37.1
 
