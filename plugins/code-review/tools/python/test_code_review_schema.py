@@ -40,8 +40,10 @@ from conftest import (
 # ---------------------------------------------------------------------------
 
 
-def test_schema_version_is_one():
-    assert SCHEMA_VERSION == 1
+def test_schema_version_is_two():
+    # v2 retired the Premise finding category when the premise reviewer
+    # was removed.
+    assert SCHEMA_VERSION == 2
 
 
 def test_finding_scopes():
@@ -55,8 +57,13 @@ def test_severities():
 def test_categories_include_canonical_and_legacy_alias():
     assert "Hygiene" in CATEGORIES
     assert "Repo Hygiene" in CATEGORIES  # legacy alias retained
-    assert "Premise" in CATEGORIES
     assert "Coverage" in CATEGORIES
+
+
+def test_premise_category_retired():
+    # v2: the premise reviewer was removed; no producer emits Premise, so
+    # it is no longer a valid category (the validator rejects it).
+    assert "Premise" not in CATEGORIES
 
 
 def test_categories_include_code_quality():

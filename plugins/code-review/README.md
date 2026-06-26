@@ -260,21 +260,19 @@ Each finding includes: file path, line number, severity, category, issue title, 
 
 Operator-tunable knobs live under `.closedloop-ai/settings/`. All files are optional; absent or malformed entries fall back to built-in defaults.
 
-### `verdict-thresholds.json` (PLN-721, PLN-773)
+### `verdict-thresholds.json` (FEA-1401)
 
-Tunes the verdict-precedence gates and the operator-facing telemetry alerts:
+Tunes the verdict-precedence gates:
 
 ```json
 {
-  "premise_cumulative_medium": 3,
-  "justification_rate_alert": 0.30
+  "impact_cumulative": 2
 }
 ```
 
 | Key | Default | Effect |
 |---|---|---|
-| `premise_cumulative_medium` | `3` | Trigger `NEEDS_ATTENTION` when at least N MEDIUM Premise findings survive verification on the same PR, even if no individual finding is HIGH. Set to a very large number (e.g. `999`) to disable. Values below 1 are ignored. |
-| `justification_rate_alert` | `0.30` | Threshold above which `stats.justification.threshold_alert` flips to `true` and the Verifier Stats footer flags the run. PLN-721 §Telemetry: "if > ~30%, authors likely gaming the hatch." Footer-only alert (does not modify the verdict). Set to `1.0` to disable. Values outside `[0.0, 1.0]` are ignored. |
+| `impact_cumulative` | `2` | Trigger `NEEDS_ATTENTION` when at least N BLOCKING/HIGH `ImpactAnalysis` findings survive verification on the same PR (Rule 6), even if no single finding would gate on its own. Set to a very large number (e.g. `999`) to disable. Values below 1 are ignored. |
 
 ### `verification-gates.json` (PLN-722)
 
@@ -307,8 +305,7 @@ The presenter (local mode `start.md`, GitHub mode `code-review-verifier-stats.md
 
 - Per-reviewer FP rate (`stats.verification.by_reviewer[*].fp_rate`)
 - Override count per reviewer (`stats.verification.by_reviewer[*].re_asserted`)
-- Premise justification rate + rejection rate (`stats.justification.*`)
-- Premise findings partitioned by subcategory (`stats.by_subcategory`)
+- Justified-finding counts (`stats.verification.justified_valid_count` / `justified_invalid_count`)
 
 `pending-learnings/premise-justifications.jsonl` and `pending-learnings/verifier-overrides.jsonl` feed `self-learning:process-learnings` so the verifier's J2 (responsiveness) threshold and the per-reviewer FP-rate gate can tune over time. Both jsonl writers serialize via `fcntl.flock` so concurrent runs each get exactly one well-formed line per event.
 

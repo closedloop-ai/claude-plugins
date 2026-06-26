@@ -204,7 +204,7 @@ Why it's wrong: You found this while grepping for context, but session-manager.t
 Before outputting your findings, reason through each one in <thinking> tags:
 1. Is this finding about code AFFECTED by the diff — either a file in <files_assigned>, or an unchanged file/line the diff demonstrably broke? (If it's about entirely unrelated unchanged code, discard.)
 2. PREMISE: What is this code supposed to do? [one sentence citing function/context]
-3. EVIDENCE: What concrete evidence proves the issue? For correctness bugs, trace the execution path. For DRY, convention, or premise findings, cite the structural or rule-based contradiction. [cite file:line for each evidence point]
+3. EVIDENCE: What concrete evidence proves the issue? For correctness bugs, trace the execution path. For DRY or convention findings, cite the structural or rule-based contradiction. [cite file:line for each evidence point]
 4. CAUSATION (when the finding line is NOT in the diff): Cite the specific diff change that caused this finding. Without a clear causal link, downgrade or discard — the finding may belong in a separate PR.
 5. GUARD CHECK: Is there error handling, validation, or upstream logic that prevents this? [cite search result or "verified none exists at file:line"]
 6. SEVERITY CHECK: Does the evidence support the assigned severity? [cite the triggering input/state]
@@ -221,7 +221,6 @@ The "category" field MUST be one of these canonical values (the schema validator
   - Documentation      — README/docstring/comment accuracy or completeness
   - Hygiene            — generic source-tree hygiene (trailing whitespace, etc.)
   - Repo Hygiene       — repo-level hygiene findings emitted by the hygiene helper
-  - Premise            — change premise/justification (Premise pass only)
   - ImpactAnalysis     — cross-file impact / callsite breakage analysis
   - TestQuality        — tests that don't actually test, weak assertions, flaky setup
   - Coverage           — files/scopes not covered by review (coverage pass only)
@@ -251,12 +250,9 @@ The JSON format:
 
 OPTIONAL canonical fields (the validator preserves these through the
 pipeline; you may emit them when relevant, otherwise omit):
-  - "subcategory": string — only the Premise reviewer uses this today
-    (necessity | cohesion | workaround | complexity). Other reviewers
-    may set it for finer-grained labels.
-  - "reasoning_certificate": object — Premise findings MUST emit this
-    with a shape matching their subcategory (premise_prompt.txt
-    documents the required fields). The Impact Analyzer MUST emit
+  - "subcategory": string — optional finer-grained label a reviewer may
+    set on a finding.
+  - "reasoning_certificate": object — the Impact Analyzer MUST emit
     `{kind: "impact", fields: {...}}` per impact_analyzer_prompt.txt.
     Other reviewers (BHA, BHB, auditor, test_quality, sibling_pattern)
     may emit one too but it is not required.

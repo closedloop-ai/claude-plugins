@@ -2218,12 +2218,6 @@ class TestVerdict:
         assert result["verdict"] == "decline"
         assert "Missing null check" in result["reason"]
 
-    def test_verdict_decline_premise_p0(self) -> None:
-        result = self._run_verdict([
-            {"severity": "HIGH", "issue": "[P0] Unnecessary change", "priority": 0, "category": "Premise"},
-        ])
-        assert result["verdict"] == "decline"
-
     def test_verdict_needs_attention_high(self) -> None:
         result = self._run_verdict([
             {"severity": "HIGH", "issue": "[P1] Race condition", "priority": 1, "category": "Correctness"},
@@ -7004,7 +6998,7 @@ class TestCanonicalSchemaIntegration:
         if result["findings"]:
             f0 = result["findings"][0]
             # Canonical schema fields
-            assert f0["schema_version"] == 1
+            assert f0["schema_version"] == 2
             assert f0["finding_scope"] == "diff"
             assert f0["system_marker"] is None
             assert f0["source"] == "hygiene"
@@ -7028,9 +7022,9 @@ class TestCanonicalSchemaIntegration:
                  "issue": "y", "priority": 2, "confidence": 0.8},
             ],
         }))
-        (tmp_path / "agent_premise.json").write_text(json.dumps({
+        (tmp_path / "agent_auditor.json").write_text(json.dumps({
             "findings": [
-                {"file": "b.ts", "severity": "MEDIUM", "line": 1, "category": "Premise",
+                {"file": "b.ts", "severity": "MEDIUM", "line": 1, "category": "Code Quality",
                  "issue": "z", "priority": 2, "confidence": 0.7},
             ],
         }))
@@ -7047,10 +7041,10 @@ class TestCanonicalSchemaIntegration:
         ids = [f["id"] for f in merged]
         assert "bha_p0_f0" in ids
         assert "bha_p0_f1" in ids
-        assert "premise_f0" in ids
+        assert "auditor_f0" in ids
         # All findings must have schema_version + finding_scope
         for f in merged:
-            assert f["schema_version"] == 1
+            assert f["schema_version"] == 2
             assert f["finding_scope"] == "diff"
 
     def test_collect_findings_survives_bad_reviewer_string(self, tmp_path: Path) -> None:
@@ -7099,9 +7093,9 @@ class TestCanonicalSchemaIntegration:
 
         (tmp_path / "agent_bha_p0.json").write_text(json.dumps({
             "findings": [
-                {"id": "premise_f99", "file": "a.ts", "severity": "HIGH", "line": 1,
+                {"id": "custom_f99", "file": "a.ts", "severity": "HIGH", "line": 1,
                  "category": "Correctness", "issue": "x", "priority": 1, "confidence": 0.9,
-                 "reviewer": "premise"},
+                 "reviewer": "unified_auditor"},
             ],
         }))
 
@@ -7114,8 +7108,8 @@ class TestCanonicalSchemaIntegration:
             _sys.stdout = old_stdout
 
         merged = json.loads((tmp_path / "findings.json").read_text())
-        assert merged[0]["id"] == "premise_f99"
-        assert merged[0]["reviewer"] == "premise"
+        assert merged[0]["id"] == "custom_f99"
+        assert merged[0]["reviewer"] == "unified_auditor"
 
     def test_validate_passes_through_system_scoped_finding(self, tmp_path: Path) -> None:
         """A system-scoped finding bypasses file/line checks."""
@@ -7282,7 +7276,7 @@ class TestFinalizeResult:
         result = self._run_finalize(tmp_path, [])
         assert result["verdict"] == "APPROVED"
         envelope = json.loads((tmp_path / "review_result.json").read_text())
-        assert envelope["schema_version"] == 1
+        assert envelope["schema_version"] == 2
         assert envelope["verdict"] == "APPROVED"
         assert envelope["verified"] == []
         assert envelope["coverage_gaps"] == []
@@ -7678,7 +7672,7 @@ class TestArbitrateBudget:
     def test_simple_fits_under_cap(self, tmp_path: Path) -> None:
         diff = _make_diff_data(files=["src/app.ts"])
         plan_in = {
-            "required": [{"reviewer": "premise", "priority": 0}],
+            "required": [{"reviewer": "bug_hunter_a", "priority": 0}],
             "best_effort": [
                 {"reviewer": "test_quality", "priority": 1},
                 {"reviewer": "impact", "priority": 2},
@@ -7737,7 +7731,7 @@ class TestArbitrateBudget:
     def test_required_with_bha_floor(self, tmp_path: Path) -> None:
         diff = _make_diff_data(files=["src/app.ts"])
         plan_in = {
-            "required": [{"reviewer": "premise", "priority": 0}],
+            "required": [{"reviewer": "bug_hunter_a", "priority": 0}],
             "best_effort": [],
         }
         summary, plan, gaps = self._run(tmp_path, plan_in, diff, cap=20)
@@ -9199,19 +9193,15 @@ class TestValidatePreservesNewFields:
 
     def test_reasoning_certificate_preserved(self, tmp_path: Path) -> None:
         cert = {
-            "kind": "necessity",
+            "kind": "impact",
             "fields": {
-                "authors_claim": "fixes the data-loss bug",
-                "counter_evidence": "auth.ts:47 already guards this",
-                "alternative_check": {
-                    "searched_for": "callers of save()",
-                    "found": "no callers pass null",
-                },
-                "conclusion": "PREMISE REFUTED",
+                "changed_symbol": "save",
+                "external_callsites": ["api.ts:47"],
+                "break_kind": "signature",
             },
         }
         finding = _make_validated_finding(
-            "premise_f0", category="Premise", reasoning_certificate=cert,
+            "impact_f0", category="ImpactAnalysis", reasoning_certificate=cert,
         )
         result = self._run([finding], tmp_path)
         assert result["validated"][0]["reasoning_certificate"] == cert
@@ -9278,13 +9268,6 @@ class TestVerifyTierTable:
         f = {"severity": "BLOCKING", "confidence": 0.99,
              "category": "InjectionAttempt", "source": "injection-detector"}
         assert _needs_verification(f) is False
-
-    def test_premise_always_verified(self) -> None:
-        # Even at MEDIUM with high confidence, Premise gets the strict
-        # adversarial re-check.
-        f = {"severity": "MEDIUM", "confidence": 0.95,
-             "category": "Premise", "source": "agent"}
-        assert _needs_verification(f) is True
 
     def test_out_of_hunk_kept_always_verified_even_at_high_confidence(
         self,
@@ -9379,10 +9362,6 @@ class TestVerifyPrepare:
                 "injection_f0", source="injection-detector",
                 category="InjectionAttempt", severity="BLOCKING",
             ),
-            _make_validated_finding(
-                "premise_f0", category="Premise", severity="MEDIUM",
-                confidence=0.99,
-            ),
             _make_validated_finding("low_f0", severity="LOW"),
             _make_validated_finding(
                 "medium_hi_f0", severity="MEDIUM", confidence=0.95,
@@ -9391,7 +9370,7 @@ class TestVerifyPrepare:
         _, manifest = _run_verify_prepare(tmp_path, findings)
         to_verify_ids = {e["finding_id"] for e in manifest["to_verify"]}
         skipped = set(manifest["skipped_no_verification"])
-        assert to_verify_ids == {"bha_p0_f0", "bhb_f0", "premise_f0"}
+        assert to_verify_ids == {"bha_p0_f0", "bhb_f0"}
         assert skipped == {"hygiene_f0", "injection_f0", "low_f0", "medium_hi_f0"}
 
     def test_max_verifications_cap_keeps_highest_priority(
@@ -9725,33 +9704,33 @@ class TestPendingLearningsAppend:
         self, tmp_path: Path,
     ) -> None:
         """End-to-end: JUSTIFIED-INVALID through cmd_verify_consolidate
-        appends one event to premise-justifications.jsonl (the autouse
-        fixture redirects the base dir to tmp_path)."""
+        appends one event to the justification-audit learning stream (the
+        autouse fixture redirects the base dir to tmp_path)."""
         from code_review_helpers import (
             _PENDING_LEARNINGS_DIR, _PENDING_LEARNINGS_PREMISE,
         )
-        finding = _make_validated_finding("premise_f0", category="Premise")
-        finding["subcategory"] = "cohesion"
+        finding = _make_validated_finding("cq_f0", category="Code Quality")
+        finding["subcategory"] = "duplication"
         finding["justification"] = {
             "text": "// intentional",
             "source": "code_comment:src/x.py:1",
             "addresses_specific_concern": True,
-            "claimed_by_reviewer": "premise",
+            "claimed_by_reviewer": "unified_auditor",
         }
         verifier_output = {
-            "finding_id": "premise_f0",
+            "finding_id": "cq_f0",
             "verifier_verdict": "JUSTIFIED-INVALID",
             "verifier_reasoning": "generic disclaimer; does not address concern",
         }
         rc, _ = _run_verify_consolidate(
             tmp_path, [finding],
             manifest={
-                "to_verify": [{"finding_id": "premise_f0", "model": "sonnet"}],
+                "to_verify": [{"finding_id": "cq_f0", "model": "sonnet"}],
                 "skipped_no_verification": [],
                 "deferred_budget": [],
                 "cache_hits": [],
             },
-            verifier_outputs={"premise_f0": verifier_output},
+            verifier_outputs={"cq_f0": verifier_output},
         )
         assert rc == 0
         jsonl = _PENDING_LEARNINGS_DIR / _PENDING_LEARNINGS_PREMISE
@@ -9759,8 +9738,8 @@ class TestPendingLearningsAppend:
         lines = jsonl.read_text().splitlines()
         assert len(lines) == 1
         event = json.loads(lines[0])
-        assert event["finding_id"] == "premise_f0"
-        assert event["subcategory"] == "cohesion"
+        assert event["finding_id"] == "cq_f0"
+        assert event["subcategory"] == "duplication"
         assert event["justification_text"] == "// intentional"
 
 
@@ -10400,13 +10379,13 @@ class TestVerifyConsolidate:
         """PLN-721: JUSTIFIED-VALID verdicts land in the new justified[]
         bucket, NOT verified[] or rejected[]. They are the author's
         defense holding up under independent audit."""
-        findings = [_make_validated_finding("premise_f0", severity="MEDIUM")]
+        findings = [_make_validated_finding("med_f0", severity="MEDIUM")]
         manifest = {
-            "to_verify": [{"finding_id": "premise_f0", "model": "sonnet"}],
+            "to_verify": [{"finding_id": "med_f0", "model": "sonnet"}],
             "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
         }
         verdicts = {
-            "premise_f0": {
+            "med_f0": {
                 "verifier_verdict": "JUSTIFIED-VALID",
                 "verifier_confidence": 0.9,
                 "verifier_reasoning": "justification addresses the concern",
@@ -10429,13 +10408,13 @@ class TestVerifyConsolidate:
         """PLN-721: JUSTIFIED-INVALID verdicts land in verified[] — the
         justification audit failed, so the original concern stands and
         downstream verdict rules treat it like any other verified MEDIUM."""
-        findings = [_make_validated_finding("premise_f0", severity="MEDIUM")]
+        findings = [_make_validated_finding("med_f0", severity="MEDIUM")]
         manifest = {
-            "to_verify": [{"finding_id": "premise_f0", "model": "sonnet"}],
+            "to_verify": [{"finding_id": "med_f0", "model": "sonnet"}],
             "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
         }
         verdicts = {
-            "premise_f0": {
+            "med_f0": {
                 "verifier_verdict": "JUSTIFIED-INVALID",
                 "verifier_confidence": 0.85,
                 "verifier_reasoning": "justification is generic, does not address concern",
@@ -10460,15 +10439,15 @@ class TestVerifyConsolidate:
         so Rule 3.5 fires and the verdict becomes NEEDS_ATTENTION."""
         findings = [
             _make_validated_finding(
-                "premise_f0", severity="MEDIUM", file="lib/auth/handler.ts",
+                "med_f0", severity="MEDIUM", file="lib/auth/handler.ts",
             ),
         ]
         manifest = {
-            "to_verify": [{"finding_id": "premise_f0", "model": "sonnet"}],
+            "to_verify": [{"finding_id": "med_f0", "model": "sonnet"}],
             "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
         }
         verdicts = {
-            "premise_f0": {
+            "med_f0": {
                 "verifier_verdict": "JUSTIFIED-VALID",
                 "verifier_confidence": 0.9,
                 "verifier_reasoning": "looks fine",
@@ -10616,57 +10595,51 @@ class TestCanonicalVerdictPLN722:
 
 
 class TestLoadVerdictThresholds:
-    """PLN-721: operator-overridable verdict thresholds."""
+    """Operator-overridable verdict thresholds. After the Premise gate was
+    retired, ``impact_cumulative`` (FEA-1401 Rule 6) is the sole tunable."""
 
     def test_none_path_returns_default(self) -> None:
         from code_review_helpers import _load_verdict_thresholds
         out = _load_verdict_thresholds(None)
-        # PLN-773 added justification_rate_alert (default 0.30) alongside
-        # the original premise_cumulative_medium (default 3). FEA-1401
-        # added impact_cumulative (default 2) — Rule 6's gate threshold.
-        assert out == {
-            "premise_cumulative_medium": 3,
-            "justification_rate_alert": 0.30,
-            "impact_cumulative": 2,
-        }
+        assert out == {"impact_cumulative": 2}
 
     def test_missing_file_returns_default(self, tmp_path: Path) -> None:
         from code_review_helpers import _load_verdict_thresholds
         out = _load_verdict_thresholds(tmp_path / "missing.json")
-        assert out["premise_cumulative_medium"] == 3
+        assert out["impact_cumulative"] == 2
 
     def test_valid_override(self, tmp_path: Path) -> None:
         from code_review_helpers import _load_verdict_thresholds
         p = tmp_path / "verdict-thresholds.json"
-        p.write_text(json.dumps({"premise_cumulative_medium": 5}))
+        p.write_text(json.dumps({"impact_cumulative": 5}))
         out = _load_verdict_thresholds(p)
-        assert out["premise_cumulative_medium"] == 5
+        assert out["impact_cumulative"] == 5
 
     def test_malformed_json_falls_back_to_default(self, tmp_path: Path) -> None:
         from code_review_helpers import _load_verdict_thresholds
         p = tmp_path / "verdict-thresholds.json"
         p.write_text("not json {")
         out = _load_verdict_thresholds(p)
-        assert out["premise_cumulative_medium"] == 3
+        assert out["impact_cumulative"] == 2
 
     def test_non_int_value_falls_back_to_default(self, tmp_path: Path) -> None:
         from code_review_helpers import _load_verdict_thresholds
         p = tmp_path / "verdict-thresholds.json"
-        p.write_text(json.dumps({"premise_cumulative_medium": "three"}))
+        p.write_text(json.dumps({"impact_cumulative": "two"}))
         out = _load_verdict_thresholds(p)
-        assert out["premise_cumulative_medium"] == 3
+        assert out["impact_cumulative"] == 2
 
     def test_zero_or_negative_falls_back_to_default(self, tmp_path: Path) -> None:
         """A 0 or negative threshold would silently disable the gate. The
         operator must use a very large number (e.g. 9999) to disable, not
         0/-1 — the loader rejects values < 1 and falls back to the default
-        so a typo doesn't silently switch off Rule 4."""
+        so a typo doesn't silently switch off Rule 6."""
         from code_review_helpers import _load_verdict_thresholds
         p = tmp_path / "verdict-thresholds.json"
-        p.write_text(json.dumps({"premise_cumulative_medium": 0}))
-        assert _load_verdict_thresholds(p)["premise_cumulative_medium"] == 3
-        p.write_text(json.dumps({"premise_cumulative_medium": -1}))
-        assert _load_verdict_thresholds(p)["premise_cumulative_medium"] == 3
+        p.write_text(json.dumps({"impact_cumulative": 0}))
+        assert _load_verdict_thresholds(p)["impact_cumulative"] == 2
+        p.write_text(json.dumps({"impact_cumulative": -1}))
+        assert _load_verdict_thresholds(p)["impact_cumulative"] == 2
 
     def test_bool_rejected_as_threshold(self, tmp_path: Path) -> None:
         """Python's `True` is `int(True) == 1` — the loader must explicitly
@@ -10674,343 +10647,9 @@ class TestLoadVerdictThresholds:
         """
         from code_review_helpers import _load_verdict_thresholds
         p = tmp_path / "verdict-thresholds.json"
-        p.write_text(json.dumps({"premise_cumulative_medium": True}))
+        p.write_text(json.dumps({"impact_cumulative": True}))
         out = _load_verdict_thresholds(p)
-        assert out["premise_cumulative_medium"] == 3
-
-
-class TestPremiseTelemetryStats:
-    """PLN-773 Phase 2 — Premise justification + by_subcategory telemetry."""
-
-    @staticmethod
-    def _premise(severity: str = "MEDIUM", subcategory: str = "cohesion",
-                 verdict: str | None = "CONFIRMED") -> dict[str, Any]:
-        return {
-            "category": "Premise",
-            "subcategory": subcategory,
-            "severity": severity,
-            "verifier_verdict": verdict,
-            "issue": "premise",
-            "reviewer": "premise",
-        }
-
-    def test_justification_stats_empty_inputs_nan_safe(self) -> None:
-        from code_review_helpers import _justification_stats
-        out = _justification_stats([], [], rate_alert_threshold=0.30)
-        assert out["rate"] == 0.0
-        assert out["rejection_rate"] == 0.0
-        assert out["total_premise"] == 0
-        assert out["threshold_alert"] is False
-
-    def test_justification_stats_no_justified_findings(self) -> None:
-        from code_review_helpers import _justification_stats
-        # 3 Premise CONFIRMED, no justified — rate is 0
-        verified = [self._premise() for _ in range(3)]
-        out = _justification_stats(verified, [], rate_alert_threshold=0.30)
-        assert out["total_premise"] == 3
-        assert out["justified_emitted"] == 0
-        assert out["rate"] == 0.0
-        assert out["rejection_rate"] == 0.0
-        assert out["threshold_alert"] is False
-
-    def test_justification_rate_crosses_threshold(self) -> None:
-        from code_review_helpers import _justification_stats
-        # 2 Premise CONFIRMED in verified, 1 Premise JUSTIFIED-VALID in justified
-        # → rate = 1/3 = 0.33 > 0.30 → alert fires
-        verified = [self._premise(), self._premise()]
-        justified = [self._premise(verdict="JUSTIFIED-VALID")]
-        out = _justification_stats(
-            verified, justified, rate_alert_threshold=0.30,
-        )
-        assert out["total_premise"] == 3
-        assert out["justified_emitted"] == 1
-        assert out["justified_valid"] == 1
-        assert out["justified_invalid"] == 0
-        assert out["rate"] == pytest.approx(1 / 3)
-        assert out["threshold_alert"] is True
-
-    def test_justified_invalid_in_verified_counts_for_emitted(self) -> None:
-        from code_review_helpers import _justification_stats
-        verified = [
-            self._premise(),  # CONFIRMED
-            self._premise(verdict="JUSTIFIED-INVALID"),
-        ]
-        justified = [self._premise(verdict="JUSTIFIED-VALID")]
-        out = _justification_stats(
-            verified, justified, rate_alert_threshold=0.30,
-        )
-        # total_premise = 2 (verified) + 1 (justified) = 3
-        # emitted = 1 (invalid) + 1 (valid) = 2
-        # rejection_rate = 1 / 2 = 0.5
-        assert out["total_premise"] == 3
-        assert out["justified_emitted"] == 2
-        assert out["rejection_rate"] == 0.5
-
-    def test_by_subcategory_partitions_only_premise(self) -> None:
-        from code_review_helpers import _by_subcategory_stats
-        verified = [
-            self._premise(subcategory="necessity"),
-            self._premise(subcategory="cohesion"),
-            self._premise(subcategory="cohesion"),
-            # Non-Premise — must not appear in any bucket
-            {"category": "Correctness", "severity": "HIGH",
-             "subcategory": "cohesion", "issue": "x"},
-        ]
-        out = _by_subcategory_stats(verified)
-        assert out == {
-            "necessity": 1, "cohesion": 2, "workaround": 0, "complexity": 0,
-        }
-
-    def test_by_subcategory_drops_non_canonical_keys(self) -> None:
-        """A reviewer typo (e.g. 'duplicaiton') does NOT create a new bucket."""
-        from code_review_helpers import _by_subcategory_stats
-        verified = [
-            self._premise(subcategory="cohesion"),
-            self._premise(subcategory="duplicaiton"),  # typo
-        ]
-        out = _by_subcategory_stats(verified)
-        assert "duplicaiton" not in out
-        assert out["cohesion"] == 1
-
-    def test_verification_by_reviewer_fp_rate(self) -> None:
-        from code_review_helpers import _verification_by_reviewer
-        verified = [
-            {"reviewer": "bug_hunter_a", "verifier_verdict": "CONFIRMED"},
-            {"reviewer": "bug_hunter_a", "verifier_verdict": "CONFIRMED"},
-            {"reviewer": "premise", "verifier_verdict": "CONFIRMED"},
-        ]
-        rejected = [
-            {"reviewer": "bug_hunter_a", "verifier_verdict": "REJECTED"},
-        ]
-        out = _verification_by_reviewer(verified, rejected)
-        # bug_hunter_a: 2 verified + 1 rejected → 1/3 FP rate
-        assert out["bug_hunter_a"]["verified"] == 2
-        assert out["bug_hunter_a"]["rejected"] == 1
-        assert out["bug_hunter_a"]["fp_rate"] == pytest.approx(1 / 3)
-        # premise: only verified → 0.0 FP rate (NaN-safe)
-        assert out["premise"]["fp_rate"] == 0.0
-
-    def test_verification_by_reviewer_counts_re_asserted(self) -> None:
-        from code_review_helpers import _verification_by_reviewer
-        verified = [
-            {"reviewer": "premise", "verifier_verdict": "RE_ASSERTED"},
-            {"reviewer": "premise", "verifier_verdict": "CONFIRMED"},
-        ]
-        out = _verification_by_reviewer(verified, [])
-        assert out["premise"]["re_asserted"] == 1
-        assert out["premise"]["verified"] == 2  # both still in verified[]
-
-    def test_stats_block_includes_pln773_sub_blocks(self) -> None:
-        """End-to-end: _stats_from_findings produces all PLN-773 keys."""
-        from code_review_helpers import _stats_from_findings
-        verified = [self._premise(subcategory="necessity")]
-        justified = [self._premise(
-            subcategory="cohesion", verdict="JUSTIFIED-VALID",
-        )]
-        stats = _stats_from_findings(verified, [], justified, [])
-        assert "by_subcategory" in stats
-        assert "justification" in stats
-        assert "by_reviewer" in stats["verification"]
-
-
-class TestLoadVerdictThresholdsJustificationRate:
-    """PLN-773: justification_rate_alert key in verdict-thresholds.json."""
-
-    def test_default_is_point_three(self) -> None:
-        from code_review_helpers import _load_verdict_thresholds
-        out = _load_verdict_thresholds(None)
-        assert out["justification_rate_alert"] == 0.30
-
-    def test_valid_float_override(self, tmp_path: Path) -> None:
-        from code_review_helpers import _load_verdict_thresholds
-        p = tmp_path / "vt.json"
-        p.write_text(json.dumps({"justification_rate_alert": 0.5}))
-        out = _load_verdict_thresholds(p)
-        assert out["justification_rate_alert"] == 0.5
-
-    def test_out_of_range_falls_back_to_default(self, tmp_path: Path) -> None:
-        """1.5 is outside [0.0, 1.0] — fall back to default."""
-        from code_review_helpers import _load_verdict_thresholds
-        p = tmp_path / "vt.json"
-        p.write_text(json.dumps({"justification_rate_alert": 1.5}))
-        out = _load_verdict_thresholds(p)
-        assert out["justification_rate_alert"] == 0.30
-
-    def test_negative_falls_back_to_default(self, tmp_path: Path) -> None:
-        from code_review_helpers import _load_verdict_thresholds
-        p = tmp_path / "vt.json"
-        p.write_text(json.dumps({"justification_rate_alert": -0.1}))
-        out = _load_verdict_thresholds(p)
-        assert out["justification_rate_alert"] == 0.30
-
-    def test_bool_rejected(self, tmp_path: Path) -> None:
-        """A bool sneaks through int isinstance() — explicit reject."""
-        from code_review_helpers import _load_verdict_thresholds
-        p = tmp_path / "vt.json"
-        p.write_text(json.dumps({"justification_rate_alert": True}))
-        out = _load_verdict_thresholds(p)
-        assert out["justification_rate_alert"] == 0.30
-
-
-class TestCumulativePremiseMediumGate:
-    """PLN-721 Rule 4: cumulative Premise MEDIUM gate."""
-
-    @staticmethod
-    def _premise_med(verifier_verdict: str | None = "CONFIRMED") -> dict[str, Any]:
-        return {
-            "category": "Premise",
-            "severity": "MEDIUM",
-            "verifier_verdict": verifier_verdict,
-            "issue": "premise med",
-        }
-
-    def test_two_medium_premise_approved(self) -> None:
-        v, _ = _compute_canonical_verdict(
-            [self._premise_med(), self._premise_med()], [],
-        )
-        assert v == "APPROVED"
-
-    def test_three_medium_premise_triggers_needs_attention(self) -> None:
-        v, r = _compute_canonical_verdict(
-            [self._premise_med(), self._premise_med(), self._premise_med()], [],
-        )
-        assert v == "NEEDS_ATTENTION"
-        assert "3 MEDIUM Premise" in r
-        assert "threshold 3" in r
-
-    def test_four_medium_premise_still_needs_attention(self) -> None:
-        v, _ = _compute_canonical_verdict(
-            [self._premise_med()] * 4, [],
-        )
-        assert v == "NEEDS_ATTENTION"
-
-    def test_custom_threshold_raises_bar(self) -> None:
-        # Operator override: premise_cumulative_medium = 5 ⇒ 3 is no longer enough
-        v, _ = _compute_canonical_verdict(
-            [self._premise_med()] * 3, [],
-            thresholds={"premise_cumulative_medium": 5},
-        )
-        assert v == "APPROVED"
-        # but 5 fires the gate
-        v, _ = _compute_canonical_verdict(
-            [self._premise_med()] * 5, [],
-            thresholds={"premise_cumulative_medium": 5},
-        )
-        assert v == "NEEDS_ATTENTION"
-
-    def test_non_premise_medium_does_not_count(self) -> None:
-        # A pile of MEDIUM CodeQuality findings doesn't trigger Rule 4.
-        v, _ = _compute_canonical_verdict(
-            [{"category": "Code Quality", "severity": "MEDIUM",
-              "verifier_verdict": "CONFIRMED", "issue": "dry"}] * 5,
-            [],
-        )
-        assert v == "APPROVED"
-
-    def test_high_blocking_premise_does_not_count_toward_rule_4(self) -> None:
-        # Rule 3 (HIGH) short-circuits before Rule 4 ever runs.
-        v, _ = _compute_canonical_verdict(
-            [{"category": "Premise", "severity": "HIGH",
-              "verifier_verdict": "CONFIRMED", "issue": "high prem"},
-             self._premise_med(), self._premise_med()],
-            [],
-        )
-        assert v == "NEEDS_ATTENTION"  # caused by HIGH, not the cumulative gate
-
-    def test_justified_valid_excluded_from_count(self) -> None:
-        """Defensive: if a JUSTIFIED-VALID finding leaks into verified[]
-        (it shouldn't — cmd_verify_consolidate routes it to justified[]),
-        the gate must still ignore it."""
-        v, _ = _compute_canonical_verdict(
-            [self._premise_med(),
-             self._premise_med(),
-             self._premise_med(verifier_verdict="JUSTIFIED-VALID")],
-            [],
-        )
-        assert v == "APPROVED"
-
-    def test_justified_invalid_counts_concern_survived(self) -> None:
-        """PR #113 review (thadeusb): JUSTIFIED-INVALID is the verifier
-        REFUSING the author's defense — the original concern survives, so
-        it must count toward the cumulative gate the same way a plain
-        CONFIRMED MEDIUM does. Excluding it (v2.9.0/v2.9.1 behavior) was
-        backwards: the author's failed wave-off shouldn't be the thing
-        that prevents the gate from firing."""
-        v, r = _compute_canonical_verdict(
-            [self._premise_med(),
-             self._premise_med(),
-             self._premise_med(verifier_verdict="JUSTIFIED-INVALID")],
-            [],
-        )
-        assert v == "NEEDS_ATTENTION"
-        assert "3 MEDIUM Premise" in r
-
-    def test_valid_vs_invalid_are_asymmetric(self) -> None:
-        """Pin the asymmetry directly: same shape, only the JUSTIFIED-*
-        verdict differs, opposite gate outcomes."""
-        from code_review_helpers import _count_gateable_premise_medium
-        with_valid = [self._premise_med()] * 2 + [
-            self._premise_med(verifier_verdict="JUSTIFIED-VALID")
-        ]
-        with_invalid = [self._premise_med()] * 2 + [
-            self._premise_med(verifier_verdict="JUSTIFIED-INVALID")
-        ]
-        assert _count_gateable_premise_medium(with_valid) == 2
-        assert _count_gateable_premise_medium(with_invalid) == 3
-
-    def test_downgrade_to_medium_counts(self) -> None:
-        """A DOWNGRADE from HIGH → MEDIUM (severity already rewritten by
-        _merge_verifier_fields) counts toward Rule 4."""
-        v, _ = _compute_canonical_verdict(
-            [self._premise_med(verifier_verdict="DOWNGRADE")] * 3, [],
-        )
-        assert v == "NEEDS_ATTENTION"
-
-    def test_tentative_rule_35_wins_over_rule_4_counting(self) -> None:
-        """If any Premise finding is TENTATIVE, Rule 3.5 short-circuits
-        first and Rule 4 never runs. The verdict is still NEEDS_ATTENTION
-        but for the verifier-uncertainty reason."""
-        v, r = _compute_canonical_verdict(
-            [self._premise_med(verifier_verdict="TENTATIVE"),
-             self._premise_med(), self._premise_med()],
-            [],
-        )
-        assert v == "NEEDS_ATTENTION"
-        assert "uncertain" in r.lower()
-
-    @pytest.mark.parametrize(
-        "verdicts",
-        [
-            ["CONFIRMED", "CONFIRMED", "CONFIRMED"],
-            ["CONFIRMED", "CONFIRMED", "JUSTIFIED-VALID"],
-            ["CONFIRMED", "JUSTIFIED-INVALID", "DOWNGRADE"],
-            ["DOWNGRADE", "DOWNGRADE", "DOWNGRADE", "CONFIRMED"],
-            ["JUSTIFIED-VALID", "JUSTIFIED-INVALID", "JUSTIFIED-VALID"],
-        ],
-    )
-    def test_telemetry_count_matches_rule_4_count(
-        self, verdicts: list[str],
-    ) -> None:
-        """PLN-721 v2.9.1: the count Rule 4 fires on MUST match the value
-        telemetry surfaces as `premise_cumulative_medium_count`. The v2.9.0
-        review caught these counts diverging because JUSTIFIED-* findings
-        were excluded from the gate but not the telemetry. Both sites now
-        delegate to `_count_gateable_premise_medium`; this test pins that
-        they stay aligned across the JUSTIFIED-VALID / JUSTIFIED-INVALID /
-        DOWNGRADE shapes that triggered the divergence.
-        """
-        from code_review_helpers import (
-            _count_gateable_premise_medium,
-            _stats_from_findings,
-        )
-        verified = [self._premise_med(verifier_verdict=v) for v in verdicts]
-        gate_count = _count_gateable_premise_medium(verified)
-        stats = _stats_from_findings(verified, [], [], [])
-        assert stats["premise_cumulative_medium_count"] == gate_count, (
-            f"telemetry/gate divergence for verdicts {verdicts}: "
-            f"stat={stats['premise_cumulative_medium_count']}, "
-            f"gate={gate_count}"
-        )
+        assert out["impact_cumulative"] == 2
 
 
 class TestFinalizeResultPrefersVerified:
@@ -11113,7 +10752,7 @@ class TestFinalizeResultPrefersVerified:
         The verdict stays APPROVED — JUSTIFIED-VALID findings do not
         trigger any of the precedence rules."""
         validated = [
-            _make_validated_finding("premise_f0", severity="MEDIUM"),
+            _make_validated_finding("med_f0", severity="MEDIUM"),
         ]
         verified_doc = {
             "verified": [],
@@ -11292,8 +10931,8 @@ class TestPR114ReviewFixes:
         envelope = {
             "verified": [], "rejected": [], "pending_verification": [],
             "justified": [
-                {"id": "premise_f0", "file": "src/x.py", "line": 5,
-                 "category": "Premise",
+                {"id": "cq_f0", "file": "src/x.py", "line": 5,
+                 "category": "Code Quality",
                  "verifier_verdict": "JUSTIFIED-VALID"},
             ],
         }
@@ -11304,7 +10943,7 @@ class TestPR114ReviewFixes:
         ns = argparse.Namespace(
             cr_dir=str(cr),
             cache_dir=str(cache),
-            finding_ids="premise_f0",
+            finding_ids="cq_f0",
             prior_result=str(prior_path),
             reason="",
             asserted_by="ops",
@@ -11320,11 +10959,11 @@ class TestPR114ReviewFixes:
         finally:
             _sys.stdout = old
         assert rc == 0
-        assert summary["already_dismissed"] == ["premise_f0"]
+        assert summary["already_dismissed"] == ["cq_f0"]
         assert summary["re_asserted"] == []
         # And critically: no override file written. Re-asserting a
         # justified finding must not silently promote it on the next run.
-        assert _load_override(cache, "premise_f0") is None
+        assert _load_override(cache, "cq_f0") is None
 
     def test_system_scoped_re_assert_writes_sentinel_and_is_honored(
         self, tmp_path: Path,
@@ -11793,12 +11432,12 @@ class TestPartitionAwareReviewerLabeling:
         from code_review_helpers import _verification_by_reviewer
         verified = [
             self._finding("bhb_f0", "bhb", "CONFIRMED"),
-            self._finding("premise_f0", "premise", "CONFIRMED"),
+            self._finding("test_quality_f0", "test_quality", "CONFIRMED"),
             self._finding("auditor_f0", "auditor", "CONFIRMED"),
             self._finding("bha_p0_f0", "bha_p0", "CONFIRMED"),
         ]
         out = _verification_by_reviewer(verified, [])
-        assert set(out.keys()) == {"bhb", "premise", "auditor", "bha_p0"}
+        assert set(out.keys()) == {"bhb", "test_quality", "auditor", "bha_p0"}
 
     def test_re_asserted_counter_attributes_to_correct_partition(self) -> None:
         from code_review_helpers import _verification_by_reviewer
@@ -12570,8 +12209,8 @@ class TestPR121TaxonomyCommentNoDanglingReference:
     """MED #3: signal_taxonomy.json comment must not reference a bootstrap
     mirror that does not yet exist.
 
-    Reviewer: Bug Hunter B + Premise both flagged the same doc-accuracy
-    gap. A developer adding a signal would look for the bootstrap mirror,
+    A doc-accuracy gap: a developer adding a signal would look for the
+    bootstrap mirror,
     find nothing, and either skip the step (breaking the documented
     invariant) or be confused. Fix: comment now defers the mirror to
     Phase 9 explicitly, rather than implying a co-located file exists.
@@ -17347,7 +16986,7 @@ class TestPLN725Phase8DeriveSpawnSpecBlockingSanitization:
     so review still ran, but actioning a verifier-rejected plan can
     spawn agents the closed_vocabulary / shape / evidence checks
     flagged. Sanitization keeps the canonical static fleet running
-    (BHB, Auditor, Premise, BHA per partition) while suppressing
+    (BHB, Auditor, BHA per partition) while suppressing
     every rule/critic-source reviewer; the BLOCKING gap finding
     already lives in agent_coverage-verify-blocking.json so the
     operator sees the rejection.
@@ -20108,7 +19747,7 @@ class TestPLN807Phase2TierPropagation:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
     ) -> None:
         """shallow cached + standard invocation → cache miss.
-        Forces the standard upgrade to actually run premise + critics."""
+        Forces the standard upgrade to actually run signal extraction + critics."""
         cmd_review_state_write(self._ns_write(tmp_path, "abc", depth="shallow"))
         capsys.readouterr()
         rc = cmd_review_state_read(self._ns_read(tmp_path, depth="standard"))
@@ -20767,8 +20406,8 @@ class TestPLN807Phase4BudgetArithmetic:
 class TestPLN807Phase5TierMismatchNudge:
     """PLN-807 Phase 5: hygiene-stage tier-mismatch nudge.
 
-    When shallow runs on a PR that would have benefited from premise
-    or critic-gates entries, a single MEDIUM system-scoped finding
+    When shallow runs on a PR that would have benefited from signal
+    extraction or critic-gates entries, a single MEDIUM system-scoped finding
     (category ``Coverage``) is emitted so the user can see what was
     skipped. MEDIUM rather than LOW because validate's
     SEVERITY_NORMALIZE map DISCARDs ``"low"`` — a LOW nudge would
@@ -21676,10 +21315,7 @@ class TestFEA1401VerdictRule:
         # category coverage.
         verified = [self._impact_finding("HIGH")]
         verdict, reason = _compute_canonical_verdict(
-            verified, [], thresholds={
-                "premise_cumulative_medium": 3,
-                "impact_cumulative": 1,
-            },
+            verified, [], thresholds={"impact_cumulative": 1},
         )
         assert verdict == "NEEDS_ATTENTION"
         assert reason  # non-empty reason from whichever rule fired
@@ -22016,7 +21652,7 @@ class TestFEA1401Telemetry:
         # The key MUST exist; absence would render the SKILL.md
         # presenter footer line as None and break the Rule 6 docstring's
         # contract. The value matches _count_gateable_impact exactly
-        # (single source of truth; mirrors premise_cumulative_medium_count).
+        # (single source of truth).
         assert "impact_cumulative_count" in stats
         assert stats["impact_cumulative_count"] == 2  # MEDIUM excluded
 
@@ -22033,9 +21669,8 @@ class TestFEA1401Telemetry:
 
 
 class TestFEA1401VerdictThresholds:
-    """Verify ``_load_verdict_thresholds`` parses the new
-    ``impact_cumulative`` key with the same validation contract as
-    ``premise_cumulative_medium`` (int, ≥ 1, not bool)."""
+    """Verify ``_load_verdict_thresholds`` parses the
+    ``impact_cumulative`` key with int, ≥ 1, not-bool validation."""
 
     def test_default_impact_threshold_when_no_config(self) -> None:
         from code_review_helpers import (

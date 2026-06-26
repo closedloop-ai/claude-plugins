@@ -28,9 +28,12 @@ from typing import Any, Literal
 # Version
 # ---------------------------------------------------------------------------
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 """Integer schema version for Finding + ResultEnvelope. Bumped on breaking
-changes per section 12 of the foundation plan."""
+changes per section 12 of the foundation plan. v2 retired the ``Premise``
+finding category (and its verdict gates, telemetry sub-blocks, and verifier
+extra-strictness) when the premise reviewer was removed — no producer emits
+``category == "Premise"`` anymore, so it is no longer a valid category."""
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +68,6 @@ CATEGORIES: frozenset[str] = frozenset({
     "Documentation",
     "Hygiene",
     "Repo Hygiene",
-    "Premise",
     "ImpactAnalysis",
     "TestQuality",
     "Coverage",

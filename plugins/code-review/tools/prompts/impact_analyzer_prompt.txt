@@ -35,8 +35,7 @@ usage is still compatible with the change.
 
 No other reviewer does this. BHA reviews the diff itself for bugs;
 BHB looks for sibling-pattern drift; the unified auditor handles style
-and small correctness issues; premise questions whether the change
-should have happened at all. None of them read code that isn't in the
+and small correctness issues. None of them read code that isn't in the
 diff. **You do.** That is the entire point of this reviewer — and the
 only thing you should be doing.
 
@@ -349,7 +348,8 @@ analyze 1–5 symbols, run 5–15 greps, and finish in under a minute.
     breaks. The break is in the `external_impact[]` entry.
   - You may NOT emit findings about the symbol's internal logic — that
     is BHA's job. You may NOT emit findings about whether the change
-    should have happened — that is Premise's job.
+    should have happened at all — that subjective judgment is out of
+    scope for this reviewer.
   - You may NOT use Bash. Use Read, Grep, Glob — plus the read-only
     `mcp__codebase-memory-mcp__*` graph tools when available (see Inputs).
   - If a callsite_snippet contains whitespace or quotes, preserve them

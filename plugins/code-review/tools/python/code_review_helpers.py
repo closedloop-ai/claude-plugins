@@ -989,10 +989,9 @@ def _check_tier_mismatch_nudge(
     finding's marker (``tier_mismatch_nudge``) makes it easy to
     auto-dismiss or filter out at the operator's discretion. Severity
     is MEDIUM — the lowest tier that survives validate's
-    SEVERITY_NORMALIZE map (which DISCARDs "low"). Category "Coverage"
-    rather than "Premise" keeps it out of the cumulative Premise
-    MEDIUM gate (Rule 4 of _compute_canonical_verdict) so it cannot
-    escalate the verdict on its own.
+    SEVERITY_NORMALIZE map (which DISCARDs "low"). It carries category
+    "Coverage" — a MEDIUM coverage nudge that surfaces to the operator
+    without escalating the verdict on its own.
     """
     if depth != "shallow":
         return []
@@ -1028,9 +1027,7 @@ def _check_tier_mismatch_nudge(
     # MEDIUM severity (not LOW) so the finding survives validate's
     # SEVERITY_NORMALIZE map (which DISCARDs "low"). MEDIUM is the
     # lowest severity that reaches the operator. Category "Coverage"
-    # rather than "Premise" so it does not contribute to the cumulative
-    # Premise MEDIUM gate (Rule 4 of _compute_canonical_verdict) and
-    # cannot accidentally escalate the verdict on its own.
+    # keeps it a non-escalating coverage nudge.
     return [{
         "reviewer": "hygiene",
         "source": "hygiene",
@@ -2098,7 +2095,6 @@ def cmd_validate(args: argparse.Namespace) -> int:
 #   | LOW (P3)                      | No        |
 #   | category=Hygiene              | No (deterministic producer) |
 #   | source=injection-detector     | No (deterministic producer) |
-#   | category=Premise              | Always (strict adversarial framing) |
 #
 # MAX_VERIFICATIONS = 50 (PLN-722: 50 × Sonnet ≈ $2/PR at current pricing).
 # Overflow ranks by (severity_weight × confidence) and tags the bottom of
@@ -2159,6 +2155,9 @@ def _verifications_cache_path(cache_dir: Path, key: str) -> Path:
 # ---------------------------------------------------------------------------
 
 _PENDING_LEARNINGS_DIR = Path(".closedloop-ai/pending-learnings")
+# General justification-audit learning stream — every JUSTIFIED-INVALID
+# verdict (any category), feeding the verifier's J2 tuning. The historical
+# "premise-" filename is kept stable for the self-learning consumer.
 _PENDING_LEARNINGS_PREMISE = "premise-justifications.jsonl"
 _PENDING_LEARNINGS_OVERRIDES = "verifier-overrides.jsonl"
 
@@ -2583,13 +2582,6 @@ def _needs_verification(finding: dict[str, Any]) -> bool:
     if finding.get("out_of_hunk_kept") is True:
         return True
 
-    # Premise: always verified with the strict adversarial framing in
-    # verifier_prompt.txt — the verdict precedence already gives Premise
-    # a high blast radius (cumulative MEDIUM gate in PLN-721), so every
-    # Premise finding needs an independent second opinion.
-    if category == "Premise":
-        return True
-
     if severity in ("BLOCKING", "HIGH"):
         return True
 
@@ -2831,21 +2823,11 @@ _CODE_REVIEW_SETTINGS_DEFAULT_PATH = Path(".closedloop-ai/settings/code-review.j
 # = no escalation; bootstrap does NOT auto-generate per `00-discovery.md`.
 _VERIFICATION_GATES_DEFAULT_PATH = Path(".closedloop-ai/settings/verification-gates.json")
 
-# PLN-721 Phase 4: Premise cumulative-MEDIUM verdict gate. Operator-overridable
-# via ``.closedloop-ai/settings/verdict-thresholds.json``; absent/malformed →
-# the default fires at 3 (matches the plan's design intent: "a single MEDIUM
-# does not block; three MEDIUM Premise findings on the same PR signal the
-# patch is structurally wrong even when no individual line is dangerous").
+# Operator-overridable verdict thresholds via
+# ``.closedloop-ai/settings/verdict-thresholds.json``; absent/malformed →
+# the built-in defaults.
 _VERDICT_THRESHOLDS_DEFAULT_PATH = Path(".closedloop-ai/settings/verdict-thresholds.json")
-_VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT = 3
-# PLN-773 Premise justification rate alert. Fires when the share of
-# Premise findings carrying author justification crosses the threshold
-# (PLN-721 §Telemetry: "if > ~30%, authors likely gaming the hatch").
-# Operator-tunable via the same verdict-thresholds.json config.
-_VERDICT_JUSTIFICATION_RATE_ALERT_DEFAULT = 0.30
 _VERDICT_THRESHOLD_KEYS: tuple[str, ...] = (
-    "premise_cumulative_medium",
-    "justification_rate_alert",
     "impact_cumulative",
 )
 
@@ -2886,37 +2868,21 @@ def _load_verdict_thresholds(path: Path | None) -> dict[str, Any]:
 
     Returns a dict with the canonical keys present:
 
-      - ``premise_cumulative_medium`` (int, ≥ 1): MEDIUM Premise count
-        gate. Default 3.
-      - ``justification_rate_alert`` (float, [0.0, 1.0]): threshold above
-        which the justification-rate footer flips to ALERT. Default 0.30.
       - ``impact_cumulative`` (int, ≥ 1): BLOCKING/HIGH ImpactAnalysis
         cumulative gate (FEA-1401 Rule 6). Default 2.
 
     Unknown keys are ignored. Invalid entries (wrong type, out of range)
     fall back to the default — the file is operator-authored and should
     not crash the pipeline on a typo or a "0" that would disable a gate
-    entirely (use a very large number / 1.0 for that respectively).
+    entirely (use a very large number for that).
     """
     defaults: dict[str, Any] = {
-        "premise_cumulative_medium": _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
-        "justification_rate_alert": _VERDICT_JUSTIFICATION_RATE_ALERT_DEFAULT,
         "impact_cumulative": _VERDICT_IMPACT_THRESHOLD_DEFAULT,
     }
     data, out = _load_optional_settings_dict(path, defaults)
     if data is None:
         return out
     # Per-key validation (each threshold has its own range constraints).
-    raw_pm = data.get("premise_cumulative_medium")
-    if isinstance(raw_pm, int) and not isinstance(raw_pm, bool) and raw_pm >= 1:
-        out["premise_cumulative_medium"] = raw_pm
-    raw_jr = data.get("justification_rate_alert")
-    if (
-        isinstance(raw_jr, (int, float))
-        and not isinstance(raw_jr, bool)
-        and 0.0 <= float(raw_jr) <= 1.0
-    ):
-        out["justification_rate_alert"] = float(raw_jr)
     raw_ic = data.get("impact_cumulative")
     if isinstance(raw_ic, int) and not isinstance(raw_ic, bool) and raw_ic >= 1:
         out["impact_cumulative"] = raw_ic
@@ -9453,7 +9419,7 @@ def _count_gateable_impact(verified: list[dict[str, Any]]) -> int:
     the verdict escalates to NEEDS_ATTENTION even if no single finding
     would have triggered Rule 2 or Rule 3 on its own.
 
-    Counting policy mirrors ``_count_gateable_premise_medium``:
+    Counting policy:
 
       - Only ``verified[]`` findings (justified/rejected/coverage_gap
         buckets are bucketed elsewhere; Impact findings flow through
@@ -9497,45 +9463,6 @@ def _count_gateable_impact(verified: list[dict[str, Any]]) -> int:
 _VERDICT_IMPACT_THRESHOLD_DEFAULT = 2
 
 
-def _count_gateable_premise_medium(verified: list[dict[str, Any]]) -> int:
-    """Return the count Rule 4's Premise-MEDIUM gate fires on.
-
-    Shared between ``_compute_canonical_verdict`` (Rule 4) and
-    ``_stats_from_findings`` (telemetry's
-    ``premise_cumulative_medium_count``) so the value the gate triggers
-    on always matches the value the operator-facing telemetry reports.
-    Counting policy:
-
-      - Only ``verified[]`` findings (``justified[]`` is bucketed
-        elsewhere; ``rejected[]`` is dropped from the verdict; and
-        ``coverage_gaps`` never carry ``category=Premise``).
-      - JUSTIFIED-VALID vs JUSTIFIED-INVALID are **asymmetric**:
-          * ``JUSTIFIED-VALID`` = author defense was audited and
-            accepted; the finding is dismissed and lives in
-            ``justified[]``, NOT ``verified[]``. Excluded defensively
-            in case a cached entry leaks into ``verified[]`` — its
-            concern was waived.
-          * ``JUSTIFIED-INVALID`` = author defense was audited and
-            REFUSED; the original concern survived. It belongs in the
-            count the same way a plain CONFIRMED MEDIUM does. The
-            reserved-but-unemitted enum value also lands here if a
-            future code path produces one in ``verified[]``.
-      - Severity is read post-DOWNGRADE — ``_merge_verifier_fields``
-        rewrites ``severity`` from ``verifier_severity`` for valid
-        downgrades, so a DOWNGRADE from HIGH → MEDIUM correctly counts.
-    """
-    count = 0
-    for finding in verified:
-        if str(finding.get("category", "")) != "Premise":
-            continue
-        if str(finding.get("severity", "")) != "MEDIUM":
-            continue
-        if finding.get("verifier_verdict") == "JUSTIFIED-VALID":
-            continue
-        count += 1
-    return count
-
-
 def _compute_canonical_verdict(
     verified: list[dict[str, Any]],
     coverage_gaps: list[dict[str, Any]],
@@ -9548,19 +9475,15 @@ def _compute_canonical_verdict(
     Returns (canonical_verdict, reason). PLN-722 added two rules: the
     ``force_human_review`` short-circuit (rule 2.5 — mandatory_human_review_
     paths) and the TENTATIVE → NEEDS_ATTENTION fall-through (rule 3.5).
-    PLN-721 fills in Rule 4: cumulative Premise MEDIUM gate. PLN-726
-    (FEA-1401) fills in Rule 6: cumulative Impact gate (≥2 BLOCKING/HIGH
-    ImpactAnalysis findings → NEEDS_ATTENTION).
+    PLN-726 (FEA-1401) fills in Rule 6: cumulative Impact gate (≥2
+    BLOCKING/HIGH ImpactAnalysis findings → NEEDS_ATTENTION).
 
-    ``thresholds`` (PLN-721): optional dict from ``_load_verdict_thresholds``;
+    ``thresholds``: optional dict from ``_load_verdict_thresholds``;
     callers that do not pass it get the built-in defaults
-    (``premise_cumulative_medium`` = 3, ``impact_cumulative`` = 2; see
-    ``_VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT`` and
-    ``_VERDICT_IMPACT_THRESHOLD_DEFAULT``) so existing test fixtures
-    and back-compat callers keep working.
+    (``impact_cumulative`` = 2; see ``_VERDICT_IMPACT_THRESHOLD_DEFAULT``)
+    so existing test fixtures and back-compat callers keep working.
     """
     thresholds = thresholds or {
-        "premise_cumulative_medium": _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
         "impact_cumulative": _VERDICT_IMPACT_THRESHOLD_DEFAULT,
     }
 
@@ -9580,12 +9503,9 @@ def _compute_canonical_verdict(
     # APPROVED.
     all_findings = verified + coverage_gaps
 
-    # Rule 2: BLOCKING (any scope) or Premise P0 → CHANGES_REQUESTED.
+    # Rule 2: BLOCKING (any scope) → CHANGES_REQUESTED.
     for finding in all_findings:
-        sev = str(finding.get("severity", ""))
-        if sev == "BLOCKING":
-            return "CHANGES_REQUESTED", _short(str(finding.get("issue", "")))
-        if str(finding.get("category", "")) == "Premise" and finding.get("priority") == 0:
+        if str(finding.get("severity", "")) == "BLOCKING":
             return "CHANGES_REQUESTED", _short(str(finding.get("issue", "")))
 
     # Rule 2.5 (PLN-722): mandatory_human_review_paths force NEEDS_ATTENTION.
@@ -9613,23 +9533,6 @@ def _compute_canonical_verdict(
             return "NEEDS_ATTENTION", _short(
                 f"verifier uncertain: {finding.get('issue', '')}",
             )
-
-    # Rule 4 (PLN-721): cumulative Premise MEDIUM gate. The counting
-    # policy is documented on ``_count_gateable_premise_medium`` — this
-    # site MUST use that helper so the value the gate fires on matches
-    # the value telemetry reports in ``premise_cumulative_medium_count``.
-    premise_medium_threshold = int(
-        thresholds.get(
-            "premise_cumulative_medium",
-            _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
-        ),
-    )
-    premise_medium_count = _count_gateable_premise_medium(verified)
-    if premise_medium_count >= premise_medium_threshold:
-        return "NEEDS_ATTENTION", _short(
-            f"{premise_medium_count} MEDIUM Premise findings "
-            f"(threshold {premise_medium_threshold})",
-        )
 
     # Rule 6 (FEA-1401 / PLN-726 OQ#6): cumulative Impact gate. ≥2
     # BLOCKING/HIGH ImpactAnalysis findings → NEEDS_ATTENTION. Under
@@ -12499,69 +12402,6 @@ def _empty_coverage_plan() -> dict[str, Any]:
     }
 
 
-_PLN773_PREMISE_SUBCATEGORIES: tuple[str, ...] = (
-    "necessity", "cohesion", "workaround", "complexity",
-)
-
-
-def _justification_stats(
-    verified: list[dict[str, Any]],
-    justified: list[dict[str, Any]],
-    *,
-    rate_alert_threshold: float,
-) -> dict[str, Any]:
-    """PLN-773 Phase 2 — Premise justification telemetry sub-block.
-
-    The denominator is total Premise findings across ``verified[]`` AND
-    ``justified[]`` (the JUSTIFIED-VALID bucket lives in ``justified[]``
-    after cmd_verify_consolidate routes; JUSTIFIED-INVALID stays in
-    ``verified[]``). NaN-safe: empty inputs return zeros, not divisions.
-    """
-    valid_count = sum(
-        1 for f in justified
-        if str(f.get("category", "")) == "Premise"
-    )
-    invalid_count = sum(
-        1 for f in verified
-        if str(f.get("category", "")) == "Premise"
-        and f.get("verifier_verdict") == "JUSTIFIED-INVALID"
-    )
-    premise_in_verified = sum(
-        1 for f in verified if str(f.get("category", "")) == "Premise"
-    )
-    total_premise = premise_in_verified + valid_count
-    emitted = valid_count + invalid_count
-    rate = (emitted / total_premise) if total_premise > 0 else 0.0
-    rejection_rate = (invalid_count / emitted) if emitted > 0 else 0.0
-    return {
-        "rate": rate,
-        "rejection_rate": rejection_rate,
-        "total_premise": total_premise,
-        "justified_emitted": emitted,
-        "justified_valid": valid_count,
-        "justified_invalid": invalid_count,
-        "threshold_alert": rate > rate_alert_threshold,
-    }
-
-
-def _by_subcategory_stats(verified: list[dict[str, Any]]) -> dict[str, int]:
-    """PLN-773 Phase 2 — Premise findings partitioned by subcategory.
-
-    Counts only ``category=Premise`` findings in ``verified[]``. Subcategories
-    are pinned to the canonical four (PLN-721) so a typo in a reviewer
-    output doesn't introduce spurious buckets; non-canonical subcategories
-    are silently ignored.
-    """
-    counts: dict[str, int] = {k: 0 for k in _PLN773_PREMISE_SUBCATEGORIES}
-    for f in verified:
-        if str(f.get("category", "")) != "Premise":
-            continue
-        sub = str(f.get("subcategory", ""))
-        if sub in counts:
-            counts[sub] += 1
-    return counts
-
-
 def _verification_by_reviewer(
     verified: list[dict[str, Any]],
     rejected: list[dict[str, Any]],
@@ -12624,15 +12464,11 @@ def _stats_from_findings(
 ) -> dict[str, Any]:
     """Compute the ``stats`` block of the result envelope.
 
-    ``thresholds`` (PLN-773): optional dict from ``_load_verdict_thresholds``.
-    Callers that omit it get the built-in default for the
-    ``justification_rate_alert`` toggle (0.30). All existing call sites
-    keep working through the optional kwarg.
+    ``thresholds`` is accepted for signature stability with the finalize
+    caller but is not currently read — the only threshold-driven stat was
+    the retired Premise justification telemetry.
     """
-    thresholds = thresholds or {
-        "premise_cumulative_medium": _VERDICT_PREMISE_MEDIUM_THRESHOLD_DEFAULT,
-        "justification_rate_alert": _VERDICT_JUSTIFICATION_RATE_ALERT_DEFAULT,
-    }
+    del thresholds  # reserved; see docstring
 
     by_severity: dict[str, int] = {"BLOCKING": 0, "HIGH": 0, "MEDIUM": 0}
     by_category: dict[str, int] = {}
@@ -12669,18 +12505,6 @@ def _stats_from_findings(
         "by_category": by_category,
         "by_reviewer": by_reviewer,
         "by_finding_scope": by_scope,
-        # PLN-773 Phase 2 — Premise telemetry sub-blocks (additive; the
-        # envelope schema accepts arbitrary stats keys).
-        "by_subcategory": _by_subcategory_stats(verified),
-        "justification": _justification_stats(
-            verified, justified,
-            rate_alert_threshold=float(
-                thresholds.get(
-                    "justification_rate_alert",
-                    _VERDICT_JUSTIFICATION_RATE_ALERT_DEFAULT,
-                ),
-            ),
-        ),
         "verification": {
             "verified_count": len(verified),
             "rejected_count": len(rejected),
@@ -12700,15 +12524,11 @@ def _stats_from_findings(
             # PLN-773 Phase 2 — per-reviewer FP rate + override counter.
             "by_reviewer": _verification_by_reviewer(verified, rejected),
         },
-        # Must match the count Rule 4 actually fires on —
-        # _count_gateable_premise_medium is the single source of truth
-        # for that policy (excludes JUSTIFIED-VALID / JUSTIFIED-INVALID).
-        "premise_cumulative_medium_count": _count_gateable_premise_medium(verified),
-        # FEA-1401 Rule 6: Impact Analyzer gate count. Mirrors
-        # premise_cumulative_medium_count — single source of truth is
-        # _count_gateable_impact. Present-local SKILL.md's Verifier Stats
-        # block reads `stats.impact_cumulative_count` directly from this
-        # dict; without this key the footer line renders as None.
+        # FEA-1401 Rule 6: Impact Analyzer gate count. Single source of
+        # truth is _count_gateable_impact. Present-local SKILL.md's
+        # Verifier Stats block reads `stats.impact_cumulative_count`
+        # directly from this dict; without this key the footer line
+        # renders as None.
         "impact_cumulative_count": _count_gateable_impact(verified),
         "agent_failures": [],
     }

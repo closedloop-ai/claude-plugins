@@ -37,7 +37,7 @@ shape. Producers may emit dicts directly; the Python convenience type lives in
   "system_marker": "<from the canonical enum (Section 3); null when finding_scope == 'diff'>",
 
   // ── Classification ────────────────────────────────────────
-  "category": "Correctness | Code Quality | Documentation | Hygiene | Repo Hygiene | Premise | ImpactAnalysis | TestQuality | Coverage | InjectionAttempt | CompanionChange | Security",
+  "category": "Correctness | Code Quality | Documentation | Hygiene | Repo Hygiene | ImpactAnalysis | TestQuality | Coverage | InjectionAttempt | CompanionChange | Security",
   "subcategory": "<category-specific; nullable>",
 
   // ── Severity ──────────────────────────────────────────────
@@ -181,7 +181,7 @@ The terminal artifact of every review run.
   // ── Stats ─────────────────────────────────────────────────
   "stats": {
     "by_severity": {"BLOCKING": <int>, "HIGH": <int>, "MEDIUM": <int>},
-    "by_category": {"Correctness": <int>, "Premise": <int>, ...},
+    "by_category": {"Correctness": <int>, ...},
     "by_reviewer": {"<reviewer>": {"verified": <int>, "rejected": <int>, "tentative": <int>, "justified": <int>}},
     "by_finding_scope": {"diff": <int>, "system": <int>, "pr_metadata": <int>},
     "verification": {
@@ -194,7 +194,7 @@ The terminal artifact of every review run.
       "skipped_count": <int>,
       "false_positive_rate": <float>
     },
-    "premise_cumulative_medium_count": <int>,
+    "impact_cumulative_count": <int>,
     "agent_failures": [{"agent_id": "<id>", "reason": "<string>"}]
   },
 
@@ -270,10 +270,9 @@ The `verdict` subcommand applies these rules in order; the first match wins.
 1. Any coverage gap with `required: true` (foundation) → **CHANGES_REQUESTED**
 2. Any BLOCKING finding (verified or system-scoped) → **CHANGES_REQUESTED**
 3. Any HIGH finding (verified or system-scoped) → **NEEDS_ATTENTION**
-4. ≥ N MEDIUM Premise findings (plan 02; default N=3) → **NEEDS_ATTENTION**
-5. ≥ M BLOCKING/HIGH Impact Analysis findings (plan 06; default M=2) → **NEEDS_ATTENTION**
-6. Any TENTATIVE finding (plan 03) → **NEEDS_ATTENTION**
-7. Otherwise → **APPROVED**
+4. ≥ M BLOCKING/HIGH Impact Analysis findings (plan 06; default M=2) → **NEEDS_ATTENTION**
+5. Any TENTATIVE finding (plan 03) → **NEEDS_ATTENTION**
+6. Otherwise → **APPROVED**
 
 `verdict_reason` cites the specific finding(s) that produced the verdict.
 
@@ -651,8 +650,8 @@ commit diff, not auto-merged.
 **Phase 8 ships 3 fixtures end-to-end**
 (`golden_minimal_correctness`, `golden_all_categories`,
 `golden_schema_v1_round_trip`) plus a byte-identical determinism test
-for `prepare-run`. The 6 fixtures requiring plans 01/02/03/05/06
-(`golden_premise_*`, `golden_impact_with_callsites`,
+for `prepare-run`. The 4 fixtures requiring plans 03/05/06
+(`golden_impact_with_callsites`,
 `golden_coverage_gap`, `golden_injection_quarantine`,
 `golden_budget_exceeded`) have reserved directories with READMEs and
 are skipped via a `_DEFERRED_FIXTURES` map in the test module until

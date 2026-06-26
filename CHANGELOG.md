@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.0.0
+
+#### Removed
+- Retired the `Premise` finding category and its entire processing layer, now inert since the premise reviewer was removed (no producer emits `category: "Premise"`). Dropped `Premise` from the `CATEGORIES` schema enum; removed the two verdict-precedence rules that gated on Premise findings (the Premise priority-0 → `CHANGES_REQUESTED` rule and the cumulative-Premise → `NEEDS_ATTENTION` rule) along with the `_count_gateable_premise_medium` helper, the `premise_cumulative_medium` operator threshold, and its `justification_rate_alert` companion; removed the Premise-scoped `stats` telemetry sub-blocks (`by_subcategory`, `justification`, `premise_cumulative_medium_count`); removed the verifier "always verify Premise" eligibility branch and the Premise extra-strictness blocks from `verifier_prompt.txt`; and deleted the four `premise_*.md` fix templates with their `/fix` dispatch rows. The shared/BHA reviewer prompts keep the generic "PREMISE:" reasoning step (what the code is supposed to do), and the general author-justification machinery — the `justified[]` bucket, `JUSTIFIED-VALID`/`JUSTIFIED-INVALID` verdicts, the verifier's J1/J2 audit, and the justification-audit learning stream — is retained; only the Premise-specific pieces were removed.
+
+#### Changed
+- Bumped `SCHEMA_VERSION` 1 → 2 for the `Finding` + `ResultEnvelope` contract to reflect the removed `Premise` category and telemetry keys. Because the schema version is folded into the prompt/cache hash, this invalidates the Bug Hunter A and verification caches once on rollout. `verdict-thresholds.json` now exposes only `impact_cumulative` (the FEA-1401 Rule 6 Impact gate), and `stats` retains `impact_cumulative_count` in place of the removed premise count.
+
 ### code-review v2.37.0
 
 #### Changed
