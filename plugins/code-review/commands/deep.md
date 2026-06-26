@@ -1,6 +1,7 @@
 ---
 description: Deep code review — standard fleet plus Impact Analyzer (FEA-1401) when changed exported symbols are detected
 argument-hint: "[scope] [--github] [--base <ref>] [--since-last-review] [--full-review]"
+model: sonnet
 ---
 
 # Deep Code Review (PLN-807 + FEA-1401)

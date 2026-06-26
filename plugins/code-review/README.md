@@ -7,6 +7,7 @@ A multi-agent code review plugin for Claude Code that performs deep, partitioned
 - **Multi-agent parallel review**: Splits changed files into partitions and spawns concurrent reviewer agents (Bug Hunter A, plus domain specialists) to review each partition independently
 - **Deterministic hygiene checks**: Pattern-based checks for CI artifacts, sensitive file exposure, and path leakage — zero LLM tokens required
 - **Risk-based model routing**: Scores each file partition by risk (size, file type, LOC) and routes high-risk partitions to more capable models
+- **Cost-optimized orchestration**: The orchestrator command runs on Sonnet (the walk is mechanical — run helper, read JSON, honor gates), while spawned reviewer and verifier subagents keep their own route-assigned models, so review quality is unchanged while the orchestration spine costs a fraction of an all-Opus run
 - **Finding validation and deduplication**: Normalizes severity, filters low-confidence findings, deduplicates near-duplicate issues via Jaccard similarity, and validates line numbers against the actual diff
 - **Incremental reviews**: Tracks prior review state to diff only new commits since the last successful review (auto-incremental mode)
 - **Caching**: Content-addressed cache keyed on prompt hash and diff tip to skip re-reviewing unchanged partitions
@@ -20,6 +21,7 @@ plugins/code-review/
   SCHEMA.md                          Canonical Finding + ResultEnvelope schema (PLN-719); §12 documents the golden fixture harness
   agents/
     code-review-worker.md            Background worker agent used by every reviewer fleet spawn (Read, Write, Grep, Glob; permissions-stable across sessions)
+    code-review-worker-graph.md      Graph-aware variant for the cross-file reviewers (Impact Analyzer, Bug Hunter B, fast-path); adds read-only codebase-memory-mcp tools for cross-file usage discovery
   commands/
     start.md                         Main /start command (orchestrator)
   prompts/

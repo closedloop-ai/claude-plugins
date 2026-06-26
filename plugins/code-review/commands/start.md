@@ -1,6 +1,7 @@
 ---
 description: Run comprehensive code review — locally or on GitHub PRs with inline comments
 argument-hint: "[scope] [--github] [--hygiene-only] [--base <ref>] [--since-last-review] [--full-review] [--depth shallow|standard|deep]"
+model: sonnet
 ---
 
 # Comprehensive Code Review
@@ -55,6 +56,13 @@ The walk is hybrid:
 - **Deterministic helper stages** (most of the plan) — invoke the named `code_review_helpers.py` subcommand with the plan's args after token substitution. No prose decisions.
 - **Agent fleet stages** — spawn parallel sub-agent Tasks. `stage_20_spawn_reviewers` invokes the `code-review:spawn-reviewers` skill; `stage_23_verify_findings` invokes the `code-review:verify-findings` skill.
 - **Present stage** (`stage_29_present`) — invoke the `code-review:present-local` skill (MODE=local) or follow `github-review.md` (MODE=github).
+
+**Model split (cost).** The orchestrator runs on **Sonnet** (`model: sonnet` in this command's frontmatter) — the walk is mechanical (run helper, read JSON, honor gates), so it needs no Opus reasoning, and the spine is ~65% of historical review cost at ~180 turns/deep-review dominated by cache reads. The judgment lives in the **subagents**, which keep their own route-assigned models regardless of the orchestrator's: BHA defaults Opus (Sonnet on test-only partitions), domain critics Sonnet, Impact Analyzer Opus, verifiers per the verify skill. A subagent's `model` (definition frontmatter or per-Task override from `spawn.json.spec`) outranks the session model, so the Sonnet spine never downgrades a reviewer. If an org `availableModels` allowlist excludes Sonnet, the session keeps its current model and the run still completes — the split is an optimization, not a hard dependency.
+
+**Turn & context discipline (cost).** Cache cost scales with carried context × turn count, so keep both small:
+- **Never read large artifacts into the orchestrator's context.** `diff_data.json`, `patches_*.txt`, and per-file diffs are passed to helpers and reviewers as **file-path arguments**, never `cat`/`Read` into the walk. Reviewers read patches themselves (see the spawn skill's anti-inline rule). The only large file the orchestrator reads is `review_result.json` at the present stage, once, with the per-section display caps the present skill already applies.
+- **Batch deterministic helper stages.** As a turn-count optimization you MAY chain a run of consecutive `helper`-kind stages into one `Bash` call (`cmd1 && cmd2 && …`, each redirecting stdout per its `stdout` field) — but ONLY a run in which **every** stage declares `on_failure: abort`, **none** has a `GATES` entry firing after it, **none** is a branching-gate boundary (A/B/C/D) or an `agent_fleet`/`present`/singleton-dispatch stage, and no stage's args depend on a value an in-batch predecessor printed to stdout. Those constraints make recovery unambiguous: there is no gate to interleave, and no `continue` stage whose successors the `&&` short-circuit would wrongly skip. After the chain returns, confirm each chained stage's `expected_outputs`; if the chain exited non-zero, an `abort` stage failed, so **abort** (do not run any gate against the partial batch). Any stage with an associated gate, a non-`abort` `on_failure` (`continue` / `continue_with_coverage_gap`), or a stdout dependency runs solo under the normal one-stage-at-a-time walk. When in doubt, don't batch.
+- **Narrate sparingly.** Emit only the operator-essential lines the per-stage notes mark for printing (review-mode line, cache status, fast-path notice, verdict). Do not echo intermediate stage progress as prose.
 
 Four runtime gates modify walker default behavior (they are runtime-driven and either replace the default walk or add a condition on top of a plan stage):
 1. **Gate A** — after `stage_12_hygiene`, if `flags.hygiene_only` is true: present hygiene findings and **EXIT** (no further stages, no verdict, no footer).
