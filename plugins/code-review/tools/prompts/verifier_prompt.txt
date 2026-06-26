@@ -107,37 +107,15 @@ or is it a generic disclaimer?
     verdict will be whatever the six checks produce — see "After the
     justification audit" below for the exact emission rule.
 
-### Premise-specific justification audit (extra strictness)
-
-For findings where `category == "Premise"`, also confirm that the
-justification rebuts the specific subcategory:
-
-  - `subcategory == "necessity"`: the justification must explain why the
-    "phantom bug" is, in fact, a real bug — citing the trigger path.
-  - `subcategory == "cohesion"`: the justification must explain why the
-    prevailing pattern doesn't apply here (e.g., the new code lives in
-    a layer the convention doesn't cover).
-  - `subcategory == "workaround"`: the justification must explain why
-    fixing at the root-cause location is not feasible (e.g., wire-format
-    freeze, external dep).
-  - `subcategory == "complexity"`: the justification must explain the
-    expected near-term use-site growth (e.g., "three more callers in
-    PR #4321 land next week"), and that follow-up must be cited.
-
-Premise justifications that fail this subcategory-specific check are
-treated as J2 failures even when J2 looked plausible at first read —
-fall through to the six-check protocol below on the same emission
-contract as J1/J2 failures.
-
 ### After the justification audit — verdict emission rules
 
 There are exactly two outcomes you may emit from the audit alone:
 
-  - **Audit passes** (J1 OK AND J2 OK AND any Premise subcategory check
-    OK) → emit `verifier_verdict: "JUSTIFIED-VALID"`. Skip the six-check
+  - **Audit passes** (J1 OK AND J2 OK) → emit
+    `verifier_verdict: "JUSTIFIED-VALID"`. Skip the six-check
     protocol; write the verdict directly using the Output shape below.
-  - **Audit fails** (J1 fails, OR J2 fails, OR a Premise subcategory
-    check fails) → **continue into the six-check protocol below.** Your
+  - **Audit fails** (J1 fails OR J2 fails) → **continue into the
+    six-check protocol below.** Your
     final emitted verdict is whatever the six checks produce
     (CONFIRMED, DOWNGRADE, TENTATIVE, or REJECTED). **Do NOT set
     `verifier_verdict: "JUSTIFIED-INVALID"`** on the fall-through path —
@@ -247,24 +225,6 @@ distinction:
     REJECTED is appropriate.
   - "I searched for the issue and could not find supporting evidence" →
     that is absence of evidence; TENTATIVE.
-
-## Premise findings (extra strictness)
-
-For findings where `category == "Premise"`, also re-execute the embedded
-reasoning_certificate's claim chain independently:
-
-  - **Necessity**: re-check the "AUTHOR'S CLAIM → COUNTER-EVIDENCE →
-    ALTERNATIVE CHECK" walk. The counter-evidence citation must exist.
-  - **Cohesion**: confirm the certificate's `prevailing_pattern` cites
-    ≥ 5 examples in the codebase (≥ 1 for duplicate-abstraction). Grep
-    each cited file:line.
-  - **Workaround**: confirm `root_cause_location` exists and
-    `root_cause_ownership` matches reality.
-  - **Complexity**: re-count `use_site_count` for over-complexity claims.
-
-Premise findings whose certificate can't be re-validated → REJECTED
-with `rejection_class: "evidence_not_found"` (the underlying claim
-chain failed).
 
 ## Impact Analyzer findings (FEA-1401 / PLN-726)
 
@@ -438,8 +398,7 @@ Rules:
     the four enumerated classes. At least one `evidence_checks[]` entry
     must have `verified: false` with a concrete `actual_read`.
   - **JUSTIFIED-VALID** (PLN-721): the author's justification passed both
-    J1 (existence) and J2 (responsiveness), including any subcategory-
-    specific check for Premise findings. `verifier_severity` is null.
+    J1 (existence) and J2 (responsiveness). `verifier_severity` is null.
     `rejection_class` is null. `evidence_checks[]` should include the
     audit checks (claim = "justification exists at <source>",
     claim = "justification addresses the specific concern").

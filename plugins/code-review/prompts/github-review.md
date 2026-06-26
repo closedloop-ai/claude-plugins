@@ -255,7 +255,6 @@ Also write `.closedloop-ai/code-review-justified-summary.md` (skip when `justifi
 
 **Finding ID:** `{ID}`
 **Original reviewer:** {REVIEWER}
-**Subcategory:** `{SUBCATEGORY}` (Premise findings only)
 **Verifier verdict:** JUSTIFIED-VALID
 **Verifier confidence:** {VERIFIER_CONFIDENCE}
 
@@ -277,13 +276,13 @@ Mark todo as `completed`.
 
 ### 6e: Write Verifier Stats (PLN-773)
 
-Read `$CR_DIR/review_result.json` → `stats.verification` and `stats.justification`. If neither block is present (very old envelope), skip this step. Otherwise write `.closedloop-ai/code-review-verifier-stats.md` (the workflow posts this as a collapsible `<details>` block in a single comment so the metrics are visible to PR reviewers without polluting inline review comments):
+Read `$CR_DIR/review_result.json` → `stats.verification`. If the block is not present (very old envelope), skip this step. Otherwise write `.closedloop-ai/code-review-verifier-stats.md` (the workflow posts this as a collapsible `<details>` block in a single comment so the metrics are visible to PR reviewers without polluting inline review comments):
 
 ```markdown
 ## Verifier Stats
 
 <details>
-<summary>{verified_count} verified · {rejected_count} dismissed · {justified_emitted} justified</summary>
+<summary>{verified_count} verified · {rejected_count} dismissed · {justified_valid_count + justified_invalid_count} justified</summary>
 
 **Verifier outcomes**
 - CONFIRMED + DOWNGRADE: {verified_count - tentative_count - re_asserted}
@@ -291,11 +290,10 @@ Read `$CR_DIR/review_result.json` → `stats.verification` and `stats.justificat
 - RE_ASSERTED: {sum over by_reviewer[].re_asserted}
 - REJECTED: {rejected_count}
 
-**Justification (PLN-721 escape hatch)**
-- Justified emitted: {justified_emitted} ({rate:.0%} of Premise total)
-- JUSTIFIED-VALID: {justified_valid}
-- JUSTIFIED-INVALID: {justified_invalid} (rejection rate {rejection_rate:.0%})
-- Threshold alert: {threshold_alert} (alerts when rate > {justification_rate_alert:.0%})
+**Justification (PLN-721)** — read from `stats.verification`
+- Justified emitted: {justified_valid_count + justified_invalid_count}
+- JUSTIFIED-VALID: {justified_valid_count}
+- JUSTIFIED-INVALID: {justified_invalid_count}
 
 **Per-reviewer FP rate** (rejected / audited)
 | Reviewer | Verified | Rejected | FP rate | Re-asserts |
@@ -304,9 +302,7 @@ Read `$CR_DIR/review_result.json` → `stats.verification` and `stats.justificat
 
 The Reviewer column keys off the `reviewer` field, which `cmd_collect_findings` derives from the agent filename (`agent_bha_p0.json` → `reviewer='bha_p0'`). Under partitioned mode the table shows one BHA row per partition (`bha_p0`, `bha_p1`, …); under unified mode it shows a single `bha_p0` row because only one partition exists.
 
-**Premise MEDIUM cumulative gate**
-- Current count: {premise_cumulative_medium_count}
-- Gate threshold: {premise_cumulative_medium}
+**Impact gateable count**: {stats.impact_cumulative_count} (gate threshold {impact_cumulative}) — read from `stats`. The envelope's sole operator-tunable verdict-gate count (the cumulative Impact gate; FEA-1401 / PLN-726 OQ#6).
 
 **Partition mode** ({verify_manifest.partition_mode}, {verify_manifest.partition_count} partitions) — read from `<CR_DIR>/verify_manifest.json`. Omit this line when the manifest file is absent (hygiene-only run or pre-PLN-774 cache).
 

@@ -24,7 +24,7 @@
   "rejected": [],
   "review_branch": "feature/x",
   "review_id": "00000000-0000-4000-8000-000000000000",
-  "schema_version": 1,
+  "schema_version": 2,
   "stats": {
     "agent_failures": [],
     "by_category": {
@@ -48,23 +48,7 @@
       "HIGH": 0,
       "MEDIUM": 0
     },
-    "by_subcategory": {
-      "cohesion": 0,
-      "complexity": 0,
-      "necessity": 0,
-      "workaround": 0
-    },
     "impact_cumulative_count": 0,
-    "justification": {
-      "justified_emitted": 0,
-      "justified_invalid": 0,
-      "justified_valid": 0,
-      "rate": 0.0,
-      "rejection_rate": 0.0,
-      "threshold_alert": false,
-      "total_premise": 0
-    },
-    "premise_cumulative_medium_count": 0,
     "verification": {
       "by_reviewer": {
         "injection-detector": {

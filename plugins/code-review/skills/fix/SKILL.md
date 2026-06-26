@@ -6,7 +6,7 @@ argument-hint: "<cr-dir> [--include-medium] [--include-tentative] [--include-jus
 
 # Fix Code Review Findings
 
-Category-dispatch fix flow for findings from a prior code review. Each finding is routed to one of four buckets based on its category/subcategory: **auto-fix**, **callsite-fix**, **specialized-fix**, or **manual-surface**. Premise findings, injection attempts, sensitive-file changes, and coverage gaps never auto-apply — they surface in a manual-action report instead.
+Category-dispatch fix flow for findings from a prior code review. Each finding is routed to one of four buckets based on its category/subcategory: **auto-fix**, **callsite-fix**, **specialized-fix**, or **manual-surface**. Injection attempts, sensitive-file changes, and coverage gaps never auto-apply — they surface in a manual-action report instead.
 
 The caller controls re-review cycles.
 
@@ -105,11 +105,6 @@ For each surviving finding, look up its dispatch bucket using the table below. S
 | `Hygiene` / `Repo Hygiene` | `gitignore_drift` | **auto-fix** | Add gitignore entry. Only auto-fix when the producer emits this exact subcategory — see `_check_gitignore_drift`. |
 | `Hygiene` / `Repo Hygiene` | `sensitive_files` | **manual-surface** | Never auto-modify (.env, credentials, .pem). Producer is `_check_sensitive_files`. |
 | `Hygiene` / `Repo Hygiene` | (other / unset / unrecognized) | **manual-surface** | **Fail-safe default**: any Hygiene finding without a recognized subcategory routes to manual-surface. Prevents a hygiene producer that forgets to set `subcategory` (or a future producer that emits a subcategory we haven't routed yet) from silently falling into auto-fix on a sensitive file. |
-| `Premise` | `necessity` | **manual-surface** | Auto-revert unsafe |
-| `Premise` | `cohesion` | **manual-surface** | Surface cited 5+ examples |
-| `Premise` | `workaround` | **manual-surface** | Surface root cause location |
-| `Premise` | `complexity` | **manual-surface** | Both over- and under-complexity surfaced for author input (the auto-fix path for over-complexity / single-use abstraction is deferred to a follow-up phase) |
-| `Premise` | (any other) | **manual-surface** | Fail safe |
 | `TestQuality` | `missing-coverage` | **manual-surface** | Specialized-fix flow (test-engineer) is **deferred to PLN-723 ship** |
 | `TestQuality` | `weak-assertion` | **manual-surface** | Deferred to PLN-723 |
 | `TestQuality` | `mock-faithfulness` | **manual-surface** | Deferred to PLN-723 |
@@ -200,10 +195,6 @@ For each finding in the manual-surface bucket, look up the template per the rout
 
 | Routing | Template file |
 |---|---|
-| `Premise/necessity` | `templates/premise_necessity.md` |
-| `Premise/cohesion` | `templates/premise_cohesion.md` |
-| `Premise/workaround` | `templates/premise_workaround.md` |
-| `Premise/complexity` | `templates/premise_complexity.md` |
 | `TestQuality/bug-locking` | `templates/testquality_bug_locking.md` |
 | `TestQuality/test-deletion` | `templates/testquality_test_deletion.md` |
 | `TestQuality/*` (other, pre-PLN-723) | `templates/testquality_specialized.md` |

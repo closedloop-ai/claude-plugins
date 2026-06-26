@@ -124,7 +124,6 @@ For each justified finding:
 ### [{ORIGINAL_SEVERITY} justified] {FILE}:{LINE} — {ISSUE_HEAD}
 **Finding ID:** `{ID}`
 **Original reviewer:** {REVIEWER}
-**Subcategory:** `{SUBCATEGORY}` (Premise findings only)
 **Verifier verdict:** JUSTIFIED-VALID
 **Verifier confidence:** {VERIFIER_CONFIDENCE}
 
@@ -186,7 +185,7 @@ If `review_result.json.pending_verification[]` is non-empty, append a one-line n
 
 ## Verifier Stats (PLN-773)
 
-Read `<CR_DIR>/review_result.json` → `stats.verification` and `stats.justification`. Render the footer below verbose-by-design — operators read the per-reviewer FP rate and the justification rate to detect over-rejection (reviewer hallucinating) and escape-hatch abuse (authors gaming the gate) respectively.
+Read `<CR_DIR>/review_result.json` → `stats.verification`. Render the footer below verbose-by-design — operators read the per-reviewer FP rate to detect over-rejection (a reviewer hallucinating findings the verifier then discards).
 
 ```
 === Verifier Stats ===
@@ -195,13 +194,11 @@ Findings verified: {stats.verification.verified_count}
   - TENTATIVE:             {tentative_count}
   - RE_ASSERTED:           sum over by_reviewer[].re_asserted
 Findings dismissed: {stats.verification.rejected_count}
-Findings justified: {stats.justification.justified_emitted}
-  - JUSTIFIED-VALID:   {stats.justification.justified_valid}
-  - JUSTIFIED-INVALID: {stats.justification.justified_invalid}
+Findings justified: {stats.verification.justified_valid_count + stats.verification.justified_invalid_count}
+  - JUSTIFIED-VALID:   {stats.verification.justified_valid_count}
+  - JUSTIFIED-INVALID: {stats.verification.justified_invalid_count}
 Reviewers (FP rate / overrides):
   {reviewer}: {fp_rate:.2f} / {re_asserted}{ "  ⚠ override" if re_asserted > 0 else "" }
-Justification rate: {stats.justification.rate:.2f} (threshold {threshold} — {ALERT|OK})
-Premise MEDIUM cumulative: {stats.premise_cumulative_medium_count} (gate threshold {premise_cumulative_medium})
 Impact gateable count:     {stats.impact_cumulative_count} (gate threshold {impact_cumulative})
 Partition mode: {verify_manifest.partition_mode} ({verify_manifest.partition_count} partitions)
 ```

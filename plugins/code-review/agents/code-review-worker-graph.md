@@ -2,6 +2,7 @@
 name: code-review-worker-graph
 description: Graph-aware code review worker for the cross-file reviewers (Impact Analyzer, Bug Hunter B, fast-path). Identical to code-review-worker but adds read-only codebase-memory-mcp tools for precise cross-file usage discovery. Use only for reviewers whose role prompt loads the codebase knowledge graph protocol.
 tools: Read, Write, Grep, Glob, mcp__codebase-memory-mcp__search_graph, mcp__codebase-memory-mcp__trace_path, mcp__codebase-memory-mcp__get_code_snippet, mcp__codebase-memory-mcp__search_code
+effort: high  # pinned so a lowered session effort can't cut reviewer reasoning depth (no per-Task override; frontmatter is the only lever). Not redundant with the default — do not remove. Rationale: start.md "Orchestrator model (cost)".
 ---
 
 # Code Review Worker (graph-aware)
