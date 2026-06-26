@@ -276,6 +276,8 @@ The `verdict` subcommand applies these rules in order; the first match wins.
 
 `verdict_reason` cites the specific finding(s) that produced the verdict.
 
+**Numbering note.** This list is a clean sequential summary. The implementation (`_compute_canonical_verdict`) carries plan-derived rule labels — including the `2.5` (mandatory-human-review short-circuit) and `3.5` (TENTATIVE fall-through) sub-rules, and the cumulative Impact gate labeled **Rule 6** (PLN-726 OQ#6) — so the code's labels do not map 1:1 to the numbers above (e.g. the Impact gate is item 4 here but "Rule 6" in code).
+
 The verdict subcommand writes `<CR_DIR>/verdict.json` with both the canonical verdict and a `verdict` string compatible with `run-loop.sh` (which keys on the legacy form):
 - APPROVED → approve
 - NEEDS_ATTENTION → needs_attention
@@ -647,12 +649,12 @@ the same normalization path the assertion uses, so a subsequent
 no-flag run sees byte-identical output. Updates are reviewed in the
 commit diff, not auto-merged.
 
-**Phase 8 ships 3 fixtures end-to-end**
+**Phase 8 shipped 3 fixtures end-to-end**
 (`golden_minimal_correctness`, `golden_all_categories`,
 `golden_schema_v1_round_trip`) plus a byte-identical determinism test
-for `prepare-run`. The 4 fixtures requiring plans 03/05/06
-(`golden_impact_with_callsites`,
-`golden_coverage_gap`, `golden_injection_quarantine`,
+for `prepare-run`; PLN-720 promoted a 4th, `golden_injection_quarantine`.
+The remaining 3 fixtures requiring plans 03/05/06
+(`golden_impact_with_callsites`, `golden_coverage_gap`,
 `golden_budget_exceeded`) have reserved directories with READMEs and
 are skipped via a `_DEFERRED_FIXTURES` map in the test module until
 their dependent plans land. Phase 4b will extend the harness to walk

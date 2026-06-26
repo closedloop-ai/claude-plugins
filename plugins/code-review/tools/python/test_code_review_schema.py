@@ -567,25 +567,18 @@ def test_envelope_accepts_re_asserted_verifier_verdict():
     assert validate_result_envelope(env) == []
 
 
-def test_envelope_accepts_pln773_telemetry_sub_blocks():
-    """PLN-773: stats gains optional sub-blocks for justification metrics,
-    by_subcategory partitioning, and per-reviewer FP rate. The envelope
-    `stats` field accepts arbitrary keys so these are additive."""
+def test_envelope_accepts_verification_stats_sub_block():
+    """PLN-773: the envelope `stats` field accepts the verification telemetry
+    sub-block additively — the `justified_valid_count` / `justified_invalid_count`
+    tallies plus per-reviewer FP rate (`by_reviewer`), as emitted by
+    `_stats_from_findings`. (The earlier premise-scoped `justification` and
+    `by_subcategory` sub-blocks were removed with the Premise category, so no
+    pipeline stage emits them anymore.)"""
     env = _minimal_envelope()
     env["stats"] = {
-        "justification": {
-            "rate": 0.18,
-            "rejection_rate": 0.40,
-            "total_premise": 11,
-            "justified_emitted": 2,
-            "justified_valid": 1,
-            "justified_invalid": 1,
-            "threshold_alert": False,
-        },
-        "by_subcategory": {
-            "necessity": 2, "cohesion": 1, "workaround": 0, "complexity": 1,
-        },
         "verification": {
+            "justified_valid_count": 2,
+            "justified_invalid_count": 1,
             "by_reviewer": {
                 "bug_hunter_a": {
                     "verified": 12, "rejected": 3,

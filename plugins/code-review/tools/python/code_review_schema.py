@@ -332,10 +332,6 @@ VERIFIER_VERDICTS: frozenset[str] = frozenset({
 })
 
 REASONING_CERTIFICATE_KINDS: frozenset[str] = frozenset({
-    "necessity",
-    "cohesion",
-    "workaround",
-    "complexity",
     "impact",
     "test_quality",
     "sibling_pattern",

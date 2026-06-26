@@ -272,7 +272,7 @@ Tunes the verdict-precedence gates:
 
 | Key | Default | Effect |
 |---|---|---|
-| `impact_cumulative` | `2` | Trigger `NEEDS_ATTENTION` when at least N BLOCKING/HIGH `ImpactAnalysis` findings survive verification on the same PR (Rule 6), even if no single finding would gate on its own. Set to a very large number (e.g. `999`) to disable. Values below 1 are ignored. |
+| `impact_cumulative` | `2` | Trigger `NEEDS_ATTENTION` when at least N BLOCKING/HIGH `ImpactAnalysis` findings survive verification on the same PR (the cumulative Impact gate — SCHEMA.md §5 verdict-precedence Rule 4 / FEA-1401 OQ#6), even if no single finding would gate on its own. Set to a very large number (e.g. `999`) to disable. Values below 1 are ignored. |
 
 ### `verification-gates.json` (PLN-722)
 
