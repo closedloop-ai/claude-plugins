@@ -7037,8 +7037,10 @@ def resolve_coverage(
     appear in ``required`` regardless of rule matches; conditional
     core reviewers (``COVERAGE_CORE_CONDITIONAL``) appear in
     ``best_effort`` only when their tier band brackets
-    ``invocation_depth`` AND at least one of their signal triggers
-    fires.
+    ``invocation_depth`` AND at least one of their triggers fires —
+    either a ``signal`` trigger matching the extracted signals or an
+    unconditional ``{"type": "always"}`` trigger (e.g. the Design
+    Critic, gated by the tier band alone).
 
     Determinism enforcement: a rule with ``required: true`` whose
     triggers are entirely LLM-driven (only ``signal`` triggers) is
@@ -10398,38 +10400,22 @@ def cmd_prepare_run(args: argparse.Namespace) -> int:
 BUDGET_TOTAL_CAP_DEFAULT = 20
 BUDGET_BHA_FLOOR_DEFAULT = 1
 
-# PLN-807: per-source cap on domain critic entries (rule + critic origin
-# combined). Independent of the total-fleet cap. Bounds critic-roster
-# growth so BHA's coverage budget can't be eaten by a long
-# ``critic-gates.json``. Hardcoded for now; if operators ask for
-# configurability later, expose via ``.closedloop-ai/settings/code-review.json``.
-DOMAIN_CRITIC_CAP = 5
-
-# Standard reviews cap domain critics tighter than deep. A standard run does
-# not warrant the full breadth of repo-specific + LLM-proposed critics; the
-# fleet ballooned to the cap on every PR regardless of how many critics were
-# genuinely relevant, so standard now keeps only the top STANDARD_DOMAIN_CRITIC_CAP
-# by (priority asc, reviewer asc). Deep retains the full DOMAIN_CRITIC_CAP for
-# breadth. Relevance itself is already enforced upstream (rule entries are
-# pattern-matched from critic-gates.json; ``critic`` entries are LLM-proposed
-# for the diff) — this cap bounds how many of those relevant critics actually
-# spawn.
-STANDARD_DOMAIN_CRITIC_CAP = 3
-
-
-def _domain_critic_cap_for_depth(depth: str | None) -> int:
-    """Return the per-source domain-critic cap for an invocation depth.
-
-    ``standard`` (and ``shallow``, which normally skips arbitration anyway)
-    cap at ``STANDARD_DOMAIN_CRITIC_CAP``; ``deep`` and any unspecified depth
-    keep the full ``DOMAIN_CRITIC_CAP``. Defaulting ``None``/unknown to the
-    full cap preserves legacy behavior for callers that do not plumb depth
-    (the stage now passes ``--depth``, so a real standard run reaches the
-    tighter cap).
-    """
-    if depth in ("standard", "shallow"):
-        return STANDARD_DOMAIN_CRITIC_CAP
-    return DOMAIN_CRITIC_CAP
+# Per-source cap on domain critic entries (rule + critic origin combined).
+# Independent of the total-fleet cap. Bounds critic-roster growth so BHA's
+# coverage budget can't be eaten by a long ``critic-gates.json``. Hardcoded
+# for now; if operators ask for configurability later, expose via
+# ``.closedloop-ai/settings/code-review.json``.
+#
+# The cap is tier-UNIFORM: standard and deep both keep only the top 3 relevant
+# domain critics by (priority asc, reviewer asc). Deep formerly kept a wider
+# cap of 5, but a deep run's extra breadth now comes from the always-on
+# conditional core reviewers (Design Critic, Impact Analyzer), which are
+# ``source: "core"`` and exempt from this cap — so deep no longer needs a wider
+# *domain*-critic allowance. Relevance is already enforced upstream (rule
+# entries are pattern-matched from critic-gates.json; ``critic`` entries are
+# LLM-proposed for the diff) — this cap bounds how many of those relevant
+# critics actually spawn.
+DOMAIN_CRITIC_CAP = 3
 
 # PLN-807: critic-cap defer reason marker. Differentiates entries
 # deferred by the per-source cap from entries deferred by the total
@@ -10674,13 +10660,17 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         print(f"Error: --cap must be > 0, got {cap}", file=sys.stderr)
         return 1
 
-    # Depth-aware domain-critic cap (standard tightens to 3; deep keeps 5).
+    # ``--depth`` is still validated (shared stage-arg hygiene; an invalid
+    # tier should fail loud), but the per-source domain-critic cap is now
+    # tier-uniform — standard and deep both cap at DOMAIN_CRITIC_CAP. Deep's
+    # extra breadth comes from the always-on conditional core reviewers
+    # (Design Critic, Impact Analyzer), which are exempt from this cap.
     depth: str | None = getattr(args, "depth", None) or None
     ok, err = _validate_invocation_depth(depth)
     if not ok:
         print(err, file=sys.stderr)
         return 1
-    critic_cap = _domain_critic_cap_for_depth(depth)
+    critic_cap = DOMAIN_CRITIC_CAP
 
     def _persist_plan(plan: dict[str, Any]) -> int:
         try:
@@ -10830,12 +10820,12 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     # bucket by (priority asc, reviewer name asc). Cap-deferred entries
     # — from EITHER bucket — land in ``deferred_for_budget`` with
     # ``defer_reason: "domain_critic_cap"`` and DO NOT emit coverage-gap
-    # findings. The cap is a hardcoded per-source soft limit (5),
-    # independent of ``--cap``; surfacing required cap drops via
-    # coverage gaps would trip ``_compute_canonical_verdict`` Rule 1
+    # findings. The cap is a hardcoded per-source soft limit
+    # (DOMAIN_CRITIC_CAP), independent of ``--cap``; surfacing required cap
+    # drops via coverage gaps would trip ``_compute_canonical_verdict`` Rule 1
     # (any required gap → CHANGES_REQUESTED) and effectively block any
-    # repo whose ``critic-gates.json`` resolves more than 5 required
-    # domain critics on a single PR. The BLOCKING branch already does
+    # repo whose ``critic-gates.json`` resolves more than DOMAIN_CRITIC_CAP
+    # required domain critics on a single PR. The BLOCKING branch already does
     # the right thing (deferred, no gap); this matches that behavior on
     # the PASS path.
     sel_req_critics, sel_be_critics, def_req_critics, def_be_critics = (
@@ -11005,12 +10995,14 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
 # failure must never break review.
 
 # Canonical role → AGENT_ID + partitioning + patches-file mapping. The
-# reviewer names on the left are the SPAWNABLE subset of
-# ``COVERAGE_CORE_REQUIRED`` (snake_case identifiers carried in the
-# final plan); the deferred subset lives in ``_SPAWN_DEFERRED_ROLES``
-# below. The two dicts together must cover every entry in
-# ``COVERAGE_CORE_REQUIRED`` — adding a new core role means choosing
-# which dict it belongs in. The AGENT_ID strings on the right are the
+# reviewer names on the left are the SPAWNABLE core reviewers — both
+# the always-add ``COVERAGE_CORE_REQUIRED`` roles and the conditional
+# ``COVERAGE_CORE_CONDITIONAL`` roles (the Impact Analyzer and the
+# Design Critic) — as snake_case identifiers carried in the final
+# plan; the deferred subset lives in ``_SPAWN_DEFERRED_ROLES`` below.
+# The two dicts together must cover every spawnable entry across
+# ``COVERAGE_CORE_REQUIRED`` and ``COVERAGE_CORE_CONDITIONAL`` — adding
+# a new core role means choosing which dict it belongs in. The AGENT_ID strings on the right are the
 # display IDs used in agent_*.json filenames (matching the static
 # reviewer table in the code-review:spawn-reviewers skill).
 _SPAWN_CORE_ROLES: dict[str, dict[str, Any]] = {
@@ -11036,6 +11028,16 @@ _SPAWN_CORE_ROLES: dict[str, dict[str, Any]] = {
     # appears in the plan.
     "impact": {
         "agent_id": "impact",
+        "partitioned": False,
+        "patches_template": "patches_all.txt",
+    },
+    # Design Critic. Conditional core reviewer (declared in
+    # COVERAGE_CORE_CONDITIONAL); lands in coverage plans on every
+    # ``--depth deep`` review via an ``{"type": "always"}`` trigger. The
+    # spawn-spec walker treats it like any other non-partitioned core role
+    # once it appears in the plan.
+    "design_critic": {
+        "agent_id": "design_critic",
         "partitioned": False,
         "patches_template": "patches_all.txt",
     },
@@ -11070,6 +11072,9 @@ def _spawn_resolve_models(route: dict[str, Any]) -> dict[str, Any]:
         # reasoning. Operators can override via spawn.json.route.models
         # when running a cost-sensitive deep review.
         "impact": models.get("impact", "opus"),
+        # Design Critic defaults to Sonnet — design review is a
+        # structural/pattern read, not deep cross-file reasoning.
+        "design_critic": models.get("design_critic", "sonnet"),
     }
 
 
@@ -11940,6 +11945,7 @@ _FLEET_DISPLAY_NAMES: dict[str, str] = {
     "fast_path_reviewer": "Fast Path Reviewer",
     "test_quality": "Test Quality",
     "impact": "Impact Analyzer",
+    "design_critic": "Design Critic",
 }
 
 
@@ -12011,16 +12017,21 @@ def _render_fleet_breakdown(spec: dict[str, Any]) -> list[str]:
         a for a in agents
         if isinstance(a, dict) and a.get("source") == "critic"
     ]
-    # Core non-partitioned reviewers actually present (the canonical
-    # pair is BHB / Auditor but sanitization or fallback paths may drop
-    # entries).
-    core_non_partitioned: list[str] = []
-    for reviewer in ("bug_hunter_b", "unified_auditor"):
-        if any(
-            isinstance(a, dict) and a.get("reviewer") == reviewer
-            for a in agents
-        ):
-            core_non_partitioned.append(_fleet_display_name(reviewer))
+    # Core non-partitioned reviewers actually present, in registry
+    # order. Derived from ``_SPAWN_CORE_ROLES`` (every non-partitioned
+    # core role — i.e. all but the partitioned Bug Hunter A, which the
+    # ``bha_count`` branch above renders) rather than a hand-maintained
+    # tuple, so BOTH conditional core reviewers — the Impact Analyzer
+    # and the always-on Design Critic — appear when present, and any
+    # future non-partitioned core role is included automatically.
+    # Sanitization or fallback paths may drop entries, so each name is
+    # gated on actual presence in ``agents``.
+    present = {a.get("reviewer") for a in agents if isinstance(a, dict)}
+    core_non_partitioned = [
+        _fleet_display_name(role)
+        for role, role_meta in _SPAWN_CORE_ROLES.items()
+        if not role_meta.get("partitioned", False) and role in present
+    ]
 
     pieces: list[str] = []
     if bha_count > 0:
@@ -12820,16 +12831,22 @@ def cmd_prep_assets(args: argparse.Namespace) -> int:
     # FEA-1401: Impact Analyzer prompt is per-run-cached on the same
     # contract as the verifier (prompt edits invalidate the cache).
     impact_src = plugin_root / "tools" / "prompts" / "impact_analyzer_prompt.txt"
+    # Design Critic role suffix — the deep-only craftsmanship reviewer reads
+    # it from CR_DIR (mirrors bha_suffix.txt) so the role prompt is pinned
+    # to the per-run copy rather than the live plugin tree.
+    design_critic_src = plugin_root / "tools" / "prompts" / "design_critic_suffix.txt"
 
     shared_dst = cr_dir / "shared_prompt.txt"
     bha_dst = cr_dir / "bha_suffix.txt"
     verifier_dst = cr_dir / "verifier_prompt.txt"
     impact_dst = cr_dir / "impact_analyzer_prompt.txt"
+    design_critic_dst = cr_dir / "design_critic_suffix.txt"
 
     shutil.copy2(shared_src, shared_dst)
     shutil.copy2(bha_src, bha_dst)
     shutil.copy2(verifier_src, verifier_dst)
     shutil.copy2(impact_src, impact_dst)
+    shutil.copy2(design_critic_src, design_critic_dst)
 
     json.dump(
         {
@@ -12837,6 +12854,7 @@ def cmd_prep_assets(args: argparse.Namespace) -> int:
             "bha_suffix": str(bha_dst),
             "verifier_prompt": str(verifier_dst),
             "impact_analyzer_prompt": str(impact_dst),
+            "design_critic_suffix": str(design_critic_dst),
         },
         sys.stdout,
         indent=2,

@@ -63,13 +63,18 @@ your role prompt directs you to use it AND your task prompt supplies a non-empty
   it is inside this checkout: it must be openable with Read at its repo-relative
   path. Discard (never cite) any absolute path outside the working directory or
   any path that escapes the repo via `..`.
-- WHEN AVAILABLE, prefer these read-only tools for cross-file work (all take
-  `project=<GRAPH_PROJECT>`):
+- WHEN AVAILABLE, prefer these read-only tools for cross-file and structural work
+  (all take `project=<GRAPH_PROJECT>`):
   - `search_graph` (query / name_pattern / qn_pattern / label) to locate symbols.
   - `trace_path` (mode=calls | data_flow | cross_service) to find callers and
     call chains.
   - `get_code_snippet` to read a symbol's source by qualified name.
   - `search_code` for graph-augmented text search (supports `path_filter`).
+  - `get_architecture` (`aspects=...`) for a project-structure / module-layout /
+    dependency overview. Primarily for design/architecture-level review.
+  - `query_graph` (read-only Cypher) for relationships grep can't express —
+    dependency-direction checks, import cycles, all implementors of an interface.
+    Primarily for design/architecture-level review.
 - The graph is a context aid, not an evidence substitute: every finding still
   cites a concrete file:line you confirmed, and any field a role prompt requires
   for verifier replay (e.g. `grep_query_used`) is still mandatory.
@@ -273,8 +278,7 @@ pipeline; you may emit them when relevant, otherwise omit):
                          "| stale_string_reference | behavioral_change "
                          "| guard_needed>",
           "description": "<one-clause: what breaks, why>",
-          "callsite_snippet": "<exact source line at file:line>",
-          "callsite_snippet_hash": "<deterministic hex digest>",
+          "callsite_snippet": "<exact source line at file:line, verbatim>",
           "discovery": "<grep | graph>",
           "confidence": <float 0..1>
         }
@@ -287,7 +291,7 @@ pipeline; you may emit them when relevant, otherwise omit):
     ``"graph"`` (found via the codebase knowledge graph; e.g. an alias,
     re-export, or dynamic-dispatch caller that grep cannot surface). Both
     are verified the same way — the verifier reads the cited file:line and
-    matches ``callsite_snippet_hash`` — but ``"graph"`` entries are exempt
+    content-matches ``callsite_snippet`` — but ``"graph"`` entries are exempt
     from the grep-replay completeness check (see ``grep_query_used``).
   - "grep_query_used": string — required alongside ``external_impact[]``
     on Impact Analyzer findings whenever at least one entry has
@@ -296,7 +300,7 @@ pipeline; you may emit them when relevant, otherwise omit):
     (``reasoning_certificate.fields.external_usages_found``); a
     substantially different replay → REJECTED. ``discovery: "graph"``
     callsites are NOT expected in the replay (grep cannot reach them) —
-    they are validated solely by the per-entry file-read + snippet-hash
+    they are validated solely by the per-entry file-read + content-match
     audit.
 
 If you find NO issues, write: {"findings": []}

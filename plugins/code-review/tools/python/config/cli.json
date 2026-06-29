@@ -1426,7 +1426,7 @@
             "standard",
             "deep"
           ],
-          "help": "Invocation tier; standard tightens the per-source domain-critic cap (deep keeps the full cap)"
+          "help": "Invocation tier; validated for hygiene. The per-source domain-critic cap is tier-uniform; deep's extra breadth comes from the always-on conditional core reviewers (Design Critic, Impact Analyzer)"
         }
       ]
     },

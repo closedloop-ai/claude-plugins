@@ -162,7 +162,7 @@ Write all verified findings verbatim — do NOT pre-filter out-of-hunk ones. `po
 **Impact Analyzer findings (FEA-1401).** Findings with
 `category: "ImpactAnalysis"` carry a populated `external_impact[]`
 array (file/line/impact_type/description/callsite_snippet/
-callsite_snippet_hash/confidence per entry) and a `grep_query_used`
+discovery/confidence per entry) and a `grep_query_used`
 string. Both fields are part of the canonical finding shape and are
 preserved through validate verbatim. `cmd_post_comments`
 (`_format_comment_body`) renders `external_impact[]` as an

@@ -254,8 +254,8 @@ identification step failed → REJECTED,
 This audit is substrate-agnostic: it verifies EVERY entry the same way
 whether the reviewer found it via grep or via the knowledge graph
 (`external_impact[i].discovery` ∈ {`"grep"`, `"graph"`}, default
-`"grep"`). Reading the cited file:line and matching the snippet hash is
-the canonical proof — a `discovery: "graph"` entry (an alias,
+`"grep"`). Reading the cited file:line and content-matching the snippet
+is the canonical proof — a `discovery: "graph"` entry (an alias,
 re-export, or dynamic-dispatch caller grep cannot surface) is verified
 HERE, not in the grep replay below.
 
@@ -263,27 +263,17 @@ For EACH entry in `finding.external_impact[]`:
 
   1. Read the cited `external_impact[i].file` at line
      `external_impact[i].line` (read ±20 lines for context).
-  2. **Snippet hash check.** If
-     `external_impact[i].callsite_snippet_hash` is present, hash the
-     line you read using the **same algorithm the Impact Analyzer
-     used: sha256 of the UTF-8 encoded line**
-     (`hashlib.sha256(line.encode("utf-8")).hexdigest()` in Python).
-     This matches the convention for `evidence[].snippet_hash`. A
-     hash match wins regardless of line drift; a hash mismatch
-     means the callsite changed under the reviewer's feet — treat
-     as drift, continue with content match against
-     `callsite_snippet`.
-  3. **Content match.** Compare the line content (whitespace-
-     tolerant) against `external_impact[i].callsite_snippet`. If
-     they don't match within ±3 lines of drift, the entry is
-     unverified.
-  4. **`impact_type` check.** Verify the cited line actually
+  2. **Content match.** Compare the line content (whitespace-
+     tolerant) against `external_impact[i].callsite_snippet`,
+     searching within ±3 lines of the cited line to tolerate drift.
+     If no line matches, the entry is unverified.
+  3. **`impact_type` check.** Verify the cited line actually
      exhibits the claimed `impact_type`. E.g., for
      `signature_mismatch` the callsite must have an arg-count or
      type-mismatch problem against the new signature; for
      `deleted_reference` the cited file must reference a name that
      no longer exists at the anchor.
-  5. **Guard check (suppression).** Look for an upstream guard,
+  4. **Guard check (suppression).** Look for an upstream guard,
      feature flag, try/except, or compatibility shim that absorbs
      the breakage at THIS callsite. If a guard exists, the entry is
      unverified (the Impact reviewer should have listed it in
@@ -297,8 +287,7 @@ Emit one `evidence_checks[]` entry per external_impact[] entry:
   "expected": "<callsite_snippet from external_impact[i]>",
   "actual_read": "<verbatim text you read>",
   "verified": true | false,
-  "source": "<file:line>",
-  "snippet_hash_matched": true | false
+  "source": "<file:line>"
 }
 ```
 
@@ -310,8 +299,8 @@ which by contract lists grep-reproducible usages only. Graph-discovered
 usages live in `reasoning_certificate.fields.graph_discovered_usages`
 (and their `external_impact[]` entries carry `discovery: "graph"`); they
 are NOT expected in the replay and their absence is NEVER a hallucination
-signal — they were already verified by the per-entry read + hash audit
-above.
+signal — they were already verified by the per-entry read + content-match
+audit above.
 
 For the FIRST FIVE Impact findings in the batch, replay
 `finding.grep_query_used` exactly (same flags, same query string).
@@ -342,8 +331,9 @@ is empty) — skip the replay to stay within verifier cost caps.
 
 After running the per-entry audit:
 
-  - **All `external_impact[]` entries verified** (per-entry read + hash,
-    for grep AND graph entries alike) AND symbol-change confirmed AND
+  - **All `external_impact[]` entries verified** (per-entry read +
+    content match, for grep AND graph entries alike) AND symbol-change
+    confirmed AND
     grep replay over `external_usages_found` (if applicable) substantially
     matches → CONFIRMED.
   - **Some entries verified, others not** → DOWNGRADE. Severity drops
@@ -351,9 +341,9 @@ After running the per-entry audit:
     code path will trim the un-verified entries from
     `external_impact[]` before persisting. Document in
     `verifier_reasoning` which entries were rejected. (A
-    `discovery: "graph"` entry that fails its read/hash audit is trimmed
-    here just like a failed grep entry — provenance does not exempt an
-    entry from per-entry verification.)
+    `discovery: "graph"` entry that fails its read/content-match audit is
+    trimmed here just like a failed grep entry — provenance does not exempt
+    an entry from per-entry verification.)
   - **No entries verified OR symbol-change refutation OR grep-replay
     refutation against a non-empty `external_usages_found`** → REJECTED
     with `rejection_class: "evidence_not_found"`.

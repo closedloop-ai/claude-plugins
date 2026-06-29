@@ -6526,6 +6526,7 @@ class TestPrepAssets:
         (prompts_dir / "bha_suffix.txt").write_text("bha suffix content")
         (prompts_dir / "verifier_prompt.txt").write_text("verifier prompt content")
         (prompts_dir / "impact_analyzer_prompt.txt").write_text("impact prompt content")
+        (prompts_dir / "design_critic_suffix.txt").write_text("design critic suffix content")
 
         cr_dir = tmp_path / "cr"
         cr_dir.mkdir()
@@ -6544,17 +6545,20 @@ class TestPrepAssets:
         assert (cr_dir / "bha_suffix.txt").exists()
         assert (cr_dir / "verifier_prompt.txt").exists()
         assert (cr_dir / "impact_analyzer_prompt.txt").exists()
+        assert (cr_dir / "design_critic_suffix.txt").exists()
         assert not (cr_dir / "premise_prompt.txt").exists()
         assert "shared_prompt" in result
         assert "bha_suffix" in result
         assert "verifier_prompt" in result
         assert "premise_prompt" not in result
         assert "impact_analyzer_prompt" in result
+        assert "design_critic_suffix" in result
         # Output paths should point to actual files in cr_dir
         assert result["shared_prompt"] == str(cr_dir / "shared_prompt.txt")
         assert result["bha_suffix"] == str(cr_dir / "bha_suffix.txt")
         assert result["verifier_prompt"] == str(cr_dir / "verifier_prompt.txt")
         assert result["impact_analyzer_prompt"] == str(cr_dir / "impact_analyzer_prompt.txt")
+        assert result["design_critic_suffix"] == str(cr_dir / "design_critic_suffix.txt")
 
 
 # ---------------------------------------------------------------------------
@@ -7767,24 +7771,27 @@ class TestArbitrateBudget:
         # cap-deferred critics must NOT surface as coverage-gap findings.
         assert gaps["findings"] == []
 
-    def test_deep_depth_keeps_full_critic_cap(self, tmp_path: Path) -> None:
-        # The same 5 critics all survive on a deep run (cap stays at 5).
+    def test_deep_depth_caps_domain_critics_at_three(self, tmp_path: Path) -> None:
+        # Deep now shares the uniform cap of 3 (formerly 5): 5 relevant
+        # critics → 3 kept, 2 deferred with the domain_critic_cap reason.
+        # Deep's extra breadth comes from the always-on conditional core
+        # reviewers (Design Critic / Impact), which are exempt from this cap.
         diff = _make_diff_data(files=["src/app.ts"])
         _, plan, _ = _run_arbitrate_budget(
             tmp_path, self._critic_plan(5), diff, cap=20, depth="deep",
         )
         selected = [r for r in plan["required"] if r.get("source") == "rule"]
-        assert len(selected) == 5
-        assert plan["budget"]["domain_critic_cap"] == 5
-        assert plan["budget"]["domain_critic_cap_fired"] is False
+        assert len(selected) == 3
+        assert plan["budget"]["domain_critic_cap"] == 3
+        assert plan["budget"]["domain_critic_cap_fired"] is True
 
-    def test_absent_depth_preserves_legacy_cap(self, tmp_path: Path) -> None:
-        # Callers that don't plumb depth keep the historical cap of 5.
+    def test_absent_depth_uses_uniform_cap(self, tmp_path: Path) -> None:
+        # Callers that don't plumb depth get the same uniform cap of 3.
         diff = _make_diff_data(files=["src/app.ts"])
         _, plan, _ = _run_arbitrate_budget(
             tmp_path, self._critic_plan(5), diff, cap=20, depth=None,
         )
-        assert plan["budget"]["domain_critic_cap"] == 5
+        assert plan["budget"]["domain_critic_cap"] == 3
 
     def test_invalid_cap_returns_error(self, tmp_path: Path) -> None:
         diff = _make_diff_data(files=["src/app.ts"])
@@ -20078,7 +20085,7 @@ class TestPLN807Phase3StaticSpawnSpec:
 
 
 class TestPLN807Phase4BudgetArithmetic:
-    """PLN-807 Phase 4: BHA-first allocation + DOMAIN_CRITIC_CAP=5.
+    """PLN-807 Phase 4: BHA-first allocation + DOMAIN_CRITIC_CAP=3.
 
     Pre-PLN-807 order: required overflow → best_effort prune → BHA last.
     Result: critic-heavy plans crushed BHA to its floor=1 partition even
@@ -20203,12 +20210,12 @@ class TestPLN807Phase4BudgetArithmetic:
             f"BHA crushed to {final['budget']['bha_partitions']}; "
             "should have its LOC-derived target reserved before critics"
         )
-        # Critics capped at 5.
+        # Critics capped at 3.
         critic_count = sum(
             1 for e in final["required"]
             if e.get("source") in {"rule", "critic"}
         )
-        assert critic_count == 5
+        assert critic_count == 3
 
     def test_sparse_critics_unchanged_behavior(self, tmp_path: Path) -> None:
         """Backwards compatibility: PRs with ≤ DOMAIN_CRITIC_CAP critics
@@ -20236,12 +20243,12 @@ class TestPLN807Phase4BudgetArithmetic:
     def test_critic_cap_does_not_emit_coverage_gap_for_required(
         self, tmp_path: Path,
     ) -> None:
-        """Required-bucket critics dropped by the 5-cap surface in
+        """Required-bucket critics dropped by the 3-cap surface in
         ``deferred_for_budget`` with ``defer_reason: "domain_critic_cap"``,
         NOT as coverage-gap findings. Rule 1 of
         ``_compute_canonical_verdict`` would otherwise turn the cap into
         an auto-CHANGES_REQUESTED block for any repo whose
-        ``critic-gates.json`` resolves more than 5 required domain
+        ``critic-gates.json`` resolves more than 3 required domain
         critics. Matches the BLOCKING-branch behavior."""
         diff = _make_diff_data(files=["src/app.ts"])
         plan = {
@@ -20257,20 +20264,22 @@ class TestPLN807Phase4BudgetArithmetic:
         assert final["budget"]["domain_critic_cap_fired"] is True
         # No coverage-gap findings emitted for cap-deferred required.
         assert gaps["findings"] == []
-        # But the 2 deferred required critics ARE annotated in
+        # But the 4 deferred required critics ARE annotated in
         # deferred_for_budget with the cap reason so operators can see
         # which critics got pushed off.
         cap_deferred = [
             e for e in final["deferred_for_budget"]
             if e.get("defer_reason") == "domain_critic_cap"
         ]
-        assert len(cap_deferred) == 2
+        assert len(cap_deferred) == 4
         cap_deferred_names = {e["reviewer"] for e in cap_deferred}
-        # The two deferred entries are the lowest-priority/alphabetically-last
-        # required critics from the input (top-5 by priority asc + name asc
-        # kept). With identical priorities, alphabetical chooses
-        # req_critic_5 and req_critic_6 to be deferred.
-        assert cap_deferred_names == {"req_critic_5", "req_critic_6"}
+        # The four deferred entries are the lowest-priority/alphabetically-last
+        # required critics from the input (top-3 by priority asc + name asc
+        # kept). With identical priorities, alphabetical keeps req_critic_0..2
+        # and defers req_critic_3..6.
+        assert cap_deferred_names == {
+            "req_critic_3", "req_critic_4", "req_critic_5", "req_critic_6",
+        }
 
     def test_critic_cap_best_effort_no_coverage_gap(self, tmp_path: Path) -> None:
         """Cap-deferred best-effort critics only appear in
@@ -20285,13 +20294,13 @@ class TestPLN807Phase4BudgetArithmetic:
             ],
         }
         _, final, gaps = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
-        # 5 selected, 3 deferred by cap.
-        assert len(final["best_effort"]) == 5
+        # 3 selected, 5 deferred by cap.
+        assert len(final["best_effort"]) == 3
         deferred_by_cap = [
             e for e in final["deferred_for_budget"]
             if e.get("defer_reason") == "domain_critic_cap"
         ]
-        assert len(deferred_by_cap) == 3
+        assert len(deferred_by_cap) == 5
         # Best-effort cap-defers don't fire coverage-gap findings.
         assert gaps["findings"] == []
 
@@ -20334,18 +20343,18 @@ class TestPLN807Phase4BudgetArithmetic:
         )
         # arbitrate_status preserved
         assert final["arbitrate_status"] == "blocked_by_verify"
-        # Critics capped to 5
+        # Critics capped to 3
         critic_count = sum(
             1 for e in final["required"]
             if e.get("source") in {"rule", "critic"}
         )
-        assert critic_count == 5
+        assert critic_count == 3
         # Required critics in excess → deferred_for_budget with cap reason
         cap_deferred = [
             e for e in final["deferred_for_budget"]
             if e.get("defer_reason") == "domain_critic_cap"
         ]
-        assert len(cap_deferred) == 4
+        assert len(cap_deferred) == 6
         # NEVER drop required on BLOCKING
         assert final["dropped_required"] == []
         # No coverage_gap findings emitted on BLOCKING branch
@@ -20363,7 +20372,7 @@ class TestPLN807Phase4BudgetArithmetic:
             ],
         }
         _, final, _ = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
-        assert final["budget"]["domain_critic_cap"] == 5
+        assert final["budget"]["domain_critic_cap"] == 3
         assert final["budget"]["domain_critic_cap_fired"] is False
 
     def test_cap_deferred_entries_annotated_with_defer_reason(
@@ -20387,8 +20396,8 @@ class TestPLN807Phase4BudgetArithmetic:
             e for e in final["deferred_for_budget"]
             if e.get("defer_reason") == "domain_critic_cap"
         ]
-        # 7 best-effort critics; 5 selected, 2 deferred by cap.
-        assert len(cap_marked) == 2
+        # 7 best-effort critics; 3 selected, 4 deferred by cap.
+        assert len(cap_marked) == 4
 
     def test_annotate_defer_reason_preserves_original_fields(self) -> None:
         from code_review_helpers import _annotate_defer_reason
@@ -20653,12 +20662,12 @@ class TestPLN807ReviewFixes:
         _, final, gaps = _run_arbitrate_budget(tmp_path, plan, diff, cap=20)
         # No coverage gaps emitted by the cap.
         assert gaps["findings"] == []
-        # All 3 deferred required critics are marked with the cap reason.
+        # All 5 deferred required critics are marked with the cap reason.
         cap_deferred = [
             e for e in final["deferred_for_budget"]
             if e.get("defer_reason") == "domain_critic_cap"
         ]
-        assert len(cap_deferred) == 3
+        assert len(cap_deferred) == 5
         assert final["budget"]["domain_critic_cap_fired"] is True
         # And the plan's verdict is NOT auto-CHANGES_REQUESTED via Rule 1.
         from code_review_helpers import _compute_canonical_verdict
@@ -20693,7 +20702,7 @@ class TestPLN807ReviewFixes:
             e for e in final["deferred_for_budget"]
             if e.get("defer_reason") == "domain_critic_cap"
         ]
-        assert len(cap_def) == 4  # 9 required → 5 selected + 4 deferred
+        assert len(cap_def) == 6  # 9 required → 3 selected + 6 deferred
 
     # ---------- Path-aware schema/migration matcher ----------
 
@@ -20936,7 +20945,6 @@ def _impact_evidence_check(
         "actual_read": "foo(bar)" if verified else "<not found>",
         "verified": verified,
         "source": f"{file}:{line}",
-        "snippet_hash_matched": verified,
     }
 
 
@@ -21016,7 +21024,22 @@ class TestFEA1401CoverageCoreConditional:
             assert isinstance(trigger.get("min_confidence"), (int, float))
 
 
-class TestFEA1401ResolveCoverage:
+class _ConditionalCoreFixtures:
+    """Shared diff / critic-gate factories for the conditional-core
+    coverage tests. Extracted so ``TestFEA1401ResolveCoverage`` and
+    ``TestDesignCriticConditionalCore`` share one definition instead of
+    duplicating identical bodies. Not a ``Test*`` class, so pytest does
+    not collect it.
+    """
+
+    def _diff(self) -> dict[str, Any]:
+        return {"files_to_review": ["src/api.ts"], "patch_lines": {}}
+
+    def _empty_critic_gates(self) -> dict[str, Any]:
+        return {"coverage": [], "moduleCritics": []}
+
+
+class TestFEA1401ResolveCoverage(_ConditionalCoreFixtures):
     """Behavioral tests for resolve_coverage's conditional-core loop.
 
     These cover the matrix: (depth × signal present × signal confidence)
@@ -21025,12 +21048,6 @@ class TestFEA1401ResolveCoverage:
 
     def _signals(self, name: str, confidence: float) -> dict[str, Any]:
         return {"signals": [{"name": name, "evidence": "test:1", "confidence": confidence}]}
-
-    def _diff(self) -> dict[str, Any]:
-        return {"files_to_review": ["src/api.ts"], "patch_lines": {}}
-
-    def _empty_critic_gates(self) -> dict[str, Any]:
-        return {"coverage": [], "moduleCritics": []}
 
     def test_impact_added_when_deep_and_exported_symbol_signal_fires(self) -> None:
         from code_review_helpers import resolve_coverage
@@ -21225,6 +21242,174 @@ class TestFEA1401SpawnSpec:
         assert _fleet_display_name("impact") == "Impact Analyzer"
 
 
+class TestDesignCriticConditionalCore(_ConditionalCoreFixtures):
+    """The Design Critic is an always-on, deep-only conditional core
+    reviewer (``COVERAGE_CORE_CONDITIONAL``). Unlike the Impact Analyzer
+    it needs no signal trigger — the ``deep`` tier band alone gates it.
+    It is ``source: "core"`` so it is exempt from ``DOMAIN_CRITIC_CAP``
+    and survives the best-effort prune.
+    """
+
+    def test_schema_entry_contract(self) -> None:
+        from code_review_schema import COVERAGE_CORE_CONDITIONAL
+
+        entries = [
+            e for e in COVERAGE_CORE_CONDITIONAL
+            if e["reviewer"] == "design_critic"
+        ]
+        assert len(entries) == 1, (
+            "Design Critic must be the single 'design_critic' entry in "
+            "COVERAGE_CORE_CONDITIONAL — duplicate entries would race in "
+            "resolve_coverage's deduplication."
+        )
+        entry = entries[0]
+        assert entry["min_depth"] == "deep"
+        assert entry["source"] == "core"
+        assert entry["required"] is False
+        triggers = list(entry["triggers"])
+        # A single always-trigger: tier band alone gates it, no signal.
+        assert len(triggers) == 1
+        assert triggers[0] == {"type": "always"}
+
+    def test_added_on_deep_without_any_signal(self) -> None:
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._diff(),
+            extract_signals=None,  # no signals at all
+            invocation_depth="deep",
+        )
+        be = {e["reviewer"] for e in plan["best_effort"]}
+        assert "design_critic" in be
+        # Lands in best_effort with source core and the always-trigger.
+        entry = next(
+            e for e in plan["best_effort"] if e["reviewer"] == "design_critic"
+        )
+        assert entry["source"] == "core"
+        assert entry["trigger"]["type"] == "always"
+        # Never required (PLN-725 determinism — best_effort only).
+        assert "design_critic" not in {e["reviewer"] for e in plan["required"]}
+
+    def test_absent_on_standard_depth(self) -> None:
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._diff(),
+            extract_signals=None,
+            invocation_depth="standard",
+        )
+        assert "design_critic" not in {e["reviewer"] for e in plan["best_effort"]}
+
+    def test_spawn_spec_emits_core_agent(self) -> None:
+        from code_review_helpers import (
+            _derive_spawn_agents_from_plan, _spawn_resolve_models,
+        )
+
+        plan = {
+            "required": [
+                {"reviewer": "bug_hunter_a", "trigger": {"type": "always"},
+                 "source": "core"},
+            ],
+            "best_effort": [
+                {"reviewer": "design_critic", "trigger": {"type": "always"},
+                 "source": "core"},
+            ],
+            "warnings": [],
+            "stats": {},
+        }
+        agents, _ = _derive_spawn_agents_from_plan(
+            plan,
+            partitions=[{"id": 0, "files": ["src/api.ts"], "is_test_only": False}],
+            models=_spawn_resolve_models({}),
+        )
+        dc = next(a for a in agents if a["reviewer"] == "design_critic")
+        assert dc["agent_id"] == "design_critic"
+        assert dc["model"] == "sonnet"
+        assert dc["partitioned"] is False
+        assert dc["patches_file"] == "patches_all.txt"
+        assert dc["source"] == "core"
+        assert dc["bucket"] == "best_effort"
+
+    def test_survives_best_effort_prune_as_core(self, tmp_path: Path) -> None:
+        # source: core best_effort entries are reserved before the prune.
+        # Even with a tight cap and many domain critics, design_critic
+        # survives (it is opted-in via --depth deep).
+        diff = _make_diff_data(files=["src/app.ts"])
+        plan = {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
+            "best_effort": [
+                {"reviewer": "design_critic", "trigger": {"type": "always"},
+                 "source": "core"},
+            ] + [
+                {"reviewer": f"critic_{i}", "source": "critic", "priority": 2}
+                for i in range(6)
+            ],
+        }
+        _, final, _ = _run_arbitrate_budget(tmp_path, plan, diff, cap=20, depth="deep")
+        assert "design_critic" in {e["reviewer"] for e in final["best_effort"]}
+        # And it does NOT consume a domain-critic slot (still capped at 3).
+        domain = [
+            e for e in final["best_effort"] if e.get("source") == "critic"
+        ]
+        assert len(domain) == 3
+
+    def test_fleet_display_name(self) -> None:
+        from code_review_helpers import _fleet_display_name
+
+        assert _fleet_display_name("design_critic") == "Design Critic"
+
+    def test_fleet_breakdown_renders_both_conditional_core_reviewers(
+        self,
+    ) -> None:
+        """Regression: the non-partitioned core display set is derived
+        from ``_SPAWN_CORE_ROLES``, so BOTH conditional core reviewers —
+        the Impact Analyzer and the Design Critic — appear on the
+        Reviewers line when present. Previously the hand-maintained
+        tuple listed the Design Critic but silently dropped the Impact
+        Analyzer (both are non-partitioned ``source: "core"`` roles).
+        """
+        from code_review_helpers import _render_fleet_breakdown
+
+        spec = {
+            "agents": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "unified_auditor", "source": "core"},
+                {"reviewer": "impact", "source": "core"},
+                {"reviewer": "design_critic", "source": "core"},
+            ],
+        }
+        line = "\n".join(_render_fleet_breakdown(spec))
+        assert "Impact Analyzer" in line
+        assert "Design Critic" in line
+        # Registry order: BHB / Auditor, then Impact Analyzer, then the
+        # Design Critic.
+        assert (
+            line.index("Unified Auditor")
+            < line.index("Impact Analyzer")
+            < line.index("Design Critic")
+        )
+
+    def test_fleet_breakdown_omits_absent_conditional_core(self) -> None:
+        """Presence gating still applies — a spec without the
+        conditional core reviewers renders neither name.
+        """
+        from code_review_helpers import _render_fleet_breakdown
+
+        spec = {
+            "agents": [
+                {"reviewer": "bug_hunter_a", "source": "core"},
+                {"reviewer": "bug_hunter_b", "source": "core"},
+                {"reviewer": "unified_auditor", "source": "core"},
+            ],
+        }
+        line = "\n".join(_render_fleet_breakdown(spec))
+        assert "Impact Analyzer" not in line
+        assert "Design Critic" not in line
+
+
 class TestFEA1401VerdictRule:
     """Cover Rule 6 (cumulative Impact gate) and its helper.
 
@@ -21362,7 +21547,6 @@ class TestFEA1401DowngradeTrim:
                 "impact_type": "signature_mismatch",
                 "description": f"breaking callsite at {f}:{ln}",
                 "callsite_snippet": "foo(bar)",
-                "callsite_snippet_hash": "abcdef",
                 "confidence": 0.9,
             }
             for f, ln in callsites
@@ -21473,8 +21657,7 @@ class TestFEA1401DowngradeTrim:
         # against an accidental shape leak.
         finding["external_impact"] = [
             {"file": "src/a.ts", "line": 10, "impact_type": "x",
-             "description": "", "callsite_snippet": "",
-             "callsite_snippet_hash": "", "confidence": 0.9},
+             "description": "", "callsite_snippet": "", "confidence": 0.9},
         ]
         verdict_data = {
             "verifier_verdict": "DOWNGRADE",
@@ -21511,7 +21694,6 @@ class TestFEA1401GraphProvenance:
             "impact_type": "signature_mismatch",
             "description": f"{discovery} callsite at {file}:{line}",
             "callsite_snippet": "foo(bar)",
-            "callsite_snippet_hash": "abcdef",
             "discovery": discovery,
             "confidence": 0.9,
         }
