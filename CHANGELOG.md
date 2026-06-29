@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.1.0
+
+#### Added
+- New **Design Critic** reviewer — an always-on, deep-tier conditional core reviewer that evaluates software-design craftsmanship (module depth and information hiding, SOLID, dependency direction and layer boundaries, project structure), drawing on *A Philosophy of Software Design*, SOLID, and *Clean Architecture*. It is a `source: "core"` reviewer (exempt from the domain-critic cap), runs on Sonnet, and emits `category: "Code Quality"` findings scoped to design flaws a change introduces or worsens.
+- Both conditional core reviewers (the Design Critic and the Impact Analyzer) now appear on the operator-facing "Reviewers:" fleet-summary line. The non-partitioned core set is derived from `_SPAWN_CORE_ROLES` so future core reviewers are listed automatically.
+
+#### Changed
+- The domain-critic cap is now a uniform 3 across both standard and deep reviews (previously 5). Deep-tier breadth comes from the always-on Design Critic and the signal-gated Impact Analyzer rather than a wider domain-critic allowance.
+- The Design Critic is graph-aware: it runs on the graph-enabled review worker and uses the `codebase-memory-mcp` knowledge graph (`get_architecture` for module/layer layout, `query_graph` for dependency direction and import cycles) when the repository is indexed, falling back to grep otherwise. The graph worker's tool set gained `get_architecture` and `query_graph`.
+
+#### Removed
+- Removed the unused `callsite_snippet_hash` field from `external_impact[]` entries and the coupled `snippet_hash_matched` evidence-check field. Impact-analysis callsites are now validated by reading the cited file and content-matching the verbatim `callsite_snippet`.
+
 ### code-review v3.0.0
 
 #### Removed

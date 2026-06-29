@@ -21,7 +21,7 @@ plugins/code-review/
   SCHEMA.md                          Canonical Finding + ResultEnvelope schema (PLN-719); §12 documents the golden fixture harness
   agents/
     code-review-worker.md            Background worker agent used by every reviewer fleet spawn (Read, Write, Grep, Glob; permissions-stable across sessions)
-    code-review-worker-graph.md      Graph-aware variant for the cross-file reviewers (Impact Analyzer, Bug Hunter B, fast-path); adds read-only codebase-memory-mcp tools for cross-file usage discovery
+    code-review-worker-graph.md      Graph-aware variant for the cross-file and design reviewers (Impact Analyzer, Bug Hunter B, fast-path, Design Critic); adds read-only codebase-memory-mcp tools — cross-file usage discovery for the cross-file roles, project-structure/dependency-graph analysis (get_architecture, query_graph) for the Design Critic
   commands/
     start.md                         Main /start command (orchestrator)
   prompts/
@@ -29,6 +29,7 @@ plugins/code-review/
   tools/
     prompts/shared_prompt.txt        Shared reviewer constraints injected into every agent prompt
     prompts/bha_suffix.txt           Bug Hunter A reviewer persona and focus areas
+    prompts/design_critic_suffix.txt Design Critic reviewer role (software-design craftsmanship; always-on at deep tier)
     python/code_review_schema.py     Canonical Finding + ResultEnvelope schema + validators (PLN-719)
     python/test_code_review_schema.py  Schema tests + round-trips
     python/code_review_helpers.py    Deterministic helper CLI (parse-diff, hygiene, partition, route, validate, cache, finalize-result, arbitrate-budget, prepare-run, etc.)
@@ -125,7 +126,7 @@ Runs a comprehensive code review. Invokes the full pipeline: diff parsing, hygie
 
 ### `/shallow` and `/deep`
 
-Thin command-file wrappers around `/start` with `--depth` pre-bound. `/shallow` invokes the built-in fleet only (BHA + BHB + unified_auditor + verifier; no `critic-gates.json` entries, no signal extraction). `/deep` invokes the standard fleet plus any reviewer tagged `min_depth: deep` in `stages.json` (reserved for the FEA-1401 Impact Analyzer slot — today equivalent to standard).
+Thin command-file wrappers around `/start` with `--depth` pre-bound. `/shallow` invokes the built-in fleet only (BHA + BHB + unified_auditor + verifier; no `critic-gates.json` entries, no signal extraction). `/deep` invokes the standard fleet plus the deep-tier reviewers: the **Design Critic** (always-on at deep — no signal trigger), and the FEA-1401 **Impact Analyzer** when signal extraction detects an exported-symbol change or symbol deletion.
 
 ### `/cost`
 
@@ -161,12 +162,13 @@ Three tiers select which reviewer fleet runs:
 | `bug_hunter_a` (partitioned at >5000 LOC) | ✓ | ✓ | ✓ |
 | `bug_hunter_b` | ✓ | ✓ | ✓ |
 | `unified_auditor` | ✓ | ✓ | ✓ |
-| `critic-gates.json` domain critics | ✗ | ✓ (≤3 total) | ✓ (≤5 total) |
+| `critic-gates.json` domain critics | ✗ | ✓ (≤3 total) | ✓ (≤3 total) |
 | Verifier | ✓ | ✓ | ✓ |
 | `fast_path_reviewer` (auto on tiny PRs) | ✓ (auto) | ✓ (auto) | ✓ (auto) |
-| `impact_analyzer` (future FEA-1401) | ✗ | ✗ | ✓ |
+| `design_critic` (always-on at deep) | ✗ | ✗ | ✓ |
+| `impact_analyzer` (FEA-1401, on exported-symbol change/deletion) | ✗ | ✗ | ✓ (on signal) |
 
-**Standard-mode budget arithmetic.** With PLN-807 Phase 4, `arbitrate-budget` reserves BHA partitions FIRST (from `_max_bha_partitions_by_loc`) and then allocates the remaining budget to critics and best-effort. The total domain-critic count across both required and best-effort buckets is capped depth-aware: standard runs keep the top `STANDARD_DOMAIN_CRITIC_CAP = 3` (by priority asc, reviewer asc), while deep runs keep the full `DOMAIN_CRITIC_CAP = 5`. Required-bucket critics dropped by the cap emit coverage-gap findings; cap-deferred entries carry `defer_reason: "domain_critic_cap"` in `deferred_for_budget`. PRs with sparse critic-gates rosters see identical fleet to pre-PLN-807.
+**Standard-mode budget arithmetic.** With PLN-807 Phase 4, `arbitrate-budget` reserves BHA partitions FIRST (from `_max_bha_partitions_by_loc`) and then allocates the remaining budget to critics and best-effort. The total domain-critic count across both required and best-effort buckets is capped uniformly at `DOMAIN_CRITIC_CAP = 3` (by priority asc, reviewer asc) for both standard and deep tiers. Required-bucket critics dropped by the cap emit coverage-gap findings; cap-deferred entries carry `defer_reason: "domain_critic_cap"` in `deferred_for_budget`. PRs with sparse critic-gates rosters see identical fleet to pre-PLN-807.
 
 **Tier-mismatch nudge.** Shallow runs emit a single LOW system-scoped finding (`system_marker: "tier_mismatch_nudge"`) when the diff would benefit from a higher tier. Heuristics: diff > 3000 LOC; schema/migration paths (`/migrations/`, `/schemas/`, `/models/`); public API surface (`plugin.json`, `index.ts`, `__init__.py`, etc.).
 
