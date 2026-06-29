@@ -293,6 +293,52 @@ def _git_rev_parse(ref: str) -> str | None:
         return None
 
 
+def _detect_default_branch() -> str:
+    """Repo default branch name (e.g. "main"), via origin/HEAD; "main" fallback."""
+    out = subprocess.run(
+        ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+        capture_output=True, text=True,
+    )
+    ref = out.stdout.strip()                        # e.g. "origin/main"
+    return ref.split("/", 1)[1] if ref.startswith("origin/") else "main"
+
+
+def _resolve_local_base(default: str) -> str:
+    """Base ref to use in ``<base>...HEAD`` for local branch/file scope.
+
+    Prefer the remote-tracking ref ``origin/<default>`` over the local branch. In
+    linked worktrees (e.g. Conductor) the local default branch is frozen at
+    workspace-creation time and silently drifts hundreds of commits behind,
+    inflating the review diff to every PR merged since. A best-effort fetch keeps
+    ``origin/<default>`` current; fall back to the local ref when offline / when
+    the remote ref does not resolve (e.g. no remote configured).
+    """
+    subprocess.run(
+        ["git", "fetch", "origin", default],
+        capture_output=True, text=True,             # best-effort; ignore failure
+    )
+    return f"origin/{default}" if _git_rev_parse(f"origin/{default}") else default
+
+
+def _warn_if_base_drifted(default_branch: str, scope_base: str) -> None:
+    """Warn on stderr when local *default_branch* is behind its origin ref.
+
+    Defense-in-depth: surfaces the worktree stale-base situation that base
+    resolution silently corrects, so a wrong/inflated diff is visible instead of
+    being a silent surprise in the review output.
+    """
+    behind = subprocess.run(
+        ["git", "rev-list", "--count", f"{default_branch}..origin/{default_branch}"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    if behind.isdigit() and int(behind) > 0:
+        print(
+            f"⚠️  local '{default_branch}' is {behind} commits behind "
+            f"origin/{default_branch}; reviewing against {scope_base}",
+            file=sys.stderr,
+        )
+
+
 # Startup-GC age guard: a PR-head worktree directory is reclaimed as an
 # abort-orphan only once it is older than this. Set far above any real
 # review wall-time (runs are minutes, not hours) so a concurrent in-flight
@@ -4817,6 +4863,24 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
         )
 
     elif mode == "local":
+        # Detect the repo default branch (not hardcoded "main") and keep
+        # base_ref as the plain name for the <BASE_REF> token / STATE_KEY.
+        default_branch = _detect_default_branch()
+        base_ref = default_branch
+
+        def _branch_base() -> str:
+            """Live base ref for branch/file scope, warning on local drift.
+
+            Prefer origin/<default> over the possibly-frozen local default
+            branch (see _resolve_local_base). Resolved only when the diff is
+            actually based on the local default — never on the PR-detected or
+            staged paths, so neither does a needless fetch nor a misleading
+            drift warning.
+            """
+            sb = _resolve_local_base(default_branch)
+            _warn_if_base_drifted(default_branch, sb)
+            return sb
+
         if not scope_args or scope_args.strip() in ("", "branch"):
             # Try auto-detecting an open PR for the current branch
             detected_pr = _detect_open_pr()
@@ -4845,10 +4909,10 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
                     # Any failure: fall back to branch scope
                     pr_number = None
                     pr_auto_detected = False
-                    diff_scope = "main...HEAD"
+                    diff_scope = f"{_branch_base()}...HEAD"
                     scope_kind = "branch"
             else:
-                diff_scope = "main...HEAD"
+                diff_scope = f"{_branch_base()}...HEAD"
                 scope_kind = "branch"
         elif scope_args.strip() == "staged":
             diff_scope = "--cached"
@@ -4856,7 +4920,7 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
         else:
             # Treat scope_args as file paths
             files = scope_args.strip()
-            diff_scope = f"main...HEAD -- {files}"
+            diff_scope = f"{_branch_base()}...HEAD -- {files}"
             path_filter = f"-- {files}"
             scope_kind = "file_paths"
 

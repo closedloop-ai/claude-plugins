@@ -6116,34 +6116,87 @@ class TestResolveScope:
         finally:
             _sys.stdout = old_stdout
 
+    def _base_resolves_side_effect(self, default: str = "main", behind: str = "0"):
+        """side_effect where origin/<default> resolves and is `behind` commits behind.
+
+        Makes the local branch/file base resolution hermetic (no real git):
+        origin/HEAD -> origin/<default>, origin/<default> rev-parses to a SHA,
+        and rev-list reports the drift count.
+        """
+        def _se(cmd, **_kwargs):  # noqa: ANN001, ANN202
+            cl = list(cmd)
+            if cl[:2] == ["git", "symbolic-ref"]:
+                return subprocess.CompletedProcess(args=cl, returncode=0, stdout=f"origin/{default}\n")
+            if cl[:3] == ["git", "rev-parse", "--verify"]:
+                return subprocess.CompletedProcess(args=cl, returncode=0, stdout="base123\n")
+            if cl[:3] == ["git", "rev-list", "--count"]:
+                return subprocess.CompletedProcess(args=cl, returncode=0, stdout=f"{behind}\n")
+            return subprocess.CompletedProcess(args=cl, returncode=0, stdout="", stderr="")
+        return _se
+
     def test_local_branch(self, tmp_path: Path) -> None:
-        with patch("code_review_helpers._detect_open_pr", return_value=None):
+        with patch("code_review_helpers._detect_open_pr", return_value=None), \
+                patch("code_review_helpers.subprocess.run",
+                      side_effect=self._base_resolves_side_effect()):
             result = self._run("local", tmp_path=tmp_path)
-        assert result["diff_scope"] == "main...HEAD"
+        assert result["diff_scope"] == "origin/main...HEAD"
+        assert result["base_ref"] == "main"
         assert result["scope_kind"] == "branch"
         assert result["pr_auto_detected"] is False
 
     def test_staged(self, tmp_path: Path) -> None:
+        # staged uses --cached and resolves no base, so no git is invoked.
         result = self._run("local", scope_args="staged", tmp_path=tmp_path)
         assert result["diff_scope"] == "--cached"
         assert result["scope_kind"] == "staged"
 
     def test_file_paths(self, tmp_path: Path) -> None:
-        result = self._run("local", scope_args="file1.ts file2.ts", tmp_path=tmp_path)
-        assert "-- file1.ts file2.ts" in result["diff_scope"]
+        with patch("code_review_helpers.subprocess.run",
+                   side_effect=self._base_resolves_side_effect()):
+            result = self._run("local", scope_args="file1.ts file2.ts", tmp_path=tmp_path)
+        assert result["diff_scope"] == "origin/main...HEAD -- file1.ts file2.ts"
         assert result["scope_kind"] == "file_paths"
         assert result["path_filter"] == "-- file1.ts file2.ts"
 
     def test_base_override(self, tmp_path: Path) -> None:
-        with patch("code_review_helpers._detect_open_pr", return_value=None):
+        with patch("code_review_helpers._detect_open_pr", return_value=None), \
+                patch("code_review_helpers.subprocess.run",
+                      side_effect=self._base_resolves_side_effect()):
             result = self._run("local", base_ref_override="develop", tmp_path=tmp_path)
         assert "origin/develop" in result["diff_scope"]
         assert result["base_ref"] == "develop"
 
     def test_base_override_preserves_path_filter(self, tmp_path: Path) -> None:
-        result = self._run("local", scope_args="file1.ts", base_ref_override="develop", tmp_path=tmp_path)
+        with patch("code_review_helpers.subprocess.run",
+                   side_effect=self._base_resolves_side_effect()):
+            result = self._run("local", scope_args="file1.ts", base_ref_override="develop", tmp_path=tmp_path)
         assert "origin/develop" in result["diff_scope"]
         assert "-- file1.ts" in result["path_filter"]
+
+    def test_local_branch_offline_falls_back_to_local_ref(self, tmp_path: Path) -> None:
+        """When origin/<default> does not resolve, base on the local ref."""
+        def _se(cmd, **_kwargs):  # noqa: ANN001, ANN202
+            cl = list(cmd)
+            if cl[:2] == ["git", "symbolic-ref"]:
+                return subprocess.CompletedProcess(args=cl, returncode=0, stdout="origin/main\n")
+            if cl[:3] == ["git", "rev-parse", "--verify"]:
+                # origin/main unresolvable -> empty -> _git_rev_parse None
+                return subprocess.CompletedProcess(args=cl, returncode=1, stdout="")
+            return subprocess.CompletedProcess(args=cl, returncode=0, stdout="", stderr="")
+        with patch("code_review_helpers._detect_open_pr", return_value=None), \
+                patch("code_review_helpers.subprocess.run", side_effect=_se):
+            result = self._run("local", tmp_path=tmp_path)
+        assert result["diff_scope"] == "main...HEAD"
+        assert result["base_ref"] == "main"
+
+    def test_local_branch_non_main_default(self, tmp_path: Path) -> None:
+        """A repo whose default is develop bases on origin/develop, base_ref=develop."""
+        with patch("code_review_helpers._detect_open_pr", return_value=None), \
+                patch("code_review_helpers.subprocess.run",
+                      side_effect=self._base_resolves_side_effect(default="develop")):
+            result = self._run("local", tmp_path=tmp_path)
+        assert result["diff_scope"] == "origin/develop...HEAD"
+        assert result["base_ref"] == "develop"
 
     # -- PR auto-detection tests ------------------------------------------------
 
@@ -6179,8 +6232,14 @@ class TestResolveScope:
                 if isinstance(resolve_result, Exception):
                     raise resolve_result
                 return resolve_result
-            # git fetch
+            # git fetch — fetch_result models the PR *head* fetch (check=True).
+            # The best-effort base-resolution fetch (git fetch origin <default>,
+            # default branch "main" here) is non-raising and must return ok so
+            # it never short-circuits the path under test.
             if cmd_list[:2] == ["git", "fetch"]:
+                target = cmd_list[3] if len(cmd_list) > 3 else ""
+                if target == "main":
+                    return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
                 if isinstance(fetch_result, Exception):
                     raise fetch_result
                 return fetch_result
@@ -6224,7 +6283,7 @@ class TestResolveScope:
         with patch("code_review_helpers.subprocess.run", side_effect=side_effect):
             result = self._run("local", tmp_path=tmp_path)
         assert result["scope_kind"] == "branch"
-        assert result["diff_scope"] == "main...HEAD"
+        assert result["diff_scope"] == "origin/main...HEAD"
         assert result["pr_auto_detected"] is False
 
     def test_explicit_pr_number_resolves_pr_scope_without_auto_detect(self, tmp_path: Path) -> None:
@@ -6268,7 +6327,7 @@ class TestResolveScope:
         with patch("code_review_helpers.subprocess.run", side_effect=side_effect):
             result = self._run("local", tmp_path=tmp_path)
         assert result["scope_kind"] == "branch"
-        assert result["diff_scope"] == "main...HEAD"
+        assert result["diff_scope"] == "origin/main...HEAD"
         assert result["pr_auto_detected"] is False
 
     def test_pr_auto_detect_falls_back_on_malformed_number(self, tmp_path: Path) -> None:
@@ -6290,7 +6349,7 @@ class TestResolveScope:
         assert result["pr_auto_detected"] is False
         assert result["pr_number"] is None
         assert result["scope_kind"] == "branch"
-        assert result["diff_scope"] == "main...HEAD"
+        assert result["diff_scope"] == "origin/main...HEAD"
         assert result["diff_tip"] == "HEAD"
 
     def test_pr_auto_detect_succeeds_but_resolve_fails(self, tmp_path: Path) -> None:
@@ -6302,7 +6361,7 @@ class TestResolveScope:
             result = self._run("local", tmp_path=tmp_path)
         assert result["pr_auto_detected"] is False
         assert result["scope_kind"] == "branch"
-        assert result["diff_scope"] == "main...HEAD"
+        assert result["diff_scope"] == "origin/main...HEAD"
 
     def test_pr_auto_detected_when_scope_args_branch_literal(self, tmp_path: Path) -> None:
         side_effect = self._mock_subprocess_side_effect(
@@ -6328,6 +6387,32 @@ class TestResolveScope:
         assert result["diff_scope"] == "origin/develop...origin/feat-x"
         assert result["base_ref"] == "develop"
         assert result["pr_auto_detected"] is True
+
+
+class TestWarnIfBaseDrifted:
+    """Drift warning fires when local default is behind origin, silent otherwise."""
+
+    def _rev_list(self, count: str):
+        def _se(cmd, **_kwargs):  # noqa: ANN001, ANN202
+            cl = list(cmd)
+            if cl[:3] == ["git", "rev-list", "--count"]:
+                return subprocess.CompletedProcess(args=cl, returncode=0, stdout=f"{count}\n")
+            return subprocess.CompletedProcess(args=cl, returncode=0, stdout="")
+        return _se
+
+    def test_warns_when_behind(self, capsys: Any) -> None:
+        from code_review_helpers import _warn_if_base_drifted
+        with patch("code_review_helpers.subprocess.run", side_effect=self._rev_list("7")):
+            _warn_if_base_drifted("main", "origin/main")
+        err = capsys.readouterr().err
+        assert "7 commits behind" in err
+        assert "origin/main" in err
+
+    def test_silent_when_current(self, capsys: Any) -> None:
+        from code_review_helpers import _warn_if_base_drifted
+        with patch("code_review_helpers.subprocess.run", side_effect=self._rev_list("0")):
+            _warn_if_base_drifted("main", "origin/main")
+        assert capsys.readouterr().err == ""
 
 
 class TestResolveScopeWorktree:
