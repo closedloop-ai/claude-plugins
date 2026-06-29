@@ -953,7 +953,6 @@ def _impact_entry(discovery: str | None) -> dict:
         "impact_type": "signature_mismatch",
         "description": "one-arg call breaks under new required param",
         "callsite_snippet": "getUser(req.params.id)",
-        "callsite_snippet_hash": "deadbeef",
         "confidence": 0.95,
     }
     if discovery is not None:

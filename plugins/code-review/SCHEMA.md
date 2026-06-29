@@ -83,8 +83,7 @@ shape. Producers may emit dicts directly; the Python convenience type lives in
       "line": <int>,
       "impact_type": "signature_mismatch | type_incompatibility | semantic_drift | deleted_reference | stale_string_reference | behavioral_change | guard_needed",
       "description": "<one sentence>",
-      "callsite_snippet": "<verbatim>",
-      "callsite_snippet_hash": "<sha256>",
+      "callsite_snippet": "<verbatim source line at file:line>",
       "discovery": "grep | graph",
       "confidence": 0.0..1.0
     }
@@ -102,8 +101,7 @@ shape. Producers may emit dicts directly; the Python convenience type lives in
     {
       "claim": "<verbatim from finding.evidence[]>",
       "verified": <bool>,
-      "actual_read": "<what verifier read at the cited location>",
-      "snippet_hash_matched": <bool>
+      "actual_read": "<what verifier read at the cited location>"
     }
   ],
   "rejection_class": "evidence_not_found | guard_exists | unreachable | out_of_scope | severity_overstated | null",

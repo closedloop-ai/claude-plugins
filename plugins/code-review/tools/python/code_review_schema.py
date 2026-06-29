@@ -153,10 +153,12 @@ COVERAGE_CORE_REQUIRED: tuple[str, ...] = (
 
 # Conditional core reviewers (FEA-1401 / PLN-726). Core reviewers that
 # ship with the plugin (not project-specific like critic-gates.json
-# entries) but are gated by tier band AND signal-trigger evaluation.
-# Added to the Coverage Plan's ``best_effort`` bucket only when BOTH
-# the invocation depth meets ``min_depth`` AND at least one trigger
-# fires against the extracted signals.
+# entries) but are gated by tier band AND trigger evaluation. Added to
+# the Coverage Plan's ``best_effort`` bucket only when the invocation
+# depth meets ``min_depth`` AND at least one trigger fires — either a
+# ``signal`` trigger matching the extracted signals (e.g. the Impact
+# Analyzer) or an unconditional ``{"type": "always"}`` trigger that
+# fires on the tier band alone (e.g. the Design Critic).
 #
 # Entry shape:
 #   - reviewer:  reviewer name; must also be registered in
@@ -177,6 +179,13 @@ COVERAGE_CORE_REQUIRED: tuple[str, ...] = (
 # The Impact Analyzer (FEA-1401) is the first entry: opus-grade
 # cross-file reviewer, runs only in ``--depth deep`` when the diff
 # emits ``exported_symbol_change`` or ``symbol_deletion`` signals.
+#
+# The Design Critic is the second entry: a software-design craftsmanship
+# reviewer that runs on EVERY ``--depth deep`` review (a single
+# ``{"type": "always"}`` trigger, so no signal is required — the tier
+# band alone gates it). It is ``source: "core"`` so it is exempt from
+# the per-source ``DOMAIN_CRITIC_CAP`` and survives arbitrate-budget's
+# best-effort prune (opted-in core reviewers always survive).
 COVERAGE_CORE_CONDITIONAL: tuple[dict[str, Any], ...] = (
     {
         "reviewer": "impact",
@@ -191,6 +200,15 @@ COVERAGE_CORE_CONDITIONAL: tuple[dict[str, Any], ...] = (
                 "name": "symbol_deletion",
                 "min_confidence": 0.85,
             },
+        ),
+        "min_depth": "deep",
+        "required": False,
+        "source": "core",
+    },
+    {
+        "reviewer": "design_critic",
+        "triggers": (
+            {"type": "always"},
         ),
         "min_depth": "deep",
         "required": False,
@@ -807,13 +825,12 @@ class ExternalImpact:
     impact_type: str
     description: str
     callsite_snippet: str
-    callsite_snippet_hash: str
     confidence: float
     # Provenance of how the callsite was found (FEA-1401 graph integration).
     # "grep" (default) → reproducible by replaying grep_query_used.
     # "graph" → found only via codebase-memory-mcp (alias/re-export/dynamic
-    # dispatch grep cannot surface); verified by per-entry file-read + hash,
-    # exempt from the verifier's grep-replay completeness check.
+    # dispatch grep cannot surface); verified by per-entry file-read +
+    # content match, exempt from the verifier's grep-replay completeness check.
     discovery: str = "grep"
 
 
@@ -822,7 +839,6 @@ class EvidenceCheck:
     claim: str
     verified: bool
     actual_read: str
-    snippet_hash_matched: bool
 
 
 @dataclass

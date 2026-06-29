@@ -94,13 +94,12 @@ grep-discovered usages (`external_usages_found` in the certificate), so:
   - `discovery: "graph"` callsites are NOT put in `external_usages_found`
     and are NOT expected in the replay (grep cannot reach them). They are
     validated independently: you MUST read each one's exact source line
-    into `callsite_snippet` + compute `callsite_snippet_hash`, and the
-    verifier re-reads the file:line and re-hashes to confirm. A graph
-    callsite you cannot back with a real, hash-matching source line will
-    be dropped as unverified.
-Either way, `callsite_snippet` + `callsite_snippet_hash` are mandatory on
-EVERY entry. The graph widens coverage; grep + snippet-hash remain the
-proof.
+    into `callsite_snippet`, and the verifier re-reads the file:line and
+    content-matches it to confirm. A graph callsite you cannot back with a
+    real, matching source line will be dropped as unverified.
+Either way, `callsite_snippet` (the exact source line, copied verbatim) is
+mandatory on EVERY entry. The graph widens coverage; grep + the verbatim
+snippet remain the proof.
 
 ## Algorithm
 
@@ -151,8 +150,8 @@ For each candidate symbol:
     finds that grep CANNOT surface — verify the path is inside this
     checkout, then tag it `discovery: "graph"` and record it in the
     certificate's `graph_discovered_usages`, NOT in `external_usages_found`
-    (keeping the grep-replay set clean). Read each one's source line for
-    `callsite_snippet`/hash like any other entry.
+    (keeping the grep-replay set clean). Read each one's source line into
+    `callsite_snippet` (verbatim) like any other entry.
   - Construct a Grep query that finds usages **outside the diff**.
     Prefer unambiguous identifiers (`FooBar`, `parseCacheKey`) over
     common words. For ambiguous names (`get`, `update`), narrow with
@@ -210,16 +209,12 @@ You may emit a finding ONLY when ALL hold:
 
   - You found ≥1 concrete external usage with cited breakage (NOT
     counting guarded usages).
-  - You read the callsite's source line and copied the exact text
-    into `callsite_snippet`.
-  - You computed `callsite_snippet_hash` over that snippet — the
-    **sha256 hex digest of the UTF-8 encoded `callsite_snippet`
-    string** (in Python:
-    `hashlib.sha256(callsite_snippet.encode("utf-8")).hexdigest()`).
-    This matches the algorithm used for `evidence[].snippet_hash`
-    elsewhere in the pipeline. The verifier replays the same hash to
-    detect drift; the orchestrator's `/fix` flow uses it to refuse a
-    callsite update when the file has changed since the review.
+  - You read the callsite's source line and copied the **exact, verbatim
+    text** (whitespace and quotes preserved) into `callsite_snippet`. This
+    is the proof of record: the verifier re-reads the cited `file:line` and
+    content-matches it, and the orchestrator's `/fix` flow compares it
+    against the current line to refuse a callsite update when the file has
+    changed since the review. An inexact snippet will fail the match.
   - The diff itself shows the symbol change (you can cite it at
     `file:line`).
 
@@ -284,7 +279,7 @@ ones) into `external_usages_found` — the verifier replays
 breakage. Place usages found ONLY via the graph (grep cannot reach
 them) into `graph_discovered_usages`. Keeping the two lists separate is
 what lets the grep replay stay clean while graph-only callsites are
-still verified per-entry by file-read + hash.
+still verified per-entry by file-read + content match.
 
 ## external_impact[] entry shape
 
@@ -297,8 +292,7 @@ callsite that breaks. Shape:
   "line": 18,
   "impact_type": "<one of the values in Step 3>",
   "description": "<one-clause: what breaks, why>",
-  "callsite_snippet": "<the exact source line at file:line>",
-  "callsite_snippet_hash": "<sha256 hex digest of UTF-8 encoded callsite_snippet>",
+  "callsite_snippet": "<the exact source line at file:line, copied verbatim>",
   "discovery": "grep",
   "confidence": 0.95
 }
@@ -313,7 +307,7 @@ this callsite, or `"graph"` when only the knowledge graph found it
 (alias / re-export / dynamic dispatch). Tag it honestly: a `"grep"`
 entry that the verifier's replay cannot reproduce is treated as a
 hallucination, while a `"graph"` entry is verified purely by the
-file-read + `callsite_snippet_hash` audit. When the graph was
+file-read + content-match audit. When the graph was
 unavailable (`GRAPH_PROJECT` empty), every entry is `"grep"`.
 
 ## Cost Caps (HARD)
@@ -353,7 +347,8 @@ analyze 1–5 symbols, run 5–15 greps, and finish in under a minute.
   - You may NOT use Bash. Use Read, Grep, Glob — plus the read-only
     `mcp__codebase-memory-mcp__*` graph tools when available (see Inputs).
   - If a callsite_snippet contains whitespace or quotes, preserve them
-    verbatim. The verifier's hash check is byte-sensitive.
+    verbatim. The verifier content-matches the snippet against the cited
+    line, so an inexact copy can fail the match.
   - All file paths in `external_impact[].file` are repo-relative
     forward-slash paths (no leading `./` or `/`).
 
@@ -547,8 +542,8 @@ Step 4: Emit ONE finding anchored at `src/api/user.ts:42` with three
 `external_impact[]` entries — two `discovery: "grep"`, one
 `discovery: "graph"` (the `sync.ts:30` alias). The verifier replays
 `\bgetUser\s*\(` and matches the two grep entries; it verifies the
-graph entry by reading `sync.ts:30` and matching its
-`callsite_snippet_hash`. All three confirmed → severity `HIGH`. The
+graph entry by reading `sync.ts:30` and content-matching its
+`callsite_snippet`. All three confirmed → severity `HIGH`. The
 alias callsite — the one grep alone would have silently dropped — is
 the whole reason the graph substrate earns its place.
 
@@ -556,7 +551,7 @@ the whole reason the graph substrate earns its place.
 
   - **Skepticism, not paranoia.** If you can't cite a concrete
     breaking callsite, don't emit. The verifier replays your grep
-    against the `discovery: "grep"` entries and re-reads + re-hashes
+    against the `discovery: "grep"` entries and re-reads + content-matches
     every entry (grep AND graph); hallucinated or unbacked callsites of
     either kind are rejected.
   - **Anchor at the change, not the break.** Putting the anchor on a
