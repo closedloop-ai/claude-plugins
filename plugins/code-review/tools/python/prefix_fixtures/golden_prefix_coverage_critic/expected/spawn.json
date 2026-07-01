@@ -1,0 +1,45 @@
+{
+  "route": {
+    "domain_critics": [],
+    "fast_path": true,
+    "high_risk_files": [],
+    "max_bha_agents": 7,
+    "models": {
+      "bug_hunter_a": {
+        "default": "opus",
+        "test_only": "sonnet"
+      },
+      "bug_hunter_b": "sonnet",
+      "fast_path_reviewer": "sonnet",
+      "unified_auditor": "sonnet"
+    },
+    "size_category": "Small",
+    "total_loc": 2
+  },
+  "spec": {
+    "agents": [
+      {
+        "agent_id": "fast",
+        "bucket": "fast_path",
+        "model": "sonnet",
+        "partitioned": false,
+        "patches_file": "patches_all.txt",
+        "reviewer": "fast_path_reviewer",
+        "source": "fast_path"
+      }
+    ],
+    "arbitrate_status": "ok",
+    "cr_dir": "<CR_DIR>",
+    "fast_path": true,
+    "gated_by_verify": false,
+    "generated_at": "<TS>",
+    "skipped": [],
+    "stats": {
+      "agent_count": 1,
+      "bha_count": 0,
+      "domain_critic_count": 0,
+      "from_best_effort": 0,
+      "from_required": 0
+    }
+  }
+}

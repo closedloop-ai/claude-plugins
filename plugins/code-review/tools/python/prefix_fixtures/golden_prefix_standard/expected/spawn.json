@@ -1,0 +1,74 @@
+{
+  "route": {
+    "domain_critics": [],
+    "fast_path": false,
+    "high_risk_files": [
+      "src/constants.py"
+    ],
+    "max_bha_agents": 7,
+    "models": {
+      "bug_hunter_a": {
+        "default": "opus",
+        "test_only": "sonnet"
+      },
+      "bug_hunter_b": "sonnet",
+      "fast_path_reviewer": "sonnet",
+      "unified_auditor": "sonnet"
+    },
+    "size_category": "Small",
+    "total_loc": 212
+  },
+  "spec": {
+    "agents": [
+      {
+        "agent_id": "bha_p0",
+        "bucket": "required",
+        "is_test_only": false,
+        "model": "opus",
+        "partition_id": 0,
+        "partitioned": true,
+        "patches_file": "patches_p0.txt",
+        "reviewer": "bug_hunter_a",
+        "source": "core"
+      },
+      {
+        "agent_id": "bhb",
+        "bucket": "required",
+        "model": "sonnet",
+        "partitioned": false,
+        "patches_file": "patches_all.txt",
+        "reviewer": "bug_hunter_b",
+        "source": "core"
+      },
+      {
+        "agent_id": "auditor",
+        "bucket": "required",
+        "model": "sonnet",
+        "partitioned": false,
+        "patches_file": "patches_all.txt",
+        "reviewer": "unified_auditor",
+        "source": "core"
+      }
+    ],
+    "arbitrate_status": "ok",
+    "cr_dir": "<CR_DIR>",
+    "fast_path": false,
+    "gated_by_verify": false,
+    "generated_at": "<TS>",
+    "skipped": [
+      {
+        "bucket": "required",
+        "reason": "deferred_pln723",
+        "reviewer": "test_quality"
+      }
+    ],
+    "stats": {
+      "agent_count": 3,
+      "bha_count": 1,
+      "domain_critic_count": 0,
+      "from_best_effort": 0,
+      "from_required": 3,
+      "required_coverage_gaps": 0
+    }
+  }
+}

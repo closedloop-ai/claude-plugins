@@ -1,0 +1,8 @@
+diff --git a/src/app.py b/src/app.py
+index 571ddb9..fc0fbb5 100644
+--- a/src/app.py
++++ b/src/app.py
+@@ -1,2 +1,2 @@
+ def greet(name):
+-    return name
++    return name.upper()

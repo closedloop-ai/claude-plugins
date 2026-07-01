@@ -1,0 +1,8 @@
+diff --git a/src/auth.py b/src/auth.py
+index df71c6f..a835079 100644
+--- a/src/auth.py
++++ b/src/auth.py
+@@ -1,2 +1,2 @@
+ def login(user):
+-    return user
++    return verify(user)

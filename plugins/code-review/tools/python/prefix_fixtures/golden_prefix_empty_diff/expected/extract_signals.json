@@ -1,0 +1,16 @@
+{
+  "cache_key": "<CACHE_KEY>",
+  "errors": [],
+  "generated_at": "<TS>",
+  "model": "haiku",
+  "prompt_hash": "<PROMPT_HASH>",
+  "signals": [
+    {
+      "confidence": 0.9,
+      "evidence": "fixture: representative signal for the changed diff",
+      "name": "accessibility_relevant"
+    }
+  ],
+  "status": "ok",
+  "taxonomy_hash": "<TAXONOMY_HASH>"
+}

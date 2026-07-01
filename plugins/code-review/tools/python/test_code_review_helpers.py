@@ -5708,6 +5708,122 @@ class TestAutoIncremental:
         assert data["diff_scope"] is None
         assert "exceeds max files" in data["review_mode_line"]
 
+    # PLN-1229 P0-D — targeted branch fill for the auto-incremental override
+    # paths the run-prefix refactor must preserve (the rarer skip reasons the
+    # happy-path tests above never reach).
+
+    def test_since_last_review_invalid_depth(self, tmp_path: Path) -> None:
+        # Depth validation runs before the state lookup — a bad tier aborts.
+        ns = self._make_args(tmp_path, since_last_review="true", depth="bogus")
+        rc = cmd_auto_incremental(ns)
+        assert rc == 1
+
+    def test_since_last_review_requires_cache_dir(self, tmp_path: Path) -> None:
+        ns = self._make_args(tmp_path, since_last_review="true")
+        ns.cache_dir = ""  # forced incremental with no cache state must abort
+        rc = cmd_auto_incremental(ns)
+        assert rc == 1
+
+    def test_since_last_review_rebase_detected(self, tmp_path: Path) -> None:
+        # Forced incremental must fail closed when the prior SHA is no longer an
+        # ancestor of the tip (a rebase) rather than emit a bogus scope.
+        state = {"reviews": {"branch:main": {"sha": "abc123"}}}
+
+        def git_side_effect(cmd: list[str]) -> str:
+            raise subprocess.CalledProcessError(1, cmd)
+
+        with patch("code_review_helpers._load_review_state", return_value=state):
+            with patch("code_review_helpers._run_git", side_effect=git_side_effect):
+                ns = self._make_args(tmp_path, since_last_review="true")
+                rc = cmd_auto_incremental(ns)
+        assert rc == 1
+
+    def test_auto_incremental_rebase_falls_back_to_full(
+        self, tmp_path: Path, capsys: Any,
+    ) -> None:
+        state = {"reviews": {"branch:main": {"sha": "abc123"}}}
+
+        def git_side_effect(cmd: list[str]) -> str:
+            if cmd[:3] == ["merge-base", "--is-ancestor", "abc123"]:
+                raise subprocess.CalledProcessError(1, cmd)
+            raise subprocess.CalledProcessError(1, cmd)
+
+        with patch("code_review_helpers._load_review_state", return_value=state):
+            with patch("code_review_helpers._run_git", side_effect=git_side_effect):
+                ns = self._make_args(tmp_path)
+                rc = cmd_auto_incremental(ns)
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out.strip())
+        assert data["diff_scope"] is None
+        assert "rebase detected" in data["review_mode_line"]
+
+    def test_auto_incremental_same_head_falls_back_to_full(
+        self, tmp_path: Path, capsys: Any,
+    ) -> None:
+        state = {"reviews": {"branch:main": {"sha": "abc123"}}}
+
+        def git_side_effect(cmd: list[str]) -> str:
+            if cmd[:3] == ["merge-base", "--is-ancestor", "abc123"]:
+                return ""
+            if cmd[:2] == ["rev-parse", "HEAD"]:
+                return "abc123\n"  # tip == last reviewed SHA
+            raise subprocess.CalledProcessError(1, cmd)
+
+        with patch("code_review_helpers._load_review_state", return_value=state):
+            with patch("code_review_helpers._run_git", side_effect=git_side_effect):
+                ns = self._make_args(tmp_path)
+                rc = cmd_auto_incremental(ns)
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out.strip())
+        assert data["diff_scope"] is None
+        assert "same HEAD" in data["review_mode_line"]
+
+    def test_auto_incremental_exceeds_max_loc(
+        self, tmp_path: Path, capsys: Any,
+    ) -> None:
+        state = {"reviews": {"branch:main": {"sha": "abc123"}}}
+
+        def git_side_effect(cmd: list[str]) -> str:
+            if cmd[:3] == ["merge-base", "--is-ancestor", "abc123"]:
+                return ""
+            if cmd[:2] == ["rev-parse", "HEAD"]:
+                return "def456\n"
+            if cmd[:2] == ["diff", "--name-only"]:
+                return "file1.ts\nfile2.ts\n"  # few files
+            if cmd[:2] == ["diff", "--shortstat"]:
+                return " 2 files changed, 3000 insertions(+), 100 deletions(-)\n"
+            raise subprocess.CalledProcessError(1, cmd)
+
+        with patch("code_review_helpers._load_review_state", return_value=state):
+            with patch("code_review_helpers._run_git", side_effect=git_side_effect):
+                ns = self._make_args(tmp_path)
+                rc = cmd_auto_incremental(ns)
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out.strip())
+        assert data["diff_scope"] is None
+        assert "exceeds max LOC" in data["review_mode_line"]
+
+    def test_auto_incremental_git_count_errors_degrade_to_zero(
+        self, tmp_path: Path, capsys: Any,
+    ) -> None:
+        # rev-parse / name-only / shortstat all failing must not abort — the
+        # counts degrade to 0 (within guardrails) and the incremental scope
+        # still emits. Covers the defensive except fallbacks.
+        state = {"reviews": {"branch:main": {"sha": "abc123"}}}
+
+        def git_side_effect(cmd: list[str]) -> str:
+            if cmd[:3] == ["merge-base", "--is-ancestor", "abc123"]:
+                return ""
+            raise subprocess.CalledProcessError(1, cmd)
+
+        with patch("code_review_helpers._load_review_state", return_value=state):
+            with patch("code_review_helpers._run_git", side_effect=git_side_effect):
+                ns = self._make_args(tmp_path)
+                rc = cmd_auto_incremental(ns)
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out.strip())
+        assert data["diff_scope"] == "abc123...HEAD"
+
     def test_default_full_review(self, tmp_path: Path, capsys: Any) -> None:
         ns = self._make_args(tmp_path, mode="github")
         rc = cmd_auto_incremental(ns)
@@ -5715,6 +5831,101 @@ class TestAutoIncremental:
         data = json.loads(capsys.readouterr().out.strip())
         assert data["diff_scope"] is None
         assert data["review_mode_line"] == "Review mode: Full review"
+
+
+class TestFinalizeCache:
+    """PLN-1229 P0-D — cmd_finalize_cache mode/scope cache-dir resolution.
+
+    finalize-cache was previously exercised only end-to-end via the local
+    branch path; these pin the github / global / PR-scoped branches (and the
+    unreadable-setup fail path) the run-prefix refactor carries through.
+    """
+
+    def _run(
+        self,
+        tmp_path: Path,
+        capsys: Any,
+        *,
+        global_cache: str,
+        mode: str = "local",
+        pr_number: str | None = None,
+        repo: str = "myrepo",
+    ) -> dict[str, Any]:
+        import argparse
+
+        from code_review_helpers import cmd_finalize_cache
+
+        setup = tmp_path / "setup.json"
+        setup.write_text(json.dumps({"global_cache": global_cache, "repo_name": repo}))
+        ns = argparse.Namespace(
+            setup_json=str(setup), mode=mode, pr_number=pr_number,
+        )
+        rc = cmd_finalize_cache(ns)
+        assert rc == 0
+        return json.loads(capsys.readouterr().out.strip())
+
+    def test_github_mode_uses_runner_temp(
+        self, tmp_path: Path, capsys: Any, monkeypatch: Any,
+    ) -> None:
+        monkeypatch.setenv("RUNNER_TEMP", str(tmp_path / "runner"))
+        data = self._run(tmp_path, capsys, global_cache="0", mode="github")
+        assert data["cache_dir"] == str(tmp_path / "runner") + "/cr-cache"
+
+    def test_global_cache_local_is_repo_scoped(
+        self, tmp_path: Path, capsys: Any, monkeypatch: Any,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        data = self._run(tmp_path, capsys, global_cache="1", repo="acme")
+        assert data["cache_dir"].endswith("/.claude/cr-cache-global-repo-acme")
+
+    def test_global_cache_github_uses_runner_temp(
+        self, tmp_path: Path, capsys: Any, monkeypatch: Any,
+    ) -> None:
+        # global_cache=1 AND github → the CI runner-temp cache, not ~/.claude.
+        monkeypatch.setenv("RUNNER_TEMP", str(tmp_path / "runner"))
+        data = self._run(tmp_path, capsys, global_cache="1", mode="github")
+        assert data["cache_dir"] == str(tmp_path / "runner") + "/cr-cache"
+
+    def test_pr_scoped_cache_dir(
+        self, tmp_path: Path, capsys: Any, monkeypatch: Any,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        data = self._run(
+            tmp_path, capsys, global_cache="0", pr_number="42", repo="acme",
+        )
+        assert data["cache_dir"].endswith("/.claude/cr-cache-repo-acme-pr-42")
+
+    def test_unreadable_setup_json_fails(self, tmp_path: Path) -> None:
+        import argparse
+
+        from code_review_helpers import cmd_finalize_cache
+
+        ns = argparse.Namespace(
+            setup_json=str(tmp_path / "missing.json"), mode="local", pr_number=None,
+        )
+        assert cmd_finalize_cache(ns) == 1
+
+
+class TestCacheCheckInputDegradation:
+    """PLN-1229 P0-D — cache-check must fail open on unreadable diff data."""
+
+    def test_missing_diff_data_degrades_to_empty(self, tmp_path: Path) -> None:
+        import argparse
+
+        out = tmp_path / "out"
+        out.mkdir()
+        ns = argparse.Namespace(
+            cache_dir=str(tmp_path / "cache"),
+            diff_data=str(tmp_path / "does_not_exist.json"),
+            prompt_hash="ph", model_id="opus", schema_version=1,
+            output_dir=str(out), global_cache=0, context_key="",
+        )
+        # A missing diff-data file must not crash the pipeline — cache-check
+        # degrades to an empty (all-uncached) result.
+        assert cmd_cache_check(ns) == 0
+        result = json.loads((out / "cache_result.json").read_text())
+        assert result["cached_files"] == []
+        assert result["uncached_files"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -6122,6 +6333,16 @@ class TestResolveScope:
         assert result["diff_scope"] == "main...HEAD"
         assert result["scope_kind"] == "branch"
         assert result["pr_auto_detected"] is False
+
+    def test_missing_setup_json_defaults_branch_to_head(self, tmp_path: Path) -> None:
+        # PLN-1229 P0-D: an unreadable setup.json must degrade the review branch
+        # to "HEAD" rather than crash resolve-scope.
+        with patch("code_review_helpers._detect_open_pr", return_value=None):
+            result = self._run(
+                "local", setup_json=str(tmp_path / "nope.json"), tmp_path=tmp_path,
+            )
+        assert result["review_branch"] == "HEAD"
+        assert result["scope_kind"] == "branch"
 
     def test_staged(self, tmp_path: Path) -> None:
         result = self._run("local", scope_args="staged", tmp_path=tmp_path)

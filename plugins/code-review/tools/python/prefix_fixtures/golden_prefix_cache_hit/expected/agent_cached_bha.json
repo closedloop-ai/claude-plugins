@@ -1,0 +1,19 @@
+{
+  "findings": [
+    {
+      "category": "Correctness",
+      "code_snippet": "C0 = 0",
+      "confidence": 0.8,
+      "emitted_at": "<TS>",
+      "explanation": "Prior review flagged an unnamed constant here.",
+      "file": "src/constants.py",
+      "finding_scope": "diff",
+      "issue": "Cached: magic constant should be named.",
+      "line": 1,
+      "recommendation": "Extract the literal into a named constant.",
+      "reviewer": "bha_p0",
+      "severity": "MEDIUM",
+      "source": "agent"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "base_ref": "main",
+  "diff_scope": "main...HEAD",
+  "diff_tip": "HEAD",
+  "head_ref": "feature",
+  "head_sha": "",
+  "path_filter": "",
+  "pr_auto_detected": false,
+  "pr_number": null,
+  "review_branch": "feature",
+  "review_root": "",
+  "scope_kind": "branch",
+  "worktree_path": ""
+}
