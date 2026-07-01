@@ -37,6 +37,9 @@ plugins/code-review/
     python/golden_fixture_harness.py     Golden fixture harness: replays canonical inputs through helper subcommands and diffs against expected envelopes (PLN-719 Phase 8)
     python/test_golden_fixtures.py       Pytest driver that runs every fixture under tools/python/fixtures/
     python/fixtures/<name>/              Per-fixture directory (config.yaml + inputs/ + expected/); 3 full scenarios + 6 README-stubs for future coverage
+    python/prefix_golden_harness.py      Prefix golden harness: walks the deterministic prefix (setup→spawn-spec) in-process against real git fixtures and snapshots every intermediate artifact (PLN-1229 Phase 0)
+    python/test_prefix_golden.py         Pytest driver for the prefix harness: determinism oracle + golden diff across the prefix_fixtures/ matrix
+    python/prefix_fixtures/<name>/       Per-fixture directory (expected/ golden snapshots); 7 branch scenarios (standard, fast-path, hygiene-only, empty-diff, cache-hit, since-last-review, coverage-critic)
 ```
 
 ### Foundation (PLN-719, schema_version 1)
