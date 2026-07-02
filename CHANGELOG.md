@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.3.0
+
+#### Changed
+- `run-prefix` now runs the **entire** deterministic review prefix in one process, folding in the Gate B model-routing (`route`) and file partitioning that previously sat outside the runner. After the cache check it computes the routing decision itself (writing `spawn.json.route`), then — unless the fast path is selected — partitions the changed files (applying the reviewer-budget caps and, when a cache directory is active, restricting partitions to the files that missed the cache). In fast-path mode partitioning is skipped entirely and the cached Bug-Hunter-A replay artifact is removed. The terminal result is now `ready_for_reviewers`, which carries the `fast_path` decision, the Bug-Hunter-A agent cap, and the cache status message so the orchestrator can print the routing and cache notices without re-reading `spawn.json`; a routing failure is surfaced as an `error` result. Documented in `SCHEMA.md`.
+- The subprocess A/B parity oracle now walks the whole prefix through partitioning and spawn-spec derivation on both sides, so its byte-identical-artifact guarantee covers the fast-path and partitioned branches (including `partitions.json` and `spawn.json`) across all seven fixtures.
+
 ### code-review v3.2.0
 
 #### Added
