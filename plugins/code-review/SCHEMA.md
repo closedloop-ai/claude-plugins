@@ -495,51 +495,63 @@ Stages from plans 01/03/05/06 are present in `run_plan.json` but marked
 
 ## 7b. `run-prefix` result contract (PLN-1229)
 
-`run-prefix` runs the deterministic prefix (stages 01→`cache_check`) in ONE
-process instead of one orchestrator turn per stage. It reads `run_plan.json` +
-`setup.json` from `--cr-dir`, walks from `--resume-from` (default: the first
-plan stage), and stops at the next genuine decision point — emitting a status
-JSON (to stdout, or `--output <path>`) that tells the orchestrator what to do
-next. The runner is **resumable**: after handling a pause the orchestrator
-re-invokes `run-prefix --resume-from <resume_stage>`. Because each segment is a
-fresh process, the `depends_on` `completed` set is reconstructed from artifacts
-on disk (a prior stage counts as done iff its literal `expected_outputs` exist).
+`run-prefix` runs the **entire** deterministic prefix (stages 01 through Gate B
+`route` + `partition` + `derive-spawn-spec`) in ONE process instead of one
+orchestrator turn per stage. It reads `run_plan.json` + `setup.json` from
+`--cr-dir`, walks from `--resume-from` (default: the first plan stage), and stops
+at the next genuine decision point — emitting a status JSON (to stdout, or
+`--output <path>`) that tells the orchestrator what to do next. The runner is
+**resumable**: after handling a pause the orchestrator re-invokes
+`run-prefix --resume-from <resume_stage>`. Because each segment is a fresh
+process, the `depends_on` `completed` set is reconstructed from artifacts on disk
+(a prior stage counts as done iff its literal `expected_outputs` exist).
 
 **Result fields:**
 
-| Field           | Type            | Meaning                                                                 |
-| --------------- | --------------- | ----------------------------------------------------------------------- |
-| `next_action`   | string (enum)   | The pause reason — authoritative (read this, not the exit code).        |
-| `resume_stage`  | string \| null  | The stage id to pass as `--resume-from` on the next invocation.         |
-| `singleton`     | string \| null  | `"extract_signals"` \| `"coverage_critic"` when `needs_singleton`.      |
-| `failed_stage`  | string \| null  | The aborting stage id when `next_action == "error"`.                    |
-| `ran_stages`    | string[]        | Stage ids executed (or `continue`-failed) this segment, in order.       |
-| `message`       | string \| null  | Short diagnostic on `error`, else null.                                 |
+| Field                  | Type            | Meaning                                                                 |
+| ---------------------- | --------------- | ----------------------------------------------------------------------- |
+| `next_action`          | string (enum)   | The pause reason — authoritative (read this, not the exit code).        |
+| `resume_stage`         | string \| null  | The stage id to pass as `--resume-from` on the next invocation.         |
+| `singleton`            | string \| null  | `"extract_signals"` \| `"coverage_critic"` when `needs_singleton`.      |
+| `failed_stage`         | string \| null  | The aborting stage id when `next_action == "error"`.                    |
+| `ran_stages`           | string[]        | Stage ids executed (or `continue`-failed) this segment, in order.       |
+| `message`              | string \| null  | Short diagnostic on `error`, else null.                                 |
+| `fast_path`            | bool            | Gate B routing decision. Present **only** on `ready_for_reviewers`.      |
+| `max_bha_agents`       | int \| null     | Gate B Bug-Hunter-A agent cap. Present **only** on `ready_for_reviewers`.|
+| `cache_status_message` | string \| null  | `cache_result.json.status_message` to print. Present on `ready_for_reviewers` and `hygiene_exit`. |
+
+`next_action`, `resume_stage`, `singleton`, `failed_stage`, `ran_stages`, and
+`message` are present on every result. The three Gate-B fields above are
+**omitted entirely** (not set to null) on the results that don't carry them —
+`fast_path` / `max_bha_agents` appear only on `ready_for_reviewers`, and
+`cache_status_message` only on `ready_for_reviewers` / `hygiene_exit`. Read them
+with `.get()`, not direct indexing.
 
 **`next_action` values:**
 
-| Value               | Fires at                              | Orchestrator does next                                                        |
-| ------------------- | ------------------------------------- | ---------------------------------------------------------------------------- |
-| `needs_singleton`   | `stage_11` / `stage_15` `needs_agent` | Spawn the `singleton` agent, write its output, re-invoke from `resume_stage`. |
-| `hygiene_exit`      | Gate A (`hygiene_only` after hygiene) | Present hygiene findings and stop (no verdict/footer).                        |
-| `ready_for_route`   | reaching `stage_17_partition`         | Run Gate B (`route`) + partition + the rest of the walk.                      |
-| `error`             | a stage aborted / a gate failed       | Fall back to the per-stage walk from `failed_stage`; partials are preserved.  |
+| Value                 | Fires at                              | Orchestrator does next                                                        |
+| --------------------- | ------------------------------------- | ---------------------------------------------------------------------------- |
+| `needs_singleton`     | `stage_11` / `stage_15` `needs_agent` | Spawn the `singleton` agent, write its output, re-invoke from `resume_stage`. |
+| `hygiene_exit`        | Gate A (`hygiene_only` after hygiene) | Print `cache_status_message`, present hygiene findings, stop (no verdict).    |
+| `ready_for_reviewers` | the whole deterministic prefix is done | Print `cache_status_message` + the `fast_path` notice; spawn the reviewer fleet (`stage_20`). |
+| `error`               | a stage aborted / a gate failed       | Fall back to the per-stage walk from `failed_stage`; partials are preserved.  |
 
-`ready_for_route` distinguishes its two cases by `resume_stage`: a non-null
-`resume_stage` (`stage_17_partition`) is the normal boundary — run Gate B +
-partition from there. A **null** `resume_stage` means the walk reached the end
-of the plan without a partition stage (e.g. a depth tier that filters partition
-out); there is nothing left to route, so the orchestrator skips Gate B and
-partition and proceeds directly to the reviewer fleet.
+On `ready_for_reviewers` the runner has already run Gate B `route` (writing
+`spawn.json.route`) and — unless `fast_path` — `stage_17_partition` (with the
+`--loc-budget 500 --max-files 25 --max-bha-agents <N>` augmentation, and the
+`uncached_diff_data.json` swap when a cache dir is active). In `fast_path` mode
+partition is skipped (no `partitions.json` / `patches_p<N>.txt`) and any cached
+BHA replay artifact is deleted. The `fast_path` / `max_bha_agents` /
+`cache_status_message` fields let the orchestrator print the routing + cache
+notices without re-reading `spawn.json`.
 
 The exit code is `0` for every well-formed result (including `error`) — the
-`next_action` field is the contract. Route + partition (Segment 3) fold into the
-runner in Phase 2, at which point `ready_for_route` becomes `ready_for_reviewers`
-(carrying `fast_path` + `cache_status_message`). The `on_failure` policy of each
-stage is honored exactly as the Walker Contract prescribes: `abort` → `error`;
-`continue` → proceed; `continue_with_coverage_gap` → proceed after writing an
+`next_action` field is the contract. The `on_failure` policy of each stage is
+honored exactly as the Walker Contract prescribes: `abort` → `error`; `continue`
+→ proceed; `continue_with_coverage_gap` → proceed after writing an
 `agent-failure` system finding to `agent_<stage>-failed.json` (collected by
-`collect-findings`).
+`collect-findings`). A `route` failure is surfaced as `error` with
+`failed_stage: "route"`.
 
 ---
 

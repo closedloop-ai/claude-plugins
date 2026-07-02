@@ -231,7 +231,7 @@ The helper script is a multi-subcommand Python CLI. The orchestrator invokes it 
 | `finalize-result` | Consolidates validated findings + coverage state + verdict into the canonical `review_result.json` envelope; deep-merges `<cr_dir>/telemetry.json` into the canonical `telemetry` block and populates `telemetry.cache_hit_rate["bha"]` from `cache_result.json` (PLN-719 Phase 7/9) |
 | `arbitrate-budget` | Applies the canonical reviewer cap policy; emits coverage gaps for required reviewers that overflow (PLN-719) |
 | `prepare-run` | Emits a declarative `run_plan.json` describing the 30-stage pipeline (PLN-719) |
-| `run-prefix` | Runs the deterministic prefix (setup→cache-check) in one process, resolving tokens and honoring gates/`on_failure`; pauses at the hygiene-only exit, a singleton needing an agent, or the route/partition boundary, emitting a status JSON and resuming from a given stage (PLN-1229) |
+| `run-prefix` | Runs the whole deterministic prefix (setup through Gate B route + partition + spawn-spec derivation) in one process, resolving tokens and honoring gates/`on_failure`; pauses at the hygiene-only exit or a singleton needing an agent, otherwise returns `ready_for_reviewers` with the fast-path/cache-status decision — emitting a status JSON and resuming from a given stage (PLN-1229) |
 
 ## GitHub CI Mode
 
