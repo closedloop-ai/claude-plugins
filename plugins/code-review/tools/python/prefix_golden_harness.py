@@ -917,16 +917,13 @@ def run_prefix_fixture(
 #
 # A and B share the canonical stage/gate TABLES but implement the walk WRAPPER
 # independently (A here, B in code_review_helpers), so a wrapper bug shared by
-# both cannot hide. Both stop at the Phase-1 boundary (before stage_17_partition
-# — route + partition land in Phase 2). Determinism across the two independent
-# stage-0 setups is provided by the same normalization the golden test relies on.
+# both cannot hide. Both run the WHOLE deterministic prefix — including Gate B
+# route + partition (Phase 2) — and stop at the reviewer fleet. Determinism
+# across the two independent stage-0 setups is provided by the same
+# normalization the golden test relies on.
 
 # The production helpers CLI both sides shell out to.
 HELPERS_PATH = Path(code_review_helpers.__file__).resolve()
-
-# The A-side stops before the partition stage: Gate B (route) + partition are
-# still the orchestrator's job in Phase 1, so run-prefix (B) never runs them.
-PHASE1_STOP_STAGE = _PARTITION_STAGE_ID
 
 
 def _make_fake_gh(bin_dir: Path) -> Path:
@@ -976,6 +973,37 @@ def _run_stage_subprocess(
     return proc.returncode
 
 
+def _run_route_gate_b_subprocess(
+    ctx: PrefixContext, repo: Path, env: dict[str, str],
+) -> None:
+    """A-side Gate B: run ``route`` as a subprocess after ``stage_19_cache_check``.
+
+    Subprocess twin of ``_run_route_gate_b``. Computes ``fast_path`` /
+    ``max_bha_agents`` (written into ``spawn.json.route``) and deletes the cached
+    BHA replay artifact on fast-path.
+    """
+    cr = ctx.cr_dir
+    intent = _resolve_token("<INTENT>", ctx)
+    _run_stage_subprocess(
+        "route",
+        [
+            "--diff-data", str(cr / "diff_data.json"),
+            "--critic-gates", ".closedloop-ai/settings/critic-gates.json",
+            "--intent", intent or "mixed",
+            "--cr-dir", str(cr),
+        ],
+        repo, None, env,
+    )
+    route = _read_json(cr / "spawn.json").get("route", {})
+    ctx.fast_path = bool(route.get("fast_path", False))
+    mba = route.get("max_bha_agents")
+    ctx.max_bha_agents = int(mba) if isinstance(mba, (int, float)) else None
+    if ctx.fast_path:
+        cached_bha = cr / "agent_cached_bha.json"
+        if cached_bha.exists():
+            cached_bha.unlink()
+
+
 def _execute_stage_subprocess(
     stage: dict[str, Any],
     ctx: PrefixContext,
@@ -985,8 +1013,8 @@ def _execute_stage_subprocess(
 ) -> StageResult:
     """Subprocess twin of ``_execute_stage`` — identical control flow, real exec.
 
-    No partition augmentation: the A-side stops before ``stage_17_partition``,
-    so that branch never runs in Phase 1.
+    Applies the same Gate B partition handling: fast-path skip and the
+    non-fast-path arg augmentation.
     """
     stage_id = stage["id"]
     if not stage.get("enabled", True):
@@ -996,6 +1024,8 @@ def _execute_stage_subprocess(
     if stage_id == _SETUP_STAGE_ID:
         completed.add(stage_id)
         return StageResult(stage_id, "ran")
+    if stage_id == _PARTITION_STAGE_ID and ctx.fast_path:
+        return StageResult(stage_id, "skipped_fast_path")
 
     kind = stage.get("kind")
     if kind != "helper":
@@ -1004,6 +1034,8 @@ def _execute_stage_subprocess(
         )
 
     resolved = _resolve_args(stage.get("args", []), ctx)
+    if stage_id == _PARTITION_STAGE_ID:
+        resolved = _augment_partition_args(resolved, ctx)
     stdout_target = stage.get("stdout")
     rc = _run_stage_subprocess(
         stage["subcommand"], resolved, repo,
@@ -1030,10 +1062,10 @@ def subprocess_walk_prefix(
     repo: Path,
     env: dict[str, str],
     *,
-    stop_before: str = PHASE1_STOP_STAGE,
+    stop_before: str = REVIEWER_FLEET_STAGE,
     singleton_stubs: dict[str, dict[str, Any]] | None = None,
 ) -> list[StageResult]:
-    """A-side walk: subprocess per stage, Gate A + singleton dispatch, no route."""
+    """A-side walk: subprocess per stage, Gate A + singleton dispatch + Gate B."""
     stubs = singleton_stubs or {}
     completed: set[str] = set()
     results: list[StageResult] = []
@@ -1046,6 +1078,8 @@ def subprocess_walk_prefix(
             _singleton_dispatch(stage_id, ctx, stubs)
         if stage_id == _HYGIENE_STAGE_ID and ctx.flags.get("hygiene_only"):
             break  # Gate A
+        if stage_id == _CACHE_CHECK_STAGE_ID:
+            _run_route_gate_b_subprocess(ctx, repo, env)  # Gate B
     return results
 
 

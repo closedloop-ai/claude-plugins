@@ -253,28 +253,37 @@ def test_prefix_matches_golden(name: str, tmp_path: Path, update_golden: bool) -
 # The refactor guarantee: run the deterministic prefix two ways and assert the
 # artifacts are byte-identical (modulo review_id / timestamps / abs paths, which
 # normalization scrubs). A-side is the subprocess-per-stage walk (what start.md
-# does today); B-side is production ``run-prefix``. Both stop at the Phase-1
-# boundary (before stage_17_partition — route + partition are Phase 2), so the
-# compared artifact set runs 01→cache_check. A and B implement the walk WRAPPER
-# independently, so a shared wrapper bug cannot hide.
+# does today); B-side is production ``run-prefix``. Both run the WHOLE
+# deterministic prefix — including Gate B route + partition — and stop at the
+# reviewer fleet, so the compared artifact set runs 01→derive-spawn-spec. A and
+# B implement the walk WRAPPER independently, so a shared wrapper bug can't hide.
 
 # The pause sequence each fixture drives run-prefix through, as
 # ``<next_action>[:<singleton>]`` per emitted segment. Pins the resumable
-# 3-segment contract at the integration level (the two singletons almost always
-# fire; hygiene-only is the one-segment Gate A exit).
+# segment contract at the integration level (the two singletons almost always
+# fire; hygiene-only is the one-segment Gate A exit; the terminal segment runs
+# Gate B route + partition and returns ready_for_reviewers).
 _EXPECTED_SEGMENTS: dict[str, list[str]] = {
-    "golden_prefix_standard": ["needs_singleton:extract_signals", "ready_for_route"],
-    "golden_prefix_fast_path": ["needs_singleton:extract_signals", "ready_for_route"],
+    "golden_prefix_standard": [
+        "needs_singleton:extract_signals", "ready_for_reviewers",
+    ],
+    "golden_prefix_fast_path": [
+        "needs_singleton:extract_signals", "ready_for_reviewers",
+    ],
     "golden_prefix_hygiene_only": ["hygiene_exit"],
-    "golden_prefix_empty_diff": ["needs_singleton:extract_signals", "ready_for_route"],
-    "golden_prefix_cache_hit": ["needs_singleton:extract_signals", "ready_for_route"],
+    "golden_prefix_empty_diff": [
+        "needs_singleton:extract_signals", "ready_for_reviewers",
+    ],
+    "golden_prefix_cache_hit": [
+        "needs_singleton:extract_signals", "ready_for_reviewers",
+    ],
     "golden_prefix_since_last_review": [
-        "needs_singleton:extract_signals", "ready_for_route",
+        "needs_singleton:extract_signals", "ready_for_reviewers",
     ],
     "golden_prefix_coverage_critic": [
         "needs_singleton:extract_signals",
         "needs_singleton:coverage_critic",
-        "ready_for_route",
+        "ready_for_reviewers",
     ],
 }
 
@@ -323,8 +332,15 @@ def test_run_prefix_pause_sequence(name: str, tmp_path: Path) -> None:
     _snaps, statuses = run_prefix_fixture_via_runner(tmp_path, _FIXTURE_FACTORIES[name]())
     assert _segment_labels(statuses) == _EXPECTED_SEGMENTS[name]
     # The final segment resolves the pipeline (no dangling needs_singleton).
-    assert statuses[-1]["next_action"] in ("ready_for_route", "hygiene_exit")
-    assert statuses[-1]["failed_stage"] is None
+    terminal = statuses[-1]
+    assert terminal["next_action"] in ("ready_for_reviewers", "hygiene_exit")
+    assert terminal["failed_stage"] is None
+    # A ready_for_reviewers terminal carries the Gate B routing decision the
+    # orchestrator prints without re-reading spawn.json.
+    if terminal["next_action"] == "ready_for_reviewers":
+        assert isinstance(terminal["fast_path"], bool)
+        assert "cache_status_message" in terminal
+        assert "max_bha_agents" in terminal
     # Every needs_singleton names the sibling consolidate stage to resume at.
     for status in statuses:
         if status["next_action"] == "needs_singleton":

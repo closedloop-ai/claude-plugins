@@ -10332,9 +10332,13 @@ def cmd_evaluate_gate(args: argparse.Namespace) -> int:
 #                  manifest is ``needs_agent`` → pause so the orchestrator can
 #                  spawn the one synchronous agent, then resume at the sibling
 #                  consolidate stage.
-#   * Gate B     — reaching ``stage_17_partition``. Phase 1 stops here and
-#                  returns ``ready_for_route``; folding route + partition into
-#                  the runner (→ ``ready_for_reviewers``) is Phase 2.
+#   * Gate B     — after ``stage_19_cache_check`` the runner invokes ``route``
+#                  (model routing) itself, then runs ``stage_17_partition``
+#                  (skipped in fast-path) and ``derive-spawn-spec`` before
+#                  stopping at the reviewer fleet — returning
+#                  ``ready_for_reviewers`` with ``fast_path`` +
+#                  ``cache_status_message`` so the orchestrator prints them
+#                  without re-reading ``spawn.json``.
 #
 # The runner is RESUMABLE: after handling a pause the orchestrator re-invokes
 # ``run-prefix --resume-from <stage>``. Because each segment is a fresh process,
@@ -10354,7 +10358,9 @@ def cmd_evaluate_gate(args: argparse.Namespace) -> int:
 _RP_SETUP_STAGE = "stage_01_setup"
 _RP_AUTO_INCREMENTAL_STAGE = "stage_07_auto_incremental"
 _RP_HYGIENE_STAGE = "stage_12_hygiene"
-_RP_PARTITION_STAGE = "stage_17_partition"  # Phase-1 terminal boundary
+_RP_CACHE_CHECK_STAGE = "stage_19_cache_check"  # Gate B (route) fires after this
+_RP_PARTITION_STAGE = "stage_17_partition"  # skipped in fast-path; else augmented
+_RP_REVIEWER_FLEET_STAGE = "stage_20_spawn_reviewers"  # terminal boundary (LLM fleet)
 
 # The two PLN-725 singleton *prepare* stages: the manifest each writes and the
 # path (within that manifest JSON) to the ``status`` field the walker reads to
@@ -10393,6 +10399,9 @@ class _RunPrefixContext:
     #: Runtime token overrides keyed by literal token string. Currently only
     #: ``<DIFF_SCOPE>`` is overridden (by stage_07 auto-incremental narrowing).
     overrides: dict[str, str] = field(default_factory=dict)
+    #: Gate B route decision, populated after stage_19_cache_check runs ``route``.
+    fast_path: bool = False
+    max_bha_agents: int | None = None
 
 
 def _rp_read_json(path: Path) -> dict[str, Any]:
@@ -10649,6 +10658,11 @@ def _execute_stage_inprocess(
         # so dependents resolve.
         completed.add(stage_id)
         return "ran", None
+    if stage_id == _RP_PARTITION_STAGE and ctx.fast_path:
+        # Gate B fast-path (start.md Gate B step 5): partition is skipped
+        # entirely — the single fast-path reviewer consumes patches_all.txt
+        # directly, so no partitions.json / patches_p<N>.txt are produced.
+        return "skipped_fast_path", None
 
     kind = stage.get("kind")
     if kind != "helper":
@@ -10668,6 +10682,8 @@ def _execute_stage_inprocess(
     try:
         with contextlib.redirect_stderr(err_buf):
             resolved = _rp_resolve_args(stage.get("args", []) or [], ctx)
+            if stage_id == _RP_PARTITION_STAGE:
+                resolved = _rp_augment_partition_args(resolved, ctx)
             ns = parser.parse_args([stage["subcommand"], *resolved])
             stdout_target = stage.get("stdout")
             rc = _rp_dispatch(
@@ -10766,10 +10782,88 @@ def _rp_evaluate_gates(
     return True, None
 
 
+def _rp_augment_partition_args(
+    resolved: list[str], ctx: _RunPrefixContext,
+) -> list[str]:
+    """Apply Gate B's partition augmentation (start.md Gate B step 4).
+
+    For the standard (non-fast-path) flow the walker passes
+    ``--loc-budget 500 --max-files 25 --max-bha-agents <N>`` on top of the plan
+    args, and — when a cache dir is active — swaps ``--diff-data`` to
+    ``uncached_diff_data.json`` so partitions only contain files that missed the
+    cache.
+    """
+    out = list(resolved)
+    cache_dir = _rp_resolve_token("<CACHE_DIR>", ctx)
+    uncached = ctx.cr_dir / "uncached_diff_data.json"
+    if cache_dir and uncached.exists():
+        out = [
+            str(uncached) if a.endswith("/diff_data.json") else a
+            for a in out
+        ]
+    out += ["--loc-budget", "500", "--max-files", "25"]
+    if ctx.max_bha_agents is not None:
+        out += ["--max-bha-agents", str(ctx.max_bha_agents)]
+    return out
+
+
+def _rp_run_route(ctx: _RunPrefixContext, parser: argparse.ArgumentParser) -> int:
+    """Run Gate B ``route`` after ``stage_19_cache_check`` (start.md Gate B).
+
+    ``route`` is not a canonical plan stage — the walker invokes it between
+    cache-check and partition to compute ``fast_path`` / ``max_bha_agents`` and
+    write the ``route`` section into ``spawn.json``. Caches the decision on
+    ``ctx``; on fast-path, deletes any cached-BHA replay artifact (the fast-path
+    reviewer bypasses the BHA cache). Returns the ``route`` return code.
+    """
+    cr = ctx.cr_dir
+    intent = _rp_resolve_token("<INTENT>", ctx)
+    err_buf = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err_buf):
+            ns = parser.parse_args([
+                "route",
+                "--diff-data", str(cr / "diff_data.json"),
+                "--critic-gates", ".closedloop-ai/settings/critic-gates.json",
+                "--intent", intent or "mixed",
+                "--cr-dir", str(cr),
+            ])
+            rc = _rp_dispatch(ns.func, ns, None)
+    except (SystemExit, Exception):  # noqa: BLE001 — a route crash is a run failure
+        rc = 1
+    finally:
+        captured = err_buf.getvalue()
+        if captured:
+            sys.stderr.write(captured)
+    if rc != 0:
+        return rc
+
+    route = _rp_read_json(cr / "spawn.json").get("route", {})
+    ctx.fast_path = bool(route.get("fast_path", False)) if isinstance(route, dict) else False
+    mba = route.get("max_bha_agents") if isinstance(route, dict) else None
+    ctx.max_bha_agents = int(mba) if isinstance(mba, (int, float)) else None
+    if ctx.fast_path:
+        cached_bha = cr / "agent_cached_bha.json"
+        if cached_bha.exists():
+            cached_bha.unlink()
+    return 0
+
+
+def _rp_cache_status_message(cr_dir: Path) -> str | None:
+    """The ``cache_result.json`` status message the orchestrator prints, or None.
+
+    start.md Gate A/B print ``cache_result.json.status_message`` when a cache dir
+    is active; returning it lets the orchestrator print it without re-reading the
+    artifact.
+    """
+    msg = _rp_read_json(cr_dir / "cache_result.json").get("status_message")
+    return str(msg) if msg else None
+
+
 def cmd_run_prefix(args: argparse.Namespace) -> int:
     """Run the deterministic prefix in-process until the next pause point.
 
-    PLN-1229 Phase 1. Consumes ``run_plan.json`` + ``setup.json`` from
+    PLN-1229 Phase 1-2. Consumes ``run_plan.json`` + ``setup.json`` from
     ``--cr-dir`` (both already written by the orchestrator's stage 0) and walks
     stages from ``--resume-from`` (default: the first plan stage) to the next
     genuine decision point, emitting a small status JSON telling the orchestrator
@@ -10779,15 +10873,18 @@ def cmd_run_prefix(args: argparse.Namespace) -> int:
     Result ``next_action`` values (authoritative — read the JSON, not the exit
     code, which is always 0 for a well-formed run):
 
-      * ``needs_singleton``  — spawn the ``singleton`` agent, write its output,
-                               then re-invoke ``--resume-from <resume_stage>``.
-      * ``hygiene_exit``     — Gate A: present hygiene findings and stop.
-      * ``ready_for_route``  — reached ``stage_17_partition``; run Gate B (route)
-                               + the rest of the walk. (Phase 2 folds route +
-                               partition in and returns ``ready_for_reviewers``.)
-      * ``error``            — a stage aborted; ``failed_stage`` is set. The
-                               orchestrator falls back to the per-stage walk from
-                               there. Partial artifacts are preserved.
+      * ``needs_singleton``    — spawn the ``singleton`` agent, write its output,
+                                 then re-invoke ``--resume-from <resume_stage>``.
+      * ``hygiene_exit``       — Gate A: present hygiene findings and stop.
+      * ``ready_for_reviewers``— the whole deterministic prefix (through Gate B
+                                 route + partition + derive-spawn-spec) is done;
+                                 spawn the reviewer fleet. Carries ``fast_path``,
+                                 ``max_bha_agents``, and ``cache_status_message``
+                                 so the orchestrator prints them without
+                                 re-reading ``spawn.json``.
+      * ``error``              — a stage aborted; ``failed_stage`` is set. The
+                                 orchestrator falls back to the per-stage walk
+                                 from there. Partial artifacts are preserved.
     """
     cr_dir = Path(args.cr_dir)
     run_plan = _rp_read_json(cr_dir / "run_plan.json")
@@ -10819,6 +10916,18 @@ def cmd_run_prefix(args: argparse.Namespace) -> int:
             print(text)
         return 0
 
+    def reviewers_result() -> dict[str, Any]:
+        return {
+            "next_action": "ready_for_reviewers",
+            "resume_stage": None,
+            "singleton": None,
+            "failed_stage": None,
+            "fast_path": ctx.fast_path,
+            "max_bha_agents": ctx.max_bha_agents,
+            "cache_status_message": _rp_cache_status_message(cr_dir),
+            "message": None,
+        }
+
     ran: list[str] = []
     started = not resume_from
     for stage in stages:
@@ -10828,16 +10937,10 @@ def cmd_run_prefix(args: argparse.Namespace) -> int:
                 started = True
             else:
                 continue
-        # Phase-1 terminal boundary: Gate B (route) + partition are still the
-        # orchestrator's job. Stop BEFORE executing partition.
-        if sid == _RP_PARTITION_STAGE:
-            return emit({
-                "next_action": "ready_for_route",
-                "resume_stage": sid,
-                "singleton": None,
-                "failed_stage": None,
-                "message": None,
-            })
+        # Terminal boundary: the reviewer fleet is the first LLM (non-
+        # deterministic) stage. The whole deterministic prefix is done.
+        if sid == _RP_REVIEWER_FLEET_STAGE:
+            return emit(reviewers_result())
 
         status, message = _execute_stage_inprocess(stage, ctx, parser, completed)
         if status == "failed_abort":
@@ -10868,8 +10971,21 @@ def cmd_run_prefix(args: argparse.Namespace) -> int:
                 "resume_stage": None,
                 "singleton": None,
                 "failed_stage": None,
+                "cache_status_message": _rp_cache_status_message(cr_dir),
                 "message": None,
             })
+
+        # Gate B — after cache-check, run ``route`` to compute fast_path /
+        # max_bha_agents (writing spawn.json.route) before the partition stage.
+        if sid == _RP_CACHE_CHECK_STAGE and status != "skipped":
+            if _rp_run_route(ctx, parser) != 0:
+                return emit({
+                    "next_action": "error",
+                    "resume_stage": _RP_PARTITION_STAGE,
+                    "singleton": None,
+                    "failed_stage": "route",
+                    "message": "Gate B route failed",
+                })
 
         # PLN-725 singleton pause — a needs_agent prepare stage yields to the
         # orchestrator to spawn one synchronous agent, then resume at the sibling.
@@ -10882,15 +10998,9 @@ def cmd_run_prefix(args: argparse.Namespace) -> int:
                 "message": None,
             })
 
-    # Walked to the end without reaching the partition stage (e.g. a depth tier
-    # that filters partition out). No route needed; signal completion.
-    return emit({
-        "next_action": "ready_for_route",
-        "resume_stage": None,
-        "singleton": None,
-        "failed_stage": None,
-        "message": None,
-    })
+    # Walked to the end without hitting the reviewer fleet (e.g. a depth tier
+    # whose plan ends earlier). The deterministic prefix is complete either way.
+    return emit(reviewers_result())
 
 
 def cmd_prepare_run(args: argparse.Namespace) -> int:

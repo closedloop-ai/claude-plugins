@@ -22751,31 +22751,36 @@ class TestCmdRunPrefixReturns:
         assert result["failed_stage"] == "stage_bad"
         assert result["message"]
 
-    def test_ready_for_route_at_partition_boundary(
+    def test_ready_for_reviewers_at_fleet_boundary(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
     ) -> None:
-        # Reaching the partition stage stops the walk BEFORE running it (Phase 1).
+        # Reaching the reviewer fleet stops the walk BEFORE running it and
+        # returns the Gate B routing fields the orchestrator prints.
         self._write_plan(tmp_path, [
             {"id": "stage_01_setup", "kind": "helper", "subcommand": "setup",
              "enabled": True, "depends_on": [], "expected_outputs": []},
-            {"id": "stage_17_partition", "kind": "helper", "subcommand": "partition",
+            {"id": "stage_20_spawn_reviewers", "kind": "agent_fleet",
              "enabled": True, "depends_on": [], "args": [], "expected_outputs": []},
         ])
         result = self._run(tmp_path, capsys)
-        assert result["next_action"] == "ready_for_route"
-        assert result["resume_stage"] == "stage_17_partition"
+        assert result["next_action"] == "ready_for_reviewers"
+        assert result["resume_stage"] is None
         assert result["failed_stage"] is None
+        # Gate B routing fields are always present on this terminal.
+        assert result["fast_path"] is False  # no route ran (no cache-check stage)
+        assert "max_bha_agents" in result
+        assert "cache_status_message" in result
 
-    def test_ready_for_route_at_end_when_no_partition(
+    def test_ready_for_reviewers_at_end(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
     ) -> None:
-        # A plan that ends before any partition stage completes cleanly.
+        # A plan that ends before the reviewer fleet completes cleanly.
         self._write_plan(tmp_path, [
             {"id": "stage_01_setup", "kind": "helper", "subcommand": "setup",
              "enabled": True, "depends_on": [], "expected_outputs": []},
         ])
         result = self._run(tmp_path, capsys)
-        assert result["next_action"] == "ready_for_route"
+        assert result["next_action"] == "ready_for_reviewers"
         assert result["resume_stage"] is None
 
     def test_output_flag_writes_status_to_file(self, tmp_path: Path) -> None:
@@ -22789,4 +22794,68 @@ class TestCmdRunPrefixReturns:
         rc = cmd_run_prefix(self._ns(tmp_path, output=str(out_path)))
         assert rc == 0
         result = json.loads(out_path.read_text())
-        assert result["next_action"] == "ready_for_route"
+        assert result["next_action"] == "ready_for_reviewers"
+
+
+class TestRunPrefixRoutePartition:
+    """Gate B route + partition folding (PLN-1229 Phase 2)."""
+
+    def test_augment_partition_args_adds_budget_flags(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_augment_partition_args
+
+        ctx = _rp_ctx(tmp_path, max_bha_agents=7)
+        out = _rp_augment_partition_args(["--diff-data", "x/diff_data.json"], ctx)
+        assert "--loc-budget" in out and "500" in out
+        assert "--max-files" in out and "25" in out
+        # max_bha_agents from the route decision is threaded through.
+        assert out[out.index("--max-bha-agents") + 1] == "7"
+
+    def test_augment_partition_swaps_to_uncached_when_cached(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _rp_augment_partition_args
+
+        (tmp_path / "cache_config.json").write_text(json.dumps({"cache_dir": "/c"}))
+        (tmp_path / "uncached_diff_data.json").write_text("{}")
+        ctx = _rp_ctx(tmp_path)
+        out = _rp_augment_partition_args(
+            ["--diff-data", str(tmp_path / "diff_data.json")], ctx,
+        )
+        # The plan's diff_data.json is swapped for the uncached subset.
+        assert str(tmp_path / "uncached_diff_data.json") in out
+        assert str(tmp_path / "diff_data.json") not in out
+
+    def test_augment_partition_no_swap_without_cache(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_augment_partition_args
+
+        # No cache_config → no uncached swap; diff-data stays as-is.
+        ctx = _rp_ctx(tmp_path)
+        out = _rp_augment_partition_args(
+            ["--diff-data", str(tmp_path / "diff_data.json")], ctx,
+        )
+        assert str(tmp_path / "diff_data.json") in out
+
+    def test_fast_path_skips_partition_stage(self, tmp_path: Path) -> None:
+        from code_review_helpers import _execute_stage_inprocess
+
+        ctx = _rp_ctx(tmp_path, fast_path=True)
+
+        def _boom(_ns: argparse.Namespace) -> int:
+            raise AssertionError("partition must not run in fast-path")
+
+        parser = _fake_stage_parser(_boom)
+        status, _msg = _execute_stage_inprocess(
+            {"id": "stage_17_partition", "kind": "helper", "subcommand": "fake",
+             "enabled": True, "depends_on": [], "args": [], "expected_outputs": []},
+            ctx, parser, set(),
+        )
+        assert status == "skipped_fast_path"
+
+    def test_cache_status_message_read_from_artifact(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_cache_status_message
+
+        assert _rp_cache_status_message(tmp_path) is None  # no artifact
+        (tmp_path / "cache_result.json").write_text(
+            json.dumps({"status_message": "1/2 files cached"}),
+        )
+        assert _rp_cache_status_message(tmp_path) == "1/2 files cached"
