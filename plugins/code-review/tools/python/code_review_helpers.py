@@ -26,6 +26,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import traceback
 import uuid
 from collections.abc import Generator
 from dataclasses import dataclass, field
@@ -10566,14 +10567,27 @@ def _rp_dispatch(func: Any, ns: argparse.Namespace, stdout_path: Path | None) ->
     return int(rc or 0)
 
 
-def _emit_prefix_stage_failure_finding(cr_dir: Path, stage_id: str) -> None:
+def _emit_prefix_stage_failure_finding(
+    cr_dir: Path, stage_id: str, diagnostic: str | None = None,
+) -> None:
     """Write ``agent_<stage>-failed.json`` with a canonical agent-failure finding.
 
     Mirrors start.md Walker Contract step 5 (``continue_with_coverage_gap``): a
     prefix stage that failed to run must surface as an operator-visible,
     collectable finding — ``collect-findings`` globs ``agent_*.json`` — rather
-    than vanish silently. Fail-open on write error (telemetry is observational).
+    than vanish silently. ``diagnostic`` is the caller's captured failure detail
+    (rc / exception / the stage's own stderr tail); it is folded into the
+    finding's explanation so the gap is debuggable without reproducing the
+    failure. Fail-open on write error (telemetry is observational).
     """
+    explanation = (
+        f"The deterministic prefix stage {stage_id!r} exited non-zero or "
+        "produced no output. Its on_failure policy is "
+        "continue_with_coverage_gap, so the pipeline proceeds but the gap is "
+        "recorded here for auditability."
+    )
+    if diagnostic:
+        explanation += f" Diagnostic: {diagnostic}"
     finding = {
         "reviewer": "foundation",
         "source": "foundation",
@@ -10584,12 +10598,7 @@ def _emit_prefix_stage_failure_finding(cr_dir: Path, stage_id: str) -> None:
         "file": None,
         "line": None,
         "issue": f"Prefix stage {stage_id} failed; continuing with coverage gap.",
-        "explanation": (
-            f"The deterministic prefix stage {stage_id!r} exited non-zero or "
-            "produced no output. Its on_failure policy is "
-            "continue_with_coverage_gap, so the pipeline proceeds but the gap is "
-            "recorded here for auditability."
-        ),
+        "explanation": explanation,
         "recommendation": (
             "Re-run the review once the underlying issue is resolved. Common "
             "causes: malformed diff input, a git error, or a taxonomy mismatch "
@@ -10650,28 +10659,45 @@ def _execute_stage_inprocess(
     on_failure = stage.get("on_failure", "abort")
     rc = 1
     message: str | None = None
+    # Capture the stage's stderr so a failing stage's own diagnostic (the
+    # cmd_* handlers report via ``print(..., file=sys.stderr)``) can be attributed
+    # to THIS stage in the batched model — one process now runs many stages, so
+    # bare process stderr no longer maps to an orchestrator turn. It is written
+    # back to the real stderr below, so live visibility is unchanged.
+    err_buf = io.StringIO()
     try:
-        resolved = _rp_resolve_args(stage.get("args", []) or [], ctx)
-        ns = parser.parse_args([stage["subcommand"], *resolved])
-        stdout_target = stage.get("stdout")
-        rc = _rp_dispatch(
-            ns.func, ns, Path(stdout_target) if stdout_target else None,
-        )
+        with contextlib.redirect_stderr(err_buf):
+            resolved = _rp_resolve_args(stage.get("args", []) or [], ctx)
+            ns = parser.parse_args([stage["subcommand"], *resolved])
+            stdout_target = stage.get("stdout")
+            rc = _rp_dispatch(
+                ns.func, ns, Path(stdout_target) if stdout_target else None,
+            )
     except SystemExit as exc:  # argparse rejected the resolved args
         message = f"argparse rejected args for {stage_id}: {exc}"
         rc = 1
     except Exception as exc:  # noqa: BLE001 — a crash is a stage failure; on_failure decides
         message = f"{type(exc).__name__} in {stage_id}: {exc}"
         rc = 1
+        # Preserve the full traceback on the real stderr — the short ``message``
+        # alone can't be debugged without reproducing the crash.
+        traceback.print_exc()
+
+    stage_stderr = err_buf.getvalue()
+    if stage_stderr:
+        sys.stderr.write(stage_stderr)
 
     outputs_ok = message is None and _rp_outputs_present(stage)
     if rc != 0 or not outputs_ok:
         if message is None:
             message = f"stage {stage_id} failed (rc={rc}, outputs_ok={outputs_ok})"
+        stderr_tail = stage_stderr.strip().splitlines()
+        if stderr_tail:
+            message = f"{message}; stderr: {stderr_tail[-1][:300]}"
         if on_failure == "abort":
             return "failed_abort", message
         if on_failure == "continue_with_coverage_gap":
-            _emit_prefix_stage_failure_finding(ctx.cr_dir, stage_id)
+            _emit_prefix_stage_failure_finding(ctx.cr_dir, stage_id, message)
         return "failed_continue", message
 
     _rp_apply_post_stage_overrides(stage_id, ctx)

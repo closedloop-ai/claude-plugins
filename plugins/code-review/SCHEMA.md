@@ -525,6 +525,13 @@ on disk (a prior stage counts as done iff its literal `expected_outputs` exist).
 | `ready_for_route`   | reaching `stage_17_partition`         | Run Gate B (`route`) + partition + the rest of the walk.                      |
 | `error`             | a stage aborted / a gate failed       | Fall back to the per-stage walk from `failed_stage`; partials are preserved.  |
 
+`ready_for_route` distinguishes its two cases by `resume_stage`: a non-null
+`resume_stage` (`stage_17_partition`) is the normal boundary — run Gate B +
+partition from there. A **null** `resume_stage` means the walk reached the end
+of the plan without a partition stage (e.g. a depth tier that filters partition
+out); there is nothing left to route, so the orchestrator skips Gate B and
+partition and proceeds directly to the reviewer fleet.
+
 The exit code is `0` for every well-formed result (including `error`) — the
 `next_action` field is the contract. Route + partition (Segment 3) fold into the
 runner in Phase 2, at which point `ready_for_route` becomes `ready_for_reviewers`

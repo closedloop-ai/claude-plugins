@@ -22608,6 +22608,32 @@ class TestExecuteStageInprocess:
         assert marker == "agent-failure"
         assert payload["findings"][0]["finding_scope"] == "system"
 
+    def test_coverage_gap_finding_threads_stage_stderr_diagnostic(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _execute_stage_inprocess
+
+        out = tmp_path / "o.json"
+
+        def _fail_with_stderr(_ns: argparse.Namespace) -> int:
+            print("Error: taxonomy mismatch after edit", file=sys.stderr)
+            return 1
+
+        parser = _fake_stage_parser(_fail_with_stderr)
+        status, message = _execute_stage_inprocess(
+            self._stage(out, id="stage_14_resolve_coverage",
+                        on_failure="continue_with_coverage_gap"),
+            _rp_ctx(tmp_path), parser, set(),
+        )
+        assert status == "failed_continue"
+        # The stage's own stderr is attributed to the stage in the message ...
+        assert "taxonomy mismatch after edit" in (message or "")
+        # ... and folded into the emitted finding's explanation (not discarded).
+        payload = json.loads(
+            (tmp_path / "agent_stage_14_resolve_coverage-failed.json").read_text(),
+        )
+        assert "taxonomy mismatch after edit" in payload["findings"][0]["explanation"]
+
     def test_skip_when_disabled(self, tmp_path: Path) -> None:
         from code_review_helpers import _execute_stage_inprocess
 
