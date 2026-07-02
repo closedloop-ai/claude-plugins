@@ -10977,14 +10977,20 @@ def cmd_run_prefix(args: argparse.Namespace) -> int:
 
         # Gate B — after cache-check, run ``route`` to compute fast_path /
         # max_bha_agents (writing spawn.json.route) before the partition stage.
-        if sid == _RP_CACHE_CHECK_STAGE and status != "skipped":
+        # Fired unconditionally after cache-check, matching start.md's Walker
+        # Contract (route reads diff_data, not the cache result, so it does not
+        # depend on cache-check succeeding) and the parity harness's A-side.
+        if sid == _RP_CACHE_CHECK_STAGE:
             if _rp_run_route(ctx, parser) != 0:
+                # Route is not a plan stage, so anchor the resumable error on
+                # cache-check: a per-stage fallback resumes there and re-runs
+                # cache-check → route → partition (route gets retried).
                 return emit({
                     "next_action": "error",
-                    "resume_stage": _RP_PARTITION_STAGE,
+                    "resume_stage": _RP_CACHE_CHECK_STAGE,
                     "singleton": None,
-                    "failed_stage": "route",
-                    "message": "Gate B route failed",
+                    "failed_stage": _RP_CACHE_CHECK_STAGE,
+                    "message": "Gate B route failed after cache-check",
                 })
 
         # PLN-725 singleton pause — a needs_agent prepare stage yields to the

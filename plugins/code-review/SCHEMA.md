@@ -516,9 +516,16 @@ process, the `depends_on` `completed` set is reconstructed from artifacts on dis
 | `failed_stage`         | string \| null  | The aborting stage id when `next_action == "error"`.                    |
 | `ran_stages`           | string[]        | Stage ids executed (or `continue`-failed) this segment, in order.       |
 | `message`              | string \| null  | Short diagnostic on `error`, else null.                                 |
-| `fast_path`            | bool            | Gate B routing decision (on `ready_for_reviewers`).                     |
-| `max_bha_agents`       | int \| null     | Gate B Bug-Hunter-A agent cap (on `ready_for_reviewers`).              |
-| `cache_status_message` | string \| null  | `cache_result.json.status_message` to print (Gate A/B), else null.      |
+| `fast_path`            | bool            | Gate B routing decision. Present **only** on `ready_for_reviewers`.      |
+| `max_bha_agents`       | int \| null     | Gate B Bug-Hunter-A agent cap. Present **only** on `ready_for_reviewers`.|
+| `cache_status_message` | string \| null  | `cache_result.json.status_message` to print. Present on `ready_for_reviewers` and `hygiene_exit`. |
+
+`next_action`, `resume_stage`, `singleton`, `failed_stage`, `ran_stages`, and
+`message` are present on every result. The three Gate-B fields above are
+**omitted entirely** (not set to null) on the results that don't carry them —
+`fast_path` / `max_bha_agents` appear only on `ready_for_reviewers`, and
+`cache_status_message` only on `ready_for_reviewers` / `hygiene_exit`. Read them
+with `.get()`, not direct indexing.
 
 **`next_action` values:**
 

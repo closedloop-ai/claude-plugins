@@ -22796,6 +22796,30 @@ class TestCmdRunPrefixReturns:
         result = json.loads(out_path.read_text())
         assert result["next_action"] == "ready_for_reviewers"
 
+    def test_route_failure_emits_resumable_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Reaching cache-check fires Gate B route; a route failure must anchor the
+        # resumable error on a real, re-runnable stage (cache-check) so a per-stage
+        # fallback re-runs cache-check → route → partition — NOT on the synthetic
+        # "route" label or the partition stage (which would skip route on retry).
+        self._write_plan(tmp_path, [
+            {"id": "stage_01_setup", "kind": "helper", "subcommand": "setup",
+             "enabled": True, "depends_on": [], "expected_outputs": []},
+            {"id": "stage_19_cache_check", "kind": "helper", "subcommand": "setup",
+             "enabled": True, "depends_on": [], "args": [], "expected_outputs": [],
+             "on_failure": "continue"},
+            {"id": "stage_20_spawn_reviewers", "kind": "agent_fleet",
+             "enabled": True, "depends_on": [], "args": [], "expected_outputs": []},
+        ])
+        with patch("code_review_helpers._rp_run_route", return_value=1):
+            result = self._run(tmp_path, capsys)
+        assert result["next_action"] == "error"
+        # failed_stage and resume_stage are the SAME real, resumable stage id.
+        assert result["failed_stage"] == "stage_19_cache_check"
+        assert result["resume_stage"] == "stage_19_cache_check"
+        assert result["message"]
+
 
 class TestRunPrefixRoutePartition:
     """Gate B route + partition folding (PLN-1229 Phase 2)."""
