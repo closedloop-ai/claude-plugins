@@ -37,7 +37,7 @@ plugins/code-review/
     python/golden_fixture_harness.py     Golden fixture harness: replays canonical inputs through helper subcommands and diffs against expected envelopes (PLN-719 Phase 8)
     python/test_golden_fixtures.py       Pytest driver that runs every fixture under tools/python/fixtures/
     python/fixtures/<name>/              Per-fixture directory (config.yaml + inputs/ + expected/); 3 full scenarios + 6 README-stubs for future coverage
-    python/prefix_golden_harness.py      Prefix golden harness: walks the deterministic prefix (setup→spawn-spec) in-process against real git fixtures and snapshots every intermediate artifact (PLN-1229 Phase 0)
+    python/prefix_golden_harness.py      Prefix golden harness + subprocess A/B parity oracle: walks the deterministic prefix against real git fixtures — in-process for golden snapshots, and per-stage-subprocess vs `run-prefix` for byte-equal parity (PLN-1229 Phase 0/1)
     python/test_prefix_golden.py         Pytest driver for the prefix harness: determinism oracle + golden diff across the prefix_fixtures/ matrix
     python/prefix_fixtures/<name>/       Per-fixture directory (expected/ golden snapshots); 7 branch scenarios (standard, fast-path, hygiene-only, empty-diff, cache-hit, since-last-review, coverage-critic)
 ```
@@ -231,6 +231,7 @@ The helper script is a multi-subcommand Python CLI. The orchestrator invokes it 
 | `finalize-result` | Consolidates validated findings + coverage state + verdict into the canonical `review_result.json` envelope; deep-merges `<cr_dir>/telemetry.json` into the canonical `telemetry` block and populates `telemetry.cache_hit_rate["bha"]` from `cache_result.json` (PLN-719 Phase 7/9) |
 | `arbitrate-budget` | Applies the canonical reviewer cap policy; emits coverage gaps for required reviewers that overflow (PLN-719) |
 | `prepare-run` | Emits a declarative `run_plan.json` describing the 30-stage pipeline (PLN-719) |
+| `run-prefix` | Runs the deterministic prefix (setup→cache-check) in one process, resolving tokens and honoring gates/`on_failure`; pauses at the hygiene-only exit, a singleton needing an agent, or the route/partition boundary, emitting a status JSON and resuming from a given stage (PLN-1229) |
 
 ## GitHub CI Mode
 

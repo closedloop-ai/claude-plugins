@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.2.0
+
+#### Added
+- New `run-prefix` helper subcommand: a resumable, in-process runner for the deterministic review prefix (stages `setup` through `cache-check`). It reads `run_plan.json` and walks the stages in one process — resolving each stage's placeholder tokens from prior-stage artifacts, redirecting stdout per stage, and honoring `on_failure` policies and validation gates — instead of one orchestrator turn per stage. It pauses only at genuine decision points (the hygiene-only early exit, a signal-extraction or coverage-critic singleton that needs an agent, or the route/partition boundary), emitting a status JSON that tells the orchestrator what to do next, and resumes from a given stage on re-invocation. A failed `continue_with_coverage_gap` stage emits a canonical `agent-failure` system finding so the gap is auditable. Documented as the `run-prefix` result contract in `SCHEMA.md`.
+- Subprocess A/B parity oracle for the prefix: the golden-fixture harness now walks each fixture two ways — one subprocess per stage (reproducing the current per-stage orchestrator walk) versus the new `run-prefix` runner — and asserts byte-identical normalized artifacts through `cache-check` across all seven fixtures, plus a pause-sequence check pinning the resumable segment boundaries. Contract tests cover token resolution, resumable dependency reconstruction, singleton detection, `on_failure` handling, and the runner's error/boundary returns.
+
 ### code-review v3.1.1
 
 #### Added
