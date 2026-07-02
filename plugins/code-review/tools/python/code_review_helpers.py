@@ -17,6 +17,7 @@ import contextlib
 import copy
 import functools
 import hashlib
+import io
 import json
 import os
 import random
@@ -27,7 +28,7 @@ import subprocess
 import sys
 import uuid
 from collections.abc import Generator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -9995,12 +9996,12 @@ def _validate_stages_config(config: dict[str, Any]) -> None:
                 f"stages.json {sid}: missing required ``min_depth`` field; "
                 f"tag as one of {sorted(_VALID_MIN_DEPTHS)}",
             )
-        for field in ("min_depth", "max_depth"):
-            if field in stage:
-                val = stage[field]
+        for tier_field in ("min_depth", "max_depth"):
+            if tier_field in stage:
+                val = stage[tier_field]
                 if val not in _VALID_MIN_DEPTHS:
                     raise ValueError(
-                        f"stages.json {sid}.{field}: invalid tier {val!r}; "
+                        f"stages.json {sid}.{tier_field}: invalid tier {val!r}; "
                         f"must be one of {sorted(_VALID_MIN_DEPTHS)}",
                     )
         lo = stage["min_depth"]
@@ -10309,6 +10310,561 @@ def cmd_evaluate_gate(args: argparse.Namespace) -> int:
             )
             return 1
     return 0
+
+
+# ---------------------------------------------------------------------------
+# run-prefix — resumable in-process segment runner (PLN-1229 Phase 1)
+# ---------------------------------------------------------------------------
+#
+# ``cmd_run_prefix`` collapses the orchestrator's stage-by-stage walk of the
+# deterministic prefix (stages 01→cache_check) into ONE process: it reads the
+# already-emitted ``run_plan.json``, resolves each stage's ``<ANGLE_BRACKET>``
+# tokens from prior-stage artifacts (the ``{...}`` templates were already
+# resolved by ``prepare-run``), dispatches the ``cmd_*`` in-process with the
+# stage's stdout redirect, and honors ``on_failure`` + validation gates —
+# exactly as ``start.md``'s Walker Contract does, but without a model turn per
+# stage. It stops (and hands control back to the orchestrator) only at genuine
+# decision points:
+#
+#   * Gate A     — ``hygiene_only`` early exit after ``stage_12_hygiene``.
+#   * Singleton  — a PLN-725 prepare stage (``stage_11`` / ``stage_15``) whose
+#                  manifest is ``needs_agent`` → pause so the orchestrator can
+#                  spawn the one synchronous agent, then resume at the sibling
+#                  consolidate stage.
+#   * Gate B     — reaching ``stage_17_partition``. Phase 1 stops here and
+#                  returns ``ready_for_route``; folding route + partition into
+#                  the runner (→ ``ready_for_reviewers``) is Phase 2.
+#
+# The runner is RESUMABLE: after handling a pause the orchestrator re-invokes
+# ``run-prefix --resume-from <stage>``. Because each segment is a fresh process,
+# the ``completed`` set (which drives ``depends_on`` skipping) is reconstructed
+# from artifacts on disk, not carried in memory.
+#
+# NOTE ON DUPLICATION: ``prefix_golden_harness.py`` contains a SEPARATE,
+# test-side reimplementation of this walk (in-process, with canned agent
+# stubs). That duplication is deliberate — the subprocess A/B parity oracle
+# runs the harness walk (A) against this runner (B) and asserts byte-identical
+# artifacts, so a bug shared between the two implementations cannot hide. The
+# canonical stage/gate TABLES (``stages.json`` / ``_build_validation_gates``)
+# ARE shared; only the WRAPPER logic is independently implemented on each side.
+
+# Stage ids the runner special-cases. Named so a rename in stages.json is one
+# edit here rather than a scatter of string literals.
+_RP_SETUP_STAGE = "stage_01_setup"
+_RP_AUTO_INCREMENTAL_STAGE = "stage_07_auto_incremental"
+_RP_HYGIENE_STAGE = "stage_12_hygiene"
+_RP_PARTITION_STAGE = "stage_17_partition"  # Phase-1 terminal boundary
+
+# The two PLN-725 singleton *prepare* stages: the manifest each writes and the
+# path (within that manifest JSON) to the ``status`` field the walker reads to
+# decide ``needs_agent`` vs ``cache_hit``/``skipped``.
+_RP_SINGLETONS: dict[str, dict[str, Any]] = {
+    "stage_11_extract_signals": {
+        "name": "extract_signals",
+        "manifest": "extract_signals_manifest.json",
+        "status_path": (),  # top-level "status"
+    },
+    "stage_15_coverage_critic": {
+        "name": "coverage_critic",
+        "manifest": _COVERAGE_STATE_FILENAME,
+        "status_path": ("critic",),  # coverage.json → critic → status
+    },
+}
+
+# Every angle-bracket token the prefix stage args reference. Explicit (vs
+# regex-scanning) so an unrecognized token in a future stage fails loudly.
+_RP_TOKENS = (
+    "<PLUGIN_ROOT>", "<DIFF_SCOPE>", "<BASE_REF>", "<DIFF_TIP>", "<SCOPE_KIND>",
+    "<REVIEW_ROOT>", "<CACHE_DIR>", "<GLOBAL_CACHE>", "<PROMPT_HASH>",
+    "<CONTEXT_KEY>", "<MODEL_ID>", "<INTENT>", "<START_TIME>", "<STATE_KEY>",
+)
+
+
+@dataclass
+class _RunPrefixContext:
+    """State threaded through one run-prefix invocation for token resolution."""
+
+    cr_dir: Path
+    plugin_root: str
+    model_id: str
+    start_time: str
+    global_cache: str
+    #: Runtime token overrides keyed by literal token string. Currently only
+    #: ``<DIFF_SCOPE>`` is overridden (by stage_07 auto-incremental narrowing).
+    overrides: dict[str, str] = field(default_factory=dict)
+
+
+def _rp_read_json(path: Path) -> dict[str, Any]:
+    """Read a JSON object, degrading a missing/malformed file to ``{}``.
+
+    Mirrors the walker's "pass an empty string for a not-yet-produced artifact"
+    tolerance — a token whose source file does not exist resolves to "".
+    """
+    try:
+        with path.open() as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _rp_default_plugin_root() -> Path:
+    """``<PLUGIN_ROOT>`` derived from this file's location.
+
+    ``code_review_helpers.py`` lives at ``<PLUGIN_ROOT>/tools/python/`` so the
+    plugin root is two parents up. Used when ``--plugin-root`` is not supplied.
+    """
+    return Path(__file__).resolve().parent.parent.parent
+
+
+def _rp_resolve_token(token: str, ctx: _RunPrefixContext) -> str:
+    """Resolve one ``<TOKEN>`` per the start.md Walker Contract token table.
+
+    Constants (``<PLUGIN_ROOT>``/``<MODEL_ID>``/``<START_TIME>``/
+    ``<GLOBAL_CACHE>``) come from the context; artifact-derived tokens are read
+    lazily from ``cr_dir``. A missing source file degrades to "" exactly as the
+    walker does.
+    """
+    if token in ctx.overrides:
+        return ctx.overrides[token]
+    if token == "<PLUGIN_ROOT>":
+        return ctx.plugin_root
+    if token == "<MODEL_ID>":
+        return ctx.model_id
+    if token == "<START_TIME>":
+        return ctx.start_time
+    if token == "<GLOBAL_CACHE>":
+        return ctx.global_cache
+
+    cr = ctx.cr_dir
+    scope = _rp_read_json(cr / "scope.json")
+    if token == "<DIFF_SCOPE>":
+        return str(scope.get("diff_scope", ""))
+    if token == "<BASE_REF>":
+        return str(scope.get("base_ref", ""))
+    if token == "<DIFF_TIP>":
+        return str(scope.get("diff_tip", ""))
+    if token == "<SCOPE_KIND>":
+        return str(scope.get("scope_kind", ""))
+    if token == "<REVIEW_ROOT>":
+        return str(scope.get("review_root", ""))
+    if token == "<STATE_KEY>":
+        review_branch = str(scope.get("review_branch", ""))
+        base_ref = str(scope.get("base_ref", ""))
+        if not review_branch and not base_ref:
+            return ""
+        return f"{review_branch}:{base_ref}"
+    if token == "<CACHE_DIR>":
+        return str(_rp_read_json(cr / "cache_config.json").get("cache_dir", ""))
+    if token == "<PROMPT_HASH>":
+        return str(_rp_read_json(cr / "hashes.json").get("prompt_hash", ""))
+    if token == "<CONTEXT_KEY>":
+        return str(_rp_read_json(cr / "hashes.json").get("context_key", ""))
+    if token == "<INTENT>":
+        return str(_rp_read_json(cr / "intent.json").get("intent", ""))
+    raise KeyError(f"unresolved run-prefix token: {token}")
+
+
+def _rp_resolve_args(raw_args: list[str], ctx: _RunPrefixContext) -> list[str]:
+    """Substitute every ``<TOKEN>`` occurrence within each arg string."""
+    out: list[str] = []
+    for arg in raw_args:
+        resolved = arg
+        for token in _RP_TOKENS:
+            if token in resolved:
+                resolved = resolved.replace(token, _rp_resolve_token(token, ctx))
+        out.append(resolved)
+    return out
+
+
+def _rp_outputs_present(stage: dict[str, Any]) -> bool:
+    """True when every literal ``expected_outputs`` path for ``stage`` exists.
+
+    Glob patterns (``agent_*.json``, ``patches_p<N>.txt``) and any unresolved
+    ``<TOKEN>`` residue are treated as satisfied — those are enforced by the
+    fleet-stage gates downstream, not the deterministic prefix. Paths in
+    ``run_plan.json`` are already ``{cr_dir}``-absolute (prepare-run resolved
+    them), so a bare existence check is correct.
+    """
+    for out in stage.get("expected_outputs", []) or []:
+        if "*" in out or "<" in out:
+            continue
+        if not Path(out).is_file():
+            return False
+    return True
+
+
+def _rp_reconstruct_completed(
+    stages: list[dict[str, Any]], resume_from: str,
+) -> set[str]:
+    """Rebuild the ``completed`` set for stages BEFORE ``resume_from``.
+
+    Each segment is a fresh process, so ``depends_on`` skipping can't rely on an
+    in-memory set. A prior stage counts as completed iff its literal
+    ``expected_outputs`` are all present on disk — which is exactly the
+    invariant a successful run leaves behind, and correctly EXCLUDES a prior
+    ``continue`` stage that failed (its dependents then skip, matching the
+    in-process walk). ``stage_01_setup`` is always completed: it ran in the
+    orchestrator's stage 0 and never re-runs in a segment.
+    """
+    completed: set[str] = set()
+    if not resume_from:
+        return completed
+    for stage in stages:
+        sid = stage["id"]
+        if sid == resume_from:
+            break
+        if sid == _RP_SETUP_STAGE:
+            completed.add(sid)
+            continue
+        if not stage.get("enabled", True):
+            continue
+        if _rp_outputs_present(stage):
+            completed.add(sid)
+    return completed
+
+
+def _rp_seed_scope_override(ctx: _RunPrefixContext) -> None:
+    """Reflect a prior stage_07 auto-incremental scope narrowing from disk.
+
+    On resume the narrowing already happened in an earlier segment, so seed the
+    ``<DIFF_SCOPE>`` override from ``auto_incremental.json`` if present. Harmless
+    on a fresh run (the file doesn't exist yet); the same override is (re)applied
+    inline right after stage_07 runs via ``_rp_apply_post_stage_overrides``.
+    """
+    override = _rp_read_json(ctx.cr_dir / "auto_incremental.json").get("diff_scope")
+    if override:
+        ctx.overrides["<DIFF_SCOPE>"] = str(override)
+
+
+def _rp_apply_post_stage_overrides(stage_id: str, ctx: _RunPrefixContext) -> None:
+    """Apply the cross-stage ``<DIFF_SCOPE>`` override the walker does in prose.
+
+    Per start.md's stage_07 note, when ``auto_incremental.json.diff_scope`` is
+    non-null the walker narrows the cached ``<DIFF_SCOPE>`` token for every
+    subsequent stage (parse-diff runs after auto-incremental in array order).
+    """
+    if stage_id == _RP_AUTO_INCREMENTAL_STAGE:
+        override = _rp_read_json(ctx.cr_dir / "auto_incremental.json").get("diff_scope")
+        if override:
+            ctx.overrides["<DIFF_SCOPE>"] = str(override)
+
+
+def _rp_dispatch(func: Any, ns: argparse.Namespace, stdout_path: Path | None) -> int:
+    """Call ``func(ns)`` with stdout redirected per the stage's ``stdout`` field.
+
+    When ``stdout_path`` is set the helper's stdout IS the artifact (production's
+    ``> file`` redirect); otherwise the helper writes its own file and prints a
+    summary we discard. Returns the ``cmd_*`` int return code.
+    """
+    if stdout_path is not None:
+        with stdout_path.open("w") as fh, contextlib.redirect_stdout(fh):
+            rc = func(ns)
+    else:
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = func(ns)
+    return int(rc or 0)
+
+
+def _emit_prefix_stage_failure_finding(cr_dir: Path, stage_id: str) -> None:
+    """Write ``agent_<stage>-failed.json`` with a canonical agent-failure finding.
+
+    Mirrors start.md Walker Contract step 5 (``continue_with_coverage_gap``): a
+    prefix stage that failed to run must surface as an operator-visible,
+    collectable finding — ``collect-findings`` globs ``agent_*.json`` — rather
+    than vanish silently. Fail-open on write error (telemetry is observational).
+    """
+    finding = {
+        "reviewer": "foundation",
+        "source": "foundation",
+        "finding_scope": "system",
+        "system_marker": "agent-failure",
+        "category": "Coverage",
+        "severity": "MEDIUM",
+        "file": None,
+        "line": None,
+        "issue": f"Prefix stage {stage_id} failed; continuing with coverage gap.",
+        "explanation": (
+            f"The deterministic prefix stage {stage_id!r} exited non-zero or "
+            "produced no output. Its on_failure policy is "
+            "continue_with_coverage_gap, so the pipeline proceeds but the gap is "
+            "recorded here for auditability."
+        ),
+        "recommendation": (
+            "Re-run the review once the underlying issue is resolved. Common "
+            "causes: malformed diff input, a git error, or a taxonomy mismatch "
+            "after a recent edit."
+        ),
+        "confidence": 1.0,
+        "emitted_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        target = cr_dir / f"agent_{stage_id}-failed.json"
+        with open(target, "w") as f:
+            json.dump({"findings": [finding]}, f, indent=2)
+    except OSError:
+        pass
+
+
+def _execute_stage_inprocess(
+    stage: dict[str, Any],
+    ctx: _RunPrefixContext,
+    parser: argparse.ArgumentParser,
+    completed: set[str],
+) -> tuple[str, str | None]:
+    """Run one helper stage in-process, honoring stdout + ``on_failure``.
+
+    Mirrors start.md Walker Contract steps 1-5 for ``kind == "helper"`` stages.
+    Returns ``(status, message)`` where ``status`` is one of:
+
+      * ``"ran"``            — succeeded; ``stage`` added to ``completed``.
+      * ``"skipped"``        — disabled, unmet ``depends_on``, or the already-run
+                               setup stage. Not added to ``completed`` (except
+                               setup, whose completion the orchestrator owns).
+      * ``"failed_continue"``— failed under ``on_failure: continue`` /
+                               ``continue_with_coverage_gap``; NOT added to
+                               ``completed`` so dependents skip.
+      * ``"failed_abort"``   — failed under ``on_failure: abort``; caller stops.
+
+    ``message`` carries a short diagnostic on failure (else ``None``).
+    """
+    stage_id = stage["id"]
+
+    if not stage.get("enabled", True):
+        return "skipped", None
+    if any(dep not in completed for dep in stage.get("depends_on", []) or []):
+        return "skipped", None
+    if stage_id == _RP_SETUP_STAGE:
+        # Setup ran in the orchestrator's stage 0; never re-run it (a second
+        # run would regenerate the non-deterministic start_time). Mark completed
+        # so dependents resolve.
+        completed.add(stage_id)
+        return "ran", None
+
+    kind = stage.get("kind")
+    if kind != "helper":
+        return "failed_abort", (
+            f"prefix must be helper-only; got kind={kind!r} for {stage_id!r}"
+        )
+
+    on_failure = stage.get("on_failure", "abort")
+    rc = 1
+    message: str | None = None
+    try:
+        resolved = _rp_resolve_args(stage.get("args", []) or [], ctx)
+        ns = parser.parse_args([stage["subcommand"], *resolved])
+        stdout_target = stage.get("stdout")
+        rc = _rp_dispatch(
+            ns.func, ns, Path(stdout_target) if stdout_target else None,
+        )
+    except SystemExit as exc:  # argparse rejected the resolved args
+        message = f"argparse rejected args for {stage_id}: {exc}"
+        rc = 1
+    except Exception as exc:  # noqa: BLE001 — a crash is a stage failure; on_failure decides
+        message = f"{type(exc).__name__} in {stage_id}: {exc}"
+        rc = 1
+
+    outputs_ok = message is None and _rp_outputs_present(stage)
+    if rc != 0 or not outputs_ok:
+        if message is None:
+            message = f"stage {stage_id} failed (rc={rc}, outputs_ok={outputs_ok})"
+        if on_failure == "abort":
+            return "failed_abort", message
+        if on_failure == "continue_with_coverage_gap":
+            _emit_prefix_stage_failure_finding(ctx.cr_dir, stage_id)
+        return "failed_continue", message
+
+    _rp_apply_post_stage_overrides(stage_id, ctx)
+    completed.add(stage_id)
+    return "ran", None
+
+
+def _rp_build_parser() -> argparse.ArgumentParser:
+    """Build the same subcommand parser ``main()`` uses.
+
+    Reusing ``_register_subparsers`` guarantees each stage's Namespace is built
+    exactly as production builds it — the alternative (hand-rolling a Namespace
+    per subcommand) would silently drift from cli.json.
+    """
+    parser = argparse.ArgumentParser(add_help=False)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    _register_subparsers(subparsers)
+    return parser
+
+
+def _rp_next_stage_id(stages: list[dict[str, Any]], stage_id: str) -> str | None:
+    """Return the id of the stage AFTER ``stage_id`` in plan array order."""
+    for i, stage in enumerate(stages):
+        if stage["id"] == stage_id and i + 1 < len(stages):
+            return str(stages[i + 1]["id"])
+    return None
+
+
+def _rp_singleton_needs_agent(ctx: _RunPrefixContext, stage_id: str) -> bool:
+    """True when a just-run singleton prepare stage's manifest is ``needs_agent``.
+
+    ``cache_hit`` / ``skipped`` (or a missing/malformed manifest) → no agent, so
+    the walk continues and the sibling consolidate stage no-ops.
+    """
+    spec = _RP_SINGLETONS[stage_id]
+    node: Any = _rp_read_json(ctx.cr_dir / str(spec["manifest"]))
+    for key in spec["status_path"]:
+        node = node.get(key, {}) if isinstance(node, dict) else {}
+    status = node.get("status", "") if isinstance(node, dict) else ""
+    return str(status) == "needs_agent"
+
+
+def _rp_evaluate_gates(
+    run_plan: dict[str, Any], cr_dir: Path, stage_id: str,
+) -> tuple[bool, str | None]:
+    """Evaluate any validation gate anchored on ``stage_id`` (Walker step 7).
+
+    Reads the depth-filtered ``validation_gates`` array from ``run_plan.json``
+    (authoritative for this invocation) and applies each matching gate's
+    ``on_failure_action`` via the canonical ``evaluate_validation_gate``
+    enforcer. Returns ``(ok, message)``; ``ok`` is False only when a gate fails
+    with ``on_failure_action: "abort"``. ``emit_coverage_gap`` gate failures
+    record a coverage-gap finding and continue.
+    """
+    for gate in run_plan.get("validation_gates", []) or []:
+        if gate.get("after_stage") != stage_id:
+            continue
+        passed, reason = evaluate_validation_gate(gate)
+        if passed:
+            continue
+        action = gate.get("on_failure_action", "abort")
+        if action == "abort":
+            return False, f"gate {gate.get('gate', '?')!r} after {stage_id}: {reason}"
+        if action == "emit_coverage_gap":
+            _emit_prefix_stage_failure_finding(cr_dir, stage_id)
+    return True, None
+
+
+def cmd_run_prefix(args: argparse.Namespace) -> int:
+    """Run the deterministic prefix in-process until the next pause point.
+
+    PLN-1229 Phase 1. Consumes ``run_plan.json`` + ``setup.json`` from
+    ``--cr-dir`` (both already written by the orchestrator's stage 0) and walks
+    stages from ``--resume-from`` (default: the first plan stage) to the next
+    genuine decision point, emitting a small status JSON telling the orchestrator
+    what to do next. See the module comment above for the pause-point contract
+    and SCHEMA.md §"run-prefix result" for the emitted fields.
+
+    Result ``next_action`` values (authoritative — read the JSON, not the exit
+    code, which is always 0 for a well-formed run):
+
+      * ``needs_singleton``  — spawn the ``singleton`` agent, write its output,
+                               then re-invoke ``--resume-from <resume_stage>``.
+      * ``hygiene_exit``     — Gate A: present hygiene findings and stop.
+      * ``ready_for_route``  — reached ``stage_17_partition``; run Gate B (route)
+                               + the rest of the walk. (Phase 2 folds route +
+                               partition in and returns ``ready_for_reviewers``.)
+      * ``error``            — a stage aborted; ``failed_stage`` is set. The
+                               orchestrator falls back to the per-stage walk from
+                               there. Partial artifacts are preserved.
+    """
+    cr_dir = Path(args.cr_dir)
+    run_plan = _rp_read_json(cr_dir / "run_plan.json")
+    stages: list[dict[str, Any]] = list(run_plan.get("stages", []) or [])
+    flags = run_plan.get("flags", {}) or {}
+    setup = _rp_read_json(cr_dir / "setup.json")
+
+    ctx = _RunPrefixContext(
+        cr_dir=cr_dir,
+        plugin_root=(getattr(args, "plugin_root", "") or str(_rp_default_plugin_root())),
+        model_id=(getattr(args, "model_id", "") or "opus"),
+        start_time=str(setup.get("start_time", "")),
+        global_cache=str(setup.get("global_cache", "0")),
+    )
+    _rp_seed_scope_override(ctx)
+
+    resume_from = getattr(args, "resume_from", "") or ""
+    completed = _rp_reconstruct_completed(stages, resume_from)
+    parser = _rp_build_parser()
+    hygiene_only = str(flags.get("hygiene_only", "")).lower() in ("true", "1")
+
+    def emit(result: dict[str, Any]) -> int:
+        result.setdefault("ran_stages", ran)
+        text = json.dumps(result, indent=2)
+        output = getattr(args, "output", None)
+        if output:
+            Path(output).write_text(text + "\n")
+        else:
+            print(text)
+        return 0
+
+    ran: list[str] = []
+    started = not resume_from
+    for stage in stages:
+        sid = stage["id"]
+        if not started:
+            if sid == resume_from:
+                started = True
+            else:
+                continue
+        # Phase-1 terminal boundary: Gate B (route) + partition are still the
+        # orchestrator's job. Stop BEFORE executing partition.
+        if sid == _RP_PARTITION_STAGE:
+            return emit({
+                "next_action": "ready_for_route",
+                "resume_stage": sid,
+                "singleton": None,
+                "failed_stage": None,
+                "message": None,
+            })
+
+        status, message = _execute_stage_inprocess(stage, ctx, parser, completed)
+        if status == "failed_abort":
+            return emit({
+                "next_action": "error",
+                "resume_stage": sid,
+                "singleton": None,
+                "failed_stage": sid,
+                "message": message,
+            })
+        if status in ("ran", "failed_continue"):
+            ran.append(sid)
+
+        gate_ok, gate_msg = _rp_evaluate_gates(run_plan, cr_dir, sid)
+        if not gate_ok:
+            return emit({
+                "next_action": "error",
+                "resume_stage": sid,
+                "singleton": None,
+                "failed_stage": sid,
+                "message": gate_msg,
+            })
+
+        # Gate A — hygiene-only early exit after the hygiene stage.
+        if sid == _RP_HYGIENE_STAGE and hygiene_only:
+            return emit({
+                "next_action": "hygiene_exit",
+                "resume_stage": None,
+                "singleton": None,
+                "failed_stage": None,
+                "message": None,
+            })
+
+        # PLN-725 singleton pause — a needs_agent prepare stage yields to the
+        # orchestrator to spawn one synchronous agent, then resume at the sibling.
+        if status == "ran" and sid in _RP_SINGLETONS and _rp_singleton_needs_agent(ctx, sid):
+            return emit({
+                "next_action": "needs_singleton",
+                "resume_stage": _rp_next_stage_id(stages, sid),
+                "singleton": _RP_SINGLETONS[sid]["name"],
+                "failed_stage": None,
+                "message": None,
+            })
+
+    # Walked to the end without reaching the partition stage (e.g. a depth tier
+    # that filters partition out). No route needed; signal completion.
+    return emit({
+        "next_action": "ready_for_route",
+        "resume_stage": None,
+        "singleton": None,
+        "failed_stage": None,
+        "message": None,
+    })
 
 
 def cmd_prepare_run(args: argparse.Namespace) -> int:

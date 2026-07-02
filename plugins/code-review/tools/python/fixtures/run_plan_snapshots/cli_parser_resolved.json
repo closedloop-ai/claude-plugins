@@ -1736,6 +1736,48 @@
       ]
     },
     {
+      "name": "run-prefix",
+      "func": "cmd_run_prefix",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        },
+        {
+          "flags": [
+            "--resume-from"
+          ],
+          "dest": "resume_from",
+          "default": ""
+        },
+        {
+          "flags": [
+            "--plugin-root"
+          ],
+          "dest": "plugin_root",
+          "default": ""
+        },
+        {
+          "flags": [
+            "--model-id"
+          ],
+          "dest": "model_id",
+          "default": "opus"
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "dest": "output",
+          "default": null
+        }
+      ]
+    },
+    {
       "name": "prep-assets",
       "func": "cmd_prep_assets",
       "args": [

@@ -1613,6 +1613,47 @@
       ]
     },
     {
+      "name": "run-prefix",
+      "help": "Run the deterministic prefix in-process until the next pause point (Gate A / singleton / route); emits a status JSON. PLN-1229.",
+      "func": "cmd_run_prefix",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "CR_DIR for the review session (must already contain run_plan.json and setup.json)."
+        },
+        {
+          "flags": [
+            "--resume-from"
+          ],
+          "default": "",
+          "help": "Stage id to resume the walk from (default: first plan stage). Pass the sibling consolidate stage after handling a needs_singleton pause."
+        },
+        {
+          "flags": [
+            "--plugin-root"
+          ],
+          "default": "",
+          "help": "Value for the <PLUGIN_ROOT> token (default: derived from the helpers file location)."
+        },
+        {
+          "flags": [
+            "--model-id"
+          ],
+          "default": "opus",
+          "help": "Value for the <MODEL_ID> token (BHA's default reviewer model)."
+        },
+        {
+          "flags": [
+            "--output"
+          ],
+          "help": "Write the status JSON to this path instead of stdout."
+        }
+      ]
+    },
+    {
       "name": "prep-assets",
       "help": "Copy prompt assets from plugin to CR_DIR",
       "func": "cmd_prep_assets",

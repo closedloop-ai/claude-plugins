@@ -19314,7 +19314,7 @@ class TestCRSPhaseACLIConfigLoader:
         Catches: cli.json type/default/choices/action edits, $$ constant
         misroutes (the original false positive was --max-files = 20 vs
         BUDGET_TOTAL_CAP_DEFAULT = 20), missing required flags, mutex routing
-        drift, and func name drift across all 44 subparsers.
+        drift, and func name drift across all 46 subparsers.
         """
         expected = json.loads(
             (self._snapshot_dir() / "cli_parser_resolved.json").read_text(),
@@ -22289,3 +22289,478 @@ class TestFEA1401PrepAssets:
         assert out["impact_analyzer_prompt"].endswith(
             "impact_analyzer_prompt.txt",
         )
+
+
+# ---------------------------------------------------------------------------
+# PLN-1229 Phase 1 / P0-C — run-prefix contract tests
+# ---------------------------------------------------------------------------
+#
+# These characterize the behaviors run-prefix newly owns in Python (they lived
+# as start.md prose before the refactor): angle-bracket token resolution, the
+# resumable ``completed``-set reconstruction, singleton needs_agent detection,
+# on_failure abort-vs-continue (incl. continue_with_coverage_gap finding
+# emission), and cmd_run_prefix's error / boundary returns. The full happy-path
+# walk is covered end-to-end by the subprocess A/B parity oracle in
+# test_prefix_golden.py; these pin the branches that oracle's deterministic
+# fixtures never exercise (aborts, degraded stages, empty inputs).
+
+
+def _rp_ctx(cr_dir: Path, **over: Any) -> Any:
+    from code_review_helpers import _RunPrefixContext
+
+    kwargs: dict[str, Any] = {
+        "cr_dir": cr_dir,
+        "plugin_root": "/PLUGIN",
+        "model_id": "opus",
+        "start_time": "1700000000",
+        "global_cache": "0",
+    }
+    kwargs.update(over)
+    return _RunPrefixContext(**kwargs)
+
+
+class TestRunPrefixTokenResolution:
+    """``_rp_resolve_token`` / ``_rp_resolve_args`` — the walker token table."""
+
+    def test_constant_tokens_come_from_context(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_resolve_token
+
+        ctx = _rp_ctx(tmp_path)
+        assert _rp_resolve_token("<PLUGIN_ROOT>", ctx) == "/PLUGIN"
+        assert _rp_resolve_token("<MODEL_ID>", ctx) == "opus"
+        assert _rp_resolve_token("<START_TIME>", ctx) == "1700000000"
+        assert _rp_resolve_token("<GLOBAL_CACHE>", ctx) == "0"
+
+    def test_scope_derived_tokens(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_resolve_token
+
+        (tmp_path / "scope.json").write_text(json.dumps({
+            "diff_scope": "main...HEAD",
+            "base_ref": "main",
+            "diff_tip": "HEAD",
+            "scope_kind": "branch",
+            "review_root": "",
+            "review_branch": "feature",
+        }))
+        ctx = _rp_ctx(tmp_path)
+        assert _rp_resolve_token("<DIFF_SCOPE>", ctx) == "main...HEAD"
+        assert _rp_resolve_token("<BASE_REF>", ctx) == "main"
+        assert _rp_resolve_token("<DIFF_TIP>", ctx) == "HEAD"
+        assert _rp_resolve_token("<SCOPE_KIND>", ctx) == "branch"
+        # STATE_KEY composes review_branch:base_ref.
+        assert _rp_resolve_token("<STATE_KEY>", ctx) == "feature:main"
+
+    def test_artifact_tokens_read_their_source_files(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_resolve_token
+
+        (tmp_path / "cache_config.json").write_text(json.dumps({"cache_dir": "/c/dir"}))
+        (tmp_path / "hashes.json").write_text(json.dumps({
+            "prompt_hash": "ph123", "context_key": "ck456",
+        }))
+        (tmp_path / "intent.json").write_text(json.dumps({"intent": "fix"}))
+        ctx = _rp_ctx(tmp_path)
+        assert _rp_resolve_token("<CACHE_DIR>", ctx) == "/c/dir"
+        assert _rp_resolve_token("<PROMPT_HASH>", ctx) == "ph123"
+        assert _rp_resolve_token("<CONTEXT_KEY>", ctx) == "ck456"
+        assert _rp_resolve_token("<INTENT>", ctx) == "fix"
+
+    def test_missing_source_file_degrades_to_empty(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_resolve_token
+
+        ctx = _rp_ctx(tmp_path)  # no scope/cache/hashes/intent files written
+        assert _rp_resolve_token("<DIFF_SCOPE>", ctx) == ""
+        assert _rp_resolve_token("<CACHE_DIR>", ctx) == ""
+        assert _rp_resolve_token("<PROMPT_HASH>", ctx) == ""
+        # STATE_KEY with neither branch nor base ref is empty, not ":".
+        assert _rp_resolve_token("<STATE_KEY>", ctx) == ""
+
+    def test_override_takes_precedence_over_scope(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_resolve_token
+
+        (tmp_path / "scope.json").write_text(json.dumps({"diff_scope": "orig"}))
+        ctx = _rp_ctx(tmp_path, overrides={"<DIFF_SCOPE>": "narrowed"})
+        assert _rp_resolve_token("<DIFF_SCOPE>", ctx) == "narrowed"
+
+    def test_unknown_token_raises(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_resolve_token
+
+        with pytest.raises(KeyError):
+            _rp_resolve_token("<NOT_A_TOKEN>", _rp_ctx(tmp_path))
+
+    def test_resolve_args_substitutes_every_occurrence(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_resolve_args
+
+        ctx = _rp_ctx(tmp_path)
+        out = _rp_resolve_args(
+            ["--model", "<MODEL_ID>", "--path=<PLUGIN_ROOT>/x", "--plain"], ctx,
+        )
+        assert out == ["--model", "opus", "--path=/PLUGIN/x", "--plain"]
+
+
+class TestRunPrefixReconstructCompleted:
+    """``_rp_reconstruct_completed`` rebuilds the depends_on set across resume."""
+
+    def _stage(self, sid: str, outputs: list[str], **over: Any) -> dict[str, Any]:
+        stage: dict[str, Any] = {
+            "id": sid, "kind": "helper", "enabled": True,
+            "expected_outputs": outputs,
+        }
+        stage.update(over)
+        return stage
+
+    def test_empty_when_no_resume(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_reconstruct_completed
+
+        stages = [self._stage("stage_a", [])]
+        assert _rp_reconstruct_completed(stages, "") == set()
+
+    def test_setup_always_completed_even_without_outputs(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_reconstruct_completed
+
+        stages = [
+            self._stage("stage_01_setup", []),
+            self._stage("stage_b", []),
+        ]
+        completed = _rp_reconstruct_completed(stages, "stage_b")
+        assert "stage_01_setup" in completed
+
+    def test_present_outputs_marks_completed_absent_excluded(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_reconstruct_completed
+
+        present = tmp_path / "present.json"
+        present.write_text("{}")
+        absent = tmp_path / "absent.json"
+        stages = [
+            self._stage("stage_ok", [str(present)]),
+            self._stage("stage_fail", [str(absent)]),  # continue-stage that failed
+            self._stage("stage_target", []),
+        ]
+        completed = _rp_reconstruct_completed(stages, "stage_target")
+        assert "stage_ok" in completed
+        assert "stage_fail" not in completed  # missing output → dependents skip
+
+    def test_disabled_stage_excluded(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_reconstruct_completed
+
+        stages = [
+            self._stage("stage_disabled", [], enabled=False),
+            self._stage("stage_target", []),
+        ]
+        assert "stage_disabled" not in _rp_reconstruct_completed(stages, "stage_target")
+
+    def test_stops_at_resume_from(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_reconstruct_completed
+
+        present = tmp_path / "p.json"
+        present.write_text("{}")
+        stages = [
+            self._stage("stage_before", [str(present)]),
+            self._stage("stage_target", [str(present)]),
+            self._stage("stage_after", [str(present)]),
+        ]
+        completed = _rp_reconstruct_completed(stages, "stage_target")
+        # Only stages strictly before resume_from are reconstructed.
+        assert completed == {"stage_before"}
+
+
+class TestRunPrefixNextStageAndSingleton:
+    def test_next_stage_id(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_next_stage_id
+
+        stages = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+        assert _rp_next_stage_id(stages, "a") == "b"
+        assert _rp_next_stage_id(stages, "b") == "c"
+        assert _rp_next_stage_id(stages, "c") is None  # last stage
+        assert _rp_next_stage_id(stages, "missing") is None
+
+    def test_extract_signals_needs_agent_top_level_status(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_singleton_needs_agent
+
+        ctx = _rp_ctx(tmp_path)
+        (tmp_path / "extract_signals_manifest.json").write_text(
+            json.dumps({"status": "needs_agent"}),
+        )
+        assert _rp_singleton_needs_agent(ctx, "stage_11_extract_signals") is True
+
+    def test_extract_signals_cache_hit_no_agent(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_singleton_needs_agent
+
+        ctx = _rp_ctx(tmp_path)
+        (tmp_path / "extract_signals_manifest.json").write_text(
+            json.dumps({"status": "cache_hit"}),
+        )
+        assert _rp_singleton_needs_agent(ctx, "stage_11_extract_signals") is False
+
+    def test_coverage_critic_needs_agent_nested_status(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_singleton_needs_agent
+
+        ctx = _rp_ctx(tmp_path)
+        (tmp_path / "coverage.json").write_text(
+            json.dumps({"critic": {"status": "needs_agent"}}),
+        )
+        assert _rp_singleton_needs_agent(ctx, "stage_15_coverage_critic") is True
+
+    def test_missing_manifest_no_agent(self, tmp_path: Path) -> None:
+        from code_review_helpers import _rp_singleton_needs_agent
+
+        ctx = _rp_ctx(tmp_path)  # no manifest on disk
+        assert _rp_singleton_needs_agent(ctx, "stage_11_extract_signals") is False
+        assert _rp_singleton_needs_agent(ctx, "stage_15_coverage_critic") is False
+
+
+def _fake_stage_parser(func: Any) -> argparse.ArgumentParser:
+    """A one-subcommand parser (``fake``) whose handler the test controls."""
+    parser = argparse.ArgumentParser(add_help=False)
+    sub = parser.add_subparsers(dest="command", required=True)
+    fake = sub.add_parser("fake")
+    fake.add_argument("--out", default="")
+    fake.set_defaults(func=func)
+    return parser
+
+
+def _fake_func(rc: int = 0, writes: str | None = None) -> Any:
+    def _run(ns: argparse.Namespace) -> int:
+        if writes:
+            Path(writes).write_text("{}")
+        return rc
+    return _run
+
+
+class TestExecuteStageInprocess:
+    """``_execute_stage_inprocess`` — steps 1-5 of the Walker Contract."""
+
+    def _stage(self, out_path: Path, **over: Any) -> dict[str, Any]:
+        stage: dict[str, Any] = {
+            "id": "stage_x", "kind": "helper", "subcommand": "fake",
+            "enabled": True, "depends_on": [],
+            "args": ["--out", str(out_path)],
+            "expected_outputs": [str(out_path)],
+            "on_failure": "abort",
+        }
+        stage.update(over)
+        return stage
+
+    def test_success_marks_completed(self, tmp_path: Path) -> None:
+        from code_review_helpers import _execute_stage_inprocess
+
+        out = tmp_path / "o.json"
+        parser = _fake_stage_parser(_fake_func(rc=0, writes=str(out)))
+        completed: set[str] = set()
+        status, msg = _execute_stage_inprocess(
+            self._stage(out), _rp_ctx(tmp_path), parser, completed,
+        )
+        assert status == "ran"
+        assert msg is None
+        assert "stage_x" in completed
+        assert out.exists()
+
+    def test_abort_on_nonzero_rc(self, tmp_path: Path) -> None:
+        from code_review_helpers import _execute_stage_inprocess
+
+        out = tmp_path / "o.json"
+        parser = _fake_stage_parser(_fake_func(rc=1, writes=str(out)))
+        completed: set[str] = set()
+        status, msg = _execute_stage_inprocess(
+            self._stage(out), _rp_ctx(tmp_path), parser, completed,
+        )
+        assert status == "failed_abort"
+        assert msg is not None
+        assert "stage_x" not in completed
+
+    def test_abort_on_missing_output(self, tmp_path: Path) -> None:
+        from code_review_helpers import _execute_stage_inprocess
+
+        out = tmp_path / "never_written.json"
+        parser = _fake_stage_parser(_fake_func(rc=0, writes=None))  # rc 0 but no file
+        status, _msg = _execute_stage_inprocess(
+            self._stage(out), _rp_ctx(tmp_path), parser, set(),
+        )
+        assert status == "failed_abort"
+
+    def test_continue_does_not_emit_finding(self, tmp_path: Path) -> None:
+        from code_review_helpers import _execute_stage_inprocess
+
+        out = tmp_path / "o.json"
+        parser = _fake_stage_parser(_fake_func(rc=1))
+        status, _msg = _execute_stage_inprocess(
+            self._stage(out, on_failure="continue"), _rp_ctx(tmp_path), parser, set(),
+        )
+        assert status == "failed_continue"
+        assert not list(tmp_path.glob("agent_*-failed.json"))
+
+    def test_continue_with_coverage_gap_emits_agent_failure_finding(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _execute_stage_inprocess
+
+        out = tmp_path / "o.json"
+        parser = _fake_stage_parser(_fake_func(rc=1))
+        status, _msg = _execute_stage_inprocess(
+            self._stage(out, id="stage_11_extract_signals",
+                        on_failure="continue_with_coverage_gap"),
+            _rp_ctx(tmp_path), parser, set(),
+        )
+        assert status == "failed_continue"
+        failed = tmp_path / "agent_stage_11_extract_signals-failed.json"
+        assert failed.exists()
+        payload = json.loads(failed.read_text())
+        marker = payload["findings"][0]["system_marker"]
+        assert marker == "agent-failure"
+        assert payload["findings"][0]["finding_scope"] == "system"
+
+    def test_skip_when_disabled(self, tmp_path: Path) -> None:
+        from code_review_helpers import _execute_stage_inprocess
+
+        out = tmp_path / "o.json"
+        parser = _fake_stage_parser(_fake_func(rc=0, writes=str(out)))
+        completed: set[str] = set()
+        status, _msg = _execute_stage_inprocess(
+            self._stage(out, enabled=False), _rp_ctx(tmp_path), parser, completed,
+        )
+        assert status == "skipped"
+        assert "stage_x" not in completed
+        assert not out.exists()  # func never ran
+
+    def test_skip_when_depends_on_unmet(self, tmp_path: Path) -> None:
+        from code_review_helpers import _execute_stage_inprocess
+
+        out = tmp_path / "o.json"
+        parser = _fake_stage_parser(_fake_func(rc=0, writes=str(out)))
+        status, _msg = _execute_stage_inprocess(
+            self._stage(out, depends_on=["missing_dep"]),
+            _rp_ctx(tmp_path), parser, set(),
+        )
+        assert status == "skipped"
+        assert not out.exists()
+
+    def test_setup_stage_is_marked_completed_not_rerun(self, tmp_path: Path) -> None:
+        from code_review_helpers import _execute_stage_inprocess
+
+        def _boom(_ns: argparse.Namespace) -> int:
+            raise AssertionError("setup must not re-run inside run-prefix")
+
+        parser = _fake_stage_parser(_boom)
+        completed: set[str] = set()
+        status, _msg = _execute_stage_inprocess(
+            {"id": "stage_01_setup", "kind": "helper", "subcommand": "fake",
+             "enabled": True, "depends_on": [], "args": [], "expected_outputs": []},
+            _rp_ctx(tmp_path), parser, completed,
+        )
+        assert status == "ran"
+        assert "stage_01_setup" in completed
+
+    def test_non_helper_kind_aborts(self, tmp_path: Path) -> None:
+        from code_review_helpers import _execute_stage_inprocess
+
+        parser = _fake_stage_parser(_fake_func())
+        status, msg = _execute_stage_inprocess(
+            {"id": "stage_fleet", "kind": "agent_fleet", "enabled": True,
+             "depends_on": [], "args": [], "expected_outputs": []},
+            _rp_ctx(tmp_path), parser, set(),
+        )
+        assert status == "failed_abort"
+        assert "helper-only" in (msg or "")
+
+    def test_auto_incremental_override_applied_on_success(self, tmp_path: Path) -> None:
+        from code_review_helpers import _execute_stage_inprocess
+
+        out = tmp_path / "auto_incremental.json"
+
+        def _write_scope(ns: argparse.Namespace) -> int:
+            out.write_text(json.dumps({"diff_scope": "abc123...HEAD"}))
+            return 0
+
+        parser = _fake_stage_parser(_write_scope)
+        ctx = _rp_ctx(tmp_path)
+        status, _msg = _execute_stage_inprocess(
+            self._stage(out, id="stage_07_auto_incremental"), ctx, parser, set(),
+        )
+        assert status == "ran"
+        # The narrowed scope becomes the <DIFF_SCOPE> token for later stages.
+        assert ctx.overrides.get("<DIFF_SCOPE>") == "abc123...HEAD"
+
+
+class TestCmdRunPrefixReturns:
+    """cmd_run_prefix's status-JSON returns for the paths fixtures don't isolate."""
+
+    def _write_plan(
+        self, cr_dir: Path, stages: list[dict[str, Any]], *,
+        flags: dict[str, Any] | None = None,
+    ) -> None:
+        cr_dir.mkdir(parents=True, exist_ok=True)
+        (cr_dir / "setup.json").write_text(json.dumps({
+            "start_time": "1700000000", "global_cache": "0",
+        }))
+        (cr_dir / "run_plan.json").write_text(json.dumps({
+            "flags": flags or {}, "stages": stages, "validation_gates": [],
+        }))
+
+    def _ns(self, cr_dir: Path, **over: Any) -> argparse.Namespace:
+        kwargs: dict[str, Any] = {
+            "cr_dir": str(cr_dir), "resume_from": "", "plugin_root": "",
+            "model_id": "opus", "output": None,
+        }
+        kwargs.update(over)
+        return argparse.Namespace(**kwargs)
+
+    def _run(self, cr_dir: Path, capsys: Any, **over: Any) -> dict[str, Any]:
+        from code_review_helpers import cmd_run_prefix
+
+        rc = cmd_run_prefix(self._ns(cr_dir, **over))
+        assert rc == 0
+        return json.loads(capsys.readouterr().out)
+
+    def test_error_on_aborting_stage(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # A non-helper stage after setup aborts the walk deterministically.
+        self._write_plan(tmp_path, [
+            {"id": "stage_01_setup", "kind": "helper", "subcommand": "setup",
+             "enabled": True, "depends_on": [], "expected_outputs": []},
+            {"id": "stage_bad", "kind": "agent_fleet", "enabled": True,
+             "depends_on": [], "args": [], "expected_outputs": []},
+        ])
+        result = self._run(tmp_path, capsys)
+        assert result["next_action"] == "error"
+        assert result["failed_stage"] == "stage_bad"
+        assert result["message"]
+
+    def test_ready_for_route_at_partition_boundary(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Reaching the partition stage stops the walk BEFORE running it (Phase 1).
+        self._write_plan(tmp_path, [
+            {"id": "stage_01_setup", "kind": "helper", "subcommand": "setup",
+             "enabled": True, "depends_on": [], "expected_outputs": []},
+            {"id": "stage_17_partition", "kind": "helper", "subcommand": "partition",
+             "enabled": True, "depends_on": [], "args": [], "expected_outputs": []},
+        ])
+        result = self._run(tmp_path, capsys)
+        assert result["next_action"] == "ready_for_route"
+        assert result["resume_stage"] == "stage_17_partition"
+        assert result["failed_stage"] is None
+
+    def test_ready_for_route_at_end_when_no_partition(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # A plan that ends before any partition stage completes cleanly.
+        self._write_plan(tmp_path, [
+            {"id": "stage_01_setup", "kind": "helper", "subcommand": "setup",
+             "enabled": True, "depends_on": [], "expected_outputs": []},
+        ])
+        result = self._run(tmp_path, capsys)
+        assert result["next_action"] == "ready_for_route"
+        assert result["resume_stage"] is None
+
+    def test_output_flag_writes_status_to_file(self, tmp_path: Path) -> None:
+        from code_review_helpers import cmd_run_prefix
+
+        self._write_plan(tmp_path, [
+            {"id": "stage_01_setup", "kind": "helper", "subcommand": "setup",
+             "enabled": True, "depends_on": [], "expected_outputs": []},
+        ])
+        out_path = tmp_path / "status.json"
+        rc = cmd_run_prefix(self._ns(tmp_path, output=str(out_path)))
+        assert rc == 0
+        result = json.loads(out_path.read_text())
+        assert result["next_action"] == "ready_for_route"
