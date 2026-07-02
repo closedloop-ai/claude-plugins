@@ -56,7 +56,9 @@ canonical schema documented in [SCHEMA.md](SCHEMA.md). Key contracts:
   (default cap=20, BHA floor=1 waived for docs-only PRs, required overflow
   fails closed and emits coverage gaps).
 - **`prepare-run`** emits a declarative `run_plan.json` describing the 30-stage
-  pipeline. (The orchestrator rewrite over this plan is a follow-up.)
+  pipeline; the orchestrator runs its deterministic prefix in one process via
+  `run-prefix` and walks the reviewer/verification/presentation tail
+  stage-by-stage (PLN-1229).
 - **Canonical `prompt_hash`** folds in `schema_version`: a MAJOR schema bump
   invalidates every cache namespace at once.
 
@@ -66,7 +68,7 @@ The terminal artifact of every review run is `review_result.json` (PLN-722 envel
 
 | Component | Role |
 |---|---|
-| `start.md` | Orchestrator command. Parses flags, sets up the session, invokes the helper CLI subcommands in sequence, spawns reviewer sub-agents, collects results, and presents findings |
+| `start.md` | Orchestrator command. Parses flags, sets up the session, runs the deterministic prefix in one process via `run-prefix` (then walks the reviewer tail stage-by-stage), spawns reviewer sub-agents, collects results, and presents findings |
 | `github-review.md` | Loaded by the orchestrator only in GitHub mode. Contains PR metadata resolution, file-based handoff format for CI, and summary format |
 | `code_review_helpers.py` | Python CLI that handles all deterministic work: git diff parsing, hygiene pattern matching, file partitioning, risk scoring/model routing, finding validation, cache management, and GitHub comment posting |
 | `shared_prompt.txt` | Constraints injected into every reviewer agent prompt: file assignment rules, evidence standards, severity definitions, and output format |
@@ -196,7 +198,7 @@ The orchestrator executes these steps in order:
 13. **Review state write** — persists the current diff tip so future `--since-last-review` runs can narrow the scope
 14. **Footer** — prints elapsed time, token usage stats, and writes the deterministic verdict JSON to `<CR_DIR>/verdict.json` (consumed by the `code` plugin's `run-loop.sh`)
 
-(Step numbers in this list are illustrative; the canonical 30-stage ordering lives in `prepare-run`'s `run_plan.json`.)
+(Step numbers in this list are illustrative; the canonical 30-stage ordering lives in `prepare-run`'s `run_plan.json`. Steps 2–8 — the deterministic prefix through routing and partitioning — run in a single process via the `run-prefix` helper; the orchestrator walks the reviewer/validation/presentation tail from step 9 onward.)
 
 ## Helper CLI (`code_review_helpers.py`)
 

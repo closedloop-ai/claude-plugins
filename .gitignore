@@ -38,6 +38,9 @@ __pycache__/
 .closedloop-ai/*
 !.closedloop-ai/settings/
 !.closedloop-ai/bootstrap-metadata.json
+# Plugin-local runtime working dirs must never be committed (the patterns above
+# are root-anchored; hook/review artifacts can otherwise land under plugins/**).
+plugins/**/.closedloop-ai/
 
 # Generated route knowledge files
 .claude/docs/routes/*

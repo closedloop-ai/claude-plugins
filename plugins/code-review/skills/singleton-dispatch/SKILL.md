@@ -77,7 +77,7 @@ Spawn one synchronous `Task` (do **not** set `run_in_background: true`). Unlike 
    | `{INPUT_PATH}` | `manifest.input_path` |
    | `{OUTPUT_PATH}` | The by-convention agent write target from the table above — `<CR_DIR>/pln725_extract_signals.json` (stage_11) or `<CR_DIR>/pln725_coverage_critic.json` (stage_15). **NOT** `manifest.output_path`. |
    | `{STAGE_LABEL}` | `"signal-extraction"` for stage_11, `"coverage-critic"` for stage_15. |
-4. After the Task returns, advance the walker to the sibling consolidate stage. No `TaskOutput` call — that's for background tasks; synchronous Tasks complete before control returns to the walker.
+4. After the Task returns, hand control back to the caller. **In the default `run-prefix` flow** (the caller is `start.md`'s Deterministic Prefix loop): do NOT advance the walker — return, and `start.md` re-invokes `run-prefix --resume-from <resume_stage>`, which runs the sibling consolidate stage. **In the per-stage fallback walk** (the caller is walking stages one at a time): advance the walker to the sibling consolidate stage yourself. Either way, no `TaskOutput` call — that's for background tasks; synchronous Tasks complete before control returns.
 
 ### Failure semantics
 
