@@ -59,6 +59,7 @@ import contextlib
 import json
 import os
 import subprocess
+import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -829,6 +830,25 @@ class PrefixRun:
     all_artifacts: list[str]
 
 
+def _make_prefix_context(cr_dir: Path, run_plan: dict[str, Any]) -> PrefixContext:
+    """Build the walk context, seeding the four constant ``<TOKEN>`` overrides.
+
+    Shared by the in-process (golden) and subprocess (A-side parity) drivers so
+    the seeded-constant contract lives in exactly one place.
+    """
+    setup = run_plan["_setup"]
+    return PrefixContext(
+        cr_dir=cr_dir,
+        flags=run_plan.get("flags", {}),
+        overrides={
+            "<PLUGIN_ROOT>": str(PLUGIN_ROOT),
+            "<MODEL_ID>": "opus",
+            "<START_TIME>": str(setup.get("start_time", 0)),
+            "<GLOBAL_CACHE>": str(setup.get("global_cache", "0")),
+        },
+    )
+
+
 def cache_dir_for(home: Path, repo_name: str = "fixture_repo") -> Path:
     """The cache dir ``finalize-cache`` resolves for a local branch review.
 
@@ -870,27 +890,294 @@ def run_prefix_fixture(
             base_ref_override=fixture.base_ref_override,
             pr_number=fixture.pr_number,
         )
-        setup = run_plan["_setup"]
-        ctx = PrefixContext(
-            cr_dir=cr_dir,
-            flags=run_plan.get("flags", {}),
-            overrides={
-                "<PLUGIN_ROOT>": str(PLUGIN_ROOT),
-                "<MODEL_ID>": "opus",
-                "<START_TIME>": str(setup.get("start_time", 0)),
-                "<GLOBAL_CACHE>": str(setup.get("global_cache", "0")),
-            },
+        ctx = _make_prefix_context(cr_dir, run_plan)
+        results = walk_prefix(
+            run_plan, ctx, stop_before=stop_before,
+            singleton_stubs=_fixture_singleton_stubs(fixture),
         )
-        stubs: dict[str, dict[str, Any]] = {
-            "stage_11_extract_signals": default_extract_signals_stub(),
-        }
-        if fixture.coverage_critic_stub is not None:
-            stubs["stage_15_coverage_critic"] = fixture.coverage_critic_stub
-        results = walk_prefix(run_plan, ctx, stop_before=stop_before, singleton_stubs=stubs)
         snapshots = collect_snapshots(cr_dir, repo, home)
         all_artifacts = sorted(p.name for p in cr_dir.iterdir() if p.is_file())
 
     return PrefixRun(results=results, snapshots=snapshots, all_artifacts=all_artifacts)
+
+
+# ---------------------------------------------------------------------------
+# Subprocess A/B parity oracle (PLN-1229 Phase 1)
+# ---------------------------------------------------------------------------
+#
+# The refactor guarantee is a parity test: run the deterministic prefix TWO ways
+# on the same fixture and assert byte-identical (normalized) artifacts.
+#
+#   A-side — the subprocess-per-stage walk below, faithfully reproducing what
+#            ``start.md`` does today: one ``python3 code_review_helpers.py
+#            <subcommand>`` per stage, real ``> file`` redirects, token
+#            resolution + gates done by this (test-side) driver.
+#   B-side — one ``python3 code_review_helpers.py run-prefix`` per segment,
+#            i.e. the production ``cmd_run_prefix`` under test.
+#
+# A and B share the canonical stage/gate TABLES but implement the walk WRAPPER
+# independently (A here, B in code_review_helpers), so a wrapper bug shared by
+# both cannot hide. Both stop at the Phase-1 boundary (before stage_17_partition
+# — route + partition land in Phase 2). Determinism across the two independent
+# stage-0 setups is provided by the same normalization the golden test relies on.
+
+# The production helpers CLI both sides shell out to.
+HELPERS_PATH = Path(code_review_helpers.__file__).resolve()
+
+# The A-side stops before the partition stage: Gate B (route) + partition are
+# still the orchestrator's job in Phase 1, so run-prefix (B) never runs them.
+PHASE1_STOP_STAGE = _PARTITION_STAGE_ID
+
+
+def _make_fake_gh(bin_dir: Path) -> Path:
+    """Write a ``gh`` stub that always exits non-zero and return its bin dir.
+
+    ``hermetic_prefix_env`` neutralizes ``_detect_open_pr`` in-process, but a
+    subprocess stage would call the real ``gh``. Shadowing ``gh`` with a failing
+    stub on ``PATH`` makes the subprocess take the identical deterministic no-PR
+    branch (``gh pr view`` → CalledProcessError → ``None``) regardless of whether
+    the host has ``gh`` installed and authenticated.
+    """
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    gh = bin_dir / "gh"
+    gh.write_text("#!/bin/sh\nexit 1\n")
+    gh.chmod(0o755)
+    return bin_dir
+
+
+def _subprocess_env(bin_dir: Path) -> dict[str, str]:
+    """Inherit the hermetic env (HOME / CR_GLOBAL_CACHE / git isolation) and
+    prepend the fake-``gh`` bin dir so subprocess stages resolve it first."""
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    return env
+
+
+def _run_stage_subprocess(
+    subcommand: str,
+    resolved_args: list[str],
+    repo: Path,
+    stdout_path: Path | None,
+    env: dict[str, str],
+) -> int:
+    """Run one helper stage as a real subprocess, honoring the ``> file`` redirect."""
+    cmd = [sys.executable, str(HELPERS_PATH), subcommand, *resolved_args]
+    if stdout_path is not None:
+        with stdout_path.open("w") as fh:
+            proc = subprocess.run(
+                cmd, cwd=str(repo), env=env, stdout=fh,
+                stderr=subprocess.PIPE, text=True,
+            )
+    else:
+        proc = subprocess.run(
+            cmd, cwd=str(repo), env=env, stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE, text=True,
+        )
+    return proc.returncode
+
+
+def _execute_stage_subprocess(
+    stage: dict[str, Any],
+    ctx: PrefixContext,
+    repo: Path,
+    env: dict[str, str],
+    completed: set[str],
+) -> StageResult:
+    """Subprocess twin of ``_execute_stage`` — identical control flow, real exec.
+
+    No partition augmentation: the A-side stops before ``stage_17_partition``,
+    so that branch never runs in Phase 1.
+    """
+    stage_id = stage["id"]
+    if not stage.get("enabled", True):
+        return StageResult(stage_id, "skipped")
+    if any(dep not in completed for dep in stage.get("depends_on", [])):
+        return StageResult(stage_id, "skipped")
+    if stage_id == _SETUP_STAGE_ID:
+        completed.add(stage_id)
+        return StageResult(stage_id, "ran")
+
+    kind = stage.get("kind")
+    if kind != "helper":
+        raise AssertionError(
+            f"prefix must be helper-only; got kind={kind!r} for {stage_id!r}",
+        )
+
+    resolved = _resolve_args(stage.get("args", []), ctx)
+    stdout_target = stage.get("stdout")
+    rc = _run_stage_subprocess(
+        stage["subcommand"], resolved, repo,
+        Path(stdout_target) if stdout_target else None, env,
+    )
+    outputs_ok = _expected_outputs_present(stage)
+    if rc != 0 or not outputs_ok:
+        on_failure = stage.get("on_failure", "abort")
+        if on_failure == "abort":
+            raise AssertionError(
+                f"stage {stage_id!r} failed (rc={rc}, outputs_ok={outputs_ok}) "
+                f"with on_failure=abort",
+            )
+        return StageResult(stage_id, "failed_continue", rc)
+
+    _apply_post_stage_overrides(stage_id, ctx)
+    completed.add(stage_id)
+    return StageResult(stage_id, "ran", rc)
+
+
+def subprocess_walk_prefix(
+    run_plan: dict[str, Any],
+    ctx: PrefixContext,
+    repo: Path,
+    env: dict[str, str],
+    *,
+    stop_before: str = PHASE1_STOP_STAGE,
+    singleton_stubs: dict[str, dict[str, Any]] | None = None,
+) -> list[StageResult]:
+    """A-side walk: subprocess per stage, Gate A + singleton dispatch, no route."""
+    stubs = singleton_stubs or {}
+    completed: set[str] = set()
+    results: list[StageResult] = []
+    for stage in run_plan["stages"]:
+        stage_id = stage["id"]
+        if stage_id == stop_before:
+            break
+        results.append(_execute_stage_subprocess(stage, ctx, repo, env, completed))
+        if stage_id in _SINGLETON_AGENT_OUTPUT:
+            _singleton_dispatch(stage_id, ctx, stubs)
+        if stage_id == _HYGIENE_STAGE_ID and ctx.flags.get("hygiene_only"):
+            break  # Gate A
+    return results
+
+
+def _fixture_singleton_stubs(fixture: PrefixFixture) -> dict[str, dict[str, Any]]:
+    """The canned singleton stubs a fixture drives (extract-signals always;
+    coverage-critic only when the fixture plants a reviewer roster)."""
+    stubs: dict[str, dict[str, Any]] = {
+        "stage_11_extract_signals": default_extract_signals_stub(),
+    }
+    if fixture.coverage_critic_stub is not None:
+        stubs["stage_15_coverage_critic"] = fixture.coverage_critic_stub
+    return stubs
+
+
+def run_prefix_fixture_subprocess(
+    tmp_root: Path, fixture: PrefixFixture,
+) -> dict[str, str]:
+    """A-side driver: build the fixture, walk it via subprocess-per-stage, snapshot.
+
+    Stage 0 (setup + prepare-run) runs in-process — it is unchanged shared code
+    both sides call; the refactor under test is the WALK, which runs as real
+    subprocesses here.
+    """
+    repo = tmp_root / "fixture_repo"
+    cr_dir = tmp_root / "cr"
+    home = tmp_root / "home"
+    bin_dir = _make_fake_gh(tmp_root / "bin")
+
+    build_fixture_repo(repo, fixture.repo)
+    home.mkdir(parents=True, exist_ok=True)
+
+    with hermetic_prefix_env(repo, home):
+        # Snapshot env INSIDE the hermetic context so the subprocess inherits the
+        # redirected HOME / CR_GLOBAL_CACHE (else the cache resolves to the real
+        # ~/.claude and pollutes it — and makes the run non-deterministic).
+        env = _subprocess_env(bin_dir)
+        if fixture.pre_seed is not None:
+            fixture.pre_seed(home, repo, cr_dir)
+        run_plan = run_setup_and_prepare(
+            cr_dir,
+            depth=fixture.depth,
+            scope_args=fixture.scope_args,
+            hygiene_only=fixture.hygiene_only,
+            since_last_review=fixture.since_last_review,
+            full_review=fixture.full_review,
+            base_ref_override=fixture.base_ref_override,
+            pr_number=fixture.pr_number,
+        )
+        ctx = _make_prefix_context(cr_dir, run_plan)
+        subprocess_walk_prefix(
+            run_plan, ctx, repo, env,
+            singleton_stubs=_fixture_singleton_stubs(fixture),
+        )
+        return collect_snapshots(cr_dir, repo, home)
+
+
+def _invoke_run_prefix_subprocess(
+    cr_dir: Path, repo: Path, env: dict[str, str], resume_from: str,
+) -> dict[str, Any]:
+    """Invoke ``code_review_helpers.py run-prefix`` as a subprocess; return status JSON."""
+    cmd = [
+        sys.executable, str(HELPERS_PATH), "run-prefix",
+        "--cr-dir", str(cr_dir),
+        "--plugin-root", str(PLUGIN_ROOT),
+        "--model-id", "opus",
+    ]
+    if resume_from:
+        cmd += ["--resume-from", resume_from]
+    proc = subprocess.run(
+        cmd, cwd=str(repo), env=env, capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(
+            f"run-prefix exited {proc.returncode}: {proc.stderr.strip()}",
+        )
+    return json.loads(proc.stdout)
+
+
+def run_prefix_fixture_via_runner(
+    tmp_root: Path, fixture: PrefixFixture,
+) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    """B-side driver: drive ``run-prefix`` segment-by-segment, snapshot.
+
+    Returns ``(snapshots, statuses)`` — the second element is the ordered list of
+    status JSONs the runner emitted (one per segment), so a test can assert the
+    pause sequence as well as artifact parity.
+    """
+    repo = tmp_root / "fixture_repo"
+    cr_dir = tmp_root / "cr"
+    home = tmp_root / "home"
+    bin_dir = _make_fake_gh(tmp_root / "bin")
+    stubs = _fixture_singleton_stubs(fixture)
+
+    build_fixture_repo(repo, fixture.repo)
+    home.mkdir(parents=True, exist_ok=True)
+
+    statuses: list[dict[str, Any]] = []
+    with hermetic_prefix_env(repo, home):
+        # Snapshot env INSIDE the hermetic context (see run_prefix_fixture_subprocess).
+        env = _subprocess_env(bin_dir)
+        if fixture.pre_seed is not None:
+            fixture.pre_seed(home, repo, cr_dir)
+        run_setup_and_prepare(
+            cr_dir,
+            depth=fixture.depth,
+            scope_args=fixture.scope_args,
+            hygiene_only=fixture.hygiene_only,
+            since_last_review=fixture.since_last_review,
+            full_review=fixture.full_review,
+            base_ref_override=fixture.base_ref_override,
+            pr_number=fixture.pr_number,
+        )
+        resume_from = ""
+        # Bounded loop: at most Gate A + 2 singletons + terminal = 4 segments.
+        for _ in range(8):
+            status = _invoke_run_prefix_subprocess(cr_dir, repo, env, resume_from)
+            statuses.append(status)
+            if status["next_action"] != "needs_singleton":
+                break
+            singleton = status["singleton"]
+            stage_id = (
+                "stage_11_extract_signals"
+                if singleton == "extract_signals"
+                else "stage_15_coverage_critic"
+            )
+            stub = stubs[stage_id]
+            (cr_dir / _SINGLETON_AGENT_OUTPUT[stage_id]).write_text(
+                json.dumps(stub, indent=2),
+            )
+            resume_from = status["resume_stage"]
+        snapshots = collect_snapshots(cr_dir, repo, home)
+    return snapshots, statuses
 
 
 # ---------------------------------------------------------------------------

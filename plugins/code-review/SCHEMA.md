@@ -493,6 +493,56 @@ Stages from plans 01/03/05/06 are present in `run_plan.json` but marked
 
 ---
 
+## 7b. `run-prefix` result contract (PLN-1229)
+
+`run-prefix` runs the deterministic prefix (stages 01→`cache_check`) in ONE
+process instead of one orchestrator turn per stage. It reads `run_plan.json` +
+`setup.json` from `--cr-dir`, walks from `--resume-from` (default: the first
+plan stage), and stops at the next genuine decision point — emitting a status
+JSON (to stdout, or `--output <path>`) that tells the orchestrator what to do
+next. The runner is **resumable**: after handling a pause the orchestrator
+re-invokes `run-prefix --resume-from <resume_stage>`. Because each segment is a
+fresh process, the `depends_on` `completed` set is reconstructed from artifacts
+on disk (a prior stage counts as done iff its literal `expected_outputs` exist).
+
+**Result fields:**
+
+| Field           | Type            | Meaning                                                                 |
+| --------------- | --------------- | ----------------------------------------------------------------------- |
+| `next_action`   | string (enum)   | The pause reason — authoritative (read this, not the exit code).        |
+| `resume_stage`  | string \| null  | The stage id to pass as `--resume-from` on the next invocation.         |
+| `singleton`     | string \| null  | `"extract_signals"` \| `"coverage_critic"` when `needs_singleton`.      |
+| `failed_stage`  | string \| null  | The aborting stage id when `next_action == "error"`.                    |
+| `ran_stages`    | string[]        | Stage ids executed (or `continue`-failed) this segment, in order.       |
+| `message`       | string \| null  | Short diagnostic on `error`, else null.                                 |
+
+**`next_action` values:**
+
+| Value               | Fires at                              | Orchestrator does next                                                        |
+| ------------------- | ------------------------------------- | ---------------------------------------------------------------------------- |
+| `needs_singleton`   | `stage_11` / `stage_15` `needs_agent` | Spawn the `singleton` agent, write its output, re-invoke from `resume_stage`. |
+| `hygiene_exit`      | Gate A (`hygiene_only` after hygiene) | Present hygiene findings and stop (no verdict/footer).                        |
+| `ready_for_route`   | reaching `stage_17_partition`         | Run Gate B (`route`) + partition + the rest of the walk.                      |
+| `error`             | a stage aborted / a gate failed       | Fall back to the per-stage walk from `failed_stage`; partials are preserved.  |
+
+`ready_for_route` distinguishes its two cases by `resume_stage`: a non-null
+`resume_stage` (`stage_17_partition`) is the normal boundary — run Gate B +
+partition from there. A **null** `resume_stage` means the walk reached the end
+of the plan without a partition stage (e.g. a depth tier that filters partition
+out); there is nothing left to route, so the orchestrator skips Gate B and
+partition and proceeds directly to the reviewer fleet.
+
+The exit code is `0` for every well-formed result (including `error`) — the
+`next_action` field is the contract. Route + partition (Segment 3) fold into the
+runner in Phase 2, at which point `ready_for_route` becomes `ready_for_reviewers`
+(carrying `fast_path` + `cache_status_message`). The `on_failure` policy of each
+stage is honored exactly as the Walker Contract prescribes: `abort` → `error`;
+`continue` → proceed; `continue_with_coverage_gap` → proceed after writing an
+`agent-failure` system finding to `agent_<stage>-failed.json` (collected by
+`collect-findings`).
+
+---
+
 ## 8. Determinism tiers (PLN-719 Section 8)
 
 | Tier                       | Definition                                                              | Required reviewers may depend? |

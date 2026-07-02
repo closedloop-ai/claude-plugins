@@ -33,6 +33,8 @@ from prefix_golden_harness import (
     fast_path_fixture,
     hygiene_only_fixture,
     run_prefix_fixture,
+    run_prefix_fixture_subprocess,
+    run_prefix_fixture_via_runner,
     since_last_review_fixture,
     standard_fixture,
 )
@@ -242,6 +244,91 @@ def test_prefix_matches_golden(name: str, tmp_path: Path, update_golden: bool) -
                 )
             )
     assert not diffs, f"[{name}] prefix artifact drift:\n" + "\n\n".join(diffs)
+
+
+# ---------------------------------------------------------------------------
+# Subprocess A/B parity oracle (PLN-1229 Phase 1)
+# ---------------------------------------------------------------------------
+#
+# The refactor guarantee: run the deterministic prefix two ways and assert the
+# artifacts are byte-identical (modulo review_id / timestamps / abs paths, which
+# normalization scrubs). A-side is the subprocess-per-stage walk (what start.md
+# does today); B-side is production ``run-prefix``. Both stop at the Phase-1
+# boundary (before stage_17_partition — route + partition are Phase 2), so the
+# compared artifact set runs 01→cache_check. A and B implement the walk WRAPPER
+# independently, so a shared wrapper bug cannot hide.
+
+# The pause sequence each fixture drives run-prefix through, as
+# ``<next_action>[:<singleton>]`` per emitted segment. Pins the resumable
+# 3-segment contract at the integration level (the two singletons almost always
+# fire; hygiene-only is the one-segment Gate A exit).
+_EXPECTED_SEGMENTS: dict[str, list[str]] = {
+    "golden_prefix_standard": ["needs_singleton:extract_signals", "ready_for_route"],
+    "golden_prefix_fast_path": ["needs_singleton:extract_signals", "ready_for_route"],
+    "golden_prefix_hygiene_only": ["hygiene_exit"],
+    "golden_prefix_empty_diff": ["needs_singleton:extract_signals", "ready_for_route"],
+    "golden_prefix_cache_hit": ["needs_singleton:extract_signals", "ready_for_route"],
+    "golden_prefix_since_last_review": [
+        "needs_singleton:extract_signals", "ready_for_route",
+    ],
+    "golden_prefix_coverage_critic": [
+        "needs_singleton:extract_signals",
+        "needs_singleton:coverage_critic",
+        "ready_for_route",
+    ],
+}
+
+
+def _segment_labels(statuses: list[dict[str, object]]) -> list[str]:
+    labels: list[str] = []
+    for status in statuses:
+        action = str(status["next_action"])
+        singleton = status.get("singleton")
+        labels.append(f"{action}:{singleton}" if singleton else action)
+    return labels
+
+
+@pytest.mark.parametrize("name", _ALL_FIXTURES)
+def test_run_prefix_matches_subprocess_walk(name: str, tmp_path: Path) -> None:
+    """``run-prefix`` (B) produces the same artifacts as the per-stage walk (A)."""
+    factory = _FIXTURE_FACTORIES[name]
+    a_snaps = run_prefix_fixture_subprocess(tmp_path / "a", factory())
+    b_snaps, statuses = run_prefix_fixture_via_runner(tmp_path / "b", factory())
+
+    assert set(a_snaps) == set(b_snaps), (
+        f"[{name}] artifact-set drift between per-stage walk and run-prefix:\n"
+        f"  only in walk:      {sorted(set(a_snaps) - set(b_snaps))}\n"
+        f"  only in run-prefix:{sorted(set(b_snaps) - set(a_snaps))}"
+    )
+    diffs: list[str] = []
+    for artifact in sorted(a_snaps):
+        if a_snaps[artifact] != b_snaps[artifact]:
+            diffs.append(
+                "\n".join(
+                    difflib.unified_diff(
+                        a_snaps[artifact].splitlines(),
+                        b_snaps[artifact].splitlines(),
+                        fromfile=f"per-stage-walk/{artifact}",
+                        tofile=f"run-prefix/{artifact}",
+                        lineterm="",
+                    )
+                )
+            )
+    assert not diffs, f"[{name}] run-prefix artifact drift:\n" + "\n\n".join(diffs)
+
+
+@pytest.mark.parametrize("name", _ALL_FIXTURES)
+def test_run_prefix_pause_sequence(name: str, tmp_path: Path) -> None:
+    """``run-prefix`` pauses at exactly the expected decision points, in order."""
+    _snaps, statuses = run_prefix_fixture_via_runner(tmp_path, _FIXTURE_FACTORIES[name]())
+    assert _segment_labels(statuses) == _EXPECTED_SEGMENTS[name]
+    # The final segment resolves the pipeline (no dangling needs_singleton).
+    assert statuses[-1]["next_action"] in ("ready_for_route", "hygiene_exit")
+    assert statuses[-1]["failed_stage"] is None
+    # Every needs_singleton names the sibling consolidate stage to resume at.
+    for status in statuses:
+        if status["next_action"] == "needs_singleton":
+            assert str(status["resume_stage"]).endswith("_consolidate")
 
 
 # ---------------------------------------------------------------------------
