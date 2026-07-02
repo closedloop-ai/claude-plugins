@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.4.0
+
+#### Changed
+- The `/code-review` orchestrator now runs the deterministic review prefix via the `run-prefix` helper loop instead of walking those stages one at a time. After session setup it invokes `run-prefix` and acts on the returned status: dispatching a signal-extraction or coverage-critic agent and resuming when one is needed, presenting hygiene findings and exiting on a hygiene-only run, or — once the whole prefix (including model routing and partitioning) is done — printing the cache/fast-path notices and handing off to the reviewer fleet. This collapses roughly nineteen helper stages and their serial model turns into a handful of orchestrator turns, the single biggest turn-count reduction in a review. The per-stage walk remains fully documented as the labeled fallback, used only when `run-prefix` reports an error or is unavailable (e.g. an older plugin cache), so no behavior is lost.
+- The stage-by-stage "Walker Contract" is now scoped to the reviewer/verification/presentation tail (spawn-reviewers onward) plus that prefix fallback; the hygiene-only exit and the routing/partition gate are performed inside `run-prefix` and surfaced through its result. The single-agent dispatch skill and `SCHEMA.md` were updated to match (the skill returns control for `run-prefix` to resume in the default flow, and `SCHEMA.md` documents the routing-failure recovery anchor and the shallow-tier spawn-spec stage).
+
 ### code-review v3.3.0
 
 #### Changed
