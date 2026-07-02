@@ -1,0 +1,117 @@
+{
+  "critic": {
+    "available_reviewers_hash": "ef127378e8168c3630966d4b9db43bc658ecb9f40586375d0cbbeba4c17e08c7",
+    "cache_key": "<CACHE_KEY>",
+    "coverage_plan_initial_hash": "<PLAN_INITIAL_HASH>",
+    "coverage_state": "<CR_DIR>/coverage.json",
+    "diff_summary_path": "<CR_DIR>/coverage_critic_diff_summary.json",
+    "input_path": "<CR_DIR>/coverage_critic_input.json",
+    "model": "sonnet",
+    "prompt_hash": "<PROMPT_HASH>",
+    "prompt_path": "<PLUGIN_ROOT>/tools/prompts/coverage_critic_prompt.txt",
+    "signals_hash": "<SIGNALS_HASH>",
+    "status": "needs_agent"
+  },
+  "final": {
+    "best_effort": [
+      {
+        "evidence": "fixture: login path adds token verification",
+        "reviewer": "security-critic",
+        "source": "critic",
+        "trigger": {
+          "type": "critic_addition"
+        }
+      }
+    ],
+    "budget": {
+      "best_effort_count": 1,
+      "bha_partitions": 1,
+      "domain_critic_cap": 3,
+      "domain_critic_cap_fired": false,
+      "required_count": 4,
+      "total_cap": 20
+    },
+    "deferred_for_budget": [],
+    "deprecation_warnings": [],
+    "dropped_required": [],
+    "required": [
+      {
+        "reviewer": "bug_hunter_a",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      },
+      {
+        "reviewer": "bug_hunter_b",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      },
+      {
+        "reviewer": "unified_auditor",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      },
+      {
+        "reviewer": "test_quality",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      }
+    ]
+  },
+  "initial": {
+    "best_effort": [],
+    "generated_at": "<TS>",
+    "required": [
+      {
+        "reviewer": "bug_hunter_a",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      },
+      {
+        "reviewer": "bug_hunter_b",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      },
+      {
+        "reviewer": "unified_auditor",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      },
+      {
+        "reviewer": "test_quality",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      }
+    ],
+    "scope": "code-review",
+    "stats": {
+      "best_effort_count": 0,
+      "detected_change_classes": [],
+      "required_count": 4,
+      "rules_evaluated": 0,
+      "rules_matched": 0,
+      "signal_count": 1
+    },
+    "warnings": []
+  },
+  "verify": {
+    "checked_at": "<TS>",
+    "verdict": "PASS",
+    "violations": []
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "changed_ranges": {
+    "src/app.py": {
+      "added": [
+        [
+          2,
+          2
+        ]
+      ],
+      "removed": [
+        [
+          2,
+          2
+        ]
+      ]
+    }
+  },
+  "file_loc": {
+    "src/app.py": {
+      "added": 1,
+      "removed": 1
+    }
+  },
+  "file_statuses": {
+    "src/app.py": "modified"
+  },
+  "files_to_review": [
+    "src/app.py"
+  ],
+  "patch_lines": {
+    "src/app.py": {
+      "added_lines": {
+        "2": "    return name.upper()"
+      },
+      "removed_lines": {
+        "2": "    return name"
+      }
+    }
+  },
+  "total_loc": 2
+}

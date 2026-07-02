@@ -1,0 +1,30 @@
+{
+  "force_merged_count": 0,
+  "partition_count": 1,
+  "partition_mode": "unified",
+  "partition_patches": [
+    "patches_p0.txt"
+  ],
+  "partitions": [
+    {
+      "files": [
+        {
+          "file": "src/constants.py",
+          "is_test": false,
+          "loc": 210
+        },
+        {
+          "file": "src/app.py",
+          "is_test": false,
+          "loc": 2
+        }
+      ],
+      "id": 0,
+      "is_test_only": false,
+      "total_loc": 212
+    }
+  ],
+  "test_file_paths": [],
+  "total_changed_loc": 212,
+  "unified_threshold_loc": 5000
+}

@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.1.1
+
+#### Added
+- Deterministic golden-fixture harness for the review pipeline's front half: it walks the whole deterministic prefix (setup through reviewer-spawn-spec derivation) in-process against real, pinned-date git fixtures — with the signal-extraction and coverage-critic singleton agents stubbed and the hygiene-only exit and routing/fast-path branches reproduced — and snapshots every intermediate artifact for byte-level regression detection. Ships seven fixtures (standard/partitioned, fast-path, hygiene-only, empty-diff, cache-hit, since-last-review, coverage-critic) with committed golden snapshots and a cross-run determinism check.
+- Targeted branch tests for the `cache-check`, `resolve-scope`, `auto-incremental`, and `finalize-cache` helpers covering their previously-untested degradation and mode/scope paths (missing diff data, unreadable setup, forced/auto incremental rebase and same-head fallbacks, and the GitHub/global/PR-scoped cache directories).
+
 ### code-review v3.1.0
 
 #### Added
