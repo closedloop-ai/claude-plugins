@@ -60,10 +60,10 @@ The walk is hybrid:
 
 **Turn & context discipline (cost).** Cache cost scales with carried context × turn count, so keep both small:
 - **Never read large artifacts into the orchestrator's context.** `diff_data.json`, `patches_*.txt`, and per-file diffs are passed to helpers and reviewers as **file-path arguments**, never `cat`/`Read` into the walk. Reviewers read patches themselves (see the spawn skill's anti-inline rule). The only large file the orchestrator reads is `review_result.json` at the present stage, once, with the per-section display caps the present skill already applies.
-- **Batch deterministic helper stages.** As a turn-count optimization you MAY chain a run of consecutive `helper`-kind stages into one `Bash` call (`cmd1 && cmd2 && …`, each redirecting stdout per its `stdout` field) — but ONLY a run in which **every** stage declares `on_failure: abort`, **none** has a `GATES` entry firing after it, **none** is a branching-gate boundary (A/B/C/D) or an `agent_fleet`/`present`/singleton-dispatch stage, and no stage's args depend on a value an in-batch predecessor printed to stdout. Those constraints make recovery unambiguous: there is no gate to interleave, and no `continue` stage whose successors the `&&` short-circuit would wrongly skip. After the chain returns, confirm each chained stage's `expected_outputs`; if the chain exited non-zero, an `abort` stage failed, so **abort** (do not run any gate against the partial batch). Any stage with an associated gate, a non-`abort` `on_failure` (`continue` / `continue_with_coverage_gap`), or a stdout dependency runs solo under the normal one-stage-at-a-time walk. When in doubt, don't batch.
+- **Batch the deterministic prefix with `run-prefix`.** The entire deterministic prefix (stages 01→19b) runs in ONE process via the `run-prefix` helper — see the **Deterministic Prefix — `run-prefix` loop** section below — collapsing ~19 helper stages (and their ~4 serial model turns each) into a handful of orchestrator turns. This is the default and the single biggest turn-count saving. Only in the per-stage **fallback walk** (when `run-prefix` errored or is unavailable) may you additionally chain a run of consecutive `helper`-kind stages into one `Bash` call (`cmd1 && cmd2 && …`, each redirecting stdout per its `stdout` field) — but ONLY a run in which **every** stage declares `on_failure: abort`, **none** has a `GATES` entry firing after it, **none** is a branching-gate boundary (A/B/C/D) or an `agent_fleet`/`present`/singleton-dispatch stage, and no stage's args depend on a value an in-batch predecessor printed to stdout. Those constraints make recovery unambiguous: there is no gate to interleave, and no `continue` stage whose successors the `&&` short-circuit would wrongly skip. After the chain returns, confirm each chained stage's `expected_outputs`; if the chain exited non-zero, an `abort` stage failed, so **abort** (do not run any gate against the partial batch). Any stage with an associated gate, a non-`abort` `on_failure` (`continue` / `continue_with_coverage_gap`), or a stdout dependency runs solo under the normal one-stage-at-a-time walk. When in doubt, don't batch.
 - **Narrate sparingly.** Emit only the operator-essential lines the per-stage notes mark for printing (review-mode line, cache status, fast-path notice, verdict). Do not echo intermediate stage progress as prose.
 
-Four runtime gates modify walker default behavior (they are runtime-driven and either replace the default walk or add a condition on top of a plan stage):
+Four runtime gates modify walker default behavior (they are runtime-driven and either replace the default walk or add a condition on top of a plan stage). **Gate A and Gate B fire inside the prefix — `run-prefix` performs them and surfaces the result to you (as `hygiene_exit` / `ready_for_reviewers`); you only execute their mechanics in the per-stage fallback walk. Gate C and Gate D fire in the walked tail (after `stage_20`), so you always apply them.**
 1. **Gate A** — after `stage_12_hygiene`, if `flags.hygiene_only` is true: present hygiene findings and **EXIT** (no further stages, no verdict, no footer).
 2. **Gate B** — after `stage_19_cache_check`, invoke `route` (model routing) to compute `fast_path` and `max_bha_agents`. `fast_path == true` skips `stage_17_partition` entirely and drives a single fast-path reviewer in `stage_20`.
 3. **Gate C** — before `stage_26_cache_update`, skip if `fast_path == true` OR `CACHE_DIR` is empty.
@@ -200,7 +200,35 @@ If MODE=github, also Read `${CLAUDE_PLUGIN_ROOT}/prompts/github-review.md` now.
 
 ---
 
+## Deterministic Prefix — `run-prefix` loop
+
+The deterministic prefix — every stage from `stage_01_setup` through Gate B (`route`), `stage_17_partition`, and `stage_19b_derive_spawn_spec` (or `stage_19c_derive_static_spec` in `--depth shallow`) — is run **in one process** by the `run-prefix` helper instead of one orchestrator turn per stage. This is the default path. Do **not** walk these stages one at a time (the per-stage **Walker Contract** below is the labeled fallback, used only when `run-prefix` returns `error` or is unavailable, e.g. an old marketplace cache with no `run-prefix` subcommand).
+
+`run-prefix` reads `run_plan.json` + `setup.json` from `<CR_DIR>` (both written in stage 0), resolves each stage's placeholder tokens from prior-stage artifacts, honors every stage's `on_failure` policy and validation gate exactly as the Walker Contract prescribes, and pauses only at genuine decision points — emitting a status JSON. See `SCHEMA.md` §7b for the full result contract.
+
+Invoke it, then dispatch on the result's `next_action` (authoritative — read the field, not the exit code, which is `0` for every well-formed result):
+
+```bash
+python3 <HELPERS> run-prefix --cr-dir <CR_DIR> --plugin-root <PLUGIN_ROOT>
+```
+
+Read the status JSON from stdout and act:
+
+1. **`needs_singleton`** — a PLN-725 singleton needs an agent (`singleton` is `"extract_signals"` or `"coverage_critic"`). Invoke the `code-review:singleton-dispatch` skill for that stage — it reads the prepare manifest `run-prefix` just wrote and spawns one synchronous Task, writing `pln725_<singleton>.json`. Then **re-invoke** `run-prefix` with `--resume-from <resume_stage>` (the `resume_stage` from the result — the sibling consolidate stage) and dispatch on the new result. Both singletons fire on most runs, so expect up to two such pauses per review.
+
+2. **`hygiene_exit`** — **Gate A** (hygiene-only). Mark the pre-review todos `run-prefix` completed (`Parse scope and get diff data`, `Run deterministic hygiene checks`) `completed`. If `cache_status_message` is non-null, print it. Render `<CR_DIR>/hygiene.json` using the **Hygiene Findings Format (Gate A render target)** section below. If `MODE=github`, do the Gate A GitHub write (`.closedloop-ai/code-review-summary.md` + `.closedloop-ai/code-review-findings.json`). Then mark "Present hygiene findings" `completed` and **EXIT** — no route, partition, agents, validate, finalize, verdict, or footer.
+
+3. **`ready_for_reviewers`** — the whole deterministic prefix is done; `run-prefix` has already run Gate B `route`, partitioned (or skipped partition in fast-path), and derived the spawn spec. Mark the pre-review todos `run-prefix` completed (`Parse scope and get diff data`, `Run deterministic hygiene checks`, `Assess scope and route models`) `completed`. Cache `FAST_PATH` (`fast_path`) and `MAX_BHA_AGENTS` (`max_bha_agents`) from the result. **Read `CACHE_DIR` from `<CR_DIR>/cache_config.json` (`cache_dir`, empty when no cache)** — the run-prefix loop skipped the walk where the fallback would have cached it, and Gate C, Gate D, and the notices below all need it. If `cache_status_message` is non-null, print it. If `FAST_PATH` is true, read `<CR_DIR>/spawn.json` (`route.models.fast_path_reviewer`) and print `"Fast path selected: 1 reviewer (<fast_path_reviewer>)."` (matching the Gate B fallback notice) and — when `CACHE_DIR` is set — `"BHA Cache: bypassed in fast-path mode."`, and replace the "Spawn reviewer agents in parallel" todo with "Run fast-path review". Then continue with the **Walker Contract** below **starting at `stage_20_spawn_reviewers`** — the reviewer fleet and everything after it are still walked one stage at a time. (Any `<CACHE_DIR>` / `<REVIEW_ROOT>` / other tokens the tail stages need are resolved from the on-disk artifacts `run-prefix` wrote, per the token table.)
+
+4. **`error`** — a stage aborted or a validation gate failed (`failed_stage` names the stage; `message` carries the diagnostic). Partial artifacts on disk are preserved. **Fall back** to the per-stage **Walker Contract** below, resuming the walk from `failed_stage` (re-run only that stage forward). If a downstream stage keeps failing, surface `message` to the operator.
+
+The routing/cache notices (Gate A cache line, Gate B fast-path + cache line) are the operator-essential output of this loop — emit them and nothing else; do not narrate the individual prefix stages `run-prefix` ran.
+
+---
+
 ## Walker Contract
+
+**When this applies.** The Walker Contract governs the **reviewer/verify/present tail** — `stage_20_spawn_reviewers` onward — which is always walked one stage at a time. In the normal flow the `run-prefix` loop above has already run the deterministic prefix (stages 01→19b) and handed off at `stage_20_spawn_reviewers`, so **begin the walk there**. The Contract is ALSO the **per-stage fallback for the prefix**: if `run-prefix` returned `error` (or is unavailable), walk the prefix stages one at a time from `failed_stage`, applying the same steps 1-8 and the Branching Gates (A/B) below. Everything in this section — token resolution, `on_failure`, gates, singleton dispatch — is exactly what `run-prefix` reproduces internally; it is documented here as the canonical contract and the recovery path.
 
 **Reading `<CR_DIR>/*.json` artifacts.** The walker reads run-plan output JSON to resolve placeholder tokens (`<DIFF_SCOPE>`, `<CACHE_DIR>`, etc.). If your session has a hook that intercepts the `Read` tool on generated artifacts (e.g. a code-discovery gate that demands codebase-memory-mcp lookups), fall back to `cat` via `Bash` — these are pipeline artifacts, not source code.
 
@@ -262,6 +290,8 @@ If a token's source file does not exist yet (a prior stage that produces it was 
 ## Branching Gates
 
 Four runtime gates modify walker default behavior. Each is documented below with the exact stage boundary it fires at.
+
+**Gate A and Gate B fire inside the prefix, so `run-prefix` performs them for you.** In the normal flow you never execute the mechanics below — `run-prefix` runs Gate A's hygiene-only exit (surfaced as `next_action: "hygiene_exit"`) and Gate B's `route` + partition (surfaced as `next_action: "ready_for_reviewers"` with `fast_path` / `max_bha_agents`), and the **Deterministic Prefix — `run-prefix` loop** section tells you what to print and where to hand off. The Gate A/B detail below is the canonical spec and the recipe for the **per-stage fallback walk** (when `run-prefix` errored). **Gate C and Gate D fire after `stage_20`, in the walked tail, so you always apply them yourself** as described.
 
 ### Gate A — After `stage_12_hygiene`: Hygiene-only early exit
 
@@ -397,7 +427,7 @@ When the walker reaches `stage_23_verify_findings`, invoke the `code-review:veri
 
 ## PLN-725 Single-Agent Dispatch
 
-Walker-contract step 6 points here. When the stage just finished is `stage_11_extract_signals` or `stage_15_coverage_critic`, invoke the `code-review:singleton-dispatch` skill. The skill owns the full protocol: reading the prepare manifest's `status` (`cache_hit` / `skipped` → no dispatch; `needs_agent` → spawn one synchronous singleton Task), the by-convention `pln725_*.json` agent write target, and the fail-closed semantics the sibling consolidate stage relies on.
+The `run-prefix` loop's `next_action: "needs_singleton"` handler points here (and, in the per-stage fallback walk, so does Walker-Contract step 6). When `run-prefix` reports a singleton — or, in the fallback walk, when the stage just finished is `stage_11_extract_signals` or `stage_15_coverage_critic` — invoke the `code-review:singleton-dispatch` skill. The skill owns the full protocol: reading the prepare manifest's `status` (`cache_hit` / `skipped` → no dispatch; `needs_agent` → spawn one synchronous singleton Task), the by-convention `pln725_*.json` agent write target, and the fail-closed semantics the sibling consolidate stage relies on. In the `run-prefix` flow the manifest already exists on disk (the runner wrote it); after the skill writes `pln725_<singleton>.json`, re-invoke `run-prefix --resume-from <resume_stage>` per the loop.
 
 <!-- replaced-by-skill: code-review:singleton-dispatch — DO NOT add inline singleton-dispatch content here -->
 

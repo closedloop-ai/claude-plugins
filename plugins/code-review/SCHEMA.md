@@ -550,8 +550,10 @@ The exit code is `0` for every well-formed result (including `error`) — the
 honored exactly as the Walker Contract prescribes: `abort` → `error`; `continue`
 → proceed; `continue_with_coverage_gap` → proceed after writing an
 `agent-failure` system finding to `agent_<stage>-failed.json` (collected by
-`collect-findings`). A `route` failure is surfaced as `error` with
-`failed_stage: "route"`.
+`collect-findings`). A Gate B `route` failure is surfaced as `error` with
+`failed_stage: "stage_19_cache_check"` (route is not a plan stage, so the error
+anchors on the stage a per-stage fallback resumes from — re-running cache-check
+→ route → partition).
 
 ---
 
