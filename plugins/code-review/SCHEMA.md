@@ -719,8 +719,10 @@ The remaining 3 fixtures requiring plans 03/05/06
 (`golden_impact_with_callsites`, `golden_coverage_gap`,
 `golden_budget_exceeded`) have reserved directories with READMEs and
 are skipped via a `_DEFERRED_FIXTURES` map in the test module until
-their dependent plans land. Phase 4b will extend the harness to walk
-`run_plan.json` end-to-end through a declarative stage runner.
+their dependent plans land. The deterministic prefix (stages `01` through
+Gate B) is pinned separately by `prefix_golden_harness.py` (PLN-1229
+Phase 0); its subprocess A/B parity oracle guards the in-process
+`run-prefix` batch runner byte-for-byte.
 
 ---
 
