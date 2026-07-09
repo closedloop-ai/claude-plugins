@@ -11013,7 +11013,8 @@ def cmd_prepare_run(args: argparse.Namespace) -> int:
     """Emit ``run_plan.json`` describing the full review pipeline.
 
     PLN-719 Section 6. The output is consumed by the ``/start`` orchestrator,
-    which walks the plan stage-by-stage (Phase 4b).
+    which runs the deterministic prefix in-process via ``run-prefix``
+    (PLN-1229) and walks the reviewer tail stage-by-stage.
 
     Determinism: same inputs produce byte-identical output **except for the
     ``review_id`` field**, which is a fresh ``uuid.uuid4()`` per invocation.

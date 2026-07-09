@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.4.1
+
+#### Fixed
+- Corrected stale documentation that described the deterministic-prefix golden harness as unbuilt future work. The `golden_fixture_harness.py` and `cmd_prepare_run` docstrings and the `SCHEMA.md` golden-fixture section now point at the delivered prefix harness (`prefix_golden_harness.py`) and its subprocess A/B parity oracle, and note that the orchestrator runs the deterministic prefix in-process via `run-prefix` rather than walking those stages one at a time.
+
 ### code-review v3.4.0
 
 #### Changed

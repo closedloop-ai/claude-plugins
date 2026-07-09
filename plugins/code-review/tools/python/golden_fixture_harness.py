@@ -17,8 +17,11 @@ Non-deterministic fields (``review_id`` UUID, ``emitted_at`` ISO timestamps,
 the wall-clock telemetry block) are normalized before diff/write so the
 expected files stay stable across runs.
 
-Phase 8 ships the post-collection harness only. Phase 4b will extend it to
-walk ``run_plan.json`` end-to-end through a declarative stage runner.
+This module pins the post-collection half only (``collect-findings`` →
+``validate`` → ``finalize-result``). The deterministic prefix — stages ``01``
+through Gate B — is pinned separately by ``prefix_golden_harness.py``
+(PLN-1229 Phase 0), whose subprocess A/B parity oracle guards the in-process
+``run-prefix`` batch runner byte-for-byte.
 """
 
 from __future__ import annotations
