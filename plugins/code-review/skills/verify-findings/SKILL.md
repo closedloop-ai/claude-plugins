@@ -30,6 +30,8 @@ This stage runs when the walker reaches `stage_23`. It implements PLN-722's find
 
 ### Spawn contract
 
+**Dispatch the whole verifier fleet as parallel background tasks in both `MODE=local` and `MODE=github`** — spawn all `to_verify[]` entries with `run_in_background: true` (in one message or a few), then collect them with blocking `TaskOutput` (below). Do NOT dispatch verifiers one-at-a-time; headless `claude -p` awaits background subagents on Claude Code v2.1.182+, so the fleet runs concurrently in CI too (`stage_23` wall-clock is the slowest verifier, not the sum).
+
 For each entry in `verify_manifest.json.to_verify[]`:
 
 1. Spawn one background `Task` with `subagent_type: "code-review:code-review-worker"`. The agent's tool allowlist (`Read`, `Write`, `Grep`, `Glob`) is identical to the Reviewer Fleet's — no permission changes needed.

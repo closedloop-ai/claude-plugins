@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.5.0
+
+#### Changed
+- GitHub-mode reviews now dispatch the reviewer fleet (`stage_20`) and verifier fleet (`stage_23`) as parallel background tasks collected with a blocking `TaskOutput`, the same as local mode, instead of running each agent synchronously one at a time. Headless `claude -p` waits for background subagents to finish before exiting (Claude Code v2.1.182+), so a code-review CI run's fleet stages now take the wall-clock of the slowest agent rather than the sum of all agents — roughly halving shallow-tier CI review time. A synchronous one-at-a-time fallback stays documented for Claude Code older than v2.1.182, the per-agent background wait can be raised past its 10-minute default via `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`, and runs that background reviewers must allow the `TaskOutput` tool. Updates the `spawn-reviewers` and `verify-findings` skills and the `start.md` walker contract.
+
 ### code-review v3.4.1
 
 #### Fixed
