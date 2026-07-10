@@ -30,6 +30,10 @@ This stage runs when the walker reaches `stage_23`. It implements PLN-722's find
 
 ### Spawn contract
 
+**Dispatch the whole verifier fleet as parallel background tasks in both `MODE=local` and `MODE=github`** — spawn all `to_verify[]` entries with `run_in_background: true` (in one message or a few), then collect them with blocking `TaskOutput` (below). Do NOT dispatch verifiers one-at-a-time; headless `claude -p` awaits background subagents on Claude Code v2.1.182+, so the fleet runs concurrently in CI too (`stage_23` wall-clock is the slowest verifier, not the sum).
+
+> **Legacy fallback (Claude Code < v2.1.182 only) — an operator concern, NOT a runtime branch the agent picks.** Same as the reviewer fleet (see `spawn-reviewers/SKILL.md`): the orchestrating agent cannot introspect its own CLI version, so it always takes the parallel path above, and `anthropics/claude-code-action@v1` ships ≥ v2.1.182. An operator forced onto an older CLI — where headless does not await background subagents, so a backgrounded verifier dies when the turn ends — must edit this skill to dispatch verifiers synchronously one at a time so no verifier is left outstanding. This mirrors the reviewer fleet so both stages degrade the same way on older CLIs.
+
 For each entry in `verify_manifest.json.to_verify[]`:
 
 1. Spawn one background `Task` with `subagent_type: "code-review:code-review-worker"`. The agent's tool allowlist (`Read`, `Write`, `Grep`, `Glob`) is identical to the Reviewer Fleet's — no permission changes needed.
