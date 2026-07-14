@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.6.0
+
+#### Fixed
+- **Reverted the v3.5.0 parallel GitHub-mode reviewer fleet (#178); restored synchronous headless dispatch at `stage_20_spawn_reviewers`.** v3.5.0 unified both modes on `run_in_background: true` + blocking `TaskOutput`, betting that headless `claude -p` (Claude Code ≥ v2.1.182) always awaits background subagents as long as the orchestrator issues the blocking collection. In practice the orchestrator does not reliably issue it: in ~18% of `claude-code-review.yml` `pull_request` runs it launched the fleet (Bug Hunter A/B, Unified Auditor) as background agents and then ended its turn ("I'll wait for the harness to notify me") with no pending synchronous tool call, so `claude -p` exited (`terminal_reason: "completed"`) before `stage_21_collect_findings … stage_30_footer` ran — no findings collected, no `.closedloop-ai/code-review-*` artifacts written, and the workflow's artifact-validation guard failed the job. GitHub/headless standard flow again dispatches reviewers **synchronously** one-at-a-time (`run_in_background: false`, wait for each `DONE findings=N file=...` before the next), which keeps the turn alive by construction; local mode keeps parallel background dispatch + blocking `TaskOutput`. The `stage_23` verifier fleet is unchanged (background + blocking `TaskOutput` in both modes, as it was before v3.5.0); its exposure to the same headless turn-ending is tracked separately (FEA-3085 follow-up). Trade-off: GitHub review wall-clock returns to sum-of-reviewers — correctness over speed for a merge-adjacent gate. Restores the FEA-2162 synchronous-GitHub reviewer contract and its test class.
+
 ### code-review v3.5.0
 
 #### Changed

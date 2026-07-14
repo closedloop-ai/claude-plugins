@@ -17728,101 +17728,126 @@ class TestPLN725Phase8StageGraph:
         assert "stage_20b_verify_spawn" in collect["depends_on"]
 
 
-class TestParallelFleetDispatchContracts:
-    """Reviewer and verifier fleets dispatch in parallel (background +
-    blocking ``TaskOutput``) in BOTH local and GitHub headless mode.
-
-    Supersedes the FEA-2162 synchronous-GitHub contract: as of Claude
-    Code v2.1.182+, headless ``claude -p`` awaits background subagents
-    (their output is part of the final result), so GitHub CI no longer
-    needs serial reviewer dispatch. A blocking ``TaskOutput`` is a
-    pending synchronous call that keeps the headless turn alive.
+class TestFEA2162SpawnReviewerContracts:
+    """FEA-2162 hardens GitHub-mode reviewer dispatch while preserving
+    local interactive parallelism.
     """
 
-    def test_standard_flow_uses_parallel_background_dispatch_in_both_modes(self) -> None:
-        """Both modes spawn the fleet as background tasks and collect with
-        blocking TaskOutput — the fleet runs concurrently.
+    def test_github_standard_flow_requires_synchronous_dispatch(self) -> None:
+        """GitHub headless standard flow must not leave background Tasks
+        outstanding when stage_20 completes.
         """
-        contract = _extract_section(
-            _spawn_reviewers_skill_text(),
-            "### Spawn + Collection Contract (standard flow)",
-            "### Agent Failure Recovery",
+        skill = _spawn_reviewers_skill_text()
+        github_section = _extract_section(
+            skill,
+            "**GitHub mode (`MODE=github`): dispatch synchronously.**",
+            "**Local mode (`MODE=local`): spawn ALL agents at once.**",
         )
-        _assert_standard_flow_parallel(contract)
-        assert "Both `MODE=local` and `MODE=github`" in contract
-        assert "slowest** reviewer, not the sum" in contract
+        assert "Spawn exactly one standard-flow reviewer at a time" in github_section
+        assert "wait for its Task response before spawning the next descriptor" in github_section
+        assert "run_in_background: false" in github_section
+        assert "never set it to `true`" in github_section
+        assert "Do not use `TaskOutput`, watcher files, sleep loops, polling loops" in github_section
+        assert "there must be no reviewer task still running" in github_section
 
-        # Reverting to synchronous-only dispatch must fail the contract.
-        mutated = contract.replace("run_in_background: true", "run_in_background: false")
+        mutated = github_section.replace("never set it to `true`", "it may be true")
         with pytest.raises(AssertionError):
-            _assert_standard_flow_parallel(mutated)
+            _assert_github_standard_flow_sync(mutated)
 
-    def test_headless_requirement_documents_await_and_ceiling(self) -> None:
-        """The headless requirement must cite v2.1.182+, the wait-ceiling
-        env var, and the allowlist need for TaskOutput.
+    def test_github_standard_flow_bans_watchers_sleep_and_taskoutput_waiting(self) -> None:
+        """Background waiting alternatives are equally unsafe in
+        headless GitHub mode and should fail the source contract.
+        """
+        github_section = _extract_section(
+            _spawn_reviewers_skill_text(),
+            "**GitHub mode (`MODE=github`): dispatch synchronously.**",
+            "**Local mode (`MODE=local`): spawn ALL agents at once.**",
+        )
+        _assert_github_standard_flow_sync(github_section)
+
+        for forbidden_replacement in (
+            "Use `TaskOutput` to wait for background reviewers.",
+            "Use watcher files to wait for background reviewers.",
+            "Use sleep loops to wait for background reviewers.",
+            "Use polling loops to wait for background reviewers.",
+        ):
+            mutated = re.sub(
+                r"Do not use `TaskOutput`, watcher files, sleep loops, polling loops,[^\n]+",
+                forbidden_replacement,
+                github_section,
+            )
+            with pytest.raises(AssertionError):
+                _assert_github_standard_flow_sync(mutated)
+
+    def test_local_standard_flow_preserves_background_collection(self) -> None:
+        """Local mode keeps parallel reviewer dispatch and blocking
+        TaskOutput collection.
         """
         skill = _spawn_reviewers_skill_text()
-        assert "Claude Code v2.1.182+" in skill
-        assert "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS" in skill
-        assert "anthropics/claude-code-action@v1" in skill
-        assert "pending synchronous tool call" in skill
-        assert "add `TaskOutput` to the run's `--allowedTools`" in skill
-
-    def test_legacy_synchronous_fallback_is_documented(self) -> None:
-        """A synchronous fallback stays documented for Claude Code < v2.1.182."""
-        skill = _spawn_reviewers_skill_text()
-        assert "Legacy fallback (Claude Code < v2.1.182 only)" in skill
-        assert "synchronously one at a time" in skill
-
-    def test_collection_is_blocking_taskoutput_and_bans_wait_substitutes(self) -> None:
-        """Collection uses blocking TaskOutput; wait-loop substitutes stay banned."""
-        contract = _extract_section(
-            _spawn_reviewers_skill_text(),
-            "### Spawn + Collection Contract (standard flow)",
-            "### Agent Failure Recovery",
+        local_section = _extract_section(
+            skill,
+            "**Local mode (`MODE=local`): spawn ALL agents at once.**",
+            "**Agents write findings to files",
         )
-        assert "Call `TaskOutput` (block: true) for every spawned background agent" in contract
-        for banned in ("watcher files", "sleep loops", "polling loops"):
-            assert banned in contract.lower()
+        local_collection = _extract_section(
+            skill,
+            "**Local collection (MANDATORY for `MODE=local`):**",
+            "For local mode, call all `TaskOutput` calls",
+        )
+        assert "Use `run_in_background: true` on every standard-flow reviewer" in local_section
+        assert "Call `TaskOutput` (block: true) for every spawned local background agent" in local_collection
 
-    def test_retry_uses_background_taskoutput_contract(self) -> None:
-        """Recovery re-spawns background + collects with blocking TaskOutput."""
+        mutated = local_section.replace("run_in_background: true", "run_in_background: false")
+        with pytest.raises(AssertionError):
+            assert "run_in_background: true" in mutated
+
+    def test_retry_uses_same_mode_specific_dispatch_rule(self) -> None:
+        """GitHub recovery attempts must be synchronous too, so a retry
+        cannot recreate the original outstanding-background failure.
+        """
         recovery_section = _extract_section(
             _spawn_reviewers_skill_text(),
             "### Agent Failure Recovery",
             "**Coverage materialization (machine-readable contract).**",
         )
-        assert "background-plus-`TaskOutput`" in recovery_section
-        assert "run_in_background: true" in recovery_section
+        assert "Retry uses the same mode branch" in recovery_section
+        assert "GitHub retries are synchronous" in recovery_section
+        assert "local retries may use the local background-plus-`TaskOutput`" in recovery_section
 
-    def test_skill_intro_describes_unified_parallel_scheduling(self) -> None:
-        """The intro must describe the same parallel scheduling for both
-        modes — not mode-specific synchronous GitHub dispatch.
+    def test_skill_intro_describes_mode_specific_task_scheduling(self) -> None:
+        """The skill introduction must not call stage-20 spawning
+        mode-agnostic after FEA-2162 split scheduling by mode.
         """
-        skill = _spawn_reviewers_skill_text()
-        assert "use the same Task scheduling" in skill
-        assert "parallel background dispatch collected with blocking `TaskOutput`" in skill
-        assert "dispatches reviewers synchronously" not in skill.lower()
+        intro = _extract_section(
+            _spawn_reviewers_skill_text(),
+            "# Reviewer Fleet Dispatch (stage_20_spawn_reviewers)",
+            "## Reviewer Fleet (stage_20_spawn_reviewers)",
+        )
+        _assert_mode_specific_prompt_contract(intro)
 
-    def test_headless_note_reflects_v2_1_182_await(self) -> None:
-        """The headless note must reflect the v2.1.182+ background-await
-        semantics rather than the old 'backgrounding dies' rule.
-        """
-        note = _extract_from(_spawn_reviewers_skill_text(), "**Headless mode note")
-        _assert_headless_note_awaits_background(note)
-
-        mutated = note.replace("v2.1.182", "v-removed")
+        mutated = intro.replace(
+            "with mode-specific Task scheduling",
+            "fleet spawning is mode-agnostic",
+        )
         with pytest.raises(AssertionError):
-            _assert_headless_note_awaits_background(mutated)
+            _assert_mode_specific_prompt_contract(mutated)
 
-    def test_verify_findings_dispatches_parallel_in_both_modes(self) -> None:
-        """The verifier fleet must also dispatch in parallel in both modes,
-        so the orchestrator does not serialize verifiers in GitHub CI.
+    def test_headless_warning_describes_github_sync_not_standard_taskoutput_collection(self) -> None:
+        """The headless warning must keep GitHub standard flow tied to
+        synchronous Task calls, not blocking TaskOutput collection.
         """
-        verify = _verify_findings_skill_text()
-        assert "parallel background tasks in both `MODE=local` and `MODE=github`" in verify
-        assert "run_in_background: true" in verify
-        assert "Do NOT dispatch verifiers one-at-a-time" in verify
+        warning = _extract_from(
+            _spawn_reviewers_skill_text(),
+            "**Headless mode warning",
+        )
+        _assert_headless_warning_mode_specific(warning)
+
+        mutated = warning.replace(
+            "GitHub standard-flow synchronous reviewer Task calls",
+            "the blocking `TaskOutput` collection (standard flow)",
+        )
+        with pytest.raises(AssertionError):
+            _assert_headless_warning_mode_specific(mutated)
 
     def test_stage_20b_still_precedes_collect_findings(self, tmp_path: Path) -> None:
         """Missing required reviewers must materialize before
@@ -17843,37 +17868,47 @@ class TestParallelFleetDispatchContracts:
                 in mutated_stages["stage_21_collect_findings"]["depends_on"]
             )
 
-    def test_start_md_stage_20_guard_requires_taskoutput_collection_before_stage_21(self) -> None:
-        """The orchestration spine must pin the stage-20 guard: collect the
-        background fleet via blocking TaskOutput before stage 21.
+    def test_start_md_stage_20_walker_guard_requires_github_sync_completion_before_stage_21(self) -> None:
+        """The orchestration spine must pin the GitHub-mode stage-20 guard.
+
+        The extracted spawn-reviewers skill owns detailed dispatch, but
+        start.md is still the walker surface that decides whether stage 20
+        may finish and advance to stage 21.
         """
         stage_note = _extract_section(
             _start_command_text(),
             "- **stage_20_spawn_reviewers**:",
             "- **stage_20b_verify_spawn**",
         )
-        _assert_start_md_stage_20_parallel_guard(stage_note)
+        _assert_start_md_github_stage_20_guard(stage_note)
 
-        mutated = stage_note.replace(
-            "before proceeding to `stage_21_collect_findings`", "whenever convenient",
-        )
+        mutated = stage_note.replace("or fail before `stage_21_collect_findings`", "or continue later")
         with pytest.raises(AssertionError):
-            _assert_start_md_stage_20_parallel_guard(mutated)
+            _assert_start_md_github_stage_20_guard(mutated)
 
-    def test_start_md_reviewer_fleet_bans_wait_loop_substitutes(self) -> None:
-        """start.md must still forbid headless wait-loop substitutes even
-        though dispatch is now parallel background + TaskOutput.
-        """
+    def test_start_md_reviewer_fleet_bans_github_watcher_sleep_and_turn_end_waits(self) -> None:
+        """start.md must not leave room for headless wait-loop substitutes."""
         reviewer_fleet = _extract_section(
             _start_command_text(),
             "## Reviewer Fleet (stage_20_spawn_reviewers)",
             "## Verifier Fleet (stage_23_verify_findings)",
         )
-        lowered = reviewer_fleet.lower()
-        assert "`taskoutput`" in lowered
-        assert "background" in lowered
-        for banned in ("watcher files", "sleep loops", "polling loops"):
-            assert banned in lowered
+        _assert_start_md_github_stage_20_guard(reviewer_fleet)
+        _assert_mode_specific_prompt_contract(reviewer_fleet)
+
+        for forbidden_replacement in (
+            "Watcher files may replace synchronous reviewer completion.",
+            "Sleep loops may replace synchronous reviewer completion.",
+            "End the assistant turn and continue when notified.",
+            "Use background `TaskOutput` waits in GitHub mode.",
+        ):
+            mutated = re.sub(
+                r"Watcher files, sleep loops, polling loops, background `TaskOutput` waits,[^\n]+",
+                forbidden_replacement,
+                reviewer_fleet,
+            )
+            with pytest.raises(AssertionError):
+                _assert_start_md_github_stage_20_guard(mutated)
 
 
 def _spawn_reviewers_skill_text() -> str:
@@ -17891,16 +17926,6 @@ def _start_command_text() -> str:
     return (Path(__file__).parents[2] / "commands" / "start.md").read_text()
 
 
-def _verify_findings_skill_text() -> str:
-    """Read the verifier-fleet dispatch contract under test."""
-    return (
-        Path(__file__).parents[2]
-        / "skills"
-        / "verify-findings"
-        / "SKILL.md"
-    ).read_text()
-
-
 def _extract_section(text: str, start: str, end: str) -> str:
     """Return a bounded prompt section so tests pin narrow contracts."""
     start_index = text.index(start)
@@ -17914,42 +17939,51 @@ def _extract_from(text: str, start: str) -> str:
     return text[start_index:]
 
 
-def _assert_standard_flow_parallel(section: str) -> None:
-    """Assert the standard-flow contract is parallel background dispatch
-    collected with a blocking ``TaskOutput`` (same for both modes)."""
-    lowered = section.lower()
-    assert "run_in_background: true" in section
-    assert "block: true" in section
-    assert "`taskoutput`" in lowered
-    assert "parallel background tasks" in lowered
-    # Wait-loop substitutes stay banned even though dispatch is now parallel.
-    assert "watcher files" in lowered
-    assert "sleep loops" in lowered
-    assert "polling loops" in lowered
+def _assert_github_standard_flow_sync(section: str) -> None:
+    """Assert the GitHub-mode standard-flow source contract is sync-only."""
+    assert "one standard-flow reviewer at a time" in section
+    assert "wait for its Task response before spawning the next descriptor" in section
+    assert "run_in_background: false" in section
+    assert "never set it to `true`" in section
+    assert "Do not use `TaskOutput`, watcher files, sleep loops, polling loops" in section
+    assert "there must be no reviewer task still running" in section
 
 
-def _assert_start_md_stage_20_parallel_guard(section: str) -> None:
-    """Assert start.md pins the stage-20 guard: blocking ``TaskOutput``
-    collection of the background fleet before ``stage_21``."""
+def _assert_start_md_github_stage_20_guard(section: str) -> None:
+    """Assert start.md pins the GitHub-mode walker guard at stage 20."""
     lowered = section.lower()
+    assert "MODE=github" in section
+    assert "synchronous" in section
     assert "`taskoutput`" in lowered
-    assert "background" in lowered
     assert "watcher" in lowered
     assert "sleep loop" in lowered
     assert "polling loop" in lowered
-    assert "stage_21_collect_findings" in section
-    assert "before proceeding to `stage_21_collect_findings`" in section
+    assert "turn-ending waits" in section or "end the assistant turn" in section
+    assert "no reviewer task" in section or "reviewer remains outstanding" in section
+    assert "fail before `stage_21_collect_findings`" in section or "must not proceed to `stage_21_collect_findings`" in section
 
 
-def _assert_headless_note_awaits_background(section: str) -> None:
-    """Assert the headless note reflects v2.1.182+ background-subagent await."""
+def _assert_mode_specific_prompt_contract(section: str) -> None:
+    """Assert prompt prose describes mode-aware, not mode-agnostic, dispatch."""
     lowered = section.lower()
-    assert "v2.1.182" in section
-    assert "background subagent" in lowered
-    assert "`taskoutput`" in lowered
+    assert "mode-specific" in lowered
+    assert "github" in lowered
+    assert "synchronous" in lowered
+    assert "local" in lowered
+    assert "blocking" in lowered
+    assert "mode-agnostic" not in lowered
+
+
+def _assert_headless_warning_mode_specific(section: str) -> None:
+    """Assert headless warning keeps GitHub standard flow synchronous."""
+    lowered = section.lower()
+    assert "github standard-flow synchronous reviewer task calls" in lowered
+    assert "github fast-path synchronous spawn" in lowered
+    assert "local-mode blocking `taskoutput` collection" in lowered
     assert "watcher files" in lowered
     assert "sleep loops" in lowered
     assert "polling loops" in lowered
+    assert "blocking `taskoutput` collection (standard flow)" not in lowered
 
 
 def _seed_phase9_inputs(
