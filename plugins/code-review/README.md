@@ -24,12 +24,27 @@ plugins/code-review/
     code-review-worker-graph.md      Graph-aware variant for the cross-file and design reviewers (Impact Analyzer, Bug Hunter B, fast-path, Design Critic); adds read-only codebase-memory-mcp tools — cross-file usage discovery for the cross-file roles, project-structure/dependency-graph analysis (get_architecture, query_graph) for the Design Critic
   commands/
     start.md                         Main /start command (orchestrator)
+    shallow.md                       /shallow wrapper — `/start --depth shallow`
+    deep.md                          /deep wrapper — `/start --depth deep`
+    cost.md                          /cost command — token-cost attribution from session transcripts
+  skills/
+    spawn-reviewers/SKILL.md         Reviewer-fleet spawn/collection contract at stage_20_spawn_reviewers
+    verify-findings/SKILL.md         Finding-verifier fleet dispatch at stage_23_verify_findings (PLN-722)
+    singleton-dispatch/SKILL.md      Single-agent dispatch for stage_11_extract_signals / stage_15_coverage_critic (PLN-725)
+    present-local/SKILL.md           Local-mode presenter at stage_29_present
+    fix/SKILL.md                     Verifies and fixes BLOCKING/HIGH findings from a prior review session
   prompts/
     github-review.md                 GitHub-mode constraints and output steps (loaded conditionally)
+  scripts/
+    dist/cost-report.mjs             Bundled Node cost analyzer for /cost (sources at tools/code-review-cost/)
   tools/
     prompts/shared_prompt.txt        Shared reviewer constraints injected into every agent prompt
     prompts/bha_suffix.txt           Bug Hunter A reviewer persona and focus areas
     prompts/design_critic_suffix.txt Design Critic reviewer role (software-design craftsmanship; always-on at deep tier)
+    prompts/impact_analyzer_prompt.txt   Impact Analyzer reviewer role (FEA-1401 cross-file blast radius; deep tier, signal-gated)
+    prompts/coverage_critic_prompt.txt   Coverage critic role (standard/deep tiers)
+    prompts/signal_extraction_prompt.txt Signal extraction role (standard/deep tiers)
+    prompts/verifier_prompt.txt      Finding-verifier role (falsify-oriented; PLN-722)
     python/code_review_schema.py     Canonical Finding + ResultEnvelope schema + validators (PLN-719)
     python/test_code_review_schema.py  Schema tests + round-trips
     python/code_review_helpers.py    Deterministic helper CLI (parse-diff, hygiene, partition, route, validate, cache, finalize-result, arbitrate-budget, prepare-run, etc.)
@@ -90,10 +105,12 @@ Runs a comprehensive code review. Invokes the full pipeline: diff parsing, hygie
 
 | Argument | Behavior |
 |---|---|
-| _(none)_ | Diff current branch vs `main` |
+| _(none)_ | Review the open PR's diff for the current branch; with no open PR, diff the current branch from its fork point off the default branch |
 | `staged` | Diff only staged (index) changes |
-| `file1 file2 ...` | Diff specific files against `main` |
+| `file1 file2 ...` | Diff specific files from the fork point off the default branch |
 | `123` | Use PR #123's diff (local output, no posting) |
+
+**Base ref resolution.** The default base branch is *detected*, not assumed: the helper reads the `origin/HEAD` symbolic ref, then probes `origin/main` / `origin/master`, then the same names locally, falling back to `main` only when nothing resolves. The diff runs from the fork point rather than a fixed ref — a clone holds both a local `<base>` and an `origin/<base>`, and either can lag the other (a stale local checkout, or unpushed local base commits). The helper takes the merge base of each against `HEAD` and uses whichever ref yields the *later* one, since that is the true fork point. This keeps commits that landed on the base branch after the fork out of the review diff under either kind of staleness.
 
 **Mode flags:**
 
@@ -102,7 +119,7 @@ Runs a comprehensive code review. Invokes the full pipeline: diff parsing, hygie
 | `--github` | GitHub CI mode: auto-detect PR from branch or accept explicit PR number, post inline comments via file-based handoff |
 | `--github 123` | GitHub CI mode: review PR #123 specifically |
 | `--hygiene-only` | Run only the deterministic hygiene checks. Zero LLM tokens consumed. Fast. |
-| `--base <ref>` | Override the base branch for diffing (default: `main`) |
+| `--base <ref>` | Override the base branch for diffing (default: the repository's detected default branch) |
 | `--since-last-review` | Review only commits added since the last successful review (local mode only) |
 | `--full-review` | Force a full diff even when auto-incremental mode would narrow the scope |
 | `--depth shallow\|standard\|deep` | Reviewer-fleet tier. Default `standard`. See **Depth Tiers** below |
@@ -110,14 +127,14 @@ Runs a comprehensive code review. Invokes the full pipeline: diff parsing, hygie
 **Examples:**
 
 ```bash
-/start                               # All changes on current branch vs main
+/start                               # Open PR diff, else changes on current branch since its fork point
 /start staged                        # Only staged changes
 /start src/auth.ts src/user.ts       # Specific files
 /start 123                           # PR #123 diff locally
 /start --github                      # CI: auto-detect PR, post comments
 /start --github 123                  # CI: PR #123, post comments
 /start --hygiene-only                # Hygiene checks only
-/start --base develop                # Diff against develop instead of main
+/start --base develop                # Diff against develop instead of the default branch
 /start --since-last-review           # Only new commits since last review
 /start --full-review                 # Disable incremental narrowing
 ```
@@ -309,7 +326,7 @@ Overrides survive across runs while the file content matches and the 90-day TTL 
 
 **Re-assert is best-effort against finding_id drift.** Finding IDs are assigned as `<reviewer>_f<index>` where `<index>` is the reviewer's emission position. Across re-runs the LLM may reorder or drop findings, so an override written against `bha_f3` on run N may map to a different finding (or no finding) on run N+1. The content-hash anchor prevents promoting an unrelated finding at a different line — but the common drift case is the override silently no-ops. Two mitigations: (1) re-assert and re-run immediately so the override is honored against the same emission set, and (2) inspect the verify-prepare manifest for `override_hits` / `override_invalidated` to confirm the override landed.
 
-The presenter (local mode `start.md`, GitHub mode `code-review-verifier-stats.md`) surfaces:
+The presenter (local mode: the `present-local` skill, GitHub mode: `github-review.md` Step 6e, which writes `.closedloop-ai/code-review-verifier-stats.md`) surfaces:
 
 - Per-reviewer FP rate (`stats.verification.by_reviewer[*].fp_rate`)
 - Override count per reviewer (`stats.verification.by_reviewer[*].re_asserted`)
