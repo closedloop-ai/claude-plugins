@@ -247,6 +247,16 @@
           ],
           "default": "",
           "help": "Verifier prompt hash for cache write-back keys."
+        },
+        {
+          "flags": [
+            "--mode"
+          ],
+          "choices": [
+            "local",
+            "github"
+          ],
+          "help": "Review mode; github raises a coverage-gap signal when a BLOCKING/HIGH finding has no verifier output (FEA-3154). Optional; omitted defaults to no signal."
         }
       ]
     },

@@ -263,6 +263,17 @@
           ],
           "dest": "prompt_hash",
           "default": ""
+        },
+        {
+          "flags": [
+            "--mode"
+          ],
+          "dest": "mode",
+          "default": null,
+          "choices": [
+            "local",
+            "github"
+          ]
         }
       ]
     },
