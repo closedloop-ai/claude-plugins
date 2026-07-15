@@ -147,6 +147,12 @@ class FixtureRepoSpec:
     computes), which is why ``head`` lands on a separate branch — so the
     symmetric diff is non-empty. ``head`` may be ``None`` for the degenerate
     empty-diff fixture (base commit only; HEAD stays on ``main``).
+
+    resolve-scope prefers ``origin/main`` as the diff base and only falls back
+    to the local ``main`` ref when no remote-tracking ref exists. These repos
+    carry no ``origin``, so the base stays local and ``diff_scope`` stays
+    ``main...HEAD`` — keep it that way, since adding a remote here would
+    repoint every fixture's expected ``scope.json``.
     """
 
     base: Commit
