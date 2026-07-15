@@ -67,33 +67,13 @@ from pathlib import Path
 from typing import Any
 
 import code_review_helpers
+from conftest import GIT_IDENTITY_ENV, git_fixture
 from golden_fixture_harness import run_with_stdout_capture
 
 # The plugin root (…/plugins/code-review) — this module lives at
 # <plugin_root>/tools/python/prefix_golden_harness.py. Resolved from __file__
 # so it is independent of the harness's chdir into the fixture repo.
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
-
-# Pinned git identity + author/committer dates. Fixed values → deterministic
-# commit SHAs, which matters for any prefix artifact that embeds a commit hash
-# (context_key, PR-head SHAs in later fixtures). Even where the plain-branch
-# prefix does not embed a SHA, pinning is free insurance.
-_GIT_IDENTITY_ENV = {
-    "GIT_AUTHOR_NAME": "Fixture Author",
-    "GIT_AUTHOR_EMAIL": "fixture@example.com",
-    "GIT_COMMITTER_NAME": "Fixture Author",
-    "GIT_COMMITTER_EMAIL": "fixture@example.com",
-    # Fully isolate git config so the host's config can neither break commits
-    # (commit.gpgsign, hooks) nor make them host-dependent. GIT_CONFIG_NOSYSTEM
-    # blocks /etc/gitconfig, but the operator's ~/.gitconfig is *global*, not
-    # system — so it also needs GIT_CONFIG_GLOBAL. Pointing GLOBAL and SYSTEM at
-    # os.devnull is unambiguous and order-independent: the fixture repo is built
-    # (via _git) BEFORE the hermetic HOME redirect, so relying on HOME alone
-    # would leave those commits exposed to the real ~/.gitconfig.
-    "GIT_CONFIG_NOSYSTEM": "1",
-    "GIT_CONFIG_GLOBAL": os.devnull,
-    "GIT_CONFIG_SYSTEM": os.devnull,
-}
 
 # The reviewer fleet — the first non-deterministic (LLM) stage. The prefix walk
 # stops *before* this id; everything earlier is deterministic (the two PLN-725
@@ -160,32 +140,16 @@ class FixtureRepoSpec:
     feature_branch: str = "feature"
 
 
-def _git(repo: Path, *args: str, env: dict[str, str] | None = None) -> str:
-    """Run a git command inside ``repo`` and return stdout (raises on failure)."""
-    full_env = {**os.environ, **_GIT_IDENTITY_ENV}
-    if env:
-        full_env.update(env)
-    result = subprocess.run(
-        ["git", *args],
-        cwd=str(repo),
-        env=full_env,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout
-
-
 def _apply_commit(repo: Path, commit: Commit) -> None:
     for rel, content in commit.writes.items():
         path = repo / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
     for rel in commit.deletes:
-        _git(repo, "rm", "--quiet", rel)
-    _git(repo, "add", "-A")
+        git_fixture(repo, "rm", "--quiet", rel)
+    git_fixture(repo, "add", "-A")
     date_env = {"GIT_AUTHOR_DATE": commit.date, "GIT_COMMITTER_DATE": commit.date}
-    _git(repo, "commit", "--quiet", "-m", commit.message, env=date_env)
+    git_fixture(repo, "commit", "--quiet", "-m", commit.message, env=date_env)
 
 
 def build_fixture_repo(repo: Path, spec: FixtureRepoSpec) -> None:
@@ -198,10 +162,10 @@ def build_fixture_repo(repo: Path, spec: FixtureRepoSpec) -> None:
     empty.
     """
     repo.mkdir(parents=True, exist_ok=True)
-    _git(repo, "init", "--quiet", "-b", "main")
+    git_fixture(repo, "init", "--quiet", "-b", "main")
     _apply_commit(repo, spec.base)
     if spec.head is not None:
-        _git(repo, "checkout", "--quiet", "-b", spec.feature_branch)
+        git_fixture(repo, "checkout", "--quiet", "-b", spec.feature_branch)
         _apply_commit(repo, spec.head)
 
 
@@ -225,7 +189,7 @@ def hermetic_prefix_env(repo: Path, home: Path) -> Iterator[None]:
     mutated = {
         "HOME": str(home),
         "CR_GLOBAL_CACHE": "0",
-        **_GIT_IDENTITY_ENV,
+        **GIT_IDENTITY_ENV,
     }
     saved: dict[str, str | None] = {k: os.environ.get(k) for k in mutated}
     original_detect = code_review_helpers._detect_open_pr
@@ -1393,7 +1357,7 @@ def _seed_review_state(home: Path, repo: Path, cr_dir: Path) -> None:
     ancestor of HEAD — so ``--since-last-review`` yields ``<base_sha>...HEAD``.
     ``completed_at`` is a cache input, never snapshotted.
     """
-    base_sha = _git(repo, "rev-parse", "main").strip()
+    base_sha = git_fixture(repo, "rev-parse", "main").strip()
     cache_dir = cache_dir_for(home)
     cache_dir.mkdir(parents=True, exist_ok=True)
     state = {

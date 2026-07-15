@@ -16,16 +16,13 @@ from unittest.mock import patch
 import pytest
 
 from conftest import (
+    git_fixture,
     invoke_prepare_run,
     minimal_diff_finding,
     minimal_envelope,
     minimal_pr_metadata_finding,
     minimal_system_finding,
 )
-
-# Reuse the golden harness's hermetic git runner (pinned identity,
-# GIT_CONFIG_NOSYSTEM) rather than re-deriving an isolated git env here.
-from prefix_golden_harness import _git as _fixture_git
 
 from code_review_helpers import (
     _INJECTION_SCORE_HIGH,
@@ -6307,9 +6304,9 @@ class TestCacheStatusMessage:
 def _commit_file(repo: Path, name: str, content: str) -> str:
     """Commit *content* as *name* inside *repo*; return the new commit SHA."""
     (repo / name).write_text(content)
-    _fixture_git(repo, "add", "-A")
-    _fixture_git(repo, "commit", "--quiet", "-m", f"add {name}")
-    return _fixture_git(repo, "rev-parse", "HEAD").strip()
+    git_fixture(repo, "add", "-A")
+    git_fixture(repo, "commit", "--quiet", "-m", f"add {name}")
+    return git_fixture(repo, "rev-parse", "HEAD").strip()
 
 
 def _build_stale_base_repo(
@@ -6334,15 +6331,15 @@ def _build_stale_base_repo(
     ``a``/``b``/``c`` SHAs; HEAD is left on ``feat-x``.
     """
     repo.mkdir(parents=True, exist_ok=True)
-    _fixture_git(repo, "init", "--quiet", "-b", default_branch)
+    git_fixture(repo, "init", "--quiet", "-b", default_branch)
     a = _commit_file(repo, "base.txt", "base\n")
     b = _commit_file(repo, "UNRELATED.txt", "landed on the base after the fork\n")
-    _fixture_git(repo, "checkout", "--quiet", "-b", "feat-x")
+    git_fixture(repo, "checkout", "--quiet", "-b", "feat-x")
     c = _commit_file(repo, "MINE.txt", "the change under review\n")
     # Rewind the local base ref behind the fork point; pin the remote at it.
-    _fixture_git(repo, "branch", "--force", default_branch, a)
+    git_fixture(repo, "branch", "--force", default_branch, a)
     if with_origin:
-        _fixture_git(repo, "update-ref", f"refs/remotes/origin/{default_branch}", b)
+        git_fixture(repo, "update-ref", f"refs/remotes/origin/{default_branch}", b)
     return {"a": a, "b": b, "c": c}
 
 
@@ -6366,7 +6363,7 @@ class TestResolveDiffBase:
 
         # Guard the fixture: the stale local ref really does over-collect, so
         # the assertion below is proving the fix and not a no-op repo shape.
-        stale = _fixture_git(repo, "diff", "--name-only", "main...HEAD").split()
+        stale = git_fixture(repo, "diff", "--name-only", "main...HEAD").split()
         assert sorted(stale) == ["MINE.txt", "UNRELATED.txt"]
 
         with patch("code_review_helpers._detect_open_pr", return_value=None):
@@ -6375,7 +6372,7 @@ class TestResolveDiffBase:
         assert result["diff_scope"] == "origin/main...HEAD"
         assert result["base_ref"] == "main"
         # The payoff: the resolved scope reviews only the branch's own commit.
-        reviewed = _fixture_git(
+        reviewed = git_fixture(
             repo, "diff", "--name-only", result["diff_scope"],
         ).split()
         assert reviewed == ["MINE.txt"]
@@ -6413,11 +6410,11 @@ class TestResolveDiffBase:
         # would fold the unpushed base commits into the diff.
         repo = tmp_path / "repo"
         repo.mkdir()
-        _fixture_git(repo, "init", "--quiet", "-b", "main")
+        git_fixture(repo, "init", "--quiet", "-b", "main")
         a = _commit_file(repo, "base.txt", "base\n")
-        _fixture_git(repo, "update-ref", "refs/remotes/origin/main", a)
+        git_fixture(repo, "update-ref", "refs/remotes/origin/main", a)
         _commit_file(repo, "UNPUSHED.txt", "on main, never pushed\n")
-        _fixture_git(repo, "checkout", "--quiet", "-b", "feat-x")
+        git_fixture(repo, "checkout", "--quiet", "-b", "feat-x")
         _commit_file(repo, "MINE.txt", "the change under review\n")
         monkeypatch.chdir(repo)
 
@@ -6425,7 +6422,7 @@ class TestResolveDiffBase:
             result = TestResolveScope()._run("local", tmp_path=tmp_path)
 
         assert result["diff_scope"] == "main...HEAD"
-        reviewed = _fixture_git(
+        reviewed = git_fixture(
             repo, "diff", "--name-only", result["diff_scope"],
         ).split()
         assert reviewed == ["MINE.txt"]
@@ -6437,16 +6434,16 @@ class TestResolveDiffBase:
         # and either ref yields the same range.
         repo = tmp_path / "repo"
         repo.mkdir()
-        _fixture_git(repo, "init", "--quiet", "-b", "main")
+        git_fixture(repo, "init", "--quiet", "-b", "main")
         a = _commit_file(repo, "base.txt", "base\n")
-        _fixture_git(repo, "update-ref", "refs/remotes/origin/main", a)
-        _fixture_git(repo, "checkout", "--quiet", "-b", "feat-x")
+        git_fixture(repo, "update-ref", "refs/remotes/origin/main", a)
+        git_fixture(repo, "checkout", "--quiet", "-b", "feat-x")
         _commit_file(repo, "MINE.txt", "the change under review\n")
         monkeypatch.chdir(repo)
         with patch("code_review_helpers._detect_open_pr", return_value=None):
             result = TestResolveScope()._run("local", tmp_path=tmp_path)
         assert result["diff_scope"] == "origin/main...HEAD"
-        reviewed = _fixture_git(
+        reviewed = git_fixture(
             repo, "diff", "--name-only", result["diff_scope"],
         ).split()
         assert reviewed == ["MINE.txt"]
@@ -6469,7 +6466,7 @@ class TestResolveDiffBase:
         # through origin/HEAD, which is why it is probed first.
         repo = tmp_path / "repo"
         _build_stale_base_repo(repo, default_branch="develop")
-        _fixture_git(
+        git_fixture(
             repo, "symbolic-ref", "refs/remotes/origin/HEAD",
             "refs/remotes/origin/develop",
         )
@@ -6567,7 +6564,7 @@ class TestResolveScope:
         """Hermetic repo carrying an ``origin/develop`` for the override to find."""
         repo = tmp_path / "repo"
         shas = _build_stale_base_repo(repo)
-        _fixture_git(repo, "update-ref", "refs/remotes/origin/develop", shas["b"])
+        git_fixture(repo, "update-ref", "refs/remotes/origin/develop", shas["b"])
         monkeypatch.chdir(repo)
         return repo
 
@@ -6596,7 +6593,7 @@ class TestResolveScope:
         # emitting an origin/<ref> that git cannot resolve.
         repo = tmp_path / "repo"
         shas = _build_stale_base_repo(repo)
-        _fixture_git(repo, "branch", "develop", shas["b"])
+        git_fixture(repo, "branch", "develop", shas["b"])
         monkeypatch.chdir(repo)
         with patch("code_review_helpers._detect_open_pr", return_value=None):
             result = self._run("local", base_ref_override="develop", tmp_path=tmp_path)

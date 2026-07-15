@@ -306,7 +306,7 @@ def _resolve_default_base_ref() -> str:
     Returns a bare branch name, not a ref — callers pair it with
     :func:`_base_rev` to get the revision to diff against. ``base_ref``
     travels through ``scope.json`` as a name because consumers such as
-    ``compute-cache-keys`` origin-qualify it themselves.
+    ``compute-hashes`` origin-qualify it themselves.
     """
     try:
         symbolic = _run_git(
