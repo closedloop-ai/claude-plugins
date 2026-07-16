@@ -6427,6 +6427,68 @@ class TestResolveDiffBase:
         ).split()
         assert reviewed == ["MINE.txt"]
 
+    def _build_diverged_base_repo(self, repo: Path) -> None:
+        """Local ``main`` and ``origin/main`` diverge from a common ancestor.
+
+        Both kinds of staleness at once::
+
+                        A1 ── A2         <- origin/main (pushed by someone else)
+                       /
+            ... ── B0 ─┤
+                       \\
+                        L1 ── L2         <- local main (unpushed)
+
+        Neither ref alone can base every branch cut from this repo: a branch
+        off ``L2`` needs the local ref, a branch off ``A2`` needs the remote
+        one. The later merge base with HEAD identifies the correct tip.
+        """
+        repo.mkdir()
+        git_fixture(repo, "init", "--quiet", "-b", "main")
+        _commit_file(repo, "base.txt", "B0\n")  # common ancestor
+        git_fixture(repo, "checkout", "--quiet", "-b", "origin-work")
+        _commit_file(repo, "A1.txt", "pushed by someone else\n")
+        a2 = _commit_file(repo, "A2.txt", "pushed by someone else\n")
+        git_fixture(repo, "update-ref", "refs/remotes/origin/main", a2)
+        git_fixture(repo, "checkout", "--quiet", "main")
+        _commit_file(repo, "L1.txt", "unpushed local base commit\n")
+        _commit_file(repo, "L2.txt", "unpushed local base commit\n")
+
+    def test_diverged_base_branch_off_local_tip_uses_local_ref(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Cut from the unpushed local tip: origin/main lags, so basing on it
+        # would fold the unpushed L1/L2 into the diff.
+        repo = tmp_path / "repo"
+        self._build_diverged_base_repo(repo)
+        git_fixture(repo, "checkout", "--quiet", "-b", "feat-x", "main")
+        _commit_file(repo, "MINE.txt", "the change under review\n")
+        monkeypatch.chdir(repo)
+        with patch("code_review_helpers._detect_open_pr", return_value=None):
+            result = TestResolveScope()._run("local", tmp_path=tmp_path)
+        assert result["diff_scope"] == "main...HEAD"
+        reviewed = git_fixture(
+            repo, "diff", "--name-only", result["diff_scope"],
+        ).split()
+        assert reviewed == ["MINE.txt"]
+
+    def test_diverged_base_branch_off_remote_tip_uses_remote_ref(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Cut from origin/main while local main is also ahead with its own
+        # unpushed commits: basing on the local ref would fold A1/A2 in.
+        repo = tmp_path / "repo"
+        self._build_diverged_base_repo(repo)
+        git_fixture(repo, "checkout", "--quiet", "-b", "feat-x", "origin/main")
+        _commit_file(repo, "MINE.txt", "the change under review\n")
+        monkeypatch.chdir(repo)
+        with patch("code_review_helpers._detect_open_pr", return_value=None):
+            result = TestResolveScope()._run("local", tmp_path=tmp_path)
+        assert result["diff_scope"] == "origin/main...HEAD"
+        reviewed = git_fixture(
+            repo, "diff", "--name-only", result["diff_scope"],
+        ).split()
+        assert reviewed == ["MINE.txt"]
+
     def test_identical_base_views_resolve_to_the_remote_ref(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
