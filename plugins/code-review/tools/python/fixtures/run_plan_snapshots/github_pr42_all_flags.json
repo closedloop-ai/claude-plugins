@@ -714,7 +714,9 @@
       "--cache-dir",
       "<CACHE_DIR>",
       "--prompt-hash",
-      "<PROMPT_HASH>"
+      "<PROMPT_HASH>",
+      "--mode",
+      "github"
     ],
     "stdout": null,
     "expected_outputs": [

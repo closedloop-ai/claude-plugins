@@ -9211,6 +9211,7 @@ def _run_verify_consolidate(
     cache_dir: Path | None = None,
     prompt_hash: str = "",
     cr_dir: Path | None = None,
+    mode: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """Invoke ``cmd_verify_consolidate`` with stdout captured into a dict."""
     import io
@@ -9246,6 +9247,7 @@ def _run_verify_consolidate(
             gates=gates_path,
             cache_dir=str(cache_dir) if cache_dir else None,
             prompt_hash=prompt_hash,
+            mode=mode,
         )
         rc = cmd_verify_consolidate(ns)
         _sys.stdout.seek(0)
@@ -10742,6 +10744,177 @@ class TestVerifyConsolidate:
         )
         assert len(out["pending_verification"]) == 1
         assert "MAX_VERIFICATIONS" in out["pending_verification"][0]["verifier_reasoning"]
+
+    def test_missing_github_verifier_high_emits_coverage_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        """FEA-3154: a missing verifier output for a HIGH finding in github mode
+        raises one durable coverage-gap that escalates the verdict.
+        """
+        import argparse as _argparse
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_finalize_result
+
+        cr_dir = tmp_path / "cr"
+        findings = [_make_validated_finding("bha_p0_f0", severity="HIGH")]
+        manifest = {
+            "to_verify": [{"finding_id": "bha_p0_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs={},
+            cr_dir=cr_dir, mode="github",
+        )
+        # (a) the finding still degrades to pending — the loud signal is additive
+        assert len(out["pending_verification"]) == 1
+        # (b) exactly one schema-valid coverage gap with the FEA-3154 shape
+        gaps = json.loads((cr_dir / "coverage_gaps.json").read_text())["findings"]
+        assert len(gaps) == 1
+        gap = gaps[0]
+        assert gap["system_marker"] == "coverage:verifier-missing-output"
+        assert gap["severity"] == "HIGH"
+        assert gap["priority"] == 1
+        assert gap["required"] is False
+        assert gap["category"] == "Coverage"
+        assert gap["finding_scope"] == "system"
+        assert gap["file"] is None
+        # (c) end-to-end finalize: the gap escalates the verdict to
+        # NEEDS_ATTENTION AND the envelope validates. Asserting rc == 0 and
+        # validation_errors == [] is required because cmd_finalize_result writes
+        # the envelope and computes the verdict *before* returning nonzero on a
+        # validation error — a verdict-only assertion would pass even with a
+        # schema-invalid gap.
+        (cr_dir / "setup.json").write_text(json.dumps(
+            {"head_sha": "abc", "current_branch": "feat/x"},
+        ))
+        validated_path = cr_dir / "findings_validated.json"
+        validated_path.write_text(json.dumps({"validated": findings}))
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            ns = _argparse.Namespace(
+                cr_dir=str(cr_dir),
+                findings_validated=str(validated_path),
+                mode="github",
+                diff_tip="abc",
+                pr_number=None,
+            )
+            rc2 = cmd_finalize_result(ns)
+            _sys.stdout.seek(0)
+            summary = json.load(_sys.stdout)
+        finally:
+            _sys.stdout = old_stdout
+        assert rc2 == 0
+        assert summary["validation_errors"] == []
+        assert summary["verdict"] == "NEEDS_ATTENTION"
+
+    def test_missing_local_verifier_does_not_emit_coverage_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        """FEA-3154: local mode keeps the pending-only degradation — no gap."""
+        cr_dir = tmp_path / "cr"
+        findings = [_make_validated_finding("bha_p0_f0", severity="HIGH")]
+        manifest = {
+            "to_verify": [{"finding_id": "bha_p0_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs={},
+            cr_dir=cr_dir, mode="local",
+        )
+        assert len(out["pending_verification"]) == 1
+        assert not (cr_dir / "coverage_gaps.json").exists()
+
+    def test_missing_github_verifier_medium_does_not_emit_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        """FEA-3154: only BLOCKING/HIGH misses are loud; MEDIUM stays pending."""
+        cr_dir = tmp_path / "cr"
+        findings = [_make_validated_finding("bhb_f0", severity="MEDIUM")]
+        manifest = {
+            "to_verify": [{"finding_id": "bhb_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs={},
+            cr_dir=cr_dir, mode="github",
+        )
+        assert len(out["pending_verification"]) == 1
+        assert not (cr_dir / "coverage_gaps.json").exists()
+
+    def test_deferred_budget_does_not_emit_github_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        """FEA-3154: budget-deferred findings are not a headless death — no gap."""
+        cr_dir = tmp_path / "cr"
+        findings = [_make_validated_finding("bha_p0_f0", severity="HIGH")]
+        manifest = {
+            "to_verify": [],
+            "skipped_no_verification": [],
+            "deferred_budget": ["bha_p0_f0"],
+            "cache_hits": [],
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs={},
+            cr_dir=cr_dir, mode="github",
+        )
+        assert len(out["pending_verification"]) == 1
+        assert not (cr_dir / "coverage_gaps.json").exists()
+
+    def test_missing_github_verifiers_aggregate_into_one_gap_with_count(
+        self, tmp_path: Path,
+    ) -> None:
+        """FEA-3154: multiple missing BLOCKING/HIGH verifiers collapse into ONE
+        aggregate gap whose count reflects the number unverified."""
+        cr_dir = tmp_path / "cr"
+        findings = [
+            _make_validated_finding("bha_p0_f0", severity="HIGH"),
+            _make_validated_finding("bha_p0_f1", severity="BLOCKING", file="src/b.ts"),
+        ]
+        manifest = {
+            "to_verify": [
+                {"finding_id": "bha_p0_f0", "model": "sonnet"},
+                {"finding_id": "bha_p0_f1", "model": "sonnet"},
+            ],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        _, out = _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs={},
+            cr_dir=cr_dir, mode="github",
+        )
+        assert len(out["pending_verification"]) == 2
+        gaps = json.loads((cr_dir / "coverage_gaps.json").read_text())["findings"]
+        # ONE aggregate gap (not one per finding), count == 2
+        assert len(gaps) == 1
+        assert "2 BLOCKING/HIGH finding" in gaps[0]["issue"]
+
+    def test_github_gap_index_continues_past_existing_coverage_gaps(
+        self, tmp_path: Path,
+    ) -> None:
+        """FEA-3154: the aggregate gap's id continues past any pre-existing
+        coverage gaps (e.g. stage_20b's coverage-verifier_f0), so no id collides."""
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True, exist_ok=True)
+        # Simulate a stage_20b dropped-reviewer gap already on disk.
+        (cr_dir / "coverage_gaps.json").write_text(json.dumps(
+            {"findings": [{"id": "coverage-verifier_f0", "severity": "HIGH"}]},
+        ))
+        findings = [_make_validated_finding("bha_p0_f0", severity="HIGH")]
+        manifest = {
+            "to_verify": [{"finding_id": "bha_p0_f0", "model": "sonnet"}],
+            "skipped_no_verification": [], "deferred_budget": [], "cache_hits": [],
+        }
+        _run_verify_consolidate(
+            tmp_path, findings, manifest=manifest, verifier_outputs={},
+            cr_dir=cr_dir, mode="github",
+        )
+        gaps = json.loads((cr_dir / "coverage_gaps.json").read_text())["findings"]
+        assert len(gaps) == 2  # pre-existing + the new aggregate
+        new_gap = gaps[-1]
+        assert new_gap["id"] == "coverage-verifier_f1"  # index = len(existing) → no collision
+        assert new_gap["system_marker"] == "coverage:verifier-missing-output"
 
     def test_sensitive_path_escalates_rejected_blocking_to_tentative(
         self, tmp_path: Path,
@@ -18289,6 +18462,203 @@ def _assert_headless_warning_mode_specific(section: str) -> None:
     assert "sleep loops" in lowered
     assert "polling loops" in lowered
     assert "blocking `taskoutput` collection (standard flow)" not in lowered
+
+
+def _verify_findings_skill_text() -> str:
+    """Read the finding-verifier dispatch prompt contract under test (FEA-3154)."""
+    return (
+        Path(__file__).parents[2]
+        / "skills"
+        / "verify-findings"
+        / "SKILL.md"
+    ).read_text()
+
+
+def _assert_github_verifier_flow_sync(section: str) -> None:
+    """Assert the GitHub-mode verifier dispatch source contract is sync-only."""
+    assert "one verifier at a time" in section
+    assert "wait for its Task response before spawning the next" in section
+    assert "run_in_background: false" in section
+    assert "never set it to `true`" in section
+    assert "Do not use `TaskOutput`, watcher files, sleep loops, polling loops" in section
+    assert "there must be no verifier task still running" in section
+
+
+def _assert_start_md_github_stage_23_guard(section: str) -> None:
+    """Assert start.md pins the GitHub-mode walker guard at stage 23."""
+    lowered = section.lower()
+    assert "MODE=github" in section
+    assert "synchronous" in section
+    assert "`taskoutput`" in lowered
+    assert "watcher" in lowered
+    assert "sleep loop" in lowered
+    assert "polling loop" in lowered
+    assert "turn-ending waits" in section or "end the assistant turn" in section
+    assert "no verifier task" in section or "verifier remains outstanding" in section
+    assert (
+        "fail before `stage_24a_verify_consolidate`" in section
+        or "must not proceed to `stage_24a_verify_consolidate`" in section
+    )
+
+
+def _assert_headless_warning_verifier_mode_specific(section: str) -> None:
+    """Assert the verifier headless warning keeps GitHub flow synchronous."""
+    lowered = section.lower()
+    assert "github verifier synchronous task calls" in lowered
+    assert "local-mode blocking `taskoutput` collection" in lowered
+    assert "watcher files" in lowered
+    assert "sleep loops" in lowered
+    assert "polling loops" in lowered
+
+
+class TestFEA3154VerifierDispatchContracts:
+    """FEA-3154 hardens GitHub-mode verifier dispatch (stage_23) the same way
+    FEA-2162 hardened the reviewer fleet, while preserving local parallelism.
+    """
+
+    def test_github_verifier_flow_requires_synchronous_dispatch(self) -> None:
+        """GitHub headless verifier dispatch must not leave background Tasks
+        outstanding when stage_23 completes.
+        """
+        github_section = _extract_section(
+            _verify_findings_skill_text(),
+            "**GitHub mode (`MODE=github`): dispatch synchronously.**",
+            "**Local mode (`MODE=local`): spawn ALL verifiers at once.**",
+        )
+        _assert_github_verifier_flow_sync(github_section)
+
+        mutated = github_section.replace("never set it to `true`", "it may be true")
+        with pytest.raises(AssertionError):
+            _assert_github_verifier_flow_sync(mutated)
+
+    def test_github_verifier_flow_bans_watchers_sleep_and_taskoutput_waiting(self) -> None:
+        """Background waiting alternatives are equally unsafe in headless
+        GitHub mode and should fail the source contract.
+        """
+        github_section = _extract_section(
+            _verify_findings_skill_text(),
+            "**GitHub mode (`MODE=github`): dispatch synchronously.**",
+            "**Local mode (`MODE=local`): spawn ALL verifiers at once.**",
+        )
+        _assert_github_verifier_flow_sync(github_section)
+
+        for forbidden_replacement in (
+            "Use `TaskOutput` to wait for background verifiers.",
+            "Use watcher files to wait for background verifiers.",
+            "Use sleep loops to wait for background verifiers.",
+            "Use polling loops to wait for background verifiers.",
+        ):
+            mutated = re.sub(
+                r"Do not use `TaskOutput`, watcher files, sleep loops, polling loops,[^\n]+",
+                forbidden_replacement,
+                github_section,
+            )
+            with pytest.raises(AssertionError):
+                _assert_github_verifier_flow_sync(mutated)
+
+    def test_local_verifier_flow_preserves_background_collection(self) -> None:
+        """Local mode keeps parallel verifier dispatch and blocking
+        TaskOutput collection.
+        """
+        skill = _verify_findings_skill_text()
+        local_section = _extract_section(
+            skill,
+            "**Local mode (`MODE=local`): spawn ALL verifiers at once.**",
+            "Each spawned verifier",
+        )
+        local_collection = _extract_section(
+            skill,
+            "**Local collection (MANDATORY for `MODE=local`):**",
+            "A missing `agent_verifier_",
+        )
+        assert "Use `run_in_background: true` on every verifier `Task`" in local_section
+        assert (
+            "Call `TaskOutput` (block: true) for every spawned local background verifier"
+            in local_collection
+        )
+
+        mutated = local_section.replace("run_in_background: true", "run_in_background: false")
+        with pytest.raises(AssertionError):
+            assert "run_in_background: true" in mutated
+
+    def test_skill_intro_describes_mode_specific_task_scheduling(self) -> None:
+        """The skill introduction must not call verifier spawning
+        mode-agnostic after FEA-3154 split scheduling by mode.
+        """
+        intro = _extract_section(
+            _verify_findings_skill_text(),
+            "# Finding-Verifier Fleet Dispatch (stage_23_verify_findings)",
+            "## Verifier Fleet (stage_23_verify_findings)",
+        )
+        _assert_mode_specific_prompt_contract(intro)
+
+        mutated = intro.replace(
+            "with mode-specific Task scheduling",
+            "verifier spawning is mode-agnostic",
+        )
+        with pytest.raises(AssertionError):
+            _assert_mode_specific_prompt_contract(mutated)
+
+    def test_headless_warning_ties_github_verifier_to_synchronous_task_calls(self) -> None:
+        """The headless warning must keep GitHub verifier flow tied to
+        synchronous Task calls, not blocking TaskOutput collection.
+        """
+        warning = _extract_from(
+            _verify_findings_skill_text(),
+            "**Headless mode warning",
+        )
+        _assert_headless_warning_verifier_mode_specific(warning)
+
+        mutated = warning.replace(
+            "GitHub verifier synchronous Task calls",
+            "the blocking `TaskOutput` collection",
+        )
+        with pytest.raises(AssertionError):
+            _assert_headless_warning_verifier_mode_specific(mutated)
+
+    def test_start_md_verifier_fleet_pins_stage_23_guard(self) -> None:
+        """start.md must not leave room for headless wait-loop substitutes at
+        the verifier fleet.
+        """
+        verifier_fleet = _extract_section(
+            _start_command_text(),
+            "## Verifier Fleet (stage_23_verify_findings)",
+            "## PLN-725 Single-Agent Dispatch",
+        )
+        _assert_start_md_github_stage_23_guard(verifier_fleet)
+        _assert_mode_specific_prompt_contract(verifier_fleet)
+
+        for forbidden_replacement in (
+            "Watcher files may replace synchronous verifier completion.",
+            "Sleep loops may replace synchronous verifier completion.",
+            "End the assistant turn and continue when notified.",
+            "Use background `TaskOutput` waits in GitHub mode.",
+        ):
+            mutated = re.sub(
+                r"Watcher files, sleep loops, polling loops, background `TaskOutput` waits,[^\n]+",
+                forbidden_replacement,
+                verifier_fleet,
+            )
+            with pytest.raises(AssertionError):
+                _assert_start_md_github_stage_23_guard(mutated)
+
+    def test_start_md_stage_23_note_pins_github_sync_completion(self) -> None:
+        """The orchestration spine's stage_23 note must pin the GitHub-mode
+        synchronous-completion clause.
+        """
+        stage_note = _extract_section(
+            _start_command_text(),
+            "- **stage_23_verify_findings**",
+            "- **stage_24a_verify_consolidate**",
+        )
+        _assert_start_md_github_stage_23_guard(stage_note)
+
+        mutated = stage_note.replace(
+            "or fail before `stage_24a_verify_consolidate`",
+            "or continue later",
+        )
+        with pytest.raises(AssertionError):
+            _assert_start_md_github_stage_23_guard(mutated)
 
 
 def _seed_phase9_inputs(

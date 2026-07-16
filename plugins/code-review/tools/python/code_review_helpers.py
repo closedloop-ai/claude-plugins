@@ -3199,6 +3199,12 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
     )
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
     prompt_hash = str(getattr(args, "prompt_hash", "") or "")
+    # FEA-3154: in GitHub/headless mode a verifier whose output never lands
+    # (e.g. the orchestrator ended its turn before collection) must not let a
+    # BLOCKING/HIGH finding ship silently — those degrade to pending_verification[],
+    # which _compute_canonical_verdict does not read. We count such misses and,
+    # in github mode, raise one durable coverage-gap signal below.
+    mode = str(getattr(args, "mode", None) or "")
 
     validated_data = _read_optional_json(validated_path, {})
     if isinstance(validated_data, dict):
@@ -3258,6 +3264,8 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
     escalated_sensitive = 0
     escalated_mandatory = 0
     force_human_review = False
+    # FEA-3154: count BLOCKING/HIGH findings whose verifier produced no output.
+    missing_high_or_blocking = 0
 
     for raw in validated:
         if not isinstance(raw, dict):
@@ -3284,6 +3292,12 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
                     "Verifier agent did not produce an output file; finding "
                     "deferred for re-verification."
                 )
+                # FEA-3154: a BLOCKING/HIGH finding left unverified is the
+                # silent-headless-death risk — count it so github mode can
+                # raise a loud coverage-gap signal below. (Deferred-budget
+                # findings take the elif branch and are intentionally excluded.)
+                if str(finding.get("severity", "")) in ("BLOCKING", "HIGH"):
+                    missing_high_or_blocking += 1
                 pending.append(finding)
                 continue
             _merge_verifier_fields(finding, verdict_data)
@@ -3405,6 +3419,34 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
                     "emitted_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
+
+    # FEA-3154: loud degradation. In github mode, if any BLOCKING/HIGH finding
+    # was left unverified (verifier produced no output), emit ONE aggregate
+    # coverage-gap finding so cmd_finalize_result escalates the verdict to at
+    # least NEEDS_ATTENTION instead of silently approving. pending_verification[]
+    # alone is not read by _compute_canonical_verdict, so without this a
+    # BLOCKING finding whose verifier died could ship APPROVED.
+    # Scoped to github deliberately: local mode renders pending_verification[]
+    # to a human at stage_29_present (human-in-the-loop), whereas github mode
+    # auto-posts a verdict with no human gate — so the loud signal matters there.
+    if mode == "github" and missing_high_or_blocking > 0:
+        gaps_path = cr_dir / "coverage_gaps.json"
+        existing_gaps = _read_optional_json(gaps_path, None)
+        gap_index = (
+            len(existing_gaps.get("findings", []) or [])
+            if isinstance(existing_gaps, dict)
+            else 0
+        )
+        _append_to_coverage_gaps(
+            gaps_path,
+            [
+                _make_unverified_findings_gap(
+                    missing_high_or_blocking,
+                    index=gap_index,
+                    emitted_at=datetime.now(timezone.utc).isoformat(),
+                ),
+            ],
+        )
 
     output = {
         "verified": verified,
@@ -11383,6 +11425,64 @@ def _make_coverage_gap_finding(
     )
 
 
+def _make_unverified_findings_gap(
+    count: int,
+    *,
+    index: int,
+    emitted_at: str,
+) -> dict[str, Any]:
+    """Build a canonical system-scoped coverage-gap for unverified BLOCKING/HIGH findings.
+
+    FEA-3154: emitted by ``cmd_verify_consolidate`` in github mode when one or
+    more BLOCKING/HIGH findings had no verifier output. Unlike
+    ``_make_coverage_gap_finding`` (a dropped *reviewer*, ``required: True`` →
+    CHANGES_REQUESTED), this is ``required: False`` → the finding surfaces as a
+    ``HIGH`` coverage gap that ``_compute_canonical_verdict`` escalates to
+    NEEDS_ATTENTION (Rule 3), mirroring the existing "verifier uncertain →
+    human triages, not silent approval" TENTATIVE semantics. It reuses the
+    ``coverage:<suffix>`` marker template (no schema change) and sets every
+    field ``validate_finding`` requires, because ``normalize_legacy_finding``
+    does not synthesize priority/severity/confidence/category/issue.
+    """
+    return normalize_legacy_finding(
+        {
+            "id": make_finding_id("coverage-verifier", index),
+            "reviewer": "coverage-verifier",
+            "source": "coverage-verifier",
+            "schema_version": SCHEMA_VERSION,
+            "finding_scope": "system",
+            "file": None,
+            "line": None,
+            "system_marker": "coverage:verifier-missing-output",
+            "category": "Coverage",
+            "severity": "HIGH",
+            "priority": 1,
+            "confidence": 1.0,
+            "issue": (
+                f"{count} BLOCKING/HIGH finding(s) shipped unverified — verifier "
+                "output missing in GitHub mode"
+            ),
+            "explanation": (
+                f"{count} BLOCKING/HIGH finding(s) had no verifier output file in "
+                "this GitHub-mode run (a verifier agent may have crashed, or the "
+                "headless turn ended before collection). Those findings remain in "
+                "pending_verification[], which the canonical verdict does not read, "
+                "so they would otherwise pass silently."
+            ),
+            "recommendation": (
+                "Re-run the review so the verifier fleet completes, or verify the "
+                "flagged BLOCKING/HIGH finding(s) manually before merging."
+            ),
+            "code_snippet": "",
+            "required": False,
+        },
+        reviewer="coverage-verifier",
+        source="coverage-verifier",
+        index=index,
+        emitted_at=emitted_at,
+    )
+
+
 def _normalize_coverage_verify_doc(doc: Any) -> tuple[str | None, list[dict[str, str]]]:
     """Coerce a parsed coverage-verify section/file into ``(verdict, violations)``.
 
@@ -12495,14 +12595,17 @@ def _append_to_coverage_gaps(
 ) -> None:
     """Append findings to ``coverage_gaps.json`` preserving existing entries.
 
-    ``arbitrate-budget`` is the original producer of this file
-    (writing the ``budget_exceeded`` findings); ``derive-spawn-spec``
-    is the second producer (writing the ``spawn_*`` reason findings).
-    Both run before ``stage_21_collect_findings`` which globs
-    ``agent_*.json`` and ``cmd_finalize_result`` which reads
-    ``coverage_gaps.json`` directly. The append-not-overwrite
-    contract keeps both producers' findings visible in the final
-    envelope.
+    Three producers write this file. ``arbitrate-budget`` is the
+    original (writing the ``budget_exceeded`` findings); ``derive-spawn-spec``
+    is the second (writing the ``spawn_*`` reason findings); both run before
+    ``stage_21_collect_findings`` which globs ``agent_*.json``.
+    ``verify-consolidate`` (``stage_24a``, FEA-3154) is the third, appending a
+    single ``coverage:verifier-missing-output`` finding in github mode when a
+    BLOCKING/HIGH finding had no verifier output — it runs after
+    collect-findings but before ``stage_25_finalize_result``. All three are
+    picked up by ``cmd_finalize_result``, which reads ``coverage_gaps.json``
+    directly. The append-not-overwrite contract keeps every producer's
+    findings visible in the final envelope.
     """
     existing = _read_optional_json(gaps_path, None)
     if isinstance(existing, dict):
