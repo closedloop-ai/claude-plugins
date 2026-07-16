@@ -12595,14 +12595,17 @@ def _append_to_coverage_gaps(
 ) -> None:
     """Append findings to ``coverage_gaps.json`` preserving existing entries.
 
-    ``arbitrate-budget`` is the original producer of this file
-    (writing the ``budget_exceeded`` findings); ``derive-spawn-spec``
-    is the second producer (writing the ``spawn_*`` reason findings).
-    Both run before ``stage_21_collect_findings`` which globs
-    ``agent_*.json`` and ``cmd_finalize_result`` which reads
-    ``coverage_gaps.json`` directly. The append-not-overwrite
-    contract keeps both producers' findings visible in the final
-    envelope.
+    Three producers write this file. ``arbitrate-budget`` is the
+    original (writing the ``budget_exceeded`` findings); ``derive-spawn-spec``
+    is the second (writing the ``spawn_*`` reason findings); both run before
+    ``stage_21_collect_findings`` which globs ``agent_*.json``.
+    ``verify-consolidate`` (``stage_24a``, FEA-3154) is the third, appending a
+    single ``coverage:verifier-missing-output`` finding in github mode when a
+    BLOCKING/HIGH finding had no verifier output — it runs after
+    collect-findings but before ``stage_25_finalize_result``. All three are
+    picked up by ``cmd_finalize_result``, which reads ``coverage_gaps.json``
+    directly. The append-not-overwrite contract keeps every producer's
+    findings visible in the final envelope.
     """
     existing = _read_optional_json(gaps_path, None)
     if isinstance(existing, dict):
