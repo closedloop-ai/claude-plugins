@@ -13,7 +13,7 @@ Run a multi-agent code review with partitioned deep review, deterministic hygien
 ## Usage
 
 ```
-/start                              # Review open PR diff for current branch, or main...HEAD if no PR
+/start                              # Review open PR diff for current branch, or the diff since the branch forked from the default branch if no PR
 /start staged                       # Review only staged changes
 /start file1 file2                  # Review specific files
 /start 123                          # Review PR #123 diff locally (no posting)

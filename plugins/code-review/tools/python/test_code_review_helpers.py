@@ -16,6 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from conftest import (
+    git_fixture,
     invoke_prepare_run,
     minimal_diff_finding,
     minimal_envelope,
@@ -6300,6 +6301,265 @@ class TestCacheStatusMessage:
 # ---------------------------------------------------------------------------
 
 
+def _commit_file(repo: Path, name: str, content: str) -> str:
+    """Commit *content* as *name* inside *repo*; return the new commit SHA."""
+    (repo / name).write_text(content)
+    git_fixture(repo, "add", "-A")
+    git_fixture(repo, "commit", "--quiet", "-m", f"add {name}")
+    return git_fixture(repo, "rev-parse", "HEAD").strip()
+
+
+def _build_stale_base_repo(
+    repo: Path, *, default_branch: str = "main", with_origin: bool = True,
+) -> dict[str, str]:
+    """Materialize a repo whose local base branch lags the branch's fork point.
+
+    Reproduces the worktree hazard without a network remote. History::
+
+        A ── B          <- B is the commit feat-x forked from
+              ╰── C     <- feat-x (HEAD)
+
+    The local ``<default_branch>`` ref is rewound to ``A`` while
+    ``refs/remotes/origin/<default_branch>`` is pinned at ``B``, standing in
+    for a clone whose shared local base ref sits behind the remote. ``B``
+    adds ``UNRELATED.txt`` (someone else's landed work) and ``C`` adds
+    ``MINE.txt`` (the change under review), so a diff based on the stale
+    local ref is detectable by file name alone.
+
+    With ``with_origin=False`` no remote-tracking ref is created, modelling a
+    remote-less repo where the local ref is the only truth. Returns the
+    ``a``/``b``/``c`` SHAs; HEAD is left on ``feat-x``.
+    """
+    repo.mkdir(parents=True, exist_ok=True)
+    git_fixture(repo, "init", "--quiet", "-b", default_branch)
+    a = _commit_file(repo, "base.txt", "base\n")
+    b = _commit_file(repo, "UNRELATED.txt", "landed on the base after the fork\n")
+    git_fixture(repo, "checkout", "--quiet", "-b", "feat-x")
+    c = _commit_file(repo, "MINE.txt", "the change under review\n")
+    # Rewind the local base ref behind the fork point; pin the remote at it.
+    git_fixture(repo, "branch", "--force", default_branch, a)
+    if with_origin:
+        git_fixture(repo, "update-ref", f"refs/remotes/origin/{default_branch}", b)
+    return {"a": a, "b": b, "c": c}
+
+
+class TestResolveDiffBase:
+    """Base resolution for local branch review (stale-ref hazard).
+
+    ``<base>...HEAD`` diffs from ``merge-base(<base>, HEAD)``. A clone's local
+    base ref is shared by every worktree, so it carries whatever commit the
+    primary checkout last left it on; when it lags, the merge base walks
+    backwards past the fork point and folds unrelated landed commits into the
+    review diff. ``origin/<base>`` only moves forward, so it pins the fork
+    point.
+    """
+
+    def test_local_branch_diffs_from_fork_point_not_stale_local_ref(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo = tmp_path / "repo"
+        _build_stale_base_repo(repo)
+        monkeypatch.chdir(repo)
+
+        # Guard the fixture: the stale local ref really does over-collect, so
+        # the assertion below is proving the fix and not a no-op repo shape.
+        stale = git_fixture(repo, "diff", "--name-only", "main...HEAD").split()
+        assert sorted(stale) == ["MINE.txt", "UNRELATED.txt"]
+
+        with patch("code_review_helpers._detect_open_pr", return_value=None):
+            result = TestResolveScope()._run("local", tmp_path=tmp_path)
+
+        assert result["diff_scope"] == "origin/main...HEAD"
+        assert result["base_ref"] == "main"
+        # The payoff: the resolved scope reviews only the branch's own commit.
+        reviewed = git_fixture(
+            repo, "diff", "--name-only", result["diff_scope"],
+        ).split()
+        assert reviewed == ["MINE.txt"]
+
+    def test_file_paths_scope_also_uses_fork_point(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo = tmp_path / "repo"
+        _build_stale_base_repo(repo)
+        monkeypatch.chdir(repo)
+        result = TestResolveScope()._run(
+            "local", scope_args="MINE.txt", tmp_path=tmp_path,
+        )
+        assert result["diff_scope"] == "origin/main...HEAD -- MINE.txt"
+        assert result["scope_kind"] == "file_paths"
+
+    def test_remoteless_repo_falls_back_to_local_ref(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # No origin means no stale-ref hazard: the local ref is the only truth.
+        repo = tmp_path / "repo"
+        _build_stale_base_repo(repo, with_origin=False)
+        monkeypatch.chdir(repo)
+        with patch("code_review_helpers._detect_open_pr", return_value=None):
+            result = TestResolveScope()._run("local", tmp_path=tmp_path)
+        assert result["diff_scope"] == "main...HEAD"
+        assert result["base_ref"] == "main"
+
+    def test_unpushed_base_commits_keep_the_local_ref_as_base(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Mirror image of the stale-local-ref hazard: when the base branch has
+        # commits that were never pushed and the branch forks off those, it is
+        # origin/main that lags. Preferring the remote ref unconditionally
+        # would fold the unpushed base commits into the diff.
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        git_fixture(repo, "init", "--quiet", "-b", "main")
+        a = _commit_file(repo, "base.txt", "base\n")
+        git_fixture(repo, "update-ref", "refs/remotes/origin/main", a)
+        _commit_file(repo, "UNPUSHED.txt", "on main, never pushed\n")
+        git_fixture(repo, "checkout", "--quiet", "-b", "feat-x")
+        _commit_file(repo, "MINE.txt", "the change under review\n")
+        monkeypatch.chdir(repo)
+
+        with patch("code_review_helpers._detect_open_pr", return_value=None):
+            result = TestResolveScope()._run("local", tmp_path=tmp_path)
+
+        assert result["diff_scope"] == "main...HEAD"
+        reviewed = git_fixture(
+            repo, "diff", "--name-only", result["diff_scope"],
+        ).split()
+        assert reviewed == ["MINE.txt"]
+
+    def _build_diverged_base_repo(self, repo: Path) -> None:
+        """Local ``main`` and ``origin/main`` diverge from a common ancestor.
+
+        Both kinds of staleness at once::
+
+                        A1 ── A2         <- origin/main (pushed by someone else)
+                       /
+            ... ── B0 ─┤
+                       \\
+                        L1 ── L2         <- local main (unpushed)
+
+        Neither ref alone can base every branch cut from this repo: a branch
+        off ``L2`` needs the local ref, a branch off ``A2`` needs the remote
+        one. The later merge base with HEAD identifies the correct tip.
+        """
+        repo.mkdir()
+        git_fixture(repo, "init", "--quiet", "-b", "main")
+        _commit_file(repo, "base.txt", "B0\n")  # common ancestor
+        git_fixture(repo, "checkout", "--quiet", "-b", "origin-work")
+        _commit_file(repo, "A1.txt", "pushed by someone else\n")
+        a2 = _commit_file(repo, "A2.txt", "pushed by someone else\n")
+        git_fixture(repo, "update-ref", "refs/remotes/origin/main", a2)
+        git_fixture(repo, "checkout", "--quiet", "main")
+        _commit_file(repo, "L1.txt", "unpushed local base commit\n")
+        _commit_file(repo, "L2.txt", "unpushed local base commit\n")
+
+    def test_diverged_base_branch_off_local_tip_uses_local_ref(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Cut from the unpushed local tip: origin/main lags, so basing on it
+        # would fold the unpushed L1/L2 into the diff.
+        repo = tmp_path / "repo"
+        self._build_diverged_base_repo(repo)
+        git_fixture(repo, "checkout", "--quiet", "-b", "feat-x", "main")
+        _commit_file(repo, "MINE.txt", "the change under review\n")
+        monkeypatch.chdir(repo)
+        with patch("code_review_helpers._detect_open_pr", return_value=None):
+            result = TestResolveScope()._run("local", tmp_path=tmp_path)
+        assert result["diff_scope"] == "main...HEAD"
+        reviewed = git_fixture(
+            repo, "diff", "--name-only", result["diff_scope"],
+        ).split()
+        assert reviewed == ["MINE.txt"]
+
+    def test_diverged_base_branch_off_remote_tip_uses_remote_ref(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Cut from origin/main while local main is also ahead with its own
+        # unpushed commits: basing on the local ref would fold A1/A2 in.
+        repo = tmp_path / "repo"
+        self._build_diverged_base_repo(repo)
+        git_fixture(repo, "checkout", "--quiet", "-b", "feat-x", "origin/main")
+        _commit_file(repo, "MINE.txt", "the change under review\n")
+        monkeypatch.chdir(repo)
+        with patch("code_review_helpers._detect_open_pr", return_value=None):
+            result = TestResolveScope()._run("local", tmp_path=tmp_path)
+        assert result["diff_scope"] == "origin/main...HEAD"
+        reviewed = git_fixture(
+            repo, "diff", "--name-only", result["diff_scope"],
+        ).split()
+        assert reviewed == ["MINE.txt"]
+
+    def test_identical_base_views_resolve_to_the_remote_ref(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The common case: local and remote agree, so both fork points match
+        # and either ref yields the same range.
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        git_fixture(repo, "init", "--quiet", "-b", "main")
+        a = _commit_file(repo, "base.txt", "base\n")
+        git_fixture(repo, "update-ref", "refs/remotes/origin/main", a)
+        git_fixture(repo, "checkout", "--quiet", "-b", "feat-x")
+        _commit_file(repo, "MINE.txt", "the change under review\n")
+        monkeypatch.chdir(repo)
+        with patch("code_review_helpers._detect_open_pr", return_value=None):
+            result = TestResolveScope()._run("local", tmp_path=tmp_path)
+        assert result["diff_scope"] == "origin/main...HEAD"
+        reviewed = git_fixture(
+            repo, "diff", "--name-only", result["diff_scope"],
+        ).split()
+        assert reviewed == ["MINE.txt"]
+
+    def test_master_default_branch_is_detected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo = tmp_path / "repo"
+        _build_stale_base_repo(repo, default_branch="master")
+        monkeypatch.chdir(repo)
+        with patch("code_review_helpers._detect_open_pr", return_value=None):
+            result = TestResolveScope()._run("local", tmp_path=tmp_path)
+        assert result["diff_scope"] == "origin/master...HEAD"
+        assert result["base_ref"] == "master"
+
+    def test_origin_head_symbolic_ref_wins_over_name_probing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # A default branch named neither main nor master is only discoverable
+        # through origin/HEAD, which is why it is probed first.
+        repo = tmp_path / "repo"
+        _build_stale_base_repo(repo, default_branch="develop")
+        git_fixture(
+            repo, "symbolic-ref", "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/develop",
+        )
+        monkeypatch.chdir(repo)
+        with patch("code_review_helpers._detect_open_pr", return_value=None):
+            result = TestResolveScope()._run("local", tmp_path=tmp_path)
+        assert result["diff_scope"] == "origin/develop...HEAD"
+        assert result["base_ref"] == "develop"
+
+    def test_fetch_intent_reads_commits_from_fork_point(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # fetch-intent feeds commit subjects to intent classification off the
+        # same base, so a stale local ref would attribute someone else's
+        # landed commit to the branch under review.
+        from code_review_helpers import cmd_fetch_intent
+
+        repo = tmp_path / "repo"
+        _build_stale_base_repo(repo)
+        monkeypatch.chdir(repo)
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        rc = cmd_fetch_intent(argparse.Namespace(
+            pr_number=None, base_ref="main", diff_tip="HEAD",
+            scope_kind="branch", cr_dir=str(cr_dir),
+        ))
+        assert rc == 0
+        intent = json.loads((cr_dir / "intent_context.json").read_text())
+        assert intent["commits"] == "add MINE.txt"
+
+
 class TestResolveScope:
     def _run(self, mode: str, scope_args: str = "", pr_number: int | None = None,
              base_ref_override: str | None = None, setup_json: str | None = None,
@@ -6327,10 +6587,15 @@ class TestResolveScope:
         finally:
             _sys.stdout = old_stdout
 
-    def test_local_branch(self, tmp_path: Path) -> None:
+    def test_local_branch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo = tmp_path / "repo"
+        _build_stale_base_repo(repo)
+        monkeypatch.chdir(repo)
         with patch("code_review_helpers._detect_open_pr", return_value=None):
             result = self._run("local", tmp_path=tmp_path)
-        assert result["diff_scope"] == "main...HEAD"
+        assert result["diff_scope"] == "origin/main...HEAD"
         assert result["scope_kind"] == "branch"
         assert result["pr_auto_detected"] is False
 
@@ -6355,16 +6620,47 @@ class TestResolveScope:
         assert result["scope_kind"] == "file_paths"
         assert result["path_filter"] == "-- file1.ts file2.ts"
 
-    def test_base_override(self, tmp_path: Path) -> None:
+    def _repo_with_origin_develop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> Path:
+        """Hermetic repo carrying an ``origin/develop`` for the override to find."""
+        repo = tmp_path / "repo"
+        shas = _build_stale_base_repo(repo)
+        git_fixture(repo, "update-ref", "refs/remotes/origin/develop", shas["b"])
+        monkeypatch.chdir(repo)
+        return repo
+
+    def test_base_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._repo_with_origin_develop(tmp_path, monkeypatch)
         with patch("code_review_helpers._detect_open_pr", return_value=None):
             result = self._run("local", base_ref_override="develop", tmp_path=tmp_path)
-        assert "origin/develop" in result["diff_scope"]
+        assert result["diff_scope"] == "origin/develop...HEAD"
         assert result["base_ref"] == "develop"
 
-    def test_base_override_preserves_path_filter(self, tmp_path: Path) -> None:
+    def test_base_override_preserves_path_filter(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._repo_with_origin_develop(tmp_path, monkeypatch)
         result = self._run("local", scope_args="file1.ts", base_ref_override="develop", tmp_path=tmp_path)
         assert "origin/develop" in result["diff_scope"]
         assert "-- file1.ts" in result["path_filter"]
+
+    def test_base_override_falls_back_to_local_ref_when_unfetched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # An override naming a branch with no remote-tracking ref has no
+        # origin-qualified alternative — use the local ref rather than
+        # emitting an origin/<ref> that git cannot resolve.
+        repo = tmp_path / "repo"
+        shas = _build_stale_base_repo(repo)
+        git_fixture(repo, "branch", "develop", shas["b"])
+        monkeypatch.chdir(repo)
+        with patch("code_review_helpers._detect_open_pr", return_value=None):
+            result = self._run("local", base_ref_override="develop", tmp_path=tmp_path)
+        assert result["diff_scope"] == "develop...HEAD"
+        assert result["base_ref"] == "develop"
 
     # -- PR auto-detection tests ------------------------------------------------
 
@@ -6405,12 +6701,21 @@ class TestResolveScope:
                 if isinstance(fetch_result, Exception):
                     raise fetch_result
                 return fetch_result
-            # PR-head worktree isolation probes (these tests focus on scope
-            # field resolution, not isolation): make the working tree already
-            # be the PR head with a clean tree so resolve-scope takes the
-            # no-worktree path. Same constant SHA for every ref → HEAD ==
-            # origin/<head>; empty status → clean; empty worktree list → no GC.
+            # Ref probes. These tests focus on scope field resolution, so both
+            # downstream readers get a repo that looks maximally ordinary: one
+            # constant SHA for every ref → HEAD == origin/<head>, so
+            # resolve-scope takes the no-worktree path; one constant merge base
+            # for every pair → the local and remote views of the base agree, so
+            # base resolution settles on the remote ref. Empty status → clean;
+            # empty worktree list → no GC. Base-selection behavior itself is
+            # covered against real repos in TestResolveDiffBase.
             if cmd_list[:3] == ["git", "rev-parse", "--verify"]:
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0, stdout="deadbeefcafe\n",
+                )
+            # Covers both `merge-base <a> <b>` and `merge-base --is-ancestor`,
+            # which signals through its exit code and ignores stdout.
+            if cmd_list[:2] == ["git", "merge-base"]:
                 return subprocess.CompletedProcess(
                     args=cmd, returncode=0, stdout="deadbeefcafe\n",
                 )
@@ -6445,7 +6750,7 @@ class TestResolveScope:
         with patch("code_review_helpers.subprocess.run", side_effect=side_effect):
             result = self._run("local", tmp_path=tmp_path)
         assert result["scope_kind"] == "branch"
-        assert result["diff_scope"] == "main...HEAD"
+        assert result["diff_scope"] == "origin/main...HEAD"
         assert result["pr_auto_detected"] is False
 
     def test_explicit_pr_number_resolves_pr_scope_without_auto_detect(self, tmp_path: Path) -> None:
@@ -6489,7 +6794,7 @@ class TestResolveScope:
         with patch("code_review_helpers.subprocess.run", side_effect=side_effect):
             result = self._run("local", tmp_path=tmp_path)
         assert result["scope_kind"] == "branch"
-        assert result["diff_scope"] == "main...HEAD"
+        assert result["diff_scope"] == "origin/main...HEAD"
         assert result["pr_auto_detected"] is False
 
     def test_pr_auto_detect_falls_back_on_malformed_number(self, tmp_path: Path) -> None:
@@ -6511,7 +6816,7 @@ class TestResolveScope:
         assert result["pr_auto_detected"] is False
         assert result["pr_number"] is None
         assert result["scope_kind"] == "branch"
-        assert result["diff_scope"] == "main...HEAD"
+        assert result["diff_scope"] == "origin/main...HEAD"
         assert result["diff_tip"] == "HEAD"
 
     def test_pr_auto_detect_succeeds_but_resolve_fails(self, tmp_path: Path) -> None:
@@ -6523,7 +6828,7 @@ class TestResolveScope:
             result = self._run("local", tmp_path=tmp_path)
         assert result["pr_auto_detected"] is False
         assert result["scope_kind"] == "branch"
-        assert result["diff_scope"] == "main...HEAD"
+        assert result["diff_scope"] == "origin/main...HEAD"
 
     def test_pr_auto_detected_when_scope_args_branch_literal(self, tmp_path: Path) -> None:
         side_effect = self._mock_subprocess_side_effect(
