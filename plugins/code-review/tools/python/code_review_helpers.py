@@ -244,8 +244,8 @@ def _resolve_pr_scope(
     """Resolve diff scope fields for a given PR number.
 
     When *allow_guess_fallback* is ``True`` (explicit ``--pr-number``), a
-    ``CalledProcessError`` from ``gh pr view`` falls back to
-    ``base_ref="main"`` / ``head_ref=current_branch``.  When ``False``
+    ``CalledProcessError`` from ``gh pr view`` falls back to the repo's
+    default branch / ``head_ref=current_branch``.  When ``False``
     (auto-detect path), errors propagate so the caller can revert to branch
     scope.
     """
@@ -256,12 +256,12 @@ def _resolve_pr_scope(
             capture_output=True, text=True, check=True,
         )
         lines = result.stdout.strip().splitlines()
-        base_ref = lines[0].strip() if len(lines) > 0 else "main"
+        base_ref = lines[0].strip() if len(lines) > 0 else _resolve_default_base_ref()
         head_ref = lines[1].strip() if len(lines) > 1 else current_branch
     except subprocess.CalledProcessError:
         if not allow_guess_fallback:
             raise
-        base_ref = "main"
+        base_ref = _resolve_default_base_ref()
         head_ref = current_branch
 
     return {
@@ -293,6 +293,92 @@ def _git_rev_parse(ref: str) -> str | None:
         return sha or None
     except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return None
+
+
+def _resolve_default_base_ref() -> str:
+    """Return the repository's default branch *name* (e.g. ``main``, ``master``).
+
+    Probes, in order: the ``origin/HEAD`` symbolic ref (what the remote
+    reports as its default), then well-known remote branches, then the
+    same names locally for repos with no ``origin``. Falls back to
+    ``main`` when nothing resolves, preserving the historical default.
+
+    Returns a bare branch name, not a ref — callers pair it with
+    :func:`_base_rev` to get the revision to diff against. ``base_ref``
+    travels through ``scope.json`` as a name because consumers such as
+    ``compute-hashes`` origin-qualify it themselves.
+    """
+    try:
+        symbolic = _run_git(
+            ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        symbolic = ""
+    if symbolic:
+        # "origin/main" -> "main"
+        _, _, name = symbolic.partition("/")
+        if name:
+            return name
+    for candidate in ("main", "master"):
+        if _git_rev_parse(f"origin/{candidate}"):
+            return candidate
+    for candidate in ("main", "master"):
+        if _git_rev_parse(candidate):
+            return candidate
+    return "main"
+
+
+def _merge_base(a: str, b: str) -> str | None:
+    """Return the merge base of *a* and *b*, or ``None`` if there isn't one.
+
+    ``None`` covers both "no common ancestor" and "a ref does not resolve",
+    which callers treat alike: neither yields a usable fork point.
+    """
+    try:
+        return _run_git(["merge-base", a, b]).strip() or None
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+
+
+def _is_ancestor(commit: str, descendant: str) -> bool:
+    """Whether *commit* is *descendant* or one of its ancestors."""
+    try:
+        _run_git(["merge-base", "--is-ancestor", commit, descendant])
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return False
+
+
+def _base_rev(base_ref: str, head_rev: str = "HEAD") -> str:
+    """Return the revision to diff *head_rev* against for branch *base_ref*.
+
+    ``<base>...<head>`` diffs from ``merge-base(<base>, <head>)``, so the base
+    ref matters only through the fork point it produces. A clone holds two
+    views of the same base branch, and either one can lag the other:
+
+    * The local ``<base_ref>`` is shared by every worktree of a clone, so it
+      carries whatever commit the primary checkout last left it on. When it
+      sits behind the fork point, the merge base walks backwards and folds
+      every commit that landed on the base in between into the review diff.
+    * ``origin/<base_ref>`` lags whenever the base has unpushed local commits.
+      Branch off those and the fork point is ahead of the remote ref, which
+      folds the unpushed base commits into the diff instead.
+
+    Both merge bases are ancestors of *head_rev* along the base branch, so the
+    later of the two is the true fork point — take the ref that produces it,
+    which is correct under either kind of staleness. Falls back to whichever
+    ref resolves when only one does (e.g. a remote-less repo, where the local
+    ref is the only truth).
+    """
+    remote_rev = f"origin/{base_ref}"
+    local_mb = _merge_base(base_ref, head_rev)
+    remote_mb = _merge_base(remote_rev, head_rev)
+    if remote_mb is None:
+        return base_ref
+    if local_mb is None:
+        return remote_rev
+    # Equal bases resolve to the remote ref; the two ranges are identical.
+    return remote_rev if _is_ancestor(local_mb, remote_mb) else base_ref
 
 
 # Startup-GC age guard: a PR-head worktree directory is reclaimed as an
@@ -4791,7 +4877,7 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
         current_branch = "HEAD"
 
     diff_scope = ""
-    base_ref = "main"
+    base_ref = _resolve_default_base_ref()
     head_ref = current_branch
     review_branch = current_branch
     diff_tip = "HEAD"
@@ -4844,13 +4930,15 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
                     pr_auto_detected = True
                 except (subprocess.CalledProcessError, FileNotFoundError,
                         OSError, ValueError):
-                    # Any failure: fall back to branch scope
+                    # Any failure: fall back to branch scope. base_ref is
+                    # untouched here — every pr_scope assignment below the
+                    # fetch is unreachable once either raise-point fires.
                     pr_number = None
                     pr_auto_detected = False
-                    diff_scope = "main...HEAD"
+                    diff_scope = f"{_base_rev(base_ref)}...HEAD"
                     scope_kind = "branch"
             else:
-                diff_scope = "main...HEAD"
+                diff_scope = f"{_base_rev(base_ref)}...HEAD"
                 scope_kind = "branch"
         elif scope_args.strip() == "staged":
             diff_scope = "--cached"
@@ -4858,7 +4946,7 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
         else:
             # Treat scope_args as file paths
             files = scope_args.strip()
-            diff_scope = f"main...HEAD -- {files}"
+            diff_scope = f"{_base_rev(base_ref)}...HEAD -- {files}"
             path_filter = f"-- {files}"
             scope_kind = "file_paths"
 
@@ -4870,11 +4958,12 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
     # Apply base-ref override if provided
     if base_ref_override:
         if scope_kind == "pr":
-            diff_scope = f"origin/{base_ref_override}...origin/{head_ref}"
+            override_head = f"origin/{head_ref}"
+            diff_scope = f"{_base_rev(base_ref_override, override_head)}...{override_head}"
         elif path_filter:
-            diff_scope = f"origin/{base_ref_override}...HEAD {path_filter}"
+            diff_scope = f"{_base_rev(base_ref_override)}...HEAD {path_filter}"
         else:
-            diff_scope = f"origin/{base_ref_override}...HEAD"
+            diff_scope = f"{_base_rev(base_ref_override)}...HEAD"
         base_ref = base_ref_override
 
     # Worktree isolation for local PR review. The diff is computed from the
@@ -4987,7 +5076,7 @@ def cmd_fetch_intent(args: argparse.Namespace) -> int:
     elif scope_kind == "branch":
         try:
             result = subprocess.run(
-                ["git", "log", f"{base_ref}..{diff_tip}",
+                ["git", "log", f"{_base_rev(base_ref, diff_tip)}..{diff_tip}",
                  "--oneline", "--no-merges", "--format=%s"],
                 capture_output=True, text=True, check=True,
             )

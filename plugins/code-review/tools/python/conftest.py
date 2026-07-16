@@ -7,12 +7,59 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from code_review_schema import SCHEMA_VERSION, empty_telemetry
+
+# Pinned git identity for every test-side fixture repo. Fixed values →
+# deterministic commit SHAs, which matters for any artifact that embeds a
+# commit hash (context_key, PR-head SHAs) and for the golden fixtures that
+# assert on them byte-for-byte. Pair with a pinned GIT_AUTHOR_DATE /
+# GIT_COMMITTER_DATE (see git_fixture's *env*) wherever the SHA itself is
+# pinned; identity alone is not enough to fix a SHA.
+GIT_IDENTITY_ENV = {
+    "GIT_AUTHOR_NAME": "Fixture Author",
+    "GIT_AUTHOR_EMAIL": "fixture@example.com",
+    "GIT_COMMITTER_NAME": "Fixture Author",
+    "GIT_COMMITTER_EMAIL": "fixture@example.com",
+    # Fully isolate git config so the host's config can neither break commits
+    # (commit.gpgsign, hooks) nor make them host-dependent. GIT_CONFIG_NOSYSTEM
+    # blocks /etc/gitconfig, but the operator's ~/.gitconfig is *global*, not
+    # system — so it also needs GIT_CONFIG_GLOBAL. Pointing GLOBAL and SYSTEM at
+    # os.devnull is unambiguous and order-independent: a fixture repo may be
+    # built BEFORE a hermetic HOME redirect, so relying on HOME alone would
+    # leave those commits exposed to the real ~/.gitconfig.
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_SYSTEM": os.devnull,
+}
+
+
+def git_fixture(repo: Path, *args: str, env: dict[str, str] | None = None) -> str:
+    """Run a git command inside *repo* and return stdout (raises on failure).
+
+    The shared builder for every test-side git fixture repo: it pins commit
+    identity and neutralizes host git config via :data:`GIT_IDENTITY_ENV`, so
+    fixture history is byte-stable across runs and hosts. *env* overlays extra
+    variables (e.g. ``GIT_AUTHOR_DATE``) onto that base.
+    """
+    full_env = {**os.environ, **GIT_IDENTITY_ENV}
+    if env:
+        full_env.update(env)
+    result = subprocess.run(
+        ["git", *args],
+        cwd=str(repo),
+        env=full_env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
