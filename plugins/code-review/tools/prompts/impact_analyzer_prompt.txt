@@ -128,6 +128,22 @@ internal to a function body. Specifically, flag:
     renames a column.
   - **Deletions**: any exported symbol whose declaration disappears.
     These are the highest-confidence breakages — they always break.
+  - **Error-handling semantics in a SHARED module**: a parser/harness/core
+    lib consumed by BOTH a desktop/Electron surface and a cloud surface
+    where the diff changes throw/catch/return semantics (e.g. swallowing an
+    error that previously threw). This is a `behavioral_change` — trace ALL
+    consumers, not just the one the PR body names, and check whether any
+    downstream quarantine/skip/defer/import path relied on the old behavior
+    (e.g. a flip from "quarantine/defer" to "import with dropped data").
+    Treat "PR body says cloud-only" as a claim to verify against the
+    consumer list, not a fact.
+  - **New unconditional data dependency in a shared component**: a
+    previously-presentational shared component that now calls a hook
+    requiring a provider (API/query client, context) unconditionally. Every
+    existing mount site is a consumer — enumerate them (especially Storybook
+    stories and the global Storybook preview) and flag any that does not
+    supply the provider; the unconditional hook call throws on mount where
+    the component used to be pure.
 
 Ignore symbols that are clearly **internal** (private/unexported,
 underscored, inside `__init__` blocks not in `__all__`, etc.). Ignore

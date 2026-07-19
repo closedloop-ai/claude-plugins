@@ -6,6 +6,8 @@ Focus areas:
 - State management: race conditions, stale closures, double-trigger patterns
 - Error handling: missing try-catch on async, unhandled promise rejections
 - Data transformations: off-by-one, incorrect parsing, wrong parameter types
+- Migration prefix contiguity (CI-blocking): when the diff adds a directory under a `prisma/migrations/` (or equivalent numbered-migration) tree, list the existing sibling prefixes and compute the next contiguous index; if the added prefix skips or reuses a slot (e.g. `0026_*` added when `0025` is the next free one), a committed-migration-name guard test fails CI — flag the mismatch as BLOCKING.
+- Read-only-bridge / write-path mismatch: when a change newly routes a write (POST/PATCH/DELETE, or any request carrying a body) through a transport/bridge/proxy/IPC layer, read that layer's method allowlist (e.g. an `ALLOWED_METHODS` set) and body handling before trusting it; a GET-only bridge silently turns every write into a network/status-0 error that read paths won't reveal. Flag only after confirming the method/body is not permitted.
 
 For each potential finding, complete this reasoning certificate in your <thinking> before including it:
 

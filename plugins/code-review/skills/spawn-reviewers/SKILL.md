@@ -186,6 +186,8 @@ Focus areas:
   Check that parameters match (undefined vs null vs empty string matters).
 - Pattern consistency: Find existing examples of similar code, verify new code matches.
 - Import validation: Verify imports resolve to real modules.
+- SSOT-drift-by-copy: a string literal or helper re-declared where a canonical const/utility of the same value already exists (especially within the same package). Grep for the value/name; if a canonical symbol exists, flag the redeclaration and name the symbol to import instead.
+- Test asserts scaffolding, not behavior: when the PR adds/changes a behavior, open the test and confirm it DRIVES that behavior end-to-end (the mutation, the flag-off case, the over-cap/other branch) — not just the wiring/scope/shape around it. Also flag a regression test that only passes because a fixture contradicts documented system behavior (false-confidence test).
 
 For DRY claims, one concrete example of prior art is sufficient (cite file path + function name).
 
@@ -218,8 +220,9 @@ For each changed file, check against:
 3. Rules tagged [pattern] — these are MEDIUM severity (verify pattern is followed)
 4. Explicit rules in the main CLAUDE.md sections (Architecture, Type Definitions, etc.)
 5. Architectural conventions: data access patterns, type locations, service layer responsibilities, code organization
+6. PR-body / docstring drift vs the diff: reconcile the PR description and load-bearing docstrings against what the diff actually does. Common real misses: wrong migration numbers; "no migration"/"no schema change" claims contradicted by the diff; "live fix" language for behavior already shipped on main; and described fallbacks/flags/removals that are not present in the diff. Flag the mismatch even when the code is otherwise correct (skip when the PR body was QUARANTINED — see shared_prompt.txt).
 
-For every finding, cite the exact rule text from CLAUDE.md.
+For every finding, cite the exact rule text from CLAUDE.md (or the exact PR-body/docstring line for drift findings).
 Use Grep and Glob to verify claims. Do NOT flag issues without searching first.
 ```
 

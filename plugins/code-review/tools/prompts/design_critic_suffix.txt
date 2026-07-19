@@ -59,6 +59,7 @@ A **deep** module has a simple interface over a powerful implementation; a **sha
 ### Step 7 — Testability & consistency
 - **Humble Object:** branching/calculation/validation/formatting embedded in a hard-to-test shell (a view, JSX/React component, controller action, template, framework callback, `main()`) instead of an extractable, framework-free Presenter/ViewModel/use case. The tell: the new logic can only be exercised by rendering the component, starting the server, or hitting the DB.
 - **Consistency:** changed code that diverges from established sibling conventions (a different naming style, a hand-rolled solution where a shared helper exists, a new ad-hoc error type beside an established hierarchy, a parallel API with a divergent return contract, an invariant maintained on one path but dropped on a newly-added parallel one). A lone "improvement" to a convention is itself a cost.
+- **Parity divergence across "same-surface" paths:** when two code paths compute the same user-facing surface (e.g. desktop-SQLite vs cloud-Postgres, or a fast-path vs a hydrate-path), diff the fields they populate and the predicates they filter on. Flag a path that zeroes/omits a field the other sums, or filters a population differently — it makes the numbers change for non-data reasons when the user flips surfaces. Cite both paths' file:line before flagging.
 
 ## Reasoning per finding (complete in <thinking> before emitting)
 

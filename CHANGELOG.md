@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.8.0
+
+#### Added
+- **Detection guidance for eight issue classes that recently slipped past `/code-review` (caught only by human "soul review").** Prompt-only, appended to the single most-relevant existing reviewer prompt/checklist — no new agents, no orchestration/tooling change, each heuristic keeps a "verify X before flagging" clause to protect against false positives. Placements: Bug Hunter A (`tools/prompts/bha_suffix.txt`) — migration-prefix contiguity (CI-blocking off-by-one against the committed-migration-name guard) and read-only-bridge vs write-path mismatch (check the bridge's `ALLOWED_METHODS`/body handling before a write is routed through it). Impact Analyzer (`tools/prompts/impact_analyzer_prompt.txt`) — cross-surface behavioral flip in a shared desktop+cloud core (error-handling semantics change → trace ALL consumers, verify "cloud-only" claims) and a new unconditional provider-requiring hook in a shared component (enumerate mount sites incl. Storybook preview). Design Critic (`tools/prompts/design_critic_suffix.txt`) — local↔cloud parity divergence (same-surface paths populating different fields/predicates). Bug Hunter B (`skills/spawn-reviewers/SKILL.md`) — SSOT-drift-by-copy (redeclared literal/helper where a canonical symbol exists) and tests that assert scaffolding rather than the changed behavior. Unified Auditor (`skills/spawn-reviewers/SKILL.md`) — PR-body/docstring drift vs the diff (wrong migration numbers, "no schema change" claims contradicted by the diff, etc.).
+
 ### code-review v3.7.0
 
 #### Changed
