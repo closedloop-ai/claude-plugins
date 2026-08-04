@@ -102,6 +102,98 @@ Do NOT flag:
 - Hypothetical edge cases dependent on specific inputs/state
 </constraints>
 
+<non_application_files>
+Config, CI, infrastructure, migration, docs, and test files in <files_assigned>
+are IN SCOPE and are systematically under-reviewed relative to application
+source. When the diff touches them, apply the same evidence standard as for
+application code — every finding here still needs a concrete file:line and a
+described failure. The recurring defect classes, by file class:
+
+CI / PIPELINE DEFINITIONS (workflow YAML, pipeline configs, composite actions):
+- A privileged job (write-scoped token or secrets) that runs repository
+  lifecycle scripts — dependency install, postinstall/prepare hooks, build —
+  BEFORE minting or consuming that credential. Lifecycle code from the ref under
+  test can persist PATH/env changes, shell hooks, or a background process and
+  intercept later tool invocations once the credential is present.
+- Write permissions or persisted checkout credentials scoped to the whole
+  workflow when only one step needs them.
+- A manual-dispatch path exposing secrets or write tokens with no trusted-ref
+  gate. Checking out a trusted ref INSIDE the job does not change what the
+  dispatch already exposed.
+- A job declaring dependencies plus a condition with no status-check function:
+  the implicit "all dependencies succeeded" is FALSE for a skipped dependency,
+  so a skippable dependency silently skips the dependent job.
+- A job with no explicit timeout — it inherits a multi-hour platform default, so
+  a runner that wedges (stops progressing rather than failing) holds its
+  concurrency group for that whole window.
+- Cancel-on-new-run applied to a job with irreversible side effects (publishing,
+  releasing, deploying an immutable artifact).
+- A path/trigger filter that does not actually match files it is meant to gate.
+- A shell step where an unguarded command can terminate the step before the
+  branch that owns its exit code, or before its telemetry/status emission.
+
+GUARD AND META-TEST SCRIPTS (lint rules, source tests, policy checks):
+- PINNED-FILE PAIR BROKEN. Repos commonly hold meta-tests that assert another
+  file's literal content — a workflow's pinned action version, a config
+  snapshot, a required-context manifest, an allowlist. When the diff edits such
+  a file, grep for a test referencing that path or a distinctive literal from
+  the changed lines; if that test exists and is NOT in the diff, the change
+  breaks it. This is a provable CI failure, so report it as "Correctness" with
+  both file:line pairs cited (the edited line and the assertion it contradicts),
+  not as a stylistic concern. It applies in both directions — loosening the
+  assertion without updating the file it pins is the same defect.
+- A guard asserting a predicate APPEARS in a file rather than executing the
+  decision. A separate permissive branch, or a short-circuit ahead of the
+  compound condition, keeps every such assertion green while widening behavior.
+- A guard anchored to the first matching block rather than the specific
+  production node, so an unused or disconnected copy satisfies it.
+- An allowlist or known-exceptions entry broad enough to suppress future real
+  violations rather than only the instance it was added for.
+
+MIGRATIONS / SCHEMA:
+- A destructive statement (dedupe, drop, backfill) selecting survivors by a
+  proxy for canonicity and cascading the rest.
+- An idempotency guard that no-ops over an invalid or partial object left by a
+  previous failed run, letting the migration record as successfully applied.
+- A new enum/status/discriminator value added without updating every classifier
+  that switches on it, so stored rows follow the wrong lifecycle.
+
+DOCS, READMEs, AND API SPECS:
+- A claim stronger than the code enforces: unconditional where the code is
+  conditional, product-wide where the behavior is one lane, or collapsing layers
+  the implementation deliberately keeps separate.
+- A behavior change in this diff whose describing document is not updated.
+- A generated-client spec admitting field combinations the runtime always
+  rejects, or omitting inputs the runtime accepts.
+
+TEST FILES: a test file in the diff is reviewable work product, not merely
+evidence for findings about other files. See <test_quality> below.
+</non_application_files>
+
+<test_quality>
+Three TestQuality shapes are high-frequency and easy to miss because the suite
+is green. Report them as category "TestQuality" with concrete file:line:
+
+1. WIRING UNPROVEN. A new helper, reducer, or classifier gets direct tests while
+   nothing asserts that its production caller invokes it — the route handler,
+   the event/action set, the IPC or transport boundary. Deleting the call site
+   would leave the suite green. Check that some test drives the production entry
+   point, not only the unit.
+2. ASSERTION OF EXISTENCE, NOT BEHAVIOR. A test that greps, regex-matches, or
+   AST-inspects source to confirm a predicate is present, instead of executing
+   that decision against synthetic inputs. It cannot distinguish a correct
+   implementation from a widened one.
+3. INPUT-INVARIANT FIXTURE. A mock, stub, or route handler returning the same
+   result regardless of the arguments, query params, or filters the test claims
+   to cover. The test then proves only that the UI changed, not that the request
+   or predicate did. Look for a handler ignoring its request argument while the
+   test name references filtering, sorting, or pagination.
+
+Also flag a test asserting only a count or a container class where the state
+mapping under test (per-item variant, icon, tone) could be uniformly wrong and
+still pass.
+</test_quality>
+
 <instructions>
 JUSTIFICATION COMMENTS:
 Inline justification comments (// Intentionally..., // Required for...) REDUCE your
