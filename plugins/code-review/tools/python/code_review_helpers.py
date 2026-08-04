@@ -3064,6 +3064,16 @@ def _load_code_review_settings(path: Path | None) -> dict[str, Any]:
         legitimate companion-change findings). Default
         :data:`OUT_OF_HUNK_CONFIDENCE_FLOOR` (0.80). Setting to 1.0 is a
         kill switch (strict "in-hunk only" behavior).
+      - ``domain_critic_cap`` (int, ≥ 0): how many domain critics may
+        spawn across the required and best-effort buckets combined.
+        Default :data:`DOMAIN_CRITIC_CAP` (3). Setting the value to 0 is a
+        kill switch (no domain critic spawns; ``source: "core"``
+        reviewers stay exempt). Raise it when a repo's
+        ``critic-gates.json`` legitimately resolves more relevant critics
+        than the default allows: the cap drops by ``(priority asc,
+        reviewer asc)``, so on a roster where every entry sits at the
+        default ``priority: 2`` the tiebreak is alphabetical, which
+        favors early reviewer names over relevance to the diff.
 
     Unknown keys are ignored. Invalid entries (wrong type, out of range)
     fall back to the default — the file is operator-authored and should
@@ -3072,6 +3082,7 @@ def _load_code_review_settings(path: Path | None) -> dict[str, Any]:
     defaults: dict[str, Any] = {
         "bha_unified_threshold_loc": BHA_UNIFIED_THRESHOLD_LOC,
         "out_of_hunk_confidence_floor": OUT_OF_HUNK_CONFIDENCE_FLOOR,
+        "domain_critic_cap": DOMAIN_CRITIC_CAP,
     }
     data, out = _load_optional_settings_dict(path, defaults)
     if data is None:
@@ -3092,6 +3103,15 @@ def _load_code_review_settings(path: Path | None) -> dict[str, Any]:
         and 0.0 <= float(raw_floor) <= 1.0
     ):
         out["out_of_hunk_confidence_floor"] = float(raw_floor)
+    raw_critic_cap = data.get("domain_critic_cap")
+    # Reject bool (an int subclass) so a stray `true` doesn't become 1.
+    # 0 is valid and meaningful: it is the no-domain-critics kill switch.
+    if (
+        isinstance(raw_critic_cap, int)
+        and not isinstance(raw_critic_cap, bool)
+        and raw_critic_cap >= 0
+    ):
+        out["domain_critic_cap"] = raw_critic_cap
     return out
 
 
@@ -11550,7 +11570,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
 
     # ``--depth`` is still validated (shared stage-arg hygiene; an invalid
     # tier should fail loud), but the per-source domain-critic cap is now
-    # tier-uniform — standard and deep both cap at DOMAIN_CRITIC_CAP. Deep's
+    # tier-uniform — standard and deep both cap at the same value. Deep's
     # extra breadth comes from the always-on conditional core reviewers
     # (Design Critic, Impact Analyzer), which are exempt from this cap.
     depth: str | None = getattr(args, "depth", None) or None
@@ -11558,7 +11578,38 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     if not ok:
         print(err, file=sys.stderr)
         return 1
-    critic_cap = DOMAIN_CRITIC_CAP
+
+    # Domain-critic cap precedence, mirroring bha_unified_threshold_loc:
+    #   1. ``--domain-critic-cap`` — explicit namespace override (tests,
+    #      one-off runs).
+    #   2. ``.closedloop-ai/settings/code-review.json`` →
+    #      ``domain_critic_cap`` — operator-tunable settings file.
+    #   3. :data:`DOMAIN_CRITIC_CAP` (3) — built-in default.
+    #
+    # Operator-tunable because the cap drops by (priority asc, reviewer
+    # asc): a repo whose critic-gates.json uses the legacy moduleCritics[]
+    # schema gets every entry at the default priority 2, so the tiebreak
+    # degenerates to alphabetical and cuts the critic the coverage critic
+    # proposed FOR the diff. Raising the cap is the blunt fix; assigning
+    # explicit priorities on canonical coverage[] rules is the precise one.
+    cap_override = getattr(args, "domain_critic_cap", None)
+    if cap_override is not None:
+        critic_cap = int(cap_override)
+    else:
+        cap_settings_path = Path(
+            getattr(args, "settings", None) or _CODE_REVIEW_SETTINGS_DEFAULT_PATH,
+        )
+        critic_cap = int(
+            _load_code_review_settings(cap_settings_path).get(
+                "domain_critic_cap", DOMAIN_CRITIC_CAP,
+            ),
+        )
+    if critic_cap < 0:
+        print(
+            f"Error: domain_critic_cap must be >= 0, got {critic_cap}",
+            file=sys.stderr,
+        )
+        return 1
 
     def _persist_plan(plan: dict[str, Any]) -> int:
         try:

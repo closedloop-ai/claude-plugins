@@ -1554,6 +1554,21 @@
             "standard",
             "deep"
           ]
+        },
+        {
+          "flags": [
+            "--settings"
+          ],
+          "dest": "settings",
+          "default": null
+        },
+        {
+          "flags": [
+            "--domain-critic-cap"
+          ],
+          "dest": "domain_critic_cap",
+          "default": null,
+          "type": "int"
         }
       ]
     },

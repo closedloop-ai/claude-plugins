@@ -190,7 +190,7 @@ Three tiers select which reviewer fleet runs:
 | `design_critic` (always-on at deep) | ✗ | ✗ | ✓ |
 | `impact_analyzer` (FEA-1401, on exported-symbol change/deletion) | ✗ | ✗ | ✓ (on signal) |
 
-**Standard-mode budget arithmetic.** With PLN-807 Phase 4, `arbitrate-budget` reserves BHA partitions FIRST (from `_max_bha_partitions_by_loc`) and then allocates the remaining budget to critics and best-effort. The total domain-critic count across both required and best-effort buckets is capped uniformly at `DOMAIN_CRITIC_CAP = 3` (by priority asc, reviewer asc) for both standard and deep tiers. Required-bucket critics dropped by the cap emit coverage-gap findings; cap-deferred entries carry `defer_reason: "domain_critic_cap"` in `deferred_for_budget`. PRs with sparse critic-gates rosters see identical fleet to pre-PLN-807.
+**Standard-mode budget arithmetic.** With PLN-807 Phase 4, `arbitrate-budget` reserves BHA partitions FIRST (from `_max_bha_partitions_by_loc`) and then allocates the remaining budget to critics and best-effort. The total domain-critic count across both required and best-effort buckets is capped uniformly at `DOMAIN_CRITIC_CAP` (default 3, operator-tunable via `.closedloop-ai/settings/code-review.json:domain_critic_cap`; by priority asc, reviewer asc) for both standard and deep tiers. Required-bucket critics dropped by the cap emit coverage-gap findings; cap-deferred entries carry `defer_reason: "domain_critic_cap"` in `deferred_for_budget`. PRs with sparse critic-gates rosters see identical fleet to pre-PLN-807.
 
 **Tier-mismatch nudge.** Shallow runs emit a single LOW system-scoped finding (`system_marker: "tier_mismatch_nudge"`) when the diff would benefit from a higher tier. Heuristics: diff > 3000 LOC; schema/migration paths (`/migrations/`, `/schemas/`, `/models/`); public API surface (`plugin.json`, `index.ts`, `__init__.py`, etc.).
 
@@ -305,11 +305,15 @@ Sensitive-path policy. See `start.md` for the full glob syntax and the three sup
 
 ### `code-review.json` (PLN-774)
 
-Operator-tunable reviewer behavior. Currently exposes the BHA conditional-partitioning threshold; future knobs will land here too.
+Operator-tunable reviewer behavior.
 
 | Key | Default | Behavior |
 |---|---|---|
 | `bha_unified_threshold_loc` | `5000` | PRs with total changed LOC at or below this value get a single "unified" BHA partition so cross-region invariants (declaration ↔ enforcement, definition ↔ reference) stay visible to one reviewer's context. PRs above the threshold fall back to the standard bin-pack (`REBALANCE_LOC_BUDGET=1200` LOC per partition). **Setting the value to `0` disables unified mode entirely (always-partition; restores pre-PLN-774 behavior — the regression escape hatch).** Invalid entries (wrong type, negative) silently fall back to the default. |
+| `out_of_hunk_confidence_floor` | `0.80` | P2+ findings whose line falls outside the file's changed range survive validation when `confidence >` this floor. `1.0` is a kill switch (strict in-hunk only); `0.0` admits every out-of-hunk P2+. |
+| `domain_critic_cap` | `3` | How many domain critics may spawn across the required and best-effort buckets combined. `source: "core"` reviewers (Design Critic, Impact Analyzer) are exempt. **Setting the value to `0` spawns no domain critics at all (kill switch).** Invalid entries (wrong type, negative) silently fall back to the default. Also overridable per-run with `arbitrate-budget --domain-critic-cap`. |
+
+**When to raise `domain_critic_cap`.** The cap drops by `(priority asc, reviewer asc)`. A repo whose `critic-gates.json` still uses the legacy `moduleCritics[]` schema gets every entry migrated as `required: False` with **no** `priority`, so all of them sit at the default `2` and the tiebreak degenerates to **alphabetical by reviewer name** — systematically favoring early names over relevance, and cutting the very critic the coverage critic proposed *for* the diff. Raising the cap is the blunt remedy; the precise one is migrating the relevant rules to the canonical `coverage[]` schema, which supports explicit `priority` and `required` (see `_migrate_module_critics` for what the legacy form forces).
 
 The chosen mode + count surface in `partitions.json` (`partition_mode`, `partition_count`, `total_changed_loc`, `unified_threshold_loc`), propagate into `verify_manifest.json`, and render in both presenters (local-mode Verifier Stats footer and GitHub Step 6e). Under partitioned mode, `stats.verification.by_reviewer` splits BHA findings per partition (`bha_p0`, `bha_p1`, …) so an over-rejecting partition surfaces in the FP-rate column.
 

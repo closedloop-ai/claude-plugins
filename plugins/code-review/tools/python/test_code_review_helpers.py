@@ -8126,6 +8126,8 @@ def _run_arbitrate_budget(
     depth: str | None = None,
     verify_doc: dict[str, Any] | None = None,
     include_verify_flag: bool = True,  # noqa: ARG001 - retained for caller signature
+    settings: dict[str, Any] | None = None,
+    domain_critic_cap: int | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Shared module-level driver for ``cmd_arbitrate_budget`` tests.
 
@@ -8162,6 +8164,14 @@ def _run_arbitrate_budget(
     if verify_doc is not None:
         _write_coverage_section(tmp_path, "verify", verify_doc)
 
+    # ISS-5122: always point --settings at a test-local path so a
+    # code-review.json in the CWD can never leak into a test run. When
+    # ``settings`` is None the file simply does not exist and the loader
+    # returns built-in defaults.
+    settings_path = tmp_path / "code-review.json"
+    if settings is not None:
+        settings_path.write_text(json.dumps(settings))
+
     old_stdout = _sys.stdout
     _sys.stdout = io.StringIO()
     try:
@@ -8170,6 +8180,8 @@ def _run_arbitrate_budget(
             diff_data=str(dd_path),
             cap=cap,
             depth=depth,
+            settings=str(settings_path),
+            domain_critic_cap=domain_critic_cap,
         )
         cmd_arbitrate_budget(ns)
         _sys.stdout.seek(0)
@@ -8317,6 +8329,78 @@ class TestArbitrateBudget:
         _, plan, _ = _run_arbitrate_budget(
             tmp_path, self._critic_plan(5), diff, cap=20, depth=None,
         )
+        assert plan["budget"]["domain_critic_cap"] == 3
+
+    def test_settings_file_raises_the_domain_critic_cap(
+        self, tmp_path: Path,
+    ) -> None:
+        """ISS-5122: ``domain_critic_cap`` in code-review.json overrides
+        the built-in 3. Without this a repo on the legacy
+        moduleCritics[] schema is stuck at 3 critics selected
+        ALPHABETICALLY — every migrated entry lands at the default
+        priority 2, so ``(priority asc, reviewer asc)`` degenerates to
+        the reviewer name and cuts the critic the coverage critic
+        proposed FOR the diff.
+        """
+        diff = _make_diff_data(files=["src/app.ts"])
+        _, plan, gaps = _run_arbitrate_budget(
+            tmp_path, self._critic_plan(5), diff, cap=20, depth="standard",
+            settings={"domain_critic_cap": 5},
+        )
+        selected = [r for r in plan["required"] if r.get("source") == "rule"]
+        assert len(selected) == 5
+        assert plan["budget"]["domain_critic_cap"] == 5
+        assert plan["budget"]["domain_critic_cap_fired"] is False
+        assert gaps["findings"] == []
+
+    def test_namespace_override_beats_settings_file(
+        self, tmp_path: Path,
+    ) -> None:
+        """Precedence: --domain-critic-cap > code-review.json > default.
+        Pinned so a future refactor cannot silently invert it."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        _, plan, _ = _run_arbitrate_budget(
+            tmp_path, self._critic_plan(5), diff, cap=20, depth="standard",
+            settings={"domain_critic_cap": 5},
+            domain_critic_cap=4,
+        )
+        selected = [r for r in plan["required"] if r.get("source") == "rule"]
+        assert len(selected) == 4
+        assert plan["budget"]["domain_critic_cap"] == 4
+
+    def test_settings_cap_zero_spawns_no_domain_critics(
+        self, tmp_path: Path,
+    ) -> None:
+        """0 is the documented kill switch: every domain critic defers
+        with the domain_critic_cap reason, and none surface as coverage
+        gaps (the cap is a budget decision, not missing coverage)."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        _, plan, gaps = _run_arbitrate_budget(
+            tmp_path, self._critic_plan(5), diff, cap=20, depth="standard",
+            settings={"domain_critic_cap": 0},
+        )
+        selected = [r for r in plan["required"] if r.get("source") == "rule"]
+        assert len(selected) == 0
+        assert plan["budget"]["domain_critic_cap"] == 0
+        capped = [
+            e for e in plan["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
+        ]
+        assert len(capped) == 5
+        assert gaps["findings"] == []
+
+    def test_malformed_settings_cap_falls_back_to_default(
+        self, tmp_path: Path,
+    ) -> None:
+        """An operator typo must not change the fleet: a non-int value
+        falls back to the built-in 3 rather than crashing the stage."""
+        diff = _make_diff_data(files=["src/app.ts"])
+        _, plan, _ = _run_arbitrate_budget(
+            tmp_path, self._critic_plan(5), diff, cap=20, depth="standard",
+            settings={"domain_critic_cap": "lots"},
+        )
+        selected = [r for r in plan["required"] if r.get("source") == "rule"]
+        assert len(selected) == 3
         assert plan["budget"]["domain_critic_cap"] == 3
 
     def test_invalid_cap_returns_error(self, tmp_path: Path) -> None:
@@ -11900,17 +11984,20 @@ class TestLoadCodeReviewSettings:
     def test_missing_file_returns_defaults(self, tmp_path: Path) -> None:
         from code_review_helpers import (
             BHA_UNIFIED_THRESHOLD_LOC,
+            DOMAIN_CRITIC_CAP,
             OUT_OF_HUNK_CONFIDENCE_FLOOR,
             _load_code_review_settings,
         )
         out = _load_code_review_settings(tmp_path / "does-not-exist.json")
         # v2.21.0 added out_of_hunk_confidence_floor to the canonical
-        # defaults; the loader must surface ALL canonical keys so
-        # callers can read with .get(key, default) safely without
-        # having to know which keys were added in which version.
+        # defaults; ISS-5122 added domain_critic_cap. The loader must
+        # surface ALL canonical keys so callers can read with
+        # .get(key, default) safely without having to know which keys
+        # were added in which version.
         assert out == {
             "bha_unified_threshold_loc": BHA_UNIFIED_THRESHOLD_LOC,
             "out_of_hunk_confidence_floor": OUT_OF_HUNK_CONFIDENCE_FLOOR,
+            "domain_critic_cap": DOMAIN_CRITIC_CAP,
         }
 
     def test_operator_override_honored(self, tmp_path: Path) -> None:
@@ -11919,6 +12006,68 @@ class TestLoadCodeReviewSettings:
         path.write_text(json.dumps({"bha_unified_threshold_loc": 3500}))
         out = _load_code_review_settings(path)
         assert out["bha_unified_threshold_loc"] == 3500
+
+    def test_domain_critic_cap_override_honored(
+        self, tmp_path: Path,
+    ) -> None:
+        """ISS-5122: the domain-critic cap is operator-tunable. Without
+        this a repo whose critic-gates.json uses the legacy
+        moduleCritics[] schema is stuck at 3 critics chosen
+        ALPHABETICALLY (every migrated entry lands at the default
+        priority 2), which cuts the critic the coverage critic proposed
+        for the diff."""
+        from code_review_helpers import _load_code_review_settings
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"domain_critic_cap": 6}))
+        out = _load_code_review_settings(path)
+        assert out["domain_critic_cap"] == 6
+
+    def test_domain_critic_cap_zero_is_valid_kill_switch(
+        self, tmp_path: Path,
+    ) -> None:
+        """0 means "spawn no domain critics" and must NOT fall back to
+        the default, mirroring bha_unified_threshold_loc's 0 semantics.
+        Core reviewers are source:"core" and stay exempt."""
+        from code_review_helpers import _load_code_review_settings
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"domain_critic_cap": 0}))
+        out = _load_code_review_settings(path)
+        assert out["domain_critic_cap"] == 0
+
+    def test_domain_critic_cap_negative_falls_back(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import (
+            DOMAIN_CRITIC_CAP, _load_code_review_settings,
+        )
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"domain_critic_cap": -1}))
+        out = _load_code_review_settings(path)
+        assert out["domain_critic_cap"] == DOMAIN_CRITIC_CAP
+
+    def test_domain_critic_cap_wrong_type_falls_back(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import (
+            DOMAIN_CRITIC_CAP, _load_code_review_settings,
+        )
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"domain_critic_cap": "6"}))
+        out = _load_code_review_settings(path)
+        assert out["domain_critic_cap"] == DOMAIN_CRITIC_CAP
+
+    def test_domain_critic_cap_bool_rejected_as_int(
+        self, tmp_path: Path,
+    ) -> None:
+        """``True`` is int(1) in Python; a stray JSON `true` must not
+        quietly become a cap of 1."""
+        from code_review_helpers import (
+            DOMAIN_CRITIC_CAP, _load_code_review_settings,
+        )
+        path = tmp_path / "code-review.json"
+        path.write_text(json.dumps({"domain_critic_cap": True}))
+        out = _load_code_review_settings(path)
+        assert out["domain_critic_cap"] == DOMAIN_CRITIC_CAP
 
     def test_zero_is_valid_kill_switch(self, tmp_path: Path) -> None:
         """``0`` is a meaningful operator value (always-partition); the

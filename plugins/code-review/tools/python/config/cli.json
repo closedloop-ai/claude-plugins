@@ -408,7 +408,11 @@
           "flags": [
             "--depth"
           ],
-          "choices": ["shallow", "standard", "deep"],
+          "choices": [
+            "shallow",
+            "standard",
+            "deep"
+          ],
           "help": "Invocation tier (FEA-1401). Gates COVERAGE_CORE_CONDITIONAL reviewers like the Impact Analyzer."
         }
       ]
@@ -1437,6 +1441,20 @@
             "deep"
           ],
           "help": "Invocation tier; validated for hygiene. The per-source domain-critic cap is tier-uniform; deep's extra breadth comes from the always-on conditional core reviewers (Design Critic, Impact Analyzer)"
+        },
+        {
+          "flags": [
+            "--settings"
+          ],
+          "default": null,
+          "help": "Path to code-review.json operator settings (default .closedloop-ai/settings/code-review.json); overridable for test isolation"
+        },
+        {
+          "flags": [
+            "--domain-critic-cap"
+          ],
+          "type": "int",
+          "help": "Override the domain-critic cap (>=0; 0 spawns no domain critics). Takes precedence over code-review.json domain_critic_cap and the built-in default"
         }
       ]
     },
@@ -1463,7 +1481,7 @@
     },
     {
       "name": "derive-static-spec",
-      "help": "Emit a static spawn.json.spec for shallow-tier runs (BHA × N partitions + BHB + unified_auditor); arbitrate_status=\"static\"",
+      "help": "Emit a static spawn.json.spec for shallow-tier runs (BHA \u00d7 N partitions + BHB + unified_auditor); arbitrate_status=\"static\"",
       "func": "cmd_derive_static_spec",
       "args": [
         {
