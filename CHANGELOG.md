@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### platform v1.1.4
+
+#### Fixed
+- **`upload-artifact` script mode now works against MCP Python SDK 2.x.** `upload_artifact.py` unpacked three values from `streamable_http_client`, read `result.isError`, and built its authenticated client with `httpx` — all 1.x-era shapes. Under SDK 2.x the transport yields a two-value `(read_stream, write_stream)` tuple, `CallToolResult` exposes `is_error`, and the transport expects an `httpx2.AsyncClient`; because the documented `uv run --with 'mcp[cli]'` invocation was unpinned it resolved to 2.x, so every run failed at connect time. The script now targets the 2.x API, and both the module docstring and `SKILL.md` pin the invocation to `mcp[cli]>=2,<3`. Connection setup shared by `--list-projects` and upload is consolidated into a single `_connect` async context manager, and the `get-document` error path reuses the existing `_error_details` helper instead of rebuilding the detail list. The repo dev dependency group moves to `mcp==2.0.0` so type checking runs against the same SDK the script requires.
+
 ### code-review v3.7.0
 
 #### Changed
