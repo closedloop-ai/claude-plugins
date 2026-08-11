@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.14.8
+
+#### Added
+- Contract test suite `test_decision_table_skill_contract.py` pinning the new decision-table skill guarantees: `Not aligned` as a terminal workflow stop, required coexisting-source interaction and precedence rows, shared-corpus production-boundary parity for executable twins, and row-ID-to-test traceability in `Required Tests`.
+
+#### Changed
+- Hardened the `decision-table` skill's alignment gate: `Final Alignment Status: Not aligned` is now a terminal workflow stop, not a report-only status. No PR creation, merge, completion signal, or success closeout may follow until the artifact is re-verified as `Aligned`; fixable repo-local findings remain unresolved work and cannot be normalized into a successful handoff. The human-facing closeout for a `Not aligned` run must state that downstream PR/merge/completion is blocked, name every unresolved blocker, and give the exact next action and owner. A matching common-miss item ("Not-aligned status treated as success") and a contract-heavy review bullet enforce the stop during review-prevention passes.
+- Decision rows now carry stable row IDs, and `Required Tests` is a traceability table instead of a prose list. The `Current Code` and `Intended Change` tables gain a `Row ID` column, and each required test maps to its decision-row IDs with a positive control, a wrong-input or mixed-state negative case, the real production boundary exercised, and expected evidence. Every material row must be covered by at least one mapped test or carried into `Not aligned` with a blocker; a test listed without row IDs or without the negative case needed to distinguish the row's branch is a named review-prevention anti-pattern.
+- New "Executable policy twins and parity" edge-case category: when one behavior or policy has multiple executable twins (a pure helper, SQL predicate, route, worker, producer, batch path, or recovery path), one shared scenario corpus must exercise every twin through its real production boundary and assert identical decisions. Source-string, AST-presence, and SQL-shape assertions are supplemental only and never establish parity, and a negative shape assertion that requires a policy predicate, identity term, join, or branch to be absent is flagged as pinning missing policy: if it permits divergence, the row is `Not aligned` until corrected. Two new review-prevention anti-patterns cover parity inferred from separate tests and shape assertions that pin missing policy.
+- New "Coexisting sources and precedence" edge-case category: when multiple evidence, authority, history, cache, or fallback sources can coexist, singleton rows are insufficient. The table must add a bounded interaction set (pairwise plus code-identified high-risk intersections, never an unbounded Cartesian product) covering legacy or absent evidence alongside fresh valid evidence, corrupt or undated evidence alongside fresh valid evidence, irrelevant historical evidence alongside a current authoritative record, tied or conflicting current records, and source/state precedence, stating which source wins and why. Singleton-only source coverage is a named review-prevention anti-pattern.
+
 ### platform v1.1.4
 
 #### Fixed
