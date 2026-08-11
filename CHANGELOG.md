@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.7.1
+
+#### Fixed
+- **A project-declared domain critic now loads its own `.claude/agents/<critic-name>.md`.** Domain critics spawn as the generic `code-review:code-review-worker` and receive only their name as a quoted `CRITIC_DOMAIN` string, so a project that defines the critic's entire method in an agent file of the same name got none of it — the only context-loading line in the domain critic prompt was the unranked "Read the repository CLAUDE.md for project context", which sits after the hard `FIRST…THEN…` block. Across three real `/code-review` runs in a consuming repo (`cr-51875`, `cr-95074`, `cr-97905`), zero of twelve spawned workers obeyed that line; the one critic that did read project doctrine got there by spontaneously grepping its own domain token, and self-describing critic names (`api-architect`, `auth-security-expert`) never self-grep at all. The critic still ran and still emitted plausible findings, with nothing in the output artifact recording that its definition was never loaded. `derive-spawn-spec` now resolves `.claude/agents/<critic-name>.md` and, when the file exists, puts its path on the domain critic descriptor as `agent_definition_file`; `cmd_route` does the same for the fast path's PASS 3 under `route.domain_critic_definitions` (both keys are omitted entirely when no such file exists). The `spawn-reviewers` skill turns that path into a non-negotiable first step in the critic's prompt — read the definition before the patches file, follow it in full, and say so in the output if the read fails. A critic with no agent file, which is the common case, produces a byte-identical descriptor, routing payload, and prompt to before. Filename convention only: a definition whose frontmatter `name` differs from its filename is not resolved, and symlinks and non-regular files are refused (the pipeline reviews untrusted checkouts).
+
 ### platform v1.1.4
 
 #### Fixed
