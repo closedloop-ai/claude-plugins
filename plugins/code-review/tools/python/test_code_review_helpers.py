@@ -23558,3 +23558,153 @@ class TestRunPrefixRoutePartition:
             json.dumps({"status_message": "1/2 files cached"}),
         )
         assert _rp_cache_status_message(tmp_path) == "1/2 files cached"
+
+
+class TestDomainCriticAgentDefinition:
+    """A domain critic named in ``critic-gates.json`` spawns as the
+    generic ``code-review:code-review-worker`` and receives only its
+    own name, so a project's ``.claude/agents/<critic-name>.md`` — which
+    may define the critic's entire method — is never loaded unless the
+    spawn prompt is ordered to Read it. These pin the resolution half of
+    that fix: the descriptor (standard flow) and the route map (fast
+    path) carry the path when the file exists, and carry nothing at all
+    when it does not.
+    """
+
+    @staticmethod
+    def _agent_file(root: Path, name: str) -> Path:
+        agents_dir = root / ".claude" / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        path = agents_dir / f"{name}.md"
+        path.write_text(f"---\nname: {name}\n---\n\nMandatory: load the soul.\n")
+        return path
+
+    @staticmethod
+    def _critic_plan(name: str) -> dict[str, Any]:
+        return {
+            "required": [{"reviewer": "bug_hunter_b", "source": "core"}],
+            "best_effort": [{"reviewer": name, "source": "rule", "priority": 1}],
+        }
+
+    @staticmethod
+    def _partitions() -> dict[str, Any]:
+        return {"partitions": [], "test_file_paths": [], "force_merged_count": 0}
+
+    @staticmethod
+    def _route(diff_data: dict[str, Any], gates_path: Path) -> dict[str, Any]:
+        import io
+        import sys as _sys
+
+        old_stdin, old_stdout = _sys.stdin, _sys.stdout
+        _sys.stdin = io.StringIO(json.dumps(diff_data))
+        _sys.stdout = io.StringIO()
+        try:
+            cmd_route(argparse.Namespace(
+                critic_gates=str(gates_path), intent="mixed", cr_dir=None,
+            ))
+            _sys.stdout.seek(0)
+            return json.load(_sys.stdout)
+        finally:
+            _sys.stdin, _sys.stdout = old_stdin, old_stdout
+
+    def test_descriptor_carries_definition_when_agent_file_exists(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With ``.claude/agents/review-soul.md`` on disk, the domain
+        critic descriptor names it so stage_20 can hard-rank the Read.
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        definition = self._agent_file(repo, "review-soul")
+        monkeypatch.chdir(repo)
+        cr_dir = repo / ".closedloop-ai" / "code-review" / "cr-1"
+        cr_dir.mkdir(parents=True)
+
+        _, spec = _run_derive_spawn_spec(
+            cr_dir, self._critic_plan("review-soul"), self._partitions(), {},
+        )
+        critic = next(a for a in spec["agents"] if a["agent_id"] == "domain_0")
+        assert critic["agent_definition_file"] == str(Path(".claude/agents/review-soul.md"))
+        assert definition.exists()
+
+    def test_descriptor_unchanged_when_no_agent_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The common case — a critic with no agent file. The descriptor
+        must carry no new key, so the assembled prompt is identical to
+        the pre-fix output.
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        # A different critic's file exists; the selected one has none.
+        self._agent_file(repo, "review-soul")
+        monkeypatch.chdir(repo)
+        cr_dir = repo / ".closedloop-ai" / "code-review" / "cr-1"
+        cr_dir.mkdir(parents=True)
+
+        _, spec = _run_derive_spawn_spec(
+            cr_dir, self._critic_plan("api-architect"), self._partitions(), {},
+        )
+        critic = next(a for a in spec["agents"] if a["agent_id"] == "domain_0")
+        assert "agent_definition_file" not in critic
+        assert set(critic) == {
+            "agent_id", "reviewer", "model", "partitioned",
+            "patches_file", "source", "bucket", "priority",
+        }
+
+    def test_route_maps_only_critics_with_agent_files(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The fast path takes its critic names from
+        ``route.domain_critics``, so the same resolution has to ride
+        along there. Absent file → absent map entry, never a null.
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._agent_file(repo, "python-script-reviewer")
+        gates = {
+            "defaults": {"reviewBudget": 4},
+            "moduleCritics": [
+                {"patterns": [".py"], "critics": ["python-script-reviewer"]},
+            ],
+        }
+        gates_path = repo / "critic-gates.json"
+        gates_path.write_text(json.dumps(gates))
+        monkeypatch.chdir(repo)
+
+        data = _make_diff_data(
+            files=["src/app.py"], loc={"src/app.py": {"added": 10, "removed": 0}},
+        )
+        with_file = self._route(data, gates_path)
+        assert with_file["domain_critics"] == ["python-script-reviewer"]
+        assert with_file["domain_critic_definitions"] == {
+            "python-script-reviewer": str(Path(".claude/agents/python-script-reviewer.md")),
+        }
+
+        (repo / ".claude" / "agents" / "python-script-reviewer.md").unlink()
+        without_file = self._route(data, gates_path)
+        assert without_file["domain_critics"] == ["python-script-reviewer"]
+        assert "domain_critic_definitions" not in without_file
+
+    def test_resolver_rejects_traversal_symlink_and_missing(
+        self, tmp_path: Path,
+    ) -> None:
+        """Critic names are operator config, so a name that isn't a
+        plain filename resolves to "" rather than a path, and a symlink
+        is refused for the same reason ``_scan_agent_definitions``
+        refuses one.
+        """
+        from code_review_helpers import _resolve_critic_definition
+
+        agents_dir = tmp_path / ".claude" / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "real.md").write_text("---\nname: real\n---\n")
+        (agents_dir / "linked.md").symlink_to(agents_dir / "real.md")
+        outside = tmp_path / "outside.md"
+        outside.write_text("owned")
+
+        assert _resolve_critic_definition("real", agents_dir) == str(agents_dir / "real.md")
+        assert _resolve_critic_definition("linked", agents_dir) == ""
+        assert _resolve_critic_definition("missing", agents_dir) == ""
+        assert _resolve_critic_definition("../outside", agents_dir) == ""
+        assert _resolve_critic_definition("", agents_dir) == ""

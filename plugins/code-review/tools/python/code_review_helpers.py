@@ -1713,6 +1713,18 @@ def cmd_route(args: argparse.Namespace) -> int:
 
     fast_path = total_loc <= FAST_PATH_MAX_LOC
 
+    # Same lookup the spawn spec does for the standard flow, for the
+    # fast path's PASS 3 (which takes its critic names from here, not
+    # from a spawn-spec descriptor). Only critics that actually ship a
+    # ``.claude/agents/<name>.md`` appear, and the key is omitted
+    # entirely when none do, so the routing payload is unchanged for
+    # every project that has no critic agent files.
+    domain_critic_definitions = {
+        critic: definition
+        for critic in selected_domain_critics
+        if (definition := _resolve_critic_definition(critic))
+    }
+
     route_payload: dict[str, Any] = {
         "size_category": size_category,
         "total_loc": total_loc,
@@ -1722,6 +1734,8 @@ def cmd_route(args: argparse.Namespace) -> int:
         "domain_critics": selected_domain_critics,
         "max_bha_agents": max_bha_agents,
     }
+    if domain_critic_definitions:
+        route_payload["domain_critic_definitions"] = domain_critic_definitions
 
     # When --cr-dir is supplied, write the routing block into
     # ``spawn.json.route`` via atomic section update so a later stage's
@@ -7741,6 +7755,46 @@ def cmd_load_available_reviewers(args: argparse.Namespace) -> int:
     return 0
 
 
+# Domain critic names are operator config (``critic-gates.json``), not a
+# closed vocabulary, so grammar-check before building a path from one:
+# no separators, no leading dot, bounded length. Mirrors the name
+# grammar the spawn-reviewers skill validates before substituting a
+# critic name into a prompt.
+_CRITIC_DEFINITION_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}$")
+
+
+def _resolve_critic_definition(
+    critic_name: str, agents_dir: Path = DEFAULT_AGENTS_DIR,
+) -> str:
+    """Path to a domain critic's own agent definition, or ``""``.
+
+    A project can define a domain critic's whole method in
+    ``.claude/agents/<critic-name>.md``. Domain critics spawn as the
+    generic ``code-review:code-review-worker`` and receive only their
+    name, so that definition is loaded only if the spawn prompt is told
+    to Read it — resolving the path here lets ``stage_20`` hard-rank
+    that Read instead of relying on the worker to go looking for it.
+
+    Returns ``""`` when the critic has no such file — the common case —
+    so the prompt is assembled exactly as it was before this field
+    existed. Matching is by filename convention; a definition whose
+    frontmatter ``name`` differs from its filename is not resolved.
+    Symlinks and non-regular files are rejected for the same reason
+    ``_scan_agent_definitions`` rejects them: the review pipeline runs
+    against an untrusted checkout.
+    """
+    if not _CRITIC_DEFINITION_NAME_RE.match(critic_name):
+        return ""
+    candidate = agents_dir / f"{critic_name}.md"
+    try:
+        lst = candidate.lstat()
+    except OSError:
+        return ""
+    if not stat.S_ISREG(lst.st_mode):
+        return ""
+    return str(candidate)
+
+
 # ---------------------------------------------------------------------------
 # PLN-725 — Coverage critic
 # ---------------------------------------------------------------------------
@@ -11990,6 +12044,7 @@ def _derive_spawn_agents_from_plan(
     models: dict[str, Any],
     *,
     bha_partitions_cap: int | None = None,
+    critic_agents_dir: Path = DEFAULT_AGENTS_DIR,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Walk the post-arbitrate plan into a flat (agents, skipped) pair.
 
@@ -12008,6 +12063,12 @@ def _derive_spawn_agents_from_plan(
     suppresses all BHA spawns (docs-only post-arbitrate). ``None``
     means "no cap" — only used by callers that pre-date the cap
     parameter.
+
+    ``critic_agents_dir`` is where a domain critic's own agent
+    definition is looked up (``.claude/agents/`` relative to the review
+    cwd by default, matching ``load-available-reviewers``). A critic
+    that has one carries its path as ``agent_definition_file``; a
+    critic that does not carries no such key.
     """
     agents: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -12164,7 +12225,7 @@ def _derive_spawn_agents_from_plan(
             # Echo the entry's actual source so presenters can tell
             # operator-configured (rule) from LLM-proposed (critic)
             # domain coverage.
-            agents.append({
+            descriptor: dict[str, Any] = {
                 "agent_id": agent_id,
                 "reviewer": reviewer,
                 "model": "sonnet",
@@ -12173,7 +12234,14 @@ def _derive_spawn_agents_from_plan(
                 "source": source,
                 "bucket": bucket,
                 "priority": int(entry.get("priority", 2)),
-            })
+            }
+            # Only present when the project actually ships
+            # ``.claude/agents/<critic>.md``; absent otherwise, which
+            # leaves the stage_20 prompt byte-identical to before.
+            definition = _resolve_critic_definition(reviewer, critic_agents_dir)
+            if definition:
+                descriptor["agent_definition_file"] = definition
+            agents.append(descriptor)
             critic_index += 1
             return
         # Genuinely unknown source — not core/rule/critic. Defense-
