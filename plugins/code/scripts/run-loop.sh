@@ -147,6 +147,11 @@ fail_loop_user_visible() {
 # fail_loop_user_visible.
 detect_spurious_complete() {
   local workdir="$1"
+  # Defaults to the global so the existing single-argument call site is
+  # unchanged; passed explicitly by tests. Non-empty means this run was asked to
+  # draft a plan from a PRD, which is what makes a missing plan.json a broken
+  # promise rather than a run that never owed one.
+  local prd_file="${2-${PRD_FILE:-}}"
   local plan_file="$workdir/plan.json"
   local state_file="$workdir/state.json"
 
@@ -166,6 +171,29 @@ detect_spurious_complete() {
   fi
 
   if [[ ! -f "$plan_file" ]]; then
+    # A --prd run exists to produce plan.json. Claiming COMPLETE without one is
+    # the strongest spurious-completion signal there is, and this branch used to
+    # wave it through: the checks below only validate pendingTasks INSIDE an
+    # existing plan, so "no plan at all" -- the case that actually happens --
+    # was the one case nothing could catch.
+    #
+    # Observed: the orchestrator launched plan-draft-writer in the BACKGROUND,
+    # said "Plan-draft-writer is running in the background. Waiting for
+    # completion.", and that same turn carried the completion promise. The loop
+    # ended, the writer was abandoned mid-flight, post-loop code review passed
+    # vacuously over an empty diff ("the base ref you passed equals HEAD, so
+    # nothing was examined"), and the run exited 0 having produced nothing. The
+    # user got an implementation-plan artifact that looked done and was empty.
+    #
+    # Scoped to runs that were asked for a plan: a run with no PRD never owed
+    # one, and is left alone.
+    if [[ -n "$prd_file" ]]; then
+      jq -n -c \
+        --arg subcode "PLAN_MISSING_AT_COMPLETION" \
+        --arg message "Loop emitted COMPLETE but no plan.json was ever written. The planning phase did not finish -- a background plan-draft-writer that is still running when the completion promise fires is abandoned. Inspect state.json and the loop output, then re-run /code:code to continue." \
+        '{subcode:$subcode,message:$message}'
+      return
+    fi
     echo '{}'
     return
   fi
