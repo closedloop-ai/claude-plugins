@@ -56,6 +56,11 @@ assert_not_spurious() {
   fi
 }
 
+# The two-argument call sites below default the command to $CLOSEDLOOP_COMMAND,
+# so an ambient value -- this suite may well be run from inside a live loop --
+# would silently decide the per-command branch for them. Clear it first.
+unset CLOSEDLOOP_COMMAND PRD_FILE || true
+
 # shellcheck source=/dev/null
 source "$RUN_LOOP"
 
@@ -104,6 +109,91 @@ printf '%s' '{"pendingTasks":[{"id":"T-1.1"}],"openQuestions":[{"id":"Q-1"}]}' >
 assert_subcode "pending tasks blocked by open questions still flagged" \
   "$(detect_spurious_complete "$WORKDIR" "/tmp/prd.md")" \
   "PENDING_TASKS_BLOCKED_BY_QUESTIONS"
+rm -rf "$WORKDIR"
+
+# --- A file that EXISTS but holds no plan is still an unproduced plan --------
+# The incident evidence is literally a 0-byte plan.json. [[ -f ]] passes on it,
+# jq yields nothing, and the pendingTasks checks then read 0 pending tasks and
+# call the run clean -- so the exact condition this guard exists to catch was
+# reported as success.
+WORKDIR=$(mktemp -d)
+: > "$WORKDIR/plan.json"
+assert_subcode "a zero-byte plan.json is treated as missing" \
+  "$(detect_spurious_complete "$WORKDIR" "/tmp/prd.md")" \
+  "PLAN_MISSING_AT_COMPLETION"
+rm -rf "$WORKDIR"
+
+WORKDIR=$(mktemp -d)
+printf '%s' '{"pendingTasks": [' > "$WORKDIR/plan.json"
+assert_subcode "a plan.json that is not parseable JSON is treated as missing" \
+  "$(detect_spurious_complete "$WORKDIR" "/tmp/prd.md")" \
+  "PLAN_MISSING_AT_COMPLETION"
+rm -rf "$WORKDIR"
+
+WORKDIR=$(mktemp -d)
+printf '%s' '   ' > "$WORKDIR/plan.json"
+assert_subcode "a whitespace-only plan.json is treated as missing" \
+  "$(detect_spurious_complete "$WORKDIR" "/tmp/prd.md")" \
+  "PLAN_MISSING_AT_COMPLETION"
+rm -rf "$WORKDIR"
+
+# A run that never owed a plan is still left alone, empty file or not.
+WORKDIR=$(mktemp -d)
+: > "$WORKDIR/plan.json"
+assert_not_spurious "a zero-byte plan.json on a run that owed no plan is not spurious" \
+  "$(detect_spurious_complete "$WORKDIR" "")"
+rm -rf "$WORKDIR"
+
+# --- An absent WORKSPACE is not an unproduced artifact: fail open ------------
+# Live-exit and boot-recovery delete the temp workdir right after finalization.
+# Adjudicating a run whose directory is already reclaimed would flip a genuine
+# success to FAILED, and no re-run repairs that. Missing workdir = cannot judge.
+WORKDIR=$(mktemp -d)
+rm -rf "$WORKDIR"
+assert_not_spurious "an absent workspace fails open rather than reporting spurious" \
+  "$(detect_spurious_complete "$WORKDIR" "/tmp/prd.md" "PLAN")"
+
+# --- Per-command contract: EXECUTE is excluded ------------------------------
+# EXECUTE's required artifact is execution-result.json, written only after a
+# successful commit AND push, so a legitimate no-changes run ends without it --
+# and without a plan.json either. It must never be flagged.
+WORKDIR=$(mktemp -d)
+printf '%s' '{"phase":"Phase 7","status":"IN_PROGRESS"}' > "$WORKDIR/state.json"
+assert_not_spurious "a legitimate no-changes EXECUTE run is not spurious" \
+  "$(detect_spurious_complete "$WORKDIR" "" "EXECUTE")"
+assert_not_spurious "EXECUTE is excluded by name even when a PRD was passed" \
+  "$(detect_spurious_complete "$WORKDIR" "/tmp/prd.md" "EXECUTE")"
+assert_not_spurious "the execute-prompt CLI spelling resolves to EXECUTE" \
+  "$(detect_spurious_complete "$WORKDIR" "/tmp/prd.md" "execute-prompt")"
+rm -rf "$WORKDIR"
+
+# --- Per-command contract: REQUEST_CHANGES owes a plan ----------------------
+# Its result bundle requires plan.json, so "no plan at all" is still caught,
+# with or without a PRD. Presence, however, proves nothing on an amend run --
+# the harness seeds plan.json before it starts -- so a zero-byte seed must be
+# caught too, and a clean result must not be read as proof the amend did work.
+WORKDIR=$(mktemp -d)
+assert_subcode "REQUEST_CHANGES with no plan.json is spurious even without a PRD" \
+  "$(detect_spurious_complete "$WORKDIR" "" "REQUEST_CHANGES")" \
+  "PLAN_MISSING_AT_COMPLETION"
+: > "$WORKDIR/plan.json"
+assert_subcode "REQUEST_CHANGES with a zero-byte seeded plan.json is spurious" \
+  "$(detect_spurious_complete "$WORKDIR" "" "REQUEST_CHANGES")" \
+  "PLAN_MISSING_AT_COMPLETION"
+rm -rf "$WORKDIR"
+
+# --- Version skew, both directions -----------------------------------------
+# A command this script has never heard of (an older desktop sending nothing, a
+# newer one sending a command added after this release) must not crash or block.
+# It falls back to the --prd proxy, i.e. the behaviour before commands existed.
+WORKDIR=$(mktemp -d)
+assert_subcode "an unknown command with a PRD falls back to the --prd proxy" \
+  "$(detect_spurious_complete "$WORKDIR" "/tmp/prd.md" "SOME_FUTURE_COMMAND")" \
+  "PLAN_MISSING_AT_COMPLETION"
+assert_not_spurious "an unknown command with no PRD is left alone" \
+  "$(detect_spurious_complete "$WORKDIR" "" "SOME_FUTURE_COMMAND")"
+assert_not_spurious "an empty command with no PRD is left alone" \
+  "$(detect_spurious_complete "$WORKDIR" "" "")"
 rm -rf "$WORKDIR"
 
 echo
