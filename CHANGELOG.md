@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### code v1.14.8
+### code v1.14.10
 
 #### Added
 - Contract test suite `test_decision_table_skill_contract.py` pinning the new decision-table skill guarantees: `Not aligned` as a terminal workflow stop, required coexisting-source interaction and precedence rows, shared-corpus production-boundary parity for executable twins, and row-ID-to-test traceability in `Required Tests`.
