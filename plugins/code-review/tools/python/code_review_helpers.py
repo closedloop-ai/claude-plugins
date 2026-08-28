@@ -452,6 +452,12 @@ class ReviewRootError(RuntimeError):
     """The review root cannot be shown to hold the diff under review."""
 
 
+# Exit code a stage uses when it could not prove its ``review_root``. The
+# walker aborts on it regardless of the stage's ``on_failure``, because every
+# path a "continue" would degrade to — the static reviewer table, "no verifier
+# this run" — dispatches the same agents against the same wrong tree.
+REVIEW_ROOT_EXIT_CODE = 3
+
 _REVIEW_ROOT_FORBIDDEN_CHARS = ("\n", "\r", "<", ">")
 
 
@@ -2883,7 +2889,7 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
         )
     except ReviewRootError as exc:
         print(f"Error: {exc}", file=sys.stderr)
-        return 1
+        return REVIEW_ROOT_EXIT_CODE
     head_sha = _validated_head_sha(
         scope_meta.get("head_sha") if isinstance(scope_meta, dict) else None,
     )
@@ -5238,7 +5244,7 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
             "holds the diff under review.",
             file=sys.stderr,
         )
-        return 1
+        return REVIEW_ROOT_EXIT_CODE
     review_root_sha = _git_head_at(review_root)
 
     result_out = {
@@ -9367,7 +9373,7 @@ def cmd_review_dismissed_prepare(args: argparse.Namespace) -> int:
         )
     except ReviewRootError as exc:
         print(f"Error: {exc}", file=sys.stderr)
-        return 1
+        return REVIEW_ROOT_EXIT_CODE
 
     inputs_dir = cr_dir / "review_dismissed_inputs"
     inputs_dir.mkdir(parents=True, exist_ok=True)
@@ -11016,7 +11022,7 @@ def _execute_stage_inprocess(
         stderr_tail = stage_stderr.strip().splitlines()
         if stderr_tail:
             message = f"{message}; stderr: {stderr_tail[-1][:300]}"
-        if on_failure == "abort":
+        if on_failure == "abort" or rc == REVIEW_ROOT_EXIT_CODE:
             return "failed_abort", message
         if on_failure == "continue_with_coverage_gap":
             _emit_prefix_stage_failure_finding(ctx.cr_dir, stage_id, message)
@@ -12442,7 +12448,7 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
         )
     except ReviewRootError as exc:
         print(f"Error: {exc}", file=sys.stderr)
-        return 1
+        return REVIEW_ROOT_EXIT_CODE
 
     coverage_plan = _read_coverage_state(cr_dir).get("final")
     if not isinstance(coverage_plan, dict):
@@ -12658,7 +12664,7 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
         )
     except ReviewRootError as exc:
         print(f"Error: {exc}", file=sys.stderr)
-        return 1
+        return REVIEW_ROOT_EXIT_CODE
 
     route = _read_spawn_state(cr_dir).get("route", {}) or {}
     if not isinstance(route, dict):

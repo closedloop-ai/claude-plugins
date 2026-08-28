@@ -7005,7 +7005,7 @@ class TestISS7382ReviewRootDispatch:
 
         rc = self._derive_spawn_spec_in(session, cr_dir)
 
-        assert rc == 1
+        assert rc == 3
         spawn = json.loads((cr_dir / "spawn.json").read_text())
         assert "spec" not in spawn, "a refused root must not publish a spawn spec"
 
@@ -7051,7 +7051,7 @@ class TestISS7382ReviewRootDispatch:
 
         rc = self._derive_spawn_spec_in(lane, cr_dir)
 
-        assert rc == 1
+        assert rc == 3
         spawn = json.loads((cr_dir / "spawn.json").read_text())
         assert "spec" not in spawn
 
@@ -9573,7 +9573,9 @@ class TestVerifyPrepareReviewRoot:
             tmp_path, [finding], seed_review_root=False,
         )
 
-        assert rc == 1
+        # 3, written out rather than imported: importing the constant this
+        # guard publishes would make a change to it undetectable here.
+        assert rc == 3
         assert not (tmp_path / "cr" / "verifier_inputs" / "bha_1.json").exists()
 
     def test_forged_review_root_errors(self, tmp_path: Path) -> None:
@@ -9587,7 +9589,7 @@ class TestVerifyPrepareReviewRoot:
         finding = _make_validated_finding("bha_1", severity="HIGH")
         rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
 
-        assert rc == 1
+        assert rc == 3
         assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
 
     def test_root_missing_the_diffs_files_errors(self, tmp_path: Path) -> None:
@@ -9605,7 +9607,7 @@ class TestVerifyPrepareReviewRoot:
         finding = _make_validated_finding("bha_1", severity="HIGH")
         rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
 
-        assert rc == 1
+        assert rc == 3
         assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
 
     def test_root_holding_the_diffs_files_is_accepted(self, tmp_path: Path) -> None:
@@ -9665,7 +9667,7 @@ class TestVerifyPrepareReviewRoot:
         finding = _make_validated_finding("bha_1", severity="HIGH")
         rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
 
-        assert rc == 1
+        assert rc == 3
         assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
 
 
@@ -9954,7 +9956,7 @@ class TestReviewDismissedPrepareReviewRoot:
         finally:
             _sys.stdout = old_stdout
 
-        assert rc == 1
+        assert rc == 3
         assert not (cr_dir / "review_dismissed_inputs" / "bha_9.json").exists()
 
 
@@ -23658,6 +23660,44 @@ class TestExecuteStageInprocess:
         )
         assert status == "failed_continue"
         assert not list(tmp_path.glob("agent_*-failed.json"))
+
+    def test_review_root_exit_code_aborts_a_continue_stage(
+        self, tmp_path: Path,
+    ) -> None:
+        # ISS-7382: the dispatch stages that re-prove review_root are
+        # on_failure "continue", and every path a continue degrades to (the
+        # static reviewer table, "no verifier this run") spawns the same
+        # agents against the same wrong tree. The refusal exit code therefore
+        # overrides on_failure. 3 is written out rather than imported: the
+        # constant this rule publishes cannot also be its own expectation.
+        from code_review_helpers import _execute_stage_inprocess
+
+        out = tmp_path / "o.json"
+        parser = _fake_stage_parser(_fake_func(rc=3))
+        status, msg = _execute_stage_inprocess(
+            self._stage(out, on_failure="continue"), _rp_ctx(tmp_path), parser, set(),
+        )
+        assert status == "failed_abort"
+        assert msg is not None
+
+    def test_the_guarded_dispatch_stages_are_on_failure_continue(self) -> None:
+        # Sibling of the case above: it is only load-bearing while these
+        # stages would otherwise degrade. If they ever become "abort" on
+        # their own, this test says so instead of going quietly vacuous.
+        stages_path = (
+            Path(__file__).parent / "config" / "stages.json"
+        )
+        by_id = {
+            s["id"]: s
+            for s in json.loads(stages_path.read_text())["stages"]
+        }
+        for stage_id in (
+            "stage_19b_derive_spawn_spec",
+            "stage_19c_derive_static_spec",
+            "stage_22b_verify_prepare",
+        ):
+            assert by_id[stage_id].get("on_failure") == "continue", stage_id
+        assert by_id["stage_03_resolve_scope"].get("on_failure") == "abort"
 
     def test_continue_with_coverage_gap_emits_agent_failure_finding(
         self, tmp_path: Path,
