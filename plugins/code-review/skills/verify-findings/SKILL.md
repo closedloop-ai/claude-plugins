@@ -48,7 +48,7 @@ Read it for the finding to verify, the canonical output path, and the
 per-output JSON shape. Write your verdict JSON to the output path the
 input file specifies. Do not write anywhere else.
 ```
-Substitute the resolved paths from the manifest entry (the verifier prompt is at `<CR_DIR>/verifier_prompt.txt`, copied by `stage_02_prep_assets`). Each input file also carries a `review_root` field (written by `stage_22b_verify_prepare` from `scope.json`); the verifier prompt tells the agent to read source under that root when it is non-empty (local PR-head worktree isolation) — no extra wiring is needed here. Set `model` to the entry's `model` field (currently uniform `sonnet`; future revisions may split by original-reviewer model for cross-model independence).
+Substitute the resolved paths from the manifest entry (the verifier prompt is at `<CR_DIR>/verifier_prompt.txt`, copied by `stage_02_prep_assets`). Each input file also carries a `review_root` field — an absolute path `stage_22b_verify_prepare` proved holds this diff before writing the manifest, so it is never empty on a healthy run; the verifier prompt tells the agent to resolve every source path under it rather than against its own working directory (which is the invoking session's checkout, not the code under review) — no extra wiring is needed here. Set `model` to the entry's `model` field (currently uniform `sonnet`; future revisions may split by original-reviewer model for cross-model independence).
 
 ### Collection contract
 

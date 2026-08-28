@@ -22,7 +22,7 @@ The input file is JSON with shape:
     "finding": { ... canonical finding ... },
     "verifier_prompt_path": "<this file>",
     "output_path": "<where to write your verdict>",
-    "review_root": "<absolute dir to read source from, or empty string>"
+    "review_root": "<absolute dir to read source from — always populated>"
   }
 
 Read the input file. The `finding` field contains the full canonical
@@ -38,18 +38,20 @@ output_path).
 
 Every file path in the finding (`finding.file`, each `finding.evidence[].file`,
 each `finding.external_impact[].file`) is **repo-relative**. Resolve them
-against `review_root` from the input file:
+against `review_root` from the input file. It is an absolute path and is
+ALWAYS populated:
 
-  - **`review_root` is a non-empty path** (local PR review where the PR head
-    is checked out into a worktree, because the operator is on a different
-    branch): read every repo-relative source path as
-    `<review_root>/<finding.file>`, and pass `path: "<review_root>"` to Grep
-    and Glob so your searches scope to the code under review — NOT the
-    operator's working tree, which holds different content. Reading the
-    working tree here would make the snippet vanish and you would wrongly
-    REJECT on `evidence_not_found`.
-  - **`review_root` is empty or absent** (the normal case): read repo-relative
-    paths as-is from the current working directory.
+  - Read every repo-relative source path as `<review_root>/<finding.file>`,
+    and pass `path: "<review_root>"` to Grep and Glob so your searches scope
+    to the code under review — NOT your current working directory, which is
+    the invoking session's checkout and on any worktree-based run holds
+    different content. Reading it would make the snippet vanish and you would
+    wrongly REJECT on `evidence_not_found`. If you already resolved anything
+    elsewhere, discard it and re-read it under `review_root`.
+  - **If `review_root` is empty, absent, or does not exist**: STOP. Write your
+    output with verdict `UNCERTAIN` and `"error": "review_root missing"`, and
+    say so in your final message. Do NOT verify against the working directory
+    instead — a verdict formed on the wrong tree is worse than no verdict.
 
 This only changes WHERE you read; it does not change the verdict logic or the
 shape of your output. Do not rewrite paths in your output — `evidence_checks[]`
