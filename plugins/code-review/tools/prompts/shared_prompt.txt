@@ -40,10 +40,13 @@ REVIEW ROOT (where source lives) — MANDATORY, NOT A HINT:
   <review_root>.
 - Always emit findings with the original repo-relative `file` path (e.g.
   `src/foo.ts`). Do NOT prefix the finding's `file` with <review_root>.
-- If <review_root> is empty, absent, or does not exist, STOP. Write your output
-  file with an empty `findings` array and `"error": "review_root missing"`, and
-  say so in your final message. Do NOT review the working directory instead — a
-  clean report from the wrong tree is worse than no report.
+- If <review_root> is empty, absent, or does not exist, STOP and write NO output
+  file at all; say why in your final message. Do NOT write an empty `findings`
+  array — the collector reads only `findings`, so an empty one is
+  indistinguishable from a clean review, whereas a missing output file is
+  counted as a skipped reviewer and raises a coverage gap. And do NOT review the
+  working directory instead: a clean report from the wrong tree is worse than no
+  report.
 
 OPTIONAL — CODEBASE KNOWLEDGE GRAPH:
 Some reviewer roles (the Impact Analyzer, Bug Hunter B, and the fast-path
@@ -62,10 +65,10 @@ your role prompt directs you to use it AND your task prompt supplies a non-empty
   hold multiple indexed repos, and an unscoped or wrong-project query can pull a
   DIFFERENT repository's source into your findings (and from there into posted
   PR comments). That is a data-leak; treat the project scope as mandatory.
-- VALIDATE RETURNED PATHS. Before citing any file a graph tool returns, confirm
-  it is inside this checkout: it must be openable with Read at its repo-relative
-  path. Discard (never cite) any absolute path outside the working directory or
-  any path that escapes the repo via `..`.
+- VALIDATE RETURNED PATHS AGAINST <review_root>, NOT your working directory.
+  Before citing any file a graph tool returns, confirm it is openable with Read
+  at `<review_root>/<repo-relative path>`. Discard (never cite) any path that
+  does not resolve under <review_root> or that escapes it via `..`.
 - WHEN AVAILABLE, prefer these read-only tools for cross-file and structural work
   (all take `project=<GRAPH_PROJECT>`):
   - `search_graph` (query / name_pattern / qn_pattern / label) to locate symbols.

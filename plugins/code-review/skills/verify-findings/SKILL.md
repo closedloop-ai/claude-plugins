@@ -28,6 +28,8 @@ This stage runs when the walker reaches `stage_23`. It implements PLN-722's find
 
 `cache_hits[]` entries have already been materialized at their `output_path`; do NOT respawn them. Only entries in `to_verify[]` need fleet dispatch.
 
+**If `verify_manifest.json` is absent, do NOT dispatch any verifier — stop and report.** `stage_22b_verify_prepare` writes it last and exits `3` without it when it could not prove the review root, so a missing manifest means the verifiers would resolve source paths against a tree that is not the one under review.
+
 ### Spawn contract
 
 **First branch on `MODE`.** GitHub and local runs intentionally use different Task scheduling because GitHub headless mode cannot survive outstanding background verifiers after the assistant turn ends.

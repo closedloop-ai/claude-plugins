@@ -316,6 +316,12 @@ ignored at spawn time.
   "fallback_reason": "<string>",       // only present when arbitrate_status="fallback"
   "cr_dir": "<absolute path>",
   "generated_at": "<ISO-8601 timestamp>",
+  "review_root": "<absolute path>",    // the checkout the diff was PROVEN
+                                       // against; present on fallback specs
+                                       // too, and the primary source for the
+                                       // mandatory {REVIEW_ROOT} substitution
+                                       // at stage_20. Never empty — derivation
+                                       // exits 3 instead of emitting one.
 
   // ── Agents to spawn ──────────────────────────────────────
   "agents": [

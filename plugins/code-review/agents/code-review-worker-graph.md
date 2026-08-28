@@ -39,9 +39,10 @@ analysis.
   - Pass `project=<GRAPH_PROJECT>` on EVERY graph call. Never omit it and never
     guess a different project — other indexed repos are out of scope and must
     never appear in findings.
-  - Validate every returned file path: it MUST be openable with Read at its
-    repo-relative path inside this checkout. Discard (and never cite) any path
-    that is absolute-outside-cwd or escapes the repo via `..`.
+  - Validate every returned file path against the task prompt's `<review_root>`,
+    never your working directory: it MUST be openable with Read at
+    `<review_root>/<repo-relative path>`. Discard (and never cite) any path that
+    does not resolve under `<review_root>` or escapes it via `..`.
   - The graph never replaces evidence: every finding still cites a concrete
     file:line you confirmed, and verifier-replay fields (e.g. `grep_query_used`)
     stay populated per your role prompt.

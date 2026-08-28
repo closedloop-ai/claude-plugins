@@ -458,7 +458,9 @@ class ReviewRootError(RuntimeError):
 # this run" — dispatches the same agents against the same wrong tree.
 REVIEW_ROOT_EXIT_CODE = 3
 
-_REVIEW_ROOT_FORBIDDEN_CHARS = ("\n", "\r", "<", ">")
+# The root is substituted into the TRUSTED instruction zone of every agent
+# prompt, so reject the markup and control bytes that could restructure it.
+_REVIEW_ROOT_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f<>`]")
 
 
 def _git_toplevel(start: str | Path | None = None) -> str:
@@ -487,6 +489,17 @@ def _git_head_at(root: str | Path) -> str:
     return result.stdout.strip()
 
 
+def _git_commit_present(root: str | Path, sha: str) -> bool:
+    """True when *sha* names a commit object the repository at *root* holds."""
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), "cat-file", "-e", f"{sha}^{{commit}}"],
+            capture_output=True, text=True,
+        ).returncode == 0
+    except (FileNotFoundError, OSError):
+        return False
+
+
 def _diff_changed_files(cr_dir: str | Path) -> list[str]:
     """Repo-relative diff files that must exist at the reviewed tip.
 
@@ -506,12 +519,15 @@ def _diff_changed_files(cr_dir: str | Path) -> list[str]:
     return [
         f for f in files
         if isinstance(f, str) and f and statuses.get(f) != "removed"
+        # git C-quotes a path containing non-ASCII, control, quote or
+        # backslash bytes, so the recorded string is not the name on disk and
+        # its absence proves nothing. An entry we cannot resolve must not
+        # produce a confident refusal.
+        and not f.startswith('"')
     ]
 
 
-def _require_review_root(
-    cr_dir: str | Path, scope_meta: object, changed_files: list[str] | None = None,
-) -> str:
+def _require_review_root(cr_dir: str | Path, scope_meta: object) -> str:
     """Return the proven review root, or raise ``ReviewRootError``.
 
     Reviewers and verifiers are spawned agents: their working directory is the
@@ -521,17 +537,24 @@ def _require_review_root(
     reports clean, which is the signal a caller uses to decide it is done.
     The root is therefore proven rather than assumed, and every failure here
     is fatal to the run by design.
+
+    Unlike ``_validated_worktree_path``, ``cr_dir`` does NOT confine the value:
+    it only locates ``diff_data.json``. Any git worktree root that holds the
+    diff is legitimate, which is why no destructive path may consume this.
     """
+    changed_files = _diff_changed_files(cr_dir)
     raw = scope_meta.get("review_root") if isinstance(scope_meta, dict) else None
     if not isinstance(raw, str) or not raw.strip():
         raise ReviewRootError(
             "review_root is empty or absent in scope.json. Spawned reviewers "
             "would resolve source paths against their own working directory — "
-            "the invoking session's checkout, not the code under review. "
-            "Re-run resolve-scope from the checkout that holds the diff.",
+            "the invoking session's checkout, not the code under review. A "
+            "scope.json from plugin < 3.8.0 always looks like this; the walker "
+            "will not re-run resolve-scope over an existing one, so start a "
+            "fresh review from the checkout that holds the diff.",
         )
     raw = raw.strip()
-    if any(ch in raw for ch in _REVIEW_ROOT_FORBIDDEN_CHARS):
+    if _REVIEW_ROOT_FORBIDDEN.search(raw):
         raise ReviewRootError(f"review_root contains illegal characters: {raw!r}")
     if not os.path.isabs(raw):
         raise ReviewRootError(f"review_root is not an absolute path: {raw!r}")
@@ -545,7 +568,12 @@ def _require_review_root(
     recorded_sha = _validated_head_sha(
         scope_meta.get("review_root_sha") if isinstance(scope_meta, dict) else None,
     )
-    if recorded_sha:
+    pinned = bool(
+        isinstance(scope_meta, dict) and str(scope_meta.get("worktree_path") or ""),
+    )
+    if recorded_sha and pinned:
+        # A PR-head worktree is a detached checkout nobody commits into, so its
+        # HEAD must still be the commit the diff was resolved at.
         actual = _git_head_at(root)
         if actual != recorded_sha:
             raise ReviewRootError(
@@ -553,28 +581,58 @@ def _require_review_root(
                 f"the diff under review was resolved at {recorded_sha}. It is not "
                 "the checkout that produced this diff.",
             )
-    missing = [f for f in (changed_files or []) if not (Path(root) / f).exists()]
+    elif recorded_sha and not _git_commit_present(root, recorded_sha):
+        # A live checkout's tip moves — the operator may legitimately commit
+        # mid-review — so require only that the resolved commit is REACHABLE
+        # here. A different clone does not have it.
+        raise ReviewRootError(
+            f"review_root {raw!r} does not contain commit {recorded_sha}, which "
+            "the diff under review was resolved at. It is a different "
+            "repository than the one that produced this diff.",
+        )
+    missing = [
+        f for f in changed_files if not os.path.lexists(os.path.join(root, f))
+    ]
     if missing:
         raise ReviewRootError(
             f"review_root {raw!r} is missing {len(missing)} of the "
-            f"{len(changed_files or [])} files this diff changes "
+            f"{len(changed_files)} files this diff changes "
             f"(e.g. {missing[:3]}). It is a different checkout than the one "
             "under review.",
+        )
+    if not recorded_sha and not changed_files:
+        # Neither proof ran: "is a git worktree root" alone is true of every
+        # checkout on the box, so returning here would report proven when
+        # nothing about THIS diff was checked.
+        raise ReviewRootError(
+            f"review_root {raw!r} could not be proven to hold this diff — "
+            "scope.json records no review_root_sha and diff_data.json lists no "
+            "resolvable changed files. Start a fresh review rather than resume "
+            "this one.",
         )
     return root
 
 
-def _read_review_root(cr_dir: str | Path, scope_meta: object) -> str:
-    """Best-effort review root for stages that run AFTER the review, or "".
+def _degraded_review_root(cr_dir: str | Path, scope_meta: object) -> str:
+    """The review root for stages that run AFTER the review, or "" — DEGRADED.
 
-    ``cmd_re_assert`` and the dismissed-review consolidation run once the
-    footer may already have torn the PR-head worktree down, and both carry a
-    ``git show`` / working-tree fallback, so a vanished root is a degraded
-    read here rather than the false-green a dispatch stage would ship.
+    NOT a substitute for ``_require_review_root``: a stage that hands work to
+    an agent must use the strict form, because "" there means every agent
+    silently reads its own working directory. Only ``cmd_re_assert`` and the
+    dismissed-review consolidation may call this — they run once the footer
+    may already have torn the PR-head worktree down, and both carry a
+    ``git show`` / working-tree fallback for the anchor hash they compute.
+
+    The reason is written to stderr rather than swallowed, so a refusal that
+    is NOT the sanctioned "worktree already gone" case is still visible.
     """
     try:
         return _require_review_root(cr_dir, scope_meta)
-    except ReviewRootError:
+    except ReviewRootError as exc:
+        print(
+            f"Warning: reading source without a proven review root — {exc}",
+            file=sys.stderr,
+        )
         return ""
 
 
@@ -588,16 +646,14 @@ def _ref_like_scope_arg(scope_args: str) -> str:
     for token in scope_args.split():
         if os.path.exists(token):
             continue
-        if ".." in token:
-            return token
-        try:
-            completed = subprocess.run(
-                ["git", "rev-parse", "--verify", "--quiet", f"{token}^{{commit}}"],
-                capture_output=True, text=True,
-            )
-        except (FileNotFoundError, OSError):
-            return ""
-        if completed.returncode == 0:
+        # A range is ref-like only when git can actually resolve a side of it;
+        # ".." alone also appears in ordinary relative pathspecs.
+        parts = (
+            token.split("...", 1) if "..." in token
+            else token.split("..", 1) if ".." in token
+            else [token]
+        )
+        if any(side and _git_rev_parse(f"{side}^{{commit}}") for side in parts):
             return token
     return ""
 
@@ -2495,7 +2551,7 @@ def _file_content_hash(
          yield identical content.
       3. working tree / repo root — the no-isolation default.
     Callers MUST pass values already vetted by ``_require_review_root`` /
-    ``_read_review_root`` / ``_validated_head_sha``.
+    ``_degraded_review_root`` / ``_validated_head_sha``.
     """
     if not file or not line:
         return ""
@@ -2868,7 +2924,8 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
         containing the canonical finding + the path the verifier should
         write its verdict to (``<cr_dir>/agent_verifier_<finding_id>.json``).
 
-    Always exits 0; an empty validated set produces an empty manifest. The
+    Exits ``REVIEW_ROOT_EXIT_CODE`` when the review root cannot be proven and
+    0 otherwise; an empty validated set produces an empty manifest. The
     walker's Verifier Fleet section spawns one ``code:code-review-worker``
     Task per ``to_verify`` entry; each agent reads its input file and
     writes its verdict to the canonical output path.
@@ -2884,9 +2941,7 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
     # finding — a clean report on source nobody opened. Fail the stage instead.
     scope_meta = _read_optional_json(cr_dir / "scope.json", {})
     try:
-        review_root = _require_review_root(
-            cr_dir, scope_meta, _diff_changed_files(cr_dir),
-        )
+        review_root = _require_review_root(cr_dir, scope_meta)
     except ReviewRootError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return REVIEW_ROOT_EXIT_CODE
@@ -5236,7 +5291,10 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
     # worktree-based run "read the working tree" means reading a different
     # checkout than the diff came from, and a clean report on code the agent
     # never opened is indistinguishable from a real pass.
-    review_root = worktree_path or _git_toplevel()
+    # realpath, because every downstream guard canonicalizes the same way and
+    # a symlinked cr_dir would otherwise make scope.json and spawn.json.spec
+    # disagree on the "same" root.
+    review_root = os.path.realpath(worktree_path) if worktree_path else _git_toplevel()
     if not review_root:
         print(
             f"Error: cannot resolve the review root — {os.getcwd()!r} is not "
@@ -9368,9 +9426,7 @@ def cmd_review_dismissed_prepare(args: argparse.Namespace) -> int:
     # wrong checkout promotes or sinks findings on code it never read.
     dismissed_scope = _read_optional_json(cr_dir / "scope.json", {})
     try:
-        review_root = _require_review_root(
-            cr_dir, dismissed_scope, _diff_changed_files(cr_dir),
-        )
+        review_root = _require_review_root(cr_dir, dismissed_scope)
     except ReviewRootError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return REVIEW_ROOT_EXIT_CODE
@@ -9457,7 +9513,7 @@ def cmd_review_dismissed_consolidate(args: argparse.Namespace) -> int:
     # ``/start`` run's ``_override_is_valid`` (which hashes under its own
     # review_root) compares like-for-like.
     consolidate_scope = _read_optional_json(cr_dir / "scope.json", {})
-    review_root = _read_review_root(cr_dir, consolidate_scope)
+    review_root = _degraded_review_root(cr_dir, consolidate_scope)
     head_sha = _validated_head_sha(
         consolidate_scope.get("head_sha") if isinstance(consolidate_scope, dict) else None,
     )
@@ -9626,7 +9682,7 @@ def cmd_re_assert(args: argparse.Namespace) -> int:
     # fallback the hash would anchor to the operator's working tree and the
     # override would be silently dropped on the next run.
     re_assert_scope = _read_optional_json(cr_dir / "scope.json", {})
-    review_root = _read_review_root(cr_dir, re_assert_scope)
+    review_root = _degraded_review_root(cr_dir, re_assert_scope)
     head_sha = _validated_head_sha(
         re_assert_scope.get("head_sha") if isinstance(re_assert_scope, dict) else None,
     )
@@ -12442,9 +12498,7 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
 
     try:
         review_root = _require_review_root(
-            cr_dir,
-            _read_optional_json(cr_dir / "scope.json", {}),
-            _diff_changed_files(cr_dir),
+            cr_dir, _read_optional_json(cr_dir / "scope.json", {}),
         )
     except ReviewRootError as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -12658,9 +12712,7 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
 
     try:
         review_root = _require_review_root(
-            cr_dir,
-            _read_optional_json(cr_dir / "scope.json", {}),
-            _diff_changed_files(cr_dir),
+            cr_dir, _read_optional_json(cr_dir / "scope.json", {}),
         )
     except ReviewRootError as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -12826,7 +12878,7 @@ def _append_to_coverage_gaps(
 
 
 def _write_spawn_spec(
-    spec: dict[str, Any], cr_dir: Path, review_root: str = "",
+    spec: dict[str, Any], cr_dir: Path, review_root: str,
 ) -> int:
     """Write the spec into spawn.json.spec and emit a short summary to stdout.
 

@@ -49,9 +49,12 @@ ALWAYS populated:
     wrongly REJECT on `evidence_not_found`. If you already resolved anything
     elsewhere, discard it and re-read it under `review_root`.
   - **If `review_root` is empty, absent, or does not exist**: STOP. Write your
-    output with verdict `UNCERTAIN` and `"error": "review_root missing"`, and
-    say so in your final message. Do NOT verify against the working directory
-    instead — a verdict formed on the wrong tree is worse than no verdict.
+    output with verdict `TENTATIVE` (the closed-vocabulary "could not settle
+    it" verdict — an invented one is discarded by consolidation), give the
+    reason as the missing review root, and say so in your final message. Do
+    NOT verify against the working directory instead: a REJECTED verdict
+    reached because the snippet was absent from the wrong tree is worse than
+    no verdict.
 
 This only changes WHERE you read; it does not change the verdict logic or the
 shape of your output. Do not rewrite paths in your output — `evidence_checks[]`
