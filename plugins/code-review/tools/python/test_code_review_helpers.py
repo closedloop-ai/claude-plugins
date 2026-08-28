@@ -6993,9 +6993,10 @@ class TestISS7382ReviewRootDispatch:
 
         cr_dir = tmp_path / "cr"
         cr_dir.mkdir()
+        # No review_root_sha: this pins the CONTAINMENT check alone, so the
+        # assertion cannot be satisfied by the commit check instead.
         (cr_dir / "scope.json").write_text(json.dumps({
             "review_root": str(session),
-            "review_root_sha": git_fixture(lane, "rev-parse", "HEAD").strip(),
         }))
         (cr_dir / "diff_data.json").write_text(json.dumps({
             "files_to_review": ["MINE.txt"],
