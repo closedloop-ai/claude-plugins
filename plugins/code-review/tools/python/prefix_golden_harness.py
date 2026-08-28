@@ -449,10 +449,13 @@ def _execute_stage(
     outputs_ok = _expected_outputs_present(stage)
     if rc != 0 or not outputs_ok:
         on_failure = stage.get("on_failure", "abort")
-        if on_failure == "abort":
+        # Exit 3 (review-root refusal) overrides on_failure, exactly as
+        # production's ``_execute_stage_inprocess`` does — an oracle that
+        # continued here would stop being a parity oracle.
+        if on_failure == "abort" or rc == code_review_helpers.REVIEW_ROOT_EXIT_CODE:
             raise AssertionError(
                 f"stage {stage_id!r} failed (rc={rc}, outputs_ok={outputs_ok}) "
-                f"with on_failure=abort",
+                f"with on_failure={on_failure}",
             )
         # continue / continue_with_coverage_gap: proceed, but do NOT mark the
         # stage as satisfying its dependents' inputs.
@@ -1014,10 +1017,13 @@ def _execute_stage_subprocess(
     outputs_ok = _expected_outputs_present(stage)
     if rc != 0 or not outputs_ok:
         on_failure = stage.get("on_failure", "abort")
-        if on_failure == "abort":
+        # Exit 3 (review-root refusal) overrides on_failure, exactly as
+        # production's ``_execute_stage_inprocess`` does — an oracle that
+        # continued here would stop being a parity oracle.
+        if on_failure == "abort" or rc == code_review_helpers.REVIEW_ROOT_EXIT_CODE:
             raise AssertionError(
                 f"stage {stage_id!r} failed (rc={rc}, outputs_ok={outputs_ok}) "
-                f"with on_failure=abort",
+                f"with on_failure={on_failure}",
             )
         return StageResult(stage_id, "failed_continue", rc)
 

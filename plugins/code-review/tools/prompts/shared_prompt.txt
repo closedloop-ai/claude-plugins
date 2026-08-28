@@ -26,21 +26,27 @@ TOOL USAGE:
 - Your patches are pre-extracted to a file — Read it (path in <patches_file> above).
 - Do NOT use Bash. All data you need is available via Read.
 
-REVIEW ROOT (where source lives):
-- If your task prompt provides a non-empty <review_root> path, the code under
-  review is checked out THERE — not in the current working directory. This
-  happens for local PR review when the PR head branch is not checked out. In
-  that case, read every repo-relative source path as `<review_root>/<path>`,
-  and pass `path: "<review_root>"` to Grep/Glob so searches scope to the code
-  you are reviewing. The working directory holds a DIFFERENT branch's content —
-  reading it would make your findings reference the wrong code.
+REVIEW ROOT (where source lives) — MANDATORY, NOT A HINT:
+- <review_root> is an absolute path and is ALWAYS provided. The code under
+  review is checked out THERE. Your current working directory is the invoking
+  session's checkout, which on any worktree-based run is a DIFFERENT tree —
+  reading it would make your findings describe code that is not under review.
+- Read every repo-relative source path as `<review_root>/<path>`, and pass
+  `path: "<review_root>"` to Grep/Glob so searches scope to the code you are
+  reviewing. If you have already read or searched anything resolved elsewhere,
+  discard it and re-read it under <review_root>.
 - The patches file, this prompt, and your output file are given as explicit
   paths (under the CR session dir) — use them as-is; do NOT prefix them with
   <review_root>.
 - Always emit findings with the original repo-relative `file` path (e.g.
   `src/foo.ts`). Do NOT prefix the finding's `file` with <review_root>.
-- If <review_root> is empty or absent (the normal case), read repo-relative
-  paths as-is from the working directory.
+- If <review_root> is empty, absent, or does not exist, STOP and write NO output
+  file at all; say why in your final message. Do NOT write an empty `findings`
+  array — the collector reads only `findings`, so an empty one is
+  indistinguishable from a clean review, whereas a missing output file is
+  counted as a skipped reviewer and raises a coverage gap. And do NOT review the
+  working directory instead: a clean report from the wrong tree is worse than no
+  report.
 
 OPTIONAL — CODEBASE KNOWLEDGE GRAPH:
 Some reviewer roles (the Impact Analyzer, Bug Hunter B, and the fast-path
@@ -59,10 +65,10 @@ your role prompt directs you to use it AND your task prompt supplies a non-empty
   hold multiple indexed repos, and an unscoped or wrong-project query can pull a
   DIFFERENT repository's source into your findings (and from there into posted
   PR comments). That is a data-leak; treat the project scope as mandatory.
-- VALIDATE RETURNED PATHS. Before citing any file a graph tool returns, confirm
-  it is inside this checkout: it must be openable with Read at its repo-relative
-  path. Discard (never cite) any absolute path outside the working directory or
-  any path that escapes the repo via `..`.
+- VALIDATE RETURNED PATHS AGAINST <review_root>, NOT your working directory.
+  Before citing any file a graph tool returns, confirm it is openable with Read
+  at `<review_root>/<repo-relative path>`. Discard (never cite) any path that
+  does not resolve under <review_root> or that escapes it via `..`.
 - WHEN AVAILABLE, prefer these read-only tools for cross-file and structural work
   (all take `project=<GRAPH_PROJECT>`):
   - `search_graph` (query / name_pattern / qn_pattern / label) to locate symbols.
