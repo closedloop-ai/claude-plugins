@@ -9986,6 +9986,34 @@ class TestVerifyPrepare:
         assert materialized["verifier_verdict"] == "CONFIRMED"
 
 
+# Fixture instant for override tests whose subject is *not* the TTL gate.
+# The override namespace has a 90-day TTL enforced sweep-on-read against the
+# wall clock, so a bare literal here silently becomes an expired override once
+# the calendar passes it — which is exactly what happened: these fixtures were
+# written on 2026-05-29 and the suite went red on 2026-08-27 with no code
+# change. Pinning BOTH the assertion timestamp and the clock keeps the gap a
+# constant 3 days, so these tests exercise the override-honoring path forever.
+# Tests whose subject IS the TTL gate deliberately do the opposite and offset
+# from the real clock (see test_override_dropped_when_ttl_exceeded).
+_OVERRIDE_FIXTURE_ASSERTED_AT = "2026-05-29T22:00:00+00:00"
+_OVERRIDE_FIXTURE_NOW = datetime(2026, 6, 1, 22, 0, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+def pinned_override_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Freeze the helper module's clock inside the overrides TTL window."""
+    import code_review_helpers
+
+    class _PinnedClock(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:  # type: ignore[override]
+            if tz is None:
+                return _OVERRIDE_FIXTURE_NOW.replace(tzinfo=None)
+            return _OVERRIDE_FIXTURE_NOW.astimezone(tz)
+
+    monkeypatch.setattr(code_review_helpers, "datetime", _PinnedClock)
+
+
 class TestOverrideCache:
     """PLN-773 Phase 3 — overrides/ cache namespace + content-hash invalidation."""
 
@@ -10068,7 +10096,7 @@ class TestOverrideCache:
             "override": "RE_ASSERT",
             "reason": "operator says fine",
             "verified_against": "REJECTED",
-            "asserted_at": "2026-05-29T22:00:00+00:00",
+            "asserted_at": _OVERRIDE_FIXTURE_ASSERTED_AT,
             "asserted_by": "kris.wong@closedloop.ai",
         }
         path = _write_override(cache, payload)
@@ -10117,7 +10145,7 @@ class TestOverrideCache:
         assert _override_is_valid(override, finding, cr) is False
 
     def test_verify_prepare_short_circuits_on_valid_override(
-        self, tmp_path: Path,
+        self, tmp_path: Path, pinned_override_clock: None,
     ) -> None:
         from code_review_helpers import _file_content_hash, _write_override
         cr = self._cr_dir(tmp_path)
@@ -10133,7 +10161,7 @@ class TestOverrideCache:
             "finding_id": "bha_p0_f0",
             "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
             "override": "RE_ASSERT",
-            "asserted_at": "2026-05-29T22:00:00+00:00",
+            "asserted_at": _OVERRIDE_FIXTURE_ASSERTED_AT,
         })
         # PR #114 review fix — delegate to the shared helper with an
         # explicit cr_dir override so the per-test stdout/Namespace dance
@@ -11528,7 +11556,7 @@ class TestPR114ReviewFixes:
         full.write_text(content)
 
     def test_prepare_then_consolidate_routes_override_to_verified(
-        self, tmp_path: Path,
+        self, tmp_path: Path, pinned_override_clock: None,
     ) -> None:
         """End-to-end: override → RE_ASSERTED in verified[].
 
@@ -11555,7 +11583,7 @@ class TestPR114ReviewFixes:
             "finding_id": "bha_p0_f0",
             "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
             "override": "RE_ASSERT",
-            "asserted_at": "2026-05-29T22:00:00+00:00",
+            "asserted_at": _OVERRIDE_FIXTURE_ASSERTED_AT,
         })
 
         # Phase 1 — prepare. Should record the fid in override_hits and
@@ -11583,7 +11611,7 @@ class TestPR114ReviewFixes:
         assert envelope["pending_verification"] == []
 
     def test_prepare_then_consolidate_writes_re_asserted_to_stats(
-        self, tmp_path: Path,
+        self, tmp_path: Path, pinned_override_clock: None,
     ) -> None:
         """The per-reviewer ``re_asserted`` counter — the whole point of the
         PR — must count this finding."""
@@ -11604,7 +11632,7 @@ class TestPR114ReviewFixes:
             "finding_id": "bha_p0_f0",
             "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
             "override": "RE_ASSERT",
-            "asserted_at": "2026-05-29T22:00:00+00:00",
+            "asserted_at": _OVERRIDE_FIXTURE_ASSERTED_AT,
         })
 
         _, manifest = _run_verify_prepare(
