@@ -1,6 +1,7 @@
 {
   "cache_bypass_reason": "no-changed-files",
   "cache_key": "<CACHE_KEY>",
+  "input_hash": "<INPUT_HASH>",
   "input_path": "<CR_DIR>/extract_signals_input.json",
   "model": "haiku",
   "output_path": "<CR_DIR>/extract_signals.json",

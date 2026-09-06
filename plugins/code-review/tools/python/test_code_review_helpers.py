@@ -12290,6 +12290,36 @@ class TestSignalInputHash:
         b = signal_input_hash({"intent": {}, "sample_diff_excerpts": [], "files": []})
         assert a == b
 
+    def test_bundle_from_identical_diff_data_is_stable_across_builds(self) -> None:
+        """ISS-8961: a run-varying field in the bundle is a permanent miss.
+
+        The key is only useful if an unchanged diff rebuilds a byte-identical
+        bundle. If someone later adds a timestamp, absolute path, or run id
+        to ``_build_signal_input``, every review misses forever and re-runs
+        the Haiku extraction — a silent cost regression the golden harness
+        cannot catch, because it normalizes ``cache_key`` to a placeholder.
+        """
+        from code_review_helpers import _build_signal_input, signal_input_hash
+        diff_data = {
+            "file_statuses": {"b.ts": "M", "a.ts": "A"},
+            "file_loc": {"a.ts": {"added": 1, "removed": 0}, "b.ts": {"added": 1, "removed": 1}},
+            "patch_lines": {
+                "a.ts": {"added_lines": {"2": "x", "10": "y"}, "removed_lines": {}},
+                "b.ts": {"added_lines": {"1": "z"}, "removed_lines": {"4": "w"}},
+            },
+        }
+        intent = {"intent": "fix"}
+        first = signal_input_hash(_build_signal_input(diff_data, intent))
+        second = signal_input_hash(_build_signal_input(diff_data, intent))
+        assert first == second
+        # Key order in the source data must not move the digest either.
+        reordered = {
+            "patch_lines": diff_data["patch_lines"],
+            "file_loc": diff_data["file_loc"],
+            "file_statuses": {"a.ts": "A", "b.ts": "M"},
+        }
+        assert signal_input_hash(_build_signal_input(reordered, intent)) == first
+
     def test_a_changed_excerpt_changes_the_hash(self) -> None:
         from code_review_helpers import signal_input_hash
         base = {"files": [{"path": "a.ts", "status": "modified"}], "intent": {}}
@@ -12651,6 +12681,50 @@ class TestPooledWorktreeSignalCacheIsolation:
         assert lane2_manifest["status"] == "needs_agent"
         # The decisive assertion: lane 2 must not be handed lane 1's output.
         assert not (lane2_dir / "extract_signals.json").exists()
+
+    def test_same_file_different_content_is_not_served_a_stale_hit(
+        self, tmp_path: Path,
+    ) -> None:
+        """The realistic pooled-lane shape: only the excerpt content differs.
+
+        The sibling test above varies the changed path too, so a key built
+        from the file list alone would still separate those two lanes. This
+        pair holds path, status, and line counts identical and varies only
+        the added line — which is what successive reviews of one branch look
+        like as it is amended. It fails unless the key covers the whole
+        agent-input bundle, excerpts included.
+        """
+        from code_review_helpers import cmd_extract_signals_prepare
+        cache_dir = tmp_path / "cr-cache-global-repo-pool"
+        cache_dir.mkdir()
+
+        keys: list[str] = []
+        for lane, added in (
+            ("lane1", "const s = await issueToken(user);"),
+            ("lane2", "const s = await issueToken(user, { ttl: 60 });"),
+        ):
+            lane_dir = tmp_path / lane
+            lane_dir.mkdir()
+            diff = self._write_diff_data(
+                lane_dir / "diff_data.json", "src/auth/login.ts", added,
+            )
+            assert cmd_extract_signals_prepare(
+                self._lane_args(lane_dir, cache_dir, diff),
+            ) == 0
+            manifest = json.loads(
+                (lane_dir / "extract_signals_manifest.json").read_text(),
+            )
+            # Same path, same status, same 1-added/0-removed counts.
+            bundle = json.loads(
+                (lane_dir / "extract_signals_input.json").read_text(),
+            )
+            assert [
+                (f["path"], f["status"], f["lines_added"], f["lines_removed"])
+                for f in bundle["files"]
+            ] == [("src/auth/login.ts", "M", 1, 0)]
+            keys.append(manifest["cache_key"])
+
+        assert keys[0] != keys[1]
 
     def test_unkeyable_input_bypasses_the_cache_in_both_directions(
         self, tmp_path: Path,

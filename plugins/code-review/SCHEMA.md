@@ -585,7 +585,7 @@ A MAJOR `schema_version` bump invalidates every cache namespace at once.
 | Namespace           | Path                                              | Key inputs                                                    | TTL    |
 | ------------------- | ------------------------------------------------- | ------------------------------------------------------------- | ------ |
 | BHA findings        | `<CACHE_DIR>/bha/<file_hash>.json`                | file_content_hash + prompt_hash + model_id + schema_version   | 30 d   |
-| Signal extraction   | `<CACHE_DIR>/signals/<key>.json`                  | diff_tip + agent_input_hash + taxonomy_hash + signal_prompt_hash | 7 d |
+| Signal extraction   | `<CACHE_DIR>/signals/<key>.json`                  | diff_tip + input_hash + taxonomy_hash + signal_prompt_hash     | 7 d    |
 | Coverage critic     | `<CACHE_DIR>/coverage_critic/<diff_tip>.json`     | coverage_plan_initial_hash + signals_hash + critic_prompt_hash | 7 d   |
 | Verification        | `<CACHE_DIR>/verifications/<finding_id>.json`     | finding_id + file_content_hash + verifier_model + verifier_prompt_hash | 30 d |
 | Overrides           | `<CACHE_DIR>/overrides/<finding_id>.json`         | finding_id (file content change invalidates)                  | 90 d   |
