@@ -682,6 +682,11 @@ _VOLATILE_KEYS = {
     # only nondeterminism, not coverage.
     "signals_hash": "<SIGNALS_HASH>",
     "coverage_plan_initial_hash": "<PLAN_INITIAL_HASH>",
+    # Fixture-coupled rather than wall-clock: deterministic for a given
+    # fixture, but pinning it would make every edit to a fixture's diff
+    # require a hand-updated digest here. Its composition is pinned by a
+    # literal-digest unit test instead (same treatment as prompt_hash).
+    "diff_summary_hash": "<DIFF_SUMMARY_HASH>",
     "emitted_at": "<TS>",
     "timestamp": "<TS>",
     "generated_at": "<TS>",

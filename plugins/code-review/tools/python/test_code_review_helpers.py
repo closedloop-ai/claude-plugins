@@ -14083,43 +14083,62 @@ class TestCoverageCriticCacheKey:
     def test_same_inputs_same_key(self) -> None:
         from code_review_helpers import coverage_critic_cache_key
         assert (
-            coverage_critic_cache_key("p", "s", "t", "h", "a")
-            == coverage_critic_cache_key("p", "s", "t", "h", "a")
+            coverage_critic_cache_key("p", "s", "d", "t", "h", "a")
+            == coverage_critic_cache_key("p", "s", "d", "t", "h", "a")
         )
 
     def test_plan_initial_hash_flip_changes_key(self) -> None:
         from code_review_helpers import coverage_critic_cache_key
         assert (
-            coverage_critic_cache_key("p1", "s", "t", "h", "a")
-            != coverage_critic_cache_key("p2", "s", "t", "h", "a")
+            coverage_critic_cache_key("p1", "s", "d", "t", "h", "a")
+            != coverage_critic_cache_key("p2", "s", "d", "t", "h", "a")
         )
 
     def test_signals_hash_flip_changes_key(self) -> None:
         from code_review_helpers import coverage_critic_cache_key
         assert (
-            coverage_critic_cache_key("p", "s1", "t", "h", "a")
-            != coverage_critic_cache_key("p", "s2", "t", "h", "a")
+            coverage_critic_cache_key("p", "s1", "d", "t", "h", "a")
+            != coverage_critic_cache_key("p", "s2", "d", "t", "h", "a")
+        )
+
+    def test_diff_summary_hash_flip_changes_key(self) -> None:
+        """ISS-9674: the only component that varies with the diff itself."""
+        from code_review_helpers import coverage_critic_cache_key
+        assert (
+            coverage_critic_cache_key("p", "s", "d1", "t", "h", "a")
+            != coverage_critic_cache_key("p", "s", "d2", "t", "h", "a")
+        )
+
+    def test_key_composition_is_pinned_to_a_literal_digest(self) -> None:
+        """Frozen literal, not a re-derivation through the builder.
+
+        A test that recomputed the digest with the same formula would stay
+        green if a component were dropped back out of the tuple.
+        """
+        from code_review_helpers import coverage_critic_cache_key
+        assert coverage_critic_cache_key("p", "s", "d", "t", "h", "a") == (
+            "85531ac31b220ae9a731cb4063b13a05177105d9b4c5872fca093b496af030b3"
         )
 
     def test_diff_tip_flip_changes_key(self) -> None:
         from code_review_helpers import coverage_critic_cache_key
         assert (
-            coverage_critic_cache_key("p", "s", "t1", "h", "a")
-            != coverage_critic_cache_key("p", "s", "t2", "h", "a")
+            coverage_critic_cache_key("p", "s", "d", "t1", "h", "a")
+            != coverage_critic_cache_key("p", "s", "d", "t2", "h", "a")
         )
 
     def test_prompt_hash_flip_changes_key(self) -> None:
         from code_review_helpers import coverage_critic_cache_key
         assert (
-            coverage_critic_cache_key("p", "s", "t", "h1", "a")
-            != coverage_critic_cache_key("p", "s", "t", "h2", "a")
+            coverage_critic_cache_key("p", "s", "d", "t", "h1", "a")
+            != coverage_critic_cache_key("p", "s", "d", "t", "h2", "a")
         )
 
     def test_available_reviewers_hash_flip_changes_key(self) -> None:
         from code_review_helpers import coverage_critic_cache_key
         assert (
-            coverage_critic_cache_key("p", "s", "t", "h", "a1")
-            != coverage_critic_cache_key("p", "s", "t", "h", "a2")
+            coverage_critic_cache_key("p", "s", "d", "t", "h", "a1")
+            != coverage_critic_cache_key("p", "s", "d", "t", "h", "a2")
         )
 
 
@@ -14787,31 +14806,20 @@ class TestCoverageCriticPrepareCLI:
     def test_cache_hit_serves_directly(self, tmp_path: Path) -> None:
         from code_review_helpers import (
             CACHE_NAMESPACE_COVERAGE_CRITIC,
-            _available_reviewers_hash,
-            _stable_json_hash,
             cmd_coverage_critic_prepare,
-            coverage_critic_cache_key,
-            _coverage_critic_prompt_hash,
-            _default_coverage_critic_prompt_path,
         )
         inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
         args = self._args(tmp_path, inputs)
         cache_dir = Path(args.cache_dir)
         (cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC).mkdir(parents=True)
 
-        plan_hash = _stable_json_hash(inputs["plan_initial"])
-        signals_hash = _stable_json_hash({"signals": []})
-        prompt_hash = _coverage_critic_prompt_hash(
-            _default_coverage_critic_prompt_path(),
-        )
-        # Roster hash must mirror what prepare computes (post-filter) —
-        # plan_initial has bug_hunter_a in required, so the filter is a
-        # no-op against the default fixture (which lists
-        # accessibility-expert + i18n-expert).
-        available_hash = _available_reviewers_hash(inputs["available"])
-        key = coverage_critic_cache_key(
-            plan_hash, signals_hash, "abc123", prompt_hash, available_hash,
-        )
+        # Seed under the key prepare itself reports on a miss, rather than
+        # re-deriving it here: a fixture that rebuilt the key through the
+        # builder under test would stay green if the composition changed.
+        assert cmd_coverage_critic_prepare(args) == 0
+        miss_manifest = _read_coverage_section(Path(args.cr_dir), "critic")
+        assert miss_manifest["status"] == "needs_agent"
+        key = miss_manifest["cache_key"]
         cached_payload = {
             "required": inputs["plan_initial"]["required"],
             "best_effort": [
@@ -14836,6 +14844,57 @@ class TestCoverageCriticPrepareCLI:
         # written_at metadata stripped from canonical output
         assert "written_at" not in final
 
+    def test_pooled_lane_with_a_different_diff_misses_prior_cache(
+        self, tmp_path: Path,
+    ) -> None:
+        """ISS-9674: the coverage-critic twin of the ISS-8961 pooled-lane bug.
+
+        Production shape: pooled worktrees give every lane in a directory
+        the same cache dir, and ``diff_tip`` is a ref name (``"HEAD"`` for a
+        local branch review), so it separates nothing. Here everything the
+        old key covered is held constant -- same plan_initial, same signals,
+        same prompt, same roster, same diff_tip -- and only the DIFF varies.
+
+        Against the pre-ISS-9674 key this fails: the two lanes compute the
+        same key and lane 2 is served lane 1's coverage plan. It passes only
+        because the key now covers the diff bundle the critic reads.
+        """
+        from code_review_helpers import (
+            CACHE_NAMESPACE_COVERAGE_CRITIC,
+            cmd_coverage_critic_prepare,
+        )
+
+        def _lane(name: str, added: dict[str, str]) -> str:
+            lane_root = tmp_path / name
+            lane_root.mkdir()
+            inputs = _write_coverage_critic_inputs(
+                lane_root,
+                signals={"signals": []},
+                diff_data={
+                    "files_to_review": ["src/Modal.tsx"],
+                    "file_statuses": {"src/Modal.tsx": "M"},
+                    "patch_lines": {
+                        "src/Modal.tsx": {
+                            "added_lines": added, "removed_lines": {},
+                        },
+                    },
+                },
+            )
+            args = self._args(lane_root, inputs)
+            # One shared pooled cache directory across both lanes.
+            args.cache_dir = str(shared_cache)
+            assert cmd_coverage_critic_prepare(args) == 0
+            manifest = _read_coverage_section(Path(args.cr_dir), "critic")
+            assert manifest["status"] == "needs_agent"
+            return str(manifest["cache_key"])
+
+        shared_cache = tmp_path / "cr-cache-global-repo-pool"
+        (shared_cache / CACHE_NAMESPACE_COVERAGE_CRITIC).mkdir(parents=True)
+
+        lane1_key = _lane("lane1", {"42": "<div role='dialog'>"})
+        lane2_key = _lane("lane2", {"42": "<div onClick={submit}>"})
+        assert lane1_key != lane2_key
+
     def test_roster_shrink_misses_prior_cache(self, tmp_path: Path) -> None:
         """Concrete failure mode the PR comment described: same diff,
         same plan_initial, same signals, same prompt, but the
@@ -14847,9 +14906,11 @@ class TestCoverageCriticPrepareCLI:
         from code_review_helpers import (
             CACHE_NAMESPACE_COVERAGE_CRITIC,
             _available_reviewers_hash,
+            _build_coverage_critic_input,
             _stable_json_hash,
             cmd_coverage_critic_prepare,
             coverage_critic_cache_key,
+            signal_input_hash,
             _coverage_critic_prompt_hash,
             _default_coverage_critic_prompt_path,
         )
@@ -14869,8 +14930,14 @@ class TestCoverageCriticPrepareCLI:
         prompt_hash = _coverage_critic_prompt_hash(
             _default_coverage_critic_prompt_path(),
         )
+        _, diff_summary = _build_coverage_critic_input(
+            inputs["plan_initial"], {"signals": []},
+            json.loads(inputs["paths"]["diff_data"].read_text()),
+            ["accessibility-expert", "i18n-expert"],
+        )
+        diff_summary_hash = signal_input_hash(diff_summary)
         old_key = coverage_critic_cache_key(
-            plan_hash, signals_hash, "abc123", prompt_hash,
+            plan_hash, signals_hash, diff_summary_hash, "abc123", prompt_hash,
             _available_reviewers_hash(["accessibility-expert", "i18n-expert"]),
         )
         # Seed a cache entry under the OLD roster that proposes the
