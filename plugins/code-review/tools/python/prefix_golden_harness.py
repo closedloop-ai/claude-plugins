@@ -674,6 +674,7 @@ _VOLATILE_KEYS = {
     "review_id": "<REVIEW_ID>",
     "prompt_hash": "<PROMPT_HASH>",
     "cache_key": "<CACHE_KEY>",
+    "input_hash": "<INPUT_HASH>",
     "taxonomy_hash": "<TAXONOMY_HASH>",
     # Cache-keying hashes computed over extract_signals.json, whose generated_at
     # is wall-clock — so these vary run-to-run. The underlying .initial plan and
