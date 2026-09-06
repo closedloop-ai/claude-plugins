@@ -284,7 +284,7 @@
             "--diff-tip"
           ],
           "required": true,
-          "help": "Diff tip SHA for cache key"
+          "help": "Diff tip ref name; a coarse cache-key component, not the diff identity."
         },
         {
           "flags": [
@@ -297,7 +297,7 @@
           "flags": [
             "--cache-dir"
           ],
-          "help": "Optional cache directory; fresh (diff_tip, taxonomy_hash, prompt_hash) tuples are served from the signals/ namespace."
+          "help": "Optional cache directory; fresh (diff_tip, input_hash, taxonomy_hash, prompt_hash) tuples are served from the signals/ namespace."
         },
         {
           "flags": [
