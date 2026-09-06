@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.7.2
+
+#### Fixed
+- **The coverage-critic cache key now covers the diff bundle the critic reads, instead of being correct by accident (ISS-9674).** `coverage_critic_cache_key` was `(coverage_plan_initial_hash, signals_hash, diff_tip, prompt_hash, available_reviewers_hash)`. `_build_coverage_critic_input` returns `(main_input, diff_summary)` where `diff_summary` is literally `_build_signal_input(diff_data, intent_summary=None)` — the bundle the critic actually reads — and it was in no key component. As with the `signals/` namespace in v3.7.1, `diff_tip` is a ref *name* and never a commit id, so nothing in the tuple varied with the diff. The namespace did not misfire only because `signals_hash` hashes `extract_signals.json`, which carries a wall-clock `generated_at`: the key changed every run, so the cache never hit. That made the obvious optimization — strip `generated_at` so the coverage-critic cache finally hits — a change that would have served one review's coverage plan to a different review from the same pooled worktree, with no test failing. The key now includes `diff_summary_hash` (`signal_input_hash` over that bundle) and `cmd_coverage_critic_prepare` builds the input before computing the key rather than after. The manifest reports `diff_summary_hash` alongside its sibling component hashes. Adds a pooled-lane regression test that holds plan, signals, prompt, roster, and diff tip constant and varies only the diff; it fails against the previous key. Also corrects the key's docstring, which claimed all five components were content-addressed when `diff_tip` is not, and the `SCHEMA.md` cache-namespace row, which documented the wrong path shape and three of the five components.
+
 ### code-review v3.7.1
 
 #### Fixed

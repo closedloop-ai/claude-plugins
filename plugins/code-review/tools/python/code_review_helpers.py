@@ -7860,16 +7860,32 @@ def _stable_json_hash(payload: Any) -> str:
 def coverage_critic_cache_key(
     coverage_plan_initial_hash: str,
     signals_hash: str,
+    diff_summary_hash: str,
     diff_tip: str,
     prompt_hash: str,
     available_reviewers_hash: str,
 ) -> str:
     """Cache key for the ``coverage_critic`` namespace (PLN-725).
 
-    Tuple ``(coverage_plan_initial_hash, signals_hash, diff_tip,
-    prompt_hash, available_reviewers_hash)`` is the complete set of
-    inputs the critic is a pure function of. All five are
-    content-addressed.
+    Tuple ``(coverage_plan_initial_hash, signals_hash, diff_summary_hash,
+    diff_tip, prompt_hash, available_reviewers_hash)`` is the complete set
+    of inputs the critic is a pure function of. All are content-addressed
+    except ``diff_tip``, which is only a ref *name* (``"HEAD"`` for every
+    local branch review, ``origin/<branch>`` for a PR) and therefore
+    discriminates nothing on its own — it is a coarse extra component,
+    never the diff identity.
+
+    ``diff_summary_hash`` (ISS-9674) fingerprints the ``diff_summary``
+    half of ``_build_coverage_critic_input`` — which is literally
+    ``_build_signal_input(diff_data, intent_summary=None)``, the bundle
+    the critic reads. Before it was added, no key component varied with
+    the diff at all; the key changed run-to-run only because
+    ``signals_hash`` transitively covered ``extract_signals.json``'s
+    wall-clock ``generated_at``. That made this namespace correct by
+    accident and permanently cold, and it meant the obvious optimization
+    — strip ``generated_at`` so the cache finally hits — would have
+    served one review's coverage plan to another review from the same
+    pooled worktree, which is ISS-8961 in this namespace.
 
     ``available_reviewers_hash`` is the deterministic hash of the
     AVAILABLE roster the agent will actually see (sorted, dedup'd, and
@@ -7882,6 +7898,7 @@ def coverage_critic_cache_key(
     payload = (
         (coverage_plan_initial_hash or "") + "\0"
         + (signals_hash or "") + "\0"
+        + (diff_summary_hash or "") + "\0"
         + (diff_tip or "") + "\0"
         + (prompt_hash or "") + "\0"
         + (available_reviewers_hash or "")
@@ -8351,9 +8368,16 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     # stale (could propose a now-removed reviewer), so it must key
     # the cache.
     available_reviewers_hash = _available_reviewers_hash(available_reviewers)
+    # ISS-9674: build the agent input before the key, so the key can cover
+    # the diff bundle the critic actually reads. Mirrors the ordering
+    # ``cmd_extract_signals_prepare`` adopted for the same reason.
+    main_input, diff_summary = _build_coverage_critic_input(
+        plan_initial, extract_signals, diff_data, available_reviewers,
+    )
+    diff_summary_hash = signal_input_hash(diff_summary)
     key = coverage_critic_cache_key(
-        plan_initial_hash, signals_hash, diff_tip, prompt_hash,
-        available_reviewers_hash,
+        plan_initial_hash, signals_hash, diff_summary_hash, diff_tip,
+        prompt_hash, available_reviewers_hash,
     )
 
     cached = _read_cached_coverage_critic(cache_dir, key)
@@ -8376,9 +8400,6 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
             return 1
         return _emit_summary(manifest)
 
-    main_input, diff_summary = _build_coverage_critic_input(
-        plan_initial, extract_signals, diff_data, available_reviewers,
-    )
     input_path = cr_dir / "coverage_critic_input.json"
     diff_summary_path = cr_dir / "coverage_critic_diff_summary.json"
     with open(input_path, "w") as f:
@@ -8391,6 +8412,7 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         "cache_key": key,
         "coverage_plan_initial_hash": plan_initial_hash,
         "signals_hash": signals_hash,
+        "diff_summary_hash": diff_summary_hash,
         "prompt_hash": prompt_hash,
         "available_reviewers_hash": available_reviewers_hash,
         "input_path": str(input_path),
