@@ -1713,17 +1713,22 @@ def cmd_route(args: argparse.Namespace) -> int:
 
     fast_path = total_loc <= FAST_PATH_MAX_LOC
 
-    # Same lookup the spawn spec does for the standard flow, for the
-    # fast path's PASS 3 (which takes its critic names from here, not
-    # from a spawn-spec descriptor). Only critics that actually ship a
-    # ``.claude/agents/<name>.md`` appear, and the key is omitted
-    # entirely when none do, so the routing payload is unchanged for
-    # every project that has no critic agent files.
-    domain_critic_definitions = {
-        critic: definition
-        for critic in selected_domain_critics
-        if (definition := _resolve_critic_definition(critic))
-    }
+    # THE resolution of critic definitions for this run. Every consumer
+    # reads this map: the fast path's PASS 3 and the static fallback
+    # table (which take their critic names from ``route``, not from a
+    # spawn-spec descriptor), and spawn-spec derivation itself. It is
+    # keyed by every available definition rather than by the critics
+    # selected here, because ``coverage_critic`` can propose a critic
+    # name this stage never saw — one scan, one answer, one cwd, for
+    # names route knows about and names it does not.
+    #
+    # The key is omitted entirely when nothing resolves, so the routing
+    # payload is unchanged for every project with no agent definitions.
+    domain_critic_definitions, definition_warnings = _critic_definition_index(
+        _critic_agents_dir(getattr(args, "cr_dir", None)), _changed_paths(diff_data),
+    )
+    for warning in definition_warnings:
+        print(f"Warning: {warning}", file=sys.stderr)
 
     route_payload: dict[str, Any] = {
         "size_category": size_category,
@@ -7595,24 +7600,40 @@ def _parse_agent_name(text: str) -> str | None:
     return value
 
 
-def _scan_agent_definitions(agents_dir: Path) -> tuple[list[str], list[str]]:
-    """Walk ``agents_dir`` and return ``(reviewers, warnings)``.
+def _index_agent_definitions(agents_dir: Path) -> tuple[dict[str, str], list[str]]:
+    """Walk ``agents_dir`` and return ``(name -> path, warnings)``.
 
-    Reviewers is a dedup'd list of names, sorted by NAME (not filename)
-    so the output is stable independent of the file-naming scheme and
-    matches the cache-key sort applied by ``_available_reviewers_hash``.
-    The walk itself is filename-sorted for deterministic duplicate
-    handling — when two files declare the same name, the
-    lexicographically-first filename wins. Warnings is a list of
-    per-file diagnostics — unreadable files, missing frontmatter,
-    duplicate names — surfaced to stderr by the caller for operator
-    visibility without aborting the load.
+    The in-file ``name`` is the authoritative identifier (see the
+    section header above), so this is the ONE place a definition file
+    is turned into an identity. Everything that needs to go the other
+    way — "which file defines the critic called X?" — indexes through
+    this map rather than guessing ``<X>.md``, because a project whose
+    filename and ``name`` diverge would otherwise resolve to nothing
+    while the roster happily advertises the name.
+
+    The walk is filename-sorted for deterministic duplicate handling —
+    when two files declare the same name, the lexicographically-first
+    filename wins. Warnings is a list of per-file diagnostics —
+    unreadable files, missing frontmatter, duplicate names — surfaced
+    to stderr by the caller for operator visibility without aborting
+    the load.
     """
-    reviewers: list[str] = []
-    seen: set[str] = set()
+    definitions: dict[str, str] = {}
     warnings: list[str] = []
     if not agents_dir.is_dir():
-        return [], [f"agents dir not found: {agents_dir}"]
+        return {}, [f"agents dir not found: {agents_dir}"]
+    # Per-file lstat below refuses a symlinked leaf, but says nothing
+    # about the directories above it: a PR can ship `.claude/agents`
+    # (or `.claude`) as a symlink and every leaf under it is then a
+    # perfectly regular file somewhere else entirely. Refuse the whole
+    # scan in that case. Only the `.claude/agents` shape the pipeline
+    # itself resolves is checked, so an operator-supplied --agents-dir
+    # under a legitimately symlinked path (macOS /tmp, for one) is not
+    # caught by the parent check.
+    if agents_dir.is_symlink() or (
+        agents_dir.parent.name == ".claude" and agents_dir.parent.is_symlink()
+    ):
+        return {}, [f"agents dir is a symlink, refusing to scan: {agents_dir}"]
     # Cap scanned files BEFORE reading any bytes. A hostile PR could add
     # hundreds of small valid agent files; per-file read bounds prevent
     # OOM on any single file but say nothing about aggregate scan time,
@@ -7633,7 +7654,7 @@ def _scan_agent_definitions(agents_dir: Path) -> tuple[list[str], list[str]]:
         # the roster size. Stop adding entries once the cap is reached;
         # remaining files still get scanned for warning purposes so
         # operators see why their roster is short.
-        if len(reviewers) >= _ROSTER_MAX_ENTRIES:
+        if len(definitions) >= _ROSTER_MAX_ENTRIES:
             warnings.append(
                 f"roster size cap reached at {_ROSTER_MAX_ENTRIES} "
                 f"entries; skipping remaining {path.name} and beyond",
@@ -7688,17 +7709,25 @@ def _scan_agent_definitions(agents_dir: Path) -> tuple[list[str], list[str]]:
         if name is None:
             warnings.append(f"{path.name}: no parseable `name` in frontmatter")
             continue
-        if name in seen:
+        if name in definitions:
             warnings.append(f"{path.name}: duplicate name {name!r}; skipped")
             continue
-        seen.add(name)
-        reviewers.append(name)
-    # Final sort is by NAME — independent of filename scheme. Walking
-    # in filename order above kept the duplicate-name "first wins"
-    # behaviour deterministic; sorting the output here makes the
-    # documented "sorted by name" contract true for any naming scheme.
-    reviewers.sort()
-    return reviewers, warnings
+        definitions[name] = str(path)
+    return definitions, warnings
+
+
+def _scan_agent_definitions(agents_dir: Path) -> tuple[list[str], list[str]]:
+    """Walk ``agents_dir`` and return ``(reviewers, warnings)``.
+
+    Reviewers is a dedup'd list of names, sorted by NAME (not filename)
+    so the output is stable independent of the file-naming scheme and
+    matches the cache-key sort applied by ``_available_reviewers_hash``.
+    Thin projection of :func:`_index_agent_definitions` — the roster and
+    the critic-definition lookup must never disagree about which file
+    carries which name, so they share one walk.
+    """
+    definitions, warnings = _index_agent_definitions(agents_dir)
+    return sorted(definitions), warnings
 
 
 def cmd_load_available_reviewers(args: argparse.Namespace) -> int:
@@ -7755,44 +7784,81 @@ def cmd_load_available_reviewers(args: argparse.Namespace) -> int:
     return 0
 
 
-# Domain critic names are operator config (``critic-gates.json``), not a
-# closed vocabulary, so grammar-check before building a path from one:
-# no separators, no leading dot, bounded length. Mirrors the name
-# grammar the spawn-reviewers skill validates before substituting a
-# critic name into a prompt.
-_CRITIC_DEFINITION_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}$")
+def _critic_agents_dir(cr_dir: str | Path | None) -> Path:
+    """The directory a domain critic's own definition is resolved from.
 
-
-def _resolve_critic_definition(
-    critic_name: str, agents_dir: Path = DEFAULT_AGENTS_DIR,
-) -> str:
-    """Path to a domain critic's own agent definition, or ``""``.
-
-    A project can define a domain critic's whole method in
-    ``.claude/agents/<critic-name>.md``. Domain critics spawn as the
-    generic ``code-review:code-review-worker`` and receive only their
-    name, so that definition is loaded only if the spawn prompt is told
-    to Read it — resolving the path here lets ``stage_20`` hard-rank
-    that Read instead of relying on the worker to go looking for it.
-
-    Returns ``""`` when the critic has no such file — the common case —
-    so the prompt is assembled exactly as it was before this field
-    existed. Matching is by filename convention; a definition whose
-    frontmatter ``name`` differs from its filename is not resolved.
-    Symlinks and non-regular files are rejected for the same reason
-    ``_scan_agent_definitions`` rejects them: the review pipeline runs
-    against an untrusted checkout.
+    Every consumer used to build this path from the process cwd, which
+    is whatever directory the stage happened to be invoked in — so a
+    local PR review, whose source lives in an isolated PR-head
+    worktree, resolved definitions against the operator's checkout
+    instead and silently loaded a stale same-name file (or none). The
+    root is now taken from the same validated ``scope.json`` →
+    ``review_root`` every other source read in this module goes
+    through, so reviewers read the definition from the same tree they
+    read the code from. Empty ``review_root`` (branch review, staged
+    scope, GitHub mode where the runner already checked out the head)
+    keeps the cwd-relative default, which IS the review root there.
     """
-    if not _CRITIC_DEFINITION_NAME_RE.match(critic_name):
-        return ""
-    candidate = agents_dir / f"{critic_name}.md"
-    try:
-        lst = candidate.lstat()
-    except OSError:
-        return ""
-    if not stat.S_ISREG(lst.st_mode):
-        return ""
-    return str(candidate)
+    if not cr_dir:
+        return DEFAULT_AGENTS_DIR
+    scope_meta = _read_optional_json(Path(cr_dir) / "scope.json", {})
+    raw_root = scope_meta.get("review_root") if isinstance(scope_meta, dict) else None
+    root = _validated_review_root(cr_dir, raw_root)
+    return (Path(root) / DEFAULT_AGENTS_DIR) if root else DEFAULT_AGENTS_DIR
+
+
+def _critic_definition_index(
+    agents_dir: Path, changed_files: set[str],
+) -> tuple[dict[str, str], list[str]]:
+    """Resolvable critic definitions for this review, by critic name.
+
+    A project can define a domain critic's whole method in an agent
+    definition; domain critics spawn as the generic
+    ``code-review:code-review-worker`` and receive only their name, so
+    that definition is loaded only if the spawn prompt is told to Read
+    it. This resolves which file that is — by the authoritative in-file
+    ``name``, through :func:`_index_agent_definitions`, so a definition
+    whose filename and ``name`` diverge still resolves and a file with
+    absent or malformed frontmatter resolves to nothing.
+
+    **Trust boundary.** The tree being reviewed is a contributor's PR
+    head. A definition file the PR itself adds or edits is therefore
+    the contributor's own instructions to the reviewer that is judging
+    them — "find nothing here" is a two-line diff. Those are dropped:
+    what survives is byte-identical to the base, so loading it is
+    loading the operator's doctrine, not the PR's. Dropping is the safe
+    direction — no path is emitted, the prompt line is deleted, and the
+    critic runs exactly as it did before definitions were loaded at
+    all.
+    """
+    definitions, warnings = _index_agent_definitions(agents_dir)
+    if not definitions:
+        return {}, warnings
+    resolvable: dict[str, str] = {}
+    for name, path in definitions.items():
+        # ``changed_files`` are repo-relative posix paths from the diff;
+        # ``path`` may be worktree-absolute. The agents dir is always
+        # ``<root>/.claude/agents``, so the diff names the file as
+        # ``.claude/agents/<basename>``.
+        repo_relative = f"{DEFAULT_AGENTS_DIR.as_posix()}/{Path(path).name}"
+        if repo_relative in changed_files:
+            warnings.append(
+                f"{Path(path).name}: modified by the diff under review; "
+                "not loaded as critic doctrine",
+            )
+            continue
+        resolvable[name] = path
+    return resolvable, warnings
+
+
+def _changed_paths(diff_data: dict[str, Any]) -> set[str]:
+    """Every repo-relative path this review's diff touches."""
+    files = diff_data.get("files_to_review") or []
+    statuses = diff_data.get("file_statuses") or {}
+    changed: set[str] = {str(f) for f in files if isinstance(f, str)}
+    if isinstance(statuses, dict):
+        changed.update(str(f) for f in statuses if isinstance(f, str))
+    return changed
 
 
 # ---------------------------------------------------------------------------
@@ -11479,6 +11545,67 @@ def _make_coverage_gap_finding(
     )
 
 
+def _make_definition_not_loaded_gap(
+    critics: list[str],
+    *,
+    index: int,
+    emitted_at: str,
+) -> dict[str, Any]:
+    """Coverage gap: a critic was handed its definition and never loaded it.
+
+    The whole point of resolving ``agent_definition_file`` is that a
+    prose "read this" line is not obeyed — measured at zero of twelve
+    workers. A resolved-but-unloaded definition therefore has to be
+    observable, or the fix inherits the failure mode it removes: the
+    critic runs, emits plausible findings, and nothing distinguishes
+    "reviewed under the project's doctrine" from "freelanced". The
+    critic reports ``definition_loaded`` in its output file and this is
+    what the absence of that report costs. ``required: False`` → HIGH,
+    which ``_compute_canonical_verdict`` escalates to NEEDS_ATTENTION
+    (a human decides whether the domain was really covered) rather than
+    CHANGES_REQUESTED.
+    """
+    listed = ", ".join(sorted(critics))
+    return normalize_legacy_finding(
+        {
+            "id": make_finding_id("coverage-verifier", index),
+            "reviewer": "coverage-verifier",
+            "source": "coverage-verifier",
+            "schema_version": SCHEMA_VERSION,
+            "finding_scope": "system",
+            "file": None,
+            "line": None,
+            "system_marker": "coverage:critic-definition-not-loaded",
+            "category": "Coverage",
+            "severity": "HIGH",
+            "priority": 1,
+            "confidence": 1.0,
+            "issue": (
+                f"{len(critics)} domain critic(s) did not confirm loading their "
+                f"own definition: {listed}"
+            ),
+            "explanation": (
+                "The spawn spec resolved an agent definition for these critics "
+                "and their prompt required it to be read first, but their output "
+                "file does not report `definition_loaded: true`. Their findings "
+                "were produced without the project's own definition of the "
+                "critic, so the domain coverage this run claims is not the "
+                "coverage it got."
+            ),
+            "recommendation": (
+                "Re-run the review, or treat the named domain(s) as unreviewed "
+                "and read them manually before merging."
+            ),
+            "code_snippet": "",
+            "required": False,
+        },
+        reviewer="coverage-verifier",
+        source="coverage-verifier",
+        index=index,
+        emitted_at=emitted_at,
+    )
+
+
 def _make_unverified_findings_gap(
     count: int,
     *,
@@ -12044,7 +12171,7 @@ def _derive_spawn_agents_from_plan(
     models: dict[str, Any],
     *,
     bha_partitions_cap: int | None = None,
-    critic_agents_dir: Path = DEFAULT_AGENTS_DIR,
+    critic_definitions: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Walk the post-arbitrate plan into a flat (agents, skipped) pair.
 
@@ -12064,11 +12191,13 @@ def _derive_spawn_agents_from_plan(
     means "no cap" — only used by callers that pre-date the cap
     parameter.
 
-    ``critic_agents_dir`` is where a domain critic's own agent
-    definition is looked up (``.claude/agents/`` relative to the review
-    cwd by default, matching ``load-available-reviewers``). A critic
-    that has one carries its path as ``agent_definition_file``; a
-    critic that does not carries no such key.
+    ``critic_definitions`` is the run's critic-name -> definition-path
+    map, resolved once by ``cmd_route`` and read back from
+    ``spawn.json.route``. A critic present in it carries its path as
+    ``agent_definition_file``; a critic that is not carries no such
+    key. This stage does no filesystem lookup of its own — resolving
+    the same fact twice, at two stages, against whatever cwd each
+    happened to have, is how the two answers diverge.
     """
     agents: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -12238,7 +12367,7 @@ def _derive_spawn_agents_from_plan(
             # Only present when the project actually ships
             # ``.claude/agents/<critic>.md``; absent otherwise, which
             # leaves the stage_20 prompt byte-identical to before.
-            definition = _resolve_critic_definition(reviewer, critic_agents_dir)
+            definition = (critic_definitions or {}).get(reviewer, "")
             if definition:
                 descriptor["agent_definition_file"] = definition
             agents.append(descriptor)
@@ -12442,9 +12571,21 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     bha_cap_raw = budget.get("bha_partitions")
     bha_cap: int | None = int(bha_cap_raw) if isinstance(bha_cap_raw, int) else None
 
+    # Resolved once at route (Gate B) and read back here — see
+    # ``_critic_definition_index``. A route with no map (no agent
+    # definitions, or every one of them touched by the diff) yields no
+    # ``agent_definition_file`` keys, which is the pre-existing shape.
+    raw_definitions = route.get("domain_critic_definitions")
+    critic_definitions = {
+        str(k): str(v)
+        for k, v in raw_definitions.items()
+        if isinstance(k, str) and isinstance(v, str) and v
+    } if isinstance(raw_definitions, dict) else {}
+
     agents, skipped = _derive_spawn_agents_from_plan(
         plan_for_spawn, partitions, models,
         bha_partitions_cap=bha_cap,
+        critic_definitions=critic_definitions,
     )
     skipped.extend(sanitized_extras)
 
@@ -12737,6 +12878,19 @@ def _write_spawn_spec(spec: dict[str, Any], cr_dir: Path) -> int:
 # observable in the run summary instead of silently dropping coverage.
 
 
+def _reports_definition_loaded(output_path: Path) -> bool:
+    """True when a reviewer's output file reports it loaded its definition.
+
+    The canonical reviewer output is ``{"findings": [...]}``; the
+    definition step adds a sibling ``definition_loaded`` boolean. A
+    bare-list output, an unreadable or malformed file, or a missing /
+    non-``true`` key all read as "did not report", which is the whole
+    point — the claim has to be made, not assumed.
+    """
+    blob = _read_optional_json(output_path, None)
+    return isinstance(blob, dict) and blob.get("definition_loaded") is True
+
+
 def cmd_verify_spawn(args: argparse.Namespace) -> int:
     """Compare ``spawn_spec.agents[]`` against on-disk ``agent_*.json``.
 
@@ -12745,6 +12899,14 @@ def cmd_verify_spawn(args: argparse.Namespace) -> int:
     coverage-gap finding to ``coverage_gaps.json``. Non-required
     (best_effort) missing agents emit no finding — those are
     budget-driven omissions, not coverage gaps.
+
+    Also checks the descriptors that DID produce output: one that
+    carried an ``agent_definition_file`` must report
+    ``definition_loaded: true``, or the run gets one aggregate
+    coverage gap naming the critics that reviewed without the doctrine
+    the project wrote for them. A resolved-but-unloaded definition is
+    otherwise indistinguishable from a loaded one — the critic still
+    runs and still emits plausible findings.
 
     Reads:
       - ``<cr_dir>/spawn.json`` ``.spec`` section (derived by stage_19b)
@@ -12820,11 +12982,26 @@ def cmd_verify_spawn(args: argparse.Namespace) -> int:
 
     missing_agents: list[dict[str, Any]] = []
     missing_required: list[dict[str, Any]] = []
+    definition_not_loaded: list[dict[str, Any]] = []
     for desc in agents:
         if not isinstance(desc, dict):
             continue
         agent_id = str(desc.get("agent_id", "") or "")
-        if not agent_id or agent_id in present_ids:
+        if not agent_id:
+            continue
+        if agent_id in present_ids:
+            # The agent ran. If it was handed a definition, its output
+            # has to say it loaded one — otherwise the definition step
+            # is exactly the unenforced prose this pipeline already
+            # measured workers ignoring.
+            if desc.get("agent_definition_file") and not _reports_definition_loaded(
+                cr_dir / f"agent_{agent_id}.json",
+            ):
+                definition_not_loaded.append({
+                    "agent_id": agent_id,
+                    "reviewer": str(desc.get("reviewer", "") or ""),
+                    "agent_definition_file": str(desc.get("agent_definition_file") or ""),
+                })
             continue
         record = {
             "agent_id": agent_id,
@@ -12850,6 +13027,14 @@ def cmd_verify_spawn(args: argparse.Namespace) -> int:
                 emitted_at=now_iso,
             ),
         )
+    if definition_not_loaded:
+        findings.append(
+            _make_definition_not_loaded_gap(
+                [r["reviewer"] or r["agent_id"] for r in definition_not_loaded],
+                index=len(findings),
+                emitted_at=now_iso,
+            ),
+        )
     if findings:
         _append_to_coverage_gaps(
             cr_dir / "coverage_gaps.json", findings,
@@ -12862,7 +13047,8 @@ def cmd_verify_spawn(args: argparse.Namespace) -> int:
         "present_agents": sorted(present_ids),
         "missing_agents": missing_agents,
         "missing_required": missing_required,
-        "missing_required_gaps": len(findings),
+        "missing_required_gaps": len(missing_required),
+        "definition_not_loaded": definition_not_loaded,
         "generated_at": now_iso,
     }
     try:

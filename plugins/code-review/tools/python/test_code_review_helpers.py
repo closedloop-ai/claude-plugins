@@ -23563,20 +23563,23 @@ class TestRunPrefixRoutePartition:
 class TestDomainCriticAgentDefinition:
     """A domain critic named in ``critic-gates.json`` spawns as the
     generic ``code-review:code-review-worker`` and receives only its
-    own name, so a project's ``.claude/agents/<critic-name>.md`` — which
-    may define the critic's entire method — is never loaded unless the
-    spawn prompt is ordered to Read it. These pin the resolution half of
-    that fix: the descriptor (standard flow) and the route map (fast
-    path) carry the path when the file exists, and carry nothing at all
-    when it does not.
+    own name, so a project's agent definition — which may define the
+    critic's entire method — is never loaded unless the spawn prompt is
+    ordered to Read it. These pin the resolution half of that fix:
+    which file a critic name resolves to, which files are refused, that
+    the run resolves it exactly once, and that a critic which never
+    loads what it was handed becomes a coverage gap rather than a set
+    of plausible findings.
     """
 
     @staticmethod
-    def _agent_file(root: Path, name: str) -> Path:
+    def _agent_file(root: Path, filename: str, declared_name: str) -> Path:
         agents_dir = root / ".claude" / "agents"
         agents_dir.mkdir(parents=True, exist_ok=True)
-        path = agents_dir / f"{name}.md"
-        path.write_text(f"---\nname: {name}\n---\n\nMandatory: load the soul.\n")
+        path = agents_dir / f"{filename}.md"
+        path.write_text(
+            f"---\nname: {declared_name}\n---\n\nMandatory: load the soul.\n",
+        )
         return path
 
     @staticmethod
@@ -23591,7 +23594,11 @@ class TestDomainCriticAgentDefinition:
         return {"partitions": [], "test_file_paths": [], "force_merged_count": 0}
 
     @staticmethod
-    def _route(diff_data: dict[str, Any], gates_path: Path) -> dict[str, Any]:
+    def _route(
+        diff_data: dict[str, Any],
+        gates_path: Path,
+        cr_dir: Path | None = None,
+    ) -> dict[str, Any]:
         import io
         import sys as _sys
 
@@ -23600,50 +23607,247 @@ class TestDomainCriticAgentDefinition:
         _sys.stdout = io.StringIO()
         try:
             cmd_route(argparse.Namespace(
-                critic_gates=str(gates_path), intent="mixed", cr_dir=None,
+                critic_gates=str(gates_path), intent="mixed",
+                cr_dir=str(cr_dir) if cr_dir else None,
             ))
             _sys.stdout.seek(0)
             return json.load(_sys.stdout)
         finally:
             _sys.stdin, _sys.stdout = old_stdin, old_stdout
 
-    def test_descriptor_carries_definition_when_agent_file_exists(
+    @staticmethod
+    def _gates(critics: list[str]) -> dict[str, Any]:
+        return {
+            "defaults": {"reviewBudget": 4},
+            "moduleCritics": [{"patterns": [".py"], "critics": critics}],
+        }
+
+    def _repo_with_route(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        filename: str, declared_name: str, changed: list[str] | None = None,
+    ) -> dict[str, Any]:
+        repo = tmp_path / "repo"
+        repo.mkdir(exist_ok=True)
+        self._agent_file(repo, filename, declared_name)
+        gates_path = repo / "critic-gates.json"
+        gates_path.write_text(json.dumps(self._gates([declared_name])))
+        monkeypatch.chdir(repo)
+        files = ["src/app.py", *(changed or [])]
+        return self._route(
+            _make_diff_data(
+                files=files,
+                loc={f: {"added": 10, "removed": 0} for f in files},
+            ),
+            gates_path,
+        )
+
+    def test_resolution_follows_frontmatter_name_not_filename(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """With ``.claude/agents/review-soul.md`` on disk, the domain
-        critic descriptor names it so stage_20 can hard-rank the Read.
+        """``soul.md`` declaring ``name: review-soul`` is the definition
+        of ``review-soul``.
+
+        The roster (``_scan_agent_definitions``) already advertises the
+        in-file name, and that is what ``critic-gates.json`` and the
+        coverage critic speak. Resolving ``<name>.md`` instead meant any
+        project whose filename and ``name`` diverge got the silent
+        no-doctrine spawn this whole fix exists to kill.
+        """
+        route = self._repo_with_route(tmp_path, monkeypatch, "soul", "review-soul")
+        assert route["domain_critic_definitions"] == {
+            "review-soul": str(Path(".claude/agents/soul.md")),
+        }
+
+    def test_definition_declaring_another_name_is_not_this_critic(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``review-soul.md`` declaring ``name: something-else`` resolves
+        as ``something-else``, never as ``review-soul``.
+        """
+        route = self._repo_with_route(
+            tmp_path, monkeypatch, "review-soul", "something-else",
+        )
+        definitions = route["domain_critic_definitions"]
+        assert definitions == {"something-else": str(Path(".claude/agents/review-soul.md"))}
+        assert "review-soul" not in definitions
+
+    def test_malformed_frontmatter_resolves_to_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A file with no parseable ``name`` has no identity, so it is
+        not the definition of anything — the prompt line is deleted and
+        the critic runs as it did before definitions existed.
         """
         repo = tmp_path / "repo"
         repo.mkdir()
-        definition = self._agent_file(repo, "review-soul")
+        agents_dir = repo / ".claude" / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "review-soul.md").write_text("no frontmatter here\n")
+        gates_path = repo / "critic-gates.json"
+        gates_path.write_text(json.dumps(self._gates(["review-soul"])))
         monkeypatch.chdir(repo)
-        cr_dir = repo / ".closedloop-ai" / "code-review" / "cr-1"
-        cr_dir.mkdir(parents=True)
 
-        _, spec = _run_derive_spawn_spec(
-            cr_dir, self._critic_plan("review-soul"), self._partitions(), {},
+        route = self._route(
+            _make_diff_data(
+                files=["src/app.py"], loc={"src/app.py": {"added": 10, "removed": 0}},
+            ),
+            gates_path,
         )
-        critic = next(a for a in spec["agents"] if a["agent_id"] == "domain_0")
-        assert critic["agent_definition_file"] == str(Path(".claude/agents/review-soul.md"))
-        assert definition.exists()
+        assert route["domain_critics"] == ["review-soul"]
+        assert "domain_critic_definitions" not in route
 
-    def test_descriptor_unchanged_when_no_agent_file(
+    def test_definition_touched_by_the_diff_is_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The common case — a critic with no agent file. The descriptor
+        """The tree under review is the contributor's PR head, so a
+        definition the diff itself edits is the contributor instructing
+        the reviewer that judges them. Refuse it; what remains is
+        byte-identical to the base.
+        """
+        route = self._repo_with_route(
+            tmp_path, monkeypatch, "review-soul", "review-soul",
+            changed=[".claude/agents/review-soul.md"],
+        )
+        assert route["domain_critics"] == ["review-soul"]
+        assert "domain_critic_definitions" not in route
+
+    def test_symlinked_agents_dir_refuses_the_whole_scan(
+        self, tmp_path: Path,
+    ) -> None:
+        """A leaf ``lstat`` says nothing about the directories above it:
+        ``.claude/agents`` symlinked elsewhere resolves every leaf under
+        it to a perfectly regular file in a tree the review never
+        validated.
+        """
+        from code_review_helpers import _index_agent_definitions
+
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "review-soul.md").write_text("---\nname: review-soul\n---\n")
+        repo = tmp_path / "repo"
+        (repo / ".claude").mkdir(parents=True)
+        (repo / ".claude" / "agents").symlink_to(elsewhere, target_is_directory=True)
+
+        definitions, warnings = _index_agent_definitions(repo / ".claude" / "agents")
+        assert definitions == {}
+        assert any("symlink" in w for w in warnings)
+
+    def test_symlinked_claude_dir_refuses_the_whole_scan(
+        self, tmp_path: Path,
+    ) -> None:
+        """Same hole one level up — ``.claude`` itself as the symlink."""
+        from code_review_helpers import _index_agent_definitions
+
+        elsewhere = tmp_path / "elsewhere"
+        (elsewhere / "agents").mkdir(parents=True)
+        (elsewhere / "agents" / "review-soul.md").write_text(
+            "---\nname: review-soul\n---\n",
+        )
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".claude").symlink_to(elsewhere, target_is_directory=True)
+
+        definitions, warnings = _index_agent_definitions(repo / ".claude" / "agents")
+        assert definitions == {}
+        assert any("symlink" in w for w in warnings)
+
+    def test_symlinked_definition_file_is_refused(self, tmp_path: Path) -> None:
+        """The leaf case the roster scan already refused, still refused
+        now that the same walk feeds critic resolution.
+        """
+        from code_review_helpers import _index_agent_definitions
+
+        agents_dir = tmp_path / ".claude" / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "real.md").write_text("---\nname: real\n---\n")
+        (agents_dir / "linked.md").symlink_to(agents_dir / "real.md")
+
+        definitions, _ = _index_agent_definitions(agents_dir)
+        assert definitions == {"real": str(agents_dir / "real.md")}
+
+    def test_oversized_definition_is_read_bounded(self, tmp_path: Path) -> None:
+        """A mandatory Read of an unbounded file is a runner the PR can
+        hang. The resolver inherits the roster scan's byte cap, so an
+        oversized definition costs a bounded prefix read and says so.
+        """
+        from code_review_helpers import (
+            _AGENT_FILE_READ_LIMIT_BYTES,
+            _index_agent_definitions,
+        )
+
+        agents_dir = tmp_path / ".claude" / "agents"
+        agents_dir.mkdir(parents=True)
+        huge = agents_dir / "review-soul.md"
+        huge.write_text(
+            "---\nname: review-soul\n---\n" + ("x" * (_AGENT_FILE_READ_LIMIT_BYTES + 4096)),
+        )
+
+        definitions, warnings = _index_agent_definitions(agents_dir)
+        assert definitions == {"review-soul": str(huge)}
+        assert any("oversized" in w for w in warnings)
+
+    def test_route_resolves_against_the_validated_review_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A local PR review isolates the head into a worktree, so the
+        definition the reviewers must read is the one in THAT tree — not
+        whichever same-name file the operator's checkout happens to have.
+        """
+        from code_review_helpers import _expected_worktree_path
+
+        repo = tmp_path / "repo"
+        cr_dir = repo / ".closedloop-ai" / "code-review" / "cr-1"
+        cr_dir.mkdir(parents=True)
+        # The operator's checkout carries a DIFFERENT critic's file, so a
+        # cwd-rooted lookup would resolve nothing for `review-soul`.
+        self._agent_file(repo, "api-architect", "api-architect")
+        worktree = Path(_expected_worktree_path(cr_dir))
+        self._agent_file(worktree, "soul", "review-soul")
+        (cr_dir / "scope.json").write_text(json.dumps({"review_root": str(worktree)}))
+        gates_path = repo / "critic-gates.json"
+        gates_path.write_text(json.dumps(self._gates(["review-soul"])))
+        monkeypatch.chdir(repo)
+
+        route = self._route(
+            _make_diff_data(
+                files=["src/app.py"], loc={"src/app.py": {"added": 10, "removed": 0}},
+            ),
+            gates_path,
+            cr_dir=cr_dir,
+        )
+        assert route["domain_critic_definitions"] == {
+            "review-soul": str(worktree / ".claude" / "agents" / "soul.md"),
+        }
+
+    def test_descriptor_takes_the_path_from_the_route_map(
+        self, tmp_path: Path,
+    ) -> None:
+        """One resolution per run. Derivation reads the map route
+        already wrote instead of re-walking the filesystem at a second
+        stage with a second cwd — so the map is what the descriptor
+        carries, even when no such file is reachable from here.
+        """
+        cr_dir = tmp_path / "cr-1"
+        cr_dir.mkdir()
+        _, spec = _run_derive_spawn_spec(
+            cr_dir, self._critic_plan("review-soul"), self._partitions(),
+            {"domain_critic_definitions": {"review-soul": ".claude/agents/soul.md"}},
+        )
+        critic = next(a for a in spec["agents"] if a["agent_id"] == "domain_0")
+        assert critic["agent_definition_file"] == ".claude/agents/soul.md"
+
+    def test_descriptor_unchanged_when_critic_has_no_definition(
+        self, tmp_path: Path,
+    ) -> None:
+        """The common case — a critic with no definition. The descriptor
         must carry no new key, so the assembled prompt is identical to
         the pre-fix output.
         """
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        # A different critic's file exists; the selected one has none.
-        self._agent_file(repo, "review-soul")
-        monkeypatch.chdir(repo)
-        cr_dir = repo / ".closedloop-ai" / "code-review" / "cr-1"
-        cr_dir.mkdir(parents=True)
-
+        cr_dir = tmp_path / "cr-1"
+        cr_dir.mkdir()
         _, spec = _run_derive_spawn_spec(
-            cr_dir, self._critic_plan("api-architect"), self._partitions(), {},
+            cr_dir, self._critic_plan("api-architect"), self._partitions(),
+            {"domain_critic_definitions": {"review-soul": ".claude/agents/soul.md"}},
         )
         critic = next(a for a in spec["agents"] if a["agent_id"] == "domain_0")
         assert "agent_definition_file" not in critic
@@ -23652,59 +23856,98 @@ class TestDomainCriticAgentDefinition:
             "patches_file", "source", "bucket", "priority",
         }
 
-    def test_route_maps_only_critics_with_agent_files(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """The fast path takes its critic names from
-        ``route.domain_critics``, so the same resolution has to ride
-        along there. Absent file → absent map entry, never a null.
-        """
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._agent_file(repo, "python-script-reviewer")
-        gates = {
-            "defaults": {"reviewBudget": 4},
-            "moduleCritics": [
-                {"patterns": [".py"], "critics": ["python-script-reviewer"]},
-            ],
-        }
-        gates_path = repo / "critic-gates.json"
-        gates_path.write_text(json.dumps(gates))
-        monkeypatch.chdir(repo)
+    @staticmethod
+    def _verify_spawn(cr_dir: Path) -> dict[str, Any]:
+        from code_review_helpers import cmd_verify_spawn
+        from golden_fixture_harness import run_with_stdout_capture
 
-        data = _make_diff_data(
-            files=["src/app.py"], loc={"src/app.py": {"added": 10, "removed": 0}},
-        )
-        with_file = self._route(data, gates_path)
-        assert with_file["domain_critics"] == ["python-script-reviewer"]
-        assert with_file["domain_critic_definitions"] == {
-            "python-script-reviewer": str(Path(".claude/agents/python-script-reviewer.md")),
-        }
+        run_with_stdout_capture(cmd_verify_spawn, argparse.Namespace(cr_dir=str(cr_dir)))
+        return json.loads((cr_dir / "spawn.json").read_text()).get("verification", {})
 
-        (repo / ".claude" / "agents" / "python-script-reviewer.md").unlink()
-        without_file = self._route(data, gates_path)
-        assert without_file["domain_critics"] == ["python-script-reviewer"]
-        assert "domain_critic_definitions" not in without_file
+    @staticmethod
+    def _seed_spawned_critic(cr_dir: Path, output: dict[str, Any] | list[Any]) -> None:
+        from code_review_helpers import _write_spawn_section
 
-    def test_resolver_rejects_traversal_symlink_and_missing(
+        _write_spawn_section(cr_dir, "spec", {
+            "arbitrate_status": "ok",
+            "agents": [{
+                "agent_id": "domain_0",
+                "reviewer": "review-soul",
+                "bucket": "best_effort",
+                "source": "rule",
+                "agent_definition_file": ".claude/agents/soul.md",
+            }],
+        })
+        (cr_dir / "agent_domain_0.json").write_text(json.dumps(output))
+
+    def test_unloaded_definition_becomes_a_coverage_gap(
         self, tmp_path: Path,
     ) -> None:
-        """Critic names are operator config, so a name that isn't a
-        plain filename resolves to "" rather than a path, and a symlink
-        is refused for the same reason ``_scan_agent_definitions``
-        refuses one.
+        """The failure this fix was written to remove, one level up: the
+        critic ran, wrote plausible findings, and never read the
+        definition it was handed. Nothing in the artifact said so.
         """
-        from code_review_helpers import _resolve_critic_definition
+        cr_dir = tmp_path / "cr-1"
+        cr_dir.mkdir()
+        self._seed_spawned_critic(cr_dir, {"findings": []})
 
-        agents_dir = tmp_path / ".claude" / "agents"
-        agents_dir.mkdir(parents=True)
-        (agents_dir / "real.md").write_text("---\nname: real\n---\n")
-        (agents_dir / "linked.md").symlink_to(agents_dir / "real.md")
-        outside = tmp_path / "outside.md"
-        outside.write_text("owned")
+        verification = self._verify_spawn(cr_dir)
+        assert [r["agent_id"] for r in verification["definition_not_loaded"]] == ["domain_0"]
+        gaps = json.loads((cr_dir / "coverage_gaps.json").read_text())
+        findings = gaps if isinstance(gaps, list) else gaps.get("findings", [])
+        assert [f["system_marker"] for f in findings] == [
+            "coverage:critic-definition-not-loaded",
+        ]
+        assert findings[0]["severity"] == "HIGH"
+        assert findings[0]["required"] is False
+        assert "review-soul" in findings[0]["issue"]
 
-        assert _resolve_critic_definition("real", agents_dir) == str(agents_dir / "real.md")
-        assert _resolve_critic_definition("linked", agents_dir) == ""
-        assert _resolve_critic_definition("missing", agents_dir) == ""
-        assert _resolve_critic_definition("../outside", agents_dir) == ""
-        assert _resolve_critic_definition("", agents_dir) == ""
+    def test_loaded_definition_emits_no_gap(self, tmp_path: Path) -> None:
+        """The positive control — the report is what clears it, and it
+        has to actually clear it.
+        """
+        cr_dir = tmp_path / "cr-1"
+        cr_dir.mkdir()
+        self._seed_spawned_critic(
+            cr_dir, {"findings": [], "definition_loaded": True},
+        )
+
+        verification = self._verify_spawn(cr_dir)
+        assert verification["definition_not_loaded"] == []
+        assert not (cr_dir / "coverage_gaps.json").exists()
+
+    def test_bare_list_output_does_not_clear_the_check(
+        self, tmp_path: Path,
+    ) -> None:
+        """A reviewer that writes the legacy bare-list shape has made no
+        claim, and an unmade claim is not a satisfied one.
+        """
+        cr_dir = tmp_path / "cr-1"
+        cr_dir.mkdir()
+        self._seed_spawned_critic(cr_dir, [])
+
+        verification = self._verify_spawn(cr_dir)
+        assert [r["agent_id"] for r in verification["definition_not_loaded"]] == ["domain_0"]
+
+    def test_critic_without_a_definition_is_never_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """No definition resolved, nothing to load, no gap — the common
+        case must not start reporting a coverage gap on every run.
+        """
+        from code_review_helpers import _write_spawn_section
+
+        cr_dir = tmp_path / "cr-1"
+        cr_dir.mkdir()
+        _write_spawn_section(cr_dir, "spec", {
+            "arbitrate_status": "ok",
+            "agents": [{
+                "agent_id": "domain_0", "reviewer": "api-architect",
+                "bucket": "best_effort", "source": "rule",
+            }],
+        })
+        (cr_dir / "agent_domain_0.json").write_text(json.dumps({"findings": []}))
+
+        verification = self._verify_spawn(cr_dir)
+        assert verification["definition_not_loaded"] == []
+        assert not (cr_dir / "coverage_gaps.json").exists()
