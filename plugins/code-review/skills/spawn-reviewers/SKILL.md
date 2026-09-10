@@ -274,8 +274,9 @@ entries can cite any repo file.
 
 Write findings to <output_file> in the JSON shape documented in
 shared_prompt.txt (`category: "ImpactAnalysis"`, populated
-external_impact[] and grep_query_used). Emit findings only when you
-have ≥1 concrete external usage with cited breakage. If grep returns
+external_impact[]; `grep_query_used` populated whenever any entry is
+`discovery: "grep"`). Emit findings only when you
+have ≥1 concrete external usage with cited breakage. If your search finds
 zero external usages OR every usage is guarded, do not emit a finding
 for that symbol.
 
@@ -285,17 +286,22 @@ deferred schemas with ToolSearch first) and ALSO use its capability C2 (usage/ca
 enumeration) to reach callers grep cannot (aliases,
 re-exports, dynamic dispatch); tag those entries `discovery: "graph"` and put
 them in the certificate's `graph_discovered_usages` per the Inputs/Step 2
-sections of impact_analyzer_prompt.txt. Always run grep too and record a real
+sections of impact_analyzer_prompt.txt. Run your text-search tool too whenever you
+hold one, and record the real query you ran in
 `grep_query_used` for the `discovery: "grep"` entries (the verifier replays it
-against `external_usages_found`). Read every callsite to capture its verbatim
+against `external_usages_found`). If you hold NO text-search tool at all, leave
+`grep_query_used` null and `external_usages_found` empty and tag every entry
+`discovery: "graph"` — never write a query you did not execute. Read every callsite
+to capture its verbatim
 `callsite_snippet` regardless of substrate, and validate substrate-returned paths are
-inside this checkout. When CODE_INTEL_ALLOWED is false or nothing answers C2, grep only.
+inside this checkout. When CODE_INTEL_ALLOWED is false or nothing answers C2, use
+text search alone (or targeted Reads if you hold no search tool).
 
 Respond ONLY with:
   DONE findings={count} file={output_file_path}
 
-Use Read, Grep, and Glob — plus whatever code-intelligence MCP tools your
-session provides. Do NOT use Bash.
+Use Read, plus whatever text-search and code-intelligence tools your session
+provides. Do NOT use Bash.
 ```
 
 **Design Critic** (conditional, deep tier only, `subagent_type: "code-review:code-review-worker-graph"`, model `sonnet`, `AGENT_ID: "design_critic"`):
