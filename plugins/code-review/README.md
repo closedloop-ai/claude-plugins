@@ -48,10 +48,14 @@ plugins/code-review/
     python/code_review_schema.py     Canonical Finding + ResultEnvelope schema + validators (PLN-719)
     python/test_code_review_schema.py  Schema tests + round-trips
     python/code_review_helpers.py    Deterministic helper CLI (parse-diff, hygiene, partition, route, validate, cache, finalize-result, arbitrate-budget, prepare-run, etc.)
+    python/config/cli.json           Declarative argparse spec the helper CLI builds its subparsers from
+    python/config/stages.json        Declarative stage table backing `prepare-run`'s `run_plan.json` and `run-prefix`
+    python/signal_taxonomy.json      Signal taxonomy loaded by signal extraction; its bytes are hashed into the extraction cache key
+    python/conftest.py               Shared pytest fixtures and finding factories for the co-located tests
     python/test_code_review_helpers.py   Unit tests for the helper CLI
     python/golden_fixture_harness.py     Golden fixture harness: replays canonical inputs through helper subcommands and diffs against expected envelopes (PLN-719 Phase 8)
     python/test_golden_fixtures.py       Pytest driver that runs every fixture under tools/python/fixtures/
-    python/fixtures/<name>/              Per-fixture directory (config.yaml + inputs/ + expected/); 3 full scenarios + 6 README-stubs for future coverage
+    python/fixtures/<name>/              Per-fixture directory (config.yaml + inputs/ + expected/); 4 full scenarios + 3 README-stubs for future coverage
     python/prefix_golden_harness.py      Prefix golden harness + subprocess A/B parity oracle: walks the deterministic prefix against real git fixtures — in-process for golden snapshots, and per-stage-subprocess vs `run-prefix` for byte-equal parity (PLN-1229 Phase 0/1)
     python/test_prefix_golden.py         Pytest driver for the prefix harness: determinism oracle + golden diff across the prefix_fixtures/ matrix
     python/prefix_fixtures/<name>/       Per-fixture directory (expected/ golden snapshots); 7 branch scenarios (standard, fast-path, hygiene-only, empty-diff, cache-hit, since-last-review, coverage-critic)
