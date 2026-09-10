@@ -39,6 +39,11 @@ Coverage and evidence disposition rule: any `covered` or `already covered` dispo
 29. **Coverage claim without a fail-closed test** where a `covered` or `already covered` disposition cites no test, or cites only a happy-path assertion, instead of a named test that fails closed on the wrong-input or negative case (including security findings).
 30. **Integration-boundary coverage backed only by helper tests** where a CLI, route handler, package export, worker/job, replay path, ingest pipeline, attribution pipeline, or public API is claimed covered by a pure helper test that never exercises production wiring through the real boundary.
 31. **Non-applicability claim without source evidence** where a `not applicable` disposition says a surface has no consumers, no exported contract, no filesystem path, no legacy records, no compatibility path, or no untrusted input without grep output, export/package inventory, call-site inventory, schema/query inventory, or exact code references proving the claim.
+32. **Singleton-only source coverage** where multiple evidence, authority, history, cache, or fallback sources can coexist but the table never exercises legacy/absent plus fresh valid, corrupt/undated plus fresh valid, irrelevant historical plus current authoritative, tied/conflicting current records, or source/state precedence.
+33. **Executable-twin parity inferred from separate tests** where a helper, SQL predicate, route, worker, producer, batch path, or recovery path reimplements one policy but no shared scenario corpus exercises every twin through its real production boundary.
+34. **Source-shape assertion pins missing policy** where a negative source-string, AST, or SQL-shape assertion requires a predicate, identity term, join, or branch to be absent and thereby preserves divergence instead of testing behavior.
+35. **Required test not traceable to decision rows** where a test is listed without stable row IDs, or lacks the wrong-input or mixed-state negative case needed to distinguish the row's branch.
+36. **Not-aligned status treated as success** where a caller proceeds to PR creation, merge, completion, or a success closeout despite unresolved `Final Alignment Status: Not aligned`.
 
 ## Contract-Heavy Review Surface
 
@@ -83,3 +88,7 @@ For contract-heavy work, also explicitly review:
 - duplicated policy logic or wire-contract constants that can drift between intended-parity entry paths
 - the same eligibility, completion, or terminal predicate enforced at a gate but re-derived independently at another site (predicate at a gate vs. re-derived in a list filter, scoped vs. unscoped routing, a terminal or disposition check, a batch path, or an early short-circuit), where the two can disagree unless they share a helper or are tied together by a parity test
 - whether `Final Alignment Status` is still defensible given the implemented compatibility and failure behavior
+- bounded pairwise/high-risk coexistence coverage when multiple evidence, authority, historical, cache, or fallback sources can be present at once
+- shared-corpus production-boundary parity for every executable twin; source-string, AST-presence, and SQL-shape assertions are supplemental only
+- stable decision-row IDs mapped to every required test, including wrong-input and mixed-state negative cases
+- a hard stop on PR, merge, and completion whenever `Final Alignment Status` is `Not aligned`, with the blocker and exact next action surfaced in the closeout

@@ -18,6 +18,28 @@ Include rows for synchronous preparation failures before fetch/await/return: URL
 
 When a helper, service, adapter, route, command, job, or handler can be called by more than one path, include rows for the invariants it must enforce itself even when current callers validate first, especially before network I/O, persistence, credentials, filesystem mutation, or other durable side effects. Do not rely only on caller-side validation: either the boundary enforces its own invariants, or record why it is intentionally private/single-caller and how that is kept true.
 
+## Executable policy twins and parity
+
+When the same behavior or policy is implemented by more than one executable path (for example a pure helper, SQL predicate, route, worker, producer, batch path, or recovery path), inventory every twin and identify its real production boundary. Build one shared scenario corpus and run every twin against it so the test proves identical decisions for identical inputs.
+
+Source-string, AST-presence, and SQL-shape assertions may supplement behavioral tests, but they never establish parity. Explicitly inspect negative shape assertions that require a policy predicate, identity term, join, or branch to be absent. If such an assertion pins a missing predicate or permits two twins to diverge, record the row as `Not aligned` until the implementation and assertion are corrected.
+
+**Tests:** require a shared-corpus parity test through each production boundary, with named decision-row coverage, a positive control, a wrong-input case, and a mixed-state case. A helper-only test plus an independent query-shape test is not sufficient.
+
+## Coexisting sources and precedence
+
+When multiple evidence, authority, history, cache, or fallback sources can coexist, singleton rows are insufficient. Add a bounded interaction set using pairwise coverage plus any high-risk intersections identified by the code. At minimum model:
+
+- legacy or absent evidence alongside fresh valid evidence;
+- corrupt or undated evidence alongside fresh valid evidence;
+- irrelevant historical evidence alongside a current authoritative record;
+- tied or conflicting current records; and
+- state/source precedence when otherwise-valid sources disagree.
+
+State which source wins, why it wins, and how irrelevant or malformed records are prevented from suppressing a valid authority or granting access on their own. Do not generate an unbounded Cartesian product; select pairwise and risk-driven intersections and record why they cover the precedence rules.
+
+**Tests:** require a positive singleton control, at least one wrong-input case, and the applicable mixed-state intersections above through the real decision boundary. Map each test to stable decision-row IDs.
+
 ## Contract-signal precedence
 
 When a dependency or peer returns multiple signals affecting the same decision (transport status, structured body fields, error codes, reason strings, headers, metadata, exit status, sentinel files), include rows for each signal and for conflicts between signals. State which signal wins and how unknown/missing signals degrade. Cover transport-vs-payload conflicts, older peers omitting newer fields, and newer peers sending unknown values.

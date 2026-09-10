@@ -108,11 +108,11 @@ from code_review_helpers import (
 # A `cached_at` timestamp always within the BHA cache TTL (30 days).
 # PLN-719 Phase 7 added sweep-on-read TTL eviction; fixtures that want a hit
 # must use a fresh timestamp. Tests that want eviction behavior should use
-# an explicitly-stale timestamp via ``_stale_cached_at()``.
+# an explicitly-stale timestamp via ``_iso_days_ago()``.
 _FRESH_CACHED_AT = datetime.now(timezone.utc).isoformat()
 
 
-def _stale_cached_at(days_ago: int = 365) -> str:
+def _iso_days_ago(days_ago: int = 365) -> str:
     """Return an ISO timestamp ``days_ago`` days in the past (default: 1 year)."""
     return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
 
@@ -3385,14 +3385,14 @@ class TestCacheTtlEviction:
         from code_review_helpers import _is_entry_fresh, CACHE_NAMESPACE_BHA
 
         # 29 days old: under the 30-day BHA TTL.
-        entry = {"cached_at": _stale_cached_at(days_ago=29)}
+        entry = {"cached_at": _iso_days_ago(days_ago=29)}
         assert _is_entry_fresh(entry, CACHE_NAMESPACE_BHA) is True
 
     def test_stale_entry_past_ttl_misses(self, tmp_path: Path) -> None:
         from code_review_helpers import _is_entry_fresh, CACHE_NAMESPACE_BHA
 
         # 31 days old: past the 30-day BHA TTL.
-        entry = {"cached_at": _stale_cached_at(days_ago=31)}
+        entry = {"cached_at": _iso_days_ago(days_ago=31)}
         assert _is_entry_fresh(entry, CACHE_NAMESPACE_BHA) is False
 
     def test_missing_cached_at_treated_as_fresh(self, tmp_path: Path) -> None:
@@ -3406,7 +3406,7 @@ class TestCacheTtlEviction:
     def test_unknown_namespace_skips_ttl_check(self, tmp_path: Path) -> None:
         from code_review_helpers import _is_entry_fresh
 
-        entry = {"cached_at": _stale_cached_at(days_ago=365 * 10)}
+        entry = {"cached_at": _iso_days_ago(days_ago=365 * 10)}
         assert _is_entry_fresh(entry, "future-namespace") is True
 
     def test_v1_cache_check_evicts_stale_entry(self, tmp_path: Path) -> None:
@@ -3425,7 +3425,7 @@ class TestCacheTtlEviction:
                 "prompt_hash": "abc123",
                 "patch_hash": patch_hash,
                 "findings": [{"file": "a.ts", "line": 1, "issue": "stale"}],
-                "cached_at": _stale_cached_at(days_ago=45),
+                "cached_at": _iso_days_ago(days_ago=45),
             }
         }
         _write_manifest(cache_dir, manifest)
@@ -3443,7 +3443,7 @@ class TestCacheTtlEviction:
         patch_hash = _compute_patch_hash("a.ts", diff_data["patch_lines"]["a.ts"])
         composite = _compute_composite_key("opus", "abc123", patch_hash, "ctx")
 
-        stale = _stale_cached_at(days_ago=45)
+        stale = _iso_days_ago(days_ago=45)
         v2_manifest = {
             "a.ts": {
                 composite: {
@@ -10133,7 +10133,7 @@ class TestOverrideCache:
             "finding_id": "bha_p0_f0",
             "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
             "override": "RE_ASSERT",
-            "asserted_at": "2026-05-29T22:00:00+00:00",
+            "asserted_at": _iso_days_ago(days_ago=1),
         })
         # PR #114 review fix — delegate to the shared helper with an
         # explicit cr_dir override so the per-test stdout/Namespace dance
@@ -11555,7 +11555,7 @@ class TestPR114ReviewFixes:
             "finding_id": "bha_p0_f0",
             "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
             "override": "RE_ASSERT",
-            "asserted_at": "2026-05-29T22:00:00+00:00",
+            "asserted_at": _iso_days_ago(days_ago=1),
         })
 
         # Phase 1 — prepare. Should record the fid in override_hits and
@@ -11604,7 +11604,7 @@ class TestPR114ReviewFixes:
             "finding_id": "bha_p0_f0",
             "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
             "override": "RE_ASSERT",
-            "asserted_at": "2026-05-29T22:00:00+00:00",
+            "asserted_at": _iso_days_ago(days_ago=1),
         })
 
         _, manifest = _run_verify_prepare(
@@ -11736,7 +11736,7 @@ class TestPR114ReviewFixes:
         self._write_target_file(tmp_path, "src/x.py", "a\nb\nc\nd\ne\n")
         cache = tmp_path / "cache"
         cache.mkdir()
-        old_ts = (datetime.now(timezone.utc) - timedelta(days=120)).isoformat()
+        old_ts = _iso_days_ago(days_ago=120)
         _write_override(cache, {
             "finding_id": "bha_p0_f0",
             "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
@@ -11762,7 +11762,7 @@ class TestPR114ReviewFixes:
         self._write_target_file(tmp_path, "src/x.py", "a\nb\nc\nd\ne\n")
         cache = tmp_path / "cache"
         cache.mkdir()
-        recent_ts = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        recent_ts = _iso_days_ago(days_ago=30)
         _write_override(cache, {
             "finding_id": "bha_p0_f0",
             "file_content_hash": _file_content_hash(cr, "src/x.py", 3),

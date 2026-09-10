@@ -132,6 +132,78 @@ fail_loop_user_visible() {
   exit 1
 }
 
+# Loop commands whose result bundle declares plan.json REQUIRED. Mirrors the
+# ResultBundle manifest that the cloud side validates against (PLAN and
+# REQUEST_CHANGES both require plan.json).
+#
+# EXECUTE is deliberately absent, and that is the load-bearing part: its
+# required artifact is execution-result.json, which is only written after a
+# successful commit AND push, so a legitimate no-changes EXECUTE run ends
+# without it. A blanket "required artifact missing => spurious" rule would fail
+# every one of those runs. Listing the non-plan commands by name below keeps
+# EXECUTE excluded on purpose rather than by the accident of it not carrying a
+# --prd.
+LOOP_COMMANDS_OWING_PLAN="PLAN REQUEST_CHANGES"
+LOOP_COMMANDS_NOT_OWING_PLAN="EXECUTE CHAT EXPLORE REQUEST_PRD_CHANGES DECOMPOSE EVALUATE_PRD GENERATE_PRD EVALUATE_PLAN EVALUATE_CODE EVALUATE_FEATURE BOOTSTRAP MANUAL"
+
+# Normalize a command label to the canonical LoopCommand spelling.
+# The desktop sets CLOSEDLOOP_COMMAND to the wire spelling (PLAN, EXECUTE,
+# REQUEST_CHANGES); a local CLI run resolves it from --prompt instead, whose
+# values are the prompt file names (plan-prompt, execute-prompt). Both map to
+# the same command, so normalize rather than special-case the caller.
+normalize_loop_command() {
+  local raw="${1:-}"
+  raw="${raw%-prompt}"
+  raw="${raw%_prompt}"
+  printf '%s' "$raw" | tr '[:lower:]-' '[:upper:]_'
+}
+
+# Does this run owe a plan.json? Echoes nothing; returns 0 (owes) or 1 (does not).
+# Args: $1 = command label (raw), $2 = prd_file
+#
+# Version skew, both directions: an unrecognized command -- an older desktop
+# sending nothing, or a newer one sending a command this script has never heard
+# of -- is not an error and never blocks. It falls back to the --prd proxy,
+# which is exactly the behaviour before commands were modelled at all.
+run_owes_plan_json() {
+  local command
+  command=$(normalize_loop_command "${1:-}")
+  local prd_file="${2:-}"
+
+  case " $LOOP_COMMANDS_OWING_PLAN " in
+    *" $command "*) return 0 ;;
+  esac
+  case " $LOOP_COMMANDS_NOT_OWING_PLAN " in
+    *" $command "*) return 1 ;;
+  esac
+
+  [[ -n "$prd_file" ]]
+}
+
+# Classify the plan artifact at $1 as: missing | empty | unparseable | present.
+#
+# "Exists" is not "was produced". The incident evidence is literally a 0-byte
+# plan.json: [[ -f ]] passes on it, jq yields nothing, and every pendingTasks
+# check below reads 0 pending tasks and calls the run clean. A file that is
+# absent, zero-byte, or not parseable JSON carries the same fact -- no plan was
+# written -- and all three must be treated as unproduced.
+classify_plan_artifact() {
+  local plan_file="$1"
+  if [[ ! -f "$plan_file" ]]; then
+    printf 'missing'
+    return
+  fi
+  if [[ ! -s "$plan_file" ]]; then
+    printf 'empty'
+    return
+  fi
+  if ! jq -e . "$plan_file" >/dev/null 2>&1; then
+    printf 'unparseable'
+    return
+  fi
+  printf 'present'
+}
+
 # Detect a spurious COMPLETE: the orchestrator's Phase 7 contract forbids
 # emitting <promise>COMPLETE</promise> when plan.json has pending tasks, but
 # it sometimes violates that contract -- typically when tasks are blocked by
@@ -143,6 +215,10 @@ fail_loop_user_visible() {
 #   {"subcode": "...", "message": "..."}   when a violation is detected
 #   {}                                      otherwise
 #
+# Args: $1 = workdir
+#       $2 = prd file    (defaults to $PRD_FILE; tests pass it explicitly)
+#       $3 = command      (defaults to $CLOSEDLOOP_COMMAND; ditto)
+#
 # Caller is responsible for telemetry, cleanup, and invoking
 # fail_loop_user_visible.
 detect_spurious_complete() {
@@ -152,8 +228,22 @@ detect_spurious_complete() {
   # draft a plan from a PRD, which is what makes a missing plan.json a broken
   # promise rather than a run that never owed one.
   local prd_file="${2-${PRD_FILE:-}}"
+  # Defaults to the global the desktop exports; passed explicitly by tests.
+  local command="${3-${CLOSEDLOOP_COMMAND:-}}"
   local plan_file="$workdir/plan.json"
   local state_file="$workdir/state.json"
+
+  # Fail OPEN when the workspace itself is gone. "The artifact was not produced"
+  # and "the workspace no longer exists" are different facts, and only the first
+  # one is evidence of a spurious completion. Live-exit and boot-recovery paths
+  # delete the temp workdir right after finalization, so adjudicating a run
+  # whose directory has already been reclaimed would flip a genuine success into
+  # a failure -- a permanent divergence that no re-run can repair. A missing
+  # workdir means "cannot judge", so judge nothing.
+  if [[ ! -d "$workdir" ]]; then
+    echo '{}'
+    return
+  fi
 
   # Skip the check when the orchestrator emitted COMPLETE as part of an
   # AWAITING_USER_SEQUENCE hard stop (e.g., the Phase 1.1 plan review
@@ -170,12 +260,15 @@ detect_spurious_complete() {
     fi
   fi
 
-  if [[ ! -f "$plan_file" ]]; then
-    # A --prd run exists to produce plan.json. Claiming COMPLETE without one is
-    # the strongest spurious-completion signal there is, and this branch used to
-    # wave it through: the checks below only validate pendingTasks INSIDE an
-    # existing plan, so "no plan at all" -- the case that actually happens --
-    # was the one case nothing could catch.
+  local plan_state
+  plan_state=$(classify_plan_artifact "$plan_file")
+
+  if [[ "$plan_state" != "present" ]]; then
+    # A PLAN or REQUEST_CHANGES run exists to produce plan.json. Claiming
+    # COMPLETE without one is the strongest spurious-completion signal there is,
+    # and this branch used to wave it through: the checks below only validate
+    # pendingTasks INSIDE an existing plan, so "no plan at all" -- the case that
+    # actually happens -- was the one case nothing could catch.
     #
     # Observed: the orchestrator launched plan-draft-writer in the BACKGROUND,
     # said "Plan-draft-writer is running in the background. Waiting for
@@ -185,12 +278,30 @@ detect_spurious_complete() {
     # nothing was examined"), and the run exited 0 having produced nothing. The
     # user got an implementation-plan artifact that looked done and was empty.
     #
-    # Scoped to runs that were asked for a plan: a run with no PRD never owed
-    # one, and is left alone.
-    if [[ -n "$prd_file" ]]; then
+    # Scoped per-command: a run that never owed a plan is left alone.
+    #
+    # REQUEST_CHANGES is included, with a known limit: the harness seeds
+    # plan.json before an amend run, so PRESENCE PROVES NOTHING there. This
+    # branch still catches "no plan at all" (including a seeded file truncated
+    # to zero bytes), but it cannot see "the amend ran and produced nothing" --
+    # that needs a pre-run baseline the detector is not given. Do not read a
+    # clean result on a REQUEST_CHANGES run as proof the amend did work.
+    if run_owes_plan_json "$command" "$prd_file"; then
+      local plan_detail
+      case "$plan_state" in
+        empty)
+          plan_detail="plan.json is zero bytes -- the file exists but no plan was ever written into it"
+          ;;
+        unparseable)
+          plan_detail="plan.json is not parseable JSON -- the file exists but no usable plan was written into it"
+          ;;
+        *)
+          plan_detail="no plan.json was ever written"
+          ;;
+      esac
       jq -n -c \
         --arg subcode "PLAN_MISSING_AT_COMPLETION" \
-        --arg message "Loop emitted COMPLETE but no plan.json was ever written. The planning phase did not finish -- a background plan-draft-writer that is still running when the completion promise fires is abandoned. Inspect state.json and the loop output, then re-run /code:code to continue." \
+        --arg message "Loop emitted COMPLETE but $plan_detail. The planning phase did not finish -- a background plan-draft-writer that is still running when the completion promise fires is abandoned. Inspect state.json and the loop output, then re-run /code:code to continue." \
         '{subcode:$subcode,message:$message}'
       return
     fi

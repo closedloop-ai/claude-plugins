@@ -74,17 +74,17 @@ Apply every category in [`edge-cases.md`](edge-cases.md). Each must be represent
 
 Frozen pre-implementation baseline. Do not rewrite after implementation begins.
 
-| Entry Path | State Inputs | Decision / Branch | Actions / Side Effects | External Outcome | Source |
-| --- | --- | --- | --- | --- | --- |
-| ... | ... | ... | ... | ... | ... |
+| Row ID | Entry Path | State Inputs | Decision / Branch | Actions / Side Effects | External Outcome | Source |
+| --- | --- | --- | --- | --- | --- | --- |
+| DT-01 | ... | ... | ... | ... | ... | ... |
 
 #### Intended Change
 
 Frozen target behavior derived from the plan or work item. Only change after implementation if you are explicitly recording a plan clarification.
 
-| Entry Path | State Inputs | Decision / Branch | Actions / Side Effects | External Outcome | Source |
-| --- | --- | --- | --- | --- | --- |
-| ... | ... | ... | ... | ... | ... |
+| Row ID | Entry Path | State Inputs | Decision / Branch | Actions / Side Effects | External Outcome | Source |
+| --- | --- | --- | --- | --- | --- | --- |
+| DT-01 | ... | ... | ... | ... | ... | ... |
 
 ### <behavior area 2>
 
@@ -98,7 +98,12 @@ Repeat as needed.
 
 ## Required Tests
 
-- Exact scenario coverage implied by the changed rows
+| Test / Command | Decision Row IDs | Positive Control | Wrong-Input / Mixed-State Negative Case | Production Boundary | Expected Evidence |
+| --- | --- | --- | --- | --- | --- |
+| ... | DT-01, DT-04 | ... | ... | route / SQL / worker / producer / etc. | ... |
+
+- Every material row must be covered by at least one mapped test or carried into `Not aligned` with a blocker.
+- When executable twins implement the same policy, use one shared scenario corpus through every real production boundary. Source-string, AST-presence, and SQL-shape assertions are supplemental and cannot establish parity.
 - Exact contract-literal binding tests for feature flags, query parameters, headers, events, cache/storage keys, command names, plugin identifiers, or other external keys. Mocks should fail closed unless the exact intended literal is used.
 
 ## Verification Findings
@@ -129,6 +134,7 @@ Repeat as needed.
 - Short explanation with source links
 - Do not use soft statuses such as `Partially aligned`, `Mostly aligned`, or `Recorded Gaps`.
 - Use `Aligned` only when no known fixable drift or required-test gap remains. Otherwise use `Not aligned` and state the blocker or user action.
+- `Not aligned` is a terminal workflow stop. Name the unresolved blocker, required next action, and owner; do not proceed to PR creation, merge, completion, or a success closeout until re-verification produces `Aligned`.
 
 ## Plan Clarifications
 
@@ -148,9 +154,12 @@ Guidelines:
 - Use `Contract Literal Inventory` to prevent similar-looking strings from being conflated. Classify each literal by semantic role, record the source of truth, and state whether wrong or legacy literals are rejected, ignored, or supported through an explicit compatibility path.
 - Use `Evidence Artifacts` for claims that are easy for an author to wave through: changed exports or subpaths, CLI flags, filesystem writes, untrusted or persisted fields, replay/idempotency behavior, and integration-boundary coverage. A `Covered` claim needs a named fail-closed test; a `not applicable` claim needs source-backed evidence such as grep output, export/package inventory, call-site inventory, schema/query inventory, or code references.
 - Keep the same state axes and column meanings across `Current Code` and `Intended Change` within each behavior area.
+- Give every material row a stable row ID and map each required test back to those row IDs.
 - Use additive rows rather than prose for behavior changes whenever possible.
 - For distributed workflows, include rows for how each replica/process learns about writes, how stale or offline replicas reconcile, and which durable source of truth wins.
 - When the same eligibility, completion, or terminal predicate is enforced at one site (a gate) but re-derived independently at another (a list filter, a terminal or disposition check, a batch or unscoped routing path, or an early short-circuit), include rows for both sites and confirm they share the predicate through a shared helper or a parity test, because the two derivations can disagree (for example a predicate at a gate vs. re-derived in a list filter, or scoped vs. unscoped routing).
+- When those paths are executable twins, run one shared scenario corpus through their real production boundaries. Do not treat source-string, AST-presence, or SQL-shape assertions as parity evidence, and flag negative shape assertions that preserve an absent policy predicate.
+- When multiple evidence, authority, history, cache, or fallback sources can coexist, include bounded pairwise/high-risk intersections rather than only singleton rows or an unbounded Cartesian product.
 - Keep data visibility rows separate from side-effect rows such as notifications, dispatches, telemetry, cleanup, and deduplication.
 - For capability- or operation-gated behavior, include fresh cache, stale false negative, stale false positive, old peer, fallback, retry, and reconciliation rows.
 - For legacy persisted records missing new fields, include conservative defaults, evidence-backed promotion/backfill, downgrade behavior, and manual-record protection.
