@@ -21,7 +21,7 @@ plugins/code-review/
   SCHEMA.md                          Canonical Finding + ResultEnvelope schema (PLN-719); §12 documents the golden fixture harness
   agents/
     code-review-worker.md            Background worker agent used by every reviewer fleet spawn (Read, Write, Grep, Glob; permissions-stable across sessions)
-    code-review-worker-graph.md      Graph-aware variant for the cross-file and design reviewers (Impact Analyzer, Bug Hunter B, fast-path, Design Critic); adds read-only codebase-memory-mcp tools — cross-file usage discovery for the cross-file roles, project-structure/dependency-graph analysis (get_architecture, query_graph) for the Design Critic
+    code-review-worker-graph.md      Code-intelligence-aware variant for the cross-file and design reviewers (Impact Analyzer, Bug Hunter B, fast-path, Design Critic); declares no tool allowlist, so it inherits whatever indexing MCP server the operator's session provides — cross-file usage discovery for the cross-file roles, project-structure/dependency analysis for the Design Critic. Degrades to grep when the session has none.
   commands/
     start.md                         Main /start command (orchestrator)
     shallow.md                       /shallow wrapper — `/start --depth shallow`
