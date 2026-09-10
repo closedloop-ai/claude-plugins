@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.7.1
+
+#### Fixed
+- Override-cache tests no longer depend on the wall-clock date. Three tests pinned an override's `asserted_at` to a fixed `2026-05-29` timestamp and asserted the override was honored — by `verify-prepare` short-circuiting into `override_hits`, and by the prepare-then-consolidate paths that route an override to `RE_ASSERTED`. Once that fixed timestamp aged past the 90-day `overrides` cache TTL, the overrides were correctly treated as expired and the three tests began failing with no accompanying code change. They now derive `asserted_at` relative to the current time, so they exercise the honored-override path regardless of when the suite runs.
+
+#### Changed
+- Test helper `_stale_cached_at()` renamed to `_iso_days_ago()` so the name matches its documented behavior (an ISO-8601 timestamp N days in the past, used for both within-TTL and past-TTL fixtures); all call sites updated, and the two override TTL boundary tests now delegate to it instead of inlining the same `datetime.now(timezone.utc) - timedelta(...)` expression.
+
 ### code v1.14.10
 
 #### Added
