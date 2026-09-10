@@ -304,9 +304,10 @@ pipeline; you may emit them when relevant, otherwise omit):
     rule for these informational attachments.
     ``discovery`` records HOW the callsite was found: ``"grep"`` (the
     default — reproducible by replaying ``grep_query_used``) or
-    ``"graph"`` (found via a code-intelligence substrate — whichever MCP
-    server the session provides; e.g. an alias,
-    re-export, or dynamic-dispatch caller that grep cannot surface). Both
+    ``"graph"`` (found on a path the replay cannot reproduce — either a
+    code-intelligence substrate surfaced it, e.g. an alias, re-export or
+    dynamic-dispatch caller grep cannot reach, or no text-search tool was
+    available at all so no replayable query exists). Both
     are verified the same way — the verifier reads the cited file:line and
     content-matches ``callsite_snippet`` — but ``"graph"`` entries are exempt
     from the grep-replay completeness check (see ``grep_query_used``).

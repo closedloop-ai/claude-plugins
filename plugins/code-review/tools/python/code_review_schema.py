@@ -263,11 +263,14 @@ SPAWN_SPEC_SOURCES: frozenset[str] = frozenset({
 # Provenance values for ``external_impact[].discovery`` (FEA-1401 graph
 # integration). ``grep`` (default) entries are reproducible via the
 # verifier's grep-replay of ``grep_query_used``; ``graph`` entries were
-# found only via a code-intelligence substrate — whichever indexing MCP
-# server the operator's session provides — and are verified per-entry by
-# file-read + snippet-hash, exempt from the grep-replay completeness gate.
-# The value records HOW a callsite was found, not which product found it;
-# it stays stable across substrates by design.
+# found on a path the grep replay cannot reproduce, and are verified
+# per-entry by file-read + snippet-hash, exempt from the grep-replay
+# completeness gate. Two branches set it: a code-intelligence substrate
+# surfaced a caller grep cannot reach (alias, re-export, dynamic
+# dispatch), or the session held no text-search tool at all, so no
+# replayable query exists for any entry. The value records HOW a
+# callsite was found, not which product found it; it stays stable
+# across substrates by design.
 EXTERNAL_IMPACT_DISCOVERY: frozenset[str] = frozenset({
     "grep",
     "graph",
@@ -831,10 +834,11 @@ class ExternalImpact:
     confidence: float
     # Provenance of how the callsite was found (FEA-1401 graph integration).
     # "grep" (default) → reproducible by replaying grep_query_used.
-    # "graph" → found only via a code-intelligence substrate, whichever
-    # indexing MCP server the session provides (alias/re-export/dynamic
-    # dispatch grep cannot surface); verified by per-entry file-read +
-    # content match, exempt from the verifier's grep-replay completeness check.
+    # "graph" → found on a path the grep replay cannot reproduce: either a
+    # code-intelligence substrate surfaced it (alias/re-export/dynamic
+    # dispatch grep cannot surface), or the session had no text-search
+    # tool at all so no replayable query exists; verified by per-entry
+    # file-read + content match, exempt from the grep-replay check.
     discovery: str = "grep"
 
 

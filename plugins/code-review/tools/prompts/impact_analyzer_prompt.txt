@@ -47,13 +47,19 @@ Every finding you emit MUST:
     that breaks (syntactically, semantically, or behaviorally) under
     the new symbol signature
   - populate `grep_query_used` with the exact grep query that found
-    the external usages (the verifier will replay it)
+    the external usages (the verifier will replay it) — UNLESS you hold
+    no text-search tool at all, in which case it stays null; see the
+    text-search rule under Inputs
   - populate `reasoning_certificate` with `kind: "impact"` and the
     full fields listed below
 
-Findings without a populated `external_impact[]`, without a
-`grep_query_used`, or with a certificate whose `kind` does not equal
-`"impact"`, will be rejected by the verifier as malformed.
+Findings without a populated `external_impact[]`, or with a certificate
+whose `kind` does not equal `"impact"`, will be rejected by the verifier
+as malformed. A missing `grep_query_used` is malformed ONLY when at
+least one entry is `discovery: "grep"`; an all-`"graph"` finding
+legitimately carries a null query and is verified per-entry instead.
+Never invent a query to satisfy this list — a `grep_query_used` you did
+not execute is fabricated evidence and is treated as such.
 
 ## Inputs
 
@@ -164,9 +170,12 @@ For each candidate symbol:
     Prefer unambiguous identifiers (`FooBar`, `parseCacheKey`) over
     common words. For ambiguous names (`get`, `update`), narrow with
     surrounding context: `\.parseCacheKey\(` or `import.*\bUser\b`.
-  - Record the **exact** query string in `grep_query_used`. The
+  - Record the **exact** query string in `grep_query_used` — the query
+    you actually ran, never a reconstruction. The
     verifier replays it; if your query and the replay disagree by more
-    than a small margin, the finding is REJECTED.
+    than a small margin, the finding is REJECTED. If you hold no
+    text-search tool, there is no query to record: leave it null and
+    tag the entries `discovery: "graph"` per the Inputs section.
   - Use `output_mode: "files_with_matches"` first to enumerate files;
     then `output_mode: "content"` with `-n` and `-B 5 -A 10` to read
     context around each hit.
