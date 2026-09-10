@@ -18,6 +18,12 @@ Include rows for synchronous preparation failures before fetch/await/return: URL
 
 When a helper, service, adapter, route, command, job, or handler can be called by more than one path, include rows for the invariants it must enforce itself even when current callers validate first, especially before network I/O, persistence, credentials, filesystem mutation, or other durable side effects. Do not rely only on caller-side validation: either the boundary enforces its own invariants, or record why it is intentionally private/single-caller and how that is kept true.
 
+## Shared host reachability
+
+When behavior is installed by a shared host above multiple entry points, include rows for every entry-point class that inherits the host, not only the feature's primary entry point. Hosts include shared wrappers, root components, providers, middleware, dispatchers, schedulers, route groups, job runners, callback registries, and other common containers. Distinguish passive entry such as navigation, refresh, replay, scheduled execution, callback delivery, or automatic retry from explicit start, resume, continue, dispatch, retry, or recovery actions. If product, plan, or guardrail text forbids an automatic takeover, replayed prompt, blocking gate, or side effect for already-satisfied users or records, include rows proving legacy and already-complete states stay non-blocked on at least one non-primary inherited entry point.
+
+**Tests:** require a positive control for the intended entry path, a passive-entry negative case on a non-primary inherited entry point, and a legacy or already-complete state case when persisted state, consent, setup, or policy records can be absent.
+
 ## Executable policy twins and parity
 
 When the same behavior or policy is implemented by more than one executable path (for example a pure helper, SQL predicate, route, worker, producer, batch path, or recovery path), inventory every twin and identify its real production boundary. Build one shared scenario corpus and run every twin against it so the test proves identical decisions for identical inputs.
@@ -90,7 +96,7 @@ Include rows for success, validation failure, dependency failure, cancellation/t
 
 When a write affects multiple processes, replicas, apps, windows, stores, or peers, include rows for how every affected surface learns about the write. Cover immediate push/control events, polling, heartbeat, reconnect, startup, manual refresh, missed event, offline recovery, and the durable source of truth that wins when surfaces disagree.
 
-For distributed browser-command, key, authorization, or signing workflows, model the web app, backend, Electron process, local trusted-key store, OS notification layer, command dispatcher, and remote peer separately unless implementation proves two surfaces share the same state and lifecycle.
+For distributed client-command, key, authorization, or signing workflows, model the client app, server, desktop or native process, local trusted-key store, notification layer, command dispatcher, and remote peer separately unless implementation proves two surfaces share the same state and lifecycle.
 
 **Tests:** require at least one immediate propagation assertion and one delayed or missed-event reconciliation assertion. The test must prove the affected consumer changed behavior, not only that the source write succeeded.
 

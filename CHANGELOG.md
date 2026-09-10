@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.14.11
+
+#### Changed
+- The `decision-table` skill now treats shared hosts as a first-class reachability case. Tables must inventory inherited entry-point classes, distinguish passive entry from explicit actions, and require non-primary entry-point coverage when a shared wrapper, middleware, dispatcher, scheduler, root component, callback registry, or other common container can trigger behavior outside its intended entry path.
+
 ### code-review v3.7.1
 
 #### Fixed
