@@ -1,7 +1,7 @@
 ---
 name: code-review-worker-graph
 description: Code-intelligence-aware review worker for the cross-file and design reviewers (Impact Analyzer, Bug Hunter B, fast-path, Design Critic). Identical to code-review-worker but inherits the parent session's tools, so whatever code-intelligence MCP server the operator has connected is available for cross-file usage discovery and project-structure / dependency-graph analysis. Use only for reviewers whose role prompt loads the code-intelligence protocol.
-disallowedTools: Bash, Edit, NotebookEdit  # harness-level: reviewers never shell out or mutate source. MCP inheritance is deliberately untouched — see shared_prompt.txt "OPTIONAL — CODE INTELLIGENCE".
+disallowedTools: Bash, Edit, NotebookEdit  # harness-level removal of the three native tools a reviewer must never hold. Does NOT reach write-shaped MCP tools (no cross-server pattern exists); those are covered by the prompt below. MCP inheritance is deliberately untouched — see shared_prompt.txt "OPTIONAL — CODE INTELLIGENCE".
 effort: high  # pinned so a lowered session effort can't cut reviewer reasoning depth (no per-Task override; frontmatter is the only lever). Not redundant with the default — do not remove. Rationale: start.md "Orchestrator model (cost)".
 ---
 
