@@ -252,7 +252,8 @@ identification step failed → REJECTED,
 ### Per-entry callsite audit
 
 This audit is substrate-agnostic: it verifies EVERY entry the same way
-whether the reviewer found it via grep or via the knowledge graph
+whether the reviewer found it via grep or via a code-intelligence
+substrate
 (`external_impact[i].discovery` ∈ {`"grep"`, `"graph"`}, default
 `"grep"`). Reading the cited file:line and content-matching the snippet
 is the canonical proof — a `discovery: "graph"` entry (an alias,

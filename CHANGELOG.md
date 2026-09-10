@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.8.0
+
+#### Changed
+- The cross-file and design reviewers are no longer bound to a specific code-intelligence MCP server. `code-review-worker-graph` previously declared an allowlist of six `mcp__codebase-memory-mcp__*` tools, which meant only that server could ever reach a reviewer and unresolved entries were silently dropped on any machine without it. The agent now declares no `tools:` allowlist and inherits the tools of the session that spawned it, so whichever indexing server the operator has connected is available; `disallowedTools: Bash, Edit, NotebookEdit` keeps the read-only-reviewer boundary. `code-review-worker` keeps its explicit four-tool allowlist, so the verifier fleet, Bug Hunter A, the domain critics and the singleton prompts continue to inherit nothing.
+- The knowledge-graph protocol in `shared_prompt.txt` is now a substrate-agnostic capability contract (`OPTIONAL — CODE INTELLIGENCE`). Instead of naming tools and their argument shapes, it describes four capabilities — symbol lookup, usage/caller enumeration, snippet read, and structure/dependency analysis — and directs the reviewer to inspect its own tool roster and bind whichever tools answer them, loading deferred MCP schemas with `ToolSearch` first. The same rewrite is applied to `impact_analyzer_prompt.txt`, `design_critic_suffix.txt`, `verifier_prompt.txt`, and the Bug Hunter B / Impact Analyzer / Design Critic / fast-path suffixes in the `spawn-reviewers` skill. The repo-scoping, path-validation, silent-degradation, and untrusted-tool-output rules are retained and generalized to any MCP tool.
+- `GRAPH_PROJECT` is replaced by a single orchestrator-computed boolean, `CODE_INTEL_ALLOWED`. The orchestrator no longer calls `list_projects`, resolves a project identifier, or makes any code-intelligence tool call at all; it only decides whether an external index may be trusted for the run, setting `CODE_INTEL_ALLOWED=false` whenever `review_root` is set (an index covers the operator checkout, not the PR head). This removes the prior step that substituted a server-returned project name into the agents' trusted instruction zone.
+
+#### Fixed
+- The Impact Analyzer can no longer report a `grep_query_used` it did not execute. Sessions that provide no text-search tool previously still emitted a grep query string, which the verifier replays as its fabrication check. `shared_prompt.txt` now states that any recorded search must describe a query actually run, and `impact_analyzer_prompt.txt` directs the analyzer to leave `grep_query_used` null, leave `external_usages_found` empty, and tag callsites `discovery: "graph"` when it holds no text-search tool — routing those entries to the per-entry file-read and content-match audit, which the verifier already handles as the all-graph case.
+
 ### code v1.14.11
 
 #### Changed

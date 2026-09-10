@@ -263,8 +263,11 @@ SPAWN_SPEC_SOURCES: frozenset[str] = frozenset({
 # Provenance values for ``external_impact[].discovery`` (FEA-1401 graph
 # integration). ``grep`` (default) entries are reproducible via the
 # verifier's grep-replay of ``grep_query_used``; ``graph`` entries were
-# found only via codebase-memory-mcp and are verified per-entry by
+# found only via a code-intelligence substrate — whichever indexing MCP
+# server the operator's session provides — and are verified per-entry by
 # file-read + snippet-hash, exempt from the grep-replay completeness gate.
+# The value records HOW a callsite was found, not which product found it;
+# it stays stable across substrates by design.
 EXTERNAL_IMPACT_DISCOVERY: frozenset[str] = frozenset({
     "grep",
     "graph",
@@ -828,7 +831,8 @@ class ExternalImpact:
     confidence: float
     # Provenance of how the callsite was found (FEA-1401 graph integration).
     # "grep" (default) → reproducible by replaying grep_query_used.
-    # "graph" → found only via codebase-memory-mcp (alias/re-export/dynamic
+    # "graph" → found only via a code-intelligence substrate, whichever
+    # indexing MCP server the session provides (alias/re-export/dynamic
     # dispatch grep cannot surface); verified by per-entry file-read +
     # content match, exempt from the verifier's grep-replay completeness check.
     discovery: str = "grep"
