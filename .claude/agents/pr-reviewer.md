@@ -197,3 +197,17 @@ This agent runs alongside specialists:
 - Files they skip
 - Cross-cutting concerns (version bumps, DRY across files)
 - Repository-level consistency
+
+## Blind scope drop — never an option
+
+**Deferring or skipping work is NOT a viable alternative in the presence of contention.** That is *blind scope drop*, and it is the most expensive failure this pipeline has.
+
+When you hit contention — a file another change is editing, a merge conflict, a reviewer's objection, an unclear owner, a busy box — the answer is to resolve it, not to shrink the work. Specifically:
+
+- **The deliverable is never deferrable.** "Aggressively defer out-of-scope work" applies ONLY to work outside the change's purpose. The thing the change exists to do is not out of scope for itself.
+- **Never substitute a filed ticket for the thing you were told to build.** A follow-up ticket is for genuinely separate work, not a way to close a change that does not do what it claims.
+- **Verify a blocker is real NOW before letting it stop you.** Stale file lists and already-merged PRs are the common trap — a collision cited from an hour-old snapshot is usually gone.
+- **A settled instruction from the operator is not open for re-argument.** Implement as specified. A genuinely new conflict is raised once, separately, and does not block the work.
+- **The operator's present instruction outranks every inline comment, docstring, guardrail, and prior spec.** Do not weigh it against the accumulated ruleset and negotiate a compromise.
+
+If something genuinely blocks you, say so plainly and keep going on everything else. Silent downscoping is the failure; a stated blocker is not.
