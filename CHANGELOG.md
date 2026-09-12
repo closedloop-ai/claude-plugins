@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.8.1
+
+#### Fixed
+- `/code-review --github <PR>` run outside GitHub Actions no longer reviews whatever tree happens to be checked out. `cmd_resolve_scope` skipped every PR-head check when the mode was github, but `--github` selects file-based handoff output and is a supported invocation from a developer machine — so such a run left `review_root` empty and every reviewer read the operator's branch while holding a diff computed from `origin/<base>...origin/<head>`. Worst on the deep tier, whose cross-file reviewers (Impact Analyzer, Design Critic, Bug Hunter B) grep for callsites the wrong tree does not have, and silent in both directions: nothing in the output said which tree was read. GitHub mode now VERIFIES the tree it was handed and REFUSES with a non-zero exit when it cannot establish it as the PR's source. Two checkout shapes are accepted, because both occur in GitHub Actions: HEAD is the PR head (`actions/checkout` with an explicit `ref: <head sha>`), or HEAD is the PR's merge ref `refs/pull/N/merge` — the DEFAULT checkout for a `pull_request` event — whose second parent is the head. Either way the tree must have no uncommitted changes to tracked files. The check costs at most three `rev-parse` calls plus one `status` and changes nothing else: github mode still creates no worktree, still emits an empty `review_root`, and still emits an empty `head_sha`, so no consumer of those fields moves. Local mode is untouched — it continues to isolate the PR head into a detached worktree, which github mode deliberately does not do because `review_root` redirects a whole agent fleet and `github-review.md`'s own steps do not resolve it.
+
 ### code-review v3.8.0
 
 #### Changed

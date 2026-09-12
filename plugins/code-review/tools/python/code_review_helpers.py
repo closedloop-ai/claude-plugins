@@ -279,10 +279,12 @@ def _resolve_pr_scope(
 def _git_rev_parse(ref: str) -> str | None:
     """Resolve *ref* to a commit SHA, or ``None`` if it does not exist.
 
-    Used to compare the PR head commit against the working-tree HEAD when
-    deciding whether local PR review needs a worktree. Never raises — an
-    unresolvable ref (e.g. ``origin/<branch>`` that was never fetched)
-    returns ``None`` so the caller falls back to reading the working tree.
+    Never raises: an unresolvable ref (``origin/<branch>`` that was never
+    fetched, ``HEAD^2`` on a non-merge commit) is a ``None``, not an error.
+    What ``None`` MEANS is the caller's to decide and they differ —
+    ``_resolve_default_base_ref`` reads it as "try the next candidate",
+    ``_tree_holds_pr_head`` as "not this shape", ``cmd_resolve_scope`` as
+    "cannot establish the PR head", which it refuses on.
     """
     try:
         result = subprocess.run(
@@ -460,6 +462,33 @@ def _working_tree_clean() -> bool:
         return result.stdout.strip() == ""
     except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return False
+
+
+def _tree_holds_pr_head(pr_head: str) -> bool:
+    """True when the working tree holds *pr_head*'s content (ISS-8769).
+
+    Two checkout shapes legitimately hold a PR's source, and BOTH occur in
+    GitHub Actions, so neither may be treated as the only one:
+
+      - the head commit itself (``actions/checkout`` with an explicit
+        ``ref: <head sha>``), and
+      - the PR's merge ref ``refs/pull/N/merge`` — the DEFAULT checkout for a
+        ``pull_request`` event — a merge commit whose SECOND parent is the head.
+
+    Anything else (another branch, a stale head, an unresolvable ref) is not
+    established, and a caller must refuse rather than review it. Uncommitted
+    changes to tracked files disqualify either shape: the tree then holds
+    content that is in no commit this PR contains. Untracked files do not,
+    matching ``_working_tree_clean``.
+
+    Costs at most three ``rev-parse`` calls plus one ``status``, and short-
+    circuits on the head-checkout case.
+    """
+    if not pr_head:
+        return False
+    if _git_rev_parse("HEAD") != pr_head and _git_rev_parse("HEAD^2") != pr_head:
+        return False
+    return _working_tree_clean()
 
 
 def _git_worktree_quiet(args: list[str]) -> None:
@@ -5021,9 +5050,12 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
     # the PR head with no uncommitted modifications. In every other case we
     # MUST isolate; if isolation cannot be established (head unresolvable, or
     # ``git worktree add`` fails) we abort rather than silently review the
-    # wrong source against a remote PR diff. GitHub CI mode already checks
-    # out the PR head, so this is local-only. Hygiene-only runs read no
-    # source (and Gate A exits before the footer teardown), so they skip it.
+    # wrong source against a remote PR diff. Isolation stays LOCAL-ONLY:
+    # ``review_root`` moves where a whole agent fleet reads from, and github
+    # mode has prompts that do not resolve it. Github mode instead VERIFIES
+    # the tree it was handed and refuses — see the ISS-8769 block below.
+    # Hygiene-only runs read no source (and Gate A exits before the footer
+    # teardown), so they skip it.
     head_sha = ""
     review_root = ""
     worktree_path = ""
@@ -5061,6 +5093,38 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
                 return 1
             review_root = created
             worktree_path = created
+
+    # ISS-8769 — github mode VERIFIES the tree it was handed, and refuses.
+    #
+    # ``--github`` selects file-based handoff output. It does NOT declare "I am
+    # running inside GitHub Actions", and running it from a developer machine is
+    # supported — so the old code, which skipped every check whenever the mode
+    # was github, silently reviewed whatever branch happened to be checked out
+    # while holding a diff computed from the PR's remote refs. Nothing in the
+    # run said which tree was read, and the deep tier's cross-file reviewers
+    # (Impact Analyzer, Design Critic, Bug Hunter B) are exactly the ones a
+    # wrong tree makes confidently wrong.
+    #
+    # This block ADDS a refusal and changes nothing else: no worktree, no
+    # ``review_root``, and ``head_sha`` stays out of the emitted scope so no
+    # downstream consumer of it changes behavior in github mode. Either the
+    # tree is established as this PR's source, or the run stops.
+    if mode == "github" and scope_kind == "pr" and not hygiene_only:
+        pr_head = _git_rev_parse(diff_tip) or ""  # diff_tip == origin/<head_ref>
+        if not _tree_holds_pr_head(pr_head):
+            print(
+                "Error: cannot establish that the checked-out tree is PR "
+                f"#{pr_number}'s source ({diff_tip} = "
+                f"{pr_head or 'unresolvable'}). Reviewers read the working "
+                "tree, so continuing would review the wrong code against this "
+                "PR's diff — the exact failure this check exists to stop. A "
+                "CI runner satisfies it by checking out the PR head or the "
+                "PR's merge ref with a clean tree; locally, check out the PR "
+                "branch (or drop --github and run the local flow, which "
+                "isolates the head into a worktree for you).",
+                file=sys.stderr,
+            )
+            return 1
 
     result_out = {
         "diff_scope": diff_scope,
