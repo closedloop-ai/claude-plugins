@@ -40,7 +40,10 @@ argument shape.
   - **Availability is yours to determine.** Inspect your own tool roster. Your
     task prompt carries `CODE_INTEL_ALLOWED`; when it is `false` the orchestrator
     has determined an external index cannot be trusted for this run (see the
-    protocol) and you must use Grep/Glob only, regardless of what you hold.
+    protocol) and you must use Grep/Glob only, regardless of what you hold. It
+    also carries `CODE_INTEL_REQUIRE_ROOT_ARG`; when it is `true` you may call
+    only tools you can scope to `<review_root>` through a root argument (see the
+    protocol's scoping rules).
   - **Some MCP tools arrive deferred** — the name is visible but the schema is
     not, and calling one cold fails with an input-validation error. Use
     `ToolSearch` to load the schemas of the tools you intend to use first.

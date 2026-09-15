@@ -80,15 +80,26 @@ particular one. Bind to what you actually hold:
      For design/architecture-level review.
 - KILL SWITCH. Your task prompt carries `CODE_INTEL_ALLOWED`. When it is
   `false`, use Grep/Glob only, no matter what tools you hold — the orchestrator
-  has determined no external index can be trusted for this run (typically the
-  source under review is a different commit than any index covers). Reviews
-  never index or re-index a repo, and never start an indexing daemon.
-- SCOPE EVERY CALL TO THIS REPO. An index may hold several repositories. If a
-  tool takes a project / workspace / repo / root argument, supply the value for
-  THIS checkout and never another; if it would default to a different repo, do
-  not use it. An unscoped or wrong-repo answer can pull a DIFFERENT repository's
-  source into your findings, and from there into posted PR comments. That is a
-  data leak; treat repo scoping as mandatory.
+  has determined no external index can be trusted for this run (the source
+  under review is a per-run checkout that no index covers). Reviews never index
+  or re-index a repo, and never start an indexing daemon.
+- SCOPE EVERY CALL TO <review_root>. An index may hold several repositories, or
+  several checkouts of one. Whenever a tool accepts a root / repo / workspace /
+  project argument, pass <review_root> — never your working directory, and never
+  another repository. An unscoped or wrong-root answer can pull a DIFFERENT
+  branch's or repository's source into your findings, and from there into posted
+  PR comments. That is a data leak; treat scoping as mandatory.
+- ROOT-ARGUMENT REQUIREMENT. Your task prompt also carries
+  `CODE_INTEL_REQUIRE_ROOT_ARG`. When it is `true`, use ONLY tools you can point
+  at <review_root> through such an argument. A tool that cannot be scoped answers
+  for the session's checkout — a different branch or commit than the code under
+  review — so do not call it. If nothing you hold can be scoped for a
+  capability, that capability is unavailable: use Grep/Glob. When it is `false`,
+  <review_root> is the session's own checkout, so a tool without a root argument
+  already answers for it.
+- SAME-SYMBOL CHECK. Always discard any response whose resolved target is not
+  the symbol you asked about. Some tools silently fall back to a fuzzy or
+  different match while still reporting success.
 - VALIDATE RETURNED PATHS AGAINST <review_root>, NOT your working directory.
   Before citing any file a tool returns, confirm it is openable with Read at
   `<review_root>/<repo-relative path>`. Discard (never cite) any path that does
