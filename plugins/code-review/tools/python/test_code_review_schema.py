@@ -523,6 +523,8 @@ def test_result_envelope_json_schema_well_formed():
     schema = result_envelope_json_schema()
     assert schema["title"] == "CodeReviewResultEnvelope"
     assert "verdict" in schema["required"]
+    for key in ("review_root", "review_root_sha", "review_root_tree"):
+        assert schema["properties"][key] == {"type": ["string", "null"]}
     assert json.loads(json.dumps(schema)) == schema
 
 

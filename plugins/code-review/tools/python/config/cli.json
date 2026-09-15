@@ -1518,7 +1518,7 @@
     },
     {
       "name": "render-reviewed-commit",
-      "help": "Print the GitHub summary's Reviewed commit line from scope.json and setup.json (ISS-9137)",
+      "help": "Print the GitHub summary's Reviewed commit line from scope.json (ISS-9137)",
       "func": "cmd_render_reviewed_commit",
       "args": [
         {

@@ -361,7 +361,7 @@ SUMMARY_EOF
 **Reviewed commit line (ISS-9137).** Do NOT hand-author it. Run the renderer and embed its output verbatim, on its own line, immediately after the **Status** line:
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py" render-reviewed-commit --cr-dir <CR_DIR>
+python <HELPERS> render-reviewed-commit --cr-dir <CR_DIR>
 ```
 
 It names the commit the review read, and also the PR head when the runner checked out a different commit (GitHub's merge ref). It never prints a filesystem path: the runner's path means nothing on a PR. If it reads `not recorded`, embed that line as-is.
@@ -369,7 +369,7 @@ It names the commit the review read, and also the PR head when the runner checke
 **Reviewer Fleet block (PLN-725 Phase 9 / v2.23.0).** Do NOT hand-author the Reviewers / Model Routing lines. Run the canonical renderer and embed its output verbatim immediately after the **Reviewed commit** line:
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py" render-fleet-summary --cr-dir <CR_DIR>
+python <HELPERS> render-fleet-summary --cr-dir <CR_DIR>
 ```
 
 The renderer reads `<CR_DIR>/spawn.json` (sections: `spec` — intended fleet from stage_19b; `verification` — runtime tally from stage_20b; `route` — model assignments from Gate B) and emits the **Reviewers**, **Model Routing**, **Fleet** (`N intended | N ran | N required missing`), and a conditional **Notes** block. The notes surface non-default outcomes (BLOCKING sanitization, runtime missing required, BHA budget cap, PLN-723 deferral, malformed-plan required skips) — operators reading the summary comment see these without having to dig into `coverage_gaps.json` or `spawn.json.verification`.

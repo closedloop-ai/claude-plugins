@@ -5515,6 +5515,7 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
     # Hygiene-only runs read no source (and Gate A exits before the footer
     # teardown), so they skip it.
     head_sha = ""
+    pr_head = ""
     worktree_path = ""
     if mode == "local" and scope_kind == "pr" and not hygiene_only:
         cr_dir = os.path.dirname(os.path.abspath(setup_json_path))
@@ -5653,6 +5654,13 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
     }
     if review_root_tree is not None:
         result_out["review_root_tree"] = review_root_tree
+    # ISS-9137: the PR head this scope reviews, for provenance. Kept apart from
+    # ``head_sha``, which github mode must leave empty (it re-routes
+    # ``_file_content_hash`` and the inline-comment ``commit_id``) even though
+    # the verification block above resolved the head.
+    pr_head_sha = head_sha or pr_head
+    if pr_head_sha:
+        result_out["pr_head_sha"] = pr_head_sha
     json.dump(result_out, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
@@ -6158,22 +6166,18 @@ def _format_elapsed(seconds: int) -> str:
 _PROVENANCE_SHA_LEN = 12
 
 
-def _review_provenance(
-    cr_dir: str | Path, scope_meta: object, setup_meta: object,
-) -> dict[str, Any]:
-    """Validated record of the checkout and commit a review read.
+def _review_provenance(cr_dir: str | Path, scope_meta: object) -> dict[str, Any]:
+    """Validated record, from ``scope.json``, of the checkout and commit a review read.
 
-    ``scope.json`` and ``setup.json`` are operator-writable, and these values
-    are printed into the footer, the GitHub summary, and ``review_result.json``,
-    so each is re-validated: a root that is not an absolute path free of
-    control bytes, ``<``, ``>`` and backticks, or a SHA that is not hex,
-    becomes ``None``. ``isolated`` is true only when ``worktree_path`` is this
-    run's canonical PR-head worktree. ``pr_head_sha`` prefers ``setup.json``,
-    which carries the PR head in github mode, where ``scope.json``'s
-    ``head_sha`` is always empty.
+    ``scope.json`` is operator-writable, and these values are printed into the
+    footer, the GitHub summary, and ``review_result.json``, so each is
+    re-validated: a root that is not an absolute path free of control bytes,
+    ``<``, ``>`` and backticks, or a SHA that is not hex, becomes ``None``.
+    ``isolated`` is true only when ``worktree_path`` is this run's canonical
+    PR-head worktree. ``pr_head_sha`` reads ``resolve-scope``'s ``pr_head_sha``,
+    which github mode records while leaving ``head_sha`` empty.
     """
     scope = scope_meta if isinstance(scope_meta, dict) else {}
-    setup = setup_meta if isinstance(setup_meta, dict) else {}
     raw_root = scope.get("review_root")
     root = (
         raw_root
@@ -6188,7 +6192,7 @@ def _review_provenance(
         "review_root_sha": _validated_head_sha(scope.get("review_root_sha")) or None,
         "review_root_tree": _validated_head_sha(scope.get("review_root_tree")) or None,
         "pr_head_sha": (
-            _validated_head_sha(setup.get("head_sha"))
+            _validated_head_sha(scope.get("pr_head_sha"))
             or _validated_head_sha(scope.get("head_sha"))
             or None
         ),
@@ -6251,15 +6255,13 @@ def _render_reviewed_commit_line(provenance: dict[str, Any]) -> str:
 def cmd_render_reviewed_commit(args: argparse.Namespace) -> int:
     """Print the GitHub summary's ``**Reviewed commit:**`` line (ISS-9137).
 
-    Reads ``<cr-dir>/scope.json`` and ``<cr-dir>/setup.json``. Always exits 0:
-    a run with no recorded commit prints a line that says so, which the summary
-    shows rather than drops.
+    Reads ``<cr-dir>/scope.json``. Always exits 0: a run with no recorded
+    commit prints a line that says so, which the summary shows rather than
+    drops.
     """
     cr_dir = Path(args.cr_dir)
     provenance = _review_provenance(
-        cr_dir,
-        _read_optional_json(cr_dir / "scope.json", {}),
-        _read_optional_json(cr_dir / "setup.json", {}),
+        cr_dir, _read_optional_json(cr_dir / "scope.json", {}),
     )
     print(_render_reviewed_commit_line(provenance))
     return 0
@@ -6326,15 +6328,11 @@ def cmd_footer(args: argparse.Namespace) -> int:
     footer_line = f"**Review complete** — {elapsed_str} | {cache_str} | {mode_str} | {token_str}"
 
     scope_meta: object = {}
-    setup_meta: object = {}
     if cr_dir:
         scope_meta = _read_optional_json(Path(cr_dir) / "scope.json", {})
-        setup_meta = _read_optional_json(Path(cr_dir) / "setup.json", {})
     # ISS-9137: name the checkout and commit the review read. Resolved before
     # the teardown below removes an isolated PR-head worktree.
-    reviewed_line = _render_reviewed_line(
-        _review_provenance(cr_dir or "", scope_meta, setup_meta),
-    )
+    reviewed_line = _render_reviewed_line(_review_provenance(cr_dir or "", scope_meta))
 
     # Teardown: remove any PR-head worktree created during scope resolution
     # (local PR review isolation). The path is validated against the
@@ -14349,7 +14347,7 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
     # ISS-9137: which checkout and commit this review read, re-validated from
     # scope.json (null when absent or malformed). ``diff_tip`` cannot say this:
     # for a branch review it is the literal ``HEAD``.
-    provenance = _review_provenance(cr_dir, scope_data, setup_data)
+    provenance = _review_provenance(cr_dir, scope_data)
 
     envelope: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,

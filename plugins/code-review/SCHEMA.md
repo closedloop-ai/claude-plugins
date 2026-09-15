@@ -136,7 +136,7 @@ The terminal artifact of every review run.
 
 ```jsonc
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "review_id": "<uuid v4>",
 
   // ── Run context ───────────────────────────────────────────

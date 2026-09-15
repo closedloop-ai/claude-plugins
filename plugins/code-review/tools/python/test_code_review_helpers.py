@@ -7568,6 +7568,29 @@ class TestResolveScopeWorktree:
         assert json.loads(out)["review_root"] == _MOCK_TOPLEVEL
         assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
 
+    def test_github_merge_ref_records_the_pr_head_for_provenance(
+        self, tmp_path: Path,
+    ) -> None:
+        # ISS-9137: github mode leaves ``head_sha`` empty, so the PR head the
+        # verification block resolved is recorded as ``pr_head_sha``, and the
+        # summary line built from this resolved scope names both commits.
+        from code_review_helpers import _render_reviewed_commit_line, _review_provenance
+
+        head, merge = "a" * 40, "e" * 40
+        with patch("code_review_helpers._git_head_at", return_value=merge):
+            rc, out, _calls = self._invoke(
+                head_sha=head, work_head=merge, merge_parent=head,
+                mode="github", pr_number=42, tmp_path=tmp_path,
+            )
+        assert rc == 0
+        scope = json.loads(out)
+        assert (scope["head_sha"], scope["pr_head_sha"], scope["review_root_sha"]) == (
+            "", head, merge,
+        )
+        assert _render_reviewed_commit_line(_review_provenance(tmp_path, scope)) == (
+            "**Reviewed commit:** `eeeeeeeeeeee` (PR head is `aaaaaaaaaaaa`)"
+        )
+
     def test_github_mode_refuses_a_merge_ref_for_a_different_head(
         self, tmp_path: Path,
     ) -> None:
@@ -10642,7 +10665,7 @@ class TestReviewProvenance:
         )
 
     @pytest.mark.parametrize(
-        ("setup_head", "expected"),
+        ("pr_head", "expected"),
         [
             ("a" * 40, "**Reviewed commit:** `aaaaaaaaaaaa` (PR head)"),
             ("b" * 40, "**Reviewed commit:** `aaaaaaaaaaaa` (PR head is `bbbbbbbbbbbb`)"),
@@ -10650,16 +10673,19 @@ class TestReviewProvenance:
         ],
     )
     def test_github_summary_line_names_commits_never_the_runner_path(
-        self, tmp_path: Path, capsys: Any, setup_head: str, expected: str,
+        self, tmp_path: Path, capsys: Any, pr_head: str, expected: str,
     ) -> None:
         from code_review_helpers import cmd_render_reviewed_commit
 
-        (tmp_path / "scope.json").write_text(json.dumps({
+        # resolve-scope's github-mode shape: head_sha empty, pr_head_sha set.
+        scope: dict[str, Any] = {
             "review_root": "/home/runner/work/repo/repo",
             "review_root_sha": self.SHA,
             "head_sha": "",
-        }))
-        (tmp_path / "setup.json").write_text(json.dumps({"head_sha": setup_head}))
+        }
+        if pr_head:
+            scope["pr_head_sha"] = pr_head
+        (tmp_path / "scope.json").write_text(json.dumps(scope))
         assert cmd_render_reviewed_commit(argparse.Namespace(cr_dir=str(tmp_path))) == 0
         assert capsys.readouterr().out.strip() == expected
 
