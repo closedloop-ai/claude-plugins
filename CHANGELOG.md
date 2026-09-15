@@ -4,6 +4,23 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.10.0
+
+#### Added
+- `review_result.json` records which checkout and commit a review read:
+  - `review_root`, `review_root_sha`, and, for a staged review, `review_root_tree`.
+  - Values are copied from `scope.json` and re-validated first. A root must be an absolute path free of control characters, `<`, `>` and backticks, and a SHA must be hex. Anything absent or malformed is written as `null`.
+  - The fields are additive, so `schema_version` stays at 2. The envelope validator rejects any value that is neither a string nor `null`.
+  - `diff_tip` could not carry this, because for a branch review it is the literal `HEAD`.
+- The review footer prints a second line, `reviewed_line` from `footer.json`, in the form ``**Reviewed:** `<review_root>` @ `<12-char sha>` ``:
+  - A PR head isolated into a worktree is named `PR #N head` rather than by path, because the footer stage removes that worktree in the same call.
+  - A staged review appends the pinned index tree.
+  - A run whose `scope.json` has no valid `review_root_sha` prints `checkout not recorded`.
+- New `render-reviewed-commit` helper subcommand prints the GitHub summary's `**Reviewed commit:**` line, which `github-review.md` places right after **Status**:
+  - It names the commit the review read, and marks it `(PR head)` when it matches the PR head in `setup.json`.
+  - When the runner checked out a different commit, such as a merge ref, it names the PR head as well.
+  - It never prints a filesystem path.
+
 ### code-review v3.9.0
 
 #### Fixed
