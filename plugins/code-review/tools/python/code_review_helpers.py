@@ -585,7 +585,7 @@ def _require_review_root(cr_dir: str | Path, scope_meta: object) -> str:
             "review_root is empty or absent in scope.json. Spawned reviewers "
             "would resolve source paths against their own working directory — "
             "the invoking session's checkout, not the code under review. A "
-            "scope.json from plugin < 3.8.0 always looks like this; the walker "
+            "scope.json from plugin < 3.9.0 always looks like this; the walker "
             "will not re-run resolve-scope over an existing one, so start a "
             "fresh review from the checkout that holds the diff.",
         )
