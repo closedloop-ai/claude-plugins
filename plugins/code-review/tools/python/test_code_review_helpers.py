@@ -6890,6 +6890,7 @@ class TestResolveScopeWorktree:
         first_parent: str = "main000",
         extra_parent: str = "",
         gh_stdout: str | None = "main\nfeat-x\n",
+        base_ref_override: str | None = None,
     ) -> tuple[int, str, list[list[str]]]:
         """Run cmd_resolve_scope with mocked git; return (rc, stdout, git_calls)."""
         import io
@@ -6974,7 +6975,7 @@ class TestResolveScopeWorktree:
         try:
             ns = argparse.Namespace(
                 mode=mode, pr_number=pr_number, scope_args="",
-                base_ref_override=None, setup_json=str(setup_path),
+                base_ref_override=base_ref_override, setup_json=str(setup_path),
                 hygiene_only=hygiene_only,
             )
             with patch(
@@ -7146,6 +7147,25 @@ class TestResolveScopeWorktree:
             mode="github", pr_number=42, tmp_path=tmp_path,
         )
         assert rc == 1
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    def test_github_mode_merge_check_uses_the_pr_base_under_a_base_override(
+        self, tmp_path: Path,
+    ) -> None:
+        # `--base develop` re-points the review diff, but GitHub built the merge
+        # ref against the PR's own base (`main` in its metadata), so that is the
+        # branch the first parent must be on. `main000` is on origin/main and
+        # NOT on origin/develop; checking against the overridden base would
+        # refuse every genuine merge-ref run that passes `--base`.
+        rc, out, calls = self._invoke(
+            head_sha="aaa111", work_head="merge777", merge_parent="aaa111",
+            base_ref_override="develop",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 0
+        result = json.loads(out)
+        assert result["base_ref"] == "develop"
+        assert result["review_root"] == ""
         assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
 
     def test_github_mode_refuses_a_dirty_tree_at_the_head(
