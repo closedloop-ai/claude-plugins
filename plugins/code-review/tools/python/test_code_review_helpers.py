@@ -6857,15 +6857,22 @@ class TestResolveScope:
 
 
 class TestResolveScopeWorktree:
-    """PR-head worktree isolation for local PR review (cmd_resolve_scope).
+    """PR-head source handling for PR review (cmd_resolve_scope).
 
-    Local ``/code-review <PR>`` computes its diff from the fetched remote
-    refs but reviewer/verifier agents read source via Read/Grep against the
-    working tree. When the operator is on a different branch, those reads
-    see the wrong content and the verifier rejects every finding on the
-    existence check. These tests pin that resolve-scope materializes a
-    detached worktree at the PR head SHA (surfaced as ``review_root``)
-    exactly when it is needed — and degrades cleanly otherwise.
+    ``/code-review <PR>`` computes its diff from the fetched remote refs but
+    reviewer/verifier agents read source via Read/Grep against the working
+    tree. When that tree is not the PR head, those reads see the wrong
+    content and the verifier rejects every finding on the existence check.
+
+    The two modes answer that differently and the cases below are split
+    accordingly. LOCAL mode ISOLATES: it materializes a detached worktree at
+    the PR head SHA (surfaced as ``review_root``) exactly when it is needed,
+    and aborts when it cannot. GITHUB mode VERIFIES AND REFUSES (ISS-8769):
+    it emits no ``review_root`` and no ``head_sha``, so nothing downstream
+    changes, but it will not proceed against a tree it cannot establish as
+    the PR's source. Coverage is deliberately NOT symmetric — the local-only
+    cases (hygiene-only, worktree-add failure) have no github analogue
+    because github mode creates no worktree.
     """
 
     def _invoke(
@@ -6879,6 +6886,11 @@ class TestResolveScopeWorktree:
         hygiene_only: str = "false",
         worktree_add_rc: int = 0,
         dirty: bool = False,
+        merge_parent: str = "",
+        first_parent: str = "main000",
+        extra_parent: str = "",
+        gh_stdout: str | None = "main\nfeat-x\n",
+        base_ref_override: str | None = None,
     ) -> tuple[int, str, list[list[str]]]:
         """Run cmd_resolve_scope with mocked git; return (rc, stdout, git_calls)."""
         import io
@@ -6896,17 +6908,51 @@ class TestResolveScopeWorktree:
             calls.append(cl)
             joined = " ".join(cl)
             if cl[:2] == ["gh", "pr"] and "baseRefName" in joined:
+                # `None` models `gh pr view` failing (auth, network, no such
+                # PR); `_resolve_pr_scope` then guesses head_ref from
+                # setup.json's `other-branch`.
+                if gh_stdout is None:
+                    raise subprocess.CalledProcessError(1, cl)
                 return subprocess.CompletedProcess(
-                    args=cl, returncode=0, stdout="main\nfeat-x\n",
+                    args=cl, returncode=0, stdout=gh_stdout,
                 )
             if cl[:2] == ["git", "fetch"]:
                 return subprocess.CompletedProcess(args=cl, returncode=0, stdout="")
             if cl[:3] == ["git", "rev-parse", "--verify"]:
                 ref = cl[-1]
-                sha = {"origin/feat-x": head_sha, "HEAD": work_head}.get(ref, "")
+                # The operator's `other-branch` is pushed and checked out, so a
+                # guessed `origin/other-branch` head resolves to HEAD itself.
+                sha = {
+                    "origin/feat-x": head_sha,
+                    "origin/other-branch": work_head,
+                    "HEAD": work_head,
+                }.get(ref, "")
                 return subprocess.CompletedProcess(
-                    args=cl, returncode=0, stdout=(sha + "\n") if sha else "",
+                    args=cl,
+                    returncode=0 if sha else 1,
+                    stdout=(sha + "\n") if sha else "",
                 )
+            if cl[:3] == ["git", "rev-list", "--parents"]:
+                # "<HEAD> <parents...>". HEAD is a merge only when
+                # `merge_parent` (its second parent) is set: the PR's merge ref
+                # shape (refs/pull/N/merge, the DEFAULT `actions/checkout` for a
+                # `pull_request` event), with `first_parent` as the base tip it
+                # merged into and `extra_parent` making it an octopus.
+                tokens = (
+                    [work_head, first_parent, merge_parent, extra_parent]
+                    if merge_parent else [work_head, first_parent]
+                )
+                return subprocess.CompletedProcess(
+                    args=cl, returncode=0,
+                    stdout=" ".join(t for t in tokens if t) + "\n",
+                )
+            if cl[:3] == ["git", "merge-base", "--is-ancestor"]:
+                # Only `main000` is on the PR's base branch (`gh` says `main`).
+                # `_run_git` relies on check=True raising for git's non-zero
+                # exit, which a mocked subprocess.run does not do by itself.
+                if cl[3:] == ["main000", "origin/main"]:
+                    return subprocess.CompletedProcess(args=cl, returncode=0, stdout="")
+                raise subprocess.CalledProcessError(1, cl)
             if cl[:2] == ["git", "status"]:
                 return subprocess.CompletedProcess(
                     args=cl, returncode=0,
@@ -6929,7 +6975,7 @@ class TestResolveScopeWorktree:
         try:
             ns = argparse.Namespace(
                 mode=mode, pr_number=pr_number, scope_args="",
-                base_ref_override=None, setup_json=str(setup_path),
+                base_ref_override=base_ref_override, setup_json=str(setup_path),
                 hygiene_only=hygiene_only,
             )
             with patch(
@@ -6990,8 +7036,9 @@ class TestResolveScopeWorktree:
         assert result["worktree_path"] == ""
 
     def test_no_worktree_in_github_mode_no_pr(self, tmp_path: Path) -> None:
-        # GitHub CI without a PR number → scope_kind "github_pending"; the
-        # guard fails on both mode and scope_kind.
+        # GitHub mode without a PR number -> scope_kind "github_pending". There
+        # is no PR head to check a tree against, so neither the local isolation
+        # block nor the github verification block applies.
         result = self._run(
             head_sha="aaa111", work_head="bbb222",
             mode="github", pr_number=None, tmp_path=tmp_path,
@@ -6999,19 +7046,186 @@ class TestResolveScopeWorktree:
         assert result["review_root"] == ""
         assert result["worktree_path"] == ""
 
-    def test_no_worktree_github_mode_with_pr_scope(self, tmp_path: Path) -> None:
-        # GitHub mode WITH a PR number → scope_kind "pr", so the no-worktree
-        # behavior is carried solely by the ``mode == "local"`` guard. This
-        # isolates the mode check from the scope_kind check, so a regression
-        # that dropped the mode guard would surface here (the runner already
-        # checks out the PR head in CI).
-        result = self._run(
+    def test_github_mode_refuses_a_tree_that_is_not_the_pr_head(
+        self, tmp_path: Path,
+    ) -> None:
+        """ISS-8769 — `--github` outside CI must not review the wrong tree.
+
+        This case previously asserted the opposite: no worktree, rc 0, on a
+        tree whose HEAD is not the PR head. That expectation was wrong rather
+        than merely outdated — it encoded "github mode means a CI runner
+        already holding the PR head" while setting up the exact state where
+        that premise fails, so it pinned the defect. `--github` selects
+        file-based handoff output; it does not declare "I am inside GitHub
+        Actions", and running it from a developer machine is supported.
+
+        The refusal is the whole behavior change: no worktree is created and
+        no `review_root` is emitted in github mode, so nothing downstream
+        moves. The two shapes a real runner produces are accepted by the two
+        cases below, which is what keeps this from breaking CI.
+        """
+        rc, _out, calls = self._invoke(
             head_sha="aaa111", work_head="bbb222",
             mode="github", pr_number=42, tmp_path=tmp_path,
         )
+        assert rc == 1
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    def test_github_mode_accepts_a_head_checkout(self, tmp_path: Path) -> None:
+        # Runner shape 1: `actions/checkout` with an explicit `ref: <head sha>`
+        # (what closedloop-ai/symphony-alpha's claude-code-review.yml does).
+        # The first positive control for the refusal above.
+        rc, out, calls = self._invoke(
+            head_sha="same999", work_head="same999",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 0
+        result = json.loads(out)
         assert result["scope_kind"] == "pr"
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+        # Github mode emits NEITHER field. `head_sha` in particular re-routes
+        # `_file_content_hash` and the inline-comment `commit_id`, so leaving
+        # it empty is what makes this change additive.
         assert result["review_root"] == ""
         assert result["worktree_path"] == ""
+        assert result["head_sha"] == ""
+
+    def test_github_mode_accepts_the_prs_merge_ref(self, tmp_path: Path) -> None:
+        # Runner shape 2, and the DEFAULT one: `actions/checkout` on a
+        # `pull_request` event checks out `refs/pull/N/merge`, a two-parent
+        # merge of the PR head (second parent) into the base tip GitHub merged
+        # into (first parent: the mock's default `main000`, on origin/main).
+        # HEAD therefore never equals the head SHA, and a check that only
+        # compared HEAD would refuse every such run — this case is what stops
+        # that.
+        rc, out, calls = self._invoke(
+            head_sha="aaa111", work_head="merge777", merge_parent="aaa111",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 0
+        assert json.loads(out)["review_root"] == ""
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    def test_github_mode_refuses_a_merge_ref_for_a_different_head(
+        self, tmp_path: Path,
+    ) -> None:
+        # The merge-ref arm must check WHICH head it merged, not merely that
+        # HEAD has a second parent. Without this, any merge commit at all would
+        # be accepted as this PR's source.
+        rc, _out, _calls = self._invoke(
+            head_sha="aaa111", work_head="merge777", merge_parent="cccc33",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 1
+
+    def test_github_mode_refuses_a_merge_whose_first_parent_is_not_on_the_base(
+        self, tmp_path: Path,
+    ) -> None:
+        # Taking the PR head as second parent does not make a merge the PR's
+        # merge ref: a local `git merge` of the head into an unrelated branch
+        # has the same second parent, and its tree carries that branch's code,
+        # which this PR's diff does not contain. The first parent must be on
+        # the PR's base branch.
+        rc, _out, calls = self._invoke(
+            head_sha="aaa111", work_head="merge777", merge_parent="aaa111",
+            first_parent="side444",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 1
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    def test_github_mode_refuses_an_octopus_merge_of_the_head(
+        self, tmp_path: Path,
+    ) -> None:
+        # Base tip first, PR head second, and a third branch folded in. GitHub's
+        # merge ref has exactly two parents; a second-parent check alone would
+        # accept this and reviewers would read the third branch's code as the
+        # PR's.
+        rc, _out, calls = self._invoke(
+            head_sha="aaa111", work_head="merge777", merge_parent="aaa111",
+            extra_parent="side444",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 1
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    def test_github_mode_merge_check_uses_the_pr_base_under_a_base_override(
+        self, tmp_path: Path,
+    ) -> None:
+        # `--base develop` re-points the review diff, but GitHub built the merge
+        # ref against the PR's own base (`main` in its metadata), so that is the
+        # branch the first parent must be on. `main000` is on origin/main and
+        # NOT on origin/develop; checking against the overridden base would
+        # refuse every genuine merge-ref run that passes `--base`.
+        rc, out, calls = self._invoke(
+            head_sha="aaa111", work_head="merge777", merge_parent="aaa111",
+            base_ref_override="develop",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 0
+        result = json.loads(out)
+        assert result["base_ref"] == "develop"
+        assert result["review_root"] == ""
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    def test_github_mode_refuses_a_dirty_tree_at_the_head(
+        self, tmp_path: Path,
+    ) -> None:
+        # HEAD is the PR head but tracked files are modified, so the tree holds
+        # content that is in no commit this PR contains. Local mode isolates
+        # here (test_dirty_tree_isolates_even_when_head_matches); github mode
+        # has no worktree to isolate into, so it refuses.
+        rc, _out, _calls = self._invoke(
+            head_sha="same999", work_head="same999", dirty=True,
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 1
+
+    def test_github_mode_refuses_when_the_pr_head_is_unresolvable(
+        self, tmp_path: Path,
+    ) -> None:
+        # The head branch name came from the PR's metadata, but
+        # `origin/<head>` was never fetched (resolve-scope lets that fetch
+        # fail), so the PR head is not established. An unresolvable ref must
+        # refuse rather than fall through to "review whatever is here".
+        rc, _out, calls = self._invoke(
+            head_sha="", work_head="bbb222",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 1
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    @pytest.mark.parametrize(
+        "gh_stdout", [None, "main\n"],
+        ids=["gh_pr_view_fails", "gh_pr_view_returns_no_head"],
+    )
+    def test_github_mode_refuses_a_guessed_head_even_when_the_tree_matches_it(
+        self, tmp_path: Path, gh_stdout: str | None,
+    ) -> None:
+        # Without a head from `gh pr view`, the guess fallback takes head_ref
+        # from the checked-out branch. That branch is pushed, checked out, and
+        # clean here, so a tree check against the guess would pass and review
+        # `other-branch` against PR #42's diff. The head must come from the
+        # PR's own metadata before any checkout is verified against it.
+        rc, _out, calls = self._invoke(
+            head_sha="aaa111", work_head="bbb222", gh_stdout=gh_stdout,
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 1
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    def test_github_mode_hygiene_only_reads_no_source_and_is_not_checked(
+        self, tmp_path: Path,
+    ) -> None:
+        # Gate A runs deterministic hygiene checks and exits before any agent
+        # reads source, so there is no wrong tree to read and nothing to refuse.
+        # Without this case the verification block could be tightened to fire on
+        # hygiene-only runs and every case above would stay green.
+        result = self._run(
+            head_sha="aaa111", work_head="bbb222", hygiene_only="true",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert result["review_root"] == ""
 
     def test_fail_closed_when_worktree_add_fails(self, tmp_path: Path) -> None:
         # Head differs (isolation required) but ``git worktree add`` failed →
