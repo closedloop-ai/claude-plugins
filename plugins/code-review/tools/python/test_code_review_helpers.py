@@ -6887,6 +6887,9 @@ class TestResolveScopeWorktree:
         worktree_add_rc: int = 0,
         dirty: bool = False,
         merge_parent: str = "",
+        first_parent: str = "main000",
+        extra_parent: str = "",
+        gh_stdout: str | None = "main\nfeat-x\n",
     ) -> tuple[int, str, list[list[str]]]:
         """Run cmd_resolve_scope with mocked git; return (rc, stdout, git_calls)."""
         import io
@@ -6904,27 +6907,51 @@ class TestResolveScopeWorktree:
             calls.append(cl)
             joined = " ".join(cl)
             if cl[:2] == ["gh", "pr"] and "baseRefName" in joined:
+                # `None` models `gh pr view` failing (auth, network, no such
+                # PR); `_resolve_pr_scope` then guesses head_ref from
+                # setup.json's `other-branch`.
+                if gh_stdout is None:
+                    raise subprocess.CalledProcessError(1, cl)
                 return subprocess.CompletedProcess(
-                    args=cl, returncode=0, stdout="main\nfeat-x\n",
+                    args=cl, returncode=0, stdout=gh_stdout,
                 )
             if cl[:2] == ["git", "fetch"]:
                 return subprocess.CompletedProcess(args=cl, returncode=0, stdout="")
             if cl[:3] == ["git", "rev-parse", "--verify"]:
                 ref = cl[-1]
-                # `HEAD^2` is the PR's merge ref shape (refs/pull/N/merge, the
-                # DEFAULT `actions/checkout` for a `pull_request` event). Git
-                # exits non-zero on a non-merge HEAD, which the helper reads as
-                # None — modelled here by leaving `merge_parent` empty.
+                # The operator's `other-branch` is pushed and checked out, so a
+                # guessed `origin/other-branch` head resolves to HEAD itself.
                 sha = {
                     "origin/feat-x": head_sha,
+                    "origin/other-branch": work_head,
                     "HEAD": work_head,
-                    "HEAD^2": merge_parent,
                 }.get(ref, "")
                 return subprocess.CompletedProcess(
                     args=cl,
                     returncode=0 if sha else 1,
                     stdout=(sha + "\n") if sha else "",
                 )
+            if cl[:3] == ["git", "rev-list", "--parents"]:
+                # "<HEAD> <parents...>". HEAD is a merge only when
+                # `merge_parent` (its second parent) is set: the PR's merge ref
+                # shape (refs/pull/N/merge, the DEFAULT `actions/checkout` for a
+                # `pull_request` event), with `first_parent` as the base tip it
+                # merged into and `extra_parent` making it an octopus.
+                tokens = (
+                    [work_head, first_parent, merge_parent, extra_parent]
+                    if merge_parent else [work_head, first_parent]
+                )
+                return subprocess.CompletedProcess(
+                    args=cl, returncode=0,
+                    stdout=" ".join(t for t in tokens if t) + "\n",
+                )
+            if cl[:3] == ["git", "merge-base", "--is-ancestor"]:
+                # Only `main000` is on the PR's base branch (`gh` says `main`).
+                # `_run_git` relies on check=True raising for git's non-zero
+                # exit, which a mocked subprocess.run does not do by itself.
+                if cl[3:] == ["main000", "origin/main"]:
+                    return subprocess.CompletedProcess(args=cl, returncode=0, stdout="")
+                raise subprocess.CalledProcessError(1, cl)
             if cl[:2] == ["git", "status"]:
                 return subprocess.CompletedProcess(
                     args=cl, returncode=0,
@@ -7064,10 +7091,12 @@ class TestResolveScopeWorktree:
 
     def test_github_mode_accepts_the_prs_merge_ref(self, tmp_path: Path) -> None:
         # Runner shape 2, and the DEFAULT one: `actions/checkout` on a
-        # `pull_request` event checks out `refs/pull/N/merge`, a merge commit
-        # whose second parent is the PR head. HEAD therefore never equals the
-        # head SHA, and a check that only compared HEAD would refuse every such
-        # run — this case is what stops that.
+        # `pull_request` event checks out `refs/pull/N/merge`, a two-parent
+        # merge of the PR head (second parent) into the base tip GitHub merged
+        # into (first parent: the mock's default `main000`, on origin/main).
+        # HEAD therefore never equals the head SHA, and a check that only
+        # compared HEAD would refuse every such run — this case is what stops
+        # that.
         rc, out, calls = self._invoke(
             head_sha="aaa111", work_head="merge777", merge_parent="aaa111",
             mode="github", pr_number=42, tmp_path=tmp_path,
@@ -7088,6 +7117,37 @@ class TestResolveScopeWorktree:
         )
         assert rc == 1
 
+    def test_github_mode_refuses_a_merge_whose_first_parent_is_not_on_the_base(
+        self, tmp_path: Path,
+    ) -> None:
+        # Taking the PR head as second parent does not make a merge the PR's
+        # merge ref: a local `git merge` of the head into an unrelated branch
+        # has the same second parent, and its tree carries that branch's code,
+        # which this PR's diff does not contain. The first parent must be on
+        # the PR's base branch.
+        rc, _out, calls = self._invoke(
+            head_sha="aaa111", work_head="merge777", merge_parent="aaa111",
+            first_parent="side444",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 1
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    def test_github_mode_refuses_an_octopus_merge_of_the_head(
+        self, tmp_path: Path,
+    ) -> None:
+        # Base tip first, PR head second, and a third branch folded in. GitHub's
+        # merge ref has exactly two parents; a second-parent check alone would
+        # accept this and reviewers would read the third branch's code as the
+        # PR's.
+        rc, _out, calls = self._invoke(
+            head_sha="aaa111", work_head="merge777", merge_parent="aaa111",
+            extra_parent="side444",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 1
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
     def test_github_mode_refuses_a_dirty_tree_at_the_head(
         self, tmp_path: Path,
     ) -> None:
@@ -7104,13 +7164,31 @@ class TestResolveScopeWorktree:
     def test_github_mode_refuses_when_the_pr_head_is_unresolvable(
         self, tmp_path: Path,
     ) -> None:
-        # `origin/<head>` never fetched, or `diff_tip` degraded to
-        # `origin/HEAD` because `gh pr view` failed and the guess fallback used
-        # the detached `current_branch`. Either way the PR head is not
-        # established, and an unresolvable ref must refuse rather than fall
-        # through to "review whatever is here".
+        # The head branch name came from the PR's metadata, but
+        # `origin/<head>` was never fetched (resolve-scope lets that fetch
+        # fail), so the PR head is not established. An unresolvable ref must
+        # refuse rather than fall through to "review whatever is here".
         rc, _out, calls = self._invoke(
             head_sha="", work_head="bbb222",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 1
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    @pytest.mark.parametrize(
+        "gh_stdout", [None, "main\n"],
+        ids=["gh_pr_view_fails", "gh_pr_view_returns_no_head"],
+    )
+    def test_github_mode_refuses_a_guessed_head_even_when_the_tree_matches_it(
+        self, tmp_path: Path, gh_stdout: str | None,
+    ) -> None:
+        # Without a head from `gh pr view`, the guess fallback takes head_ref
+        # from the checked-out branch. That branch is pushed, checked out, and
+        # clean here, so a tree check against the guess would pass and review
+        # `other-branch` against PR #42's diff. The head must come from the
+        # PR's own metadata before any checkout is verified against it.
+        rc, _out, calls = self._invoke(
+            head_sha="aaa111", work_head="bbb222", gh_stdout=gh_stdout,
             mode="github", pr_number=42, tmp_path=tmp_path,
         )
         assert rc == 1
