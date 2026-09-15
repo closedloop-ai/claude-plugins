@@ -240,7 +240,7 @@ def _resolve_pr_scope(
     current_branch: str,
     *,
     allow_guess_fallback: bool,
-) -> dict[str, str | int]:
+) -> dict[str, str | int | bool]:
     """Resolve diff scope fields for a given PR number.
 
     When *allow_guess_fallback* is ``True`` (explicit ``--pr-number``), a
@@ -248,6 +248,12 @@ def _resolve_pr_scope(
     default branch / ``head_ref=current_branch``.  When ``False``
     (auto-detect path), errors propagate so the caller can revert to branch
     scope.
+
+    ``head_ref_from_metadata`` is ``True`` only when ``gh pr view`` returned
+    both the base and the head branch names, and ``False`` whenever
+    ``head_ref`` is the ``current_branch`` guess. A guess names whatever
+    branch is checked out, not this PR, so github mode refuses on it rather
+    than verify a checkout against it (ISS-8769).
     """
     try:
         result = subprocess.run(
@@ -258,11 +264,13 @@ def _resolve_pr_scope(
         lines = result.stdout.strip().splitlines()
         base_ref = lines[0].strip() if len(lines) > 0 else _resolve_default_base_ref()
         head_ref = lines[1].strip() if len(lines) > 1 else current_branch
+        head_ref_from_metadata = len(lines) > 1
     except subprocess.CalledProcessError:
         if not allow_guess_fallback:
             raise
         base_ref = _resolve_default_base_ref()
         head_ref = current_branch
+        head_ref_from_metadata = False
 
     return {
         "diff_scope": f"origin/{base_ref}...origin/{head_ref}",
@@ -273,16 +281,19 @@ def _resolve_pr_scope(
         "path_filter": "",
         "scope_kind": "pr",
         "pr_number": pr_number,
+        "head_ref_from_metadata": head_ref_from_metadata,
     }
 
 
 def _git_rev_parse(ref: str) -> str | None:
     """Resolve *ref* to a commit SHA, or ``None`` if it does not exist.
 
-    Used to compare the PR head commit against the working-tree HEAD when
-    deciding whether local PR review needs a worktree. Never raises — an
-    unresolvable ref (e.g. ``origin/<branch>`` that was never fetched)
-    returns ``None`` so the caller falls back to reading the working tree.
+    Never raises: an unresolvable ref (``origin/<branch>`` that was never
+    fetched, an unborn ``HEAD``) is a ``None``, not an error.
+    What ``None`` MEANS is the caller's to decide and they differ —
+    ``_resolve_default_base_ref`` reads it as "try the next candidate",
+    ``_tree_holds_pr_head`` as "not this shape", ``cmd_resolve_scope`` as
+    "cannot establish the PR head", which it refuses on.
     """
     try:
         result = subprocess.run(
@@ -799,6 +810,73 @@ def _working_tree_clean() -> bool:
         return result.stdout.strip() == ""
     except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return False
+
+
+def _head_is_pr_merge(pr_head: str, pr_base: str) -> bool:
+    """True when HEAD is a merge of *pr_head* into the PR's base branch.
+
+    ``HEAD^2 == pr_head`` alone does not identify ``refs/pull/N/merge``: any
+    merge that takes the head as its second parent passes it, including one
+    whose first parent is an unrelated branch and an octopus that folds a
+    third branch in, and reviewers would then read code this PR's diff does
+    not contain. GitHub's merge ref has exactly two parents, the base tip it
+    merged into and then the head, so all of these must hold:
+
+      - exactly two parents (no octopus),
+      - the second parent is *pr_head*, and
+      - the first parent is on the PR's base branch: *pr_base*
+        (``origin/<baseRefName>``) is it or descends from it.
+
+    Ancestry, not equality, on the first parent: the merge ref records the
+    base tip at the moment GitHub computed it, and the runner fetches the base
+    later, so ``origin/<base>`` is routinely ahead of it. The PR metadata's
+    ``baseRefOid`` is no better a pin — it would be read at resolve time,
+    after the checkout, so equality with it refuses every run in which the
+    base moved in between,
+    and ancestry against it needs a commit the runner may never have fetched.
+    ``origin/<base>`` is the ref the review diff is computed from, and the
+    walk to the first parent stays inside history that diff already needs.
+
+    Fails closed: any git error (unresolvable base, shallow history, git
+    missing) is ``False``.
+    """
+    try:
+        # Plumbing, so user log config cannot reshape the output:
+        # "<HEAD> <parent 1> <parent 2> ...".
+        parents = _run_git(["rev-list", "--parents", "-n", "1", "HEAD"]).split()[1:]
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return False
+    if len(parents) != 2 or parents[1] != pr_head:
+        return False
+    return _is_ancestor(parents[0], pr_base)
+
+
+def _tree_holds_pr_head(pr_head: str, pr_base: str) -> bool:
+    """True when the working tree holds *pr_head*'s content (ISS-8769).
+
+    Two checkout shapes legitimately hold a PR's source, and BOTH occur in
+    GitHub Actions, so neither may be treated as the only one:
+
+      - the head commit itself (``actions/checkout`` with an explicit
+        ``ref: <head sha>``), and
+      - the PR's merge ref ``refs/pull/N/merge`` — the DEFAULT checkout for a
+        ``pull_request`` event — a two-parent merge of the head into a commit
+        on *pr_base* (see ``_head_is_pr_merge`` for why each part is needed).
+
+    Anything else (another branch, a stale head, an unresolvable ref, a merge
+    that is not this PR's) is not established, and a caller must refuse rather
+    than review it. Uncommitted changes to tracked files disqualify either
+    shape: the tree then holds content that is in no commit this PR contains.
+    Untracked files do not, matching ``_working_tree_clean``.
+
+    Costs one ``rev-parse`` plus one ``status`` on the head checkout, and two
+    more git calls (parents, ancestry) on the merge-ref shape.
+    """
+    if not pr_head:
+        return False
+    if _git_rev_parse("HEAD") != pr_head and not _head_is_pr_merge(pr_head, pr_base):
+        return False
+    return _working_tree_clean()
 
 
 def _git_worktree_quiet(args: list[str]) -> None:
@@ -5266,6 +5344,11 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
     scope_kind = "branch"
 
     pr_auto_detected = False
+    # Github mode verifies the checkout against the PR's OWN metadata, so it
+    # needs to know whether the head was read from ``gh pr view`` or guessed,
+    # and which base the PR targets before ``--base`` overrides ``base_ref``.
+    pr_head_from_metadata = False
+    pr_base_ref = ""
 
     if pr_number is not None:
         # Explicit --pr-number: use _resolve_pr_scope with guess fallback.
@@ -5278,6 +5361,8 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
         review_branch = str(pr_scope["review_branch"])
         path_filter = str(pr_scope["path_filter"])
         scope_kind = str(pr_scope["scope_kind"])
+        pr_head_from_metadata = bool(pr_scope["head_ref_from_metadata"])
+        pr_base_ref = base_ref
 
         # Fetch origin head (allow failure for explicit PR)
         subprocess.run(
@@ -5372,9 +5457,12 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
     # the PR head with no uncommitted modifications. In every other case we
     # MUST isolate; if isolation cannot be established (head unresolvable, or
     # ``git worktree add`` fails) we abort rather than silently review the
-    # wrong source against a remote PR diff. GitHub CI mode already checks
-    # out the PR head, so this is local-only. Hygiene-only runs read no
-    # source (and Gate A exits before the footer teardown), so they skip it.
+    # wrong source against a remote PR diff. Isolation stays LOCAL-ONLY: a
+    # worktree moves where a whole agent fleet reads from, and github mode has
+    # prompts that do not resolve ``review_root``. Github mode instead VERIFIES
+    # the tree it was handed and refuses — see the ISS-8769 block below.
+    # Hygiene-only runs read no source (and Gate A exits before the footer
+    # teardown), so they skip it.
     head_sha = ""
     worktree_path = ""
     if mode == "local" and scope_kind == "pr" and not hygiene_only:
@@ -5411,6 +5499,61 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
                 return 1
             worktree_path = created
 
+    # ISS-8769 — github mode VERIFIES the tree it was handed, and refuses.
+    #
+    # ``--github`` selects file-based handoff output. It does NOT declare "I am
+    # running inside GitHub Actions", and running it from a developer machine is
+    # supported — so the old code, which skipped every check whenever the mode
+    # was github, silently reviewed whatever branch happened to be checked out
+    # while holding a diff computed from the PR's remote refs. Nothing in the
+    # run said which tree was read, and the deep tier's cross-file reviewers
+    # (Impact Analyzer, Design Critic, Bug Hunter B) are exactly the ones a
+    # wrong tree makes confidently wrong.
+    #
+    # This block ADDS a refusal and creates no worktree, and ``head_sha`` stays
+    # out of the emitted scope, so ``_file_content_hash`` and the inline-comment
+    # ``commit_id`` keep reading the working tree. ``review_root`` is resolved
+    # below exactly as for every non-isolated scope: the invoking checkout,
+    # which is the tree this block verifies. It runs BEFORE any scope is
+    # emitted, so either the tree is established as this PR's source or the
+    # run stops with nothing on stdout.
+    #
+    # "This PR" means the PR's own metadata, checked FIRST. When ``gh pr view``
+    # fails, ``_resolve_pr_scope`` guesses ``head_ref`` from the checked-out
+    # branch, and a clean checkout of that branch trivially holds the guessed
+    # head — so verifying the tree against it would pass and review that
+    # branch against the requested PR's diff.
+    if mode == "github" and scope_kind == "pr" and not hygiene_only:
+        if not pr_head_from_metadata:
+            print(
+                f"Error: cannot resolve PR #{pr_number}'s head from its "
+                f"metadata (`gh pr view {pr_number}` failed or returned no "
+                "head branch), so the only head available is a guess "
+                f"({diff_tip}, from the checked-out branch). A tree that "
+                "matches a guess proves nothing about this PR, and continuing "
+                "could review the wrong code against its diff. Check "
+                "`gh auth status` (GH_TOKEN on a CI runner) and that PR "
+                f"#{pr_number} exists in this repository, then retry.",
+                file=sys.stderr,
+            )
+            return 1
+        pr_head = _git_rev_parse(diff_tip) or ""  # diff_tip == origin/<head_ref>
+        if not _tree_holds_pr_head(pr_head, f"origin/{pr_base_ref}"):
+            print(
+                "Error: cannot establish that the checked-out tree is PR "
+                f"#{pr_number}'s source ({diff_tip} = "
+                f"{pr_head or 'unresolvable'}). Reviewers read the working "
+                "tree, so continuing would review the wrong code against this "
+                "PR's diff — the exact failure this check exists to stop. A "
+                "CI runner satisfies it by checking out the PR head, or the "
+                "PR's merge ref (exactly the head merged into a commit on "
+                f"origin/{pr_base_ref}), with a clean tree; locally, check out "
+                "the PR branch (or drop --github and run the local flow, which "
+                "isolates the head into a worktree for you).",
+                file=sys.stderr,
+            )
+            return 1
+
     # The review root is resolved HERE, once, for every scope kind — not left
     # for each spawned agent to infer from its own cwd. A reviewer/verifier
     # Task inherits the invoking SESSION's working directory, so on any
@@ -5420,6 +5563,11 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
     # realpath, because every downstream guard canonicalizes the same way and
     # a symlinked cr_dir would otherwise make scope.json and spawn.json.spec
     # disagree on the "same" root.
+    # In github mode there is no worktree, so this is the invoking checkout the
+    # ISS-8769 block above just verified, and review_root_sha is its HEAD: the
+    # PR head for a head checkout, the MERGE commit for a merge-ref checkout.
+    # The dispatch drift check must compare against what is checked out, not
+    # against the PR head.
     review_root = os.path.realpath(worktree_path) if worktree_path else _git_toplevel()
     if not review_root:
         print(
