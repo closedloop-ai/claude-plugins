@@ -7568,6 +7568,29 @@ class TestResolveScopeWorktree:
         assert json.loads(out)["review_root"] == _MOCK_TOPLEVEL
         assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
 
+    def test_github_merge_ref_records_the_pr_head_for_provenance(
+        self, tmp_path: Path,
+    ) -> None:
+        # ISS-9137: github mode leaves ``head_sha`` empty, so the PR head the
+        # verification block resolved is recorded as ``pr_head_sha``, and the
+        # summary line built from this resolved scope names both commits.
+        from code_review_helpers import _render_reviewed_commit_line, _review_provenance
+
+        head, merge = "a" * 40, "e" * 40
+        with patch("code_review_helpers._git_head_at", return_value=merge):
+            rc, out, _calls = self._invoke(
+                head_sha=head, work_head=merge, merge_parent=head,
+                mode="github", pr_number=42, tmp_path=tmp_path,
+            )
+        assert rc == 0
+        scope = json.loads(out)
+        assert (scope["head_sha"], scope["pr_head_sha"], scope["review_root_sha"]) == (
+            "", head, merge,
+        )
+        assert _render_reviewed_commit_line(_review_provenance(tmp_path, scope)) == (
+            "**Reviewed commit:** `eeeeeeeeeeee` (PR head is `aaaaaaaaaaaa`)"
+        )
+
     def test_github_mode_refuses_a_merge_ref_for_a_different_head(
         self, tmp_path: Path,
     ) -> None:
@@ -10561,6 +10584,148 @@ class TestFooterWorktreeTeardown:
         rc = self._run_footer(tmp_path, cr_dir)
         assert rc == 0
         assert removed == []
+
+
+class TestReviewProvenance:
+    """ISS-9137: the footer, GitHub summary, and envelope name what was read."""
+
+    SHA = "a" * 40
+    HEAD = "b" * 40
+    TREE = "c" * 40
+
+    def _footer(
+        self, tmp_path: Path, cr_dir: Path, scope: dict[str, Any],
+        monkeypatch: Any, capsys: Any,
+    ) -> str:
+        from code_review_helpers import cmd_footer
+
+        cr_dir.mkdir(parents=True, exist_ok=True)
+        (cr_dir / "scope.json").write_text(json.dumps(scope))
+        monkeypatch.setattr("code_review_helpers._remove_pr_head_worktree", lambda p: None)
+        ns = argparse.Namespace(
+            start_time=0.0, cache_result=None, review_mode_line="Full review",
+            cr_dir=str(cr_dir), project_dir=str(tmp_path),
+        )
+        assert cmd_footer(ns) == 0
+        return json.loads(capsys.readouterr().out)["reviewed_line"]
+
+    def test_footer_names_checkout_and_commit(
+        self, tmp_path: Path, monkeypatch: Any, capsys: Any,
+    ) -> None:
+        line = self._footer(
+            tmp_path, tmp_path / "cr",
+            {"review_root": "/repo/wt", "review_root_sha": self.SHA, "worktree_path": ""},
+            monkeypatch, capsys,
+        )
+        assert line == "**Reviewed:** `/repo/wt` @ `aaaaaaaaaaaa`"
+
+    def test_footer_names_isolated_pr_head_not_its_removed_path(
+        self, tmp_path: Path, monkeypatch: Any, capsys: Any,
+    ) -> None:
+        cr_dir = tmp_path / "cr"
+        worktree = str(cr_dir / "pr_head_worktree")
+        line = self._footer(
+            tmp_path, cr_dir,
+            {
+                "review_root": worktree, "review_root_sha": self.SHA,
+                "worktree_path": worktree, "pr_number": 42,
+            },
+            monkeypatch, capsys,
+        )
+        assert line == (
+            "**Reviewed:** PR #42 head @ `aaaaaaaaaaaa` (isolated worktree, removed after review)"
+        )
+
+    def test_footer_names_staged_index_tree(
+        self, tmp_path: Path, monkeypatch: Any, capsys: Any,
+    ) -> None:
+        line = self._footer(
+            tmp_path, tmp_path / "cr",
+            {"review_root": "/repo", "review_root_sha": self.SHA, "review_root_tree": self.TREE},
+            monkeypatch, capsys,
+        )
+        assert line == "**Reviewed:** `/repo` @ `aaaaaaaaaaaa` + staged index (tree `cccccccccccc`)"
+
+    def test_footer_never_prints_malformed_values(
+        self, tmp_path: Path, monkeypatch: Any, capsys: Any,
+    ) -> None:
+        cr_dir = tmp_path / "cr"
+        forged_root = self._footer(
+            tmp_path, cr_dir,
+            {"review_root": "/repo`\n**Approved**", "review_root_sha": self.SHA},
+            monkeypatch, capsys,
+        )
+        assert forged_root == "**Reviewed:** checkout (path not recorded) @ `aaaaaaaaaaaa`"
+        ref_not_sha = self._footer(
+            tmp_path, cr_dir, {"review_root": "/repo", "review_root_sha": "HEAD"},
+            monkeypatch, capsys,
+        )
+        assert ref_not_sha == (
+            "**Reviewed:** checkout not recorded (scope.json has no valid review_root_sha)"
+        )
+
+    @pytest.mark.parametrize(
+        ("pr_head", "expected"),
+        [
+            ("a" * 40, "**Reviewed commit:** `aaaaaaaaaaaa` (PR head)"),
+            ("b" * 40, "**Reviewed commit:** `aaaaaaaaaaaa` (PR head is `bbbbbbbbbbbb`)"),
+            ("", "**Reviewed commit:** `aaaaaaaaaaaa`"),
+        ],
+    )
+    def test_github_summary_line_names_commits_never_the_runner_path(
+        self, tmp_path: Path, capsys: Any, pr_head: str, expected: str,
+    ) -> None:
+        from code_review_helpers import cmd_render_reviewed_commit
+
+        # resolve-scope's github-mode shape: head_sha empty, pr_head_sha set.
+        scope: dict[str, Any] = {
+            "review_root": "/home/runner/work/repo/repo",
+            "review_root_sha": self.SHA,
+            "head_sha": "",
+        }
+        if pr_head:
+            scope["pr_head_sha"] = pr_head
+        (tmp_path / "scope.json").write_text(json.dumps(scope))
+        assert cmd_render_reviewed_commit(argparse.Namespace(cr_dir=str(tmp_path))) == 0
+        assert capsys.readouterr().out.strip() == expected
+
+    def _finalize(self, cr_dir: Path, scope: dict[str, Any], capsys: Any) -> dict[str, Any]:
+        from code_review_helpers import cmd_finalize_result
+
+        validated = cr_dir / "findings_validated.json"
+        validated.write_text(json.dumps({"validated": [], "discarded": [], "stats": {}}))
+        (cr_dir / "scope.json").write_text(json.dumps(scope))
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir), findings_validated=str(validated),
+            mode="local", diff_tip="HEAD", pr_number=None,
+        )
+        assert cmd_finalize_result(ns) == 0
+        capsys.readouterr()
+        return json.loads((cr_dir / "review_result.json").read_text())
+
+    def test_envelope_records_reviewed_checkout(self, tmp_path: Path, capsys: Any) -> None:
+        envelope = self._finalize(
+            tmp_path,
+            {"review_root": "/repo", "review_root_sha": self.SHA, "review_root_tree": self.TREE},
+            capsys,
+        )
+        assert (
+            envelope["review_root"], envelope["review_root_sha"], envelope["review_root_tree"],
+        ) == ("/repo", self.SHA, self.TREE)
+
+    def test_envelope_nulls_malformed_checkout_and_validator_rejects_non_strings(
+        self, tmp_path: Path, capsys: Any,
+    ) -> None:
+        from code_review_schema import validate_result_envelope
+
+        envelope = self._finalize(
+            tmp_path, {"review_root": "relative/path", "review_root_sha": "--output=x"}, capsys,
+        )
+        assert (
+            envelope["review_root"], envelope["review_root_sha"], envelope["review_root_tree"],
+        ) == (None, None, None)
+        envelope["review_root"] = 5
+        assert "review_root must be a string or null" in validate_result_envelope(envelope)
 
 
 class TestRemovePrHeadWorktree:
@@ -21204,7 +21369,7 @@ class TestCRSPhaseACLIConfigLoader:
         Catches: cli.json type/default/choices/action edits, $$ constant
         misroutes (the original false positive was --max-files = 20 vs
         BUDGET_TOTAL_CAP_DEFAULT = 20), missing required flags, mutex routing
-        drift, and func name drift across all 46 subparsers.
+        drift, and func name drift across all 47 subparsers.
         """
         expected = json.loads(
             (self._snapshot_dir() / "cli_parser_resolved.json").read_text(),

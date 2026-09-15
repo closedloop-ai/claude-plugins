@@ -4,6 +4,27 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.10.0
+
+#### Added
+- `review_result.json` records which checkout and commit a review read:
+  - `review_root`, `review_root_sha`, and, for a staged review, `review_root_tree`.
+  - Values are copied from `scope.json` and re-validated first. A root must be an absolute path free of control characters, `<`, `>` and backticks, and a SHA must be hex. Anything absent or malformed is written as `null`.
+  - The fields are additive, so `schema_version` stays at 2. The envelope validator rejects any value that is neither a string nor `null`, and `result_envelope_json_schema()` declares all three as nullable strings.
+  - `diff_tip` could not carry this, because for a branch review it is the literal `HEAD`.
+- The review footer prints a second line, `reviewed_line` from `footer.json`, in the form ``**Reviewed:** `<review_root>` @ `<12-char sha>` ``:
+  - A PR head isolated into a worktree is named `PR #N head` rather than by path, because the footer stage removes that worktree in the same call.
+  - A staged review appends the pinned index tree.
+  - A run whose `scope.json` has no valid `review_root_sha` prints `checkout not recorded`.
+- New `render-reviewed-commit` helper subcommand prints the GitHub summary's `**Reviewed commit:**` line, which `github-review.md` places right after **Status**:
+  - It names the commit the review read, and marks it `(PR head)` when it matches the PR head.
+  - When the runner checked out a different commit, such as a merge ref, it names the PR head as well.
+  - It never prints a filesystem path.
+  - The PR head comes from a new `scope.json` key, `pr_head_sha`, which `resolve-scope` writes for PR scope. Github mode records it there while still leaving `head_sha` empty, because `head_sha` redirects `_file_content_hash` and the inline-comment `commit_id` away from the verified working tree.
+
+#### Fixed
+- `github-review.md` and the `present-local` skill now run `render-reviewed-commit` and `render-fleet-summary` through the resolved `<HELPERS>` path instead of `${CLAUDE_PLUGIN_ROOT}`. When `CLAUDE_PLUGIN_ROOT` is empty and `start.md` resolved the helpers from the in-repo tree or the marketplace cache, the old form pointed at `/tools/python/code_review_helpers.py`.
+
 ### code-review v3.9.0
 
 #### Fixed

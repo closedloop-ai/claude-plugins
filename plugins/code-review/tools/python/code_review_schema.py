@@ -1080,6 +1080,10 @@ def _validate_envelope_scalars(envelope: dict[str, Any]) -> list[str]:
     verdict = envelope.get("verdict")
     if verdict not in VERDICTS:
         out.append(f"verdict {verdict!r} not in {sorted(VERDICTS)}")
+    for key in ("review_root", "review_root_sha", "review_root_tree"):
+        value = envelope.get(key)
+        if value is not None and not isinstance(value, str):
+            out.append(f"{key} must be a string or null")
     return out
 
 
@@ -1286,6 +1290,9 @@ def result_envelope_json_schema() -> dict[str, Any]:
             "pr_number": {"type": ["integer", "null"]},
             "head_sha": {"type": ["string", "null"]},
             "diff_tip": {"type": "string"},
+            "review_root": {"type": ["string", "null"]},
+            "review_root_sha": {"type": ["string", "null"]},
+            "review_root_tree": {"type": ["string", "null"]},
             "review_branch": {"type": ["string", "null"]},
             "base_ref": {"type": ["string", "null"]},
             "diff_scope": {"type": ["string", "null"]},

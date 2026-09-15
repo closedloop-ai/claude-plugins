@@ -33,7 +33,7 @@ Output in this format:
 **Reviewer Fleet block (PLN-725 Phase 9 / v2.23.0).** Do NOT write the Reviewers / Model Routing / Fleet lines from scratch. Run the canonical renderer and embed its output verbatim:
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py" render-fleet-summary --cr-dir <CR_DIR>
+python <HELPERS> render-fleet-summary --cr-dir <CR_DIR>
 ```
 
 The renderer consumes `<CR_DIR>/spawn.json` (sections: `spec` — intended fleet from stage_19b; `verification` — runtime tally from stage_20b; `route` — model assignments from Gate B). The output is a deterministic markdown block of 2–9 lines — 2–4 for the core **Reviewers** / **Model Routing** / **Fleet** section, plus up to 5 conditional note bullets — covering:

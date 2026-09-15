@@ -1637,6 +1637,20 @@
       ]
     },
     {
+      "name": "render-reviewed-commit",
+      "func": "cmd_render_reviewed_commit",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null,
+          "required": true
+        }
+      ]
+    },
+    {
       "name": "prepare-run",
       "func": "cmd_prepare_run",
       "args": [
