@@ -81,8 +81,7 @@ particular one. Bind to what you actually hold:
 - KILL SWITCH. Your task prompt carries `CODE_INTEL_ALLOWED`. When it is
   `false`, use Grep/Glob only, no matter what tools you hold — the orchestrator
   has determined no external index can be trusted for this run (the source
-  under review is a per-run checkout that no index covers). Reviews never index
-  or re-index a repo, and never start an indexing daemon.
+  under review is a per-run checkout that no index covers).
 - SCOPE EVERY CALL TO <review_root>. An index may hold several repositories, or
   several checkouts of one. Whenever a tool accepts a root / repo / workspace /
   project argument, pass <review_root> — never your working directory, and never
@@ -97,6 +96,11 @@ particular one. Bind to what you actually hold:
   capability, that capability is unavailable: use Grep/Glob. When it is `false`,
   <review_root> is the session's own checkout, so a tool without a root argument
   already answers for it.
+- NO INDEXING CALLS. Never call a tool whose purpose is to index, re-index, or
+  start or stop an indexing service. A query tool that builds or refreshes its
+  index as a side effect of answering a query scoped to <review_root> is
+  allowed: that is how a scoped query reaches a checkout no index covered yet,
+  so do not avoid such a tool for that reason.
 - SAME-SYMBOL CHECK. Always discard any response whose resolved target is not
   the symbol you asked about. Some tools silently fall back to a fuzzy or
   different match while still reporting success.
