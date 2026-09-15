@@ -529,13 +529,73 @@ def _git_drifted_paths(
     return [p for p in paths if p in differing]
 
 
+# Named escapes git's C-style path quoting emits; every other control or
+# non-ASCII byte becomes a 3-digit octal escape.
+_GIT_C_QUOTE_ESCAPES: dict[str, int] = {
+    "a": 0x07, "b": 0x08, "t": 0x09, "n": 0x0A, "v": 0x0B, "f": 0x0C,
+    "r": 0x0D, '"': 0x22, "\\": 0x5C,
+}
+
+
+def _git_unquote_path(recorded: str) -> str | None:
+    """The on-disk name for a path as ``git diff --name-only`` printed it.
+
+    Without ``-z`` git C-quotes any path holding a non-ASCII, control, double
+    quote or backslash byte: the name is wrapped in double quotes, each such
+    byte becomes one of ``_GIT_C_QUOTE_ESCAPES`` or a 3-digit octal escape,
+    and the escapes spell raw bytes, not text. An unquoted name is returned
+    unchanged. Returns None when a quoted name is not valid quoting
+    (unterminated, a bare inner quote, an unknown or truncated escape, an
+    out-of-range octal, or an empty name), so the caller refuses rather than
+    guesses.
+    """
+    if not recorded.startswith('"'):
+        return recorded
+    if len(recorded) < 3 or not recorded.endswith('"'):
+        return None
+    body = recorded[1:-1]
+    raw = bytearray()
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch == '"':
+            return None
+        if ch != "\\":
+            raw += ch.encode("utf-8", "surrogateescape")
+            i += 1
+            continue
+        escape = body[i + 1:i + 2]
+        if escape in _GIT_C_QUOTE_ESCAPES:
+            raw.append(_GIT_C_QUOTE_ESCAPES[escape])
+            i += 2
+            continue
+        octal = body[i + 1:i + 4]
+        if (
+            len(octal) == 3
+            and all(c in "01234567" for c in octal)
+            and int(octal, 8) <= 0xFF
+        ):
+            raw.append(int(octal, 8))
+            i += 4
+            continue
+        return None
+    return os.fsdecode(bytes(raw))
+
+
 def _diff_changed_files(cr_dir: str | Path) -> list[str]:
-    """Repo-relative diff files that must exist at the reviewed tip.
+    """On-disk names of the repo-relative diff files that must exist at the tip.
 
     Removals are excluded — they are absent from the head by definition.
     Empty when ``diff_data.json`` has not been written yet (stages that run
     before ``parse-diff``), which makes the containment check additive rather
     than a precondition on stage order.
+
+    ``parse-diff`` records names as ``git diff --name-only`` prints them, so a
+    path holding a non-ASCII, control, double quote or backslash byte is
+    stored C-quoted. It is decoded to the name on disk, never skipped: a
+    skipped entry would drop that file from both the containment and the drift
+    check, so an edit to it after resolution would go unnoticed. An entry that
+    looks quoted but does not decode raises ``ReviewRootError``.
     """
     data = _read_optional_json(Path(cr_dir) / "diff_data.json", None)
     if not isinstance(data, dict):
@@ -545,15 +605,22 @@ def _diff_changed_files(cr_dir: str | Path) -> list[str]:
     files = data.get("files_to_review")
     if not isinstance(files, list):
         return []
-    return [
-        f for f in files
-        if isinstance(f, str) and f and statuses.get(f) != "removed"
-        # git C-quotes a path containing non-ASCII, control, quote or
-        # backslash bytes, so the recorded string is not the name on disk and
-        # its absence proves nothing. An entry we cannot resolve must not
-        # produce a confident refusal.
-        and not f.startswith('"')
-    ]
+    changed: list[str] = []
+    for recorded in files:
+        if not isinstance(recorded, str) or not recorded:
+            continue
+        # file_statuses is keyed by the same quoted string parse-diff recorded.
+        if statuses.get(recorded) == "removed":
+            continue
+        name = _git_unquote_path(recorded)
+        if name is None:
+            raise ReviewRootError(
+                f"diff_data.json lists {recorded!r}, which is not valid git "
+                "path quoting, so it cannot be resolved to a file on disk and "
+                "the root cannot be proven to hold it.",
+            )
+        changed.append(name)
+    return changed
 
 
 def _require_review_root(cr_dir: str | Path, scope_meta: object) -> str:

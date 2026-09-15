@@ -9986,23 +9986,90 @@ class TestVerifyPrepareReviewRoot:
 
         assert rc == 3
 
+    @staticmethod
+    def _seed_root_with_git_quoted_changed_file(
+        tmp_path: Path,
+    ) -> tuple[Path, Path, str]:
+        """A live checkout whose diff changes a file git records C-quoted.
+
+        The recorded name comes from git itself (``ls-files`` quotes paths
+        exactly as ``diff --name-only`` does), so diff_data.json carries the
+        string parse-diff would store rather than a hand-written escape.
+        """
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = Path(_make_review_root(
+            tmp_path / "checkout", {"src/café.py": "v1\n"},
+        ))
+        recorded = next(
+            line for line in git_fixture(root, "ls-files").splitlines()
+            if "caf" in line
+        )
+        assert recorded.startswith('"'), f"git did not quote {recorded!r}"
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(root),
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": [recorded],
+            "file_statuses": {recorded: "added"},
+        }))
+        return cr_dir, root, recorded
+
     def test_git_quoted_path_does_not_refuse_a_correct_root(
         self, tmp_path: Path,
     ) -> None:
         # git C-quotes a non-ASCII path in `diff --name-only`, so the recorded
-        # string is not the name on disk. An entry we cannot resolve must not
-        # abort a review against a perfectly correct root.
-        cr_dir = tmp_path / "cr"
-        _seed_scope_review_root(cr_dir, tmp_path / "checkout")
-        (cr_dir / "diff_data.json").write_text(json.dumps({
-            "files_to_review": ['"src/caf\\303\\251.py"'],
-            "file_statuses": {'"src/caf\\303\\251.py"': "added"},
-        }))
+        # string is not the name on disk. It is decoded, and a root holding the
+        # decoded file unchanged must not be refused.
+        cr_dir, root, _recorded = self._seed_root_with_git_quoted_changed_file(
+            tmp_path,
+        )
 
         finding = _make_validated_finding("bha_1", severity="HIGH")
         rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
 
         assert rc == 0
+        input_data = json.loads(
+            (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
+        )
+        assert input_data["review_root"] == str(root)
+
+    def test_git_quoted_changed_file_edited_after_resolution_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Skipping quoted entries dropped this file from both the containment
+        # and the drift check, so an edit to it after resolution went unseen.
+        cr_dir, root, _recorded = self._seed_root_with_git_quoted_changed_file(
+            tmp_path,
+        )
+        (root / "src" / "café.py").write_text("edited, never committed\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_malformed_git_quoted_entry_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # An entry that looks quoted but does not decode cannot be resolved on
+        # disk, so it refuses rather than being skipped or guessed at.
+        cr_dir, _root = self._seed_live_root_with_changed_file(tmp_path)
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/a.py", '"src/unterminated.py'],
+            "file_statuses": {
+                "src/a.py": "modified", '"src/unterminated.py': "added",
+            },
+        }))
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+        assert "not valid git path quoting" in capsys.readouterr().err
 
 
 class TestFooterWorktreeTeardown:
