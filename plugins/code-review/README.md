@@ -244,7 +244,7 @@ The helper script is a multi-subcommand Python CLI. The orchestrator invokes it 
 | `resolve-threads` | Resolves outdated bot review threads on a PR (GitHub mode) |
 | `session-tokens` | Collects token usage stats from the session |
 | `footer` | Computes the formatted review footer string and the `reviewed_line` naming the checkout and commit the review read (ISS-9137) |
-| `render-reviewed-commit` | Prints the GitHub summary's `Reviewed commit` line from `scope.json` and `setup.json`: the commit the review read, plus the PR head when they differ; never a filesystem path (ISS-9137) |
+| `render-reviewed-commit` | Prints the GitHub summary's `Reviewed commit` line from `scope.json`: the commit the review read, plus the PR head (`pr_head_sha`) when they differ; never a filesystem path (ISS-9137) |
 | `resolve-scope` | Resolves diff scope (branch, PR number, base ref, path filter) from CLI arguments and git context |
 | `fetch-intent` | Fetches context (PR description, recent commits) used to classify the diff intent |
 | `classify-intent` | Classifies the diff intent (feature, bugfix, refactor, etc.) for model routing |
