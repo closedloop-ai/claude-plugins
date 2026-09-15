@@ -1517,6 +1517,20 @@
       ]
     },
     {
+      "name": "render-reviewed-commit",
+      "help": "Print the GitHub summary's Reviewed commit line from scope.json and setup.json (ISS-9137)",
+      "func": "cmd_render_reviewed_commit",
+      "args": [
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "required": true,
+          "help": "Session CR_DIR path"
+        }
+      ]
+    },
+    {
       "name": "prepare-run",
       "help": "Emit run_plan.json describing the full review pipeline",
       "func": "cmd_prepare_run",

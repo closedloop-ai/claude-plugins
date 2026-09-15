@@ -1080,6 +1080,10 @@ def _validate_envelope_scalars(envelope: dict[str, Any]) -> list[str]:
     verdict = envelope.get("verdict")
     if verdict not in VERDICTS:
         out.append(f"verdict {verdict!r} not in {sorted(VERDICTS)}")
+    for key in ("review_root", "review_root_sha", "review_root_tree"):
+        value = envelope.get(key)
+        if value is not None and not isinstance(value, str):
+            out.append(f"{key} must be a string or null")
     return out
 
 

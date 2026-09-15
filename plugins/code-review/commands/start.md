@@ -486,14 +486,18 @@ Follow Steps 6 and 8 in `github-review.md` (loaded in stage 0c for GitHub mode).
 
 ## Review Footer (stage_30_footer)
 
-The footer prints elapsed time, cache stats, and token usage. Stage 30's helper is `footer`; the walker calls it with the args declared in the run plan. The plan includes `--cache-result <CR_DIR>/cache_result.json` unconditionally — when cache was inactive or fast-path bypassed it, the file simply does not exist and the helper falls back to `"Cache: disabled"` via its existing OSError handling.
+The footer prints elapsed time, cache stats, and token usage, then names the checkout and commit the review read (ISS-9137). Stage 30's helper is `footer`; the walker calls it with the args declared in the run plan. The plan includes `--cache-result <CR_DIR>/cache_result.json` unconditionally — when cache was inactive or fast-path bypassed it, the file simply does not exist and the helper falls back to `"Cache: disabled"` via its existing OSError handling.
 
-Read `<CR_DIR>/footer.json` for `footer_line` and print:
+Read `<CR_DIR>/footer.json` for `footer_line` and `reviewed_line` and print both, verbatim:
 
 ```markdown
 ---
 **Review complete** — 8m 59s | Cache: 5/10 files (50%) | Full review | Tokens: ~281K effective (613 in, 5.6K out, 225K cache-write, 2.5M cache-read)
+
+**Reviewed:** `/Users/me/src/repo` @ `1a2b3c4d5e6f`
 ```
+
+Never hand-author or drop `reviewed_line`. It names `PR #N head` instead of a path when the PR head was isolated into a worktree (this stage removes that worktree), appends the pinned index tree for a staged review, and reads `checkout not recorded` when `scope.json` carried no valid `review_root_sha`. Print that line too: it means nothing vouches for which tree was read.
 
 ---
 
