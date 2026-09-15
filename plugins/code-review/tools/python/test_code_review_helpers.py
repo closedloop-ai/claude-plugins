@@ -6309,6 +6309,35 @@ def _commit_file(repo: Path, name: str, content: str) -> str:
     return git_fixture(repo, "rev-parse", "HEAD").strip()
 
 
+def _make_review_root(root: Path, files: dict[str, str] | None = None) -> str:
+    """Build a real committed git worktree usable as a ``review_root``.
+
+    The dispatch stages refuse to run against a root they cannot prove, so
+    tests that are about something else need a genuine one. Returns the
+    realpath, which is what the production resolver records.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    git_fixture(root, "init", "--quiet", "-b", "main")
+    for name, content in (files or {"seed.txt": "seed\n"}).items():
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+    git_fixture(root, "add", "-A")
+    git_fixture(root, "commit", "--quiet", "-m", "seed")
+    return os.path.realpath(str(root))
+
+
+def _seed_scope_review_root(cr_dir: Path, root: Path) -> str:
+    """Write *cr_dir*/scope.json pointing at a fresh provable review root."""
+    cr_dir.mkdir(parents=True, exist_ok=True)
+    resolved = _make_review_root(root)
+    (cr_dir / "scope.json").write_text(json.dumps({
+        "review_root": resolved,
+        "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+    }))
+    return resolved
+
+
 def _build_stale_base_repo(
     repo: Path, *, default_branch: str = "main", with_origin: bool = True,
 ) -> dict[str, str]:
@@ -6709,6 +6738,12 @@ class TestResolveScope:
             # base resolution settles on the remote ref. Empty status → clean;
             # empty worktree list → no GC. Base-selection behavior itself is
             # covered against real repos in TestResolveDiffBase.
+            # Review-root resolution: resolve-scope always records the root of
+            # the checkout the diff came from.
+            if cmd_list[-1] == "--show-toplevel":
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0, stdout="/repo\n",
+                )
             if cmd_list[:3] == ["git", "rev-parse", "--verify"]:
                 return subprocess.CompletedProcess(
                     args=cmd, returncode=0, stdout="deadbeefcafe\n",
@@ -6856,6 +6891,426 @@ class TestResolveScope:
         assert result["pr_auto_detected"] is True
 
 
+_MOCK_TOPLEVEL = "/repo"
+
+
+class TestISS7382ReviewRootDispatch:
+    """ISS-7382 — reviewers resolved source paths against the wrong checkout.
+
+    A reviewer/verifier Task inherits the INVOKING SESSION's working
+    directory. Every worktree-based lane runs ``/code-review`` from a
+    non-session cwd, so "read the working tree" pointed the whole fleet at a
+    different checkout than the diff — and a reviewer that reads unrelated
+    code returns a confident clean report, which is the signal a lane uses to
+    decide it is done. These pin the dispatch-layer fix.
+    """
+
+    @staticmethod
+    def _resolve_scope_in(
+        repo: Path, tmp_path: Path, scope_args: str = "",
+    ) -> dict[str, Any]:
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_resolve_scope
+
+        setup_path = tmp_path / "setup.json"
+        setup_path.write_text(json.dumps({"current_branch": "feat-x"}))
+        old_stdout = _sys.stdout
+        old_cwd = os.getcwd()
+        _sys.stdout = io.StringIO()
+        try:
+            os.chdir(repo)
+            ns = argparse.Namespace(
+                mode="local", pr_number=None, scope_args=scope_args,
+                base_ref_override=None, setup_json=str(setup_path),
+                hygiene_only="false",
+            )
+            with patch("code_review_helpers._detect_open_pr", return_value=None):
+                rc = cmd_resolve_scope(ns)
+            _sys.stdout.seek(0)
+            captured = _sys.stdout.read()
+        finally:
+            _sys.stdout = old_stdout
+            os.chdir(old_cwd)
+        assert rc == 0, f"resolve-scope failed: rc={rc}"
+        return json.loads(captured)
+
+    @staticmethod
+    def _derive_spawn_spec_in(cwd: Path, cr_dir: Path) -> int:
+        """Run the reviewer-dispatch stage with the process cwd set to *cwd*."""
+        import io
+        import sys as _sys
+
+        from code_review_helpers import (
+            _write_coverage_section,
+            _write_spawn_section,
+            cmd_derive_spawn_spec,
+        )
+
+        _write_coverage_section(cr_dir, "final", {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 1},
+        })
+        _write_spawn_section(cr_dir, "route", {"fast_path": False, "models": {}})
+        partitions = cr_dir / "partitions.json"
+        partitions.write_text(json.dumps({
+            "partitions": [
+                {"id": 0, "files": [{"file": "src/a.py"}], "is_test_only": False},
+            ],
+        }))
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir), partitions=str(partitions),
+        )
+        old_cwd = os.getcwd()
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            os.chdir(cwd)
+            return cmd_derive_spawn_spec(ns)
+        finally:
+            _sys.stdout = old_stdout
+            os.chdir(old_cwd)
+
+    def test_branch_review_pins_the_invoking_checkout_as_review_root(
+        self, tmp_path: Path,
+    ) -> None:
+        # AC1: the root is decided once, at the dispatch layer, from the
+        # checkout that produced the diff — not left to each agent's cwd.
+        repo = tmp_path / "lane_worktree"
+        _build_stale_base_repo(repo)
+        expected_sha = git_fixture(repo, "rev-parse", "HEAD").strip()
+
+        scope = self._resolve_scope_in(repo, tmp_path)
+
+        assert scope["review_root"] == os.path.realpath(str(repo))
+        assert scope["review_root_sha"] == expected_sha
+
+    def test_resolve_scope_pins_the_index_tree_only_for_staged_scope(
+        self, tmp_path: Path,
+    ) -> None:
+        # A staged review diffs the index against HEAD, so no commit pins what
+        # it reviews; resolve-scope records the index as a tree object. Every
+        # other scope kind is pinned by review_root_sha and carries no tree.
+        repo = tmp_path / "lane_worktree"
+        _build_stale_base_repo(repo)
+        (repo / "MINE.txt").write_text("staged edit\n")
+        git_fixture(repo, "add", "MINE.txt")
+
+        staged = self._resolve_scope_in(repo, tmp_path, scope_args="staged")
+        branch = self._resolve_scope_in(repo, tmp_path)
+
+        assert staged["scope_kind"] == "staged"
+        assert staged["review_root_tree"] == git_fixture(repo, "write-tree").strip()
+        assert staged["review_root_tree"] != git_fixture(
+            repo, "rev-parse", "HEAD^{tree}",
+        ).strip()
+        assert branch["scope_kind"] == "branch"
+        assert "review_root_tree" not in branch
+
+    def test_reviewer_dispatch_against_a_mismatched_checkout_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # AC3: the run must ERROR, not emit a spec that spawns reviewers at a
+        # checkout without the diff (which reports zero findings).
+        lane = tmp_path / "lane_worktree"
+        _build_stale_base_repo(lane)
+        session = Path(_make_review_root(tmp_path / "session_checkout"))
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        # No review_root_sha: this pins the CONTAINMENT check alone, so the
+        # assertion cannot be satisfied by the commit check instead.
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(session),
+        }))
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["MINE.txt"],
+            "file_statuses": {"MINE.txt": "added"},
+        }))
+
+        rc = self._derive_spawn_spec_in(session, cr_dir)
+
+        assert rc == 3
+        spawn = json.loads((cr_dir / "spawn.json").read_text())
+        assert "spec" not in spawn, "a refused root must not publish a spawn spec"
+
+    def test_reviewer_dispatch_against_the_reviewed_checkout_succeeds(
+        self, tmp_path: Path,
+    ) -> None:
+        # Sibling of the case above in the opposite state. Without it, rc == 1
+        # there would also be satisfied by a stage that refuses every root.
+        lane = tmp_path / "lane_worktree"
+        _build_stale_base_repo(lane)
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(lane),
+            "review_root_sha": git_fixture(lane, "rev-parse", "HEAD").strip(),
+        }))
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["MINE.txt"],
+            "file_statuses": {"MINE.txt": "added"},
+        }))
+
+        # cwd is the WRONG checkout on purpose: the spec must still carry the
+        # lane worktree, because the root comes from scope.json, not cwd.
+        session = Path(_make_review_root(tmp_path / "session_checkout"))
+        rc = self._derive_spawn_spec_in(session, cr_dir)
+
+        assert rc == 0
+        spec = json.loads((cr_dir / "spawn.json").read_text())["spec"]
+        assert spec["review_root"] == os.path.realpath(str(lane))
+        assert spec["agents"], "expected the reviewer fleet to be described"
+
+    def test_empty_review_root_is_a_hard_error_not_a_cwd_fallback(
+        self, tmp_path: Path,
+    ) -> None:
+        # The pre-fix artifact: resolve-scope emitted review_root "" for every
+        # branch review, and every agent then read its own cwd.
+        lane = tmp_path / "lane_worktree"
+        _build_stale_base_repo(lane)
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        (cr_dir / "scope.json").write_text(json.dumps({"review_root": ""}))
+
+        rc = self._derive_spawn_spec_in(lane, cr_dir)
+
+        assert rc == 3
+        spawn = json.loads((cr_dir / "spawn.json").read_text())
+        assert "spec" not in spawn
+
+    def test_positional_revision_range_is_rejected(self, tmp_path: Path) -> None:
+        # `/code-review origin/main...HEAD` was folded into a `--` pathspec
+        # that matches nothing, so the review ran on an empty diff and
+        # reported clean.
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_resolve_scope
+
+        repo = tmp_path / "repo"
+        _build_stale_base_repo(repo)
+        setup_path = tmp_path / "setup.json"
+        setup_path.write_text(json.dumps({"current_branch": "feat-x"}))
+
+        old_stdout = _sys.stdout
+        old_cwd = os.getcwd()
+        _sys.stdout = io.StringIO()
+        try:
+            os.chdir(repo)
+            rc = cmd_resolve_scope(argparse.Namespace(
+                mode="local", pr_number=None, scope_args="origin/main...HEAD",
+                base_ref_override=None, setup_json=str(setup_path),
+                hygiene_only="false",
+            ))
+            _sys.stdout.seek(0)
+            captured = _sys.stdout.read()
+        finally:
+            _sys.stdout = old_stdout
+            os.chdir(old_cwd)
+
+        assert rc == 1
+        assert captured.strip() == "", "a rejected scope must not emit a scope.json payload"
+
+    def test_positional_bare_ref_is_rejected(self, tmp_path: Path) -> None:
+        # `/code-review origin/main` carries no "..", so a range-shaped check
+        # alone would let it through — and it is the same defect: a ref folded
+        # into a pathspec matches nothing and the review reports clean.
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_resolve_scope
+
+        repo = tmp_path / "repo"
+        _build_stale_base_repo(repo)
+        setup_path = tmp_path / "setup.json"
+        setup_path.write_text(json.dumps({"current_branch": "feat-x"}))
+
+        old_stdout = _sys.stdout
+        old_cwd = os.getcwd()
+        _sys.stdout = io.StringIO()
+        try:
+            os.chdir(repo)
+            rc = cmd_resolve_scope(argparse.Namespace(
+                mode="local", pr_number=None, scope_args="origin/main",
+                base_ref_override=None, setup_json=str(setup_path),
+                hygiene_only="false",
+            ))
+            _sys.stdout.seek(0)
+            captured = _sys.stdout.read()
+        finally:
+            _sys.stdout = old_stdout
+            os.chdir(old_cwd)
+
+        assert rc == 1
+        assert captured.strip() == ""
+
+    def test_positional_nonexistent_nonref_is_accepted(
+        self, tmp_path: Path,
+    ) -> None:
+        # A pathspec that matches nothing yet (a glob, a deleted file) is not
+        # a ref, so the guard must not refuse it — otherwise "reject every
+        # positional token" would satisfy the two rejection cases above.
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_resolve_scope
+
+        repo = tmp_path / "repo"
+        _build_stale_base_repo(repo)
+        setup_path = tmp_path / "setup.json"
+        setup_path.write_text(json.dumps({"current_branch": "feat-x"}))
+
+        old_stdout = _sys.stdout
+        old_cwd = os.getcwd()
+        _sys.stdout = io.StringIO()
+        try:
+            os.chdir(repo)
+            rc = cmd_resolve_scope(argparse.Namespace(
+                mode="local", pr_number=None, scope_args="src/*.ts",
+                base_ref_override=None, setup_json=str(setup_path),
+                hygiene_only="false",
+            ))
+            _sys.stdout.seek(0)
+            scope = json.loads(_sys.stdout.read())
+        finally:
+            _sys.stdout = old_stdout
+            os.chdir(old_cwd)
+
+        assert rc == 0
+        assert scope["path_filter"] == "-- src/*.ts"
+
+    def test_positional_file_paths_are_still_accepted(
+        self, tmp_path: Path,
+    ) -> None:
+        # Sibling of the rejection above: a real path must keep working, so
+        # the guard cannot be satisfied by refusing every positional arg.
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_resolve_scope
+
+        repo = tmp_path / "repo"
+        _build_stale_base_repo(repo)
+        setup_path = tmp_path / "setup.json"
+        setup_path.write_text(json.dumps({"current_branch": "feat-x"}))
+
+        old_stdout = _sys.stdout
+        old_cwd = os.getcwd()
+        _sys.stdout = io.StringIO()
+        try:
+            os.chdir(repo)
+            rc = cmd_resolve_scope(argparse.Namespace(
+                mode="local", pr_number=None, scope_args="MINE.txt",
+                base_ref_override=None, setup_json=str(setup_path),
+                hygiene_only="false",
+            ))
+            _sys.stdout.seek(0)
+            scope = json.loads(_sys.stdout.read())
+        finally:
+            _sys.stdout = old_stdout
+            os.chdir(old_cwd)
+
+        assert rc == 0
+        assert scope["path_filter"] == "-- MINE.txt"
+        assert scope["scope_kind"] == "file_paths"
+
+    def test_github_merge_ref_checkout_passes_the_dispatch_re_proof(
+        self, tmp_path: Path,
+    ) -> None:
+        # The default `actions/checkout` for a `pull_request` event is the PR's
+        # merge ref: HEAD merges the PR head into the base, so it never equals
+        # the head. review_root_sha must be that MERGE commit, because the
+        # dispatch drift check compares the diff's files against it. The base
+        # also edited the PR's file here (a clean merge), so src/a.py at the
+        # merge differs from the PR head: recording the head instead would
+        # refuse this correct checkout as drifted.
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_parse_diff, cmd_resolve_scope
+
+        repo = tmp_path / "runner_checkout"
+        lines = [f"line {i}\n" for i in range(20)]
+        _make_review_root(repo, {"src/a.py": "".join(lines)})
+        git_fixture(repo, "checkout", "--quiet", "-b", "feat-x")
+        pr_lines = list(lines)
+        pr_lines[15] = "pr change\n"
+        pr_head = _commit_file(repo, "src/a.py", "".join(pr_lines))
+        git_fixture(repo, "checkout", "--quiet", "main")
+        base_lines = list(lines)
+        base_lines[2] = "base change\n"
+        base_tip = _commit_file(repo, "src/a.py", "".join(base_lines))
+        git_fixture(repo, "update-ref", "refs/remotes/origin/main", base_tip)
+        git_fixture(repo, "update-ref", "refs/remotes/origin/feat-x", pr_head)
+        git_fixture(repo, "checkout", "--quiet", "--detach", base_tip)
+        git_fixture(repo, "merge", "--quiet", "--no-ff", "--no-edit", pr_head)
+        merge_sha = git_fixture(repo, "rev-parse", "HEAD").strip()
+
+        setup_path = tmp_path / "setup.json"
+        setup_path.write_text(json.dumps({"current_branch": "HEAD"}))
+        real_run = subprocess.run
+
+        def _gh_metadata_only(
+            cmd: list[str], *args: Any, **kwargs: Any,
+        ) -> subprocess.CompletedProcess[Any]:
+            # `gh pr view` answers with the PR's own base and head, and there
+            # is no remote to fetch from. Every other git call runs for real.
+            if cmd[:2] == ["gh", "pr"]:
+                return subprocess.CompletedProcess(cmd, 0, "main\nfeat-x\n", "")
+            if cmd[:2] == ["git", "fetch"]:
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            return real_run(cmd, *args, **kwargs)
+
+        old_stdout, old_cwd = _sys.stdout, os.getcwd()
+        _sys.stdout = io.StringIO()
+        try:
+            os.chdir(repo)
+            with patch(
+                "code_review_helpers.subprocess.run", side_effect=_gh_metadata_only,
+            ):
+                rc = cmd_resolve_scope(argparse.Namespace(
+                    mode="github", pr_number=42, scope_args="",
+                    base_ref_override=None, setup_json=str(setup_path),
+                    hygiene_only="false",
+                ))
+            scope_out = _sys.stdout.getvalue()
+            _sys.stdout = io.StringIO()
+            parse_rc = cmd_parse_diff(argparse.Namespace(
+                scope="origin/main...origin/feat-x", workdir=str(repo),
+            ))
+            diff_out = _sys.stdout.getvalue()
+        finally:
+            _sys.stdout = old_stdout
+            os.chdir(old_cwd)
+
+        assert rc == 0, "github mode refused a genuine merge-ref checkout"
+        scope = json.loads(scope_out)
+        assert scope["diff_scope"] == "origin/main...origin/feat-x"
+        assert scope["review_root"] == os.path.realpath(str(repo))
+        assert scope["review_root_sha"] == merge_sha
+        assert scope["review_root_sha"] != pr_head
+        assert scope["head_sha"] == ""
+        assert scope["worktree_path"] == ""
+        assert parse_rc == 0
+        diff_data = json.loads(diff_out)
+        assert diff_data["files_to_review"] == ["src/a.py"]
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        (cr_dir / "scope.json").write_text(json.dumps(scope))
+        (cr_dir / "diff_data.json").write_text(json.dumps(diff_data))
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        dispatch_rc, _manifest = _run_verify_prepare(
+            tmp_path, [finding], cr_dir=cr_dir,
+        )
+
+        assert dispatch_rc == 0
+
+
 class TestResolveScopeWorktree:
     """PR-head source handling for PR review (cmd_resolve_scope).
 
@@ -6868,9 +7323,9 @@ class TestResolveScopeWorktree:
     accordingly. LOCAL mode ISOLATES: it materializes a detached worktree at
     the PR head SHA (surfaced as ``review_root``) exactly when it is needed,
     and aborts when it cannot. GITHUB mode VERIFIES AND REFUSES (ISS-8769):
-    it emits no ``review_root`` and no ``head_sha``, so nothing downstream
-    changes, but it will not proceed against a tree it cannot establish as
-    the PR's source. Coverage is deliberately NOT symmetric — the local-only
+    it creates no worktree and emits no ``head_sha``, and its ``review_root``
+    is the invoking checkout it verified, but it will not proceed against a
+    tree it cannot establish as the PR's source. Coverage is deliberately NOT symmetric — the local-only
     cases (hygiene-only, worktree-add failure) have no github analogue
     because github mode creates no worktree.
     """
@@ -6918,6 +7373,10 @@ class TestResolveScopeWorktree:
                 )
             if cl[:2] == ["git", "fetch"]:
                 return subprocess.CompletedProcess(args=cl, returncode=0, stdout="")
+            if cl[-1] == "--show-toplevel":
+                return subprocess.CompletedProcess(
+                    args=cl, returncode=0, stdout=_MOCK_TOPLEVEL + "\n",
+                )
             if cl[:3] == ["git", "rev-parse", "--verify"]:
                 ref = cl[-1]
                 # The operator's `other-branch` is pushed and checked out, so a
@@ -7012,8 +7471,10 @@ class TestResolveScopeWorktree:
     ) -> None:
         result = self._run(head_sha="same999", work_head="same999", tmp_path=tmp_path)
         assert result["head_sha"] == "same999"
-        assert result["review_root"] == ""
         assert result["worktree_path"] == ""
+        # No worktree is needed, but the root is still pinned to the checkout
+        # the diff came from — agents must never be left to infer it.
+        assert result["review_root"] == _MOCK_TOPLEVEL
 
     def test_dirty_tree_isolates_even_when_head_matches(self, tmp_path: Path) -> None:
         # HEAD == PR head but the tree has uncommitted changes → the working
@@ -7032,7 +7493,7 @@ class TestResolveScopeWorktree:
             head_sha="aaa111", work_head="bbb222",
             hygiene_only="true", tmp_path=tmp_path,
         )
-        assert result["review_root"] == ""
+        assert result["review_root"] == _MOCK_TOPLEVEL
         assert result["worktree_path"] == ""
 
     def test_no_worktree_in_github_mode_no_pr(self, tmp_path: Path) -> None:
@@ -7043,7 +7504,7 @@ class TestResolveScopeWorktree:
             head_sha="aaa111", work_head="bbb222",
             mode="github", pr_number=None, tmp_path=tmp_path,
         )
-        assert result["review_root"] == ""
+        assert result["review_root"] == _MOCK_TOPLEVEL
         assert result["worktree_path"] == ""
 
     def test_github_mode_refuses_a_tree_that_is_not_the_pr_head(
@@ -7060,8 +7521,8 @@ class TestResolveScopeWorktree:
         Actions", and running it from a developer machine is supported.
 
         The refusal is the whole behavior change: no worktree is created and
-        no `review_root` is emitted in github mode, so nothing downstream
-        moves. The two shapes a real runner produces are accepted by the two
+        `review_root` stays the invoking checkout in github mode, so no agent
+        is redirected. The two shapes a real runner produces are accepted by the two
         cases below, which is what keeps this from breaking CI.
         """
         rc, _out, calls = self._invoke(
@@ -7083,10 +7544,11 @@ class TestResolveScopeWorktree:
         result = json.loads(out)
         assert result["scope_kind"] == "pr"
         assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
-        # Github mode emits NEITHER field. `head_sha` in particular re-routes
-        # `_file_content_hash` and the inline-comment `commit_id`, so leaving
-        # it empty is what makes this change additive.
-        assert result["review_root"] == ""
+        # Github mode creates no worktree and emits no `head_sha`: `head_sha`
+        # re-routes `_file_content_hash` and the inline-comment `commit_id`, so
+        # leaving it empty keeps both reading the verified working tree.
+        # `review_root` is the invoking checkout, as for every non-isolated scope.
+        assert result["review_root"] == _MOCK_TOPLEVEL
         assert result["worktree_path"] == ""
         assert result["head_sha"] == ""
 
@@ -7103,7 +7565,7 @@ class TestResolveScopeWorktree:
             mode="github", pr_number=42, tmp_path=tmp_path,
         )
         assert rc == 0
-        assert json.loads(out)["review_root"] == ""
+        assert json.loads(out)["review_root"] == _MOCK_TOPLEVEL
         assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
 
     def test_github_mode_refuses_a_merge_ref_for_a_different_head(
@@ -7165,7 +7627,7 @@ class TestResolveScopeWorktree:
         assert rc == 0
         result = json.loads(out)
         assert result["base_ref"] == "develop"
-        assert result["review_root"] == ""
+        assert result["review_root"] == _MOCK_TOPLEVEL
         assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
 
     def test_github_mode_refuses_a_dirty_tree_at_the_head(
@@ -7225,7 +7687,7 @@ class TestResolveScopeWorktree:
             head_sha="aaa111", work_head="bbb222", hygiene_only="true",
             mode="github", pr_number=42, tmp_path=tmp_path,
         )
-        assert result["review_root"] == ""
+        assert result["review_root"] == _MOCK_TOPLEVEL
 
     def test_fail_closed_when_worktree_add_fails(self, tmp_path: Path) -> None:
         # Head differs (isolation required) but ``git worktree add`` failed →
@@ -9385,8 +9847,13 @@ def _run_verify_prepare(
     cache_dir: Path | None = None,
     prompt_hash: str = "",
     cr_dir: Path | None = None,
+    seed_review_root: bool = True,
 ) -> tuple[int, dict[str, Any]]:
-    """Invoke ``cmd_verify_prepare`` with stdout captured into a dict."""
+    """Invoke ``cmd_verify_prepare`` with stdout captured into a dict.
+
+    ``seed_review_root=False`` leaves scope.json absent so the review-root
+    refusal path can be exercised.
+    """
     import io
     import sys as _sys
 
@@ -9394,6 +9861,8 @@ def _run_verify_prepare(
     if cr_dir is None:
         cr_dir = tmp_path / "cr"
     cr_dir.mkdir(parents=True, exist_ok=True)
+    if seed_review_root and not (cr_dir / "scope.json").exists():
+        _seed_scope_review_root(cr_dir, tmp_path / "review_root_repo")
     # The verifier_prompt.txt placeholder is referenced in the per-finding
     # input files; create a stub so the path the test inspects exists.
     (cr_dir / "verifier_prompt.txt").write_text("verifier prompt stub")
@@ -9409,8 +9878,10 @@ def _run_verify_prepare(
         )
         rc = cmd_verify_prepare(ns)
         _sys.stdout.seek(0)
-        manifest = json.load(_sys.stdout)
-        return rc, manifest
+        # A refused review root writes nothing to stdout (the manifest is the
+        # success artifact), so an empty capture is a legitimate outcome.
+        captured = _sys.stdout.read()
+        return rc, json.loads(captured) if captured.strip() else {}
     finally:
         _sys.stdout = old_stdout
 
@@ -9474,18 +9945,15 @@ def _run_verify_consolidate(
 class TestVerifyPrepareReviewRoot:
     """``review_root`` from scope.json is threaded into every verifier input.
 
-    Local PR-head worktree isolation: when scope resolution created a
-    worktree at the PR head, the verifier fleet must read source under that
-    root (not the operator's working tree). cmd_verify_prepare reads
-    ``scope.json`` and stamps ``review_root`` onto each per-finding input so
-    the verifier prompt resolves paths correctly.
+    A verifier Task inherits the invoking session's working directory, so a
+    root that does not hold the diff makes the existence check read unrelated
+    source and REJECT every finding. ``cmd_verify_prepare`` therefore proves
+    the root before it writes any input, and fails the stage when it cannot.
     """
 
     def test_review_root_written_into_verifier_input(self, tmp_path: Path) -> None:
         cr_dir = tmp_path / "cr"
-        cr_dir.mkdir(parents=True)
-        worktree = str(cr_dir / "pr_head_worktree")
-        (cr_dir / "scope.json").write_text(json.dumps({"review_root": worktree}))
+        root = _seed_scope_review_root(cr_dir, tmp_path / "worktree")
 
         finding = _make_validated_finding("bha_1", severity="HIGH")
         rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
@@ -9494,29 +9962,133 @@ class TestVerifyPrepareReviewRoot:
         input_data = json.loads(
             (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
         )
-        assert input_data["review_root"] == worktree
+        assert input_data["review_root"] == root
 
-    def test_review_root_empty_when_scope_absent(self, tmp_path: Path) -> None:
-        # No scope.json (or no worktree) → empty review_root → verifier reads
-        # the working tree as before. The common, no-regression case.
+    def test_absent_scope_errors_instead_of_emitting_inputs(
+        self, tmp_path: Path,
+    ) -> None:
+        # No scope.json → no provable root. The old behavior stamped "" and
+        # let every verifier resolve against its own cwd; that is the
+        # wrong-checkout false green, so the stage must fail instead.
         finding = _make_validated_finding("bha_1", severity="HIGH")
-        rc, _manifest = _run_verify_prepare(tmp_path, [finding])
-
-        assert rc == 0
-        input_data = json.loads(
-            (tmp_path / "cr" / "verifier_inputs" / "bha_1.json").read_text(),
+        rc, _manifest = _run_verify_prepare(
+            tmp_path, [finding], seed_review_root=False,
         )
-        assert input_data["review_root"] == ""
 
-    def test_forged_review_root_rejected(self, tmp_path: Path) -> None:
-        # A scope.json that points review_root at an arbitrary path (or
-        # injects markup) must NOT redirect verifier reads — only the
-        # canonical <cr_dir>/pr_head_worktree is honored.
+        # 3, written out rather than imported: importing the constant this
+        # guard publishes would make a change to it undetectable here.
+        assert rc == 3
+        assert not (tmp_path / "cr" / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_nonexistent_review_root_errors(self, tmp_path: Path) -> None:
         cr_dir = tmp_path / "cr"
         cr_dir.mkdir(parents=True)
         (cr_dir / "scope.json").write_text(
-            json.dumps({"review_root": "/etc\n<inject>"}),
+            json.dumps({"review_root": str(tmp_path / "not_here")}),
         )
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_prompt_markup_in_a_real_root_still_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Angle brackets are legal in a POSIX filename, so this is a genuine
+        # git worktree root that exists — only the markup filter can refuse
+        # it. Without a fixture like this the filter is deletable while green,
+        # and the value lands in the TRUSTED zone of every agent prompt.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = _make_review_root(tmp_path / "re<view>root")
+        # A recorded sha, so the "proven by nothing" rule cannot stand in for
+        # the markup filter and leave it deletable-while-green.
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": root,
+            "review_root_sha": git_fixture(
+                tmp_path / "re<view>root", "rev-parse", "HEAD",
+            ).strip(),
+        }))
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_relative_review_root_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Resolvable from the current directory, and therefore exactly the
+        # cwd-relative resolution this guard exists to refuse. Only the
+        # is-absolute check can reject it.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        _make_review_root(tmp_path / "checkout")
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": "checkout",
+            "review_root_sha": git_fixture(
+                tmp_path / "checkout", "rev-parse", "HEAD",
+            ).strip(),
+        }))
+        monkeypatch.chdir(tmp_path)
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_subdirectory_of_a_checkout_errors(self, tmp_path: Path) -> None:
+        # An existing absolute directory inside a real git worktree: only the
+        # "is the worktree ROOT" check can refuse it, and it must, because
+        # every repo-relative path would resolve one level too deep.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = Path(_make_review_root(tmp_path / "checkout", {"src/a.py": "x\n"}))
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(root / "src"),
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_root_missing_the_diffs_files_errors(self, tmp_path: Path) -> None:
+        # ISS-7382 regression: dispatch against a checkout that is a healthy
+        # git worktree but is NOT the one the diff came from. This is exactly
+        # what every reviewer saw when it resolved paths against the invoking
+        # session's cwd — the run must ERROR, not report zero findings.
+        cr_dir = tmp_path / "cr"
+        _seed_scope_review_root(cr_dir, tmp_path / "other_checkout")
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/only_in_the_real_tree.py"],
+            "file_statuses": {"src/only_in_the_real_tree.py": "added"},
+        }))
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_root_holding_the_diffs_files_is_accepted(self, tmp_path: Path) -> None:
+        # Sibling of the case above in the opposite state: same diff_data, but
+        # a root that DOES contain the changed file. Without this, "rc == 1"
+        # above would also be satisfied by a stage that rejects every root.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = _make_review_root(
+            tmp_path / "real_checkout",
+            {"src/only_in_the_real_tree.py": "x = 1\n"},
+        )
+        (cr_dir / "scope.json").write_text(json.dumps({"review_root": root}))
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/only_in_the_real_tree.py"],
+            "file_statuses": {"src/only_in_the_real_tree.py": "added"},
+        }))
+
         finding = _make_validated_finding("bha_1", severity="HIGH")
         rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
 
@@ -9524,7 +10096,394 @@ class TestVerifyPrepareReviewRoot:
         input_data = json.loads(
             (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
         )
-        assert input_data["review_root"] == ""
+        assert input_data["review_root"] == root
+
+    def test_removed_file_does_not_have_to_exist_under_the_root(
+        self, tmp_path: Path,
+    ) -> None:
+        # A deletion is absent from the head by construction, so requiring it
+        # would fail every diff that removes a file.
+        cr_dir = tmp_path / "cr"
+        _seed_scope_review_root(cr_dir, tmp_path / "checkout")
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/gone.py"],
+            "file_statuses": {"src/gone.py": "removed"},
+        }))
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+
+    def test_pr_head_worktree_moved_off_the_resolved_commit_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # A PR-head worktree is a detached checkout nobody commits into, so
+        # its HEAD must still BE the commit the diff was resolved at.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = Path(_make_review_root(cr_dir / "pr_head_worktree"))
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(root),
+            "review_root_sha": _commit_file(root, "later.txt", "later\n"),
+            "worktree_path": str(root),
+        }))
+        git_fixture(root, "reset", "--quiet", "--hard", "HEAD~1")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_live_checkout_may_commit_during_the_review(
+        self, tmp_path: Path,
+    ) -> None:
+        # Sibling of the case above, and the reason the two are not one rule:
+        # a live checkout's tip moves legitimately. Committing mid-review must
+        # not abort it, so the live-root check is reachability, not equality.
+        cr_dir = tmp_path / "cr"
+        root = Path(_seed_scope_review_root(cr_dir, tmp_path / "checkout"))
+        _commit_file(root, "later.txt", "later\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+
+    @staticmethod
+    def _seed_live_root_with_changed_file(tmp_path: Path) -> tuple[Path, Path]:
+        """A live checkout, resolved at its HEAD, whose diff changes ``src/a.py``.
+
+        The drift check only compares the files the diff names, so every drift
+        case needs diff_data.json listing one that exists at the recorded
+        commit.
+        """
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = Path(_make_review_root(tmp_path / "checkout", {"src/a.py": "v1\n"}))
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(root),
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/a.py"],
+            "file_statuses": {"src/a.py": "modified"},
+        }))
+        return cr_dir, root
+
+    def test_commit_to_a_changed_file_after_resolution_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Reachability alone passes here: the resolved commit is still an
+        # ancestor and src/a.py still exists, yet reviewers would read content
+        # the diff never contained.
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        _commit_file(root, "src/a.py", "v2 committed after resolution\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_uncommitted_edit_to_a_changed_file_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # HEAD never moves, so no commit-level check can see this.
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        (root / "src" / "a.py").write_text("edited, never committed\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_reset_that_moves_a_changed_file_back_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Resolved at v2, then reset to v1: the v2 commit stays in the object
+        # store (so reachability passes) and src/a.py still exists (so
+        # containment passes), but its content is no longer the reviewed one.
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        scope = json.loads((cr_dir / "scope.json").read_text())
+        scope["review_root_sha"] = _commit_file(root, "src/a.py", "v2\n")
+        (cr_dir / "scope.json").write_text(json.dumps(scope))
+        git_fixture(root, "reset", "--quiet", "--hard", "HEAD~1")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_drift_on_paths_outside_the_diff_is_accepted(
+        self, tmp_path: Path,
+    ) -> None:
+        # Sibling of the three drift refusals: the check is scoped to the
+        # diff's files, so a committed and an uncommitted change elsewhere in a
+        # live checkout must not abort the review.
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        _commit_file(root, "later.txt", "later\n")
+        (root / "later.txt").write_text("edited, never committed\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+        input_data = json.loads(
+            (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
+        )
+        assert input_data["review_root"] == str(root)
+
+    def _seed_staged_review(self, tmp_path: Path) -> tuple[Path, Path]:
+        """A staged review of ``src/a.py``, pinned the way resolve-scope pins it.
+
+        The repo also tracks an unrelated ``notes.txt``. The change to
+        ``src/a.py`` is staged, and scope.json records HEAD as
+        ``review_root_sha`` and the index as ``review_root_tree``.
+        """
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        _commit_file(root, "notes.txt", "notes\n")
+        (root / "src" / "a.py").write_text("staged change\n")
+        git_fixture(root, "add", "src/a.py")
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(root),
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+            "scope_kind": "staged",
+            "review_root_tree": git_fixture(root, "write-tree").strip(),
+        }))
+        return cr_dir, root
+
+    def test_staged_scope_is_not_refused_for_its_own_staged_changes(
+        self, tmp_path: Path,
+    ) -> None:
+        # A staged review diffs the index against HEAD, so every changed file
+        # differs from review_root_sha by construction. Its baseline is the
+        # pinned index tree, which a staged file left untouched still matches.
+        cr_dir, root = self._seed_staged_review(tmp_path)
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+        input_data = json.loads(
+            (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
+        )
+        assert input_data["review_root"] == str(root)
+
+    def test_staged_scope_unstaged_edit_to_a_staged_file_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Agents read the working tree, so an edit on top of the staged content
+        # puts code in front of them that the staged diff never contained.
+        cr_dir, root = self._seed_staged_review(tmp_path)
+        (root / "src" / "a.py").write_text("edited after staging\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_staged_scope_restaged_after_resolution_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Re-staging makes the index agree with the working tree again, but both
+        # now differ from the snapshot the diff was computed from.
+        cr_dir, root = self._seed_staged_review(tmp_path)
+        (root / "src" / "a.py").write_text("re-staged after resolution\n")
+        git_fixture(root, "add", "src/a.py")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_staged_scope_unrelated_unstaged_edit_is_accepted(
+        self, tmp_path: Path,
+    ) -> None:
+        # Sibling of the two refusals above: the staged comparison is limited to
+        # the diff's files, so an unstaged edit elsewhere must not abort it.
+        cr_dir, root = self._seed_staged_review(tmp_path)
+        (root / "notes.txt").write_text("edited, never staged\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+
+    @pytest.mark.parametrize(
+        "tree", [None, "", "not-a-tree-id", "0" * 40],
+        ids=["absent", "empty", "invalid", "unknown_object"],
+    )
+    def test_staged_scope_without_a_valid_review_root_tree_errors(
+        self, tmp_path: Path, tree: str | None,
+    ) -> None:
+        # Without the pinned index a staged review has no baseline, so an edit
+        # after resolution could not be detected: refuse rather than pass.
+        cr_dir, _root = self._seed_staged_review(tmp_path)
+        scope = json.loads((cr_dir / "scope.json").read_text())
+        if tree is None:
+            del scope["review_root_tree"]
+        else:
+            scope["review_root_tree"] = tree
+        (cr_dir / "scope.json").write_text(json.dumps(scope))
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_drift_comparison_git_failure_fails_closed(
+        self, tmp_path: Path,
+    ) -> None:
+        # A drift check that cannot run has proven nothing, so it must refuse
+        # rather than read as "no drift".
+        cr_dir, _root = self._seed_live_root_with_changed_file(tmp_path)
+        real_run = subprocess.run
+
+        def _fail_the_drift_diff(
+            cmd: list[str], *args: Any, **kwargs: Any,
+        ) -> subprocess.CompletedProcess[Any]:
+            if "diff" in cmd and "--name-only" in cmd:
+                return subprocess.CompletedProcess(cmd, 128, b"", b"fatal")
+            return real_run(cmd, *args, **kwargs)
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        with patch(
+            "code_review_helpers.subprocess.run", side_effect=_fail_the_drift_diff,
+        ):
+            rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_live_checkout_without_the_resolved_commit_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # A different clone does not hold the commit the diff was resolved at,
+        # which is what distinguishes it from the same checkout moved forward.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        elsewhere = Path(_make_review_root(tmp_path / "other_clone"))
+        reviewed = Path(_make_review_root(
+            tmp_path / "reviewed", {"unrelated.txt": "a different history\n"},
+        ))
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(elsewhere),
+            "review_root_sha": git_fixture(
+                reviewed, "rev-parse", "HEAD",
+            ).strip(),
+        }))
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_root_proven_by_nothing_errors(self, tmp_path: Path) -> None:
+        # No recorded commit and no resolvable changed files: "is a git
+        # worktree root" is true of every checkout on the box, so returning
+        # would report proven when nothing about THIS diff was checked.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = _make_review_root(tmp_path / "checkout")
+        (cr_dir / "scope.json").write_text(json.dumps({"review_root": root}))
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+
+    @staticmethod
+    def _seed_root_with_git_quoted_changed_file(
+        tmp_path: Path,
+    ) -> tuple[Path, Path, str]:
+        """A live checkout whose diff changes a file git records C-quoted.
+
+        The recorded name comes from git itself (``ls-files`` quotes paths
+        exactly as ``diff --name-only`` does), so diff_data.json carries the
+        string parse-diff would store rather than a hand-written escape.
+        """
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = Path(_make_review_root(
+            tmp_path / "checkout", {"src/café.py": "v1\n"},
+        ))
+        recorded = next(
+            line for line in git_fixture(root, "ls-files").splitlines()
+            if "caf" in line
+        )
+        assert recorded.startswith('"'), f"git did not quote {recorded!r}"
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(root),
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": [recorded],
+            "file_statuses": {recorded: "added"},
+        }))
+        return cr_dir, root, recorded
+
+    def test_git_quoted_path_does_not_refuse_a_correct_root(
+        self, tmp_path: Path,
+    ) -> None:
+        # git C-quotes a non-ASCII path in `diff --name-only`, so the recorded
+        # string is not the name on disk. It is decoded, and a root holding the
+        # decoded file unchanged must not be refused.
+        cr_dir, root, _recorded = self._seed_root_with_git_quoted_changed_file(
+            tmp_path,
+        )
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+        input_data = json.loads(
+            (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
+        )
+        assert input_data["review_root"] == str(root)
+
+    def test_git_quoted_changed_file_edited_after_resolution_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Skipping quoted entries dropped this file from both the containment
+        # and the drift check, so an edit to it after resolution went unseen.
+        cr_dir, root, _recorded = self._seed_root_with_git_quoted_changed_file(
+            tmp_path,
+        )
+        (root / "src" / "café.py").write_text("edited, never committed\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_malformed_git_quoted_entry_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # An entry that looks quoted but does not decode cannot be resolved on
+        # disk, so it refuses rather than being skipped or guessed at.
+        cr_dir, _root = self._seed_live_root_with_changed_file(tmp_path)
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/a.py", '"src/unterminated.py'],
+            "file_statuses": {
+                "src/a.py": "modified", '"src/unterminated.py': "added",
+            },
+        }))
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+        assert "not valid git path quoting" in capsys.readouterr().err
 
 
 class TestFooterWorktreeTeardown:
@@ -9767,9 +10726,7 @@ class TestReviewDismissedPrepareReviewRoot:
         from code_review_helpers import cmd_review_dismissed_prepare
 
         cr_dir = tmp_path / "cr"
-        cr_dir.mkdir(parents=True)
-        worktree = str(cr_dir / "pr_head_worktree")
-        (cr_dir / "scope.json").write_text(json.dumps({"review_root": worktree}))
+        root = _seed_scope_review_root(cr_dir, tmp_path / "worktree")
         (cr_dir / "verifier_prompt.txt").write_text("stub")
         (cr_dir / "review_result.json").write_text(json.dumps({
             "rejected": [_make_validated_finding("bha_9", severity="HIGH")],
@@ -9787,7 +10744,35 @@ class TestReviewDismissedPrepareReviewRoot:
         input_data = json.loads(
             (cr_dir / "review_dismissed_inputs" / "bha_9.json").read_text(),
         )
-        assert input_data["review_root"] == worktree
+        assert input_data["review_root"] == root
+
+    def test_absent_scope_errors_instead_of_emitting_dismissed_inputs(
+        self, tmp_path: Path,
+    ) -> None:
+        # The dismissed fleet is a second verifier dispatch; an unprovable
+        # root halts it for the same reason it halts the primary fleet.
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_review_dismissed_prepare
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        (cr_dir / "verifier_prompt.txt").write_text("stub")
+        (cr_dir / "review_result.json").write_text(json.dumps({
+            "rejected": [_make_validated_finding("bha_9", severity="HIGH")],
+        }))
+
+        ns = argparse.Namespace(cr_dir=str(cr_dir), prior_result=None)
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            rc = cmd_review_dismissed_prepare(ns)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert rc == 3
+        assert not (cr_dir / "review_dismissed_inputs" / "bha_9.json").exists()
 
 
 class TestLocalPrWorktreeFlow:
@@ -9849,6 +10834,13 @@ class TestLocalPrWorktreeFlow:
             _sys.stdout = old_stdout
         assert rc == 0
         assert scope["review_root"] == expected_root
+        # ``git worktree add`` was mocked, so materialize the checkout it would
+        # have produced — verify-prepare re-proves the root against real git,
+        # including the commit resolve-scope would have recorded for it.
+        assert _make_review_root(cr_dir / "pr_head_worktree") == expected_root
+        scope["review_root_sha"] = git_fixture(
+            Path(expected_root), "rev-parse", "HEAD",
+        ).strip()
         (cr_dir / "scope.json").write_text(json.dumps(scope))
 
         # Stage 2: verify-prepare threads review_root into the verifier input
@@ -10499,6 +11491,8 @@ class TestReviewDismissed:
         cr = tmp_path / ".closedloop-ai" / "code-review" / "cr-x"
         cr.mkdir(parents=True, exist_ok=True)
         (cr / "verifier_prompt.txt").write_text("stub")
+        if not (cr / "scope.json").exists():
+            _seed_scope_review_root(cr, tmp_path / "review_root_repo")
         return cr
 
     def _run_prepare(
@@ -11733,6 +12727,8 @@ class TestPR114ReviewFixes:
     def _cr_dir(tmp_path: Path) -> Path:
         cr = tmp_path / ".closedloop-ai" / "code-review" / "cr-x"
         cr.mkdir(parents=True, exist_ok=True)
+        if not (cr / "scope.json").exists():
+            _seed_scope_review_root(cr, tmp_path / "review_root_repo")
         return cr
 
     @staticmethod
@@ -17307,6 +18303,10 @@ def _run_derive_spawn_spec(
         p_path.write_text(json.dumps(partitions))
     if route is not None:
         _write_spawn_section(tmp_path, "route", route)
+    # Spec derivation is a dispatch stage and refuses an unprovable review
+    # root; these tests are about the spec, so give them a real one.
+    if not (tmp_path / "scope.json").exists():
+        _seed_scope_review_root(tmp_path, tmp_path / "review_root_repo")
 
     ns = argparse.Namespace(
         cr_dir=str(tmp_path),
@@ -17727,6 +18727,7 @@ class TestPLN725Phase8DeriveSpawnSpec:
         p = tmp_path / "partitions.json"
         p.write_text(json.dumps(self._two_partitions()))
         _write_spawn_section(tmp_path, "route", self._route())
+        _seed_scope_review_root(tmp_path, tmp_path / "review_root_repo")
 
         ns = argparse.Namespace(
             cr_dir=str(tmp_path),
@@ -20973,6 +21974,8 @@ class TestPLN807Phase3StaticSpawnSpec:
             p_path.write_text(json.dumps({"partitions": partitions}))
         if route is not None:
             _write_spawn_section(tmp_path, "route", route)
+        if not (tmp_path / "scope.json").exists():
+            _seed_scope_review_root(tmp_path, tmp_path / "review_root_repo")
 
         ns = argparse.Namespace(
             cr_dir=str(tmp_path),
@@ -20998,6 +22001,34 @@ class TestPLN807Phase3StaticSpawnSpec:
             route={"max_bha_agents": 5, "fast_path": False},
         )
         assert spec["arbitrate_status"] == "static"
+
+    def test_unprovable_review_root_exits_3_without_a_spec(
+        self, tmp_path: Path,
+    ) -> None:
+        # Static derivation hands the reviewer fleet a root too, so an empty one
+        # must halt the run with exit 3 rather than emit a spec — the same
+        # refusal derive-spawn-spec makes. `_invoke` discards the return code and
+        # seeds a provable root, so this case builds its own arguments.
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_derive_static_spec
+
+        (tmp_path / "scope.json").write_text(json.dumps({"review_root": ""}))
+        p_path = tmp_path / "partitions.json"
+        p_path.write_text(json.dumps({
+            "partitions": [{"id": 0, "is_test_only": False}],
+        }))
+        ns = argparse.Namespace(cr_dir=str(tmp_path), partitions=str(p_path))
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            rc = cmd_derive_static_spec(ns)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert rc == 3
+        assert not (tmp_path / "spawn.json").exists()
 
     def test_emits_bha_bhb_auditor_only(self, tmp_path: Path) -> None:
         spec = self._invoke(
@@ -23476,6 +24507,44 @@ class TestExecuteStageInprocess:
         )
         assert status == "failed_continue"
         assert not list(tmp_path.glob("agent_*-failed.json"))
+
+    def test_review_root_exit_code_aborts_a_continue_stage(
+        self, tmp_path: Path,
+    ) -> None:
+        # ISS-7382: the dispatch stages that re-prove review_root are
+        # on_failure "continue", and every path a continue degrades to (the
+        # static reviewer table, "no verifier this run") spawns the same
+        # agents against the same wrong tree. The refusal exit code therefore
+        # overrides on_failure. 3 is written out rather than imported: the
+        # constant this rule publishes cannot also be its own expectation.
+        from code_review_helpers import _execute_stage_inprocess
+
+        out = tmp_path / "o.json"
+        parser = _fake_stage_parser(_fake_func(rc=3))
+        status, msg = _execute_stage_inprocess(
+            self._stage(out, on_failure="continue"), _rp_ctx(tmp_path), parser, set(),
+        )
+        assert status == "failed_abort"
+        assert msg is not None
+
+    def test_the_guarded_dispatch_stages_are_on_failure_continue(self) -> None:
+        # Sibling of the case above: it is only load-bearing while these
+        # stages would otherwise degrade. If they ever become "abort" on
+        # their own, this test says so instead of going quietly vacuous.
+        stages_path = (
+            Path(__file__).parent / "config" / "stages.json"
+        )
+        by_id = {
+            s["id"]: s
+            for s in json.loads(stages_path.read_text())["stages"]
+        }
+        for stage_id in (
+            "stage_19b_derive_spawn_spec",
+            "stage_19c_derive_static_spec",
+            "stage_22b_verify_prepare",
+        ):
+            assert by_id[stage_id].get("on_failure") == "continue", stage_id
+        assert by_id["stage_03_resolve_scope"].get("on_failure") == "abort"
 
     def test_continue_with_coverage_gap_emits_agent_failure_finding(
         self, tmp_path: Path,

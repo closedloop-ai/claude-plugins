@@ -33,21 +33,27 @@ TOOL USAGE:
   you did not run — downstream verification replays it, and an invented query
   is treated as fabricated evidence.
 
-REVIEW ROOT (where source lives):
-- If your task prompt provides a non-empty <review_root> path, the code under
-  review is checked out THERE — not in the current working directory. This
-  happens for local PR review when the PR head branch is not checked out. In
-  that case, read every repo-relative source path as `<review_root>/<path>`,
-  and pass `path: "<review_root>"` to Grep/Glob so searches scope to the code
-  you are reviewing. The working directory holds a DIFFERENT branch's content —
-  reading it would make your findings reference the wrong code.
+REVIEW ROOT (where source lives) — MANDATORY, NOT A HINT:
+- <review_root> is an absolute path and is ALWAYS provided. The code under
+  review is checked out THERE. Your current working directory is the invoking
+  session's checkout, which on any worktree-based run is a DIFFERENT tree —
+  reading it would make your findings describe code that is not under review.
+- Read every repo-relative source path as `<review_root>/<path>`, and pass
+  `path: "<review_root>"` to Grep/Glob so searches scope to the code you are
+  reviewing. If you have already read or searched anything resolved elsewhere,
+  discard it and re-read it under <review_root>.
 - The patches file, this prompt, and your output file are given as explicit
   paths (under the CR session dir) — use them as-is; do NOT prefix them with
   <review_root>.
 - Always emit findings with the original repo-relative `file` path (e.g.
   `src/foo.ts`). Do NOT prefix the finding's `file` with <review_root>.
-- If <review_root> is empty or absent (the normal case), read repo-relative
-  paths as-is from the working directory.
+- If <review_root> is empty, absent, or does not exist, STOP and write NO output
+  file at all; say why in your final message. Do NOT write an empty `findings`
+  array — the collector reads only `findings`, so an empty one is
+  indistinguishable from a clean review, whereas a missing output file is
+  counted as a skipped reviewer and raises a coverage gap. And do NOT review the
+  working directory instead: a clean report from the wrong tree is worse than no
+  report.
 
 OPTIONAL — CODE INTELLIGENCE:
 Some reviewer roles (the Impact Analyzer, Bug Hunter B, the Design Critic, and
@@ -74,19 +80,34 @@ particular one. Bind to what you actually hold:
      For design/architecture-level review.
 - KILL SWITCH. Your task prompt carries `CODE_INTEL_ALLOWED`. When it is
   `false`, use Grep/Glob only, no matter what tools you hold — the orchestrator
-  has determined no external index can be trusted for this run (typically the
-  source under review is a different commit than any index covers). Reviews
-  never index or re-index a repo, and never start an indexing daemon.
-- SCOPE EVERY CALL TO THIS REPO. An index may hold several repositories. If a
-  tool takes a project / workspace / repo / root argument, supply the value for
-  THIS checkout and never another; if it would default to a different repo, do
-  not use it. An unscoped or wrong-repo answer can pull a DIFFERENT repository's
-  source into your findings, and from there into posted PR comments. That is a
-  data leak; treat repo scoping as mandatory.
-- VALIDATE RETURNED PATHS. Before citing any file a tool returns, confirm it is
-  inside this checkout: it must be openable with Read at its repo-relative path.
-  Discard (never cite) any absolute path outside the working directory or any
-  path that escapes the repo via `..`.
+  has determined no external index can be trusted for this run (the source
+  under review is a per-run checkout that no index covers).
+- SCOPE EVERY CALL TO <review_root>. An index may hold several repositories, or
+  several checkouts of one. Whenever a tool accepts a root / repo / workspace /
+  project argument, pass <review_root> — never your working directory, and never
+  another repository. An unscoped or wrong-root answer can pull a DIFFERENT
+  branch's or repository's source into your findings, and from there into posted
+  PR comments. That is a data leak; treat scoping as mandatory.
+- ROOT-ARGUMENT REQUIREMENT. Your task prompt also carries
+  `CODE_INTEL_REQUIRE_ROOT_ARG`. When it is `true`, use ONLY tools you can point
+  at <review_root> through such an argument. A tool that cannot be scoped answers
+  for the session's checkout — a different branch or commit than the code under
+  review — so do not call it. If nothing you hold can be scoped for a
+  capability, that capability is unavailable: use Grep/Glob. When it is `false`,
+  <review_root> is the session's own checkout, so a tool without a root argument
+  already answers for it.
+- NO INDEXING CALLS. Never call a tool whose purpose is to index, re-index, or
+  start or stop an indexing service. A query tool that builds or refreshes its
+  index as a side effect of answering a query scoped to <review_root> is
+  allowed: that is how a scoped query reaches a checkout no index covered yet,
+  so do not avoid such a tool for that reason.
+- SAME-SYMBOL CHECK. Always discard any response whose resolved target is not
+  the symbol you asked about. Some tools silently fall back to a fuzzy or
+  different match while still reporting success.
+- VALIDATE RETURNED PATHS AGAINST <review_root>, NOT your working directory.
+  Before citing any file a tool returns, confirm it is openable with Read at
+  `<review_root>/<repo-relative path>`. Discard (never cite) any path that does
+  not resolve under <review_root> or that escapes it via `..`.
 - DEGRADE SILENTLY. A missing tool, an error, an empty result, or a stale index
   means fall back to Grep/Glob and change nothing else. Do NOT mention the
   substrate's presence or absence in findings, and do NOT change what you report

@@ -1,6 +1,6 @@
 ---
 name: spawn-reviewers
-description: Spawn and collect the reviewer fleet at stage_20_spawn_reviewers. Consumes spawn.json.spec (the authoritative spawn spec from derive-spawn-spec / derive-static-spec), resolves CODE_INTEL_ALLOWED, builds per-agent prompts from the per-agent template + role suffixes (Bug Hunter A/B, Unified Auditor, Domain Critics, Impact Analyzer), handles the standard, fast-path, all-cached-BHA, and gated-by-verify cases, and runs the spawn/collection contract and agent-failure recovery. Falls back to the static reviewer table when spawn.json marks arbitrate_status:"fallback". Invoke when stage_20_spawn_reviewers is reached (both MODE=local and MODE=github). Do NOT use for the verifier fleet (stage_23 — see the verify-findings skill) or the PLN-725 singletons (stage_11/stage_15 — see the singleton-dispatch skill).
+description: Spawn and collect the reviewer fleet at stage_20_spawn_reviewers. Consumes spawn.json.spec (the authoritative spawn spec from derive-spawn-spec / derive-static-spec), resolves CODE_INTEL_ALLOWED and CODE_INTEL_REQUIRE_ROOT_ARG, builds per-agent prompts from the per-agent template + role suffixes (Bug Hunter A/B, Unified Auditor, Domain Critics, Impact Analyzer), handles the standard, fast-path, all-cached-BHA, and gated-by-verify cases, and runs the spawn/collection contract and agent-failure recovery. Falls back to the static reviewer table when spawn.json marks arbitrate_status:"fallback". Invoke when stage_20_spawn_reviewers is reached (both MODE=local and MODE=github). Do NOT use for the verifier fleet (stage_23 — see the verify-findings skill) or the PLN-725 singletons (stage_11/stage_15 — see the singleton-dispatch skill).
 ---
 
 # Reviewer Fleet Dispatch (stage_20_spawn_reviewers)
@@ -21,9 +21,9 @@ This stage runs when the walker reaches `stage_20`.
 - `model` → resolved per-agent model string (already accounts for BHA test-only routing and spawn.json.route overrides — do not re-derive).
 - `partitioned: true` + `partition_id` → patches file is `patches_p{partition_id}.txt`; use the partition's `files[]` from `partitions.json` for `<files_assigned>`.
 - `partitioned: false` → patches file is `patches_all.txt`; `<files_assigned>` is the full `files_to_review` list.
-- `subagent_type` per descriptor: use `code-review:code-review-worker-graph` when `reviewer ∈ {bug_hunter_b, impact, design_critic}` (or the fast-path agent); use `code-review:code-review-worker` for every other descriptor. See the "Agent type" rule above. Pass the resolved `CODE_INTEL_ALLOWED` into the BHB / Impact / Design Critic / fast-path prompts.
+- `subagent_type` per descriptor: use `code-review:code-review-worker-graph` when `reviewer ∈ {bug_hunter_b, impact, design_critic}` (or the fast-path agent); use `code-review:code-review-worker` for every other descriptor. See the "Agent type" rule above. Pass the resolved `CODE_INTEL_ALLOWED` and `CODE_INTEL_REQUIRE_ROOT_ARG` into the BHB / Impact / Design Critic / fast-path prompts.
 - Prompt-suffix dispatch is **two-level**:
-  - When `source == "core"`, branch on the `reviewer` field to select the suffix: `bug_hunter_a` → BHA, `bug_hunter_b` → BHB, `unified_auditor` → Auditor, `impact` → Impact Analyzer, `design_critic` → Design Critic. (All five roles share `source: "core"`, so `source` alone is not enough.) `impact` only appears in `agents[]` when invocation depth is `deep` AND signal extraction emitted `exported_symbol_change` or `symbol_deletion`; `design_critic` appears in `agents[]` on every `deep` review (an always-on conditional core reviewer). Both are code-intelligence-aware: `impact` and `design_critic` each load the code-intelligence protocol, so spawn both as `code-review:code-review-worker-graph` and substitute the resolved `CODE_INTEL_ALLOWED` into their suffixes.
+  - When `source == "core"`, branch on the `reviewer` field to select the suffix: `bug_hunter_a` → BHA, `bug_hunter_b` → BHB, `unified_auditor` → Auditor, `impact` → Impact Analyzer, `design_critic` → Design Critic. (All five roles share `source: "core"`, so `source` alone is not enough.) `impact` only appears in `agents[]` when invocation depth is `deep` AND signal extraction emitted `exported_symbol_change` or `symbol_deletion`; `design_critic` appears in `agents[]` on every `deep` review (an always-on conditional core reviewer). Both are code-intelligence-aware: `impact` and `design_critic` each load the code-intelligence protocol, so spawn both as `code-review:code-review-worker-graph` and substitute the resolved `CODE_INTEL_ALLOWED` and `CODE_INTEL_REQUIRE_ROOT_ARG` into their suffixes.
   - When `source` is `"rule"` or `"critic"` → Domain Critic suffix (the `reviewer` field carries the critic name for the `{critic_name}` prompt slot). `"rule"` means the entry came from a deterministically matched `critic-gates.json` `coverage[]` rule (including migrated legacy `moduleCritics[]`); `"critic"` means the entry was LLM-proposed by `coverage_critic`. Both spawn as `domain_<N>` with sonnet.
   - When `source == "fast_path"` → Fast Path suffix (only emitted on the fast-path branch; mutually exclusive with the bucket walk).
 - `spec.fast_path: true` → spec emits exactly one agent (`agent_id: "fast"`); skip the standard-flow tables and use the Fast Path suffix below.
@@ -55,13 +55,13 @@ Context-heavy operations that cause "Prompt is too long" failures:
 
 The two differ in what they can rely on, and the prompts account for it. `code-review-worker`'s allowlist *guarantees* the core four regardless of what the spawning session holds. The inheriting worker gets whatever that session has — which is usually the core four plus the session's MCP servers, but is NOT guaranteed: a session that supplies its own search tooling instead of `Grep`/`Glob` yields a reviewer without them. That is why the shared prompt states text search as a capability rather than a tool name and tells the reviewer to fall back to targeted `Read` calls, and why `grep_query_used` must describe a query actually executed. `Write` is inherited in practice, and the write-denied fallback in `shared_prompt.txt` (emit `<findings_json>` inline, report `file=WRITE_DENIED`) still covers the case where it is refused.
 
-**Code-intelligence gate (do once, before spawning the code-intelligence-aware roles).** The plugin does not require, name, or probe any particular MCP server. Discovery is the reviewer's job — it holds the tool schemas, so it is the only party that can bind a capability to a real call. The orchestrator decides exactly one thing: whether an external index may be trusted for this run at all.
+**Code-intelligence gate (do once, before spawning the code-intelligence-aware roles).** The plugin does not require, name, or probe any particular MCP server. Discovery is the reviewer's job — it holds the tool schemas, so it is the only party that can bind a capability to a real call. The orchestrator decides two things: whether an external index may be used for this run at all, and whether reviewers must scope every code-intelligence call to `review_root` through a root argument.
 
-1. Set `CODE_INTEL_ALLOWED = true` by default.
-2. **Set `CODE_INTEL_ALLOWED = false` when `<REVIEW_ROOT>` (scope.json → `review_root`) is non-empty.** Any external index is built against the operator's working checkout, which under PR-head worktree isolation is a *different commit* than the source the agents Read/Grep (the PR head under `review_root`). Letting reviewers (Bug Hunter B, Impact Analyzer, Design Critic, fast-path) query that index would surface a different branch's symbols into findings on this PR. Re-indexing the worktree per review is out of scope, so the correct, safe behavior is grep-only. This holds for every substrate, present or future — it is a property of the review, not of the server.
-3. Substitute the resolved value into the Bug Hunter B, Impact Analyzer, Design Critic, and Fast Path prompts (the `CODE_INTEL_ALLOWED=<...>` line in each suffix). `false` tells the agent to use Grep/Glob only regardless of what it holds.
+1. **Set `CODE_INTEL_ALLOWED = false` only when `<CR_DIR>/scope.json` → `worktree_path` is non-empty; otherwise `true`.** That path is the per-run PR-head worktree under `<CR_DIR>`, created and torn down on every review, so any index for it would be cold every time, and an index of any other tree describes a different commit than the PR head the agents read. Every other run keeps code intelligence on: branch, staged, and file-path review from the primary checkout or from a separate git worktree, local PR review already at the PR head, and GitHub mode.
+2. **Set `CODE_INTEL_REQUIRE_ROOT_ARG = false` only when the reviewed root IS the session's primary checkout; otherwise `true`.** Resolve both sides to real paths (`realpath`) and compare: (a) `<CR_DIR>/scope.json` → `review_root`, and (b) the git toplevel of the SESSION's primary working directory — the directory this Claude Code session was started in, as your session environment states it — computed with `git -C <session primary working directory> rev-parse --show-toplevel`. Use the session's primary working directory, NOT whatever directory a helper process happened to run in: the cwd recorded in `setup.json`, the directory `resolve-scope` ran from, and a Bash call's cwd can all differ from it. `false` only on an exact match; `true` on a mismatch AND whenever either side cannot be determined (empty or missing `review_root`, the primary working directory is not inside a git worktree, or the git call fails). The reason: a code-intelligence tool called without a root argument answers for the session's primary checkout. When `review_root` is any other tree — a branch review run from a separate git worktree, such as a per-chunk campaign worktree — that answer describes a different branch or commit than the source the agents Read/Grep, so reviewers may use only tools they can point at `review_root` through a root / repo / workspace / project argument (the shared protocol states the rule). When the roots match, an unscoped tool already answers for the tree under review.
+3. Substitute both resolved values into the Bug Hunter B, Impact Analyzer, Design Critic, and Fast Path prompts (the `CODE_INTEL_ALLOWED=<...>` and `CODE_INTEL_REQUIRE_ROOT_ARG=<...>` values in each suffix). `CODE_INTEL_ALLOWED=false` tells the agent to use Grep/Glob only regardless of what it holds; `CODE_INTEL_REQUIRE_ROOT_ARG=true` tells it to call only tools it can scope to `review_root`. Both hold for every substrate, present or future — they are properties of the review, not of the server.
 
-The orchestrator makes NO code-intelligence tool calls — it does not enumerate servers, resolve project identifiers, or check index freshness. That keeps this stage free of both the context-budget cost and the injection surface the old `list_projects` handshake carried (a server-returned project name substituted into the agents' trusted instruction zone). A reviewer that finds no usable tool degrades to grep silently, so `true` is safe when nothing is connected.
+The orchestrator makes NO code-intelligence tool calls — it does not enumerate servers, resolve project identifiers, or check index freshness. That keeps this stage free of both the context-budget cost and the injection surface the old `list_projects` handshake carried (a server-returned project name substituted into the agents' trusted instruction zone). A reviewer that finds no usable tool degrades to grep silently, so `CODE_INTEL_ALLOWED=true` is safe when nothing is connected.
 
 ### Standard Flow (FAST_PATH == false)
 
@@ -98,7 +98,9 @@ The orchestrator assigns each agent a unique `AGENT_ID` (e.g., `bha_p0`, `bhb`, 
 
 **Important:** When constructing agent prompts, substitute the resolved `CR_DIR` path (e.g., `.closedloop-ai/code-review/cr-38291`) into `{CR_DIR}` — agents run in separate processes and do not have access to the orchestrator's shell variables.
 
-**`{REVIEW_ROOT}` substitution.** Resolve `{REVIEW_ROOT}` from `<CR_DIR>/scope.json` → `review_root` (the `<REVIEW_ROOT>` walker token). It is non-empty only for local PR review where the PR head was checked out into a worktree because the operator is on a different branch; in that case every reviewer must read source under that root (the `shared_prompt.txt` REVIEW ROOT block tells the agent how). For the common case (`review_root` empty — local branch review, staged/file scope, or GitHub mode where the runner already checked out the head) substitute the empty string and agents read the working tree as usual. The same value flows to the verifier fleet via each verifier input's `review_root` field, so reviewers and verifiers always read identical content.
+**`{REVIEW_ROOT}` substitution — REQUIRED, every agent, every run.** Resolve `{REVIEW_ROOT}` from `spawn.json.spec.review_root` (`derive-spawn-spec` / `derive-static-spec` stamp it there after proving it holds this diff); `<CR_DIR>/scope.json` → `review_root` carries the same value and is the fallback when the spec is absent. It is an absolute path and is **never empty** on a healthy run — the deterministic prefix errors out rather than emitting one. Substitute it into every reviewer prompt, including the fast path and the static-table fallback.
+
+Do not skip this substitution and do not pass an empty value: a reviewer Task inherits the invoking session's working directory, which on any worktree-based run is a different checkout than the diff, and a reviewer that resolves paths there returns a confident clean report on code it never opened. If `review_root` is empty or missing from both files, **stop and report the error** instead of spawning — the prefix is supposed to have made that impossible, so an empty value means a broken run, not a run without isolation. The same value flows to the verifier fleet via each verifier input's `review_root` field, so reviewers and verifiers always read identical content.
 
 **Reading `partitions.json` (read the file once with `cat` or `Read`, then map keys; do NOT reach for `python -c "json.load(...)[0]"`).**
 
@@ -187,14 +189,17 @@ Focus areas:
 
 For DRY claims, one concrete example of prior art is sufficient (cite file path + function name).
 
-CODE INTELLIGENCE (optional): CODE_INTEL_ALLOWED=<CODE_INTEL_ALLOWED>. Follow the
+CODE INTELLIGENCE (optional): CODE_INTEL_ALLOWED=<CODE_INTEL_ALLOWED>,
+CODE_INTEL_REQUIRE_ROOT_ARG=<CODE_INTEL_REQUIRE_ROOT_ARG>. Follow the
 "OPTIONAL — CODE INTELLIGENCE" protocol in {CR_DIR}/shared_prompt.txt: inspect your own
 tool roster for an MCP server that indexes this repo, loading deferred schemas with
 ToolSearch first. When one is available, prefer it for your cross-file work — capability
 C3 (snippet read) to read the exact service/API implementation instead of Glob-guessing
 its file, C1/C2 (symbol lookup, usage enumeration) for DRY/duplicate lookups and import
-validation. Scope every call to this repo and validate returned paths are inside this
-checkout. When CODE_INTEL_ALLOWED is false or nothing in your roster answers the
+validation. Pass <review_root> as the root argument whenever a tool accepts one; when
+CODE_INTEL_REQUIRE_ROOT_ARG is true, call only tools you can scope that way. Discard any
+answer for a different symbol than you asked about, and validate returned paths resolve
+under <review_root>. When CODE_INTEL_ALLOWED is false or nothing you may call answers the
 capability, use Grep/Glob silently. Findings still cite a concrete file:line you confirmed.
 
 IMPORTANT: Read the repository root CLAUDE.md file before starting your review. Use it for
@@ -280,7 +285,8 @@ have ≥1 concrete external usage with cited breakage. If your search finds
 zero external usages OR every usage is guarded, do not emit a finding
 for that symbol.
 
-CODE INTELLIGENCE (optional): CODE_INTEL_ALLOWED=<CODE_INTEL_ALLOWED>. When it is
+CODE INTELLIGENCE (optional): CODE_INTEL_ALLOWED=<CODE_INTEL_ALLOWED>,
+CODE_INTEL_REQUIRE_ROOT_ARG=<CODE_INTEL_REQUIRE_ROOT_ARG>. When CODE_INTEL_ALLOWED is
 true, inspect your own tool roster for an MCP server that indexes this repo (load
 deferred schemas with ToolSearch first) and ALSO use its capability C2 (usage/caller
 enumeration) to reach callers grep cannot (aliases,
@@ -293,9 +299,12 @@ against `external_usages_found`). If you hold NO text-search tool at all, leave
 `grep_query_used` null and `external_usages_found` empty and tag every entry
 `discovery: "graph"` — never write a query you did not execute. Read every callsite
 to capture its verbatim
-`callsite_snippet` regardless of substrate, and validate substrate-returned paths are
-inside this checkout. When CODE_INTEL_ALLOWED is false or nothing answers C2, use
-text search alone (or targeted Reads if you hold no search tool).
+`callsite_snippet` regardless of substrate. Pass <review_root> as the root argument
+whenever a tool accepts one; when CODE_INTEL_REQUIRE_ROOT_ARG is true, call only tools you
+can scope that way. Discard any answer for a different symbol than you asked about, and
+validate substrate-returned paths resolve under <review_root>. When CODE_INTEL_ALLOWED is
+false or nothing you may call answers C2, use text search alone (or targeted Reads if you
+hold no search tool).
 
 Respond ONLY with:
   DONE findings={count} file={output_file_path}
@@ -306,7 +315,7 @@ provides. Do NOT use Bash.
 
 **Design Critic** (conditional, deep tier only, `subagent_type: "code-review:code-review-worker-graph"`, model `sonnet`, `AGENT_ID: "design_critic"`):
 
-The Design Critic is an always-on conditional core reviewer that appears in `spawn.json.spec.agents[]` on every `deep` review (no signal trigger required). It uses the standard per-agent template above (which already directs the agent to Read `{CR_DIR}/shared_prompt.txt` first, then the patches file); its role suffix points at `{CR_DIR}/design_critic_suffix.txt` (copied by `prep-assets`, mirroring `bha_suffix.txt`). It is not partitioned — `{PARTITION_OR_ALL}` is `all`. Like the Impact Analyzer it is code-intelligence-aware — spawn it as `code-review:code-review-worker-graph` and substitute the resolved `CODE_INTEL_ALLOWED` into its suffix (`false` when `review_root` is set, which tells it to grep instead). The suffix:
+The Design Critic is an always-on conditional core reviewer that appears in `spawn.json.spec.agents[]` on every `deep` review (no signal trigger required). It uses the standard per-agent template above (which already directs the agent to Read `{CR_DIR}/shared_prompt.txt` first, then the patches file); its role suffix points at `{CR_DIR}/design_critic_suffix.txt` (copied by `prep-assets`, mirroring `bha_suffix.txt`). It is not partitioned — `{PARTITION_OR_ALL}` is `all`. Like the Impact Analyzer it is code-intelligence-aware — spawn it as `code-review:code-review-worker-graph` and substitute the resolved `CODE_INTEL_ALLOWED` and `CODE_INTEL_REQUIRE_ROOT_ARG` into its suffix (`CODE_INTEL_ALLOWED=false` only when `worktree_path` is set, which tells it to grep instead; `CODE_INTEL_REQUIRE_ROOT_ARG=true` unless `review_root` is the session's primary checkout — see the code-intelligence gate above). The suffix:
 
 ```
 Read {CR_DIR}/design_critic_suffix.txt for your role, evaluation procedure,
@@ -319,15 +328,18 @@ Use Read, Grep, and Glob for codebase context — design judgments need
 whole-system perspective, but every finding must cite a concrete file:line
 tied to this diff. Do NOT use Bash.
 
-CODE INTELLIGENCE (optional): CODE_INTEL_ALLOWED=<CODE_INTEL_ALLOWED>. Follow the
+CODE INTELLIGENCE (optional): CODE_INTEL_ALLOWED=<CODE_INTEL_ALLOWED>,
+CODE_INTEL_REQUIRE_ROOT_ARG=<CODE_INTEL_REQUIRE_ROOT_ARG>. Follow the
 "OPTIONAL — CODE INTELLIGENCE" protocol in {CR_DIR}/shared_prompt.txt.
-When it is true, inspect your own tool roster for an MCP server indexing this
-repo (ToolSearch for deferred schemas) and prefer it for structure and
+When CODE_INTEL_ALLOWED is true, inspect your own tool roster for an MCP server
+indexing this repo (ToolSearch for deferred schemas) and prefer it for structure and
 dependency-direction analysis — capability C4 (module layout, dependency edges,
 cycles, implementors; some servers expose this as a query language over the
-dependency graph) and C2 (call / data-flow chains). Scope every call to this
-repo and validate returned paths are inside this checkout.
-When CODE_INTEL_ALLOWED is false or nothing answers C4, grep imports instead.
+dependency graph) and C2 (call / data-flow chains). Pass <review_root> as the root
+argument whenever a tool accepts one; when CODE_INTEL_REQUIRE_ROOT_ARG is true, call
+only tools you can scope that way. Discard any answer for a different symbol than you
+asked about, and validate returned paths resolve under <review_root>.
+When CODE_INTEL_ALLOWED is false or nothing you may call answers C4, grep imports instead.
 ```
 
 ### Spawn + Collection Contract (standard flow)
@@ -355,7 +367,7 @@ If any agent failed (context overflow, subscription limits, timeout) or its outp
 
 1. **Log the failure**: Record which agent failed and why (e.g., `"Bug Hunter A partition 2: context overflow"`).
 2. **If failed agent is BHA (partitioned)**: halve the failed partition (LOC budget ÷ 2) and re-spawn with `model: "haiku"` and `subagent_type: "code-review:code-review-worker"`. The re-spawned agent writes to a new output file.
-3. **If failed agent is non-partitioned (BHB / Impact Analyzer / Design Critic / Unified Auditor / Domain Critic)**: re-spawn the same role once with `model: "haiku"` and the same file assignment. Keep the role's worker type — BHB, the Impact Analyzer, and the Design Critic re-spawn as `code-review:code-review-worker-graph` (with the same `CODE_INTEL_ALLOWED`); Auditor/Domain Critic re-spawn as `code-review:code-review-worker`.
+3. **If failed agent is non-partitioned (BHB / Impact Analyzer / Design Critic / Unified Auditor / Domain Critic)**: re-spawn the same role once with `model: "haiku"` and the same file assignment. Keep the role's worker type — BHB, the Impact Analyzer, and the Design Critic re-spawn as `code-review:code-review-worker-graph` (with the same `CODE_INTEL_ALLOWED` and `CODE_INTEL_REQUIRE_ROOT_ARG`); Auditor/Domain Critic re-spawn as `code-review:code-review-worker`.
 4. **Retry uses the same mode branch**: GitHub retries are synchronous and must finish before the next descriptor or downstream stage; local retries may use the local background-plus-`TaskOutput` collection contract.
 5. **Second failure → skip with warning**: if the recovery attempt fails, log a warning (`"⚠️ {agent_name} skipped — {N} files not reviewed due to agent failures"`) and continue. Do NOT fall back to reviewing in the main conversation — this would load patches into the orchestrator's context and recreate the overflow problem on large PRs. Skipped scope must be listed in the output for manual follow-up.
 6. **Continue collecting**: do not block the pipeline on a single agent failure. The walker's `on_failure: continue_with_coverage_gap` for `stage_20` ensures the run completes even if some partitions are unreviewed.
@@ -369,7 +381,7 @@ Mark "Run fast-path review" `in_progress`.
 The fast-path spawns a single agent that performs all review passes in one run. Use the per-agent prompt wrapper above unchanged (`mode: standalone`, `<output_file>`, `<patches_file>`, `<files_assigned>`), with the fast-path-specific suffix below.
 
 **Fast-Path Agent settings:**
-- `subagent_type`: `"code-review:code-review-worker-graph"` (the fast-path agent runs a BHB cross-file pass, so it gets the code-intelligence-aware worker; pass the resolved `CODE_INTEL_ALLOWED` into its prompt)
+- `subagent_type`: `"code-review:code-review-worker-graph"` (the fast-path agent runs a BHB cross-file pass, so it gets the code-intelligence-aware worker; pass the resolved `CODE_INTEL_ALLOWED` and `CODE_INTEL_REQUIRE_ROOT_ARG` into its prompt)
 - `model`: from `spawn.json.route -> models.fast_path_reviewer` (NOT hardcoded)
 - `run_in_background`: `false` (spawn the single fast-path agent SYNCHRONOUSLY; backgrounding one agent buys no parallelism and is fatal in headless mode, see "Fast-Path Spawn + Collection" below)
 - `AGENT_ID`: `"fast"`
@@ -410,12 +422,15 @@ Focus areas:
 
 For DRY claims, one concrete example of prior art is sufficient (cite file path + function name).
 
-CODE INTELLIGENCE (optional): CODE_INTEL_ALLOWED=<CODE_INTEL_ALLOWED>. Follow the
-"OPTIONAL — CODE INTELLIGENCE" protocol in {CR_DIR}/shared_prompt.txt — when it is true,
-inspect your own tool roster for an MCP server indexing this repo (ToolSearch for deferred
-schemas) and prefer its C1/C2/C3 capabilities for the cross-file lookups above; scope every
-call to this repo and validate returned paths are inside this checkout; otherwise use
-Grep/Glob silently.
+CODE INTELLIGENCE (optional): CODE_INTEL_ALLOWED=<CODE_INTEL_ALLOWED>,
+CODE_INTEL_REQUIRE_ROOT_ARG=<CODE_INTEL_REQUIRE_ROOT_ARG>. Follow the
+"OPTIONAL — CODE INTELLIGENCE" protocol in {CR_DIR}/shared_prompt.txt — when
+CODE_INTEL_ALLOWED is true, inspect your own tool roster for an MCP server indexing this
+repo (ToolSearch for deferred schemas) and prefer its C1/C2/C3 capabilities for the
+cross-file lookups above; pass <review_root> as the root argument whenever a tool accepts
+one (when CODE_INTEL_REQUIRE_ROOT_ARG is true, call only tools you can scope that way),
+discard any answer for a different symbol than you asked about, and validate returned
+paths resolve under <review_root>; otherwise use Grep/Glob silently.
 
 IMPORTANT: Read the repository root CLAUDE.md file before starting your review. Use it for
 DRY detection (check Learned Patterns for known conventions) and pattern consistency checks.

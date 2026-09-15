@@ -16,17 +16,24 @@ to survive human review of the committed golden.
 
 from __future__ import annotations
 
+import argparse
 import difflib
+import os
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from prefix_golden_harness import (
     PREFIX_ARTIFACTS,
     PRE_SINGLETON_STOP_STAGE,
+    PrefixContext,
     PrefixFixture,
     PrefixRun,
+    _build_cli_parser,
+    _execute_stage,
+    _execute_stage_subprocess,
     cache_hit_fixture,
     coverage_critic_fixture,
     empty_diff_fixture,
@@ -62,6 +69,104 @@ def _expected_dir(name: str) -> Path:
 
 def _statuses(run: PrefixRun) -> dict[str, str]:
     return {r.stage_id: r.status for r in run.results}
+
+
+# ---------------------------------------------------------------------------
+# Review-root refusal (exit 3) overrides on_failure in BOTH harness walkers
+# ---------------------------------------------------------------------------
+#
+# Production's ``_execute_stage_inprocess`` aborts on exit 3 regardless of the
+# stage's ``on_failure``. The fixture matrix above only walks provable roots, so
+# without these a walker that continued past a wrong-worktree refusal would
+# still claim parity with production.
+
+
+def _review_root_refusal_stage(cr_dir: Path) -> dict[str, Any]:
+    """stage_19b as stages.json declares it (``on_failure: continue``), aimed at
+    a cr_dir with no scope.json, so the real review-root guard exits 3."""
+    return {
+        "id": "stage_19b_derive_spawn_spec",
+        "kind": "helper",
+        "subcommand": "derive-spawn-spec",
+        "args": [
+            "--cr-dir", str(cr_dir), "--partitions", str(cr_dir / "partitions.json"),
+        ],
+        "stdout": None,
+        "expected_outputs": [str(cr_dir / "spawn.json")],
+        "depends_on": [],
+        "on_failure": "continue",
+        "enabled": True,
+    }
+
+
+def test_inprocess_walker_aborts_on_review_root_refusal(tmp_path: Path) -> None:
+    cr_dir = tmp_path / "cr"
+    cr_dir.mkdir()
+
+    with pytest.raises(AssertionError, match=r"rc=3"):
+        _execute_stage(
+            _review_root_refusal_stage(cr_dir),
+            PrefixContext(cr_dir=cr_dir, flags={}),
+            _build_cli_parser(),
+            set(),
+        )
+
+
+def test_inprocess_walker_still_continues_other_failures(tmp_path: Path) -> None:
+    # Sibling: the override is scoped to exit 3, so an ordinary non-zero exit on
+    # the same continue stage must still degrade rather than abort.
+    cr_dir = tmp_path / "cr"
+    cr_dir.mkdir()
+    parser = argparse.ArgumentParser()
+    stub = parser.add_subparsers(dest="command", required=True).add_parser(
+        "derive-spawn-spec",
+    )
+    stub.add_argument("--cr-dir")
+    stub.add_argument("--partitions")
+    stub.set_defaults(func=lambda _ns: 1)
+
+    result = _execute_stage(
+        _review_root_refusal_stage(cr_dir),
+        PrefixContext(cr_dir=cr_dir, flags={}),
+        parser,
+        set(),
+    )
+
+    assert result.status == "failed_continue"
+    assert result.returncode == 1
+
+
+def test_subprocess_walker_aborts_on_review_root_refusal(tmp_path: Path) -> None:
+    cr_dir = tmp_path / "cr"
+    cr_dir.mkdir()
+
+    with pytest.raises(AssertionError, match=r"rc=3"):
+        _execute_stage_subprocess(
+            _review_root_refusal_stage(cr_dir),
+            PrefixContext(cr_dir=cr_dir, flags={}),
+            tmp_path,
+            dict(os.environ),
+            set(),
+        )
+
+
+def test_subprocess_walker_still_continues_other_failures(tmp_path: Path) -> None:
+    # Sibling: an argparse rejection exits 2, which must still degrade.
+    cr_dir = tmp_path / "cr"
+    cr_dir.mkdir()
+    stage = _review_root_refusal_stage(cr_dir)
+    stage["args"] = [*stage["args"], "--no-such-flag"]
+
+    result = _execute_stage_subprocess(
+        stage,
+        PrefixContext(cr_dir=cr_dir, flags={}),
+        tmp_path,
+        dict(os.environ),
+        set(),
+    )
+
+    assert result.status == "failed_continue"
+    assert result.returncode == 2
 
 
 # ---------------------------------------------------------------------------

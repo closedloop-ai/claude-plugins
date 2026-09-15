@@ -90,7 +90,10 @@ Two discovery substrates, used together:
      deferred schemas with `ToolSearch` as the protocol describes. Skip
      this substrate entirely (grep-only) when your task prompt sets
      `CODE_INTEL_ALLOWED=false` or when your roster holds nothing that
-     answers capability C2. When it is available, use C1 (symbol lookup)
+     answers capability C2 — and when it sets
+     `CODE_INTEL_REQUIRE_ROOT_ARG=true`, count only tools you can scope to
+     `<review_root>` (the protocol's scoping rules decide which tools you
+     may call). When it is available, use C1 (symbol lookup)
      and C2 (caller enumeration) to enumerate callers and C3 (snippet
      read) to read them. A caller the substrate surfaces but grep CANNOT
      (aliased import, re-export, dynamic dispatch) is a
@@ -536,7 +539,8 @@ use the new name `SESSION_COOKIE_NAME`."
 ### Example 5: Substrate-discovered alias callsite that grep misses
 
 `CODE_INTEL_ALLOWED` is `true` and your roster holds a caller-enumeration
-tool for this repo (capability C2). The diff at
+tool for this repo (capability C2) that you may call under
+`CODE_INTEL_REQUIRE_ROOT_ARG` (per the shared protocol). The diff at
 `src/api/user.ts:42` changes `function getUser(id: string)` to
 `function getUser(id: string, options: UserOptions)` — no default.
 

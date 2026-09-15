@@ -33,6 +33,7 @@
     "fast_path": true,
     "gated_by_verify": false,
     "generated_at": "<TS>",
+    "review_root": "<REPO>",
     "skipped": [],
     "stats": {
       "agent_count": 1,
