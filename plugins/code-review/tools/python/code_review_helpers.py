@@ -500,6 +500,25 @@ def _git_head_at(root: str | Path) -> str:
     return result.stdout.strip()
 
 
+def _git_index_tree(root: str | Path) -> str:
+    """The tree object id of the index at *root* (``git write-tree``), or "".
+
+    Pins what a staged review reads: ``--cached`` diffs the index against
+    HEAD, so no commit holds that content. ``write-tree`` stores only the tree
+    objects (the blobs are already stored by ``git add``), unreferenced, so
+    ``git gc`` prunes them on its normal schedule. An index with unmerged
+    entries cannot be written and yields "", which the dispatch guard refuses.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "write-tree"],
+            capture_output=True, text=True, check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return ""
+    return _validated_head_sha(result.stdout)
+
+
 def _git_commit_present(root: str | Path, sha: str) -> bool:
     """True when *sha* names a commit object the repository at *root* holds."""
     try:
@@ -514,9 +533,10 @@ def _git_commit_present(root: str | Path, sha: str) -> bool:
 def _git_drifted_paths(
     root: str | Path, sha: str, paths: list[str],
 ) -> list[str] | None:
-    """The *paths* whose content at *root* differs from commit *sha*, or None.
+    """The *paths* whose content at *root* differs from *sha*, or None.
 
-    Compares the commit against the WORKING TREE, so a later commit, a reset,
+    *sha* is a commit, or for staged scope the index tree ``git write-tree``
+    recorded. Compares it against the WORKING TREE, so a later commit, a reset,
     and an uncommitted (staged or unstaged) edit all count as drift. No
     pathspec is passed — ``git diff`` has no ``--pathspec-from-file`` — so
     argv stays the same size however large the diff, and no path is
@@ -646,7 +666,9 @@ def _require_review_root(cr_dir: str | Path, scope_meta: object) -> str:
     is fatal to the run by design.
 
     Proving the right checkout is not enough: the files the diff changes must
-    also still hold the content they had at ``review_root_sha``. A commit, a
+    also still hold the content they had at ``review_root_sha`` (for staged
+    scope, whose diff is index-vs-HEAD: the index tree pinned as
+    ``review_root_tree``). A commit, a
     reset, or an uncommitted edit after resolution can keep that commit
     reachable and every changed path present while moving the source
     reviewers read, so the fleet would publish a clean review of a snapshot
@@ -715,27 +737,45 @@ def _require_review_root(cr_dir: str | Path, scope_meta: object) -> str:
             "under review.",
         )
     scope_kind = scope_meta.get("scope_kind") if isinstance(scope_meta, dict) else None
-    # lc-debt: staged scope skips drift detection — its diff is index-vs-HEAD,
-    # so no commit pins the reviewed content and every staged file already
-    # differs from review_root_sha; upgrade by recording the index tree
-    # (git write-tree) at resolve-scope and diffing against that instead.
-    if recorded_sha and changed_files and scope_kind != "staged":
-        drifted = _git_drifted_paths(root, recorded_sha, changed_files)
+    if scope_kind == "staged":
+        # A staged review diffs the index against HEAD, so every staged file
+        # already differs from review_root_sha. What it reviews is the index as
+        # resolve-scope found it, pinned as the tree object review_root_tree;
+        # without that pin an edit or a re-stage after resolution goes unseen.
+        baseline = _validated_head_sha(
+            scope_meta.get("review_root_tree") if isinstance(scope_meta, dict) else None,
+        )
+        if not baseline:
+            raise ReviewRootError(
+                "scope.json records no valid review_root_tree for the staged "
+                f"review of {raw!r}, so the staged snapshot under review cannot "
+                "be pinned. Start a fresh review.",
+            )
+        snapshot = f"the staged snapshot (tree {baseline})"
+        remedy = (
+            "Stage or stash edits to the files under review and start a fresh "
+            "review."
+        )
+    else:
+        baseline = recorded_sha
+        snapshot = f"commit {recorded_sha}"
+        remedy = "Commit or stash those edits and start a fresh review."
+    if baseline and changed_files:
+        drifted = _git_drifted_paths(root, baseline, changed_files)
         if drifted is None:
             raise ReviewRootError(
-                f"could not compare review_root {raw!r} against commit "
-                f"{recorded_sha}, which the diff under review was resolved at "
-                "(git diff failed). Refusing rather than dispatch agents "
-                "against a snapshot nobody verified.",
+                f"could not compare review_root {raw!r} against {snapshot}, "
+                "which the diff under review was resolved at (git diff "
+                "failed). Refusing rather than dispatch agents against a "
+                "snapshot nobody verified.",
             )
         if drifted:
             raise ReviewRootError(
                 f"review_root {raw!r} no longer holds the snapshot under "
                 f"review: {len(drifted)} of the {len(changed_files)} files this "
-                f"diff changes differ from commit {recorded_sha} "
-                f"(e.g. {drifted[:3]}) — committed, reset, or edited after the "
-                "scope was resolved. Agents would read source that is not the "
-                "diff. Commit or stash those edits and start a fresh review.",
+                f"diff changes differ from {snapshot} (e.g. {drifted[:3]}) — "
+                "committed, reset, staged, or edited after the scope was "
+                f"resolved. Agents would read source that is not the diff. {remedy}",
             )
     if not recorded_sha and not changed_files:
         # Neither proof ran: "is a git worktree root" alone is true of every
@@ -5578,6 +5618,12 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
         )
         return REVIEW_ROOT_EXIT_CODE
     review_root_sha = _git_head_at(review_root)
+    # Staged scope diffs the INDEX against HEAD, so no commit pins the content
+    # under review. Pin the index itself as a tree object; the dispatch drift
+    # check compares the working tree against it, which catches an unstaged
+    # edit to a staged file and a re-stage after resolution. Every other scope
+    # kind is pinned by review_root_sha and emits no tree.
+    review_root_tree = _git_index_tree(review_root) if scope_kind == "staged" else None
 
     result_out = {
         "diff_scope": diff_scope,
@@ -5594,6 +5640,8 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
         "review_root_sha": review_root_sha,
         "worktree_path": worktree_path,
     }
+    if review_root_tree is not None:
+        result_out["review_root_tree"] = review_root_tree
     json.dump(result_out, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0

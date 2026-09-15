@@ -6906,7 +6906,9 @@ class TestISS7382ReviewRootDispatch:
     """
 
     @staticmethod
-    def _resolve_scope_in(repo: Path, tmp_path: Path) -> dict[str, Any]:
+    def _resolve_scope_in(
+        repo: Path, tmp_path: Path, scope_args: str = "",
+    ) -> dict[str, Any]:
         import io
         import sys as _sys
 
@@ -6920,7 +6922,7 @@ class TestISS7382ReviewRootDispatch:
         try:
             os.chdir(repo)
             ns = argparse.Namespace(
-                mode="local", pr_number=None, scope_args="",
+                mode="local", pr_number=None, scope_args=scope_args,
                 base_ref_override=None, setup_json=str(setup_path),
                 hygiene_only="false",
             )
@@ -6984,6 +6986,28 @@ class TestISS7382ReviewRootDispatch:
 
         assert scope["review_root"] == os.path.realpath(str(repo))
         assert scope["review_root_sha"] == expected_sha
+
+    def test_resolve_scope_pins_the_index_tree_only_for_staged_scope(
+        self, tmp_path: Path,
+    ) -> None:
+        # A staged review diffs the index against HEAD, so no commit pins what
+        # it reviews; resolve-scope records the index as a tree object. Every
+        # other scope kind is pinned by review_root_sha and carries no tree.
+        repo = tmp_path / "lane_worktree"
+        _build_stale_base_repo(repo)
+        (repo / "MINE.txt").write_text("staged edit\n")
+        git_fixture(repo, "add", "MINE.txt")
+
+        staged = self._resolve_scope_in(repo, tmp_path, scope_args="staged")
+        branch = self._resolve_scope_in(repo, tmp_path)
+
+        assert staged["scope_kind"] == "staged"
+        assert staged["review_root_tree"] == git_fixture(repo, "write-tree").strip()
+        assert staged["review_root_tree"] != git_fixture(
+            repo, "rev-parse", "HEAD^{tree}",
+        ).strip()
+        assert branch["scope_kind"] == "branch"
+        assert "review_root_tree" not in branch
 
     def test_reviewer_dispatch_against_a_mismatched_checkout_errors(
         self, tmp_path: Path,
@@ -10213,23 +10237,106 @@ class TestVerifyPrepareReviewRoot:
         )
         assert input_data["review_root"] == str(root)
 
+    def _seed_staged_review(self, tmp_path: Path) -> tuple[Path, Path]:
+        """A staged review of ``src/a.py``, pinned the way resolve-scope pins it.
+
+        The repo also tracks an unrelated ``notes.txt``. The change to
+        ``src/a.py`` is staged, and scope.json records HEAD as
+        ``review_root_sha`` and the index as ``review_root_tree``.
+        """
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        _commit_file(root, "notes.txt", "notes\n")
+        (root / "src" / "a.py").write_text("staged change\n")
+        git_fixture(root, "add", "src/a.py")
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(root),
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+            "scope_kind": "staged",
+            "review_root_tree": git_fixture(root, "write-tree").strip(),
+        }))
+        return cr_dir, root
+
     def test_staged_scope_is_not_refused_for_its_own_staged_changes(
         self, tmp_path: Path,
     ) -> None:
         # A staged review diffs the index against HEAD, so every changed file
-        # differs from review_root_sha by construction; comparing against that
-        # commit would refuse every staged review.
-        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
-        scope = json.loads((cr_dir / "scope.json").read_text())
-        scope["scope_kind"] = "staged"
-        (cr_dir / "scope.json").write_text(json.dumps(scope))
-        (root / "src" / "a.py").write_text("staged change\n")
-        git_fixture(root, "add", "src/a.py")
+        # differs from review_root_sha by construction. Its baseline is the
+        # pinned index tree, which a staged file left untouched still matches.
+        cr_dir, root = self._seed_staged_review(tmp_path)
 
         finding = _make_validated_finding("bha_1", severity="HIGH")
         rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
 
         assert rc == 0
+        input_data = json.loads(
+            (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
+        )
+        assert input_data["review_root"] == str(root)
+
+    def test_staged_scope_unstaged_edit_to_a_staged_file_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Agents read the working tree, so an edit on top of the staged content
+        # puts code in front of them that the staged diff never contained.
+        cr_dir, root = self._seed_staged_review(tmp_path)
+        (root / "src" / "a.py").write_text("edited after staging\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_staged_scope_restaged_after_resolution_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Re-staging makes the index agree with the working tree again, but both
+        # now differ from the snapshot the diff was computed from.
+        cr_dir, root = self._seed_staged_review(tmp_path)
+        (root / "src" / "a.py").write_text("re-staged after resolution\n")
+        git_fixture(root, "add", "src/a.py")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_staged_scope_unrelated_unstaged_edit_is_accepted(
+        self, tmp_path: Path,
+    ) -> None:
+        # Sibling of the two refusals above: the staged comparison is limited to
+        # the diff's files, so an unstaged edit elsewhere must not abort it.
+        cr_dir, root = self._seed_staged_review(tmp_path)
+        (root / "notes.txt").write_text("edited, never staged\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+
+    @pytest.mark.parametrize(
+        "tree", [None, "", "not-a-tree-id", "0" * 40],
+        ids=["absent", "empty", "invalid", "unknown_object"],
+    )
+    def test_staged_scope_without_a_valid_review_root_tree_errors(
+        self, tmp_path: Path, tree: str | None,
+    ) -> None:
+        # Without the pinned index a staged review has no baseline, so an edit
+        # after resolution could not be detected: refuse rather than pass.
+        cr_dir, _root = self._seed_staged_review(tmp_path)
+        scope = json.loads((cr_dir / "scope.json").read_text())
+        if tree is None:
+            del scope["review_root_tree"]
+        else:
+            scope["review_root_tree"] = tree
+        (cr_dir / "scope.json").write_text(json.dumps(scope))
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
 
     def test_drift_comparison_git_failure_fails_closed(
         self, tmp_path: Path,
