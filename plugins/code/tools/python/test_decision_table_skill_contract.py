@@ -55,3 +55,17 @@ def test_required_tests_map_to_rows_and_negative_cases() -> None:
     assert "Row ID" in artifact_format
     assert "Decision Row IDs" in artifact_format
     assert "Wrong-Input / Mixed-State Negative Case" in artifact_format
+
+
+def test_shared_hosts_require_passive_entry_point_coverage() -> None:
+    skill = read_skill_file("SKILL.md")
+    edge_cases = read_skill_file("references/edge-cases.md")
+    review_prevention = read_skill_file("references/review-prevention.md")
+    artifact_format = read_skill_file("references/artifact-format.md")
+
+    for text in (skill, edge_cases, review_prevention, artifact_format):
+        normalized_text = text.lower()
+        assert "shared host" in normalized_text
+        assert "passive" in normalized_text
+        assert "explicit" in normalized_text
+        assert "non-primary" in normalized_text

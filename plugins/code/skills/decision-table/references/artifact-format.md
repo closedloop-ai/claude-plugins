@@ -42,6 +42,7 @@ Record evidence for high-yield coverage and non-applicability claims. Paste conc
 | filesystem/path write | symlink/clobber/bounds/canonicalization evidence and tests | ... | covered / not applicable / not aligned |
 | new trusted/persisted field | source, forgeability, validation/guard, legacy behavior, and mutation test | ... | covered / not applicable / not aligned |
 | replay/idempotency behavior | replay path test through production sequencing, not only helper state | ... | covered / not aligned |
+| shared host reachability | entry-point inventory and passive-entry tests for inherited entry points, not only the primary entry point or explicit action | ... | covered / not aligned |
 | integration-boundary coverage claim | named test entering through CLI, route, package export, worker/job, replay, ingest, attribution, or public API | ... | covered / not aligned |
 
 ## Behavioral Edge-Case Expansion
@@ -49,6 +50,7 @@ Record evidence for high-yield coverage and non-applicability claims. Paste conc
 Apply every category in [`edge-cases.md`](edge-cases.md). Each must be represented by rows or an explicit non-applicability note with source-backed evidence before marking `Final Alignment Status: Aligned`. The bullets below are placeholder shape — the canonical list is in `edge-cases.md`; do not skip categories that are absent from this template.
 
 - Structured-result setup failures: <rows or non-applicability note>
+- Shared host reachability: <rows or non-applicability note>
 - External contract literal binding: <rows or non-applicability note>
 - Library-managed lifecycle re-entry: <rows or non-applicability note>
 - Cross-surface propagation and reconciliation: <rows or non-applicability note>
@@ -163,6 +165,7 @@ Guidelines:
 - Keep data visibility rows separate from side-effect rows such as notifications, dispatches, telemetry, cleanup, and deduplication.
 - For capability- or operation-gated behavior, include fresh cache, stale false negative, stale false positive, old peer, fallback, retry, and reconciliation rows.
 - For legacy persisted records missing new fields, include conservative defaults, evidence-backed promotion/backfill, downgrade behavior, and manual-record protection.
+- For shared hosts, include every inherited entry-point class and distinguish passive entry from explicit actions, with non-primary entry-point coverage when the host can trigger behavior outside its intended entry path.
 - For distributed command/key/signing workflows, include register/create, approval/authorization, normal command, revoke/delete, offline/reconnect reconciliation, repeated action/idempotency, and stale UI/cache scenarios.
 - Every nontrivial row should include file or plan references.
 - Mark inferred target-state behavior explicitly when the plan implies it but does not say it directly.

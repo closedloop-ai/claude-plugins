@@ -994,6 +994,26 @@ def test_external_impact_discovery_mixed_substrates_valid():
     assert validate_finding(f) == []
 
 
+def test_external_impact_all_graph_with_null_grep_query_valid():
+    # The no-text-search fallback shape: a session holding no Grep and no
+    # MCP equivalent cannot produce a replayable query, so the analyzer
+    # emits every entry as discovery="graph" with grep_query_used null.
+    # The verifier skips the replay gate for this case and audits each
+    # entry by file-read + content match instead, so the validator must
+    # accept it — rejecting it here would silently drop the fallback's
+    # findings and push reviewers back toward inventing a query.
+    f = _impact_finding_with_impacts(_impact_entry("graph"))
+    f["grep_query_used"] = None
+    assert validate_finding(f) == []
+
+
+def test_external_impact_all_graph_with_omitted_grep_query_valid():
+    # Same shape, but the field is absent rather than explicitly null.
+    f = _impact_finding_with_impacts(_impact_entry("graph"))
+    del f["grep_query_used"]
+    assert validate_finding(f) == []
+
+
 def _impact_entry_with_file(file: str) -> dict:
     entry = _impact_entry("graph")
     entry["file"] = file
