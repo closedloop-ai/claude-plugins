@@ -679,7 +679,8 @@ def _require_review_root(cr_dir: str | Path, scope_meta: object) -> str:
     diff is legitimate, which is why no destructive path may consume this.
     """
     changed_files = _diff_changed_files(cr_dir)
-    raw = scope_meta.get("review_root") if isinstance(scope_meta, dict) else None
+    meta: dict[str, Any] = scope_meta if isinstance(scope_meta, dict) else {}
+    raw = meta.get("review_root")
     if not isinstance(raw, str) or not raw.strip():
         raise ReviewRootError(
             "review_root is empty or absent in scope.json. Spawned reviewers "
@@ -701,12 +702,8 @@ def _require_review_root(cr_dir: str | Path, scope_meta: object) -> str:
         raise ReviewRootError(
             f"review_root is not the root of a git worktree: {raw!r}",
         )
-    recorded_sha = _validated_head_sha(
-        scope_meta.get("review_root_sha") if isinstance(scope_meta, dict) else None,
-    )
-    pinned = bool(
-        isinstance(scope_meta, dict) and str(scope_meta.get("worktree_path") or ""),
-    )
+    recorded_sha = _validated_head_sha(meta.get("review_root_sha"))
+    pinned = bool(str(meta.get("worktree_path") or ""))
     if recorded_sha and pinned:
         # A PR-head worktree is a detached checkout nobody commits into, so its
         # HEAD must still be the commit the diff was resolved at.
@@ -736,15 +733,13 @@ def _require_review_root(cr_dir: str | Path, scope_meta: object) -> str:
             f"(e.g. {missing[:3]}). It is a different checkout than the one "
             "under review.",
         )
-    scope_kind = scope_meta.get("scope_kind") if isinstance(scope_meta, dict) else None
+    scope_kind = meta.get("scope_kind")
     if scope_kind == "staged":
         # A staged review diffs the index against HEAD, so every staged file
         # already differs from review_root_sha. What it reviews is the index as
         # resolve-scope found it, pinned as the tree object review_root_tree;
         # without that pin an edit or a re-stage after resolution goes unseen.
-        baseline = _validated_head_sha(
-            scope_meta.get("review_root_tree") if isinstance(scope_meta, dict) else None,
-        )
+        baseline = _validated_head_sha(meta.get("review_root_tree"))
         if not baseline:
             raise ReviewRootError(
                 "scope.json records no valid review_root_tree for the staged "
@@ -788,6 +783,24 @@ def _require_review_root(cr_dir: str | Path, scope_meta: object) -> str:
             "this one.",
         )
     return root
+
+
+def _require_review_root_or_report(
+    cr_dir: str | Path, scope_meta: object,
+) -> tuple[str | None, int]:
+    """Prove the review root for a dispatch stage, returning ``(root, 0)`` or
+    ``(None, REVIEW_ROOT_EXIT_CODE)``.
+
+    Every stage that hands work to an agent refuses the same way — the reason
+    on stderr and exit ``REVIEW_ROOT_EXIT_CODE``, which the walker aborts on
+    regardless of ``on_failure`` — so the try/except is shared. Stages that
+    run after the review use ``_degraded_review_root`` instead.
+    """
+    try:
+        return _require_review_root(cr_dir, scope_meta), 0
+    except ReviewRootError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return None, REVIEW_ROOT_EXIT_CODE
 
 
 def _degraded_review_root(cr_dir: str | Path, scope_meta: object) -> str:
@@ -3184,11 +3197,9 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
     # this diff makes the existence check read unrelated code and REJECT every
     # finding — a clean report on source nobody opened. Fail the stage instead.
     scope_meta = _read_optional_json(cr_dir / "scope.json", {})
-    try:
-        review_root = _require_review_root(cr_dir, scope_meta)
-    except ReviewRootError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return REVIEW_ROOT_EXIT_CODE
+    review_root, refusal_rc = _require_review_root_or_report(cr_dir, scope_meta)
+    if review_root is None:
+        return refusal_rc
     head_sha = _validated_head_sha(
         scope_meta.get("head_sha") if isinstance(scope_meta, dict) else None,
     )
@@ -9747,11 +9758,9 @@ def cmd_review_dismissed_prepare(args: argparse.Namespace) -> int:
     # proven root as the primary fleet — a second opinion formed against the
     # wrong checkout promotes or sinks findings on code it never read.
     dismissed_scope = _read_optional_json(cr_dir / "scope.json", {})
-    try:
-        review_root = _require_review_root(cr_dir, dismissed_scope)
-    except ReviewRootError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return REVIEW_ROOT_EXIT_CODE
+    review_root, refusal_rc = _require_review_root_or_report(cr_dir, dismissed_scope)
+    if review_root is None:
+        return refusal_rc
 
     inputs_dir = cr_dir / "review_dismissed_inputs"
     inputs_dir.mkdir(parents=True, exist_ok=True)
@@ -12818,13 +12827,11 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     cr_dir = Path(args.cr_dir)
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    try:
-        review_root = _require_review_root(
-            cr_dir, _read_optional_json(cr_dir / "scope.json", {}),
-        )
-    except ReviewRootError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return REVIEW_ROOT_EXIT_CODE
+    review_root, refusal_rc = _require_review_root_or_report(
+        cr_dir, _read_optional_json(cr_dir / "scope.json", {}),
+    )
+    if review_root is None:
+        return refusal_rc
 
     coverage_plan = _read_coverage_state(cr_dir).get("final")
     if not isinstance(coverage_plan, dict):
@@ -13032,13 +13039,11 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
     cr_dir = Path(args.cr_dir)
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    try:
-        review_root = _require_review_root(
-            cr_dir, _read_optional_json(cr_dir / "scope.json", {}),
-        )
-    except ReviewRootError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return REVIEW_ROOT_EXIT_CODE
+    review_root, refusal_rc = _require_review_root_or_report(
+        cr_dir, _read_optional_json(cr_dir / "scope.json", {}),
+    )
+    if review_root is None:
+        return refusal_rc
 
     route = _read_spawn_state(cr_dir).get("route", {}) or {}
     if not isinstance(route, dict):

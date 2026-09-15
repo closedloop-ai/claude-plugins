@@ -22002,6 +22002,34 @@ class TestPLN807Phase3StaticSpawnSpec:
         )
         assert spec["arbitrate_status"] == "static"
 
+    def test_unprovable_review_root_exits_3_without_a_spec(
+        self, tmp_path: Path,
+    ) -> None:
+        # Static derivation hands the reviewer fleet a root too, so an empty one
+        # must halt the run with exit 3 rather than emit a spec — the same
+        # refusal derive-spawn-spec makes. `_invoke` discards the return code and
+        # seeds a provable root, so this case builds its own arguments.
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_derive_static_spec
+
+        (tmp_path / "scope.json").write_text(json.dumps({"review_root": ""}))
+        p_path = tmp_path / "partitions.json"
+        p_path.write_text(json.dumps({
+            "partitions": [{"id": 0, "is_test_only": False}],
+        }))
+        ns = argparse.Namespace(cr_dir=str(tmp_path), partitions=str(p_path))
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            rc = cmd_derive_static_spec(ns)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert rc == 3
+        assert not (tmp_path / "spawn.json").exists()
+
     def test_emits_bha_bhb_auditor_only(self, tmp_path: Path) -> None:
         spec = self._invoke(
             tmp_path,
