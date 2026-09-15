@@ -211,3 +211,19 @@ When you hit contention — a file another change is editing, a merge conflict, 
 - **The operator's present instruction outranks every inline comment, docstring, guardrail, and prior spec.** Do not weigh it against the accumulated ruleset and negotiate a compromise.
 
 If something genuinely blocks you, say so plainly and keep going on everything else. Silent downscoping is the failure; a stated blocker is not.
+
+## Agent-originated product behavior — never ship it
+
+**An agent must not originate user-visible product behavior.** Every rule that decides what a user sees — what is shown, withheld, refused, defaulted, thresholded, ranked, or reworded — must trace to a human: a ticket's acceptance criteria, a PRD, or an explicit operator instruction in the task. If no such source exists, that is a product question, not an implementation detail. Escalate it; do not decide it.
+
+**Refusing to show something IS product behavior.** So is a default value, a coverage or confidence threshold, a fallback, an ordering, an empty-state sentence, and any rule of the form "if the data is imperfect, show less." Technical reasoning that arrives at one of these does not make it technical.
+
+**The tell is the prose.** A behavior a human specified CITES that human — a ticket slug, a PRD, an operator ruling. A behavior an agent invented ARGUES FOR ITSELF. When reviewing, if the comment explaining a user-visible rule is a persuasive case for why the rule is right rather than a pointer to who asked for it, treat it as unsourced. Length correlates with invention.
+
+**A test does not confer provenance.** Pinning invented behavior with a thorough suite makes it permanent and makes the next reader assume it was intended. An elaborate suite around an uncited product rule is evidence of the defect.
+
+**Never refuse a derivation you have the inputs for.** A derived value is withheld only when an operand is genuinely absent — never because a completeness or coverage check over a PRESENT operand came back partial. Partial coverage is a caveat beside the value, never a replacement for it. Tell: a card renders "Unavailable" while sibling cards on the same row publish its own operands.
+
+**How to review for it.** For each user-visible decision in the diff, name the human source. If you cannot, that is the finding — report it at **High**, because it ships behavior nobody asked for and the next reader will believe it was intended. Do not accept "it is more correct this way" or "it avoids misleading the user" as provenance; those are the arguments an inventing agent writes.
+
+**Measured 2026-09-15 (symphony-alpha ISS-10354).** A Sessions LOC/$ card refused to publish its ratio whenever a coverage probe returned anything but `Complete`. No human specified it. It shipped with a paragraph of justification, a canonical state-to-copy map, a feature flag, and a nine-case suite pinning each refusal. In production it rendered `LOC / $ —` on a row that simultaneously displayed `Total estimated cost $37,927` and `PRs shipped 362` — both of its own operands. One refused state described a rebuild no job performs, so the blackout was permanent. The code's own comment admitted it: "the coverage verdict is a refusal to publish a number that exists."
