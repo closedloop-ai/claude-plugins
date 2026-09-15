@@ -9820,6 +9820,134 @@ class TestVerifyPrepareReviewRoot:
 
         assert rc == 0
 
+    @staticmethod
+    def _seed_live_root_with_changed_file(tmp_path: Path) -> tuple[Path, Path]:
+        """A live checkout, resolved at its HEAD, whose diff changes ``src/a.py``.
+
+        The drift check only compares the files the diff names, so every drift
+        case needs diff_data.json listing one that exists at the recorded
+        commit.
+        """
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = Path(_make_review_root(tmp_path / "checkout", {"src/a.py": "v1\n"}))
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(root),
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/a.py"],
+            "file_statuses": {"src/a.py": "modified"},
+        }))
+        return cr_dir, root
+
+    def test_commit_to_a_changed_file_after_resolution_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Reachability alone passes here: the resolved commit is still an
+        # ancestor and src/a.py still exists, yet reviewers would read content
+        # the diff never contained.
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        _commit_file(root, "src/a.py", "v2 committed after resolution\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_uncommitted_edit_to_a_changed_file_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # HEAD never moves, so no commit-level check can see this.
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        (root / "src" / "a.py").write_text("edited, never committed\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_reset_that_moves_a_changed_file_back_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Resolved at v2, then reset to v1: the v2 commit stays in the object
+        # store (so reachability passes) and src/a.py still exists (so
+        # containment passes), but its content is no longer the reviewed one.
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        scope = json.loads((cr_dir / "scope.json").read_text())
+        scope["review_root_sha"] = _commit_file(root, "src/a.py", "v2\n")
+        (cr_dir / "scope.json").write_text(json.dumps(scope))
+        git_fixture(root, "reset", "--quiet", "--hard", "HEAD~1")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_drift_on_paths_outside_the_diff_is_accepted(
+        self, tmp_path: Path,
+    ) -> None:
+        # Sibling of the three drift refusals: the check is scoped to the
+        # diff's files, so a committed and an uncommitted change elsewhere in a
+        # live checkout must not abort the review.
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        _commit_file(root, "later.txt", "later\n")
+        (root / "later.txt").write_text("edited, never committed\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+        input_data = json.loads(
+            (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
+        )
+        assert input_data["review_root"] == str(root)
+
+    def test_staged_scope_is_not_refused_for_its_own_staged_changes(
+        self, tmp_path: Path,
+    ) -> None:
+        # A staged review diffs the index against HEAD, so every changed file
+        # differs from review_root_sha by construction; comparing against that
+        # commit would refuse every staged review.
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        scope = json.loads((cr_dir / "scope.json").read_text())
+        scope["scope_kind"] = "staged"
+        (cr_dir / "scope.json").write_text(json.dumps(scope))
+        (root / "src" / "a.py").write_text("staged change\n")
+        git_fixture(root, "add", "src/a.py")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+
+    def test_drift_comparison_git_failure_fails_closed(
+        self, tmp_path: Path,
+    ) -> None:
+        # A drift check that cannot run has proven nothing, so it must refuse
+        # rather than read as "no drift".
+        cr_dir, _root = self._seed_live_root_with_changed_file(tmp_path)
+        real_run = subprocess.run
+
+        def _fail_the_drift_diff(
+            cmd: list[str], *args: Any, **kwargs: Any,
+        ) -> subprocess.CompletedProcess[Any]:
+            if "diff" in cmd and "--name-only" in cmd:
+                return subprocess.CompletedProcess(cmd, 128, b"", b"fatal")
+            return real_run(cmd, *args, **kwargs)
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        with patch(
+            "code_review_helpers.subprocess.run", side_effect=_fail_the_drift_diff,
+        ):
+            rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
     def test_live_checkout_without_the_resolved_commit_errors(
         self, tmp_path: Path,
     ) -> None:

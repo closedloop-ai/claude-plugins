@@ -500,6 +500,35 @@ def _git_commit_present(root: str | Path, sha: str) -> bool:
         return False
 
 
+def _git_drifted_paths(
+    root: str | Path, sha: str, paths: list[str],
+) -> list[str] | None:
+    """The *paths* whose content at *root* differs from commit *sha*, or None.
+
+    Compares the commit against the WORKING TREE, so a later commit, a reset,
+    and an uncommitted (staged or unstaged) edit all count as drift. No
+    pathspec is passed — ``git diff`` has no ``--pathspec-from-file`` — so
+    argv stays the same size however large the diff, and no path is
+    glob-interpreted: membership is an exact match against git's
+    NUL-delimited output. Returns None when git fails, so the caller can fail
+    closed.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "git", "-C", str(root), "diff", "--name-only", "-z",
+                "--no-renames", "--no-ext-diff", sha, "--",
+            ],
+            capture_output=True,
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    differing = {os.fsdecode(p) for p in result.stdout.split(b"\0") if p}
+    return [p for p in paths if p in differing]
+
+
 def _diff_changed_files(cr_dir: str | Path) -> list[str]:
     """Repo-relative diff files that must exist at the reviewed tip.
 
@@ -537,6 +566,13 @@ def _require_review_root(cr_dir: str | Path, scope_meta: object) -> str:
     reports clean, which is the signal a caller uses to decide it is done.
     The root is therefore proven rather than assumed, and every failure here
     is fatal to the run by design.
+
+    Proving the right checkout is not enough: the files the diff changes must
+    also still hold the content they had at ``review_root_sha``. A commit, a
+    reset, or an uncommitted edit after resolution can keep that commit
+    reachable and every changed path present while moving the source
+    reviewers read, so the fleet would publish a clean review of a snapshot
+    the diff never contained. Drift on paths outside the diff is allowed.
 
     Unlike ``_validated_worktree_path``, ``cr_dir`` does NOT confine the value:
     it only locates ``diff_data.json``. Any git worktree root that holds the
@@ -600,6 +636,29 @@ def _require_review_root(cr_dir: str | Path, scope_meta: object) -> str:
             f"(e.g. {missing[:3]}). It is a different checkout than the one "
             "under review.",
         )
+    scope_kind = scope_meta.get("scope_kind") if isinstance(scope_meta, dict) else None
+    # lc-debt: staged scope skips drift detection — its diff is index-vs-HEAD,
+    # so no commit pins the reviewed content and every staged file already
+    # differs from review_root_sha; upgrade by recording the index tree
+    # (git write-tree) at resolve-scope and diffing against that instead.
+    if recorded_sha and changed_files and scope_kind != "staged":
+        drifted = _git_drifted_paths(root, recorded_sha, changed_files)
+        if drifted is None:
+            raise ReviewRootError(
+                f"could not compare review_root {raw!r} against commit "
+                f"{recorded_sha}, which the diff under review was resolved at "
+                "(git diff failed). Refusing rather than dispatch agents "
+                "against a snapshot nobody verified.",
+            )
+        if drifted:
+            raise ReviewRootError(
+                f"review_root {raw!r} no longer holds the snapshot under "
+                f"review: {len(drifted)} of the {len(changed_files)} files this "
+                f"diff changes differ from commit {recorded_sha} "
+                f"(e.g. {drifted[:3]}) — committed, reset, or edited after the "
+                "scope was resolved. Agents would read source that is not the "
+                "diff. Commit or stash those edits and start a fresh review.",
+            )
     if not recorded_sha and not changed_files:
         # Neither proof ran: "is a git worktree root" alone is true of every
         # checkout on the box, so returning here would report proven when
