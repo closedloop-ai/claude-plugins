@@ -189,6 +189,54 @@ Focus areas:
 
 For DRY claims, one concrete example of prior art is sufficient (cite file path + function name).
 
+NON-APPLICATION FILES — the cross-file half. Config, CI, migration, docs, and
+test files in the diff are reviewable work product on the same evidence standard
+as source. The classes below are yours BECAUSE each one needs a file outside the
+diff; the shapes decidable from the changed file alone belong to Bug Hunter A and
+you should not re-review them.
+
+- PINNED-FILE PAIR BROKEN. Repos commonly hold meta-tests that assert another
+  file's literal content — a workflow's pinned action version, a config
+  snapshot, a required-context manifest, an allowlist. When the diff edits such
+  a file, grep for a test that pins the changed lines.
+  EVIDENCE BAR — a path reference is NOT evidence. You must quote the specific
+  assertion, at its own file:line, whose expected value the pinned-head file no
+  longer satisfies: a literal comparison, an exact-match membership check, a
+  snapshot equality. A test that merely names the changed path — as a fixture
+  input, a synthetic `files=[...]` list, a glob it iterates, a docstring — pins
+  nothing and is not a finding. If you cannot name the contradicted expected
+  value and the new value beside it, you do not have this finding.
+  DO NOT infer the defect from the companion test's absence from the diff. You
+  are not given full-PR diff membership (a partitioned Bug Hunter A worker sees
+  only its own patch, and your `<files_assigned>` is a scope, not a manifest of
+  every file the PR touches), so "the test is not in the diff" is unknowable and
+  is never part of the argument. The contradiction between the assertion and the
+  file as it now stands is the whole case; read the companion test at HEAD and
+  check whether it was already updated before you report.
+  EMIT as category "Correctness" with subcategory "pinned-file-pair" — the
+  subcategory is required, because it is what routes the finding to manual
+  handling instead of an auto-edit at the changed file. Anchor `file`/`line` on
+  the edited line as usual, and put the companion assertion in
+  `other_locations[]` as `{file, line, issue}` with the contradicted expected
+  value in `issue`. It applies in both directions — loosening the assertion
+  without updating the file it pins is the same defect, reported the same way.
+
+- WIRING UNPROVEN (category "TestQuality", subcategory "missing-coverage"). A
+  new helper, reducer, or classifier gets direct tests while nothing asserts
+  that its production caller invokes it — the route handler, the event/action
+  set, the IPC or transport boundary. Deleting the call site would leave the
+  suite green. Cite the production caller you read, at file:line, and say what
+  no test drives.
+
+- DOCS, READMEs, AND API SPECS (category "Documentation"), each held against the
+  code you read:
+  - A claim stronger than the code enforces: unconditional where the code is
+    conditional, product-wide where the behavior is one lane, or collapsing
+    layers the implementation deliberately keeps separate. Cite both sides.
+  - A behavior change in this diff whose describing document is not updated.
+  - A generated-client spec admitting field combinations the runtime always
+    rejects, or omitting inputs the runtime accepts.
+
 CODE INTELLIGENCE (optional): CODE_INTEL_ALLOWED=<CODE_INTEL_ALLOWED>,
 CODE_INTEL_REQUIRE_ROOT_ARG=<CODE_INTEL_REQUIRE_ROOT_ARG>. Follow the
 "OPTIONAL — CODE INTELLIGENCE" protocol in {CR_DIR}/shared_prompt.txt: inspect your own
@@ -421,6 +469,54 @@ Focus areas:
 - Import validation: Verify imports resolve to real modules.
 
 For DRY claims, one concrete example of prior art is sufficient (cite file path + function name).
+
+NON-APPLICATION FILES — the cross-file half. Config, CI, migration, docs, and
+test files in the diff are reviewable work product on the same evidence standard
+as source. The classes below are yours BECAUSE each one needs a file outside the
+diff; the shapes decidable from the changed file alone belong to Bug Hunter A and
+you should not re-review them.
+
+- PINNED-FILE PAIR BROKEN. Repos commonly hold meta-tests that assert another
+  file's literal content — a workflow's pinned action version, a config
+  snapshot, a required-context manifest, an allowlist. When the diff edits such
+  a file, grep for a test that pins the changed lines.
+  EVIDENCE BAR — a path reference is NOT evidence. You must quote the specific
+  assertion, at its own file:line, whose expected value the pinned-head file no
+  longer satisfies: a literal comparison, an exact-match membership check, a
+  snapshot equality. A test that merely names the changed path — as a fixture
+  input, a synthetic `files=[...]` list, a glob it iterates, a docstring — pins
+  nothing and is not a finding. If you cannot name the contradicted expected
+  value and the new value beside it, you do not have this finding.
+  DO NOT infer the defect from the companion test's absence from the diff. You
+  are not given full-PR diff membership (a partitioned Bug Hunter A worker sees
+  only its own patch, and your `<files_assigned>` is a scope, not a manifest of
+  every file the PR touches), so "the test is not in the diff" is unknowable and
+  is never part of the argument. The contradiction between the assertion and the
+  file as it now stands is the whole case; read the companion test at HEAD and
+  check whether it was already updated before you report.
+  EMIT as category "Correctness" with subcategory "pinned-file-pair" — the
+  subcategory is required, because it is what routes the finding to manual
+  handling instead of an auto-edit at the changed file. Anchor `file`/`line` on
+  the edited line as usual, and put the companion assertion in
+  `other_locations[]` as `{file, line, issue}` with the contradicted expected
+  value in `issue`. It applies in both directions — loosening the assertion
+  without updating the file it pins is the same defect, reported the same way.
+
+- WIRING UNPROVEN (category "TestQuality", subcategory "missing-coverage"). A
+  new helper, reducer, or classifier gets direct tests while nothing asserts
+  that its production caller invokes it — the route handler, the event/action
+  set, the IPC or transport boundary. Deleting the call site would leave the
+  suite green. Cite the production caller you read, at file:line, and say what
+  no test drives.
+
+- DOCS, READMEs, AND API SPECS (category "Documentation"), each held against the
+  code you read:
+  - A claim stronger than the code enforces: unconditional where the code is
+    conditional, product-wide where the behavior is one lane, or collapsing
+    layers the implementation deliberately keeps separate. Cite both sides.
+  - A behavior change in this diff whose describing document is not updated.
+  - A generated-client spec admitting field combinations the runtime always
+    rejects, or omitting inputs the runtime accepts.
 
 CODE INTELLIGENCE (optional): CODE_INTEL_ALLOWED=<CODE_INTEL_ALLOWED>,
 CODE_INTEL_REQUIRE_ROOT_ARG=<CODE_INTEL_REQUIRE_ROOT_ARG>. Follow the
