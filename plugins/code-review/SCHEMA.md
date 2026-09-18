@@ -136,13 +136,16 @@ The terminal artifact of every review run.
 
 ```jsonc
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "review_id": "<uuid v4>",
 
   // ── Run context ───────────────────────────────────────────
   "pr_number": <int|null>,
   "head_sha": "<sha|null>",
   "diff_tip": "<sha>",
+  "review_root": "<absolute path|null>",     // checkout the review read (ISS-9137)
+  "review_root_sha": "<sha|null>",           // commit that checkout held at resolve-scope
+  "review_root_tree": "<tree sha|null>",     // staged scope only: the pinned index tree
   "review_branch": "<branch>",
   "base_ref": "<ref>",
   "diff_scope": "<as resolved by resolve-scope>",
@@ -316,6 +319,12 @@ ignored at spawn time.
   "fallback_reason": "<string>",       // only present when arbitrate_status="fallback"
   "cr_dir": "<absolute path>",
   "generated_at": "<ISO-8601 timestamp>",
+  "review_root": "<absolute path>",    // the checkout the diff was PROVEN
+                                       // against; present on fallback specs
+                                       // too, and the primary source for the
+                                       // mandatory {REVIEW_ROOT} substitution
+                                       // at stage_20. Never empty — derivation
+                                       // exits 3 instead of emitting one.
 
   // ── Agents to spawn ──────────────────────────────────────
   "agents": [
@@ -486,7 +495,7 @@ finding — best-effort omissions are budget-driven, not coverage gaps.
 | 27 | review-state-write           | `review-state-write`     | Review state                                                  |
 | 28 | verdict                      | `verdict`                | `verdict.json`                                                |
 | 29 | present                      | (present)                | Local or GitHub output                                        |
-| 30 | footer                       | `footer`                 | Footer line                                                   |
+| 30 | footer                       | `footer`                 | Footer line + `reviewed_line` (checkout and commit read)      |
 
 Stages from plans 01/03/05/06 are present in `run_plan.json` but marked
 `enabled: false` until those plans land.

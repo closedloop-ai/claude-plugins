@@ -21,7 +21,7 @@ plugins/code-review/
   SCHEMA.md                          Canonical Finding + ResultEnvelope schema (PLN-719); §12 documents the golden fixture harness
   agents/
     code-review-worker.md            Background worker agent used by every reviewer fleet spawn (Read, Write, Grep, Glob; permissions-stable across sessions)
-    code-review-worker-graph.md      Graph-aware variant for the cross-file and design reviewers (Impact Analyzer, Bug Hunter B, fast-path, Design Critic); adds read-only codebase-memory-mcp tools — cross-file usage discovery for the cross-file roles, project-structure/dependency-graph analysis (get_architecture, query_graph) for the Design Critic
+    code-review-worker-graph.md      Code-intelligence-aware variant for the cross-file and design reviewers (Impact Analyzer, Bug Hunter B, fast-path, Design Critic); declares no tool allowlist, so it inherits whatever indexing MCP server the operator's session provides — cross-file usage discovery for the cross-file roles, project-structure/dependency analysis for the Design Critic. Degrades to grep when the session has none.
   commands/
     start.md                         Main /start command (orchestrator)
     shallow.md                       /shallow wrapper — `/start --depth shallow`
@@ -48,10 +48,14 @@ plugins/code-review/
     python/code_review_schema.py     Canonical Finding + ResultEnvelope schema + validators (PLN-719)
     python/test_code_review_schema.py  Schema tests + round-trips
     python/code_review_helpers.py    Deterministic helper CLI (parse-diff, hygiene, partition, route, validate, cache, finalize-result, arbitrate-budget, prepare-run, etc.)
+    python/config/cli.json           Declarative argparse spec the helper CLI builds its subparsers from
+    python/config/stages.json        Declarative stage table backing `prepare-run`'s `run_plan.json` and `run-prefix`
+    python/signal_taxonomy.json      Signal taxonomy loaded by signal extraction; its bytes are hashed into the extraction cache key
+    python/conftest.py               Shared pytest fixtures and finding factories for the co-located tests
     python/test_code_review_helpers.py   Unit tests for the helper CLI
     python/golden_fixture_harness.py     Golden fixture harness: replays canonical inputs through helper subcommands and diffs against expected envelopes (PLN-719 Phase 8)
     python/test_golden_fixtures.py       Pytest driver that runs every fixture under tools/python/fixtures/
-    python/fixtures/<name>/              Per-fixture directory (config.yaml + inputs/ + expected/); 3 full scenarios + 6 README-stubs for future coverage
+    python/fixtures/<name>/              Per-fixture directory (config.yaml + inputs/ + expected/); 4 full scenarios + 3 README-stubs for future coverage
     python/prefix_golden_harness.py      Prefix golden harness + subprocess A/B parity oracle: walks the deterministic prefix against real git fixtures — in-process for golden snapshots, and per-stage-subprocess vs `run-prefix` for byte-equal parity (PLN-1229 Phase 0/1)
     python/test_prefix_golden.py         Pytest driver for the prefix harness: determinism oracle + golden diff across the prefix_fixtures/ matrix
     python/prefix_fixtures/<name>/       Per-fixture directory (expected/ golden snapshots); 7 branch scenarios (standard, fast-path, hygiene-only, empty-diff, cache-hit, since-last-review, coverage-critic)
@@ -213,7 +217,7 @@ The orchestrator executes these steps in order:
 11. **Cache update** (if caching is active) — writes validated findings to the cache for future incremental runs
 12. **Present results** — local mode: prints findings by severity in the terminal; GitHub mode: writes `.closedloop-ai/code-review-findings.json`, `.closedloop-ai/code-review-threads.json`, and `.closedloop-ai/code-review-summary.md` for the CI workflow to post
 13. **Review state write** — persists the current diff tip so future `--since-last-review` runs can narrow the scope
-14. **Footer** — prints elapsed time, token usage stats, and writes the deterministic verdict JSON to `<CR_DIR>/verdict.json` (consumed by the `code` plugin's `run-loop.sh`)
+14. **Footer** — prints elapsed time, token usage stats, and the checkout and commit the review read (`reviewed_line`), and writes the deterministic verdict JSON to `<CR_DIR>/verdict.json` (consumed by the `code` plugin's `run-loop.sh`)
 
 (Step numbers in this list are illustrative; the canonical 30-stage ordering lives in `prepare-run`'s `run_plan.json`. Steps 2–8 — the deterministic prefix through routing and partitioning — run in a single process via the `run-prefix` helper; the orchestrator walks the reviewer/validation/presentation tail from step 9 onward.)
 
@@ -239,7 +243,8 @@ The helper script is a multi-subcommand Python CLI. The orchestrator invokes it 
 | `post-comments` | Posts validated findings as inline GitHub PR comments (GitHub mode) |
 | `resolve-threads` | Resolves outdated bot review threads on a PR (GitHub mode) |
 | `session-tokens` | Collects token usage stats from the session |
-| `footer` | Computes the formatted review footer string |
+| `footer` | Computes the formatted review footer string and the `reviewed_line` naming the checkout and commit the review read (ISS-9137) |
+| `render-reviewed-commit` | Prints the GitHub summary's `Reviewed commit` line from `scope.json`: the commit the review read, plus the PR head (`pr_head_sha`) when they differ; never a filesystem path (ISS-9137) |
 | `resolve-scope` | Resolves diff scope (branch, PR number, base ref, path filter) from CLI arguments and git context |
 | `fetch-intent` | Fetches context (PR description, recent commits) used to classify the diff intent |
 | `classify-intent` | Classifies the diff intent (feature, bugfix, refactor, etc.) for model routing |

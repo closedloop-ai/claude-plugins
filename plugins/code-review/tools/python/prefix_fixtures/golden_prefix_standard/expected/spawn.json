@@ -55,6 +55,7 @@
     "fast_path": false,
     "gated_by_verify": false,
     "generated_at": "<TS>",
+    "review_root": "<REPO>",
     "skipped": [
       {
         "bucket": "required",

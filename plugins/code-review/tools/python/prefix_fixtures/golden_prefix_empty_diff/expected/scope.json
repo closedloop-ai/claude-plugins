@@ -8,7 +8,8 @@
   "pr_auto_detected": false,
   "pr_number": null,
   "review_branch": "main",
-  "review_root": "",
+  "review_root": "<REPO>",
+  "review_root_sha": "d4eaffbc8458a0309d310f610d47b9789de7ec6f",
   "scope_kind": "branch",
   "worktree_path": ""
 }

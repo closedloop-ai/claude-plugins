@@ -24,6 +24,9 @@
   "rejected": [],
   "review_branch": "feature/x",
   "review_id": "00000000-0000-4000-8000-000000000000",
+  "review_root": null,
+  "review_root_sha": null,
+  "review_root_tree": null,
   "schema_version": 2,
   "stats": {
     "agent_failures": [],
