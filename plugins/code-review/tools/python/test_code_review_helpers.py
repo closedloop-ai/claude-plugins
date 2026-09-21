@@ -90,6 +90,7 @@ from code_review_helpers import (
 )
 from code_review_helpers import (
     VERIFY_MAX_VERIFICATIONS,
+    _VERDICT_REASON_MAX,
     _compute_canonical_verdict,
     _glob_to_regex,
     _load_verification_gates,
@@ -8511,6 +8512,42 @@ class TestFinalizeResult:
         assert envelope["coverage_gaps"] == []
         assert envelope["mode"] == "local"
 
+    def test_approved_envelope_records_verifier_rejections(
+        self, tmp_path: Path,
+    ) -> None:
+        """ISS-10711 end to end: the reason must survive into the envelope.
+
+        Unit-testing ``_compute_canonical_verdict`` cannot see a call site that
+        forgets to pass ``rejected``, and that call site is the whole fix.
+        """
+        (tmp_path / "findings_verified.json").write_text(json.dumps({
+            "verified": [],
+            "rejected": [
+                minimal_diff_finding(
+                    id=f"bha_p0_f{i}",
+                    verifier_verdict="REJECTED",
+                    rejection_class="evidence_not_found",
+                )
+                for i in range(7)
+            ],
+            "pending_verification": [],
+        }))
+        result = self._run_finalize(tmp_path, [])
+
+        assert result["validation_errors"] == [], (
+            "fixture must be schema-valid, or a real envelope regression "
+            "hides in this test's noise"
+        )
+        assert result["verdict"] == "APPROVED"
+        envelope = json.loads((tmp_path / "review_result.json").read_text())
+        reason = envelope["verdict_reason"]
+        assert reason != "", (
+            "an APPROVED that discarded 7 findings must not be "
+            "indistinguishable from a clean review"
+        )
+        assert "7" in reason
+        assert "evidence_not_found" in reason
+
     def test_envelope_passes_schema_validation(self, tmp_path: Path) -> None:
         result = self._run_finalize(tmp_path, [])
         assert result["validation_errors"] == []
@@ -12671,6 +12708,79 @@ class TestCanonicalVerdictPLN722:
             [],
         )
         assert v == "APPROVED"
+
+
+class TestApprovedVerdictReasonISS10711:
+    """An APPROVED must say when verification discarded every finding.
+
+    ISS-10711: seven of eight verifiers rejected real findings (two P1s, one
+    writing permanently-wrong rows into an append-only ledger) and the rollup
+    wrote ``APPROVED`` with ``reason: ""`` — indistinguishable from a review
+    that found nothing. The verdict itself is deliberately unchanged; only
+    its auditability is.
+    """
+
+    def test_approved_with_no_rejections_keeps_empty_reason(self) -> None:
+        v, r = _compute_canonical_verdict([], [])
+        assert v == "APPROVED"
+        assert r == ""
+
+    def test_approved_after_rejections_names_count_and_class(self) -> None:
+        rejected = [
+            {"rejection_class": "evidence_not_found"} for _ in range(7)
+        ]
+        v, r = _compute_canonical_verdict([], [], rejected=rejected)
+        assert v == "APPROVED", "gating must not change — only the reason"
+        # The exact ISS-10711 shape: the reason must not be empty, and must
+        # carry the count a reader needs to distrust the green.
+        assert r != ""
+        assert "7" in r
+        assert "evidence_not_found" in r
+
+    def test_reason_ranks_classes_by_frequency(self) -> None:
+        # Two short class names both fit the envelope, so ordering is visible.
+        rejected = (
+            [{"rejection_class": "guard_exists"}] * 3
+            + [{"rejection_class": "unreachable"}] * 5
+        )
+        _, r = _compute_canonical_verdict([], [], rejected=rejected)
+        assert r.index("unreachable x5") < r.index("guard_exists x3")
+
+    def test_tail_is_elided_rather_than_truncated(self) -> None:
+        # Three classes cannot fit; the dropped ones must be marked, and the
+        # surviving text must not end mid-class-name.
+        rejected = (
+            [{"rejection_class": "guard_exists"}] * 3
+            + [{"rejection_class": "evidence_not_found"}] * 5
+            + [{"rejection_class": "unreachable"}]
+        )
+        _, r = _compute_canonical_verdict([], [], rejected=rejected)
+        assert r.endswith("...)")
+        assert "evidence_not_found x5" in r
+        assert len(r) <= _VERDICT_REASON_MAX
+
+    def test_missing_rejection_class_is_not_dropped(self) -> None:
+        _, r = _compute_canonical_verdict(
+            [], [], rejected=[{}, {"rejection_class": None}],
+        )
+        assert "2 finding(s)" in r
+        assert "unclassified" in r
+
+    def test_reason_stays_within_the_envelope_cap(self) -> None:
+        rejected = [
+            {"rejection_class": f"class_{i}_with_a_very_long_name"}
+            for i in range(40)
+        ]
+        _, r = _compute_canonical_verdict([], [], rejected=rejected)
+        assert len(r) <= _VERDICT_REASON_MAX
+
+    def test_a_blocking_finding_still_outranks_the_rejection_note(self) -> None:
+        v, r = _compute_canonical_verdict(
+            [{"severity": "BLOCKING", "issue": "rce"}], [],
+            rejected=[{"rejection_class": "evidence_not_found"}],
+        )
+        assert v == "CHANGES_REQUESTED"
+        assert "rce" in r
 
 
 class TestLoadVerdictThresholds:

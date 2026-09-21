@@ -160,8 +160,25 @@ verbatim and compare against the stored hash. If the finding targets a
 removed line (the snippet is no longer present at HEAD), look at the
 pre-change content via the patch hunks.
 
-  - NO match anywhere AND no snippet_hash match → REJECTED,
-    `rejection_class: "evidence_not_found"`.
+Absence splits three ways, and only one of them disproves a finding.
+"I could not locate it" and "it is not there" are different claims.
+
+  - **The cited file does not exist under `review_root`** → TENTATIVE.
+    A missing file is equally well explained by a rename, a bad path, or a
+    tree that is not the one this diff describes. Name the missing path in
+    `verifier_reasoning`.
+  - **The snippet appears in the patch hunks as an ADDED line but is absent
+    from `review_root`** → TENTATIVE, and say plainly that the tree you
+    read disagrees with the diff under review. That is a scope or checkout
+    fault in the run, not evidence against the finding. Never REJECT here:
+    a tree holding none of the branch's new code makes EVERY finding about
+    it look fabricated, which is how a whole fleet once rejected seven real
+    findings at 0.95 confidence and shipped an APPROVED (ISS-10711).
+  - **The file exists, you read it, and neither the snippet nor any
+    `snippet_hash` matches anywhere in it, and it is not an added line in
+    the patch** → REJECTED, `rejection_class: "evidence_not_found"`.
+    This is the only branch carrying positive disconfirmation: you read the
+    right file and the claimed code is not in it.
   - Line drift only (snippet matches at a different line) → continue
     through the remaining checks. **Do not reject on line drift alone.**
   - Match found → continue.

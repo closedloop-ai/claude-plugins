@@ -10293,12 +10293,48 @@ def _count_gateable_impact(verified: list[dict[str, Any]]) -> int:
 _VERDICT_IMPACT_THRESHOLD_DEFAULT = 2
 
 
+def _approved_verdict_reason(rejected: list[dict[str, Any]] | None) -> str:
+    """Reason text for an APPROVED reached after verifiers discarded findings.
+
+    An APPROVED carrying an empty reason is indistinguishable from a review
+    that found nothing, so a run whose every finding was discarded reads as
+    clean (ISS-10711: seven of eight verifiers rejected real findings and the
+    rollup said ``APPROVED`` with ``reason: ""``). Naming the count and the
+    dominant rejection classes leaves the gating decision untouched and makes
+    it auditable.
+
+    Composed to FIT ``_VERDICT_REASON_MAX`` rather than truncated to it: a
+    reason chopped mid-class reads as a different class. The count is the
+    load-bearing half, so classes are dropped (and the elision marked) before
+    it is.
+    """
+    if not rejected:
+        return ""
+    tally: dict[str, int] = {}
+    for finding in rejected:
+        name = str(finding.get("rejection_class") or "unclassified")
+        tally[name] = tally.get(name, 0) + 1
+    ranked = sorted(tally.items(), key=lambda kv: (-kv[1], kv[0]))
+    head = f"{len(rejected)} finding(s) rejected by verification"
+    shown = list(ranked)
+    while shown:
+        body = ", ".join(f"{name} x{count}" for name, count in shown)
+        if len(shown) < len(ranked):
+            body += ", ..."
+        text = f"{head} ({body})"
+        if len(text) <= _VERDICT_REASON_MAX:
+            return text
+        shown.pop()
+    return head
+
+
 def _compute_canonical_verdict(
     verified: list[dict[str, Any]],
     coverage_gaps: list[dict[str, Any]],
     *,
     force_human_review: bool = False,
     thresholds: dict[str, int] | None = None,
+    rejected: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str]:
     """Apply canonical verdict precedence rules (PLN-719 Section 5).
 
@@ -10312,6 +10348,10 @@ def _compute_canonical_verdict(
     callers that do not pass it get the built-in defaults
     (``impact_cumulative`` = 2; see ``_VERDICT_IMPACT_THRESHOLD_DEFAULT``)
     so existing test fixtures and back-compat callers keep working.
+
+    ``rejected``: the discarded bucket, used only to give an APPROVED a
+    non-empty reason (ISS-10711). It never changes which verdict is
+    returned — a rejected finding is, by definition, not gating.
     """
     thresholds = thresholds or {
         "impact_cumulative": _VERDICT_IMPACT_THRESHOLD_DEFAULT,
@@ -10388,7 +10428,7 @@ def _compute_canonical_verdict(
             f"(threshold {impact_threshold})",
         )
 
-    return "APPROVED", ""
+    return "APPROVED", _approved_verdict_reason(rejected)
 
 
 def _read_optional_json(path: Path, default: Any) -> Any:
@@ -14325,6 +14365,7 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
         verified, coverage_gaps,
         force_human_review=force_human_review,
         thresholds=thresholds,
+        rejected=rejected,
     )
 
     # Pull optional run-context inputs.
