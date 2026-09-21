@@ -31,7 +31,7 @@ A code-intelligence substrate is the precise substrate for this step when your s
 - **Cycles (ADP):** A↔B import cycle (directly or via a chain). Import-cycle workarounds in the diff are a tell — a function-local/deferred import or `TYPE_CHECKING`-only import added to dodge a circular import.
 
 ### Step 4 — Evaluate module depth (for each new module/class/interface)
-A **deep** module has a simple interface over a powerful implementation; a **shallow** one has an interface nearly as complex as its implementation. Flag:
+A **deep** module has a simple interface over a powerful implementation; a **shallow** one has an interface nearly as complex as its implementation. For each new module/class, consult capability C7 (duplication) when you hold it, per the shared protocol: a hit is a candidate for "wrapper adds no abstraction" or information leakage — read both sides before reporting. Flag:
 - A new class/wrapper that adds no abstraction over what it wraps
 - A constructor taking 6+ params assigned straight to fields with no logic
 - A pass-through method (body is a single delegating call with a similar signature)
@@ -68,6 +68,8 @@ CAUSATION: Which part of THIS diff introduced or worsened it? (If it's pre-exist
 COST: Which symptom does it impose — change amplification, cognitive load, or unknown unknowns?
 CONCLUSION: DESIGN FLAW CONFIRMED (with the corrective refactor named) or DISCARDED (with why it's acceptable).
 
+A design finding that rests on absence — an unused interface, a single-implementation abstraction, a dead module — is governed by the shared protocol's AN EMPTY RESULT IS NOT A NEGATIVE RESULT rule: an empty substrate answer with unverified index coverage proves nothing, so confirm with Grep across `<review_root>` or do not assert it.
+
 Emit only findings where CONCLUSION = DESIGN FLAW CONFIRMED. Do not report style preferences, hypothetical future issues, or design debt outside the diff's blast radius.
 
 ## Severity (use the shared tiers; design findings are mostly MEDIUM/HIGH)
@@ -86,4 +88,4 @@ SOLID (Martin): SRP (one actor), OCP (extension without modification), LSP (beha
 
 Clean Architecture (Martin): Dependency Rule (source dependencies point only inward), Screaming Architecture (structure reveals domain not framework), Humble Object (split testable behavior from the hard-to-test shell), REP/CCP/CRP (component cohesion), ADP/SDP/SAP (component coupling — no cycles; depend toward stability; stable components are abstract).
 
-Use Read, Grep, and Glob for codebase context — plus whatever code-intelligence MCP tools your session provides, per the OPTIONAL — CODE INTELLIGENCE protocol in `shared_prompt.txt` (capabilities C1–C4; load deferred tool schemas with `ToolSearch` first). Scope every call to `<review_root>` and validate returned paths resolve under it, as that protocol requires. Do NOT use Bash.
+Use Read, Grep, and Glob for codebase context — plus whatever code-intelligence MCP tools your session provides, per the OPTIONAL — CODE INTELLIGENCE protocol in `shared_prompt.txt` (capabilities C1–C7; load deferred tool schemas with `ToolSearch` first). Scope every call to `<review_root>` and validate returned paths resolve under it, as that protocol requires. Do NOT use Bash.

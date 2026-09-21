@@ -195,8 +195,10 @@ CODE_INTEL_REQUIRE_ROOT_ARG=<CODE_INTEL_REQUIRE_ROOT_ARG>. Follow the
 tool roster for an MCP server that indexes this repo, loading deferred schemas with
 ToolSearch first. When one is available, prefer it for your cross-file work — capability
 C3 (snippet read) to read the exact service/API implementation instead of Glob-guessing
-its file, C1/C2 (symbol lookup, usage enumeration) for DRY/duplicate lookups and import
-validation. Pass <review_root> as the root argument whenever a tool accepts one; when
+its file, C7 (duplication) first and then C1/C2 (symbol lookup, usage enumeration) for
+DRY/duplicate lookups, C1/C2 for import validation, and C5 (change impact), scoped to your
+assigned files, for what else this change reaches. Any claim resting on absence ("unused",
+"no callers", "no existing helper") follows that protocol's empty-result rule. Pass <review_root> as the root argument whenever a tool accepts one; when
 CODE_INTEL_REQUIRE_ROOT_ARG is true, call only tools you can scope that way. Discard any
 answer for a different symbol than you asked about, and validate returned paths resolve
 under <review_root>. When CODE_INTEL_ALLOWED is false or nothing you may call answers the
@@ -292,7 +294,11 @@ deferred schemas with ToolSearch first) and ALSO use its capability C2 (usage/ca
 enumeration) to reach callers grep cannot (aliases,
 re-exports, dynamic dispatch); tag those entries `discovery: "graph"` and put
 them in the certificate's `graph_discovered_usages` per the Inputs/Step 2
-sections of impact_analyzer_prompt.txt. Run your text-search tool too whenever you
+sections of impact_analyzer_prompt.txt. If you also hold C5 (change impact), seed
+with ONE call scoped to your assigned files, passing `base_ref` Read from
+{CR_DIR}/scope.json — skip C5 when that value is absent, empty, or begins with `-`.
+A zero-usages conclusion is an absence claim: the protocol's empty-result rule
+governs it. Run your text-search tool too whenever you
 hold one, and record the real query you ran in
 `grep_query_used` for the `discovery: "grep"` entries (the verifier replays it
 against `external_usages_found`). If you hold NO text-search tool at all, leave
@@ -335,7 +341,8 @@ When CODE_INTEL_ALLOWED is true, inspect your own tool roster for an MCP server
 indexing this repo (ToolSearch for deferred schemas) and prefer it for structure and
 dependency-direction analysis — capability C4 (module layout, dependency edges,
 cycles, implementors; some servers expose this as a query language over the
-dependency graph) and C2 (call / data-flow chains). Pass <review_root> as the root
+dependency graph) and C2 (call / data-flow chains), plus C7 (duplication) for each new
+module/class; absence-based design claims follow the protocol's empty-result rule. Pass <review_root> as the root
 argument whenever a tool accepts one; when CODE_INTEL_REQUIRE_ROOT_ARG is true, call
 only tools you can scope that way. Discard any answer for a different symbol than you
 asked about, and validate returned paths resolve under <review_root>.
@@ -426,8 +433,9 @@ CODE INTELLIGENCE (optional): CODE_INTEL_ALLOWED=<CODE_INTEL_ALLOWED>,
 CODE_INTEL_REQUIRE_ROOT_ARG=<CODE_INTEL_REQUIRE_ROOT_ARG>. Follow the
 "OPTIONAL — CODE INTELLIGENCE" protocol in {CR_DIR}/shared_prompt.txt — when
 CODE_INTEL_ALLOWED is true, inspect your own tool roster for an MCP server indexing this
-repo (ToolSearch for deferred schemas) and prefer its C1/C2/C3 capabilities for the
-cross-file lookups above; pass <review_root> as the root argument whenever a tool accepts
+repo (ToolSearch for deferred schemas) and prefer its C1/C2/C3 capabilities, plus C5
+(change impact) and C7 (duplication), for the cross-file lookups above; any claim resting
+on absence follows that protocol's empty-result rule; pass <review_root> as the root argument whenever a tool accepts
 one (when CODE_INTEL_REQUIRE_ROOT_ARG is true, call only tools you can scope that way),
 discard any answer for a different symbol than you asked about, and validate returned
 paths resolve under <review_root>; otherwise use Grep/Glob silently.

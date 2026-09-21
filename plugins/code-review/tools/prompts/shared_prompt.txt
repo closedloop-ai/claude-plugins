@@ -78,6 +78,21 @@ particular one. Bind to what you actually hold:
   C3 SNIPPET READ — read a symbol's source without knowing its file.
   C4 STRUCTURE — module/layer layout, dependency direction, import cycles.
      For design/architecture-level review.
+  C5 CHANGE IMPACT — maps a diff to the symbols it changed and the call sites
+     they reach. A seed for cross-file work; every row is a candidate.
+  C6 INDEX COVERAGE — says whether the index is current, whether given paths
+     are in it, and whether an answer was cut short or degraded. May be a tool,
+     or fields on another tool's response.
+  C7 DUPLICATION — reports near-duplicate symbols.
+- C5 CALL DISCIPLINE. Scope the call to your assigned files (split a large
+  assignment — a row limit may not bound the whole response) and pass a row
+  limit anyway. Use the review's diff base. Keep only rows tied to a symbol you
+  are analysing. Treat dunder and generic names (`__init__`, `get`, `open`) as
+  unverified until a C2 call or a Read confirms the target.
+- C7 HITS ARE CANDIDATES. Read both sides before reporting. A tool error, or
+  duplicate data that has not been built, means C7 is unavailable, never "no
+  duplicates" — and do not build it (NO INDEXING CALLS). It matches
+  copy-with-renaming, not semantic equivalence.
 - KILL SWITCH. Your task prompt carries `CODE_INTEL_ALLOWED`. When it is
   `false`, use Grep/Glob only, no matter what tools you hold — the orchestrator
   has determined no external index can be trusted for this run (the source
@@ -108,10 +123,20 @@ particular one. Bind to what you actually hold:
   Before citing any file a tool returns, confirm it is openable with Read at
   `<review_root>/<repo-relative path>`. Discard (never cite) any path that does
   not resolve under <review_root> or that escapes it via `..`.
-- DEGRADE SILENTLY. A missing tool, an error, an empty result, or a stale index
-  means fall back to Grep/Glob and change nothing else. Do NOT mention the
-  substrate's presence or absence in findings, and do NOT change what you report
-  because of it.
+- DEGRADE SILENTLY. A missing tool, an error, or a stale index means fall back
+  to Grep/Glob and change nothing else. Do NOT mention the substrate's presence
+  or absence in findings, and do NOT change what you report because of it.
+- AN EMPTY RESULT IS NOT A NEGATIVE RESULT. Before any finding OR dismissal that
+  rests on absence — "no callers", "unused", "not referenced", "dead code",
+  "safe to delete", "no other implementation" — establish via C6 that the paths
+  the claim spans are indexed and current and that the response was not cut
+  short or degraded. Anything else — stale, missing, excluded, unparsed,
+  unknown, a freshness answer that does not speak to those paths, or no C6 held
+  — means the index proves nothing about that path: confirm with Grep across
+  <review_root>, or do not assert it.
+  A clean coverage result means "no recorded gap", never proof of completeness.
+- NO COMPLETENESS CLAIMS. No substrate field licenses saying a list of callers
+  is complete ("all callers", "only N call sites"); report what you found.
 - NEVER AN EVIDENCE SUBSTITUTE. Every finding still cites a concrete file:line
   you confirmed by reading it, and any field a role prompt requires for verifier
   replay (e.g. `grep_query_used`) is still mandatory.
