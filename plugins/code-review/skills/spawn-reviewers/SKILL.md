@@ -346,6 +346,7 @@ module/class; absence-based design claims follow the protocol's empty-result rul
 argument whenever a tool accepts one; when CODE_INTEL_REQUIRE_ROOT_ARG is true, call
 only tools you can scope that way. Discard any answer for a different symbol than you
 asked about, and validate returned paths resolve under <review_root>.
+If nothing visible answers C4, make the protocol's one broker search for it before falling back.
 When CODE_INTEL_ALLOWED is false or nothing you may call answers C4, grep imports instead.
 ```
 

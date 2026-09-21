@@ -70,6 +70,11 @@ particular one. Bind to what you actually hold:
   fails with an input-validation error — so use `ToolSearch` to load the schemas
   of the ones you intend to use. If nothing in your roster answers a capability,
   that capability is simply unavailable: use Grep/Glob and move on.
+  One step before that fallback: some servers expose further read-only tools
+  only through a broker tool that searches for and calls tools by name. Search
+  it ONCE per unanswered capability. Call through it only tools whose purpose is
+  to query — never one that scans, executes, writes, indexes, or records; unclear
+  purpose → do not call. Every invariant here binds a brokered call as a direct one.
 - CAPABILITIES worth reaching for, in priority order:
   C1 SYMBOL LOOKUP — locate a symbol's definition and qualified name.
   C2 USAGE / CALLER ENUMERATION — find references and callers, including the

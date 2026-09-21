@@ -58,5 +58,6 @@ argument shape.
 
 Do NOT use Bash — everything you need is reachable with Read, Grep, and Glob.
 That applies equally to any inherited MCP tool that runs shell commands or edits
-files: a reviewer reads and reports, it never executes or mutates. All findings
+files: a reviewer reads and reports, it never executes or mutates. A tool reached
+through a broker is held to the same rule as one called directly. All findings
 are written with Write exactly as the generic worker does.
