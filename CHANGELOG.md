@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.10.1
+
+#### Added
+- The optional code-intelligence protocol in `shared_prompt.txt` names three more capabilities a reviewer may use when its session holds a tool that answers them: C5 change impact (maps a diff to the symbols it changed and the call sites they reach), C6 index coverage (whether the index is current, whether given paths are in it, and whether an answer was cut short or degraded), and C7 duplication (near-duplicate symbols). C5 rows and C7 hits are candidates, never evidence: a C5 call is scoped to the reviewer's assigned files with a row limit and the review's diff base, and both sides of a C7 hit are read before reporting. A C7 error or unbuilt duplicate data means the capability is unavailable, not "no duplicates".
+- `spawn-reviewers`, `impact_analyzer_prompt.txt`, and `design_critic_suffix.txt` say which role reaches for which capability. The Impact Analyzer seeds its candidate-symbol list with one C5 call that cross-checks, and never replaces, its own walk of the diff; C5 call sites enter the existing `discovery: "grep"` / `discovery: "graph"` flow and still need a `callsite_snippet` read from the file. Every role reads the C5 diff base from `base_ref` in `scope.json` and skips C5 when that value is absent, empty, or begins with `-`. The Design Critic consults C7 for each new module or class.
+- Reviewers may discover further read-only tools through a broker tool that searches for and calls tools by name: one search per unanswered capability, only tools whose purpose is to query, and never one that scans, executes, writes, indexes, or records. `code-review-worker-graph.md` holds a brokered tool to the same read-only rule as one called directly, and the Design Critic makes that one search for C4 before falling back to grepping imports.
+
+#### Changed
+- An empty answer from a code-intelligence tool no longer counts as evidence of absence. `shared_prompt.txt` drops "an empty result" from the conditions that degrade silently to Grep/Glob and adds a rule for any finding or dismissal that rests on absence ("no callers", "unused", "dead code", "no other implementation"): first establish through C6 that the paths the claim spans are indexed and current and that the response was not cut short; otherwise confirm with Grep across `<review_root>` or do not assert it. A clean coverage result means "no recorded gap", not proof of completeness. The Impact Analyzer's zero-usages conclusion and the Design Critic's absence-based design findings point at this rule.
+- No finding may claim a caller list is complete ("all callers", "only N call sites"); reviewers report what they found.
+- Editing `shared_prompt.txt` changes the canonical prompt hash, so the Bug Hunter A cache and the `verifications/` cache are invalidated once on upgrade. The change is prompt and agent wording only: no helper, schema, hook, or orchestrator change.
+
 ### code-review v3.10.0
 
 #### Added
