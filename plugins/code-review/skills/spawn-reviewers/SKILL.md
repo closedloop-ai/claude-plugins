@@ -51,7 +51,7 @@ Context-heavy operations that cause "Prompt is too long" failures:
 **Agent type (CRITICAL — prevents context overflow AND permission issues):** every agent spawned by this command MUST use one of the two code-review worker types in the Task tool call — never `general-purpose` (background agents with that type inherit only the session's `permissions.allow` list, which often lacks bare Read/Write/Grep/Glob, causing silent permission denials) and never an omitted `subagent_type` (Claude Code then auto-selects an unrelated agent whose larger system prompt bloats context). The two types:
 
 - **`code-review:code-review-worker`** (default; `tools: Read, Write, Grep, Glob`) — use for EVERY reviewer EXCEPT the four code-intelligence-aware roles below. This includes Bug Hunter A, Unified Auditor, Domain Critics, the **verifier fleet** (stage_23), and the **PLN-725 singletons** (stage_11 / stage_15). Its explicit allowlist is what keeps these roles at exactly four tools — they inherit NOTHING from the session, keeping the trust boundary tight for the adversarial verifier and the singleton prompts that never load the code-intelligence protocol.
-- **`code-review:code-review-worker-graph`** (no `tools:` allowlist — inherits the session's tools, minus a `disallowedTools` denylist for Bash/Edit/NotebookEdit) — use ONLY for the code-intelligence-aware roles: **Bug Hunter B**, the **Impact Analyzer**, the **Design Critic**, and the **Fast Path** reviewer (which runs a BHB pass). These are the only roles whose prompts load the "OPTIONAL — CODE INTELLIGENCE" protocol. (BHB / Impact / fast-path use the cross-file capabilities C1–C3; the Design Critic also uses the structural capability C4.)
+- **`code-review:code-review-worker-graph`** (no `tools:` allowlist — inherits the session's tools, minus a `disallowedTools` denylist for Bash/Edit/NotebookEdit) — use ONLY for the code-intelligence-aware roles: **Bug Hunter B**, the **Impact Analyzer**, the **Design Critic**, and the **Fast Path** reviewer (which runs a BHB pass). These are the only roles whose prompts load the "OPTIONAL — CODE INTELLIGENCE" protocol. (Each role's suffix below names the capabilities it reaches for; the shared protocol defines them.)
 
 The two differ in what they can rely on, and the prompts account for it. `code-review-worker`'s allowlist *guarantees* the core four regardless of what the spawning session holds. The inheriting worker gets whatever that session has — which is usually the core four plus the session's MCP servers, but is NOT guaranteed: a session that supplies its own search tooling instead of `Grep`/`Glob` yields a reviewer without them. That is why the shared prompt states text search as a capability rather than a tool name and tells the reviewer to fall back to targeted `Read` calls, and why `grep_query_used` must describe a query actually executed. `Write` is inherited in practice, and the write-denied fallback in `shared_prompt.txt` (emit `<findings_json>` inline, report `file=WRITE_DENIED`) still covers the case where it is refused.
 
@@ -197,7 +197,9 @@ ToolSearch first. When one is available, prefer it for your cross-file work — 
 C3 (snippet read) to read the exact service/API implementation instead of Glob-guessing
 its file, C7 (duplication) first and then C1/C2 (symbol lookup, usage enumeration) for
 DRY/duplicate lookups, C1/C2 for import validation, and C5 (change impact), scoped to your
-assigned files, for what else this change reaches. Any claim resting on absence ("unused",
+assigned files, for what else this change reaches — pass `base_ref` Read from
+{CR_DIR}/scope.json, and skip C5 when that value is absent, empty, or begins with `-`.
+Any claim resting on absence ("unused",
 "no callers", "no existing helper") follows that protocol's empty-result rule. Pass <review_root> as the root argument whenever a tool accepts one; when
 CODE_INTEL_REQUIRE_ROOT_ARG is true, call only tools you can scope that way. Discard any
 answer for a different symbol than you asked about, and validate returned paths resolve
@@ -435,7 +437,9 @@ CODE_INTEL_REQUIRE_ROOT_ARG=<CODE_INTEL_REQUIRE_ROOT_ARG>. Follow the
 "OPTIONAL — CODE INTELLIGENCE" protocol in {CR_DIR}/shared_prompt.txt — when
 CODE_INTEL_ALLOWED is true, inspect your own tool roster for an MCP server indexing this
 repo (ToolSearch for deferred schemas) and prefer its C1/C2/C3 capabilities, plus C5
-(change impact) and C7 (duplication), for the cross-file lookups above; any claim resting
+(change impact — pass `base_ref` Read from {CR_DIR}/scope.json, and skip C5 when that
+value is absent, empty, or begins with `-`) and C7 (duplication), for the cross-file
+lookups above; any claim resting
 on absence follows that protocol's empty-result rule; pass <review_root> as the root argument whenever a tool accepts
 one (when CODE_INTEL_REQUIRE_ROOT_ARG is true, call only tools you can scope that way),
 discard any answer for a different symbol than you asked about, and validate returned
