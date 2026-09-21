@@ -101,7 +101,8 @@ Two discovery substrates, used together:
      Validate every returned path is inside this checkout before citing
      it (per the shared protocol).
      When you also hold C5 (change impact), make it your first move: ONE
-     call, scoped to your assigned files with a row limit, to seed the
+     call, naming only the files where the patch changes an exported
+     surface, one caller hop, row limit 25 or less, to seed the
      candidate-symbol list and its call sites. Diff base: Read `base_ref`
      from `{CR_DIR}/scope.json` and pass it. If it is absent, empty, or
      begins with `-`, skip C5. If the tool cannot take a base, skip C5.

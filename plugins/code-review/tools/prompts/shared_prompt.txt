@@ -89,11 +89,11 @@ particular one. Bind to what you actually hold:
      are in it, and whether an answer was cut short or degraded. May be a tool,
      or fields on another tool's response.
   C7 DUPLICATION — reports near-duplicate symbols.
-- C5 CALL DISCIPLINE. Scope the call to your assigned files (split a large
-  assignment — a row limit may not bound the whole response) and pass a row
-  limit anyway. Use the review's diff base. Keep only rows tied to a symbol you
-  are analysing. Treat dunder and generic names (`__init__`, `get`, `open`) as
-  unverified until a C2 call or a Read confirms the target.
+- C5 CALL DISCIPLINE. Keep it small: one caller hop, a row limit of 25 or less,
+  and only those assigned files whose exported surface changed — the response
+  grows with every file you name, whatever the limit. Use the review's diff base.
+  Keep only rows tied to a symbol you are analysing. Treat dunder and generic
+  names (`__init__`, `get`, `open`) as unverified until C2 or a Read confirms.
 - C7 HITS ARE CANDIDATES. Read both sides before reporting. A tool error, or
   duplicate data that has not been built, means C7 is unavailable, never "no
   duplicates" — and do not build it (NO INDEXING CALLS). It matches
