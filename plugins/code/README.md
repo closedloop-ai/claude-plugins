@@ -164,6 +164,18 @@ Checks for `.closedloop-ai/closedloop-loop.local.md`, reads the current iteratio
 
 Supports resuming mid-session via a `{stem}.state` sidecar file that tracks the current round and Codex session ID.
 
+### `/code:design-inventory`
+
+**Description:** Inventory a Claude Design export for review, then create draft feature tickets from the edited review document.
+
+**Usage:**
+```
+/code:design-inventory <export.zip> [--repo <path>] [--workdir <path>]
+/code:design-inventory --tickets <workdir> --review-doc <FEA-slug> --project <PRO-slug> [--repo <path>]
+```
+
+Activates the `code:design-inventory` skill. The first form inventories the export and publishes a Design Review document; the second derives accepted decisions from the edited document and generates draft tickets.
+
 ---
 
 ## Agents
@@ -312,7 +324,7 @@ Generates a repo-local decision-table artifact that makes control-flow and state
 
 ### `design-inventory`
 
-Staged pipeline for inventorying a Claude Design export into reviewable findings, a human decision gate, and DRAFT ticket generation. Stage A extracts the zip, runs parallel `design-unit-analyst` agents per unit (screens, regions, standalone components) from per-unit context packs, emits schema-validated findings (each with a recommended action), and publishes a platform "Design Review" Feature document with inline images. Stage B is the human editing that document - delete a section to decline, edit a line to amend, leave to accept - with survival judged from heading-line id anchors. Stage C derives decisions from the edited document and generates DRAFT feature tickets grouped per screen (UI plus optional API, with BLOCKS edges) and workdir-only design packs, only for accepted units. Invoked via the `code:design-inventory` skill when users request a design handoff, design inventory, or ticket generation from a design review. Scripts are TypeScript under `tools/design-inventory/src/` with built `dist/` bundles committed to `skills/design-inventory/scripts/dist/`.
+Staged pipeline for inventorying a Claude Design export into reviewable findings, a human decision gate, and DRAFT ticket generation. Stage A extracts the zip, runs parallel `design-unit-analyst` agents per unit (screens, regions, standalone components) from per-unit context packs, emits schema-validated findings (each with a recommended action), and publishes a platform "Design Review" Feature document with inline images. Stage B is the human editing that document - delete a section to decline, edit a line to amend, leave to accept - with survival judged from heading-line id anchors. Stage C derives decisions from the edited document and generates DRAFT feature tickets grouped per screen (UI plus optional API, with BLOCKS edges) and workdir-only design packs, only for accepted units. Invoked via `/code:design-inventory` when users request a design handoff, design inventory, or ticket generation from a design review. Scripts are TypeScript under `tools/design-inventory/src/` with built `dist/` bundles committed to `skills/design-inventory/scripts/dist/`.
 
 ---
 

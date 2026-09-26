@@ -20,6 +20,7 @@
 # Diagnostics go to stderr only.
 
 set -euo pipefail
+umask 077
 
 # Single source of truth for the state directory name
 CLOSEDLOOP_STATE_DIR=".closedloop-ai"
@@ -77,6 +78,8 @@ fi
 LOG_DIR="$HOME/$CLOSEDLOOP_STATE_DIR/plan-with-codex"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/$LOG_ID.jsonl"
+ERROR_LOG="$LOG_DIR/$LOG_ID.stderr"
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 # ── Temp directory with cleanup ───────────────────────────────────────────────
 
@@ -220,40 +223,23 @@ PROMPT_EOF
 
 # ── JSON parsing helpers ─────────────────────────────────────────────────────
 
-# Extract thread_id from thread.started event in JSON stream.
-# Prints the thread_id or empty string.
-parse_thread_id() {
-  python3 -c "
-import json, sys
-for line in open(sys.argv[1]):
-    try:
-        e = json.loads(line.strip())
-        if e.get('type') == 'thread.started' and e.get('thread_id'):
-            print(e['thread_id']); break
-    except Exception:
-        pass
-" "$1" 2>/dev/null || true
-}
-
-# Extract agent_message text from item.completed events.
-# Writes concatenated text to the specified output file.
+# Publish feedback only after the complete JSONL stream validates.
 parse_feedback_text() {
   local json_file="$1"
-  local output_file="$2"
-  python3 -c "
-import json, sys
-lines = []
-for line in open(sys.argv[1]):
-    try:
-        e = json.loads(line.strip())
-        if e.get('type') == 'item.completed':
-            item = e.get('item', {})
-            if item.get('type') == 'agent_message' and item.get('text'):
-                lines.append(item['text'])
-    except Exception:
-        pass
-sys.stdout.write('\n'.join(lines))
-" "$json_file" > "$output_file" 2>/dev/null
+  local parsed_session
+  if ! parsed_session=$(python3 "$SCRIPT_DIR/parse_codex_json.py" "$json_file" "$FEEDBACK_FILE" 2>> "$ERROR_LOG"); then
+    if [[ -n "$parsed_session" ]]; then
+      effective_session_id="$parsed_session"
+    fi
+    echo "Feedback extraction failed; details retained in $ERROR_LOG" >&2
+    echo "CODEX_FAILED:feedback extraction failed; log=$LOG_FILE; diagnostics=$ERROR_LOG"
+    echo "CODEX_SESSION:${effective_session_id:-none}"
+    echo "LOG_ID:$LOG_ID"
+    return 1
+  fi
+  if [[ -n "$parsed_session" ]]; then
+    effective_session_id="$parsed_session"
+  fi
 }
 
 # ── Run codex ────────────────────────────────────────────────────────────────
@@ -263,7 +249,7 @@ run_codex_cmd() {
   # Log round header
   printf '\n--- Round %s | %s ---\n' "$ROUND" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOG_FILE"
   # Tee raw JSON stream to both the capture file and the persistent log
-  codex "$@" 2>/dev/null | tee -a "$LOG_FILE" > "$json_out"
+  codex "$@" 2>> "$ERROR_LOG" | tee -a "$LOG_FILE" > "$json_out"
 }
 
 effective_session_id="$SESSION_ID"
@@ -280,35 +266,17 @@ if [[ -n "$SESSION_ID" ]]; then
   codex_exit=$?
   set -e
 
-  new_session=$(parse_thread_id "$codex_json")
-  if [[ -n "$new_session" ]]; then
-    effective_session_id="$new_session"
-  fi
-  # else: preserve the input SESSION_ID
-
-  parse_feedback_text "$codex_json" "$FEEDBACK_FILE"
-
-  if [[ $codex_exit -eq 0 ]] || [[ -s "$FEEDBACK_FILE" ]]; then
-    # Resume succeeded -- skip to verdict extraction
-    :
-  else
+  if [[ $codex_exit -ne 0 ]] && [[ ! -s "$codex_json" ]]; then
+    # Only an empty failed resume can safely start a fresh review. A partial
+    # stream may already contain paid work and must be diagnosed from its log.
     echo "Codex session resume failed, starting fresh session..." >&2
     effective_session_id=""
-    rm -f "$codex_json"
-
-    # Fall through to fresh session below
     set +e
     run_codex_cmd "$codex_json" exec "${base_args[@]}" "$prompt_content"
     codex_exit=$?
     set -e
-
-    new_session=$(parse_thread_id "$codex_json")
-    if [[ -n "$new_session" ]]; then
-      effective_session_id="$new_session"
-    fi
-
-    parse_feedback_text "$codex_json" "$FEEDBACK_FILE"
   fi
+  if ! parse_feedback_text "$codex_json"; then exit 0; fi
 else
   # No session to resume -- fresh start
   set +e
@@ -316,12 +284,7 @@ else
   codex_exit=$?
   set -e
 
-  new_session=$(parse_thread_id "$codex_json")
-  if [[ -n "$new_session" ]]; then
-    effective_session_id="$new_session"
-  fi
-
-  parse_feedback_text "$codex_json" "$FEEDBACK_FILE"
+  if ! parse_feedback_text "$codex_json"; then exit 0; fi
 fi
 
 # ── Emit structured tokens ───────────────────────────────────────────────────
