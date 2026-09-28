@@ -164,6 +164,20 @@ Checks for `.closedloop-ai/closedloop-loop.local.md`, reads the current iteratio
 
 Supports resuming mid-session via a `{stem}.state` sidecar file that tracks the current round and Codex session ID.
 
+### `/code:design-inventory`
+
+**Description:** Run the Claude Design to ClosedLoop pipeline.
+
+**Usage:**
+```
+/code:design-inventory <export.zip> [--repo <path>] [--workdir <path>]
+/code:design-inventory --tickets <workdir> --review-doc <FEA-slug> --project <PRO-slug> [--repo <path>]
+```
+
+**What it does:**
+
+Activates the `code:design-inventory` skill with the given arguments. The first form runs Stage A (inventory a design export zip into schema-validated findings and publish a platform Design Review document); the `--tickets` form runs Stage C (derive decisions from the human-edited review document and generate DRAFT feature tickets).
+
 ---
 
 ## Agents
@@ -313,6 +327,10 @@ Generates a repo-local decision-table artifact that makes control-flow and state
 ### `design-inventory`
 
 Staged pipeline for inventorying a Claude Design export into reviewable findings, a human decision gate, and DRAFT ticket generation. Stage A extracts the zip, runs parallel `design-unit-analyst` agents per unit (screens, regions, standalone components) from per-unit context packs, emits schema-validated findings (each with a recommended action), and publishes a platform "Design Review" Feature document with inline images. Stage B is the human editing that document - delete a section to decline, edit a line to amend, leave to accept - with survival judged from heading-line id anchors. Stage C derives decisions from the edited document and generates DRAFT feature tickets grouped per screen (UI plus optional API, with BLOCKS edges) and workdir-only design packs, only for accepted units. Invoked via the `code:design-inventory` skill when users request a design handoff, design inventory, or ticket generation from a design review. Scripts are TypeScript under `tools/design-inventory/src/` with built `dist/` bundles committed to `skills/design-inventory/scripts/dist/`.
+
+### `guided-manual-qa`
+
+Derives and runs an interactive, evidence-recorded manual QA session for a code change, ticket, branch, or pull request. Resolves the exact worktree and head under test, maps candidate checkpoints against passing exact-head E2E coverage, and schedules human QA only for the uncovered remainder. Prepares a trustworthy local environment (worktree-owned services, verified origin, proven persistence chain), writes a durable Markdown QA record outside the tracked tree before the first checkpoint, and proves each checkpoint's oracle before presenting it. The human confirms checkpoint by checkpoint with `PASS`, `FAIL`, or `BLOCKED`; agent observations are recorded as supporting evidence, never as human confirmation. Ships a bundled Playwright launcher (`scripts/dist/launch-interactive-browser.mjs`, Node 18+) that opens the interactive browser with preloaded localStorage fixtures and an optional `--ready-selector` gate. Scripts are TypeScript under `tools/guided-manual-qa/src/` with the built bundle committed to `skills/guided-manual-qa/scripts/dist/`. Performs no source changes or external writes without separate authorization.
 
 ---
 
