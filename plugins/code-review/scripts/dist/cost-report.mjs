@@ -6,7 +6,7 @@ import { readFileSync as readFileSync2, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, basename as basename2, join as join2 } from "node:path";
 
-// src/cli.ts
+// ../shared/cli.ts
 import { pathToFileURL } from "node:url";
 function runWhenMain(metaUrl, main2) {
   const entry = process.argv[1];

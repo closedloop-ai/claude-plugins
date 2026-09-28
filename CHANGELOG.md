@@ -4,6 +4,25 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.15.0
+
+#### Added
+- New `guided-manual-qa` skill that derives and runs an interactive, evidence-recorded manual QA session for a code change, ticket, branch, or pull request:
+  - Maps each candidate checkpoint to passing exact-head E2E assertions first, and schedules human checkpoints only for uncovered behavior.
+  - Prepares a local test environment owned by the worktree, and requires proof that listeners and the persistence chain belong to it before the first checkpoint.
+  - Keeps a durable Markdown QA record outside the tracked tree (template in `references/qa-record-template.md`), updated after every material action.
+  - Proves each checkpoint's oracle (surface ownership, contract evidence, fixture reachability, population effects) before asking the human, and records `PASS` / `FAIL` / `BLOCKED` one checkpoint at a time.
+  - `references/plan-methodology.md` covers risk-based plan derivation; `references/browser-state-fixtures.md` covers per-origin browser state.
+- Bundled launcher `skills/guided-manual-qa/scripts/dist/launch-interactive-browser.mjs` opens a visible Playwright browser with localStorage fixtures preloaded before the first navigation. It resolves Playwright from the repository under test, rejects non-HTTP(S) URLs and non-string fixture values, can merge into a private auth state, waits for an optional `--ready-selector`, refuses a page that left the requested origin and path or is mid Clerk handshake, verifies the loaded keys, and prints key names only. Sources and vitest suite live in `tools/guided-manual-qa/`.
+
+#### Removed
+- `skills/design-inventory/scripts/dist/cli.mjs`, a bundle of the shared `runWhenMain` helper that has no entry point and is not referenced. The other design-inventory bundles change only in the inlined helper's source-path comment.
+
+### code-review v3.10.2
+
+#### Changed
+- Rebuilt `scripts/dist/cost-report.mjs` after the `runWhenMain` helper moved to `tools/shared/cli.ts`. The bundle differs only in the inlined helper's source-path comment; behavior is unchanged.
+
 ### code-review v3.10.1
 
 #### Added

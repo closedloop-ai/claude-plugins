@@ -1,0 +1,106 @@
+---
+name: guided-manual-qa
+description: Derive and run an interactive, evidence-recorded manual QA session for a code change, ticket, branch, or pull request. Use when a human should validate live behavior checkpoint by checkpoint after repository-aware setup; do not use as a substitute for automated tests or a read-only code review.
+---
+
+# Guided Manual QA
+
+Run manual QA as a collaboration with the human for behavior that exact-head E2E does not already verify. Inspect the current change and map each proposed checkpoint to the existing E2E assertions before scheduling it. A passing E2E test can close that coverage need but is automated evidence, never a human `PASS`. Prepare a safe test environment for the remaining checkpoints, then present one observable checkpoint at a time.
+
+## Establish the test contract
+
+1. Resolve the exact repository, worktree, base, and head under test. Do not silently switch checkouts or infer that another running instance represents this worktree.
+2. Read the applicable repository instructions for the changed paths. Inspect the live diff, referenced requirements or work item, nearby owning code, existing tests, and the current behavior being extended or replaced.
+3. If repository instructions require repository or workflow memory, query it before choosing bootstrap, launch, validation, or QA paths. Treat memory as a hint and verify every material instruction against current repository docs and code.
+4. Map the shipping boundary and adjacent regression surfaces. Include conditional concerns only when evidence makes them relevant: web, API, desktop/Electron, shared packages, persistence, permissions, feature flags, failure states, responsive layouts, themes, accessibility, packaging, or cross-surface parity.
+5. Before scheduling a prototype checkpoint, trace the code responsible for its assertion through actual imports to a production-facing consumer or a Storybook story. The same shared component or behavior is eligible even if the prototype supplies its fixtures; Storybook qualifies as a component-adoption destination before the component reaches production. A similar-looking copy, isolated prototype route, mock-only interaction, or fixture-specific behavior is not eligible merely because production might adopt it later. Do not use isolated prototype behavior as acceptance or bug-fix evidence. Preserve the underlying ticket requirement: move its checkpoint to the actual production or Storybook owner when one exists, or record the unverified ownership gap rather than silently dropping it. Record this reachability decision for each prototype checkpoint.
+6. For every candidate manual checkpoint, compare its exact route, host, flag state, fixture transition, action, and expected result with passing E2E on the current head. Record the spec/assertion and run evidence when E2E covers it; schedule human QA only for the uncovered part or an explicitly human-only requirement. A nearby or narrower test does not count as coverage.
+7. Derive the remaining prioritized manual plan using [references/plan-methodology.md](references/plan-methodology.md). Do not reuse a stale plan merely because it names the same feature.
+
+State the proposed scope, environment, fixtures, and known gaps before launching. If requirements and the live change disagree, record the discrepancy and ask for direction when it materially changes what success means.
+
+## Prepare a trustworthy local environment
+
+- Lock the runtime target before launching anything. The default manual-QA target is the exact active worktree running locally. A Vercel deployment, branch preview, staging URL, or green preview check is evidence that a remote deployment exists; it is not authorization to use that deployment for manual QA. Use a remote preview only when the user explicitly requests it or current repository instructions explicitly designate it as the manual-QA target for this change. If neither authority exists, remain local.
+- Treat the origin as part of the test contract. Record the approved scheme, host, and port, then verify the browser's actual URL before accepting screenshots, observations, or human confirmation. Evidence collected from an unapproved origin is invalid setup evidence: record an `ORACLE CORRECTION`, withdraw any dependent result, and reopen the affected checkpoints on the approved origin.
+- On an authenticated page, wait for a visible control owned by the target route and verify the settled browser URL after client bootstrap. An initial navigation or launcher-ready URL alone can precede an auth redirect. The bundled launcher accepts `--ready-selector` for this gate; see [references/browser-state-fixtures.md](references/browser-state-fixtures.md).
+- Use repository-supported bootstrap and launch commands from the exact active worktree. Do not invent a setup path when the repository documents one.
+- Keep source unchanged while merely testing. Any generated data, config, or fixture must be disposable, ignored, or stored outside the tracked tree unless the user separately asks to productize it.
+- Use only local or explicitly designated non-production data and services. Prefer repository-supported seeds, fixtures, test accounts, and reset paths. Never point destructive or mutating tests at production.
+- Before starting services, inspect relevant listeners and processes. Do not kill or reuse an unrelated process. If a port is occupied, identify its owner and use a documented alternative or stop for direction.
+- Do not equate `localhost` with the repository's intended local service. When persistence is involved, inventory both container runtimes and native listeners, identify the actual engine that owns each port, and compare that with the repository's documented path and the user's stated expectation. Never silently use a pre-existing native database when Docker or Compose is the expected lane, and never claim a database is in Docker without verifying the container and port mapping.
+- Each guided-manual-qa worker owns creating, launching, seeding, verifying, and cleaning up its own test environment and database for its remaining database-backed checkpoints. Use a ticket/worktree-specific container or Compose project, ports, database, and auth identity when the repository supports them; never borrow another worker's stack or migrate, reset, or seed shared developer state. If the only supported path cannot run safely, record the exact limitation and obtain an explicitly designated alternative before involving the human. For a genuinely fixture-only surface, record why a database is not applicable. Use the repository's current migration and seed commands and safety guards; do not use reset or force-overwrite merely for setup convenience.
+- Before the first checkpoint, prove the entire persistence chain: container or native service identity, host-to-container port mapping when applicable, database name, migration state, seed profile/source, non-sensitive population summary, and the app/API process's effective connection target. A successful seed against one database does not prove the running application uses it.
+- Distinguish mock-backed and database-backed surfaces explicitly. A fixture-only prototype may need no database, while adjacent production consumers of the same shared component may require a locally seeded app/API stack. Record which checkpoint uses which data source; do not describe prototype fixtures as seeded production data or skip a required production-consumer regression because the prototype renders.
+- A prototype is an optional harness for eligible shared code, not a manual-QA destination by itself. Do not add prototype-only E2E tests. Assess repository-supported E2E coverage for affected production code separately; neither a manual finding nor Storybook reachability automatically requires a new E2E test.
+- Start services from the resolved worktree. Record the launch commands, working directories, process identifiers, ports, and health checks. Prove that each tested listener belongs to this worktree using the strongest available evidence: process command and cwd, parent process, build or commit marker, service metadata, or a repository-provided diagnostic endpoint.
+- After that proof succeeds, launch the UI the user requested for the intentional interactive session. Do not open unrelated surfaces or claim an unlaunched surface was exercised.
+- Record feature-flag assignments, roles, permissions, account or fixture identity, and other state that changes the observable result. Redact credentials and secrets.
+- When the matrix depends on browser-local state such as feature-flag fixtures, configure it before the first app navigation through a supported browser-context mechanism. Read [references/browser-state-fixtures.md](references/browser-state-fixtures.md). Do not make the human open DevTools or paste JavaScript, and do not use `javascript:` URLs, raw CDP, or the user's ordinary browser profile.
+- When the repository has Playwright installed and no stronger repository launcher exists, run the bundled launcher `${CLAUDE_SKILL_DIR}/scripts/dist/launch-interactive-browser.mjs` (Node 18+, no install step) with the bootstrapped repository root as the working directory to open the intentional interactive window with preloaded state. Keep its process alive through the checkpoint and stop only the launcher processes created for the session.
+- Run only the automated prechecks that make the interactive session meaningful. Follow repository policy for headless browser tests and displayless Electron tests. An explicitly requested interactive manual session may open the requested UI; automated tests must not become visible as a side effect.
+
+Use bounded recovery. Never repeat an unchanged failing launch command. Make at most one targeted repair per documented launch path, capture the exact command and failure, then move to a documented fallback or mark the affected checkpoint `BLOCKED`. Do not improvise an unverified substitute and present it as equivalent.
+
+## Create the QA record
+
+Before the first checkpoint, create a physical, durable Markdown record outside the tracked source tree when possible. Prefer an existing repository-declared QA artifact location; otherwise use a user-level directory outside every repository checkout (for example `~/.closedloop-ai/manual-qa/<repo>/<change-target>/`). Do not stage or commit it. Base it on [references/qa-record-template.md](references/qa-record-template.md).
+
+Write the exact-head E2E coverage map and the complete remaining human-checkpoint inventory into that file before walkthrough work begins, including expected results, dependencies, priorities, and initially known gaps. For an existing plan, label a transferred scenario `E2E_COVERED` only after recording the matching assertion and passing current-head result; exclude it from human `PASS` counts and keep its earlier details for lineage. Do not silently erase it. The file is the source of truth for session continuity; chat context, summaries, and model memory are not.
+
+Record enough detail for another person to reproduce the session: repository and worktree, base and head, environment, services, flags and permissions, fixtures and cleanup, automated prechecks, each scenario's expected and actual result, confirmer, evidence, recovery attempts, findings, and disposition. Never store secrets or sensitive production data.
+
+Update the physical record immediately after every material setup change, checkpoint response, blocker, recovery attempt, finding, scope change, and cleanup action. Do this before presenting the next checkpoint or ending a turn so a different agent or developer can resume solely from the file. Preserve incomplete scenarios as `PENDING` or `BLOCKED`; never remove them because context is tight or a dependency failed.
+
+## Prove the checkpoint oracle before asking the human
+
+Do not turn a plausible expectation into a human checkpoint. Before presenting each checkpoint, establish and write its oracle in the physical record:
+
+1. **Surface ownership:** identify the exact route, mode, renderer, or variant under test and prove that it owns the asserted element or behavior. Do not extrapolate from a sibling surface merely because it renders the same entity or concept. List/detail, free-text/faceted search, web/desktop, and display/editor variants may intentionally differ.
+   For a prototype route, also name the exact code that implements the assertion and its proven production or Storybook importer. If only the prototype route or fixture owns it, mark the prototype checkpoint `NOT APPLICABLE` and route the requirement to an eligible owner or record the coverage gap.
+2. **Contract evidence:** anchor each pass/fail expectation to an exact, applicable acceptance criterion, approved PRD or plan clause, or direct operator ruling. Record its identifier/version and explain why it governs this route and variant. Code, tests, design notes, and internal QA matrices can prove behavior or suggest a diagnostic, but cannot add a product obligation. Label any conclusion that requires interpretation as an inference; do not silently turn it into an acceptance gate. When sources disagree, resolve the disagreement before involving the human.
+3. **Fixture reachability:** prove the named fixture reaches that exact path with the required projection, flags, permissions, and state. A row existing in storage is insufficient when the tested surface reads a different index, projection, cache, or adapter.
+4. **Population effects:** account for persisted filters, default toggles, hierarchy/context rows, grouping, pagination, and non-applicable entity types before stating an exact count or membership expectation. Prefer an independent read-only probe for exact populations.
+5. **Applicability:** if the surface intentionally does not render the asserted field or interaction, mark that claim `NOT APPLICABLE` and move the checkpoint to the surface that owns it. Absence by design is neither a pass nor a product failure for the misplaced assertion.
+
+If the oracle is still uncertain, run a bounded read-only inspection or split the checkpoint into a diagnostic observation first. Do not ask the human to adjudicate an expectation the agent has not established. An observation that differs from an unsupported inference is not a product `FAIL` and does not authorize a fix.
+
+When a human observation conflicts with the prompt, re-check the cited acceptance or approved requirement and its applicability before opening a finding. If the expectation was wrong or only an unsupported inference, record an `ORACLE CORRECTION`, preserve the useful observation, withdraw any candidate finding, and revise dependent checkpoints. Do not count an oracle correction as a product `FAIL`.
+
+## Guide the human checkpoint by checkpoint
+
+For each checkpoint:
+
+1. Put the application in the required state using safe local setup.
+2. Complete and record the oracle proof above.
+3. Present exactly one small human action or observation, its expected result, and what evidence to capture.
+4. Wait for the human to report `PASS`, `FAIL`, or `BLOCKED`, plus the observed result. Do not advance on an assumption.
+5. Re-check disputed expectations before classifying a mismatch, then write the status, exact actual behavior, confirmer, timestamp, evidence location, and any oracle correction to the QA record.
+6. Adapt the remaining plan. A failure may require a minimal reproduction, a narrower diagnostic checkpoint, or skipping only dependent checkpoints. A blocked prerequisite must not silently erase the dependent coverage.
+
+Use these meanings consistently:
+
+- `PASS`: the named human observed the expected behavior in the recorded environment.
+- `FAIL`: the named human observed behavior that contradicts the expectation.
+- `BLOCKED`: the checkpoint could not be exercised or judged; record why and what remains unverified.
+
+Agent inspection, screenshots, logs, API probes, and automated assertions are supporting evidence, not human confirmation. Label them `agent-observed` or `automated`; never fill the confirmer field with the human's name unless that human actually confirmed the result.
+
+When a finding is confirmed, assemble a reproducible evidence package in the local record: environment and head, prerequisites, minimal steps, expected and actual behavior, frequency, relevant logs or screenshots, affected surfaces, and cleanup state. Continue with independent checkpoints when safe. Before any source change or external-system mutation, offer an explicit next-action choice and wait for separate authorization.
+
+## Finish the session
+
+Clean up only the disposable processes and data created for this run, using repository-supported teardown where available. Do not remove unrelated state.
+
+End with a concise summary containing:
+
+- coverage completed by surface and risk;
+- `PASS`, `FAIL`, and `BLOCKED` counts;
+- confirmed findings and evidence locations;
+- untested gaps and why they remain;
+- cleanup status and the durable record path;
+- the next action, if the user explicitly selected one.
+
+Reconcile that summary from the physical QA record rather than reconstructing it from conversation history.
+
+Do not file issues, mutate work items, change source, push code, trigger CI or reviews, or perform other external writes without separate authorization for that specific action.

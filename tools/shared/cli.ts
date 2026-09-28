@@ -2,13 +2,8 @@
  * Shared CLI entry helper: run main() only when executed directly (not when
  * imported by tests), mirroring Python's `if __name__ == "__main__"`.
  *
- * CANONICAL SOURCE: tools/design-inventory/src/cli.ts. This is a deliberate
- * verbatim copy. The two tool packages are self-contained and bundle
- * independently (separate package.json / tsconfig / esbuild target) with no
- * shared module, so this ~10-line bootstrap is duplicated rather than
- * cross-imported across package boundaries. Keep the copies in lockstep: land
- * any change to the helper (e.g. a synchronous-throw guard) in the
- * design-inventory copy first, then mirror it here verbatim.
+ * Imported by every TypeScript tool package under tools/ via a relative path;
+ * each package's esbuild step inlines it into that package's bundles.
  */
 
 import { pathToFileURL } from "node:url";
