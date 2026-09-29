@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.16.2
+
+#### Changed
+- `guided-manual-qa` checks whether a fixed-port control launcher supports isolated ports, sessions, or project names for concurrent workers before choosing it, and falls back to a documented manual isolated stack with recorded process ownership proof when it does not.
+- `guided-manual-qa` no longer treats a parent supervisor, launchd wrapper, or control command reporting `started` as readiness; the actual listener and the route-owned ready selector must be proven first. A wrapper that hangs before spawning its child gets one bounded foreground diagnostic of the same command, stopped before any fallback.
+
 ### code v1.16.1
 
 #### Changed
