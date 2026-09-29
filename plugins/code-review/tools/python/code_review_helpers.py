@@ -12741,7 +12741,7 @@ def _derive_spawn_agents_from_plan(
         if role_cfg is not None:
             if role_cfg["partitioned"]:
                 # BHA expands per partition. When partitions is empty
-                # (all cached or docs-only post-arbitrate), no BHA spawn.
+                # (all files cached), no BHA spawn.
                 if not partitions:
                     skipped.append({
                         "reviewer": reviewer,
@@ -13105,12 +13105,12 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     # missing required reviewer). The spawn-spec path now emits the
     # same canonical Coverage finding so finalize-result picks it up
     # via coverage_gaps.json. Benign reasons (test_quality deferral,
-    # all-cached/docs-only no_partitions, the docs_only BHA floor waiver,
+    # all-cached no_partitions, the docs_only BHA floor waiver,
     # gated_by_verify suppression) are explicitly excluded — those are intentional omissions, not
     # coverage gaps.
     _SPAWN_BENIGN_REQUIRED_SKIPS = {
         "deferred_pln723",      # PLN-723 placeholder slot
-        "no_partitions",        # all-cached / docs-only
+        "no_partitions",        # all files cached
         "docs_only",            # arbitrate-budget waived the BHA floor
         "gated_by_verify",      # BLOCKING sanitization
     }
@@ -13235,7 +13235,7 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
 
     # Synthetic plan: shallow fleet is exactly BHA + BHB + unified_auditor.
     # Reusing _derive_spawn_agents_from_plan keeps BHA partition expansion,
-    # docs-only (no_partitions) handling, dedup, and patches-file naming
+    # all-cached (no_partitions) handling, dedup, and patches-file naming
     # in one place instead of duplicating per-tier logic.
     static_plan: dict[str, Any] = {
         "required": [
@@ -13290,7 +13290,7 @@ def _build_spawn_required_gap_findings(
 
     Benign reasons (intentional omissions, not coverage gaps): the
     PLN-723 ``deferred_pln723`` placeholder, ``no_partitions``
-    (all-cached / docs-only — BHA legitimately has nothing to do),
+    (all files cached — BHA legitimately has nothing to do),
     ``docs_only`` (arbitrate-budget waived the BHA floor for a
     docs-only diff), and ``gated_by_verify`` (BLOCKING sanitization
     already surfaces via agent_coverage-verify-blocking.json).

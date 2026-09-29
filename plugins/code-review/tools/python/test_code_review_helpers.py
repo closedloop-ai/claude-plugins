@@ -20528,7 +20528,7 @@ class TestPLN725Phase9RenderFleetSummaryNotes:
         assert "2 partition(s)" in out
         assert "(2/3)" in out
 
-    def test_budget_capped_docs_only_aggregate_uses_partition_count(
+    def test_budget_capped_zero_cap_aggregate_uses_partition_count(
         self, tmp_path: Path,
     ) -> None:
         """When the post-arbitrate cap is 0 without the docs-only
