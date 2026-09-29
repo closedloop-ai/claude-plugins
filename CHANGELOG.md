@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.16.1
+
+#### Changed
+- `guided-manual-qa` compares rendered columns, measured container width, and responsive mode with a comparable reference when data changes layout, and requires representative disposable fixtures before presenting the human checkpoint.
+
 ### code v1.16.0
 
 #### Added
