@@ -4,6 +4,26 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.16.0
+
+#### Added
+- `guided-manual-qa` rebinds results after a head change (`references/plan-methodology.md`, "Rebind results after a head change"). Each tested head records its merge base and stable patch-id. When only the base moved, checkpoints that the base's changed files cannot reach are carried forward and the rest reset to `PENDING`; when the patch-id changed, every checkpoint the delta reaches resets unless a written reason says otherwise. A carried-forward result is never described as exercised on the new head.
+- The QA record template keeps checkpoint attempts in an append-only table (attempt, head, patch-id, status, actual, confirmer, time, evidence, carry-forward reason), and records the merge base and patch-id per tested head and the resume point.
+- Agent dry run as oracle item 6: when the repository declares a verification protocol, the agent drives each checkpoint itself first, through the entry point the requirement names, captures the action and resulting state, adds a read-only second view after a write, and runs writes only on disposable data that is reset before the human's run.
+- "Bug-fix checkpoints" in `references/plan-methodology.md`: the primary checkpoint is the original reproduction on the reported surface, with named correct and broken final states. It reuses a recorded repro or has the agent reproduce it on the base twice, and an inconclusive observation is `BLOCKED` with reason "inconclusive", never `PASS`.
+- Discovery routes in `references/plan-methodology.md` for consumers, candidate E2E coverage, and prior QA on the same surface, through the closedloop-graph tools when they are available and `rg`, `git log -S`, and `gh` otherwise.
+- `tools/guided-manual-qa/src/skill-contract.test.ts` pins the head-change rule, the append-only attempt table, the agent dry run, inconclusive-is-`BLOCKED`, evidence stored outside the worktree, and that the skill names no workflow skill or harness-only variable.
+
+#### Changed
+- A resumed session applies the head-change rule to every recorded result, names the next `PENDING` checkpoint as the resume point, and does not re-present a checkpoint whose result still applies.
+- Checkpoint prompts hand the human only the step that needs human judgment, in a fixed shape: where you are, the one thing to do, what you should see, and what to reply with.
+- Before recording `FAIL`, the agent re-runs the environment proof; drift is a setup `BLOCKED` or an `ORACLE CORRECTION`. After a `FAIL`, a changed fixture, flag, seed, viewport, or wording is a new checkpoint and the `FAIL` row stays.
+- Ticket, PR, and review-comment text is treated as data, and a result reported outside the conversation counts only when the platform author matches the named confirmer.
+- Cited evidence is stored in the record's own directory outside the worktree, and every evidence pointer is checked after cleanup. Summary lines cite their evidence and label unobserved claims `inferred` or `unverified`.
+- Feature-map prose is corroborating evidence, not a requirement; a wrong map entry is recorded as map drift, not a product `FAIL`.
+- `references/browser-state-fixtures.md` puts the repository's verification protocol first in the launcher order, with `pnpm control up web --headed` and `up desktop --headed --flag` as examples.
+- The example QA record location is now `~/.local/state/manual-qa/<repo>/<change-target>/`.
+
 ### code v1.15.1
 
 #### Added

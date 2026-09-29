@@ -4,7 +4,7 @@ Read this reference when a manual QA matrix depends on local storage, cookies, f
 
 ## Preferred order
 
-1. Use a repository-provided QA control or documented fixture launcher when one exists.
+1. Use the repository's verification protocol or documented fixture launcher when one exists. For example, a repository that ships a `pnpm control` protocol may open the interactive session with `pnpm control up web --headed` or `pnpm control up desktop --headed --flag <key>=true`, adding `--allow-write` only for checkpoints that write and only against this worktree's stack. A protocol that attaches to whatever already answers on its ports still needs the listener-ownership proof `SKILL.md` requires. When the protocol has no web local-storage fixture option, use the bundled launcher for those matrices.
 2. Otherwise, use the repository's installed Playwright to create a dedicated interactive browser context with state populated before the first application navigation.
 3. If neither path is supported, mark the affected setup and checkpoints `BLOCKED`. Do not ask the human to use DevTools as routine setup and do not bypass a browser safety refusal.
 
