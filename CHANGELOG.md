@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.15.1
+
+#### Added
+- `skills/guided-manual-qa/agents/openai.yaml` carries Codex display metadata, so Codex and Claude Code load the same `guided-manual-qa` skill directory.
+- `guided-manual-qa` keeps a QA session alive across tool calls or worker turns: services run under a repository-supported or OS-supported owner that survives that boundary, the record says how to inspect and stop it, and a resumed session rereads the QA record and rechecks the head, owned processes, listeners, data target, and route instead of trusting earlier PIDs or ready checks.
+- The QA record template gains a line for the interactive window or app owner, its settled route and control, and the last live verification time, plus a note under the services table to record each process owner and recheck the rows after a resume.
+
+#### Changed
+- Before a UI checkpoint, the agent opens the requested window or app itself, verifies the settled origin and a visible control owned by the route, and keeps it available; an unready window keeps the checkpoint pending as a setup limitation. After presenting a checkpoint the agent stops making tool calls until the human responds or asks for setup help.
+- `SKILL.md` names the bundled launcher as `scripts/dist/launch-interactive-browser.mjs` relative to the skill directory and has the agent resolve its absolute path from where it read `SKILL.md`, instead of using `${CLAUDE_SKILL_DIR}`, which only Claude Code expands. `references/browser-state-fixtures.md` uses the same placeholder in its example command.
+
 ### code v1.15.0
 
 #### Added
