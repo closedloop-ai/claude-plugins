@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.15.1
+
+#### Fixed
+- `codex-review`'s `run_codex_review.sh` no longer passes `--full-auto`, which current codex-cli rejects with exit 2, so every review round failed. It now passes `-c sandbox_mode=read-only`, which both `codex exec` and `codex exec resume` accept; `-s read-only` would have broken every resumed round.
+- `run_codex_review.sh` keeps codex's stderr instead of discarding it. `CODEX_FAILED` now carries one line of it after the exit code (the first line naming an error, else the last line, skipping the `Reading ... from stdin...` banner), the full stderr goes to the script's stderr, and a failed session resume names its cause before falling back to a fresh session.
+
 ### code v1.15.0
 
 #### Added

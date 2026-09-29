@@ -84,6 +84,7 @@ tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
 
 codex_json="$tmp_dir/codex_output.json"
+codex_stderr="$tmp_dir/codex_stderr.txt"
 prompt_file="$tmp_dir/prompt.txt"
 
 # ── Build the review prompt ──────────────────────────────────────────────────
@@ -263,13 +264,23 @@ run_codex_cmd() {
   # Log round header
   printf '\n--- Round %s | %s ---\n' "$ROUND" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOG_FILE"
   # Tee raw JSON stream to both the capture file and the persistent log
-  codex "$@" 2>/dev/null | tee -a "$LOG_FILE" > "$json_out"
+  codex "$@" 2>"$codex_stderr" | tee -a "$LOG_FILE" > "$json_out"
+}
+
+# One line from the last codex run's stderr: the first naming an error, else the
+# last. Skips codex's "Reading ... from stdin..." banner, which precedes failures.
+codex_stderr_reason() {
+  local lines
+  lines=$(tr -d '\r' < "$codex_stderr" 2>/dev/null | grep -v -e '^[[:space:]]*$' -e '^Reading .*stdin\.\.\.$') || true
+  grep -i -m1 'error' <<<"$lines" || tail -n1 <<<"$lines"
 }
 
 effective_session_id="$SESSION_ID"
 codex_exit=0
 
-base_args=(--full-auto --json -m "$CODEX_MODEL" -c model_reasoning_effort=high)
+# `-c sandbox_mode=` rather than `--full-auto` (rejected since codex-cli 0.154)
+# or `-s` (rejected by `codex exec resume`), so one arg set serves both calls.
+base_args=(--json -m "$CODEX_MODEL" -c sandbox_mode=read-only -c model_reasoning_effort=high)
 prompt_content=$(cat "$prompt_file")
 
 # Attempt session resume if we have a prior session ID
@@ -292,7 +303,7 @@ if [[ -n "$SESSION_ID" ]]; then
     # Resume succeeded -- skip to verdict extraction
     :
   else
-    echo "Codex session resume failed, starting fresh session..." >&2
+    echo "Codex session resume failed ($(codex_stderr_reason)), starting fresh session..." >&2
     effective_session_id=""
     rm -f "$codex_json"
 
@@ -330,7 +341,9 @@ feedback_content=$(cat "$FEEDBACK_FILE" 2>/dev/null || echo "")
 
 # Handle failures
 if [[ $codex_exit -ne 0 ]] && [[ -z "$feedback_content" ]]; then
-  echo "CODEX_FAILED:codex exited with code $codex_exit"
+  cat "$codex_stderr" >&2 2>/dev/null || true
+  reason=$(codex_stderr_reason)
+  echo "CODEX_FAILED:codex exited with code $codex_exit${reason:+: $reason}"
   echo "CODEX_SESSION:${effective_session_id:-none}"
   echo "LOG_ID:$LOG_ID"
   exit 0
