@@ -170,7 +170,8 @@ The terminal artifact of every review run.
       "total_cap": <int>,
       "required_count": <int>,
       "best_effort_count": <int>,
-      "bha_partitions": <int>
+      "bha_partitions": <int>,
+      "docs_only": true                // only when arbitrate-budget waived the BHA floor
     }
   },
   "coverage_gaps": [<finding with category=Coverage and finding_scope=system>, ...],
@@ -347,7 +348,7 @@ ignored at spawn time.
     {
       "reviewer": "<name>",
       "bucket": "required | best_effort",
-      "reason": "deferred_pln723 | no_partitions | unknown_reviewer | missing_reviewer_name | duplicate_agent_id | budget_capped | gated_by_verify",
+      "reason": "deferred_pln723 | no_partitions | docs_only | unknown_reviewer | missing_reviewer_name | duplicate_agent_id | budget_capped | gated_by_verify",
       "agent_id": "<id>",              // only on duplicate_agent_id
       "partition_id": 0,               // only on budget_capped (BHA)
       "budget_cap": 0,                 // only on budget_capped
@@ -376,7 +377,7 @@ constants in `code_review_schema.py`):
 | `arbitrate_status` | `ok`, `blocked_by_verify`, `fallback`, `static` | `ok` = normal arbitration ran; `blocked_by_verify` = Phase 7 BLOCKING gate fired upstream and the plan passed through unchanged; `fallback` = derive failed, orchestrator must walk the static reviewer table in the `code-review:spawn-reviewers` skill; `static` (PLN-807) = shallow tier — the spec was emitted by `derive-static-spec` (fixed BHA + BHB + unified_auditor fleet) without consulting a coverage plan, and `stage_20` treats it identically to `fallback` (use the spec verbatim, skip the bucket walk); the distinct status is a telemetry signal that distinguishes user intent (shallow) from upstream derive failure |
 | `source` | `core`, `rule`, `critic`, `fast_path` | Selects the prompt-suffix dispatch in the `code-review:spawn-reviewers` skill (`source: "core"` further branches on `reviewer`; `rule` and `critic` both map to the Domain Critic suffix — `rule` for deterministically matched critic-gates rules including migrated `moduleCritics[]`, `critic` for LLM-proposed additions) |
 | `bucket` | `required`, `best_effort`, `fast_path` | Mirrors the source bucket in `coverage_plan.json` |
-| `skipped[].reason` | `deferred_pln723`, `no_partitions`, `unknown_reviewer`, `missing_reviewer_name`, `duplicate_agent_id`, `budget_capped`, `gated_by_verify` | Reasons surfaced so operators see why a reviewer was omitted |
+| `skipped[].reason` | `deferred_pln723`, `no_partitions`, `docs_only`, `unknown_reviewer`, `missing_reviewer_name`, `duplicate_agent_id`, `budget_capped`, `gated_by_verify` | Reasons surfaced so operators see why a reviewer was omitted |
 | `fallback_reason` | `coverage_plan_missing_or_malformed`, `partitions_missing_or_malformed` | Only set when `arbitrate_status == "fallback"`; names the specific upstream-artifact failure |
 
 **Fallback sentinel invariant:** when `arbitrate_status == "fallback"`,
@@ -403,12 +404,15 @@ does not duplicate it. Presenters use `gated_by_verify` to surface
 by the count of partitions in `partitions.json`. When the partitioner
 emitted more partitions than the budget reserved, the first `cap`
 partitions spawn and the rest land in `skipped[]` with
-`reason: "budget_capped"`. A cap of 0 (docs-only post-arbitrate)
-suppresses all BHA spawns regardless of partition count.
+`reason: "budget_capped"`. A cap of 0 suppresses all BHA spawns
+regardless of partition count. When arbitrate-budget set the cap to 0
+because the diff is docs-only (`coverage_plan.budget.docs_only: true`),
+the single skipped entry carries `reason: "docs_only"`; a cap of 0
+without that marker keeps `reason: "budget_capped"`.
 
 **Required coverage-gap invariant:** every entry in `skipped[]`
 with `bucket == "required"` and a non-benign reason
-(everything except `deferred_pln723`, `no_partitions`,
+(everything except `deferred_pln723`, `no_partitions`, `docs_only`,
 `gated_by_verify`) produces a coverage-gap finding appended to
 `coverage_gaps.json`. `cmd_finalize_result` reads that file into the
 envelope's coverage-gap bucket where it contributes to the canonical

@@ -12238,6 +12238,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         return 1
 
     diff_data = _read_optional_json(Path(args.diff_data), {}) or {}
+    docs_only = _is_docs_only(diff_data)
     cap: int = int(args.cap)
     if cap <= 0:
         print(f"Error: --cap must be > 0, got {cap}", file=sys.stderr)
@@ -12325,7 +12326,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         # leftover capacity, so a BLOCKING verdict on a critic-heavy
         # plan does not crush BHA to its floor=1 the same way the
         # pre-PLN-807 PASS path did. Docs-only PRs still get 0.
-        if _is_docs_only(diff_data):
+        if docs_only:
             blocking_bha_partitions = 0
         else:
             blocking_bha_partitions = max(
@@ -12351,6 +12352,8 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
             "arbitrate_status": "blocked_by_verify",
             "generated_at": now_iso_gate,
         }
+        if docs_only:
+            final_plan["budget"]["docs_only"] = True
         rc = _persist_plan(final_plan)
         if rc != 0:
             return rc
@@ -12377,7 +12380,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         sys.stdout.write("\n")
         return 0
 
-    bha_floor = 0 if _is_docs_only(diff_data) else BUDGET_BHA_FLOOR_DEFAULT
+    bha_floor = 0 if docs_only else BUDGET_BHA_FLOOR_DEFAULT
     max_bha = _max_bha_partitions_by_loc(diff_data)
 
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -12393,7 +12396,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     # coverage budget. ``_max_bha_partitions_by_loc`` already caps at
     # ``DEFAULT_MAX_BHA_AGENTS`` internally, so no second min() is
     # needed.
-    if _is_docs_only(diff_data):
+    if docs_only:
         bha_target = 0
     else:
         bha_target = max(bha_floor, max_bha)
@@ -12533,6 +12536,10 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         },
         "dropped_required": dropped_required,
     }
+    # ISS-10869: records why ``bha_partitions`` is 0 so derive-spawn-spec
+    # can tell the deliberate docs-only skip from a budget-capped drop.
+    if docs_only:
+        final_plan["budget"]["docs_only"] = True
 
     rc = _persist_plan(final_plan)
     if rc != 0:
@@ -12550,7 +12557,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
             "deferred_count": len(deferred_for_budget),
             "dropped_required_count": len(dropped_required),
             "bha_partitions": bha_partitions,
-            "docs_only": _is_docs_only(diff_data),
+            "docs_only": docs_only,
         },
         sys.stdout,
         indent=2,
@@ -12685,6 +12692,7 @@ def _derive_spawn_agents_from_plan(
     models: dict[str, Any],
     *,
     bha_partitions_cap: int | None = None,
+    docs_only: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Walk the post-arbitrate plan into a flat (agents, skipped) pair.
 
@@ -12700,9 +12708,11 @@ def _derive_spawn_agents_from_plan(
     and the post-arbitrate cap are computed at different times and
     can diverge), the first K partitions are spawned and the rest
     land in ``skipped[]`` with ``reason: "budget_capped"``. A cap of 0
-    suppresses all BHA spawns (docs-only post-arbitrate). ``None``
-    means "no cap" — only used by callers that pre-date the cap
-    parameter.
+    suppresses all BHA spawns: with ``docs_only`` (arbitrate-budget
+    waived the BHA floor) the one skipped entry carries
+    ``reason: "docs_only"``; without it the zero is a cap and keeps
+    ``reason: "budget_capped"``. ``None`` means "no cap" — only used by
+    callers that pre-date the cap parameter.
     """
     agents: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -12744,8 +12754,7 @@ def _derive_spawn_agents_from_plan(
                 # partitions on disk (the route-level
                 # ``max_bha_agents`` and the post-arbitrate cap are
                 # computed at different times and can diverge). When
-                # the cap is 0, no BHA agents spawn at all
-                # (docs-only post-arbitrate). When the cap is positive
+                # the cap is 0, no BHA agents spawn at all. When the cap is positive
                 # but < len(partitions), the first cap partitions
                 # spawn (partitions are bin-packed by the partitioner
                 # in roughly diff-LOC order, so prefix-take is the
@@ -12754,8 +12763,14 @@ def _derive_spawn_agents_from_plan(
                 dropped_for_cap: list[dict[str, Any]] = []
                 if bha_partitions_cap is not None:
                     cap = max(0, int(bha_partitions_cap))
+                    if cap == 0 and docs_only:
+                        skipped.append({
+                            "reviewer": reviewer,
+                            "bucket": bucket,
+                            "reason": "docs_only",
+                        })
+                        return
                     if cap == 0:
-                        # Docs-only post-arbitrate; skip BHA entirely.
                         skipped.append({
                             "reviewer": reviewer,
                             "bucket": bucket,
@@ -13080,6 +13095,7 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     agents, skipped = _derive_spawn_agents_from_plan(
         plan_for_spawn, partitions, models,
         bha_partitions_cap=bha_cap,
+        docs_only=budget.get("docs_only") is True,
     )
     skipped.extend(sanitized_extras)
 
@@ -13089,12 +13105,13 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     # missing required reviewer). The spawn-spec path now emits the
     # same canonical Coverage finding so finalize-result picks it up
     # via coverage_gaps.json. Benign reasons (test_quality deferral,
-    # all-cached/docs-only no_partitions, gated_by_verify suppression)
-    # are explicitly excluded — those are intentional omissions, not
+    # all-cached/docs-only no_partitions, the docs_only BHA floor waiver,
+    # gated_by_verify suppression) are explicitly excluded — those are intentional omissions, not
     # coverage gaps.
     _SPAWN_BENIGN_REQUIRED_SKIPS = {
         "deferred_pln723",      # PLN-723 placeholder slot
         "no_partitions",        # all-cached / docs-only
+        "docs_only",            # arbitrate-budget waived the BHA floor
         "gated_by_verify",      # BLOCKING sanitization
     }
     spawn_gap_findings = _build_spawn_required_gap_findings(
@@ -13274,8 +13291,9 @@ def _build_spawn_required_gap_findings(
     Benign reasons (intentional omissions, not coverage gaps): the
     PLN-723 ``deferred_pln723`` placeholder, ``no_partitions``
     (all-cached / docs-only — BHA legitimately has nothing to do),
-    and ``gated_by_verify`` (BLOCKING sanitization already surfaces
-    via agent_coverage-verify-blocking.json).
+    ``docs_only`` (arbitrate-budget waived the BHA floor for a
+    docs-only diff), and ``gated_by_verify`` (BLOCKING sanitization
+    already surfaces via agent_coverage-verify-blocking.json).
     """
     findings: list[dict[str, Any]] = []
     idx = 0
@@ -13808,11 +13826,12 @@ def _render_fleet_notes(
     # one note. Two emission shapes from _derive_spawn_agents_from_plan:
     #   - cap > 0: one capped entry per dropped partition (each
     #     carries ``partition_id``). Dropped count = len(entries).
-    #   - cap == 0 (docs-only post-arbitrate): a single aggregate
+    #   - cap == 0 without the docs-only marker: a single aggregate
     #     entry covers ALL N suppressed partitions (no
     #     ``partition_id``; ``partition_count`` reflects the total).
     #     Dropped count = ``partition_count`` from the aggregate.
-    # Counting len(capped_entries) under-reports the docs-only case
+    #     (A docs-only zero is ``reason: "docs_only"``, not counted here.)
+    # Counting len(capped_entries) under-reports the aggregate case
     # as "1 partition(s)" when N partitions were actually suppressed
     # via a single aggregate entry.
     capped_entries = [

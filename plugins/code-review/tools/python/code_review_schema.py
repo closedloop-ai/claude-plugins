@@ -291,6 +291,7 @@ SPAWN_SPEC_BUCKETS: frozenset[str] = frozenset({
 SPAWN_SPEC_SKIP_REASONS: frozenset[str] = frozenset({
     "deferred_pln723",         # test_quality slot reserved for PLN-723
     "no_partitions",           # all files cached or docs-only → no BHA
+    "docs_only",               # arbitrate-budget waived the BHA floor (docs-only diff)
     "unknown_reviewer",        # closed-vocab violation: not core, not critic
     "missing_reviewer_name",   # plan entry with blank/missing reviewer
     "duplicate_agent_id",      # same agent_id produced twice (defense-in-depth)
