@@ -257,6 +257,25 @@ sys.stdout.write('\n'.join(lines))
 " "$json_file" > "$output_file" 2>/dev/null
 }
 
+# Extract the failure message from the JSON stream: the last turn.failed error,
+# else the last top-level error event. Prints it on one line, or nothing.
+parse_failure_message() {
+  python3 -c "
+import json, sys
+turn = err = ''
+for line in open(sys.argv[1]):
+    try:
+        e = json.loads(line.strip())
+        if e.get('type') == 'turn.failed':
+            turn = e['error']['message'] or turn
+        elif e.get('type') == 'error':
+            err = e['message'] or err
+    except Exception:
+        pass
+print(' '.join(str(turn or err).split()))
+" "$1" 2>/dev/null || true
+}
+
 # ── Run codex ────────────────────────────────────────────────────────────────
 
 run_codex_cmd() {
@@ -267,19 +286,25 @@ run_codex_cmd() {
   codex "$@" 2>"$codex_stderr" | tee -a "$LOG_FILE" > "$json_out"
 }
 
-# One line from the last codex run's stderr: the first naming an error, else the
-# last. Skips codex's "Reading ... from stdin..." banner, which precedes failures.
-codex_stderr_reason() {
-  local lines
+# One line saying why the last codex run failed. Turn failures arrive in the JSON
+# stream; CLI and config errors only on stderr, where the first line starting with
+# "error" wins, else the last line, skipping the "Reading ... stdin..." banner.
+codex_failure_reason() {
+  local reason lines
+  reason=$(parse_failure_message "$codex_json")
+  if [[ -n "$reason" ]]; then
+    echo "$reason"
+    return
+  fi
   lines=$(tr -d '\r' < "$codex_stderr" 2>/dev/null | grep -v -e '^[[:space:]]*$' -e '^Reading .*stdin\.\.\.$') || true
-  grep -i -m1 'error' <<<"$lines" || tail -n1 <<<"$lines"
+  grep -i -m1 '^error' <<<"$lines" || tail -n1 <<<"$lines"
 }
 
 effective_session_id="$SESSION_ID"
 codex_exit=0
 
-# `-c sandbox_mode=` rather than `--full-auto` (rejected since codex-cli 0.154)
-# or `-s` (rejected by `codex exec resume`), so one arg set serves both calls.
+# `-c sandbox_mode=` rather than `--full-auto` (removed in codex-cli 0.147) or
+# `-s` (rejected by `codex exec resume`), so one arg set serves both calls.
 base_args=(--json -m "$CODEX_MODEL" -c sandbox_mode=read-only -c model_reasoning_effort=high)
 prompt_content=$(cat "$prompt_file")
 
@@ -303,7 +328,8 @@ if [[ -n "$SESSION_ID" ]]; then
     # Resume succeeded -- skip to verdict extraction
     :
   else
-    echo "Codex session resume failed ($(codex_stderr_reason)), starting fresh session..." >&2
+    resume_reason=$(codex_failure_reason)
+    echo "Codex session resume failed${resume_reason:+ ($resume_reason)}, starting fresh session..." >&2
     effective_session_id=""
     rm -f "$codex_json"
 
@@ -342,7 +368,7 @@ feedback_content=$(cat "$FEEDBACK_FILE" 2>/dev/null || echo "")
 # Handle failures
 if [[ $codex_exit -ne 0 ]] && [[ -z "$feedback_content" ]]; then
   cat "$codex_stderr" >&2 2>/dev/null || true
-  reason=$(codex_stderr_reason)
+  reason=$(codex_failure_reason)
   echo "CODEX_FAILED:codex exited with code $codex_exit${reason:+: $reason}"
   echo "CODEX_SESSION:${effective_session_id:-none}"
   echo "LOG_ID:$LOG_ID"

@@ -7,8 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### code v1.15.1
 
 #### Fixed
-- `codex-review`'s `run_codex_review.sh` no longer passes `--full-auto`, which current codex-cli rejects with exit 2, so every review round failed. It now passes `-c sandbox_mode=read-only`, which both `codex exec` and `codex exec resume` accept; `-s read-only` would have broken every resumed round.
-- `run_codex_review.sh` keeps codex's stderr instead of discarding it. `CODEX_FAILED` now carries one line of it after the exit code (the first line naming an error, else the last line, skipping the `Reading ... from stdin...` banner), the full stderr goes to the script's stderr, and a failed session resume names its cause before falling back to a fresh session.
+- `codex-review`'s `run_codex_review.sh` no longer passes `--full-auto`, which codex-cli 0.147 removed, so every review round exited 2. It now passes `-c sandbox_mode=read-only`, which both `codex exec` and `codex exec resume` accept; `-s read-only` would have broken every resumed round. The reviewer's sandbox narrows from `--full-auto`'s workspace-write to read-only.
+- `run_codex_review.sh` keeps codex's stderr instead of discarding it. `CODEX_FAILED` now carries one line after the exit code saying why codex failed: the last `turn.failed` (else `error`) message from the JSON stream, otherwise the first stderr line starting with `error`, otherwise the last stderr line, skipping the `Reading ... from stdin...` banner. The full stderr goes to the script's stderr, and a failed session resume names its cause before falling back to a fresh session.
+- `debate-loop.sh` prints the `CODEX_FAILED` reason with `printf '%s'` instead of `echo -e`, so backslashes in codex's message are printed as-is instead of being read as escapes.
 
 ### code v1.15.0
 
