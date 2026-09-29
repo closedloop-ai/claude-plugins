@@ -44,6 +44,8 @@ if mode == "reject-json":
 if mode == "runtime-error":
     sys.stderr.write("Not inside a trusted directory and --skip-git-repo-check was not specified.\n")
     sys.exit(1)
+if mode == "banner-only":
+    sys.exit(1)
 
 print(json.dumps({"type": "thread.started", "thread_id": "thread-new"}))
 print(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "VERDICT: APPROVED"}}))
@@ -133,3 +135,11 @@ def test_codex_failed_carries_the_last_stderr_line_when_none_names_an_error(
         "CODEX_FAILED:codex exited with code 1: "
         "Not inside a trusted directory and --skip-git-repo-check was not specified."
     )
+
+
+def test_codex_failed_does_not_report_the_stdin_banner_as_the_cause(
+    tmp_path: Path,
+) -> None:
+    result, _ = run_review(tmp_path, "--round", "1", mode="banner-only")
+
+    assert result.stdout.splitlines()[0] == "CODEX_FAILED:codex exited with code 1"
