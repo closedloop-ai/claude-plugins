@@ -31,10 +31,10 @@ const context = await browser.newContext({
 
 Values in Web Storage are strings. Serialize structured fixtures once, before building the entries. Validate the target with `new URL()` and use its exact `.origin`; never accept an arbitrary script or expression as fixture input.
 
-The bundled launcher implements this path without writing browser state into the repository. Run it with the bootstrapped repository root as the working directory, using the absolute launcher path given in SKILL.md:
+The bundled launcher implements this path without writing browser state into the repository. Run it with the bootstrapped repository root as the working directory. Its path is relative to the skill directory, so resolve the absolute path as SKILL.md describes:
 
 ```bash
-node "<launcher path from SKILL.md>" \
+node "<absolute skill directory>/scripts/dist/launch-interactive-browser.mjs" \
   --url 'http://localhost:3000/path-under-test' \
   --storage-file /private/untracked/storage-fixture.json \
   --state-name 'flag-matrix-state' \

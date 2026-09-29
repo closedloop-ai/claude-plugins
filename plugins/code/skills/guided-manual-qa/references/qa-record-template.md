@@ -29,6 +29,7 @@ Copy this template to the chosen durable, untracked QA-record location. This phy
 - Browser state origin and non-secret keys:
 - Browser state verification:
 - Disposable browser context/profile and cleanup path:
+- Interactive window or app owner, settled route/control, and last live verification time:
 - Feature-flag assignments:
 - Role / permissions:
 - Local or non-production account / tenant:
@@ -38,6 +39,8 @@ Copy this template to the chosen durable, untracked QA-record location. This phy
 
 | Service | Launch command | Cwd | PID | Listener / endpoint | Health result | Proof it maps to this worktree |
 | --- | --- | --- | --- | --- | --- | --- |
+
+Record the service owner or supervisor that keeps each required process alive across tool calls or worker turns, plus the supported command that inspects and stops only that owner. Recheck these rows after a resume; prior readiness is historical evidence.
 
 ### Persistence runtime proof
 
