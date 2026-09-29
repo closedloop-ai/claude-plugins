@@ -13,6 +13,8 @@ Copy this template to the chosen durable, untracked QA-record location. This phy
 - Change target (ticket, branch, PR, or description):
 - Base revision:
 - Head revision:
+- Merge base and stable patch-id at each tested head:
+- Resume point (next `PENDING` checkpoint):
 - Uncommitted changes under test:
 - Requirements consulted:
 - Repository instructions consulted:
@@ -100,16 +102,19 @@ Every planned scenario must appear here even if it has not started. When a scena
 - Active defaults, persisted state, hierarchy, and population effects:
 - Applicability boundary / intentionally absent behavior:
 - Prerequisites and starting state:
+- Entry point used (feature-map id and route, when the repository keeps a feature map):
+- Agent dry run (capture, or link to an earlier capture of this entry point on this head):
+- Read-only second view after a write:
 - Human action or observation:
 - Expected:
-- Actual:
-- Status: `PASS` / `FAIL` / `BLOCKED` / `NOT APPLICABLE` / `ORACLE CORRECTION`
-- Confirmed by:
-- Confirmation time:
-- Evidence:
 - Agent-observed or automated supporting evidence:
 - Reset / cleanup performed:
 - Effect on later checkpoints:
+
+| Attempt | Head | Patch-id | Status | Actual | Confirmed by | Time | Evidence | Carry-forward reason |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+
+Status is `PASS`, `FAIL`, `BLOCKED`, `NOT APPLICABLE`, or `ORACLE CORRECTION`; an inconclusive observation is `BLOCKED` with reason "inconclusive". Append a row for every run, rerun, reset, or carry-forward. Never edit an earlier row. The latest row is the checkpoint's current status in "Planned coverage".
 
 Duplicate this section for each checkpoint.
 
@@ -135,6 +140,7 @@ Record a wrong-origin or wrong-service discovery as an `ORACLE CORRECTION`. Stat
 - Frequency:
 - Affected surfaces:
 - Logs, screenshots, or trace references:
+- Evidence label for each claim (`agent-observed`, `automated`, `inferred`, or `unverified`):
 - Related checkpoint IDs:
 - Local cleanup state:
 - Selected disposition: local evidence only / continue independent testing / investigate source / authorized external action
@@ -147,5 +153,9 @@ Record a wrong-origin or wrong-service discovery as an `ORACLE CORRECTION`. Stat
 - Confirmed findings:
 - Untested gaps and reasons:
 - Cleanup status:
-- Evidence locations:
+- Evidence locations (in the record's directory, outside the worktree):
+- Evidence pointers checked after cleanup, and any that no longer resolve:
+- Feature-map drift observed:
 - Selected next action:
+
+Each line cites the record section or evidence path that supports it. Label a claim nobody observed `inferred` or `unverified`.
