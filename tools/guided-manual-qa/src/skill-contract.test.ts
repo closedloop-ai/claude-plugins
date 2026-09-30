@@ -96,6 +96,22 @@ describe("guided-manual-qa skill contract", () => {
     );
   });
 
+  it("proves service readiness beyond a launcher or wrapper report", () => {
+    const environment = section(skill, "## Prepare a trustworthy local environment");
+    expect(environment).toContain(
+      "Before choosing a control launcher that binds fixed ports, verify whether it supports isolated ports, sessions, or project names for concurrent workers.",
+    );
+    expect(environment).toContain(
+      "use a documented manual isolated stack and record exact process ownership proof",
+    );
+    expect(environment).toContain("reporting `started` is not readiness by itself");
+    expect(environment).toContain(
+      "prove the actual listener and the route-owned ready selector before presenting a checkpoint",
+    );
+    expect(environment).toContain("run one bounded foreground diagnostic of the same documented command");
+    expect(environment).toContain("then stop that diagnostic before trying a fallback");
+  });
+
   it("stays standalone and harness-neutral", () => {
     for (const path of textFiles(SKILL_ROOT)) {
       const text = readFileSync(path, "utf8");
