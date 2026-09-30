@@ -112,6 +112,29 @@ describe("guided-manual-qa skill contract", () => {
     expect(environment).toContain("then stop that diagnostic before trying a fallback");
   });
 
+  it("routes to the human only what E2E and the agent cannot verify", () => {
+    expect(skill).toContain(
+      "Present a checkpoint to the human only when both are true: passing E2E on the current head does not already verify it, and the agent cannot reliably verify it itself",
+    );
+    const oracle = section(skill, "## Prove the checkpoint oracle before asking the human");
+    expect(oracle).toContain("Do not turn a plausible expectation into a human checkpoint.");
+    expect(oracle).toContain("Record `AGENT_VERIFIED` with its `agent-observed` evidence, and do not present the checkpoint");
+    expect(oracle).toContain("the checkpoint is not `AGENT_VERIFIED`; route it to the human");
+    expect(oracle).toContain("Never silently pass either.");
+    expect(skill).toContain("close one as `AGENT_VERIFIED` or `E2E_COVERED`, never as `PASS`");
+    const finish = section(skill, "## Finish the session");
+    expect(finish).toContain(
+      "separate counts for human-confirmed `PASS` and `FAIL`, `AGENT_VERIFIED`, `E2E_COVERED`, and `BLOCKED`",
+    );
+    expect(finish).toContain("each checkpoint left to the human and why it needed a human");
+    expect(section(template, "## Checkpoint results")).toContain(
+      'For `AGENT_VERIFIED`, "Confirmed by" is `agent-observed`, never a human name.',
+    );
+    expect(section(template, "## Final summary")).toContain(
+      "Checkpoints left to the human, and why each needed a human:",
+    );
+  });
+
   it("stays standalone and harness-neutral", () => {
     for (const path of textFiles(SKILL_ROOT)) {
       const text = readFileSync(path, "utf8");

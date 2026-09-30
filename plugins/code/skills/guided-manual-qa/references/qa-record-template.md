@@ -1,6 +1,6 @@
 # Manual QA Record
 
-Copy this template to the chosen durable, untracked QA-record location. This physical Markdown file is the complete plan and live execution ledger, not merely a final report. Populate the entire planned scenario inventory before the first human checkpoint and update the file after every material action. Remove unused optional rows, but retain explicit gaps and `not applicable` decisions.
+Copy this template to the chosen durable, untracked QA-record location. This physical Markdown file is the complete plan and live execution ledger, not merely a final report. Populate the entire planned scenario inventory before the first checkpoint and update the file after every material action. Remove unused optional rows, but retain explicit gaps and `not applicable` decisions.
 
 ## Session identity
 
@@ -78,14 +78,14 @@ These results prepare the session and do not count as human confirmation.
 | Requirement / candidate checkpoint | Shipping host and state | E2E spec and assertion | Tested head and result | Manual gap, if any |
 | --- | --- | --- | --- | --- |
 
-Record a candidate here rather than in the human queue when a passing E2E case proves its same host, flags, fixture transition, action, and oracle. An E2E result is automated coverage, not a human `PASS`. Recheck every row after a head change; preserve the prior evidence without pretending it ran on the new head.
+Record a candidate here as `E2E_COVERED`, rather than in planned coverage, when a passing E2E case proves its same host, flags, fixture transition, action, and oracle. An E2E result is automated coverage, not a human `PASS`. Recheck every row after a head change; preserve the prior evidence without pretending it ran on the new head.
 
 ## Planned coverage
 
 | ID | Priority | Surface / risk not covered by E2E | Requirement | Dependencies | Status |
 | --- | --- | --- | --- | --- | --- |
 
-Use `PENDING`, `PASS`, `FAIL`, `BLOCKED`, or `NOT APPLICABLE` for human-checkpoint status. In a carried-forward plan, `E2E_COVERED` means a former human checkpoint moved to the exact-head E2E coverage map; link its matching assertion and result, and exclude it from human pass/fail counts.
+Use `PENDING`, `PASS`, `FAIL`, `BLOCKED`, `NOT APPLICABLE`, or `AGENT_VERIFIED` for checkpoint status. `AGENT_VERIFIED` means the agent closed the checkpoint under the routing rule in `SKILL.md` without presenting it; it is never a human `PASS`. In a carried-forward plan, `E2E_COVERED` means a former checkpoint moved to the exact-head E2E coverage map; link its matching assertion and result. Exclude both from human pass/fail counts.
 
 Every planned scenario must appear here even if it has not started. When a scenario is blocked, retain it and record the exact prerequisite and recheck condition rather than deleting or silently narrowing it.
 
@@ -104,6 +104,7 @@ Every planned scenario must appear here even if it has not started. When a scena
 - Prerequisites and starting state:
 - Entry point used (feature-map id and route, when the repository keeps a feature map):
 - Agent dry run (capture, or link to an earlier capture of this entry point on this head):
+- Routing (`AGENT_VERIFIED` with its evidence, or the reason this checkpoint needs a human):
 - Read-only second view after a write:
 - Human action or observation:
 - Expected:
@@ -114,7 +115,7 @@ Every planned scenario must appear here even if it has not started. When a scena
 | Attempt | Head | Patch-id | Status | Actual | Confirmed by | Time | Evidence | Carry-forward reason |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
-Status is `PASS`, `FAIL`, `BLOCKED`, `NOT APPLICABLE`, or `ORACLE CORRECTION`; an inconclusive observation is `BLOCKED` with reason "inconclusive". Append a row for every run, rerun, reset, or carry-forward. Never edit an earlier row. The latest row is the checkpoint's current status in "Planned coverage".
+Status is `PASS`, `FAIL`, `BLOCKED`, `NOT APPLICABLE`, `AGENT_VERIFIED`, or `ORACLE CORRECTION`; an inconclusive observation is `BLOCKED` with reason "inconclusive". For `AGENT_VERIFIED`, "Confirmed by" is `agent-observed`, never a human name. Append a row for every run, rerun, reset, or carry-forward. Never edit an earlier row. The latest row is the checkpoint's current status in "Planned coverage".
 
 Duplicate this section for each checkpoint.
 
@@ -149,7 +150,8 @@ Record a wrong-origin or wrong-service discovery as an `ORACLE CORRECTION`. Stat
 ## Final summary
 
 - Coverage completed:
-- Pass / fail / blocked totals:
+- Separate counts: human-confirmed `PASS` and `FAIL`, `AGENT_VERIFIED`, `E2E_COVERED`, and `BLOCKED`:
+- Checkpoints left to the human, and why each needed a human:
 - Confirmed findings:
 - Untested gaps and reasons:
 - Cleanup status:

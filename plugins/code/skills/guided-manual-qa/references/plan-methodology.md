@@ -29,7 +29,7 @@ A graph zero is a claim about the query, not about the code. Without the graph, 
 
 ## Separate E2E coverage from human checkpoints
 
-Map each proposed observation to a passing E2E assertion on the current head. Count it as covered only when the same shipping host, flag assignment, fixture transition, action, and expected outcome are exercised. Record the test, assertion, head, and result in the QA record. Put only uncovered behavior and explicitly human-only requirements in the manual queue; a related test or a broader green job is not enough. Recheck the map after a head change, as the next section describes.
+Map each proposed observation to a passing E2E assertion on the current head. Count it as covered only when the same shipping host, flag assignment, fixture transition, action, and expected outcome are exercised. Record the test, assertion, head, and result in the QA record. Put only uncovered behavior and explicitly human-only requirements in the manual plan, where `SKILL.md` routes each checkpoint to agent verification or to the human; a related test or a broader green job is not enough. Recheck the map after a head change, as the next section describes.
 
 ## Rebind results after a head change
 
@@ -64,7 +64,7 @@ Prefer a small set of discriminating scenarios over many cosmetic repetitions. A
 
 For a change that fixes a reported bug, the primary checkpoint is the original reproduction on the surface where it was reported. Before scheduling it, name the correct final state and the broken final state; a setup step, expected dialog, or loading state is not the bug. Reuse a recorded repro of the bug if one exists, as the checkpoint's path and its "before" evidence; otherwise reproduce it yourself on the base, twice, before scheduling the checkpoint. Do not ask the human to reproduce it on the base unless you cannot reach that surface, and record why.
 
-The human checkpoint passes only when the human reaches the point of divergence on the head and sees the correct final state. For an intermittent bug, ask for two independent runs. An observation that does not show the discriminating state, or one made on a different surface, is `BLOCKED` with reason "inconclusive", never `PASS`.
+The checkpoint passes only when its observer, the human or the agent under the routing rule in `SKILL.md`, reaches the point of divergence on the head and sees the correct final state. For an intermittent bug, require two independent runs. An observation that does not show the discriminating state, or one made on a different surface, is `BLOCKED` with reason "inconclusive", never `PASS`.
 
 ## Apply conditional lenses
 

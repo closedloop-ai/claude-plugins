@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.16.3
+
+#### Changed
+- `guided-manual-qa` presents a checkpoint to the human only when passing E2E on the current head does not already verify it and the agent cannot reliably verify it itself. After the oracle proof, the agent records a checkpoint it conclusively observed as `AGENT_VERIFIED` with `agent-observed` evidence and does not present it; it routes to the human only visual or perceptual judgments, flows it cannot drive or observe reliably (real OAuth, OS dialogs, hardware, third-party UIs), and product-judgment calls, and records why. An inconclusive agent observation goes to the human, and a contradicting one is settled as setup, oracle, or a candidate finding; neither is silently passed.
+- `AGENT_VERIFIED` and `E2E_COVERED` join the status meanings and are never a human `PASS`. The final summary reports human-confirmed `PASS` and `FAIL`, `AGENT_VERIFIED`, `E2E_COVERED`, and `BLOCKED` counts separately, and lists each checkpoint left to the human with the reason it needed one. The interactive window opens only when at least one checkpoint is routed to the human.
+- The QA record template adds `AGENT_VERIFIED` to the checkpoint statuses, a routing line per checkpoint, `agent-observed` as the confirmer for agent-verified attempts, and the separate counts and human-routed list in the final summary. A bug-fix checkpoint can be closed by the agent under the same routing rule.
+- `tools/guided-manual-qa/src/skill-contract.test.ts` pins the routing rule, the inconclusive-observation escalation, and the separate summary counts.
+
 ### code v1.16.2
 
 #### Changed
