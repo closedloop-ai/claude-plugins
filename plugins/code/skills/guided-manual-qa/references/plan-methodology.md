@@ -64,7 +64,7 @@ Prefer a small set of discriminating scenarios over many cosmetic repetitions. A
 
 For a change that fixes a reported bug, the primary checkpoint is the original reproduction on the surface where it was reported. Before scheduling it, name the correct final state and the broken final state; a setup step, expected dialog, or loading state is not the bug. Reuse a recorded repro of the bug if one exists, as the checkpoint's path and its "before" evidence; otherwise reproduce it yourself on the base, twice, before scheduling the checkpoint. Do not ask the human to reproduce it on the base unless you cannot reach that surface, and record why.
 
-The checkpoint passes only when its observer, the human or the agent under the routing rule in `SKILL.md`, reaches the point of divergence on the head and sees the correct final state. For an intermittent bug, require two independent runs. An observation that does not show the discriminating state, or one made on a different surface, is `BLOCKED` with reason "inconclusive", never `PASS`.
+The checkpoint passes only when its observer, the human or the agent under the routing rule in `SKILL.md`, reaches the point of divergence on the head and sees the correct final state. For an intermittent bug, require two independent runs. An agent observation that does not show the discriminating state on the reported surface routes the checkpoint to the human under that rule. A human observation that does not show it, or one made on a different surface, is `BLOCKED` with reason "inconclusive", never `PASS`, and the fix stays unverified.
 
 ## Apply conditional lenses
 
