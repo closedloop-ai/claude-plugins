@@ -4,7 +4,7 @@ Read this reference when a manual QA matrix depends on local storage, cookies, f
 
 ## Preferred order
 
-1. Use a repository-provided QA control or documented fixture launcher when one exists.
+1. Use the repository's verification protocol or documented fixture launcher when one exists. For example, a repository that ships a `pnpm control` protocol may open the interactive session with `pnpm control up web --headed` or `pnpm control up desktop --headed --flag <key>=true`, adding `--allow-write` only for checkpoints that write and only against this worktree's stack. A protocol that attaches to whatever already answers on its ports still needs the listener-ownership proof `SKILL.md` requires. When the protocol has no web local-storage fixture option, use the bundled launcher for those matrices.
 2. Otherwise, use the repository's installed Playwright to create a dedicated interactive browser context with state populated before the first application navigation.
 3. If neither path is supported, mark the affected setup and checkpoints `BLOCKED`. Do not ask the human to use DevTools as routine setup and do not bypass a browser safety refusal.
 
@@ -31,10 +31,10 @@ const context = await browser.newContext({
 
 Values in Web Storage are strings. Serialize structured fixtures once, before building the entries. Validate the target with `new URL()` and use its exact `.origin`; never accept an arbitrary script or expression as fixture input.
 
-The bundled launcher implements this path without writing browser state into the repository. Run it with the bootstrapped repository root as the working directory, using the absolute launcher path given in SKILL.md:
+The bundled launcher implements this path without writing browser state into the repository. Run it with the bootstrapped repository root as the working directory. Its path is relative to the skill directory, so resolve the absolute path as SKILL.md describes:
 
 ```bash
-node "<launcher path from SKILL.md>" \
+node "<absolute skill directory>/scripts/dist/launch-interactive-browser.mjs" \
   --url 'http://localhost:3000/path-under-test' \
   --storage-file /private/untracked/storage-fixture.json \
   --state-name 'flag-matrix-state' \
@@ -51,7 +51,7 @@ When authentication already comes from a repository-supported Playwright storage
 
 ## Interactive session
 
-The human explicitly requesting interactive manual QA authorizes a visible application window for that session; this does not authorize visible automated E2E. Launch a fresh Playwright browser and context for the interactive session, with `headless: false` only for that intentional human walkthrough. Keep automated suites headless or displayless according to repository policy.
+The human explicitly requesting interactive manual QA authorizes a visible application window for that session; this does not authorize visible automated E2E. Launch a fresh Playwright browser and context for the interactive session, with `headless: false` only for that intentional human walkthrough. Keep automated suites headless or displayless according to repository policy. The agent's own verification uses the same preloaded state in a headless context; the visible window is only for a checkpoint routed to the human.
 
 Use a new temporary or dedicated QA profile/context rather than the human's normal Chrome profile. Playwright warns that automating the default Chrome user-data directory is unsupported. Record the browser channel and that the profile was disposable, but do not record profile contents.
 
