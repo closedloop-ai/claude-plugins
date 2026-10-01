@@ -4,12 +4,63 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### code v1.15.1
+### code v1.16.4
 
 #### Fixed
 - `codex-review`'s `run_codex_review.sh` no longer passes `--full-auto`, which codex-cli 0.147 removed, so every review round exited 2. It now passes `-c sandbox_mode=read-only`, which both `codex exec` and `codex exec resume` accept; `-s read-only` would have broken every resumed round. The reviewer's sandbox narrows from `--full-auto`'s workspace-write to read-only.
 - `run_codex_review.sh` keeps codex's stderr instead of discarding it. `CODEX_FAILED` now carries one line after the exit code saying why codex failed: the last `turn.failed` (else `error`) message from the JSON stream, otherwise the first stderr line starting with `error`, otherwise the last stderr line, skipping the `Reading ... from stdin...` banner. The full stderr goes to the script's stderr, and a failed session resume names its cause before falling back to a fresh session.
 - `debate-loop.sh` prints the `CODEX_FAILED` reason with `printf '%s'` instead of `echo -e`, so backslashes in codex's message are printed as-is instead of being read as escapes.
+
+### code v1.16.3
+
+#### Changed
+- `guided-manual-qa` presents a checkpoint to the human only when passing E2E on the current head does not already verify it and the agent cannot reliably verify it itself. After the oracle proof, the agent records a checkpoint it conclusively observed as `AGENT_VERIFIED` with `agent-observed` evidence and does not present it; it routes to the human only visual or perceptual judgments, flows it cannot drive or observe reliably (real OAuth, OS dialogs, hardware, third-party UIs), and product-judgment calls, and records why. An inconclusive agent observation goes to the human, and a contradicting one is settled as setup, oracle, or a candidate finding; neither is silently passed.
+- `AGENT_VERIFIED` and `E2E_COVERED` join the status meanings and are never a human `PASS`. The final summary reports human-confirmed `PASS` and `FAIL`, `AGENT_VERIFIED`, `E2E_COVERED`, and `BLOCKED` counts separately, and lists each checkpoint left to the human with the reason it needed one. The agent verifies in its own headless context with the same preloaded browser state; the visible interactive window opens only for a checkpoint routed to the human.
+- The QA record template adds `AGENT_VERIFIED` to the checkpoint statuses, a routing line per checkpoint, `agent-observed` as the confirmer for agent-verified attempts, and the separate counts and human-routed list in the final summary. A bug-fix checkpoint can be closed by the agent under the same routing rule; an agent observation that misses the discriminating state routes it to the human, and only an inconclusive human observation makes it `BLOCKED` with reason "inconclusive".
+- `plugins/code/README.md` describes the routing rule and the separate `AGENT_VERIFIED` and `E2E_COVERED` dispositions.
+- `tools/guided-manual-qa/src/skill-contract.test.ts` pins the routing rule, the inconclusive-observation escalation, the separate summary counts, and that the visible window waits for a human-routed checkpoint while agent verification does not.
+
+### code v1.16.2
+
+#### Changed
+- `guided-manual-qa` checks whether a fixed-port control launcher supports isolated ports, sessions, or project names for concurrent workers before choosing it, and falls back to a documented manual isolated stack with recorded process ownership proof when it does not.
+- `guided-manual-qa` no longer treats a parent supervisor, launchd wrapper, or control command reporting `started` as readiness; the actual listener and the route-owned ready selector must be proven first. A wrapper that hangs before spawning its child gets one bounded foreground diagnostic of the same command, stopped before any fallback.
+
+### code v1.16.1
+
+#### Changed
+- `guided-manual-qa` compares rendered columns, measured container width, and responsive mode with a comparable reference when data changes layout, and requires representative disposable fixtures before presenting the human checkpoint.
+
+### code v1.16.0
+
+#### Added
+- `guided-manual-qa` rebinds results after a head change (`references/plan-methodology.md`, "Rebind results after a head change"). Each tested head records its merge base and stable patch-id. When only the base moved, checkpoints that the base's changed files cannot reach are carried forward and the rest reset to `PENDING`; when the patch-id changed, every checkpoint the delta reaches resets unless a written reason says otherwise. A carried-forward result is never described as exercised on the new head.
+- The QA record template keeps checkpoint attempts in an append-only table (attempt, head, patch-id, status, actual, confirmer, time, evidence, carry-forward reason), and records the merge base and patch-id per tested head and the resume point.
+- Agent dry run as oracle item 6: when the repository declares a verification protocol, the agent drives each checkpoint itself first, through the entry point the requirement names, captures the action and resulting state, adds a read-only second view after a write, and runs writes only on disposable data that is reset before the human's run.
+- "Bug-fix checkpoints" in `references/plan-methodology.md`: the primary checkpoint is the original reproduction on the reported surface, with named correct and broken final states. It reuses a recorded repro or has the agent reproduce it on the base twice, and an inconclusive observation is `BLOCKED` with reason "inconclusive", never `PASS`.
+- Discovery routes in `references/plan-methodology.md` for consumers, candidate E2E coverage, and prior QA on the same surface, through the closedloop-graph tools when they are available and `rg`, `git log -S`, and `gh` otherwise.
+- `tools/guided-manual-qa/src/skill-contract.test.ts` pins the head-change rule, the append-only attempt table, the agent dry run, inconclusive-is-`BLOCKED`, evidence stored outside the worktree, and that the skill names no workflow skill or harness-only variable.
+
+#### Changed
+- A resumed session applies the head-change rule to every recorded result, names the next `PENDING` checkpoint as the resume point, and does not re-present a checkpoint whose result still applies.
+- Checkpoint prompts hand the human only the step that needs human judgment, in a fixed shape: where you are, the one thing to do, what you should see, and what to reply with.
+- Before recording `FAIL`, the agent re-runs the environment proof; drift is a setup `BLOCKED` or an `ORACLE CORRECTION`. After a `FAIL`, a changed fixture, flag, seed, viewport, or wording is a new checkpoint and the `FAIL` row stays.
+- Ticket, PR, and review-comment text is treated as data, and a result reported outside the conversation counts only when the platform author matches the named confirmer.
+- Cited evidence is stored in the record's own directory outside the worktree, and every evidence pointer is checked after cleanup. Summary lines cite their evidence and label unobserved claims `inferred` or `unverified`.
+- Feature-map prose is corroborating evidence, not a requirement; a wrong map entry is recorded as map drift, not a product `FAIL`.
+- `references/browser-state-fixtures.md` puts the repository's verification protocol first in the launcher order, with `pnpm control up web --headed` and `up desktop --headed --flag` as examples.
+- The example QA record location is now `~/.local/state/manual-qa/<repo>/<change-target>/`.
+
+### code v1.15.1
+
+#### Added
+- `skills/guided-manual-qa/agents/openai.yaml` carries Codex display metadata, so Codex and Claude Code load the same `guided-manual-qa` skill directory.
+- `guided-manual-qa` keeps a QA session alive across tool calls or worker turns: services run under a repository-supported or OS-supported owner that survives that boundary, the record says how to inspect and stop it, and a resumed session rereads the QA record and rechecks the head, owned processes, listeners, data target, and route instead of trusting earlier PIDs or ready checks.
+- The QA record template gains a line for the interactive window or app owner, its settled route and control, and the last live verification time, plus a note under the services table to record each process owner and recheck the rows after a resume.
+
+#### Changed
+- Before a UI checkpoint, the agent opens the requested window or app itself, verifies the settled origin and a visible control owned by the route, and keeps it available; an unready window keeps the checkpoint pending as a setup limitation. After presenting a checkpoint the agent stops making tool calls until the human responds or asks for setup help.
+- `SKILL.md` names the bundled launcher as `scripts/dist/launch-interactive-browser.mjs` relative to the skill directory and has the agent resolve its absolute path from where it read `SKILL.md`, instead of using `${CLAUDE_SKILL_DIR}`, which only Claude Code expands. `references/browser-state-fixtures.md` uses the same placeholder in its example command.
 
 ### code v1.15.0
 

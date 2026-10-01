@@ -17,9 +17,28 @@ Start from current evidence rather than the title alone:
 
 For every changed behavior, identify where it ships and where the old behavior must remain unchanged. Follow shared code to each real consumer, but stop once one bounded adjacent pass produces no new material surface. A prototype is eligible as a manual harness only for the exact asserted code also imported by production or Storybook; a similar visual copy, route-only behavior, or mock-only behavior is not. Keep evidence for intentionally excluded surfaces so omission is visible rather than silent, and carry any underlying acceptance requirement to its real owner or an explicit coverage gap.
 
+### Discovery routes
+
+When the closedloop-graph tools are available, find things through them first and verify each answer in the worktree. The graph indexes the default branch only, so this change's own edits are never in it.
+
+- Consumers of changed code: `code_symbols` for the repo-qualified path, then `code_callers` and `code_importers`; `code_grep` for routes, flags, test ids, and event names. Verify with `rg`.
+- Candidate E2E coverage: `code_tests_for` on each changed file (`code_callers` drops test rows), then read the spec and confirm the assertion and a current-head run as `SKILL.md` requires. A graph hit is a candidate, never coverage.
+- Prior QA on the same surface: `blast_radius_tickets` on the changed files and `ticket_detail` for their PRs, then read those PRs' manual-QA comments with `gh`. Reuse a prior scenario's path and fixture only after re-proving its oracle here.
+
+A graph zero is a claim about the query, not about the code. Without the graph, use `rg` for consumers and E2E candidates, `git log -S` for the history of a string or symbol, and `gh` for prior PRs and their comments. Say which route produced each piece of evidence.
+
 ## Separate E2E coverage from human checkpoints
 
-Map each proposed observation to a passing E2E assertion on the current head. Count it as covered only when the same shipping host, flag assignment, fixture transition, action, and expected outcome are exercised. Record the test, assertion, head, and result in the QA record. Put only uncovered behavior and explicitly human-only requirements in the manual queue; a related test or a broader green job is not enough. Recheck the map after a head change.
+Map each proposed observation to a passing E2E assertion on the current head. Count it as covered only when the same shipping host, flag assignment, fixture transition, action, and expected outcome are exercised. Record the test, assertion, head, and result in the QA record. Put only uncovered behavior and explicitly human-only requirements in the manual plan, where `SKILL.md` routes each checkpoint to agent verification or to the human; a related test or a broader green job is not enough. Recheck the map after a head change, as the next section describes.
+
+## Rebind results after a head change
+
+Record the merge base and the stable patch-id of the change with every tested head: `git diff --binary $(git merge-base <base> <head>) <head> | git patch-id --stable`, where `<base>` is the resolved base branch (for example `origin/main`). When the head moves, mark every result stale and compute the patch-id again.
+
+- Patch-id unchanged: the head only integrated the base branch. List the files the base changed between the two merge bases (`git diff --name-only <old-merge-base> <new-merge-base>`). When the closedloop-graph tools are available, find what those files reach with `code_importers` and `code_callers` on each file and `code_grep` for routes, flags, and other strings, then verify with `rg` in the worktree; otherwise use `rg` alone and say so. Carry forward each checkpoint whose surface, fixture, and oracle none of those files reach, and reset the rest to `PENDING`.
+- Patch-id changed: reset each checkpoint the delta reaches directly or indirectly. Carry one forward only with a written reason that the changed files cannot affect its surface, fixture, oracle, or requirement.
+
+A carried-forward result applies to the new head; it was not exercised there. Never claim otherwise. Record every rerun, reset, and carry-forward as a new attempt row in the checkpoint's attempt table; never edit an earlier row.
 
 ## Rank scenarios
 
@@ -40,6 +59,12 @@ Prefer a small set of discriminating scenarios over many cosmetic repetitions. A
 3. changed edge and failure paths;
 4. the highest-risk adjacent regression;
 5. parity across actual consumers when shared behavior can diverge.
+
+## Bug-fix checkpoints
+
+For a change that fixes a reported bug, the primary checkpoint is the original reproduction on the surface where it was reported. Before scheduling it, name the correct final state and the broken final state; a setup step, expected dialog, or loading state is not the bug. Reuse a recorded repro of the bug if one exists, as the checkpoint's path and its "before" evidence; otherwise reproduce it yourself on the base, twice, before scheduling the checkpoint. Do not ask the human to reproduce it on the base unless you cannot reach that surface, and record why.
+
+The checkpoint passes only when its observer, the human or the agent under the routing rule in `SKILL.md`, reaches the point of divergence on the head and sees the correct final state. For an intermittent bug, require two independent runs. An agent observation that does not show the discriminating state on the reported surface routes the checkpoint to the human under that rule. A human observation that does not show it, or one made on a different surface, is `BLOCKED` with reason "inconclusive", never `PASS`, and the fix stays unverified.
 
 ## Apply conditional lenses
 
@@ -64,7 +89,11 @@ Each checkpoint should include:
 - expected visible or behavioral result;
 - evidence to capture;
 - dependencies on earlier checkpoints;
-- safe reset or cleanup when stateful.
+- safe reset or cleanup when stateful;
+- the entry point used, named by feature-map id and route when the repository keeps a feature map;
+- for a write, a second view that shows the stored value (reload, reopen from the list, or a different surface), because a success toast alone is not proof.
+
+If an entry point the change touches cannot be reached, mark its checkpoint `BLOCKED` with the attempted route and the unmet precondition. Never pass it through a different entry point.
 
 Avoid checkpoints that ask the human to judge multiple independent claims at once. Split them so a result is unambiguous.
 
