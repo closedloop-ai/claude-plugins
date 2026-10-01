@@ -18166,6 +18166,7 @@ class TestArbitrateBudgetCrDirDefault:
         final = _read_coverage_section(cr_dir, "final")
         assert final["arbitrate_status"] == "blocked_by_verify"
         assert final["budget"]["bha_partitions"] == 0
+        assert final["budget"]["docs_only"] is True
 
     def test_writes_coverage_gaps_alongside_aggregate(self, tmp_path: Path) -> None:
         """``coverage_gaps.json`` stays standalone (multi-writer). On
@@ -19022,10 +19023,11 @@ class TestPLN725Phase8DeriveSpawnSpecBudgetCap:
         assert capped[0]["partition_count"] == 3
 
     def test_bha_partitions_zero_suppresses_all_bha(self, tmp_path: Path) -> None:
-        """Docs-only post-arbitrate sets ``bha_partitions: 0``. No BHA
-        descriptors emit even when the partitioner produced
-        partitions (e.g. on a mixed docs+code diff where docs
-        dominate the LOC cap).
+        """``bha_partitions: 0`` suppresses every BHA descriptor even
+        when the partitioner produced partitions. Without the
+        ``budget.docs_only`` marker the zero is a cap, so the one
+        skipped entry stays ``budget_capped`` (the docs-only case is
+        ``TestISS10869DocsOnlyBhaSkip``).
         """
         plan = {
             "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
@@ -19063,6 +19065,142 @@ class TestPLN725Phase8DeriveSpawnSpecBudgetCap:
         assert len(bha_agents) == 3
         capped = [s for s in spec["skipped"] if s["reason"] == "budget_capped"]
         assert capped == []
+
+
+class TestISS10869DocsOnlyBhaSkip:
+    """ISS-10869: arbitrate-budget deliberately zeroes BHA on a docs-only
+    diff. derive-spawn-spec used to report that zero as a
+    ``budget_capped`` drop of a required reviewer, so finalize-result
+    carried a HIGH coverage gap and the verdict was CHANGES_REQUESTED.
+    Each case drives arbitrate-budget -> derive-spawn-spec ->
+    finalize-result -> verdict against a review root that holds the
+    diff's files.
+    """
+
+    _CORE_PLAN: dict[str, Any] = {
+        "required": [
+            {"reviewer": r, "source": "core"}
+            for r in (
+                "bug_hunter_a", "bug_hunter_b", "unified_auditor",
+                "test_quality",
+            )
+        ],
+        "best_effort": [],
+    }
+
+    @staticmethod
+    def _partitions(files: list[str]) -> dict[str, Any]:
+        return {
+            "partitions": [
+                {"id": i, "files": [{"file": f}], "is_test_only": False}
+                for i, f in enumerate(files)
+            ],
+            "test_file_paths": [],
+            "force_merged_count": 0,
+        }
+
+    def _run_chain(
+        self, tmp_path: Path, files: list[str], partition_files: list[str],
+    ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+        from code_review_helpers import cmd_finalize_result, cmd_verdict
+        from golden_fixture_harness import run_with_stdout_capture
+
+        root = tmp_path / "review_root_repo"
+        resolved = _make_review_root(root, {f: "x\n" for f in files})
+        (tmp_path / "scope.json").write_text(json.dumps({
+            "review_root": resolved,
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        _, final, _ = _run_arbitrate_budget(
+            tmp_path, self._CORE_PLAN, _make_diff_data(files=files),
+        )
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, final, self._partitions(partition_files),
+            {"fast_path": False, "models": {}},
+        )
+        validated = tmp_path / "findings_validated.json"
+        validated.write_text(json.dumps({"validated": [], "discarded": [], "stats": {}}))
+        run_with_stdout_capture(cmd_finalize_result, argparse.Namespace(
+            cr_dir=str(tmp_path), findings_validated=str(validated),
+            mode="local", diff_tip="abc1234", pr_number=None,
+        ))
+        verdict = json.loads(run_with_stdout_capture(cmd_verdict, argparse.Namespace(
+            findings_validated=str(validated),
+            review_result=str(tmp_path / "review_result.json"),
+        )))
+        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())["findings"]
+        return final, spec, gaps, verdict
+
+    def test_docs_only_diff_skips_bha_without_coverage_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        doc = "docs/runbooks/production-branch-cutover-reset.md"
+        final, spec, gaps, verdict = self._run_chain(tmp_path, [doc], [doc])
+        assert final["budget"]["bha_partitions"] == 0
+        assert final["budget"]["docs_only"] is True
+        bha_skips = [s for s in spec["skipped"] if s["reviewer"] == "bug_hunter_a"]
+        assert bha_skips == [
+            {"reviewer": "bug_hunter_a", "bucket": "required", "reason": "docs_only",
+             "budget_cap": 0, "partition_count": 1},
+        ]
+        assert spec["stats"]["required_coverage_gaps"] == 0
+        assert gaps == []
+        assert verdict["canonical_verdict"] == "APPROVED"
+        assert "- ℹ️ BHA skipped on a docs-only diff." in _run_render_fleet_summary(tmp_path)
+
+    def test_mixed_docs_and_code_diff_keeps_bha_floor(
+        self, tmp_path: Path,
+    ) -> None:
+        final, spec, gaps, verdict = self._run_chain(
+            tmp_path, ["docs/guide.md", "src/app.ts"], ["src/app.ts"],
+        )
+        assert final["budget"]["bha_partitions"] >= 1
+        assert "docs_only" not in final["budget"]
+        assert [a["agent_id"] for a in spec["agents"] if a["reviewer"] == "bug_hunter_a"] == ["bha_p0"]
+        assert [s for s in spec["skipped"] if s["reviewer"] == "bug_hunter_a"] == []
+        assert gaps == []
+        assert verdict["canonical_verdict"] == "APPROVED"
+
+    def test_bha_partition_cap_still_reports_high_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        """Counterfactual for the docs-only case: partitions the budget
+        could not fit are a real required-reviewer drop and still block.
+        """
+        files = ["src/a.ts", "src/b.ts", "src/c.ts"]
+        final, spec, gaps, verdict = self._run_chain(tmp_path, files, files)
+        assert final["budget"]["bha_partitions"] == 1
+        capped = [s for s in spec["skipped"] if s["reason"] == "budget_capped"]
+        assert [s["partition_id"] for s in capped] == [1, 2]
+        assert len(gaps) == 2
+        for gap in gaps:
+            assert gap["severity"] == "HIGH"
+            assert gap["issue"] == "Required reviewer dropped: bug_hunter_a"
+            assert "budget capped" in gap["explanation"]
+        assert verdict["canonical_verdict"] == "CHANGES_REQUESTED"
+
+    def test_zero_cap_without_docs_only_marker_still_reports_high_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        """A zero ``bha_partitions`` is only benign when arbitrate-budget
+        marked the diff docs-only. A zero from anywhere else (the
+        pre-fix BLOCKING path hardcoded one on code PRs) stays a
+        ``budget_capped`` drop with a HIGH gap.
+        """
+        plan = {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 0},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._partitions(["src/a.ts"]),
+            {"fast_path": False, "models": {}},
+        )
+        assert [s["reason"] for s in spec["skipped"]] == ["budget_capped"]
+        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())["findings"]
+        assert [(g["severity"], g["issue"]) for g in gaps] == [
+            ("HIGH", "Required reviewer dropped: bug_hunter_a"),
+        ]
 
 
 class TestPLN725Phase8DeriveSpawnSpecBlockingSanitization:
@@ -20392,11 +20530,11 @@ class TestPLN725Phase9RenderFleetSummaryNotes:
         assert "2 partition(s)" in out
         assert "(2/3)" in out
 
-    def test_budget_capped_docs_only_aggregate_uses_partition_count(
+    def test_budget_capped_zero_cap_aggregate_uses_partition_count(
         self, tmp_path: Path,
     ) -> None:
-        """When the post-arbitrate cap is 0 (docs-only),
-        ``_derive_spawn_agents_from_plan`` emits ONE aggregate
+        """When the post-arbitrate cap is 0 without the docs-only
+        marker, ``_derive_spawn_agents_from_plan`` emits ONE aggregate
         ``budget_capped`` entry covering all N suppressed
         partitions (no ``partition_id``, ``partition_count`` =
         N). Pre-v2.23.3 the renderer counted
