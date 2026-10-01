@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.10.3
+
+#### Fixed
+- A docs-only diff no longer gets a `CHANGES_REQUESTED` verdict for not spawning `bug_hunter_a`. `arbitrate-budget` already set `bha_partitions` to 0 when every changed file is documentation, but `derive-spawn-spec` recorded that skip as `reason: "budget_capped"`. Because `bug_hunter_a` is a required reviewer, a `Required reviewer dropped: bug_hunter_a` coverage-gap finding followed, advising the operator to raise `--cap`.
+  - `arbitrate-budget` now writes `budget.docs_only: true` into `coverage.json.final` when it waives the BHA floor, on both the arbitrated and the `blocked_by_verify` paths. The key is absent for other diffs.
+  - `derive-spawn-spec` records a zero cap that carries that marker as `skipped[].reason: "docs_only"`. It is benign, like `no_partitions`, so it emits no coverage-gap finding.
+  - A zero cap without the marker, and partitions dropped because the partitioner produced more than `bha_partitions`, still record `budget_capped` and still produce the required-reviewer coverage gap.
+  - `docs_only` is added to `SPAWN_SPEC_SKIP_REASONS`, and SCHEMA.md and `start.md` list it with the other benign skip reasons.
+  - The `docs_only` skipped entry carries `budget_cap: 0` and `partition_count`, as the zero-cap `budget_capped` entry does, and `render-fleet-summary` adds an informational `ℹ️ BHA skipped on a docs-only diff.` note when that entry is present.
+
 ### code v1.16.3
 
 #### Changed
