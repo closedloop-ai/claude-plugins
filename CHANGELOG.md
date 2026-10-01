@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `derive-spawn-spec` records a zero cap that carries that marker as `skipped[].reason: "docs_only"`. It is benign, like `no_partitions`, so it emits no coverage-gap finding.
   - A zero cap without the marker, and partitions dropped because the partitioner produced more than `bha_partitions`, still record `budget_capped` and still produce the required-reviewer coverage gap.
   - `docs_only` is added to `SPAWN_SPEC_SKIP_REASONS`, and SCHEMA.md and `start.md` list it with the other benign skip reasons.
+  - The `docs_only` skipped entry carries `budget_cap: 0` and `partition_count`, as the zero-cap `budget_capped` entry does, and `render-fleet-summary` adds an informational `ℹ️ BHA skipped on a docs-only diff.` note when that entry is present.
 
 ### code v1.16.3
 

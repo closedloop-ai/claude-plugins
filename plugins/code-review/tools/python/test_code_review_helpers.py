@@ -19140,11 +19140,13 @@ class TestISS10869DocsOnlyBhaSkip:
         assert final["budget"]["docs_only"] is True
         bha_skips = [s for s in spec["skipped"] if s["reviewer"] == "bug_hunter_a"]
         assert bha_skips == [
-            {"reviewer": "bug_hunter_a", "bucket": "required", "reason": "docs_only"},
+            {"reviewer": "bug_hunter_a", "bucket": "required", "reason": "docs_only",
+             "budget_cap": 0, "partition_count": 1},
         ]
         assert spec["stats"]["required_coverage_gaps"] == 0
         assert gaps == []
         assert verdict["canonical_verdict"] == "APPROVED"
+        assert "- ℹ️ BHA skipped on a docs-only diff." in _run_render_fleet_summary(tmp_path)
 
     def test_mixed_docs_and_code_diff_keeps_bha_floor(
         self, tmp_path: Path,

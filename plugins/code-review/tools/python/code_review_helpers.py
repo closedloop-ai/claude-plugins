@@ -12768,6 +12768,8 @@ def _derive_spawn_agents_from_plan(
                             "reviewer": reviewer,
                             "bucket": bucket,
                             "reason": "docs_only",
+                            "budget_cap": 0,
+                            "partition_count": len(partitions),
                         })
                         return
                     if cap == 0:
@@ -13859,6 +13861,12 @@ def _render_fleet_notes(
         for s in skipped
     ):
         notes.append("- ℹ️ `test_quality` slot reserved for PLN-723.")
+
+    if any(
+        isinstance(s, dict) and s.get("reason") == "docs_only"
+        for s in skipped
+    ):
+        notes.append("- ℹ️ BHA skipped on a docs-only diff.")
 
     # Other skip reasons (unknown_reviewer / duplicate_agent_id /
     # missing_reviewer_name) → already produce coverage_gaps.json

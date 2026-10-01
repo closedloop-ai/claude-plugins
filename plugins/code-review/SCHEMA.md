@@ -351,8 +351,8 @@ ignored at spawn time.
       "reason": "deferred_pln723 | no_partitions | docs_only | unknown_reviewer | missing_reviewer_name | duplicate_agent_id | budget_capped | gated_by_verify",
       "agent_id": "<id>",              // only on duplicate_agent_id
       "partition_id": 0,               // only on budget_capped (BHA)
-      "budget_cap": 0,                 // only on budget_capped
-      "partition_count": 0,            // only on budget_capped
+      "budget_cap": 0,                 // only on budget_capped and docs_only
+      "partition_count": 0,            // only on budget_capped and docs_only
       "source": "rule | critic"        // only on gated_by_verify (preserved for presenters)
     }
   ],
