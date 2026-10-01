@@ -1,4 +1,5 @@
-"""Tests for skills/codex-review/scripts/run_codex_review.sh against a fake codex.
+"""Tests for skills/codex-review/scripts/run_codex_review.sh and hooks/plan-review.sh
+against a fake codex.
 
 The fake rejects arguments the way codex-cli 0.147+ does: `--full-auto` on any
 subcommand, and `-s`/`--sandbox` on `exec resume`, each with exit 2 and a clap
@@ -10,8 +11,11 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = REPO_ROOT / "plugins/code/skills/codex-review/scripts/run_codex_review.sh"
+HOOK = REPO_ROOT / "plugins/code/hooks/plan-review.sh"
 
 FAKE_CODEX = r"""#!/usr/bin/env python3
 import json, os, sys
@@ -60,30 +64,46 @@ if mode == "turn-failed":
     fail(banner, tracing)
 if mode == "resume-fails" and resuming:
     fail(banner, "Error: no session thread-old")
+if mode in ("empty", "no-verdict"):
+    sys.stderr.write("WARNING: stream disconnected before completion\n")
+    emit({"type": "thread.started", "thread_id": "thread-new"})
+    if mode == "no-verdict":
+        emit({"type": "item.completed", "item": {"type": "agent_message", "text": "Looking at the plan"}})
+    sys.exit(0)
 
 emit({"type": "thread.started", "thread_id": "thread-new"})
 emit({"type": "item.completed", "item": {"type": "agent_message", "text": "VERDICT: APPROVED"}})
 """
 
 
-def run_review(
-    tmp_path: Path, *extra: str, mode: str = ""
-) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
+def fake_codex_env(tmp_path: Path, mode: str) -> dict[str, str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     fake = bin_dir / "codex"
     fake.write_text(FAKE_CODEX)
     fake.chmod(0o755)
-    plan = tmp_path / "plan.md"
-    plan.write_text("# Plan\n")
-    argv_log = tmp_path / "argv.jsonl"
-    env = {
+    return {
         **os.environ,
         "HOME": str(tmp_path),
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-        "FAKE_CODEX_ARGV_LOG": str(argv_log),
+        "FAKE_CODEX_ARGV_LOG": str(tmp_path / "argv.jsonl"),
         "FAKE_CODEX_MODE": mode,
     }
+
+
+def codex_calls(tmp_path: Path) -> list[list[str]]:
+    argv_log = tmp_path / "argv.jsonl"
+    if not argv_log.exists():
+        return []
+    return [json.loads(line) for line in argv_log.read_text().splitlines()]
+
+
+def run_review(
+    tmp_path: Path, *extra: str, mode: str = ""
+) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
+    env = fake_codex_env(tmp_path, mode)
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
     result = subprocess.run(
         [
             "bash",
@@ -100,12 +120,22 @@ def run_review(
         env=env,
         stdin=subprocess.DEVNULL,
     )
-    calls = (
-        [json.loads(line) for line in argv_log.read_text().splitlines()]
-        if argv_log.exists()
-        else []
+    return result, codex_calls(tmp_path)
+
+
+def run_plan_review_hook(
+    tmp_path: Path, mode: str = ""
+) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
+    payload = {"cwd": str(tmp_path), "tool_response": {"plan": "# Plan\n"}}
+    result = subprocess.run(
+        ["bash", str(HOOK)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
+        env=fake_codex_env(tmp_path, mode),
     )
-    return result, calls
+    return result, codex_calls(tmp_path)
 
 
 def has_pair(args: list[str], flag: str, value: str) -> bool:
@@ -129,6 +159,7 @@ def test_first_round_runs_codex_exec_read_only(tmp_path: Path) -> None:
     assert len(calls) == 1
     assert calls[0][0] == "exec"
     assert has_pair(calls[0], "-c", "sandbox_mode=read-only"), calls[0]
+    assert has_pair(calls[0], "-c", "approval_policy=never"), calls[0]
 
 
 def test_resumed_round_runs_codex_exec_resume_read_only(tmp_path: Path) -> None:
@@ -139,6 +170,7 @@ def test_resumed_round_runs_codex_exec_resume_read_only(tmp_path: Path) -> None:
     assert len(calls) == 1
     assert calls[0][:3] == ["exec", "resume", "thread-old"]
     assert has_pair(calls[0], "-c", "sandbox_mode=read-only"), calls[0]
+    assert has_pair(calls[0], "-c", "approval_policy=never"), calls[0]
 
 
 def test_failed_resume_names_its_cause_and_falls_back_to_exec(tmp_path: Path) -> None:
@@ -157,6 +189,7 @@ def test_failed_resume_names_its_cause_and_falls_back_to_exec(tmp_path: Path) ->
     assert len(calls) == 2
     assert calls[1][0] == "exec"
     assert has_pair(calls[1], "-c", "sandbox_mode=read-only"), calls[1]
+    assert has_pair(calls[1], "-c", "approval_policy=never"), calls[1]
 
 
 def test_codex_failed_carries_a_cli_rejection(tmp_path: Path) -> None:
@@ -195,4 +228,34 @@ def test_codex_failed_carries_the_turn_failure_from_the_json_stream(
 ) -> None:
     assert failed_token(tmp_path, "turn-failed") == (
         "CODEX_FAILED:codex exited with code 1: The 'bogus' model is not supported."
+    )
+
+
+@pytest.mark.parametrize("mode", ["empty", "no-verdict"])
+def test_codex_empty_passes_codex_stderr_through(tmp_path: Path, mode: str) -> None:
+    result, _ = run_review(tmp_path, "--round", "1", mode=mode)
+
+    assert result.stdout.splitlines()[0] == "CODEX_EMPTY", result.stdout
+    assert "WARNING: stream disconnected before completion" in result.stderr
+
+
+def test_plan_review_hook_runs_codex_exec_read_only(tmp_path: Path) -> None:
+    result, calls = run_plan_review_hook(tmp_path)
+
+    assert "VERDICT: APPROVED" in json.loads(result.stdout)["hookSpecificOutput"][
+        "additionalContext"
+    ], result.stdout
+    assert len(calls) == 1
+    assert calls[0][0] == "exec"
+    assert has_pair(calls[0], "-c", "sandbox_mode=read-only"), calls[0]
+    assert has_pair(calls[0], "-c", "approval_policy=never"), calls[0]
+
+
+def test_plan_review_hook_logs_codex_stderr(tmp_path: Path) -> None:
+    result, _ = run_plan_review_hook(tmp_path, mode="stderr-errors")
+
+    assert result.stdout == ""
+    logs = (tmp_path / ".closedloop-ai/plan-review-logs").glob("*.log")
+    assert any(
+        "Error: failed to load config.toml" in log.read_text() for log in logs
     )

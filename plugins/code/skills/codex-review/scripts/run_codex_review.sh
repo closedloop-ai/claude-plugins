@@ -305,7 +305,9 @@ codex_exit=0
 
 # `-c sandbox_mode=` rather than `--full-auto` (removed in codex-cli 0.147) or
 # `-s` (rejected by `codex exec resume`), so one arg set serves both calls.
-base_args=(--json -m "$CODEX_MODEL" -c sandbox_mode=read-only -c model_reasoning_effort=high)
+# approval_policy is explicit because exec drops its own `never` default when the
+# user's config sets `approvals_reviewer = "auto_review"`.
+base_args=(--json -m "$CODEX_MODEL" -c sandbox_mode=read-only -c approval_policy=never -c model_reasoning_effort=high)
 prompt_content=$(cat "$prompt_file")
 
 # Attempt session resume if we have a prior session ID
@@ -377,6 +379,7 @@ fi
 
 # Handle empty response
 if [[ -z "$feedback_content" ]]; then
+  cat "$codex_stderr" >&2 2>/dev/null || true
   echo "CODEX_EMPTY"
   echo "CODEX_SESSION:${effective_session_id:-none}"
   echo "LOG_ID:$LOG_ID"
@@ -393,6 +396,7 @@ elif echo "$feedback_content" | grep -q "^### Finding"; then
   echo "VERDICT:NEEDS_CHANGES"
 else
   # No verdict AND no findings -- likely truncated response, not a real review
+  cat "$codex_stderr" >&2 2>/dev/null || true
   echo "CODEX_EMPTY"
 fi
 

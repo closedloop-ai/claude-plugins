@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `codex-review`'s `run_codex_review.sh` no longer passes `--full-auto`, which codex-cli 0.147 removed, so every review round exited 2. It now passes `-c sandbox_mode=read-only`, which both `codex exec` and `codex exec resume` accept; `-s read-only` would have broken every resumed round. The reviewer's sandbox narrows from `--full-auto`'s workspace-write to read-only.
 - `run_codex_review.sh` keeps codex's stderr instead of discarding it. `CODEX_FAILED` now carries one line after the exit code saying why codex failed: the last `turn.failed` (else `error`) message from the JSON stream, otherwise the first stderr line starting with `error`, otherwise the last stderr line, skipping the `Reading ... from stdin...` banner. The full stderr goes to the script's stderr, and a failed session resume names its cause before falling back to a fresh session.
 - `debate-loop.sh` prints the `CODEX_FAILED` reason with `printf '%s'` instead of `echo -e`, so backslashes in codex's message are printed as-is instead of being read as escapes.
+- `run_codex_review.sh` also passes `-c approval_policy=never`. `codex exec` defaults approval to `never` but drops that default when the user's config sets `approvals_reviewer = "auto_review"`, which left the user's `approval_policy` in effect.
+- `run_codex_review.sh` writes codex's stderr to the script's stderr when it reports `CODEX_EMPTY`, as it already does for `CODEX_FAILED`.
+- `hooks/plan-review.sh` passes `-c sandbox_mode=read-only -c approval_policy=never` instead of `--full-auto`, and appends codex's stderr to its debug log instead of discarding it.
 
 ### code v1.16.3
 
