@@ -51,7 +51,7 @@ When authentication already comes from a repository-supported Playwright storage
 
 ## Interactive session
 
-The human explicitly requesting interactive manual QA authorizes a visible application window for that session; this does not authorize visible automated E2E. Launch a fresh Playwright browser and context for the interactive session, with `headless: false` only for that intentional human walkthrough. Keep automated suites headless or displayless according to repository policy.
+The human explicitly requesting interactive manual QA authorizes a visible application window for that session; this does not authorize visible automated E2E. Launch a fresh Playwright browser and context for the interactive session, with `headless: false` only for that intentional human walkthrough. Keep automated suites headless or displayless according to repository policy. The agent's own verification uses the same preloaded state in a headless context; the visible window is only for a checkpoint routed to the human.
 
 Use a new temporary or dedicated QA profile/context rather than the human's normal Chrome profile. Playwright warns that automating the default Chrome user-data directory is unsupported. Record the browser channel and that the profile was disposable, but do not record profile contents.
 

@@ -5,7 +5,7 @@ description: Derive and run an interactive, evidence-recorded manual QA session 
 
 # Guided Manual QA
 
-Run manual QA as a collaboration with the human for behavior that exact-head E2E does not already verify. Inspect the current change and map each proposed checkpoint to the existing E2E assertions before scheduling it. A passing E2E test can close that coverage need but is automated evidence, never a human `PASS`. Prepare a safe test environment for the remaining checkpoints, then present one observable checkpoint at a time.
+Run manual QA as a collaboration with the human, and spend the human's time only on what needs human eyes. Present a checkpoint to the human only when both are true: passing E2E on the current head does not already verify it, and the agent cannot reliably verify it itself (see "Prove the checkpoint oracle before asking the human"). Record everything else as `E2E_COVERED` or `AGENT_VERIFIED` with its evidence; neither is ever a human `PASS`. Prepare a safe test environment, then present the remaining human checkpoints one at a time.
 
 ## Establish the test contract
 
@@ -14,7 +14,7 @@ Run manual QA as a collaboration with the human for behavior that exact-head E2E
 3. If repository instructions require repository or workflow memory, query it before choosing bootstrap, launch, validation, or QA paths. Treat memory as a hint and verify every material instruction against current repository docs and code.
 4. Map the shipping boundary and adjacent regression surfaces. Include conditional concerns only when evidence makes them relevant: web, API, desktop/Electron, shared packages, persistence, permissions, feature flags, failure states, responsive layouts, themes, accessibility, packaging, or cross-surface parity.
 5. Before scheduling a prototype checkpoint, trace the code responsible for its assertion through actual imports to a production-facing consumer or a Storybook story. The same shared component or behavior is eligible even if the prototype supplies its fixtures; Storybook qualifies as a component-adoption destination before the component reaches production. A similar-looking copy, isolated prototype route, mock-only interaction, or fixture-specific behavior is not eligible merely because production might adopt it later. Do not use isolated prototype behavior as acceptance or bug-fix evidence. Preserve the underlying ticket requirement: move its checkpoint to the actual production or Storybook owner when one exists, or record the unverified ownership gap rather than silently dropping it. Record this reachability decision for each prototype checkpoint.
-6. For every candidate manual checkpoint, compare its exact route, host, flag state, fixture transition, action, and expected result with passing E2E on the current head. Record the spec/assertion and run evidence when E2E covers it; schedule human QA only for the uncovered part or an explicitly human-only requirement. A nearby or narrower test does not count as coverage.
+6. For every candidate manual checkpoint, compare its exact route, host, flag state, fixture transition, action, and expected result with passing E2E on the current head. Record the spec/assertion and run evidence and mark it `E2E_COVERED` when E2E covers it; plan only the uncovered part or an explicitly human-only requirement as a checkpoint. A nearby or narrower test does not count as coverage.
 7. Derive the remaining prioritized manual plan using [references/plan-methodology.md](references/plan-methodology.md). Do not reuse a stale plan merely because it names the same feature.
 
 State the proposed scope, environment, fixtures, and known gaps before launching. If requirements and the live change disagree, record the discrepancy and ask for direction when it materially changes what success means.
@@ -35,7 +35,7 @@ State the proposed scope, environment, fixtures, and known gaps before launching
 - A prototype is an optional harness for eligible shared code, not a manual-QA destination by itself. Do not add prototype-only E2E tests. Assess repository-supported E2E coverage for affected production code separately; neither a manual finding nor Storybook reachability automatically requires a new E2E test.
 - Start services from the resolved worktree. Record the launch commands, working directories, process identifiers, ports, and health checks. Prove that each tested listener belongs to this worktree using the strongest available evidence: process command and cwd, parent process, build or commit marker, service metadata, or a repository-provided diagnostic endpoint. A parent supervisor, launchd wrapper, or control command reporting `started` is not readiness by itself; prove the actual listener and the route-owned ready selector before presenting a checkpoint. If a wrapper hangs before spawning the child or listener, run one bounded foreground diagnostic of the same documented command to distinguish wrapper failure from app/runtime failure, then stop that diagnostic before trying a fallback.
 - If the QA session spans tool calls or worker turns, keep its services under a repository-supported or OS-supported owner that survives that boundary. Record how to inspect and stop that owner. On resume, read the existing QA record and recheck the current head, owned processes, listeners, data target, and exact route; earlier PIDs and ready checks are historical evidence, not proof that the environment is still available. Then apply "Rebind results after a head change" in [references/plan-methodology.md](references/plan-methodology.md) to every recorded result, name the next `PENDING` checkpoint as the resume point in the record, and continue from it. Do not re-present a checkpoint whose result still applies to the current head.
-- After that proof succeeds, launch the UI the user requested for the intentional interactive session. Do not open unrelated surfaces or claim an unlaunched surface was exercised.
+- After that proof succeeds, prepare the browser or app context the checkpoints need. For your own verification, use a headless or displayless context with the same preloaded state ([references/browser-state-fixtures.md](references/browser-state-fixtures.md)); it needs no human checkpoint to exist. Launch the visible window the user requested only for a checkpoint routed to the human, at step 3 of "Guide the human checkpoint by checkpoint". Do not open unrelated surfaces or claim an unlaunched surface was exercised.
 - Record feature-flag assignments, roles, permissions, account or fixture identity, and other state that changes the observable result. Redact credentials and secrets.
 - When the matrix depends on browser-local state such as feature-flag fixtures, configure it before the first app navigation through a supported browser-context mechanism. Read [references/browser-state-fixtures.md](references/browser-state-fixtures.md). Do not make the human open DevTools or paste JavaScript, and do not use `javascript:` URLs, raw CDP, or the user's ordinary browser profile.
 - When the repository has Playwright installed and no stronger repository launcher exists, run the bundled launcher `scripts/dist/launch-interactive-browser.mjs` (Node 18+, no install step) to open the intentional interactive window with preloaded state. Keep its process alive through the checkpoint and stop only the launcher processes created for the session. The launcher path is relative to this skill's directory, not to the repository under test. Run the launcher with the bootstrapped repository root as the working directory, so it resolves Playwright from that repository, and invoke it by the absolute path you resolve from the directory where you read this `SKILL.md`.
@@ -47,7 +47,7 @@ Use bounded recovery. Never repeat an unchanged failing launch command. Make at 
 
 Before the first checkpoint, create a physical, durable Markdown record outside the tracked source tree when possible. Prefer an existing repository-declared QA artifact location; otherwise use a user-level directory outside every repository checkout (for example `~/.local/state/manual-qa/<repo>/<change-target>/`). Do not stage or commit it. Base it on [references/qa-record-template.md](references/qa-record-template.md).
 
-Write the exact-head E2E coverage map and the complete remaining human-checkpoint inventory into that file before walkthrough work begins, including expected results, dependencies, priorities, and initially known gaps. For an existing plan, label a transferred scenario `E2E_COVERED` only after recording the matching assertion and passing current-head result; exclude it from human `PASS` counts and keep its earlier details for lineage. Do not silently erase it. The file is the source of truth for session continuity; chat context, summaries, and model memory are not.
+Write the exact-head E2E coverage map and the complete remaining checkpoint inventory into that file before walkthrough work begins, including expected results, dependencies, priorities, and initially known gaps. For an existing plan, label a transferred scenario `E2E_COVERED` only after recording the matching assertion and passing current-head result; exclude it from human `PASS` counts and keep its earlier details for lineage. Do not silently erase it. The file is the source of truth for session continuity; chat context, summaries, and model memory are not.
 
 Record enough detail for another person to reproduce the session: repository and worktree, base and head, environment, services, flags and permissions, fixtures and cleanup, automated prechecks, each scenario's expected and actual result, confirmer, evidence, recovery attempts, findings, and disposition. Never store secrets or sensitive production data.
 
@@ -67,11 +67,19 @@ Do not turn a plausible expectation into a human checkpoint. Before presenting e
 
 If the oracle is still uncertain, run a bounded read-only inspection or split the checkpoint into a diagnostic observation first. Do not ask the human to adjudicate an expectation the agent has not established. An observation that differs from an unsupported inference is not a product `FAIL` and does not authorize a fix.
 
+Once the oracle is established, route the checkpoint. Record `AGENT_VERIFIED` with its `agent-observed` evidence, and do not present the checkpoint, when your own observation on this head (the dry run, a DOM or accessibility read, an API second view, or a log) conclusively shows the expected result and the result needs no human judgment. Route it to the human only when it needs human eyes, and record why:
+
+- a visual or perceptual judgment that is hard to assert, such as layout, overlap, animation, or whether it looks right;
+- a flow you cannot drive or observe reliably, such as real OAuth, OS dialogs, hardware, or a third-party UI;
+- a product-judgment call.
+
+When your observation of an established expectation is inconclusive, the checkpoint is not `AGENT_VERIFIED`; route it to the human. If the human cannot observe the discriminating state either, record `BLOCKED` with reason "inconclusive". When it contradicts the expectation, settle it as a setup problem, an oracle problem, or a candidate finding, as item 6 describes. Never silently pass either.
+
 When a human observation conflicts with the prompt, re-check the cited acceptance or approved requirement and its applicability before opening a finding. If the expectation was wrong or only an unsupported inference, record an `ORACLE CORRECTION`, preserve the useful observation, withdraw any candidate finding, and revise dependent checkpoints. Do not count an oracle correction as a product `FAIL`.
 
 ## Guide the human checkpoint by checkpoint
 
-For each checkpoint:
+For each checkpoint routed to the human:
 
 1. Put the application in the required state using safe local setup.
 2. Complete and record the oracle proof above.
@@ -85,8 +93,10 @@ Use these meanings consistently:
 - `PASS`: the named human observed the expected behavior in the recorded environment.
 - `FAIL`: the named human observed behavior that contradicts the expectation.
 - `BLOCKED`: the checkpoint could not be exercised or judged; record why and what remains unverified. An inconclusive observation is `BLOCKED` with reason "inconclusive", never `PASS`.
+- `AGENT_VERIFIED`: the agent conclusively observed the expected result under the routing rule in "Prove the checkpoint oracle before asking the human"; the human was not asked.
+- `E2E_COVERED`: a passing E2E assertion on the current head proves the checkpoint's exact host, state, action, and result.
 
-Agent inspection, screenshots, logs, API probes, and automated assertions are supporting evidence, not human confirmation. Label them `agent-observed` or `automated`; never fill the confirmer field with the human's name unless that human actually confirmed the result. A result reported outside this conversation (a PR comment, a message) counts only when the platform's author identity matches the named human confirmer. Anyone else's report is supporting evidence.
+Agent inspection, screenshots, logs, API probes, and automated assertions are not human confirmation. They can support a human checkpoint or close one as `AGENT_VERIFIED` or `E2E_COVERED`, never as `PASS`. Label them `agent-observed` or `automated`; never fill the confirmer field with the human's name unless that human actually confirmed the result. A result reported outside this conversation (a PR comment, a message) counts only when the platform's author identity matches the named human confirmer. Anyone else's report is supporting evidence.
 
 When a finding is confirmed, assemble a reproducible evidence package in the local record: environment and head, prerequisites, minimal steps, expected and actual behavior, frequency, relevant logs or screenshots, affected surfaces, and cleanup state. Continue with independent checkpoints when safe. Before any source change or external-system mutation, offer an explicit next-action choice and wait for separate authorization.
 
@@ -99,7 +109,8 @@ Store the screenshots, snapshots, and verification-protocol artifacts the record
 End with a concise summary containing:
 
 - coverage completed by surface and risk;
-- `PASS`, `FAIL`, and `BLOCKED` counts;
+- separate counts for human-confirmed `PASS` and `FAIL`, `AGENT_VERIFIED`, `E2E_COVERED`, and `BLOCKED`, never folded together;
+- each checkpoint left to the human and why it needed a human;
 - confirmed findings and evidence locations;
 - untested gaps and why they remain;
 - cleanup status and the durable record path;
