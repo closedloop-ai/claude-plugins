@@ -501,7 +501,7 @@ while [[ $round -le $MAX_ROUNDS ]]; do
 
     # Handle failures and empty responses
     if [[ "$CODEX_VERDICT" == FAILED:* ]]; then
-      echo -e "${RED}Error: Codex failed: ${CODEX_VERDICT#FAILED:}${NC}" >&2
+      printf '%bError: Codex failed: %s%b\n' "$RED" "${CODEX_VERDICT#FAILED:}" "$NC" >&2
       exit 1
     fi
 
