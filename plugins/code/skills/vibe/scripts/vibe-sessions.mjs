@@ -134,7 +134,7 @@ function changeSummary(worktree) {
   const upstreamAhead = git(worktree, [
     "rev-list",
     "--count",
-    "origin/main..HEAD",
+    `origin/${baseBranch(worktree)}..HEAD`,
   ]);
   return { changedFiles, commitsAheadOfMain: Number(upstreamAhead) };
 }
@@ -194,8 +194,9 @@ function newSession() {
   if (branchExists) {
     throw new Error(`Branch ${branch} already exists. Pick another slug.`);
   }
-  git(repo, ["fetch", "origin", "main"]);
-  git(repo, ["worktree", "add", "--no-track", "-b", branch, worktree, "origin/main"]);
+  const base = baseBranch(repo);
+  git(repo, ["fetch", "origin", base]);
+  git(repo, ["worktree", "add", "--no-track", "-b", branch, worktree, `origin/${base}`]);
   const now = new Date().toISOString();
   const record = {
     slug,
@@ -260,4 +261,17 @@ function discardSession() {
     git(repo, ["branch", "-D", branch]);
   }
   return { discarded: true, wouldLose };
+}
+
+/**
+ * The branch new sessions start from: `main`, unless the checkout sets git
+ * config `vibe.baseRef` (a temporary override while the symphony-alpha vibe
+ * environment is not on main yet; unset it once it is).
+ */
+function baseBranch(cwd) {
+  try {
+    return git(cwd, ["config", "--get", "vibe.baseRef"]) || "main";
+  } catch {
+    return "main";
+  }
 }

@@ -57,7 +57,7 @@ if (!branch.startsWith(BRANCH_PREFIX)) {
   fail(`${worktree} is on ${branch}, not a vibe branch (${BRANCH_PREFIX}*).`);
 }
 
-const baseCommit = git(["merge-base", "HEAD", "origin/main"]);
+const baseCommit = git(["merge-base", "HEAD", `origin/${baseBranch()}`]);
 const changedFiles = listChangedFiles(baseCommit);
 const forbidden = changedFiles.filter((file) => isForbidden(file.path));
 const outsideAllowed = changedFiles.filter(
@@ -176,4 +176,12 @@ function previewAliasFor(branchName) {
     return { url: null, reason: "branch name too long for a predictable alias" };
   }
   return { url: `https://${label}${PREVIEW_ALIAS_SUFFIX}`, reason: null };
+}
+
+function baseBranch() {
+  try {
+    return git(["config", "--get", "vibe.baseRef"]) || "main";
+  } catch {
+    return "main";
+  }
 }
