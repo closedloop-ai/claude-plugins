@@ -5,9 +5,11 @@
 //
 // Usage:
 //   vibe-sessions.mjs list    --repo <symphony-alpha checkout>
-//   vibe-sessions.mjs new     --repo <checkout> --slug <slug> --summary <text> [--ticket ISS-123]
+//   vibe-sessions.mjs new     --repo <checkout> --slug <slug> --summary <text>
+//                             --scope draft|full [--ticket ISS-123]
 //   vibe-sessions.mjs touch   --worktree <path> [--summary <text>] [--ticket ISS-123]
 //                             [--status active|handed-off] [--handoff-ticket ISS-123]
+//                             [--scope draft|full]
 //                             [--stack <json>]
 //   vibe-sessions.mjs discard --worktree <path> [--confirm]
 //
@@ -35,6 +37,13 @@ const SessionStatus = {
   HandedOff: "handed-off",
 };
 
+// Draft: frontend only, with stubs, handed to engineering to finish. Full:
+// frontend and backend, shipped as a PR an engineer reviews (ISS-12046).
+const SessionScope = {
+  Draft: "draft",
+  Full: "full",
+};
+
 const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: {
@@ -44,6 +53,7 @@ const { positionals, values } = parseArgs({
     summary: { type: "string" },
     ticket: { type: "string" },
     status: { type: "string" },
+    scope: { type: "string" },
     "handoff-ticket": { type: "string" },
     stack: { type: "string" },
     confirm: { type: "boolean", default: false },
@@ -151,6 +161,7 @@ function listSessions(repo) {
         summary: record?.summary ?? null,
         ticket: record?.ticket ?? null,
         status: record?.status ?? SessionStatus.Active,
+        scope: record?.scope ?? SessionScope.Draft,
         handoffTicket: record?.handoffTicket ?? null,
         createdAt: record?.createdAt ?? null,
         lastActiveAt: record?.lastActiveAt ?? null,
@@ -174,6 +185,7 @@ function newSession() {
   const repo = requireOption("repo");
   const slug = requireOption("slug");
   const summary = requireOption("summary");
+  const scope = requireScope(requireOption("scope"));
   if (!SLUG_PATTERN.test(slug) || slug.length > MAX_SLUG_LENGTH) {
     throw new Error(
       `Slug must be lowercase words joined by hyphens, at most ${MAX_SLUG_LENGTH} characters.`
@@ -204,6 +216,7 @@ function newSession() {
     summary,
     ticket: values.ticket ?? null,
     status: SessionStatus.Active,
+    scope,
     handoffTicket: null,
     baseCommit: git(worktree, ["rev-parse", "HEAD"]),
     createdAt: now,
@@ -228,6 +241,7 @@ function touchSession() {
     summary: values.summary ?? record.summary,
     ticket: values.ticket ?? record.ticket,
     status: values.status ?? record.status,
+    scope: values.scope ? requireScope(values.scope) : (record.scope ?? SessionScope.Draft),
     handoffTicket: values["handoff-ticket"] ?? record.handoffTicket,
     stack: values.stack ? JSON.parse(values.stack) : record.stack,
     lastActiveAt: new Date().toISOString(),
@@ -274,4 +288,11 @@ function baseBranch(cwd) {
   } catch {
     return "main";
   }
+}
+
+function requireScope(scope) {
+  if (!Object.values(SessionScope).includes(scope)) {
+    throw new Error(`--scope must be one of: ${Object.values(SessionScope).join(", ")}.`);
+  }
+  return scope;
 }

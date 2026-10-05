@@ -19,6 +19,25 @@ corrections, the footprint, checks, and review summaries, the
 `../skills/vibe/references/closedloop-graph.md` and
 `../skills/handoff/references/ticket-template.md`.
 
+## Ship mode (full scope)
+
+Instead of steps 1 to 5 below: create or update the ticket the same way but
+with `status: IN_REVIEW` (an existing ticket moves to IN_REVIEW); commit and
+push the same way; then open a PR to `main` with `gh pr create`, filling the
+template fetched from main
+(`gh api repos/closedloop-ai/symphony-alpha/contents/.github/pull_request_template.md --jq .content | base64 -d`)
+per the root `AGENTS.md`: title `<ISS-slug>: <summary>` within 72 characters
+including the ` (#NNNN)` GitHub appends; Summary saying it was built in a vibe
+session and needs an engineer's review before merging; Breaking changes
+answered; UI Feature Flag answered when a gate fires (a net-new screen or nav
+item needs a default-off flag per the closed-by-default UI policy, unless the
+person chose Labs, which already gates it); Test plan from the test and review
+summaries (at most 20 lines). Never enable auto-merge here. Link the branch
+with `create_branch_artifact`. Attach every decision table the backend worker
+wrote (`.closedloop-ai/decision-tables/*.md` in the worktree, gitignored) to
+the ticket with `upload-attachment`, and name them in the PR body. Return the
+PR URL.
+
 ## Do
 
 1. Ticket (ClosedLoop MCP). Assignee: Andrew Eye from `list-users` (email

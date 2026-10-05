@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.18.0
+
+#### Added
+- Vibe sessions have a scope (ISS-12046). After asking what to work on, `vibe` asks whether the work is a draft for engineering to finish or should go all the way including the backend, and records it (`vibe-sessions.mjs new --scope draft|full`, `touch --scope`). Draft behaves as before.
+- Full scope: guardrails allow `apps/api`, `packages/api/src/types`, `packages/database` (schema and migrations, applied only to the throwaway vibe database), and Desktop main-process code, each under its owning AGENTS.md; net-new surfaces ship behind a default-off flag. The change worker returns `NEEDS_BACKEND` and the new `vibe-backend-worker` builds the backend from a decision table it writes first with the `decision-table` skill, plus seed coverage and seed data for new models and tests.
+- `handoff` full-scope ship path: the whole test suite (`vibe-verify-worker` full-suite mode), two `workflow-code-review` passes with fixes between, a PR to `main` with the ticket at IN_REVIEW and decision tables attached (`vibe-publish-worker` ship mode), and the new `vibe-ship-worker`, which fixes failing checks, waits for an engineer's approving review (it never merges without one), enables auto-merge, follows the merge queue, and marks the ticket DONE. `handoff-inventory.mjs` allows backend paths for full-scope sessions.
+- `workflow-code-review` skill, moved from the workflow prompt pack together with the 12 review lens files it loads, so it installs with this plugin.
+- Nudges: when the person is done, `vibe` asks whether to hand off now or keep a draft; at start it flags unhanded sessions older than three days.
+
 ### code v1.17.2
 
 #### Fixed

@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Finish a vibe session in symphony-alpha and hand it to engineering. Shows the person a task list, then (through workers) verifies the work stays frontend-only, makes sure every new or changed component has Storybook stories, runs lint, typecheck, and tests, runs an adversarial code review and fixes what it confirms, writes api-requirements.md from the session's stubs, creates the ClosedLoop handoff ticket (IN_PROGRESS, assigned to Andrew Eye) with that file attached, makes the single commit on the andy/<slug> branch, pushes, and posts the stable Vercel preview link. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
+description: Finish a vibe session in symphony-alpha and hand it to engineering. Shows the person a task list, then (through workers) verifies the work stays frontend-only, makes sure every new or changed component has Storybook stories, runs lint, typecheck, and tests, runs an adversarial code review and fixes what it confirms, writes api-requirements.md from the session's stubs, creates the ClosedLoop handoff ticket (IN_PROGRESS, assigned to Andrew Eye) with that file attached, makes the single commit on the andy/<slug> branch, pushes, and posts the stable Vercel preview link. For a full-scope session it instead runs the whole test suite, two workflow-code-review passes, opens a PR to main, moves the ticket to IN_REVIEW, and follows CI, the required engineer review, and the merge queue until it merges. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
 ---
 
 # Handoff
@@ -41,12 +41,23 @@ own folder, not the repository.
 | Adversarial review | repo `review-soul` and `vibe-adversarial-reviewer`, in parallel |
 | Requirements | `vibe-api-requirements-writer` |
 | Ticket, commit, push, preview | `vibe-publish-worker` |
+| Full scope: whole test suite | `vibe-verify-worker` (full-suite mode) |
+| Full scope: two review passes | the `workflow-code-review` skill (itself orchestrator-only), findings to `vibe-change-worker` / `vibe-backend-worker` |
+| Full scope: PR to main | `vibe-publish-worker` (ship mode) |
+| Full scope: CI, engineer review, merge queue | `vibe-ship-worker` |
 
 ## 0. Pick the session
 
 Run `node ../vibe/scripts/vibe-sessions.mjs list --repo <repo>`. Use the
 session whose worktree you are in. If you are not in one and more than one
 session is `active`, list them in plain words and ask which one to hand off.
+
+## Scope
+
+Read the session's `scope` from the list. **Draft** (the default) follows
+sections 1 to 11 as written: the work goes to engineering to finish. **Full**
+uses the ship path in section 12 instead of sections 7 to 10: the work becomes
+a pull request to `main` that an engineer reviews before it merges.
 
 ## 1. Show the task list first
 
@@ -66,6 +77,21 @@ Here's what I'll do to hand this off:
 [ ] Attach the write-up to the ticket
 [ ] Save your work as one change on its own branch and upload it
 [ ] Get the shareable preview link and add it to the ticket
+```
+
+For a **full** scope session, show this list instead:
+
+```
+Here's what I'll do to ship this:
+[ ] Summarize what changed and confirm it with you
+[ ] Check the change stays within what we can ship
+[ ] Make sure every new or changed component has Storybook stories, and
+    measure what the work adds to the Storybook sidebar
+[ ] Run every test in the repo
+[ ] Run two tough code reviews and fix what they find
+[ ] Create the ClosedLoop ticket (in review)
+[ ] Open a pull request for an engineer to review
+[ ] Watch the checks, and merge once an engineer approves
 ```
 
 If this session already has a `handoffTicket` (they kept working after an
@@ -141,3 +167,38 @@ Tell them, in a few lines: the ticket link, the preview link, the branch name
 engineering will use, and what engineering will build (one line per stub). The
 preview runs against the stage API, not the seeded local data, and needs a
 stage sign-in in a normal browser; stubbed screens still show their fixtures.
+
+## 12. Full scope: ship it
+
+Sections 2 to 4 run as in draft scope (the inventory allows backend paths in
+full scope). Then:
+
+1. **Whole test suite.** Dispatch `vibe-verify-worker` in full-suite mode. It
+   fixes failures in the session's own changes and never weakens a test.
+2. **Two review passes.** Run the `workflow-code-review` skill (`$workflow-code-review`
+   in Codex, `/code:workflow-code-review` in Claude Code) on the worktree's
+   changes against its base. It dispatches its own reviewer workers; you only
+   receive its consolidated findings. Send frontend findings to
+   `vibe-change-worker` and backend findings to `vibe-backend-worker`, both in
+   fix mode, then run the full suite again. Then run `workflow-code-review` a
+   second time on the result and repeat the fix and suite steps for anything it
+   confirms. Keep both passes' fixed and rejected lists for the PR.
+3. **Pull request.** Dispatch `vibe-publish-worker` in ship mode with the
+   summary, the footprint, the test results, and both review summaries. It
+   creates or updates the ClosedLoop ticket at IN_REVIEW, makes the one commit,
+   pushes, opens the PR to `main`, and links the branch. Record the ticket on
+   the session (`touch --handoff-ticket`).
+4. **Checks, review, merge.** Dispatch `vibe-ship-worker` with the PR URL and
+   the worktree. It returns one of: `FIXING` (it fixed a failing check and
+   pushed; dispatch it again), `AWAITING_REVIEW` (everything is green and it is
+   waiting for an engineer's approval), `QUEUED`, or `MERGED`. On
+   `AWAITING_REVIEW`, tell the person the pull request is ready and an engineer
+   will review it; they can close this and run the handoff skill again later to
+   pick up where it left off. On `MERGED`, the worker has marked the ticket
+   DONE; mark the session handed off and run `just vibe-down`.
+5. **Resuming.** When the handoff skill runs on a full-scope session that
+   already has a PR, skip straight to step 4.
+
+Tell the person, in a few lines: the ticket link, the PR link, and where it
+stands (waiting for review, in the merge queue, or merged).
+

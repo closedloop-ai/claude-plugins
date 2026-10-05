@@ -1,6 +1,9 @@
 # Stubbing data and actions
 
-Vibe sessions never write backend code. When the UI needs data the API does
+This applies to **draft** scope sessions. In full scope, the backend is built
+for real by `vibe-backend-worker` and nothing is stubbed.
+
+Draft vibe sessions never write backend code. When the UI needs data the API does
 not return, or an action the API cannot perform, build the UI against a stub
 and record exactly what engineering must implement. Stubs are temporary by
 design: engineering replaces each one when they build the real endpoint.

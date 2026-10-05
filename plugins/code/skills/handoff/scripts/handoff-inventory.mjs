@@ -23,6 +23,19 @@ const ALLOWED_PREFIXES = [
   "apps/desktop/src/renderer/",
   "apps/storybook/",
 ];
+// Full scope (ISS-12046) builds the backend too, and an engineer reviews the
+// PR, so these move from forbidden to allowed.
+const FULL_SCOPE_PREFIXES = [
+  "apps/api/",
+  "packages/api/",
+  "packages/database/",
+  "apps/desktop/src/main/",
+  "apps/desktop/prisma/",
+];
+const ALWAYS_FORBIDDEN_PREFIXES = ["packages/golden-sessions/", ".github/"];
+const SessionScope = { Draft: "draft", Full: "full" };
+const RECORD_FILE = "vibe-session.json";
+
 const FORBIDDEN_PREFIXES = [
   "apps/api/",
   "apps/mcp/",
@@ -57,6 +70,7 @@ if (!branch.startsWith(BRANCH_PREFIX)) {
   fail(`${worktree} is on ${branch}, not a vibe branch (${BRANCH_PREFIX}*).`);
 }
 
+const scope = sessionScope();
 const baseCommit = git(["merge-base", "HEAD", `origin/${baseBranch()}`]);
 const changedFiles = listChangedFiles(baseCommit);
 const forbidden = changedFiles.filter((file) => isForbidden(file.path));
@@ -80,6 +94,7 @@ const result = {
   ok: Object.values(blocking).every(Boolean),
   worktree,
   branch,
+  scope,
   baseCommit,
   blocking,
   changedFiles,
@@ -122,6 +137,15 @@ function listChangedFiles(base) {
 }
 
 function isForbidden(filePath) {
+  if (ALWAYS_FORBIDDEN_PREFIXES.some((prefix) => filePath.startsWith(prefix))) {
+    return true;
+  }
+  if (scope === SessionScope.Full) {
+    if (FULL_SCOPE_PREFIXES.some((prefix) => filePath.startsWith(prefix))) {
+      return false;
+    }
+    return FORBIDDEN_BASENAMES.has(path.basename(filePath));
+  }
   if (FORBIDDEN_PREFIXES.some((prefix) => filePath.startsWith(prefix))) {
     return true;
   }
@@ -132,7 +156,11 @@ function isForbidden(filePath) {
 }
 
 function isAllowed(filePath) {
-  return ALLOWED_PREFIXES.some((prefix) => filePath.startsWith(prefix));
+  const allowed =
+    scope === SessionScope.Full
+      ? [...ALLOWED_PREFIXES, ...FULL_SCOPE_PREFIXES]
+      : ALLOWED_PREFIXES;
+  return allowed.some((prefix) => filePath.startsWith(prefix));
 }
 
 function findStubImportViolations(files) {
@@ -184,4 +212,13 @@ function baseBranch() {
   } catch {
     return "main";
   }
+}
+
+function sessionScope() {
+  const file = path.join(git(["rev-parse", "--absolute-git-dir"]), RECORD_FILE);
+  if (!existsSync(file)) {
+    return SessionScope.Draft;
+  }
+  const scopeValue = JSON.parse(readFileSync(file, "utf8")).scope;
+  return scopeValue === SessionScope.Full ? SessionScope.Full : SessionScope.Draft;
 }
