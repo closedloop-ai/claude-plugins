@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.18.2
+
+#### Changed
+- `vibe` guardrails: a new or extended design-system primitive needs a full spec before it is built (every variant and size, responsive behavior, accessibility, and every applicable state), and `vibe-primitive-worker` builds all of it with a story per variant, size, and state, returning `BLOCKED` when the spec leaves part out.
+- `vibe` guardrails: a request to make something look better changes only the visual layer; copy, information architecture, and routes stay unless the person asks.
+
 ### code v1.18.1
 
 #### Added
