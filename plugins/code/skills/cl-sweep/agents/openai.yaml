@@ -1,0 +1,4 @@
+interface:
+  display_name: "CL Sweep"
+  short_description: "Sweep ClosedLoop on Desktop or CLI"
+  default_prompt: "Use $cl-sweep for this ClosedLoop project: create or adopt the project-keyed parent goal, select the complete Desktop path or proven cwd-bound CLI App Server worker path, keep the rolling ticket queue active, run $cl-analyze first, and for every validated GO/GO_WITH_UI_PLAN_APPROVAL immediately transition to ACTIVE_EXECUTING/ACTIVE_PLANNING and send $cl-execute to the same owner or approved batch. Analysis-only GO is never terminal; do not mark the parent goal complete while any eligible ticket, active child, monitored PR, or waiting state remains. Finish tickets only through private leases, durable ownership, readiness, review, validation, monitoring, and merge gates."
