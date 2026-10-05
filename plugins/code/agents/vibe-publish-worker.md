@@ -42,8 +42,10 @@ corrections, the footprint, checks, and review summaries, the
    minutes; let it finish. If it fails, return `BLOCKED` with the failing check
    in one line (the orchestrator sends it to a fix worker). Never `--no-verify`
    or `SKIP_PREPUSH_GATES`.
-4. Link the branch: ClosedLoop `create_branch_artifact` for the ticket,
-   repository `closedloop-ai/symphony-alpha`, the branch name.
+4. Link the branch: ClosedLoop `create_branch_artifact` with `projectId` (the
+   ticket's project UUID), `branchName` (`andy/<slug>`), `sourceArtifactId`
+   (the ticket's UUID), `baseBranch` (the session's base, usually `main`), and
+   `baseBranchSource: "mcp_input"`.
 5. Preview: the inventory's `previewAlias.url`. Poll
    `gh api "repos/closedloop-ai/symphony-alpha/deployments?sha=<commit>"` for
    the `Preview – app-stage` environment and its latest status every 30

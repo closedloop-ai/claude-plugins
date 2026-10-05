@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.17.2
+
+#### Fixed
+- `vibe-publish-worker` and `vibe-seed-refresh` now pass `create_branch_artifact` the arguments it takes (`projectId`, `branchName`, `sourceArtifactId`, `baseBranch`) instead of a repository name.
+
 ### code v1.17.1
 
 #### Added

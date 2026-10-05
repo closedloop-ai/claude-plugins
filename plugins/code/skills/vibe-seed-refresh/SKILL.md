@@ -73,7 +73,9 @@ summary. On `BLOCKED`, post the reason as a loop event, tell Daniel, and stop.
 ## 4. Pull request
 
 Dispatch `vibe-seed-pr-worker` in open mode with the worktree and ticket. It
-returns the PR URL. Link it (ClosedLoop `create_branch_artifact`, loop event),
+returns the PR URL. Link it (ClosedLoop `create_branch_artifact` with the ticket's project UUID as
+`projectId`, the branch as `branchName`, and the ticket's UUID as
+`sourceArtifactId`; then a loop event),
 start the monitor per the `gh-monitor-pr` skill with the PR URL and
 `--stall-after 1800`, save phase `pr-open`, and end the turn.
 
