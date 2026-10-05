@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.17.0
+
+#### Added
+- `vibe` skill: lets a non-engineer build product UI for symphony-alpha in the Codex Desktop in-app browser. Preflight installs prerequisites; each session is an `andy/<slug>` worktree off fresh `origin/main` (`scripts/vibe-sessions.mjs` lists, creates, resumes, and discards sessions); `just vibe-up` brings up a throwaway seeded web and Desktop environment; chat requests and in-browser annotations become code under guardrails (frontend only, design-system reuse, tokens, Storybook stories, `*.vibe-stub.ts` stubs for missing API data, no invented copy). The skill is orchestrator-only: it never reads or edits code and dispatches workers for every task.
+- `handoff` skill: shows a task list, then through workers checks guardrails (`scripts/handoff-inventory.mjs`), completes Storybook stories and measures the sidebar footprint (`pnpm vibe storybook-diff`), runs lint, typecheck, and tests, runs an adversarial review, writes `api-requirements.md` from the stubs, creates the ClosedLoop handoff ticket (IN_PROGRESS, assigned to the vibe user) with it attached, makes one commit, pushes, and adds the stable Vercel branch preview link.
+- `vibe-seed-refresh` skill: checks symphony-alpha's vibe seed against main and, on drift, files a ticket, fixes the seed in a worktree, opens a PR, and follows it through `gh-monitor-pr` and the merge queue to merged. Orchestrator-only.
+- Agents for the three skills: `vibe-setup-worker`, `vibe-requirements-worker`, `vibe-change-worker`, `vibe-primitive-worker`, `vibe-handoff-summarizer`, `vibe-verify-worker`, `vibe-publish-worker`, `vibe-guardrails-reviewer`, `vibe-adversarial-reviewer`, `vibe-api-requirements-writer`, `vibe-storybook-decomposer`, `vibe-seed-check-worker`, `vibe-seed-fix-worker`, `vibe-seed-pr-worker`. All use closedloop-graph first (`skills/vibe/references/closedloop-graph.md`).
+- Codex packaging for the `code` plugin (`.codex-plugin/plugin.json`) and a `code` entry in `.agents/plugins/marketplace.json`, so `codex plugin add code@closedloop-ai` installs it. Install steps for a vibe user's Mac: `skills/vibe/INSTALL.md`.
+
 ### code v1.16.4
 
 #### Fixed
