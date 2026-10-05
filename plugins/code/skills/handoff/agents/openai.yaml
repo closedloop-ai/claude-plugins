@@ -1,0 +1,4 @@
+interface:
+  display_name: "Handoff"
+  short_description: "Finish a vibe session and hand it to engineering"
+  default_prompt: "Use $handoff to hand this vibe session off to engineering."
