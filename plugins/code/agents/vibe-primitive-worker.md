@@ -27,8 +27,11 @@ skill (`.claude/skills/storybook/SKILL.md`, `references/gotchas.md`,
 
 1. Use closedloop-graph `code_symbols` and `search_nodes` to confirm nothing
    equivalent exists under another name; if it does, return `BLOCKED` naming it.
-2. Build it where the spec places it, with tokens only, every variant and state
-   the spec lists, and accessible names and keyboard behavior.
+2. Build it where the spec places it, with tokens only. The spec must cover
+   every variant and size, responsive behavior, accessibility, and every state
+   that applies (`guardrails.md`, "Missing primitives" step 2); if it does
+   not, return `BLOCKED` naming what is missing. Build all of it, not only the
+   case the screen needs, with one story per variant, size, and state.
 3. Stories in a collected location with controls; `DS_*` taxonomy entry for a
    new `packages/design-system/components/ui/*.tsx`; tests in
    `packages/design-system/__tests__/` when it lives there.

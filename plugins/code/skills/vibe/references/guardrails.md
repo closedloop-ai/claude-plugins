@@ -93,6 +93,14 @@ When nothing in the catalog fits:
    - Create: a new component, placed where the steward says. Generic and
      domain-free goes in `packages/design-system/components/ui/`; domain UI
      goes in its feature slice under `packages/app/<feature>/components/`.
+
+   For Extend and Create, the spec must cover the whole component, not only
+   the case this screen needs: every variant and size, responsive behavior at
+   phone and desktop widths, accessibility (accessible name, keyboard
+   behavior, focus handling, ARIA state), and every state that applies
+   (default, hover, focus, disabled, loading, empty, error). Ask the steward
+   for whatever its answer leaves out before building. Any text a state shows
+   follows the Copy rules below.
 3. Build it to the repo's Storybook and design-system rules
    (`apps/storybook/AGENTS.md`, `packages/design-system/AGENTS.md`), using the
    repo skill `.claude/skills/storybook` (`workflows/author-stories.md`,
@@ -120,6 +128,13 @@ each one to the nearest existing token or spacing step and tell the person
 which token you used. If no token is close, raise it as a missing primitive.
 No icon-in-a-colored-box chips, no borders on everything, no badge where a
 plain string works.
+
+## Making something look better
+
+When the person asks to make something look better, change only the visual
+layer: spacing, type, color tokens, alignment, and emphasis. Copy, information
+architecture, and routes stay as they are unless the person asks to change
+them.
 
 ## Copy
 
