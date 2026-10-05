@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.18.1
+
+#### Added
+- Added the `gh-monitor-pr` skill to the code plugin. It starts detached GitHub pull-request monitors, wakes the exact launching Codex Desktop or CLI root through the native managed App Server, and keeps monitor-local delivery receipts without depending on the separate `app-server-orchestrator` skill.
+- Added the ClosedLoop ticket skill pack (`cl-policy`, `cl-analyze`, `cl-find-related-tickets`, `cl-split`, `cl-work-report`, `cl-sweep`, and `cl-execute`) plus supporting instruction skills (`closedloop-intel`, `measurement-discipline`, and `mermaid-visualizer`) so the Codex plugin can provide the local ClosedLoop workflows without relying on personal `~/.codex/skills` copies.
+
 ### code v1.18.0
 
 #### Added
