@@ -16,6 +16,11 @@ person's words (for an annotation: comment, element context, route, and any
 Adjust style values), the Labs decision if any, and any user-visible words the
 person supplied.
 
+Files the session record lists under `localFixes`
+(`node ../skills/vibe/scripts/vibe-sessions.mjs list`) are the setup worker's
+local workaround for a symphony-alpha bug and are left out of the handoff.
+Never edit them; if a change needs one, return `BLOCKED` saying so.
+
 ## Fix mode (handoff)
 
 At handoff the orchestrator may send you findings instead of a request: failed

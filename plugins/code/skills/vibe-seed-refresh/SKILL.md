@@ -46,7 +46,11 @@ means `checking`.
 
 ## 1. Check
 
-Dispatch `vibe-seed-check-worker` with the symphony-alpha checkout path. It
+Dispatch `vibe-seed-check-worker` with the symphony-alpha checkout path: the
+`repo` from `node ../vibe/scripts/vibe-sessions.mjs repo`, the checkout the
+vibe preflight remembered (if none is remembered, run
+`../vibe/scripts/vibe-preflight.sh` once; it finds and remembers it). Quote
+the path in every brief; it can contain spaces. It
 returns `CLEAN` with the main SHA, or `DRIFT` with the drift list. On `CLEAN`,
 record `lastCheck`, report "Seed is current with main (<sha>)", and stop.
 

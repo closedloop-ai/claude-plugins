@@ -23,7 +23,8 @@ corrections, the footprint, checks, and review summaries, the
 
 Instead of steps 1 to 5 below: create or update the ticket the same way but
 with `status: IN_REVIEW` (an existing ticket moves to IN_REVIEW); commit and
-push the same way; then open a PR to `main` with `gh pr create`, filling the
+push the same way, including restoring the local fixes first, so the PR never
+carries them; then open a PR to `main` with `gh pr create`, filling the
 template fetched from main
 (`gh api repos/closedloop-ai/symphony-alpha/contents/.github/pull_request_template.md --jq .content | base64 -d`)
 per the root `AGENTS.md`: title `<ISS-slug>: <summary>` within 72 characters
@@ -51,7 +52,15 @@ PR URL.
    run closedloop-graph `query_collisions` / `search_nodes` with the summary and
    put any overlapping open tickets in the body. Attach the requirements with
    `upload-attachment`.
-2. Commit. In the worktree: `git add -A`; check `git status` shows nothing
+2. Commit. First keep the setup worker's local fixes out: for every entry in
+   the inventory's `localFixes`, restore its path to the inventory's
+   `baseCommit`. A path that exists there:
+   `git -C "<wt>" restore --source=<baseCommit> --staged --worktree "<path>"`;
+   a path the fix added (not in `baseCommit`, checked with
+   `git -C "<wt>" cat-file -e <baseCommit>:"<path>"`): `rm -f "<wt>/<path>"`
+   and `git -C "<wt>" rm --cached --quiet --ignore-unmatch "<path>"`. Then
+   in the worktree: `git add -A`; confirm `git diff --cached --name-only`
+   contains none of the `localFixes` paths, and that `git status` shows nothing
    unexpected (no `.env*`, `.control/`, build output); if it does, unstage it
    and report. One commit, `<ISS-slug>: <plain imperative summary>` under 72
    characters, body listing the screens changed and `Handoff ticket: <ISS-slug>`.

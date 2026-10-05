@@ -3,6 +3,11 @@
 // mechanical guardrail checks. Prints one JSON object; exits 0 when every
 // blocking check passes and 1 otherwise. Changes nothing.
 //
+// Files in the session record's `localFixes` (workarounds for symphony-alpha
+// bugs that the setup worker filed as tickets) are not the person's work:
+// they are listed under `localFixes` and left out of `changedFiles` and every
+// guardrail check, and the publish worker restores them before committing.
+//
 // Usage: handoff-inventory.mjs --worktree <path>
 
 import { execFileSync } from "node:child_process";
@@ -70,9 +75,15 @@ if (!branch.startsWith(BRANCH_PREFIX)) {
   fail(`${worktree} is on ${branch}, not a vibe branch (${BRANCH_PREFIX}*).`);
 }
 
-const scope = sessionScope();
+const record = readSessionRecord();
+const scope = record?.scope === SessionScope.Full ? SessionScope.Full : SessionScope.Draft;
+const localFixTickets = localFixTicketsByPath(record);
 const baseCommit = git(["merge-base", "HEAD", `origin/${baseBranch()}`]);
-const changedFiles = listChangedFiles(baseCommit);
+const allChangedFiles = listChangedFiles(baseCommit);
+const changedFiles = allChangedFiles.filter((file) => !localFixTickets.has(file.path));
+const localFixes = allChangedFiles
+  .filter((file) => localFixTickets.has(file.path))
+  .map((file) => ({ ...file, ticket: localFixTickets.get(file.path) }));
 const forbidden = changedFiles.filter((file) => isForbidden(file.path));
 const outsideAllowed = changedFiles.filter(
   (file) => !isForbidden(file.path) && !isAllowed(file.path)
@@ -98,6 +109,7 @@ const result = {
   baseCommit,
   blocking,
   changedFiles,
+  localFixes,
   forbidden,
   outsideAllowed,
   stubs,
@@ -214,11 +226,23 @@ function baseBranch() {
   }
 }
 
-function sessionScope() {
+function readSessionRecord() {
   const file = path.join(git(["rev-parse", "--absolute-git-dir"]), RECORD_FILE);
   if (!existsSync(file)) {
-    return SessionScope.Draft;
+    return null;
   }
-  const scopeValue = JSON.parse(readFileSync(file, "utf8")).scope;
-  return scopeValue === SessionScope.Full ? SessionScope.Full : SessionScope.Draft;
+  return JSON.parse(readFileSync(file, "utf8"));
+}
+
+function localFixTicketsByPath(sessionRecord) {
+  const tickets = new Map();
+  const fixes = Array.isArray(sessionRecord?.localFixes) ? sessionRecord.localFixes : [];
+  for (const fix of fixes) {
+    for (const filePath of Array.isArray(fix?.paths) ? fix.paths : []) {
+      if (typeof filePath === "string" && !tickets.has(filePath)) {
+        tickets.set(filePath, typeof fix.ticket === "string" ? fix.ticket : null);
+      }
+    }
+  }
+  return tickets;
 }

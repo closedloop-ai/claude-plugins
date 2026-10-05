@@ -1,5 +1,12 @@
 # Preflight fixes
 
+The preflight finds the symphony-alpha checkout wherever it lives in the home
+folder (by its git remote `closedloop-ai/symphony-alpha`, not its folder
+name) and remembers it in `~/.codex/vibe/config.json`. Every later run and
+`vibe-sessions.mjs` use that remembered checkout. Paths can contain spaces
+(for example `~/Documents/Closedloop.ai - Active Work/symphony-alpha`), so
+quote every path in every command.
+
 `scripts/vibe-preflight.sh` reports each failure with a `fix` key. Apply the
 matching fix below, then re-run the script. Run fixes yourself in the terminal.
 Use the Codex Computer Use plugin only where a step says so. Never type,
@@ -12,17 +19,47 @@ installing <thing>; type it in the prompt" and wait.
 | `unsupported-os` | Stop. This flow supports macOS only. Tell the person and Daniel Ochoa. |
 | `install-xcode-clt` | `xcode-select --install`, then wait for the system installer to finish. Computer Use may click Install and Agree in that dialog. |
 | `install-homebrew` | `NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`. It asks for the Mac password through sudo. Afterwards add brew to the shell: `echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile && eval "$(/opt/homebrew/bin/brew shellenv)"`. |
-| `install-node` | `brew install node@24 && brew link --overwrite --force node@24`. Re-check `node --version`. |
+| `install-node` | The Node that vibe commands actually run (first on PATH, both here and in a new shell) is missing or outside the checkout's `engines` range; the `detail` names the version, its location, and the range. Follow "Supported Node" below. |
 | `install-pnpm` | `corepack enable && corepack prepare pnpm@latest --activate`. Inside the repo the `packageManager` field pins the exact version. |
 | `brew-install-just` | `brew install just` |
 | `brew-install-jq` | `brew install jq` |
 | `brew-install-gh` | `brew install gh`, then apply `gh-auth-login`. |
 | `gh-auth-login` | `gh auth login --hostname github.com --git-protocol https --web`. It prints a one-time code and opens the browser. Computer Use may paste the code and click Authorize when the person is already signed in to GitHub in that browser; otherwise ask them to sign in there. Then `gh auth setup-git`. |
-| `install-docker` | `brew install --cask docker`, then accept the license without a dialog: `sudo /Applications/Docker.app/Contents/MacOS/install --accept-license --user="$USER"` (asks for the Mac password). Then apply `start-docker`. |
+| `install-docker` | Only when neither Docker Desktop nor Colima is installed: `brew install --cask docker`, then accept the license without a dialog: `sudo /Applications/Docker.app/Contents/MacOS/install --accept-license --user="$USER"` (asks for the Mac password). Then apply `start-docker`. |
 | `start-docker` | `docker desktop start` (falls back to `open -a Docker` when the `desktop` subcommand is missing). Poll `docker info` every 5 seconds for up to 3 minutes. If it does not come up, take one screenshot with Computer Use; if a Docker dialog is waiting (sign-in prompt, survey, terms), dismiss or skip it (never sign in on the person's behalf) and keep polling. |
-| `clone-repo` | `mkdir -p ~/Source && gh repo clone closedloop-ai/symphony-alpha ~/Source/symphony-alpha`, then apply `run-loops-setup`. |
-| `ask-for-repo-path` | The checkout found is not symphony-alpha. Ask where their symphony-alpha folder is, or clone a fresh one with `clone-repo`. |
-| `run-loops-setup` | In the main checkout: `git pull --ff-only origin main` only if the working tree is clean, then `./.closedloop-ai/loops-setup.sh`. If it reports missing env values, show the exact names to Daniel Ochoa rather than guessing values. |
+| `brew-install-docker-cli` | Colima is the engine but the `docker` command is missing: `brew install docker`, then re-run the preflight (it will then ask for `start-colima` if Colima is stopped). |
+| `start-colima` | Colima is installed and stopped: `colima start` (the first start downloads a virtual machine and can take several minutes), then `docker context use colima`. Poll `docker info` every 5 seconds for up to 5 minutes. Do not install Docker Desktop on a Mac that uses Colima. |
+| `use-colima-context` | Colima is running but `docker` points at another engine: `docker context use colima`, then `docker info`. |
+| `install-compose-plugin` | `docker compose version` fails: `brew install docker-compose`, then `mkdir -p "$HOME/.docker/cli-plugins" && ln -sfn "$(brew --prefix)/opt/docker-compose/bin/docker-compose" "$HOME/.docker/cli-plugins/docker-compose"`. Continue only once `docker compose version` prints a version. |
+| `choose-repo` | More than one symphony-alpha checkout was found (the `detail` lists them, separated by a vertical bar). Return `NEEDS_PERSON` asking which folder they work in, listing the folders in plain words. Then run the preflight with `--repo "<chosen folder>"`, which remembers it. |
+| `allow-folder-access` | macOS did not let Codex look inside the folders in `detail`. Return `NEEDS_PERSON`: "Your Mac is asking whether Codex can open your <folder> folder; click Allow." If no prompt appears, they allow it in System Settings, Privacy & Security, Files and Folders, under Codex. Then re-run the preflight. Never clone while this is unresolved; the checkout may be in that folder. |
+| `clone-repo` | Only when the preflight found no checkout anywhere in the home folder: `mkdir -p "$HOME/Source" && gh repo clone closedloop-ai/symphony-alpha "$HOME/Source/symphony-alpha"`, run the preflight with `--repo "$HOME/Source/symphony-alpha"` so it is remembered, then apply `run-loops-setup`. |
+| `ask-for-repo-path` | The folder given with `--repo` is not a symphony-alpha checkout (its git remote is not `closedloop-ai/symphony-alpha`). Ask where their symphony-alpha folder is, or clone a fresh one with `clone-repo`. |
+| `run-loops-setup` | In the remembered checkout (`repo` detail; quote the path, it can contain spaces): `git -C "<repo>" pull --ff-only origin main` only if the working tree is clean, then `cd "<repo>" && ./.closedloop-ai/loops-setup.sh`. If it reports missing env values, show the exact names to Daniel Ochoa rather than guessing values. |
+
+## Supported Node
+
+Install `node@24` when the range accepts 24 (the default range
+`^24 || >=26` does), otherwise `node`. Then put it first on PATH for every new
+shell, including Codex's non-interactive ones. Each profile file gets one
+marked block, appended at the end so it comes after Homebrew's own setup; a
+file that already has the marker is left alone:
+
+```bash
+brew install node@24
+NODE_BIN="$(brew --prefix node@24)/bin"
+for f in "$HOME/.zshenv" "$HOME/.zprofile"; do
+  touch "$f"
+  grep -qF '# vibe: supported Node first' "$f" ||
+    printf '\n# vibe: supported Node first\nexport PATH="%s:$PATH"\n' "$NODE_BIN" >> "$f"
+done
+```
+
+Add the same block to `~/.bash_profile` only if that file already exists.
+Do not unlink or remove the old Node; other tools may use it. Re-run the
+preflight in a new command: the `node` check must pass, which means both this
+shell and a new one run a supported version. Then apply `install-pnpm` if
+`pnpm` is now missing.
 
 ## Beyond the script
 

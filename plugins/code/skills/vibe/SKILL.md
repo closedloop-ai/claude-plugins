@@ -21,7 +21,7 @@ work itself. Under all circumstances:
   create files, or run builds, tests, linters, or installers.
 - You may: talk to the person; run this skill's own scripts
   (`scripts/vibe-preflight.sh`, `scripts/vibe-sessions.mjs`) and the
-  environment lifecycle commands (`just vibe-up`, `just vibe-down`,
+  environment lifecycle commands (`pnpm vibe up --ci`, `just vibe-down`,
   `just vibe-status`), whose output is short JSON; read the `VIBE_ENV` line;
   open, reload, and inspect the in-app browser; and dispatch workers.
 - Everything else goes to a worker, even a one-line change and even when you
@@ -47,8 +47,11 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   instructions plus the inputs below. Repo agents live in `<repo>/.claude/agents/`.
 - Claude Code: invoke as `/code:vibe`; plugin agents are available as
   `code:<name>`.
-- Run `just vibe-up` in a persistent terminal session, never as a blocking
-  foreground call.
+- Start the environment with `pnpm vibe up --ci`, which runs it detached so it
+  survives between turns. Never use the foreground `just vibe-up`: it dies
+  when the turn ends.
+- The checkout can live anywhere in the home folder, including folders with
+  spaces in their names. Quote every path you pass to a command.
 - Paths like `scripts/...` and `references/...` are relative to this skill's
   folder, not the repository.
 - Every worker reads `references/closedloop-graph.md` and uses closedloop-graph
@@ -58,7 +61,7 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 
 | Worker | Dispatch it to |
 |---|---|
-| `vibe-setup-worker` | fix failed preflight checks, bootstrap a worktree, diagnose an environment that will not start |
+| `vibe-setup-worker` | fix failed preflight checks, bootstrap a worktree, start or diagnose an environment that will not start, and work around a symphony-alpha bug locally (ticket filed, fix kept out of handoff) |
 | `vibe-requirements-worker` | read a ClosedLoop ticket (and its PRD, plan, related tickets) and turn it into requirements and a starting screen |
 | `vibe-change-worker` | make one requested change (chat or annotation): locate, implement, stub (draft) or request backend work (full), add stories, self-check |
 | `vibe-backend-worker` | full scope only: build the backend half of a change (route, service, validation, schema and migration, seed, tests), driven by a decision table |
@@ -73,12 +76,17 @@ then dispatch a fresh worker with the answer.
 
 ## 1. Preflight
 
-Run `scripts/vibe-preflight.sh` (add `--repo <path>` when the checkout is not
-in a standard location). It prints one JSON line per check. If every check
-passes, continue. Otherwise dispatch `vibe-setup-worker` with the failed
+Run `scripts/vibe-preflight.sh`. It finds the symphony-alpha checkout anywhere
+in the home folder by its git remote, remembers it in
+`~/.codex/vibe/config.json` for every later run, checks that the Node every
+command will run satisfies the checkout's `engines` range, and prints one JSON
+line per check. The `repo` check's `detail` is the checkout path (`<repo>`
+in this skill). If every check passes, continue. Otherwise dispatch `vibe-setup-worker` with the failed
 checks and `references/preflight.md`. The only things the person ever does
-are type their Mac password into an installer prompt and finish a browser
-sign-in; the worker reports those as `NEEDS_PERSON`. You and the workers
+are type their Mac password into an installer prompt, finish a browser
+sign-in, allow Codex into a folder when macOS asks, and say which folder they
+work in when more than one copy of symphony-alpha exists; the worker reports
+those as `NEEDS_PERSON`. You and the workers
 never type or ask for credentials. Re-run the preflight until it passes.
 
 Also confirm the two connectors answer: ClosedLoop (`get-me`) and
@@ -90,7 +98,7 @@ unavailable so it falls back to plain search.
 
 ## 2. Start or resume
 
-Run `node scripts/vibe-sessions.mjs list --repo <repo>`.
+Run `node scripts/vibe-sessions.mjs list` (it uses the remembered checkout).
 
 - No sessions with status `active`: start new (below).
 - One or more `active` sessions: show each in one plain line built from
@@ -124,7 +132,7 @@ Starting new:
    `touch --scope full`).
 3. Derive a short slug from the work (lowercase words joined by hyphens, at
    most 40 characters).
-4. `node scripts/vibe-sessions.mjs new --repo <repo> --slug <slug> --summary
+4. `node scripts/vibe-sessions.mjs new --slug <slug> --summary
    "<one line>" --scope <draft|full> [--ticket <slug>]`. This fetches main and creates the worktree
    on `andy/<slug>` from fresh `origin/main`.
 5. Dispatch `vibe-setup-worker` to bootstrap the new worktree.
@@ -136,11 +144,27 @@ makes the only commit.
 
 ## 3. Bring up the environment
 
-In the worktree, start `just vibe-up` in a persistent terminal session and wait
-for its `VIBE_ENV` line. Record it:
-`node scripts/vibe-sessions.mjs touch --worktree <wt> --stack '<VIBE_ENV json>'`.
-If it fails, dispatch `vibe-setup-worker` with the last lines of the output
-and `references/environment.md`.
+In the worktree, run `just vibe-status` first. If it reports `running: true`
+(a resumed session whose environment is still up), use its `env`. Otherwise
+run `pnpm vibe up --ci`: it starts the environment in the background and
+returns with the `VIBE_ENV` line once everything answers. If the command
+returns without that line or the tool call times out, the environment keeps
+starting; poll `just vibe-status` every 30 seconds (up to 30 minutes) until it
+reports `running: true` and use its `env`. Record it:
+`node scripts/vibe-sessions.mjs touch --worktree "<wt>" --stack '<VIBE_ENV json>'`.
+If it fails or never comes up, dispatch `vibe-setup-worker` with the last
+lines of the output, the worktree, the session slug, and
+`references/environment.md`.
+
+If the setup worker returns `DONE` with a `LOCAL_FIX` line, it found a bug in
+symphony-alpha, fixed it on this Mac, and filed a ticket. Tell the person in
+one plain sentence, for example: "The app had a bug that stopped it starting;
+I fixed it on your computer so you can keep going and filed ISS-123 so
+engineering fixes it for everyone." Their handoff leaves that fix out.
+
+At the start of every later turn, and whenever a tab stops answering, run
+`just vibe-status`; if it no longer reports `running: true`, start it again
+as above.
 
 Open `webUrl` in a Codex in-app Browser tab, and `desktopUrl` in a second tab
 when the work touches Desktop. Make the browser visible and confirm each tab
@@ -188,8 +212,8 @@ For each request or annotation (a queued batch is one dispatch):
    with its spec, the worktree, and the session summary. When it returns
    `DONE`, re-dispatch the change worker with the original request so it wires
    the screen to the new backend. The environment's API reloads on its own;
-   if the worker added a database migration, run `just vibe-down` and
-   `just vibe-up` so the throwaway database picks it up.
+   if the worker added a database migration, run `just vibe-down` and then
+   `pnpm vibe up --ci` (section 3) so the throwaway database picks it up.
 6. On `BLOCKED`: tell the person plainly what could not be done and why, and
    offer the closest compliant version the worker suggested.
 
@@ -206,7 +230,7 @@ engineering.
 
 - `references/closedloop-graph.md`: how every worker uses closedloop-graph.
 - `references/preflight.md`: fixes for every preflight check (setup worker).
-- `references/environment.md`: what `just vibe-up` provides and how to recover.
+- `references/environment.md`: what `pnpm vibe up --ci` provides and how to recover.
 - `references/guardrails.md`: what may change and how (change and primitive workers).
 - `references/annotations.md`: turning annotations into code locations (change worker).
 - `references/stubs.md`: stubbing data and actions (change worker).
