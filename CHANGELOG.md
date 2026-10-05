@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.17.1
+
+#### Added
+- `vibe` and `handoff` read an optional git config `vibe.baseRef` in the symphony-alpha checkout. When set, new vibe sessions start from `origin/<vibe.baseRef>` instead of `origin/main`, and handoff's inventory diffs against that branch. It is a temporary override for onboarding before the symphony-alpha vibe environment lands on main; unset it afterwards with `git config --unset vibe.baseRef`.
+
 ### code v1.17.0
 
 #### Added
