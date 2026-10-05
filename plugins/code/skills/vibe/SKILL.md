@@ -1,6 +1,6 @@
 ---
 name: vibe
-description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (built for Andy, the CEO) working in the Codex Desktop in-app browser. Sets up the machine, creates or resumes an isolated worktree off fresh main, brings up a throwaway fully seeded local web and Desktop stack, asks what part of the app to work on (a ClosedLoop ticket or a plain description), then turns chat requests and in-browser annotations into code that follows the repo's existing patterns, with Storybook-first components and stubbed data in place of backend work. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work to engineering with the handoff skill.
+description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (built for Andy, the CEO) working in the Codex Desktop in-app browser. Sets up the machine, creates or resumes an isolated worktree off fresh main, brings up a throwaway fully seeded local web and Desktop stack, asks what part of the app to work on (a ClosedLoop ticket or a plain description), then turns chat requests and in-browser annotations into code that follows the repo's existing patterns, with Storybook-first components. Each session is either a draft (frontend only, stubbed data, finished by engineering) or full scope (frontend and backend, shipped as a PR an engineer reviews). Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work to engineering with the handoff skill.
 ---
 
 # Vibe
@@ -60,13 +60,15 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 |---|---|
 | `vibe-setup-worker` | fix failed preflight checks, bootstrap a worktree, diagnose an environment that will not start |
 | `vibe-requirements-worker` | read a ClosedLoop ticket (and its PRD, plan, related tickets) and turn it into requirements and a starting screen |
-| `vibe-change-worker` | make one requested change (chat or annotation): locate, implement, stub, add stories, self-check |
+| `vibe-change-worker` | make one requested change (chat or annotation): locate, implement, stub (draft) or request backend work (full), add stories, self-check |
+| `vibe-backend-worker` | full scope only: build the backend half of a change (route, service, validation, schema and migration, seed, tests), driven by a decision table |
 | `vibe-primitive-worker` | build a new design-system primitive from an approved spec, with stories, catalog, and tests |
 
 Every worker result starts with a status: `DONE`, `NEEDS_PERSON` (a question
 or action only the person can answer or take, already phrased for them),
 `NEEDS_PRIMITIVE` (a building block is missing; includes the steward's spec),
-or `BLOCKED` (with the reason). Relay `NEEDS_PERSON` verbatim in plain words,
+`NEEDS_BACKEND` (full scope only: the backend work the change needs, as a
+spec for `vibe-backend-worker`), or `BLOCKED` (with the reason). Relay `NEEDS_PERSON` verbatim in plain words,
 then dispatch a fresh worker with the answer.
 
 ## 1. Preflight
@@ -95,6 +97,10 @@ Run `node scripts/vibe-sessions.mjs list --repo <repo>`.
   `summary`, `lastActiveAt` (as a weekday or date), and `changedFiles`
   ("Projects board filter chips, last worked Tuesday, 6 files changed"), plus a
   final option "Start something new". Let them pick. Never resume on a guess.
+- Any `active` session whose `lastActiveAt` is more than three days old gets
+  one extra line: "This hasn't been handed off yet. Hand it to engineering
+  now, keep working on it, or throw it away?" Act on the answer (handoff
+  skill, resume, or `discard` after they confirm what will be lost).
 - If their first message already describes the work, match it against the
   summaries and offer the match as a resume. If nothing matches, start new and
   mention the open sessions in one line.
@@ -109,12 +115,19 @@ Starting new:
    sentences. For a description, dispatch the same worker with the
    description: it checks for an existing ticket covering it and finds the
    starting screen.
-2. Derive a short slug from the work (lowercase words joined by hyphens, at
+2. Ask once: "Should this be a draft for engineering to finish, or should we
+   build it all the way, including the backend?" A draft is frontend only,
+   with sample data where the API is missing, handed to engineering. All the
+   way means the backend and database too, shipped as a pull request an
+   engineer reviews before it merges. Record the answer as the scope (`draft`
+   or `full`); if they are unsure, use `draft` (it can change later with
+   `touch --scope full`).
+3. Derive a short slug from the work (lowercase words joined by hyphens, at
    most 40 characters).
-3. `node scripts/vibe-sessions.mjs new --repo <repo> --slug <slug> --summary
-   "<one line>" [--ticket <slug>]`. This fetches main and creates the worktree
+4. `node scripts/vibe-sessions.mjs new --repo <repo> --slug <slug> --summary
+   "<one line>" --scope <draft|full> [--ticket <slug>]`. This fetches main and creates the worktree
    on `andy/<slug>` from fresh `origin/main`.
-4. Dispatch `vibe-setup-worker` to bootstrap the new worktree.
+5. Dispatch `vibe-setup-worker` to bootstrap the new worktree.
 
 Resuming: use the session's `worktree`. Starting new or resuming stops any
 other session's environment (`just vibe-down` in that worktree) but never
@@ -155,7 +168,7 @@ straight into the app?" Default to straight into the app.
 For each request or annotation (a queued batch is one dispatch):
 
 1. Dispatch `vibe-change-worker` with the worktree, the session summary, the
-   request verbatim (for annotations: the comment, the element context, the
+   session scope, the request verbatim (for annotations: the comment, the element context, the
    route, and any Adjust values), the Labs answer if one applies, and the
    person's own words for any user-visible text.
 2. On `DONE`: reload the tab, look at it yourself, then tell the person in one
@@ -170,13 +183,22 @@ For each request or annotation (a queued batch is one dispatch):
    `vibe-primitive-worker` with the steward's spec. When it returns `DONE`,
    open the story URL it gives (Storybook URL from `VIBE_ENV`) and ask the
    person to approve it there. On approval, re-dispatch the original change.
-5. On `BLOCKED`: tell the person plainly what could not be done and why, and
+5. On `NEEDS_BACKEND` (full scope only): tell the person in one sentence that
+   this needs some behind-the-scenes work first. Dispatch `vibe-backend-worker`
+   with its spec, the worktree, and the session summary. When it returns
+   `DONE`, re-dispatch the change worker with the original request so it wires
+   the screen to the new backend. The environment's API reloads on its own;
+   if the worker added a database migration, run `just vibe-down` and
+   `just vibe-up` so the throwaway database picks it up.
+6. On `BLOCKED`: tell the person plainly what could not be done and why, and
    offer the closest compliant version the worker suggested.
 
 ## 6. Ending a session
 
-When they are done for now, run `just vibe-down` in the worktree unless they
-ask to keep it running. Their work stays in the worktree, uncommitted, until
+When they say they are done, ask once: "Hand this to engineering now, or keep
+it as a draft to come back to?" On "hand it over", run the handoff skill. On
+"keep it", run `just vibe-down` in the worktree unless they ask to keep it
+running. Their work stays in the worktree, uncommitted, until
 they run the handoff skill. Remind them that `handoff` is how the work reaches
 engineering.
 

@@ -9,7 +9,8 @@ You run checks so the orchestrator never reads build or test output.
 
 ## Inputs
 
-The worktree path, the mode (`checks` or `footprint`), and the inventory path.
+The worktree path, the mode (`checks`, `footprint`, or `full-suite`), and the
+inventory path.
 
 ## Read first
 
@@ -27,6 +28,14 @@ test is a failing expectation: fix the code, unless the test asserts old UI the
 person deliberately changed, in which case update that assertion and list it.
 Never skip, delete, or loosen a test. Leave failures the session did not cause
 alone and list them.
+
+## Full-suite mode (full scope)
+
+Run every lane, not only what changed: `pnpm verify` (unscoped, so the full
+typecheck graph and `typecheck:web-e2e` run), `pnpm test`, and every script
+lane `pnpm test:lanes` names for the changed files (for example
+`pnpm test:lint`, `pnpm test:skills`). Same fixing rules as checks mode. Report
+per lane.
 
 ## Footprint mode
 

@@ -16,9 +16,41 @@ vibe sessions and points at the repo rules that matter most here.
 | `apps/desktop/src/renderer/**` (Desktop UI) | `packages/api/**` (shared API contracts belong to engineering) |
 | `*.stories.tsx` anywhere above, `apps/storybook/**` story wiring | `packages/golden-sessions/**`, `.github/**`, `scripts/**`, any `AGENTS.md` |
 
-If a request can only be met by a change in the right-hand column, it becomes a
-stub plus a written requirement (`stubs.md`). Say so in one sentence and build
-the UI against the stub.
+That table is the **draft** scope. In draft scope, a request that can only be
+met by a change in the right-hand column becomes a stub plus a written
+requirement (`stubs.md`). Say so in one sentence and build the UI against the
+stub.
+
+### Full scope
+
+In a **full** scope session (the session record's `scope`), the work goes all
+the way and ships as a pull request an engineer reviews before it merges. These
+move to allowed, each under its owning `AGENTS.md`, and are built by
+`vibe-backend-worker`, never by the change worker:
+
+- `apps/api/**`: thin route, fat service, `withAnyAuth`, Zod validation, org
+  scoping on every query, the `Result` error model (`apps/api/AGENTS.md`).
+- `packages/api/src/types/**`: shared request and response types, the one
+  canonical place for them.
+- `packages/database/**`: Prisma schema changes with a generated migration
+  (`packages/database/AGENTS.md`); never edit a migration that has landed on
+  main; apply migrations only to the session's throwaway vibe database; every
+  new model gets a seed coverage file and seed data in the vibe seed.
+- `apps/desktop/src/main/**` and `apps/desktop/prisma/**`, when the change is a
+  Desktop feature (`apps/desktop/AGENTS.md`; gateway operations stay in
+  `apps/desktop/src/server/operations/`).
+- The backend worker's decision table stays local in
+  `.closedloop-ai/decision-tables/` (gitignored in this repo); handoff attaches
+  it to the ticket so the reviewing engineer sees it.
+
+Full-scope work merges to `main`, so the closed-by-default UI policy applies: a
+net-new screen, surface, or navigation item ships behind a default-off PostHog
+flag (one key for web and Desktop, read where it gates). If the person chose
+Labs, the Labs pattern is that flag. Tell them in one line that they will see it
+on their preview only with the flag on for their account.
+
+Still never, in any scope: `packages/golden-sessions/**`, `.github/**`, and
+`AGENTS.md` / `CLAUDE.md` files. Stubs are not used in full scope.
 
 The prototype-first rule in the root `AGENTS.md` (net-new screens start in
 `apps/prototypes`) does not apply to vibe sessions. That is an operator

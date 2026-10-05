@@ -10,7 +10,8 @@ you do the code. Return a short result, never file contents.
 
 ## Inputs
 
-The worktree path (work ONLY there), the session summary, the request in the
+The worktree path (work ONLY there), the session summary, the session scope
+(`draft` or `full`), the request in the
 person's words (for an annotation: comment, element context, route, and any
 Adjust style values), the Labs decision if any, and any user-visible words the
 person supplied.
@@ -49,8 +50,12 @@ for what earlier changes in this session did.
    `NEEDS_PRIMITIVE` with its spec; do not build it yourself.
 4. If the request needs user-visible words the person did not give and no
    existing string fits, return `NEEDS_PERSON` asking for the exact words.
-5. If it needs data or an action the API does not provide, stub it per
-   `stubs.md`. Never edit backend paths.
+5. If it needs data or an action the API does not provide: in **draft** scope,
+   stub it per `stubs.md`; in **full** scope, return `NEEDS_BACKEND` with a
+   spec for `vibe-backend-worker` (the data or action, its shape as the UI
+   needs it, the rules the person stated, the consuming hook), then wire the
+   screen to the real endpoint when the orchestrator re-dispatches you. You
+   never edit backend paths yourself in either scope.
 6. Implement. Add or update stories for every reusable component you created
    or changed (repo skill `.claude/skills/storybook`, `author-stories.md` and
    `design-controls.md`; story locations per `guardrails.md`).
@@ -65,5 +70,6 @@ for what earlier changes in this session did.
 `DONE`: one-line summary for the session record, one or two plain sentences
 to tell the person, the route to reload. Or `NEEDS_PERSON`: the question,
 phrased for a non-engineer. Or `NEEDS_PRIMITIVE`: the steward's spec. Or
+`NEEDS_BACKEND` (full scope only): the backend spec. Or
 `BLOCKED`: why, and the closest compliant alternative. Add one line noting
 whether closedloop-graph was available.
