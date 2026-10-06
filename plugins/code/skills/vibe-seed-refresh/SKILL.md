@@ -1,6 +1,6 @@
 ---
 name: vibe-seed-refresh
-description: Keep symphony-alpha's vibe seed (the throwaway, fully seeded data behind `just vibe-up` and the vibe skill's seeded Vercel environments) in step with main. Checks fresh main for seed drift (models marked todo, models with no coverage file, a failing seed, a red Vibe Seed Walk run on main); when drift exists it creates a ClosedLoop ticket and marks it IN_PROGRESS, has workers fix the seed in a fresh worktree and open a PR, monitors it with gh-monitor-pr until green, enables auto-merge into the merge queue, keeps monitoring until it merges, then marks the ticket DONE. Built for Codex Desktop. Use when asked to "refresh the vibe seed", "check the seed", "update the seeded db", or on a schedule.
+description: Keep symphony-alpha's vibe seed (the throwaway, fully seeded data behind `just vibe-up` and the vibe skill's seeded Vercel environments) in step with main. Checks fresh main for seed drift (models marked todo, models with no coverage file, a failing seed, a red nightly screen walk); when drift exists it creates a ClosedLoop ticket and marks it IN_PROGRESS, has workers fix the seed in a fresh worktree and open a PR, monitors it with gh-monitor-pr until green, enables auto-merge into the merge queue, keeps monitoring until it merges, then marks the ticket DONE. Built for Codex Desktop. Use when asked to "refresh the vibe seed", "check the seed", "update the seeded db", or on a schedule.
 ---
 
 # Vibe seed refresh

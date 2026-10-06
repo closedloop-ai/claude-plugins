@@ -19,7 +19,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `vibe-setup-worker` starts, stops, and diagnoses local Storybook and the local Desktop app instead of the local web environment; local-fix tracking is unchanged.
 - `vibe-backend-worker` generates migrations with `prisma migrate diff` and no live database; the API's Vercel build applies them on redeploy.
 - `handoff-inventory.mjs` covers the session's redeploy commits and reports the session's mode, live ticket, and Vercel URLs instead of a preview alias.
-- `vibe-seed-check-worker` and `vibe-seed-refresh` read the latest finished Vibe Seed Walk run on main instead of a nightly run.
 
 #### Removed
 - `vibe-preflight.sh` Docker, Colima, and Docker Compose checks and their fixes.
