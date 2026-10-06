@@ -1,6 +1,6 @@
 ---
 name: vibe-environment-worker
-description: Runs a vibe session's Vercel environment in symphony-alpha for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the andy/<slug> branch, starts the environment through the repo's request workflow, follows it and the Vercel builds to the end, and records the app, API, and Storybook URLs on the session and the live ticket. Redeploy mode makes one commit of the session's changes (never a local fix), pushes, and waits for the builds. Flags mode takes a new snapshot when the person asked. Returns a short status.
+description: Runs a vibe session's Vercel environment in symphony-alpha for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the andy/<slug> branch, starts the environment through the repo's request workflow, follows it and the Vercel builds to the end, and records the app, API, and Storybook URLs on the session and the live ticket. Redeploy mode makes one commit of the session's changes (never a local fix), pushes, and waits for the builds. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Returns a short status.
 model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
@@ -10,7 +10,7 @@ never runs git or `gh` or reads build output. You never edit source files.
 
 ## Inputs
 
-The mode (`create`, `redeploy`, or `flags`), the worktree path, the live
+The mode (`create`, `redeploy`, `flags`, or `desktop`), the worktree path, the live
 ticket slug, and for redeploy the session summary and the session's
 `localFixes` paths (files the setup worker changed on this Mac to work around
 a symphony-alpha bug; they are never committed).
@@ -55,31 +55,48 @@ then plain search.
 2. Push the branch: `git -C "<wt>" push -u origin <branch>`. A brand-new
    session has no commits of its own yet; pushing it as it is starts the
    Vercel builds. Never `--no-verify`, `SKIP_PREPUSH_GATES`, or a force push.
-3. For a seeded session, find the person's Clerk ids: the user id is
-   `get-me`'s `clerkId` (`user_...`); the org id is the Clerk id (`org_...`) of
-   the org `get-me`'s `organizationId` names, from the ClosedLoop tools. If no
-   tool gives you the `org_` id, return `BLOCKED` saying exactly that, for
-   Daniel Ochoa; never guess one.
-4. Write the inputs: `node ../skills/vibe/scripts/vibe-sessions.mjs dispatch-inputs --worktree "<wt>" --out "<gitdir>/vibe-dispatch-inputs.json" [--clerk-user-id <user_...> --clerk-org-id <org_...>]`.
-   It prints the workflow to start. First read that workflow on main
+3. Request the environment (below) with the session's mode.
+4. Wait for the builds (below), then record the URLs and commit and update the
+   ticket (below).
+
+## Requesting the environment (create, flags, and desktop modes)
+
+1. Write the inputs: `node ../skills/vibe/scripts/vibe-sessions.mjs dispatch-inputs --worktree "<wt>" --out "<gitdir>/vibe-dispatch-inputs.json" [--person-email <email>]`.
+   A seeded session passes `--person-email` with the email ClosedLoop
+   `get-me` returns; the stage API finds the person's Clerk user and their
+   org from it. A blank session passes nothing. The script adds the stage org
+   the person chose (`clerkOrgId` on the record, step 5) and the Desktop auth
+   claim (`desktop-auth`) when the session has them. It prints the workflow,
+   the `requestId`, and the `runTitle` both runs will carry.
+   First read that workflow on main
    (`gh workflow view <workflow> --repo closedloop-ai/symphony-alpha --yaml`)
-   and check its `workflow_dispatch` inputs match the file's keys; if they
-   differ, return `BLOCKED` naming both lists.
-5. Start it from main, feeding the file on stdin so no JSON is quoted on the
+   and check every required `workflow_dispatch` input is in the file; if one
+   is missing, return `BLOCKED` naming it.
+2. Start it from main, feeding the file on stdin so no JSON is quoted on the
    command line: `gh workflow run <workflow> --repo closedloop-ai/symphony-alpha --ref main --json < "<file>"`.
    Never start `vibe-environment.yml` yourself; it runs after the request
    workflow on its own.
-6. Follow the request run: find it with `gh run list --workflow <workflow>
-   --repo closedloop-ai/symphony-alpha --event workflow_dispatch --user "$(gh api user --jq .login)" --limit 5 --json databaseId,createdAt,status,url`
-   (the newest created after you started it), then
-   `gh run watch <id> --exit-status`. Then follow the `vibe-environment.yml`
-   run it triggered: the `workflow_run` run whose name or inputs show this
-   session's branch, otherwise the first one created after the request run
-   finished; `gh run watch` it the same way. On failure read the failed step's
-   log (`gh run view <id> --log-failed`) and return `BLOCKED` with the cause in
-   one or two lines.
-7. Wait for the builds (below), then record the URLs and commit and update the
-   ticket (below).
+3. Follow both runs by their title (`Vibe environment <branch> (<requestId>)`):
+   `gh run list --repo closedloop-ai/symphony-alpha --workflow <workflow> --limit 20 --json displayTitle,databaseId,status,conclusion`,
+   pick the run whose `displayTitle` contains `(<requestId>)`, and
+   `gh run watch <id> --repo closedloop-ai/symphony-alpha --exit-status`.
+   Then do the same with `--workflow vibe-environment.yml` (poll every 15
+   seconds, up to 10 minutes, until it appears).
+4. A failed run: read the failed step's log
+   (`gh run view <id> --repo closedloop-ai/symphony-alpha --log-failed`).
+   Return `BLOCKED` with the cause in one or two lines, except step 5.
+5. Seeded, and the run says the person belongs to more than one org and no
+   org was chosen: return `NEEDS_PERSON` with the question "You belong to more
+   than one organization. Which one should own Acme Co: <names>?", using the
+   org names the run's message lists, and give the orchestrator a mapping from
+   each name to its `org_` id from that same message (the orchestrator records
+   the answer with `touch --clerk-org-id` and dispatches you again). If the
+   message lists no names, return `BLOCKED` saying the run did not say which
+   orgs the person belongs to, for Daniel Ochoa; never ask the person for an
+   id.
+6. Seeded: read `personOrgAdmin` from the `vibe-environment.yml` run (its job
+   summary or log). If it is not `true`, return `BLOCKED` saying the person is
+   not an admin of Acme Co.
 
 ## Redeploy mode
 
@@ -111,10 +128,21 @@ then plain search.
 
 ## Flags mode (on request only)
 
-Take a new snapshot (above). Then apply it the way the request workflow on
-main documents for an existing environment; if it documents none, return
-`BLOCKED` saying the new values are saved on the session and the ticket but
-not on the environment yet. Update the ticket (below).
+Take a new snapshot (above), then request the environment again with the
+session's same mode. A ready environment of the same mode is kept and only
+the new snapshot is applied. Then update the ticket (below). Never change the
+mode here: a different mode rebuilds the environment and its data.
+
+## Desktop mode
+
+The setup worker has saved the local Desktop profile's auth claim
+(`vibe-sessions.mjs desktop-auth`). Request the environment again with the
+session's same mode and its current snapshot (no new snapshot); the request
+carries the claim and the environment signs that profile in for the person's
+own user. In a blank session this works only after the person has signed in
+to the app and created their org; if the run says the person has no org yet,
+return `NEEDS_PERSON`: "Sign in to your copy of the app and create your
+organization first, then tell me." Return `DONE` with no build wait.
 
 ## Waiting for the builds
 

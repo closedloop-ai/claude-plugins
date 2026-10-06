@@ -12,8 +12,13 @@ the team's local checks; the vibe skill never uses it.
 Asked once when the session starts, recorded as the session's `mode`.
 
 - **Seeded**: the vibe seed fills the environment with realistic data under an
-  org named Acme Co, with its owner and teammates. The person signs in through
-  Clerk as themselves and lands in Acme Co as an admin.
+  org named Acme Co, with its owner and teammates. The stage API finds the
+  person's Clerk user from their email and binds Acme Co to their stage org,
+  with them as an admin (the run reports `personOrgAdmin`). If they belong to
+  more than one stage org, the run fails saying so; the person picks the org
+  by name, `touch --clerk-org-id` records it, and the environment is
+  requested again. The person signs in through Clerk as themselves and lands
+  in Acme Co.
 - **Blank**: no data. The person signs in through Clerk as themselves and
   creates their own org.
 
@@ -23,14 +28,18 @@ Asked once when the session starts, recorded as the session's `mode`.
    `vibe-sessions.mjs flag-snapshot`.
 2. Push the branch (`git push -u origin andy/<slug>`), which starts the Vercel
    builds for the app, API, and Storybook.
-3. Write the request inputs with `vibe-sessions.mjs dispatch-inputs` (the
-   Clerk user and org ids only for seeded), and start the request workflow it
-   names from main: `gh workflow run <workflow> --ref main --json < <file>`.
-   Never start `vibe-environment.yml` directly: it holds the cloud credential
-   and runs after the request workflow on its own.
-4. Follow both runs to the end: the request run, then the
-   `vibe-environment.yml` run it triggers. Then wait for the Vercel builds of
-   the pushed commit and confirm the app, API, and Storybook URLs answer.
+3. Write the request inputs with `vibe-sessions.mjs dispatch-inputs` and
+   start the request workflow it names from main:
+   `gh workflow run vibe-environment-dispatch.yml --ref main --json < <file>`.
+   Inputs: `branch`, `mode`, `flag_snapshot`, `request_id` (a fresh id per
+   request), and for seeded `person_email` (from ClosedLoop `get-me`) plus
+   `clerk_org_id` only when the person belongs to more than one stage org;
+   `desktop_auth` once the session has a local Desktop profile. Never start
+   `vibe-environment.yml` directly: it holds the cloud credential and runs
+   after the request workflow on its own.
+4. Follow both runs to the end. Both are titled
+   `Vibe environment <branch> (<request_id>)`. Then wait for the Vercel builds
+   of the pushed commit and confirm the app, API, and Storybook URLs answer.
 5. Record the URLs and commit (`touch --vercel ... --deployed <sha>`) and put
    them on the live ticket.
 
@@ -51,7 +60,9 @@ as the person's real account (their Clerk user id, the PostHog distinct id)
 and real ClosedLoop org. PostHog is one project for stage and production, so
 no other credential is needed. The environment uses these values instead of
 evaluating flags live. Every redeploy keeps the same snapshot; it is taken
-again only when the person asks. Shape (validated by `flag-snapshot`):
+again only when the person asks, and applied by requesting the environment
+again with the same mode (a ready environment is kept; a different mode would
+rebuild it). Shape (validated by `flag-snapshot`):
 `{ takenAt, distinctId, orgId?, flags }`, each flag `true`, `false`, or a
 variant name.
 
@@ -69,9 +80,37 @@ amended later.
 - **Storybook, between redeploys**: optional, for looking at components before
   the next redeploy. It needs no database. `vibe-setup-worker` starts it
   detached on a free port and records it with `touch --stack`.
-- **Desktop, only for sessions that touch Desktop**: the Desktop app on a
-  seeded local profile, signed in to the session's Vercel API. Its database is
-  a local file, so Docker is not needed. Web-only sessions never start it.
+- **Desktop, only for sessions that touch Desktop**: the real Desktop app on a
+  seeded local profile, signed in to the session's Vercel API as the person.
+  Its database is a local file, so Docker is not needed. Web-only sessions
+  never start it. See "Desktop" below.
+
+## Desktop
+
+The one place these commands live; `vibe-setup-worker` runs them from the
+worktree. The profile folder is `<gitdir>/vibe-desktop-profile`, where
+`<gitdir>` is `git -C "<wt>" rev-parse --absolute-git-dir` (never inside the
+repo). `<api>` and `<app>` are the session's `vercel.apiUrl` and
+`vercel.appUrl`.
+
+1. Build the seeded profile, once:
+   `pnpm --filter desktop vibe:profile prepare --out "<profile>" --now <ISO now>`.
+2. Make its auth claim and save it on the session:
+   `pnpm --filter desktop vibe:profile auth-claim --profile "<profile>"` prints
+   one JSON line `{refreshTokenHash, publicKeySpki, gatewayId}` (public values;
+   no secret leaves the Mac). Write it to a file and run
+   `vibe-sessions.mjs desktop-auth --worktree "<wt>" --file "<file>"`.
+3. `vibe-environment-worker` in desktop mode requests the environment again so
+   it signs that profile in for the person's own user (blank sessions: only
+   after the person has signed in and created their org).
+4. Sign the profile in to the session's environment:
+   `pnpm --filter desktop vibe:profile sign-in --profile "<profile>" --api-origin <api> --web-origin <app>`.
+5. Start the app:
+   `pnpm --filter desktop vibe:profile launch --profile "<profile>" --api-origin <api> --web-origin <app>`.
+
+If any of these fails and the setup worker cannot fix it, tell the person
+plainly: "Desktop isn't available for this session yet, so we'll keep going
+on the web app." Then continue web-only.
 
 ## When it fails
 

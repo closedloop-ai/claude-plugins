@@ -13,9 +13,11 @@
 //                                     [--status active|handed-off] [--live-ticket ISS-123]
 //                                     [--scope draft|full] [--mode seeded|blank]
 //                                     [--vercel <json>] [--deployed <commit>] [--stack <json>]
+//                                     [--clerk-org-id org_...]
 //   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json>
+//   vibe-sessions.mjs desktop-auth    --worktree <path> --file <auth-claim.json>
 //   vibe-sessions.mjs dispatch-inputs --worktree <path> --out <inputs.json>
-//                                     [--clerk-user-id user_... --clerk-org-id org_...]
+//                                     [--person-email <email>]
 //   vibe-sessions.mjs codex-sessions  --worktree <path> [--thread <id>]
 //   vibe-sessions.mjs ticket-sections --worktree <path>
 //   vibe-sessions.mjs local-fix       --worktree <path> --ticket ISS-123 --path <file> [--path <file> ...]
@@ -35,12 +37,19 @@
 // snapshot, and Sessions sections from the record. `dispatch-inputs` writes
 // the inputs for the symphony-alpha vibe environment request workflow as a
 // JSON file for `gh workflow run <workflow> --ref main --json < <file>`, so no
-// JSON is ever quoted on a command line.
+// JSON is ever quoted on a command line, with a fresh request id that names
+// the runs it starts. `touch --clerk-org-id` records the stage org a seeded
+// session's person chose when they belong to more than one; every later
+// request sends it. `desktop-auth` validates and saves the Desktop profile's
+// auth claim (`pnpm --filter desktop vibe:profile auth-claim`) next to the
+// record; every later request sends it too, so the environment signs that
+// profile in.
 //
 // Every command prints one JSON object on stdout. Errors print
 // {"ok":false,"error":...} and exit non-zero.
 
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -48,7 +57,9 @@ import { parseArgs } from "node:util";
 import {
   buildDispatchInputs,
   DISPATCH_WORKFLOW,
+  DispatchInput,
   findCodexSubagents,
+  validateDesktopAuth,
   renderRecordSections,
   VERCEL_URL_KEYS,
   validateFlagSnapshot,
@@ -60,6 +71,7 @@ const WORKTREE_DIR = ".claude/worktrees";
 const WORKTREE_NAME_PREFIX = "andy-";
 const RECORD_FILE = "vibe-session.json";
 const SNAPSHOT_FILE = "vibe-flag-snapshot.json";
+const DESKTOP_AUTH_FILE = "vibe-desktop-auth.json";
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 // Vercel's per-branch preview aliases are `<project>-git-andy-<slug>`, and a
 // DNS label longer than 63 characters gets truncated and hashed, which would
@@ -71,6 +83,7 @@ const CONFIG_FILE = path.join(os.homedir(), ".codex", "vibe", "config.json");
 const TICKET_PATTERN = /^[A-Z]+-\d+$/;
 const COMMIT_PATTERN = /^[0-9a-f]{7,40}$/;
 const THREAD_PATTERN = /^[A-Za-z0-9-]{8,100}$/;
+const CLERK_ORG_PATTERN = /^org_[A-Za-z0-9]+$/;
 
 const SessionStatus = {
   Active: "active",
@@ -110,7 +123,7 @@ const { positionals, values } = parseArgs({
     file: { type: "string" },
     thread: { type: "string" },
     out: { type: "string" },
-    "clerk-user-id": { type: "string" },
+    "person-email": { type: "string" },
     "clerk-org-id": { type: "string" },
     stack: { type: "string" },
     path: { type: "string", multiple: true },
@@ -142,6 +155,8 @@ function run(command) {
       return { session: touchSession() };
     case "flag-snapshot":
       return { session: saveFlagSnapshot() };
+    case "desktop-auth":
+      return { session: saveDesktopAuth() };
     case "dispatch-inputs":
       return dispatchInputs();
     case "codex-sessions":
@@ -154,7 +169,7 @@ function run(command) {
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, touch, flag-snapshot, dispatch-inputs, codex-sessions, ticket-sections, local-fix, discard."
+        "Unknown command. Use one of: repo, list, show, new, touch, flag-snapshot, desktop-auth, dispatch-inputs, codex-sessions, ticket-sections, local-fix, discard."
       );
   }
 }
@@ -309,6 +324,8 @@ function newSession() {
     lastActiveAt: now,
     vercel: vercelDefaults(branch),
     flagSnapshot: null,
+    clerkOrgId: null,
+    desktopAuthSavedAt: null,
     codexSessions: { orchestrators: [], subagents: [] },
     stack: null,
     localFixes: [],
@@ -337,6 +354,7 @@ function touchSession() {
     mode: values.mode ? requireMode(values.mode) : record.mode,
     liveTicket: liveTicket ?? record.liveTicket,
     vercel: updateVercel(record.vercel, now),
+    clerkOrgId: values["clerk-org-id"] ? requireClerkOrgId(values["clerk-org-id"]) : record.clerkOrgId,
     stack: values.stack ? JSON.parse(values.stack) : record.stack,
     lastActiveAt: now,
   };
@@ -412,6 +430,13 @@ function baseBranch(cwd) {
   } catch {
     return "main";
   }
+}
+
+function requireClerkOrgId(id) {
+  if (!CLERK_ORG_PATTERN.test(id)) {
+    throw new Error("--clerk-org-id must be a Clerk organization id (org_...).");
+  }
+  return id;
 }
 
 function requireMode(mode) {
@@ -516,6 +541,8 @@ function withDefaults(record) {
     liveTicket: rest.liveTicket ?? handoffTicket ?? null,
     vercel: rest.vercel ?? (rest.branch ? vercelDefaults(rest.branch) : null),
     flagSnapshot: rest.flagSnapshot ?? null,
+    clerkOrgId: rest.clerkOrgId ?? null,
+    desktopAuthSavedAt: rest.desktopAuthSavedAt ?? null,
     codexSessions: rest.codexSessions ?? { orchestrators: [], subagents: [] },
     localFixes: rest.localFixes ?? [],
   };
@@ -607,10 +634,46 @@ function dispatchInputs() {
   const inputs = buildDispatchInputs({
     record,
     snapshot: readSnapshot(worktree, record),
-    clerkUserId: values["clerk-user-id"],
-    clerkOrgId: values["clerk-org-id"],
+    personEmail: values["person-email"],
+    clerkOrgId: record.clerkOrgId ?? undefined,
+    desktopAuth: readDesktopAuth(worktree, record),
+    requestId: randomUUID(),
   });
   mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   writeFileSync(out, `${JSON.stringify(inputs)}\n`);
-  return { workflow: DISPATCH_WORKFLOW, ref: "main", out, inputNames: Object.keys(inputs) };
+  return {
+    workflow: DISPATCH_WORKFLOW,
+    ref: "main",
+    out,
+    requestId: inputs[DispatchInput.RequestId],
+    runTitle: `Vibe environment ${record.branch} (${inputs[DispatchInput.RequestId]})`,
+    inputNames: Object.keys(inputs),
+  };
+}
+
+function desktopAuthPath(worktree) {
+  return path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), DESKTOP_AUTH_FILE);
+}
+
+/** Validates the Desktop profile's auth claim and saves it beside the record. */
+function saveDesktopAuth() {
+  const worktree = requireOption("worktree");
+  const file = requireOption("file");
+  const record = requireRecord(worktree);
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    throw new Error(`Could not read a JSON auth claim from ${file}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  writeFileSync(desktopAuthPath(worktree), `${JSON.stringify(validateDesktopAuth(parsed))}\n`);
+  const now = new Date().toISOString();
+  const updated = { ...record, desktopAuthSavedAt: now, lastActiveAt: now };
+  writeRecord(worktree, updated);
+  return { worktree, ...updated };
+}
+
+function readDesktopAuth(worktree, record) {
+  const file = desktopAuthPath(worktree);
+  return record.desktopAuthSavedAt && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined;
 }

@@ -49,16 +49,17 @@ The checkout is the one the preflight remembered
   If the stack already lists a Storybook whose process is alive and whose URL
   answers, reuse it.
 - Local Desktop (only when the orchestrator says the session touches
-  Desktop): start the Desktop app from the worktree on a seeded local profile,
-  signed in to the session's Vercel API (the record's `vercel.apiUrl`, with
-  `vercel.appUrl` as the web origin). Use the command symphony-alpha provides
-  for that (check `pnpm vibe` usage and the root `justfile` on the session's
-  base; closedloop-graph `code_grep` for `vibe` and `desktop`). Run it
-  detached with its log in the session's private git directory and record
-  what it prints (the Desktop URL or window, its pid) in the stack. If the
-  Desktop window asks the person to sign in, return `NEEDS_PERSON`. If the
-  checkout has no such command, return `BLOCKED` saying so; never point a
-  Desktop at a local API.
+  Desktop), in two dispatches, following the Desktop section of
+  `environment.md` exactly (it is the one place the commands live):
+  - Profile: build the seeded profile in the session's private git directory
+    (step 1), make its auth claim and save it with `desktop-auth` (step 2),
+    and return `DONE` saying the environment must now be requested again
+    (the orchestrator dispatches `vibe-environment-worker` in desktop mode).
+  - Launch: sign the profile in (step 4) and start the app detached (step 5),
+    logging to the session's private git directory, and record its pid in the
+    stack with `touch --stack`, keeping anything else the stack lists.
+  Never point a Desktop at a local API. If a command fails and you cannot fix
+  it, return `BLOCKED` with `DESKTOP_UNAVAILABLE` and the error in one line.
 - Stop: end the processes the session's stack lists (only those pids, after
   checking each is still the process you started) and clear the stack with
   `touch --stack '{}'`. Never touch another session's files.

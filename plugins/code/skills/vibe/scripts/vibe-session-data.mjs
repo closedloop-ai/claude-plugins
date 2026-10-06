@@ -39,18 +39,26 @@ export const PENDING = "Pending.";
 
 // The permission-less request workflow in symphony-alpha that starts the
 // session's environment (ISS-12056). It runs from main; the workflow holding
-// the cloud credential runs after it on `workflow_run`, never dispatched here.
-// The input names are provisional until that workflow lands.
+// the cloud credential (`vibe-environment.yml`) runs after it on
+// `workflow_run`, never dispatched here. Both runs are titled
+// `Vibe environment <branch> (<request_id>)`.
 export const DISPATCH_WORKFLOW = "vibe-environment-dispatch.yml";
 export const DispatchInput = {
   Branch: "branch",
   Mode: "mode",
   FlagSnapshot: "flag_snapshot",
-  ClerkUserId: "clerk_user_id",
+  PersonEmail: "person_email",
   ClerkOrgId: "clerk_org_id",
+  DesktopAuth: "desktop_auth",
+  RequestId: "request_id",
 };
-const CLERK_USER_ID = /^user_[A-Za-z0-9]+$/;
+// What `pnpm --filter desktop vibe:profile auth-claim` prints: public values
+// only; the profile's secrets never leave the Mac.
+const DESKTOP_AUTH_KEYS = ["refreshTokenHash", "publicKeySpki", "gatewayId"];
+const MAX_DESKTOP_AUTH_VALUE = 4096;
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CLERK_ORG_ID = /^org_[A-Za-z0-9]+$/;
+export const REQUEST_ID = /^[A-Za-z0-9-]{8,64}$/;
 
 /** The stable per-branch Vercel URLs for a vibe branch, or null when unpredictable. */
 export function vercelAliases(branch) {
@@ -338,33 +346,67 @@ function renderSessions(record) {
 }
 
 /**
- * The request workflow's inputs: every value a string, the snapshot as
- * compact JSON, and the Clerk ids only for a seeded session (both required
- * there, refused for a blank one).
+ * The request workflow's inputs, every value a string: the branch, the mode,
+ * the snapshot as compact JSON, and the request id that names both runs. A
+ * seeded session also sends the person's email (the stage API finds their
+ * Clerk user and org from it) and, only when they belong to more than one
+ * stage org, the Clerk id of the one they chose. A blank session sends
+ * neither. A session that touches Desktop also sends its saved Desktop auth
+ * claim, in either mode.
  */
-export function buildDispatchInputs({ record, snapshot, clerkUserId, clerkOrgId }) {
+export function buildDispatchInputs({ record, snapshot, personEmail, clerkOrgId, desktopAuth, requestId }) {
   if (record.mode !== "seeded" && record.mode !== "blank") {
     throw new Error("The session has no seeded or blank mode yet; set it with touch --mode.");
   }
   if (!snapshot) {
     throw new Error("The session has no flag snapshot yet; save one with flag-snapshot first.");
   }
+  if (!REQUEST_ID.test(requestId ?? "")) {
+    throw new Error("The request id must be 8 to 64 letters, digits, or hyphens.");
+  }
   const inputs = {
     [DispatchInput.Branch]: record.branch,
     [DispatchInput.Mode]: record.mode,
     [DispatchInput.FlagSnapshot]: JSON.stringify(validateFlagSnapshot(snapshot)),
+    [DispatchInput.RequestId]: requestId,
   };
+  if (desktopAuth) {
+    inputs[DispatchInput.DesktopAuth] = JSON.stringify(validateDesktopAuth(desktopAuth));
+  }
   if (record.mode === "blank") {
-    if (clerkUserId || clerkOrgId) {
-      throw new Error("Clerk ids are only sent for a seeded session.");
+    if (personEmail || clerkOrgId) {
+      throw new Error("The person's email and Clerk org are only sent for a seeded session.");
     }
     return inputs;
   }
-  if (!CLERK_USER_ID.test(clerkUserId ?? "")) {
-    throw new Error("A seeded session needs --clerk-user-id (a Clerk user id, user_...).");
+  if (!EMAIL.test(personEmail ?? "")) {
+    throw new Error("A seeded session needs --person-email (the email ClosedLoop get-me returns).");
   }
-  if (!CLERK_ORG_ID.test(clerkOrgId ?? "")) {
-    throw new Error("A seeded session needs --clerk-org-id (a Clerk organization id, org_...).");
+  inputs[DispatchInput.PersonEmail] = personEmail;
+  if (clerkOrgId !== undefined) {
+    if (!CLERK_ORG_ID.test(clerkOrgId)) {
+      throw new Error("--clerk-org-id must be a Clerk organization id (org_...).");
+    }
+    inputs[DispatchInput.ClerkOrgId] = clerkOrgId;
   }
-  return { ...inputs, [DispatchInput.ClerkUserId]: clerkUserId, [DispatchInput.ClerkOrgId]: clerkOrgId };
+  return inputs;
+}
+
+/** Validates an auth claim from `vibe:profile auth-claim` and returns it with keys in a fixed order. */
+export function validateDesktopAuth(claim) {
+  if (!claim || typeof claim !== "object" || Array.isArray(claim)) {
+    throw new Error("The Desktop auth claim must be a JSON object.");
+  }
+  const problems = Object.keys(claim)
+    .filter((key) => !DESKTOP_AUTH_KEYS.includes(key))
+    .map((key) => `unknown field "${key}"`);
+  for (const key of DESKTOP_AUTH_KEYS) {
+    if (!isBoundedString(claim[key], MAX_DESKTOP_AUTH_VALUE)) {
+      problems.push(`${key} must be a non-empty string`);
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(`Desktop auth claim does not match auth-claim's output: ${problems.join("; ")}.`);
+  }
+  return Object.fromEntries(DESKTOP_AUTH_KEYS.map((key) => [key, claim[key]]));
 }

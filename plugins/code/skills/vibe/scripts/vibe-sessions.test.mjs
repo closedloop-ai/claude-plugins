@@ -349,7 +349,7 @@ test("ticket-sections renders the record's sections and marks what is still pend
   assert.match(filled.json.markdown, /- Last deployed: `abcdef1234`/);
 });
 
-test("dispatch-inputs writes the request workflow's inputs, Clerk ids only for a seeded session", (t) => {
+test("dispatch-inputs writes the request workflow's inputs with a fresh request id", (t) => {
   const { root, home, worktree } = newSession(t, "dispatch");
   const out = path.join(root, "out", "inputs.json");
   const noSnapshot = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
@@ -364,38 +364,88 @@ test("dispatch-inputs writes the request workflow's inputs, Clerk ids only for a
   assert.equal(blank.status, 0, blank.stderr);
   assert.equal(blank.json.workflow, "vibe-environment-dispatch.yml");
   assert.equal(blank.json.ref, "main");
+  assert.match(blank.json.requestId, /^[A-Za-z0-9-]{8,64}$/);
+  assert.equal(blank.json.runTitle, `Vibe environment andy/dispatch (${blank.json.requestId})`);
   const blankInputs = JSON.parse(readFileSync(out, "utf8"));
-  assert.deepEqual(Object.keys(blankInputs), ["branch", "mode", "flag_snapshot"]);
+  assert.deepEqual(Object.keys(blankInputs).sort(), ["branch", "flag_snapshot", "mode", "request_id"]);
   assert.equal(blankInputs.branch, "andy/dispatch");
   assert.equal(blankInputs.mode, "blank");
+  assert.equal(blankInputs.request_id, blank.json.requestId);
   assert.deepEqual(JSON.parse(blankInputs.flag_snapshot).flags, { "it's-quoted": true });
-  const blankWithIds = runNode(
+
+  const again = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
+  assert.notEqual(again.json.requestId, blank.json.requestId);
+
+  const blankWithEmail = runNode(
     SCRIPT,
-    ["dispatch-inputs", "--worktree", worktree, "--out", out, "--clerk-user-id", "user_1", "--clerk-org-id", "org_1"],
+    ["dispatch-inputs", "--worktree", worktree, "--out", out, "--person-email", "andy@example.com"],
     home
   );
-  assert.equal(blankWithIds.status, 1);
-  assert.match(blankWithIds.json.error, /only sent for a seeded session/);
+  assert.equal(blankWithEmail.status, 1);
+  assert.match(blankWithEmail.json.error, /only sent for a seeded session/);
 
   runNode(SCRIPT, ["touch", "--worktree", worktree, "--mode", "seeded"], home);
-  const missingOrg = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out, "--clerk-user-id", "user_1"], home);
-  assert.equal(missingOrg.status, 1);
-  assert.match(missingOrg.json.error, /--clerk-org-id/);
-  const internalUuid = runNode(
-    SCRIPT,
-    ["dispatch-inputs", "--worktree", worktree, "--out", out, "--clerk-user-id", "user_1", "--clerk-org-id", "019c24db-a261-738f-8eff-ea275fb27470"],
-    home
-  );
-  assert.equal(internalUuid.status, 1);
+  const noEmail = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
+  assert.equal(noEmail.status, 1);
+  assert.match(noEmail.json.error, /--person-email/);
+
   const seeded = runNode(
     SCRIPT,
-    ["dispatch-inputs", "--worktree", worktree, "--out", out, "--clerk-user-id", "user_38tW", "--clerk-org-id", "org_2abc"],
+    ["dispatch-inputs", "--worktree", worktree, "--out", out, "--person-email", "andy@example.com"],
     home
   );
   assert.equal(seeded.status, 0, seeded.stderr);
   const seededInputs = JSON.parse(readFileSync(out, "utf8"));
   assert.equal(seededInputs.mode, "seeded");
-  assert.equal(seededInputs.clerk_user_id, "user_38tW");
-  assert.equal(seededInputs.clerk_org_id, "org_2abc");
-  assert.ok(Object.values(seededInputs).every((value) => typeof value === "string"));
+  assert.equal(seededInputs.person_email, "andy@example.com");
+  assert.equal("clerk_org_id" in seededInputs, false);
+
+  const badOrgChoice = runNode(SCRIPT, ["touch", "--worktree", worktree, "--clerk-org-id", "Acme"], home);
+  assert.equal(badOrgChoice.status, 1);
+  assert.match(badOrgChoice.json.error, /org_/);
+  runNode(SCRIPT, ["touch", "--worktree", worktree, "--clerk-org-id", "org_2abc"], home);
+  const chosenOrg = runNode(
+    SCRIPT,
+    ["dispatch-inputs", "--worktree", worktree, "--out", out, "--person-email", "andy@example.com"],
+    home
+  );
+  assert.equal(chosenOrg.status, 0, chosenOrg.stderr);
+  const chosenInputs = JSON.parse(readFileSync(out, "utf8"));
+  assert.equal(chosenInputs.clerk_org_id, "org_2abc");
+  assert.ok(Object.values(chosenInputs).every((value) => typeof value === "string"));
+});
+
+test("desktop-auth saves the profile's auth claim and every later request sends it", (t) => {
+  const { root, home, worktree } = newSession(t, "desktop");
+  const snapshotFile = path.join(root, "snapshot.json");
+  writeJson(snapshotFile, { takenAt: "2026-10-06T15:00:00Z", distinctId: "user_abc", flags: {} });
+  runNode(SCRIPT, ["flag-snapshot", "--worktree", worktree, "--file", snapshotFile], home);
+  const out = path.join(root, "inputs.json");
+  runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
+  assert.equal("desktop_auth" in JSON.parse(readFileSync(out, "utf8")), false);
+
+  const claimFile = path.join(root, "claim.json");
+  for (const [claim, message] of [
+    [{ refreshTokenHash: "h", publicKeySpki: "k" }, /gatewayId/],
+    [{ refreshTokenHash: "h", publicKeySpki: "k", gatewayId: "g", refreshToken: "secret" }, /unknown field "refreshToken"/],
+  ]) {
+    writeJson(claimFile, claim);
+    const refused = runNode(SCRIPT, ["desktop-auth", "--worktree", worktree, "--file", claimFile], home);
+    assert.equal(refused.status, 1);
+    assert.match(refused.json.error, message);
+  }
+
+  writeJson(claimFile, { gatewayId: "gw-1", publicKeySpki: "MIIB", refreshTokenHash: "abc123" });
+  const saved = runNode(SCRIPT, ["desktop-auth", "--worktree", worktree, "--file", claimFile], home);
+  assert.equal(saved.status, 0, saved.stderr);
+  assert.ok(Date.parse(saved.json.session.desktopAuthSavedAt));
+
+  const blank = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
+  assert.equal(blank.status, 0, blank.stderr);
+  assert.ok(blank.json.inputNames.includes("desktop_auth"));
+  assert.deepEqual(JSON.parse(JSON.parse(readFileSync(out, "utf8")).desktop_auth), {
+    refreshTokenHash: "abc123",
+    publicKeySpki: "MIIB",
+    gatewayId: "gw-1",
+  });
 });

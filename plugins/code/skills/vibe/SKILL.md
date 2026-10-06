@@ -174,9 +174,13 @@ the URLs on the session, and fills the ticket's Environment, Production flag
 snapshot, and Sessions sections.
 
 A resumed session whose `vercel.lastDeployedCommit` is set already has its
-environment; skip this. If the worker returns `BLOCKED`, tell the person in
-one or two plain lines what failed and suggest they message Daniel Ochoa with
-the session slug.
+environment; skip this. If the worker returns `NEEDS_PERSON` asking which
+organization should own Acme Co, ask the person exactly that, record the org
+id the worker mapped to their answer with
+`node scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_...>`,
+and dispatch it again. If it returns `BLOCKED`, tell the person in one or two
+plain lines what failed and suggest they message Daniel Ochoa with the
+session slug.
 
 When it returns `DONE`:
 - Open `appUrl` in a Codex in-app Browser tab and make the browser visible.
@@ -185,9 +189,13 @@ When it returns `DONE`:
   their own org.
 - Confirm the tab shows the app (with Acme Co data when seeded), not an error
   page or an empty shell, before saying it is ready.
-- If the work touches Desktop, dispatch `vibe-setup-worker` to start the
-  local Desktop app signed in to this environment's API (the person finishes
-  the sign-in in the Desktop window if it asks).
+- If the work touches Desktop, start it per the Desktop section of
+  `references/environment.md`: dispatch `vibe-setup-worker` to build the
+  profile, then `vibe-environment-worker` in desktop mode (in a blank session,
+  only after the person has signed in and created their org), then
+  `vibe-setup-worker` to sign it in and launch it. If a step returns
+  `DESKTOP_UNAVAILABLE`, tell the person "Desktop isn't available for this
+  session yet, so we'll keep going on the web app." and continue web-only.
 
 If the setup worker ever returns `DONE` with a `LOCAL_FIX` line, it found a
 bug in symphony-alpha, fixed it on this Mac, and filed a ticket. Tell the
