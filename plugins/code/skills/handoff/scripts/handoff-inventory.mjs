@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// Inventory a vibe session's uncommitted work for handoff and run the
+// Inventory a vibe session's work for handoff (its redeploy commits and
+// anything not committed yet, against its base on main) and run the
 // mechanical guardrail checks. Prints one JSON object; exits 0 when every
 // blocking check passes and 1 otherwise. Changes nothing.
 //
 // Files in the session record's `localFixes` (workarounds for symphony-alpha
 // bugs that the setup worker filed as tickets) are not the person's work:
 // they are listed under `localFixes` and left out of `changedFiles` and every
-// guardrail check, and the publish worker restores them before committing.
+// guardrail check, and no redeploy or handoff commit includes them.
 //
 // Usage: handoff-inventory.mjs --worktree <path>
 
@@ -17,9 +18,6 @@ import { parseArgs } from "node:util";
 
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 const BRANCH_PREFIX = "andy/";
-const PREVIEW_ALIAS_SUFFIX = ".preview.closedloop-stage.ai";
-const PREVIEW_PROJECT = "app-stage";
-const MAX_DNS_LABEL = 63;
 
 const ALLOWED_PREFIXES = [
   "apps/app/",
@@ -28,8 +26,8 @@ const ALLOWED_PREFIXES = [
   "apps/desktop/src/renderer/",
   "apps/storybook/",
 ];
-// Full scope (ISS-12046) builds the backend too, and an engineer reviews the
-// PR, so these move from forbidden to allowed.
+// Full scope (ISS-12046) builds the backend too, and an engineer reviews it
+// before it merges, so these move from forbidden to allowed.
 const FULL_SCOPE_PREFIXES = [
   "apps/api/",
   "packages/api/",
@@ -93,7 +91,6 @@ const stubs = changedFiles
   .map((file) => file.path);
 const stubImportViolations = findStubImportViolations(changedFiles);
 const componentsWithoutStories = findComponentsWithoutStories(changedFiles);
-const previewAlias = previewAliasFor(branch);
 
 const blocking = {
   forbiddenPaths: forbidden.length === 0,
@@ -106,6 +103,9 @@ const result = {
   worktree,
   branch,
   scope,
+  mode: record?.mode ?? null,
+  liveTicket: record?.liveTicket ?? record?.handoffTicket ?? null,
+  vercel: record?.vercel ?? null,
   baseCommit,
   blocking,
   changedFiles,
@@ -115,7 +115,6 @@ const result = {
   stubs,
   stubImportViolations,
   componentsWithoutStories,
-  previewAlias,
 };
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 process.exit(result.ok ? 0 : 1);
@@ -207,15 +206,6 @@ function findComponentsWithoutStories(files) {
       return !changedPaths.has(story) && !existsSync(path.join(worktree, story));
     })
     .map((file) => file.path);
-}
-
-function previewAliasFor(branchName) {
-  const slug = branchName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  const label = `${PREVIEW_PROJECT}-git-${slug}`;
-  if (label.length > MAX_DNS_LABEL) {
-    return { url: null, reason: "branch name too long for a predictable alias" };
-  }
-  return { url: `https://${label}${PREVIEW_ALIAS_SUFFIX}`, reason: null };
 }
 
 function baseBranch() {

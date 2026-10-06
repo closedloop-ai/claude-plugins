@@ -1,4 +1,4 @@
 interface:
   display_name: "Vibe"
-  short_description: "Build product UI in the in-app browser on a seeded local copy"
+  short_description: "Build product UI in the in-app browser on your own Vercel copy"
   default_prompt: "Use $vibe to start or resume a vibe session."

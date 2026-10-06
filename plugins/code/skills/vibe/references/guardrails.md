@@ -24,9 +24,10 @@ stub.
 ### Full scope
 
 In a **full** scope session (the session record's `scope`), the work goes all
-the way and ships as a pull request an engineer reviews before it merges. These
-move to allowed, each under its owning `AGENTS.md`, and are built by
-`vibe-backend-worker`, never by the change worker:
+the way, backend included. It still ends on the session's branch: design
+reviews it, then an engineer opens the pull request and reviews it before it
+merges. These move to allowed, each under its owning `AGENTS.md`, and are
+built by `vibe-backend-worker`, never by the change worker:
 
 - `apps/api/**`: thin route, fat service, `withAnyAuth`, Zod validation, org
   scoping on every query, the `Result` error model (`apps/api/AGENTS.md`).
@@ -34,20 +35,22 @@ move to allowed, each under its owning `AGENTS.md`, and are built by
   canonical place for them.
 - `packages/database/**`: Prisma schema changes with a generated migration
   (`packages/database/AGENTS.md`); never edit a migration that has landed on
-  main; apply migrations only to the session's throwaway vibe database; every
-  new model gets a seed coverage file and seed data in the vibe seed.
+  main; never apply a migration to a shared database from this Mac (the API's
+  Vercel build applies it to the session's own data on redeploy); every new
+  model gets a seed coverage file and seed data in the vibe seed.
 - `apps/desktop/src/main/**` and `apps/desktop/prisma/**`, when the change is a
   Desktop feature (`apps/desktop/AGENTS.md`; gateway operations stay in
   `apps/desktop/src/server/operations/`).
 - The backend worker's decision table stays local in
   `.closedloop-ai/decision-tables/` (gitignored in this repo); handoff attaches
-  it to the ticket so the reviewing engineer sees it.
+  it to the live ticket so the reviewing engineer sees it.
 
-Full-scope work merges to `main`, so the closed-by-default UI policy applies: a
-net-new screen, surface, or navigation item ships behind a default-off PostHog
-flag (one key for web and Desktop, read where it gates). If the person chose
-Labs, the Labs pattern is that flag. Tell them in one line that they will see it
-on their preview only with the flag on for their account.
+Full-scope work is headed for `main`, so the closed-by-default UI policy
+applies: a net-new screen, surface, or navigation item ships behind a
+default-off PostHog flag (one key for web and Desktop, read where it gates).
+If the person chose Labs, the Labs pattern is that flag. Tell them in one line
+that the new screen stays hidden on their environment until that flag is
+turned on for them.
 
 Still never, in any scope: `packages/golden-sessions/**`, `.github/**`, and
 `AGENTS.md` / `CLAUDE.md` files. Stubs are not used in full scope.
@@ -116,8 +119,8 @@ When nothing in the catalog fits:
      `pnpm --filter storybook validate:catalog`. Never hand-edit
      `component-catalog.ts`.
 4. Run `pnpm --filter storybook test` and confirm the new stories pass.
-5. Open its story in the in-app browser (Storybook URL from the `VIBE_ENV`
-   line) and ask the person to approve it there.
+5. Open its story in the in-app browser (local Storybook, which the
+   orchestrator starts for this) and ask the person to approve it there.
 6. Only after approval, use it in the screen.
 
 ## Tokens and styling
@@ -153,9 +156,9 @@ Default: no flag. When the person asks for Labs, follow the existing Labs
 destination pattern: the route checks the `labs-nav-section` container flag
 plus its own PostHog key (see `apps/app/app/(authenticated)/[orgSlug]/help/page.tsx`
 and `packages/app/shared/lib/feature-flags.ts`). One key gates web and Desktop.
-Tell them the Labs entry shows on their preview link only if those flags are on
-for their account, and record the key in the session summary so handoff can
-list it.
+Tell them the Labs entry shows on their environment only if those flags are
+on for them, and record the key in the session summary so handoff can list
+it.
 
 ## Repo rules that bite most often
 

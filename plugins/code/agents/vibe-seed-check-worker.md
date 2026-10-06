@@ -1,6 +1,6 @@
 ---
 name: vibe-seed-check-worker
-description: Checks symphony-alpha's vibe seed against fresh main for the vibe-seed-refresh orchestrator. Refreshes a dedicated detached check worktree, runs pnpm vibe check and reads the latest nightly screen walk, and returns CLEAN or DRIFT with a short drift list. Changes no tracked files.
+description: Checks symphony-alpha's vibe seed against fresh main for the vibe-seed-refresh orchestrator. Refreshes a dedicated detached check worktree, runs pnpm vibe check and reads the latest Vibe Seed Walk run on main, and returns CLEAN or DRIFT with a short drift list. Changes no tracked files.
 model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
@@ -26,8 +26,10 @@ The symphony-alpha checkout path.
    `./.closedloop-ai/loops-setup.sh` in it.
 3. In that worktree run `pnpm vibe check`. It prints one JSON object with
    `todo`, `missing`, `stale`, `emptyRows`, and `seedError`.
-4. Read the latest nightly walk on main:
-   `gh run list --repo closedloop-ai/symphony-alpha --workflow vibe-seed-nightly.yml --branch main --limit 1 --json conclusion,url,createdAt`.
+4. Read the latest finished Vibe Seed Walk run on main. The workflow
+   (`vibe-seed-nightly.yml`) runs on every push to main and is informational
+   only (a failure alerts #cl-status-ci-cd; it gates nothing):
+   `gh run list --repo closedloop-ai/symphony-alpha --workflow vibe-seed-nightly.yml --branch main --status completed --limit 1 --json conclusion,url,createdAt,headSha`.
 5. For each drifted model, use closedloop-graph `fts_search` / `ticket_detail`
    to name the ticket or PR that introduced it, so the fix worker knows the
    intent behind it.
@@ -36,5 +38,5 @@ The symphony-alpha checkout path.
 
 `CLEAN` with the main SHA, or `DRIFT` with: the main SHA, each drifted model
 with its kind (todo, missing, stale, empty) and the introducing ticket if
-found, `seedError` in one line if set, and the nightly run's conclusion and URL
-if it failed.
+found, `seedError` in one line if set, and the Vibe Seed Walk run's conclusion,
+commit, and URL if it failed.

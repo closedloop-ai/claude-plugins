@@ -5,20 +5,37 @@
 //
 // Usage:
 //   vibe-sessions.mjs repo
-//   vibe-sessions.mjs list      [--repo <symphony-alpha checkout>]
-//   vibe-sessions.mjs new       [--repo <checkout>] --slug <slug> --summary <text>
-//                               --scope draft|full [--ticket ISS-123]
-//   vibe-sessions.mjs touch     --worktree <path> [--summary <text>] [--ticket ISS-123]
-//                               [--status active|handed-off] [--handoff-ticket ISS-123]
-//                               [--scope draft|full]
-//                               [--stack <json>]
-//   vibe-sessions.mjs local-fix --worktree <path> --ticket ISS-123 --path <file> [--path <file> ...]
-//   vibe-sessions.mjs discard   --worktree <path> [--confirm]
+//   vibe-sessions.mjs list            [--repo <symphony-alpha checkout>]
+//   vibe-sessions.mjs show            --worktree <path>
+//   vibe-sessions.mjs new             [--repo <checkout>] --slug <slug> --summary <text>
+//                                     --scope draft|full --mode seeded|blank [--ticket ISS-123]
+//   vibe-sessions.mjs touch           --worktree <path> [--summary <text>] [--ticket ISS-123]
+//                                     [--status active|handed-off] [--live-ticket ISS-123]
+//                                     [--scope draft|full] [--mode seeded|blank]
+//                                     [--vercel <json>] [--deployed <commit>] [--stack <json>]
+//   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json>
+//   vibe-sessions.mjs dispatch-inputs --worktree <path> --out <inputs.json>
+//                                     [--clerk-user-id user_... --clerk-org-id org_...]
+//   vibe-sessions.mjs codex-sessions  --worktree <path> [--thread <id>]
+//   vibe-sessions.mjs ticket-sections --worktree <path>
+//   vibe-sessions.mjs local-fix       --worktree <path> --ticket ISS-123 --path <file> [--path <file> ...]
+//   vibe-sessions.mjs discard         --worktree <path> [--confirm]
 //
 // `--repo` defaults to the checkout vibe-preflight.sh remembered in
 // ~/.codex/vibe/config.json; `repo` prints it. `local-fix` records files the
 // setup worker changed to work around a symphony-alpha bug (filed as the
-// ticket), so handoff keeps them out of the person's commit.
+// ticket), so no redeploy or handoff commits them.
+//
+// The live ticket (ISS-12057) is `liveTicket`; `--handoff-ticket` and a
+// record's `handoffTicket` are read as the same field for sessions started
+// before it. `flag-snapshot` validates and saves the production flag snapshot
+// (ISS-12048) next to the record; `codex-sessions` records this Codex thread
+// (`--thread`, else CODEX_THREAD_ID) and every subagent thread it spawned;
+// `ticket-sections` prints the live ticket's Environment, Production flag
+// snapshot, and Sessions sections from the record. `dispatch-inputs` writes
+// the inputs for the symphony-alpha vibe environment request workflow as a
+// JSON file for `gh workflow run <workflow> --ref main --json < <file>`, so no
+// JSON is ever quoted on a command line.
 //
 // Every command prints one JSON object on stdout. Errors print
 // {"ok":false,"error":...} and exit non-zero.
@@ -28,31 +45,51 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import {
+  buildDispatchInputs,
+  DISPATCH_WORKFLOW,
+  findCodexSubagents,
+  renderRecordSections,
+  VERCEL_URL_KEYS,
+  validateFlagSnapshot,
+  vercelAliases,
+} from "./vibe-session-data.mjs";
 
 const BRANCH_PREFIX = "andy/";
 const WORKTREE_DIR = ".claude/worktrees";
 const WORKTREE_NAME_PREFIX = "andy-";
 const RECORD_FILE = "vibe-session.json";
+const SNAPSHOT_FILE = "vibe-flag-snapshot.json";
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-// Vercel's per-branch preview alias is `app-stage-git-andy-<slug>`, and a DNS
-// label longer than 63 characters gets truncated and hashed, which would make
-// the handoff link unpredictable.
+// Vercel's per-branch preview aliases are `<project>-git-andy-<slug>`, and a
+// DNS label longer than 63 characters gets truncated and hashed, which would
+// make the session's URLs unpredictable.
 const MAX_SLUG_LENGTH = 40;
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 // Written by vibe-preflight.sh; holds {"repo": "<symphony-alpha checkout>"}.
 const CONFIG_FILE = path.join(os.homedir(), ".codex", "vibe", "config.json");
 const TICKET_PATTERN = /^[A-Z]+-\d+$/;
+const COMMIT_PATTERN = /^[0-9a-f]{7,40}$/;
+const THREAD_PATTERN = /^[A-Za-z0-9-]{8,100}$/;
 
 const SessionStatus = {
   Active: "active",
   HandedOff: "handed-off",
 };
 
-// Draft: frontend only, with stubs, handed to engineering to finish. Full:
-// frontend and backend, shipped as a PR an engineer reviews (ISS-12046).
+// Draft: frontend only, with stubs, for engineering to finish. Full: frontend
+// and backend (ISS-12046). Both end on the branch, handed to design and then
+// engineering, who open the pull request (ISS-12057).
 const SessionScope = {
   Draft: "draft",
   Full: "full",
+};
+
+// Seeded: the session's Vercel environment is filled by the vibe seed under
+// Acme Co. Blank: no data; the person creates their own org (ISS-12056).
+const SessionMode = {
+  Seeded: "seeded",
+  Blank: "blank",
 };
 
 const { positionals, values } = parseArgs({
@@ -65,7 +102,16 @@ const { positionals, values } = parseArgs({
     ticket: { type: "string" },
     status: { type: "string" },
     scope: { type: "string" },
+    mode: { type: "string" },
+    "live-ticket": { type: "string" },
     "handoff-ticket": { type: "string" },
+    vercel: { type: "string" },
+    deployed: { type: "string" },
+    file: { type: "string" },
+    thread: { type: "string" },
+    out: { type: "string" },
+    "clerk-user-id": { type: "string" },
+    "clerk-org-id": { type: "string" },
     stack: { type: "string" },
     path: { type: "string", multiple: true },
     confirm: { type: "boolean", default: false },
@@ -88,17 +134,27 @@ function run(command) {
       return { repo: resolveRepo() };
     case "list":
       return { sessions: listSessions(resolveRepo()) };
+    case "show":
+      return { session: showSession() };
     case "new":
       return { session: newSession() };
     case "touch":
       return { session: touchSession() };
+    case "flag-snapshot":
+      return { session: saveFlagSnapshot() };
+    case "dispatch-inputs":
+      return dispatchInputs();
+    case "codex-sessions":
+      return { session: recordCodexSessions() };
+    case "ticket-sections":
+      return { markdown: ticketSections() };
     case "local-fix":
       return { session: recordLocalFix() };
     case "discard":
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, new, touch, local-fix, discard."
+        "Unknown command. Use one of: repo, list, show, new, touch, flag-snapshot, dispatch-inputs, codex-sessions, ticket-sections, local-fix, discard."
       );
   }
 }
@@ -130,7 +186,15 @@ function readRecord(worktree) {
   if (!existsSync(file)) {
     return null;
   }
-  return JSON.parse(readFileSync(file, "utf8"));
+  return withDefaults(JSON.parse(readFileSync(file, "utf8")));
+}
+
+function requireRecord(worktree) {
+  const record = readRecord(worktree);
+  if (!record) {
+    throw new Error(`No vibe session record in ${worktree}.`);
+  }
+  return record;
 }
 
 function writeRecord(worktree, record) {
@@ -178,9 +242,12 @@ function listSessions(repo) {
         ticket: record?.ticket ?? null,
         status: record?.status ?? SessionStatus.Active,
         scope: record?.scope ?? SessionScope.Draft,
-        handoffTicket: record?.handoffTicket ?? null,
+        mode: record?.mode ?? null,
+        liveTicket: record?.liveTicket ?? null,
         createdAt: record?.createdAt ?? null,
         lastActiveAt: record?.lastActiveAt ?? null,
+        vercel: record?.vercel ?? vercelDefaults(entry.branch),
+        flagSnapshotTakenAt: record?.flagSnapshot?.takenAt ?? null,
         stack: record?.stack ?? null,
         localFixes: record?.localFixes ?? [],
         ...changeSummary(entry.worktree),
@@ -203,6 +270,7 @@ function newSession() {
   const slug = requireOption("slug");
   const summary = requireOption("summary");
   const scope = requireScope(requireOption("scope"));
+  const mode = requireMode(requireOption("mode"));
   if (!SLUG_PATTERN.test(slug) || slug.length > MAX_SLUG_LENGTH) {
     throw new Error(
       `Slug must be lowercase words joined by hyphens, at most ${MAX_SLUG_LENGTH} characters.`
@@ -234,10 +302,14 @@ function newSession() {
     ticket: values.ticket ?? null,
     status: SessionStatus.Active,
     scope,
-    handoffTicket: null,
+    mode,
+    liveTicket: null,
     baseCommit: git(worktree, ["rev-parse", "HEAD"]),
     createdAt: now,
     lastActiveAt: now,
+    vercel: vercelDefaults(branch),
+    flagSnapshot: null,
+    codexSessions: { orchestrators: [], subagents: [] },
     stack: null,
     localFixes: [],
   };
@@ -247,25 +319,59 @@ function newSession() {
 
 function touchSession() {
   const worktree = requireOption("worktree");
-  const record = readRecord(worktree);
-  if (!record) {
-    throw new Error(`No vibe session record in ${worktree}.`);
-  }
+  const record = requireRecord(worktree);
   if (values.status && !Object.values(SessionStatus).includes(values.status)) {
     throw new Error(`--status must be one of: ${Object.values(SessionStatus).join(", ")}.`);
   }
+  const liveTicket = values["live-ticket"] ?? values["handoff-ticket"];
+  if (liveTicket !== undefined && !TICKET_PATTERN.test(liveTicket)) {
+    throw new Error("--live-ticket must be a ClosedLoop slug such as ISS-123.");
+  }
+  const now = new Date().toISOString();
   const updated = {
     ...record,
     summary: values.summary ?? record.summary,
     ticket: values.ticket ?? record.ticket,
     status: values.status ?? record.status,
-    scope: values.scope ? requireScope(values.scope) : (record.scope ?? SessionScope.Draft),
-    handoffTicket: values["handoff-ticket"] ?? record.handoffTicket,
+    scope: values.scope ? requireScope(values.scope) : record.scope,
+    mode: values.mode ? requireMode(values.mode) : record.mode,
+    liveTicket: liveTicket ?? record.liveTicket,
+    vercel: updateVercel(record.vercel, now),
     stack: values.stack ? JSON.parse(values.stack) : record.stack,
-    lastActiveAt: new Date().toISOString(),
+    lastActiveAt: now,
   };
   writeRecord(worktree, updated);
   return { worktree, ...updated };
+}
+
+function showSession() {
+  const worktree = requireOption("worktree");
+  return { worktree, ...requireRecord(worktree) };
+}
+
+/** Applies `--vercel` (URLs the environment reported) and `--deployed`. */
+function updateVercel(current, now) {
+  const next = { ...current };
+  if (values.vercel) {
+    const given = JSON.parse(values.vercel);
+    for (const [key, value] of Object.entries(given)) {
+      if (!VERCEL_URL_KEYS.includes(key)) {
+        throw new Error(`--vercel accepts only ${VERCEL_URL_KEYS.join(", ")}.`);
+      }
+      if (typeof value !== "string" || !/^https:\/\/\S+$/.test(value)) {
+        throw new Error(`--vercel ${key} must be an https URL.`);
+      }
+      next[key] = value.replace(/\/$/, "");
+    }
+  }
+  if (values.deployed) {
+    if (!COMMIT_PATTERN.test(values.deployed)) {
+      throw new Error("--deployed must be a commit SHA.");
+    }
+    next.lastDeployedCommit = values.deployed;
+    next.lastDeployedAt = now;
+  }
+  return next;
 }
 
 function discardSession() {
@@ -306,6 +412,13 @@ function baseBranch(cwd) {
   } catch {
     return "main";
   }
+}
+
+function requireMode(mode) {
+  if (!Object.values(SessionMode).includes(mode)) {
+    throw new Error(`--mode must be one of: ${Object.values(SessionMode).join(", ")}.`);
+  }
+  return mode;
 }
 
 function requireScope(scope) {
@@ -357,10 +470,7 @@ function recordLocalFix() {
   if (paths.length === 0) {
     throw new Error("--path is required at least once.");
   }
-  const record = readRecord(worktree);
-  if (!record) {
-    throw new Error(`No vibe session record in ${worktree}.`);
-  }
+  const record = requireRecord(worktree);
   const now = new Date().toISOString();
   const localFixes = [...(record.localFixes ?? [])];
   const existing = localFixes.findIndex((fix) => fix.ticket === ticket);
@@ -387,4 +497,120 @@ function normalizeRepoPath(raw) {
     throw new Error(`--path must be relative to the worktree root: ${raw}`);
   }
   return normalized.replace(/\/$/, "");
+}
+
+function vercelDefaults(branch) {
+  return { ...vercelAliases(branch), lastDeployedCommit: null, lastDeployedAt: null };
+}
+
+/**
+ * Fills fields added after a record was written, and reads the pre-ISS-12057
+ * `handoffTicket` as `liveTicket`.
+ */
+function withDefaults(record) {
+  const { handoffTicket, ...rest } = record;
+  return {
+    ...rest,
+    scope: rest.scope ?? SessionScope.Draft,
+    mode: rest.mode ?? null,
+    liveTicket: rest.liveTicket ?? handoffTicket ?? null,
+    vercel: rest.vercel ?? (rest.branch ? vercelDefaults(rest.branch) : null),
+    flagSnapshot: rest.flagSnapshot ?? null,
+    codexSessions: rest.codexSessions ?? { orchestrators: [], subagents: [] },
+    localFixes: rest.localFixes ?? [],
+  };
+}
+
+function snapshotPath(worktree) {
+  return path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), SNAPSHOT_FILE);
+}
+
+/** Validates the flag snapshot file, saves it beside the record, and records a summary. */
+function saveFlagSnapshot() {
+  const worktree = requireOption("worktree");
+  const file = requireOption("file");
+  const record = requireRecord(worktree);
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    throw new Error(`Could not read a JSON flag snapshot from ${file}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const snapshot = validateFlagSnapshot(parsed);
+  const saved = snapshotPath(worktree);
+  writeFileSync(saved, `${JSON.stringify(snapshot, null, 2)}\n`);
+  const updated = {
+    ...record,
+    flagSnapshot: {
+      takenAt: snapshot.takenAt,
+      distinctId: snapshot.distinctId,
+      ...(snapshot.orgId === undefined ? {} : { orgId: snapshot.orgId }),
+      flagCount: Object.keys(snapshot.flags).length,
+      file: saved,
+    },
+    lastActiveAt: new Date().toISOString(),
+  };
+  writeRecord(worktree, updated);
+  return { worktree, ...updated };
+}
+
+function readSnapshot(worktree, record) {
+  if (!record.flagSnapshot) {
+    return null;
+  }
+  const file = snapshotPath(worktree);
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
+}
+
+/**
+ * Records this Codex thread as one of the session's orchestrators, then every
+ * subagent thread any of them spawned, from Codex's own session files.
+ */
+function recordCodexSessions() {
+  const worktree = requireOption("worktree");
+  const record = requireRecord(worktree);
+  const thread = values.thread ?? process.env.CODEX_THREAD_ID ?? "";
+  if (!THREAD_PATTERN.test(thread)) {
+    throw new Error("No Codex thread id: pass --thread, or run inside Codex where CODEX_THREAD_ID is set.");
+  }
+  const now = new Date().toISOString();
+  const orchestrators = [...record.codexSessions.orchestrators];
+  if (!orchestrators.some((entry) => entry.id === thread)) {
+    orchestrators.push({ id: thread, recordedAt: now });
+  }
+  const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  const subagents = findCodexSubagents({
+    codexHome,
+    orchestrators: orchestrators.map((entry) => entry.id),
+    since: record.createdAt,
+  });
+  const updated = {
+    ...record,
+    codexSessions: { orchestrators, subagents },
+    lastActiveAt: now,
+  };
+  writeRecord(worktree, updated);
+  return { worktree, ...updated };
+}
+
+function ticketSections() {
+  const worktree = requireOption("worktree");
+  const record = requireRecord(worktree);
+  return renderRecordSections(record, readSnapshot(worktree, record));
+}
+
+/** Writes the environment request workflow's inputs for this session to `--out`. */
+function dispatchInputs() {
+  const worktree = requireOption("worktree");
+  const out = requireOption("out");
+  const record = requireRecord(worktree);
+  const inputs = buildDispatchInputs({
+    record,
+    snapshot: readSnapshot(worktree, record),
+    clerkUserId: values["clerk-user-id"],
+    clerkOrgId: values["clerk-org-id"],
+  });
+  mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
+  writeFileSync(out, `${JSON.stringify(inputs)}\n`);
+  return { workflow: DISPATCH_WORKFLOW, ref: "main", out, inputNames: Object.keys(inputs) };
 }

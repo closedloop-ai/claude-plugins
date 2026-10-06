@@ -1,69 +1,77 @@
 ---
 name: handoff
-description: Finish a vibe session in symphony-alpha and hand it to engineering. Shows the person a task list, then (through workers) verifies the work stays frontend-only, makes sure every new or changed component has Storybook stories, runs lint, typecheck, and tests, runs an adversarial code review and fixes what it confirms, writes api-requirements.md from the session's stubs, creates the ClosedLoop handoff ticket (IN_PROGRESS, assigned to Andrew Eye) with that file attached, makes the single commit on the andy/<slug> branch, pushes, and posts the stable Vercel preview link. For a full-scope session it instead runs the whole test suite, two workflow-code-review passes, opens a PR to main, moves the ticket to IN_REVIEW, and follows CI, the required engineer review, and the merge queue until it merges. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
+description: Finish a vibe session in symphony-alpha and hand it to design, then engineering. Shows the person a task list, then (through workers) checks the work stays within its scope, makes sure every new or changed component has Storybook stories, runs lint, typecheck, and tests (the whole suite for a full-scope session), runs the code reviews (an adversarial review, or two workflow-code-review passes for full scope) and fixes what they confirm, checks the session's live ClosedLoop ticket is complete, pushes the last changes to the andy/<slug> branch and its Vercel environment, and assigns the ticket to Nenad Antic for design review with the status left In Progress. Both scopes end at the branch; no pull request is opened. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
 ---
 
 # Handoff
 
 The person ran `vibe` and built something they are happy with. You
-orchestrate making it safe and complete for engineering to take over, without
-asking them to understand any of the engineering. Engineering branches off the
-pushed `andy/<slug>` branch, wires the real backend, and runs their own
-reviews; they do not "review" this work, so the ticket stays IN_PROGRESS.
+orchestrate making it safe and complete for the next people, without asking
+them to understand any of the engineering. The session's live ClosedLoop
+ticket was created when the session started and the workers kept it current;
+handoff checks it is complete rather than writing it. Then Nenad Antic
+(design) reviews the components in the branch's Vercel Storybook, comments on
+the ticket when he signs off, and reassigns it to Daniel Ochoa, who finishes
+the work through analysis, a pull request, and merge. The ticket stays In
+Progress throughout, and no pull request is opened here, in either scope.
 
 ## Your role: orchestrate, never do the work
 
 The same rule as the `vibe` skill, without exception: you never read source
-files, search the codebase, edit files, read diffs, or run builds, tests,
-linters, reviews, git, or `gh` yourself. You show and update the task list,
-talk to the person, run this skill's inventory script and the vibe session
-script (short JSON), and dispatch workers. Each worker returns a short status
-(`DONE`, `NEEDS_PERSON`, `BLOCKED`); relay `NEEDS_PERSON` verbatim in plain
-words and dispatch a fresh worker with the answer. Every worker brief says to
-use closedloop-graph first (`../vibe/references/closedloop-graph.md`).
+files, search the codebase, edit files, read diffs or tickets in full, or run
+builds, tests, linters, reviews, git, or `gh` yourself. You show and update
+the task list, talk to the person, run this skill's inventory script and the
+vibe session script (short JSON), and dispatch workers. Each worker returns a
+short status (`DONE`, `NEEDS_PERSON`, `BLOCKED`); relay `NEEDS_PERSON`
+verbatim in plain words and dispatch a fresh worker with the answer. Every
+worker brief says to use closedloop-graph first
+(`../vibe/references/closedloop-graph.md`), and every worker that edits the
+live ticket follows `../vibe/references/ticket-template.md`.
 
 Harness notes match the `vibe` skill: in Codex invoke as `$handoff` and spawn
 plugin agents from `../../agents/<name>.md` with the file's body as the
 subagent's instructions; in Claude Code use `/code:handoff` and the
 `code:<name>` agents. Repo agents live in `<repo>/.claude/agents/`. Paths like
-`scripts/...`, `references/...`, and `../vibe/...` are relative to this skill's
-own folder, not the repository.
+`scripts/...` and `../vibe/...` are relative to this skill's own folder, not
+the repository.
 
 ## Workers
 
 | Step | Worker |
 |---|---|
 | Summary | `vibe-handoff-summarizer` |
-| Guardrail and review fixes | `vibe-change-worker` (fix mode: give it the findings) |
+| Guardrail and review fixes | `vibe-change-worker` (fix mode: give it the findings); backend findings in full scope to `vibe-backend-worker` (fix mode) |
 | Judgment guardrails | `vibe-guardrails-reviewer` |
 | Storybook | `vibe-storybook-decomposer` |
-| Code checks, Storybook footprint | `vibe-verify-worker` |
-| Adversarial review | repo `review-soul` and `vibe-adversarial-reviewer`, in parallel |
-| Requirements | `vibe-api-requirements-writer` |
-| Ticket, commit, push, preview | `vibe-publish-worker` |
-| Full scope: whole test suite | `vibe-verify-worker` (full-suite mode) |
-| Full scope: two review passes | the `workflow-code-review` skill (itself orchestrator-only), findings to `vibe-change-worker` / `vibe-backend-worker` |
-| Full scope: PR to main | `vibe-publish-worker` (ship mode) |
-| Full scope: CI, engineer review, merge queue | `vibe-ship-worker` |
+| Code checks, whole test suite, Storybook footprint | `vibe-verify-worker` |
+| Draft: adversarial review | repo `review-soul` and `vibe-adversarial-reviewer`, in parallel |
+| Full: two review passes | the `workflow-code-review` skill (itself orchestrator-only) |
+| Draft: requirements file | `vibe-api-requirements-writer` |
+| Last push and Vercel check | `vibe-environment-worker` (redeploy mode) |
+| Ticket check and assignment | `vibe-ticket-worker` (handoff mode, then assign mode) |
 
 ## 0. Pick the session
 
 Run `node ../vibe/scripts/vibe-sessions.mjs list` (it uses the checkout the
-vibe preflight remembered). Use the
-session whose worktree you are in. If you are not in one and more than one
-session is `active`, list them in plain words and ask which one to hand off.
+vibe preflight remembered). Use the session whose worktree you are in. If you
+are not in one and more than one session is `active`, list them in plain
+words and ask which one to hand off. Read its `scope`, `liveTicket`, and
+`localFixes`.
 
-## Scope
+If the session has no `liveTicket` (it started before live tickets existed),
+dispatch `vibe-ticket-worker` in create mode first and record the slug with
+`touch --live-ticket`. If it is `handed-off`, tell the person it already went
+to design and stop.
 
-Read the session's `scope` from the list. **Draft** (the default) follows
-sections 1 to 11 as written: the work goes to engineering to finish. **Full**
-uses the ship path in section 12 instead of sections 7 to 10: the work becomes
-a pull request to `main` that an engineer reviews before it merges.
+Then run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
+so this conversation is recorded on the session too.
 
 ## 1. Show the task list first
 
-Before anything else, show this list and keep it updated as each item
-finishes (mark it done, or say plainly what blocked it):
+Before anything else, show the list for the session's scope and keep it
+updated as each item finishes (mark it done, or say plainly what blocked it).
+
+Draft scope:
 
 ```
 Here's what I'll do to hand this off:
@@ -74,58 +82,52 @@ Here's what I'll do to hand this off:
 [ ] Run the code checks (lint, types, tests)
 [ ] Run a tough code review and fix what it finds
 [ ] Write up what engineering needs to build behind the scenes
-[ ] Create the ClosedLoop ticket for engineering (assigned to you for now)
-[ ] Attach the write-up to the ticket
-[ ] Save your work as one change on its own branch and upload it
-[ ] Get the shareable preview link and add it to the ticket
+[ ] Upload the last changes and check the app and Storybook show them
+[ ] Check the ticket has everything design and engineering need
+[ ] Hand the ticket to Nenad Antic for design review
 ```
 
-For a **full** scope session, show this list instead:
+Full scope:
 
 ```
-Here's what I'll do to ship this:
+Here's what I'll do to hand this off:
 [ ] Summarize what changed and confirm it with you
-[ ] Check the change stays within what we can ship
+[ ] Check the change stays within what we can hand off
 [ ] Make sure every new or changed component has Storybook stories, and
     measure what the work adds to the Storybook sidebar
 [ ] Run every test in the repo
 [ ] Run two tough code reviews and fix what they find
-[ ] Create the ClosedLoop ticket (in review)
-[ ] Open a pull request for an engineer to review
-[ ] Watch the checks, and merge once an engineer approves
+[ ] Upload the last changes and check the app and Storybook show them
+[ ] Check the ticket has everything design and engineering need
+[ ] Hand the ticket to Nenad Antic for design review
 ```
-
-If this session already has a `handoffTicket` (they kept working after an
-earlier handoff), say the existing ticket will be updated instead, and have the
-publish worker confirm it is still assigned to Andrew Eye. If engineering has
-reassigned it, stop: that branch is engineering's now, and new changes need a
-new vibe session.
 
 ## 2. Summarize and confirm
 
 Run `node scripts/handoff-inventory.mjs --worktree "<wt>"` (the JSON stays out
-of the chat). Dispatch `vibe-handoff-summarizer` with the worktree and the
+of the chat). It covers the session's redeploy commits and anything not
+committed yet. Dispatch `vibe-handoff-summarizer` with the worktree and the
 inventory path.
 
 The inventory's `localFixes` are files the setup worker changed on this Mac to
 work around a symphony-alpha bug (each with the ticket that reports it). They
 are not the person's work: the inventory already leaves them out of
 `changedFiles` and its guardrail checks, and every worker brief from here on
-(summarizer, guardrails reviewer, change worker, decomposer, verify worker,
-reviewers, publish worker, ship worker) lists their paths as out of scope, not
-to be described, reviewed, edited, or committed. The publish worker restores
-them before its commit. Show the person its plain summary and ask them to confirm or
-correct it. Their corrections go to the publish worker for the ticket.
+(summarizer, guardrails reviewer, change and backend workers, decomposer,
+verify worker, reviewers, environment worker, ticket worker) lists their paths
+as out of scope, not to be described, reviewed, edited, or committed. Show the
+person the plain summary and ask them to confirm or correct it. Their
+corrections go to the ticket worker in step 9.
 
 ## 3. Guardrail check
 
 If the inventory's `blocking` checks fail, or `outsideAllowed` is non-empty,
-dispatch `vibe-change-worker` in fix mode with those findings. A forbidden
-backend or database change is never handed off: the worker turns it into a stub
-plus a requirement, or returns `NEEDS_PERSON` explaining what removing it
-would take away. Then dispatch `vibe-guardrails-reviewer`, and pass any
-findings to `vibe-change-worker`. Re-run the inventory until every blocking
-check passes.
+dispatch `vibe-change-worker` in fix mode with those findings. In draft scope
+a forbidden backend or database change is never handed off: the worker turns
+it into a stub plus a requirement, or returns `NEEDS_PERSON` explaining what
+removing it would take away. Then dispatch `vibe-guardrails-reviewer`, and
+pass any findings to `vibe-change-worker`. Re-run the inventory until every
+blocking check passes.
 
 ## 4. Storybook
 
@@ -136,82 +138,80 @@ components. Then dispatch `vibe-verify-worker` in footprint mode: it runs
 decomposer, and confirms every new component appears in the sidebar. Keep its
 footprint summary for the ticket.
 
-## 5. Code checks
+## 5. Checks
 
-Dispatch `vibe-verify-worker` in checks mode. It runs Biome, source gates,
-affected typecheck and tests, fixes failures in the session's own changes,
-never weakens a test, and returns a short pass/fail summary plus any
+Draft: dispatch `vibe-verify-worker` in checks mode. It runs Biome, source
+gates, affected typecheck and tests, fixes failures in the session's own
+changes, never weakens a test, and returns a short pass/fail summary plus any
 pre-existing failures it left alone.
 
-## 6. Adversarial review
+Full: dispatch `vibe-verify-worker` in full-suite mode instead. It runs every
+lane, fixes failures in the session's own changes, and never weakens a test.
 
-Dispatch the repo agent `review-soul` (`.claude/agents/review-soul.md`) and
-`vibe-adversarial-reviewer` in parallel on the worktree. Pass their findings to
-`vibe-change-worker` in fix mode; it verifies each finding against the code
-before fixing and reports fixed and rejected (with one line why). Then run step
-5 again.
+## 6. Reviews
 
-## 7. Write the requirements
+Draft: dispatch the repo agent `review-soul` (`.claude/agents/review-soul.md`)
+and `vibe-adversarial-reviewer` in parallel on the worktree. Pass their
+findings to `vibe-change-worker` in fix mode; it verifies each finding against
+the code before fixing and reports fixed and rejected (with one line why).
+Then run step 5 again.
+
+Full: run the `workflow-code-review` skill (`$workflow-code-review` in Codex,
+`/code:workflow-code-review` in Claude Code) on the worktree's changes against
+the session's base. It dispatches its own reviewer workers; you only receive
+its consolidated findings. Send frontend findings to `vibe-change-worker` and
+backend findings to `vibe-backend-worker`, both in fix mode, then run the full
+suite again (step 5). Then run `workflow-code-review` a second time on the
+result and repeat the fix and suite steps for anything it confirms. Keep both
+passes' fixed and rejected lists for the ticket.
+
+## 7. Requirements (draft scope)
 
 Dispatch `vibe-api-requirements-writer` with the inventory's `stubs`. It
 writes `api-requirements.md` to the session's private git directory, never
-into the repo.
+into the repo. The ticket worker reconciles the ticket's API requirements
+section with it and attaches it in step 9. Full scope skips this; its Backend
+built and Backend still missing sections are reconciled in step 9.
 
-## 8 to 10. Ticket, commit, push, preview
+## 8. Upload the last changes
 
-Dispatch `vibe-publish-worker` with: the worktree, the inventory path (its
-`localFixes` are restored to the base before the commit), the
-confirmed summary and the person's corrections, the footprint, check, and
-review summaries, the requirements file path, and the existing `handoffTicket`
-if any. It creates or updates the ticket (`references/ticket-template.md`),
-attaches the requirements, makes the one commit, pushes, links the branch,
-waits for the preview, and adds the link. When it returns, record the ticket:
-`node ../vibe/scripts/vibe-sessions.mjs touch --worktree <wt> --handoff-ticket <ISS-slug>`.
+Run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
+again, then dispatch `vibe-environment-worker` in redeploy mode with the
+worktree, the live ticket slug, the confirmed summary, and the inventory's
+`localFixes` paths. It commits everything the checks and reviews changed as
+one more commit (nothing is squashed or amended), pushes through the repo's
+pre-push checks, waits for the Vercel builds, and updates the ticket. If
+nothing changed since the last redeploy, it confirms the branch and the
+environment are current instead. A push refused by the repo's checks goes back
+to step 5's fixing, then this step again.
 
-## 11. Report
+## 9. Check the ticket
 
-Mark the session handed off:
-`node ../vibe/scripts/vibe-sessions.mjs touch --worktree <wt> --status handed-off`.
-Then `just vibe-down` in the worktree unless they want to keep looking.
+Dispatch `vibe-ticket-worker` in handoff mode with: the worktree, the live
+ticket slug, the scope, the inventory path, the confirmed summary and the
+person's corrections, the footprint, check, and review summaries, the
+requirements file path (draft) or the decision tables in
+`.closedloop-ai/decision-tables/` (full). It refreshes the record sections,
+fills the Handoff section, reconciles API requirements or the backend
+sections, attaches the files, and runs `scripts/live-ticket-check.mjs`. It
+returns `DONE` when the ticket is complete, or `NEEDS_PERSON` with what only
+the person can supply (for example acceptance criteria they never stated).
+Repeat until it returns `DONE`.
 
-Tell them, in a few lines: the ticket link, the preview link, the branch name
-engineering will use, and what engineering will build (one line per stub). The
-preview runs against the stage API, not the seeded local data, and needs a
-stage sign-in in a normal browser; stubbed screens still show their fixtures.
+## 10. Hand it to design
 
-## 12. Full scope: ship it
+Dispatch `vibe-ticket-worker` in assign mode with the live ticket slug. It
+confirms the ticket is still assigned to Andrew Eye (if engineering or design
+already took it, it returns `BLOCKED` and you stop: that branch is theirs
+now), assigns it to Nenad Antic, and leaves the status In Progress.
 
-Sections 2 to 4 run as in draft scope (the inventory allows backend paths in
-full scope). Then:
+Then mark the session handed off:
+`node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off`,
+and dispatch `vibe-setup-worker` to stop local Storybook or Desktop if either
+runs.
 
-1. **Whole test suite.** Dispatch `vibe-verify-worker` in full-suite mode. It
-   fixes failures in the session's own changes and never weakens a test.
-2. **Two review passes.** Run the `workflow-code-review` skill (`$workflow-code-review`
-   in Codex, `/code:workflow-code-review` in Claude Code) on the worktree's
-   changes against its base. It dispatches its own reviewer workers; you only
-   receive its consolidated findings. Send frontend findings to
-   `vibe-change-worker` and backend findings to `vibe-backend-worker`, both in
-   fix mode, then run the full suite again. Then run `workflow-code-review` a
-   second time on the result and repeat the fix and suite steps for anything it
-   confirms. Keep both passes' fixed and rejected lists for the PR.
-3. **Pull request.** Dispatch `vibe-publish-worker` in ship mode with the
-   inventory path, the summary, the footprint, the test results, and both
-   review summaries. It restores the inventory's `localFixes` before the
-   commit, so the PR never carries them. It
-   creates or updates the ClosedLoop ticket at IN_REVIEW, makes the one commit,
-   pushes, opens the PR to `main`, and links the branch. Record the ticket on
-   the session (`touch --handoff-ticket`).
-4. **Checks, review, merge.** Dispatch `vibe-ship-worker` with the PR URL,
-   the worktree, and the inventory's `localFixes` paths. It returns one of: `FIXING` (it fixed a failing check and
-   pushed; dispatch it again), `AWAITING_REVIEW` (everything is green and it is
-   waiting for an engineer's approval), `QUEUED`, or `MERGED`. On
-   `AWAITING_REVIEW`, tell the person the pull request is ready and an engineer
-   will review it; they can close this and run the handoff skill again later to
-   pick up where it left off. On `MERGED`, the worker has marked the ticket
-   DONE; mark the session handed off and run `just vibe-down`.
-5. **Resuming.** When the handoff skill runs on a full-scope session that
-   already has a PR, skip straight to step 4.
-
-Tell the person, in a few lines: the ticket link, the PR link, and where it
-stands (waiting for review, in the merge queue, or merged).
-
+Tell them, in a few lines: the ticket link, the app and Storybook links, the
+branch name, and what happens next: Nenad Antic reviews the components in
+Storybook and comments on the ticket when he signs off, then hands it to
+Daniel Ochoa to finish. For a draft, add one line per piece of backend work
+engineering will build.
