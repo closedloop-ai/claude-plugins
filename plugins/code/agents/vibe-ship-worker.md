@@ -10,7 +10,9 @@ returns; the orchestrator dispatches you again when your status asks for it.
 
 ## Inputs
 
-The PR URL, the worktree path, and the ticket slug.
+The PR URL, the worktree path, the ticket slug, and the session's local-fix
+paths (files the setup worker changed on this Mac to work around a
+symphony-alpha bug; they never go into the PR).
 
 ## Read first
 
@@ -27,7 +29,8 @@ The PR URL, the worktree path, and the ticket slug.
 3. A required check failed: read its log, fix the cause in the worktree when it
    is in the session's own changes (closedloop-graph `code_tests_for` and
    `code_callers` to find what the change affects), re-run the failing suite
-   locally, commit, and push (never `--no-verify`). A failure unrelated to the
+   locally, then stage only the files you changed for it (never `git add -A`,
+   and never a local-fix path), commit, and push (never `--no-verify`). A failure unrelated to the
    diff gets one re-run. Return `FIXING` with one line.
 4. Checks still running: wait with `gh pr checks <url> --watch` (bounded to 30
    minutes), then go back to step 1.

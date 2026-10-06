@@ -4,6 +4,20 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.18.3
+
+#### Fixed
+- `vibe-preflight.sh` finds an existing symphony-alpha checkout anywhere under the home folder, including folders with spaces in their names, by its `closedloop-ai/symphony-alpha` git remote rather than its folder name, and remembers it in `~/.codex/vibe/config.json`. A worktree resolves to its main checkout, `--repo` sets the remembered checkout, several checkouts ask the person to choose (`choose-repo`), folders macOS would not let it search report `allow-folder-access`, and it clones only when no checkout exists.
+- The `node` check reads the Node range from the checkout's `package.json` `engines` field and checks both the Node first on PATH and the one a new shell runs. The `install-node` fix installs a supported Homebrew Node and puts it first on PATH in `~/.zshenv` and `~/.zprofile` so Codex's non-interactive shells use it.
+- Preflight supports Colima as the Docker engine (`brew-install-docker-cli`, `start-colima`, `use-colima-context`; Docker Desktop is installed only when neither engine exists) and adds a `docker-compose` check with an `install-compose-plugin` fix.
+- `vibe` and `vibe-setup-worker` start the environment detached with `pnpm vibe up --ci` and poll `just vibe-status` for the `VIBE_ENV` record, so it survives between turns; `vibe` reuses a running environment and restarts it when `vibe-status` reports it stopped.
+
+#### Added
+- `vibe-sessions.mjs repo` prints the remembered checkout; `list` and `new` use it when `--repo` is omitted.
+- When the vibe environment fails because of a bug in symphony-alpha itself, `vibe-setup-worker` files a ClosedLoop ticket with the diagnosis assigned to Daniel Ochoa in the current week's project, fixes it locally in the session worktree, and records the changed files with the new `vibe-sessions.mjs local-fix --ticket <slug> --path <file>` (stored as `localFixes` on the session record). `vibe` tells the person in one sentence.
+- `handoff-inventory.mjs` lists those files under `localFixes` and leaves them out of `changedFiles` and every guardrail check; `vibe-publish-worker` restores them to the base before its commit (draft and full scope), and `vibe-ship-worker` stages only the files it fixed.
+- `node --test` suites for `vibe-preflight.sh`, `vibe-sessions.mjs`, and `handoff-inventory.mjs`.
+
 ### code v1.18.2
 
 #### Changed

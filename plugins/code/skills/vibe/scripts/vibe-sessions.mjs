@@ -4,20 +4,28 @@
 // git directory so it is never tracked or committed.
 //
 // Usage:
-//   vibe-sessions.mjs list    --repo <symphony-alpha checkout>
-//   vibe-sessions.mjs new     --repo <checkout> --slug <slug> --summary <text>
-//                             --scope draft|full [--ticket ISS-123]
-//   vibe-sessions.mjs touch   --worktree <path> [--summary <text>] [--ticket ISS-123]
-//                             [--status active|handed-off] [--handoff-ticket ISS-123]
-//                             [--scope draft|full]
-//                             [--stack <json>]
-//   vibe-sessions.mjs discard --worktree <path> [--confirm]
+//   vibe-sessions.mjs repo
+//   vibe-sessions.mjs list      [--repo <symphony-alpha checkout>]
+//   vibe-sessions.mjs new       [--repo <checkout>] --slug <slug> --summary <text>
+//                               --scope draft|full [--ticket ISS-123]
+//   vibe-sessions.mjs touch     --worktree <path> [--summary <text>] [--ticket ISS-123]
+//                               [--status active|handed-off] [--handoff-ticket ISS-123]
+//                               [--scope draft|full]
+//                               [--stack <json>]
+//   vibe-sessions.mjs local-fix --worktree <path> --ticket ISS-123 --path <file> [--path <file> ...]
+//   vibe-sessions.mjs discard   --worktree <path> [--confirm]
+//
+// `--repo` defaults to the checkout vibe-preflight.sh remembered in
+// ~/.codex/vibe/config.json; `repo` prints it. `local-fix` records files the
+// setup worker changed to work around a symphony-alpha bug (filed as the
+// ticket), so handoff keeps them out of the person's commit.
 //
 // Every command prints one JSON object on stdout. Errors print
 // {"ok":false,"error":...} and exit non-zero.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
@@ -31,6 +39,9 @@ const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 // the handoff link unpredictable.
 const MAX_SLUG_LENGTH = 40;
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
+// Written by vibe-preflight.sh; holds {"repo": "<symphony-alpha checkout>"}.
+const CONFIG_FILE = path.join(os.homedir(), ".codex", "vibe", "config.json");
+const TICKET_PATTERN = /^[A-Z]+-\d+$/;
 
 const SessionStatus = {
   Active: "active",
@@ -56,6 +67,7 @@ const { positionals, values } = parseArgs({
     scope: { type: "string" },
     "handoff-ticket": { type: "string" },
     stack: { type: "string" },
+    path: { type: "string", multiple: true },
     confirm: { type: "boolean", default: false },
   },
 });
@@ -72,17 +84,21 @@ try {
 
 function run(command) {
   switch (command) {
+    case "repo":
+      return { repo: resolveRepo() };
     case "list":
-      return { sessions: listSessions(requireOption("repo")) };
+      return { sessions: listSessions(resolveRepo()) };
     case "new":
       return { session: newSession() };
     case "touch":
       return { session: touchSession() };
+    case "local-fix":
+      return { session: recordLocalFix() };
     case "discard":
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: list, new, touch, discard."
+        "Unknown command. Use one of: repo, list, new, touch, local-fix, discard."
       );
   }
 }
@@ -166,6 +182,7 @@ function listSessions(repo) {
         createdAt: record?.createdAt ?? null,
         lastActiveAt: record?.lastActiveAt ?? null,
         stack: record?.stack ?? null,
+        localFixes: record?.localFixes ?? [],
         ...changeSummary(entry.worktree),
       };
     })
@@ -182,7 +199,7 @@ function compareLastActive(a, b) {
 }
 
 function newSession() {
-  const repo = requireOption("repo");
+  const repo = resolveRepo();
   const slug = requireOption("slug");
   const summary = requireOption("summary");
   const scope = requireScope(requireOption("scope"));
@@ -222,6 +239,7 @@ function newSession() {
     createdAt: now,
     lastActiveAt: now,
     stack: null,
+    localFixes: [],
   };
   writeRecord(worktree, record);
   return { worktree, ...record };
@@ -295,4 +313,78 @@ function requireScope(scope) {
     throw new Error(`--scope must be one of: ${Object.values(SessionScope).join(", ")}.`);
   }
   return scope;
+}
+
+/**
+ * The symphony-alpha checkout: `--repo` when given, otherwise the one
+ * vibe-preflight.sh remembered.
+ */
+function resolveRepo() {
+  if (values.repo) {
+    return values.repo;
+  }
+  let config = null;
+  try {
+    config = JSON.parse(readFileSync(CONFIG_FILE, "utf8"));
+  } catch {
+    config = null;
+  }
+  const repo = typeof config?.repo === "string" ? config.repo : "";
+  if (!repo) {
+    throw new Error(
+      `No symphony-alpha checkout is remembered in ${CONFIG_FILE}. Run vibe-preflight.sh first, or pass --repo.`
+    );
+  }
+  if (!existsSync(repo)) {
+    throw new Error(
+      `The remembered checkout ${repo} no longer exists. Run vibe-preflight.sh to find it again.`
+    );
+  }
+  return repo;
+}
+
+/**
+ * Records files changed to work around a symphony-alpha bug, grouped by the
+ * ticket that reports it. Repeating a ticket adds to its paths.
+ */
+function recordLocalFix() {
+  const worktree = requireOption("worktree");
+  const ticket = requireOption("ticket");
+  if (!TICKET_PATTERN.test(ticket)) {
+    throw new Error("--ticket must be a ClosedLoop slug such as ISS-123.");
+  }
+  const paths = (values.path ?? []).map(normalizeRepoPath);
+  if (paths.length === 0) {
+    throw new Error("--path is required at least once.");
+  }
+  const record = readRecord(worktree);
+  if (!record) {
+    throw new Error(`No vibe session record in ${worktree}.`);
+  }
+  const now = new Date().toISOString();
+  const localFixes = [...(record.localFixes ?? [])];
+  const existing = localFixes.findIndex((fix) => fix.ticket === ticket);
+  if (existing === -1) {
+    localFixes.push({ ticket, paths: [...new Set(paths)].sort(), recordedAt: now });
+  } else {
+    const merged = new Set([...localFixes[existing].paths, ...paths]);
+    localFixes[existing] = { ...localFixes[existing], paths: [...merged].sort(), recordedAt: now };
+  }
+  const updated = { ...record, localFixes, lastActiveAt: now };
+  writeRecord(worktree, updated);
+  return { worktree, ...updated };
+}
+
+function normalizeRepoPath(raw) {
+  const normalized = path.posix.normalize(raw.replaceAll("\\", "/"));
+  if (
+    !raw ||
+    path.posix.isAbsolute(normalized) ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../")
+  ) {
+    throw new Error(`--path must be relative to the worktree root: ${raw}`);
+  }
+  return normalized.replace(/\/$/, "");
 }

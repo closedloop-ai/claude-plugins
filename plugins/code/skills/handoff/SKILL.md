@@ -48,7 +48,8 @@ own folder, not the repository.
 
 ## 0. Pick the session
 
-Run `node ../vibe/scripts/vibe-sessions.mjs list --repo <repo>`. Use the
+Run `node ../vibe/scripts/vibe-sessions.mjs list` (it uses the checkout the
+vibe preflight remembered). Use the
 session whose worktree you are in. If you are not in one and more than one
 session is `active`, list them in plain words and ask which one to hand off.
 
@@ -102,9 +103,18 @@ new vibe session.
 
 ## 2. Summarize and confirm
 
-Run `node scripts/handoff-inventory.mjs --worktree <wt>` (the JSON stays out
+Run `node scripts/handoff-inventory.mjs --worktree "<wt>"` (the JSON stays out
 of the chat). Dispatch `vibe-handoff-summarizer` with the worktree and the
-inventory path. Show the person its plain summary and ask them to confirm or
+inventory path.
+
+The inventory's `localFixes` are files the setup worker changed on this Mac to
+work around a symphony-alpha bug (each with the ticket that reports it). They
+are not the person's work: the inventory already leaves them out of
+`changedFiles` and its guardrail checks, and every worker brief from here on
+(summarizer, guardrails reviewer, change worker, decomposer, verify worker,
+reviewers, publish worker, ship worker) lists their paths as out of scope, not
+to be described, reviewed, edited, or committed. The publish worker restores
+them before its commit. Show the person its plain summary and ask them to confirm or
 correct it. Their corrections go to the publish worker for the ticket.
 
 ## 3. Guardrail check
@@ -149,7 +159,8 @@ into the repo.
 
 ## 8 to 10. Ticket, commit, push, preview
 
-Dispatch `vibe-publish-worker` with: the worktree, the inventory path, the
+Dispatch `vibe-publish-worker` with: the worktree, the inventory path (its
+`localFixes` are restored to the base before the commit), the
 confirmed summary and the person's corrections, the footprint, check, and
 review summaries, the requirements file path, and the existing `handoffTicket`
 if any. It creates or updates the ticket (`references/ticket-template.md`),
@@ -184,12 +195,14 @@ full scope). Then:
    second time on the result and repeat the fix and suite steps for anything it
    confirms. Keep both passes' fixed and rejected lists for the PR.
 3. **Pull request.** Dispatch `vibe-publish-worker` in ship mode with the
-   summary, the footprint, the test results, and both review summaries. It
+   inventory path, the summary, the footprint, the test results, and both
+   review summaries. It restores the inventory's `localFixes` before the
+   commit, so the PR never carries them. It
    creates or updates the ClosedLoop ticket at IN_REVIEW, makes the one commit,
    pushes, opens the PR to `main`, and links the branch. Record the ticket on
    the session (`touch --handoff-ticket`).
-4. **Checks, review, merge.** Dispatch `vibe-ship-worker` with the PR URL and
-   the worktree. It returns one of: `FIXING` (it fixed a failing check and
+4. **Checks, review, merge.** Dispatch `vibe-ship-worker` with the PR URL,
+   the worktree, and the inventory's `localFixes` paths. It returns one of: `FIXING` (it fixed a failing check and
    pushed; dispatch it again), `AWAITING_REVIEW` (everything is green and it is
    waiting for an engineer's approval), `QUEUED`, or `MERGED`. On
    `AWAITING_REVIEW`, tell the person the pull request is ready and an engineer

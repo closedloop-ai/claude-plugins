@@ -56,10 +56,16 @@ connector.
 
 Start a new Codex thread and type `$vibe`. On the first run it:
 
-- installs whatever is missing (Homebrew, Docker Desktop, Node, pnpm, `gh`,
-  `just`, `jq`)
+- finds an existing symphony-alpha checkout anywhere in the home folder (by
+  its GitHub remote, so the folder can have any name, including spaces) and
+  remembers it in `~/.codex/vibe/config.json`; only when there is none does it
+  clone one to `~/Source/symphony-alpha`. It then bootstraps it
+- installs whatever is missing (Homebrew, Node, pnpm, `gh`, `just`, `jq`, and
+  the Docker Compose plugin), and puts a Node that satisfies the repo's
+  `engines` range first on PATH for every new shell
+- uses Colima as the Docker engine when it is installed (starting it if it is
+  stopped), and installs Docker Desktop only when neither is present
 - signs `gh` in to GitHub through the browser
-- clones symphony-alpha to `~/Source/symphony-alpha` and bootstraps it
 
 The vibe user only has to type their Mac password when an installer asks for
 it. After that, `$vibe` asks what they want to work on and opens the app in
