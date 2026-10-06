@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.18.4
+
+#### Changed
+- `vibe-seed-check-worker` and `vibe-seed-refresh` read the latest finished Vibe Seed Walk run on main (`vibe-seed-nightly.yml`, which now runs on every push to main and is informational only) instead of a nightly run, and report that run's conclusion, commit, and URL when it failed.
+
 ### code v1.18.3
 
 #### Fixed
