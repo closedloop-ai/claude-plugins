@@ -462,7 +462,7 @@ test("ticket-sections renders the record's sections and marks what is still pend
   assert.match(filled.json.markdown, /\| `a-flag` \| false \|\n\| `b-flag` \| `test` \|/);
   assert.match(filled.json.markdown, /as PostHog user `user_abc`\. 2 flags\./);
   assert.match(filled.json.markdown, /- Codex session \(orchestrator\): `thread-12345678`/);
-  assert.match(filled.json.markdown, /- App: https:\/\/app-stage-git-andy-sections\.preview\.closedloop-stage\.ai\n/);
+  assert.match(filled.json.markdown, /- App: https:\/\/app-stage-git-andy-sections\.preview\.closedloop-stage\.ai\/sign-in\n/);
   assert.match(filled.json.markdown, new RegExp(`- Last deployed: \`${git(worktree, ["rev-parse", "HEAD"], home).slice(0, 10)}\``));
 });
 
