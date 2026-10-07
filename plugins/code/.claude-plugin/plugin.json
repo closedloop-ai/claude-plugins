@@ -1,7 +1,7 @@
 {
   "name": "code",
   "description": "Code, ClosedLoop ticket workflow, and planning framework plugin",
-  "version": "1.19.1",
+  "version": "1.19.2",
   "author": {
     "name": "ClosedLoop",
     "email": "support@closedloop.ai"

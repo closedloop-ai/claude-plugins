@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.2
+
+#### Fixed
+- `vibe/INSTALL.md` "Updating" covers both marketplace kinds: a Git marketplace updates with `codex plugin marketplace upgrade closedloop-ai`, then `codex plugin add code@closedloop-ai` if `codex plugin list --marketplace closedloop-ai` still shows the old version; a local folder marketplace, which `marketplace upgrade` does not refresh, updates by pulling that checkout and running `codex plugin add code@closedloop-ai` again. Both end with a full quit and reopen of the ChatGPT app, and the section says how to check the installed version against `plugins/code/.codex-plugin/plugin.json` on `main`.
+- `vibe/INSTALL.md` "First run" describes the session's seeded or blank Vercel environment (web app, API, and Storybook), with nothing of the web app on the Mac and the Desktop app run locally only for sessions that touch Desktop.
+
 ### code v1.19.1
 
 #### Changed
