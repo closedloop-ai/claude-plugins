@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.4
+
+#### Fixed
+- `vibe-environment-worker` offers only the orgs the person is an admin of when asking which org should own Acme Co, reading `isAdmin` and the `clerk_org_refusal=` line the environment run now prints (symphony-alpha #8493), and asks again when the chosen org is one they are not an admin of (`clerk_org_not_admin`). When they are an admin of none (`clerk_org_no_admin`), it tells them they need admin on a test-site organization or a new session with an empty copy of the app; `vibe` passes that on as written. A run from before #8493 lists orgs without `isAdmin`, and every one of them is offered, as before.
+
 ### code v1.19.3
 
 #### Fixed
