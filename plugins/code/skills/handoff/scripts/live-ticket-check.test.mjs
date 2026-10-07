@@ -177,3 +177,30 @@ test("the sections ticket-sections renders from a finished record pass the check
   const filled = parseSections(renderRecordSections(finished, snapshot));
   assert.deepEqual(checkLiveTicket(completeTicket("draft", Object.fromEntries(filled)), "draft").problems, []);
 });
+
+test("with --base-commit, the Environment section must name the branch's current base", (t) => {
+  const ticket = completeTicket("draft");
+  assert.deepEqual(checkLiveTicket(ticket, "draft", { baseCommit: "abcdef1234567890aa" }).problems, []);
+
+  // ISS-12135: the branch merged main after the session started, so its base moved.
+  const stale = checkLiveTicket(ticket, "draft", { baseCommit: "a55ebc7cfb00000000" });
+  assert.deepEqual(stale.problems, [
+    { section: "Environment", problem: "names base abcdef1234, but the branch's base is a55ebc7cfb" },
+  ]);
+
+  const unnamed = completeTicket("draft", {
+    Environment: ENVIRONMENT.replace(" (base: origin/main at `abcdef1234`)", ""),
+  });
+  assert.deepEqual(checkLiveTicket(unnamed, "draft", { baseCommit: "a55ebc7cfb" }).problems, [
+    { section: "Environment", problem: "names no base commit; the branch's base is a55ebc7cfb" },
+  ]);
+  assert.deepEqual(checkLiveTicket(unnamed, "draft").problems, []);
+
+  const dir = mkdtempSync(path.join(tmpdir(), "live-ticket-base-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "ticket.md");
+  writeFileSync(file, ticket);
+  const cli = runNode(SCRIPT, ["--file", file, "--scope", "draft", "--base-commit", "a55ebc7cfb"], dir);
+  assert.equal(cli.status, 1);
+  assert.deepEqual(cli.json.problems.map(({ section }) => section), ["Environment"]);
+});

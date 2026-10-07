@@ -42,7 +42,8 @@
 // (ISS-12048) next to the record; `codex-sessions` records this Codex thread
 // (`--thread`, else CODEX_THREAD_ID) and every subagent thread it spawned;
 // `ticket-sections` prints the live ticket's Environment, Production flag
-// snapshot, and Sessions sections from the record. `dispatch-inputs` writes
+// snapshot, and Sessions sections from the record, with the branch's current
+// merge-base as its base commit. `dispatch-inputs` writes
 // the inputs for the symphony-alpha vibe environment request workflow as a
 // JSON file for `gh workflow run <workflow> --ref main --json < <file>`, so no
 // JSON is ever quoted on a command line, with a fresh request id that names
@@ -654,7 +655,7 @@ function recordCodexSessions() {
 function ticketSections() {
   const worktree = requireOption("worktree");
   const record = requireRecord(worktree);
-  return renderRecordSections(record, readSnapshot(worktree, record));
+  return renderRecordSections({ ...record, baseCommit: currentBaseCommit(worktree, record) }, readSnapshot(worktree, record));
 }
 
 /** Writes the environment request workflow's inputs for this session to `--out`. */
@@ -774,4 +775,17 @@ function recordEnvironmentResult() {
   };
   writeRecord(worktree, updated);
   return { worktree, ...updated };
+}
+
+/**
+ * The branch's base as the handoff inventory computes it: its merge-base with
+ * the base branch, which moves when the session merges main (ISS-12135). The
+ * commit the session started from is only the fallback when there is none.
+ */
+function currentBaseCommit(worktree, record) {
+  try {
+    return git(worktree, ["merge-base", "HEAD", `origin/${baseBranch(worktree)}`]);
+  } catch {
+    return record.baseCommit;
+  }
 }

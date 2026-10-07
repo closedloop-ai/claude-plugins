@@ -466,6 +466,27 @@ test("ticket-sections renders the record's sections and marks what is still pend
   assert.match(filled.json.markdown, new RegExp(`- Last deployed: \`${git(worktree, ["rev-parse", "HEAD"], home).slice(0, 10)}\``));
 });
 
+test("ticket-sections names the branch's current base after the session merges main", (t) => {
+  const { home, checkout, worktree } = newSession(t, "merged");
+  const started = git(worktree, ["rev-parse", "HEAD"], home);
+  const before = runNode(SCRIPT, ["ticket-sections", "--worktree", worktree], home);
+  assert.match(before.json.markdown, new RegExp(`\\(base: origin/main at \`${started.slice(0, 10)}\`\\)`));
+
+  // Main moves on, and the session merges it (ISS-12135).
+  writeFileSync(path.join(checkout, "later.md"), "later\n");
+  git(checkout, ["add", "-A"], home);
+  git(checkout, ["commit", "--quiet", "-m", "later on main"], home);
+  git(checkout, ["push", "--quiet", "origin", "main"], home);
+  const moved = git(checkout, ["rev-parse", "HEAD"], home);
+  git(worktree, ["fetch", "--quiet", "origin", "main"], home);
+  git(worktree, ["merge", "--quiet", "--no-edit", "origin/main"], home);
+
+  const after = runNode(SCRIPT, ["ticket-sections", "--worktree", worktree], home);
+  assert.equal(after.status, 0, after.stderr);
+  assert.match(after.json.markdown, new RegExp(`\\(base: origin/main at \`${moved.slice(0, 10)}\`\\)`));
+  assert.notEqual(moved, started);
+});
+
 test("dispatch-inputs writes the request workflow's inputs with a fresh request id", (t) => {
   const { root, home, worktree } = newSession(t, "dispatch");
   const out = path.join(root, "out", "inputs.json");

@@ -57,6 +57,16 @@ finding that would need backend work becomes a stub plus a requirement; one
 whose fix would remove something the person built returns `NEEDS_PERSON`
 explaining what would be lost.
 
+The orchestrator may also send a question asked during handoff and the
+person's answer to it (a rule, a permission, what happens in a case). Their
+answer is now a requirement in their words. Check the code against it on
+every screen it touches, web and Desktop for a shared surface. If the code
+already meets it, change nothing and return `DONE` with `already met` and the
+file and line that show it. Otherwise build it under the same rules below
+(a need the API does not cover is a stub plus a requirement in draft scope,
+`NEEDS_BACKEND` in full scope) and return `DONE` with `built`. Either way,
+put the answer in Scope and acceptance criteria in their words (step 10).
+
 ## Read first, every time
 
 From this plugin's `skills/vibe/references/` (`../skills/vibe/references/`
@@ -134,7 +144,8 @@ for what earlier changes in this session did.
 ## Return (under 150 words)
 
 `PLAN` (plan dispatch): the units, one plain line each, and any questions
-for the person. `DONE` (unit dispatch): one-line summary for the session
+for the person. In fix mode, `DONE` also says whether any file changed (the
+orchestrator re-runs the checks, reviews, and redeploy when one did). `DONE` (unit dispatch): one-line summary for the session
 record, one plain sentence to tell the person what is now visible, the route
 it changes (web and, for a shared surface, Desktop), the story URL to open if
 the unit has one, and the units still left (or "none"). Or `NEEDS_PERSON`:

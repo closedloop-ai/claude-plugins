@@ -16,8 +16,10 @@ in cancel mode: the worktree is gone), and the live ticket slug (not in create
 mode). Cancel: the session's `operator` from the discard result. Create: the requirements worker's brief,
 the originating ticket if any, the scope, and the mode. Handoff: the scope,
 the inventory path, the confirmed summary and the person's corrections, the
-footprint, check, and review summaries, and the requirements file path
-(draft) or the decision tables (full).
+footprint, check, and review summaries, the requirements file path (draft) or
+the decision tables (full), and every answer the person gave during handoff:
+the question, their exact words, and how it was handled (`built` with the
+change worker's summary, `already met` with its evidence, or `wording`).
 
 ## Read first
 
@@ -69,23 +71,44 @@ name, or have none.
    operator (`assigneeId` is `operator.id`, and the assignee's email is
    `operator.email` exactly); if not, return `BLOCKED`: design or engineering
    owns it now.
-2. Paste `ticket-sections` over Environment, Production flag snapshot, and
-   Sessions.
-3. Apply the person's corrections to What this is and Scope and acceptance
-   criteria.
-4. Draft scope: reconcile API requirements with `api-requirements.md` (one
+2. Regenerate the inventory so it describes the branch as it is now:
+   `node ../skills/handoff/scripts/handoff-inventory.mjs --worktree "<wt>" > "<inventory path>"`
+   (a failing guardrail check exits non-zero and is the orchestrator's
+   concern; JSON with an `error` and no `baseCommit` returns `BLOCKED`).
+   Paste `ticket-sections` over Environment, Production flag snapshot, and
+   Sessions. Its base commit is the branch's current merge-base with main,
+   which moves when the branch merges main; it must be the inventory's
+   `baseCommit`, never a value carried over from an earlier version of the
+   ticket.
+3. Apply the person's corrections and answers. An answer that decides what
+   the product does (a rule, a permission, what happens in a case, an
+   acceptance criterion) goes into the ticket only when it is marked `built`
+   or `already met`. One marked `wording`, or not marked, that decides what
+   the product does is never written: return `NEEDS_CHANGE` with the question
+   and the answer, so the change worker checks the code first.
+4. After any correction or answer, re-derive every section that depends on
+   it from the current ticket, the inventory, and the change log, not only the
+   line it answers: What this is (it no longer calls the question open,
+   unruled, or pending), Scope and acceptance criteria (the criterion in the
+   person's words), API requirements or the backend sections when it sets a
+   rule for one of them, and Handoff. Search the whole body for the
+   question's subject and fix every mention that still treats it as
+   unanswered.
+5. Draft scope: reconcile API requirements with `api-requirements.md` (one
    subsection per stub, nothing missing or stale) and attach the file with
    `upload-attachment`. Full scope: reconcile Backend built and Backend still
    missing with the diff (`git -C "<wt>" diff --stat <inventory baseCommit>`)
    and the decision tables, and attach each decision table.
-5. Fill Handoff from the summaries you were given, per the template.
-6. Write the body back with `create-document-version`, then save it to
+6. Fill Handoff from the summaries you were given, per the template.
+7. Write the body back with `create-document-version`, then save it to
    `$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-live-ticket.md` and run
-   `node ../skills/handoff/scripts/live-ticket-check.mjs --file "<that file>" --scope <scope>`.
+   `node ../skills/handoff/scripts/live-ticket-check.mjs --file "<that file>" --scope <scope> --base-commit <inventory baseCommit>`.
    Fix every problem you can from the session; a problem only the person can
    resolve (acceptance criteria they never stated, an unclear scope line)
-   returns `NEEDS_PERSON` with the question in plain words. Repeat until the
-   check passes.
+   returns `NEEDS_PERSON` with the question in plain words, marked
+   `behavior` when the answer will decide what the product does and
+   `wording` when it only changes how the ticket describes what is built.
+   Repeat until the check passes.
 
 ## Assign mode
 
@@ -112,6 +135,8 @@ The person threw the session away and its branch is deleted.
 
 `DONE` with the ticket slug and URL (create, assign, cancel; create also confirms the
 slug is recorded on the session), or with "complete" and
-what you reconciled (handoff). Or `NEEDS_PERSON` with one plain question. Or
+what you reconciled (handoff). Or `NEEDS_PERSON` with one plain question
+(handoff: marked `behavior` or `wording`). Or `NEEDS_CHANGE` (handoff) with
+the question and answer the code has not been checked against. Or
 `BLOCKED` with why. Add one line noting whether closedloop-graph was
 available.
