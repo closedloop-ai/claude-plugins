@@ -1,6 +1,7 @@
 // Pure helpers behind vibe-sessions.mjs: the session's Vercel URLs, the
 // production flag snapshot contract (ISS-12048), the Codex session ids that
-// worked on it, and the live ticket sections rendered from the session record.
+// worked on it, the person running it, and the live ticket sections rendered
+// from the session record.
 
 import { closeSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
 import path from "node:path";
@@ -59,6 +60,8 @@ const MAX_DESKTOP_AUTH_VALUE = 4096;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CLERK_ORG_ID = /^org_[A-Za-z0-9]+$/;
 export const REQUEST_ID = /^[A-Za-z0-9-]{8,64}$/;
+const OPERATOR_ID = /^[A-Za-z0-9_-]{1,200}$/;
+const MAX_OPERATOR_NAME = 200;
 
 /** The stable per-branch Vercel URLs for a vibe branch, or null when unpredictable. */
 export function vercelAliases(branch) {
@@ -409,4 +412,23 @@ export function validateDesktopAuth(claim) {
     throw new Error(`Desktop auth claim does not match auth-claim's output: ${problems.join("; ")}.`);
   }
   return Object.fromEntries(DESKTOP_AUTH_KEYS.map((key) => [key, claim[key]]));
+}
+
+/**
+ * The person running the session, from ClosedLoop `get-me`: their user id and
+ * email (the live ticket is assigned to that user and compared by id and exact
+ * email, never by display name) and, when given, their name for the ticket.
+ */
+export function validateOperator({ id, email, name }) {
+  if (!OPERATOR_ID.test(id ?? "")) {
+    throw new Error("--operator-id must be the ClosedLoop user id get-me returns.");
+  }
+  if (!EMAIL.test(email ?? "")) {
+    throw new Error("--operator-email must be the email get-me returns.");
+  }
+  const trimmed = name?.trim() ?? "";
+  if (name !== undefined && (trimmed === "" || trimmed.length > MAX_OPERATOR_NAME)) {
+    throw new Error(`--operator-name must be 1 to ${MAX_OPERATOR_NAME} characters when given.`);
+  }
+  return { id, email, name: trimmed || null };
 }

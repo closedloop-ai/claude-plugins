@@ -24,7 +24,7 @@ function setup(t, slug) {
   });
   const created = runNode(
     SESSIONS,
-    ["new", "--repo", checkout, "--slug", slug, "--summary", slug, "--scope", "draft", "--mode", "seeded"],
+    ["new", "--repo", checkout, "--slug", slug, "--summary", slug, "--scope", "draft", "--mode", "seeded", "--operator-id", "user-andy", "--operator-email", "andy@example.com"],
     fixture.home
   );
   assert.equal(created.status, 0, created.stderr);

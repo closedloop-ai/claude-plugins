@@ -119,7 +119,7 @@ Run `node scripts/vibe-sessions.mjs list` (it uses the remembered checkout).
   summaries and offer the match as a resume. If nothing matches, start new and
   mention the open sessions in one line.
 - A `handed-off` session belongs to design and engineering now (its ticket is
-  no longer assigned to Andrew Eye): start new.
+  no longer assigned to the person who ran it): start new.
 
 Starting new:
 1. Ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
@@ -142,8 +142,12 @@ Starting new:
 4. Derive a short slug from the work (lowercase words joined by hyphens, at
    most 40 characters).
 5. `node scripts/vibe-sessions.mjs new --slug <slug> --summary "<one line>"
-   --scope <draft|full> --mode <seeded|blank> [--ticket <slug>]`. This fetches
-   main and creates the worktree on `andy/<slug>` from fresh `origin/main`.
+   --scope <draft|full> --mode <seeded|blank> [--ticket <slug>]
+   --operator-id <id> --operator-email <email> --operator-name "<firstName lastName>"`,
+   with the operator from the `get-me` call in section 1 (the person running
+   this session; leave out `--operator-name` when `get-me` has no name). This
+   fetches main and creates the worktree on `andy/<slug>` from fresh
+   `origin/main`. The live ticket is assigned to that person.
 6. Record this conversation as the session's orchestrator:
    `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` (it reads
    `CODEX_THREAD_ID`; outside Codex, pass `--thread <id>` if you have one, or
@@ -151,8 +155,7 @@ Starting new:
 7. Dispatch `vibe-setup-worker` to bootstrap the new worktree and, in
    parallel, `vibe-ticket-worker` in create mode with the worktree, the
    requirements worker's brief, the originating ticket if any, the scope, and
-   the mode. Record its slug:
-   `node scripts/vibe-sessions.mjs touch --worktree "<wt>" --live-ticket <ISS-slug>`.
+   the mode. It records the ticket's slug on the session itself.
    Tell the person in one line that the ticket exists and give its link.
 8. Stand up the environment (section 3).
 

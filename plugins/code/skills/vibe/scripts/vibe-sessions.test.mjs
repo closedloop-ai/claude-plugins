@@ -7,6 +7,7 @@ import { git, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "vibe-sessions.mjs");
 const SPACED_CHECKOUT = ["Documents", "Closedloop.ai - Active Work", "symphony-alpha"];
+const OPERATOR_ARGS = ["--operator-id", "user-andy", "--operator-email", "andy@example.com", "--operator-name", "Andy Example"];
 
 function rememberRepo(home, repo) {
   const dir = path.join(home, ".codex", "vibe");
@@ -43,7 +44,7 @@ test("repo, list, and new use the remembered checkout, including a path with spa
 
   const created = runNode(
     SCRIPT,
-    ["new", "--slug", "board-chips", "--summary", "Board chips", "--scope", "draft", "--mode", "seeded"],
+    ["new", "--slug", "board-chips", "--summary", "Board chips", "--scope", "draft", "--mode", "seeded", ...OPERATOR_ARGS],
     home
   );
   assert.equal(created.status, 0, created.stderr);
@@ -72,7 +73,7 @@ test("local-fix records paths per ticket, merges repeats, and list reports them"
   rememberRepo(home, checkout);
   const { json } = runNode(
     SCRIPT,
-    ["new", "--slug", "fix-me", "--summary", "Fix me", "--scope", "draft", "--mode", "seeded"],
+    ["new", "--slug", "fix-me", "--summary", "Fix me", "--scope", "draft", "--mode", "seeded", ...OPERATOR_ARGS],
     home
   );
   const worktree = json.session.worktree;
@@ -110,7 +111,7 @@ test("local-fix rejects paths outside the worktree and missing inputs", (t) => {
   rememberRepo(home, checkout);
   const { json } = runNode(
     SCRIPT,
-    ["new", "--slug", "guarded", "--summary", "Guarded", "--scope", "draft", "--mode", "seeded"],
+    ["new", "--slug", "guarded", "--summary", "Guarded", "--scope", "draft", "--mode", "seeded", ...OPERATOR_ARGS],
     home
   );
   const worktree = json.session.worktree;
@@ -135,7 +136,7 @@ function newSession(t, slug, extra = []) {
   rememberRepo(fixture.home, fixture.checkout);
   const created = runNode(
     SCRIPT,
-    ["new", "--slug", slug, "--summary", slug, "--scope", "draft", "--mode", "blank", ...extra],
+    ["new", "--slug", slug, "--summary", slug, "--scope", "draft", "--mode", "blank", ...OPERATOR_ARGS, ...extra],
     fixture.home
   );
   assert.equal(created.status, 0, created.stderr);
@@ -150,12 +151,12 @@ function writeJson(file, value) {
 test("new requires a seeded or blank mode and records the branch's Vercel URLs", (t) => {
   const { home, checkout } = setup(t);
   rememberRepo(home, checkout);
-  const missing = runNode(SCRIPT, ["new", "--slug", "no-mode", "--summary", "x", "--scope", "draft"], home);
+  const missing = runNode(SCRIPT, ["new", "--slug", "no-mode", "--summary", "x", "--scope", "draft", ...OPERATOR_ARGS], home);
   assert.equal(missing.status, 1);
   assert.match(missing.json.error, /--mode is required/);
   const wrong = runNode(
     SCRIPT,
-    ["new", "--slug", "wrong-mode", "--summary", "x", "--scope", "draft", "--mode", "local"],
+    ["new", "--slug", "wrong-mode", "--summary", "x", "--scope", "draft", "--mode", "local", ...OPERATOR_ARGS],
     home
   );
   assert.equal(wrong.status, 1);
@@ -163,7 +164,7 @@ test("new requires a seeded or blank mode and records the branch's Vercel URLs",
 
   const created = runNode(
     SCRIPT,
-    ["new", "--slug", "tag-edit", "--summary", "Tag edit", "--scope", "full", "--mode", "seeded"],
+    ["new", "--slug", "tag-edit", "--summary", "Tag edit", "--scope", "full", "--mode", "seeded", ...OPERATOR_ARGS],
     home
   );
   assert.equal(created.status, 0, created.stderr);
@@ -178,6 +179,65 @@ test("new requires a seeded or blank mode and records the branch's Vercel URLs",
   const listed = runNode(SCRIPT, ["list"], home);
   assert.equal(listed.json.sessions[0].mode, "seeded");
   assert.equal(listed.json.sessions[0].liveTicket, null);
+});
+
+test("new records the person running the session and refuses to start without them", (t) => {
+  const { home, checkout } = setup(t);
+  rememberRepo(home, checkout);
+  const base = ["new", "--summary", "x", "--scope", "draft", "--mode", "blank"];
+  const missing = runNode(SCRIPT, [...base, "--slug", "no-operator"], home);
+  assert.equal(missing.status, 1);
+  assert.match(missing.json.error, /--operator-id and --operator-email are required/);
+  const noEmail = runNode(SCRIPT, [...base, "--slug", "no-email", "--operator-id", "user-andy"], home);
+  assert.equal(noEmail.status, 1);
+  assert.match(noEmail.json.error, /--operator-email/);
+  const badId = runNode(
+    SCRIPT,
+    [...base, "--slug", "bad-id", "--operator-id", "Andy Example", "--operator-email", "andy@example.com"],
+    home
+  );
+  assert.equal(badId.status, 1);
+  assert.match(badId.json.error, /--operator-id/);
+  assert.equal(git(checkout, ["branch", "--list", "andy/no-operator"], home), "");
+
+  const created = runNode(SCRIPT, [...base, "--slug", "with-operator", ...OPERATOR_ARGS], home);
+  assert.equal(created.status, 0, created.stderr);
+  const expected = { id: "user-andy", email: "andy@example.com", name: "Andy Example" };
+  assert.deepEqual(created.json.session.operator, expected);
+  assert.deepEqual(JSON.parse(readFileSync(recordFile(created.json.session.worktree, home), "utf8")).operator, expected);
+  const listed = runNode(SCRIPT, ["list"], home);
+  assert.deepEqual(listed.json.sessions[0].operator, expected);
+
+  const nameless = runNode(
+    SCRIPT,
+    [...base, "--slug", "nameless", "--operator-id", "user-dan", "--operator-email", "dan+08252026@example.com"],
+    home
+  );
+  assert.deepEqual(nameless.json.session.operator, { id: "user-dan", email: "dan+08252026@example.com", name: null });
+});
+
+test("touch sets the operator on a record written before it existed and keeps it otherwise", (t) => {
+  const { home, worktree } = newSession(t, "older");
+  const file = recordFile(worktree, home);
+  const legacy = JSON.parse(readFileSync(file, "utf8"));
+  delete legacy.operator;
+  writeFileSync(file, JSON.stringify(legacy));
+  const shown = runNode(SCRIPT, ["show", "--worktree", worktree], home);
+  assert.equal(shown.json.session.operator, null);
+
+  const kept = runNode(SCRIPT, ["touch", "--worktree", worktree, "--summary", "again"], home);
+  assert.equal(kept.json.session.operator, null);
+  const partial = runNode(SCRIPT, ["touch", "--worktree", worktree, "--operator-email", "andy@example.com"], home);
+  assert.equal(partial.status, 1);
+  assert.match(partial.json.error, /--operator-id/);
+  const set = runNode(
+    SCRIPT,
+    ["touch", "--worktree", worktree, "--operator-id", "user-andy", "--operator-email", "andy@example.com"],
+    home
+  );
+  assert.deepEqual(set.json.session.operator, { id: "user-andy", email: "andy@example.com", name: null });
+  const later = runNode(SCRIPT, ["touch", "--worktree", worktree, "--live-ticket", "ISS-20"], home);
+  assert.deepEqual(later.json.session.operator, { id: "user-andy", email: "andy@example.com", name: null });
 });
 
 test("touch records the live ticket, accepts the old --handoff-ticket name, and reads old records", (t) => {
@@ -384,7 +444,7 @@ test("dispatch-inputs writes the request workflow's inputs with a fresh request 
   assert.equal(blankWithEmail.status, 1);
   assert.match(blankWithEmail.json.error, /only sent for a seeded session/);
 
-  runNode(SCRIPT, ["touch", "--worktree", worktree, "--mode", "seeded"], home);
+  runNode(SCRIPT, ["touch", "--worktree", worktree, "--mode", "seeded", ...OPERATOR_ARGS], home);
   const noEmail = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
   assert.equal(noEmail.status, 1);
   assert.match(noEmail.json.error, /--person-email/);

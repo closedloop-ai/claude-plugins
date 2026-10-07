@@ -59,8 +59,8 @@ words and ask which one to hand off. Read its `scope`, `liveTicket`, and
 `localFixes`.
 
 If the session has no `liveTicket` (it started before live tickets existed),
-dispatch `vibe-ticket-worker` in create mode first and record the slug with
-`touch --live-ticket`. If it is `handed-off`, tell the person it already went
+dispatch `vibe-ticket-worker` in create mode first; it records the slug on
+the session. If it is `handed-off`, tell the person it already went
 to design and stop.
 
 Then run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
@@ -200,10 +200,11 @@ Repeat until it returns `DONE`.
 
 ## 10. Hand it to design
 
-Dispatch `vibe-ticket-worker` in assign mode with the live ticket slug. It
-confirms the ticket is still assigned to Andrew Eye (if engineering or design
-already took it, it returns `BLOCKED` and you stop: that branch is theirs
-now), assigns it to Nenad Antic, and leaves the status In Progress.
+Dispatch `vibe-ticket-worker` in assign mode with the worktree and the live
+ticket slug. It confirms the ticket is still assigned to the session's
+operator, the person who ran it (if engineering or design already took it, it
+returns `BLOCKED` and you stop: that branch is theirs now), assigns it to
+Nenad Antic, and leaves the status In Progress.
 
 Then mark the session handed off:
 `node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off`,

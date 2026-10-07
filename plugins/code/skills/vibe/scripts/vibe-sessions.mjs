@@ -9,11 +9,13 @@
 //   vibe-sessions.mjs show            --worktree <path>
 //   vibe-sessions.mjs new             [--repo <checkout>] --slug <slug> --summary <text>
 //                                     --scope draft|full --mode seeded|blank [--ticket ISS-123]
+//                                     --operator-id <id> --operator-email <email> [--operator-name <name>]
 //   vibe-sessions.mjs touch           --worktree <path> [--summary <text>] [--ticket ISS-123]
 //                                     [--status active|handed-off] [--live-ticket ISS-123]
 //                                     [--scope draft|full] [--mode seeded|blank]
 //                                     [--vercel <json>] [--deployed <commit>] [--stack <json>]
 //                                     [--clerk-org-id org_...]
+//                                     [--operator-id <id> --operator-email <email> [--operator-name <name>]]
 //   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json>
 //   vibe-sessions.mjs desktop-auth    --worktree <path> --file <auth-claim.json>
 //   vibe-sessions.mjs dispatch-inputs --worktree <path> --out <inputs.json>
@@ -28,6 +30,9 @@
 // setup worker changed to work around a symphony-alpha bug (filed as the
 // ticket), so no redeploy or handoff commits them.
 //
+// `operator` is the person running the session, from ClosedLoop `get-me`
+// (`--operator-*`, required on `new`; `touch` sets it on an older record):
+// the live ticket is assigned to them and handoff checks it still is.
 // The live ticket (ISS-12057) is `liveTicket`; `--handoff-ticket` and a
 // record's `handoffTicket` are read as the same field for sessions started
 // before it. `flag-snapshot` validates and saves the production flag snapshot
@@ -63,6 +68,7 @@ import {
   renderRecordSections,
   VERCEL_URL_KEYS,
   validateFlagSnapshot,
+  validateOperator,
   vercelAliases,
 } from "./vibe-session-data.mjs";
 
@@ -125,6 +131,9 @@ const { positionals, values } = parseArgs({
     out: { type: "string" },
     "person-email": { type: "string" },
     "clerk-org-id": { type: "string" },
+    "operator-id": { type: "string" },
+    "operator-email": { type: "string" },
+    "operator-name": { type: "string" },
     stack: { type: "string" },
     path: { type: "string", multiple: true },
     confirm: { type: "boolean", default: false },
@@ -258,6 +267,7 @@ function listSessions(repo) {
         status: record?.status ?? SessionStatus.Active,
         scope: record?.scope ?? SessionScope.Draft,
         mode: record?.mode ?? null,
+        operator: record?.operator ?? null,
         liveTicket: record?.liveTicket ?? null,
         createdAt: record?.createdAt ?? null,
         lastActiveAt: record?.lastActiveAt ?? null,
@@ -286,6 +296,7 @@ function newSession() {
   const summary = requireOption("summary");
   const scope = requireScope(requireOption("scope"));
   const mode = requireMode(requireOption("mode"));
+  const operator = operatorFromArgs({ required: true });
   if (!SLUG_PATTERN.test(slug) || slug.length > MAX_SLUG_LENGTH) {
     throw new Error(
       `Slug must be lowercase words joined by hyphens, at most ${MAX_SLUG_LENGTH} characters.`
@@ -318,6 +329,7 @@ function newSession() {
     status: SessionStatus.Active,
     scope,
     mode,
+    operator,
     liveTicket: null,
     baseCommit: git(worktree, ["rev-parse", "HEAD"]),
     createdAt: now,
@@ -352,6 +364,7 @@ function touchSession() {
     status: values.status ?? record.status,
     scope: values.scope ? requireScope(values.scope) : record.scope,
     mode: values.mode ? requireMode(values.mode) : record.mode,
+    operator: operatorFromArgs({ required: false }) ?? record.operator,
     liveTicket: liveTicket ?? record.liveTicket,
     vercel: updateVercel(record.vercel, now),
     clerkOrgId: values["clerk-org-id"] ? requireClerkOrgId(values["clerk-org-id"]) : record.clerkOrgId,
@@ -538,6 +551,7 @@ function withDefaults(record) {
     ...rest,
     scope: rest.scope ?? SessionScope.Draft,
     mode: rest.mode ?? null,
+    operator: rest.operator ?? null,
     liveTicket: rest.liveTicket ?? handoffTicket ?? null,
     vercel: rest.vercel ?? (rest.branch ? vercelDefaults(rest.branch) : null),
     flagSnapshot: rest.flagSnapshot ?? null,
@@ -676,4 +690,20 @@ function saveDesktopAuth() {
 function readDesktopAuth(worktree, record) {
   const file = desktopAuthPath(worktree);
   return record.desktopAuthSavedAt && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined;
+}
+
+/** The `--operator-*` options as a validated operator, or undefined when none is given and none is required. */
+function operatorFromArgs({ required }) {
+  const given = ["operator-id", "operator-email", "operator-name"].some((name) => values[name] !== undefined);
+  if (!given && !required) {
+    return undefined;
+  }
+  if (!given) {
+    throw new Error("--operator-id and --operator-email are required: the person running the session, from ClosedLoop get-me.");
+  }
+  return validateOperator({
+    id: values["operator-id"],
+    email: values["operator-email"],
+    name: values["operator-name"],
+  });
 }

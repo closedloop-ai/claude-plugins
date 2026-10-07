@@ -83,6 +83,31 @@ test("pending markers, placeholders, missing record fields, and wrong-scope sect
   ]);
 });
 
+test("the Engineering checklist keeps only the session's own scope's lines", () => {
+  const template = parseSections(TEMPLATE_BODY.exec(readFileSync(TEMPLATE, "utf8"))[1]).get("Engineering checklist");
+  assert.match(template, /\(draft scope\)/);
+  assert.match(template, /\(full scope\)/);
+
+  const both = [
+    "- [ ] Replace each stub with the real API call (draft scope)",
+    "- [ ] Review the backend listed under Backend built (full scope)",
+    "- [ ] Open the pull request",
+  ].join("\n");
+  const draft = checkLiveTicket(completeTicket("draft", { "Engineering checklist": both }), "draft");
+  assert.deepEqual(draft.problems, [
+    { section: "Engineering checklist", problem: "has a line marked (full scope) in a draft scope session" },
+  ]);
+  const full = checkLiveTicket(completeTicket("full", { "Engineering checklist": both }), "full");
+  assert.deepEqual(full.problems, [
+    { section: "Engineering checklist", problem: "has a line marked (draft scope) in a full scope session" },
+  ]);
+
+  const ownLines = both.split("\n").filter((line) => !line.includes("(full scope)")).join("\n");
+  assert.equal(checkLiveTicket(completeTicket("draft", { "Engineering checklist": ownLines }), "draft").ok, true);
+  const handoff = "- Checks: lint, typecheck, tests (full scope: every lane), each pass";
+  assert.equal(checkLiveTicket(completeTicket("draft", { Handoff: handoff }), "draft").ok, true);
+});
+
 test("a missing or empty section fails, and code spans never count as placeholders", () => {
   const missing = completeTicket("full").replace(/## Backend still missing\n\nNone\.\n/, "");
   assert.deepEqual(checkLiveTicket(missing, "full").problems, [{ section: "Backend still missing", problem: "missing" }]);

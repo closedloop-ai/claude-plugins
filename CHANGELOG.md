@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Fixed
 - `vibe/INSTALL.md` "Updating" covers both marketplace kinds: a Git marketplace updates with `codex plugin marketplace upgrade closedloop-ai`, then `codex plugin add code@closedloop-ai` if `codex plugin list --marketplace closedloop-ai` still shows the old version; a local folder marketplace, which `marketplace upgrade` does not refresh, updates by pulling that checkout and running `codex plugin add code@closedloop-ai` again. Both end with a full quit and reopen of the ChatGPT app, and the section says how to check the installed version against `plugins/code/.codex-plugin/plugin.json` on `main`.
 - `vibe/INSTALL.md` "First run" describes the session's seeded or blank Vercel environment (web app, API, and Storybook), with nothing of the web app on the Mac and the Desktop app run locally only for sessions that touch Desktop.
+- The live ticket is assigned to the person running the session instead of always to Andrew Eye. `vibe-sessions.mjs new` requires `--operator-id` and `--operator-email` (with optional `--operator-name`) from ClosedLoop `get-me` and records them as the session's `operator`; `touch` sets it on an older record and `list` reports it. The ticket template names that person, `vibe-ticket-worker` handoff and assign modes check the ticket is still assigned to the operator by user id and exact email, never display name, and `vibe` treats a `handed-off` session as no longer assigned to the person who ran it.
+- `vibe-ticket-worker` create mode records the new ticket's slug on the session itself (`touch --live-ticket`); `vibe` and `handoff` no longer do it.
+- The live ticket's Engineering checklist keeps only the lines for the session's scope, and `live-ticket-check.mjs` reports a `(full scope)` line on a draft ticket or a `(draft scope)` line on a full one.
 
 ### code v1.19.1
 
