@@ -13,14 +13,15 @@ the team's local checks; the vibe skill never uses it.
 Asked once when the session starts, recorded as the session's `mode`.
 
 - **Seeded**: the vibe seed fills the environment with realistic data under an
-  org named Acme Co, with its owner and teammates. The stage API finds the
-  person's Clerk user from their email and binds Acme Co to their stage org,
+  org named `<email> Co` using the signed-in person's Clerk primary email,
+  with its owner and teammates; sample-data names stay unchanged. The stage
+  API finds the person's Clerk user from their email and binds the seeded org to their stage org,
   with them as an admin (the run reports `personOrgAdmin`). If they are an
   admin of more than one stage org, the API binds the org their Clerk session
   last had active; only when it cannot tell does the run fail, the person
   picks by name, `touch --clerk-org-id` records it, and the environment is
   requested again. The person signs in through Clerk as themselves and lands
-  in Acme Co.
+  in `<email> Co`. Local `pnpm vibe up` keeps Acme Co.
 - **Blank**: no data. The person signs in through Clerk as themselves and
   creates their own org.
 

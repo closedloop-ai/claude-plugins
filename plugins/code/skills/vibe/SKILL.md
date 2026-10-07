@@ -142,7 +142,7 @@ Starting new:
    (the app opens on its default page after sign-in), and never promise a
    screen for a broad request such as "look for visual bugs".
 2. Ask once: "Should your copy of the app start with sample data (a company
-   called Acme Co with people and work in it), or empty so you set it up
+   called <email> Co with people and work in it), or empty so you set it up
    yourself?" Record `seeded` or `blank` as the mode. If they are unsure, use
    `seeded`.
 3. Derive a short slug from the work (lowercase words joined by hyphens, at
@@ -195,7 +195,7 @@ environment; skip this and use its recorded `appUrl`, opening
 `<appUrl>/sign-in` first as below. A resumed session
 without it (one started before environments were verified) goes through
 create mode again; the worker keeps its flag snapshot. If the worker returns `NEEDS_PERSON` asking which
-one should own Acme Co, ask the person exactly its question, record the org
+one should own `<email> Co`, ask the person exactly its question, record the org
 id the worker mapped to their answer with
 `node scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_...>`,
 and dispatch it again. If it returns `NEEDS_PERSON` saying they are not an
@@ -212,9 +212,9 @@ When it returns `DONE`:
   signed-out visitor to account creation, and the person already has an
   account. After this first sign-in, use the plain `appUrl`; if a tab ever
   lands on account creation instead, open `<appUrl>/sign-in`. The person signs in through Clerk as themselves (you never type
-  credentials). Seeded: they land in Acme Co as an admin. Blank: they create
+  credentials). Seeded: they land in `<email> Co` as an admin. Blank: they create
   their own org.
-- Confirm the tab shows the app (with Acme Co data when seeded), not an error
+- Confirm the tab shows the app (with seeded data when seeded), not an error
   page or an empty shell, before saying it is ready.
 - Start Desktop for every session, per the Desktop section of
   `references/environment.md`, and open it as a second tab:
@@ -230,7 +230,7 @@ When it returns `DONE`:
      `desktop-tab` again for that URL.
   3. Open its `url` exactly as given (never shortened, never shown to the
      person) in a second Codex in-app Browser tab, and confirm it shows the
-     Desktop app's navigation (with Acme Co data when seeded), not
+     Desktop app's navigation (with seeded data when seeded), not
      `Connecting to Closedloop Desktop…`, an error, or a refused connection.
      If `desktop-tab` reports `running` with no `url`, the session's worktree
      predates the Desktop tab: Desktop is open as its own window, as before,
