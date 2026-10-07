@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.9
+
+#### Fixed
+- `vibe-environment-worker` reads a failed job from the job logs endpoint (`gh api --allow-escape-sequences repos/closedloop-ai/symphony-alpha/actions/jobs/<job id>/logs`) instead of `gh run view --job <id> --log-failed`, which refuses while other jobs in the run are still going, so a fast failure such as the person check is reported right away with its `##[error]` cause and the org lines.
+
 ### code v1.19.8
 
 #### Fixed

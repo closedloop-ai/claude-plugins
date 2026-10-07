@@ -105,10 +105,13 @@ then plain search.
    happens rather than when the whole run ends: every 15 seconds run
    `gh run view <id> --repo closedloop-ai/symphony-alpha --json status,conclusion,jobs`
    and stop at the first job whose `conclusion` is `failure`, `cancelled`, or
-   `timed_out`. Read that job's failed steps
-   (`gh run view --job <job databaseId> --repo closedloop-ai/symphony-alpha --log-failed`)
-   and return `BLOCKED` with the cause in one or two lines, except steps 5, 6
-   and 7.
+   `timed_out`. Read that job's log from the job logs endpoint, which answers
+   as soon as the job ends even while other jobs in the run are still going
+   (`gh run view --log-failed` refuses until the whole run completes):
+   `gh api --allow-escape-sequences repos/closedloop-ai/symphony-alpha/actions/jobs/<job databaseId>/logs`.
+   The cause is on its `##[error]` lines, and the `org:`, `clerk_org_refusal=`
+   and `clerk_orgs_json=` lines steps 5 and 6 read are in the same log. Return
+   `BLOCKED` with the cause in one or two lines, except steps 5, 6 and 7.
    Otherwise continue until the run's `status` is `completed` with
    `conclusion` `success`. Give up after 45 minutes with `BLOCKED` naming the
    job still running.

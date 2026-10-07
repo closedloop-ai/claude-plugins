@@ -1,6 +1,6 @@
 {
   "name": "code",
-  "version": "1.19.8",
+  "version": "1.19.9",
   "description": "Code and planning framework plugin, including ClosedLoop ticket workflows, native PR monitoring, and the vibe, handoff, and vibe-seed-refresh skills for symphony-alpha.",
   "author": {
     "name": "ClosedLoop",
