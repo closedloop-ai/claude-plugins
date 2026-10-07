@@ -3,11 +3,14 @@
 // handoff: every section the session's scope needs is present and filled, no
 // template placeholder or `Pending.` marker is left, the sections rendered
 // from the session record carry their URLs, flag table, and session ids, and
-// the Engineering checklist has no line marked for the other scope.
+// the Engineering checklist has no line marked for the other scope. With
+// `--base-commit` (the handoff inventory's `baseCommit`), the Environment
+// section must name that commit as the branch's base, so a branch that merged
+// main since the session started is not handed off with its old base.
 // Prints one JSON object; exits 0 when complete and 1 otherwise. Changes
 // nothing. The sections are the headings of ../../vibe/references/ticket-template.md.
 //
-// Usage: live-ticket-check.mjs --file <ticket body .md> --scope draft|full
+// Usage: live-ticket-check.mjs --file <ticket body .md> --scope draft|full [--base-commit <sha>]
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -39,6 +42,8 @@ const PENDING_MARKER = /(^|\s)Pending\.\s*$/m;
 const PLACEHOLDER = /<[a-z][^<>\n]*>/i;
 const FENCED_BLOCK = /```[\s\S]*?```/g;
 const INLINE_CODE = /`[^`\n]*`/g;
+const ENVIRONMENT_BASE = /^- Branch: .*\(base: [^)]* at `([0-9a-f]+)`\)/m;
+const SHORT_SHA_LENGTH = 10;
 const REQUIRED_CONTENT = {
   Environment: [
     [/^- App: https:\/\/\S+/m, "has no App URL"],
@@ -69,7 +74,7 @@ export function parseSections(body) {
   return sections;
 }
 
-export function checkLiveTicket(body, scope) {
+export function checkLiveTicket(body, scope, { baseCommit } = {}) {
   if (!Object.values(Scope).includes(scope)) {
     throw new Error(`--scope must be one of: ${Object.values(Scope).join(", ")}.`);
   }
@@ -88,6 +93,9 @@ export function checkLiveTicket(body, scope) {
       continue;
     }
     problems.push(...checkSection(heading, content), ...checkScopeLines(heading, content, scope));
+    if (heading === "Environment" && baseCommit) {
+      problems.push(...checkBaseCommit(content, baseCommit));
+    }
   }
   return { ok: problems.length === 0, scope, problems };
 }
@@ -123,13 +131,30 @@ function checkScopeLines(heading, content, scope) {
     .map((other) => ({ section: heading, problem: `has a line marked (${other} scope) in a ${scope} scope session` }));
 }
 
+/** The Environment section names the branch's current base, not the commit the session started from. */
+function checkBaseCommit(content, baseCommit) {
+  const expected = baseCommit.slice(0, SHORT_SHA_LENGTH);
+  const named = ENVIRONMENT_BASE.exec(content)?.[1];
+  if (!named) {
+    return [{ section: "Environment", problem: `names no base commit; the branch's base is ${expected}` }];
+  }
+  if (!baseCommit.startsWith(named) && !named.startsWith(baseCommit)) {
+    return [{ section: "Environment", problem: `names base ${named}, but the branch's base is ${expected}` }];
+  }
+  return [];
+}
+
 function main() {
-  const { values } = parseArgs({ options: { file: { type: "string" }, scope: { type: "string" } } });
+  const { values } = parseArgs({
+    options: { file: { type: "string" }, scope: { type: "string" }, "base-commit": { type: "string" } },
+  });
   try {
     if (!values.file) {
       throw new Error("--file is required.");
     }
-    const result = checkLiveTicket(readFileSync(path.resolve(values.file), "utf8"), values.scope);
+    const result = checkLiveTicket(readFileSync(path.resolve(values.file), "utf8"), values.scope, {
+      baseCommit: values["base-commit"],
+    });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     process.exit(result.ok ? 0 : 1);
   } catch (error) {

@@ -23,7 +23,8 @@ builds, tests, linters, reviews, git, or `gh` yourself. You show and update
 the task list, talk to the person, run this skill's inventory script and the
 vibe session script (short JSON), and dispatch workers. Each worker returns a
 short status (`DONE`, `NEEDS_PERSON`, `BLOCKED`); relay `NEEDS_PERSON`
-verbatim in plain words and dispatch a fresh worker with the answer. Every
+verbatim in plain words and route the answer as "Answers from the person"
+below says. Every
 worker brief says to use closedloop-graph first
 (`../vibe/references/closedloop-graph.md`), and every worker that edits the
 live ticket follows `../vibe/references/ticket-template.md`.
@@ -38,12 +39,45 @@ the repository. Resolve the plugin root (two levels above this file, as the
 the same plugin-root line: worker paths starting with `../` are relative to
 `<root>/agents`, never to the worktree the worker runs in.
 
+## Answers from the person
+
+Every answer the person gives during handoff (to a worker's `NEEDS_PERSON`,
+or as a correction to the summary in step 2) is one of two kinds, and the
+worker that asked says which (`behavior` or `wording`):
+
+- **Behavior**: it decides what the product does. A rule, a permission (who
+  may do something), what happens in a case, an acceptance criterion, or a
+  change to what they built. Treat an answer as behavior when the worker did
+  not say, or when you are unsure.
+- **Wording**: it only changes how the ticket describes what is already
+  built (the summary, a name, how the scope reads).
+
+A behavior answer goes to `vibe-change-worker` in fix mode first, with the
+question and the person's answer verbatim. It checks the code against the
+answer on every screen it touches and either reports the code already meets
+it (with the evidence, no file changed) or builds it under its usual rules
+(in full scope a backend need comes back as `NEEDS_BACKEND` for
+`vibe-backend-worker`). If it changed any file, re-run before the ticket is
+finished: step 3 (inventory and guardrails), step 4 when a component or story
+changed, step 5 (checks), step 6 on the result (draft: both reviewers; full:
+one `workflow-code-review` pass), step 7 when a stub was added or changed,
+and step 8 (the redeploy). Only then does the answer go to
+`vibe-ticket-worker`.
+
+A wording answer goes straight to `vibe-ticket-worker`.
+
+Every `vibe-ticket-worker` handoff dispatch carries all the answers so far,
+each with the question, the person's exact words, and how it was handled:
+`built` (with the change worker's one-line summary), `already met` (with its
+evidence), or `wording`. Never send the ticket worker a behavior answer the
+change worker has not handled; it refuses one with `NEEDS_CHANGE`.
+
 ## Workers
 
 | Step | Worker |
 |---|---|
 | Summary | `vibe-handoff-summarizer` |
-| Guardrail and review fixes | `vibe-change-worker` (fix mode: give it the findings); backend findings in full scope to `vibe-backend-worker` (fix mode) |
+| Guardrail and review fixes, behavior answers | `vibe-change-worker` (fix mode: give it the findings, or the question and the person's answer); backend findings in full scope to `vibe-backend-worker` (fix mode) |
 | Judgment guardrails | `vibe-guardrails-reviewer` |
 | Storybook | `vibe-storybook-decomposer` |
 | Code checks, whole test suite, Storybook footprint | `vibe-verify-worker` |
@@ -119,8 +153,10 @@ are not the person's work: the inventory already leaves them out of
 (summarizer, guardrails reviewer, change and backend workers, decomposer,
 verify worker, reviewers, environment worker, ticket worker) lists their paths
 as out of scope, not to be described, reviewed, edited, or committed. Show the
-person the plain summary and ask them to confirm or correct it. Their
-corrections go to the ticket worker in step 9.
+person the plain summary and ask them to confirm or correct it. Route each
+correction as "Answers from the person" says: a correction that changes what
+the product does goes to the change worker now; the rest go to the ticket
+worker in step 9.
 
 ## 3. Guardrail check
 
@@ -195,12 +231,26 @@ Dispatch `vibe-ticket-worker` in handoff mode with: the worktree, the live
 ticket slug, the scope, the inventory path, the confirmed summary and the
 person's corrections, the footprint, check, and review summaries, the
 requirements file path (draft) or the decision tables in
-`.closedloop-ai/decision-tables/` (full). It refreshes the record sections,
-fills the Handoff section, reconciles API requirements or the backend
-sections, attaches the files, and runs `scripts/live-ticket-check.mjs`. It
-returns `DONE` when the ticket is complete, or `NEEDS_PERSON` with what only
-the person can supply (for example acceptance criteria they never stated).
-Repeat until it returns `DONE`.
+`.closedloop-ai/decision-tables/` (full), and every answer from the person so
+far with how it was handled. It refreshes the record sections (the
+Environment base commit from the current inventory), re-derives every section
+an answer touches, fills the Handoff section, reconciles API requirements or
+the backend sections, attaches the files, and runs
+`scripts/live-ticket-check.mjs`. It returns:
+
+- `DONE` when the ticket is complete.
+- `NEEDS_PERSON` with what only the person can supply (for example acceptance
+  criteria they never stated), marked `behavior` or `wording`. Ask the person,
+  then route their answer as "Answers from the person" says: a behavior
+  answer goes through the change worker, the checks, the reviews, and the
+  redeploy before the ticket worker sees it again.
+- `NEEDS_CHANGE` with an answer or criterion the code has not been checked
+  against. Send it to `vibe-change-worker` in fix mode and continue the same
+  way.
+
+Repeat until it returns `DONE`. Never go on to step 10 while a behavior answer
+has not been through the change worker, or while its re-run checks, reviews,
+or redeploy are unfinished.
 
 ## 10. Hand it to design
 

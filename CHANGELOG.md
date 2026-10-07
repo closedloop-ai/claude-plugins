@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.7
+
+#### Fixed
+- `handoff` routes every answer the person gives during handoff (to a worker's `NEEDS_PERSON`, or a correction to the summary) by kind. An answer that decides what the product does (a rule, a permission, what happens in a case, an acceptance criterion), or one whose kind is unclear, goes to `vibe-change-worker` in fix mode first; if it changed any file, the inventory and guardrails, Storybook, checks, reviews, requirements, and redeploy steps run again before the ticket worker sees the answer. An answer that only changes the ticket's wording goes straight to `vibe-ticket-worker`. Step 10 does not start while a behavior answer is unhandled or its re-runs are unfinished.
+- `vibe-change-worker` fix mode takes a handoff question and the person's answer as a requirement in their words: it checks the code on every screen the answer touches, returns `already met` with the file and line or builds it and returns `built`, writes the answer into Scope and acceptance criteria, and says whether any file changed.
+- `vibe-ticket-worker` handoff mode takes every answer with how it was handled, returns the new `NEEDS_CHANGE` status instead of writing a behavior answer the change worker has not handled, re-derives every section that depends on an answer (What this is, Scope and acceptance criteria, API requirements or the backend sections, Handoff), marks each `NEEDS_PERSON` question `behavior` or `wording`, and regenerates the inventory before writing.
+- `vibe-sessions.mjs ticket-sections` names the branch's current merge-base with the base branch as the Environment base commit, so a branch that merged main shows its new base instead of the commit the session started from. `live-ticket-check.mjs` takes `--base-commit` and reports an Environment section that names no base or a different one; the ticket worker passes the inventory's `baseCommit`.
+
 ### code v1.19.6
 
 #### Fixed
