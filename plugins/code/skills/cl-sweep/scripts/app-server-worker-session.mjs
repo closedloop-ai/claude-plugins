@@ -1565,6 +1565,7 @@ function launchDetached(args) {
     '--socket', required(args, 'socket'),
     '--session-file', required(args, 'session-file'),
     '--events-file', required(args, 'events-file')];
+  if (args.codex) childArgs.push('--codex', args.codex);
   if (command === 'run') {
     childArgs.push('--prompt-file', required(args, 'prompt-file'), '--activity-phase', activity.phase);
     if (activity.reviewKind) childArgs.push('--review-kind', activity.reviewKind);
