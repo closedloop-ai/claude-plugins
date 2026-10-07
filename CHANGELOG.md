@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.6
+
+#### Fixed
+- `vibe/references/environment.md` no longer tells the reader to record the URLs and deployed commit with `touch --vercel ... --deployed`, which no longer exists: it says the run's `vibe-environment-result` artifact is recorded with `vibe-sessions.mjs environment-result`, the only command that records them, and that the URLs the session predicts at creation are shown only after a verified result.
+
 ### code v1.19.5
 
 #### Fixed
