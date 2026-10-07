@@ -10,14 +10,19 @@
 # only one found under the home folder. A checkout is recognized by its git
 # remote (closedloop-ai/symphony-alpha), not by its folder name.
 #
-# Usage: vibe-preflight.sh [--repo <path to symphony-alpha checkout>]
+# Usage: vibe-preflight.sh [--repo <path to symphony-alpha checkout>] [--prototype]
 
 set -uo pipefail
 
 REPO_ARG=""
-if [[ "${1:-}" == "--repo" ]]; then
-  REPO_ARG="${2:-}"
-fi
+PROTOTYPE_ONLY=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo) REPO_ARG="${2:-}"; shift; if [[ $# -gt 0 ]]; then shift; fi ;;
+    --prototype) PROTOTYPE_ONLY=1; shift ;;
+    *) printf 'Unknown option: %s\n' "$1" >&2; exit 1 ;;
+  esac
+done
 
 CONFIG_DIR="$HOME/.codex/vibe"
 CONFIG_FILE="$CONFIG_DIR/config.json"
@@ -348,14 +353,16 @@ if [[ -n "$repo" ]]; then
   fi
   # The public PostHog key the flag snapshot needs: the checkout's env file,
   # else the production app's page. The key itself is never printed here.
-  posthog_output="$(node "$SCRIPT_DIR/posthog-key.mjs" --checkout "$repo" 2>/dev/null)"
-  if [[ "$posthog_output" == *'"ok":true'* ]]; then
-    posthog_host="$(printf '%s' "$posthog_output" | sed -n 's/.*"host":"\([^"]*\)".*/\1/p')"
-    posthog_source="$(printf '%s' "$posthog_output" | sed -n 's/.*"source":"\([^"]*\)".*/\1/p')"
-    emit posthog-key true "$posthog_host from $posthog_source" ""
-  else
-    posthog_error="$(printf '%s' "$posthog_output" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p')"
-    emit posthog-key false "${posthog_error:-the PostHog key could not be resolved}" "posthog-key-missing"
+  if [[ "$PROTOTYPE_ONLY" == 0 ]]; then
+    posthog_output="$(node "$SCRIPT_DIR/posthog-key.mjs" --checkout "$repo" 2>/dev/null)"
+    if [[ "$posthog_output" == *'"ok":true'* ]]; then
+      posthog_host="$(printf '%s' "$posthog_output" | sed -n 's/.*"host":"\([^"]*\)".*/\1/p')"
+      posthog_source="$(printf '%s' "$posthog_output" | sed -n 's/.*"source":"\([^"]*\)".*/\1/p')"
+      emit posthog-key true "$posthog_host from $posthog_source" ""
+    else
+      posthog_error="$(printf '%s' "$posthog_output" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p')"
+      emit posthog-key false "${posthog_error:-the PostHog key could not be resolved}" "posthog-key-missing"
+    fi
   fi
 else
   emit repo false "$repo_detail" "$repo_fix"

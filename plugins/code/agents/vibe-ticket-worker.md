@@ -32,6 +32,23 @@ editor follows). The session record:
 Files under the record's `localFixes` are not the person's work; never
 describe them on the ticket.
 
+An owned `prototype/<slug>` session uses the same live ticket, operator,
+lookup, and assignment rules. Read the canonical prototype skill at the
+absolute `<repo-root>/.claude/skills/prototype/SKILL.md` path. Its verified
+publication replaces app/API/Storybook deployment fields; `ticket-sections`
+renders the prototype slug, immutable preview, full deployed SHA, and
+verification timestamp. The flag section is `None.` and no seeded/blank mode
+or flag snapshot is requested. Backend built is `None.`; Backend still missing
+records only evidenced promotion work, or `None.`. Use the canonical decision
+log and design review outcome in Handoff, and name the resolved next owner.
+For this session, the Handoff Next line points at its canonical prototype
+preview instead of claiming a deployed Storybook link exists; preserve the
+shared component/story paths and measured footprint separately.
+Do not turn mock sandbox behavior into a claim about production behavior.
+The prototype worker owns canonical ReadyForReview/tags and sharing;
+prototype-approve owns its metadata HandedOff transition. Ticket assignment
+does not replace those transitions or open a PR.
+
 The record's `operator` is the person running the session (`id`, `email`,
 `name`, from ClosedLoop `get-me`). If it is `null` (a session started before
 it was recorded), call `get-me` and record it first:
@@ -102,7 +119,7 @@ name, or have none.
    Handoff when the ticket has none.
 7. Write the body back with `create-document-version`, then save it to
    `$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-live-ticket.md` and run
-   `node ../skills/handoff/scripts/live-ticket-check.mjs --file "<that file>" --base-commit <inventory baseCommit>`.
+   `node ../skills/handoff/scripts/live-ticket-check.mjs --file "<that file>" --base-commit <inventory baseCommit> --worktree "<wt>"`.
    Fix every problem you can from the session; a problem only the person can
    resolve (acceptance criteria they never stated, an unclear scope line)
    returns `NEEDS_PERSON` with the question in plain words, marked

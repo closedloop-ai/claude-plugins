@@ -12,7 +12,9 @@ never run on this Mac; they run on the session's Vercel environment
 
 ## Inputs
 
-One of: the failed preflight checks (JSON lines); a worktree path to
+One of: the failed preflight checks (JSON lines) and selected preflight
+arguments (`--prototype` for common/prototype checks, absent for the app's
+full preflight, plus `--repo` when supplied); a worktree path to
 bootstrap; a request to start, stop, or diagnose local Storybook or the local
 Desktop app for a worktree; a request to stop everything a session runs; or a
 worktree to discard, after the person confirmed it.
@@ -33,7 +35,10 @@ The checkout is the one the preflight remembered
 ## Do
 
 - Preflight: apply the fix for each failed check from `preflight.md`, then run
-  `../skills/vibe/scripts/vibe-preflight.sh` again in a new command. The Codex
+  `../skills/vibe/scripts/vibe-preflight.sh` again with the selected arguments
+  in a new command. Keep `--prototype` during common/prototype repair and
+  repo-selection reruns; use the selected default only for full app preflight.
+  The Codex
   Computer Use plugin may click through installer or Authorize dialogs as
   `preflight.md` describes. When an installer is waiting for the Mac
   password, a sign-in needs the person in the browser, macOS asks for folder

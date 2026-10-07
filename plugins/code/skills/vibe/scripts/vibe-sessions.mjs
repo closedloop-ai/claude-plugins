@@ -10,6 +10,8 @@
 //   vibe-sessions.mjs new             [--repo <checkout>] --slug <slug> --summary <text>
 //                                     --mode seeded|blank [--ticket ISS-123]
 //                                     --operator-id <id> --operator-email <email> [--operator-name <name>]
+//   vibe-sessions.mjs new-prototype   same ownership/summary options, without --mode
+//   vibe-sessions.mjs prototype-result --worktree <path> --file <canonical result.json>
 //   vibe-sessions.mjs touch           --worktree <path> [--summary <text>] [--ticket ISS-123]
 //                                     [--status active|handed-off] [--live-ticket ISS-123]
 //                                     [--mode seeded|blank] [--stack <json>]
@@ -71,10 +73,12 @@
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublication } from "./prototype-session.mjs";
+import { git, readSessionRecord, writeSessionRecord as writeRecord } from "./session-record.mjs";
 import {
   buildDispatchInputs,
   DISPATCH_WORKFLOW,
@@ -94,7 +98,6 @@ const SYMPHONY_REPOSITORY = "closedloop-ai/symphony-alpha";
 const SCHEMA_CLEANUP_WORKFLOW = "cleanup-preview-schemas.yml";
 const WORKTREE_DIR = ".claude/worktrees";
 const WORKTREE_NAME_PREFIX = "vibe-";
-const RECORD_FILE = "vibe-session.json";
 const SNAPSHOT_FILE = "vibe-flag-snapshot.json";
 const DESKTOP_AUTH_FILE = "vibe-desktop-auth.json";
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -102,14 +105,12 @@ const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 // DNS label longer than 63 characters gets truncated and hashed, which would
 // make the session's URLs unpredictable.
 const MAX_SLUG_LENGTH = 40;
-const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 // Written by vibe-preflight.sh; holds {"repo": "<symphony-alpha checkout>"}.
 const CONFIG_FILE = path.join(os.homedir(), ".codex", "vibe", "config.json");
 const TICKET_PATTERN = /^[A-Z]+-\d+$/;
 const THREAD_PATTERN = /^[A-Za-z0-9-]{8,100}$/;
 const CLERK_ORG_PATTERN = /^org_[A-Za-z0-9]+$/;
 const PID_PATTERN = /^[1-9]\d{0,9}$/;
-const OWNER_ONLY = 0o600;
 // What symphony-alpha's Desktop main process logs once its window is shown.
 const DESKTOP_WINDOW_VISIBLE = /Desktop window visible/;
 
@@ -176,6 +177,10 @@ function run(command) {
       return { session: showSession() };
     case "new":
       return { session: newSession() };
+    case "new-prototype":
+      return { session: newSession({ prototype: true }) };
+    case "prototype-result":
+      return { session: savePrototypePublication(requireOption("worktree"), requireOption("file")) };
     case "touch":
       return { session: touchSession() };
     case "flag-snapshot":
@@ -200,7 +205,7 @@ function run(command) {
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, dispatch-inputs, codex-sessions, ticket-sections, environment-result, local-fix, discard."
+        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, dispatch-inputs, codex-sessions, ticket-sections, environment-result, local-fix, discard."
       );
   }
 }
@@ -213,26 +218,9 @@ function requireOption(name) {
   return value;
 }
 
-function git(cwd, args) {
-  return execFileSync("git", args, {
-    cwd,
-    encoding: "utf8",
-    maxBuffer: GIT_MAX_BUFFER,
-    stdio: ["ignore", "pipe", "pipe"],
-  }).trim();
-}
-
-function recordPath(worktree) {
-  const gitDir = git(worktree, ["rev-parse", "--absolute-git-dir"]);
-  return path.join(gitDir, RECORD_FILE);
-}
-
 function readRecord(worktree) {
-  const file = recordPath(worktree);
-  if (!existsSync(file)) {
-    return null;
-  }
-  return withDefaults(JSON.parse(readFileSync(file, "utf8")));
+  const record = readSessionRecord(worktree);
+  return record ? withDefaults(record) : null;
 }
 
 function requireRecord(worktree) {
@@ -241,15 +229,6 @@ function requireRecord(worktree) {
     throw new Error(`No vibe session record in ${worktree}.`);
   }
   return record;
-}
-
-function writeRecord(worktree, record) {
-  const file = recordPath(worktree);
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`, { mode: OWNER_ONLY });
-  // `mode` applies only when the file is created; a record written before the
-  // stack carried a bridge token is narrowed here.
-  chmodSync(file, OWNER_ONLY);
 }
 
 function parseWorktreeList(repo) {
@@ -280,11 +259,13 @@ function changeSummary(worktree) {
 
 function listSessions(repo) {
   return parseWorktreeList(repo)
-    .filter((entry) => entry.branch?.startsWith(BRANCH_PREFIX))
+    .filter((entry) => entry.branch?.startsWith(BRANCH_PREFIX) ||
+      (entry.branch?.startsWith(PROTOTYPE_BRANCH_PREFIX) && existsSync(entry.worktree) &&
+        isOwnedPrototypeSession(readRecord(entry.worktree), entry.branch)))
     .map((entry) => {
       const record = readRecord(entry.worktree);
       return {
-        slug: entry.branch.slice(BRANCH_PREFIX.length),
+        slug: record?.slug ?? entry.branch.slice(BRANCH_PREFIX.length),
         branch: entry.branch,
         worktree: entry.worktree,
         summary: record?.summary ?? null,
@@ -295,7 +276,8 @@ function listSessions(repo) {
         liveTicket: record?.liveTicket ?? null,
         createdAt: record?.createdAt ?? null,
         lastActiveAt: record?.lastActiveAt ?? null,
-        vercel: record?.vercel ?? vercelDefaults(entry.branch),
+        vercel: isOwnedPrototypeSession(record) ? null : record?.vercel ?? vercelDefaults(entry.branch),
+        ...(isOwnedPrototypeSession(record) && record.prototype ? { prototype: record.prototype } : {}),
         flagSnapshotTakenAt: record?.flagSnapshot?.takenAt ?? null,
         stack: record?.stack ?? null,
         localFixes: record?.localFixes ?? [],
@@ -314,22 +296,25 @@ function compareLastActive(a, b) {
   return a.slug.localeCompare(b.slug);
 }
 
-function newSession() {
+function newSession({ prototype = false } = {}) {
   const repo = resolveRepo();
   const slug = requireOption("slug");
   const summary = requireOption("summary");
-  const mode = requireMode(requireOption("mode"));
+  const mode = prototype ? null : requireMode(requireOption("mode"));
+  if (prototype && (values.mode || !/^[a-z]/.test(slug))) {
+    throw new Error("A prototype slug must start with a letter and has no seeded or blank mode.");
+  }
   const operator = operatorFromArgs({ required: true });
   if (!SLUG_PATTERN.test(slug) || slug.length > MAX_SLUG_LENGTH) {
     throw new Error(
       `Slug must be lowercase words joined by hyphens, at most ${MAX_SLUG_LENGTH} characters.`
     );
   }
-  const branch = `${BRANCH_PREFIX}${slug}`;
+  const branch = `${prototype ? PROTOTYPE_BRANCH_PREFIX : BRANCH_PREFIX}${slug}`;
   const worktree = path.join(
     git(repo, ["rev-parse", "--show-toplevel"]),
     WORKTREE_DIR,
-    `${WORKTREE_NAME_PREFIX}${slug}`
+    `${prototype ? "prototype-" : WORKTREE_NAME_PREFIX}${slug}`
   );
   if (existsSync(worktree)) {
     throw new Error(`A session already exists at ${worktree}. Resume it or pick another slug.`);
@@ -342,6 +327,9 @@ function newSession() {
   }
   const base = baseBranch(repo);
   git(repo, ["fetch", "origin", base]);
+  if (prototype && git(repo, ["ls-tree", "--name-only", `origin/${base}`, `apps/prototypes/app/p/${slug}`])) {
+    throw new Error(`Prototype ${slug} already exists on the fresh base. Pick another slug.`);
+  }
   git(repo, ["worktree", "add", "--no-track", "-b", branch, worktree, `origin/${base}`]);
   const now = new Date().toISOString();
   const record = {
@@ -356,7 +344,7 @@ function newSession() {
     baseCommit: git(worktree, ["rev-parse", "HEAD"]),
     createdAt: now,
     lastActiveAt: now,
-    vercel: vercelDefaults(branch),
+    vercel: prototype ? null : vercelDefaults(branch),
     flagSnapshot: null,
     clerkOrgId: null,
     desktopAuthSavedAt: null,
@@ -371,6 +359,9 @@ function newSession() {
 function touchSession() {
   const worktree = requireOption("worktree");
   const record = requireRecord(worktree);
+  if (isOwnedPrototypeSession(record) && (values.mode || values["clerk-org-id"])) {
+    throw new Error("Prototype sessions do not have app data modes or Clerk organizations.");
+  }
   if (values.status && !Object.values(SessionStatus).includes(values.status)) {
     throw new Error(`--status must be one of: ${Object.values(SessionStatus).join(", ")}.`);
   }
@@ -414,7 +405,8 @@ function discardSession() {
   const worktree = requireOption("worktree");
   const record = readRecord(worktree);
   const branch = git(worktree, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  if (!branch.startsWith(BRANCH_PREFIX)) {
+  const prototype = isOwnedPrototypeSession(record, branch);
+  if (!branch.startsWith(BRANCH_PREFIX) && !prototype) {
     throw new Error(`${worktree} is not a vibe session (branch ${branch}).`);
   }
   if (record?.status === SessionStatus.HandedOff) {
@@ -435,12 +427,14 @@ function discardSession() {
   }
   const commonDir = git(worktree, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const repo = path.dirname(commonDir);
-  if (wouldLose.pushed) {
+  if (wouldLose.pushed && !prototype) {
     execFileSync(
       "gh",
       ["workflow", "run", SCHEMA_CLEANUP_WORKFLOW, "--repo", SYMPHONY_REPOSITORY, "--ref", "main", "-f", `branch=${branch}`],
       { stdio: ["ignore", "pipe", "pipe"] }
     );
+  }
+  if (wouldLose.pushed) {
     git(repo, ["push", "origin", "--delete", branch]);
   }
   git(repo, ["worktree", "remove", "--force", worktree]);
@@ -448,7 +442,7 @@ function discardSession() {
   return {
     discarded: true,
     remoteBranchDeleted: wouldLose.pushed,
-    schemaCleanupRequested: wouldLose.pushed,
+    schemaCleanupRequested: wouldLose.pushed && !prototype,
     wouldLose,
   };
 }
@@ -583,6 +577,9 @@ function withDefaults(record) {
 }
 
 function vercelWithDefaults(record) {
+  if (isOwnedPrototypeSession(record)) {
+    return null;
+  }
   if (record.vercel) {
     return { deploymentIds: null, verifiedAt: null, ...record.vercel };
   }

@@ -5,6 +5,7 @@
 
 import { closeSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
 import path from "node:path";
+import { isOwnedPrototypeSession } from "./prototype-session.mjs";
 
 // Vercel mints `<project>-git-<branch>` aliases on this domain for every
 // pushed branch. A DNS label longer than 63 characters is truncated and
@@ -309,6 +310,17 @@ export function renderRecordSections(record, snapshot) {
 }
 
 function renderEnvironment(record) {
+  if (isOwnedPrototypeSession(record)) {
+    const publication = record.prototype;
+    const base = record.baseCommit ? ` (base: origin/main at \`${record.baseCommit.slice(0, 10)}\`)` : "";
+    return [
+      "## Environment", "",
+      `- Branch: \`${record.branch}\`${base}`,
+      `- Prototype: \`${record.slug}\``,
+      `- Preview: ${publication?.previewUrl ?? PENDING}`,
+      `- Last deployed: ${publication ? `\`${publication.deployedCommit}\` at ${publication.verifiedAt}` : PENDING}`,
+    ].join("\n");
+  }
   const vercel = record.vercel ?? {};
   // A URL goes on the ticket only once the environment run verified it
   // against the branch's own deployment; until then any preview host may be
@@ -345,6 +357,9 @@ function modeLabel(mode) {
 
 function renderFlagSnapshot(record, snapshot) {
   const heading = ["## Production flag snapshot", ""];
+  if (isOwnedPrototypeSession(record)) {
+    return [...heading, "None."].join("\n");
+  }
   if (!record.flagSnapshot || !snapshot) {
     return [...heading, PENDING].join("\n");
   }

@@ -9,6 +9,16 @@ it never writes it from scratch.
 
 ## Rules for every worker that edits it
 
+Owned prototype sessions retain these headings and ownership rules. Their
+record sections truthfully name the canonical immutable prototype preview,
+slug, full deployed SHA and verification timestamp, with `None.` for the
+production flag snapshot. No app/API/Storybook URLs or seeded/blank data are
+fabricated. Backend built is `None.`; Backend still missing lists evidenced
+promotion work or `None.`. Handoff includes the canonical decision log and
+single design-review result alongside shared-surface stories, check/review
+summaries, and the person's resolved next owner. The prototype worker owns
+these updates; the same ticket worker verifies completeness and assignment.
+
 - Read the latest version with `get-document` (`includeContent: true`, a large
   `contentMaxChars`) immediately before you write, change only the sections
   your step owns (table below), keep every other section exactly as it is,

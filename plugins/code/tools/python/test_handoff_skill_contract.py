@@ -176,5 +176,30 @@ def test_vibe_sends_pure_mockups_to_prototype() -> None:
     starting_new = section(VIBE_SKILL.read_text(), "## 2. Start or resume")
     build_loop = section(VIBE_SKILL.read_text(), "## 5. Build loop")
 
-    assert "use `$prototype` for that instead" in starting_new
+    # Daniel ruled that vibe invokes the canonical workflow itself.
+    assert "`new-prototype`" in starting_new
+    assert "without `--mode`" in starting_new
+    assert "absolute `<repo-root>/.claude/skills/prototype/SKILL.md`" in starting_new
+    assert "always select" in starting_new
+    assert "`vibe-prototype-worker` in iterate mode" in build_loop
     assert "`$prototype`" in build_loop
+
+
+def test_owned_prototypes_keep_handoff_assignment_and_canonical_transitions() -> None:
+    skill = HANDOFF_SKILL.read_text()
+    worker = (PLUGIN_ROOT / "agents" / "vibe-prototype-worker.md").read_text()
+    assert "Steps 8 and 9 remain unchanged" in skill
+    assert "prepare-handoff mode" in skill
+    assert "PrototypeStatus.HandedOff remains owned by prototype-approve" in skill
+    assert "Do not execute its PR creation" in worker
+    assert "Do not reproduce" in worker
+    assert "prototype-result --worktree" in worker
+    assert "immutable preview URL" in worker
+
+
+def test_prototype_preflight_mode_survives_setup_worker_repairs() -> None:
+    setup_worker = (PLUGIN_ROOT / "agents" / "vibe-setup-worker.md").read_text()
+    preflight = (PLUGIN_ROOT / "skills" / "vibe" / "references" / "preflight.md").read_text()
+    assert "selected preflight arguments" in VIBE_SKILL.read_text()
+    assert "Keep `--prototype` during common/prototype repair" in setup_worker
+    assert "replace the `--repo` path but preserve `--prototype`" in preflight

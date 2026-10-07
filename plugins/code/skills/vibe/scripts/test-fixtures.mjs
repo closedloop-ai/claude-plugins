@@ -75,3 +75,15 @@ export function runNode(script, args, home, extraEnv = {}) {
   }
   return { status: result.status, json: JSON.parse(result.stdout), stderr: result.stderr };
 }
+
+/** A synthetic checker with the same narrow initializer extension point. */
+export function portableSurfaceChecker(entries = []) {
+  return [
+    'const infrastructurePattern = /^@repo\\/design-system$/;',
+    "const portableSurfaceAllowlist = new Set([",
+    ...entries.map((entry) => `  ${JSON.stringify(entry)},`),
+    "]);",
+    "export const accepts = (specifier) => portableSurfaceAllowlist.has(specifier);",
+    "",
+  ].join("\n");
+}

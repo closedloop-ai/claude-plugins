@@ -241,6 +241,13 @@ Generates `api-requirements.md` from an approved plan. Extracts tasks requiring 
 
 ### Support Agents
 
+**`vibe-prototype-worker`** (model: sonnet)
+Delegates an owned mockup session to symphony-alpha's canonical prototype skill.
+Builds and iterates the shared surface, always shares through the canonical
+Vercel procedure, records the immutable preview URL and full deployed SHA,
+and keeps the live ticket current. Prepares canonical design review and
+metadata for handoff without opening a pull request.
+
 **`visual-qa-subagent`** (model: sonnet)
 Performs visual QA using Playwright browser automation. Reads test steps exclusively from `visual-requirements.md` — never from source code. Returns `SUCCESS`, `FAILURE`, `AUTH_REQUIRED`, `BLOCKED`, or `INCOMPLETE_DOCS`. Maintains `visual-qa-memory.md` throughout the session.
 
@@ -267,6 +274,22 @@ Per-design-unit state-vs-spec analyst for the `design-inventory` pipeline. Analy
 ## Skills
 
 Skills are reusable, invocable units of functionality available to orchestrators and agents via the `Skill` tool.
+
+### `vibe`
+
+Starts or resumes an owned symphony-alpha session with a live ClosedLoop
+ticket. App changes use a seeded or blank per-branch environment. Mockup
+requests automatically invoke the repository's canonical prototype workflow
+on `prototype/<slug>`, share on Vercel, and return the immutable preview URL,
+full deployed SHA, and slug. Workers own changes, annotations, and redeploys.
+
+### `handoff`
+
+Checks and reviews the session's work, verifies its current app environment or
+canonical prototype publication, and completes the same live ticket. Resolves
+the next owner named by the person and assigns the ticket with status In
+Progress. Canonical prototype review and metadata transitions are preserved;
+handoff ends at the branch without opening a pull request.
 
 ### `plan-validate`
 
