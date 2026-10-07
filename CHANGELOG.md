@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.15
+
+#### Fixed
+- `.codex-plugin/plugin.json` carries the same version as `.claude-plugin/plugin.json` (1.19.15). The Codex manifest was left at 1.19.13 when the Claude manifest moved to 1.19.14, and Codex installs into a cache folder named by the Codex manifest version, so an install could stay on the 1.19.13 folder's content.
+
+### code-review v3.10.4
+
+#### Fixed
+- `.codex-plugin/plugin.json` carries the same version as `.claude-plugin/plugin.json` (3.10.4). The Codex manifest had stayed at 2.34.0 since it was added, so Codex installs kept using the 2.34.0 cache folder.
+
 ### code v1.19.14
 
 #### Fixed

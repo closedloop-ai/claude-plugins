@@ -68,6 +68,25 @@ jobs:
             fi
           done <<< "$changed_plugins"
 
+  plugin-manifest-versions:
+    name: Plugin Manifest Versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tools/plugin-manifests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tools/plugin-manifests/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      # Fails when any plugin's .claude-plugin and .codex-plugin versions differ.
+      - run: npm test
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
