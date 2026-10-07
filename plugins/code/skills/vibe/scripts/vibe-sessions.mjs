@@ -15,10 +15,10 @@
 //                                     [--scope draft|full] [--mode seeded|blank] [--stack <json>]
 //                                     [--clerk-org-id org_...]
 //                                     [--operator-id <id> --operator-email <email> [--operator-name <name>]]
-//   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json>
+//   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json> [--replace]
 //   vibe-sessions.mjs desktop-auth    --worktree <path> --file <auth-claim.json>
 //   vibe-sessions.mjs dispatch-inputs --worktree <path> --out <inputs.json>
-//                                     [--person-email <email>]
+//                                     [--person-email <email>] [--keep-flag-snapshot true|false]
 //   vibe-sessions.mjs codex-sessions  --worktree <path> [--thread <id>]
 //   vibe-sessions.mjs ticket-sections --worktree <path>
 //   vibe-sessions.mjs environment-result --worktree <path> --file <vibe-environment-result.json>
@@ -134,6 +134,8 @@ const { positionals, values } = parseArgs({
     "person-email": { type: "string" },
     "clerk-org-id": { type: "string" },
     "request-id": { type: "string" },
+    "keep-flag-snapshot": { type: "string" },
+    replace: { type: "boolean", default: false },
     "operator-id": { type: "string" },
     "operator-email": { type: "string" },
     "operator-name": { type: "string" },
@@ -584,6 +586,13 @@ function saveFlagSnapshot() {
     throw new Error(`Could not read a JSON flag snapshot from ${file}: ${error instanceof Error ? error.message : String(error)}`);
   }
   const snapshot = validateFlagSnapshot(parsed);
+  // ISS-12135 bug 43: the snapshot is taken once, when the session starts,
+  // and replaced only when the person asks (flags mode passes --replace).
+  if (record.flagSnapshot && !values.replace) {
+    throw new Error(
+      `The session already has a flag snapshot (taken ${record.flagSnapshot.takenAt}); it is replaced only when the person asks for fresh flags (--replace).`
+    );
+  }
   const saved = snapshotPath(worktree);
   writeFileSync(saved, `${JSON.stringify(snapshot, null, 2)}\n`);
   const updated = {
@@ -658,6 +667,7 @@ function dispatchInputs() {
     clerkOrgId: record.clerkOrgId ?? undefined,
     desktopAuth: readDesktopAuth(worktree, record),
     requestId: randomUUID(),
+    keepFlagSnapshot: values["keep-flag-snapshot"],
   });
   mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   writeFileSync(out, `${JSON.stringify(inputs)}\n`);

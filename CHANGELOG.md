@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.5
+
+#### Fixed
+- The flag snapshot is taken once, when the session starts: `vibe-sessions.mjs flag-snapshot` refuses to replace a session's snapshot without `--replace`, which only `vibe-environment-worker` flags mode passes. `dispatch-inputs` takes `--keep-flag-snapshot true|false` and sends `keep_flag_snapshot` (symphony-alpha #8497); the worker passes it only when the request workflow on main declares that input, `false` in flags mode and `true` otherwise, so a re-dispatch never re-applies a snapshot to an environment it keeps.
+
 ### code v1.19.4
 
 #### Fixed

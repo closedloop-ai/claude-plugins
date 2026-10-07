@@ -52,6 +52,9 @@ export const DispatchInput = {
   ClerkOrgId: "clerk_org_id",
   DesktopAuth: "desktop_auth",
   RequestId: "request_id",
+  // ISS-12135 bug 43: optional, sent only when the workflow on main declares
+  // it. "true" keeps a ready environment's snapshot; "false" is a flag refresh.
+  KeepFlagSnapshot: "keep_flag_snapshot",
 };
 // What `pnpm --filter desktop vibe:profile auth-claim` prints: public values
 // only; the profile's secrets never leave the Mac.
@@ -385,7 +388,7 @@ function renderSessions(record) {
  * request check refuses the claim without it). A blank session without a
  * Desktop claim sends no email, and a blank session never sends a Clerk org.
  */
-export function buildDispatchInputs({ record, snapshot, personEmail, clerkOrgId, desktopAuth, requestId }) {
+export function buildDispatchInputs({ record, snapshot, personEmail, clerkOrgId, desktopAuth, requestId, keepFlagSnapshot }) {
   if (record.mode !== "seeded" && record.mode !== "blank") {
     throw new Error("The session has no seeded or blank mode yet; set it with touch --mode.");
   }
@@ -395,11 +398,15 @@ export function buildDispatchInputs({ record, snapshot, personEmail, clerkOrgId,
   if (!REQUEST_ID.test(requestId ?? "")) {
     throw new Error("The request id must be 8 to 64 letters, digits, or hyphens.");
   }
+  if (keepFlagSnapshot !== undefined && keepFlagSnapshot !== "true" && keepFlagSnapshot !== "false") {
+    throw new Error("--keep-flag-snapshot must be true or false.");
+  }
   const inputs = {
     [DispatchInput.Branch]: record.branch,
     [DispatchInput.Mode]: record.mode,
     [DispatchInput.FlagSnapshot]: JSON.stringify(validateFlagSnapshot(snapshot)),
     [DispatchInput.RequestId]: requestId,
+    ...(keepFlagSnapshot === undefined ? {} : { [DispatchInput.KeepFlagSnapshot]: keepFlagSnapshot }),
   };
   if (desktopAuth) {
     inputs[DispatchInput.DesktopAuth] = JSON.stringify(validateDesktopAuth(desktopAuth));

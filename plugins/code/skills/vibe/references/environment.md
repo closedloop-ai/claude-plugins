@@ -35,7 +35,9 @@ Asked once when the session starts, recorded as the session's `mode`.
    `clerk_org_id` only when the person belongs to more than one stage org;
    `desktop_auth` once the session has a local Desktop profile, always with
    `person_email` so the Desktop session belongs to the person (a blank
-   session sends `person_email` only then, and never `clerk_org_id`). Never start
+   session sends `person_email` only then, and never `clerk_org_id`), and
+   `keep_flag_snapshot` (`false` only for a flag refresh) when the workflow
+   declares it. Never start
    `vibe-environment.yml` directly: it holds the cloud credential and runs
    after the request workflow on its own.
 4. Follow both runs to the end. Both are titled

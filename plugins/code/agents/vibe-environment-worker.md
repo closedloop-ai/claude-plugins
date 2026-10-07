@@ -51,9 +51,10 @@ then plain search.
    session's private git directory
    (`$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-flag-snapshot.new.json`)
    and save it:
-   `node ../skills/vibe/scripts/vibe-sessions.mjs flag-snapshot --worktree "<wt>" --file "<file>"`.
-   It refuses anything that does not match the contract; fix the file, never
-   the contract.
+   `node ../skills/vibe/scripts/vibe-sessions.mjs flag-snapshot --worktree "<wt>" --file "<file>"`,
+   adding `--replace` in flags mode only. It refuses anything that does not
+   match the contract (fix the file, never the contract), and without
+   `--replace` it refuses a session that already has a snapshot.
 
 ## Create mode
 
@@ -85,7 +86,10 @@ then plain search.
    First read that workflow on main
    (`gh workflow view <workflow> --repo closedloop-ai/symphony-alpha --yaml`)
    and check every required `workflow_dispatch` input is in the file; if one
-   is missing, return `BLOCKED` naming it.
+   is missing, return `BLOCKED` naming it. If it declares a
+   `keep_flag_snapshot` input, add `--keep-flag-snapshot false` in flags mode
+   and `--keep-flag-snapshot true` in every other mode, so a re-dispatch never
+   re-applies the snapshot to an environment it keeps.
 2. Start it from main, feeding the file on stdin so no JSON is quoted on the
    command line: `gh workflow run <workflow> --repo closedloop-ai/symphony-alpha --ref main --json < "<file>"`.
    Never start `vibe-environment.yml` yourself; it runs after the request
