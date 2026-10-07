@@ -9,12 +9,14 @@
 // Prints one JSON object; exits 0 when complete and 1 otherwise. Changes
 // nothing. The sections are the headings of ../../vibe/references/ticket-template.md.
 //
-// Usage: live-ticket-check.mjs --file <ticket body .md> [--base-commit <sha>]
+// Usage: live-ticket-check.mjs --file <ticket body .md> [--base-commit <sha>] [--worktree <path>]
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
+import { git, readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 
 /** Every section of the live ticket, in template order. */
 export const TICKET_SECTIONS = [
@@ -68,16 +70,36 @@ export function parseSections(body) {
   return sections;
 }
 
-export function checkLiveTicket(body, { baseCommit } = {}) {
+export function checkLiveTicket(body, { baseCommit, record, headSha, branch } = {}) {
   const sections = parseSections(body);
   const problems = [];
+  const prototype = isOwnedPrototypeSession(record);
+  if (prototype) {
+    if (branch !== undefined && !isOwnedPrototypeSession(record, branch)) {
+      problems.push({ section: "Environment", problem: "worktree is not on its owned prototype branch" });
+    }
+    try { requirePrototypePublication(record, headSha); }
+    catch (error) { problems.push({ section: "Environment", problem: error.message }); }
+  }
   for (const heading of TICKET_SECTIONS) {
     const content = sections.get(heading);
     if (content === undefined) {
       problems.push({ section: heading, problem: "missing" });
       continue;
     }
-    problems.push(...checkSection(heading, content));
+    problems.push(...checkSection(heading, content, prototype));
+    if (prototype && heading === "Environment") {
+      for (const line of [
+        `- Branch: \`${record.branch}\``,
+        `- Prototype: \`${record.slug}\``,
+        `- Preview: ${record.prototype?.previewUrl}`,
+        `- Last deployed: \`${record.prototype?.deployedCommit}\` at ${record.prototype?.verifiedAt}`,
+      ]) {
+        if (!content.split("\n").some((actual) => actual === line || (line.startsWith("- Branch:") && actual.startsWith(`${line} (base:`)))) {
+          problems.push({ section: heading, problem: "does not match the recorded prototype publication" });
+        }
+      }
+    }
     if (heading === "Environment" && baseCommit) {
       problems.push(...checkBaseCommit(content, baseCommit));
     }
@@ -85,7 +107,7 @@ export function checkLiveTicket(body, { baseCommit } = {}) {
   return { ok: problems.length === 0, problems };
 }
 
-function checkSection(heading, content) {
+function checkSection(heading, content, prototype) {
   if (content.trim() === "") {
     return [{ section: heading, problem: "empty" }];
   }
@@ -98,7 +120,9 @@ function checkSection(heading, content) {
   if (placeholder) {
     problems.push({ section: heading, problem: `still has the template placeholder ${placeholder[0].slice(0, 60)}` });
   }
-  for (const [pattern, problem] of REQUIRED_CONTENT[heading] ?? []) {
+  const requirements = prototype && (heading === "Environment" || heading === "Production flag snapshot")
+    ? [] : REQUIRED_CONTENT[heading] ?? [];
+  for (const [pattern, problem] of requirements) {
     if (!pattern.test(content)) {
       problems.push({ section: heading, problem });
     }
@@ -121,7 +145,7 @@ function checkBaseCommit(content, baseCommit) {
 
 function main() {
   const { values } = parseArgs({
-    options: { file: { type: "string" }, "base-commit": { type: "string" } },
+    options: { file: { type: "string" }, "base-commit": { type: "string" }, worktree: { type: "string" } },
   });
   try {
     if (!values.file) {
@@ -129,6 +153,9 @@ function main() {
     }
     const result = checkLiveTicket(readFileSync(path.resolve(values.file), "utf8"), {
       baseCommit: values["base-commit"],
+      record: values.worktree ? readSessionRecord(values.worktree) : undefined,
+      branch: values.worktree ? git(values.worktree, ["rev-parse", "--abbrev-ref", "HEAD"]) : undefined,
+      headSha: values.worktree ? git(values.worktree, ["rev-parse", "HEAD"]) : undefined,
     });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     process.exit(result.ok ? 0 : 1);

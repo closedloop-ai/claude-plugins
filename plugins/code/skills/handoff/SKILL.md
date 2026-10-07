@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Finish a vibe session in symphony-alpha and hand it to whoever picks it up next, usually design and then engineering. Shows the person a task list, then (through workers) checks the work stays within its scope, makes sure every new or changed component has Storybook stories, runs lint, typecheck, and tests (the whole suite when the session changed backend code), runs the code reviews (review-soul and an adversarial review, or two workflow-code-review passes when the session changed backend code) and fixes what they confirm, asks who should pick the work up next and finds that person in ClosedLoop, checks the session's live ClosedLoop ticket is complete, pushes the last changes to the vibe/<slug> branch and its Vercel environment, and assigns the ticket to the person they named with the status left In Progress. It ends at the branch; no pull request is opened. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
+description: Finish a vibe session in symphony-alpha and hand it to whoever picks it up next, usually design and then engineering. Shows the person a task list, then (through workers) checks the work stays within its scope, makes sure every new or changed component has Storybook stories, runs lint, typecheck, and tests (the whole suite when the session changed backend code), runs the code reviews (review-soul and an adversarial review, or two workflow-code-review passes when the session changed backend code) and fixes what they confirm, asks who should pick the work up next and finds that person in ClosedLoop, checks the session's live ClosedLoop ticket is complete, pushes the last app changes to vibe/<slug> and its Vercel environment, or prepares an owned prototype/<slug> through canonical design review and immutable Vercel sharing, and assigns the ticket to the person they named with the status left In Progress. It ends at the branch; no pull request is opened. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
 ---
 
 # Handoff
@@ -102,6 +102,53 @@ handed off and stop.
 
 Then run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
 so this conversation is recorded on the session too.
+
+### Owned prototype sessions
+
+An owned session on `prototype/<slug>` follows the same summary, guardrails,
+lighter checks and reviews, next-owner lookup, complete-ticket check, and
+assignment below. The inventory's `prototype` publication identifies this
+path; an arbitrary prototype branch without the matching private ownership
+record is refused. Give every worker that publication and the canonical
+prototype skill's absolute `<repo-root>/.claude/skills/prototype/SKILL.md` path.
+Keep every `localFixes` path excluded as usual.
+
+The inventory always returns the owned prototype's files and base, including
+when publication is missing or stale. If its
+`blocking.prototypePublicationCurrent` is false, dispatch the prototype worker
+in share mode with `publicationProblem`, then re-run inventory before the
+checks. This recovers an unshared or newly committed iteration through the
+canonical share procedure; a failed share stays blocked with its evidence.
+
+Route behavior answers and all guardrail/review/check fixes to
+`vibe-prototype-worker` in fix mode, using the same person's words and findings.
+Run steps 3 through 6 again after changes. Storybook decomposition and footprint
+cover the canonical shared surface and its stories, not the mock sandbox host;
+the prototype worker also runs the canonical catalog, registry, decision-log,
+lint and type checks. Mock-only sandbox state is intentional under that
+canonical contract; do not create app backend stubs or a production flag
+snapshot to satisfy the app-only checks.
+
+In step 7 dispatch `vibe-prototype-worker` in prepare-handoff mode instead of
+the environment worker. It preserves canonical step 7's single design review,
+ReadyForReview and tags, retains the review outcome on the ticket, and shares
+the resulting commit through canonical step 5.5 without opening a PR.
+PrototypeStatus.HandedOff remains owned by prototype-approve. Re-run inventory
+on the returned publication before ticket completion. A failed or stale share
+blocks handoff until the same work is repaired and published.
+
+Steps 8 and 9 remain unchanged: the person names the next owner, lookup resolves
+them, the complete live ticket is checked against this owned publication,
+assignment is verified with status In Progress, and the private vibe session
+is marked handed-off. That session marker does not approve prototype metadata.
+The final links are the ticket and immutable prototype preview, with full
+deployed SHA, slug, branch, and resolved next owner. Do not report app, API,
+or Storybook deployments for a prototype session. No PR is opened here.
+
+Use the lighter task list below for this flow, naming the prototype preview
+in the upload item using the canonical prototype label instead of promising
+an app deployment. Shared component stories and their footprint remain part
+of the handoff.
 
 ## 1. Show the task list first
 

@@ -13,6 +13,10 @@ session's branch and start its environment through GitHub.
 
 `scripts/vibe-preflight.sh` reports each failure with a `fix` key. Apply the
 matching fix below, then re-run the script. Run fixes yourself in the terminal.
+Keep the selected preflight arguments on every rerun: common/prototype checks
+keep `--prototype`, while app preflight omits it. Repo choice and cloning
+replace the `--repo` path but preserve `--prototype` when selected. A prototype
+does not need the app's public PostHog key.
 Use the Codex Computer Use plugin only where a step says so. Never type,
 store, or ask for a password or token; when an installer asks for the Mac
 password, tell the person "Your Mac is asking for your password to finish

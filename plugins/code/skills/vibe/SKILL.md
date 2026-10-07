@@ -1,6 +1,6 @@
 ---
 name: vibe
-description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (built for Andy, the CEO) working in the Codex Desktop in-app browser. Sets up the machine, creates or resumes an isolated worktree off fresh main, asks what part of the app to work on (a ClosedLoop ticket or a plain description) and whether the environment should be seeded with sample data or blank, creates the session's live ClosedLoop ticket, and stands up the session's own Vercel environment (web app, API, Storybook) with the production feature flag values pinned. Opens the web app and the Desktop app (through its local browser bridge) as two in-app browser tabs, and reopens either on request. Then turns chat requests and in-browser annotations into code that follows the repo's existing patterns, with Storybook-first components, and redeploys to Vercel when the person asks, building the backend too whenever a change needs data or an action the API lacks. Every session ends at a branch handed to design, then engineering. A pure mockup or fake-data exploration goes to the prototype skill instead. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
+description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (built for Andy, the CEO) working in the Codex Desktop in-app browser. Sets up the machine, creates or resumes an isolated worktree off fresh main, asks what part of the app to work on (a ClosedLoop ticket or a plain description) and whether the environment should be seeded with sample data or blank, creates the session's live ClosedLoop ticket, and stands up the session's own Vercel environment (web app, API, Storybook) with the production feature flag values pinned. Opens the web app and the Desktop app (through its local browser bridge) as two in-app browser tabs, and reopens either on request. Then turns chat requests and in-browser annotations into code that follows the repo's existing patterns, with Storybook-first components, and redeploys to Vercel when the person asks, building the backend too whenever a change needs data or an action the API lacks. Every session ends at a branch handed to design, then engineering. For a pure mockup or fake-data exploration, invokes the repository's canonical prototype skill itself in an owned prototype session, always shares on Vercel, and returns the immutable preview URL, full deployed commit SHA, and slug; handoff preserves the same live ticket and next-owner assignment without opening a PR. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
 ---
 
 # Vibe
@@ -78,6 +78,7 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 | `vibe-change-worker` | make one requested change (chat or annotation): locate, implement, request backend work, add stories, self-check, update the live ticket |
 | `vibe-backend-worker` | build the backend half of a change (route, service, validation, schema and migration, seed, tests), driven by a decision table |
 | `vibe-primitive-worker` | build a new design-system primitive from an approved spec, with stories, catalog, and tests |
+| `vibe-prototype-worker` | build, iterate, share, or prepare an owned mockup for handoff through the repository's canonical prototype skill |
 
 Every worker result starts with a status: `DONE`, `NEEDS_PERSON` (a question
 or action only the person can answer or take, already phrased for them),
@@ -90,7 +91,13 @@ then dispatch a fresh worker with the answer.
 
 ## 1. Preflight
 
-Run `scripts/vibe-preflight.sh`. It finds the symphony-alpha checkout anywhere
+Run `scripts/vibe-preflight.sh --prototype` for the common prerequisites
+before choosing a session. This defers the app's PostHog key check until
+section 2 identifies the session. For an app session, re-run the default
+`scripts/vibe-preflight.sh` and resolve its failures before section 3.
+Pure mockups and recorded prototype resumes need no PostHog key.
+
+The selected preflight command finds the symphony-alpha checkout anywhere
 in the home folder by its git remote, remembers it in
 `~/.codex/vibe/config.json` for every later run, checks that the Node every
 command will run satisfies the checkout's `engines` range, and prints one JSON
@@ -102,7 +109,9 @@ installer prompt, finish a browser sign-in, allow Codex into a folder when
 macOS asks, and say which folder they work in when more than one copy of
 symphony-alpha exists; the worker reports those as `NEEDS_PERSON`. You and the
 workers never type or ask for credentials. Re-run the preflight until it
-passes.
+passes. Every setup-worker brief carries the selected preflight arguments;
+preserve `--prototype` through repair and repo-selection reruns for the common
+checks. The later app preflight deliberately omits it.
 
 Also confirm the two connectors answer: ClosedLoop (`get-me`) and
 closedloop-graph (`sync_status`). closedloop-graph is optional: if it does not
@@ -132,8 +141,9 @@ Starting new:
 1. Ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
    URL) or a plain description. A vibe session builds the real thing, backend
    included when a change needs it, so if they clearly want a mockup or an
-   exploration with made-up data (nothing it shows needs to be real), tell
-   them in one line to use `$prototype` for that instead, and stop. For a
+   exploration with made-up data (nothing it shows needs to be real), start
+   the prototype session below yourself. The person only types `$vibe` and
+   `$handoff`; do not ask them to invoke `$prototype`. For a
    ticket, dispatch `vibe-requirements-worker`. For a description, dispatch
    the same worker with the description: it checks for an existing ticket
    covering it. Tell the person only its brief, in two or three sentences.
@@ -164,6 +174,35 @@ Starting new:
    It records the ticket's slug on the session itself.
    Tell the person in one line that the ticket exists and give its link.
 7. Stand up the environment (section 3).
+
+### Mockup sessions
+
+For a pure mockup request, derive a non-colliding canonical prototype slug
+(starts with a letter, lowercase words joined by hyphens, at most 40 characters)
+and run `new-prototype` with the same summary, originating ticket if any, and
+`--operator-*` values as step 4, without `--mode`. It reuses the private
+session record and fresh-main worktree creation on `prototype/<slug>`.
+Record this conversation with `codex-sessions`. Dispatch `vibe-ticket-worker`
+in create mode with the person's own brief, then `vibe-prototype-worker` in
+build mode with that ticket, worktree, and brief. Its instructions invoke the
+absolute `<repo-root>/.claude/skills/prototype/SKILL.md` and always select
+canonical sharing on Vercel. The canonical worker owns the deployment wait.
+Do not ask app-data, backend, or flag questions or start the app environment.
+
+On `DONE`, open its immutable `previewUrl` in the in-app browser and return
+that URL, the full `deployedCommit`, and `slug`. Respect the Vercel team login.
+On `BLOCKED`, relay the evidence and continue only after the failure is fixed.
+Listing and handoff accept only branch-matching privately recorded prototype
+sessions, not every `prototype/` branch in the checkout.
+
+For a resumed owned prototype session, use its worktree and run
+`codex-sessions`. Dispatch the prototype worker in share mode to verify the
+current commit before opening the returned preview. Bring back its recorded
+immutable preview tab when asked. Chat and annotations go to its iterate mode,
+including all annotation context; fixes go to its fix mode. A redeploy request
+goes to its share mode and opens the newly returned immutable URL. These routes
+replace the app-only sections 3 through 7 for this session. Handoff uses the
+same ticket and next-owner assignment through the handoff skill.
 
 Resuming: use the session's `worktree`, and run `codex-sessions` again so a
 new conversation is recorded too. Starting new or resuming stops any other
@@ -283,9 +322,10 @@ straight into the app?" Default to straight into the app.
 ## 5. Build loop
 
 For each request or annotation (a queued batch is one request), work in small
-visible steps so the person never waits in silence. A request that is
-clearly only a mockup with made-up data gets the same `$prototype` line as
-section 2, step 1, instead of a worker.
+visible steps so the person never waits in silence. For an owned prototype
+session, dispatch `vibe-prototype-worker` in iterate mode with the request or
+annotation verbatim. A new mockup request starts the prototype session in
+section 2; the orchestrator invokes canonical `$prototype` through that worker.
 
 1. Dispatch `vibe-change-worker` to plan, with the worktree, the session
    summary, the live ticket slug, the request verbatim

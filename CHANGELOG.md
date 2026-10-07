@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.22
+
+#### Added
+- `vibe-prototype-worker` delegates owned mockup sessions to symphony-alpha's canonical prototype skill, always shares on Vercel, and records the immutable preview URL, full deployed SHA, and slug. `new-prototype` reuses private session ownership and fresh-main worktree creation on `prototype/<slug>`; `prototype-result` records only a matching canonical publication.
+
+#### Changed
+- `vibe` invokes the canonical prototype workflow itself for mockups and routes resume, annotations, iteration, and sharing through the same worker. Pure mockups require no seeded or blank mode, app environment, backend stubs, or PostHog snapshot. Selected preflight arguments survive setup repairs and repository choice.
+- `handoff` accepts only privately owned prototype sessions, preserves complete repair inventory when publication is stale, admits only the session's sandbox host and exact portable-surface allowlist additions, and verifies current publication in the live ticket. Canonical design review and metadata transitions remain intact; the same live ticket is assigned to the chosen next owner with status In Progress, without opening a pull request. Existing app URL and flag requirements are unchanged.
+
 ### code v1.19.21
 
 #### Fixed

@@ -23,7 +23,10 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
+import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
+import { isPortableSurfaceAllowlistEdit, PORTABLE_SURFACE_CHECKER } from "./prototype-allowlist.mjs";
 
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 const BRANCH_PREFIX = "vibe/";
@@ -56,7 +59,6 @@ const BACKEND_PREFIXES = [
   "apps/desktop/prisma/",
 ];
 const BACKEND_SEGMENTS = ["/prisma/", "/migrations/"];
-const RECORD_FILE = "vibe-session.json";
 
 const STORY_PATTERN = /\.stories\.tsx?$/;
 const COMPONENT_PATTERN = /\/components\/.+\.tsx$/;
@@ -69,11 +71,17 @@ if (!values.worktree) {
 const worktree = path.resolve(values.worktree);
 
 const branch = git(["rev-parse", "--abbrev-ref", "HEAD"]);
-if (!branch.startsWith(BRANCH_PREFIX)) {
+const record = readSessionRecord(worktree);
+const prototype = isOwnedPrototypeSession(record, branch);
+if (!branch.startsWith(BRANCH_PREFIX) && !prototype) {
   fail(`${worktree} is on ${branch}, not a vibe branch (${BRANCH_PREFIX}*).`);
 }
 
-const record = readSessionRecord();
+let publicationProblem;
+if (prototype) {
+  try { requirePrototypePublication(record, git(["rev-parse", "HEAD"])); }
+  catch (error) { publicationProblem = error.message; }
+}
 const localFixTickets = localFixTicketsByPath(record);
 const baseCommit = git(["merge-base", "HEAD", `origin/${baseBranch()}`]);
 const allChangedFiles = listChangedFiles(baseCommit);
@@ -93,6 +101,7 @@ const componentsWithoutStories = findComponentsWithoutStories(changedFiles);
 const blocking = {
   forbiddenPaths: forbidden.length === 0,
   hasChanges: changedFiles.length > 0,
+  ...(prototype ? { prototypePublicationCurrent: publicationProblem === undefined } : {}),
 };
 
 const result = {
@@ -102,6 +111,8 @@ const result = {
   mode: record?.mode ?? null,
   liveTicket: record?.liveTicket ?? record?.handoffTicket ?? null,
   vercel: record?.vercel ?? null,
+  ...(prototype ? { prototype: record.prototype } : {}),
+  ...(publicationProblem ? { publicationProblem } : {}),
   baseCommit,
   blocking,
   changedFiles,
@@ -170,6 +181,20 @@ function isShrinkOnlyEdit(file) {
 }
 
 function isAllowed(filePath) {
+  if (prototype && (filePath.startsWith(`apps/prototypes/app/p/${record.slug}/`) ||
+    filePath === "apps/prototypes/lib/registry.generated.ts")) {
+    return true;
+  }
+  if (prototype && filePath === PORTABLE_SURFACE_CHECKER) {
+    try {
+      return isPortableSurfaceAllowlistEdit(
+        git(["show", `${baseCommit}:${filePath}`]),
+        readFileSync(path.join(worktree, filePath), "utf8"),
+        (specifier) => [".ts", ".tsx", ".mjs"].some((extension) =>
+          existsSync(path.join(worktree, "packages/app", `${specifier.slice("@repo/app/".length)}${extension}`)))
+      );
+    } catch { return false; }
+  }
   return ALLOWED_PREFIXES.some((prefix) => filePath.startsWith(prefix));
 }
 
@@ -196,14 +221,6 @@ function baseBranch() {
   } catch {
     return "main";
   }
-}
-
-function readSessionRecord() {
-  const file = path.join(git(["rev-parse", "--absolute-git-dir"]), RECORD_FILE);
-  if (!existsSync(file)) {
-    return null;
-  }
-  return JSON.parse(readFileSync(file, "utf8"));
 }
 
 function localFixTicketsByPath(sessionRecord) {

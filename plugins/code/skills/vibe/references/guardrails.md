@@ -8,6 +8,17 @@ to vibe sessions and points at the repo rules that matter most here.
 
 ## What may change
 
+For an owned `prototype/<slug>` mockup session, the repository's canonical
+`<repo-root>/.claude/skills/prototype/SKILL.md` owns sandbox rules instead of
+the full-app rules in this section. Its allowed host paths are exactly
+`apps/prototypes/app/p/<slug>/`, the generated registry, and the exact portable
+surface allowlist in `apps/prototypes/scripts/check-catalog-imports.mjs`.
+The shared surface and stories still follow their owning package rules. Mock
+state stays in the sandbox adapter; no backend stubs, seeded/blank environment,
+or production flag snapshot is added. Only a branch-matching private session
+record admits this path. All copy, reuse, accessibility, and forbidden-file
+rules still apply.
+
 Every session builds the real thing, frontend and backend: a screen that needs
 data or an action the API does not provide gets that backend built, by
 `vibe-backend-worker`, never by the change worker. A session that needs no new

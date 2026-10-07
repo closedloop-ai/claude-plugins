@@ -201,3 +201,15 @@ test("just is not a vibe prerequisite", (t) => {
   const env = setup(t);
   assert.equal(runPreflight(env).checks.just, undefined);
 });
+
+test("prototype preflight keeps common prerequisites and omits only the app PostHog check", (t) => {
+  const env = setup(t);
+  const checkout = path.join(env.home, ...SPACED);
+  makeCheckout({ ...env, checkout });
+  const prototype = runPreflight(env, ["--prototype", "--repo", checkout]);
+  assert.equal(prototype.checks["posthog-key"], undefined);
+  assert.equal(prototype.checks.repo.ok, true);
+  assert.equal(prototype.checks.gh.ok, false, "common prerequisite failures remain visible");
+  const app = runPreflight(env, ["--repo", checkout]);
+  assert.equal(app.checks["posthog-key"].ok, false, "app sessions still require the real key");
+});
