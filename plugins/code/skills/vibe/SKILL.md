@@ -239,36 +239,46 @@ straight into the app?" Default to straight into the app.
 
 ## 5. Build loop
 
-For each request or annotation (a queued batch is one dispatch):
+For each request or annotation (a queued batch is one request), work in small
+visible steps so the person never waits in silence:
 
-1. Dispatch `vibe-change-worker` with the worktree, the session summary, the
-   session scope, the live ticket slug, the request verbatim (for
-   annotations: the comment, the element context, the route, and any Adjust
-   values), the Labs answer if one applies, the person's own words for any
-   user-visible text, and the local Storybook URL if one is running.
-2. On `DONE`: tell the person in one or two plain sentences what changed. If
-   the worker named a story and local Storybook is running, open the story so
-   they can see it now; otherwise remind them it shows in the app after they
-   say "redeploy". Update the session record with the worker's one-line
-   summary:
+1. Dispatch `vibe-change-worker` to plan, with the worktree, the session
+   summary, the session scope, the live ticket slug, the request verbatim
+   (for annotations: the comment, the element context, the route, and any
+   Adjust values), the Labs answer if one applies, the person's own words for
+   any user-visible text, and the local Storybook URL if one is running. It
+   returns `PLAN` in a few minutes: the units and any questions.
+2. Ask its questions first (step 4). Then tell the person in one or two plain
+   sentences what will happen, in the order of the units ("First the select
+   boxes on Sessions, then the same on Branches, then the tag menu; I'll tell
+   you as each one is done."). If any unit adds or changes a story and local
+   Storybook is not running, dispatch `vibe-setup-worker` to start it now.
+3. Dispatch a change worker for each unit in turn, with the same inputs plus
+   the plan and the unit to build. On each `DONE`, relay its one plain
+   sentence right away. If the unit named a story, open it in local
+   Storybook; otherwise remind them changes show in the app after they say
+   "redeploy". Update the session record with the worker's one-line summary:
    `node scripts/vibe-sessions.mjs touch --worktree "<wt>" --summary "<summary>"`.
-3. On `NEEDS_PERSON`: ask the question exactly as the worker phrased it (copy,
-   "everywhere or just here", a product decision), then dispatch a fresh
-   worker with the answer.
-4. On `NEEDS_PRIMITIVE`: tell the person in one sentence that the screen needs
+   Continue with the units it lists as left until none are. On
+   `NEEDS_STORYBOOK`, start local Storybook as above and dispatch the unit
+   again.
+4. On `NEEDS_PERSON`: ask the question exactly as the worker phrased it (copy,
+   "everywhere or just here", web only or wait for Desktop, a product
+   decision), then dispatch a fresh worker with the answer.
+5. On `NEEDS_PRIMITIVE`: tell the person in one sentence that the screen needs
    a building block the component library does not have yet. Dispatch
    `vibe-primitive-worker` with the steward's spec, the worktree, and the live
    ticket slug. Approval happens in local Storybook: if none is running,
    dispatch `vibe-setup-worker` to start it. When the primitive worker returns
    `DONE`, open the story URL it gives and ask the person to approve it there.
    On approval, re-dispatch the original change.
-5. On `NEEDS_BACKEND` (full scope only): tell the person in one sentence that
+6. On `NEEDS_BACKEND` (full scope only): tell the person in one sentence that
    this needs some behind-the-scenes work first. Dispatch
    `vibe-backend-worker` with its spec, the worktree, the session summary, and
    the live ticket slug. When it returns `DONE`, re-dispatch the change worker
    with the original request so it wires the screen to the new backend. The
    new backend reaches the Vercel environment on the next redeploy.
-6. On `BLOCKED`: tell the person plainly what could not be done and why, and
+7. On `BLOCKED`: tell the person plainly what could not be done and why, and
    offer the closest compliant version the worker suggested.
 
 Local Storybook is optional. Offer it once, when a change adds or changes a
