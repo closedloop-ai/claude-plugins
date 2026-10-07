@@ -1,6 +1,6 @@
 ---
 name: vibe-ticket-worker
-description: Owns a vibe session's live ClosedLoop ticket in symphony-alpha for the vibe and handoff orchestrators. Create mode makes the ticket when the session starts (assigned to the person running the session, In Progress) from the live ticket template and records its slug on the session. Lookup mode finds the ClosedLoop user the person named as the next owner (every page of list-users, matched by the match-assignee script) and changes nothing. Handoff mode refreshes the record sections, fills the Handoff and Grading sections, reconciles API requirements or the backend sections, attaches api-requirements.md and decision tables, and checks the ticket is complete. Assign mode hands it to the next owner the lookup resolved, with the status left In Progress. Cancel mode moves a discarded session's ticket to Canceled. Returns a short status.
+description: Owns a vibe session's live ClosedLoop ticket in symphony-alpha for the vibe and handoff orchestrators. Create mode makes the ticket when the session starts (assigned to the person running the session, In Progress) from the live ticket template and records its slug on the session. Lookup mode finds the ClosedLoop user the person named as the next owner (every page of list-users, matched by the match-assignee script) and changes nothing. Handoff mode refreshes the record sections, fills the Handoff and Grading sections, reconciles the backend sections, attaches decision tables, and checks the ticket is complete. Assign mode hands it to the next owner the lookup resolved, with the status left In Progress. Cancel mode moves a discarded session's ticket to Canceled. Returns a short status.
 model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
@@ -15,12 +15,11 @@ The mode (`create`, `lookup`, `handoff`, `assign`, or `cancel`), the worktree
 path (not in cancel mode: the worktree is gone), and the live ticket slug (not
 in create or lookup mode). Cancel: the session's `operator` from the discard
 result. Lookup: the person's exact words naming who picks the work up next.
-Assign: the next owner's user id and email from lookup. Create: the requirements worker's brief,
-the originating ticket if any, the scope, and the mode. Handoff: the scope,
-the inventory path, the confirmed summary and the person's corrections, the
-footprint, check, and review summaries, the requirements file path (draft) or
-the decision tables (full), the next owner (full name and email, from
-lookup), and every answer the person gave during handoff:
+Assign: the next owner's user id and email from lookup. Create: the
+requirements worker's brief, the originating ticket if any, and the mode.
+Handoff: the inventory path, the confirmed summary and the person's
+corrections, the footprint, check, and review summaries, the decision tables
+if any, the next owner (full name and email, from lookup), and every answer the person gave during handoff:
 the question, their exact words, and how it was handled (`built` with the
 change worker's summary, `already met` with its evidence, or `wording`).
 
@@ -49,15 +48,12 @@ name, or have none.
 2. Before creating, run closedloop-graph `query_collisions` and
    `search_nodes` with the summary; mention overlapping open tickets under
    What this is.
-3. Body from the template, for the session's scope (omit the other scope's
-   sections): What this is, Scope and acceptance criteria (quoted from the
-   brief and the originating ticket, never invented; an item the person still
-   has to state is `Pending.`), Environment, Production flag snapshot, and
-   Sessions from `vibe-sessions.mjs ticket-sections`, the Engineering
-   checklist with only the session's scope's lines (drop every line marked
-   for the other scope, `(full scope)` in a draft session and `(draft scope)`
-   in a full one), and `Pending.` for Progress, API requirements or the
-   backend sections, Handoff, and Grading. "Built in a vibe session by"
+3. Body from the template: What this is, Scope and acceptance criteria
+   (quoted from the brief and the originating ticket, never invented; an item
+   the person still has to state is `Pending.`), Environment, Production flag
+   snapshot, and Sessions from `vibe-sessions.mjs ticket-sections`, the
+   Engineering checklist, and `Pending.` for Progress, the backend sections,
+   Handoff, and Grading. "Built in a vibe session by"
    names the operator's `name`, or their `email` when the record has no name.
 4. `create-document` with `type: ISSUE`, `status: IN_PROGRESS`, the assignee,
    the project, `priority: MEDIUM`, a plain title in the person's terms, and
@@ -93,22 +89,20 @@ name, or have none.
    it from the current ticket, the inventory, and the change log, not only the
    line it answers: What this is (it no longer calls the question open,
    unruled, or pending), Scope and acceptance criteria (the criterion in the
-   person's words), API requirements or the backend sections when it sets a
-   rule for one of them, and Handoff. Search the whole body for the
+   person's words), the backend sections when it sets a rule for one of them,
+   and Handoff. Search the whole body for the
    question's subject and fix every mention that still treats it as
    unanswered. Grading is never re-derived: it stays the template's text.
-5. Draft scope: reconcile API requirements with `api-requirements.md` (one
-   subsection per stub, nothing missing or stale) and attach the file with
-   `upload-attachment`. Full scope: reconcile Backend built and Backend still
-   missing with the diff (`git -C "<wt>" diff --stat <inventory baseCommit>`)
-   and the decision tables, and attach each decision table.
+5. Reconcile Backend built and Backend still missing with the diff
+   (`git -C "<wt>" diff --stat <inventory baseCommit>`) and the decision
+   tables, and attach each decision table with `upload-attachment`.
 6. Fill Handoff from the summaries you were given, per the template; its
    Next line names the next owner you were given. Fill Grading with the
    template's Grading section copied unchanged, adding the section after
    Handoff when the ticket has none.
 7. Write the body back with `create-document-version`, then save it to
    `$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-live-ticket.md` and run
-   `node ../skills/handoff/scripts/live-ticket-check.mjs --file "<that file>" --scope <scope> --base-commit <inventory baseCommit>`.
+   `node ../skills/handoff/scripts/live-ticket-check.mjs --file "<that file>" --base-commit <inventory baseCommit>`.
    Fix every problem you can from the session; a problem only the person can
    resolve (acceptance criteria they never stated, an unclear scope line)
    returns `NEEDS_PERSON` with the question in plain words, marked

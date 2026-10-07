@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.20
+
+#### Changed
+- `vibe` no longer asks whether a session is a draft or full scope: every session builds the real thing, and a change that needs data or an action the API lacks gets that backend built by `vibe-backend-worker`. A request that is clearly a mockup or an exploration with made-up data is pointed at `$prototype` in one line instead. `vibe-sessions.mjs` drops `--scope` from `new` and `touch`, stops recording `scope`, and drops a `scope` left on an older record.
+- `handoff` picks how hard it checks from what the session changed rather than a declared scope. `handoff-inventory.mjs` reports `backendChanged` and `backendFiles` (anything under `apps/api`, `apps/mcp`, `apps/relay`, `apps/realtime`, `packages/api`, `packages/database`, `apps/desktop/src/main`, `apps/desktop/src/server`, `apps/desktop/prisma`, or any `prisma/` or `migrations/` folder). With no backend change, handoff runs the affected checks plus `review-soul` and `vibe-adversarial-reviewer`; with one, the full suite and two `workflow-code-review` passes, switching to that from the first inventory run that reports a backend change. The inventory always applies the frontend plus backend path rules that full scope used.
+- `live-ticket-check.mjs` takes no `--scope` and always requires Backend built and Backend still missing. The ticket template, `vibe-ticket-worker`, `vibe-change-worker`, `vibe-backend-worker`, `vibe-environment-worker`, `vibe-verify-worker`, `vibe-guardrails-reviewer`, `vibe-adversarial-reviewer`, `vibe-handoff-summarizer`, `vibe-storybook-decomposer`, and `references/guardrails.md` drop their draft-only paths. Node and Python contract tests updated.
+
+#### Removed
+- Draft-scope stubs: `references/stubs.md`, the `vibe-api-requirements-writer` agent, the inventory's `stubs` and `stubImportViolations` output and stub-import blocking check, and the ticket template's API requirements section and draft-only Engineering checklist lines.
+
 ### code v1.19.19
 
 #### Added

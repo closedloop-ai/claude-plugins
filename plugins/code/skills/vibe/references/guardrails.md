@@ -1,47 +1,30 @@
 # Guardrails
 
-Vibe work is handed to engineering, who finish the backend and run their own
-reviews. It must already follow the team's patterns so they extend it rather
-than rewrite it. The repo's `AGENTS.md` files are the contract; read the
-nearest one before editing a directory. This file adds the rules specific to
-vibe sessions and points at the repo rules that matter most here.
+Vibe work is handed to design and then engineering, who review it and open
+the pull request. It must already follow the team's patterns so they extend it
+rather than rewrite it. The repo's `AGENTS.md` files are the contract; read
+the nearest one before editing a directory. This file adds the rules specific
+to vibe sessions and points at the repo rules that matter most here.
 
 ## What may change
 
-| Allowed | Never |
+Every session builds the real thing, frontend and backend: a screen that needs
+data or an action the API does not provide gets that backend built, by
+`vibe-backend-worker`, never by the change worker. A session that needs no new
+data changes only frontend paths. It still ends on the session's branch:
+design reviews it, then an engineer opens the pull request and reviews it
+before it merges.
+
+| Frontend (`vibe-change-worker`, `vibe-primitive-worker`) | Never |
 |---|---|
-| `apps/app/**` (web pages and route shells) | `apps/api/**`, `apps/mcp/**`, `apps/relay/**`, `apps/realtime/**` |
-| `packages/app/**` (shared web and Desktop UI) | `packages/database/**`, any `prisma/` folder or migration |
-| `packages/design-system/**` (primitives, tokens, stories) | `apps/desktop/src/main/**`, `apps/desktop/prisma/**` (Desktop backend) |
-| `apps/desktop/src/renderer/**` (Desktop UI) | `packages/api/**` (shared API contracts belong to engineering) |
-| `*.stories.tsx` anywhere above, `apps/storybook/**` story wiring | `packages/golden-sessions/**`, `.github/**`, `scripts/**`, any `AGENTS.md` |
+| `apps/app/**` (web pages and route shells) | `apps/mcp/**`, `apps/relay/**`, `apps/realtime/**` |
+| `packages/app/**` (shared web and Desktop UI) | `packages/golden-sessions/**`, `.github/**` |
+| `packages/design-system/**` (primitives, tokens, stories) | `scripts/**` (one exception below) |
+| `apps/desktop/src/renderer/**` (Desktop UI) | any `AGENTS.md` or `CLAUDE.md` |
+| `*.stories.tsx` anywhere above, `apps/storybook/**` story wiring | |
 
-That table is the **draft** scope. In draft scope, a request that can only be
-met by a change in the right-hand column becomes a stub plus a written
-requirement (`stubs.md`). Say so in one sentence and build the UI against the
-stub.
-
-One exception under `scripts/`: the source-gate allowlist
-(`scripts/lint/source-gate-allowlist.json`) is shrink-only, so when the
-session's change removes the last allowlisted occurrence of a rule (or some
-of them), delete that entry or lower its count. That is the only `scripts/`
-edit a draft session may make; the handoff inventory checks mechanically that
-the file only lost entries or counts, and refuses anything else under
-`scripts/`. It applies wherever the session's work is checked or pushed (a
-change worker's self-check or fix mode, a redeploy, the first push, handoff):
-when `pnpm check:source-gates` or the pre-push hook reports a stale entry
-(for example "pins count 1, but only 0 remain") for a file the session
-changed, delete the entry (0 remain) or lower its count to what remains, and
-run the gate again. Never add an entry or raise a count; a new violation is
-fixed in the code.
-
-### Full scope
-
-In a **full** scope session (the session record's `scope`), the work goes all
-the way, backend included. It still ends on the session's branch: design
-reviews it, then an engineer opens the pull request and reviews it before it
-merges. These move to allowed, each under its owning `AGENTS.md`, and are
-built by `vibe-backend-worker`, never by the change worker:
+Backend, built only by `vibe-backend-worker`, each under its owning
+`AGENTS.md`:
 
 - `apps/api/**`: thin route, fat service, `withAnyAuth`, Zod validation, org
   scoping on every query, the `Result` error model (`apps/api/AGENTS.md`).
@@ -59,15 +42,28 @@ built by `vibe-backend-worker`, never by the change worker:
   `.closedloop-ai/decision-tables/` (gitignored in this repo); handoff attaches
   it to the live ticket so the reviewing engineer sees it.
 
-Full-scope work is headed for `main`, so the closed-by-default UI policy
-applies: a net-new screen, surface, or navigation item ships behind a
-default-off PostHog flag (one key for web and Desktop, read where it gates).
-If the person chose Labs, the Labs pattern is that flag. Tell them in one line
-that the new screen stays hidden on their environment until that flag is
-turned on for them.
+Handoff checks the work harder when the session changed backend code (the
+whole test suite and two code review passes) than when it did not.
 
-Still never, in any scope: `packages/golden-sessions/**`, `.github/**`, and
-`AGENTS.md` / `CLAUDE.md` files. Stubs are not used in full scope.
+One exception under `scripts/`: the source-gate allowlist
+(`scripts/lint/source-gate-allowlist.json`) is shrink-only, so when the
+session's change removes the last allowlisted occurrence of a rule (or some
+of them), delete that entry or lower its count. That is the only `scripts/`
+edit a session may make; the handoff inventory checks mechanically that the
+file only lost entries or counts, and reports anything else under `scripts/`.
+It applies wherever the session's work is checked or pushed (a change
+worker's self-check or fix mode, a redeploy, the first push, handoff): when
+`pnpm check:source-gates` or the pre-push hook reports a stale entry (for
+example "pins count 1, but only 0 remain") for a file the session changed,
+delete the entry (0 remain) or lower its count to what remains, and run the
+gate again. Never add an entry or raise a count; a new violation is fixed in
+the code.
+
+Vibe work is headed for `main`, so the closed-by-default UI policy applies: a
+net-new screen, surface, or navigation item ships behind a default-off PostHog
+flag (one key for web and Desktop, read where it gates). If the person chose
+Labs, the Labs pattern is that flag. Tell them in one line that the new screen
+stays hidden on their environment until that flag is turned on for them.
 
 The prototype-first rule in the root `AGENTS.md` (net-new screens start in
 `apps/prototypes`) does not apply to vibe sessions. That is an operator

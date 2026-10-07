@@ -17,6 +17,7 @@ HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 TICKET_TEMPLATE = PLUGIN_ROOT / "skills" / "vibe" / "references" / "ticket-template.md"
 TICKET_WORKER = PLUGIN_ROOT / "agents" / "vibe-ticket-worker.md"
 CHANGE_WORKER = PLUGIN_ROOT / "agents" / "vibe-change-worker.md"
+VIBE_SKILL = PLUGIN_ROOT / "skills" / "vibe" / "SKILL.md"
 
 
 def section(text: str, heading: str) -> str:
@@ -34,7 +35,7 @@ def test_behavior_answers_go_to_the_change_worker_before_the_ticket() -> None:
     assert "**Wording**" in answers
     assert "when you are unsure" in answers
     assert "A behavior answer goes to `vibe-change-worker` in fix mode first" in answers
-    for rerun in ("step 3", "step 4", "step 5", "step 6", "step 7", "step 8"):
+    for rerun in ("step 3", "step 4", "step 5", "step 6", "step 7"):
         assert rerun in answers, rerun
     assert "Only then does the answer go to `vibe-ticket-worker`." in answers
     assert "A wording answer goes straight to `vibe-ticket-worker`." in answers
@@ -42,14 +43,14 @@ def test_behavior_answers_go_to_the_change_worker_before_the_ticket() -> None:
     assert "`already met`" in answers
 
 
-def test_step_nine_routes_answers_and_blocks_finalizing_until_reruns_finish() -> None:
-    step_nine = section(HANDOFF_SKILL.read_text(), "## 9. Choose who picks it up, then check the ticket")
+def test_step_eight_routes_answers_and_blocks_finalizing_until_reruns_finish() -> None:
+    step_eight = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
 
-    assert "`NEEDS_PERSON`" in step_nine
-    assert "`NEEDS_CHANGE`" in step_nine
-    assert "route their answer as \"Answers from the person\" says" in step_nine
-    assert "Environment base commit from the current inventory" in step_nine
-    assert "Never go on to step 10 while a behavior answer" in step_nine
+    assert "`NEEDS_PERSON`" in step_eight
+    assert "`NEEDS_CHANGE`" in step_eight
+    assert "route their answer as \"Answers from the person\" says" in step_eight
+    assert "Environment base commit from the current inventory" in step_eight
+    assert "Never go on to step 9 while a behavior answer" in step_eight
 
 
 def test_summary_corrections_that_change_behavior_are_routed_too() -> None:
@@ -81,16 +82,16 @@ def test_change_worker_checks_a_handoff_answer_against_the_code() -> None:
     assert "Scope and acceptance criteria in their words" in fix_mode
 
 
-def test_step_nine_asks_for_the_next_owner_and_never_defaults() -> None:
-    step_nine = section(HANDOFF_SKILL.read_text(), "## 9. Choose who picks it up, then check the ticket")
+def test_step_eight_asks_for_the_next_owner_and_never_defaults() -> None:
+    step_eight = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
 
-    assert "Who should pick this up next? A name or email is fine." in step_nine
-    assert "`vibe-ticket-worker` in lookup mode" in step_nine
-    assert "`Assigning this to <full name>.`" in step_nine
-    assert "`<full name> (<email>)`" in step_nine
-    assert "ask the question again" in step_nine
-    assert "never fall back to anyone by default" in step_nine
-    assert "the next owner (full name and email)" in step_nine
+    assert "Who should pick this up next? A name or email is fine." in step_eight
+    assert "`vibe-ticket-worker` in lookup mode" in step_eight
+    assert "`Assigning this to <full name>.`" in step_eight
+    assert "`<full name> (<email>)`" in step_eight
+    assert "ask the question again" in step_eight
+    assert "never fall back to anyone by default" in step_eight
+    assert "the next owner (full name and email)" in step_eight
 
 
 def test_lookup_matches_through_the_script_and_assign_uses_its_user() -> None:
@@ -143,3 +144,37 @@ def test_ticket_worker_fills_grading_at_handoff_and_never_rederives_it() -> None
     assert "Grading is never re-derived: it stays the template's text." in handoff
     assert "template's Grading section copied unchanged" in handoff
     assert "adding the section after Handoff when the ticket has none" in handoff
+
+
+def test_check_weight_follows_whether_the_session_changed_backend_code() -> None:
+    skill = HANDOFF_SKILL.read_text()
+    task_list = section(skill, "## 1. Show the task list first")
+    checks = section(skill, "## 5. Checks")
+    reviews = section(skill, "## 6. Reviews")
+
+    assert "handoff-inventory.mjs --worktree" in task_list
+    assert "`backendChanged`" in task_list
+    assert "use the backend checks from then on" in task_list
+    assert "Lighter: dispatch `vibe-verify-worker` in checks mode" in checks
+    assert "Backend: dispatch `vibe-verify-worker` in full-suite mode" in checks
+    assert "Lighter: dispatch the repo agent `review-soul`" in reviews
+    assert "`vibe-adversarial-reviewer` in parallel" in reviews
+    assert "Backend: run the `workflow-code-review` skill" in reviews
+    assert "`workflow-code-review` a second time" in reviews
+
+
+def test_draft_scope_is_retired() -> None:
+    for path in (HANDOFF_SKILL, VIBE_SKILL, TICKET_TEMPLATE, TICKET_WORKER, CHANGE_WORKER):
+        text = path.read_text()
+        for retired in ("draft scope", "full scope", "--scope", "vibe-stub", "stubs.md", "api-requirements"):
+            assert retired not in text.lower(), (path.name, retired)
+    assert not (PLUGIN_ROOT / "skills" / "vibe" / "references" / "stubs.md").exists()
+    assert not (PLUGIN_ROOT / "agents" / "vibe-api-requirements-writer.md").exists()
+
+
+def test_vibe_sends_pure_mockups_to_prototype() -> None:
+    starting_new = section(VIBE_SKILL.read_text(), "## 2. Start or resume")
+    build_loop = section(VIBE_SKILL.read_text(), "## 5. Build loop")
+
+    assert "use `$prototype` for that instead" in starting_new
+    assert "`$prototype`" in build_loop
