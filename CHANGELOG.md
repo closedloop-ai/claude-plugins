@@ -4,6 +4,26 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.0
+
+#### Added
+- `vibe-environment-worker` agent: takes the production flag snapshot in PostHog for the person's account, pushes the `andy/<slug>` branch, starts the session's environment through symphony-alpha's `vibe-environment-dispatch.yml` request workflow (inputs fed to `gh workflow run --json` from a file: `branch`, `mode`, `flag_snapshot`, `request_id`, and for seeded `person_email` plus an optional `clerk_org_id`; `desktop_auth` once the session has a Desktop profile), follows that run and the `vibe-environment.yml` run it triggers by the request id in their titles, asks which org owns Acme Co when the person has several, waits for the Vercel app, API, and Storybook builds, and records the URLs. Redeploy mode makes one commit of the session's changes (never a local fix) and pushes; flags mode retakes the snapshot and requests the environment again with the same mode; desktop mode requests it again so it signs in the session's Desktop profile.
+- `vibe-ticket-worker` agent: creates the session's live ClosedLoop ticket at session start (assigned to Andrew Eye, In Progress), reconciles and checks it at handoff, and assigns it to Nenad Antic with the status left In Progress.
+- `vibe-sessions.mjs`: `--mode seeded|blank` on `new` and `touch`; `--live-ticket`; `--vercel`, `--deployed`, and `--clerk-org-id` on `touch`; the stable per-branch Vercel URLs recorded on the session; and new commands `show`, `flag-snapshot` (validates and saves the snapshot `{ takenAt, distinctId, orgId?, flags }`), `desktop-auth` (validates and saves the Desktop profile's auth claim), `dispatch-inputs` (writes the request inputs with a fresh request id), `codex-sessions` (records `CODEX_THREAD_ID` and every subagent thread it spawned, read from Codex's session files), and `ticket-sections` (renders the ticket's Environment, Production flag snapshot, and Sessions sections from the record).
+- `handoff/scripts/live-ticket-check.mjs`: checks a live ticket body has every section its scope needs, filled, with no template placeholder or `Pending.` marker left.
+
+#### Changed
+- `vibe` no longer starts a local web environment. It asks for seeded or blank data, creates the live ticket, stands up the session's Vercel environment, opens its app URL for the person to sign in, redeploys only when asked ("redeploy", "push it up", and similar), and refreshes flags only when asked. Local Storybook may run between redeploys; the Desktop app runs locally only for sessions that touch Desktop, on a seeded profile in the session's private git directory signed in to the session's Vercel API through `pnpm --filter desktop vibe:profile` (`prepare`, `auth-claim`, `sign-in`, `launch`), and the session continues web-only if that fails.
+- `handoff` checks the live ticket instead of writing it, runs the checks and reviews (full scope keeps the whole suite and two `workflow-code-review` passes), pushes the last changes, and assigns the ticket to Nenad Antic. Both scopes end at the branch; the task lists shown to the person changed to match.
+- `references/ticket-template.md` moved to the vibe skill and is now the live ticket's section template, with which worker keeps each section current. Change, backend, and primitive workers update their sections as they work; draft stubs add their API requirement to the ticket when made.
+- `vibe-setup-worker` starts, stops, and diagnoses local Storybook and the local Desktop app instead of the local web environment; local-fix tracking is unchanged.
+- `vibe-backend-worker` generates migrations with `prisma migrate diff` and no live database; the API's Vercel build applies them on redeploy.
+- `handoff-inventory.mjs` covers the session's redeploy commits and reports the session's mode, live ticket, and Vercel URLs instead of a preview alias.
+
+#### Removed
+- `vibe-preflight.sh` Docker, Colima, and Docker Compose checks and their fixes.
+- `vibe-publish-worker` and `vibe-ship-worker`; full scope no longer opens a pull request, waits for review, or follows the merge queue.
+
 ### code v1.18.3
 
 #### Fixed

@@ -7,6 +7,10 @@ name) and remembers it in `~/.codex/vibe/config.json`. Every later run and
 (for example `~/Documents/Closedloop.ai - Active Work/symphony-alpha`), so
 quote every path in every command.
 
+Vibe sessions run on a Vercel environment, not a local web stack, so the
+preflight does not check Docker; `gh` matters because workers push the
+session's branch and start its environment through GitHub.
+
 `scripts/vibe-preflight.sh` reports each failure with a `fix` key. Apply the
 matching fix below, then re-run the script. Run fixes yourself in the terminal.
 Use the Codex Computer Use plugin only where a step says so. Never type,
@@ -25,12 +29,6 @@ installing <thing>; type it in the prompt" and wait.
 | `brew-install-jq` | `brew install jq` |
 | `brew-install-gh` | `brew install gh`, then apply `gh-auth-login`. |
 | `gh-auth-login` | `gh auth login --hostname github.com --git-protocol https --web`. It prints a one-time code and opens the browser. Computer Use may paste the code and click Authorize when the person is already signed in to GitHub in that browser; otherwise ask them to sign in there. Then `gh auth setup-git`. |
-| `install-docker` | Only when neither Docker Desktop nor Colima is installed: `brew install --cask docker`, then accept the license without a dialog: `sudo /Applications/Docker.app/Contents/MacOS/install --accept-license --user="$USER"` (asks for the Mac password). Then apply `start-docker`. |
-| `start-docker` | `docker desktop start` (falls back to `open -a Docker` when the `desktop` subcommand is missing). Poll `docker info` every 5 seconds for up to 3 minutes. If it does not come up, take one screenshot with Computer Use; if a Docker dialog is waiting (sign-in prompt, survey, terms), dismiss or skip it (never sign in on the person's behalf) and keep polling. |
-| `brew-install-docker-cli` | Colima is the engine but the `docker` command is missing: `brew install docker`, then re-run the preflight (it will then ask for `start-colima` if Colima is stopped). |
-| `start-colima` | Colima is installed and stopped: `colima start` (the first start downloads a virtual machine and can take several minutes), then `docker context use colima`. Poll `docker info` every 5 seconds for up to 5 minutes. Do not install Docker Desktop on a Mac that uses Colima. |
-| `use-colima-context` | Colima is running but `docker` points at another engine: `docker context use colima`, then `docker info`. |
-| `install-compose-plugin` | `docker compose version` fails: `brew install docker-compose`, then `mkdir -p "$HOME/.docker/cli-plugins" && ln -sfn "$(brew --prefix)/opt/docker-compose/bin/docker-compose" "$HOME/.docker/cli-plugins/docker-compose"`. Continue only once `docker compose version` prints a version. |
 | `choose-repo` | More than one symphony-alpha checkout was found (the `detail` lists them, separated by a vertical bar). Return `NEEDS_PERSON` asking which folder they work in, listing the folders in plain words. Then run the preflight with `--repo "<chosen folder>"`, which remembers it. |
 | `allow-folder-access` | macOS did not let Codex look inside the folders in `detail`. Return `NEEDS_PERSON`: "Your Mac is asking whether Codex can open your <folder> folder; click Allow." If no prompt appears, they allow it in System Settings, Privacy & Security, Files and Folders, under Codex. Then re-run the preflight. Never clone while this is unresolved; the checkout may be in that folder. |
 | `clone-repo` | Only when the preflight found no checkout anywhere in the home folder: `mkdir -p "$HOME/Source" && gh repo clone closedloop-ai/symphony-alpha "$HOME/Source/symphony-alpha"`, run the preflight with `--repo "$HOME/Source/symphony-alpha"` so it is remembered, then apply `run-loops-setup`. |

@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
+import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");
@@ -24,7 +24,7 @@ function setup(t, slug) {
   });
   const created = runNode(
     SESSIONS,
-    ["new", "--repo", checkout, "--slug", slug, "--summary", slug, "--scope", "draft"],
+    ["new", "--repo", checkout, "--slug", slug, "--summary", slug, "--scope", "draft", "--mode", "seeded"],
     fixture.home
   );
   assert.equal(created.status, 0, created.stderr);
@@ -102,4 +102,23 @@ test("a recorded local fix that was already restored is not listed", (t) => {
   const result = runNode(INVENTORY, ["--worktree", worktree], home);
   assert.equal(result.status, 0);
   assert.deepEqual(result.json.localFixes, []);
+});
+
+test("committed redeploys count as the session's work and the live ticket is reported", (t) => {
+  const { home, worktree } = setup(t, "redeployed");
+  write(worktree, "apps/app/page.tsx", "export const page = 3;\n");
+  git(worktree, ["add", "apps/app/page.tsx"], home);
+  git(worktree, ["commit", "--quiet", "-m", "redeploy 1"], home);
+  write(worktree, "apps/app/later.tsx", "export const later = 1;\n");
+  runNode(SESSIONS, ["touch", "--worktree", worktree, "--live-ticket", "ISS-90"], home);
+
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.status, 0, JSON.stringify(result.json));
+  assert.deepEqual(result.json.changedFiles, [
+    { path: "apps/app/later.tsx", status: "A" },
+    { path: "apps/app/page.tsx", status: "M" },
+  ]);
+  assert.equal(result.json.liveTicket, "ISS-90");
+  assert.equal(result.json.mode, "seeded");
+  assert.equal(result.json.vercel.appUrl, "https://app-stage-git-andy-redeployed.preview.closedloop-stage.ai");
 });

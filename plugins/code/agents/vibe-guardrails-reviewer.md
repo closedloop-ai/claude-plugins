@@ -1,6 +1,6 @@
 ---
 name: vibe-guardrails-reviewer
-description: Reviews a vibe session's uncommitted symphony-alpha diff against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, stub wiring, repo conventions). Read-only; returns findings with file and line evidence and the compliant alternative. Used by the handoff skill and on demand during a vibe session.
+description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, stub wiring, repo conventions). Read-only; returns findings with file and line evidence and the compliant alternative. Used by the handoff skill and on demand during a vibe session.
 model: sonnet
 tools: Read, Grep, Glob, Bash
 ---

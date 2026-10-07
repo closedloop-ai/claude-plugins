@@ -83,8 +83,12 @@ the UI behaves as if the save worked, and the requirement lists the request
 body and the expected response. Components never import a stub file
 directly; only hooks do.
 
-## What handoff does with stubs
+## Where requirements go
 
-The handoff skill lists every `*.vibe-stub.ts` file in the diff, turns the
-`requirement` objects into `api-requirements.md`, attaches it to the handoff
-ticket, and checks that no stub is imported outside a hook.
+When the change worker makes a stub, it adds that stub's requirement to the
+live ticket's API requirements section right away (`ticket-template.md`), so
+engineering can see what is needed while the work is still going. At handoff
+the inventory lists every `*.vibe-stub.ts` file in the diff and checks that
+no stub is imported outside a hook, `vibe-api-requirements-writer` turns the
+`requirement` objects into `api-requirements.md`, and the ticket worker
+reconciles the ticket's section with it and attaches the file.

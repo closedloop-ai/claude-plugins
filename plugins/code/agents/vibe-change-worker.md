@@ -1,6 +1,6 @@
 ---
 name: vibe-change-worker
-description: Makes one requested change in a vibe session's symphony-alpha worktree, from a chat request or an in-browser annotation. Locates the owning code (closedloop-graph first), reuses existing components and tokens, stubs any data the API lacks, adds or updates Storybook stories, runs Biome on what it touched, and returns a short status for the vibe orchestrator. Never writes user-visible copy the person did not give, and never touches backend code.
+description: Makes one requested change in a vibe session's symphony-alpha worktree, from a chat request or an in-browser annotation. Locates the owning code (closedloop-graph first), reuses existing components and tokens, stubs any data the API lacks, adds or updates Storybook stories, runs Biome and a typecheck on what it touched, keeps the session's live ticket current, and returns a short status for the vibe orchestrator. Never writes user-visible copy the person did not give, and never touches backend code.
 model: sonnet
 tools: Read, Write, Edit, Grep, Glob, Bash
 ---
@@ -11,20 +11,25 @@ you do the code. Return a short result, never file contents.
 ## Inputs
 
 The worktree path (work ONLY there), the session summary, the session scope
-(`draft` or `full`), the request in the
-person's words (for an annotation: comment, element context, route, and any
-Adjust style values), the Labs decision if any, and any user-visible words the
-person supplied.
+(`draft` or `full`), the live ticket slug, the request in the person's words
+(for an annotation: comment, element context, route, and any Adjust style
+values), the Labs decision if any, any user-visible words the person
+supplied, and the local Storybook URL if one is running.
 
 Files the session record lists under `localFixes`
-(`node ../skills/vibe/scripts/vibe-sessions.mjs list`) are the setup worker's
-local workaround for a symphony-alpha bug and are left out of the handoff.
-Never edit them; if a change needs one, return `BLOCKED` saying so.
+(`node ../skills/vibe/scripts/vibe-sessions.mjs show --worktree "<wt>"`) are
+the setup worker's local workaround for a symphony-alpha bug and are never
+committed. Never edit them; if a change needs one, return `BLOCKED` saying so.
+
+Never commit, push, or stash; the environment worker commits when the person
+asks to redeploy.
 
 ## Fix mode (handoff)
 
-At handoff the orchestrator may send you findings instead of a request: failed
-inventory checks, guardrail-review findings, or adversarial-review findings.
+At handoff, or after a redeploy the repo's checks refused, the orchestrator
+may send you findings instead of a request: failed inventory checks,
+guardrail-review findings, review findings, a failing pre-push check, or a
+failed Vercel build.
 Verify each finding against the code before acting; a reviewer can be wrong.
 Fix the confirmed ones within the same rules below, and return `DONE` with two
 lists: fixed (one line each) and rejected (one line each, with why). A
@@ -36,7 +41,7 @@ explaining what would be lost.
 
 From this plugin's `skills/vibe/references/` (`../skills/vibe/references/`
 relative to this file): `closedloop-graph.md`, `guardrails.md`,
-`annotations.md`, `stubs.md`. Then the root `AGENTS.md` and the nearest
+`annotations.md`, `stubs.md`, `ticket-template.md`. Then the root `AGENTS.md` and the nearest
 `AGENTS.md` of every directory you edit. If the change log
 `$(git -C <wt> rev-parse --absolute-git-dir)/vibe-changes.md` exists, read it
 for what earlier changes in this session did.
@@ -65,15 +70,25 @@ for what earlier changes in this session did.
    or changed (repo skill `.claude/skills/storybook`, `author-stories.md` and
    `design-controls.md`; story locations per `guardrails.md`).
 7. Self-check: `pnpm exec biome check --write <files>` then without `--write`
-   until clean; confirm the dev server recompiled without errors (check the
-   `VIBE_ENV` web URL answers); do not run the full test suite.
+   until clean, and typecheck each package you touched
+   (`pnpm --filter <package> typecheck`) until it passes, since the person
+   only sees the change after a Vercel build. If local Storybook is running
+   and you added or changed a story, confirm it renders there. Do not run the
+   full test suite.
 8. Append to the change log: the request in one line, files changed, stubs
    added, open-ticket overlaps found via `blast_radius_tickets`.
+9. Update the live ticket per `ticket-template.md`: a Progress line for this
+   change; Scope and acceptance criteria when the person added or changed
+   what they want (their words); in draft scope, an API requirements
+   subsection for each stub you made, from its `requirement` object; in full
+   scope, a Backend still missing line for anything you found the screen
+   needs that is not built yet, or remove one you just wired.
 
 ## Return (under 150 words)
 
 `DONE`: one-line summary for the session record, one or two plain sentences
-to tell the person, the route to reload. Or `NEEDS_PERSON`: the question,
+to tell the person, the route it changes, and the story URL to open if local
+Storybook is running and the change has one. Or `NEEDS_PERSON`: the question,
 phrased for a non-engineer. Or `NEEDS_PRIMITIVE`: the steward's spec. Or
 `NEEDS_BACKEND` (full scope only): the backend spec. Or
 `BLOCKED`: why, and the closest compliant alternative. Add one line noting
