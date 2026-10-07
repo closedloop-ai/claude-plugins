@@ -74,8 +74,8 @@ it. After that, `$vibe` asks what they want to work on and whether to start
 with sample data (seeded) or empty (blank), sets up that session's own
 Vercel environment (web app, API, and Storybook; a few minutes), and opens
 it in the in-app browser, where they sign in as themselves. Nothing of the
-web app runs on the Mac. The Desktop app runs on the Mac only in a session
-whose work touches Desktop.
+web app runs on the Mac. The Desktop app runs on the Mac for every session,
+signed in to that environment, and opens as a second in-app browser tab.
 
 If a step fails, run the preflight on its own to see which check is red:
 

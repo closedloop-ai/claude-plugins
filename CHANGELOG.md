@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.16
+
+#### Added
+- `vibe-sessions.mjs desktop-launched --worktree --pid --log` records a running `vibe:profile launch` on the session's stack (its pid, its log, and the `Desktop browser URL:` the launch printed), keeping what else the stack lists. It takes the log's last URL line and refuses one that is not a loopback `/design-system/browser.html` URL with a `closedloopBridgeToken`, a log without the line, and a bad pid. `desktop-tab --worktree` returns that URL only while the recorded launch is still running, and `running: false` otherwise. Node tests cover both. The session record is now written owner-only (0600), since its stack can carry the bridge token.
+
+#### Changed
+- `vibe` starts Desktop for every session, not only for work that touches Desktop, and opens it through Desktop's browser bridge as a second in-app Browser tab once Desktop reports ready (in a blank session, only after the person has signed in and created their org, as before). The web app tab still opens first at `<appUrl>/sign-in`. A new "Bringing a tab back" path reopens either tab when the person asks, starting Desktop again when `desktop-tab` says it is not running. The "Desktop isn't available for this session yet, so we'll keep going on the web app." fallback is unchanged; annotation instructions cover either tab, and a redeploy reloads the Desktop tab too.
+- `references/environment.md` Desktop section: `vibe:profile launch` runs the dev launcher with the browser bridge (symphony-alpha ISS-12182), logs owner-only, and step 6 records the launch with `desktop-launched`. A new "The Desktop tab" part says how the URL is opened (exactly as recorded, a new port and token per launch, never in chat or on the ticket, read-only), how `desktop-tab` decides a reopen, and that a launch without the URL line (a worktree before ISS-12182) is reported as Desktop unavailable.
+- `vibe-setup-worker` launches Desktop for every session, skips a launch when `desktop-tab` reports one running, signs in only a profile that is not signed in yet, records the launch with `desktop-launched`, and never returns the URL or its token. `vibe/INSTALL.md` says Desktop runs for every session as a second tab.
+
 ### code v1.19.15
 
 #### Fixed

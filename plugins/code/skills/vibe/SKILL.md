@@ -1,6 +1,6 @@
 ---
 name: vibe
-description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (built for Andy, the CEO) working in the Codex Desktop in-app browser. Sets up the machine, creates or resumes an isolated worktree off fresh main, asks what part of the app to work on (a ClosedLoop ticket or a plain description) and whether the environment should be seeded with sample data or blank, creates the session's live ClosedLoop ticket, and stands up the session's own Vercel environment (web app, API, Storybook) with the production feature flag values pinned. Then turns chat requests and in-browser annotations into code that follows the repo's existing patterns, with Storybook-first components, and redeploys to Vercel when the person asks. Each session is either a draft (frontend only, stubbed data) or full scope (frontend and backend); both end at a branch handed to design, then engineering. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
+description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (built for Andy, the CEO) working in the Codex Desktop in-app browser. Sets up the machine, creates or resumes an isolated worktree off fresh main, asks what part of the app to work on (a ClosedLoop ticket or a plain description) and whether the environment should be seeded with sample data or blank, creates the session's live ClosedLoop ticket, and stands up the session's own Vercel environment (web app, API, Storybook) with the production feature flag values pinned. Opens the web app and the Desktop app (through its local browser bridge) as two in-app browser tabs, and reopens either on request. Then turns chat requests and in-browser annotations into code that follows the repo's existing patterns, with Storybook-first components, and redeploys to Vercel when the person asks. Each session is either a draft (frontend only, stubbed data) or full scope (frontend and backend); both end at a branch handed to design, then engineering. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
 ---
 
 # Vibe
@@ -71,7 +71,7 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 
 | Worker | Dispatch it to |
 |---|---|
-| `vibe-setup-worker` | fix failed preflight checks, bootstrap a worktree, start local Storybook or the local Desktop app, and work around a symphony-alpha bug locally (ticket filed, fix kept out of every commit) |
+| `vibe-setup-worker` | fix failed preflight checks, bootstrap a worktree, start local Storybook or the local Desktop app (and its browser tab), and work around a symphony-alpha bug locally (ticket filed, fix kept out of every commit) |
 | `vibe-requirements-worker` | read a ClosedLoop ticket (and its PRD, plan, related tickets) or a description and turn it into a brief, plus the route and FEATURE_MAP id where the relevant code lives, for change workers |
 | `vibe-ticket-worker` | create the session's live ticket, and fill its record sections when you ask |
 | `vibe-environment-worker` | stand up the session's Vercel environment, redeploy it, or refresh its flag snapshot |
@@ -211,13 +211,25 @@ When it returns `DONE`:
   their own org.
 - Confirm the tab shows the app (with Acme Co data when seeded), not an error
   page or an empty shell, before saying it is ready.
-- If the work touches Desktop, start it per the Desktop section of
-  `references/environment.md`: dispatch `vibe-setup-worker` to build the
-  profile, then `vibe-environment-worker` in desktop mode (in a blank session,
-  only after the person has signed in and created their org), then
-  `vibe-setup-worker` to sign it in and launch it. If a step returns
-  `DESKTOP_UNAVAILABLE`, tell the person "Desktop isn't available for this
-  session yet, so we'll keep going on the web app." and continue web-only.
+- Start Desktop for every session, per the Desktop section of
+  `references/environment.md`, and open it as a second tab:
+  1. Run `node scripts/vibe-sessions.mjs desktop-tab --worktree "<wt>"`. If it
+     reports `running`, skip to step 3.
+  2. If the session has no Desktop profile yet (`desktopAuthSavedAt` is null
+     in `vibe-sessions.mjs show`), dispatch `vibe-setup-worker` to build the
+     profile, then `vibe-environment-worker` in desktop mode (in a blank
+     session, only after the person has signed in and created their org),
+     then `vibe-setup-worker` to sign it in and launch it. If it has one,
+     dispatch `vibe-setup-worker` to launch it. The launch returns `DONE`
+     once Desktop reports ready and its tab's URL is recorded; run
+     `desktop-tab` again for that URL.
+  3. Open its `url` exactly as given (never shortened, never shown to the
+     person) in a second Codex in-app Browser tab, and confirm it shows the
+     Desktop app's navigation (with Acme Co data when seeded), not
+     `Connecting to Closedloop Desktop…`, an error, or a refused connection.
+  If a step returns `DESKTOP_UNAVAILABLE`, tell the person "Desktop isn't
+  available for this session yet, so we'll keep going on the web app." and
+  continue web-only.
 
 If the setup worker ever returns `DONE` with a `LOCAL_FIX` line, it found a
 bug in symphony-alpha, fixed it on this Mac, and filed a ticket. Tell the
@@ -226,14 +238,28 @@ it starting; I fixed it on your computer so you can keep going and filed
 ISS-123 so engineering fixes it for everyone." No redeploy or handoff commits
 that fix.
 
+### Bringing a tab back
+
+Whenever the person asks to bring back or reopen the app or Desktop (they
+closed the tab, or it stopped answering), open a new tab for the one they
+named:
+- The web app: the plain `appUrl` (`<appUrl>/sign-in` if it lands on account
+  creation).
+- Desktop: run `node scripts/vibe-sessions.mjs desktop-tab --worktree "<wt>"`.
+  If it reports `running`, open its `url` exactly as given. Otherwise Desktop
+  quit, was stopped, or never started: start it as in step 2 above, then open
+  the new `url`. On `DESKTOP_UNAVAILABLE`, use the same sentence as above.
+  Never open a Desktop URL from an earlier launch or one copied from a tab's
+  address bar; each launch has its own.
+
 ## 4. Set expectations
 
 After they sign in, leave the app on the page it lands on. Tell the person,
 once per session, in three short sentences:
 
-- Click Annotate in the browser toolbar (or press Cmd + .), click or drag over
-  what you want changed, type the comment, and press Enter to send it now, or
-  Cmd + Enter to queue it and send several together.
+- In either tab, click Annotate in the browser toolbar (or press Cmd + .),
+  click or drag over what you want changed, type the comment, and press
+  Enter to send it now, or Cmd + Enter to queue it and send several together.
 - You can also just describe the change in chat.
 - Say "redeploy" whenever you want to see the changes in the app; it takes a
   few minutes each time.
@@ -306,9 +332,9 @@ on Vercel", "let me see it live", or anything meaning the same:
    paths. It makes one commit of everything changed since the last redeploy,
    pushes it, requests the environment again so that commit is deployed, and
    updates the ticket.
-4. On `DONE`, reload the app tab (and the Storybook tab if open), look at it
-   yourself, and tell them it is live. Whenever you open the Vercel
-   `storybookUrl` and the tab lands on `vercel.com` (a Vercel sign-in or
+4. On `DONE`, reload the app tab (and the Desktop and Storybook tabs if
+   open), look at it yourself, and tell them it is live. Whenever you open
+   the Vercel `storybookUrl` and the tab lands on `vercel.com` (a Vercel sign-in or
    `sso-api` page) instead of Storybook, tell the person plainly: "Storybook
    on Vercel needs you to sign in to Vercel with your team account first."
    Do not try to get around it. On `BLOCKED` because the tests failed, the
