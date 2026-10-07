@@ -15,10 +15,12 @@
 //                                     [--scope draft|full] [--mode seeded|blank] [--stack <json>]
 //                                     [--clerk-org-id org_...]
 //                                     [--operator-id <id> --operator-email <email> [--operator-name <name>]]
-//   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json>
+//   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json> [--replace]
 //   vibe-sessions.mjs desktop-auth    --worktree <path> --file <auth-claim.json>
 //   vibe-sessions.mjs dispatch-inputs --worktree <path> --out <inputs.json>
-//                                     [--person-email <email>]
+//                                     [--person-email <email>] [--keep-flag-snapshot true|false]
+//                                     (`true` is sent only when the session's previous request
+//                                     published a verified result; otherwise `false`)
 //   vibe-sessions.mjs codex-sessions  --worktree <path> [--thread <id>]
 //   vibe-sessions.mjs ticket-sections --worktree <path>
 //   vibe-sessions.mjs environment-result --worktree <path> --file <vibe-environment-result.json>
@@ -134,6 +136,8 @@ const { positionals, values } = parseArgs({
     "person-email": { type: "string" },
     "clerk-org-id": { type: "string" },
     "request-id": { type: "string" },
+    "keep-flag-snapshot": { type: "string" },
+    replace: { type: "boolean", default: false },
     "operator-id": { type: "string" },
     "operator-email": { type: "string" },
     "operator-name": { type: "string" },
@@ -584,6 +588,13 @@ function saveFlagSnapshot() {
     throw new Error(`Could not read a JSON flag snapshot from ${file}: ${error instanceof Error ? error.message : String(error)}`);
   }
   const snapshot = validateFlagSnapshot(parsed);
+  // ISS-12135 bug 43: the snapshot is taken once, when the session starts,
+  // and replaced only when the person asks (flags mode passes --replace).
+  if (record.flagSnapshot && !values.replace) {
+    throw new Error(
+      `The session already has a flag snapshot (taken ${record.flagSnapshot.takenAt}); it is replaced only when the person asks for fresh flags (--replace).`
+    );
+  }
   const saved = snapshotPath(worktree);
   writeFileSync(saved, `${JSON.stringify(snapshot, null, 2)}\n`);
   const updated = {
@@ -651,6 +662,13 @@ function dispatchInputs() {
   const worktree = requireOption("worktree");
   const out = requireOption("out");
   const record = requireRecord(worktree);
+  // ISS-12135 bug 43: a snapshot is kept only when this session's previous
+  // request published a verified result. A run that failed (perhaps before
+  // posting the snapshot into a schema it built) gets it posted again.
+  const previousVerified =
+    typeof record.lastRequestId === "string" && record.vercel?.verifiedRequestId === record.lastRequestId;
+  const asked = values["keep-flag-snapshot"];
+  const keepFlagSnapshot = asked === "true" && !previousVerified ? "false" : asked;
   const inputs = buildDispatchInputs({
     record,
     snapshot: readSnapshot(worktree, record),
@@ -658,9 +676,11 @@ function dispatchInputs() {
     clerkOrgId: record.clerkOrgId ?? undefined,
     desktopAuth: readDesktopAuth(worktree, record),
     requestId: randomUUID(),
+    keepFlagSnapshot,
   });
   mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   writeFileSync(out, `${JSON.stringify(inputs)}\n`);
+  writeRecord(worktree, { ...record, lastRequestId: inputs[DispatchInput.RequestId] });
   return {
     workflow: DISPATCH_WORKFLOW,
     ref: "main",
@@ -748,6 +768,7 @@ function recordEnvironmentResult() {
       lastDeployedAt: now,
       deploymentIds: verified.deploymentIds,
       verifiedAt: verified.verifiedAt,
+      verifiedRequestId: requestId,
     },
     lastActiveAt: now,
   };
