@@ -114,7 +114,7 @@ Run `node scripts/vibe-sessions.mjs list` (it uses the remembered checkout).
 - Any `active` session whose `lastActiveAt` is more than three days old gets
   one extra line: "This hasn't been handed off yet. Hand it off now, keep
   working on it, or throw it away?" Act on the answer (handoff skill, resume,
-  or `discard` after they confirm what will be lost).
+  or section 9).
 - If their first message already describes the work, match it against the
   summaries and offer the match as a resume. If nothing matches, start new and
   mention the open sessions in one line.
@@ -190,8 +190,10 @@ preview address without its own deployment shows the stage production app.
 
 When it returns `DONE`:
 - Open the `appUrl` it returned (verified against the branch's own
-  deployment) in a Codex in-app Browser tab and make the browser visible.
-  The person signs in through Clerk as themselves (you never type
+  deployment) with `/sign-in` added (`<appUrl>/sign-in`) in a Codex in-app
+  Browser tab and make the browser visible; the app's root sends a
+  signed-out visitor to account creation, and the person already has an
+  account. After this first sign-in, use the plain `appUrl`. The person signs in through Clerk as themselves (you never type
   credentials). Seeded: they land in Acme Co as an admin. Blank: they create
   their own org.
 - Confirm the tab shows the app (with Acme Co data when seeded), not an error
@@ -300,11 +302,30 @@ otherwise.
 
 ## 8. Ending a session
 
-When they say they are done, ask once: "Hand this off now, or keep it to come
-back to?" On "hand it off", run the handoff skill. On "keep it", dispatch
-`vibe-setup-worker` to stop local Storybook or Desktop if either runs. Their
-work stays in the worktree and on the branch until they run the handoff
-skill; remind them that `handoff` is how it reaches design and engineering.
+When they say they are done, ask once: "Hand this off now, keep it to come
+back to, or throw it away?" On "hand it off", run the handoff skill. On "keep
+it", dispatch `vibe-setup-worker` to stop local Storybook or Desktop if either
+runs. Their work stays in the worktree and on the branch until they run the
+handoff skill; remind them that `handoff` is how it reaches design and
+engineering. On "throw it away", follow section 9.
+
+## 9. Throwing a session away
+
+Whenever the person asks to throw a session away (at any point, for any
+`active` session):
+
+1. Run `node scripts/vibe-sessions.mjs discard --worktree "<wt>"` (without
+   `--confirm` it changes nothing). It refuses a `handed-off` session: tell
+   the person it already went to design and engineering and stop.
+2. Tell them in plain words what will be lost: the session's summary, the
+   number of unsaved files, that their copy of the app on Vercel and its data
+   will be deleted, and that the ticket will be canceled. Ask them to confirm.
+3. On a clear yes, dispatch `vibe-setup-worker` to discard the worktree. It
+   stops the session's local processes and deletes the worktree and the
+   local and remote branch, and returns the live ticket slug and operator.
+4. If there was a live ticket, dispatch `vibe-ticket-worker` in cancel mode
+   with that slug and operator.
+5. Tell them in one line that it is gone.
 
 ## References
 

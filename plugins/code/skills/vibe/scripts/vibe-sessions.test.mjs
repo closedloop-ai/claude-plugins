@@ -593,3 +593,57 @@ test("desktop-auth saves the profile's auth claim and every later request sends 
   assert.equal(seededInputs.clerk_org_id, "org_2abc");
   assert.ok("desktop_auth" in seededInputs);
 });
+
+test("discard reports what would be lost, then deletes the pushed branch everywhere so the slug can be reused", (t) => {
+  const { checkout, home, worktree } = newSession(t, "throw-away");
+  runNode(SCRIPT, ["touch", "--worktree", worktree, "--live-ticket", "ISS-30"], home);
+  git(worktree, ["push", "--quiet", "-u", "origin", "andy/throw-away"], home);
+  writeFileSync(path.join(worktree, "draft.txt"), "unsaved\n");
+
+  const preview = runNode(SCRIPT, ["discard", "--worktree", worktree], home);
+  assert.equal(preview.status, 0, preview.stderr);
+  assert.equal(preview.json.discarded, false);
+  assert.equal(preview.json.wouldLose.pushed, true);
+  assert.equal(preview.json.wouldLose.liveTicket, "ISS-30");
+  assert.deepEqual(preview.json.wouldLose.operator, { id: "user-andy", email: "andy@example.com", name: "Andy Example" });
+  assert.deepEqual(preview.json.wouldLose.uncommittedFiles, ["draft.txt"]);
+  assert.notEqual(git(checkout, ["ls-remote", "--heads", "origin", "andy/throw-away"], home), "");
+
+  const done = runNode(SCRIPT, ["discard", "--worktree", worktree, "--confirm"], home);
+  assert.equal(done.status, 0, done.stderr);
+  assert.equal(done.json.discarded, true);
+  assert.equal(done.json.remoteBranchDeleted, true);
+  assert.equal(done.json.wouldLose.liveTicket, "ISS-30");
+  assert.equal(git(checkout, ["ls-remote", "--heads", "origin", "andy/throw-away"], home), "");
+  assert.equal(git(checkout, ["branch", "--list", "andy/throw-away"], home), "");
+  assert.deepEqual(runNode(SCRIPT, ["list"], home).json.sessions, []);
+
+  const again = runNode(
+    SCRIPT,
+    ["new", "--slug", "throw-away", "--summary", "again", "--scope", "draft", "--mode", "blank", ...OPERATOR_ARGS],
+    home
+  );
+  assert.equal(again.status, 0, again.stderr);
+});
+
+test("discard deletes an unpushed session's local branch and never discards a handed-off one", (t) => {
+  const { checkout, home, worktree } = newSession(t, "local-only");
+  const done = runNode(SCRIPT, ["discard", "--worktree", worktree, "--confirm"], home);
+  assert.equal(done.status, 0, done.stderr);
+  assert.equal(done.json.remoteBranchDeleted, false);
+  assert.equal(git(checkout, ["branch", "--list", "andy/local-only"], home), "");
+
+  const created = runNode(
+    SCRIPT,
+    ["new", "--slug", "handed", "--summary", "handed", "--scope", "draft", "--mode", "blank", ...OPERATOR_ARGS],
+    home
+  );
+  const handed = created.json.session.worktree;
+  runNode(SCRIPT, ["touch", "--worktree", handed, "--status", "handed-off"], home);
+  for (const args of [[], ["--confirm"]]) {
+    const refused = runNode(SCRIPT, ["discard", "--worktree", handed, ...args], home);
+    assert.equal(refused.status, 1);
+    assert.match(refused.json.error, /handed off/);
+  }
+  assert.notEqual(git(checkout, ["branch", "--list", "andy/handed"], home), "");
+});

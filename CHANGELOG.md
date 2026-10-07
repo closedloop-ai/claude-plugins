@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.3
+
+#### Fixed
+- `vibe-environment-worker` treats the environment as ready only when the `vibe-environment.yml` run succeeds and its `vibe-environment-result` artifact (`requestId`, `branch`, `mode`, `headSha`, the app, API, and Storybook URLs, `deploymentIds`, `verifiedAt`) passes the new `vibe-sessions.mjs environment-result` command, which checks it against the request id, the session's branch and mode, and the worktree's HEAD before recording the URLs, deployment ids, and deployed commit. It no longer matches GitHub deployments by `ref`, probes preview URLs, or claims a push of a new branch starts the Vercel builds. Create, redeploy, flags, and desktop modes all read the result, and a missing or refused result returns `BLOCKED` without a URL.
+- `vibe-environment-worker` follows each run job by job and stops at the first failed, cancelled, or timed-out job with that job's failed log, instead of waiting for the whole run.
+- Redeploy mode requests the environment again with the same mode after pushing, so the new commit is deployed and verified.
+- `ticket-sections` shows the app, API, and Storybook URLs and the last deployed commit only once the environment result is recorded; `vibe` opens only the URL the worker returned with `DONE`, and a resumed session without a verified environment goes through create mode again, keeping its flag snapshot. The first time it opens the app for the person to sign in, it opens the verified URL's `/sign-in` path; after that, the plain app URL.
+- `dispatch-inputs` sends `person_email` for a blank session that has a Desktop auth claim (and only then), so a blank session can get a Desktop session; a blank session still never sends a Clerk org.
+- `discard` deletes the remote `andy/<slug>` branch (removing its Vercel previews and preview schema), the worktree, and the local branch, refuses a handed-off session, and returns the live ticket and operator. `vibe` offers throwing a session away at any time (new section 9): the setup worker discards it after the person confirms, and `vibe-ticket-worker` cancel mode moves the live ticket to Canceled with a Progress line.
+
+#### Removed
+- `vibe-sessions.mjs touch --vercel` and `--deployed`; `environment-result` is the only way the session records URLs and the deployed commit.
+
 ### code v1.19.2
 
 #### Fixed

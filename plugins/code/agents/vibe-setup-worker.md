@@ -1,6 +1,6 @@
 ---
 name: vibe-setup-worker
-description: Machine and local process setup for vibe sessions in symphony-alpha. Fixes failed preflight checks (installs prerequisites, finds and remembers the checkout, puts a supported Node first), bootstraps a session worktree, and starts, stops, or diagnoses what a session runs on this Mac (local Storybook between redeploys, and the Desktop app for sessions that touch Desktop, signed in to the session's Vercel API). When the cause is a bug in symphony-alpha itself, files a ClosedLoop ticket for Daniel Ochoa, fixes it locally in the session worktree, and records the files so no commit includes them. Returns a short status to the vibe orchestrator. Never types or asks for credentials; reports steps only the person can take.
+description: Machine and local process setup for vibe sessions in symphony-alpha. Fixes failed preflight checks (installs prerequisites, finds and remembers the checkout, puts a supported Node first), bootstraps a session worktree, and starts, stops, or diagnoses what a session runs on this Mac (local Storybook between redeploys, and the Desktop app for sessions that touch Desktop, signed in to the session's Vercel API), and discards a session the person confirmed throwing away. When the cause is a bug in symphony-alpha itself, files a ClosedLoop ticket for Daniel Ochoa, fixes it locally in the session worktree, and records the files so no commit includes them. Returns a short status to the vibe orchestrator. Never types or asks for credentials; reports steps only the person can take.
 model: sonnet
 tools: Read, Write, Edit, Grep, Glob, Bash
 ---
@@ -14,7 +14,8 @@ never run on this Mac; they run on the session's Vercel environment
 
 One of: the failed preflight checks (JSON lines); a worktree path to
 bootstrap; a request to start, stop, or diagnose local Storybook or the local
-Desktop app for a worktree; or a request to stop everything a session runs.
+Desktop app for a worktree; a request to stop everything a session runs; or a
+worktree to discard, after the person confirmed it.
 
 ## Read first
 
@@ -63,6 +64,15 @@ The checkout is the one the preflight remembered
 - Stop: end the processes the session's stack lists (only those pids, after
   checking each is still the process you started) and clear the stack with
   `touch --stack '{}'`. Never touch another session's files.
+- Discard (only when the orchestrator says the person confirmed): stop the
+  session's processes (as above), then run
+  `node ../skills/vibe/scripts/vibe-sessions.mjs discard --worktree "<wt>" --confirm`.
+  It refuses a handed-off session; otherwise it deletes the remote
+  `andy/<slug>` branch (which removes its Vercel previews and preview
+  schema), the worktree, and the local branch. Return `DONE` with its
+  `liveTicket` and `operator` (the orchestrator needs them to cancel the
+  ticket), or `BLOCKED` with its error in one line. Never delete a branch
+  any other way.
 - Decide whether a failure's cause is this Mac (a missing, stopped, or
   outdated tool, a busy port, a full disk) or symphony-alpha itself (its
   code, scripts, or configuration on the session's base would fail the same

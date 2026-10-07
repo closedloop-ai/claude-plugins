@@ -384,6 +384,14 @@ function showSession() {
   return { worktree, ...requireRecord(worktree) };
 }
 
+/**
+ * Without `--confirm`, reports what discarding would lose. With it, deletes
+ * the remote branch (which removes the session's Vercel previews and preview
+ * schema), the worktree, and the local branch, in that order, so a failed
+ * remote delete leaves the session intact. A handed-off session is never
+ * discarded. The result carries the live ticket and operator read from the
+ * record before it is deleted, for the worker that cancels the ticket.
+ */
 function discardSession() {
   const worktree = requireOption("worktree");
   const record = readRecord(worktree);
@@ -391,11 +399,16 @@ function discardSession() {
   if (!branch.startsWith(BRANCH_PREFIX)) {
     throw new Error(`${worktree} is not a vibe session (branch ${branch}).`);
   }
+  if (record?.status === SessionStatus.HandedOff) {
+    throw new Error(`${branch} was handed off; it belongs to design and engineering now and is never discarded.`);
+  }
   const changed = git(worktree, ["status", "--porcelain"]);
   const wouldLose = {
     worktree,
     branch,
     summary: record?.summary ?? null,
+    liveTicket: record?.liveTicket ?? null,
+    operator: record?.operator ?? null,
     uncommittedFiles: changed ? changed.split("\n").map((line) => line.slice(3)) : [],
     pushed: git(worktree, ["ls-remote", "--heads", "origin", branch]) !== "",
   };
@@ -404,11 +417,12 @@ function discardSession() {
   }
   const commonDir = git(worktree, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const repo = path.dirname(commonDir);
-  git(repo, ["worktree", "remove", "--force", worktree]);
-  if (!wouldLose.pushed) {
-    git(repo, ["branch", "-D", branch]);
+  if (wouldLose.pushed) {
+    git(repo, ["push", "origin", "--delete", branch]);
   }
-  return { discarded: true, wouldLose };
+  git(repo, ["worktree", "remove", "--force", worktree]);
+  git(repo, ["branch", "-D", branch]);
+  return { discarded: true, remoteBranchDeleted: wouldLose.pushed, wouldLose };
 }
 
 /**
