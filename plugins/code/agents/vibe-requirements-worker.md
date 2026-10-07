@@ -1,6 +1,6 @@
 ---
 name: vibe-requirements-worker
-description: Turns a ClosedLoop ticket or a plain description into vibe-session requirements for symphony-alpha. Reads the ticket with its PRD, plan, and related tickets through closedloop-graph and the ClosedLoop MCP, checks for existing or overlapping work, maps the request to the screen to start on, and returns a short brief plus any questions only the person can answer. Read-only.
+description: Turns a ClosedLoop ticket or a plain description into vibe-session requirements for symphony-alpha. Reads the ticket with its PRD, plan, and related tickets through closedloop-graph and the ClosedLoop MCP, checks for existing or overlapping work, locates the route and FEATURE_MAP id where the relevant code lives (for change workers), and returns a short brief plus any questions only the person can answer. Read-only.
 model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
@@ -25,17 +25,20 @@ the person's description in their own words.
 2. Description: `query_collisions` and `search_nodes` with the description,
    and `fts_search` on its key terms, to find an existing ticket or PRD that
    already covers it.
-3. Map the request to a screen: `.claude/skills/control/FEATURE_MAP.md`
+3. Locate the relevant code: `.claude/skills/control/FEATURE_MAP.md`
    (`pnpm control feature list`, `feature show <id>`), confirmed with
    closedloop-graph `code_symbols` on the screen's main component.
-4. Note in-flight work on that screen: `blast_radius_tickets` on its route and
+4. Note in-flight work on that code: `blast_radius_tickets` on its route and
    main component files.
 
 ## Return (under 200 words)
 
-`DONE` with: a two or three sentence summary in plain words; the requirements
-as a short list quoted from their source (never invented); the starting route
-and FEATURE_MAP id; overlapping or in-flight tickets (slug and title); and
-whether this is a change to an existing screen or a net-new screen. Or
+`DONE` with: a two or three sentence summary in plain words, which the
+orchestrator relays to the person and which never names a screen to start
+on; the requirements as a short list quoted from their source (never
+invented); the route and FEATURE_MAP id where the relevant code lives, for
+change workers (not shown to the person); overlapping or in-flight tickets
+(slug and title); and whether this is a change to an existing screen or a
+net-new screen. Or
 `NEEDS_PERSON` with questions only the person can answer (scope, which of two
 existing tickets they mean). Note whether closedloop-graph was available.

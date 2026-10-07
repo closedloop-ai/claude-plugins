@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.13
+
+#### Changed
+- `vibe` start-new step 1 tells the person only the requirements worker's brief, in two or three sentences. The route and FEATURE_MAP id the worker returns are described as where the relevant code lives, for workers; the orchestrator never presents them as a screen the session starts on (the app opens on its default page after sign-in) and never promises a screen for a broad request such as "look for visual bugs". The Workers table row says the same.
+- `vibe-requirements-worker` locates the route and FEATURE_MAP id where the relevant code lives instead of mapping the request to a screen to start on. Its returned summary is the part relayed to the person and never names a screen to start on; the route and FEATURE_MAP id are still returned, for change workers, and are not shown to the person.
+
 ### code v1.19.12
 
 #### Added
