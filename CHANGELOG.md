@@ -4,13 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### code v1.19.4
+### code v1.19.5
 
 #### Fixed
 - `codex-review` extracts completed JSONL as UTF-8 and atomically replaces feedback only after the stream has a `turn.completed` event and an agent message, so a malformed or partial stream keeps the prior result. Blank and non-JSON lines are skipped and counted in the diagnostics instead of discarding a completed review.
 - The review wrapper retains Codex and parser diagnostics with the log ID, and its failure token carries the Codex exit code and reason.
 - A failed resume starts a fresh session only when the stream never started a thread (no `thread.started`), including a dead thread ID that prints only an error event; a stream that did start keeps its session and is diagnosed from the log rather than paid for twice.
 - The failure-reason parser reads the JSONL as UTF-8, independent of the host code page.
+
+### code v1.19.4
+
+#### Fixed
+- `vibe-environment-worker` offers only the orgs the person is an admin of when asking which org should own Acme Co, reading `isAdmin` and the `clerk_org_refusal=` line the environment run now prints (symphony-alpha #8493), and asks again when the chosen org is one they are not an admin of (`clerk_org_not_admin`). When they are an admin of none (`clerk_org_no_admin`), it tells them they need admin on a test-site organization or a new session with an empty copy of the app; `vibe` passes that on as written. A run from before #8493 lists orgs without `isAdmin`, and every one of them is offered, as before.
 
 ### code v1.19.3
 

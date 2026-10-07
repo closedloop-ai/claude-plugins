@@ -189,7 +189,9 @@ create mode again; the worker keeps its flag snapshot. If the worker returns `NE
 organization should own Acme Co, ask the person exactly that, record the org
 id the worker mapped to their answer with
 `node scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_...>`,
-and dispatch it again. If it returns `BLOCKED`, tell the person in one or two
+and dispatch it again. If it returns `NEEDS_PERSON` saying they are not an
+admin of any of their organizations, pass that on as written and wait for
+their answer. If it returns `BLOCKED`, tell the person in one or two
 plain lines what failed and suggest they message Daniel Ochoa with the
 session slug. Never open or give the person a URL after `BLOCKED`: any
 preview address without its own deployment shows the stage production app.

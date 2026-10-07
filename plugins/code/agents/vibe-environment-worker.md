@@ -101,27 +101,40 @@ then plain search.
    and stop at the first job whose `conclusion` is `failure`, `cancelled`, or
    `timed_out`. Read that job's failed steps
    (`gh run view --job <job databaseId> --repo closedloop-ai/symphony-alpha --log-failed`)
-   and return `BLOCKED` with the cause in one or two lines, except steps 5 and 6.
+   and return `BLOCKED` with the cause in one or two lines, except steps 5, 6
+   and 7.
    Otherwise continue until the run's `status` is `completed` with
    `conclusion` `success`. Give up after 45 minutes with `BLOCKED` naming the
    job still running.
-5. Seeded, and the run says the person belongs to more than one org and no
-   org was chosen: read the orgs from the run's `org: <name> (<org_id>)` lines
-   or its `clerk_orgs_json` output and return `NEEDS_PERSON` with the question
-   "You belong to more than one organization. Which one should own Acme Co:
-   <names>?", plus a mapping from each name to its `org_` id (the orchestrator
-   records the answer with `touch --clerk-org-id` and dispatches you again,
-   which sends `clerk_org_id`). If the run lists no orgs, return `BLOCKED`
-   saying the run did not say which orgs the person belongs to, for Daniel
-   Ochoa. Never ask the person for an id and never pass on the run's wording
-   (such as "pass clerk_org_id").
-6. Any other refusal about the person's identity (no stage account for their
+5. Seeded, and the run says the person must choose an org: its
+   `clerk_org_refusal=` line is `clerk_org_ambiguous` (a run without that line
+   says the person belongs to more than one org and no org was chosen), or it
+   is `clerk_org_not_admin` (the chosen org is one they are not an admin of).
+   Read the orgs from the run's `clerk_orgs_json` output (or its
+   `org: <name> (<org_id>)` lines) and keep only those with `isAdmin` true; an
+   org without that field counts as admin. If any remain, return
+   `NEEDS_PERSON` with the question "You belong to more than one
+   organization. Which one should own Acme Co: <names>?", plus a mapping from
+   each name to its `org_` id (the orchestrator records the answer with
+   `touch --clerk-org-id` and dispatches you again, which sends
+   `clerk_org_id`). If none remain, do step 6 instead. If the run lists no
+   orgs, return `BLOCKED` saying the run did not say which orgs the person
+   belongs to, for Daniel Ochoa. Never ask the person for an id and never pass
+   on the run's wording (such as "pass clerk_org_id").
+6. Seeded, and the person is an admin of none of their orgs (the
+   `clerk_org_refusal=` line is `clerk_org_no_admin`, or step 5 kept no org):
+   return `NEEDS_PERSON` with "Acme Co needs an organization on the test site
+   where you are an admin, and you are not an admin of <names>. Ask an admin
+   there to make you one, then tell me, or start a new session with an empty
+   copy of the app." Put the run's own message in a separate line for Daniel
+   Ochoa.
+7. Any other refusal about the person's identity (no stage account for their
    email, more than one, or no org): return `NEEDS_PERSON` in plain words the
    person can act on, for example "Sign in once at https://app.closedloop-stage.ai
    with your work account, then tell me." or "You don't have an organization
    on the test site yet; sign in there and create one, then tell me." Put the
    run's own message in a separate line for Daniel Ochoa.
-7. Seeded: read `personOrgAdmin` from the `vibe-environment.yml` run (its job
+8. Seeded: read `personOrgAdmin` from the `vibe-environment.yml` run (its job
    summary or log). If it is not `true`, return `BLOCKED` saying the person is
    not an admin of Acme Co.
 
