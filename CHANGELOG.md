@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.21
+
+#### Changed
+- Vibe sessions use `vibe/<slug>` branches instead of `andy/<slug>`, so the rules symphony-alpha keys off them hold for anyone running the skill (meeting requirement A5, symphony-alpha ISS-12135). `vibe-sessions.mjs` creates and lists `vibe/` branches in `.claude/worktrees/vibe-<slug>` worktrees, and `handoff-inventory.mjs` reads the same prefix; sessions on `andy/` branches are no longer listed. Requires symphony-alpha with ISS-12135's `vibe/` workflows. The skill, references, INSTALL.md and agents say `vibe/`.
+- `vibe-sessions.mjs discard --confirm` now requests the drop of a pushed session's preview schema and stored files (`gh workflow run cleanup-preview-schemas.yml --repo closedloop-ai/symphony-alpha --ref main -f branch=<branch>`) before deleting the remote branch, because symphony-alpha's daily sweep no longer drops a `vibe/` schema. A failed request deletes nothing. The result carries `schemaCleanupRequested`. `vibe` SKILL.md, `vibe-setup-worker` and `references/environment.md` say a session's data stays until it is thrown away. Node tests cover the request, a failed request, and an unpushed session.
+
 ### code v1.19.20
 
 #### Changed
