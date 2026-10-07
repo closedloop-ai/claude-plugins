@@ -1,6 +1,6 @@
 ---
 name: vibe
-description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (built for Andy, the CEO) working in the Codex Desktop in-app browser. Sets up the machine, creates or resumes an isolated worktree off fresh main, asks what part of the app to work on (a ClosedLoop ticket or a plain description) and whether the environment should be seeded with sample data or blank, creates the session's live ClosedLoop ticket, and stands up the session's own Vercel environment (web app, API, Storybook) with the production feature flag values pinned. Opens the web app and the Desktop app (through its local browser bridge) as two in-app browser tabs, and reopens either on request. Then turns chat requests and in-browser annotations into code that follows the repo's existing patterns, with Storybook-first components, and redeploys to Vercel when the person asks. Each session is either a draft (frontend only, stubbed data) or full scope (frontend and backend); both end at a branch handed to design, then engineering. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
+description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (built for Andy, the CEO) working in the Codex Desktop in-app browser. Sets up the machine, creates or resumes an isolated worktree off fresh main, asks what part of the app to work on (a ClosedLoop ticket or a plain description) and whether the environment should be seeded with sample data or blank, creates the session's live ClosedLoop ticket, and stands up the session's own Vercel environment (web app, API, Storybook) with the production feature flag values pinned. Opens the web app and the Desktop app (through its local browser bridge) as two in-app browser tabs, and reopens either on request. Then turns chat requests and in-browser annotations into code that follows the repo's existing patterns, with Storybook-first components, and redeploys to Vercel when the person asks, building the backend too whenever a change needs data or an action the API lacks. Every session ends at a branch handed to design, then engineering. A pure mockup or fake-data exploration goes to the prototype skill instead. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
 ---
 
 # Vibe
@@ -29,8 +29,8 @@ work itself. Under all circumstances:
 - Everything else goes to a worker, even a one-line change and even when you
   think you already know the file. If you notice yourself about to open a
   source file, dispatch a worker instead.
-- Give each worker only what it needs: the worktree path, the session summary,
-  scope, and mode, the live ticket slug, the request in the person's own
+- Give each worker only what it needs: the worktree path, the session summary
+  and mode, the live ticket slug, the request in the person's own
   words, and for an annotation the comment text, the element context, and the
   page route. Workers return a short result; do not ask them for file
   contents.
@@ -75,15 +75,15 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 | `vibe-requirements-worker` | read a ClosedLoop ticket (and its PRD, plan, related tickets) or a description and turn it into a brief, plus the route and FEATURE_MAP id where the relevant code lives, for change workers |
 | `vibe-ticket-worker` | create the session's live ticket, and fill its record sections when you ask |
 | `vibe-environment-worker` | stand up the session's Vercel environment, redeploy it, or refresh its flag snapshot |
-| `vibe-change-worker` | make one requested change (chat or annotation): locate, implement, stub (draft) or request backend work (full), add stories, self-check, update the live ticket |
-| `vibe-backend-worker` | full scope only: build the backend half of a change (route, service, validation, schema and migration, seed, tests), driven by a decision table |
+| `vibe-change-worker` | make one requested change (chat or annotation): locate, implement, request backend work, add stories, self-check, update the live ticket |
+| `vibe-backend-worker` | build the backend half of a change (route, service, validation, schema and migration, seed, tests), driven by a decision table |
 | `vibe-primitive-worker` | build a new design-system primitive from an approved spec, with stories, catalog, and tests |
 
 Every worker result starts with a status: `DONE`, `NEEDS_PERSON` (a question
 or action only the person can answer or take, already phrased for them),
 `NEEDS_PRIMITIVE` (a building block is missing; includes the steward's spec),
-`NEEDS_BACKEND` (full scope only: the backend work the change needs, as a
-spec for `vibe-backend-worker`), `NEEDS_DESKTOP_STOP` (the worker must merge
+`NEEDS_BACKEND` (the backend work the change needs, as a spec for
+`vibe-backend-worker`), `NEEDS_DESKTOP_STOP` (the worker must merge
 main into the worktree or otherwise swap its commit while Desktop runs), or
 `BLOCKED` (with the reason). Relay `NEEDS_PERSON` verbatim in plain words,
 then dispatch a fresh worker with the answer.
@@ -130,44 +130,40 @@ Run `node scripts/vibe-sessions.mjs list` (it uses the remembered checkout).
 
 Starting new:
 1. Ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
-   URL) or a plain description. For a ticket, dispatch
-   `vibe-requirements-worker`. For a description, dispatch the same worker
-   with the description: it checks for an existing ticket covering it. Tell
-   the person only its brief, in two or three sentences. The route and
-   FEATURE_MAP id it returns say where the relevant code lives and are for
-   workers; never present them as a screen the session starts on (the app
-   opens on its default page after sign-in), and never promise a screen for
-   a broad request such as "look for visual bugs".
-2. Ask once: "Should this be a draft for engineering to finish, or should we
-   build it all the way, including the backend?" A draft is frontend only,
-   with sample data where the API is missing. All the way means the backend
-   and database too. Either way the work ends on a branch that design reviews
-   first and engineering finishes. Record the answer as the scope (`draft` or
-   `full`); if they are unsure, use `draft` (it can change later with
-   `touch --scope full`).
-3. Ask once: "Should your copy of the app start with sample data (a company
+   URL) or a plain description. A vibe session builds the real thing, backend
+   included when a change needs it, so if they clearly want a mockup or an
+   exploration with made-up data (nothing it shows needs to be real), tell
+   them in one line to use `$prototype` for that instead, and stop. For a
+   ticket, dispatch `vibe-requirements-worker`. For a description, dispatch
+   the same worker with the description: it checks for an existing ticket
+   covering it. Tell the person only its brief, in two or three sentences.
+   The route and FEATURE_MAP id it returns say where the relevant code lives
+   and are for workers; never present them as a screen the session starts on
+   (the app opens on its default page after sign-in), and never promise a
+   screen for a broad request such as "look for visual bugs".
+2. Ask once: "Should your copy of the app start with sample data (a company
    called Acme Co with people and work in it), or empty so you set it up
    yourself?" Record `seeded` or `blank` as the mode. If they are unsure, use
    `seeded`.
-4. Derive a short slug from the work (lowercase words joined by hyphens, at
+3. Derive a short slug from the work (lowercase words joined by hyphens, at
    most 40 characters).
-5. `node scripts/vibe-sessions.mjs new --slug <slug> --summary "<one line>"
-   --scope <draft|full> --mode <seeded|blank> [--ticket <slug>]
+4. `node scripts/vibe-sessions.mjs new --slug <slug> --summary "<one line>"
+   --mode <seeded|blank> [--ticket <slug>]
    --operator-id <id> --operator-email <email> --operator-name "<firstName lastName>"`,
    with the operator from the `get-me` call in section 1 (the person running
    this session; leave out `--operator-name` when `get-me` has no name). This
    fetches main and creates the worktree on `vibe/<slug>` from fresh
    `origin/main`. The live ticket is assigned to that person.
-6. Record this conversation as the session's orchestrator:
+5. Record this conversation as the session's orchestrator:
    `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` (it reads
    `CODEX_THREAD_ID`; outside Codex, pass `--thread <id>` if you have one, or
    skip it).
-7. Dispatch `vibe-setup-worker` to bootstrap the new worktree and, in
+6. Dispatch `vibe-setup-worker` to bootstrap the new worktree and, in
    parallel, `vibe-ticket-worker` in create mode with the worktree, the
-   requirements worker's brief, the originating ticket if any, the scope, and
-   the mode. It records the ticket's slug on the session itself.
+   requirements worker's brief, the originating ticket if any, and the mode.
+   It records the ticket's slug on the session itself.
    Tell the person in one line that the ticket exists and give its link.
-8. Stand up the environment (section 3).
+7. Stand up the environment (section 3).
 
 Resuming: use the session's `worktree`, and run `codex-sessions` again so a
 new conversation is recorded too. Starting new or resuming stops any other
@@ -287,10 +283,12 @@ straight into the app?" Default to straight into the app.
 ## 5. Build loop
 
 For each request or annotation (a queued batch is one request), work in small
-visible steps so the person never waits in silence:
+visible steps so the person never waits in silence. A request that is
+clearly only a mockup with made-up data gets the same `$prototype` line as
+section 2, step 1, instead of a worker.
 
 1. Dispatch `vibe-change-worker` to plan, with the worktree, the session
-   summary, the session scope, the live ticket slug, the request verbatim
+   summary, the live ticket slug, the request verbatim
    (for annotations: the comment, the element context, the route, and any
    Adjust values), the Labs answer if one applies, the person's own words for
    any user-visible text, and the local Storybook URL if one is running. It
@@ -319,7 +317,7 @@ visible steps so the person never waits in silence:
    dispatch `vibe-setup-worker` to start it. When the primitive worker returns
    `DONE`, open the story URL it gives and ask the person to approve it there.
    On approval, re-dispatch the original change.
-6. On `NEEDS_BACKEND` (full scope only): tell the person in one sentence that
+6. On `NEEDS_BACKEND`: tell the person in one sentence that
    this needs some behind-the-scenes work first. Dispatch
    `vibe-backend-worker` with its spec, the worktree, the session summary, and
    the live ticket slug. When it returns `DONE`, re-dispatch the change worker
@@ -407,4 +405,3 @@ Whenever the person asks to throw a session away (at any point, for any
   each one current.
 - `references/guardrails.md`: what may change and how (change and primitive workers).
 - `references/annotations.md`: turning annotations into code locations (change worker).
-- `references/stubs.md`: stubbing data and actions (change worker).

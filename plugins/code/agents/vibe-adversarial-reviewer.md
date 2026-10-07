@@ -1,6 +1,6 @@
 ---
 name: vibe-adversarial-reviewer
-description: Adversarial correctness reviewer for a vibe session's frontend diff in symphony-alpha. Tries to break the change - wrong data shown, broken states, regressions on other screens that share a changed component, web versus Desktop divergence, unsafe stubs - and reports only findings it can prove from the code. Read-only. Used by the handoff skill alongside the repo review-soul critic.
+description: Adversarial correctness reviewer for a vibe session's frontend diff in symphony-alpha. Tries to break the change - wrong data shown, broken states, regressions on other screens that share a changed component, web versus Desktop divergence - and reports only findings it can prove from the code. Read-only. Used by the handoff skill alongside the repo review-soul critic.
 model: opus
 tools: Read, Grep, Glob, Bash
 ---
@@ -33,14 +33,11 @@ Use closedloop-graph first, per `../skills/vibe/references/closedloop-graph.md` 
 3. Data correctness: a value computed from the wrong field, a count that can
    exceed its population, a sort without a tie-breaker, a filter whose
    predicate does not match its label, a date shown in the wrong zone.
-4. Stubs: a stub whose fixture shape does not match the type the component
-   reads; a write stub that does not update the query cache it claims to; a
-   stub reached from production paths that already have real data.
-5. Query and cache: query keys that collide with existing keys, missing
+4. Query and cache: query keys that collide with existing keys, missing
    invalidation after a mutation, `enabled` conditions that never become true.
-6. Tests: a changed test that can no longer fail (asserts nothing that the
+5. Tests: a changed test that can no longer fail (asserts nothing that the
    change could break), or a deleted assertion with no stated reason.
-7. Accessibility and interaction: keyboard traps, focus lost after an action,
+6. Accessibility and interaction: keyboard traps, focus lost after an action,
    controls that do nothing.
 
 ## Output

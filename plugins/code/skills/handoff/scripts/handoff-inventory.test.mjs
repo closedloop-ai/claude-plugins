@@ -24,13 +24,14 @@ function setup(t, slug) {
     checkout,
     files: {
       "scripts/loops-setup.sh": "echo old\n",
+      ".github/workflows/ci.yml": "on: push\n",
       "apps/app/page.tsx": "export const page = 1;\n",
       [ALLOWLIST]: allowlist([FOCUS_RING, HEX]),
     },
   });
   const created = runNode(
     SESSIONS,
-    ["new", "--repo", checkout, "--slug", slug, "--summary", slug, "--scope", "draft", "--mode", "seeded", "--operator-id", "user-andy", "--operator-email", "andy@example.com"],
+    ["new", "--repo", checkout, "--slug", slug, "--summary", slug, "--mode", "seeded", "--operator-id", "user-andy", "--operator-email", "andy@example.com"],
     fixture.home
   );
   assert.equal(created.status, 0, created.stderr);
@@ -70,13 +71,13 @@ test("local fixes are listed on their own and kept out of every guardrail check"
 
 test("the same forbidden change is still blocked when it is not a recorded local fix", (t) => {
   const { home, worktree } = setup(t, "no-local-fix");
-  write(worktree, "scripts/loops-setup.sh", "echo fixed\n");
+  write(worktree, ".github/workflows/ci.yml", "on: pull_request\n");
   write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
 
   const result = runNode(INVENTORY, ["--worktree", worktree], home);
   assert.equal(result.status, 1);
   assert.equal(result.json.blocking.forbiddenPaths, false);
-  assert.deepEqual(result.json.forbidden, [{ path: "scripts/loops-setup.sh", status: "M" }]);
+  assert.deepEqual(result.json.forbidden, [{ path: ".github/workflows/ci.yml", status: "M" }]);
   assert.deepEqual(result.json.localFixes, []);
 });
 
@@ -129,7 +130,7 @@ test("committed redeploys count as the session's work and the live ticket is rep
   assert.equal(result.json.vercel.appUrl, "https://app-stage-git-vibe-redeployed.preview.closedloop-stage.ai");
 });
 
-test("a draft session may only shrink the source-gate allowlist under scripts/", (t) => {
+test("a session may only shrink the source-gate allowlist under scripts/", (t) => {
   const { home, worktree } = setup(t, "shrink");
   write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
   write(worktree, ALLOWLIST, allowlist([HEX]));
@@ -140,21 +141,74 @@ test("a draft session may only shrink the source-gate allowlist under scripts/",
   assert.deepEqual(removed.json.outsideAllowed, []);
 
   write(worktree, ALLOWLIST, allowlist([FOCUS_RING, { ...HEX, count: 2 }]));
-  assert.equal(runNode(INVENTORY, ["--worktree", worktree], home).status, 0);
+  assert.deepEqual(runNode(INVENTORY, ["--worktree", worktree], home).json.outsideAllowed, []);
 
   const grown = { ...HEX, count: 4 };
   const added = { ...HEX, file: "apps/app/c.tsx", fingerprint: "apps/app/c.tsx" };
   for (const entries of [[FOCUS_RING, grown], [FOCUS_RING, HEX, added], [{ ...FOCUS_RING, reason: "changed" }]]) {
     write(worktree, ALLOWLIST, allowlist(entries));
     const refused = runNode(INVENTORY, ["--worktree", worktree], home);
-    assert.equal(refused.status, 1, JSON.stringify(entries));
-    assert.deepEqual(refused.json.forbidden, [{ path: ALLOWLIST, status: "M" }]);
+    assert.deepEqual(refused.json.outsideAllowed, [{ path: ALLOWLIST, status: "M" }], JSON.stringify(entries));
     assert.deepEqual(refused.json.shrinkOnlyAllowlists, []);
   }
 
   write(worktree, ALLOWLIST, allowlist([HEX]));
   write(worktree, "scripts/loops-setup.sh", "echo fixed\n");
   const other = runNode(INVENTORY, ["--worktree", worktree], home);
-  assert.equal(other.status, 1);
-  assert.deepEqual(other.json.forbidden, [{ path: "scripts/loops-setup.sh", status: "M" }]);
+  assert.deepEqual(other.json.outsideAllowed, [{ path: "scripts/loops-setup.sh", status: "M" }]);
+});
+
+test("frontend-only work reports no backend change", (t) => {
+  const { home, worktree } = setup(t, "frontend-only");
+  write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
+  write(worktree, "packages/app/tags/components/tag-menu.tsx", "export const TagMenu = 1;\n");
+  write(worktree, "apps/desktop/src/renderer/view.tsx", "export const view = 1;\n");
+
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.status, 0, JSON.stringify(result.json));
+  assert.equal(result.json.backendChanged, false);
+  assert.deepEqual(result.json.backendFiles, []);
+});
+
+test("backend work is allowed and reported for the full checks", (t) => {
+  const { home, worktree } = setup(t, "backend");
+  write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
+  write(worktree, "apps/api/app/tags/route.ts", "export const GET = 1;\n");
+  write(worktree, "packages/api/src/types/tag.ts", "export type Tag = string;\n");
+  write(worktree, "packages/database/prisma/migrations/1_tags/migration.sql", "select 1;\n");
+  write(worktree, "apps/desktop/src/main/tags.ts", "export const tags = 1;\n");
+
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.status, 0, JSON.stringify(result.json));
+  assert.deepEqual(result.json.forbidden, []);
+  assert.deepEqual(result.json.outsideAllowed, []);
+  assert.equal(result.json.backendChanged, true);
+  assert.deepEqual(
+    result.json.backendFiles.map((file) => file.path),
+    [
+      "apps/api/app/tags/route.ts",
+      "apps/desktop/src/main/tags.ts",
+      "packages/api/src/types/tag.ts",
+      "packages/database/prisma/migrations/1_tags/migration.sql",
+    ]
+  );
+});
+
+test("a migration outside the backend packages and a local-fix backend file count the right way", (t) => {
+  const { home, worktree } = setup(t, "migration-elsewhere");
+  write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
+  write(worktree, "apps/desktop/src/server/fix.ts", "export const fix = 1;\n");
+  runNode(
+    SESSIONS,
+    ["local-fix", "--worktree", worktree, "--ticket", "ISS-77", "--path", "apps/desktop/src/server/fix.ts"],
+    home
+  );
+  const withoutBackend = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(withoutBackend.json.backendChanged, false);
+
+  write(worktree, "apps/mcp/prisma/migrations/2_x/migration.sql", "select 1;\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.backendChanged, true);
+  assert.deepEqual(result.json.backendFiles, [{ path: "apps/mcp/prisma/migrations/2_x/migration.sql", status: "A" }]);
+  assert.deepEqual(result.json.outsideAllowed, [{ path: "apps/mcp/prisma/migrations/2_x/migration.sql", status: "A" }]);
 });

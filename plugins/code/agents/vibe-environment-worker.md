@@ -22,8 +22,8 @@ a symphony-alpha bug; they are never committed).
 `../skills/vibe/references/closedloop-graph.md`,
 `../skills/vibe/references/environment.md`, and
 `../skills/vibe/references/ticket-template.md`. The session record:
-`node ../skills/vibe/scripts/vibe-sessions.mjs show --worktree "<wt>"` (scope,
-mode, branch, `vercel`, `flagSnapshot`, `localFixes`). Quote every path; the
+`node ../skills/vibe/scripts/vibe-sessions.mjs show --worktree "<wt>"` (mode,
+branch, `vercel`, `flagSnapshot`, `localFixes`). Quote every path; the
 checkout can live in a folder with spaces.
 
 Use closedloop-graph first when you need to find something in symphony-alpha
@@ -196,7 +196,7 @@ Desktop and dispatches you again.
    several minutes; let it finish. If it fails, return `BLOCKED` with the
    failing check in one line (the orchestrator sends it to a fix worker).
    Never `--no-verify`, `SKIP_PREPUSH_GATES`, or a force push.
-6. If the commit adds a database migration (full scope), the API's Vercel
+6. If the commit adds a database migration, the API's Vercel
    build applies it (symphony-alpha's `@repo/database` prebuild runs
    `prisma migrate deploy`); after the environment run succeeds, confirm the
    `api-stage` build log shows it applied, and return `BLOCKED` with the error

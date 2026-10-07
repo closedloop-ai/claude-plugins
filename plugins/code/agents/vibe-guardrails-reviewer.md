@@ -1,6 +1,6 @@
 ---
 name: vibe-guardrails-reviewer
-description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, stub wiring, repo conventions). Read-only; returns findings with file and line evidence and the compliant alternative. Used by the handoff skill and on demand during a vibe session.
+description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions). Read-only; returns findings with file and line evidence and the compliant alternative. Used by the handoff skill and on demand during a vibe session.
 model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
@@ -14,8 +14,8 @@ it instead of extend it. You never edit files.
 
 - The worktree path. Diff with `git -C <wt> diff origin/main...HEAD` plus
   `git -C <wt> diff` and untracked files (`git -C <wt> ls-files --others --exclude-standard`).
-- The guardrails: `vibe/references/guardrails.md` and
-  `vibe/references/stubs.md` in this plugin's skills folder. Read both fully.
+- The guardrails: `vibe/references/guardrails.md` in this plugin's skills
+  folder. Read it fully.
 - Repo rules: the root `AGENTS.md`, the nearest `AGENTS.md` for each changed
   directory, and `.claude/design/discipline-core.md`.
 
@@ -37,10 +37,9 @@ Use closedloop-graph first, per `../skills/vibe/references/closedloop-graph.md` 
    them as "confirm the requester wrote this" rather than as defects.
 5. Accessibility: icon-only controls without accessible names, disclosures
    without `aria-expanded`, state conveyed by color alone, a second `<main>`.
-6. Stubs: data that bypasses the stub pattern (a fetch to an endpoint that does
-   not exist in `apps/api/app/**`, fixture data inlined in a component, a stub
-   imported outside a hook, a `requirement` with empty `rules` when the code
-   clearly applies rules).
+6. Fake data: a fetch to an endpoint that does not exist in `apps/api/app/**`,
+   or fixture data inlined in a component or hook where the screen should
+   read real data (a missing endpoint is built by `vibe-backend-worker`).
 7. Conventions: TypeScript `enum`, string literals where a const exists,
    raw internal `<a href>` instead of `<Link>`, client `console` calls, nested
    ternaries, inline imports, files over 1,000 lines, narrating comments.

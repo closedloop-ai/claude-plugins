@@ -27,8 +27,7 @@ it never writes it from scratch.
   written in angle brackets (a component like `<TagMenu>`, a placeholder like
   `<tag>`) must go in a code span or it disappears.
 - Keep the headings exactly as below; the handoff check finds sections by
-  heading. Omit `## API requirements` in a full-scope session, and
-  `## Backend built` and `## Backend still missing` in a draft one.
+  heading.
 
 | Section | Written by | When |
 |---|---|---|
@@ -36,13 +35,12 @@ it never writes it from scratch.
 | Scope and acceptance criteria | `vibe-ticket-worker`, then `vibe-change-worker` | session start; whenever the person changes what they want |
 | Environment | `ticket-sections` (via `vibe-environment-worker`) | environment start, every redeploy |
 | Progress | `vibe-change-worker`, `vibe-backend-worker`, `vibe-primitive-worker`, `vibe-environment-worker` | after each change and each redeploy |
-| API requirements (draft) | `vibe-change-worker` | as each stub is made; reconciled at handoff |
-| Backend built, Backend still missing (full) | `vibe-backend-worker`, `vibe-change-worker` | as backend work is built or found missing |
+| Backend built, Backend still missing | `vibe-backend-worker`, `vibe-change-worker` | as backend work is built or found missing |
 | Production flag snapshot | `ticket-sections` (via `vibe-environment-worker`) | environment start, a refresh the person asked for |
 | Sessions | `ticket-sections` (via `vibe-environment-worker`, `vibe-ticket-worker`) | every redeploy, handoff |
 | Handoff | `vibe-ticket-worker` | handoff |
 | Grading | `vibe-ticket-worker` | handoff, copied unchanged from this template |
-| Engineering checklist | `vibe-ticket-worker` | session start, keeping only the lines for the session's scope |
+| Engineering checklist | `vibe-ticket-worker` | session start |
 
 ## Body
 
@@ -53,8 +51,7 @@ it never writes it from scratch.
 do and why it matters. Name the originating ticket if the session started from
 one.>
 
-Built in a vibe session by <operator name>. Scope: <draft: frontend only, with
-sample data where the API does not exist yet | full: frontend and backend>.
+Built in a vibe session by <operator name>.
 
 ## Scope and acceptance criteria
 
@@ -72,28 +69,14 @@ API, and Storybook URLs, and the last deployed commit.>
 
 - <date>: <one line per change or redeploy, newest last>
 
-## API requirements
-
-<Draft scope only. One subsection per stub, written when the stub is made:>
-
-### <n>. <what the screen needs>
-
-- Stub: `<path>` (`<export>`), used by `<hook>` in `<components>`
-- Kind: read | write
-- Suggested endpoint: `<METHOD /path>` (closest existing route: `<path>`)
-- Request and response: <fields with types>
-- Rules: <the person's rules, verbatim>
-
-<Or "None: every screen uses existing API endpoints.">
-
 ## Backend built
 
-<Full scope only. One line per endpoint, service, type, model, or migration
-built, with its path and decision table.>
+<One line per endpoint, service, type, model, or migration built, with its
+path and decision table, or "None: every screen uses existing API endpoints.">
 
 ## Backend still missing
 
-<Full scope only. What the screens need that is not built yet, or "None.">
+<What the screens need that is not built yet, or "None.">
 
 ## Production flag snapshot
 
@@ -112,8 +95,8 @@ subagent that worked on this.>
 - Components changed: <path>: <what changed>, or "none"
 - Storybook footprint: <components added and changed with story counts, net
   sidebar rows, governance problems left>
-- Checks: <lint, source gates, typecheck, tests (full scope: every lane), each
-  pass or fail>
+- Checks: <lint, source gates, typecheck, tests (every lane when the session
+  changed backend code), each pass or fail>
 - Reviews: <n fixed, n rejected; one line each, rejected with why>
 - Tests whose old-UI assertions were updated on purpose: <list or "none">
 - Pre-existing failures not touched by this work: <list or "none">
@@ -150,13 +133,8 @@ Yes / no, plus one line when it's a no:
 
 ## Engineering checklist
 
-- [ ] Implement each endpoint under API requirements in `apps/api` (thin
-      route, service, Zod validation, org scoping) with shared types in
-      `packages/api/src/types/` (draft scope)
-- [ ] Replace each `*.vibe-stub.ts` fixture with the real API call in its
-      hook, then delete the stub file (draft scope)
 - [ ] Review the backend listed under Backend built and finish anything under
-      Backend still missing (full scope)
+      Backend still missing
 - [ ] Add or extend route, service, hook, and component tests for the real
       data path
 - [ ] Decide whether a net-new surface needs a default-off PostHog flag before

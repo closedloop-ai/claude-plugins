@@ -45,7 +45,7 @@ test("repo, list, and new use the remembered checkout, including a path with spa
 
   const created = runNode(
     SCRIPT,
-    ["new", "--slug", "board-chips", "--summary", "Board chips", "--scope", "draft", "--mode", "seeded", ...OPERATOR_ARGS],
+    ["new", "--slug", "board-chips", "--summary", "Board chips", "--mode", "seeded", ...OPERATOR_ARGS],
     home
   );
   assert.equal(created.status, 0, created.stderr);
@@ -74,7 +74,7 @@ test("local-fix records paths per ticket, merges repeats, and list reports them"
   rememberRepo(home, checkout);
   const { json } = runNode(
     SCRIPT,
-    ["new", "--slug", "fix-me", "--summary", "Fix me", "--scope", "draft", "--mode", "seeded", ...OPERATOR_ARGS],
+    ["new", "--slug", "fix-me", "--summary", "Fix me", "--mode", "seeded", ...OPERATOR_ARGS],
     home
   );
   const worktree = json.session.worktree;
@@ -112,7 +112,7 @@ test("local-fix rejects paths outside the worktree and missing inputs", (t) => {
   rememberRepo(home, checkout);
   const { json } = runNode(
     SCRIPT,
-    ["new", "--slug", "guarded", "--summary", "Guarded", "--scope", "draft", "--mode", "seeded", ...OPERATOR_ARGS],
+    ["new", "--slug", "guarded", "--summary", "Guarded", "--mode", "seeded", ...OPERATOR_ARGS],
     home
   );
   const worktree = json.session.worktree;
@@ -137,7 +137,7 @@ function newSession(t, slug, extra = []) {
   rememberRepo(fixture.home, fixture.checkout);
   const created = runNode(
     SCRIPT,
-    ["new", "--slug", slug, "--summary", slug, "--scope", "draft", "--mode", "blank", ...OPERATOR_ARGS, ...extra],
+    ["new", "--slug", slug, "--summary", slug, "--mode", "blank", ...OPERATOR_ARGS, ...extra],
     fixture.home
   );
   assert.equal(created.status, 0, created.stderr);
@@ -167,12 +167,12 @@ function writeJson(file, value) {
 test("new requires a seeded or blank mode and records the branch's Vercel URLs", (t) => {
   const { home, checkout } = setup(t);
   rememberRepo(home, checkout);
-  const missing = runNode(SCRIPT, ["new", "--slug", "no-mode", "--summary", "x", "--scope", "draft", ...OPERATOR_ARGS], home);
+  const missing = runNode(SCRIPT, ["new", "--slug", "no-mode", "--summary", "x", ...OPERATOR_ARGS], home);
   assert.equal(missing.status, 1);
   assert.match(missing.json.error, /--mode is required/);
   const wrong = runNode(
     SCRIPT,
-    ["new", "--slug", "wrong-mode", "--summary", "x", "--scope", "draft", "--mode", "local", ...OPERATOR_ARGS],
+    ["new", "--slug", "wrong-mode", "--summary", "x", "--mode", "local", ...OPERATOR_ARGS],
     home
   );
   assert.equal(wrong.status, 1);
@@ -180,7 +180,7 @@ test("new requires a seeded or blank mode and records the branch's Vercel URLs",
 
   const created = runNode(
     SCRIPT,
-    ["new", "--slug", "tag-edit", "--summary", "Tag edit", "--scope", "full", "--mode", "seeded", ...OPERATOR_ARGS],
+    ["new", "--slug", "tag-edit", "--summary", "Tag edit", "--mode", "seeded", ...OPERATOR_ARGS],
     home
   );
   assert.equal(created.status, 0, created.stderr);
@@ -202,7 +202,7 @@ test("new requires a seeded or blank mode and records the branch's Vercel URLs",
 test("new records the person running the session and refuses to start without them", (t) => {
   const { home, checkout } = setup(t);
   rememberRepo(home, checkout);
-  const base = ["new", "--summary", "x", "--scope", "draft", "--mode", "blank"];
+  const base = ["new", "--summary", "x", "--mode", "blank"];
   const missing = runNode(SCRIPT, [...base, "--slug", "no-operator"], home);
   assert.equal(missing.status, 1);
   assert.match(missing.json.error, /--operator-id and --operator-email are required/);
@@ -700,7 +700,7 @@ test("discard reports what would be lost, then requests the schema drop and dele
 
   const again = runNode(
     SCRIPT,
-    ["new", "--slug", "throw-away", "--summary", "again", "--scope", "draft", "--mode", "blank", ...OPERATOR_ARGS],
+    ["new", "--slug", "throw-away", "--summary", "again", "--mode", "blank", ...OPERATOR_ARGS],
     home
   );
   assert.equal(again.status, 0, again.stderr);
@@ -731,7 +731,7 @@ test("discard deletes an unpushed session's local branch and never discards a ha
 
   const created = runNode(
     SCRIPT,
-    ["new", "--slug", "handed", "--summary", "handed", "--scope", "draft", "--mode", "blank", ...OPERATOR_ARGS],
+    ["new", "--slug", "handed", "--summary", "handed", "--mode", "blank", ...OPERATOR_ARGS],
     home
   );
   const handed = created.json.session.worktree;
@@ -848,4 +848,17 @@ test("desktop-launched records a launch that predates the tab as a running windo
   runNode(SCRIPT, ["desktop-launched", "--worktree", worktree, "--pid", String(exitedPid()), "--log", log], home);
   const quit = runNode(SCRIPT, ["desktop-tab", "--worktree", worktree], home);
   assert.deepEqual([quit.json.running, quit.json.url], [false, null]);
+});
+
+test("sessions carry no scope, and a record written with the retired draft scope drops it", (t) => {
+  const { home, worktree } = newSession(t, "no-scope");
+  const shown = runNode(SCRIPT, ["show", "--worktree", worktree], home);
+  assert.equal(shown.status, 0, shown.stderr);
+  assert.equal("scope" in shown.json.session, false);
+
+  const file = recordFile(worktree, home);
+  writeJson(file, { ...JSON.parse(readFileSync(file, "utf8")), scope: "draft" });
+  const listed = runNode(SCRIPT, ["list"], home);
+  assert.equal("scope" in listed.json.sessions[0], false);
+  assert.equal("scope" in runNode(SCRIPT, ["show", "--worktree", worktree], home).json.session, false);
 });
