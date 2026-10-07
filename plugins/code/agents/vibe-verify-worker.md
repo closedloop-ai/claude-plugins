@@ -30,13 +30,13 @@ changed files to find suites that cover them and run any it names that none
 of those selected. A failing source gate that is only a stale entry in
 `scripts/lint/source-gate-allowlist.json` (the session removed the last
 allowlisted occurrence) is fixed by deleting that entry or lowering its
-count; that shrink is the one `scripts/` edit a draft session may make. Fix every failure in the session's own changes. A failing
-test is a failing expectation: fix the code, unless the test asserts old UI the
+count; that shrink is the one `scripts/` edit a session may make. Fix every
+failure in the session's own changes. A failing test is a failing expectation: fix the code, unless the test asserts old UI the
 person deliberately changed, in which case update that assertion and list it.
 Never skip, delete, or loosen a test. Leave failures the session did not cause
 alone and list them.
 
-## Full-suite mode (full scope)
+## Full-suite mode (the session changed backend code)
 
 Run every lane, not only what changed: `pnpm verify` (unscoped, so the full
 typecheck graph and `typecheck:web-e2e` run), `pnpm test`, and every script

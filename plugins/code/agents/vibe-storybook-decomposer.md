@@ -31,8 +31,7 @@ Use closedloop-graph first, per `../skills/vibe/references/closedloop-graph.md` 
 2. Stories. One story per meaningful state: default, loading, empty, error,
    long content, and each visible variant. Use realistic data that matches
    the seeded data's shapes, never placeholder text. Data that comes from a
-   hook is passed as props in stories; do not call stubs or the API from a
-   story.
+   hook is passed as props in stories; do not call the API from a story.
 3. Controls. Every prop gets a control decision per `design-controls.md`.
 4. Catalog and taxonomy. A new `packages/design-system/components/ui/*.tsx`
    is added to the right `DS_*` set in

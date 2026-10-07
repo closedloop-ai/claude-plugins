@@ -9,9 +9,13 @@
 // they are listed under `localFixes` and left out of `changedFiles` and every
 // guardrail check, and no redeploy or handoff commit includes them.
 //
-// A draft session may edit nothing under `scripts/` except a source-gate
-// allowlist edit that only removes entries or lowers counts
-// (allowlist-shrink.mjs); those are listed under `shrinkOnlyAllowlists`.
+// A session may edit nothing under `scripts/` except a source-gate allowlist
+// edit that only removes entries or lowers counts (allowlist-shrink.mjs);
+// those are listed under `shrinkOnlyAllowlists`.
+//
+// `backendChanged` says whether the work touched backend code
+// (`backendFiles`). Handoff runs its lighter checks when it did not, and the
+// full suite with two workflow-code-review passes when it did.
 //
 // Usage: handoff-inventory.mjs --worktree <path>
 
@@ -24,48 +28,39 @@ import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-s
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 const BRANCH_PREFIX = "andy/";
 
+// The frontend paths a change worker edits, plus the backend paths that only
+// vibe-backend-worker edits (ISS-12046); an engineer reviews both before merge.
 const ALLOWED_PREFIXES = [
   "apps/app/",
   "packages/app/",
   "packages/design-system/",
   "apps/desktop/src/renderer/",
   "apps/storybook/",
-];
-// Full scope (ISS-12046) builds the backend too, and an engineer reviews it
-// before it merges, so these move from forbidden to allowed.
-const FULL_SCOPE_PREFIXES = [
   "apps/api/",
   "packages/api/",
   "packages/database/",
   "apps/desktop/src/main/",
   "apps/desktop/prisma/",
 ];
-const ALWAYS_FORBIDDEN_PREFIXES = ["packages/golden-sessions/", ".github/"];
-const SessionScope = { Draft: "draft", Full: "full" };
-const RECORD_FILE = "vibe-session.json";
-
-const FORBIDDEN_PREFIXES = [
+const FORBIDDEN_PREFIXES = ["packages/golden-sessions/", ".github/"];
+const FORBIDDEN_BASENAMES = new Set(["AGENTS.md", "CLAUDE.md", "AGENTS.override.md"]);
+const BACKEND_PREFIXES = [
   "apps/api/",
   "apps/mcp/",
   "apps/relay/",
   "apps/realtime/",
-  "packages/database/",
   "packages/api/",
+  "packages/database/",
   "apps/desktop/src/main/",
+  "apps/desktop/src/server/",
   "apps/desktop/prisma/",
-  "packages/golden-sessions/",
-  ".github/",
-  "scripts/",
 ];
-const FORBIDDEN_SEGMENTS = ["/prisma/", "/migrations/"];
-const FORBIDDEN_BASENAMES = new Set(["AGENTS.md", "CLAUDE.md", "AGENTS.override.md"]);
+const BACKEND_SEGMENTS = ["/prisma/", "/migrations/"];
+const RECORD_FILE = "vibe-session.json";
 
-const STUB_SUFFIX = ".vibe-stub.ts";
 const STORY_PATTERN = /\.stories\.tsx?$/;
 const COMPONENT_PATTERN = /\/components\/.+\.tsx$/;
 const TEST_PATTERN = /(?:\.test\.tsx?$|\/__tests__\/)/;
-const HOOK_FILE_PATTERN = /\/hooks\/[^/]+\.tsx?$/;
-const STUB_IMPORT_PATTERN = /from\s+["'][^"']*\.vibe-stub["']/;
 
 const { values } = parseArgs({ options: { worktree: { type: "string" } } });
 if (!values.worktree) {
@@ -79,7 +74,6 @@ if (!branch.startsWith(BRANCH_PREFIX)) {
 }
 
 const record = readSessionRecord();
-const scope = record?.scope === SessionScope.Full ? SessionScope.Full : SessionScope.Draft;
 const localFixTickets = localFixTicketsByPath(record);
 const baseCommit = git(["merge-base", "HEAD", `origin/${baseBranch()}`]);
 const allChangedFiles = listChangedFiles(baseCommit);
@@ -93,15 +87,11 @@ const forbidden = changedFiles.filter((file) => isForbidden(file.path) && !shrin
 const outsideAllowed = changedFiles.filter(
   (file) => !isForbidden(file.path) && !isAllowed(file.path) && !shrinkOnlyPaths.has(file.path)
 );
-const stubs = changedFiles
-  .filter((file) => file.path.endsWith(STUB_SUFFIX) && file.status !== "D")
-  .map((file) => file.path);
-const stubImportViolations = findStubImportViolations(changedFiles);
+const backendFiles = changedFiles.filter((file) => isBackend(file.path));
 const componentsWithoutStories = findComponentsWithoutStories(changedFiles);
 
 const blocking = {
   forbiddenPaths: forbidden.length === 0,
-  stubImportsOnlyInHooks: stubImportViolations.length === 0,
   hasChanges: changedFiles.length > 0,
 };
 
@@ -109,7 +99,6 @@ const result = {
   ok: Object.values(blocking).every(Boolean),
   worktree,
   branch,
-  scope,
   mode: record?.mode ?? null,
   liveTicket: record?.liveTicket ?? record?.handoffTicket ?? null,
   vercel: record?.vercel ?? null,
@@ -120,8 +109,8 @@ const result = {
   forbidden,
   outsideAllowed,
   shrinkOnlyAllowlists,
-  stubs,
-  stubImportViolations,
+  backendChanged: backendFiles.length > 0,
+  backendFiles,
   componentsWithoutStories,
 };
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
@@ -156,22 +145,10 @@ function listChangedFiles(base) {
 }
 
 function isForbidden(filePath) {
-  if (ALWAYS_FORBIDDEN_PREFIXES.some((prefix) => filePath.startsWith(prefix))) {
-    return true;
-  }
-  if (scope === SessionScope.Full) {
-    if (FULL_SCOPE_PREFIXES.some((prefix) => filePath.startsWith(prefix))) {
-      return false;
-    }
-    return FORBIDDEN_BASENAMES.has(path.basename(filePath));
-  }
-  if (FORBIDDEN_PREFIXES.some((prefix) => filePath.startsWith(prefix))) {
-    return true;
-  }
-  if (FORBIDDEN_SEGMENTS.some((segment) => `/${filePath}`.includes(segment))) {
-    return true;
-  }
-  return FORBIDDEN_BASENAMES.has(path.basename(filePath));
+  return (
+    FORBIDDEN_PREFIXES.some((prefix) => filePath.startsWith(prefix)) ||
+    FORBIDDEN_BASENAMES.has(path.basename(filePath))
+  );
 }
 
 /** A modified shrink-only allowlist whose working-tree copy only shrinks the base copy. */
@@ -193,28 +170,7 @@ function isShrinkOnlyEdit(file) {
 }
 
 function isAllowed(filePath) {
-  const allowed =
-    scope === SessionScope.Full
-      ? [...ALLOWED_PREFIXES, ...FULL_SCOPE_PREFIXES]
-      : ALLOWED_PREFIXES;
-  return allowed.some((prefix) => filePath.startsWith(prefix));
-}
-
-function findStubImportViolations(files) {
-  const violations = [];
-  for (const file of files) {
-    if (file.status === "D" || !/\.tsx?$/.test(file.path)) {
-      continue;
-    }
-    if (file.path.endsWith(STUB_SUFFIX) || HOOK_FILE_PATTERN.test(file.path)) {
-      continue;
-    }
-    const absolute = path.join(worktree, file.path);
-    if (existsSync(absolute) && STUB_IMPORT_PATTERN.test(readFileSync(absolute, "utf8"))) {
-      violations.push(file.path);
-    }
-  }
-  return violations;
+  return ALLOWED_PREFIXES.some((prefix) => filePath.startsWith(prefix));
 }
 
 function findComponentsWithoutStories(files) {
@@ -261,4 +217,11 @@ function localFixTicketsByPath(sessionRecord) {
     }
   }
   return tickets;
+}
+
+function isBackend(filePath) {
+  return (
+    BACKEND_PREFIXES.some((prefix) => filePath.startsWith(prefix)) ||
+    BACKEND_SEGMENTS.some((segment) => `/${filePath}`.includes(segment))
+  );
 }

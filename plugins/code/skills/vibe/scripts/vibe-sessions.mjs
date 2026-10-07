@@ -8,11 +8,11 @@
 //   vibe-sessions.mjs list            [--repo <symphony-alpha checkout>]
 //   vibe-sessions.mjs show            --worktree <path>
 //   vibe-sessions.mjs new             [--repo <checkout>] --slug <slug> --summary <text>
-//                                     --scope draft|full --mode seeded|blank [--ticket ISS-123]
+//                                     --mode seeded|blank [--ticket ISS-123]
 //                                     --operator-id <id> --operator-email <email> [--operator-name <name>]
 //   vibe-sessions.mjs touch           --worktree <path> [--summary <text>] [--ticket ISS-123]
 //                                     [--status active|handed-off] [--live-ticket ISS-123]
-//                                     [--scope draft|full] [--mode seeded|blank] [--stack <json>]
+//                                     [--mode seeded|blank] [--stack <json>]
 //                                     [--clerk-org-id org_...]
 //                                     [--operator-id <id> --operator-email <email> [--operator-name <name>]]
 //   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json> [--replace]
@@ -116,14 +116,6 @@ const SessionStatus = {
   HandedOff: "handed-off",
 };
 
-// Draft: frontend only, with stubs, for engineering to finish. Full: frontend
-// and backend (ISS-12046). Both end on the branch, handed to design and then
-// engineering, who open the pull request (ISS-12057).
-const SessionScope = {
-  Draft: "draft",
-  Full: "full",
-};
-
 // Seeded: the session's Vercel environment is filled by the vibe seed under
 // Acme Co. Blank: no data; the person creates their own org (ISS-12056).
 const SessionMode = {
@@ -140,7 +132,6 @@ const { positionals, values } = parseArgs({
     summary: { type: "string" },
     ticket: { type: "string" },
     status: { type: "string" },
-    scope: { type: "string" },
     mode: { type: "string" },
     "live-ticket": { type: "string" },
     "handoff-ticket": { type: "string" },
@@ -297,7 +288,6 @@ function listSessions(repo) {
         summary: record?.summary ?? null,
         ticket: record?.ticket ?? null,
         status: record?.status ?? SessionStatus.Active,
-        scope: record?.scope ?? SessionScope.Draft,
         mode: record?.mode ?? null,
         operator: record?.operator ?? null,
         liveTicket: record?.liveTicket ?? null,
@@ -326,7 +316,6 @@ function newSession() {
   const repo = resolveRepo();
   const slug = requireOption("slug");
   const summary = requireOption("summary");
-  const scope = requireScope(requireOption("scope"));
   const mode = requireMode(requireOption("mode"));
   const operator = operatorFromArgs({ required: true });
   if (!SLUG_PATTERN.test(slug) || slug.length > MAX_SLUG_LENGTH) {
@@ -359,7 +348,6 @@ function newSession() {
     summary,
     ticket: values.ticket ?? null,
     status: SessionStatus.Active,
-    scope,
     mode,
     operator,
     liveTicket: null,
@@ -394,7 +382,6 @@ function touchSession() {
     summary: values.summary ?? record.summary,
     ticket: values.ticket ?? record.ticket,
     status: values.status ?? record.status,
-    scope: values.scope ? requireScope(values.scope) : record.scope,
     mode: values.mode ? requireMode(values.mode) : record.mode,
     operator: operatorFromArgs({ required: false }) ?? record.operator,
     liveTicket: liveTicket ?? record.liveTicket,
@@ -479,13 +466,6 @@ function requireMode(mode) {
   return mode;
 }
 
-function requireScope(scope) {
-  if (!Object.values(SessionScope).includes(scope)) {
-    throw new Error(`--scope must be one of: ${Object.values(SessionScope).join(", ")}.`);
-  }
-  return scope;
-}
-
 /**
  * The symphony-alpha checkout: `--repo` when given, otherwise the one
  * vibe-preflight.sh remembered.
@@ -568,14 +548,14 @@ function vercelDefaults(branch) {
 }
 
 /**
- * Fills fields added after a record was written, and reads the pre-ISS-12057
- * `handoffTicket` as `liveTicket`.
+ * Fills fields added after a record was written, reads the pre-ISS-12057
+ * `handoffTicket` as `liveTicket`, and drops the retired draft/full `scope`
+ * (every session is built frontend and backend).
  */
 function withDefaults(record) {
-  const { handoffTicket, ...rest } = record;
+  const { handoffTicket, scope: _retiredScope, ...rest } = record;
   return {
     ...rest,
-    scope: rest.scope ?? SessionScope.Draft,
     mode: rest.mode ?? null,
     operator: rest.operator ?? null,
     liveTicket: rest.liveTicket ?? handoffTicket ?? null,

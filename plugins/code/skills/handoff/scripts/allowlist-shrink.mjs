@@ -1,12 +1,12 @@
 // Decides whether an edit to a source-gate allowlist only removes entries or
 // lowers their counts. The repo's allowlists are shrink-only: a vibe session
 // whose change removes the last allowlisted occurrence of a rule must delete
-// that entry for `pnpm check:source-gates` to pass, so a draft session may make
+// that entry for `pnpm check:source-gates` to pass, so a session may make
 // exactly that edit and no other edit under `scripts/` (ISS-12135).
 
 import { isDeepStrictEqual } from "node:util";
 
-/** Allowlist files a draft session may shrink, relative to the repo root. */
+/** Allowlist files a session may shrink, relative to the repo root. */
 export const SHRINK_ONLY_ALLOWLISTS = new Set(["scripts/lint/source-gate-allowlist.json"]);
 
 const ENTRY_KEY_FIELDS = ["rule", "file", "fingerprint"];

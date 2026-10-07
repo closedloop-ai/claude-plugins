@@ -1,43 +1,36 @@
 #!/usr/bin/env node
 // Checks a vibe session's live ticket body (ISS-12057) is complete before
-// handoff: every section the session's scope needs is present and filled, no
-// template placeholder or `Pending.` marker is left, the sections rendered
-// from the session record carry their URLs, flag table, and session ids, and
-// the Engineering checklist has no line marked for the other scope. With
+// handoff: every section is present and filled, no template placeholder or
+// `Pending.` marker is left, and the sections rendered from the session
+// record carry their URLs, flag table, and session ids. With
 // `--base-commit` (the handoff inventory's `baseCommit`), the Environment
 // section must name that commit as the branch's base, so a branch that merged
 // main since the session started is not handed off with its old base.
 // Prints one JSON object; exits 0 when complete and 1 otherwise. Changes
 // nothing. The sections are the headings of ../../vibe/references/ticket-template.md.
 //
-// Usage: live-ticket-check.mjs --file <ticket body .md> --scope draft|full [--base-commit <sha>]
+// Usage: live-ticket-check.mjs --file <ticket body .md> [--base-commit <sha>]
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
-const Scope = { Draft: "draft", Full: "full" };
-
-/** Every section of the live ticket, in template order, with the scopes that need it. */
+/** Every section of the live ticket, in template order. */
 export const TICKET_SECTIONS = [
-  { heading: "What this is", scopes: [Scope.Draft, Scope.Full] },
-  { heading: "Scope and acceptance criteria", scopes: [Scope.Draft, Scope.Full] },
-  { heading: "Environment", scopes: [Scope.Draft, Scope.Full] },
-  { heading: "Progress", scopes: [Scope.Draft, Scope.Full] },
-  { heading: "API requirements", scopes: [Scope.Draft] },
-  { heading: "Backend built", scopes: [Scope.Full] },
-  { heading: "Backend still missing", scopes: [Scope.Full] },
-  { heading: "Production flag snapshot", scopes: [Scope.Draft, Scope.Full] },
-  { heading: "Sessions", scopes: [Scope.Draft, Scope.Full] },
-  { heading: "Handoff", scopes: [Scope.Draft, Scope.Full] },
-  { heading: "Grading", scopes: [Scope.Draft, Scope.Full] },
-  { heading: "Engineering checklist", scopes: [Scope.Draft, Scope.Full] },
+  "What this is",
+  "Scope and acceptance criteria",
+  "Environment",
+  "Progress",
+  "Backend built",
+  "Backend still missing",
+  "Production flag snapshot",
+  "Sessions",
+  "Handoff",
+  "Grading",
+  "Engineering checklist",
 ];
 
-// The template marks each scope-only checklist line `(draft scope)` or
-// `(full scope)`; the ticket keeps only its own scope's lines.
-const SCOPE_MARKED_SECTIONS = new Set(["Engineering checklist"]);
 const SECTION_HEADING = /^## (.+?)\s*$/;
 const PENDING_MARKER = /(^|\s)Pending\.\s*$/m;
 const PLACEHOLDER = /<[a-z][^<>\n]*>/i;
@@ -75,30 +68,21 @@ export function parseSections(body) {
   return sections;
 }
 
-export function checkLiveTicket(body, scope, { baseCommit } = {}) {
-  if (!Object.values(Scope).includes(scope)) {
-    throw new Error(`--scope must be one of: ${Object.values(Scope).join(", ")}.`);
-  }
+export function checkLiveTicket(body, { baseCommit } = {}) {
   const sections = parseSections(body);
   const problems = [];
-  for (const { heading, scopes } of TICKET_SECTIONS) {
+  for (const heading of TICKET_SECTIONS) {
     const content = sections.get(heading);
-    if (!scopes.includes(scope)) {
-      if (content !== undefined) {
-        problems.push({ section: heading, problem: `belongs only to a ${scopes.join(" or ")} scope session` });
-      }
-      continue;
-    }
     if (content === undefined) {
       problems.push({ section: heading, problem: "missing" });
       continue;
     }
-    problems.push(...checkSection(heading, content), ...checkScopeLines(heading, content, scope));
+    problems.push(...checkSection(heading, content));
     if (heading === "Environment" && baseCommit) {
       problems.push(...checkBaseCommit(content, baseCommit));
     }
   }
-  return { ok: problems.length === 0, scope, problems };
+  return { ok: problems.length === 0, problems };
 }
 
 function checkSection(heading, content) {
@@ -122,16 +106,6 @@ function checkSection(heading, content) {
   return problems;
 }
 
-/** A section built from scope-marked template lines keeps only the session's own scope's lines. */
-function checkScopeLines(heading, content, scope) {
-  if (!SCOPE_MARKED_SECTIONS.has(heading)) {
-    return [];
-  }
-  return Object.values(Scope)
-    .filter((other) => other !== scope && content.includes(`(${other} scope)`))
-    .map((other) => ({ section: heading, problem: `has a line marked (${other} scope) in a ${scope} scope session` }));
-}
-
 /** The Environment section names the branch's current base, not the commit the session started from. */
 function checkBaseCommit(content, baseCommit) {
   const expected = baseCommit.slice(0, SHORT_SHA_LENGTH);
@@ -147,13 +121,13 @@ function checkBaseCommit(content, baseCommit) {
 
 function main() {
   const { values } = parseArgs({
-    options: { file: { type: "string" }, scope: { type: "string" }, "base-commit": { type: "string" } },
+    options: { file: { type: "string" }, "base-commit": { type: "string" } },
   });
   try {
     if (!values.file) {
       throw new Error("--file is required.");
     }
-    const result = checkLiveTicket(readFileSync(path.resolve(values.file), "utf8"), values.scope, {
+    const result = checkLiveTicket(readFileSync(path.resolve(values.file), "utf8"), {
       baseCommit: values["base-commit"],
     });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
