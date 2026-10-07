@@ -8,7 +8,7 @@ hands-on time; the `vibe` skill installs everything else on its first run.
 - The vibe user needs:
   - Codex Desktop (inside the ChatGPT app) installed and signed in.
   - A GitHub account in the `closedloop-ai` org with push access to
-    `symphony-alpha` (every session pushes an `andy/<slug>` branch and starts
+    `symphony-alpha` (every session pushes a `vibe/<slug>` branch and starts
     its Vercel environment through a GitHub workflow).
   - A ClosedLoop account.
   - To have signed in at least once to the stage app,

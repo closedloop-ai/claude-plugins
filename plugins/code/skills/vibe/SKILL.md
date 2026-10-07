@@ -156,7 +156,7 @@ Starting new:
    --operator-id <id> --operator-email <email> --operator-name "<firstName lastName>"`,
    with the operator from the `get-me` call in section 1 (the person running
    this session; leave out `--operator-name` when `get-me` has no name). This
-   fetches main and creates the worktree on `andy/<slug>` from fresh
+   fetches main and creates the worktree on `vibe/<slug>` from fresh
    `origin/main`. The live ticket is assigned to that person.
 6. Record this conversation as the session's orchestrator:
    `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` (it reads
@@ -389,8 +389,10 @@ Whenever the person asks to throw a session away (at any point, for any
    number of unsaved files, that their copy of the app on Vercel and its data
    will be deleted, and that the ticket will be canceled. Ask them to confirm.
 3. On a clear yes, dispatch `vibe-setup-worker` to discard the worktree. It
-   stops the session's local processes and deletes the worktree and the
-   local and remote branch, and returns the live ticket slug and operator.
+   stops the session's local processes, requests the drop of the session's
+   data in symphony-alpha (nothing removes it automatically), deletes the
+   worktree and the local and remote branch, and returns the live ticket
+   slug and operator.
 4. If there was a live ticket, dispatch `vibe-ticket-worker` in cancel mode
    with that slug and operator.
 5. Tell them in one line that it is gone.

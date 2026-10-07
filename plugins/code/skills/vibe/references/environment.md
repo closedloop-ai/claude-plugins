@@ -1,9 +1,10 @@
 # The vibe environment
 
 Each vibe session runs on its own Vercel environment (ISS-12056): the web
-app, the API, and Storybook deployed from the session's `andy/<slug>` branch
+app, the API, and Storybook deployed from the session's `vibe/<slug>` branch
 as production builds, backed by the session's own throwaway data in the stage
-database (its own preview schema, removed when the branch is gone). Nothing
+database (its own preview schema, which nothing removes automatically: it
+stays until the session is thrown away, ISS-12135). Nothing
 of the web app runs on this Mac. `just vibe-up` stays in symphony-alpha for
 the team's local checks; the vibe skill never uses it.
 
@@ -27,7 +28,7 @@ Asked once when the session starts, recorded as the session's `mode`.
 
 1. Take the production flag snapshot (below) and save it with
    `vibe-sessions.mjs flag-snapshot`.
-2. Push the branch (`git push -u origin andy/<slug>`).
+2. Push the branch (`git push -u origin vibe/<slug>`).
 3. Write the request inputs with `vibe-sessions.mjs dispatch-inputs` and
    start the request workflow it names from main:
    `gh workflow run vibe-environment-dispatch.yml --ref main --json < <file>`.
@@ -61,9 +62,9 @@ once `environment-result` has recorded a verified result:
 
 | Field | What it is |
 |---|---|
-| `appUrl` | The web app (`app-stage-git-andy-<slug>`). Open it in the in-app Browser. |
-| `apiUrl` | The API behind it (`api-stage-git-andy-<slug>`); the app finds it by hostname. |
-| `storybookUrl` | Storybook (`prototypes-git-andy-<slug>`, under `/storybook`), where design reviews the components. It sits behind Vercel's sign-in: a viewer not signed in to Vercel with a team account is sent to `vercel.com` (`sso-api`) instead. |
+| `appUrl` | The web app (`app-stage-git-vibe-<slug>`). Open it in the in-app Browser. |
+| `apiUrl` | The API behind it (`api-stage-git-vibe-<slug>`); the app finds it by hostname. |
+| `storybookUrl` | Storybook (`prototypes-git-vibe-<slug>`, under `/storybook`), where design reviews the components. It sits behind Vercel's sign-in: a viewer not signed in to Vercel with a team account is sent to `vercel.com` (`sso-api`) instead. |
 
 ## The production flag snapshot
 

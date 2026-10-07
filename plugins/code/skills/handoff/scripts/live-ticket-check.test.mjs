@@ -14,11 +14,11 @@ const TEMPLATE = path.join(HERE, "..", "..", "vibe", "references", "ticket-templ
 const TEMPLATE_BODY = /````markdown\n([\s\S]*?)\n````\n?$/;
 
 const ENVIRONMENT = [
-  "- Branch: `andy/tags` (base: origin/main at `abcdef1234`)",
+  "- Branch: `vibe/tags` (base: origin/main at `abcdef1234`)",
   "- Data: seeded (Acme Co sample data)",
-  "- App: https://app-stage-git-andy-tags.preview.closedloop-stage.ai",
-  "- API: https://api-stage-git-andy-tags.preview.closedloop-stage.ai",
-  "- Storybook: https://prototypes-git-andy-tags.preview.closedloop-stage.ai/storybook",
+  "- App: https://app-stage-git-vibe-tags.preview.closedloop-stage.ai",
+  "- API: https://api-stage-git-vibe-tags.preview.closedloop-stage.ai",
+  "- Storybook: https://prototypes-git-vibe-tags.preview.closedloop-stage.ai/storybook",
   "- Last deployed: `abcdef1234` at 2026-10-06T16:00:00.000Z",
 ].join("\n");
 
@@ -135,7 +135,7 @@ test("the CLI prints the result and exits non-zero when incomplete", (t) => {
 });
 
 test("the sections ticket-sections renders from a finished record pass the check, and a fresh one does not", () => {
-  const branch = "andy/tags";
+  const branch = "vibe/tags";
   const fresh = {
     branch,
     baseCommit: "abcdef1234567890",

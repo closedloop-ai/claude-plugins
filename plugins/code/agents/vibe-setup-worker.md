@@ -80,9 +80,12 @@ The checkout is the one the preflight remembered
 - Discard (only when the orchestrator says the person confirmed): stop the
   session's processes (as above), then run
   `node ../skills/vibe/scripts/vibe-sessions.mjs discard --worktree "<wt>" --confirm`.
-  It refuses a handed-off session; otherwise it deletes the remote
-  `andy/<slug>` branch (which removes its Vercel previews and preview
-  schema), the worktree, and the local branch. Return `DONE` with its
+  It refuses a handed-off session; otherwise, for a pushed session, it
+  requests the drop of the session's preview schema and stored files
+  (symphony-alpha's `cleanup-preview-schemas.yml` through `gh`, since
+  nothing removes a `vibe/` schema automatically), then deletes the remote
+  `vibe/<slug>` branch, the worktree, and the local branch. A failed
+  request deletes nothing. Return `DONE` with its
   `liveTicket` and `operator` (the orchestrator needs them to cancel the
   ticket), or `BLOCKED` with its error in one line. Never delete a branch
   any other way.

@@ -31,7 +31,7 @@ Use closedloop-graph first, per `../skills/vibe/references/closedloop-graph.md` 
 ```markdown
 # API requirements: <session summary>
 
-Branch: andy/<slug>. Each section below is backed by a stub file that the UI
+Branch: vibe/<slug>. Each section below is backed by a stub file that the UI
 uses today. Implement the endpoint, then replace the stub in the named hook.
 
 ## <n>. <requirement.need>

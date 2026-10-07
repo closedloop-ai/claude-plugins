@@ -126,7 +126,7 @@ test("committed redeploys count as the session's work and the live ticket is rep
   ]);
   assert.equal(result.json.liveTicket, "ISS-90");
   assert.equal(result.json.mode, "seeded");
-  assert.equal(result.json.vercel.appUrl, "https://app-stage-git-andy-redeployed.preview.closedloop-stage.ai");
+  assert.equal(result.json.vercel.appUrl, "https://app-stage-git-vibe-redeployed.preview.closedloop-stage.ai");
 });
 
 test("a draft session may only shrink the source-gate allowlist under scripts/", (t) => {

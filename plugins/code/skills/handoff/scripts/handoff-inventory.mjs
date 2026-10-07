@@ -22,7 +22,7 @@ import { parseArgs } from "node:util";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
 
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
-const BRANCH_PREFIX = "andy/";
+const BRANCH_PREFIX = "vibe/";
 
 const ALLOWED_PREFIXES = [
   "apps/app/",

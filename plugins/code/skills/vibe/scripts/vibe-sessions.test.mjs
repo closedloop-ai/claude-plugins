@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -49,7 +49,7 @@ test("repo, list, and new use the remembered checkout, including a path with spa
     home
   );
   assert.equal(created.status, 0, created.stderr);
-  assert.equal(created.json.session.worktree, path.join(checkout, ".claude", "worktrees", "andy-board-chips"));
+  assert.equal(created.json.session.worktree, path.join(checkout, ".claude", "worktrees", "vibe-board-chips"));
   assert.deepEqual(created.json.session.localFixes, []);
 
   const listed = runNode(SCRIPT, ["list"], home);
@@ -144,6 +144,21 @@ function newSession(t, slug, extra = []) {
   return { ...fixture, worktree: created.json.session.worktree };
 }
 
+/**
+ * A `gh` first on PATH that logs each call's arguments and exits with
+ * `exitCode`, so discard's schema-drop request is observed without GitHub.
+ */
+function ghStub(root, exitCode) {
+  const dir = path.join(root, `gh-stub-${Math.random().toString(16).slice(2)}`);
+  mkdirSync(dir);
+  const log = path.join(dir, "calls.log");
+  writeFileSync(path.join(dir, "gh"), `#!/bin/sh\necho "$*" >> "${log}"\nexit ${exitCode}\n`, { mode: 0o755 });
+  return {
+    env: { PATH: `${dir}${path.delimiter}${process.env.PATH}` },
+    calls: () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : []),
+  };
+}
+
 function writeJson(file, value) {
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, typeof value === "string" ? value : JSON.stringify(value));
@@ -171,9 +186,9 @@ test("new requires a seeded or blank mode and records the branch's Vercel URLs",
   assert.equal(created.status, 0, created.stderr);
   assert.equal(created.json.session.mode, "seeded");
   assert.deepEqual(created.json.session.vercel, {
-    appUrl: "https://app-stage-git-andy-tag-edit.preview.closedloop-stage.ai",
-    apiUrl: "https://api-stage-git-andy-tag-edit.preview.closedloop-stage.ai",
-    storybookUrl: "https://prototypes-git-andy-tag-edit.preview.closedloop-stage.ai/storybook",
+    appUrl: "https://app-stage-git-vibe-tag-edit.preview.closedloop-stage.ai",
+    apiUrl: "https://api-stage-git-vibe-tag-edit.preview.closedloop-stage.ai",
+    storybookUrl: "https://prototypes-git-vibe-tag-edit.preview.closedloop-stage.ai/storybook",
     lastDeployedCommit: null,
     lastDeployedAt: null,
     deploymentIds: null,
@@ -201,7 +216,7 @@ test("new records the person running the session and refuses to start without th
   );
   assert.equal(badId.status, 1);
   assert.match(badId.json.error, /--operator-id/);
-  assert.equal(git(checkout, ["branch", "--list", "andy/no-operator"], home), "");
+  assert.equal(git(checkout, ["branch", "--list", "vibe/no-operator"], home), "");
 
   const created = runNode(SCRIPT, [...base, "--slug", "with-operator", ...OPERATOR_ARGS], home);
   assert.equal(created.status, 0, created.stderr);
@@ -263,7 +278,7 @@ test("touch records the live ticket, accepts the old --handoff-ticket name, and 
   const listed = runNode(SCRIPT, ["list"], home);
   assert.equal(listed.json.sessions[0].liveTicket, "ISS-12");
   assert.equal(listed.json.sessions[0].mode, null);
-  assert.equal(listed.json.sessions[0].vercel.appUrl, "https://app-stage-git-andy-live-ticket.preview.closedloop-stage.ai");
+  assert.equal(listed.json.sessions[0].vercel.appUrl, "https://app-stage-git-vibe-live-ticket.preview.closedloop-stage.ai");
   const touched = runNode(SCRIPT, ["touch", "--worktree", worktree, "--summary", "again"], home);
   assert.equal(touched.json.session.liveTicket, "ISS-12");
   assert.equal("handoffTicket" in JSON.parse(readFileSync(file, "utf8")), false);
@@ -275,9 +290,9 @@ function environmentResult(worktree, home, overrides = {}) {
     branch: git(worktree, ["rev-parse", "--abbrev-ref", "HEAD"], home),
     mode: "blank",
     headSha: git(worktree, ["rev-parse", "HEAD"], home),
-    appUrl: "https://app-stage-git-andy-deploys.preview.closedloop-stage.ai",
-    apiUrl: "https://api-stage-git-andy-deploys.preview.closedloop-stage.ai",
-    storybookUrl: "https://prototypes-git-andy-deploys.preview.closedloop-stage.ai/storybook/",
+    appUrl: "https://app-stage-git-vibe-deploys.preview.closedloop-stage.ai",
+    apiUrl: "https://api-stage-git-vibe-deploys.preview.closedloop-stage.ai",
+    storybookUrl: "https://prototypes-git-vibe-deploys.preview.closedloop-stage.ai/storybook/",
     deploymentIds: { app: "dpl_app", api: "dpl_api", storybook: "dpl_sb" },
     verifiedAt: "2026-10-07T03:00:00Z",
     ...overrides,
@@ -293,7 +308,7 @@ test("environment-result records only a result verified for this request, branch
   const head = git(worktree, ["rev-parse", "HEAD"], home);
   const cases = [
     [{ requestId: "req-other-0001" }, /requestId is "req-other-0001", expected "req-12345678"/],
-    [{ branch: "andy/someone-else" }, /branch is/],
+    [{ branch: "vibe/someone-else" }, /branch is/],
     [{ mode: "seeded" }, /mode is "seeded", expected "blank"/],
     [{ headSha: "0".repeat(40) }, new RegExp(`headSha is "${"0".repeat(40)}", expected "${head}"`)],
     [{ appUrl: "http://app.example" }, /appUrl must be an https URL/],
@@ -324,8 +339,8 @@ test("environment-result records only a result verified for this request, branch
   const saved = record();
   assert.equal(saved.status, 0, saved.stderr);
   const vercel = saved.json.session.vercel;
-  assert.equal(vercel.storybookUrl, "https://prototypes-git-andy-deploys.preview.closedloop-stage.ai/storybook");
-  assert.equal(vercel.appUrl, "https://app-stage-git-andy-deploys.preview.closedloop-stage.ai");
+  assert.equal(vercel.storybookUrl, "https://prototypes-git-vibe-deploys.preview.closedloop-stage.ai/storybook");
+  assert.equal(vercel.appUrl, "https://app-stage-git-vibe-deploys.preview.closedloop-stage.ai");
   assert.equal(vercel.lastDeployedCommit, head);
   assert.ok(Date.parse(vercel.lastDeployedAt));
   assert.deepEqual(vercel.deploymentIds, { app: "dpl_app", api: "dpl_api", storybook: "dpl_sb" });
@@ -450,7 +465,7 @@ test("ticket-sections renders the record's sections and marks what is still pend
 
   const resultFile = path.join(root, "vibe-environment-result.json");
   writeJson(resultFile, environmentResult(worktree, home, {
-    appUrl: "https://app-stage-git-andy-sections.preview.closedloop-stage.ai",
+    appUrl: "https://app-stage-git-vibe-sections.preview.closedloop-stage.ai",
   }));
   const recorded = runNode(
     SCRIPT,
@@ -463,7 +478,7 @@ test("ticket-sections renders the record's sections and marks what is still pend
   assert.match(filled.json.markdown, /\| `a-flag` \| false \|\n\| `b-flag` \| `test` \|/);
   assert.match(filled.json.markdown, /as PostHog user `user_abc`\. 2 flags\./);
   assert.match(filled.json.markdown, /- Codex session \(orchestrator\): `thread-12345678`/);
-  assert.match(filled.json.markdown, /- App: https:\/\/app-stage-git-andy-sections\.preview\.closedloop-stage\.ai\/sign-in\n/);
+  assert.match(filled.json.markdown, /- App: https:\/\/app-stage-git-vibe-sections\.preview\.closedloop-stage\.ai\/sign-in\n/);
   assert.match(filled.json.markdown, new RegExp(`- Last deployed: \`${git(worktree, ["rev-parse", "HEAD"], home).slice(0, 10)}\``));
 });
 
@@ -504,10 +519,10 @@ test("dispatch-inputs writes the request workflow's inputs with a fresh request 
   assert.equal(blank.json.workflow, "vibe-environment-dispatch.yml");
   assert.equal(blank.json.ref, "main");
   assert.match(blank.json.requestId, /^[A-Za-z0-9-]{8,64}$/);
-  assert.equal(blank.json.runTitle, `Vibe environment andy/dispatch (${blank.json.requestId})`);
+  assert.equal(blank.json.runTitle, `Vibe environment vibe/dispatch (${blank.json.requestId})`);
   const blankInputs = JSON.parse(readFileSync(out, "utf8"));
   assert.deepEqual(Object.keys(blankInputs).sort(), ["branch", "flag_snapshot", "mode", "request_id"]);
-  assert.equal(blankInputs.branch, "andy/dispatch");
+  assert.equal(blankInputs.branch, "vibe/dispatch");
   assert.equal(blankInputs.mode, "blank");
   assert.equal(blankInputs.request_id, blank.json.requestId);
   assert.deepEqual(JSON.parse(blankInputs.flag_snapshot).flags, { "it's-quoted": true });
@@ -526,7 +541,7 @@ test("dispatch-inputs writes the request workflow's inputs with a fresh request 
   const unverified = keepInput("true");
   assert.equal(unverified.sent, "false", "no request has published a result yet");
   const resultFile = path.join(root, "result.json");
-  writeJson(resultFile, environmentResult(worktree, home, { requestId: unverified.requestId, branch: "andy/dispatch" }));
+  writeJson(resultFile, environmentResult(worktree, home, { requestId: unverified.requestId, branch: "vibe/dispatch" }));
   const recorded = runNode(
     SCRIPT,
     ["environment-result", "--worktree", worktree, "--file", resultFile, "--request-id", unverified.requestId],
@@ -653,28 +668,34 @@ test("desktop-auth saves the profile's auth claim and every later request sends 
   assert.ok("desktop_auth" in seededInputs);
 });
 
-test("discard reports what would be lost, then deletes the pushed branch everywhere so the slug can be reused", (t) => {
-  const { checkout, home, worktree } = newSession(t, "throw-away");
+test("discard reports what would be lost, then requests the schema drop and deletes the pushed branch everywhere so the slug can be reused", (t) => {
+  const { checkout, home, root, worktree } = newSession(t, "throw-away");
+  const gh = ghStub(root, 0);
   runNode(SCRIPT, ["touch", "--worktree", worktree, "--live-ticket", "ISS-30"], home);
-  git(worktree, ["push", "--quiet", "-u", "origin", "andy/throw-away"], home);
+  git(worktree, ["push", "--quiet", "-u", "origin", "vibe/throw-away"], home);
   writeFileSync(path.join(worktree, "draft.txt"), "unsaved\n");
 
-  const preview = runNode(SCRIPT, ["discard", "--worktree", worktree], home);
+  const preview = runNode(SCRIPT, ["discard", "--worktree", worktree], home, gh.env);
   assert.equal(preview.status, 0, preview.stderr);
+  assert.deepEqual(gh.calls(), []);
   assert.equal(preview.json.discarded, false);
   assert.equal(preview.json.wouldLose.pushed, true);
   assert.equal(preview.json.wouldLose.liveTicket, "ISS-30");
   assert.deepEqual(preview.json.wouldLose.operator, { id: "user-andy", email: "andy@example.com", name: "Andy Example" });
   assert.deepEqual(preview.json.wouldLose.uncommittedFiles, ["draft.txt"]);
-  assert.notEqual(git(checkout, ["ls-remote", "--heads", "origin", "andy/throw-away"], home), "");
+  assert.notEqual(git(checkout, ["ls-remote", "--heads", "origin", "vibe/throw-away"], home), "");
 
-  const done = runNode(SCRIPT, ["discard", "--worktree", worktree, "--confirm"], home);
+  const done = runNode(SCRIPT, ["discard", "--worktree", worktree, "--confirm"], home, gh.env);
   assert.equal(done.status, 0, done.stderr);
   assert.equal(done.json.discarded, true);
   assert.equal(done.json.remoteBranchDeleted, true);
+  assert.equal(done.json.schemaCleanupRequested, true);
+  assert.deepEqual(gh.calls(), [
+    "workflow run cleanup-preview-schemas.yml --repo closedloop-ai/symphony-alpha --ref main -f branch=vibe/throw-away",
+  ]);
   assert.equal(done.json.wouldLose.liveTicket, "ISS-30");
-  assert.equal(git(checkout, ["ls-remote", "--heads", "origin", "andy/throw-away"], home), "");
-  assert.equal(git(checkout, ["branch", "--list", "andy/throw-away"], home), "");
+  assert.equal(git(checkout, ["ls-remote", "--heads", "origin", "vibe/throw-away"], home), "");
+  assert.equal(git(checkout, ["branch", "--list", "vibe/throw-away"], home), "");
   assert.deepEqual(runNode(SCRIPT, ["list"], home).json.sessions, []);
 
   const again = runNode(
@@ -685,12 +706,28 @@ test("discard reports what would be lost, then deletes the pushed branch everywh
   assert.equal(again.status, 0, again.stderr);
 });
 
+test("discard keeps the session when the schema drop cannot be requested", (t) => {
+  const { checkout, home, root, worktree } = newSession(t, "kept");
+  git(worktree, ["push", "--quiet", "-u", "origin", "vibe/kept"], home);
+  const gh = ghStub(root, 1);
+
+  const failed = runNode(SCRIPT, ["discard", "--worktree", worktree, "--confirm"], home, gh.env);
+  assert.equal(failed.status, 1);
+  assert.equal(gh.calls().length, 1);
+  assert.notEqual(git(checkout, ["ls-remote", "--heads", "origin", "vibe/kept"], home), "");
+  assert.notEqual(git(checkout, ["branch", "--list", "vibe/kept"], home), "");
+  assert.ok(existsSync(worktree));
+});
+
 test("discard deletes an unpushed session's local branch and never discards a handed-off one", (t) => {
-  const { checkout, home, worktree } = newSession(t, "local-only");
-  const done = runNode(SCRIPT, ["discard", "--worktree", worktree, "--confirm"], home);
+  const { checkout, home, root, worktree } = newSession(t, "local-only");
+  const gh = ghStub(root, 0);
+  const done = runNode(SCRIPT, ["discard", "--worktree", worktree, "--confirm"], home, gh.env);
   assert.equal(done.status, 0, done.stderr);
   assert.equal(done.json.remoteBranchDeleted, false);
-  assert.equal(git(checkout, ["branch", "--list", "andy/local-only"], home), "");
+  assert.equal(done.json.schemaCleanupRequested, false);
+  assert.deepEqual(gh.calls(), []);
+  assert.equal(git(checkout, ["branch", "--list", "vibe/local-only"], home), "");
 
   const created = runNode(
     SCRIPT,
@@ -704,7 +741,7 @@ test("discard deletes an unpushed session's local branch and never discards a ha
     assert.equal(refused.status, 1);
     assert.match(refused.json.error, /handed off/);
   }
-  assert.notEqual(git(checkout, ["branch", "--list", "andy/handed"], home), "");
+  assert.notEqual(git(checkout, ["branch", "--list", "vibe/handed"], home), "");
 });
 
 const BRIDGE_TOKEN_A = "A".repeat(43);
@@ -728,7 +765,7 @@ test("desktop-launched records the running launch and its Desktop tab URL, and d
   writeFileSync(
     log,
     [
-      "[vibe-profile] launching Desktop against https://api-stage-git-andy-desktop-tab.preview.closedloop-stage.ai",
+      "[vibe-profile] launching Desktop against https://api-stage-git-vibe-desktop-tab.preview.closedloop-stage.ai",
       `Desktop browser URL: ${bridgeUrl(50425, BRIDGE_TOKEN_A)}`,
       "[ELIFECYCLE] Command failed with exit code 143.",
       `Desktop browser URL: ${bridgeUrl(51229, BRIDGE_TOKEN_B)}`,
