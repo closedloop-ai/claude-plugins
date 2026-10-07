@@ -83,9 +83,10 @@ Every worker result starts with a status: `DONE`, `NEEDS_PERSON` (a question
 or action only the person can answer or take, already phrased for them),
 `NEEDS_PRIMITIVE` (a building block is missing; includes the steward's spec),
 `NEEDS_BACKEND` (full scope only: the backend work the change needs, as a
-spec for `vibe-backend-worker`), or `BLOCKED` (with the reason). Relay
-`NEEDS_PERSON` verbatim in plain words, then dispatch a fresh worker with the
-answer.
+spec for `vibe-backend-worker`), `NEEDS_DESKTOP_STOP` (the worker must merge
+main into the worktree or otherwise swap its commit while Desktop runs), or
+`BLOCKED` (with the reason). Relay `NEEDS_PERSON` verbatim in plain words,
+then dispatch a fresh worker with the answer.
 
 ## 1. Preflight
 
@@ -175,6 +176,14 @@ what that session's `stack` lists) but never touches its files. You never
 commit, push, stash, or rebase; only `vibe-environment-worker` commits and
 pushes, when the person asks to redeploy.
 
+Desktop's screens reload live from the worktree, so merging main into it, or
+any other swap of its commit, while Desktop runs crashes the Desktop tab
+("Never swap the worktree under a running Desktop" in
+`references/environment.md`). No step in this skill or handoff does that
+today. When a worker returns `NEEDS_DESKTOP_STOP`, dispatch
+`vibe-setup-worker` to stop Desktop, dispatch the worker again, then start
+Desktop again and open its new tab (section 3, Desktop step 2 then step 3).
+
 ## 3. Stand up the environment
 
 Tell the person in one line that their copy of the app is being set up on
@@ -227,6 +236,9 @@ When it returns `DONE`:
      person) in a second Codex in-app Browser tab, and confirm it shows the
      Desktop app's navigation (with Acme Co data when seeded), not
      `Connecting to Closedloop Desktop…`, an error, or a refused connection.
+     If `desktop-tab` reports `running` with no `url`, the session's worktree
+     predates the Desktop tab: Desktop is open as its own window, as before,
+     and there is no tab to open.
   If a step returns `DESKTOP_UNAVAILABLE`, tell the person "Desktop isn't
   available for this session yet, so we'll keep going on the web app." and
   continue web-only.
@@ -249,6 +261,8 @@ named:
   If it reports `running`, open its `url` exactly as given. Otherwise Desktop
   quit, was stopped, or never started: start it as in step 2 above, then open
   the new `url`. On `DESKTOP_UNAVAILABLE`, use the same sentence as above.
+  With `running` and no `url` (a worktree that predates the tab), tell the
+  person Desktop is open in its own window on their Mac for this session.
   Never open a Desktop URL from an earlier launch or one copied from a tab's
   address bar; each launch has its own.
 

@@ -62,9 +62,16 @@ The checkout is the one the preflight remembered
     Otherwise sign the profile in (step 4) unless it already is (sign-in
     refuses a signed-in profile; go on to step 5), start the app detached
     (step 5), wait for its `Desktop window visible` log line, and record the
-    launch and its tab URL with `desktop-launched` (step 6). Return `DONE`
-    once it is recorded; the orchestrator reads the URL with `desktop-tab`,
-    so never put the URL or its token in your result.
+    launch and its tab URL with `desktop-launched` (step 6; a worktree whose
+    launcher predates the tab is recorded with no URL and keeps running as a
+    window). Return `DONE` once it is recorded; the orchestrator reads the URL
+    with `desktop-tab`, so never put the URL or its token in your result.
+  - Stop Desktop only (before a step that merges main or swaps the
+    worktree's commit, per "Never swap the worktree under a running Desktop"
+    in `environment.md`): stop the recorded Desktop launch as `environment.md`
+    says, wait until its Electron process has exited, and leave Storybook and
+    the rest of the stack as they are (`desktop-tab` then reports it not
+    running).
   Never point a Desktop at a local API. If a command fails and you cannot fix
   it, return `BLOCKED` with `DESKTOP_UNAVAILABLE` and the error in one line.
 - Stop: end the processes the session's stack lists (only those pids, after

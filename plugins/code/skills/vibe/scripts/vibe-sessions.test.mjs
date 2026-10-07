@@ -764,12 +764,12 @@ test("desktop-launched records the running launch and its Desktop tab URL, and d
   assert.deepEqual([stopped.json.running, stopped.json.url], [false, null]);
 });
 
-test("desktop-launched refuses a log without a loopback Desktop tab URL and a bad pid, and keeps the stack", (t) => {
+test("desktop-launched refuses a log that is not a started launch or has a bad tab URL, and a bad pid, and keeps the stack", (t) => {
   const { root, home, worktree } = newSession(t, "desktop-refused");
   runNode(SCRIPT, ["touch", "--worktree", worktree, "--stack", JSON.stringify({ storybookPid: 7 })], home);
   const log = path.join(root, "vibe-desktop.log");
   for (const [text, message] of [
-    ["[startup] Desktop window visible reason=app-mounted\n", /no "Desktop browser URL:" line/],
+    ["[vibe-profile] launching Desktop against https://api.example\n", /neither a "Desktop browser URL:" line nor "Desktop window visible"/],
     [`Desktop browser URL: ${bridgeUrl(5173, BRIDGE_TOKEN_A).replace("127.0.0.1", "example.com")}\n`, /not a loopback/],
     [`Desktop browser URL: ${bridgeUrl(5173, "short")}\n`, /not a loopback/],
     [`Desktop browser URL: ${bridgeUrl(5173, BRIDGE_TOKEN_A).replace("browser.html", "index.html")}\n`, /not a loopback/],
@@ -792,4 +792,23 @@ test("desktop-launched refuses a log without a loopback Desktop tab URL and a ba
   assert.match(missing.json.error, /Could not read the Desktop launch log/);
   const shown = runNode(SCRIPT, ["show", "--worktree", worktree], home);
   assert.deepEqual(shown.json.session.stack, { storybookPid: 7 });
+});
+
+test("desktop-launched records a launch that predates the tab as a running window with no URL", (t) => {
+  const { root, home, worktree } = newSession(t, "desktop-window");
+  const log = path.join(root, "vibe-desktop.log");
+  writeFileSync(log, `Desktop browser URL: ${bridgeUrl(50425, BRIDGE_TOKEN_A)}\n`);
+  runNode(SCRIPT, ["desktop-launched", "--worktree", worktree, "--pid", String(process.pid), "--log", log], home);
+
+  writeFileSync(log, "[vibe-profile] launching Desktop\n[startup][10:00:00.000] Desktop window visible reason=app-mounted\n");
+  const launched = runNode(SCRIPT, ["desktop-launched", "--worktree", worktree, "--pid", String(process.pid), "--log", log], home);
+  assert.equal(launched.status, 0, launched.stderr);
+  assert.deepEqual(launched.json.session.stack, { desktopPid: process.pid, desktopLog: log, desktopBrowserUrl: null });
+
+  const tab = runNode(SCRIPT, ["desktop-tab", "--worktree", worktree], home);
+  assert.deepEqual([tab.json.running, tab.json.url], [true, null]);
+
+  runNode(SCRIPT, ["desktop-launched", "--worktree", worktree, "--pid", String(exitedPid()), "--log", log], home);
+  const quit = runNode(SCRIPT, ["desktop-tab", "--worktree", worktree], home);
+  assert.deepEqual([quit.json.running, quit.json.url], [false, null]);
 });

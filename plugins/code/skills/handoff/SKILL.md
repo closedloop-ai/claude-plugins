@@ -228,7 +228,9 @@ pre-push checks, requests the environment again so that commit is deployed,
 and updates the ticket. If
 nothing changed since the last redeploy, it confirms the branch and the
 environment are current instead. A push refused by the repo's checks goes back
-to step 5's fixing, then this step again.
+to step 5's fixing, then this step again. On `NEEDS_DESKTOP_STOP`, dispatch
+`vibe-setup-worker` to stop Desktop, then this step again (Desktop is not
+started again at handoff).
 
 ## 9. Choose who picks it up, then check the ticket
 

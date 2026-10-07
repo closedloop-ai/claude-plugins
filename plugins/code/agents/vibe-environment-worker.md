@@ -149,6 +149,13 @@ then plain search.
 
 ## Redeploy mode
 
+Never merge main into the worktree, pull, rebase, reset, or check out another
+commit while the session's Desktop runs (`vibe-sessions.mjs desktop-tab`
+reports `running`): it crashes Desktop ("Never swap the worktree under a
+running Desktop" in `environment.md`). No step below does; if one ever has
+to, return `NEEDS_DESKTOP_STOP` naming the step, and the orchestrator stops
+Desktop and dispatches you again.
+
 1. If the person also asked for fresh flags, do flags mode first.
 2. Stage everything the session changed except the local fixes: `git -C "<wt>"
    add -A`, then for every `localFixes` path
@@ -270,5 +277,6 @@ and add your Progress line.
 `DONE` with the verified app, API, and Storybook URLs exactly as
 `environment-result` recorded them, the commit SHA, and one plain sentence
 for the person. Or `NEEDS_PERSON` with one plain instruction. Or
-`BLOCKED` with the cause in one or two lines and whether it is in the
-session's own change.
+`NEEDS_DESKTOP_STOP` with the step that must merge main or swap the
+worktree's commit. Or `BLOCKED` with the cause in one or two lines and
+whether it is in the session's own change.

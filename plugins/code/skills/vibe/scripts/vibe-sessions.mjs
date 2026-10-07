@@ -56,9 +56,10 @@
 // record; every later request sends it too, so the environment signs that
 // profile in. `desktop-launched` records a running `vibe:profile launch`
 // (its pid and log) and the Desktop browser tab's URL it printed on the
-// session's stack (ISS-12182); `desktop-tab` reports that URL only while the
-// launch is still running, so a tab is never reopened on a closed Desktop's
-// port. The URL carries the launch's bridge token, so the record is written
+// session's stack (ISS-12182), or no URL for a worktree whose launcher
+// predates the tab (the Desktop window still runs); `desktop-tab` reports
+// whether that launch is still running and its URL only while it is, so a tab
+// is never reopened on a closed Desktop's port. The URL carries the launch's bridge token, so the record is written
 // owner-only and the URL never goes on the ticket. `environment-result` checks the result `vibe-environment.yml`
 // published for a request (its `vibe-environment-result` artifact) against
 // that request and the worktree's HEAD and only then records the verified
@@ -107,6 +108,8 @@ const THREAD_PATTERN = /^[A-Za-z0-9-]{8,100}$/;
 const CLERK_ORG_PATTERN = /^org_[A-Za-z0-9]+$/;
 const PID_PATTERN = /^[1-9]\d{0,9}$/;
 const OWNER_ONLY = 0o600;
+// What symphony-alpha's Desktop main process logs once its window is shown.
+const DESKTOP_WINDOW_VISIBLE = /Desktop window visible/;
 
 const SessionStatus = {
   Active: "active",
@@ -812,8 +815,10 @@ function currentBaseCommit(worktree, record) {
 /**
  * Records a running `vibe:profile launch` on the session's stack, keeping what
  * else the stack lists: its pid, its log, and the Desktop browser tab's URL
- * from that log. Refuses a log without the URL, so the stack never names a
- * Desktop the person cannot open as a tab.
+ * from that log. A log that shows the window up but no URL is a worktree whose
+ * launcher predates the tab (symphony-alpha before ISS-12182): the launch is
+ * recorded with no URL, so Desktop still runs as its own window. A log with
+ * neither is refused: Desktop has not started.
  */
 function recordDesktopLaunch() {
   const worktree = requireOption("worktree");
@@ -830,10 +835,8 @@ function recordDesktopLaunch() {
     throw new Error(`Could not read the Desktop launch log ${log}: ${error instanceof Error ? error.message : String(error)}`);
   }
   const desktopBrowserUrl = findDesktopBrowserUrl(text);
-  if (desktopBrowserUrl === null) {
-    throw new Error(
-      `${log} has no "Desktop browser URL:" line: Desktop has not started yet, or this worktree's vibe:profile launch predates the browser tab.`
-    );
+  if (desktopBrowserUrl === null && !DESKTOP_WINDOW_VISIBLE.test(text)) {
+    throw new Error(`${log} shows neither a "Desktop browser URL:" line nor "Desktop window visible": Desktop has not started yet.`);
   }
   const now = new Date().toISOString();
   const updated = {
@@ -846,15 +849,16 @@ function recordDesktopLaunch() {
 }
 
 /**
- * The Desktop browser tab to open: the recorded URL while the launch that
- * printed it is still running, else `running: false` and no URL (Desktop was
- * never started here, quit, or was stopped, and must be launched again).
+ * Whether the recorded Desktop launch is still running, and the browser tab's
+ * URL only while it is. `running: false` means Desktop was never started here,
+ * quit, or was stopped, and must be launched again; `running: true` with no
+ * URL is a launch that predates the tab, open as its own window only.
  */
 function desktopTab() {
   const worktree = requireOption("worktree");
   const { stack } = requireRecord(worktree);
-  const running = Boolean(stack?.desktopBrowserUrl) && isRunning(stack?.desktopPid);
-  return { worktree, running, url: running ? stack.desktopBrowserUrl : null };
+  const running = isRunning(stack?.desktopPid);
+  return { worktree, running, url: running ? (stack.desktopBrowserUrl ?? null) : null };
 }
 
 function isRunning(pid) {
