@@ -183,7 +183,8 @@ the URLs on the session, and fills the ticket's Environment, Production flag
 snapshot, and Sessions sections.
 
 A resumed session whose `vercel.verifiedAt` is set already has its
-environment; skip this and use its recorded `appUrl`. A resumed session
+environment; skip this and use its recorded `appUrl`, opening
+`<appUrl>/sign-in` first as below. A resumed session
 without it (one started before environments were verified) goes through
 create mode again; the worker keeps its flag snapshot. If the worker returns `NEEDS_PERSON` asking which
 organization should own Acme Co, ask the person exactly that, record the org
@@ -201,7 +202,8 @@ When it returns `DONE`:
   deployment) with `/sign-in` added (`<appUrl>/sign-in`) in a Codex in-app
   Browser tab and make the browser visible; the app's root sends a
   signed-out visitor to account creation, and the person already has an
-  account. After this first sign-in, use the plain `appUrl`. The person signs in through Clerk as themselves (you never type
+  account. After this first sign-in, use the plain `appUrl`; if a tab ever
+  lands on account creation instead, open `<appUrl>/sign-in`. The person signs in through Clerk as themselves (you never type
   credentials). Seeded: they land in Acme Co as an admin. Blank: they create
   their own org.
 - Confirm the tab shows the app (with Acme Co data when seeded), not an error

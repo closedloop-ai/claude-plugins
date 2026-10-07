@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.10
+
+#### Fixed
+- Every app link the vibe skills give a person is the sign-in page, because the app's root sends a signed-out visitor to account creation: the ticket's Environment section links `<appUrl>/sign-in`, `handoff`'s final message gives `<appUrl>/sign-in`, and `vibe` opens `<appUrl>/sign-in` first on a resumed session too and whenever a tab lands on account creation.
+
 ### code v1.19.9
 
 #### Fixed

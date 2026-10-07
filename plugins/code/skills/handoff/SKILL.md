@@ -265,7 +265,9 @@ Then mark the session handed off:
 and dispatch `vibe-setup-worker` to stop local Storybook or Desktop if either
 runs.
 
-Tell them, in a few lines: the ticket link, the app and Storybook links, the
+Tell them, in a few lines: the ticket link, the app link as
+`<appUrl>/sign-in` (the app's root sends a signed-out visitor to account
+creation), the Storybook link, the
 branch name, and what happens next: Nenad Antic reviews the components in
 Storybook and comments on the ticket when he signs off, then hands it to
 Daniel Ochoa to finish. Say that the Storybook link opens only after

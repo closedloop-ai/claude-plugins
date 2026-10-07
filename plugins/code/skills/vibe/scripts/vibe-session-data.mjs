@@ -324,7 +324,9 @@ function renderEnvironment(record) {
     "",
     `- Branch: \`${record.branch}\`${base}`,
     `- Data: ${modeLabel(record.mode)}`,
-    `- App: ${url(vercel.appUrl)}`,
+    // ISS-12135 bug 56: the app's root sends a signed-out visitor to account
+    // creation, so the ticket links the sign-in page.
+    `- App: ${url(vercel.appUrl && `${vercel.appUrl}/sign-in`)}`,
     `- API: ${url(vercel.apiUrl)}`,
     `- Storybook: ${url(vercel.storybookUrl)}`,
     `- Last deployed: ${deployed}`,
