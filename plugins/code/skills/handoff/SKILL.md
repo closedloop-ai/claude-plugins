@@ -33,7 +33,10 @@ plugin agents from `../../agents/<name>.md` with the file's body as the
 subagent's instructions; in Claude Code use `/code:handoff` and the
 `code:<name>` agents. Repo agents live in `<repo>/.claude/agents/`. Paths like
 `scripts/...` and `../vibe/...` are relative to this skill's own folder, not
-the repository.
+the repository. Resolve the plugin root (two levels above this file, as the
+`vibe` skill describes) to an absolute path and start every worker brief with
+the same plugin-root line: worker paths starting with `../` are relative to
+`<root>/agents`, never to the worktree the worker runs in.
 
 ## Workers
 

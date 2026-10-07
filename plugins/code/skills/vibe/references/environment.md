@@ -64,7 +64,10 @@ Taken once, when the environment is created (ISS-12048): every feature flag's
 production value, evaluated in PostHog with the public project key (`phc_`)
 as the person's real account (their Clerk user id, the PostHog distinct id)
 and real ClosedLoop org. PostHog is one project for stage and production, so
-no other credential is needed. The environment uses these values instead of
+no other credential is needed. The key is public (it ships in every browser
+bundle); `scripts/posthog-key.mjs` reads it from the checkout's
+`apps/app/.env.local`, or from the production app's page when a fresh checkout
+has none, so no Vercel sign-in is needed. The environment uses these values instead of
 evaluating flags live. Every redeploy keeps the same snapshot; it is taken
 again only when the person asks, and applied by requesting the environment
 again with the same mode (a ready environment is kept; a different mode would

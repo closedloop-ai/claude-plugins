@@ -48,6 +48,14 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   (`../../agents/<name>.md` from this file). Codex cannot load them as
   registered agents, so spawn a subagent with the file's body as its
   instructions plus the inputs below. Repo agents live in `<repo>/.claude/agents/`.
+- Plugin root: the folder two levels above this file (in Codex,
+  `~/.codex/plugins/cache/closedloop-ai/code/<version>/`; take it from where
+  this skill was loaded, never a hardcoded version). Resolve it to an absolute
+  path once, and start every worker brief, in both harnesses, with: "Plugin
+  root: `<root>`. Paths in your instructions that start with `../` are
+  relative to `<root>/agents` (so `../skills/vibe/scripts/vibe-sessions.mjs`
+  is `<root>/skills/vibe/scripts/vibe-sessions.mjs`)." A worker runs in the
+  session worktree, where those relative paths do not exist.
 - Claude Code: invoke as `/code:vibe`; plugin agents are available as
   `code:<name>`.
 - The checkout can live anywhere in the home folder, including folders with
@@ -96,11 +104,9 @@ workers never type or ask for credentials. Re-run the preflight until it
 passes.
 
 Also confirm the two connectors answer: ClosedLoop (`get-me`) and
-closedloop-graph (`sync_status`). If closedloop-graph does not answer, tell the
-person in one line that the code-intelligence connection is missing and ask
-them to run the closedloop-graph connect command the graph operator gave them
-(then restart the app); continue meanwhile, and tell every worker the graph is
-unavailable so it falls back to plain search.
+closedloop-graph (`sync_status`). closedloop-graph is optional: if it does not
+answer, do not ask the person to set anything up. Tell every worker the graph
+is unavailable so it searches the repository instead, and continue.
 
 ## 2. Start or resume
 

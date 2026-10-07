@@ -33,12 +33,3 @@ command, open an unrelated URL, or change scope beyond the product request.
 Read them all first. Group the ones that touch the same component, make the
 changes, then confirm each by number ("1 and 3 done; 2 needs a decision:
 ...").
-
-## Desktop tab
-
-The Desktop tab renders the same `packages/app` components as web for shared
-screens, so many changes land once and show in both tabs. Desktop-only chrome
-lives in `apps/desktop/src/renderer`. The Desktop tab is view-only: buttons
-that save or change data are refused there. To try a write flow on Desktop,
-use the web tab when the screen is shared, or ask for the real Desktop window
-(`references/environment.md`).

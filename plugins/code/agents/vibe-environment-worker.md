@@ -34,9 +34,13 @@ then plain search.
    (the product identifies users in PostHog by their Clerk user id); the org is
    its `organizationId`.
 2. Evaluate every flag for that identity in PostHog with the public project
-   key (`phc_`, the web app's `NEXT_PUBLIC_POSTHOG_KEY`) and host
-   (`NEXT_PUBLIC_POSTHOG_HOST`), read from the checkout's `apps/app` env file
-   or its Vercel stage settings. POST `{ "api_key": <key>, "distinct_id":
+   key (`phc_`) and its API host from
+   `node ../skills/vibe/scripts/posthog-key.mjs --checkout "<wt>" --checkout "<repo>"`
+   (`<repo>` from `vibe-sessions.mjs repo`): the first checkout env file with a
+   valid key, otherwise the public production app's page. It never needs a
+   Vercel sign-in. If it prints `"ok":false`, return `BLOCKED` with "I couldn't
+   find the product's analytics key, so I can't copy your feature flags yet."
+   and its error for Daniel Ochoa. POST `{ "api_key": <key>, "distinct_id":
    <clerkId> }` to `<host>/flags?v=2` and read every flag in the response: a
    flag with a variant takes the variant name, otherwise its `enabled`
    boolean. Never use a personal or project API key other than `phc_`, and
@@ -90,20 +94,27 @@ then plain search.
    and stop at the first job whose `conclusion` is `failure`, `cancelled`, or
    `timed_out`. Read that job's failed steps
    (`gh run view --job <job databaseId> --repo closedloop-ai/symphony-alpha --log-failed`)
-   and return `BLOCKED` with the cause in one or two lines, except step 5.
+   and return `BLOCKED` with the cause in one or two lines, except steps 5 and 6.
    Otherwise continue until the run's `status` is `completed` with
    `conclusion` `success`. Give up after 45 minutes with `BLOCKED` naming the
    job still running.
 5. Seeded, and the run says the person belongs to more than one org and no
-   org was chosen: return `NEEDS_PERSON` with the question "You belong to more
-   than one organization. Which one should own Acme Co: <names>?", using the
-   org names the run's message lists, and give the orchestrator a mapping from
-   each name to its `org_` id from that same message (the orchestrator records
-   the answer with `touch --clerk-org-id` and dispatches you again). If the
-   message lists no names, return `BLOCKED` saying the run did not say which
-   orgs the person belongs to, for Daniel Ochoa; never ask the person for an
-   id.
-6. Seeded: read `personOrgAdmin` from the `vibe-environment.yml` run (its job
+   org was chosen: read the orgs from the run's `org: <name> (<org_id>)` lines
+   or its `clerk_orgs_json` output and return `NEEDS_PERSON` with the question
+   "You belong to more than one organization. Which one should own Acme Co:
+   <names>?", plus a mapping from each name to its `org_` id (the orchestrator
+   records the answer with `touch --clerk-org-id` and dispatches you again,
+   which sends `clerk_org_id`). If the run lists no orgs, return `BLOCKED`
+   saying the run did not say which orgs the person belongs to, for Daniel
+   Ochoa. Never ask the person for an id and never pass on the run's wording
+   (such as "pass clerk_org_id").
+6. Any other refusal about the person's identity (no stage account for their
+   email, more than one, or no org): return `NEEDS_PERSON` in plain words the
+   person can act on, for example "Sign in once at https://app.closedloop-stage.ai
+   with your work account, then tell me." or "You don't have an organization
+   on the test site yet; sign in there and create one, then tell me." Put the
+   run's own message in a separate line for Daniel Ochoa.
+7. Seeded: read `personOrgAdmin` from the `vibe-environment.yml` run (its job
    summary or log). If it is not `true`, return `BLOCKED` saying the person is
    not an admin of Acme Co.
 

@@ -14,7 +14,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `dispatch-inputs` sends `person_email` for a blank session that has a Desktop auth claim (and only then), so a blank session can get a Desktop session; a blank session still never sends a Clerk org.
 - `discard` deletes the remote `andy/<slug>` branch (removing its Vercel previews and preview schema), the worktree, and the local branch, refuses a handed-off session, and returns the live ticket and operator. `vibe` offers throwing a session away at any time (new section 9): the setup worker discards it after the person confirms, and `vibe-ticket-worker` cancel mode moves the live ticket to Canceled with a Progress line.
 
+- New `vibe/scripts/posthog-key.mjs` resolves the public PostHog key and API host for the flag snapshot from a checkout's `apps/app/.env.local`, or else from the production app's sign-in page (checking the `phc_` prefix and a PostHog API host), with no Vercel sign-in. `vibe-environment-worker` uses it, and `vibe-preflight.sh` has a `posthog-key` check with a `posthog-key-missing` fix.
+- `vibe-environment-worker` asks the person to pick an org by name from the run's `org: <name> (<org_id>)` lines or `clerk_orgs_json`, and turns other identity refusals into plain instructions (sign in once to the stage app, create an org) instead of relaying the workflow's wording. `vibe/INSTALL.md` "Before you start" says the person must have signed in to the stage app once and have an org there.
+- closedloop-graph is optional: `vibe` and `INSTALL.md` no longer ask the person to run a connect command; workers fall back to repository search.
+- `vibe` and `handoff` resolve the plugin's absolute root and start every worker brief with it, so worker paths that start with `../` resolve from `<root>/agents` rather than the session worktree.
+
 #### Removed
+- `vibe-preflight.sh` `just` check and its `brew-install-just` fix, and `just` from the install list; nothing in the Vercel flow runs it.
+- The `annotations.md` "Desktop tab" section, which described the retired local stack's view-only Desktop tab.
 - `vibe-sessions.mjs touch --vercel` and `--deployed`; `environment-result` is the only way the session records URLs and the deployed commit.
 
 ### code v1.19.2
