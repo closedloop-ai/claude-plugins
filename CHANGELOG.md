@@ -4,10 +4,41 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### code v1.19.14
+### code v1.19.18
 
 #### Changed
 - `vibe-environment-worker` no longer asks which org should own Acme Co when the stage API chose it: the API binds the person's only admin org, otherwise the org their Clerk session last had active (symphony-alpha ISS-12135). When an older API still refuses with exactly one admin org listed, the worker records that org with `touch --clerk-org-id` and requests the environment once more instead of asking. When the API cannot choose, the question is "Which one should own Acme Co: <names>?", with no words about organizations or Clerk. `vibe` SKILL.md and `references/environment.md` say the same.
+
+### code v1.19.17
+
+#### Fixed
+- A vibe session whose worktree predates symphony-alpha ISS-12182 keeps Desktop as its own window instead of reporting it unavailable. `vibe-sessions.mjs desktop-launched` records a launch whose log shows `Desktop window visible` but no `Desktop browser URL:` line with no URL (and still refuses a log showing neither), and `desktop-tab` reports `running` from the launch's pid alone, with a `url` only when the launch printed one. `vibe` opens no Desktop tab for such a launch, and a request to bring the Desktop tab back says Desktop is open in its own window. Node test added.
+- Merging main into a session worktree, or any other swap of its commit, while its Desktop runs crashed the Desktop tab (React `insertBefore` NotFoundError, "Maximum update depth exceeded", Dashboard stuck loading) until Desktop restarted. `references/environment.md` adds "Never swap the worktree under a running Desktop": stop Desktop before such a step, then start it again and open the new tab URL. `vibe-environment-worker` returns the new `NEEDS_DESKTOP_STOP` status instead of doing such a step while Desktop runs; `vibe` and `handoff` handle it by having `vibe-setup-worker` stop Desktop only (a new dispatch that leaves Storybook and the stack alone), and `vibe` relaunches it afterwards. No step in either skill merges main or swaps the worktree's commit today.
+
+### code v1.19.16
+
+#### Added
+- `vibe-sessions.mjs desktop-launched --worktree --pid --log` records a running `vibe:profile launch` on the session's stack (its pid, its log, and the `Desktop browser URL:` the launch printed), keeping what else the stack lists. It takes the log's last URL line and refuses one that is not a loopback `/design-system/browser.html` URL with a `closedloopBridgeToken`, a log without the line, and a bad pid. `desktop-tab --worktree` returns that URL only while the recorded launch is still running, and `running: false` otherwise. Node tests cover both. The session record is now written owner-only (0600), since its stack can carry the bridge token.
+
+#### Changed
+- `vibe` starts Desktop for every session, not only for work that touches Desktop, and opens it through Desktop's browser bridge as a second in-app Browser tab once Desktop reports ready (in a blank session, only after the person has signed in and created their org, as before). The web app tab still opens first at `<appUrl>/sign-in`. A new "Bringing a tab back" path reopens either tab when the person asks, starting Desktop again when `desktop-tab` says it is not running. The "Desktop isn't available for this session yet, so we'll keep going on the web app." fallback is unchanged; annotation instructions cover either tab, and a redeploy reloads the Desktop tab too.
+- `references/environment.md` Desktop section: `vibe:profile launch` runs the dev launcher with the browser bridge (symphony-alpha ISS-12182), logs owner-only, and step 6 records the launch with `desktop-launched`. A new "The Desktop tab" part says how the URL is opened (exactly as recorded, a new port and token per launch, never in chat or on the ticket, read-only), how `desktop-tab` decides a reopen, and that a launch without the URL line (a worktree before ISS-12182) is reported as Desktop unavailable.
+- `vibe-setup-worker` launches Desktop for every session, skips a launch when `desktop-tab` reports one running, signs in only a profile that is not signed in yet, records the launch with `desktop-launched`, and never returns the URL or its token. `vibe/INSTALL.md` says Desktop runs for every session as a second tab.
+
+### code v1.19.15
+
+#### Fixed
+- `.codex-plugin/plugin.json` carries the same version as `.claude-plugin/plugin.json` (1.19.15). The Codex manifest was left at 1.19.13 when the Claude manifest moved to 1.19.14, and Codex installs into a cache folder named by the Codex manifest version, so an install could stay on the 1.19.13 folder's content.
+
+### code-review v3.10.4
+
+#### Fixed
+- `.codex-plugin/plugin.json` carries the same version as `.claude-plugin/plugin.json` (3.10.4). The Codex manifest had stayed at 2.34.0 since it was added, so Codex installs kept using the 2.34.0 cache folder.
+
+### code v1.19.14
+
+#### Fixed
+- `cl-sweep/scripts/app-server-worker-session.mjs launch` passes its `--codex` executable to the detached `run` or `supervise` runner. The runner used to fall back to `codex` on PATH, so a launch given an explicit `--codex` drove a different binary, and failed with `spawn codex ENOENT` where `codex` was not installed.
 
 ### code v1.19.13
 

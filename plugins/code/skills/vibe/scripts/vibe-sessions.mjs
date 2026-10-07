@@ -17,6 +17,8 @@
 //                                     [--operator-id <id> --operator-email <email> [--operator-name <name>]]
 //   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json> [--replace]
 //   vibe-sessions.mjs desktop-auth    --worktree <path> --file <auth-claim.json>
+//   vibe-sessions.mjs desktop-launched --worktree <path> --pid <launch pid> --log <launch log>
+//   vibe-sessions.mjs desktop-tab     --worktree <path>
 //   vibe-sessions.mjs dispatch-inputs --worktree <path> --out <inputs.json>
 //                                     [--person-email <email>] [--keep-flag-snapshot true|false]
 //                                     (`true` is sent only when the session's previous request
@@ -52,7 +54,13 @@
 // request sends it. `desktop-auth` validates and saves the Desktop profile's
 // auth claim (`pnpm --filter desktop vibe:profile auth-claim`) next to the
 // record; every later request sends it too, so the environment signs that
-// profile in. `environment-result` checks the result `vibe-environment.yml`
+// profile in. `desktop-launched` records a running `vibe:profile launch`
+// (its pid and log) and the Desktop browser tab's URL it printed on the
+// session's stack (ISS-12182), or no URL for a worktree whose launcher
+// predates the tab (the Desktop window still runs); `desktop-tab` reports
+// whether that launch is still running and its URL only while it is, so a tab
+// is never reopened on a closed Desktop's port. The URL carries the launch's bridge token, so the record is written
+// owner-only and the URL never goes on the ticket. `environment-result` checks the result `vibe-environment.yml`
 // published for a request (its `vibe-environment-result` artifact) against
 // that request and the worktree's HEAD and only then records the verified
 // URLs, deployment ids, and deployed commit; nothing else records them, and
@@ -63,7 +71,7 @@
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -72,6 +80,7 @@ import {
   DISPATCH_WORKFLOW,
   DispatchInput,
   findCodexSubagents,
+  findDesktopBrowserUrl,
   validateDesktopAuth,
   validateEnvironmentResult,
   renderRecordSections,
@@ -97,6 +106,10 @@ const CONFIG_FILE = path.join(os.homedir(), ".codex", "vibe", "config.json");
 const TICKET_PATTERN = /^[A-Z]+-\d+$/;
 const THREAD_PATTERN = /^[A-Za-z0-9-]{8,100}$/;
 const CLERK_ORG_PATTERN = /^org_[A-Za-z0-9]+$/;
+const PID_PATTERN = /^[1-9]\d{0,9}$/;
+const OWNER_ONLY = 0o600;
+// What symphony-alpha's Desktop main process logs once its window is shown.
+const DESKTOP_WINDOW_VISIBLE = /Desktop window visible/;
 
 const SessionStatus = {
   Active: "active",
@@ -143,6 +156,8 @@ const { positionals, values } = parseArgs({
     "operator-email": { type: "string" },
     "operator-name": { type: "string" },
     stack: { type: "string" },
+    pid: { type: "string" },
+    log: { type: "string" },
     path: { type: "string", multiple: true },
     confirm: { type: "boolean", default: false },
   },
@@ -174,6 +189,10 @@ function run(command) {
       return { session: saveFlagSnapshot() };
     case "desktop-auth":
       return { session: saveDesktopAuth() };
+    case "desktop-launched":
+      return { session: recordDesktopLaunch() };
+    case "desktop-tab":
+      return desktopTab();
     case "dispatch-inputs":
       return dispatchInputs();
     case "codex-sessions":
@@ -188,7 +207,7 @@ function run(command) {
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, touch, flag-snapshot, desktop-auth, dispatch-inputs, codex-sessions, ticket-sections, environment-result, local-fix, discard."
+        "Unknown command. Use one of: repo, list, show, new, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, dispatch-inputs, codex-sessions, ticket-sections, environment-result, local-fix, discard."
       );
   }
 }
@@ -234,7 +253,10 @@ function requireRecord(worktree) {
 function writeRecord(worktree, record) {
   const file = recordPath(worktree);
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
+  writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`, { mode: OWNER_ONLY });
+  // `mode` applies only when the file is created; a record written before the
+  // stack carried a bridge token is narrowed here.
+  chmodSync(file, OWNER_ONLY);
 }
 
 function parseWorktreeList(repo) {
@@ -787,5 +809,66 @@ function currentBaseCommit(worktree, record) {
     return git(worktree, ["merge-base", "HEAD", `origin/${baseBranch(worktree)}`]);
   } catch {
     return record.baseCommit;
+  }
+}
+
+/**
+ * Records a running `vibe:profile launch` on the session's stack, keeping what
+ * else the stack lists: its pid, its log, and the Desktop browser tab's URL
+ * from that log. A log that shows the window up but no URL is a worktree whose
+ * launcher predates the tab (symphony-alpha before ISS-12182): the launch is
+ * recorded with no URL, so Desktop still runs as its own window. A log with
+ * neither is refused: Desktop has not started.
+ */
+function recordDesktopLaunch() {
+  const worktree = requireOption("worktree");
+  const pidText = requireOption("pid");
+  const log = path.resolve(requireOption("log"));
+  if (!PID_PATTERN.test(pidText)) {
+    throw new Error("--pid must be the launch command's process id.");
+  }
+  const record = requireRecord(worktree);
+  let text;
+  try {
+    text = readFileSync(log, "utf8");
+  } catch (error) {
+    throw new Error(`Could not read the Desktop launch log ${log}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const desktopBrowserUrl = findDesktopBrowserUrl(text);
+  if (desktopBrowserUrl === null && !DESKTOP_WINDOW_VISIBLE.test(text)) {
+    throw new Error(`${log} shows neither a "Desktop browser URL:" line nor "Desktop window visible": Desktop has not started yet.`);
+  }
+  const now = new Date().toISOString();
+  const updated = {
+    ...record,
+    stack: { ...record.stack, desktopPid: Number(pidText), desktopLog: log, desktopBrowserUrl },
+    lastActiveAt: now,
+  };
+  writeRecord(worktree, updated);
+  return { worktree, ...updated };
+}
+
+/**
+ * Whether the recorded Desktop launch is still running, and the browser tab's
+ * URL only while it is. `running: false` means Desktop was never started here,
+ * quit, or was stopped, and must be launched again; `running: true` with no
+ * URL is a launch that predates the tab, open as its own window only.
+ */
+function desktopTab() {
+  const worktree = requireOption("worktree");
+  const { stack } = requireRecord(worktree);
+  const running = isRunning(stack?.desktopPid);
+  return { worktree, running, url: running ? (stack.desktopBrowserUrl ?? null) : null };
+}
+
+function isRunning(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }

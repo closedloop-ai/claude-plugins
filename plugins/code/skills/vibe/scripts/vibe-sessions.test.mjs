@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -704,4 +705,110 @@ test("discard deletes an unpushed session's local branch and never discards a ha
     assert.match(refused.json.error, /handed off/);
   }
   assert.notEqual(git(checkout, ["branch", "--list", "andy/handed"], home), "");
+});
+
+const BRIDGE_TOKEN_A = "A".repeat(43);
+const BRIDGE_TOKEN_B = "b-_9".repeat(11);
+const bridgeUrl = (port, token) =>
+  `http://127.0.0.1:${port}/design-system/browser.html?closedloopBridgeToken=${token}`;
+
+function exitedPid() {
+  const child = spawnSync(process.execPath, ["-e", ""]);
+  return child.pid;
+}
+
+test("desktop-launched records the running launch and its Desktop tab URL, and desktop-tab hands it out only while it runs", (t) => {
+  const { root, home, worktree } = newSession(t, "desktop-tab");
+  const before = runNode(SCRIPT, ["desktop-tab", "--worktree", worktree], home);
+  assert.equal(before.status, 0, before.stderr);
+  assert.deepEqual([before.json.running, before.json.url], [false, null]);
+
+  runNode(SCRIPT, ["touch", "--worktree", worktree, "--stack", JSON.stringify({ storybookUrl: "http://localhost:6100", storybookPid: 42 })], home);
+  const log = path.join(root, "vibe-desktop.log");
+  writeFileSync(
+    log,
+    [
+      "[vibe-profile] launching Desktop against https://api-stage-git-andy-desktop-tab.preview.closedloop-stage.ai",
+      `Desktop browser URL: ${bridgeUrl(50425, BRIDGE_TOKEN_A)}`,
+      "[ELIFECYCLE] Command failed with exit code 143.",
+      `Desktop browser URL: ${bridgeUrl(51229, BRIDGE_TOKEN_B)}`,
+      "[startup][11:00:28.789] Desktop window visible reason=app-mounted",
+      "",
+    ].join("\n")
+  );
+  const launched = runNode(SCRIPT, ["desktop-launched", "--worktree", worktree, "--pid", String(process.pid), "--log", log], home);
+  assert.equal(launched.status, 0, launched.stderr);
+  assert.deepEqual(launched.json.session.stack, {
+    storybookUrl: "http://localhost:6100",
+    storybookPid: 42,
+    desktopPid: process.pid,
+    desktopLog: log,
+    desktopBrowserUrl: bridgeUrl(51229, BRIDGE_TOKEN_B),
+  });
+  assert.equal(statSync(recordFile(worktree, home)).mode & 0o777, 0o600);
+
+  const open = runNode(SCRIPT, ["desktop-tab", "--worktree", worktree], home);
+  assert.deepEqual([open.json.running, open.json.url], [true, bridgeUrl(51229, BRIDGE_TOKEN_B)]);
+
+  const sections = runNode(SCRIPT, ["ticket-sections", "--worktree", worktree], home);
+  assert.equal(sections.status, 0, sections.stderr);
+  assert.equal(sections.json.markdown.includes(BRIDGE_TOKEN_B), false);
+
+  runNode(SCRIPT, ["desktop-launched", "--worktree", worktree, "--pid", String(exitedPid()), "--log", log], home);
+  const quit = runNode(SCRIPT, ["desktop-tab", "--worktree", worktree], home);
+  assert.deepEqual([quit.json.running, quit.json.url], [false, null]);
+
+  runNode(SCRIPT, ["desktop-launched", "--worktree", worktree, "--pid", String(process.pid), "--log", log], home);
+  runNode(SCRIPT, ["touch", "--worktree", worktree, "--stack", "{}"], home);
+  const stopped = runNode(SCRIPT, ["desktop-tab", "--worktree", worktree], home);
+  assert.deepEqual([stopped.json.running, stopped.json.url], [false, null]);
+});
+
+test("desktop-launched refuses a log that is not a started launch or has a bad tab URL, and a bad pid, and keeps the stack", (t) => {
+  const { root, home, worktree } = newSession(t, "desktop-refused");
+  runNode(SCRIPT, ["touch", "--worktree", worktree, "--stack", JSON.stringify({ storybookPid: 7 })], home);
+  const log = path.join(root, "vibe-desktop.log");
+  for (const [text, message] of [
+    ["[vibe-profile] launching Desktop against https://api.example\n", /neither a "Desktop browser URL:" line nor "Desktop window visible"/],
+    [`Desktop browser URL: ${bridgeUrl(5173, BRIDGE_TOKEN_A).replace("127.0.0.1", "example.com")}\n`, /not a loopback/],
+    [`Desktop browser URL: ${bridgeUrl(5173, "short")}\n`, /not a loopback/],
+    [`Desktop browser URL: ${bridgeUrl(5173, BRIDGE_TOKEN_A).replace("browser.html", "index.html")}\n`, /not a loopback/],
+    [`Desktop browser URL: ${bridgeUrl(5173, BRIDGE_TOKEN_A).replace("http:", "https:")}\n`, /not a loopback/],
+    ["Desktop browser URL: not-a-url\n", /is not a URL/],
+  ]) {
+    writeFileSync(log, text);
+    const refused = runNode(SCRIPT, ["desktop-launched", "--worktree", worktree, "--pid", "123", "--log", log], home);
+    assert.equal(refused.status, 1);
+    assert.match(refused.json.error, message);
+  }
+  writeFileSync(log, `Desktop browser URL: ${bridgeUrl(5173, BRIDGE_TOKEN_A)}\n`);
+  for (const pid of ["0", "12.5", "abc"]) {
+    const refused = runNode(SCRIPT, ["desktop-launched", "--worktree", worktree, "--pid", pid, "--log", log], home);
+    assert.equal(refused.status, 1);
+    assert.match(refused.json.error, /--pid must be/);
+  }
+  const missing = runNode(SCRIPT, ["desktop-launched", "--worktree", worktree, "--pid", "123", "--log", path.join(root, "nope.log")], home);
+  assert.equal(missing.status, 1);
+  assert.match(missing.json.error, /Could not read the Desktop launch log/);
+  const shown = runNode(SCRIPT, ["show", "--worktree", worktree], home);
+  assert.deepEqual(shown.json.session.stack, { storybookPid: 7 });
+});
+
+test("desktop-launched records a launch that predates the tab as a running window with no URL", (t) => {
+  const { root, home, worktree } = newSession(t, "desktop-window");
+  const log = path.join(root, "vibe-desktop.log");
+  writeFileSync(log, `Desktop browser URL: ${bridgeUrl(50425, BRIDGE_TOKEN_A)}\n`);
+  runNode(SCRIPT, ["desktop-launched", "--worktree", worktree, "--pid", String(process.pid), "--log", log], home);
+
+  writeFileSync(log, "[vibe-profile] launching Desktop\n[startup][10:00:00.000] Desktop window visible reason=app-mounted\n");
+  const launched = runNode(SCRIPT, ["desktop-launched", "--worktree", worktree, "--pid", String(process.pid), "--log", log], home);
+  assert.equal(launched.status, 0, launched.stderr);
+  assert.deepEqual(launched.json.session.stack, { desktopPid: process.pid, desktopLog: log, desktopBrowserUrl: null });
+
+  const tab = runNode(SCRIPT, ["desktop-tab", "--worktree", worktree], home);
+  assert.deepEqual([tab.json.running, tab.json.url], [true, null]);
+
+  runNode(SCRIPT, ["desktop-launched", "--worktree", worktree, "--pid", String(exitedPid()), "--log", log], home);
+  const quit = runNode(SCRIPT, ["desktop-tab", "--worktree", worktree], home);
+  assert.deepEqual([quit.json.running, quit.json.url], [false, null]);
 });

@@ -96,10 +96,11 @@ amended later.
 - **Storybook, between redeploys**: optional, for looking at components before
   the next redeploy. It needs no database. `vibe-setup-worker` starts it
   detached on a free port and records it with `touch --stack`.
-- **Desktop, only for sessions that touch Desktop**: the real Desktop app on a
-  seeded local profile, signed in to the session's Vercel API as the person.
-  Its database is a local file, so Docker is not needed. Web-only sessions
-  never start it. See "Desktop" below.
+- **Desktop, for every session**: the real Desktop app on a seeded local
+  profile, signed in to the session's Vercel API as the person, shown to the
+  person as a second in-app Browser tab through its browser bridge (the
+  Desktop window opens too). Its database is a local file, so Docker is not
+  needed. See "Desktop" below.
 
 ## Desktop
 
@@ -125,22 +126,68 @@ repo). `<api>` and `<app>` are the session's `vercel.apiUrl` and
    so it refuses a profile that is already signed in. A profile that needs
    signing in again (another environment, a lost session) is prepared fresh
    from step 1.
-5. Start the app detached, logging to the session's private git directory:
-   `nohup pnpm --filter desktop vibe:profile launch --profile "<profile>" --api-origin <api> --web-origin <app> > "<gitdir>/vibe-desktop.log" 2>&1 &`.
+5. Start the app detached, logging owner-only to the session's private git
+   directory:
+   `(umask 077; nohup pnpm --filter desktop vibe:profile launch --profile "<profile>" --api-origin <api> --web-origin <app> > "<gitdir>/vibe-desktop.log" 2>&1 & echo $!)`.
    It refuses a profile that is not signed in. The command does not return
-   while Desktop is open: it runs the dev launcher, which builds what it needs
-   and then runs Electron, and it exits only when the app quits (non-zero if
-   Desktop failed). Desktop is up once the log shows
-   `Desktop window visible`; if the command exits before that line, the end
-   of the log says why. Record the background command's pid (`$!`) as the
-   stack's `desktopPid`. To stop Desktop, send SIGTERM to the
-   `scripts/dev-launch.mjs` process under that pid (`ps -o pid,ppid,command`
-   shows the tree): it passes the signal to Electron, and the launch command
-   then exits.
+   while Desktop is open: it runs the dev launcher with the browser bridge,
+   which builds what it needs and then runs Electron, and it exits only when
+   the app quits (non-zero if Desktop failed). Desktop is up once the log
+   shows `Desktop window visible`; if the command exits before that line, the
+   end of the log says why. Just before that line the log prints
+   `Desktop browser URL: http://127.0.0.1:<port>/design-system/browser.html?closedloopBridgeToken=<token>`.
+6. Record the launch (the pid `echo $!` printed) and that URL on the
+   session: `vibe-sessions.mjs desktop-launched --worktree "<wt>" --pid <pid> --log "<gitdir>/vibe-desktop.log"`.
+   It reads the URL from the log and keeps anything else the stack lists. A
+   worktree whose `vibe:profile launch` predates the browser tab
+   (symphony-alpha before ISS-12182) logs the window but no URL: the launch is
+   recorded with no URL and Desktop keeps running as its own window, as it
+   did before the tab existed.
+
+To stop Desktop, send SIGTERM to the `scripts/dev-launch.mjs` process under
+the recorded `desktopPid` (`ps -o pid,ppid,command` shows the tree): it
+passes the signal to Electron, and the launch command then exits. Electron
+can take up to a minute to finish quitting.
 
 If any of these fails and the setup worker cannot fix it, tell the person
 plainly: "Desktop isn't available for this session yet, so we'll keep going
 on the web app." Then continue web-only.
+
+### The Desktop tab
+
+The URL is the Desktop app's screens served from this Mac by the session
+worktree's own renderer, talking to the Desktop window, which stays the only
+place the person's credentials live. Open it exactly as recorded, never
+truncated or with the token removed, in a new in-app Browser tab; a route
+can be added after it (`#/sessions`). The tab removes the token from its
+address bar once it loads, so a reopen always uses the recorded URL, never
+one copied from a tab. Each launch has its own port and token: a URL from an
+earlier launch does not open. The token lets whoever holds it read the
+session's Desktop data while that launch runs, so it never goes in chat, on
+the ticket, or in a commit. The tab reads and shows data; saving changes in
+it is not supported (the bridge forwards reads only).
+
+`vibe-sessions.mjs desktop-tab --worktree "<wt>"` returns `running` and the
+`url` to open. It hands out the URL only while the recorded launch is still
+running; `running: false` means Desktop was never started for the session,
+quit, or was stopped, and is started again with step 5 then step 6 (the
+profile stays signed in, so steps 1 to 4 are not repeated). `running: true`
+with no `url` is a launch that predates the tab: Desktop is open as its own
+window only.
+
+### Never swap the worktree under a running Desktop
+
+The Desktop renderer reloads live from the worktree's source. Merging main
+into the worktree, pulling, rebasing, resetting, or checking out another
+commit while Desktop runs reloads it against a different tree and crashes it
+(React `insertBefore` NotFoundError, "Maximum update depth exceeded", screens
+stuck loading; a restart fixes it). Before any such step, stop Desktop (above);
+after it, start Desktop again with step 5 then step 6, which records a new
+port and token, and open the new tab. Ordinary edits to files, which is all
+change, backend, and primitive workers do, are fine while it runs. No step in
+the vibe or handoff skills merges main or swaps the worktree's commit today
+(redeploy commits and pushes the session's own changes; resume only reopens
+the worktree as it is); this rule binds any step that ever does.
 
 ## When it fails
 

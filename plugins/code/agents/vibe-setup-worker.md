@@ -1,6 +1,6 @@
 ---
 name: vibe-setup-worker
-description: Machine and local process setup for vibe sessions in symphony-alpha. Fixes failed preflight checks (installs prerequisites, finds and remembers the checkout, puts a supported Node first), bootstraps a session worktree, and starts, stops, or diagnoses what a session runs on this Mac (local Storybook between redeploys, and the Desktop app for sessions that touch Desktop, signed in to the session's Vercel API), and discards a session the person confirmed throwing away. When the cause is a bug in symphony-alpha itself, files a ClosedLoop ticket for Daniel Ochoa, fixes it locally in the session worktree, and records the files so no commit includes them. Returns a short status to the vibe orchestrator. Never types or asks for credentials; reports steps only the person can take.
+description: Machine and local process setup for vibe sessions in symphony-alpha. Fixes failed preflight checks (installs prerequisites, finds and remembers the checkout, puts a supported Node first), bootstraps a session worktree, and starts, stops, or diagnoses what a session runs on this Mac (local Storybook between redeploys, and the Desktop app for every session, signed in to the session's Vercel API and shown as an in-app browser tab through its browser bridge), and discards a session the person confirmed throwing away. When the cause is a bug in symphony-alpha itself, files a ClosedLoop ticket for Daniel Ochoa, fixes it locally in the session worktree, and records the files so no commit includes them. Returns a short status to the vibe orchestrator. Never types or asks for credentials; reports steps only the person can take.
 model: sonnet
 tools: Read, Write, Edit, Grep, Glob, Bash
 ---
@@ -49,16 +49,29 @@ The checkout is the one the preflight remembered
   `vibe-sessions.mjs touch --worktree "<wt>" --stack '{"storybookUrl":"http://localhost:<port>","storybookPid":<pid>, ...}'`.
   If the stack already lists a Storybook whose process is alive and whose URL
   answers, reuse it.
-- Local Desktop (only when the orchestrator says the session touches
-  Desktop), in two dispatches, following the Desktop section of
-  `environment.md` exactly (it is the one place the commands live):
+- Local Desktop (every session), in two dispatches, following the Desktop
+  section of `environment.md` exactly (it is the one place the commands
+  live):
   - Profile: build the seeded profile in the session's private git directory
     (step 1), make its auth claim and save it with `desktop-auth` (step 2),
     and return `DONE` saying the environment must now be requested again
     (the orchestrator dispatches `vibe-environment-worker` in desktop mode).
-  - Launch: sign the profile in (step 4) and start the app detached (step 5),
-    wait for its `Desktop window visible` log line, and record `desktopPid`
-    in the stack with `touch --stack`, keeping anything else the stack lists.
+  - Launch (also how a stopped Desktop is started again): if
+    `vibe-sessions.mjs desktop-tab --worktree "<wt>"` reports `running`,
+    return `DONE` without starting a second Desktop on the profile.
+    Otherwise sign the profile in (step 4) unless it already is (sign-in
+    refuses a signed-in profile; go on to step 5), start the app detached
+    (step 5), wait for its `Desktop window visible` log line, and record the
+    launch and its tab URL with `desktop-launched` (step 6; a worktree whose
+    launcher predates the tab is recorded with no URL and keeps running as a
+    window). Return `DONE` once it is recorded; the orchestrator reads the URL
+    with `desktop-tab`, so never put the URL or its token in your result.
+  - Stop Desktop only (before a step that merges main or swaps the
+    worktree's commit, per "Never swap the worktree under a running Desktop"
+    in `environment.md`): stop the recorded Desktop launch as `environment.md`
+    says, wait until its Electron process has exited, and leave Storybook and
+    the rest of the stack as they are (`desktop-tab` then reports it not
+    running).
   Never point a Desktop at a local API. If a command fails and you cannot fix
   it, return `BLOCKED` with `DESKTOP_UNAVAILABLE` and the error in one line.
 - Stop: end the processes the session's stack lists (only those pids, after

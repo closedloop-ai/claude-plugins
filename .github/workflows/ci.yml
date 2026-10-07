@@ -68,6 +68,25 @@ jobs:
             fi
           done <<< "$changed_plugins"
 
+  plugin-manifest-versions:
+    name: Plugin Manifest Versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tools/plugin-manifests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tools/plugin-manifests/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      # Fails when any plugin's .claude-plugin and .codex-plugin versions differ.
+      - run: npm test
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -100,6 +119,33 @@ jobs:
           python-version: "3.13"
       - run: uv sync --frozen --group dev
       - run: uv run pytest plugins/
+
+  node-tests:
+    name: Node Tests (skill scripts)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run node:test suites under plugins/
+        run: |
+          files=()
+          while IFS= read -r file; do
+            files+=("$file")
+          done < <(git ls-files -- \
+            ':(glob)plugins/**/*.test.mjs' \
+            ':(glob)plugins/**/*.test.cjs' \
+            ':(glob)plugins/**/*.test.js')
+          # node --test exits 0 when nothing matches, so an empty set must fail here.
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::no *.test.{mjs,cjs,js} files found under plugins/; the discovery glob is broken."
+            exit 1
+          fi
+          echo "Running ${#files[@]} test files:"
+          printf '  %s\n' "${files[@]}"
+          node --test --test-reporter=spec "${files[@]}"
 
   tools-ts:
     name: TypeScript (${{ matrix.tool }})
