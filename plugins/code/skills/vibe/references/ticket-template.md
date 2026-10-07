@@ -116,10 +116,11 @@ subagent that worked on this.>
 - Reviews: <n fixed, n rejected; one line each, rejected with why>
 - Tests whose old-UI assertions were updated on purpose: <list or "none">
 - Pre-existing failures not touched by this work: <list or "none">
-- Next: Nenad Antic reviews the components in the Storybook above (it opens
-  after signing in to Vercel with a team account) and comments here when he
-  signs off, then reassigns this ticket to Daniel Ochoa, who
-  finishes it through analysis, a pull request, and merge.
+- Next: <the next owner the person chose at handoff, by full name> picks
+  this up. Usually design reviews the components in the Storybook above (it
+  opens after signing in to Vercel with a team account) and comments here on
+  sign-off, then engineering finishes it through analysis, a pull request,
+  and merge.
 
 ## Engineering checklist
 
