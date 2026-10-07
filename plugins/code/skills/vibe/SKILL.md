@@ -223,10 +223,10 @@ it starting; I fixed it on your computer so you can keep going and filed
 ISS-123 so engineering fixes it for everyone." No redeploy or handoff commits
 that fix.
 
-## 4. Open the starting screen and set expectations
+## 4. Set expectations
 
-Open the screen the requirements worker named on `appUrl`. Then tell the
-person, once per session, in three short sentences:
+After they sign in, leave the app on the page it lands on. Tell the person,
+once per session, in three short sentences:
 
 - Click Annotate in the browser toolbar (or press Cmd + .), click or drag over
   what you want changed, type the comment, and press Enter to send it now, or

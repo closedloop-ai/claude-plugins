@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.11
+
+#### Changed
+- `vibe` no longer opens the screen `vibe-requirements-worker` named once the person signs in, for a new or a resumed session: the app stays on the page it lands on. Section 4 is now "Set expectations" and keeps the Annotate, chat, and redeploy instructions and the missing-Annotate note. The requirements worker still maps the request to its starting screen.
+
 ### code v1.19.10
 
 #### Fixed
