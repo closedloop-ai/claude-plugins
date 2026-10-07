@@ -493,12 +493,27 @@ test("dispatch-inputs writes the request workflow's inputs with a fresh request 
   const again = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
   assert.notEqual(again.json.requestId, blank.json.requestId);
 
-  // ISS-12135 bug 43: keep_flag_snapshot only when asked for, as a string.
-  for (const keep of ["true", "false"]) {
+  // ISS-12135 bug 43: keep_flag_snapshot only when asked for, as a string,
+  // and "true" only after the previous request published a verified result.
+  const keepInput = (keep) => {
     const result = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out, "--keep-flag-snapshot", keep], home);
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(JSON.parse(readFileSync(out, "utf8")).keep_flag_snapshot, keep);
-  }
+    return { requestId: result.json.requestId, sent: JSON.parse(readFileSync(out, "utf8")).keep_flag_snapshot };
+  };
+  assert.equal(keepInput("false").sent, "false");
+  const unverified = keepInput("true");
+  assert.equal(unverified.sent, "false", "no request has published a result yet");
+  const resultFile = path.join(root, "result.json");
+  writeJson(resultFile, environmentResult(worktree, home, { requestId: unverified.requestId, branch: "andy/dispatch" }));
+  const recorded = runNode(
+    SCRIPT,
+    ["environment-result", "--worktree", worktree, "--file", resultFile, "--request-id", unverified.requestId],
+    home
+  );
+  assert.equal(recorded.status, 0, recorded.stderr);
+  const afterVerified = keepInput("true");
+  assert.equal(afterVerified.sent, "true");
+  assert.equal(keepInput("true").sent, "false", "the previous request has not published a result");
   const badKeep = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out, "--keep-flag-snapshot", "yes"], home);
   assert.equal(badKeep.status, 1);
   assert.match(badKeep.json.error, /--keep-flag-snapshot must be true or false/);

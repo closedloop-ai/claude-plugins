@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### code v1.19.5
 
 #### Fixed
-- The flag snapshot is taken once, when the session starts: `vibe-sessions.mjs flag-snapshot` refuses to replace a session's snapshot without `--replace`, which only `vibe-environment-worker` flags mode passes. `dispatch-inputs` takes `--keep-flag-snapshot true|false` and sends `keep_flag_snapshot` (symphony-alpha #8497); the worker passes it only when the request workflow on main declares that input, `false` in flags mode and `true` otherwise, so a re-dispatch never re-applies a snapshot to an environment it keeps.
+- The flag snapshot is taken once, when the session starts: `vibe-sessions.mjs flag-snapshot` refuses to replace a session's snapshot without `--replace`, which only `vibe-environment-worker` flags mode passes. `dispatch-inputs` takes `--keep-flag-snapshot true|false` and sends `keep_flag_snapshot` (symphony-alpha #8497); the worker passes it only when the request workflow on main declares that input, `false` in flags mode and `true` otherwise, so a re-dispatch never re-applies a snapshot to an environment it keeps. `dispatch-inputs` records each request id and sends `true` only when the previous request published a verified result (`environment-result` records `vercel.verifiedRequestId`), so an environment whose last run failed gets its snapshot posted again.
 
 ### code v1.19.4
 

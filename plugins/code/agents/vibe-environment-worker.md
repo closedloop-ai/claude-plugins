@@ -89,7 +89,9 @@ then plain search.
    is missing, return `BLOCKED` naming it. If it declares a
    `keep_flag_snapshot` input, add `--keep-flag-snapshot false` in flags mode
    and `--keep-flag-snapshot true` in every other mode, so a re-dispatch never
-   re-applies the snapshot to an environment it keeps.
+   re-applies the snapshot to an environment it keeps. The script sends `true`
+   only when the session's previous request published a verified result;
+   otherwise it sends `false`, so a failed run's environment gets its snapshot.
 2. Start it from main, feeding the file on stdin so no JSON is quoted on the
    command line: `gh workflow run <workflow> --repo closedloop-ai/symphony-alpha --ref main --json < "<file>"`.
    Never start `vibe-environment.yml` yourself; it runs after the request

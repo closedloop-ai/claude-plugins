@@ -19,6 +19,8 @@
 //   vibe-sessions.mjs desktop-auth    --worktree <path> --file <auth-claim.json>
 //   vibe-sessions.mjs dispatch-inputs --worktree <path> --out <inputs.json>
 //                                     [--person-email <email>] [--keep-flag-snapshot true|false]
+//                                     (`true` is sent only when the session's previous request
+//                                     published a verified result; otherwise `false`)
 //   vibe-sessions.mjs codex-sessions  --worktree <path> [--thread <id>]
 //   vibe-sessions.mjs ticket-sections --worktree <path>
 //   vibe-sessions.mjs environment-result --worktree <path> --file <vibe-environment-result.json>
@@ -660,6 +662,13 @@ function dispatchInputs() {
   const worktree = requireOption("worktree");
   const out = requireOption("out");
   const record = requireRecord(worktree);
+  // ISS-12135 bug 43: a snapshot is kept only when this session's previous
+  // request published a verified result. A run that failed (perhaps before
+  // posting the snapshot into a schema it built) gets it posted again.
+  const previousVerified =
+    typeof record.lastRequestId === "string" && record.vercel?.verifiedRequestId === record.lastRequestId;
+  const asked = values["keep-flag-snapshot"];
+  const keepFlagSnapshot = asked === "true" && !previousVerified ? "false" : asked;
   const inputs = buildDispatchInputs({
     record,
     snapshot: readSnapshot(worktree, record),
@@ -667,10 +676,11 @@ function dispatchInputs() {
     clerkOrgId: record.clerkOrgId ?? undefined,
     desktopAuth: readDesktopAuth(worktree, record),
     requestId: randomUUID(),
-    keepFlagSnapshot: values["keep-flag-snapshot"],
+    keepFlagSnapshot,
   });
   mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   writeFileSync(out, `${JSON.stringify(inputs)}\n`);
+  writeRecord(worktree, { ...record, lastRequestId: inputs[DispatchInput.RequestId] });
   return {
     workflow: DISPATCH_WORKFLOW,
     ref: "main",
@@ -758,6 +768,7 @@ function recordEnvironmentResult() {
       lastDeployedAt: now,
       deploymentIds: verified.deploymentIds,
       verifiedAt: verified.verifiedAt,
+      verifiedRequestId: requestId,
     },
     lastActiveAt: now,
   };
