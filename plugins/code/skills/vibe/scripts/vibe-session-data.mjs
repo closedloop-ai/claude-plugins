@@ -64,13 +64,12 @@ const OPERATOR_ID = /^[A-Za-z0-9_-]{1,200}$/;
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const HTTPS_URL = /^https:\/\/\S+$/;
 const MAX_DEPLOYMENT_ID = 200;
-// What symphony-alpha's `vibe-environment.yml` uploads as the
-// `vibe-environment-result` artifact once the branch head's app, API, and
-// Storybook deployments are READY and their aliases verified against them.
-// Any `*.preview.closedloop-stage.ai` host without its own deployment is
-// served by the stage production app, so only this result says a URL is safe.
-export const ENVIRONMENT_RESULT_ARTIFACT = "vibe-environment-result";
-export const ENVIRONMENT_RESULT_FILE = "vibe-environment-result.json";
+// The fields of `vibe-environment-result.json`, which symphony-alpha's
+// `vibe-environment.yml` uploads as the `vibe-environment-result` artifact
+// once the branch head's app, API, and Storybook deployments are READY and
+// their aliases verified against them (symphony-alpha #8476). Any
+// `*.preview.closedloop-stage.ai` host without its own deployment is served by
+// the stage production app, so only this result says a URL is safe.
 const ENVIRONMENT_RESULT_KEYS = [
   "requestId",
   "branch",
