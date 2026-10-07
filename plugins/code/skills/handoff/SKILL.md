@@ -180,7 +180,8 @@ again, then dispatch `vibe-environment-worker` in redeploy mode with the
 worktree, the live ticket slug, the confirmed summary, and the inventory's
 `localFixes` paths. It commits everything the checks and reviews changed as
 one more commit (nothing is squashed or amended), pushes through the repo's
-pre-push checks, waits for the Vercel builds, and updates the ticket. If
+pre-push checks, requests the environment again so that commit is deployed,
+and updates the ticket. If
 nothing changed since the last redeploy, it confirms the branch and the
 environment are current instead. A push refused by the repo's checks goes back
 to step 5's fixing, then this step again.

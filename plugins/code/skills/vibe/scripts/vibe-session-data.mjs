@@ -1,7 +1,7 @@
 // Pure helpers behind vibe-sessions.mjs: the session's Vercel URLs, the
 // production flag snapshot contract (ISS-12048), the Codex session ids that
-// worked on it, the person running it, and the live ticket sections rendered
-// from the session record.
+// worked on it, the person running it, the environment run's verified result,
+// and the live ticket sections rendered from the session record.
 
 import { closeSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
 import path from "node:path";
@@ -61,6 +61,28 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CLERK_ORG_ID = /^org_[A-Za-z0-9]+$/;
 export const REQUEST_ID = /^[A-Za-z0-9-]{8,64}$/;
 const OPERATOR_ID = /^[A-Za-z0-9_-]{1,200}$/;
+const FULL_SHA = /^[0-9a-f]{40}$/;
+const HTTPS_URL = /^https:\/\/\S+$/;
+const MAX_DEPLOYMENT_ID = 200;
+// What symphony-alpha's `vibe-environment.yml` uploads as the
+// `vibe-environment-result` artifact once the branch head's app, API, and
+// Storybook deployments are READY and their aliases verified against them.
+// Any `*.preview.closedloop-stage.ai` host without its own deployment is
+// served by the stage production app, so only this result says a URL is safe.
+export const ENVIRONMENT_RESULT_ARTIFACT = "vibe-environment-result";
+export const ENVIRONMENT_RESULT_FILE = "vibe-environment-result.json";
+const ENVIRONMENT_RESULT_KEYS = [
+  "requestId",
+  "branch",
+  "mode",
+  "headSha",
+  "appUrl",
+  "apiUrl",
+  "storybookUrl",
+  "deploymentIds",
+  "verifiedAt",
+];
+const DEPLOYMENT_ID_KEYS = ["app", "api", "storybook"];
 const MAX_OPERATOR_NAME = 200;
 
 /** The stable per-branch Vercel URLs for a vibe branch, or null when unpredictable. */
@@ -286,7 +308,12 @@ export function renderRecordSections(record, snapshot) {
 
 function renderEnvironment(record) {
   const vercel = record.vercel ?? {};
-  const deployed = vercel.lastDeployedCommit
+  // A URL goes on the ticket only once the environment run verified it
+  // against the branch's own deployment; until then any preview host may be
+  // the stage production app.
+  const verified = Boolean(vercel.verifiedAt);
+  const url = (value) => (verified && value ? value : PENDING);
+  const deployed = verified && vercel.lastDeployedCommit
     ? `\`${vercel.lastDeployedCommit.slice(0, 10)}\` at ${vercel.lastDeployedAt}`
     : PENDING;
   const base = record.baseCommit ? ` (base: origin/main at \`${record.baseCommit.slice(0, 10)}\`)` : "";
@@ -295,9 +322,9 @@ function renderEnvironment(record) {
     "",
     `- Branch: \`${record.branch}\`${base}`,
     `- Data: ${modeLabel(record.mode)}`,
-    `- App: ${vercel.appUrl ?? PENDING}`,
-    `- API: ${vercel.apiUrl ?? PENDING}`,
-    `- Storybook: ${vercel.storybookUrl ?? PENDING}`,
+    `- App: ${url(vercel.appUrl)}`,
+    `- API: ${url(vercel.apiUrl)}`,
+    `- Storybook: ${url(vercel.storybookUrl)}`,
     `- Last deployed: ${deployed}`,
   ].join("\n");
 }
@@ -353,9 +380,11 @@ function renderSessions(record) {
  * the snapshot as compact JSON, and the request id that names both runs. A
  * seeded session also sends the person's email (the stage API finds their
  * Clerk user and org from it) and, only when they belong to more than one
- * stage org, the Clerk id of the one they chose. A blank session sends
- * neither. A session that touches Desktop also sends its saved Desktop auth
- * claim, in either mode.
+ * stage org, the Clerk id of the one they chose. A session that touches
+ * Desktop also sends its saved Desktop auth claim, in either mode, with the
+ * person's email so the Desktop session belongs to them (symphony-alpha's
+ * request check refuses the claim without it). A blank session without a
+ * Desktop claim sends no email, and a blank session never sends a Clerk org.
  */
 export function buildDispatchInputs({ record, snapshot, personEmail, clerkOrgId, desktopAuth, requestId }) {
   if (record.mode !== "seeded" && record.mode !== "blank") {
@@ -377,15 +406,27 @@ export function buildDispatchInputs({ record, snapshot, personEmail, clerkOrgId,
     inputs[DispatchInput.DesktopAuth] = JSON.stringify(validateDesktopAuth(desktopAuth));
   }
   if (record.mode === "blank") {
-    if (personEmail || clerkOrgId) {
-      throw new Error("The person's email and Clerk org are only sent for a seeded session.");
+    if (clerkOrgId) {
+      throw new Error("A Clerk org is only sent for a seeded session.");
     }
-    return inputs;
+    if (!desktopAuth) {
+      if (personEmail) {
+        throw new Error("A blank session sends the person's email only with a Desktop auth claim.");
+      }
+      return inputs;
+    }
   }
   if (!EMAIL.test(personEmail ?? "")) {
-    throw new Error("A seeded session needs --person-email (the email ClosedLoop get-me returns).");
+    throw new Error(
+      desktopAuth
+        ? "A request with a Desktop auth claim needs --person-email (the email ClosedLoop get-me returns), so the Desktop session belongs to the person."
+        : "A seeded session needs --person-email (the email ClosedLoop get-me returns)."
+    );
   }
   inputs[DispatchInput.PersonEmail] = personEmail;
+  if (record.mode === "blank") {
+    return inputs;
+  }
   if (clerkOrgId !== undefined) {
     if (!CLERK_ORG_ID.test(clerkOrgId)) {
       throw new Error("--clerk-org-id must be a Clerk organization id (org_...).");
@@ -431,4 +472,59 @@ export function validateOperator({ id, email, name }) {
     throw new Error(`--operator-name must be 1 to ${MAX_OPERATOR_NAME} characters when given.`);
   }
   return { id, email, name: trimmed || null };
+}
+
+/**
+ * Validates the environment run's result against the request it answers and
+ * the branch head that was pushed. Throws naming every mismatch; a URL is
+ * returned only when the whole result checks out.
+ */
+export function validateEnvironmentResult(result, { requestId, branch, mode, headSha }) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    throw new Error("The environment result must be a JSON object.");
+  }
+  const problems = Object.keys(result)
+    .filter((key) => !ENVIRONMENT_RESULT_KEYS.includes(key))
+    .map((key) => `unknown field "${key}"`);
+  const expected = { requestId, branch, mode, headSha };
+  for (const [key, value] of Object.entries(expected)) {
+    if (result[key] !== value) {
+      problems.push(`${key} is ${JSON.stringify(result[key] ?? null)}, expected ${JSON.stringify(value)}`);
+    }
+  }
+  if (!FULL_SHA.test(result.headSha ?? "")) {
+    problems.push("headSha must be a full commit SHA");
+  }
+  for (const key of VERCEL_URL_KEYS) {
+    if (typeof result[key] !== "string" || !HTTPS_URL.test(result[key])) {
+      problems.push(`${key} must be an https URL`);
+    }
+  }
+  const ids = result.deploymentIds;
+  if (!ids || typeof ids !== "object" || Array.isArray(ids)) {
+    problems.push("deploymentIds must name the app, api, and storybook deployments");
+  } else {
+    for (const key of DEPLOYMENT_ID_KEYS) {
+      if (!isBoundedString(ids[key], MAX_DEPLOYMENT_ID)) {
+        problems.push(`deploymentIds.${key} must be a non-empty string`);
+      }
+    }
+    for (const key of Object.keys(ids).filter((key) => !DEPLOYMENT_ID_KEYS.includes(key))) {
+      problems.push(`unknown deploymentIds field "${key}"`);
+    }
+  }
+  if (typeof result.verifiedAt !== "string" || !ISO_DATETIME.test(result.verifiedAt)) {
+    problems.push("verifiedAt must be an ISO date and time");
+  }
+  if (problems.length > 0) {
+    throw new Error(`The environment result is not verified for this request: ${problems.join("; ")}.`);
+  }
+  return {
+    appUrl: result.appUrl.replace(/\/$/, ""),
+    apiUrl: result.apiUrl.replace(/\/$/, ""),
+    storybookUrl: result.storybookUrl.replace(/\/$/, ""),
+    deploymentIds: Object.fromEntries(DEPLOYMENT_ID_KEYS.map((key) => [key, ids[key]])),
+    headSha: result.headSha,
+    verifiedAt: result.verifiedAt,
+  };
 }

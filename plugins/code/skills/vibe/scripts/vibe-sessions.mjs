@@ -12,8 +12,7 @@
 //                                     --operator-id <id> --operator-email <email> [--operator-name <name>]
 //   vibe-sessions.mjs touch           --worktree <path> [--summary <text>] [--ticket ISS-123]
 //                                     [--status active|handed-off] [--live-ticket ISS-123]
-//                                     [--scope draft|full] [--mode seeded|blank]
-//                                     [--vercel <json>] [--deployed <commit>] [--stack <json>]
+//                                     [--scope draft|full] [--mode seeded|blank] [--stack <json>]
 //                                     [--clerk-org-id org_...]
 //                                     [--operator-id <id> --operator-email <email> [--operator-name <name>]]
 //   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json>
@@ -22,6 +21,8 @@
 //                                     [--person-email <email>]
 //   vibe-sessions.mjs codex-sessions  --worktree <path> [--thread <id>]
 //   vibe-sessions.mjs ticket-sections --worktree <path>
+//   vibe-sessions.mjs environment-result --worktree <path> --file <vibe-environment-result.json>
+//                                     --request-id <id>
 //   vibe-sessions.mjs local-fix       --worktree <path> --ticket ISS-123 --path <file> [--path <file> ...]
 //   vibe-sessions.mjs discard         --worktree <path> [--confirm]
 //
@@ -48,7 +49,11 @@
 // request sends it. `desktop-auth` validates and saves the Desktop profile's
 // auth claim (`pnpm --filter desktop vibe:profile auth-claim`) next to the
 // record; every later request sends it too, so the environment signs that
-// profile in.
+// profile in. `environment-result` checks the result `vibe-environment.yml`
+// published for a request (its `vibe-environment-result` artifact) against
+// that request and the worktree's HEAD and only then records the verified
+// URLs, deployment ids, and deployed commit; nothing else records them, and
+// the ticket shows no URL until one is verified.
 //
 // Every command prints one JSON object on stdout. Errors print
 // {"ok":false,"error":...} and exit non-zero.
@@ -65,8 +70,8 @@ import {
   DispatchInput,
   findCodexSubagents,
   validateDesktopAuth,
+  validateEnvironmentResult,
   renderRecordSections,
-  VERCEL_URL_KEYS,
   validateFlagSnapshot,
   validateOperator,
   vercelAliases,
@@ -87,7 +92,6 @@ const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 // Written by vibe-preflight.sh; holds {"repo": "<symphony-alpha checkout>"}.
 const CONFIG_FILE = path.join(os.homedir(), ".codex", "vibe", "config.json");
 const TICKET_PATTERN = /^[A-Z]+-\d+$/;
-const COMMIT_PATTERN = /^[0-9a-f]{7,40}$/;
 const THREAD_PATTERN = /^[A-Za-z0-9-]{8,100}$/;
 const CLERK_ORG_PATTERN = /^org_[A-Za-z0-9]+$/;
 
@@ -124,13 +128,12 @@ const { positionals, values } = parseArgs({
     mode: { type: "string" },
     "live-ticket": { type: "string" },
     "handoff-ticket": { type: "string" },
-    vercel: { type: "string" },
-    deployed: { type: "string" },
     file: { type: "string" },
     thread: { type: "string" },
     out: { type: "string" },
     "person-email": { type: "string" },
     "clerk-org-id": { type: "string" },
+    "request-id": { type: "string" },
     "operator-id": { type: "string" },
     "operator-email": { type: "string" },
     "operator-name": { type: "string" },
@@ -172,13 +175,15 @@ function run(command) {
       return { session: recordCodexSessions() };
     case "ticket-sections":
       return { markdown: ticketSections() };
+    case "environment-result":
+      return { session: recordEnvironmentResult() };
     case "local-fix":
       return { session: recordLocalFix() };
     case "discard":
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, touch, flag-snapshot, desktop-auth, dispatch-inputs, codex-sessions, ticket-sections, local-fix, discard."
+        "Unknown command. Use one of: repo, list, show, new, touch, flag-snapshot, desktop-auth, dispatch-inputs, codex-sessions, ticket-sections, environment-result, local-fix, discard."
       );
   }
 }
@@ -366,7 +371,6 @@ function touchSession() {
     mode: values.mode ? requireMode(values.mode) : record.mode,
     operator: operatorFromArgs({ required: false }) ?? record.operator,
     liveTicket: liveTicket ?? record.liveTicket,
-    vercel: updateVercel(record.vercel, now),
     clerkOrgId: values["clerk-org-id"] ? requireClerkOrgId(values["clerk-org-id"]) : record.clerkOrgId,
     stack: values.stack ? JSON.parse(values.stack) : record.stack,
     lastActiveAt: now,
@@ -378,31 +382,6 @@ function touchSession() {
 function showSession() {
   const worktree = requireOption("worktree");
   return { worktree, ...requireRecord(worktree) };
-}
-
-/** Applies `--vercel` (URLs the environment reported) and `--deployed`. */
-function updateVercel(current, now) {
-  const next = { ...current };
-  if (values.vercel) {
-    const given = JSON.parse(values.vercel);
-    for (const [key, value] of Object.entries(given)) {
-      if (!VERCEL_URL_KEYS.includes(key)) {
-        throw new Error(`--vercel accepts only ${VERCEL_URL_KEYS.join(", ")}.`);
-      }
-      if (typeof value !== "string" || !/^https:\/\/\S+$/.test(value)) {
-        throw new Error(`--vercel ${key} must be an https URL.`);
-      }
-      next[key] = value.replace(/\/$/, "");
-    }
-  }
-  if (values.deployed) {
-    if (!COMMIT_PATTERN.test(values.deployed)) {
-      throw new Error("--deployed must be a commit SHA.");
-    }
-    next.lastDeployedCommit = values.deployed;
-    next.lastDeployedAt = now;
-  }
-  return next;
 }
 
 function discardSession() {
@@ -538,7 +517,13 @@ function normalizeRepoPath(raw) {
 }
 
 function vercelDefaults(branch) {
-  return { ...vercelAliases(branch), lastDeployedCommit: null, lastDeployedAt: null };
+  return {
+    ...vercelAliases(branch),
+    lastDeployedCommit: null,
+    lastDeployedAt: null,
+    deploymentIds: null,
+    verifiedAt: null,
+  };
 }
 
 /**
@@ -553,13 +538,20 @@ function withDefaults(record) {
     mode: rest.mode ?? null,
     operator: rest.operator ?? null,
     liveTicket: rest.liveTicket ?? handoffTicket ?? null,
-    vercel: rest.vercel ?? (rest.branch ? vercelDefaults(rest.branch) : null),
+    vercel: vercelWithDefaults(rest),
     flagSnapshot: rest.flagSnapshot ?? null,
     clerkOrgId: rest.clerkOrgId ?? null,
     desktopAuthSavedAt: rest.desktopAuthSavedAt ?? null,
     codexSessions: rest.codexSessions ?? { orchestrators: [], subagents: [] },
     localFixes: rest.localFixes ?? [],
   };
+}
+
+function vercelWithDefaults(record) {
+  if (record.vercel) {
+    return { deploymentIds: null, verifiedAt: null, ...record.vercel };
+  }
+  return record.branch ? vercelDefaults(record.branch) : null;
 }
 
 function snapshotPath(worktree) {
@@ -706,4 +698,45 @@ function operatorFromArgs({ required }) {
     email: values["operator-email"],
     name: values["operator-name"],
   });
+}
+
+/**
+ * Records the verified result of the environment run for `--request-id`: the
+ * URLs, deployment ids, and deployed commit, only when the result answers that
+ * request for this session's branch and mode at the worktree's HEAD.
+ */
+function recordEnvironmentResult() {
+  const worktree = requireOption("worktree");
+  const file = requireOption("file");
+  const requestId = requireOption("request-id");
+  const record = requireRecord(worktree);
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    throw new Error(`Could not read a JSON environment result from ${file}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const verified = validateEnvironmentResult(parsed, {
+    requestId,
+    branch: record.branch,
+    mode: record.mode,
+    headSha: git(worktree, ["rev-parse", "HEAD"]),
+  });
+  const now = new Date().toISOString();
+  const updated = {
+    ...record,
+    vercel: {
+      ...record.vercel,
+      appUrl: verified.appUrl,
+      apiUrl: verified.apiUrl,
+      storybookUrl: verified.storybookUrl,
+      lastDeployedCommit: verified.headSha,
+      lastDeployedAt: now,
+      deploymentIds: verified.deploymentIds,
+      verifiedAt: verified.verifiedAt,
+    },
+    lastActiveAt: now,
+  };
+  writeRecord(worktree, updated);
+  return { worktree, ...updated };
 }

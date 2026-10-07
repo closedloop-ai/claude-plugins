@@ -176,17 +176,21 @@ branch, starts the environment through GitHub, follows it to the end, records
 the URLs on the session, and fills the ticket's Environment, Production flag
 snapshot, and Sessions sections.
 
-A resumed session whose `vercel.lastDeployedCommit` is set already has its
-environment; skip this. If the worker returns `NEEDS_PERSON` asking which
+A resumed session whose `vercel.verifiedAt` is set already has its
+environment; skip this and use its recorded `appUrl`. A resumed session
+without it (one started before environments were verified) goes through
+create mode again; the worker keeps its flag snapshot. If the worker returns `NEEDS_PERSON` asking which
 organization should own Acme Co, ask the person exactly that, record the org
 id the worker mapped to their answer with
 `node scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_...>`,
 and dispatch it again. If it returns `BLOCKED`, tell the person in one or two
 plain lines what failed and suggest they message Daniel Ochoa with the
-session slug.
+session slug. Never open or give the person a URL after `BLOCKED`: any
+preview address without its own deployment shows the stage production app.
 
 When it returns `DONE`:
-- Open `appUrl` in a Codex in-app Browser tab and make the browser visible.
+- Open the `appUrl` it returned (verified against the branch's own
+  deployment) in a Codex in-app Browser tab and make the browser visible.
   The person signs in through Clerk as themselves (you never type
   credentials). Seeded: they land in Acme Co as an admin. Blank: they create
   their own org.
@@ -275,7 +279,8 @@ on Vercel", "let me see it live", or anything meaning the same:
 3. Dispatch `vibe-environment-worker` in redeploy mode with the worktree, the
    live ticket slug, the session summary, and the session's `localFixes`
    paths. It makes one commit of everything changed since the last redeploy,
-   pushes it, waits for the Vercel builds, and updates the ticket.
+   pushes it, requests the environment again so that commit is deployed, and
+   updates the ticket.
 4. On `DONE`, reload the app tab (and the Storybook tab if open), look at it
    yourself, and tell them it is live. On `BLOCKED` because the repo's checks
    refused the push or a build failed in the session's own change, dispatch

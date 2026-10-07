@@ -150,12 +150,26 @@ test("the sections ticket-sections renders from a finished record pass the check
   );
   assert.deepEqual(
     pending.problems.map(({ section }) => section),
-    ["Environment", "Production flag snapshot", "Production flag snapshot", "Sessions", "Sessions"]
+    [
+      "Environment",
+      "Environment",
+      "Environment",
+      "Environment",
+      "Production flag snapshot",
+      "Production flag snapshot",
+      "Sessions",
+      "Sessions",
+    ]
   );
 
   const finished = {
     ...fresh,
-    vercel: { ...fresh.vercel, lastDeployedCommit: "abcdef1234567890", lastDeployedAt: "2026-10-06T16:00:00.000Z" },
+    vercel: {
+      ...fresh.vercel,
+      lastDeployedCommit: "abcdef1234567890",
+      lastDeployedAt: "2026-10-06T16:00:00.000Z",
+      verifiedAt: "2026-10-06T16:00:00.000Z",
+    },
     flagSnapshot: { takenAt: "2026-10-06T15:00:00Z" },
     codexSessions: { orchestrators: [{ id: "thread-1" }], subagents: [{ id: "child-1", role: "vibe-change-worker" }] },
   };
