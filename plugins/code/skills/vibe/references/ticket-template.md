@@ -1,7 +1,8 @@
 # The live ticket
 
 Every vibe session has one ClosedLoop issue ticket, created when the session
-starts (assigned to Andrew Eye, status In Progress) and kept current by the
+starts (assigned to the person running the session, the session record's
+`operator`, status In Progress) and kept current by the
 workers while the person works. Engineering and design read it to know what
 was built, what is missing, and where to look. Handoff checks it is complete;
 it never writes it from scratch.
@@ -37,7 +38,7 @@ it never writes it from scratch.
 | Production flag snapshot | `ticket-sections` (via `vibe-environment-worker`) | environment start, a refresh the person asked for |
 | Sessions | `ticket-sections` (via `vibe-environment-worker`, `vibe-ticket-worker`) | every redeploy, handoff |
 | Handoff | `vibe-ticket-worker` | handoff |
-| Engineering checklist | `vibe-ticket-worker` | session start |
+| Engineering checklist | `vibe-ticket-worker` | session start, keeping only the lines for the session's scope |
 
 ## Body
 
@@ -48,7 +49,7 @@ it never writes it from scratch.
 do and why it matters. Name the originating ticket if the session started from
 one.>
 
-Built in a vibe session by Andrew Eye. Scope: <draft: frontend only, with
+Built in a vibe session by <operator name>. Scope: <draft: frontend only, with
 sample data where the API does not exist yet | full: frontend and backend>.
 
 ## Scope and acceptance criteria

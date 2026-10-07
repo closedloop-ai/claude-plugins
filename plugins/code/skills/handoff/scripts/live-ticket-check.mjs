@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Checks a vibe session's live ticket body (ISS-12057) is complete before
 // handoff: every section the session's scope needs is present and filled, no
-// template placeholder or `Pending.` marker is left, and the sections rendered
-// from the session record carry their URLs, flag table, and session ids.
+// template placeholder or `Pending.` marker is left, the sections rendered
+// from the session record carry their URLs, flag table, and session ids, and
+// the Engineering checklist has no line marked for the other scope.
 // Prints one JSON object; exits 0 when complete and 1 otherwise. Changes
 // nothing. The sections are the headings of ../../vibe/references/ticket-template.md.
 //
@@ -30,6 +31,9 @@ export const TICKET_SECTIONS = [
   { heading: "Engineering checklist", scopes: [Scope.Draft, Scope.Full] },
 ];
 
+// The template marks each scope-only checklist line `(draft scope)` or
+// `(full scope)`; the ticket keeps only its own scope's lines.
+const SCOPE_MARKED_SECTIONS = new Set(["Engineering checklist"]);
 const SECTION_HEADING = /^## (.+?)\s*$/;
 const PENDING_MARKER = /(^|\s)Pending\.\s*$/m;
 const PLACEHOLDER = /<[a-z][^<>\n]*>/i;
@@ -83,7 +87,7 @@ export function checkLiveTicket(body, scope) {
       problems.push({ section: heading, problem: "missing" });
       continue;
     }
-    problems.push(...checkSection(heading, content));
+    problems.push(...checkSection(heading, content), ...checkScopeLines(heading, content, scope));
   }
   return { ok: problems.length === 0, scope, problems };
 }
@@ -107,6 +111,16 @@ function checkSection(heading, content) {
     }
   }
   return problems;
+}
+
+/** A section built from scope-marked template lines keeps only the session's own scope's lines. */
+function checkScopeLines(heading, content, scope) {
+  if (!SCOPE_MARKED_SECTIONS.has(heading)) {
+    return [];
+  }
+  return Object.values(Scope)
+    .filter((other) => other !== scope && content.includes(`(${other} scope)`))
+    .map((other) => ({ section: heading, problem: `has a line marked (${other} scope) in a ${scope} scope session` }));
 }
 
 function main() {
