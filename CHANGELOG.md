@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.8
+
+#### Fixed
+- `vibe/references/environment.md` Desktop steps say what `vibe:profile` actually does: `sign-in` works once per profile (it rotates the refresh token and refuses a signed-in profile, so signing in again needs a fresh `prepare`), and `launch` runs detached with its log in the session's private git directory, blocks while Desktop is open, refuses a profile that is not signed in, is up once the log shows `Desktop window visible`, and is stopped with SIGTERM to its `scripts/dev-launch.mjs` process. `vibe-setup-worker` waits for that line and records the launch command's pid as the stack's `desktopPid`.
+
 ### code v1.19.7
 
 #### Fixed
