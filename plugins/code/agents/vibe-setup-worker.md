@@ -57,8 +57,8 @@ The checkout is the one the preflight remembered
     and return `DONE` saying the environment must now be requested again
     (the orchestrator dispatches `vibe-environment-worker` in desktop mode).
   - Launch: sign the profile in (step 4) and start the app detached (step 5),
-    logging to the session's private git directory, and record its pid in the
-    stack with `touch --stack`, keeping anything else the stack lists.
+    wait for its `Desktop window visible` log line, and record `desktopPid`
+    in the stack with `touch --stack`, keeping anything else the stack lists.
   Never point a Desktop at a local API. If a command fails and you cannot fix
   it, return `BLOCKED` with `DESKTOP_UNAVAILABLE` and the error in one line.
 - Stop: end the processes the session's stack lists (only those pids, after

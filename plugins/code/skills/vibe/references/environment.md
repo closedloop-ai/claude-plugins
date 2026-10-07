@@ -120,8 +120,22 @@ repo). `<api>` and `<app>` are the session's `vercel.apiUrl` and
    after the person has signed in and created their org).
 4. Sign the profile in to the session's environment:
    `pnpm --filter desktop vibe:profile sign-in --profile "<profile>" --api-origin <api> --web-origin <app>`.
-5. Start the app:
-   `pnpm --filter desktop vibe:profile launch --profile "<profile>" --api-origin <api> --web-origin <app>`.
+   It works once per profile: signing in rotates the profile's refresh token,
+   so it refuses a profile that is already signed in. A profile that needs
+   signing in again (another environment, a lost session) is prepared fresh
+   from step 1.
+5. Start the app detached, logging to the session's private git directory:
+   `nohup pnpm --filter desktop vibe:profile launch --profile "<profile>" --api-origin <api> --web-origin <app> > "<gitdir>/vibe-desktop.log" 2>&1 &`.
+   It refuses a profile that is not signed in. The command does not return
+   while Desktop is open: it runs the dev launcher, which builds what it needs
+   and then runs Electron, and it exits only when the app quits (non-zero if
+   Desktop failed). Desktop is up once the log shows
+   `Desktop window visible`; if the command exits before that line, the end
+   of the log says why. Record the background command's pid (`$!`) as the
+   stack's `desktopPid`. To stop Desktop, send SIGTERM to the
+   `scripts/dev-launch.mjs` process under that pid (`ps -o pid,ppid,command`
+   shows the tree): it passes the signal to Electron, and the launch command
+   then exits.
 
 If any of these fails and the setup worker cannot fix it, tell the person
 plainly: "Desktop isn't available for this session yet, so we'll keep going
