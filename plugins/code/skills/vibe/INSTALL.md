@@ -134,4 +134,4 @@ claude-plugins `main`.
 |---|---|
 | `$vibe` | Start something new, or pick up where they left off |
 | "redeploy" (in a vibe session) | Put the latest changes on their Vercel copy of the app |
-| `$handoff` | Check and finish the work's ticket and hand it to Nenad Antic for design review, then engineering |
+| `$handoff` | Check and finish the work's ticket and hand it to whoever they name to pick it up next (usually design, then engineering) |

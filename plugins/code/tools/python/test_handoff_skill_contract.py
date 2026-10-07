@@ -2,6 +2,8 @@
 
 A handoff answer that decides what the product does must reach the change worker,
 and the checks, reviews, and redeploy must follow, before the ticket is finished.
+The ticket goes to the user the person names as the next owner, never to a
+built-in default.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
+TICKET_TEMPLATE = PLUGIN_ROOT / "skills" / "vibe" / "references" / "ticket-template.md"
 TICKET_WORKER = PLUGIN_ROOT / "agents" / "vibe-ticket-worker.md"
 CHANGE_WORKER = PLUGIN_ROOT / "agents" / "vibe-change-worker.md"
 
@@ -40,7 +43,7 @@ def test_behavior_answers_go_to_the_change_worker_before_the_ticket() -> None:
 
 
 def test_step_nine_routes_answers_and_blocks_finalizing_until_reruns_finish() -> None:
-    step_nine = section(HANDOFF_SKILL.read_text(), "## 9. Check the ticket")
+    step_nine = section(HANDOFF_SKILL.read_text(), "## 9. Choose who picks it up, then check the ticket")
 
     assert "`NEEDS_PERSON`" in step_nine
     assert "`NEEDS_CHANGE`" in step_nine
@@ -76,3 +79,36 @@ def test_change_worker_checks_a_handoff_answer_against_the_code() -> None:
     assert "`already met`" in fix_mode
     assert "`built`" in fix_mode
     assert "Scope and acceptance criteria in their words" in fix_mode
+
+
+def test_step_nine_asks_for_the_next_owner_and_never_defaults() -> None:
+    step_nine = section(HANDOFF_SKILL.read_text(), "## 9. Choose who picks it up, then check the ticket")
+
+    assert "Who should pick this up next? A name or email is fine." in step_nine
+    assert "`vibe-ticket-worker` in lookup mode" in step_nine
+    assert "`Assigning this to <full name>.`" in step_nine
+    assert "`<full name> (<email>)`" in step_nine
+    assert "ask the question again" in step_nine
+    assert "never fall back to anyone by default" in step_nine
+    assert "the next owner (full name and email)" in step_nine
+
+
+def test_lookup_matches_through_the_script_and_assign_uses_its_user() -> None:
+    worker = TICKET_WORKER.read_text()
+    lookup = section(worker, "## Lookup mode")
+    assign = section(worker, "## Assign mode")
+
+    assert "until `hasMore` is false" in lookup
+    assert "match-assignee.mjs" in lookup
+    assert "Never match by eye" in lookup
+    assert "choose none" in lookup
+    assert "the next owner's id as `assigneeId`" in assign
+    assert "`expectedStatus: IN_PROGRESS`; never change the status" in assign
+    assert "never assign anyone by default" in assign
+
+
+def test_no_next_owner_is_hardcoded() -> None:
+    next_line = section(TICKET_TEMPLATE.read_text(), "## Handoff")
+    for text in (HANDOFF_SKILL.read_text(), TICKET_WORKER.read_text(), next_line):
+        assert "Nenad" not in text
+    assert "- Next: <the next owner the person chose at handoff, by full name>" in next_line

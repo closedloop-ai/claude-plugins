@@ -1,6 +1,6 @@
 ---
 name: vibe-ticket-worker
-description: Owns a vibe session's live ClosedLoop ticket in symphony-alpha for the vibe and handoff orchestrators. Create mode makes the ticket when the session starts (assigned to the person running the session, In Progress) from the live ticket template and records its slug on the session. Handoff mode refreshes the record sections, fills the Handoff section, reconciles API requirements or the backend sections, attaches api-requirements.md and decision tables, and checks the ticket is complete. Assign mode hands it to Nenad Antic with the status left In Progress. Cancel mode moves a discarded session's ticket to Canceled. Returns a short status.
+description: Owns a vibe session's live ClosedLoop ticket in symphony-alpha for the vibe and handoff orchestrators. Create mode makes the ticket when the session starts (assigned to the person running the session, In Progress) from the live ticket template and records its slug on the session. Lookup mode finds the ClosedLoop user the person named as the next owner (every page of list-users, matched by the match-assignee script) and changes nothing. Handoff mode refreshes the record sections, fills the Handoff section, reconciles API requirements or the backend sections, attaches api-requirements.md and decision tables, and checks the ticket is complete. Assign mode hands it to the next owner the lookup resolved, with the status left In Progress. Cancel mode moves a discarded session's ticket to Canceled. Returns a short status.
 model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
@@ -11,13 +11,16 @@ work; you create the ticket, finish it at handoff, and assign it.
 
 ## Inputs
 
-The mode (`create`, `handoff`, `assign`, or `cancel`), the worktree path (not
-in cancel mode: the worktree is gone), and the live ticket slug (not in create
-mode). Cancel: the session's `operator` from the discard result. Create: the requirements worker's brief,
+The mode (`create`, `lookup`, `handoff`, `assign`, or `cancel`), the worktree
+path (not in cancel mode: the worktree is gone), and the live ticket slug (not
+in create or lookup mode). Cancel: the session's `operator` from the discard
+result. Lookup: the person's exact words naming who picks the work up next.
+Assign: the next owner's user id and email from lookup. Create: the requirements worker's brief,
 the originating ticket if any, the scope, and the mode. Handoff: the scope,
 the inventory path, the confirmed summary and the person's corrections, the
 footprint, check, and review summaries, the requirements file path (draft) or
-the decision tables (full), and every answer the person gave during handoff:
+the decision tables (full), the next owner (full name and email, from
+lookup), and every answer the person gave during handoff:
 the question, their exact words, and how it was handled (`built` with the
 change worker's summary, `already met` with its evidence, or `wording`).
 
@@ -99,7 +102,8 @@ name, or have none.
    `upload-attachment`. Full scope: reconcile Backend built and Backend still
    missing with the diff (`git -C "<wt>" diff --stat <inventory baseCommit>`)
    and the decision tables, and attach each decision table.
-6. Fill Handoff from the summaries you were given, per the template.
+6. Fill Handoff from the summaries you were given, per the template; its
+   Next line names the next owner you were given.
 7. Write the body back with `create-document-version`, then save it to
    `$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-live-ticket.md` and run
    `node ../skills/handoff/scripts/live-ticket-check.mjs --file "<that file>" --scope <scope> --base-commit <inventory baseCommit>`.
@@ -110,13 +114,33 @@ name, or have none.
    `wording` when it only changes how the ticket describes what is built.
    Repeat until the check passes.
 
+## Lookup mode
+
+Finds the next owner; reads only, and never touches the ticket.
+
+1. Page `list-users` with `limit: 100` from `offset: 0`, following
+   `nextOffset` until `hasMore` is false. Save each response verbatim as JSON
+   to its own file under
+   `$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-users/` (empty the
+   folder first).
+2. Run `node ../skills/handoff/scripts/match-assignee.mjs --name "<the person's words>" --users <page file>`,
+   one `--users` per saved page, passing their words as a single argument.
+   It matches first name, last name, full name, and email, ignoring case. An
+   `error` means the pages are incomplete or malformed: page again. Never
+   match by eye, widen the match, or substitute anyone.
+3. `status: one`: return `DONE` with the match's id, name, and email.
+   `several`: return `NEEDS_PERSON` listing every match's name and email,
+   and choose none. `none`: return `NEEDS_PERSON` saying nobody matches the
+   words.
+
 ## Assign mode
 
 1. `get-document` the ticket; confirm it is still assigned to the session's
    operator (same check as handoff mode) and In Progress. If someone else already has it, return `BLOCKED` naming them.
-2. Nenad Antic from `list-users` (email `nenad.antic@closedloop.ai`).
-   `update-document` with his id as `assigneeId` and `expectedStatus:
-   IN_PROGRESS`; never change the status. Confirm with `get-document`.
+2. `update-document` with the next owner's id as `assigneeId` and
+   `expectedStatus: IN_PROGRESS`; never change the status. Confirm with
+   `get-document` that the assignee is that id and email. Without a next
+   owner from lookup, return `BLOCKED`; never assign anyone by default.
 
 ## Cancel mode
 
@@ -134,9 +158,11 @@ The person threw the session away and its branch is deleted.
 ## Return (under 100 words)
 
 `DONE` with the ticket slug and URL (create, assign, cancel; create also confirms the
-slug is recorded on the session), or with "complete" and
+slug is recorded on the session; assign also names the new assignee), with
+the user's id, name, and email (lookup), or with "complete" and
 what you reconciled (handoff). Or `NEEDS_PERSON` with one plain question
-(handoff: marked `behavior` or `wording`). Or `NEEDS_CHANGE` (handoff) with
+(handoff: marked `behavior` or `wording`; lookup: the matches, or that there
+were none). Or `NEEDS_CHANGE` (handoff) with
 the question and answer the code has not been checked against. Or
 `BLOCKED` with why. Add one line noting whether closedloop-graph was
 available.

@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Finish a vibe session in symphony-alpha and hand it to design, then engineering. Shows the person a task list, then (through workers) checks the work stays within its scope, makes sure every new or changed component has Storybook stories, runs lint, typecheck, and tests (the whole suite for a full-scope session), runs the code reviews (an adversarial review, or two workflow-code-review passes for full scope) and fixes what they confirm, checks the session's live ClosedLoop ticket is complete, pushes the last changes to the andy/<slug> branch and its Vercel environment, and assigns the ticket to Nenad Antic for design review with the status left In Progress. Both scopes end at the branch; no pull request is opened. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
+description: Finish a vibe session in symphony-alpha and hand it to whoever picks it up next, usually design and then engineering. Shows the person a task list, then (through workers) checks the work stays within its scope, makes sure every new or changed component has Storybook stories, runs lint, typecheck, and tests (the whole suite for a full-scope session), runs the code reviews (an adversarial review, or two workflow-code-review passes for full scope) and fixes what they confirm, asks who should pick the work up next and finds that person in ClosedLoop, checks the session's live ClosedLoop ticket is complete, pushes the last changes to the andy/<slug> branch and its Vercel environment, and assigns the ticket to the person they named with the status left In Progress. Both scopes end at the branch; no pull request is opened. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
 ---
 
 # Handoff
@@ -9,11 +9,13 @@ The person ran `vibe` and built something they are happy with. You
 orchestrate making it safe and complete for the next people, without asking
 them to understand any of the engineering. The session's live ClosedLoop
 ticket was created when the session started and the workers kept it current;
-handoff checks it is complete rather than writing it. Then Nenad Antic
-(design) reviews the components in the branch's Vercel Storybook, comments on
-the ticket when he signs off, and reassigns it to Daniel Ochoa, who finishes
-the work through analysis, a pull request, and merge. The ticket stays In
-Progress throughout, and no pull request is opened here, in either scope.
+handoff checks it is complete rather than writing it. The person says who
+picks the work up next, and the ticket is assigned to them. Usually that is
+design, who reviews the components in the branch's Vercel Storybook and
+comments on the ticket on sign-off, then engineering, who finishes the work
+through analysis, a pull request, and merge; sometimes it goes straight to
+engineering. The ticket stays In Progress throughout, and no pull request is
+opened here, in either scope.
 
 ## Your role: orchestrate, never do the work
 
@@ -43,7 +45,8 @@ the same plugin-root line: worker paths starting with `../` are relative to
 
 Every answer the person gives during handoff (to a worker's `NEEDS_PERSON`,
 or as a correction to the summary in step 2) is one of two kinds, and the
-worker that asked says which (`behavior` or `wording`):
+worker that asked says which (`behavior` or `wording`). The one exception is
+who picks the work up next, which step 9 asks and routes itself.
 
 - **Behavior**: it decides what the product does. A rule, a permission (who
   may do something), what happens in a case, an acceptance criterion, or a
@@ -85,7 +88,7 @@ change worker has not handled; it refuses one with `NEEDS_CHANGE`.
 | Full: two review passes | the `workflow-code-review` skill (itself orchestrator-only) |
 | Draft: requirements file | `vibe-api-requirements-writer` |
 | Last push and Vercel check | `vibe-environment-worker` (redeploy mode) |
-| Ticket check and assignment | `vibe-ticket-worker` (handoff mode, then assign mode) |
+| Next owner, ticket check, and assignment | `vibe-ticket-worker` (lookup mode, then handoff mode, then assign mode) |
 
 ## 0. Pick the session
 
@@ -97,8 +100,8 @@ words and ask which one to hand off. Read its `scope`, `liveTicket`, and
 
 If the session has no `liveTicket` (it started before live tickets existed),
 dispatch `vibe-ticket-worker` in create mode first; it records the slug on
-the session. If it is `handed-off`, tell the person it already went
-to design and stop.
+the session. If it is `handed-off`, tell the person it was already
+handed off and stop.
 
 Then run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
 so this conversation is recorded on the session too.
@@ -120,8 +123,9 @@ Here's what I'll do to hand this off:
 [ ] Run a tough code review and fix what it finds
 [ ] Write up what engineering needs to build behind the scenes
 [ ] Upload the last changes and check the app and Storybook show them
+[ ] Ask you who picks this up next
 [ ] Check the ticket has everything design and engineering need
-[ ] Hand the ticket to Nenad Antic for design review
+[ ] Hand the ticket to the person you chose
 ```
 
 Full scope:
@@ -135,8 +139,9 @@ Here's what I'll do to hand this off:
 [ ] Run every test in the repo
 [ ] Run two tough code reviews and fix what they find
 [ ] Upload the last changes and check the app and Storybook show them
+[ ] Ask you who picks this up next
 [ ] Check the ticket has everything design and engineering need
-[ ] Hand the ticket to Nenad Antic for design review
+[ ] Hand the ticket to the person you chose
 ```
 
 ## 2. Summarize and confirm
@@ -225,10 +230,35 @@ nothing changed since the last redeploy, it confirms the branch and the
 environment are current instead. A push refused by the repo's checks goes back
 to step 5's fixing, then this step again.
 
-## 9. Check the ticket
+## 9. Choose who picks it up, then check the ticket
 
-Dispatch `vibe-ticket-worker` in handoff mode with: the worktree, the live
-ticket slug, the scope, the inventory path, the confirmed summary and the
+Ask the person one plain question, in exactly these words:
+
+```
+Who should pick this up next? A name or email is fine.
+```
+
+Dispatch `vibe-ticket-worker` in lookup mode with the worktree and their
+exact words. It reads every ClosedLoop user, matches the words through
+`scripts/match-assignee.mjs`, changes nothing, and returns:
+
+- `DONE` with one user's id, full name, and email. Tell the person in one
+  line, `Assigning this to <full name>.`, and ask nothing more about it.
+- `NEEDS_PERSON` with several users. Ask
+  `More than one person matches "<their words>". Which one?` and list each
+  on its own line as `<full name> (<email>)`. Dispatch lookup mode again with
+  the email of the one they pick.
+- `NEEDS_PERSON` with no match. Say
+  `I couldn't find anyone in ClosedLoop matching "<their words>".` and ask
+  the question again.
+
+Never pick the person yourself and never fall back to anyone by default: the
+ticket goes only to the user the person named. Design reviewing first and
+engineering finishing is the usual route, but the person decides.
+
+Then dispatch `vibe-ticket-worker` in handoff mode with: the worktree, the live
+ticket slug, the scope, the next owner (full name and email), the inventory
+path, the confirmed summary and the
 person's corrections, the footprint, check, and review summaries, the
 requirements file path (draft) or the decision tables in
 `.closedloop-ai/decision-tables/` (full), and every answer from the person so
@@ -249,16 +279,18 @@ the backend sections, attaches the files, and runs
   way.
 
 Repeat until it returns `DONE`. Never go on to step 10 while a behavior answer
-has not been through the change worker, or while its re-run checks, reviews,
-or redeploy are unfinished.
+has not been through the change worker, while its re-run checks, reviews,
+or redeploy are unfinished, or without a next owner the lookup resolved to
+exactly one user.
 
-## 10. Hand it to design
+## 10. Hand it over
 
-Dispatch `vibe-ticket-worker` in assign mode with the worktree and the live
-ticket slug. It confirms the ticket is still assigned to the session's
-operator, the person who ran it (if engineering or design already took it, it
-returns `BLOCKED` and you stop: that branch is theirs now), assigns it to
-Nenad Antic, and leaves the status In Progress.
+Dispatch `vibe-ticket-worker` in assign mode with the worktree, the live
+ticket slug, and the next owner's user id and email from step 9. It confirms
+the ticket is still assigned to the session's operator, the person who ran it
+(if engineering or design already took it, it returns `BLOCKED` and you stop:
+that branch is theirs now), assigns it to the next owner, and leaves the
+status In Progress.
 
 Then mark the session handed off:
 `node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off`,
@@ -268,9 +300,9 @@ runs.
 Tell them, in a few lines: the ticket link, the app link as
 `<appUrl>/sign-in` (the app's root sends a signed-out visitor to account
 creation), the Storybook link, the
-branch name, and what happens next: Nenad Antic reviews the components in
-Storybook and comments on the ticket when he signs off, then hands it to
-Daniel Ochoa to finish. Say that the Storybook link opens only after
+branch name, and what happens next: the next owner, by name, picks it up
+from the ticket (usually design reviews the components in Storybook and
+comments on the ticket on sign-off, then engineering finishes it). Say that the Storybook link opens only after
 signing in to Vercel with a team account. If you open it and land on a
 `vercel.com` sign-in or `sso-api` page, say exactly that rather than that
 Storybook is broken, and do not try to get around it. For a draft, add one line per piece of backend work

@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.12
+
+#### Added
+- `handoff/scripts/match-assignee.mjs` (with node tests) resolves the name or email the person gives at handoff to ClosedLoop users. It reads every saved `list-users` page, refuses a page set that does not cover the organization's total, and matches first name, last name, full name, or email ignoring case and extra spaces, reporting `one`, `several`, or `none` with each match's id, name, and email.
+
+#### Changed
+- `handoff` no longer assigns every ticket to Nenad Antic. Step 9 asks "Who should pick this up next? A name or email is fine.", and `vibe-ticket-worker`'s new lookup mode pages `list-users` and runs `match-assignee.mjs`. One match is announced as "Assigning this to <full name>." with no further confirmation; several matches are listed by full name and email for the person to choose; no match is said plainly and the question is asked again. Nothing falls back to a default person.
+- `vibe-ticket-worker` assign mode assigns the ticket to the user id lookup resolved, keeps the status In Progress, and returns `BLOCKED` without one; handoff mode writes that person into the Handoff section's Next line. The ticket template's Next line names the chosen owner and describes design review then engineering as the usual route, and the handoff task list, final message, skill description, and `vibe/INSTALL.md` say the same.
+
 ### code v1.19.11
 
 #### Changed
