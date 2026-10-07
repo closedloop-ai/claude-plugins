@@ -73,6 +73,9 @@ if mode in ("empty", "no-verdict"):
 
 emit({"type": "thread.started", "thread_id": "thread-new"})
 emit({"type": "item.completed", "item": {"type": "agent_message", "text": "VERDICT: APPROVED"}})
+# codex exec --json ends every finished turn with turn.completed; the wrapper
+# publishes feedback only once it has seen one.
+emit({"type": "turn.completed"})
 """
 
 

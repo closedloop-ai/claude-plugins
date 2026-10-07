@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.5
+
+#### Fixed
+- `codex-review` extracts completed JSONL as UTF-8 and atomically replaces feedback only after the stream has a `turn.completed` event and an agent message, so a malformed or partial stream keeps the prior result. Blank and non-JSON lines are skipped and counted in the diagnostics instead of discarding a completed review.
+- The review wrapper retains Codex and parser diagnostics with the log ID, and its failure token carries the Codex exit code and reason.
+- A failed resume starts a fresh session only when the stream never started a thread (no `thread.started`), including a dead thread ID that prints only an error event; a stream that did start keeps its session and is diagnosed from the log rather than paid for twice.
+- The failure-reason parser reads the JSONL as UTF-8, independent of the host code page.
+
 ### code v1.19.4
 
 #### Fixed
