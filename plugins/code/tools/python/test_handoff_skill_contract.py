@@ -112,3 +112,34 @@ def test_no_next_owner_is_hardcoded() -> None:
     for text in (HANDOFF_SKILL.read_text(), TICKET_WORKER.read_text(), next_line):
         assert "Nenad" not in text
     assert "- Next: <the next owner the person chose at handoff, by full name>" in next_line
+
+
+def test_template_grading_block_follows_handoff_with_the_seven_item_checklist() -> None:
+    template = TICKET_TEMPLATE.read_text()
+    grading = section(template, "## Grading")
+
+    assert template.index("## Handoff") < template.index("## Grading") < template.index("## Engineering checklist")
+    for text in ("`Design grade`", "`Eng grade`", "Custom Fields", "it starts collapsed", "before changing anything"):
+        assert text in grading, text
+    for item in (
+        "1. Followed our codebase rules.",
+        "2. Reused existing components.",
+        "3. Storybook is right.",
+        "4. Extended the existing pattern.",
+        "5. Backend is wired correctly.",
+        "6. No invented copy.",
+        "7. What we had to fix before merge.",
+    ):
+        assert item in grading, item
+    assert "Nenad" not in grading
+
+
+def test_ticket_worker_fills_grading_at_handoff_and_never_rederives_it() -> None:
+    worker = TICKET_WORKER.read_text()
+    create = section(worker, "## Create mode")
+    handoff = section(worker, "## Handoff mode")
+
+    assert "Handoff, and Grading" in create
+    assert "Grading is never re-derived: it stays the template's text." in handoff
+    assert "template's Grading section copied unchanged" in handoff
+    assert "adding the section after Handoff when the ticket has none" in handoff

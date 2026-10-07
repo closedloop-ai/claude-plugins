@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.19
+
+#### Added
+- The vibe live ticket template (`references/ticket-template.md`) has a Grading section after Handoff: whoever picks the work up (design, then engineering) grades it at pickup by setting the `Design grade` or `Eng grade` custom field (High / Medium / Low) and posting one comment from the seven-item yes/no checklist the section carries, with engineering adding what had to be fixed before merge. The template's outer fence is now four backticks so the comment template sits in its own code block. `vibe-ticket-worker` writes `Pending.` for it at create, fills it with the template's text unchanged at handoff (adding it to tickets that predate it), and never re-derives it. `live-ticket-check.mjs` requires the section in both scopes. Node and Python contract tests updated.
+
 ### code v1.19.18
 
 #### Changed

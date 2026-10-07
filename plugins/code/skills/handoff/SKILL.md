@@ -266,8 +266,8 @@ requirements file path (draft) or the decision tables in
 `.closedloop-ai/decision-tables/` (full), and every answer from the person so
 far with how it was handled. It refreshes the record sections (the
 Environment base commit from the current inventory), re-derives every section
-an answer touches, fills the Handoff section, reconciles API requirements or
-the backend sections, attaches the files, and runs
+an answer touches, fills the Handoff and Grading sections, reconciles API
+requirements or the backend sections, attaches the files, and runs
 `scripts/live-ticket-check.mjs`. It returns:
 
 - `DONE` when the ticket is complete.
