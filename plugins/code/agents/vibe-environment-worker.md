@@ -115,21 +115,28 @@ then plain search.
    Otherwise continue until the run's `status` is `completed` with
    `conclusion` `success`. Give up after 45 minutes with `BLOCKED` naming the
    job still running.
-5. Seeded, and the run says the person must choose an org: its
+5. Seeded, and the run says the org could not be chosen: its
    `clerk_org_refusal=` line is `clerk_org_ambiguous` (a run without that line
    says the person belongs to more than one org and no org was chosen), or it
    is `clerk_org_not_admin` (the chosen org is one they are not an admin of).
-   Read the orgs from the run's `clerk_orgs_json` output (or its
-   `org: <name> (<org_id>)` lines) and keep only those with `isAdmin` true; an
-   org without that field counts as admin. If any remain, return
-   `NEEDS_PERSON` with the question "You belong to more than one
-   organization. Which one should own Acme Co: <names>?", plus a mapping from
-   each name to its `org_` id (the orchestrator records the answer with
-   `touch --clerk-org-id` and dispatches you again, which sends
-   `clerk_org_id`). If none remain, do step 6 instead. If the run lists no
-   orgs, return `BLOCKED` saying the run did not say which orgs the person
-   belongs to, for Daniel Ochoa. Never ask the person for an id and never pass
-   on the run's wording (such as "pass clerk_org_id").
+   The stage API picks the org itself (their only admin org, otherwise the org
+   their Clerk session last had active) and refuses only when it cannot, so a
+   run that succeeded never leads to a question. Read the orgs from the run's
+   `clerk_orgs_json` output (or its `org: <name> (<org_id>)` lines) and keep
+   only those with `isAdmin` true; an org without that field counts as admin.
+   If exactly one remains (an older stage API still refuses then), do not ask:
+   record it with
+   `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_id>`
+   and request the environment again, once; if that run refuses the same way,
+   return `BLOCKED` with its message for Daniel Ochoa. If two or more remain,
+   return `NEEDS_PERSON` with the question "Which one should own Acme Co:
+   <names>?", plus a mapping from each name to its `org_` id (the orchestrator
+   records the answer with `touch --clerk-org-id` and dispatches you again,
+   which sends `clerk_org_id`). If none remain, do step 6 instead. If the run
+   lists no orgs, return `BLOCKED` saying the run did not say which orgs the
+   person belongs to, for Daniel Ochoa. Never ask the person for an id, never
+   add words about organizations or Clerk to that question, and never pass on
+   the run's wording (such as "pass clerk_org_id").
 6. Seeded, and the person is an admin of none of their orgs (the
    `clerk_org_refusal=` line is `clerk_org_no_admin`, or step 5 kept no org):
    return `NEEDS_PERSON` with "Acme Co needs an organization on the test site

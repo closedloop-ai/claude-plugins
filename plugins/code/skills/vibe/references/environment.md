@@ -14,9 +14,10 @@ Asked once when the session starts, recorded as the session's `mode`.
 - **Seeded**: the vibe seed fills the environment with realistic data under an
   org named Acme Co, with its owner and teammates. The stage API finds the
   person's Clerk user from their email and binds Acme Co to their stage org,
-  with them as an admin (the run reports `personOrgAdmin`). If they belong to
-  more than one stage org, the run fails saying so; the person picks the org
-  by name, `touch --clerk-org-id` records it, and the environment is
+  with them as an admin (the run reports `personOrgAdmin`). If they are an
+  admin of more than one stage org, the API binds the org their Clerk session
+  last had active; only when it cannot tell does the run fail, the person
+  picks by name, `touch --clerk-org-id` records it, and the environment is
   requested again. The person signs in through Clerk as themselves and lands
   in Acme Co.
 - **Blank**: no data. The person signs in through Clerk as themselves and
@@ -32,7 +33,7 @@ Asked once when the session starts, recorded as the session's `mode`.
    `gh workflow run vibe-environment-dispatch.yml --ref main --json < <file>`.
    Inputs: `branch`, `mode`, `flag_snapshot`, `request_id` (a fresh id per
    request), and for seeded `person_email` (from ClosedLoop `get-me`) plus
-   `clerk_org_id` only when the person belongs to more than one stage org;
+   `clerk_org_id` only when the person picked one;
    `desktop_auth` once the session has a local Desktop profile, always with
    `person_email` so the Desktop session belongs to the person (a blank
    session sends `person_email` only then, and never `clerk_org_id`), and

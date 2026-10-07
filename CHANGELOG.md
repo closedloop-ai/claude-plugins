@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.18
+
+#### Changed
+- `vibe-environment-worker` no longer asks which org should own Acme Co when the stage API chose it: the API binds the person's only admin org, otherwise the org their Clerk session last had active (symphony-alpha ISS-12135). When an older API still refuses with exactly one admin org listed, the worker records that org with `touch --clerk-org-id` and requests the environment once more instead of asking. When the API cannot choose, the question is "Which one should own Acme Co: <names>?", with no words about organizations or Clerk. `vibe` SKILL.md and `references/environment.md` say the same.
+
 ### code v1.19.17
 
 #### Fixed

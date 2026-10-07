@@ -199,7 +199,7 @@ environment; skip this and use its recorded `appUrl`, opening
 `<appUrl>/sign-in` first as below. A resumed session
 without it (one started before environments were verified) goes through
 create mode again; the worker keeps its flag snapshot. If the worker returns `NEEDS_PERSON` asking which
-organization should own Acme Co, ask the person exactly that, record the org
+one should own Acme Co, ask the person exactly its question, record the org
 id the worker mapped to their answer with
 `node scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_...>`,
 and dispatch it again. If it returns `NEEDS_PERSON` saying they are not an
