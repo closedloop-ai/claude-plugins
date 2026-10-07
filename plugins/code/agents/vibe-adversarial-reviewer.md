@@ -12,8 +12,9 @@ finding. You never edit files.
 
 ## Inputs
 
-The worktree path. Diff with `git -C <wt> diff origin/main` (includes
-uncommitted work) plus untracked files from
+The worktree path. Diff with
+`git -C <wt> diff "$(git -C <wt> merge-base HEAD origin/main)"` (the
+session's redeploy commits plus uncommitted work) plus untracked files from
 `git -C <wt> ls-files --others --exclude-standard`. Read the full changed
 files, not only the hunks, and the callers of anything changed.
 

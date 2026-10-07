@@ -154,23 +154,12 @@ test("a supported Node here but an old one in a new shell still fails", (t) => {
   assert.match(checks.node.detail, /a new shell runs v22\.11\.0/);
 });
 
-test("a stopped Colima is started rather than installing Docker Desktop, and Compose is checked", (t) => {
+test("no Docker check runs: vibe sessions use Vercel, not a local web environment", (t) => {
   const env = setup(t);
   writeExecutable(path.join(env.bin, "colima"), "exit 1");
   writeExecutable(path.join(env.bin, "docker"), "exit 1");
   const { checks } = runPreflight(env);
-  assert.equal(checks.docker.fix, "start-colima");
-  assert.equal(checks["docker-compose"].ok, false);
-  assert.equal(checks["docker-compose"].fix, "install-compose-plugin");
-});
-
-test("a running engine with the Compose plugin passes both checks", (t) => {
-  const env = setup(t);
-  writeExecutable(
-    path.join(env.bin, "docker"),
-    'case "$1 $2" in "compose version") echo 2.40.0;; "context show") echo colima;; esac; exit 0'
-  );
-  const { checks } = runPreflight(env);
-  assert.equal(checks.docker.ok, true);
-  assert.equal(checks["docker-compose"].ok, true);
+  assert.equal(checks.docker, undefined);
+  assert.equal(checks["docker-compose"], undefined);
+  assert.equal(checks.gh.ok, false);
 });

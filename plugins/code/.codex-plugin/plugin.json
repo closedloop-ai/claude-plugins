@@ -1,6 +1,6 @@
 {
   "name": "code",
-  "version": "1.18.4",
+  "version": "1.19.1",
   "description": "Code and planning framework plugin, including ClosedLoop ticket workflows, native PR monitoring, and the vibe, handoff, and vibe-seed-refresh skills for symphony-alpha.",
   "author": {
     "name": "ClosedLoop",
@@ -15,14 +15,14 @@
   "interface": {
     "displayName": "ClosedLoop Code",
     "shortDescription": "Planning, ClosedLoop ticket, PR monitor, and vibe workflows.",
-    "longDescription": "ClosedLoop Code provides planning and implementation skills, ClosedLoop ticket analysis/execution/sweep workflows, a native App Server PR monitor, and vibe sessions that let a non-engineer build product UI in the in-app browser on a seeded local copy of symphony-alpha and hand the work to engineering.",
+    "longDescription": "ClosedLoop Code provides planning and implementation skills, ClosedLoop ticket analysis/execution/sweep workflows, a native App Server PR monitor, and vibe sessions that let a non-engineer build product UI in the in-app browser on their own Vercel copy of symphony-alpha, kept on a live ClosedLoop ticket, and hand the work to design and then engineering.",
     "developerName": "ClosedLoop",
     "category": "Development",
     "capabilities": ["Write", "Analyze"],
     "websiteURL": "https://github.com/closedloop-ai/claude-plugins",
     "defaultPrompt": [
       "Start a vibe session.",
-      "Hand this vibe session off to engineering.",
+      "Hand this vibe session off to design and engineering.",
       "Refresh the vibe seed.",
       "Analyze this ClosedLoop ticket.",
       "Monitor this pull request."

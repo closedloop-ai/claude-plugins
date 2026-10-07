@@ -343,39 +343,6 @@ else
   emit gh false "not installed" "brew-install-gh"
 fi
 
-# Docker engine: Colima when it is installed, Docker Desktop otherwise.
-docker_fix=""
-if have docker && docker info >/dev/null 2>&1; then
-  emit docker true "engine running (context $(docker context show 2>/dev/null))" ""
-elif have colima; then
-  if ! have docker; then
-    docker_fix="brew-install-docker-cli"
-    emit docker false "Colima installed, docker command missing" "$docker_fix"
-  elif colima status >/dev/null 2>&1; then
-    docker_fix="use-colima-context"
-    emit docker false "Colima running, docker is pointed elsewhere" "$docker_fix"
-  else
-    docker_fix="start-colima"
-    emit docker false "Colima installed, stopped" "$docker_fix"
-  fi
-elif [[ -d /Applications/Docker.app ]]; then
-  docker_fix="start-docker"
-  emit docker false "Docker Desktop installed, engine not running" "$docker_fix"
-else
-  docker_fix="install-docker"
-  emit docker false "no Docker engine installed" "$docker_fix"
-fi
-
-if have docker; then
-  if docker compose version >/dev/null 2>&1; then
-    emit docker-compose true "$(docker compose version --short 2>/dev/null)" ""
-  else
-    emit docker-compose false "docker compose plugin missing" "install-compose-plugin"
-  fi
-else
-  emit docker-compose false "docker command not installed yet" "${docker_fix:-install-docker}"
-fi
-
 if [[ -n "$repo" ]]; then
   emit repo true "$repo" ""
   if [[ -d "$repo/node_modules" ]]; then

@@ -10,12 +10,14 @@ before anyone uses it in a screen; you only build it and its stories.
 
 ## Inputs
 
-The worktree path (work only there), the steward's spec, and the Storybook URL
-from the session's `VIBE_ENV`.
+The worktree path (work only there), the steward's spec, the live ticket
+slug, and the local Storybook URL (the orchestrator starts one for approval).
+Never commit, push, or stash.
 
 ## Read first
 
-`../skills/vibe/references/closedloop-graph.md` and
+`../skills/vibe/references/closedloop-graph.md`,
+`../skills/vibe/references/ticket-template.md`, and
 `../skills/vibe/references/guardrails.md` ("Missing primitives" steps 2 to 4
 are yours; the orchestrator does the approval steps). The repo's
 `apps/storybook/AGENTS.md`, `packages/design-system/AGENTS.md`, the storybook
@@ -38,6 +40,8 @@ skill (`.claude/skills/storybook/SKILL.md`, `references/gotchas.md`,
 4. `pnpm --filter storybook catalog:sync`, `pnpm --filter storybook validate:catalog`,
    `pnpm --filter storybook test`, and Biome on your files, until all pass.
 5. Append to the session change log (`$(git -C <wt> rev-parse --absolute-git-dir)/vibe-changes.md`).
+6. Add a Progress line to the live ticket per `ticket-template.md` naming the
+   new building block and its story.
 
 ## Return (under 120 words)
 

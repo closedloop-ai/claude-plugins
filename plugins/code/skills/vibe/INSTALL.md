@@ -8,12 +8,14 @@ hands-on time; the `vibe` skill installs everything else on its first run.
 - The vibe user needs:
   - Codex Desktop (inside the ChatGPT app) installed and signed in.
   - A GitHub account in the `closedloop-ai` org with push access to
-    `symphony-alpha` (handoff pushes an `andy/<slug>` branch).
+    `symphony-alpha` (every session pushes an `andy/<slug>` branch and starts
+    its Vercel environment through a GitHub workflow).
   - A ClosedLoop account.
-- Both pull requests must be merged to `main`:
+- These must be merged to `main`:
   - claude-plugins, for the skills.
-  - symphony-alpha ISS-12017, for `just vibe-up` and the seed. Every vibe
-    session starts from fresh `main`.
+  - symphony-alpha ISS-12056 (the per-session Vercel environment and its
+    request workflow) and ISS-12048 (the production flag snapshot). Every
+    vibe session starts from fresh `main`.
 
 ## 1. Install the plugin and connect ClosedLoop
 
@@ -46,8 +48,7 @@ Check:
 In Codex Desktop, open Plugins and make sure these are added and enabled:
 
 - **Browser**: the in-app browser the work happens in.
-- **Computer Use**: lets setup start Docker and click through installer and
-  sign-in dialogs.
+- **Computer Use**: lets setup click through installer and sign-in dialogs.
 
 Quit the ChatGPT app completely and reopen it, so it loads the new plugin and
 connector.
@@ -60,16 +61,16 @@ Start a new Codex thread and type `$vibe`. On the first run it:
   its GitHub remote, so the folder can have any name, including spaces) and
   remembers it in `~/.codex/vibe/config.json`; only when there is none does it
   clone one to `~/Source/symphony-alpha`. It then bootstraps it
-- installs whatever is missing (Homebrew, Node, pnpm, `gh`, `just`, `jq`, and
-  the Docker Compose plugin), and puts a Node that satisfies the repo's
-  `engines` range first on PATH for every new shell
-- uses Colima as the Docker engine when it is installed (starting it if it is
-  stopped), and installs Docker Desktop only when neither is present
+- installs whatever is missing (Homebrew, Node, pnpm, `gh`, `just`, and
+  `jq`), and puts a Node that satisfies the repo's `engines` range first on
+  PATH for every new shell. Docker is not needed: the app runs on Vercel.
 - signs `gh` in to GitHub through the browser
 
 The vibe user only has to type their Mac password when an installer asks for
-it. After that, `$vibe` asks what they want to work on and opens the app in
-the in-app browser.
+it. After that, `$vibe` asks what they want to work on and whether to start
+with sample data, sets up their own copy of the app on Vercel (a few
+minutes), and opens it in the in-app browser, where they sign in as
+themselves.
 
 If a step fails, run the preflight on its own to see which check is red:
 
@@ -91,4 +92,5 @@ Then restart the ChatGPT app.
 | Command | What it does |
 |---|---|
 | `$vibe` | Start something new, or pick up where they left off |
-| `$handoff` | Send the finished work to engineering: a ticket assigned to them, a branch, and a preview link |
+| "redeploy" (in a vibe session) | Put the latest changes on their Vercel copy of the app |
+| `$handoff` | Check and finish the work's ticket and hand it to Nenad Antic for design review, then engineering |

@@ -6,7 +6,7 @@ tools: Read, Grep, Glob, Bash
 ---
 
 You summarize a vibe session for its author, who is not an engineer, and for
-the handoff ticket. You never edit files.
+the live ticket's Handoff section. You never edit files.
 
 ## Inputs
 
@@ -16,7 +16,8 @@ The worktree path and the handoff inventory JSON path.
 
 `../skills/vibe/references/closedloop-graph.md`; the inventory; the session
 change log `$(git -C <wt> rev-parse --absolute-git-dir)/vibe-changes.md`;
-`git -C <wt> diff --stat origin/main` and the diff of each changed file.
+`git -C <wt> diff --stat <inventory baseCommit>` (the session's redeploy
+commits and anything not committed yet) and the diff of each changed file.
 Use closedloop-graph `code_symbols` / `code_callers` to name the screens each
 changed component appears on, and `blast_radius_tickets` on the changed files
 to list other open tickets touching them.
