@@ -4,6 +4,34 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.3
+
+#### Fixed
+- `vibe-environment-worker` treats the environment as ready only when the `vibe-environment.yml` run succeeds and its `vibe-environment-result` artifact (`requestId`, `branch`, `mode`, `headSha`, the app, API, and Storybook URLs, `deploymentIds`, `verifiedAt`) (published by symphony-alpha #8476) passes the new `vibe-sessions.mjs environment-result` command, which checks it against the request id, the session's branch and mode, and the worktree's HEAD before recording the URLs, deployment ids, and deployed commit. It no longer matches GitHub deployments by `ref`, probes preview URLs, or claims a push of a new branch starts the Vercel builds. Create, redeploy, flags, and desktop modes all read the result, and a missing or refused result returns `BLOCKED` without a URL.
+- `vibe-environment-worker` follows each run job by job and stops at the first failed, cancelled, or timed-out job with that job's failed log, instead of waiting for the whole run.
+- Redeploy mode requests the environment again with the same mode after pushing, so the new commit is deployed and verified.
+- `ticket-sections` shows the app, API, and Storybook URLs and the last deployed commit only once the environment result is recorded; `vibe` opens only the URL the worker returned with `DONE`, and a resumed session without a verified environment goes through create mode again, keeping its flag snapshot. The first time it opens the app for the person to sign in, it opens the verified URL's `/sign-in` path; after that, the plain app URL.
+- `dispatch-inputs` sends `person_email` for a blank session that has a Desktop auth claim (and only then), so a blank session can get a Desktop session; a blank session still never sends a Clerk org.
+- `discard` deletes the remote `andy/<slug>` branch (removing its Vercel previews and preview schema), the worktree, and the local branch, refuses a handed-off session, and returns the live ticket and operator. `vibe` offers throwing a session away at any time (new section 9): the setup worker discards it after the person confirms, and `vibe-ticket-worker` cancel mode moves the live ticket to Canceled with a Progress line.
+
+- New `vibe/scripts/posthog-key.mjs` resolves the public PostHog key and API host for the flag snapshot from a checkout's `apps/app/.env.local`, or else from the production app's sign-in page (checking the `phc_` prefix and a PostHog API host), with no Vercel sign-in. `vibe-environment-worker` uses it, and `vibe-preflight.sh` has a `posthog-key` check with a `posthog-key-missing` fix.
+- `vibe-environment-worker` asks the person to pick an org by name from the run's `org: <name> (<org_id>)` lines or `clerk_orgs_json`, and turns other identity refusals into plain instructions (sign in once to the stage app, create an org) instead of relaying the workflow's wording. `vibe/INSTALL.md` "Before you start" says the person must have signed in to the stage app once and have an org there.
+- closedloop-graph is optional: `vibe` and `INSTALL.md` no longer ask the person to run a connect command; workers fall back to repository search.
+- `vibe` and `handoff` resolve the plugin's absolute root and start every worker brief with it, so worker paths that start with `../` resolve from `<root>/agents` rather than the session worktree.
+- `vibe-change-worker` first returns a quick `PLAN` (small units, each visible on its own, plus any questions for the person), then builds one unit per dispatch and reports what is now visible and what is left; `vibe` tells the person the plan up front and relays each unit as it finishes. A change to a shared `packages/app` surface is wired and typechecked on both the web and Desktop hosts, or the worker asks whether to build it for the web only. Copy reuses an existing constant only when its text matches the person's words exactly, and counted text reads right for one and many. Each new or changed story is checked in the local Storybook UI at a 1280 by 800 viewport, and its play function must pass there and leave no toast, overlay, or scrolled-away content; the new `NEEDS_STORYBOOK` status asks the orchestrator to start local Storybook first.
+- `ticket-template.md` notes that ClosedLoop strips angle-bracketed text, so such text goes in code spans.
+- The branch Storybook URL is documented as behind Vercel's sign-in: `vibe` and `handoff` tell the person plainly that it needs a Vercel sign-in with a team account when the tab lands on a `vercel.com` sign-in or `sso-api` page, and the ticket's Handoff "Next" line says the same to design.
+- `handoff-inventory.mjs` lets a draft session shrink `scripts/lint/source-gate-allowlist.json` (remove entries or lower counts, checked by the new `allowlist-shrink.mjs` against the base copy) and reports it under `shrinkOnlyAllowlists`; any other `scripts/` edit stays forbidden. `guardrails.md` and `vibe-verify-worker` describe the exception.
+- `vibe-environment-worker` redeploy mode runs `pnpm check:source-gates` and then `turbo test` for the packages changed since the last verified deploy and their dependents (`--continue`, 15 minutes) before committing and pushing, and returns `BLOCKED` with the failing suites instead of pushing. A stale `source-gate-allowlist.json` entry for a file the session changed is shrunk (deleted or lowered, never added or raised) wherever the session's work is checked or pushed: the change worker's self-check and fix mode, redeploy, and the first push in create mode, as `guardrails.md` now describes.
+- `vibe-environment-worker` create mode takes the flag snapshot only when the session has none, so a re-run after a refused push keeps the existing snapshot; only flags mode replaces it.
+- `vibe-verify-worker` checks mode runs `pnpm test:affected --continue`, runs `pnpm --filter desktop test:renderer` directly when `packages/app` changed, and runs every lane `pnpm test:lanes` names for the diff except Desktop e2e.
+- `vibe-environment-worker` notes that a branch alias whose latest build Vercel cancelled answers 200 with a "Deployment was cancelled" page, another reason only the verified environment result counts as ready.
+
+#### Removed
+- `vibe-preflight.sh` `just` check and its `brew-install-just` fix, and `just` from the install list; nothing in the Vercel flow runs it.
+- The `annotations.md` "Desktop tab" section, which described the retired local stack's view-only Desktop tab.
+- `vibe-sessions.mjs touch --vercel` and `--deployed`; `environment-result` is the only way the session records URLs and the deployed commit.
+
 ### code v1.19.2
 
 #### Fixed

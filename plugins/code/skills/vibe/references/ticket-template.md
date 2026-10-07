@@ -23,6 +23,9 @@ it never writes it from scratch.
   that still has one.
 - Write for an engineer who never saw the session, in plain words. Use the
   person's own words for what they asked for; never invent requirements.
+- ClosedLoop strips angle-bracketed text from ticket content, so anything
+  written in angle brackets (a component like `<TagMenu>`, a placeholder like
+  `<tag>`) must go in a code span or it disappears.
 - Keep the headings exactly as below; the handoff check finds sections by
   heading. Omit `## API requirements` in a full-scope session, and
   `## Backend built` and `## Backend still missing` in a draft one.
@@ -113,8 +116,9 @@ subagent that worked on this.>
 - Reviews: <n fixed, n rejected; one line each, rejected with why>
 - Tests whose old-UI assertions were updated on purpose: <list or "none">
 - Pre-existing failures not touched by this work: <list or "none">
-- Next: Nenad Antic reviews the components in the Storybook above and comments
-  here when he signs off, then reassigns this ticket to Daniel Ochoa, who
+- Next: Nenad Antic reviews the components in the Storybook above (it opens
+  after signing in to Vercel with a team account) and comments here when he
+  signs off, then reassigns this ticket to Daniel Ochoa, who
   finishes it through analysis, a pull request, and merge.
 
 ## Engineering checklist

@@ -11,6 +11,11 @@ hands-on time; the `vibe` skill installs everything else on its first run.
     `symphony-alpha` (every session pushes an `andy/<slug>` branch and starts
     its Vercel environment through a GitHub workflow).
   - A ClosedLoop account.
+  - To have signed in at least once to the stage app,
+    https://app.closedloop-stage.ai, with the same work account and to have
+    an organization there. A seeded session binds its sample company to that
+    account and organization; without them the environment stops and asks
+    for the sign-in.
 - These must be merged to `main`:
   - claude-plugins, for the skills.
   - symphony-alpha ISS-12056 (the per-session Vercel environment and its
@@ -31,16 +36,15 @@ CODEX=/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex
 The last command opens the browser. Have the vibe user sign in to ClosedLoop
 with their own account. Codex stores an OAuth sign-in, not an API key.
 
-The vibe workers also use closedloop-graph (ticket and code intelligence). If
-`"$CODEX" mcp list` does not show `closedloop-graph`, run the closedloop-graph
-connect command from the graph operator on this Mac. It needs the vibe user's
-Tailscale access.
+closedloop-graph (ticket and code intelligence) is optional. The workers use
+it when it is connected and fall back to searching the repository when it is
+not, so nothing needs to be set up for it.
 
 Check:
 
 ```bash
 "$CODEX" plugin list | grep code@closedloop-ai   # installed, enabled
-"$CODEX" mcp list                                # closedloop (OAuth) and closedloop-graph
+"$CODEX" mcp list                                # closedloop (OAuth)
 ```
 
 ## 2. Turn on the Codex plugins vibe uses
@@ -61,8 +65,7 @@ Start a new Codex thread and type `$vibe`. On the first run it:
   its GitHub remote, so the folder can have any name, including spaces) and
   remembers it in `~/.codex/vibe/config.json`; only when there is none does it
   clone one to `~/Source/symphony-alpha`. It then bootstraps it
-- installs whatever is missing (Homebrew, Node, pnpm, `gh`, `just`, and
-  `jq`), and puts a Node that satisfies the repo's `engines` range first on
+- installs whatever is missing (Homebrew, Node, pnpm, `gh`, and `jq`), and puts a Node that satisfies the repo's `engines` range first on
   PATH for every new shell. Docker is not needed: the app runs on Vercel.
 - signs `gh` in to GitHub through the browser
 

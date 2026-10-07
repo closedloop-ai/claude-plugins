@@ -25,7 +25,6 @@ installing <thing>; type it in the prompt" and wait.
 | `install-homebrew` | `NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`. It asks for the Mac password through sudo. Afterwards add brew to the shell: `echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile && eval "$(/opt/homebrew/bin/brew shellenv)"`. |
 | `install-node` | The Node that vibe commands actually run (first on PATH, both here and in a new shell) is missing or outside the checkout's `engines` range; the `detail` names the version, its location, and the range. Follow "Supported Node" below. |
 | `install-pnpm` | `corepack enable && corepack prepare pnpm@latest --activate`. Inside the repo the `packageManager` field pins the exact version. |
-| `brew-install-just` | `brew install just` |
 | `brew-install-jq` | `brew install jq` |
 | `brew-install-gh` | `brew install gh`, then apply `gh-auth-login`. |
 | `gh-auth-login` | `gh auth login --hostname github.com --git-protocol https --web`. It prints a one-time code and opens the browser. Computer Use may paste the code and click Authorize when the person is already signed in to GitHub in that browser; otherwise ask them to sign in there. Then `gh auth setup-git`. |
@@ -33,6 +32,7 @@ installing <thing>; type it in the prompt" and wait.
 | `allow-folder-access` | macOS did not let Codex look inside the folders in `detail`. Return `NEEDS_PERSON`: "Your Mac is asking whether Codex can open your <folder> folder; click Allow." If no prompt appears, they allow it in System Settings, Privacy & Security, Files and Folders, under Codex. Then re-run the preflight. Never clone while this is unresolved; the checkout may be in that folder. |
 | `clone-repo` | Only when the preflight found no checkout anywhere in the home folder: `mkdir -p "$HOME/Source" && gh repo clone closedloop-ai/symphony-alpha "$HOME/Source/symphony-alpha"`, run the preflight with `--repo "$HOME/Source/symphony-alpha"` so it is remembered, then apply `run-loops-setup`. |
 | `ask-for-repo-path` | The folder given with `--repo` is not a symphony-alpha checkout (its git remote is not `closedloop-ai/symphony-alpha`). Ask where their symphony-alpha folder is, or clone a fresh one with `clone-repo`. |
+| `posthog-key-missing` | Neither the checkout's `apps/app/.env.local` nor the production app's page gave the public PostHog key the flag snapshot needs (`detail` says why; usually no network). Check the Mac is online and re-run the preflight. If it still fails, tell the person "I can't reach the product's analytics settings right now; Daniel Ochoa can help." and show `detail` to Daniel Ochoa. Never ask the person for a key or a Vercel sign-in. |
 | `run-loops-setup` | In the remembered checkout (`repo` detail; quote the path, it can contain spaces): `git -C "<repo>" pull --ff-only origin main` only if the working tree is clean, then `cd "<repo>" && ./.closedloop-ai/loops-setup.sh`. If it reports missing env values, show the exact names to Daniel Ochoa rather than guessing values. |
 
 ## Supported Node

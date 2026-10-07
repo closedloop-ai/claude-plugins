@@ -48,6 +48,14 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   (`../../agents/<name>.md` from this file). Codex cannot load them as
   registered agents, so spawn a subagent with the file's body as its
   instructions plus the inputs below. Repo agents live in `<repo>/.claude/agents/`.
+- Plugin root: the folder two levels above this file (in Codex,
+  `~/.codex/plugins/cache/closedloop-ai/code/<version>/`; take it from where
+  this skill was loaded, never a hardcoded version). Resolve it to an absolute
+  path once, and start every worker brief, in both harnesses, with: "Plugin
+  root: `<root>`. Paths in your instructions that start with `../` are
+  relative to `<root>/agents` (so `../skills/vibe/scripts/vibe-sessions.mjs`
+  is `<root>/skills/vibe/scripts/vibe-sessions.mjs`)." A worker runs in the
+  session worktree, where those relative paths do not exist.
 - Claude Code: invoke as `/code:vibe`; plugin agents are available as
   `code:<name>`.
 - The checkout can live anywhere in the home folder, including folders with
@@ -96,11 +104,9 @@ workers never type or ask for credentials. Re-run the preflight until it
 passes.
 
 Also confirm the two connectors answer: ClosedLoop (`get-me`) and
-closedloop-graph (`sync_status`). If closedloop-graph does not answer, tell the
-person in one line that the code-intelligence connection is missing and ask
-them to run the closedloop-graph connect command the graph operator gave them
-(then restart the app); continue meanwhile, and tell every worker the graph is
-unavailable so it falls back to plain search.
+closedloop-graph (`sync_status`). closedloop-graph is optional: if it does not
+answer, do not ask the person to set anything up. Tell every worker the graph
+is unavailable so it searches the repository instead, and continue.
 
 ## 2. Start or resume
 
@@ -114,7 +120,7 @@ Run `node scripts/vibe-sessions.mjs list` (it uses the remembered checkout).
 - Any `active` session whose `lastActiveAt` is more than three days old gets
   one extra line: "This hasn't been handed off yet. Hand it off now, keep
   working on it, or throw it away?" Act on the answer (handoff skill, resume,
-  or `discard` after they confirm what will be lost).
+  or section 9).
 - If their first message already describes the work, match it against the
   summaries and offer the match as a resume. If nothing matches, start new and
   mention the open sessions in one line.
@@ -176,18 +182,24 @@ branch, starts the environment through GitHub, follows it to the end, records
 the URLs on the session, and fills the ticket's Environment, Production flag
 snapshot, and Sessions sections.
 
-A resumed session whose `vercel.lastDeployedCommit` is set already has its
-environment; skip this. If the worker returns `NEEDS_PERSON` asking which
+A resumed session whose `vercel.verifiedAt` is set already has its
+environment; skip this and use its recorded `appUrl`. A resumed session
+without it (one started before environments were verified) goes through
+create mode again; the worker keeps its flag snapshot. If the worker returns `NEEDS_PERSON` asking which
 organization should own Acme Co, ask the person exactly that, record the org
 id the worker mapped to their answer with
 `node scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_...>`,
 and dispatch it again. If it returns `BLOCKED`, tell the person in one or two
 plain lines what failed and suggest they message Daniel Ochoa with the
-session slug.
+session slug. Never open or give the person a URL after `BLOCKED`: any
+preview address without its own deployment shows the stage production app.
 
 When it returns `DONE`:
-- Open `appUrl` in a Codex in-app Browser tab and make the browser visible.
-  The person signs in through Clerk as themselves (you never type
+- Open the `appUrl` it returned (verified against the branch's own
+  deployment) with `/sign-in` added (`<appUrl>/sign-in`) in a Codex in-app
+  Browser tab and make the browser visible; the app's root sends a
+  signed-out visitor to account creation, and the person already has an
+  account. After this first sign-in, use the plain `appUrl`. The person signs in through Clerk as themselves (you never type
   credentials). Seeded: they land in Acme Co as an admin. Blank: they create
   their own org.
 - Confirm the tab shows the app (with Acme Co data when seeded), not an error
@@ -227,36 +239,46 @@ straight into the app?" Default to straight into the app.
 
 ## 5. Build loop
 
-For each request or annotation (a queued batch is one dispatch):
+For each request or annotation (a queued batch is one request), work in small
+visible steps so the person never waits in silence:
 
-1. Dispatch `vibe-change-worker` with the worktree, the session summary, the
-   session scope, the live ticket slug, the request verbatim (for
-   annotations: the comment, the element context, the route, and any Adjust
-   values), the Labs answer if one applies, the person's own words for any
-   user-visible text, and the local Storybook URL if one is running.
-2. On `DONE`: tell the person in one or two plain sentences what changed. If
-   the worker named a story and local Storybook is running, open the story so
-   they can see it now; otherwise remind them it shows in the app after they
-   say "redeploy". Update the session record with the worker's one-line
-   summary:
+1. Dispatch `vibe-change-worker` to plan, with the worktree, the session
+   summary, the session scope, the live ticket slug, the request verbatim
+   (for annotations: the comment, the element context, the route, and any
+   Adjust values), the Labs answer if one applies, the person's own words for
+   any user-visible text, and the local Storybook URL if one is running. It
+   returns `PLAN` in a few minutes: the units and any questions.
+2. Ask its questions first (step 4). Then tell the person in one or two plain
+   sentences what will happen, in the order of the units ("First the select
+   boxes on Sessions, then the same on Branches, then the tag menu; I'll tell
+   you as each one is done."). If any unit adds or changes a story and local
+   Storybook is not running, dispatch `vibe-setup-worker` to start it now.
+3. Dispatch a change worker for each unit in turn, with the same inputs plus
+   the plan and the unit to build. On each `DONE`, relay its one plain
+   sentence right away. If the unit named a story, open it in local
+   Storybook; otherwise remind them changes show in the app after they say
+   "redeploy". Update the session record with the worker's one-line summary:
    `node scripts/vibe-sessions.mjs touch --worktree "<wt>" --summary "<summary>"`.
-3. On `NEEDS_PERSON`: ask the question exactly as the worker phrased it (copy,
-   "everywhere or just here", a product decision), then dispatch a fresh
-   worker with the answer.
-4. On `NEEDS_PRIMITIVE`: tell the person in one sentence that the screen needs
+   Continue with the units it lists as left until none are. On
+   `NEEDS_STORYBOOK`, start local Storybook as above and dispatch the unit
+   again.
+4. On `NEEDS_PERSON`: ask the question exactly as the worker phrased it (copy,
+   "everywhere or just here", web only or wait for Desktop, a product
+   decision), then dispatch a fresh worker with the answer.
+5. On `NEEDS_PRIMITIVE`: tell the person in one sentence that the screen needs
    a building block the component library does not have yet. Dispatch
    `vibe-primitive-worker` with the steward's spec, the worktree, and the live
    ticket slug. Approval happens in local Storybook: if none is running,
    dispatch `vibe-setup-worker` to start it. When the primitive worker returns
    `DONE`, open the story URL it gives and ask the person to approve it there.
    On approval, re-dispatch the original change.
-5. On `NEEDS_BACKEND` (full scope only): tell the person in one sentence that
+6. On `NEEDS_BACKEND` (full scope only): tell the person in one sentence that
    this needs some behind-the-scenes work first. Dispatch
    `vibe-backend-worker` with its spec, the worktree, the session summary, and
    the live ticket slug. When it returns `DONE`, re-dispatch the change worker
    with the original request so it wires the screen to the new backend. The
    new backend reaches the Vercel environment on the next redeploy.
-6. On `BLOCKED`: tell the person plainly what could not be done and why, and
+7. On `BLOCKED`: tell the person plainly what could not be done and why, and
    offer the closest compliant version the worker suggested.
 
 Local Storybook is optional. Offer it once, when a change adds or changes a
@@ -275,10 +297,16 @@ on Vercel", "let me see it live", or anything meaning the same:
 3. Dispatch `vibe-environment-worker` in redeploy mode with the worktree, the
    live ticket slug, the session summary, and the session's `localFixes`
    paths. It makes one commit of everything changed since the last redeploy,
-   pushes it, waits for the Vercel builds, and updates the ticket.
+   pushes it, requests the environment again so that commit is deployed, and
+   updates the ticket.
 4. On `DONE`, reload the app tab (and the Storybook tab if open), look at it
-   yourself, and tell them it is live. On `BLOCKED` because the repo's checks
-   refused the push or a build failed in the session's own change, dispatch
+   yourself, and tell them it is live. Whenever you open the Vercel
+   `storybookUrl` and the tab lands on `vercel.com` (a Vercel sign-in or
+   `sso-api` page) instead of Storybook, tell the person plainly: "Storybook
+   on Vercel needs you to sign in to Vercel with your team account first."
+   Do not try to get around it. On `BLOCKED` because the tests failed, the
+   repo's checks refused the push, or a build failed in the session's own
+   change, dispatch
    `vibe-change-worker` (or `vibe-backend-worker` for backend code) in fix
    mode with the failure, then redeploy again. Tell the person in one plain
    line that something needed fixing first.
@@ -295,11 +323,30 @@ otherwise.
 
 ## 8. Ending a session
 
-When they say they are done, ask once: "Hand this off now, or keep it to come
-back to?" On "hand it off", run the handoff skill. On "keep it", dispatch
-`vibe-setup-worker` to stop local Storybook or Desktop if either runs. Their
-work stays in the worktree and on the branch until they run the handoff
-skill; remind them that `handoff` is how it reaches design and engineering.
+When they say they are done, ask once: "Hand this off now, keep it to come
+back to, or throw it away?" On "hand it off", run the handoff skill. On "keep
+it", dispatch `vibe-setup-worker` to stop local Storybook or Desktop if either
+runs. Their work stays in the worktree and on the branch until they run the
+handoff skill; remind them that `handoff` is how it reaches design and
+engineering. On "throw it away", follow section 9.
+
+## 9. Throwing a session away
+
+Whenever the person asks to throw a session away (at any point, for any
+`active` session):
+
+1. Run `node scripts/vibe-sessions.mjs discard --worktree "<wt>"` (without
+   `--confirm` it changes nothing). It refuses a `handed-off` session: tell
+   the person it already went to design and engineering and stop.
+2. Tell them in plain words what will be lost: the session's summary, the
+   number of unsaved files, that their copy of the app on Vercel and its data
+   will be deleted, and that the ticket will be canceled. Ask them to confirm.
+3. On a clear yes, dispatch `vibe-setup-worker` to discard the worktree. It
+   stops the session's local processes and deletes the worktree and the
+   local and remote branch, and returns the live ticket slug and operator.
+4. If there was a live ticket, dispatch `vibe-ticket-worker` in cancel mode
+   with that slug and operator.
+5. Tell them in one line that it is gone.
 
 ## References
 

@@ -26,21 +26,27 @@ Asked once when the session starts, recorded as the session's `mode`.
 
 1. Take the production flag snapshot (below) and save it with
    `vibe-sessions.mjs flag-snapshot`.
-2. Push the branch (`git push -u origin andy/<slug>`), which starts the Vercel
-   builds for the app, API, and Storybook.
+2. Push the branch (`git push -u origin andy/<slug>`).
 3. Write the request inputs with `vibe-sessions.mjs dispatch-inputs` and
    start the request workflow it names from main:
    `gh workflow run vibe-environment-dispatch.yml --ref main --json < <file>`.
    Inputs: `branch`, `mode`, `flag_snapshot`, `request_id` (a fresh id per
    request), and for seeded `person_email` (from ClosedLoop `get-me`) plus
    `clerk_org_id` only when the person belongs to more than one stage org;
-   `desktop_auth` once the session has a local Desktop profile. Never start
+   `desktop_auth` once the session has a local Desktop profile, always with
+   `person_email` so the Desktop session belongs to the person (a blank
+   session sends `person_email` only then, and never `clerk_org_id`). Never start
    `vibe-environment.yml` directly: it holds the cloud credential and runs
    after the request workflow on its own.
 4. Follow both runs to the end. Both are titled
-   `Vibe environment <branch> (<request_id>)`. Then wait for the Vercel builds
-   of the pushed commit and confirm the app, API, and Storybook URLs answer.
-5. Record the URLs and commit (`touch --vercel ... --deployed <sha>`) and put
+   `Vibe environment <branch> (<request_id>)`. The `vibe-environment.yml` run
+   makes sure the branch head has ready app, API, and Storybook deployments
+   (Vercel does not build a commit it already built, so a new branch still at
+   main's commit gets none on its own) and reports their URLs and the deployed
+   commit. Its success is the only sign the environment is ready: GitHub
+   deployments carry the commit, not the branch, as their `ref`, and
+   `*.preview.closedloop-stage.ai` answers for any branch, deployed or not.
+5. Record the reported URLs and commit (`touch --vercel ... --deployed <sha>`) and put
    them on the live ticket.
 
 The URLs are the stable per-branch Vercel aliases, recorded on the session
@@ -50,7 +56,7 @@ when it is created:
 |---|---|
 | `appUrl` | The web app (`app-stage-git-andy-<slug>`). Open it in the in-app Browser. |
 | `apiUrl` | The API behind it (`api-stage-git-andy-<slug>`); the app finds it by hostname. |
-| `storybookUrl` | Storybook (`prototypes-git-andy-<slug>`, under `/storybook`), where design reviews the components. |
+| `storybookUrl` | Storybook (`prototypes-git-andy-<slug>`, under `/storybook`), where design reviews the components. It sits behind Vercel's sign-in: a viewer not signed in to Vercel with a team account is sent to `vercel.com` (`sso-api`) instead. |
 
 ## The production flag snapshot
 
@@ -58,7 +64,10 @@ Taken once, when the environment is created (ISS-12048): every feature flag's
 production value, evaluated in PostHog with the public project key (`phc_`)
 as the person's real account (their Clerk user id, the PostHog distinct id)
 and real ClosedLoop org. PostHog is one project for stage and production, so
-no other credential is needed. The environment uses these values instead of
+no other credential is needed. The key is public (it ships in every browser
+bundle); `scripts/posthog-key.mjs` reads it from the checkout's
+`apps/app/.env.local`, or from the production app's page when a fresh checkout
+has none, so no Vercel sign-in is needed. The environment uses these values instead of
 evaluating flags live. Every redeploy keeps the same snapshot; it is taken
 again only when the person asks, and applied by requesting the environment
 again with the same mode (a ready environment is kept; a different mode would
@@ -70,9 +79,9 @@ variant name.
 
 Only when the person asks ("redeploy", "redeploy to Vercel", "push it up",
 "put it on Vercel", "let me see it live"). One commit of everything changed
-since the last redeploy, never a local fix, then a push; the worker waits for
-the Vercel builds of that commit and tells the orchestrator when the app and
-Storybook show it. Each redeploy is its own commit; nothing is squashed or
+since the last redeploy, never a local fix, then a push and the environment
+requested again with the same mode; the worker reads the deployed commit from
+that run and tells the orchestrator when the app and Storybook show it. Each redeploy is its own commit; nothing is squashed or
 amended later.
 
 ## What runs on this Mac

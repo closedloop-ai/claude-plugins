@@ -175,6 +175,8 @@ test("new requires a seeded or blank mode and records the branch's Vercel URLs",
     storybookUrl: "https://prototypes-git-andy-tag-edit.preview.closedloop-stage.ai/storybook",
     lastDeployedCommit: null,
     lastDeployedAt: null,
+    deploymentIds: null,
+    verifiedAt: null,
   });
   const listed = runNode(SCRIPT, ["list"], home);
   assert.equal(listed.json.sessions[0].mode, "seeded");
@@ -266,38 +268,67 @@ test("touch records the live ticket, accepts the old --handoff-ticket name, and 
   assert.equal("handoffTicket" in JSON.parse(readFileSync(file, "utf8")), false);
 });
 
-test("touch takes reported Vercel URLs and the deployed commit, and rejects anything else", (t) => {
-  const { home, worktree } = newSession(t, "deploys");
-  const updated = runNode(
-    SCRIPT,
-    [
-      "touch",
-      "--worktree",
-      worktree,
-      "--vercel",
-      JSON.stringify({ storybookUrl: "https://prototypes-abc.preview.closedloop-stage.ai/storybook/" }),
-      "--deployed",
-      "0123456789abcdef",
-    ],
-    home
-  );
-  assert.equal(updated.status, 0, updated.stderr);
-  const vercel = updated.json.session.vercel;
-  assert.equal(vercel.storybookUrl, "https://prototypes-abc.preview.closedloop-stage.ai/storybook");
-  assert.equal(vercel.appUrl, "https://app-stage-git-andy-deploys.preview.closedloop-stage.ai");
-  assert.equal(vercel.lastDeployedCommit, "0123456789abcdef");
-  assert.ok(Date.parse(vercel.lastDeployedAt));
+function environmentResult(worktree, home, overrides = {}) {
+  return {
+    requestId: "req-12345678",
+    branch: git(worktree, ["rev-parse", "--abbrev-ref", "HEAD"], home),
+    mode: "blank",
+    headSha: git(worktree, ["rev-parse", "HEAD"], home),
+    appUrl: "https://app-stage-git-andy-deploys.preview.closedloop-stage.ai",
+    apiUrl: "https://api-stage-git-andy-deploys.preview.closedloop-stage.ai",
+    storybookUrl: "https://prototypes-git-andy-deploys.preview.closedloop-stage.ai/storybook/",
+    deploymentIds: { app: "dpl_app", api: "dpl_api", storybook: "dpl_sb" },
+    verifiedAt: "2026-10-07T03:00:00Z",
+    ...overrides,
+  };
+}
 
+test("environment-result records only a result verified for this request, branch, mode, and HEAD", (t) => {
+  const { root, home, worktree } = newSession(t, "deploys");
+  const file = path.join(root, "vibe-environment-result.json");
+  const record = (extra = []) =>
+    runNode(SCRIPT, ["environment-result", "--worktree", worktree, "--file", file, "--request-id", "req-12345678", ...extra], home);
+
+  const head = git(worktree, ["rev-parse", "HEAD"], home);
   const cases = [
-    [["--vercel", JSON.stringify({ webUrl: "https://x.example" })], /accepts only/],
-    [["--vercel", JSON.stringify({ appUrl: "http://localhost:3000" })], /https URL/],
-    [["--deployed", "main"], /commit SHA/],
+    [{ requestId: "req-other-0001" }, /requestId is "req-other-0001", expected "req-12345678"/],
+    [{ branch: "andy/someone-else" }, /branch is/],
+    [{ mode: "seeded" }, /mode is "seeded", expected "blank"/],
+    [{ headSha: "0".repeat(40) }, new RegExp(`headSha is "${"0".repeat(40)}", expected "${head}"`)],
+    [{ appUrl: "http://app.example" }, /appUrl must be an https URL/],
+    [{ storybookUrl: undefined }, /storybookUrl must be an https URL/],
+    [{ deploymentIds: { app: "dpl_app", api: "dpl_api" } }, /deploymentIds\.storybook/],
+    [{ deploymentIds: undefined }, /deploymentIds must name/],
+    [{ verifiedAt: "yesterday" }, /verifiedAt must be an ISO/],
+    [{ extra: true }, /unknown field "extra"/],
   ];
-  for (const [args, message] of cases) {
-    const result = runNode(SCRIPT, ["touch", "--worktree", worktree, ...args], home);
-    assert.equal(result.status, 1, args.join(" "));
-    assert.match(result.json.error, message);
+  for (const [overrides, message] of cases) {
+    writeJson(file, environmentResult(worktree, home, overrides));
+    const refused = record();
+    assert.equal(refused.status, 1, JSON.stringify(overrides));
+    assert.match(refused.json.error, message);
   }
+  const unchanged = runNode(SCRIPT, ["show", "--worktree", worktree], home);
+  assert.equal(unchanged.json.session.vercel.verifiedAt, null);
+  assert.equal(unchanged.json.session.vercel.lastDeployedCommit, null);
+
+  writeJson(file, "not json");
+  assert.match(record().json.error, /Could not read a JSON environment result/);
+  writeJson(file, environmentResult(worktree, home));
+  assert.match(
+    runNode(SCRIPT, ["environment-result", "--worktree", worktree, "--file", file], home).json.error,
+    /--request-id is required/
+  );
+
+  const saved = record();
+  assert.equal(saved.status, 0, saved.stderr);
+  const vercel = saved.json.session.vercel;
+  assert.equal(vercel.storybookUrl, "https://prototypes-git-andy-deploys.preview.closedloop-stage.ai/storybook");
+  assert.equal(vercel.appUrl, "https://app-stage-git-andy-deploys.preview.closedloop-stage.ai");
+  assert.equal(vercel.lastDeployedCommit, head);
+  assert.ok(Date.parse(vercel.lastDeployedAt));
+  assert.deepEqual(vercel.deploymentIds, { app: "dpl_app", api: "dpl_api", storybook: "dpl_sb" });
+  assert.equal(vercel.verifiedAt, "2026-10-07T03:00:00Z");
 });
 
 test("flag-snapshot saves a snapshot that matches the contract and refuses one that does not", (t) => {
@@ -399,14 +430,28 @@ test("ticket-sections renders the record's sections and marks what is still pend
   const file = path.join(root, "snapshot.json");
   writeJson(file, { takenAt: "2026-10-06T15:00:00Z", distinctId: "user_abc", flags: { "b-flag": "test", "a-flag": false } });
   runNode(SCRIPT, ["flag-snapshot", "--worktree", worktree, "--file", file], home);
-  runNode(SCRIPT, ["touch", "--worktree", worktree, "--deployed", "abcdef1234567"], home);
   runNode(SCRIPT, ["codex-sessions", "--worktree", worktree, "--thread", "thread-12345678"], home, { CODEX_HOME: path.join(root, "none") });
+  const unverified = runNode(SCRIPT, ["ticket-sections", "--worktree", worktree], home);
+  assert.match(unverified.json.markdown, /- App: Pending\.\n- API: Pending\.\n- Storybook: Pending\./);
+  assert.doesNotMatch(unverified.json.markdown, /preview\.closedloop-stage\.ai/);
+
+  const resultFile = path.join(root, "vibe-environment-result.json");
+  writeJson(resultFile, environmentResult(worktree, home, {
+    appUrl: "https://app-stage-git-andy-sections.preview.closedloop-stage.ai",
+  }));
+  const recorded = runNode(
+    SCRIPT,
+    ["environment-result", "--worktree", worktree, "--file", resultFile, "--request-id", "req-12345678"],
+    home
+  );
+  assert.equal(recorded.status, 0, recorded.stderr);
   const filled = runNode(SCRIPT, ["ticket-sections", "--worktree", worktree], home);
   assert.doesNotMatch(filled.json.markdown, /Pending\./);
   assert.match(filled.json.markdown, /\| `a-flag` \| false \|\n\| `b-flag` \| `test` \|/);
   assert.match(filled.json.markdown, /as PostHog user `user_abc`\. 2 flags\./);
   assert.match(filled.json.markdown, /- Codex session \(orchestrator\): `thread-12345678`/);
-  assert.match(filled.json.markdown, /- Last deployed: `abcdef1234`/);
+  assert.match(filled.json.markdown, /- App: https:\/\/app-stage-git-andy-sections\.preview\.closedloop-stage\.ai\n/);
+  assert.match(filled.json.markdown, new RegExp(`- Last deployed: \`${git(worktree, ["rev-parse", "HEAD"], home).slice(0, 10)}\``));
 });
 
 test("dispatch-inputs writes the request workflow's inputs with a fresh request id", (t) => {
@@ -442,7 +487,7 @@ test("dispatch-inputs writes the request workflow's inputs with a fresh request 
     home
   );
   assert.equal(blankWithEmail.status, 1);
-  assert.match(blankWithEmail.json.error, /only sent for a seeded session/);
+  assert.match(blankWithEmail.json.error, /only with a Desktop auth claim/);
 
   runNode(SCRIPT, ["touch", "--worktree", worktree, "--mode", "seeded", ...OPERATOR_ARGS], home);
   const noEmail = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
@@ -500,12 +545,105 @@ test("desktop-auth saves the profile's auth claim and every later request sends 
   assert.equal(saved.status, 0, saved.stderr);
   assert.ok(Date.parse(saved.json.session.desktopAuthSavedAt));
 
-  const blank = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
+  const blankNoEmail = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
+  assert.equal(blankNoEmail.status, 1);
+  assert.match(blankNoEmail.json.error, /Desktop auth claim needs --person-email/);
+
+  const blank = runNode(
+    SCRIPT,
+    ["dispatch-inputs", "--worktree", worktree, "--out", out, "--person-email", "andy@example.com"],
+    home
+  );
   assert.equal(blank.status, 0, blank.stderr);
-  assert.ok(blank.json.inputNames.includes("desktop_auth"));
-  assert.deepEqual(JSON.parse(JSON.parse(readFileSync(out, "utf8")).desktop_auth), {
+  const blankInputs = JSON.parse(readFileSync(out, "utf8"));
+  assert.deepEqual(Object.keys(blankInputs).sort(), [
+    "branch",
+    "desktop_auth",
+    "flag_snapshot",
+    "mode",
+    "person_email",
+    "request_id",
+  ]);
+  assert.equal(blankInputs.mode, "blank");
+  assert.equal(blankInputs.person_email, "andy@example.com");
+  assert.deepEqual(JSON.parse(blankInputs.desktop_auth), {
     refreshTokenHash: "abc123",
     publicKeySpki: "MIIB",
     gatewayId: "gw-1",
   });
+
+  runNode(SCRIPT, ["touch", "--worktree", worktree, "--clerk-org-id", "org_2abc"], home);
+  const blankOrg = runNode(
+    SCRIPT,
+    ["dispatch-inputs", "--worktree", worktree, "--out", out, "--person-email", "andy@example.com"],
+    home
+  );
+  assert.equal(blankOrg.status, 1);
+  assert.match(blankOrg.json.error, /Clerk org is only sent for a seeded session/);
+
+  runNode(SCRIPT, ["touch", "--worktree", worktree, "--mode", "seeded"], home);
+  const seeded = runNode(
+    SCRIPT,
+    ["dispatch-inputs", "--worktree", worktree, "--out", out, "--person-email", "andy@example.com"],
+    home
+  );
+  assert.equal(seeded.status, 0, seeded.stderr);
+  const seededInputs = JSON.parse(readFileSync(out, "utf8"));
+  assert.equal(seededInputs.person_email, "andy@example.com");
+  assert.equal(seededInputs.clerk_org_id, "org_2abc");
+  assert.ok("desktop_auth" in seededInputs);
+});
+
+test("discard reports what would be lost, then deletes the pushed branch everywhere so the slug can be reused", (t) => {
+  const { checkout, home, worktree } = newSession(t, "throw-away");
+  runNode(SCRIPT, ["touch", "--worktree", worktree, "--live-ticket", "ISS-30"], home);
+  git(worktree, ["push", "--quiet", "-u", "origin", "andy/throw-away"], home);
+  writeFileSync(path.join(worktree, "draft.txt"), "unsaved\n");
+
+  const preview = runNode(SCRIPT, ["discard", "--worktree", worktree], home);
+  assert.equal(preview.status, 0, preview.stderr);
+  assert.equal(preview.json.discarded, false);
+  assert.equal(preview.json.wouldLose.pushed, true);
+  assert.equal(preview.json.wouldLose.liveTicket, "ISS-30");
+  assert.deepEqual(preview.json.wouldLose.operator, { id: "user-andy", email: "andy@example.com", name: "Andy Example" });
+  assert.deepEqual(preview.json.wouldLose.uncommittedFiles, ["draft.txt"]);
+  assert.notEqual(git(checkout, ["ls-remote", "--heads", "origin", "andy/throw-away"], home), "");
+
+  const done = runNode(SCRIPT, ["discard", "--worktree", worktree, "--confirm"], home);
+  assert.equal(done.status, 0, done.stderr);
+  assert.equal(done.json.discarded, true);
+  assert.equal(done.json.remoteBranchDeleted, true);
+  assert.equal(done.json.wouldLose.liveTicket, "ISS-30");
+  assert.equal(git(checkout, ["ls-remote", "--heads", "origin", "andy/throw-away"], home), "");
+  assert.equal(git(checkout, ["branch", "--list", "andy/throw-away"], home), "");
+  assert.deepEqual(runNode(SCRIPT, ["list"], home).json.sessions, []);
+
+  const again = runNode(
+    SCRIPT,
+    ["new", "--slug", "throw-away", "--summary", "again", "--scope", "draft", "--mode", "blank", ...OPERATOR_ARGS],
+    home
+  );
+  assert.equal(again.status, 0, again.stderr);
+});
+
+test("discard deletes an unpushed session's local branch and never discards a handed-off one", (t) => {
+  const { checkout, home, worktree } = newSession(t, "local-only");
+  const done = runNode(SCRIPT, ["discard", "--worktree", worktree, "--confirm"], home);
+  assert.equal(done.status, 0, done.stderr);
+  assert.equal(done.json.remoteBranchDeleted, false);
+  assert.equal(git(checkout, ["branch", "--list", "andy/local-only"], home), "");
+
+  const created = runNode(
+    SCRIPT,
+    ["new", "--slug", "handed", "--summary", "handed", "--scope", "draft", "--mode", "blank", ...OPERATOR_ARGS],
+    home
+  );
+  const handed = created.json.session.worktree;
+  runNode(SCRIPT, ["touch", "--worktree", handed, "--status", "handed-off"], home);
+  for (const args of [[], ["--confirm"]]) {
+    const refused = runNode(SCRIPT, ["discard", "--worktree", handed, ...args], home);
+    assert.equal(refused.status, 1);
+    assert.match(refused.json.error, /handed off/);
+  }
+  assert.notEqual(git(checkout, ["branch", "--list", "andy/handed"], home), "");
 });

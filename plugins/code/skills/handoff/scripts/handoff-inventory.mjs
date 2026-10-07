@@ -9,12 +9,17 @@
 // they are listed under `localFixes` and left out of `changedFiles` and every
 // guardrail check, and no redeploy or handoff commit includes them.
 //
+// A draft session may edit nothing under `scripts/` except a source-gate
+// allowlist edit that only removes entries or lowers counts
+// (allowlist-shrink.mjs); those are listed under `shrinkOnlyAllowlists`.
+//
 // Usage: handoff-inventory.mjs --worktree <path>
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
 
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 const BRANCH_PREFIX = "andy/";
@@ -82,9 +87,11 @@ const changedFiles = allChangedFiles.filter((file) => !localFixTickets.has(file.
 const localFixes = allChangedFiles
   .filter((file) => localFixTickets.has(file.path))
   .map((file) => ({ ...file, ticket: localFixTickets.get(file.path) }));
-const forbidden = changedFiles.filter((file) => isForbidden(file.path));
+const shrinkOnlyAllowlists = changedFiles.filter((file) => isShrinkOnlyEdit(file));
+const shrinkOnlyPaths = new Set(shrinkOnlyAllowlists.map((file) => file.path));
+const forbidden = changedFiles.filter((file) => isForbidden(file.path) && !shrinkOnlyPaths.has(file.path));
 const outsideAllowed = changedFiles.filter(
-  (file) => !isForbidden(file.path) && !isAllowed(file.path)
+  (file) => !isForbidden(file.path) && !isAllowed(file.path) && !shrinkOnlyPaths.has(file.path)
 );
 const stubs = changedFiles
   .filter((file) => file.path.endsWith(STUB_SUFFIX) && file.status !== "D")
@@ -112,6 +119,7 @@ const result = {
   localFixes,
   forbidden,
   outsideAllowed,
+  shrinkOnlyAllowlists,
   stubs,
   stubImportViolations,
   componentsWithoutStories,
@@ -164,6 +172,24 @@ function isForbidden(filePath) {
     return true;
   }
   return FORBIDDEN_BASENAMES.has(path.basename(filePath));
+}
+
+/** A modified shrink-only allowlist whose working-tree copy only shrinks the base copy. */
+function isShrinkOnlyEdit(file) {
+  if (file.status !== "M" || !SHRINK_ONLY_ALLOWLISTS.has(file.path)) {
+    return false;
+  }
+  const absolute = path.join(worktree, file.path);
+  if (!existsSync(absolute)) {
+    return false;
+  }
+  let baseText;
+  try {
+    baseText = git(["show", `${baseCommit}:${file.path}`]);
+  } catch {
+    return false;
+  }
+  return isShrinkOnlyAllowlistEdit(baseText, readFileSync(absolute, "utf8"));
 }
 
 function isAllowed(filePath) {

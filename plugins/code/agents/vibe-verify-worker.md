@@ -21,9 +21,16 @@ the root `AGENTS.md` (Test Practices and the Test Modification Guardrail).
 
 Run in the worktree: `pnpm exec biome check --write <changed .ts/.tsx/.css>`
 then without `--write`; `pnpm check:source-gates`; `pnpm typecheck:affected`;
-`pnpm test:affected`. Use closedloop-graph `code_tests_for` on the changed
-files to find suites that cover them and run any it names that the affected
-selection missed. Fix every failure in the session's own changes. A failing
+`pnpm test:affected --continue` (so one failing package does not hide the
+rest). When the session changed `packages/app`, also run
+`pnpm --filter desktop test:renderer` directly, since turbo may serve the
+Desktop renderer lane from cache. Then run every lane `pnpm test:lanes` names
+for the diff, except Desktop e2e. Use closedloop-graph `code_tests_for` on the
+changed files to find suites that cover them and run any it names that none
+of those selected. A failing source gate that is only a stale entry in
+`scripts/lint/source-gate-allowlist.json` (the session removed the last
+allowlisted occurrence) is fixed by deleting that entry or lowering its
+count; that shrink is the one `scripts/` edit a draft session may make. Fix every failure in the session's own changes. A failing
 test is a failing expectation: fix the code, unless the test asserts old UI the
 person deliberately changed, in which case update that assertion and list it.
 Never skip, delete, or loosen a test. Leave failures the session did not cause

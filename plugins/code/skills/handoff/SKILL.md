@@ -33,7 +33,10 @@ plugin agents from `../../agents/<name>.md` with the file's body as the
 subagent's instructions; in Claude Code use `/code:handoff` and the
 `code:<name>` agents. Repo agents live in `<repo>/.claude/agents/`. Paths like
 `scripts/...` and `../vibe/...` are relative to this skill's own folder, not
-the repository.
+the repository. Resolve the plugin root (two levels above this file, as the
+`vibe` skill describes) to an absolute path and start every worker brief with
+the same plugin-root line: worker paths starting with `../` are relative to
+`<root>/agents`, never to the worktree the worker runs in.
 
 ## Workers
 
@@ -180,7 +183,8 @@ again, then dispatch `vibe-environment-worker` in redeploy mode with the
 worktree, the live ticket slug, the confirmed summary, and the inventory's
 `localFixes` paths. It commits everything the checks and reviews changed as
 one more commit (nothing is squashed or amended), pushes through the repo's
-pre-push checks, waits for the Vercel builds, and updates the ticket. If
+pre-push checks, requests the environment again so that commit is deployed,
+and updates the ticket. If
 nothing changed since the last redeploy, it confirms the branch and the
 environment are current instead. A push refused by the repo's checks goes back
 to step 5's fixing, then this step again.
@@ -214,5 +218,8 @@ runs.
 Tell them, in a few lines: the ticket link, the app and Storybook links, the
 branch name, and what happens next: Nenad Antic reviews the components in
 Storybook and comments on the ticket when he signs off, then hands it to
-Daniel Ochoa to finish. For a draft, add one line per piece of backend work
+Daniel Ochoa to finish. Say that the Storybook link opens only after
+signing in to Vercel with a team account. If you open it and land on a
+`vercel.com` sign-in or `sso-api` page, say exactly that rather than that
+Storybook is broken, and do not try to get around it. For a draft, add one line per piece of backend work
 engineering will build.

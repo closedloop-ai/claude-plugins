@@ -16,8 +16,13 @@ function writeExecutable(file, body) {
   chmodSync(file, 0o755);
 }
 
+// Reports the given version; anything else (the preflight's own node scripts)
+// runs on the real Node.
 function fakeNode(dir, version) {
-  writeExecutable(path.join(dir, "node"), `echo ${version}`);
+  writeExecutable(
+    path.join(dir, "node"),
+    `case "$1" in --version|-v) echo ${version} ;; *) exec "${process.execPath}" "$@" ;; esac`
+  );
 }
 
 /**
@@ -39,9 +44,18 @@ function setup(t, { nodeVersion = "v24.11.0", freshNodeVersion } = {}) {
   return { ...fixture, bin, shell };
 }
 
-function runPreflight({ home, bin, shell }, args = []) {
+// Nothing listens here, so the PostHog check never reaches the network.
+const UNREACHABLE_PAGE = "http://127.0.0.1:9/sign-in";
+
+function runPreflight({ home, bin, shell }, args = [], extraEnv = {}) {
   const result = spawnSync("/bin/bash", [SCRIPT, ...args], {
-    env: { ...gitEnv(home), PATH: `${bin}:${SYSTEM_PATH}`, SHELL: shell },
+    env: {
+      ...gitEnv(home),
+      PATH: `${bin}:${SYSTEM_PATH}`,
+      SHELL: shell,
+      VIBE_POSTHOG_PAGE_URL: UNREACHABLE_PAGE,
+      ...extraEnv,
+    },
     encoding: "utf8",
   });
   if (result.error) {
@@ -56,7 +70,7 @@ function runPreflight({ home, bin, shell }, args = []) {
         return [parsed.check, parsed];
       })
   );
-  return { status: result.status, checks };
+  return { status: result.status, checks, stdout: result.stdout };
 }
 
 function remembered(home) {
@@ -162,4 +176,28 @@ test("no Docker check runs: vibe sessions use Vercel, not a local web environmen
   assert.equal(checks.docker, undefined);
   assert.equal(checks["docker-compose"], undefined);
   assert.equal(checks.gh.ok, false);
+});
+
+test("the PostHog check passes from the checkout's env file and fails plainly without a key", (t) => {
+  const env = setup(t);
+  const checkout = path.join(env.home, ...SPACED);
+  makeCheckout({ ...env, checkout });
+
+  const missing = runPreflight(env);
+  assert.equal(missing.checks["posthog-key"].ok, false);
+  assert.equal(missing.checks["posthog-key"].fix, "posthog-key-missing");
+  assert.match(missing.checks["posthog-key"].detail, /could not be read/);
+
+  const key = "phc_TestKey0123456789abcdefghijklmnopqrstu";
+  mkdirSync(path.join(checkout, "apps", "app"), { recursive: true });
+  writeFileSync(path.join(checkout, "apps", "app", ".env.local"), `NEXT_PUBLIC_POSTHOG_KEY=${key}\n`);
+  const found = runPreflight(env);
+  assert.equal(found.checks["posthog-key"].ok, true, found.checks["posthog-key"].detail);
+  assert.match(found.checks["posthog-key"].detail, /^https:\/\/us\.i\.posthog\.com from .*\.env\.local$/);
+  assert.doesNotMatch(found.stdout, new RegExp(key));
+});
+
+test("just is not a vibe prerequisite", (t) => {
+  const env = setup(t);
+  assert.equal(runPreflight(env).checks.just, undefined);
 });

@@ -1,6 +1,6 @@
 ---
 name: vibe-ticket-worker
-description: Owns a vibe session's live ClosedLoop ticket in symphony-alpha for the vibe and handoff orchestrators. Create mode makes the ticket when the session starts (assigned to the person running the session, In Progress) from the live ticket template and records its slug on the session. Handoff mode refreshes the record sections, fills the Handoff section, reconciles API requirements or the backend sections, attaches api-requirements.md and decision tables, and checks the ticket is complete. Assign mode hands it to Nenad Antic with the status left In Progress. Returns a short status.
+description: Owns a vibe session's live ClosedLoop ticket in symphony-alpha for the vibe and handoff orchestrators. Create mode makes the ticket when the session starts (assigned to the person running the session, In Progress) from the live ticket template and records its slug on the session. Handoff mode refreshes the record sections, fills the Handoff section, reconciles API requirements or the backend sections, attaches api-requirements.md and decision tables, and checks the ticket is complete. Assign mode hands it to Nenad Antic with the status left In Progress. Cancel mode moves a discarded session's ticket to Canceled. Returns a short status.
 model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
@@ -11,8 +11,9 @@ work; you create the ticket, finish it at handoff, and assign it.
 
 ## Inputs
 
-The mode (`create`, `handoff`, or `assign`), the worktree path, and the live
-ticket slug (not in create mode). Create: the requirements worker's brief,
+The mode (`create`, `handoff`, `assign`, or `cancel`), the worktree path (not
+in cancel mode: the worktree is gone), and the live ticket slug (not in create
+mode). Cancel: the session's `operator` from the discard result. Create: the requirements worker's brief,
 the originating ticket if any, the scope, and the mode. Handoff: the scope,
 the inventory path, the confirmed summary and the person's corrections, the
 footprint, check, and review summaries, and the requirements file path
@@ -94,9 +95,22 @@ name, or have none.
    `update-document` with his id as `assigneeId` and `expectedStatus:
    IN_PROGRESS`; never change the status. Confirm with `get-document`.
 
+## Cancel mode
+
+The person threw the session away and its branch is deleted.
+
+1. `get-document` the ticket; confirm it is still assigned to the operator
+   you were given (same check as handoff mode) and In Progress. If not,
+   return `BLOCKED` naming who has it and its status; never cancel a ticket
+   someone else owns.
+2. Add one Progress line, `<date>: Discarded; the branch and its environment
+   were deleted.`, writing the body back with `create-document-version`.
+3. `update-document` with `status: CANCELED` and `expectedStatus:
+   IN_PROGRESS`. Confirm with `get-document`.
+
 ## Return (under 100 words)
 
-`DONE` with the ticket slug and URL (create, assign; create also confirms the
+`DONE` with the ticket slug and URL (create, assign, cancel; create also confirms the
 slug is recorded on the session), or with "complete" and
 what you reconciled (handoff). Or `NEEDS_PERSON` with one plain question. Or
 `BLOCKED` with why. Add one line noting whether closedloop-graph was

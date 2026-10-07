@@ -21,6 +21,20 @@ met by a change in the right-hand column becomes a stub plus a written
 requirement (`stubs.md`). Say so in one sentence and build the UI against the
 stub.
 
+One exception under `scripts/`: the source-gate allowlist
+(`scripts/lint/source-gate-allowlist.json`) is shrink-only, so when the
+session's change removes the last allowlisted occurrence of a rule (or some
+of them), delete that entry or lower its count. That is the only `scripts/`
+edit a draft session may make; the handoff inventory checks mechanically that
+the file only lost entries or counts, and refuses anything else under
+`scripts/`. It applies wherever the session's work is checked or pushed (a
+change worker's self-check or fix mode, a redeploy, the first push, handoff):
+when `pnpm check:source-gates` or the pre-push hook reports a stale entry
+(for example "pins count 1, but only 0 remain") for a file the session
+changed, delete the entry (0 remain) or lower its count to what remains, and
+run the gate again. Never add an entry or raise a count; a new violation is
+fixed in the code.
+
 ### Full scope
 
 In a **full** scope session (the session record's `scope`), the work goes all

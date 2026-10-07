@@ -27,6 +27,7 @@ SEARCH_DEPTH=6
 REMOTE_PATTERN='[:/]closedloop-ai/symphony-alpha(\.git)?/?$'
 
 failures=0
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 json_escape() {
   local value="$1"
@@ -321,11 +322,6 @@ else
   emit pnpm false "not installed" "install-pnpm"
 fi
 
-if have just; then
-  emit just true "$(just --version)" ""
-else
-  emit just false "not installed" "brew-install-just"
-fi
 
 if have jq; then
   emit jq true "$(jq --version)" ""
@@ -349,6 +345,17 @@ if [[ -n "$repo" ]]; then
     emit repo-bootstrap true "node_modules present" ""
   else
     emit repo-bootstrap false "dependencies not installed" "run-loops-setup"
+  fi
+  # The public PostHog key the flag snapshot needs: the checkout's env file,
+  # else the production app's page. The key itself is never printed here.
+  posthog_output="$(node "$SCRIPT_DIR/posthog-key.mjs" --checkout "$repo" 2>/dev/null)"
+  if [[ "$posthog_output" == *'"ok":true'* ]]; then
+    posthog_host="$(printf '%s' "$posthog_output" | sed -n 's/.*"host":"\([^"]*\)".*/\1/p')"
+    posthog_source="$(printf '%s' "$posthog_output" | sed -n 's/.*"source":"\([^"]*\)".*/\1/p')"
+    emit posthog-key true "$posthog_host from $posthog_source" ""
+  else
+    posthog_error="$(printf '%s' "$posthog_output" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p')"
+    emit posthog-key false "${posthog_error:-the PostHog key could not be resolved}" "posthog-key-missing"
   fi
 else
   emit repo false "$repo_detail" "$repo_fix"
