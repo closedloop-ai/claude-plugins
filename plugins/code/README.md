@@ -166,7 +166,7 @@ Supports resuming mid-session via a `{stem}.state` sidecar file that tracks the 
 
 ### `/code:design-inventory`
 
-**Description:** Inventory a Claude Design export for review, then create draft feature tickets from the edited review document.
+**Description:** Run the Claude Design to ClosedLoop pipeline.
 
 **Usage:**
 ```
@@ -174,7 +174,9 @@ Supports resuming mid-session via a `{stem}.state` sidecar file that tracks the 
 /code:design-inventory --tickets <workdir> --review-doc <FEA-slug> --project <PRO-slug> [--repo <path>]
 ```
 
-Activates the `code:design-inventory` skill. The first form inventories the export and publishes a Design Review document; the second derives accepted decisions from the edited document and generates draft tickets.
+**What it does:**
+
+Activates the `code:design-inventory` skill with the given arguments. The first form runs Stage A (inventory a design export zip into schema-validated findings and publish a platform Design Review document); the `--tickets` form runs Stage C (derive decisions from the human-edited review document and generate DRAFT feature tickets).
 
 ---
 
@@ -324,7 +326,23 @@ Generates a repo-local decision-table artifact that makes control-flow and state
 
 ### `design-inventory`
 
-Staged pipeline for inventorying a Claude Design export into reviewable findings, a human decision gate, and DRAFT ticket generation. Stage A extracts the zip, runs parallel `design-unit-analyst` agents per unit (screens, regions, standalone components) from per-unit context packs, emits schema-validated findings (each with a recommended action), and publishes a platform "Design Review" Feature document with inline images. Stage B is the human editing that document - delete a section to decline, edit a line to amend, leave to accept - with survival judged from heading-line id anchors. Stage C derives decisions from the edited document and generates DRAFT feature tickets grouped per screen (UI plus optional API, with BLOCKS edges) and workdir-only design packs, only for accepted units. Invoked via `/code:design-inventory` when users request a design handoff, design inventory, or ticket generation from a design review. Scripts are TypeScript under `tools/design-inventory/src/` with built `dist/` bundles committed to `skills/design-inventory/scripts/dist/`.
+Staged pipeline for inventorying a Claude Design export into reviewable findings, a human decision gate, and DRAFT ticket generation. Stage A extracts the zip, runs parallel `design-unit-analyst` agents per unit (screens, regions, standalone components) from per-unit context packs, emits schema-validated findings (each with a recommended action), and publishes a platform "Design Review" Feature document with inline images. Stage B is the human editing that document - delete a section to decline, edit a line to amend, leave to accept - with survival judged from heading-line id anchors. Stage C derives decisions from the edited document and generates DRAFT feature tickets grouped per screen (UI plus optional API, with BLOCKS edges) and workdir-only design packs, only for accepted units. Invoked via the `code:design-inventory` skill when users request a design handoff, design inventory, or ticket generation from a design review. Scripts are TypeScript under `tools/design-inventory/src/` with built `dist/` bundles committed to `skills/design-inventory/scripts/dist/`.
+
+### `guided-manual-qa`
+
+Derives and runs an interactive, evidence-recorded manual QA session for a code change, ticket, branch, or pull request. Resolves the exact worktree and head under test, maps candidate checkpoints against passing exact-head E2E coverage, and presents a checkpoint to the human only when neither that E2E coverage nor the agent's own observation can reliably verify it: visual or perceptual judgments, flows the agent cannot drive or observe reliably, and product-judgment calls. Prepares a trustworthy local environment (worktree-owned services, verified origin, proven persistence chain), writes a durable Markdown QA record outside the tracked tree before the first checkpoint, and proves each checkpoint's oracle before presenting it. The human confirms each checkpoint routed to them with `PASS`, `FAIL`, or `BLOCKED`. An agent observation can close a checkpoint as `AGENT_VERIFIED` and a passing E2E assertion as `E2E_COVERED`, never as a human `PASS`; an inconclusive agent observation goes to the human, and the final summary counts each kind separately. Ships a bundled Playwright launcher (`scripts/dist/launch-interactive-browser.mjs`, Node 18+) that opens the interactive browser with preloaded localStorage fixtures and an optional `--ready-selector` gate. Scripts are TypeScript under `tools/guided-manual-qa/src/` with the built bundle committed to `skills/guided-manual-qa/scripts/dist/`. Performs no source changes or external writes without separate authorization. The same skill directory also carries `agents/openai.yaml` display metadata so Codex can load it as a skill.
+
+### `gh-monitor-pr`
+
+Detached GitHub pull-request monitor for waking the exact launching Codex Desktop or CLI root when review comments, CI failures, conflicts, merge-queue changes, closure, merge readiness, or successful merges need attention. It uses the native managed Codex App Server daemon and portable proxy/direct Unix-socket transports to steer an active parent turn or start a turn on an idle parent, while persisting monitor-local delivery receipts so ambiguous accepted wakeups are not replayed automatically. Includes CLI setup/probe, start, transfer, recovery, status, stop, and one-shot snapshot commands, plus tests for notification delivery, recovery, and PR event evaluation. The skill has no `app-server-orchestrator` dependency.
+
+### ClosedLoop Ticket Skills
+
+The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl-analyze`, `cl-find-related-tickets`, `cl-split`, `cl-work-report`, `cl-sweep`, and `cl-execute`. Together they cover policy-aware ticket analysis, related-ticket discovery, safe one-level split workflows, private project work reports, sweep coordination, and end-to-end ticket execution. The imported sweep scripts use the native managed Codex App Server through bundled helpers rather than depending on a separate `app-server-orchestrator` skill. Runtime access still depends on the operator's normal ClosedLoop, GitHub, `workflow-memory`, and `closedloop-graph` MCP/API configuration.
+
+### Supporting Codex Skills
+
+The code plugin also carries `closedloop-intel`, `workflow-code-review`, `measurement-discipline`, and `mermaid-visualizer` because the ClosedLoop ticket skills reference them directly. These are instruction skills only: `closedloop-intel` requires the connected `closedloop-graph` MCP server, `workflow-code-review` uses available worker/subagent support, and `mermaid-visualizer` supplies local Mermaid syntax guidance for plan and report diagrams.
 
 ---
 

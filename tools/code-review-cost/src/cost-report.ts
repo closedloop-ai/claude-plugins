@@ -23,7 +23,7 @@ import { parseArgs } from "node:util";
 import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, basename, join } from "node:path";
-import { runWhenMain } from "./cli.js";
+import { runWhenMain } from "../../shared/cli.js";
 import {
   type Aggregate,
   type SessionCost,

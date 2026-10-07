@@ -1,0 +1,4 @@
+interface:
+  display_name: "Workflow Code Review"
+  short_description: "Run a worker-backed review with workflow review lenses"
+  default_prompt: "Use $workflow-code-review to review this PR, branch, or diff."

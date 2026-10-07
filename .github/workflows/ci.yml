@@ -101,28 +101,50 @@ jobs:
       - run: uv sync --frozen --group dev
       - run: uv run pytest plugins/
 
-  design-inventory-ts:
-    name: TypeScript (design-inventory)
+  tools-ts:
+    name: TypeScript (${{ matrix.tool }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tool: design-inventory
+            dist: plugins/code/skills/design-inventory/scripts/dist
+            min_bundles: 10
+          - tool: code-review-cost
+            dist: plugins/code-review/scripts/dist
+            min_bundles: 1
+          - tool: guided-manual-qa
+            dist: plugins/code/skills/guided-manual-qa/scripts/dist
+            min_bundles: 1
     defaults:
       run:
-        working-directory: tools/design-inventory
+        working-directory: tools/${{ matrix.tool }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: tools/design-inventory/package-lock.json
+          cache-dependency-path: tools/${{ matrix.tool }}/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
       - name: Verify committed dist bundles are up to date
+        env:
+          DIST: ${{ matrix.dist }}
+          MIN_BUNDLES: ${{ matrix.min_bundles }}
+          TOOL: ${{ matrix.tool }}
         run: |
-          DIST=plugins/code/skills/design-inventory/scripts/dist
           tracked=$(git -C ../.. ls-files "$DIST/*.mjs" | wc -l)
-          if [ "$tracked" -lt 10 ]; then
-            echo "::error::only $tracked tracked bundles under $DIST; bundles are missing or ignored (root .gitignore dist/ rule?). The skill cannot run without them."
+          if [ "$tracked" -lt "$MIN_BUNDLES" ]; then
+            echo "::error::only $tracked tracked bundles under $DIST; bundles are missing or ignored (root .gitignore dist/ rule?). The plugin cannot run without them."
+            exit 1
+          fi
+          npm run build
+          if ! git -C ../.. diff --exit-code -- "$DIST" || [ -n "$(git -C ../.. status --porcelain -- "$DIST")" ]; then
+            git -C ../.. status --porcelain -- "$DIST"
+            echo "::error::$DIST is stale or contains untracked bundles. Run 'npm run build' in tools/$TOOL and commit the result."
             exit 1
           fi
           npm run build

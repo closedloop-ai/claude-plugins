@@ -92,8 +92,15 @@ def test_completed_utf8_review_survives_ascii_stdout(tmp_path: Path) -> None:
             event_jsonl(
                 {"type": "thread.started", "thread_id": "synthetic-session"},
                 {"type": "item.completed", "item": {"type": "agent_message", "text": "VERDICT: APPROVED"}},
-            ) + '{"type":\n' + event_jsonl({"type": "turn.completed"}),
-            "JSONL line 3",
+            ) + '{"type":\n',
+            "without turn.completed",
+        ),
+        (
+            event_jsonl(
+                {"type": "thread.started", "thread_id": "synthetic-session"},
+                {"type": "turn.completed"},
+            ),
+            "no agent message",
         ),
         (
             event_jsonl(
@@ -112,7 +119,11 @@ def test_failed_extraction_keeps_prior_feedback_and_does_not_rerun(
         session_id="previous-session", codex_exit=1,
     )
     assert completed.returncode == 0, completed.stderr
-    assert "CODEX_FAILED:feedback extraction failed" in completed.stdout
+    # A failed codex run keeps the established one-line token; the parser's
+    # reason goes to the retained diagnostics instead.
+    assert completed.stdout.splitlines()[0] == (
+        "CODEX_FAILED:codex exited with code 1: synthetic codex diagnostic"
+    ), completed.stdout
     assert "CODEX_SESSION:synthetic-session" in completed.stdout
     assert "LOG_ID:synthetic-review" in completed.stdout
     assert feedback.read_bytes() == b"prior usable verdict"
@@ -121,3 +132,76 @@ def test_failed_extraction_keeps_prior_feedback_and_does_not_rerun(
     detail = diagnostics.read_text(encoding="utf-8")
     assert expected_error in detail
     assert "synthetic codex diagnostic" in detail
+
+
+def test_stray_lines_do_not_discard_a_completed_review(tmp_path: Path) -> None:
+    """The codex CLI owns this stdout format; a stray line must not cost a paid review.
+
+    A blank line, a plain-text notice, and a truncated object all sit between
+    completed events. The completeness gate, not per-line strictness, decides.
+    """
+    jsonl = (
+        event_jsonl({"type": "thread.started", "thread_id": "synthetic-session"})
+        + "\nWARNING: a deprecation notice\n" + '{"type":\n'
+        + event_jsonl(
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "VERDICT: APPROVED"}},
+            {"type": "turn.completed"},
+        )
+    )
+    completed, feedback, home, calls = run_synthetic(
+        tmp_path, jsonl, prior_feedback=b"old usable feedback",
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "VERDICT:APPROVED" in completed.stdout, completed.stdout
+    assert "CODEX_SESSION:synthetic-session" in completed.stdout
+    assert feedback.read_bytes() == b"VERDICT: APPROVED"
+    assert calls.read_text(encoding="utf-8").splitlines() == ["call"]
+    diagnostics = home / ".closedloop-ai" / "plan-with-codex" / "synthetic-review.stderr"
+    assert "ignored 2 non-event JSONL line(s): 3, 4" in diagnostics.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "jsonl",
+    [
+        pytest.param("", id="empty-stream"),
+        pytest.param(
+            event_jsonl({"type": "error", "message": "thread previous-session not found"}),
+            id="error-event-only",
+        ),
+    ],
+)
+def test_failed_resume_without_a_started_thread_starts_fresh(tmp_path: Path, jsonl: str) -> None:
+    """No thread.started means nothing resumed and nothing was paid for.
+
+    The error-event case is a dead or expired thread ID: a nonempty stream that a
+    file-size test reads as "work happened", wedging every retry on the same ID.
+    """
+    completed, feedback, _home, calls = run_synthetic(
+        tmp_path, jsonl, prior_feedback=b"prior usable verdict",
+        session_id="previous-session", codex_exit=1,
+    )
+    assert calls.read_text(encoding="utf-8").splitlines() == ["call", "call"], completed.stderr
+    assert "starting fresh session" in completed.stderr
+    assert "CODEX_FAILED:" in completed.stdout
+    assert "CODEX_SESSION:none" in completed.stdout
+    assert feedback.read_bytes() == b"prior usable verdict"
+
+
+def test_incomplete_stream_after_a_clean_exit_is_empty_and_keeps_prior_feedback(
+    tmp_path: Path,
+) -> None:
+    """Exit 0 without turn.completed is CODEX_EMPTY, never a published partial review."""
+    completed, feedback, _home, calls = run_synthetic(
+        tmp_path,
+        event_jsonl(
+            {"type": "thread.started", "thread_id": "synthetic-session"},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "Looking at the plan"}},
+        ),
+        prior_feedback=b"prior usable verdict",
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [
+        "CODEX_EMPTY", "CODEX_SESSION:synthetic-session", "LOG_ID:synthetic-review",
+    ], completed.stdout
+    assert feedback.read_bytes() == b"prior usable verdict"
+    assert calls.read_text(encoding="utf-8").splitlines() == ["call"]

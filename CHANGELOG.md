@@ -4,12 +4,219 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### code v1.14.12
+### code v1.19.4
 
 #### Fixed
-- `codex-review` extracts completed JSONL as UTF-8 and atomically replaces feedback only after validation, preserving a prior result when the stream is malformed or partial.
-- The review wrapper retains Codex and parser diagnostics with the log ID and does not start a fresh review after a failed resume produces a nonempty stream.
-- On extraction failure, the wrapper reports a thread ID already present in a valid start event without accepting incomplete feedback.
+- `codex-review` extracts completed JSONL as UTF-8 and atomically replaces feedback only after the stream has a `turn.completed` event and an agent message, so a malformed or partial stream keeps the prior result. Blank and non-JSON lines are skipped and counted in the diagnostics instead of discarding a completed review.
+- The review wrapper retains Codex and parser diagnostics with the log ID, and its failure token carries the Codex exit code and reason.
+- A failed resume starts a fresh session only when the stream never started a thread (no `thread.started`), including a dead thread ID that prints only an error event; a stream that did start keeps its session and is diagnosed from the log rather than paid for twice.
+- The failure-reason parser reads the JSONL as UTF-8, independent of the host code page.
+
+### code v1.19.3
+
+#### Fixed
+- `vibe-environment-worker` treats the environment as ready only when the `vibe-environment.yml` run succeeds and its `vibe-environment-result` artifact (`requestId`, `branch`, `mode`, `headSha`, the app, API, and Storybook URLs, `deploymentIds`, `verifiedAt`) (published by symphony-alpha #8476) passes the new `vibe-sessions.mjs environment-result` command, which checks it against the request id, the session's branch and mode, and the worktree's HEAD before recording the URLs, deployment ids, and deployed commit. It no longer matches GitHub deployments by `ref`, probes preview URLs, or claims a push of a new branch starts the Vercel builds. Create, redeploy, flags, and desktop modes all read the result, and a missing or refused result returns `BLOCKED` without a URL.
+- `vibe-environment-worker` follows each run job by job and stops at the first failed, cancelled, or timed-out job with that job's failed log, instead of waiting for the whole run.
+- Redeploy mode requests the environment again with the same mode after pushing, so the new commit is deployed and verified.
+- `ticket-sections` shows the app, API, and Storybook URLs and the last deployed commit only once the environment result is recorded; `vibe` opens only the URL the worker returned with `DONE`, and a resumed session without a verified environment goes through create mode again, keeping its flag snapshot. The first time it opens the app for the person to sign in, it opens the verified URL's `/sign-in` path; after that, the plain app URL.
+- `dispatch-inputs` sends `person_email` for a blank session that has a Desktop auth claim (and only then), so a blank session can get a Desktop session; a blank session still never sends a Clerk org.
+- `discard` deletes the remote `andy/<slug>` branch (removing its Vercel previews and preview schema), the worktree, and the local branch, refuses a handed-off session, and returns the live ticket and operator. `vibe` offers throwing a session away at any time (new section 9): the setup worker discards it after the person confirms, and `vibe-ticket-worker` cancel mode moves the live ticket to Canceled with a Progress line.
+
+- New `vibe/scripts/posthog-key.mjs` resolves the public PostHog key and API host for the flag snapshot from a checkout's `apps/app/.env.local`, or else from the production app's sign-in page (checking the `phc_` prefix and a PostHog API host), with no Vercel sign-in. `vibe-environment-worker` uses it, and `vibe-preflight.sh` has a `posthog-key` check with a `posthog-key-missing` fix.
+- `vibe-environment-worker` asks the person to pick an org by name from the run's `org: <name> (<org_id>)` lines or `clerk_orgs_json`, and turns other identity refusals into plain instructions (sign in once to the stage app, create an org) instead of relaying the workflow's wording. `vibe/INSTALL.md` "Before you start" says the person must have signed in to the stage app once and have an org there.
+- closedloop-graph is optional: `vibe` and `INSTALL.md` no longer ask the person to run a connect command; workers fall back to repository search.
+- `vibe` and `handoff` resolve the plugin's absolute root and start every worker brief with it, so worker paths that start with `../` resolve from `<root>/agents` rather than the session worktree.
+- `vibe-change-worker` first returns a quick `PLAN` (small units, each visible on its own, plus any questions for the person), then builds one unit per dispatch and reports what is now visible and what is left; `vibe` tells the person the plan up front and relays each unit as it finishes. A change to a shared `packages/app` surface is wired and typechecked on both the web and Desktop hosts, or the worker asks whether to build it for the web only. Copy reuses an existing constant only when its text matches the person's words exactly, and counted text reads right for one and many. Each new or changed story is checked in the local Storybook UI at a 1280 by 800 viewport, and its play function must pass there and leave no toast, overlay, or scrolled-away content; the new `NEEDS_STORYBOOK` status asks the orchestrator to start local Storybook first.
+- `ticket-template.md` notes that ClosedLoop strips angle-bracketed text, so such text goes in code spans.
+- The branch Storybook URL is documented as behind Vercel's sign-in: `vibe` and `handoff` tell the person plainly that it needs a Vercel sign-in with a team account when the tab lands on a `vercel.com` sign-in or `sso-api` page, and the ticket's Handoff "Next" line says the same to design.
+- `handoff-inventory.mjs` lets a draft session shrink `scripts/lint/source-gate-allowlist.json` (remove entries or lower counts, checked by the new `allowlist-shrink.mjs` against the base copy) and reports it under `shrinkOnlyAllowlists`; any other `scripts/` edit stays forbidden. `guardrails.md` and `vibe-verify-worker` describe the exception.
+- `vibe-environment-worker` redeploy mode runs `pnpm check:source-gates` and then `turbo test` for the packages changed since the last verified deploy and their dependents (`--continue`, 15 minutes) before committing and pushing, and returns `BLOCKED` with the failing suites instead of pushing. A stale `source-gate-allowlist.json` entry for a file the session changed is shrunk (deleted or lowered, never added or raised) wherever the session's work is checked or pushed: the change worker's self-check and fix mode, redeploy, and the first push in create mode, as `guardrails.md` now describes.
+- `vibe-environment-worker` create mode takes the flag snapshot only when the session has none, so a re-run after a refused push keeps the existing snapshot; only flags mode replaces it.
+- `vibe-verify-worker` checks mode runs `pnpm test:affected --continue`, runs `pnpm --filter desktop test:renderer` directly when `packages/app` changed, and runs every lane `pnpm test:lanes` names for the diff except Desktop e2e.
+- `vibe-environment-worker` notes that a branch alias whose latest build Vercel cancelled answers 200 with a "Deployment was cancelled" page, another reason only the verified environment result counts as ready.
+
+#### Removed
+- `vibe-preflight.sh` `just` check and its `brew-install-just` fix, and `just` from the install list; nothing in the Vercel flow runs it.
+- The `annotations.md` "Desktop tab" section, which described the retired local stack's view-only Desktop tab.
+- `vibe-sessions.mjs touch --vercel` and `--deployed`; `environment-result` is the only way the session records URLs and the deployed commit.
+
+### code v1.19.2
+
+#### Fixed
+- `vibe/INSTALL.md` "Updating" covers both marketplace kinds: a Git marketplace updates with `codex plugin marketplace upgrade closedloop-ai`, then `codex plugin add code@closedloop-ai` if `codex plugin list --marketplace closedloop-ai` still shows the old version; a local folder marketplace, which `marketplace upgrade` does not refresh, updates by pulling that checkout and running `codex plugin add code@closedloop-ai` again. Both end with a full quit and reopen of the ChatGPT app, and the section says how to check the installed version against `plugins/code/.codex-plugin/plugin.json` on `main`.
+- `vibe/INSTALL.md` "First run" describes the session's seeded or blank Vercel environment (web app, API, and Storybook), with nothing of the web app on the Mac and the Desktop app run locally only for sessions that touch Desktop.
+- The live ticket is assigned to the person running the session instead of always to Andrew Eye. `vibe-sessions.mjs new` requires `--operator-id` and `--operator-email` (with optional `--operator-name`) from ClosedLoop `get-me` and records them as the session's `operator`; `touch` sets it on an older record and `list` reports it. The ticket template names that person, `vibe-ticket-worker` handoff and assign modes check the ticket is still assigned to the operator by user id and exact email, never display name, and `vibe` treats a `handed-off` session as no longer assigned to the person who ran it.
+- `vibe-ticket-worker` create mode records the new ticket's slug on the session itself (`touch --live-ticket`); `vibe` and `handoff` no longer do it.
+- The live ticket's Engineering checklist keeps only the lines for the session's scope, and `live-ticket-check.mjs` reports a `(full scope)` line on a draft ticket or a `(draft scope)` line on a full one.
+
+### code v1.19.1
+
+#### Changed
+- `vibe-seed-check-worker` and `vibe-seed-refresh` read the latest finished Vibe Seed Walk run on main (`vibe-seed-nightly.yml`, which now runs on every push to main and is informational only) instead of a nightly run, and report that run's conclusion, commit, and URL when it failed.
+
+### code v1.19.0
+
+#### Added
+- `vibe-environment-worker` agent: takes the production flag snapshot in PostHog for the person's account, pushes the `andy/<slug>` branch, starts the session's environment through symphony-alpha's `vibe-environment-dispatch.yml` request workflow (inputs fed to `gh workflow run --json` from a file: `branch`, `mode`, `flag_snapshot`, `request_id`, and for seeded `person_email` plus an optional `clerk_org_id`; `desktop_auth` once the session has a Desktop profile), follows that run and the `vibe-environment.yml` run it triggers by the request id in their titles, asks which org owns Acme Co when the person has several, waits for the Vercel app, API, and Storybook builds, and records the URLs. Redeploy mode makes one commit of the session's changes (never a local fix) and pushes; flags mode retakes the snapshot and requests the environment again with the same mode; desktop mode requests it again so it signs in the session's Desktop profile.
+- `vibe-ticket-worker` agent: creates the session's live ClosedLoop ticket at session start (assigned to Andrew Eye, In Progress), reconciles and checks it at handoff, and assigns it to Nenad Antic with the status left In Progress.
+- `vibe-sessions.mjs`: `--mode seeded|blank` on `new` and `touch`; `--live-ticket`; `--vercel`, `--deployed`, and `--clerk-org-id` on `touch`; the stable per-branch Vercel URLs recorded on the session; and new commands `show`, `flag-snapshot` (validates and saves the snapshot `{ takenAt, distinctId, orgId?, flags }`), `desktop-auth` (validates and saves the Desktop profile's auth claim), `dispatch-inputs` (writes the request inputs with a fresh request id), `codex-sessions` (records `CODEX_THREAD_ID` and every subagent thread it spawned, read from Codex's session files), and `ticket-sections` (renders the ticket's Environment, Production flag snapshot, and Sessions sections from the record).
+- `handoff/scripts/live-ticket-check.mjs`: checks a live ticket body has every section its scope needs, filled, with no template placeholder or `Pending.` marker left.
+
+#### Changed
+- `vibe` no longer starts a local web environment. It asks for seeded or blank data, creates the live ticket, stands up the session's Vercel environment, opens its app URL for the person to sign in, redeploys only when asked ("redeploy", "push it up", and similar), and refreshes flags only when asked. Local Storybook may run between redeploys; the Desktop app runs locally only for sessions that touch Desktop, on a seeded profile in the session's private git directory signed in to the session's Vercel API through `pnpm --filter desktop vibe:profile` (`prepare`, `auth-claim`, `sign-in`, `launch`), and the session continues web-only if that fails.
+- `handoff` checks the live ticket instead of writing it, runs the checks and reviews (full scope keeps the whole suite and two `workflow-code-review` passes), pushes the last changes, and assigns the ticket to Nenad Antic. Both scopes end at the branch; the task lists shown to the person changed to match.
+- `references/ticket-template.md` moved to the vibe skill and is now the live ticket's section template, with which worker keeps each section current. Change, backend, and primitive workers update their sections as they work; draft stubs add their API requirement to the ticket when made.
+- `vibe-setup-worker` starts, stops, and diagnoses local Storybook and the local Desktop app instead of the local web environment; local-fix tracking is unchanged.
+- `vibe-backend-worker` generates migrations with `prisma migrate diff` and no live database; the API's Vercel build applies them on redeploy.
+- `handoff-inventory.mjs` covers the session's redeploy commits and reports the session's mode, live ticket, and Vercel URLs instead of a preview alias.
+
+#### Removed
+- `vibe-preflight.sh` Docker, Colima, and Docker Compose checks and their fixes.
+- `vibe-publish-worker` and `vibe-ship-worker`; full scope no longer opens a pull request, waits for review, or follows the merge queue.
+
+### code v1.18.3
+
+#### Fixed
+- `vibe-preflight.sh` finds an existing symphony-alpha checkout anywhere under the home folder, including folders with spaces in their names, by its `closedloop-ai/symphony-alpha` git remote rather than its folder name, and remembers it in `~/.codex/vibe/config.json`. A worktree resolves to its main checkout, `--repo` sets the remembered checkout, several checkouts ask the person to choose (`choose-repo`), folders macOS would not let it search report `allow-folder-access`, and it clones only when no checkout exists.
+- The `node` check reads the Node range from the checkout's `package.json` `engines` field and checks both the Node first on PATH and the one a new shell runs. The `install-node` fix installs a supported Homebrew Node and puts it first on PATH in `~/.zshenv` and `~/.zprofile` so Codex's non-interactive shells use it.
+- Preflight supports Colima as the Docker engine (`brew-install-docker-cli`, `start-colima`, `use-colima-context`; Docker Desktop is installed only when neither engine exists) and adds a `docker-compose` check with an `install-compose-plugin` fix.
+- `vibe` and `vibe-setup-worker` start the environment detached with `pnpm vibe up --ci` and poll `just vibe-status` for the `VIBE_ENV` record, so it survives between turns; `vibe` reuses a running environment and restarts it when `vibe-status` reports it stopped.
+
+#### Added
+- `vibe-sessions.mjs repo` prints the remembered checkout; `list` and `new` use it when `--repo` is omitted.
+- When the vibe environment fails because of a bug in symphony-alpha itself, `vibe-setup-worker` files a ClosedLoop ticket with the diagnosis assigned to Daniel Ochoa in the current week's project, fixes it locally in the session worktree, and records the changed files with the new `vibe-sessions.mjs local-fix --ticket <slug> --path <file>` (stored as `localFixes` on the session record). `vibe` tells the person in one sentence.
+- `handoff-inventory.mjs` lists those files under `localFixes` and leaves them out of `changedFiles` and every guardrail check; `vibe-publish-worker` restores them to the base before its commit (draft and full scope), and `vibe-ship-worker` stages only the files it fixed.
+- `node --test` suites for `vibe-preflight.sh`, `vibe-sessions.mjs`, and `handoff-inventory.mjs`.
+
+### code v1.18.2
+
+#### Changed
+- `vibe` guardrails: a new or extended design-system primitive needs a full spec before it is built (every variant and size, responsive behavior, accessibility, and every applicable state), and `vibe-primitive-worker` builds all of it with a story per variant, size, and state, returning `BLOCKED` when the spec leaves part out.
+- `vibe` guardrails: a request to make something look better changes only the visual layer; copy, information architecture, and routes stay unless the person asks.
+
+### code v1.18.1
+
+#### Added
+- Added the `gh-monitor-pr` skill to the code plugin. It starts detached GitHub pull-request monitors, wakes the exact launching Codex Desktop or CLI root through the native managed App Server, and keeps monitor-local delivery receipts without depending on the separate `app-server-orchestrator` skill.
+- Added the ClosedLoop ticket skill pack (`cl-policy`, `cl-analyze`, `cl-find-related-tickets`, `cl-split`, `cl-work-report`, `cl-sweep`, and `cl-execute`) plus supporting instruction skills (`closedloop-intel`, `measurement-discipline`, and `mermaid-visualizer`) so the Codex plugin can provide the local ClosedLoop workflows without relying on personal `~/.codex/skills` copies.
+
+### code v1.18.0
+
+#### Added
+- Vibe sessions have a scope (ISS-12046). After asking what to work on, `vibe` asks whether the work is a draft for engineering to finish or should go all the way including the backend, and records it (`vibe-sessions.mjs new --scope draft|full`, `touch --scope`). Draft behaves as before.
+- Full scope: guardrails allow `apps/api`, `packages/api/src/types`, `packages/database` (schema and migrations, applied only to the throwaway vibe database), and Desktop main-process code, each under its owning AGENTS.md; net-new surfaces ship behind a default-off flag. The change worker returns `NEEDS_BACKEND` and the new `vibe-backend-worker` builds the backend from a decision table it writes first with the `decision-table` skill, plus seed coverage and seed data for new models and tests.
+- `handoff` full-scope ship path: the whole test suite (`vibe-verify-worker` full-suite mode), two `workflow-code-review` passes with fixes between, a PR to `main` with the ticket at IN_REVIEW and decision tables attached (`vibe-publish-worker` ship mode), and the new `vibe-ship-worker`, which fixes failing checks, waits for an engineer's approving review (it never merges without one), enables auto-merge, follows the merge queue, and marks the ticket DONE. `handoff-inventory.mjs` allows backend paths for full-scope sessions.
+- `workflow-code-review` skill, moved from the workflow prompt pack together with the 12 review lens files it loads, so it installs with this plugin.
+- Nudges: when the person is done, `vibe` asks whether to hand off now or keep a draft; at start it flags unhanded sessions older than three days.
+
+### code v1.17.2
+
+#### Fixed
+- `vibe-publish-worker` and `vibe-seed-refresh` now pass `create_branch_artifact` the arguments it takes (`projectId`, `branchName`, `sourceArtifactId`, `baseBranch`) instead of a repository name.
+
+### code v1.17.1
+
+#### Added
+- `vibe` and `handoff` read an optional git config `vibe.baseRef` in the symphony-alpha checkout. When set, new vibe sessions start from `origin/<vibe.baseRef>` instead of `origin/main`, and handoff's inventory diffs against that branch. It is a temporary override for onboarding before the symphony-alpha vibe environment lands on main; unset it afterwards with `git config --unset vibe.baseRef`.
+
+### code v1.17.0
+
+#### Added
+- `vibe` skill: lets a non-engineer build product UI for symphony-alpha in the Codex Desktop in-app browser. Preflight installs prerequisites; each session is an `andy/<slug>` worktree off fresh `origin/main` (`scripts/vibe-sessions.mjs` lists, creates, resumes, and discards sessions); `just vibe-up` brings up a throwaway seeded web and Desktop environment; chat requests and in-browser annotations become code under guardrails (frontend only, design-system reuse, tokens, Storybook stories, `*.vibe-stub.ts` stubs for missing API data, no invented copy). The skill is orchestrator-only: it never reads or edits code and dispatches workers for every task.
+- `handoff` skill: shows a task list, then through workers checks guardrails (`scripts/handoff-inventory.mjs`), completes Storybook stories and measures the sidebar footprint (`pnpm vibe storybook-diff`), runs lint, typecheck, and tests, runs an adversarial review, writes `api-requirements.md` from the stubs, creates the ClosedLoop handoff ticket (IN_PROGRESS, assigned to the vibe user) with it attached, makes one commit, pushes, and adds the stable Vercel branch preview link.
+- `vibe-seed-refresh` skill: checks symphony-alpha's vibe seed against main and, on drift, files a ticket, fixes the seed in a worktree, opens a PR, and follows it through `gh-monitor-pr` and the merge queue to merged. Orchestrator-only.
+- Agents for the three skills: `vibe-setup-worker`, `vibe-requirements-worker`, `vibe-change-worker`, `vibe-primitive-worker`, `vibe-handoff-summarizer`, `vibe-verify-worker`, `vibe-publish-worker`, `vibe-guardrails-reviewer`, `vibe-adversarial-reviewer`, `vibe-api-requirements-writer`, `vibe-storybook-decomposer`, `vibe-seed-check-worker`, `vibe-seed-fix-worker`, `vibe-seed-pr-worker`. All use closedloop-graph first (`skills/vibe/references/closedloop-graph.md`).
+- Codex packaging for the `code` plugin (`.codex-plugin/plugin.json`) and a `code` entry in `.agents/plugins/marketplace.json`, so `codex plugin add code@closedloop-ai` installs it. Install steps for a vibe user's Mac: `skills/vibe/INSTALL.md`.
+
+### code v1.16.4
+
+#### Fixed
+- `codex-review`'s `run_codex_review.sh` no longer passes `--full-auto`, which codex-cli 0.147 removed, so every review round exited 2. It now passes `-c sandbox_mode=read-only`, which both `codex exec` and `codex exec resume` accept; `-s read-only` would have broken every resumed round. The reviewer's sandbox narrows from `--full-auto`'s workspace-write to read-only.
+- `run_codex_review.sh` keeps codex's stderr instead of discarding it. `CODEX_FAILED` now carries one line after the exit code saying why codex failed: the last `turn.failed` (else `error`) message from the JSON stream, otherwise the first stderr line starting with `error`, otherwise the last stderr line, skipping the `Reading ... from stdin...` banner. The full stderr goes to the script's stderr, and a failed session resume names its cause before falling back to a fresh session.
+- `debate-loop.sh` prints the `CODEX_FAILED` reason with `printf '%s'` instead of `echo -e`, so backslashes in codex's message are printed as-is instead of being read as escapes.
+- `run_codex_review.sh` also passes `-c approval_policy=never`. `codex exec` defaults approval to `never` but drops that default when the user's config sets `approvals_reviewer = "auto_review"`, which left the user's `approval_policy` in effect.
+- `run_codex_review.sh` writes codex's stderr to the script's stderr when it reports `CODEX_EMPTY`, as it already does for `CODEX_FAILED`.
+- `hooks/plan-review.sh` passes `-c sandbox_mode=read-only -c approval_policy=never` instead of `--full-auto`, and appends codex's stderr to its debug log instead of discarding it.
+
+### code-review v3.10.3
+
+#### Fixed
+- A docs-only diff no longer gets a `CHANGES_REQUESTED` verdict for not spawning `bug_hunter_a`. `arbitrate-budget` already set `bha_partitions` to 0 when every changed file is documentation, but `derive-spawn-spec` recorded that skip as `reason: "budget_capped"`. Because `bug_hunter_a` is a required reviewer, a `Required reviewer dropped: bug_hunter_a` coverage-gap finding followed, advising the operator to raise `--cap`.
+  - `arbitrate-budget` now writes `budget.docs_only: true` into `coverage.json.final` when it waives the BHA floor, on both the arbitrated and the `blocked_by_verify` paths. The key is absent for other diffs.
+  - `derive-spawn-spec` records a zero cap that carries that marker as `skipped[].reason: "docs_only"`. It is benign, like `no_partitions`, so it emits no coverage-gap finding.
+  - A zero cap without the marker, and partitions dropped because the partitioner produced more than `bha_partitions`, still record `budget_capped` and still produce the required-reviewer coverage gap.
+  - `docs_only` is added to `SPAWN_SPEC_SKIP_REASONS`, and SCHEMA.md and `start.md` list it with the other benign skip reasons.
+  - The `docs_only` skipped entry carries `budget_cap: 0` and `partition_count`, as the zero-cap `budget_capped` entry does, and `render-fleet-summary` adds an informational `ℹ️ BHA skipped on a docs-only diff.` note when that entry is present.
+
+### code v1.16.3
+
+#### Changed
+- `guided-manual-qa` presents a checkpoint to the human only when passing E2E on the current head does not already verify it and the agent cannot reliably verify it itself. After the oracle proof, the agent records a checkpoint it conclusively observed as `AGENT_VERIFIED` with `agent-observed` evidence and does not present it; it routes to the human only visual or perceptual judgments, flows it cannot drive or observe reliably (real OAuth, OS dialogs, hardware, third-party UIs), and product-judgment calls, and records why. An inconclusive agent observation goes to the human, and a contradicting one is settled as setup, oracle, or a candidate finding; neither is silently passed.
+- `AGENT_VERIFIED` and `E2E_COVERED` join the status meanings and are never a human `PASS`. The final summary reports human-confirmed `PASS` and `FAIL`, `AGENT_VERIFIED`, `E2E_COVERED`, and `BLOCKED` counts separately, and lists each checkpoint left to the human with the reason it needed one. The agent verifies in its own headless context with the same preloaded browser state; the visible interactive window opens only for a checkpoint routed to the human.
+- The QA record template adds `AGENT_VERIFIED` to the checkpoint statuses, a routing line per checkpoint, `agent-observed` as the confirmer for agent-verified attempts, and the separate counts and human-routed list in the final summary. A bug-fix checkpoint can be closed by the agent under the same routing rule; an agent observation that misses the discriminating state routes it to the human, and only an inconclusive human observation makes it `BLOCKED` with reason "inconclusive".
+- `plugins/code/README.md` describes the routing rule and the separate `AGENT_VERIFIED` and `E2E_COVERED` dispositions.
+- `tools/guided-manual-qa/src/skill-contract.test.ts` pins the routing rule, the inconclusive-observation escalation, the separate summary counts, and that the visible window waits for a human-routed checkpoint while agent verification does not.
+
+### code v1.16.2
+
+#### Changed
+- `guided-manual-qa` checks whether a fixed-port control launcher supports isolated ports, sessions, or project names for concurrent workers before choosing it, and falls back to a documented manual isolated stack with recorded process ownership proof when it does not.
+- `guided-manual-qa` no longer treats a parent supervisor, launchd wrapper, or control command reporting `started` as readiness; the actual listener and the route-owned ready selector must be proven first. A wrapper that hangs before spawning its child gets one bounded foreground diagnostic of the same command, stopped before any fallback.
+
+### code v1.16.1
+
+#### Changed
+- `guided-manual-qa` compares rendered columns, measured container width, and responsive mode with a comparable reference when data changes layout, and requires representative disposable fixtures before presenting the human checkpoint.
+
+### code v1.16.0
+
+#### Added
+- `guided-manual-qa` rebinds results after a head change (`references/plan-methodology.md`, "Rebind results after a head change"). Each tested head records its merge base and stable patch-id. When only the base moved, checkpoints that the base's changed files cannot reach are carried forward and the rest reset to `PENDING`; when the patch-id changed, every checkpoint the delta reaches resets unless a written reason says otherwise. A carried-forward result is never described as exercised on the new head.
+- The QA record template keeps checkpoint attempts in an append-only table (attempt, head, patch-id, status, actual, confirmer, time, evidence, carry-forward reason), and records the merge base and patch-id per tested head and the resume point.
+- Agent dry run as oracle item 6: when the repository declares a verification protocol, the agent drives each checkpoint itself first, through the entry point the requirement names, captures the action and resulting state, adds a read-only second view after a write, and runs writes only on disposable data that is reset before the human's run.
+- "Bug-fix checkpoints" in `references/plan-methodology.md`: the primary checkpoint is the original reproduction on the reported surface, with named correct and broken final states. It reuses a recorded repro or has the agent reproduce it on the base twice, and an inconclusive observation is `BLOCKED` with reason "inconclusive", never `PASS`.
+- Discovery routes in `references/plan-methodology.md` for consumers, candidate E2E coverage, and prior QA on the same surface, through the closedloop-graph tools when they are available and `rg`, `git log -S`, and `gh` otherwise.
+- `tools/guided-manual-qa/src/skill-contract.test.ts` pins the head-change rule, the append-only attempt table, the agent dry run, inconclusive-is-`BLOCKED`, evidence stored outside the worktree, and that the skill names no workflow skill or harness-only variable.
+
+#### Changed
+- A resumed session applies the head-change rule to every recorded result, names the next `PENDING` checkpoint as the resume point, and does not re-present a checkpoint whose result still applies.
+- Checkpoint prompts hand the human only the step that needs human judgment, in a fixed shape: where you are, the one thing to do, what you should see, and what to reply with.
+- Before recording `FAIL`, the agent re-runs the environment proof; drift is a setup `BLOCKED` or an `ORACLE CORRECTION`. After a `FAIL`, a changed fixture, flag, seed, viewport, or wording is a new checkpoint and the `FAIL` row stays.
+- Ticket, PR, and review-comment text is treated as data, and a result reported outside the conversation counts only when the platform author matches the named confirmer.
+- Cited evidence is stored in the record's own directory outside the worktree, and every evidence pointer is checked after cleanup. Summary lines cite their evidence and label unobserved claims `inferred` or `unverified`.
+- Feature-map prose is corroborating evidence, not a requirement; a wrong map entry is recorded as map drift, not a product `FAIL`.
+- `references/browser-state-fixtures.md` puts the repository's verification protocol first in the launcher order, with `pnpm control up web --headed` and `up desktop --headed --flag` as examples.
+- The example QA record location is now `~/.local/state/manual-qa/<repo>/<change-target>/`.
+
+### code v1.15.1
+
+#### Added
+- `skills/guided-manual-qa/agents/openai.yaml` carries Codex display metadata, so Codex and Claude Code load the same `guided-manual-qa` skill directory.
+- `guided-manual-qa` keeps a QA session alive across tool calls or worker turns: services run under a repository-supported or OS-supported owner that survives that boundary, the record says how to inspect and stop it, and a resumed session rereads the QA record and rechecks the head, owned processes, listeners, data target, and route instead of trusting earlier PIDs or ready checks.
+- The QA record template gains a line for the interactive window or app owner, its settled route and control, and the last live verification time, plus a note under the services table to record each process owner and recheck the rows after a resume.
+
+#### Changed
+- Before a UI checkpoint, the agent opens the requested window or app itself, verifies the settled origin and a visible control owned by the route, and keeps it available; an unready window keeps the checkpoint pending as a setup limitation. After presenting a checkpoint the agent stops making tool calls until the human responds or asks for setup help.
+- `SKILL.md` names the bundled launcher as `scripts/dist/launch-interactive-browser.mjs` relative to the skill directory and has the agent resolve its absolute path from where it read `SKILL.md`, instead of using `${CLAUDE_SKILL_DIR}`, which only Claude Code expands. `references/browser-state-fixtures.md` uses the same placeholder in its example command.
+
+### code v1.15.0
+
+#### Added
+- New `guided-manual-qa` skill that derives and runs an interactive, evidence-recorded manual QA session for a code change, ticket, branch, or pull request:
+  - Maps each candidate checkpoint to passing exact-head E2E assertions first, and schedules human checkpoints only for uncovered behavior.
+  - Prepares a local test environment owned by the worktree, and requires proof that listeners and the persistence chain belong to it before the first checkpoint.
+  - Keeps a durable Markdown QA record outside the tracked tree (template in `references/qa-record-template.md`), updated after every material action.
+  - Proves each checkpoint's oracle (surface ownership, contract evidence, fixture reachability, population effects) before asking the human, and records `PASS` / `FAIL` / `BLOCKED` one checkpoint at a time.
+  - `references/plan-methodology.md` covers risk-based plan derivation; `references/browser-state-fixtures.md` covers per-origin browser state.
+- Bundled launcher `skills/guided-manual-qa/scripts/dist/launch-interactive-browser.mjs` opens a visible Playwright browser with localStorage fixtures preloaded before the first navigation. It resolves Playwright from the repository under test, rejects non-HTTP(S) URLs and non-string fixture values, can merge into a private auth state, waits for an optional `--ready-selector`, refuses a page that left the requested origin and path or is mid Clerk handshake, verifies the loaded keys, and prints key names only. Sources and vitest suite live in `tools/guided-manual-qa/`.
+
+#### Removed
+- `skills/design-inventory/scripts/dist/cli.mjs`, a bundle of the shared `runWhenMain` helper that has no entry point and is not referenced. The other design-inventory bundles change only in the inlined helper's source-path comment.
+
+### code-review v3.10.2
+
+#### Changed
+- Rebuilt `scripts/dist/cost-report.mjs` after the `runWhenMain` helper moved to `tools/shared/cli.ts`. The bundle differs only in the inlined helper's source-path comment; behavior is unchanged.
 
 ### code-review v3.10.1
 

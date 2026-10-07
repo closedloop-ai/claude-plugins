@@ -87,6 +87,7 @@ tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
 
 codex_json="$tmp_dir/codex_output.json"
+codex_stderr="$tmp_dir/codex_stderr.txt"
 prompt_file="$tmp_dir/prompt.txt"
 
 # ── Build the review prompt ──────────────────────────────────────────────────
@@ -226,20 +227,48 @@ PROMPT_EOF
 # Publish feedback only after the complete JSONL stream validates.
 parse_feedback_text() {
   local json_file="$1"
-  local parsed_session
-  if ! parsed_session=$(python3 "$SCRIPT_DIR/parse_codex_json.py" "$json_file" "$FEEDBACK_FILE" 2>> "$ERROR_LOG"); then
-    if [[ -n "$parsed_session" ]]; then
-      effective_session_id="$parsed_session"
-    fi
-    echo "Feedback extraction failed; details retained in $ERROR_LOG" >&2
-    echo "CODEX_FAILED:feedback extraction failed; log=$LOG_FILE; diagnostics=$ERROR_LOG"
-    echo "CODEX_SESSION:${effective_session_id:-none}"
-    echo "LOG_ID:$LOG_ID"
-    return 1
-  fi
+  local parsed_session parse_rc=0 reason
+  parsed_session=$(python3 "$SCRIPT_DIR/parse_codex_json.py" "$json_file" "$FEEDBACK_FILE" 2>> "$ERROR_LOG") || parse_rc=$?
   if [[ -n "$parsed_session" ]]; then
     effective_session_id="$parsed_session"
   fi
+  [[ $parse_rc -eq 0 ]] && return 0
+
+  # The prior feedback file is untouched. Report in the tokens the orchestrator
+  # already handles: a failed codex run, an incomplete stream (exit 3: no
+  # turn.completed or no agent message), or a stream that could not be read.
+  echo "Feedback extraction failed; details retained in $ERROR_LOG" >&2
+  cat "$codex_stderr" >&2 2>/dev/null || true
+  if [[ $codex_exit -ne 0 ]]; then
+    reason=$(codex_failure_reason)
+    echo "CODEX_FAILED:codex exited with code $codex_exit${reason:+: $reason}"
+  elif [[ $parse_rc -eq 3 ]]; then
+    echo "CODEX_EMPTY"
+  else
+    echo "CODEX_FAILED:feedback extraction failed; log=$LOG_FILE; diagnostics=$ERROR_LOG"
+  fi
+  echo "CODEX_SESSION:${effective_session_id:-none}"
+  echo "LOG_ID:$LOG_ID"
+  return 1
+}
+
+# Extract the failure message from the JSON stream: the last turn.failed error,
+# else the last top-level error event. Prints it on one line, or nothing.
+parse_failure_message() {
+  python3 -c "
+import json, sys
+turn = err = ''
+for line in open(sys.argv[1], encoding='utf-8', errors='replace'):
+    try:
+        e = json.loads(line.strip())
+        if e.get('type') == 'turn.failed':
+            turn = e['error']['message'] or turn
+        elif e.get('type') == 'error':
+            err = e['message'] or err
+    except Exception:
+        pass
+print(' '.join(str(turn or err).split()))
+" "$1" 2>/dev/null || true
 }
 
 # ── Run codex ────────────────────────────────────────────────────────────────
@@ -248,14 +277,36 @@ run_codex_cmd() {
   local json_out="$1"; shift
   # Log round header
   printf '\n--- Round %s | %s ---\n' "$ROUND" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOG_FILE"
-  # Tee raw JSON stream to both the capture file and the persistent log
-  codex "$@" 2>> "$ERROR_LOG" | tee -a "$LOG_FILE" > "$json_out"
+  # Tee raw JSON stream to both the capture file and the persistent log. stderr
+  # goes to this run's file for codex_failure_reason and is kept in $ERROR_LOG.
+  local rc=0
+  codex "$@" 2>"$codex_stderr" | tee -a "$LOG_FILE" > "$json_out" || rc=$?
+  cat "$codex_stderr" >> "$ERROR_LOG" 2>/dev/null || true
+  return "$rc"
+}
+
+# One line saying why the last codex run failed. Turn failures arrive in the JSON
+# stream; CLI and config errors only on stderr, where the first line starting with
+# "error" wins, else the last line, skipping the "Reading ... stdin..." banner.
+codex_failure_reason() {
+  local reason lines
+  reason=$(parse_failure_message "$codex_json")
+  if [[ -n "$reason" ]]; then
+    echo "$reason"
+    return
+  fi
+  lines=$(tr -d '\r' < "$codex_stderr" 2>/dev/null | grep -v -e '^[[:space:]]*$' -e '^Reading .*stdin\.\.\.$') || true
+  grep -i -m1 '^error' <<<"$lines" || tail -n1 <<<"$lines"
 }
 
 effective_session_id="$SESSION_ID"
 codex_exit=0
 
-base_args=(--full-auto --json -m "$CODEX_MODEL" -c model_reasoning_effort=high)
+# `-c sandbox_mode=` rather than `--full-auto` (removed in codex-cli 0.147) or
+# `-s` (rejected by `codex exec resume`), so one arg set serves both calls.
+# approval_policy is explicit because exec drops its own `never` default when the
+# user's config sets `approvals_reviewer = "auto_review"`.
+base_args=(--json -m "$CODEX_MODEL" -c sandbox_mode=read-only -c approval_policy=never -c model_reasoning_effort=high)
 prompt_content=$(cat "$prompt_file")
 
 # Attempt session resume if we have a prior session ID
@@ -266,10 +317,14 @@ if [[ -n "$SESSION_ID" ]]; then
   codex_exit=$?
   set -e
 
-  if [[ $codex_exit -ne 0 ]] && [[ ! -s "$codex_json" ]]; then
-    # Only an empty failed resume can safely start a fresh review. A partial
-    # stream may already contain paid work and must be diagnosed from its log.
-    echo "Codex session resume failed, starting fresh session..." >&2
+  # A failed resume that never started a thread did no paid work, so a fresh
+  # session is safe -- including a dead or expired thread ID whose only output is
+  # a JSON error event. Once thread.started appears the stream may hold paid work:
+  # diagnose it from the log rather than paying for a second review.
+  resumed_thread=$(python3 "$SCRIPT_DIR/parse_codex_json.py" --thread-id "$codex_json" 2>> "$ERROR_LOG" || true)
+  if [[ $codex_exit -ne 0 ]] && [[ -z "$resumed_thread" ]]; then
+    resume_reason=$(codex_failure_reason)
+    echo "Codex session resume failed${resume_reason:+ ($resume_reason)}, starting fresh session..." >&2
     effective_session_id=""
     set +e
     run_codex_cmd "$codex_json" exec "${base_args[@]}" "$prompt_content"
@@ -293,7 +348,9 @@ feedback_content=$(cat "$FEEDBACK_FILE" 2>/dev/null || echo "")
 
 # Handle failures
 if [[ $codex_exit -ne 0 ]] && [[ -z "$feedback_content" ]]; then
-  echo "CODEX_FAILED:codex exited with code $codex_exit"
+  cat "$codex_stderr" >&2 2>/dev/null || true
+  reason=$(codex_failure_reason)
+  echo "CODEX_FAILED:codex exited with code $codex_exit${reason:+: $reason}"
   echo "CODEX_SESSION:${effective_session_id:-none}"
   echo "LOG_ID:$LOG_ID"
   exit 0
@@ -301,6 +358,7 @@ fi
 
 # Handle empty response
 if [[ -z "$feedback_content" ]]; then
+  cat "$codex_stderr" >&2 2>/dev/null || true
   echo "CODEX_EMPTY"
   echo "CODEX_SESSION:${effective_session_id:-none}"
   echo "LOG_ID:$LOG_ID"
@@ -317,6 +375,7 @@ elif echo "$feedback_content" | grep -q "^### Finding"; then
   echo "VERDICT:NEEDS_CHANGES"
 else
   # No verdict AND no findings -- likely truncated response, not a real review
+  cat "$codex_stderr" >&2 2>/dev/null || true
   echo "CODEX_EMPTY"
 fi
 

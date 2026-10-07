@@ -342,7 +342,7 @@ function checkThemeIdUniqueness(docs) {
   return 1;
 }
 
-// src/cli.ts
+// ../shared/cli.ts
 import { pathToFileURL } from "node:url";
 function runWhenMain(metaUrl, main2) {
   const entry = process.argv[1];
