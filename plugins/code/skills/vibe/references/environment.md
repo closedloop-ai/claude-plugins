@@ -137,11 +137,11 @@ repo). `<api>` and `<app>` are the session's `vercel.apiUrl` and
    `Desktop browser URL: http://127.0.0.1:<port>/design-system/browser.html?closedloopBridgeToken=<token>`.
 6. Record the launch (the pid `echo $!` printed) and that URL on the
    session: `vibe-sessions.mjs desktop-launched --worktree "<wt>" --pid <pid> --log "<gitdir>/vibe-desktop.log"`.
-   It reads the URL from the log and keeps anything else the stack lists. If
-   it says the log has no `Desktop browser URL:` line once the window is
-   visible, the worktree's `vibe:profile launch` predates the browser tab
-   (symphony-alpha before ISS-12182): stop that Desktop and report Desktop as
-   unavailable.
+   It reads the URL from the log and keeps anything else the stack lists. A
+   worktree whose `vibe:profile launch` predates the browser tab
+   (symphony-alpha before ISS-12182) logs the window but no URL: the launch is
+   recorded with no URL and Desktop keeps running as its own window, as it
+   did before the tab existed.
 
 To stop Desktop, send SIGTERM to the `scripts/dev-launch.mjs` process under
 the recorded `desktopPid` (`ps -o pid,ppid,command` shows the tree): it
@@ -170,7 +170,23 @@ it is not supported (the bridge forwards reads only).
 `url` to open. It hands out the URL only while the recorded launch is still
 running; `running: false` means Desktop was never started for the session,
 quit, or was stopped, and is started again with step 5 then step 6 (the
-profile stays signed in, so steps 1 to 4 are not repeated).
+profile stays signed in, so steps 1 to 4 are not repeated). `running: true`
+with no `url` is a launch that predates the tab: Desktop is open as its own
+window only.
+
+### Never swap the worktree under a running Desktop
+
+The Desktop renderer reloads live from the worktree's source. Merging main
+into the worktree, pulling, rebasing, resetting, or checking out another
+commit while Desktop runs reloads it against a different tree and crashes it
+(React `insertBefore` NotFoundError, "Maximum update depth exceeded", screens
+stuck loading; a restart fixes it). Before any such step, stop Desktop (above);
+after it, start Desktop again with step 5 then step 6, which records a new
+port and token, and open the new tab. Ordinary edits to files, which is all
+change, backend, and primitive workers do, are fine while it runs. No step in
+the vibe or handoff skills merges main or swaps the worktree's commit today
+(redeploy commits and pushes the session's own changes; resume only reopens
+the worktree as it is); this rule binds any step that ever does.
 
 ## When it fails
 

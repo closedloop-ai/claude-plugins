@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.17
+
+#### Fixed
+- A vibe session whose worktree predates symphony-alpha ISS-12182 keeps Desktop as its own window instead of reporting it unavailable. `vibe-sessions.mjs desktop-launched` records a launch whose log shows `Desktop window visible` but no `Desktop browser URL:` line with no URL (and still refuses a log showing neither), and `desktop-tab` reports `running` from the launch's pid alone, with a `url` only when the launch printed one. `vibe` opens no Desktop tab for such a launch, and a request to bring the Desktop tab back says Desktop is open in its own window. Node test added.
+- Merging main into a session worktree, or any other swap of its commit, while its Desktop runs crashed the Desktop tab (React `insertBefore` NotFoundError, "Maximum update depth exceeded", Dashboard stuck loading) until Desktop restarted. `references/environment.md` adds "Never swap the worktree under a running Desktop": stop Desktop before such a step, then start it again and open the new tab URL. `vibe-environment-worker` returns the new `NEEDS_DESKTOP_STOP` status instead of doing such a step while Desktop runs; `vibe` and `handoff` handle it by having `vibe-setup-worker` stop Desktop only (a new dispatch that leaves Storybook and the stack alone), and `vibe` relaunches it afterwards. No step in either skill merges main or swaps the worktree's commit today.
+
 ### code v1.19.16
 
 #### Added
