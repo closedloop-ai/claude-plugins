@@ -72,7 +72,7 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 | Worker | Dispatch it to |
 |---|---|
 | `vibe-setup-worker` | fix failed preflight checks, bootstrap a worktree, start local Storybook or the local Desktop app, and work around a symphony-alpha bug locally (ticket filed, fix kept out of every commit) |
-| `vibe-requirements-worker` | read a ClosedLoop ticket (and its PRD, plan, related tickets) and turn it into requirements and a starting screen |
+| `vibe-requirements-worker` | read a ClosedLoop ticket (and its PRD, plan, related tickets) or a description and turn it into a brief, plus the route and FEATURE_MAP id where the relevant code lives, for change workers |
 | `vibe-ticket-worker` | create the session's live ticket, and fill its record sections when you ask |
 | `vibe-environment-worker` | stand up the session's Vercel environment, redeploy it, or refresh its flag snapshot |
 | `vibe-change-worker` | make one requested change (chat or annotation): locate, implement, stub (draft) or request backend work (full), add stories, self-check, update the live ticket |
@@ -130,10 +130,13 @@ Run `node scripts/vibe-sessions.mjs list` (it uses the remembered checkout).
 Starting new:
 1. Ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
    URL) or a plain description. For a ticket, dispatch
-   `vibe-requirements-worker` and summarize its result back in two or three
-   sentences. For a description, dispatch the same worker with the
-   description: it checks for an existing ticket covering it and finds the
-   starting screen.
+   `vibe-requirements-worker`. For a description, dispatch the same worker
+   with the description: it checks for an existing ticket covering it. Tell
+   the person only its brief, in two or three sentences. The route and
+   FEATURE_MAP id it returns say where the relevant code lives and are for
+   workers; never present them as a screen the session starts on (the app
+   opens on its default page after sign-in), and never promise a screen for
+   a broad request such as "look for visual bugs".
 2. Ask once: "Should this be a draft for engineering to finish, or should we
    build it all the way, including the backend?" A draft is frontend only,
    with sample data where the API is missing. All the way means the backend
