@@ -48,11 +48,15 @@ Asked once when the session starts, recorded as the session's `mode`.
    commit. Its success is the only sign the environment is ready: GitHub
    deployments carry the commit, not the branch, as their `ref`, and
    `*.preview.closedloop-stage.ai` answers for any branch, deployed or not.
-5. Record the reported URLs and commit (`touch --vercel ... --deployed <sha>`) and put
-   them on the live ticket.
+5. Download the run's `vibe-environment-result` artifact and record it with
+   `vibe-sessions.mjs environment-result --request-id <request_id>`, which
+   checks it against the request, the session's branch and mode, and the
+   worktree's HEAD before recording the URLs, deployment ids, and deployed
+   commit. Nothing else records them. Then put them on the live ticket.
 
-The URLs are the stable per-branch Vercel aliases, recorded on the session
-when it is created:
+The URLs are the stable per-branch Vercel aliases. The session record holds
+the predicted ones from when it is created, but they are shown or opened only
+once `environment-result` has recorded a verified result:
 
 | Field | What it is |
 |---|---|
