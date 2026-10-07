@@ -179,7 +179,9 @@ the artifact `vibe-environment-result`, a file `vibe-environment-result.json`:
 
 That file is the only thing that makes a URL safe to give the person. Any
 `*.preview.closedloop-stage.ai` host without its own deployment is served by
-the stage production app and answers 200 or 307, so never treat a URL
+the stage production app and answers 200 or 307, and a branch alias whose
+latest build Vercel cancelled (it cancels the API build on a frontend-only
+push) answers 200 with a "Deployment was cancelled" page, so never treat a URL
 answering as ready, never probe one to decide, and never judge readiness
 from GitHub deployments (Vercel sets their `ref` to the commit, not the
 branch). This holds in every mode that requests the environment: create,

@@ -56,7 +56,7 @@ when it is created:
 |---|---|
 | `appUrl` | The web app (`app-stage-git-andy-<slug>`). Open it in the in-app Browser. |
 | `apiUrl` | The API behind it (`api-stage-git-andy-<slug>`); the app finds it by hostname. |
-| `storybookUrl` | Storybook (`prototypes-git-andy-<slug>`, under `/storybook`), where design reviews the components. |
+| `storybookUrl` | Storybook (`prototypes-git-andy-<slug>`, under `/storybook`), where design reviews the components. It sits behind Vercel's sign-in: a viewer not signed in to Vercel with a team account is sent to `vercel.com` (`sso-api`) instead. |
 
 ## The production flag snapshot
 

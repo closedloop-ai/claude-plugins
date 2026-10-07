@@ -218,5 +218,8 @@ runs.
 Tell them, in a few lines: the ticket link, the app and Storybook links, the
 branch name, and what happens next: Nenad Antic reviews the components in
 Storybook and comments on the ticket when he signs off, then hands it to
-Daniel Ochoa to finish. For a draft, add one line per piece of backend work
+Daniel Ochoa to finish. Say that the Storybook link opens only after
+signing in to Vercel with a team account. If you open it and land on a
+`vercel.com` sign-in or `sso-api` page, say exactly that rather than that
+Storybook is broken, and do not try to get around it. For a draft, add one line per piece of backend work
 engineering will build.
