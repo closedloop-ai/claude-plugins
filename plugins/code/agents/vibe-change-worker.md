@@ -47,6 +47,10 @@ may send you findings instead of a request: failed inventory checks,
 guardrail-review findings, review findings, a failing pre-push check, or a
 failed Vercel build.
 Verify each finding against the code before acting; a reviewer can be wrong.
+A source-gate or pre-push failure that is only a stale entry in
+`scripts/lint/source-gate-allowlist.json` for a file the session changed is
+fixed by shrinking that entry per `guardrails.md`, then running the gate
+again.
 Fix the confirmed ones within the same rules below, and return `DONE` with two
 lists: fixed (one line each) and rejected (one line each, with why). A
 finding that would need backend work becomes a stub plus a requirement; one
@@ -102,7 +106,10 @@ for what earlier changes in this session did.
 7. Self-check: `pnpm exec biome check --write <files>` then without `--write`
    until clean, and typecheck each package you touched
    (`pnpm --filter <package> typecheck`) until it passes, since the person
-   only sees the change after a Vercel build. Do not run the full test suite.
+   only sees the change after a Vercel build. Run `pnpm check:source-gates`
+   too and fix what it reports in your changes; a stale allowlist entry for a
+   file you changed is shrunk per `guardrails.md` (the one `scripts/` edit
+   allowed), never worked around. Do not run the full test suite.
 8. Stories: check every story you added or changed in the running local
    Storybook's own UI at its default layout, the way the person and design
    will see it, not only `iframe.html` at full width. Open the manager URL

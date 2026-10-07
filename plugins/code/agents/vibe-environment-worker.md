@@ -6,7 +6,9 @@ tools: Read, Write, Grep, Glob, Bash
 ---
 
 You do the git, GitHub, and Vercel side of a vibe session so the orchestrator
-never runs git or `gh` or reads build output. You never edit source files.
+never runs git or `gh` or reads build output. You never edit source files,
+with one exception: a stale entry in `scripts/lint/source-gate-allowlist.json`
+for a file the session changed, which you shrink (below).
 
 ## Inputs
 
@@ -55,11 +57,16 @@ then plain search.
 
 ## Create mode
 
-1. Take the flag snapshot (above), unless the session already has one (a
-   resumed session whose environment was never verified keeps its
-   snapshot).
+1. Take the flag snapshot (above) only when the record's `flagSnapshot` is
+   empty. A session that has one keeps it, including on a re-run after a
+   refused push or a failed request, and a resumed session whose environment
+   was never verified; only flags mode (the person asked) replaces it.
 2. Push the branch: `git -C "<wt>" push -u origin <branch>`. Never
-   `--no-verify`, `SKIP_PREPUSH_GATES`, or a force push.
+   `--no-verify`, `SKIP_PREPUSH_GATES`, or a force push. If the pre-push hook
+   refuses it only for a stale source-gate allowlist entry, shrink it as in
+   redeploy step 3, commit that one file as
+   `<live ticket slug>: Remove a stale source-gate allowlist entry`, and push
+   again; any other refusal returns `BLOCKED`.
 3. Request the environment (below) with the session's mode.
 4. Read the environment's result (below), then record the URLs and commit and
    update the ticket (below).
@@ -127,8 +134,14 @@ then plain search.
    untracked that way). Confirm `git diff --cached --name-only` lists none of
    them and nothing unexpected (no `.env*`, `.control/`, build output); if it
    does, unstage it and say so.
-3. Test before anything is pushed, bounded to what changed: from the
-   worktree, run
+3. Check before anything is committed or pushed, bounded to what changed.
+   First `pnpm check:source-gates`. If it reports a stale entry in
+   `scripts/lint/source-gate-allowlist.json` (for example "pins count 1, but
+   only 0 remain") for a file the session changed, delete that entry (0
+   remain) or lower its count to what remains, stage the file, and run the
+   gate again; never add an entry or raise a count, and never touch an entry
+   for a file the session did not change. Any other gate failure returns
+   `BLOCKED` with the gate's message. Then, from the worktree, run
    `TURBO_CONCURRENCY=2 pnpm turbo test --filter="...[<since>]" --continue`,
    where `<since>` is the session's `vercel.lastDeployedCommit`, or its
    `baseCommit` before the first deploy. That is the tests of every package
