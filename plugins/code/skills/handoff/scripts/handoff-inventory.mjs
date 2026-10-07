@@ -26,7 +26,7 @@ import { parseArgs } from "node:util";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
 
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
-const BRANCH_PREFIX = "andy/";
+const BRANCH_PREFIX = "vibe/";
 
 // The frontend paths a change worker edits, plus the backend paths that only
 // vibe-backend-worker edits (ISS-12046); an engineer reviews both before merge.

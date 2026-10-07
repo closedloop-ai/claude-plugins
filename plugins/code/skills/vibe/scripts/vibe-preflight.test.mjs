@@ -123,8 +123,8 @@ test("several checkouts ask the person to choose, and --repo remembers the main 
   assert.match(ambiguous.checks.repo.detail, /Closedloop\.ai - Active Work/);
   assert.equal(remembered(env.home), null);
 
-  const worktree = path.join(first, ".claude", "worktrees", "andy-x");
-  git(first, ["worktree", "add", "--quiet", "-b", "andy/x", worktree], env.home);
+  const worktree = path.join(first, ".claude", "worktrees", "vibe-x");
+  git(first, ["worktree", "add", "--quiet", "-b", "vibe/x", worktree], env.home);
   const chosen = runPreflight(env, ["--repo", worktree]);
   assert.equal(chosen.checks.repo.ok, true);
   assert.equal(remembered(env.home), first);

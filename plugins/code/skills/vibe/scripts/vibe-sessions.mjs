@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Manage vibe sessions: one git worktree per piece of work, on an
-// `andy/<slug>` branch, with a session record kept in the worktree's private
+// Manage vibe sessions: one git worktree per piece of work, on a
+// `vibe/<slug>` branch, with a session record kept in the worktree's private
 // git directory so it is never tracked or committed.
 //
 // Usage:
@@ -89,14 +89,16 @@ import {
   vercelAliases,
 } from "./vibe-session-data.mjs";
 
-const BRANCH_PREFIX = "andy/";
+const BRANCH_PREFIX = "vibe/";
+const SYMPHONY_REPOSITORY = "closedloop-ai/symphony-alpha";
+const SCHEMA_CLEANUP_WORKFLOW = "cleanup-preview-schemas.yml";
 const WORKTREE_DIR = ".claude/worktrees";
-const WORKTREE_NAME_PREFIX = "andy-";
+const WORKTREE_NAME_PREFIX = "vibe-";
 const RECORD_FILE = "vibe-session.json";
 const SNAPSHOT_FILE = "vibe-flag-snapshot.json";
 const DESKTOP_AUTH_FILE = "vibe-desktop-auth.json";
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-// Vercel's per-branch preview aliases are `<project>-git-andy-<slug>`, and a
+// Vercel's per-branch preview aliases are `<project>-git-vibe-<slug>`, and a
 // DNS label longer than 63 characters gets truncated and hashed, which would
 // make the session's URLs unpredictable.
 const MAX_SLUG_LENGTH = 40;
@@ -399,10 +401,12 @@ function showSession() {
 }
 
 /**
- * Without `--confirm`, reports what discarding would lose. With it, deletes
- * the remote branch (which removes the session's Vercel previews and preview
- * schema), the worktree, and the local branch, in that order, so a failed
- * remote delete leaves the session intact. A handed-off session is never
+ * Without `--confirm`, reports what discarding would lose. With it, requests
+ * the drop of a pushed session's preview schema and its stored files
+ * (symphony-alpha's `cleanup-preview-schemas.yml` with the branch; its daily
+ * sweep never drops a `vibe/` schema, ISS-12135), then deletes the remote
+ * branch, the worktree, and the local branch, in that order, so a failed
+ * request or remote delete leaves the session intact. A handed-off session is never
  * discarded. The result carries the live ticket and operator read from the
  * record before it is deleted, for the worker that cancels the ticket.
  */
@@ -432,11 +436,21 @@ function discardSession() {
   const commonDir = git(worktree, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const repo = path.dirname(commonDir);
   if (wouldLose.pushed) {
+    execFileSync(
+      "gh",
+      ["workflow", "run", SCHEMA_CLEANUP_WORKFLOW, "--repo", SYMPHONY_REPOSITORY, "--ref", "main", "-f", `branch=${branch}`],
+      { stdio: ["ignore", "pipe", "pipe"] }
+    );
     git(repo, ["push", "origin", "--delete", branch]);
   }
   git(repo, ["worktree", "remove", "--force", worktree]);
   git(repo, ["branch", "-D", branch]);
-  return { discarded: true, remoteBranchDeleted: wouldLose.pushed, wouldLose };
+  return {
+    discarded: true,
+    remoteBranchDeleted: wouldLose.pushed,
+    schemaCleanupRequested: wouldLose.pushed,
+    wouldLose,
+  };
 }
 
 /**

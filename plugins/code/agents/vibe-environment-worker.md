@@ -1,6 +1,6 @@
 ---
 name: vibe-environment-worker
-description: Runs a vibe session's Vercel environment in symphony-alpha for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the andy/<slug> branch, starts the environment through the repo's request workflow, follows it to the end, and records the app, API, and Storybook URLs and deployed commit it reports on the session and the live ticket. Redeploy mode makes one commit of the session's changes (never a local fix), pushes, and requests the environment again so the new commit is deployed. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Returns a short status.
+description: Runs a vibe session's Vercel environment in symphony-alpha for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the vibe/<slug> branch, starts the environment through the repo's request workflow, follows it to the end, and records the app, API, and Storybook URLs and deployed commit it reports on the session and the live ticket. Redeploy mode makes one commit of the session's changes (never a local fix), pushes, and requests the environment again so the new commit is deployed. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Returns a short status.
 model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
@@ -129,7 +129,7 @@ then plain search.
    `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_id>`
    and request the environment again, once; if that run refuses the same way,
    return `BLOCKED` with its message for Daniel Ochoa. If two or more remain,
-   return `NEEDS_PERSON` with the question "Which one should own Acme Co:
+   return `NEEDS_PERSON` with the question "Which one should own <email> Co:
    <names>?", plus a mapping from each name to its `org_` id (the orchestrator
    records the answer with `touch --clerk-org-id` and dispatches you again,
    which sends `clerk_org_id`). If none remain, do step 6 instead. If the run
@@ -139,7 +139,7 @@ then plain search.
    the run's wording (such as "pass clerk_org_id").
 6. Seeded, and the person is an admin of none of their orgs (the
    `clerk_org_refusal=` line is `clerk_org_no_admin`, or step 5 kept no org):
-   return `NEEDS_PERSON` with "Acme Co needs an organization on the test site
+   return `NEEDS_PERSON` with "<email> Co needs an organization on the test site
    where you are an admin, and you are not an admin of <names>. Ask an admin
    there to make you one, then tell me, or start a new session with an empty
    copy of the app." Put the run's own message in a separate line for Daniel
@@ -152,7 +152,7 @@ then plain search.
    run's own message in a separate line for Daniel Ochoa.
 8. Seeded: read `personOrgAdmin` from the `vibe-environment.yml` run (its job
    summary or log). If it is not `true`, return `BLOCKED` saying the person is
-   not an admin of Acme Co.
+   not an admin of `<email> Co`.
 
 ## Redeploy mode
 
