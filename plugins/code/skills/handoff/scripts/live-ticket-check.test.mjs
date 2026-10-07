@@ -11,7 +11,7 @@ import { runNode } from "../../vibe/scripts/test-fixtures.mjs";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "live-ticket-check.mjs");
 const TEMPLATE = path.join(HERE, "..", "..", "vibe", "references", "ticket-template.md");
-const TEMPLATE_BODY = /```markdown\n([\s\S]*?)\n```\n?$/;
+const TEMPLATE_BODY = /````markdown\n([\s\S]*?)\n````\n?$/;
 
 const ENVIRONMENT = [
   "- Branch: `andy/tags` (base: origin/main at `abcdef1234`)",
@@ -34,6 +34,7 @@ function completeTicket(scope, overrides = {}) {
     "Production flag snapshot": "Taken 2026-10-06T15:00:00Z as PostHog user `user_1`. 1 flags.\n\n| Flag | Value |\n|---|---|\n| `a` | true |",
     Sessions: "- Codex session (orchestrator): `01a11209-54a0-72c0-8255-68692884c10f`",
     Handoff: "- Checks: all pass",
+    Grading: "Set `Design grade` or `Eng grade`.\n\n```\nGrade: High / Medium / Low\n```",
     "Engineering checklist": "- [ ] Open the pull request",
     ...overrides,
   };

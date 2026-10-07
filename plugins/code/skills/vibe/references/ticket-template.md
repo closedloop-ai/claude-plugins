@@ -41,11 +41,12 @@ it never writes it from scratch.
 | Production flag snapshot | `ticket-sections` (via `vibe-environment-worker`) | environment start, a refresh the person asked for |
 | Sessions | `ticket-sections` (via `vibe-environment-worker`, `vibe-ticket-worker`) | every redeploy, handoff |
 | Handoff | `vibe-ticket-worker` | handoff |
+| Grading | `vibe-ticket-worker` | handoff, copied unchanged from this template |
 | Engineering checklist | `vibe-ticket-worker` | session start, keeping only the lines for the session's scope |
 
 ## Body
 
-```markdown
+````markdown
 ## What this is
 
 <Two or three sentences in the person's words: what someone will be able to
@@ -122,6 +123,31 @@ subagent that worked on this.>
   sign-off, then engineering finishes it through analysis, a pull request,
   and merge.
 
+## Grading
+
+Whoever picks this up grades it at pickup, before changing anything: design
+when it is assigned to them, engineering when design passes it on, before
+opening the PR. Set your field, `Design grade` or `Eng grade` (High / Medium /
+Low), in the issue's Custom Fields section below the body (it starts
+collapsed), then post one comment using the template below. When the PR
+merges, engineering adds what had to be fixed before merge.
+
+High = took it as is or with small tweaks. Medium = real fixes, but we kept
+the structure. Low = had to redo a meaningful part.
+
+```
+Grade: High / Medium / Low
+
+Yes / no, plus one line when it's a no:
+1. Followed our codebase rules. AGENTS.md and the nearest owning AGENTS.md, no lint or gate suppressions added to get green.
+2. Reused existing components. No hand-rolled copy of something we already ship, and no duplicated helpers or types.
+3. Storybook is right. Every new or changed component has stories in the right place, and the controls are usable. (Design)
+4. Extended the existing pattern. For example, bulk add tag built once on the shared bulk action so Sessions and Branches both get it, not two copies.
+5. Backend is wired correctly. Route, service, shared types, Zod and migration follow our layering, and nothing is left on a stub. (Eng)
+6. No invented copy. Every user-visible string came from a person or an existing label.
+7. What we had to fix before merge. A count and a short list. (Eng, filled in at merge)
+```
+
 ## Engineering checklist
 
 - [ ] Implement each endpoint under API requirements in `apps/api` (thin
@@ -137,4 +163,4 @@ subagent that worked on this.>
       merge (closed-by-default UI policy)
 - [ ] Verify shared `packages/app` changes on both web and Desktop
 - [ ] Open the pull request to `main`; independent code review
-```
+````

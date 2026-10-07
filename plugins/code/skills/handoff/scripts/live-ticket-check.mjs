@@ -31,6 +31,7 @@ export const TICKET_SECTIONS = [
   { heading: "Production flag snapshot", scopes: [Scope.Draft, Scope.Full] },
   { heading: "Sessions", scopes: [Scope.Draft, Scope.Full] },
   { heading: "Handoff", scopes: [Scope.Draft, Scope.Full] },
+  { heading: "Grading", scopes: [Scope.Draft, Scope.Full] },
   { heading: "Engineering checklist", scopes: [Scope.Draft, Scope.Full] },
 ];
 
