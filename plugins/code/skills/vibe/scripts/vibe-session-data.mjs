@@ -536,3 +536,48 @@ export function validateEnvironmentResult(result, { requestId, branch, mode, hea
     verifiedAt: result.verifiedAt,
   };
 }
+
+// What symphony-alpha's Desktop dev launcher prints once Electron is up with
+// the browser bridge (`apps/desktop/scripts/dev-launch.mjs`), which
+// `vibe:profile launch` runs since ISS-12182. The token is the launch's
+// reader credential (`desktopBrowserBridgeTokenParam`, at least
+// `desktopBrowserBridgeMinimumTokenLength` characters).
+const DESKTOP_BROWSER_URL_LINE = /^Desktop browser URL: (\S+)\s*$/gm;
+const DESKTOP_BROWSER_PATH = "/design-system/browser.html";
+const DESKTOP_BRIDGE_TOKEN_PARAM = "closedloopBridgeToken";
+const DESKTOP_BRIDGE_TOKEN = /^[A-Za-z0-9_-]{43,}$/;
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost"]);
+
+/**
+ * The Desktop browser tab's URL from a `vibe:profile launch` log: the last
+ * `Desktop browser URL:` line, so a log that holds several launches yields the
+ * one running now. Returns null when the log has none (the launcher has not
+ * reached Electron yet, or the worktree's launcher predates the bridge).
+ * Throws when the line is there but is not a loopback bridge URL with a token.
+ */
+export function findDesktopBrowserUrl(log) {
+  const lines = [...log.matchAll(DESKTOP_BROWSER_URL_LINE)];
+  const last = lines.at(-1)?.[1];
+  if (last === undefined) {
+    return null;
+  }
+  let url;
+  try {
+    url = new URL(last);
+  } catch {
+    throw new Error("The Desktop browser URL in the launch log is not a URL.");
+  }
+  const token = url.searchParams.get(DESKTOP_BRIDGE_TOKEN_PARAM) ?? "";
+  if (
+    url.protocol !== "http:" ||
+    !LOOPBACK_HOSTS.has(url.hostname) ||
+    url.port === "" ||
+    url.pathname !== DESKTOP_BROWSER_PATH ||
+    !DESKTOP_BRIDGE_TOKEN.test(token)
+  ) {
+    throw new Error(
+      `The Desktop browser URL in the launch log is not a loopback ${DESKTOP_BROWSER_PATH} URL with a ${DESKTOP_BRIDGE_TOKEN_PARAM}.`
+    );
+  }
+  return url.href;
+}
