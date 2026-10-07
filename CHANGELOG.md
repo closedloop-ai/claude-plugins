@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v1.19.14
+
+#### Fixed
+- `cl-sweep/scripts/app-server-worker-session.mjs launch` passes its `--codex` executable to the detached `run` or `supervise` runner. The runner used to fall back to `codex` on PATH, so a launch given an explicit `--codex` drove a different binary, and failed with `spawn codex ENOENT` where `codex` was not installed.
+
 ### code v1.19.13
 
 #### Changed
