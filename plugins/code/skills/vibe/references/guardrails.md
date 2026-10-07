@@ -21,6 +21,14 @@ met by a change in the right-hand column becomes a stub plus a written
 requirement (`stubs.md`). Say so in one sentence and build the UI against the
 stub.
 
+One exception under `scripts/`: the source-gate allowlist
+(`scripts/lint/source-gate-allowlist.json`) is shrink-only, so when the
+session's change removes the last allowlisted occurrence of a rule (or some
+of them), delete that entry or lower its count. That is the only `scripts/`
+edit a draft session may make; the handoff inventory checks mechanically that
+the file only lost entries or counts, and refuses anything else under
+`scripts/`.
+
 ### Full scope
 
 In a **full** scope session (the session record's `scope`), the work goes all

@@ -304,8 +304,9 @@ on Vercel", "let me see it live", or anything meaning the same:
    `storybookUrl` and the tab lands on `vercel.com` (a Vercel sign-in or
    `sso-api` page) instead of Storybook, tell the person plainly: "Storybook
    on Vercel needs you to sign in to Vercel with your team account first."
-   Do not try to get around it. On `BLOCKED` because the repo's checks
-   refused the push or a build failed in the session's own change, dispatch
+   Do not try to get around it. On `BLOCKED` because the tests failed, the
+   repo's checks refused the push, or a build failed in the session's own
+   change, dispatch
    `vibe-change-worker` (or `vibe-backend-worker` for backend code) in fix
    mode with the failure, then redeploy again. Tell the person in one plain
    line that something needed fixing first.

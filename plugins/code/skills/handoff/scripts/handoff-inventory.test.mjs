@@ -8,6 +8,11 @@ import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fi
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");
 const SESSIONS = path.join(HERE, "..", "..", "vibe", "scripts", "vibe-sessions.mjs");
+const ALLOWLIST = "scripts/lint/source-gate-allowlist.json";
+const FOCUS_RING = { rule: "no-hand-rolled-focus-ring", file: "packages/app/a.tsx", fingerprint: "packages/app/a.tsx", count: 1, reason: "seeded" };
+const HEX = { rule: "no-hex-color-in-jsx-styling", file: "apps/app/b.tsx", fingerprint: "apps/app/b.tsx", count: 3, reason: "seeded" };
+const allowlist = (entries) =>
+  `${JSON.stringify({ registeredRules: ["no-hand-rolled-focus-ring", "no-hex-color-in-jsx-styling"], entries }, null, 2)}\n`;
 
 function setup(t, slug) {
   const fixture = makeHome("handoff-inventory-");
@@ -20,6 +25,7 @@ function setup(t, slug) {
     files: {
       "scripts/loops-setup.sh": "echo old\n",
       "apps/app/page.tsx": "export const page = 1;\n",
+      [ALLOWLIST]: allowlist([FOCUS_RING, HEX]),
     },
   });
   const created = runNode(
@@ -121,4 +127,34 @@ test("committed redeploys count as the session's work and the live ticket is rep
   assert.equal(result.json.liveTicket, "ISS-90");
   assert.equal(result.json.mode, "seeded");
   assert.equal(result.json.vercel.appUrl, "https://app-stage-git-andy-redeployed.preview.closedloop-stage.ai");
+});
+
+test("a draft session may only shrink the source-gate allowlist under scripts/", (t) => {
+  const { home, worktree } = setup(t, "shrink");
+  write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
+  write(worktree, ALLOWLIST, allowlist([HEX]));
+  const removed = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(removed.status, 0, JSON.stringify(removed.json.forbidden));
+  assert.deepEqual(removed.json.shrinkOnlyAllowlists, [{ path: ALLOWLIST, status: "M" }]);
+  assert.deepEqual(removed.json.forbidden, []);
+  assert.deepEqual(removed.json.outsideAllowed, []);
+
+  write(worktree, ALLOWLIST, allowlist([FOCUS_RING, { ...HEX, count: 2 }]));
+  assert.equal(runNode(INVENTORY, ["--worktree", worktree], home).status, 0);
+
+  const grown = { ...HEX, count: 4 };
+  const added = { ...HEX, file: "apps/app/c.tsx", fingerprint: "apps/app/c.tsx" };
+  for (const entries of [[FOCUS_RING, grown], [FOCUS_RING, HEX, added], [{ ...FOCUS_RING, reason: "changed" }]]) {
+    write(worktree, ALLOWLIST, allowlist(entries));
+    const refused = runNode(INVENTORY, ["--worktree", worktree], home);
+    assert.equal(refused.status, 1, JSON.stringify(entries));
+    assert.deepEqual(refused.json.forbidden, [{ path: ALLOWLIST, status: "M" }]);
+    assert.deepEqual(refused.json.shrinkOnlyAllowlists, []);
+  }
+
+  write(worktree, ALLOWLIST, allowlist([HEX]));
+  write(worktree, "scripts/loops-setup.sh", "echo fixed\n");
+  const other = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(other.status, 1);
+  assert.deepEqual(other.json.forbidden, [{ path: "scripts/loops-setup.sh", status: "M" }]);
 });

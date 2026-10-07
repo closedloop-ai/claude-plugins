@@ -127,23 +127,34 @@ then plain search.
    untracked that way). Confirm `git diff --cached --name-only` lists none of
    them and nothing unexpected (no `.env*`, `.control/`, build output); if it
    does, unstage it and say so.
-3. Nothing staged and nothing unpushed: skip to step 6 (the environment is
+3. Test before anything is pushed, bounded to what changed: from the
+   worktree, run
+   `TURBO_CONCURRENCY=2 pnpm turbo test --filter="...[<since>]" --continue`,
+   where `<since>` is the session's `vercel.lastDeployedCommit`, or its
+   `baseCommit` before the first deploy. That is the tests of every package
+   the session changed since then plus the packages that depend on them
+   (Storybook's story sweep included). Allow it 15 minutes. If anything fails
+   or it runs out of time, return `BLOCKED` with the failing suites and the
+   first error line of each, and push nothing (the orchestrator sends them to
+   a change worker in fix mode, then asks for the redeploy again). Never
+   skip, filter out, or loosen a failing test to get a push through.
+4. Nothing staged and nothing unpushed: skip to step 7 (the environment is
    already current). Otherwise make one commit:
    `<live ticket slug>: <plain imperative summary of what changed since the last redeploy>`,
    under 72 characters, with a body listing the screens changed. No mention of
    AI tools. Never amend or squash an earlier commit.
-4. Push: `git -C "<wt>" push origin <branch>`. The pre-push hook can take
+5. Push: `git -C "<wt>" push origin <branch>`. The pre-push hook can take
    several minutes; let it finish. If it fails, return `BLOCKED` with the
    failing check in one line (the orchestrator sends it to a fix worker).
    Never `--no-verify`, `SKIP_PREPUSH_GATES`, or a force push.
-5. If the commit adds a database migration (full scope), the API's Vercel
+6. If the commit adds a database migration (full scope), the API's Vercel
    build applies it (symphony-alpha's `@repo/database` prebuild runs
    `prisma migrate deploy`); after the environment run succeeds, confirm the
    `api-stage` build log shows it applied, and return `BLOCKED` with the error
    if it failed. If the log shows the session's preview schema was dropped and
    recreated (that script's recovery for a failed preview migration), the
    session's data is gone: say so in your result.
-6. Request the environment (below) again with the session's same mode (a
+7. Request the environment (below) again with the session's same mode (a
    ready environment of the same mode is kept; only the deployments of the
    new branch head are made ready), read its result (below), then record and
    update the ticket (below), adding a Progress line "Redeployed `<short sha>`".
@@ -205,7 +216,7 @@ redeploy, flags, and desktop.
 4. A run that failed on a Vercel build: read the build's log with the Vercel
    tools and return `BLOCKED` with the cause; say whether it is in the
    session's own change.
-5. If the commit adds a migration (redeploy step 5), check the `api-stage`
+5. If the commit adds a migration (redeploy step 6), check the `api-stage`
    build log for the deployment `deploymentIds.api` names.
 
 ## Record and update the ticket
