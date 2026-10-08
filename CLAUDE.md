@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A monorepo of open-source Claude Code plugins by ClosedLoop. Six plugins — `bootstrap`, `code`, `code-review`, `judges`, `platform`, `self-learning` — each under `plugins/<name>/` with a standard layout: `.claude-plugin/plugin.json`, `agents/`, `commands/`, `skills/`, `hooks/`, `tools/python/`, `scripts/`.
+A monorepo of open-source Claude Code plugins by ClosedLoop. Eight plugins (`bootstrap`, `closedloop-core`, `code`, `code-review`, `judges`, `platform`, `self-learning`, `vibe`), each under `plugins/<name>/` with a standard layout: `.claude-plugin/plugin.json`, `agents/`, `commands/`, `skills/`, `hooks/`, `tools/python/`, `scripts/`.
 
 ## Commands
 
@@ -36,7 +36,7 @@ npm run build      # rebuild committed dist/*.mjs (written to plugins/code/skill
 
 ### Plugin Structure
 
-Each plugin's manifest lives at `plugins/<name>/.claude-plugin/plugin.json` with `name`, `description`, `version`, and `author` fields. The `.claude-plugin/marketplace.json` at repo root registers all six plugins.
+Each plugin's manifest lives at `plugins/<name>/.claude-plugin/plugin.json` with `name`, `description`, `version`, and `author` fields. The `.claude-plugin/marketplace.json` at repo root registers all eight plugins.
 
 ### Agent Definitions
 
@@ -48,7 +48,7 @@ Always use `plugin-name:skill-name` format (e.g., `self-learning:learning-qualit
 
 ### The `code` Plugin is the Hub
 
-`code` depends on both `judges` and `self-learning`. `judges` depends back on `code` (circular). `bootstrap` depends on `code`. `code-review`, `platform`, and `self-learning` are standalone. See `docs/dependencies.md` for the full dependency map.
+`code` depends on `closedloop-core`, `judges`, and `self-learning`. `judges` depends back on `code` (circular). `bootstrap` depends on `code`. `vibe` and `platform` depend on `closedloop-core`. `closedloop-core`, `code-review`, and `self-learning` are standalone. See `docs/dependencies.md` for the full dependency map.
 
 ### Closed Loop (run-loop.sh)
 
