@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -11,7 +11,7 @@ import {
   readThreadState, sendInput,
 } from './core-client-process.mjs';
 import { fixtureSkillPath, installRegistryFixture, registryFixtureCode } from './core-client-fixture.mjs';
-import { resolveCoreSkill } from './resolve-core-skill.mjs';
+import { DISCOVERY_STAGE_TIMEOUT_MS, DISCOVERY_TOTAL_TIMEOUT_MS, resolveCoreSkill } from './resolve-core-skill.mjs';
 
 function executable(root, name, body) {
   const path = join(root, name);
@@ -133,13 +133,34 @@ test('Claude named discovery honors project precedence, disabled entries, and in
   const root = mkdtempSync(join(tmpdir(), 'core-claude-resolver-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const coreRoot = dirname(dirname(dirname(fixtureSkillPath())));
+  const coreAlias = join(root, 'installed-core');
+  symlinkSync(coreRoot, coreAlias, 'dir');
   const registry = [
     { id: 'closedloop-core@closedloop-ai', enabled: true, scope: 'user', installPath: '/unavailable/user/core' },
-    { id: 'closedloop-core@closedloop-ai', enabled: true, scope: 'project', installPath: coreRoot },
+    { id: 'closedloop-core@closedloop-ai', enabled: true, scope: 'project', installPath: coreAlias },
     { id: 'closedloop-core@closedloop-ai', enabled: false, scope: 'local', installPath: '/unavailable/local/core' },
   ];
   const claude = executable(root, 'claude', `process.stdout.write(${JSON.stringify(JSON.stringify(registry))});`);
-  assert.equal((await resolveCoreSkill({ runtime: 'claude', claude })).skillDirectory, dirname(fixtureSkillPath()));
+  assert.equal((await resolveCoreSkill({ runtime: 'claude', claude })).skillDirectory, join(coreAlias, 'skills/gh-monitor-pr'));
   const old = executable(root, 'claude-old', `process.stdout.write(${JSON.stringify(JSON.stringify([{ ...registry[1], installPath: root }]))});`);
   await assert.rejects(resolveCoreSkill({ runtime: 'claude', claude: old }), /API is unavailable/);
+});
+
+test('thread-state forwarding preserves three independent RPC budgets and a single shrinking deadline', async t => {
+  assert.equal(DISCOVERY_TOTAL_TIMEOUT_MS, DISCOVERY_STAGE_TIMEOUT_MS * 4 + 2000);
+  const observed = [];
+  const client = Object.assign(Object.create(AppServerClient.prototype), {
+    operation: async (...args) => { observed.push(args); return { status: 'active' }; },
+  });
+  await readThreadState(client, 'thread-1');
+  assert.equal(observed[0][2], 181_000);
+  await readThreadState(client, 'thread-1', { timeoutMs: 40_000 });
+  assert.equal(observed[1][2], 121_000);
+  assert.deepEqual(observed[1][1].options, { timeoutMs: 40_000 });
+  const previousNow = Date.now;
+  t.after(() => { Date.now = previousNow; });
+  Date.now = () => 10_000;
+  await readThreadState(client, 'thread-1', { timeoutMs: () => 5000 });
+  assert.deepEqual(observed[2][1].options, { deadline: 15_000 });
+  assert.equal(observed[2][2], 6000);
 });

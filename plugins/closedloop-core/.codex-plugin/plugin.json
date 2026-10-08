@@ -13,6 +13,7 @@
     "shortDescription": "Shared planning, review, QA, and monitoring skills.",
     "developerName": "ClosedLoop",
     "category": "Development",
-    "capabilities": ["Analyze", "Write"]
+    "capabilities": ["Analyze", "Write"],
+    "defaultPrompt": ["Monitor this pull request."]
   }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -9,10 +9,12 @@ const PROCESS_API = 'CLOSEDLOOP_APP_SERVER_CLIENT v1';
 const CORE_ID = 'closedloop-core@closedloop-ai';
 const SKILL_NAME = 'closedloop-core:gh-monitor-pr';
 const BUNDLED_CODEX = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex';
+export const DISCOVERY_STAGE_TIMEOUT_MS = 20_000;
+export const DISCOVERY_TOTAL_TIMEOUT_MS = DISCOVERY_STAGE_TIMEOUT_MS * 4 + 2000;
 
 function jsonCommand(executable, args, input) {
   return JSON.parse(execFileSync(executable, args, {
-    input, encoding: 'utf8', timeout: 20_000, maxBuffer: 16 * 1024 * 1024,
+    input, encoding: 'utf8', timeout: DISCOVERY_STAGE_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024,
     stdio: ['pipe', 'pipe', 'pipe'],
   }));
 }
@@ -34,7 +36,7 @@ export function codexSkills(executable, cwd) {
       child.once('close', () => clearTimeout(force));
       if (error) reject(error); else accept(result);
     };
-    const timer = setTimeout(() => finish(new Error('Core skill discovery timed out')), 20_000);
+    const timer = setTimeout(() => finish(new Error('Core skill discovery timed out')), DISCOVERY_STAGE_TIMEOUT_MS);
     child.stderr.resume();
     child.on('error', () => finish(new Error('Codex skill discovery could not start')));
     child.on('close', () => finish(new Error('Codex skill discovery closed before returning skills')));
@@ -112,4 +114,4 @@ async function main() {
   catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) await main();

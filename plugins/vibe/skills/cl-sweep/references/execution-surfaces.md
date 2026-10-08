@@ -42,7 +42,9 @@ Select `cli` only when Desktop is incomplete and all of these are proven:
 
 The Desktop task connector may be absent from a CLI tool surface even when the
 same tasks are reachable through the managed App Server. Probe the exact CLI
-root with `gh-monitor-pr/scripts/setup-app-server.mjs probe --surface cli` and
+root after loading `gh-monitor-pr` by name (`$gh-monitor-pr` in Codex or
+`/closedloop-core:gh-monitor-pr` in Claude Code). Run
+`scripts/setup-app-server.mjs probe --surface cli` from that loaded skill's own folder and
 use the verified portable proxy for legacy-task read/pause fencing. Connector
 absence alone is not proof that a Desktop task is stopped or unreachable.
 

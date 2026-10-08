@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DISCOVERY_TOTAL_TIMEOUT_MS } from './resolve-core-skill.mjs';
 
 const PROCESS_API = 'CLOSEDLOOP_APP_SERVER_CLIENT v1';
 const resolver = fileURLToPath(new URL('./resolve-core-skill.mjs', import.meta.url));
@@ -11,7 +12,7 @@ export function coreSkillDirectory(options = {}) {
   const key = JSON.stringify([options.runtime || '', options.codex || 'codex', options.claude || 'claude', process.cwd()]);
   if (!bindings.has(key)) {
     const raw = execFileSync(process.execPath, [resolver], {
-      input: JSON.stringify(options), encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024,
+      input: JSON.stringify(options), encoding: 'utf8', timeout: DISCOVERY_TOTAL_TIMEOUT_MS, maxBuffer: 1024 * 1024,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     const result = JSON.parse(raw);
@@ -202,20 +203,29 @@ export function readThreadState(client, threadId, options = {}) {
     ? { deadline: Date.now() + options.timeoutMs() }
     : options;
   const payload = { threadId, options: forwarded };
-  if (!(client instanceof AppServerClient)) return delegatedOperation(client, 'readThreadState', payload);
-  return client.operation('readThreadState', payload, forwarded.timeoutMs || 60_000);
+  // The native helper may perform three separately bounded RPCs; a deadline remains one deadline.
+  const timeoutMs = threadReadBudget(forwarded);
+  if (!(client instanceof AppServerClient)) return delegatedOperation(client, 'readThreadState', payload, timeoutMs);
+  return client.operation('readThreadState', payload, timeoutMs);
 }
 
 /** Preserve exactly-once state-aware input delivery in core, not in this adapter. */
 export function sendInput(client, options, input, retryDelayMs = 100) {
-  if (!(client instanceof AppServerClient)) return delegatedOperation(client, 'sendInput', { options, input, retryDelayMs });
-  return client.operation('sendInput', { options, input, retryDelayMs }, (options.waitSeconds ?? 30) * 1000 + 1000);
+  const timeoutMs = (options.waitSeconds ?? 30) * 1000 + Math.max(1000, retryDelayMs);
+  if (!(client instanceof AppServerClient)) return delegatedOperation(client, 'sendInput', { options, input, retryDelayMs }, timeoutMs);
+  return client.operation('sendInput', { options, input, retryDelayMs }, timeoutMs);
 }
 
-async function delegatedOperation(client, operation, payload) {
+async function delegatedOperation(client, operation, payload, timeoutMs = 61_000) {
   const adapter = new AppServerClient({}, client);
   try {
     await adapter.connect();
-    return await adapter.operation(operation, payload, (payload.options?.waitSeconds ?? 60) * 1000 + 1000);
+    return await adapter.operation(operation, payload, timeoutMs);
   } finally { adapter.close(); }
+}
+
+function threadReadBudget(options) {
+  if (options.deadline != null) return Math.max(1, options.deadline - Date.now()) + 1000;
+  const requestBudget = Number.isFinite(options.timeoutMs) ? Math.max(1, options.timeoutMs) : 60_000;
+  return requestBudget * 3 + 1000;
 }
