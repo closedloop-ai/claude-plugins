@@ -30,7 +30,7 @@ Activate with `Skill(skill="<id>")`.
 | `code:cross-repo-cache` | Phase 1.4.1 entry, before cross-repo-coordinator | `CROSS_REPO_CACHE_HIT` (with status) / `CROSS_REPO_CACHE_MISS` |
 | `judges:eval-cache` | Phase 1.3 entry, before plan-evaluator | `EVAL_CACHE_HIT` (with `simple_mode`, `selected_critics`) / `EVAL_CACHE_MISS` |
 | `code:iterative-retrieval` | Complex subagent calls where initial response may be incomplete (not for simple queries) | 4-phase protocol: Dispatch → Evaluate → Refine → Loop |
-| `code:decision-table` | Phase 2.7 (generation via plan-writer) and Phase 5.5 (verification-only via behavior-verifier) | Activated by subagents, not directly by orchestrator |
+| `$decision-table` in Codex; `/closedloop-core:decision-table` in Claude Code | Phase 2.7 (generation via plan-writer) and Phase 5.5 (verification-only via behavior-verifier) | Activated by subagents, not directly by orchestrator |
 
 **plan-validate vs plan-validator:** Use `code:plan-validate` skill for structural checks. Only launch @code:plan-validator agent after phases that modify plan content (Phase 1, 2.6, 2.7) with "SEMANTIC ONLY" prompt.
 

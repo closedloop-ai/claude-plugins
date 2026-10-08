@@ -31,7 +31,7 @@ Activate with `Skill(skill="<id>")`.
 | `code:plan-validate` | Every plan validation site (structural checks via Python script) | `VALID`, `FORMAT_ISSUES`, `EMPTY_FILE` |
 | `code:build-status-cache` | Phase 7 build check; also stamp after Phase 5 passes | `BUILD_CACHE_HIT` / `BUILD_CACHE_MISS` |
 | `code:iterative-retrieval` | Complex subagent calls where initial response may be incomplete (not for simple queries) | 4-phase protocol: Dispatch → Evaluate → Refine → Loop |
-| `code:decision-table` | Phase 5.5 (verification-only via behavior-verifier) | Activated by subagents, not directly by orchestrator |
+| `$decision-table` in Codex; `/closedloop-core:decision-table` in Claude Code | Phase 5.5 (verification-only via behavior-verifier) | Activated by subagents, not directly by orchestrator |
 | `code-review:start` (command — run via SlashCommand, NOT `Skill`) | Phase 6.5 review round (in-session review) | Writes verdict + findings under `.closedloop-ai/code-review/cr-*` |
 | `code-review:fix` | Phase 6.5 fix round (apply review findings) | Writes `fix_result.json` under the CR dir |
 

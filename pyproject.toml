@@ -18,6 +18,14 @@ extraPaths = [
 # conftest.py and same-directory modules resolve correctly without colliding
 # with other plugins' identically-named files (e.g. conftest.py).
 [[tool.pyright.executionEnvironments]]
+root = "plugins/vibe/tools/python"
+extraPaths = ["plugins/vibe/tools/python"]
+
+[[tool.pyright.executionEnvironments]]
+root = "plugins/closedloop-core/tools/python"
+extraPaths = ["plugins/closedloop-core/tools/python"]
+
+[[tool.pyright.executionEnvironments]]
 root = "plugins/code-review/tools/python"
 extraPaths = ["plugins/code-review/tools/python"]
 

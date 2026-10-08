@@ -1,12 +1,11 @@
 # Platform Plugin
 
-The Platform plugin provides foundational skills for working with the ClosedLoop/Claude Code ecosystem. It bundles five skills covering Claude Code extensibility knowledge, prompt engineering best practices, diagram visualization, artifact upload workflows, and skill creation scaffolding.
+The Platform plugin provides foundational skills for working with the ClosedLoop/Claude Code ecosystem. It bundles four skills covering Claude Code extensibility knowledge, prompt engineering best practices, artifact upload workflows, and skill creation scaffolding. It depends on `closedloop-core`, which owns the shared Mermaid visualization skill.
 
 ## Key Features
 
 - **Claude Code expert guidance**: Comprehensive quick-reference for building and maintaining skills, agents, slash commands, hooks, and plugins, including file format specifications, validation checklists, and a decision framework for choosing extension types.
 - **Context engineering**: Distilled Anthropic prompt engineering documentation covering nine techniques—from basic clarity to extended thinking—with prioritized guidance on when to apply each.
-- **Mermaid visualization**: Generates clear, effective Mermaid diagrams for system architectures, control flows, data flows, state machines, sequence diagrams, and entity relationships directly in markdown.
 - **Artifact upload**: Automates uploading files to the ClosedLoop platform as typed documents (PRD, implementation plan, feature, or template) using either a direct-API script or MCP fallback.
 - **Skill creation**: Scaffolds new skill directories with proper structure, generates SKILL.md templates with frontmatter, and guides through a five-step creation process from understanding use cases through iteration.
 
@@ -33,10 +32,6 @@ plugins/platform/
     │       ├── extended-thinking.md   # Extended thinking mode guidance
     │       ├── long-context.md        # 200K-token context window patterns
     │       └── xml-tags.md            # XML structuring patterns for prompts
-    ├── mermaid-visualizer/
-    │   ├── SKILL.md                   # Main skill definition
-    │   └── references/
-    │       └── mermaid-syntax.md      # Complete Mermaid syntax reference
     ├── upload-artifact/
     │   ├── SKILL.md                   # Main skill definition
     │   └── scripts/
@@ -49,7 +44,7 @@ plugins/platform/
             └── quick_validate.py      # Skill validation script
 ```
 
-All five are **skills** (not agents or commands), meaning Claude invokes them automatically based on conversation context without any explicit user invocation.
+All four are **skills** (not agents or commands), meaning Claude invokes them automatically based on conversation context without any explicit user invocation.
 
 ## Skills
 
@@ -113,30 +108,6 @@ Nine prompting techniques prioritized by effectiveness, with actionable guidance
 
 ---
 
-### mermaid-visualizer
-
-**Trigger conditions**: When a user asks to explain a complex idea, concept, or system architecture, or when a diagram would help visualize control flows, system architectures, data flows, state machines, sequence diagrams, or entity relationships.
-
-**What it provides**:
-
-A comprehensive guide for creating Mermaid diagrams embedded in markdown. Covers six diagram types with syntax reference and best practices:
-
-| Diagram Type | Best For |
-|---|---|
-| Flowcharts | Decision trees, process flows, control flows |
-| Sequence Diagrams | Component/system interactions over time |
-| State Diagrams | State transitions and triggers |
-| Class Diagrams | Object-oriented relationships and hierarchies |
-| Entity Relationship Diagrams | Database schemas and data relationships |
-| System Architecture Diagrams | Component relationships and service interactions |
-
-**References**:
-
-| File | Contents |
-|------|----------|
-| `references/mermaid-syntax.md` | Complete Mermaid syntax reference: node syntax (rectangular, diamond, rounded, stadium), edge syntax (solid, dotted, thick arrows with labels), prohibited symbols and safe alternatives, all six diagram types with examples, and 10 best practices for clarity |
-
----
 
 ### upload-artifact
 
@@ -201,7 +172,7 @@ Covers skill anatomy (SKILL.md frontmatter, scripts/, references/, assets/), the
 
 ### Installing the Plugin
 
-Add the plugin to your Claude Code installation following the standard plugin installation process. Once installed, all five skills activate automatically when the conversation context matches their trigger conditions — no slash command or explicit invocation is required.
+Add the plugin and its `closedloop-core` dependency to your Claude Code installation following the standard plugin installation process. Once installed, all four platform skills activate automatically when the conversation context matches their trigger conditions; no slash command or explicit invocation is required. Mermaid visualization remains available as `/closedloop-core:mermaid-visualizer` from the shared dependency, not as a bundled platform copy.
 
 ### Using claude-code-expert
 

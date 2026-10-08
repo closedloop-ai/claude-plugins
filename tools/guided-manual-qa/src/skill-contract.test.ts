@@ -1,6 +1,6 @@
 /**
  * Contract checks for the guided-manual-qa skill text. The skill is loaded by
- * both Claude Code and Codex from plugins/code/skills/guided-manual-qa, so
+ * both Claude Code and Codex from plugins/vibe/skills/guided-manual-qa, so
  * these tests pin the rules that must not silently drift out of its markdown.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 const SKILL_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  "../../../plugins/code/skills/guided-manual-qa",
+  "../../../plugins/vibe/skills/guided-manual-qa",
 );
 
 function read(relativePath: string): string {

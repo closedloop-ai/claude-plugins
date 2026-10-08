@@ -4,6 +4,30 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.0.0
+
+#### Added
+- Shared `decision-table`, `workflow-code-review`, `mermaid-visualizer`, `closedloop-intel`, and `plan-structure` skills, moved to their own plugin with Claude Code and Codex manifests and marketplace entries. Consumers load them by name and read resources from the loaded skill's own folder.
+
+### code v1.19.24
+
+#### Changed
+- Moved vibe sessions, ticket workflows, PR monitoring, manual QA, and shared instruction skills into `vibe` and `closedloop-core`. Planning agents, prompts and schema metadata name shared skills for both runtimes. Claude Code installs core through the plugin dependency; Codex installs it explicitly.
+
+### platform v1.1.5
+
+#### Changed
+- Mermaid visualization uses the `closedloop-core` dependency instead of a second bundled copy.
+
+### vibe v1.0.0
+
+#### Added
+- Vibe and handoff, vibe seed refresh, the ClosedLoop ticket skills, PR monitoring, guided manual QA, measurement discipline, and their workers and tests, moved together into an independently installable plugin for Codex and Claude Code.
+- Codex preflight stops before session setup when `closedloop-core` is missing or disabled and prints its install command using the resolved PATH or app-bundled CLI. Missing Node retains its existing prerequisite repair. The selected runtime argument preserves Claude Code's manifest dependency behavior.
+
+#### Changed
+- Plan lint requires the template path supplied by the loaded `plan-structure` skill. Guided manual QA build output and CI checks follow its new plugin location.
+
 ### code v1.19.23
 
 #### Added

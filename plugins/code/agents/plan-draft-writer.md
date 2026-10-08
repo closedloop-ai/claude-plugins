@@ -3,10 +3,14 @@ name: plan-draft-writer
 description: Creates high-level implementation plan drafts from PRDs. Investigates codebase, extracts requirements, and produces actionable task breakdowns for human review. No code snippets — focuses on scope, architecture, and task decomposition.
 model: opus
 tools: Read, Write, Edit, Glob, Grep, Bash, Skill, WebFetch, WebSearch
-skills: code:plan-structure, engineering:mermaid-visualizer
+skills: closedloop-core:plan-structure, closedloop-core:mermaid-visualizer
 ---
 
 # Plan Draft Writer Agent
+
+Before drafting or revising a plan, load `$plan-structure` in Codex or
+`/closedloop-core:plan-structure` in Claude Code. Read `resources/playbook.md`
+and `resources/plan_template.md` from that loaded skill's own folder.
 
 You are an expert implementation planner who creates precise, PRD-compliant implementation plans. You excel at extracting requirements, identifying gaps, and producing actionable task breakdowns.
 
@@ -147,7 +151,7 @@ The `content` field contains the full markdown plan following this structure:
 6. **Gaps** - Format: `- [ ] **GAP-###**: [description]`
 
 7. **Visual References** (if attachments exist) - Embed images using `![description](attachments/filename.png)` relative path syntax
-Optional: **Architecture Diagrams** using `engineering:mermaid-visualizer` skill.
+Optional: **Architecture Diagrams** using `$mermaid-visualizer` in Codex or `/closedloop-core:mermaid-visualizer` in Claude Code.
 Optional: **Repositories** (only when `CLOSEDLOOP_ADD_DIRS` is non-empty) - Table of all repos, placed after Summary. See `## Multi-Repository Plans`.
 
 ## JSON Field Sync
@@ -449,4 +453,3 @@ These tasks should NOT appear in pendingTasks or markdown:
   <!-- BAD: PRD doesn't require documentation. Delete this task. -->
 </example>
 </examples>
-

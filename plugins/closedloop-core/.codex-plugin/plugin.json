@@ -1,0 +1,18 @@
+{
+  "name": "closedloop-core",
+  "version": "1.0.0",
+  "description": "Shared ClosedLoop planning, intelligence, diagrams, and review skills",
+  "author": {"name": "ClosedLoop", "email": "support@closedloop.ai"},
+  "homepage": "https://github.com/closedloop-ai/claude-plugins",
+  "repository": "https://github.com/closedloop-ai/claude-plugins",
+  "license": "Apache-2.0",
+  "keywords": ["closedloop", "planning", "review", "agent-plugin"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ClosedLoop Core",
+    "shortDescription": "Shared planning, intelligence, and review skills.",
+    "developerName": "ClosedLoop",
+    "category": "Development",
+    "capabilities": ["Analyze"]
+  }
+}
