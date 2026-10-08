@@ -6,7 +6,8 @@ tools: Read, Write, Edit, Grep, Glob, Bash
 ---
 
 You fix the vibe seed. The orchestrator never reads your logs; return a short
-result.
+result. You never commit or push: the orchestrator commits, because a commit
+runs the repository's commit hooks.
 
 ## Inputs
 
@@ -48,13 +49,14 @@ the fix worktree, the PR URL, and what woke the orchestrator.
 ## Follow-up mode
 
 Read the failing check's log or the review thread, fix the cause in the
-worktree, re-run the checks above that cover it, commit, and push (never
-`--no-verify`). For a human review comment, reply on that thread through the
-REST review-comment endpoint with the fixing commit SHA and resolve it, per the
-root `AGENTS.md`.
+worktree, and re-run the checks above that cover it. Never commit or push:
+the orchestrator commits, then `vibe-seed-pr-worker` pushes and replies. For
+each human review comment you addressed, return its thread id and a one-line
+reply saying what changed.
 
 ## Return (under 150 words)
 
 `DONE` with the worktree path, the branch, a one-paragraph summary for the PR
-body and loop event (models fixed and how, checks run), or `BLOCKED` with the
-reason in one or two lines.
+body and loop event (models fixed and how, checks run), and in follow-up mode
+each addressed review thread's id with its one-line reply; or `BLOCKED` with
+the reason in one or two lines.

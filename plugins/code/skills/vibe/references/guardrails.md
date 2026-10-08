@@ -92,6 +92,12 @@ decision recorded on ISS-12017. Build in Storybook and app code directly.
   `packages/app/AGENTS.md`).
 - Add a new control to the surface that already owns that entity or flow
   (same tab, drawer, dialog, or card) instead of a parallel page.
+- A change that applies to two or more screens or surfaces that render a
+  shared parent goes into that parent as a generic, domain-free slot or
+  extension point; the domain wiring stays in the owning feature package, and
+  each screen opts in instead of reimplementing it. Never copy an existing
+  shared component. `design-pass.md` has the owner rules, the build loop's
+  prep step, and what handoff flags.
 
 ## Reuse first
 
@@ -134,8 +140,8 @@ When nothing in the catalog fits:
      never picked up); `packages/app/*/components/` stories may sit beside the
      component.
    - A new `packages/design-system/components/ui/*.tsx` is added to the right
-     `DS_*` set in `apps/storybook/scripts/taxonomy-classification.mjs`, and
-     its tests go in `packages/design-system/__tests__/`.
+     `DS_*` set in `apps/storybook/scripts/taxonomy-classification.mjs`. Its
+     tests are not written here (Tests, below).
    - Register it by running `pnpm --filter storybook catalog:sync` and
      `pnpm --filter storybook validate:catalog`. Never hand-edit
      `component-catalog.ts`.
@@ -180,6 +186,32 @@ and `packages/app/shared/lib/feature-flags.ts`). One key gates web and Desktop.
 Tell them the Labs entry shows on their environment only if those flags are
 on for them, and record the key in the session summary so handoff can list
 it.
+
+## Tests
+
+No worker in vibe or handoff writes or edits a test, in the build loop or at
+handoff: no new or changed `*.test.*` or `*.spec.*` file, nothing under
+`__tests__/` or `e2e/`, no snapshot or fixture a test reads. Tests are
+engineering's job, not the job of the person running the session. Stories
+are not tests and are still built. Lint and typecheck stay allowed. Handoff
+still runs the existing tests; a failure the session caused is fixed in the
+session's own code, and an existing test is never edited, weakened, or
+skipped. A test that fails only because it asserts what the person
+deliberately changed is left as it is and listed for engineering.
+
+The only exception: when the person explicitly asks for a pull request to be
+raised, full tests for all of the session's changes are written before the
+pull request is opened. Neither vibe nor handoff opens a pull request today,
+so this exception has no path yet.
+
+## Checks
+
+Never make a failing check pass by changing the check: test assertions and
+expected values, snapshots, tolerances, skips, timeouts, coverage or size
+thresholds, lint and type suppressions (`biome-ignore`, `@ts-expect-error`, a
+cast that only quiets the compiler), a raised allowlist count, or the harness.
+Fix the code. The one exception is the shrink-only allowlist edit above. If an
+expectation looks wrong, keep it and report it.
 
 ## Repo rules that bite most often
 

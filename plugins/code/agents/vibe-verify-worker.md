@@ -25,16 +25,18 @@ then without `--write`; `pnpm check:source-gates`; `pnpm typecheck:affected`;
 rest). When the session changed `packages/app`, also run
 `pnpm --filter desktop test:renderer` directly, since turbo may serve the
 Desktop renderer lane from cache. Then run every lane `pnpm test:lanes` names
-for the diff, except Desktop e2e. Use closedloop-graph `code_tests_for` on the
+for the diff, except Desktop e2e. Use closedloop-graph (required) `code_tests_for` on the
 changed files to find suites that cover them and run any it names that none
 of those selected. A failing source gate that is only a stale entry in
 `scripts/lint/source-gate-allowlist.json` (the session removed the last
 allowlisted occurrence) is fixed by deleting that entry or lowering its
 count; that shrink is the one `scripts/` edit a session may make. Fix every
-failure in the session's own changes. A failing test is a failing expectation: fix the code, unless the test asserts old UI the
-person deliberately changed, in which case update that assertion and list it.
-Never skip, delete, or loosen a test. Leave failures the session did not cause
-alone and list them.
+failure in the session's own code. A failing test is a failing expectation:
+fix the code. Never write, edit, skip, delete, or loosen a test
+(`guardrails.md`, "Tests"); tests are engineering's. A test that fails only
+because it asserts what the person deliberately changed is left as it is and
+listed for engineering, not fixed by undoing the person's change. Leave
+failures the session did not cause alone and list them.
 
 ## Full-suite mode (the session changed backend code)
 
@@ -55,5 +57,7 @@ Storybook scans).
 ## Return (under 150 words)
 
 `DONE` with the pass/fail line per check (or the footprint summary), what you
-fixed, deliberate old-UI test updates, and pre-existing failures left alone.
-Or `BLOCKED` with the one failure you could not fix and why.
+fixed, failing tests that assert what the person deliberately changed (left
+for engineering), and pre-existing failures left alone. Or `BLOCKED` with the
+one failure you could not fix and why. In checks and full-suite modes, end
+with the Graph block (`closedloop-graph.md`).

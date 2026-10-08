@@ -41,4 +41,5 @@ change workers (not shown to the person); overlapping or in-flight tickets
 (slug and title); and whether this is a change to an existing screen or a
 net-new screen. Or
 `NEEDS_PERSON` with questions only the person can answer (scope, which of two
-existing tickets they mean). Note whether closedloop-graph was available.
+existing tickets they mean). End with the Graph block
+(`../skills/vibe/references/closedloop-graph.md`); the graph is required.

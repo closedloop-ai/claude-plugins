@@ -103,12 +103,17 @@ subagent that worked on this.>
 <Filled at handoff.>
 - Components added: <path> with story <path>, one line each, or "none"
 - Components changed: <path>: <what changed>, or "none"
+- Design decisions: <one line per non-trivial request: the owner it was
+  built in and the rule that chose it; for each restructure at handoff, the
+  owner, its shape, and the alternative rejected and why>, or "none: only
+  copy, color, or spacing changed"
 - Storybook footprint: <components added and changed with story counts, net
   sidebar rows, governance problems left>
 - Checks: <lint, source gates, typecheck, tests (every lane when the session
   changed backend code), each pass or fail>
 - Reviews: <n fixed, n rejected; one line each, rejected with why>
-- Tests whose old-UI assertions were updated on purpose: <list or "none">
+- Failing tests that assert what the person deliberately changed, left for
+  engineering to update (vibe never edits tests): <list or "none">
 - Pre-existing failures not touched by this work: <list or "none">
 - Next: <the next owner the person chose at handoff, by full name> picks
   this up. Usually design reviews the components in the Storybook above (it
@@ -135,7 +140,7 @@ Yes / no, plus one line when it's a no:
 1. Followed our codebase rules. AGENTS.md and the nearest owning AGENTS.md, no lint or gate suppressions added to get green.
 2. Reused existing components. No hand-rolled copy of something we already ship, and no duplicated helpers or types.
 3. Storybook is right. Every new or changed component has stories in the right place, and the controls are usable. (Design)
-4. Extended the existing pattern. For example, bulk add tag built once on the shared bulk action so Sessions and Branches both get it, not two copies.
+4. Extended the existing pattern. For example, a capability two screens share built once on their shared parent so both get it, not two copies.
 5. Backend is wired correctly. Route, service, shared types, Zod and migration follow our layering, and nothing is left on a stub. (Eng)
 6. No invented copy. Every user-visible string came from a person or an existing label.
 7. What we had to fix before merge. A count and a short list. (Eng, filled in at merge)

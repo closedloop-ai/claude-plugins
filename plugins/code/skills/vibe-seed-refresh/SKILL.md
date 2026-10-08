@@ -22,8 +22,13 @@ This thread can live for days across monitor wake-ups, so its context is for
 state and decisions only. Under all circumstances you never read source,
 search the codebase, edit files, read logs or diffs, or run seeds, builds,
 tests, git, or `gh` yourself. You read and write the state file, call the
-ClosedLoop MCP for the ticket and loop, start and stop `gh-monitor-pr`, and
-dispatch workers with short briefs. Workers return a short status (`DONE`,
+ClosedLoop MCP for the ticket and loop, start and stop `gh-monitor-pr`,
+commit, and dispatch workers with short briefs. Committing is yours alone,
+because a commit runs the repository's commit hooks: use
+`node ../vibe/scripts/commit-worktree.mjs --worktree "<fix worktree>" --subject "<subject>" [--body "<text>"]`,
+which prints short JSON. No worker commits. A commit the hook refused
+(`"ok":false`) goes to `vibe-seed-fix-worker` in follow-up mode with the
+error, then you commit again. Workers return a short status (`DONE`,
 `BLOCKED`, or `DRIFT` / `CLEAN` from the check worker).
 
 Workers are this plugin's agents (`../../agents/<name>.md`; in Codex spawn a
@@ -35,7 +40,7 @@ subagent with the file's body as its instructions, in Claude Code use
 |---|---|
 | `vibe-seed-check-worker` | refresh the check worktree to fresh main and report drift |
 | `vibe-seed-fix-worker` | fix the seed in the fix worktree until the checks pass; also fixes CI failures and review comments later |
-| `vibe-seed-pr-worker` | commit, push, open the PR from the template; later merge main, re-enqueue, report PR state |
+| `vibe-seed-pr-worker` | push and open the PR from the template; later push fixes and reply on review threads, stage a merge of main, re-enqueue, report PR state |
 
 ## State
 
@@ -77,8 +82,11 @@ summary. On `BLOCKED`, post the reason as a loop event, tell Daniel, and stop.
 
 ## 4. Pull request
 
-Dispatch `vibe-seed-pr-worker` in open mode with the worktree and ticket. It
-returns the PR URL. Link it (ClosedLoop `create_branch_artifact` with the ticket's project UUID as
+Commit the fix worker's changes with the subject
+`<ISS-slug>: Refresh the vibe seed for <summary>` (64 characters or fewer, so
+it stays within 72 once GitHub appends ` (#NNNN)`; no mention of AI tools).
+Then dispatch `vibe-seed-pr-worker` in open mode with the worktree, ticket,
+and the fix worker's summary. It pushes and returns the PR URL. Link it (ClosedLoop `create_branch_artifact` with the ticket's project UUID as
 `projectId`, the branch as `branchName`, and the ticket's UUID as
 `sourceArtifactId`; then a loop event),
 start the monitor per the `gh-monitor-pr` skill with the PR URL and
@@ -90,16 +98,22 @@ Read state. Dispatch `vibe-seed-pr-worker` in status mode for a one-line PR
 state, then act on it:
 
 - Failing check or new human review comment: dispatch `vibe-seed-fix-worker`
-  in follow-up mode with the PR URL. It fixes, pushes, replies on review
-  threads with the fixing commit, and resolves them. A failure unrelated to
+  in follow-up mode with the PR URL. It fixes and returns the threads it
+  addressed with a one-line reply for each. Commit with the subject
+  `<ISS-slug>: <what the fix changed>`, then dispatch `vibe-seed-pr-worker`
+  in push mode with those threads and replies; it pushes, replies on each
+  thread with the fixing commit, and resolves them. A failure unrelated to
   the diff gets one re-run; a second failure gets a loop event and a note to
   Daniel instead of more re-runs.
-- Merge conflict: `vibe-seed-pr-worker` in sync mode (merge main, re-run the
-  fix worker's checks through it, push).
+- Merge conflict: `vibe-seed-pr-worker` in sync mode (stage a merge of main
+  without committing, re-run the fix worker's checks through it). Commit with
+  the subject `Merge origin/main into <branch>`, then `vibe-seed-pr-worker`
+  in push mode.
 - Green and approved or not requiring review: `vibe-seed-pr-worker` in enqueue
   mode (`gh pr merge --squash --auto`); save phase `queued`.
 - Removed from the queue: `vibe-seed-fix-worker` in follow-up mode to
-  diagnose per `docs/runbooks/merge-queue-operations.md`, then enqueue again.
+  diagnose per `docs/runbooks/merge-queue-operations.md`; commit and push as
+  for a failing check, then enqueue again.
 - Merged: save phase `merged` and continue to section 6.
 
 End every wake-up turn after acting; the monitor wakes the thread again.

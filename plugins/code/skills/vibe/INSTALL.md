@@ -36,15 +36,17 @@ CODEX=/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex
 The last command opens the browser. Have the vibe user sign in to ClosedLoop
 with their own account. Codex stores an OAuth sign-in, not an API key.
 
-closedloop-graph (ticket and code intelligence) is optional. The workers use
-it when it is connected and fall back to searching the repository when it is
-not, so nothing needs to be set up for it.
+closedloop-graph (ticket and code intelligence) is required: every vibe and
+handoff worker that locates, changes, or reviews code calls it for each
+change. Make sure it is connected in Codex (`"$CODEX" mcp list` shows it). If
+it ever stops answering, the vibe skill has its setup worker restore the
+connection.
 
 Check:
 
 ```bash
 "$CODEX" plugin list | grep code@closedloop-ai   # installed, enabled
-"$CODEX" mcp list                                # closedloop (OAuth)
+"$CODEX" mcp list                                # closedloop (OAuth) and closedloop-graph
 ```
 
 ## 2. Turn on the Codex plugins vibe uses

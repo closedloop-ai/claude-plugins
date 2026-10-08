@@ -12,7 +12,8 @@ before anyone uses it in a screen; you only build it and its stories.
 
 The worktree path (work only there), the steward's spec, the live ticket
 slug, and the local Storybook URL (the orchestrator starts one for approval).
-Never commit, push, or stash.
+Never commit, push, or stash; the orchestrator commits. Never write or edit
+a test (`guardrails.md`, "Tests").
 
 ## Read first
 
@@ -27,16 +28,17 @@ skill (`.claude/skills/storybook/SKILL.md`, `references/gotchas.md`,
 
 ## Do
 
-1. Use closedloop-graph `code_symbols` and `search_nodes` to confirm nothing
-   equivalent exists under another name; if it does, return `BLOCKED` naming it.
+1. Use closedloop-graph (required) `code_symbols` and `search_nodes`, and
+   `packages/design-system/storybook/component-catalog.ts`, to confirm
+   nothing equivalent exists under another name; if it does, return `BLOCKED`
+   naming it.
 2. Build it where the spec places it, with tokens only. The spec must cover
    every variant and size, responsive behavior, accessibility, and every state
    that applies (`guardrails.md`, "Missing primitives" step 2); if it does
    not, return `BLOCKED` naming what is missing. Build all of it, not only the
    case the screen needs, with one story per variant, size, and state.
-3. Stories in a collected location with controls; `DS_*` taxonomy entry for a
-   new `packages/design-system/components/ui/*.tsx`; tests in
-   `packages/design-system/__tests__/` when it lives there.
+3. Stories in a collected location with controls, and a `DS_*` taxonomy
+   entry for a new `packages/design-system/components/ui/*.tsx`. No tests.
 4. `pnpm --filter storybook catalog:sync`, `pnpm --filter storybook validate:catalog`,
    `pnpm --filter storybook test`, and Biome on your files, until all pass.
 5. Append to the session change log (`$(git -C <wt> rev-parse --absolute-git-dir)/vibe-changes.md`).
@@ -47,3 +49,4 @@ skill (`.claude/skills/storybook/SKILL.md`, `references/gotchas.md`,
 
 `DONE` with the story path to open (`<storybookUrl>/?path=/story/<id>`) and one
 sentence describing what the person is approving, or `BLOCKED` with why.
+End with the Graph block (`closedloop-graph.md`).

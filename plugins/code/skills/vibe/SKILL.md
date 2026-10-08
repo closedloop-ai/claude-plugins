@@ -21,9 +21,12 @@ work itself. Under all circumstances:
 - You never read source files, search the codebase, explore the repo, edit or
   create files, read tickets in full, or run builds, tests, linters,
   installers, git, or `gh`.
+- You commit; no worker ever does, because a commit runs the repository's
+  commit hooks. You commit only through `scripts/commit-worktree.mjs`, which
+  returns short JSON.
 - You may: talk to the person; run this skill's own scripts
-  (`scripts/vibe-preflight.sh`, `scripts/vibe-sessions.mjs`), whose output is
-  short JSON; call ClosedLoop `get-me` and closedloop-graph `sync_status` to
+  (`scripts/vibe-preflight.sh`, `scripts/vibe-sessions.mjs`,
+  `scripts/commit-worktree.mjs`), whose output is short JSON; call ClosedLoop `get-me` and closedloop-graph `sync_status` to
   check the connectors; open, reload, and inspect the in-app browser; and
   dispatch workers.
 - Everything else goes to a worker, even a one-line change and even when you
@@ -62,8 +65,15 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   spaces in their names. Quote every path you pass to a command.
 - Paths like `scripts/...` and `references/...` are relative to this skill's
   folder, not the repository.
-- Every worker reads `references/closedloop-graph.md` and uses closedloop-graph
-  first. When you dispatch one, say so in the brief.
+- Every worker reads `references/closedloop-graph.md`. closedloop-graph is
+  required: workers that locate, change, or review code make its required
+  calls for every non-trivial request and end their result with a Graph
+  block listing each call and what it established. When you dispatch one,
+  say so in the brief. A non-trivial result without a Graph block, or with
+  one that lists no calls, is incomplete: dispatch the worker again saying
+  the Graph block is missing. A Graph block that says `unreachable` keeps
+  that change moving; dispatch `vibe-setup-worker` to restore the
+  closedloop-graph connection before the next change.
 - Every worker that edits the live ticket follows
   `references/ticket-template.md`. Say so in the brief and give the slug.
 
@@ -71,13 +81,13 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 
 | Worker | Dispatch it to |
 |---|---|
-| `vibe-setup-worker` | fix failed preflight checks, bootstrap a worktree, start local Storybook or the local Desktop app (and its browser tab), and work around a symphony-alpha bug locally (ticket filed, fix kept out of every commit) |
+| `vibe-setup-worker` | fix failed preflight checks, restore the closedloop-graph connection, bootstrap a worktree, start local Storybook or the local Desktop app (and its browser tab), and work around a symphony-alpha bug locally (ticket filed, fix kept out of every commit) |
 | `vibe-requirements-worker` | read a ClosedLoop ticket (and its PRD, plan, related tickets) or a description and turn it into a brief, plus the route and FEATURE_MAP id where the relevant code lives, for change workers |
 | `vibe-ticket-worker` | create the session's live ticket, and fill its record sections when you ask |
 | `vibe-environment-worker` | stand up the session's Vercel environment, redeploy it, or refresh its flag snapshot |
-| `vibe-change-worker` | make one requested change (chat or annotation): locate, implement, request backend work, add stories, self-check, update the live ticket |
-| `vibe-backend-worker` | build the backend half of a change (route, service, validation, schema and migration, seed, tests), driven by a decision table |
-| `vibe-primitive-worker` | build a new design-system primitive from an approved spec, with stories, catalog, and tests |
+| `vibe-change-worker` | make one requested change (chat or annotation): locate and prep (pick the owner by rule), implement at that owner, request backend work, add stories, self-check, update the live ticket |
+| `vibe-backend-worker` | build the backend half of a change (route, service, validation, schema and migration, seed), driven by a decision table |
+| `vibe-primitive-worker` | build a new design-system primitive from an approved spec, with stories and catalog |
 | `vibe-prototype-worker` | build, iterate, share, or prepare an owned mockup for handoff through the repository's canonical prototype skill |
 
 Every worker result starts with a status: `DONE`, `NEEDS_PERSON` (a question
@@ -85,8 +95,14 @@ or action only the person can answer or take, already phrased for them),
 `NEEDS_PRIMITIVE` (a building block is missing; includes the steward's spec),
 `NEEDS_BACKEND` (the backend work the change needs, as a spec for
 `vibe-backend-worker`), `NEEDS_DESKTOP_STOP` (the worker must merge
-main into the worktree or otherwise swap its commit while Desktop runs), or
-`BLOCKED` (with the reason). Relay `NEEDS_PERSON` verbatim in plain words,
+main into the worktree or otherwise swap its commit while Desktop runs),
+`NEEDS_COMMIT` (the worktree has changes you have not committed yet: commit
+them as section 6 step 3 says, then dispatch the worker again), or
+`BLOCKED` (with the reason).
+
+No worker in this skill writes or edits a test (`references/guardrails.md`,
+"Tests"); tests are engineering's. The only exception is a pull request the
+person explicitly asks for, and this skill opens none. Relay `NEEDS_PERSON` verbatim in plain words,
 then dispatch a fresh worker with the answer.
 
 ## 1. Preflight
@@ -114,9 +130,10 @@ preserve `--prototype` through repair and repo-selection reruns for the common
 checks. The later app preflight deliberately omits it.
 
 Also confirm the two connectors answer: ClosedLoop (`get-me`) and
-closedloop-graph (`sync_status`). closedloop-graph is optional: if it does not
-answer, do not ask the person to set anything up. Tell every worker the graph
-is unavailable so it searches the repository instead, and continue.
+closedloop-graph (`sync_status`). closedloop-graph is required. If it does
+not answer, dispatch `vibe-setup-worker` to restore the connection; never ask
+the person to set anything up beyond what that worker reports as
+`NEEDS_PERSON`.
 
 ## 2. Start or resume
 
@@ -200,16 +217,19 @@ For a resumed owned prototype session, use its worktree and run
 current commit before opening the returned preview. Bring back its recorded
 immutable preview tab when asked. Chat and annotations go to its iterate mode,
 including all annotation context; fixes go to its fix mode. A redeploy request
-goes to its share mode and opens the newly returned immutable URL. These routes
+goes to its share mode and opens the newly returned immutable URL. Where the
+canonical procedure commits, the worker returns `NEEDS_COMMIT` with the
+message the procedure calls for; commit with `scripts/commit-worktree.mjs`
+using that message, then dispatch it again. These routes
 replace the app-only sections 3 through 7 for this session. Handoff uses the
 same ticket and next-owner assignment through the handoff skill.
 
 Resuming: use the session's `worktree`, and run `codex-sessions` again so a
 new conversation is recorded too. Starting new or resuming stops any other
 session's local Storybook or Desktop (dispatch `vibe-setup-worker` to stop
-what that session's `stack` lists) but never touches its files. You never
-commit, push, stash, or rebase; only `vibe-environment-worker` commits and
-pushes, when the person asks to redeploy.
+what that session's `stack` lists) but never touches its files. You commit
+only through `scripts/commit-worktree.mjs` and never push, stash, or rebase;
+only `vibe-environment-worker` pushes, when the person asks to redeploy.
 
 Desktop's screens reload live from the worktree, so merging main into it, or
 any other swap of its commit, while Desktop runs crashes the Desktop tab
@@ -332,14 +352,20 @@ section 2; the orchestrator invokes canonical `$prototype` through that worker.
    (for annotations: the comment, the element context, the route, and any
    Adjust values), the Labs answer if one applies, the person's own words for
    any user-visible text, and the local Storybook URL if one is running. It
-   returns `PLAN` in a few minutes: the units and any questions.
+   returns `PLAN` in a few minutes: its Prep block (the owner it picked by
+   rule, `references/design-pass.md`), its Graph block, the units, and any
+   questions. The Prep and Graph blocks are for workers: never relay them to
+   the person, and never ask the person to confirm an owner or approach.
 2. Ask its questions first (step 4). Then tell the person in one or two plain
-   sentences what will happen, in the order of the units ("First the select
-   boxes on Sessions, then the same on Branches, then the tag menu; I'll tell
-   you as each one is done."). If any unit adds or changes a story and local
+   sentences what will happen, in the order of the units ("First the new
+   control on the first screen, then the same on the second, then its menu;
+   I'll tell you as each one is done."). If any unit adds or changes a story and local
    Storybook is not running, dispatch `vibe-setup-worker` to start it now.
 3. Dispatch a change worker for each unit in turn, with the same inputs plus
-   the plan and the unit to build. On each `DONE`, relay its one plain
+   the plan, its Prep block verbatim, and the unit to build. The loop has no
+   review step: placement, duplication, the red-flag screen, reviews, tests,
+   lint, and typecheck beyond the worker's own self-check all happen at
+   handoff. On each `DONE`, relay its one plain
    sentence right away. If the unit named a story, open it in local
    Storybook; otherwise remind them changes show in the app after they say
    "redeploy". Update the session record with the worker's one-line summary:
@@ -379,21 +405,28 @@ on Vercel", "let me see it live", or anything meaning the same:
 1. Run `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` so
    the ticket lists every subagent so far.
 2. Tell them in one line that it is on its way and takes a few minutes.
-3. Dispatch `vibe-environment-worker` in redeploy mode with the worktree, the
+3. Commit everything changed since the last redeploy:
+   `node scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the changes since the last redeploy>" --body "<the screens changed, one per line>"`.
+   The subject stays under 72 characters and never mentions AI tools. The
+   script leaves out the session's `localFixes` and files that never belong
+   in a commit, and the repository's commit hook runs. `committed: false`
+   means nothing changed; continue. `"ok":false` means the hook refused:
+   dispatch `vibe-change-worker` (or `vibe-backend-worker` for backend code)
+   in fix mode with the error, then commit again.
+4. Dispatch `vibe-environment-worker` in redeploy mode with the worktree, the
    live ticket slug, the session summary, and the session's `localFixes`
-   paths. It makes one commit of everything changed since the last redeploy,
-   pushes it, requests the environment again so that commit is deployed, and
-   updates the ticket.
-4. On `DONE`, reload the app tab (and the Desktop and Storybook tabs if
+   paths. It pushes, requests the environment again so that commit is
+   deployed, and updates the ticket. A build-loop redeploy runs no tests;
+   they wait for handoff.
+5. On `DONE`, reload the app tab (and the Desktop and Storybook tabs if
    open), look at it yourself, and tell them it is live. Whenever you open
    the Vercel `storybookUrl` and the tab lands on `vercel.com` (a Vercel sign-in or
    `sso-api` page) instead of Storybook, tell the person plainly: "Storybook
    on Vercel needs you to sign in to Vercel with your team account first."
-   Do not try to get around it. On `BLOCKED` because the tests failed, the
-   repo's checks refused the push, or a build failed in the session's own
-   change, dispatch
+   Do not try to get around it. On `BLOCKED` because the repo's checks
+   refused the push or a build failed in the session's own change, dispatch
    `vibe-change-worker` (or `vibe-backend-worker` for backend code) in fix
-   mode with the failure, then redeploy again. Tell the person in one plain
+   mode with the failure, then commit and redeploy again (steps 3 and 4). Tell the person in one plain
    line that something needed fixing first.
 
 Never redeploy unless the person asked.
@@ -444,4 +477,6 @@ Whenever the person asks to throw a session away (at any point, for any
 - `references/ticket-template.md`: the live ticket's sections and who keeps
   each one current.
 - `references/guardrails.md`: what may change and how (change and primitive workers).
+- `references/design-pass.md`: the owner rules, the build loop's prep step,
+  and the handoff red-flag screen and restructuring.
 - `references/annotations.md`: turning annotations into code locations (change worker).

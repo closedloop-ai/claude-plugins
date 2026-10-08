@@ -44,6 +44,16 @@ The checkout is the one the preflight remembered
   password, a sign-in needs the person in the browser, macOS asks for folder
   access, or more than one checkout was found, stop and return
   `NEEDS_PERSON`.
+- closedloop-graph unreachable (preflight's `sync_status` failed, or a
+  worker's Graph block said `unreachable`): this is a setup problem, not a
+  normal state. Check that Codex lists the server (`mcp list` on the Codex
+  CLI that `../skills/vibe/INSTALL.md` uses) and that it answers. When it is listed
+  but not answering, reconnect it the way `preflight.md` reconnects the
+  ClosedLoop connector (Computer Use may open Settings; the person completes
+  any sign-in), or have the person quit and reopen the ChatGPT app, returned
+  as `NEEDS_PERSON` in one plain line. When it is not configured at all,
+  return `BLOCKED` saying the closedloop-graph connector is missing, for
+  Daniel Ochoa.
 - Bootstrap: run `./.closedloop-ai/loops-setup.sh` in the worktree; on failure
   read its output and fix the cause if it is a missing prerequisite.
 - Local Storybook: start it detached in the worktree on a free port from 6100
