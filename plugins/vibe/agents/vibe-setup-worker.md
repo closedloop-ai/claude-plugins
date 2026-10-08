@@ -12,6 +12,13 @@ never run on this Mac; they run on the session's Vercel environment
 
 ## Inputs
 
+Read `../skills/vibe/references/quality-loop.md`. Never ask the person a
+technical question; resolve checkout/runtime choices from the active workspace,
+remembered session and current evidence, or return `BLOCKED` internally. Human
+sign-in, OS permissions and entering their own credentials remain legitimate
+actions. Obtain the orchestrator's exclusive record-writing turn before any
+stack/profile/local-fix/session JSON mutation, never alongside another writer.
+
 One of: the failed preflight checks (JSON lines) and selected preflight
 arguments (`--prototype` for common/prototype checks, absent for the app's
 full preflight, plus `--repo` when supplied); a worktree path to
@@ -42,8 +49,9 @@ The checkout is the one the preflight remembered
   Computer Use plugin may click through installer or Authorize dialogs as
   `preflight.md` describes. When an installer is waiting for the Mac
   password, a sign-in needs the person in the browser, macOS asks for folder
-  access, or more than one checkout was found, stop and return
-  `NEEDS_PERSON`.
+  access, stop and return `NEEDS_PERSON` for that human-only action.
+  Multiple checkouts are resolved internally from the active workspace or
+  recorded session; if still ambiguous, return `BLOCKED`, not a technical question.
 - closedloop-graph unreachable (preflight's `sync_status` failed, or a
   worker's Graph block said `unreachable`): this is a setup problem, not a
   normal state. Check that Codex lists the server (`mcp list` on the Codex

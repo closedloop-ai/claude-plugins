@@ -38,6 +38,9 @@ these updates; the same ticket worker verifies completeness and assignment.
   `<tag>`) must go in a code span or it disappears.
 - Keep the headings exactly as below; the handoff check finds sections by
   heading.
+- Technical plans in `.closedloop-ai/vibe-plans/` stay local to the worktree:
+  never upload them, paste their body into this ticket or add a plan-approval
+  milestone. Product scope and truthful delivery/review history remain here.
 
 | Section | Written by | When |
 |---|---|---|
@@ -104,7 +107,7 @@ subagent that worked on this.>
 - Components added: <path> with story <path>, one line each, or "none"
 - Components changed: <path>: <what changed>, or "none"
 - Design decisions: <one line per non-trivial request: the owner it was
-  built in and the rule that chose it; for each restructure at handoff, the
+  built in and the rule that chose it; for each restructure during building or handoff, the
   owner, its shape, and the alternative rejected and why>, or "none: only
   copy, color, or spacing changed"
 - Storybook footprint: <components added and changed with story counts, net
@@ -112,8 +115,8 @@ subagent that worked on this.>
 - Checks: <lint, source gates, typecheck, tests (every lane when the session
   changed backend code), each pass or fail>
 - Reviews: <n fixed, n rejected; one line each, rejected with why>
-- Failing tests that assert what the person deliberately changed, left for
-  engineering to update (vibe never edits tests): <list or "none">
+- Tests authored at handoff: <paths and criteria covered; any obsolete
+  expectation changed with its exact human behavior ruling>, or "none"
 - Pre-existing failures not touched by this work: <list or "none">
 - Next: <the next owner the person chose at handoff, by full name> picks
   this up. Usually design reviews the components in the Storybook above (it
@@ -150,8 +153,8 @@ Yes / no, plus one line when it's a no:
 
 - [ ] Review the backend listed under Backend built and finish anything under
       Backend still missing
-- [ ] Add or extend route, service, hook, and component tests for the real
-      data path
+- [ ] Review the handoff's route, service, hook, and component coverage for
+      the real data path and extend it where engineering finds a gap
 - [ ] Decide whether a net-new surface needs a default-off PostHog flag before
       merge (closed-by-default UI policy)
 - [ ] Verify shared `packages/app` changes on both web and Desktop

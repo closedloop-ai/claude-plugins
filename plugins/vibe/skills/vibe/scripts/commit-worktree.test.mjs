@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { git, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "commit-worktree.mjs");
+const PLAN_GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), "local-plans.mjs");
 
 function setup(t) {
   const fixture = makeHome("commit-worktree-");
@@ -73,6 +74,40 @@ test("reports nothing to commit without creating a commit", (t) => {
   assert.equal(result.json.committed, false);
   assert.deepEqual(result.json.excluded, ["scripts/fix.sh"]);
   assert.equal(commitCount(checkout, home), before);
+});
+
+test("local plans stay in the worktree even when staged, without excluding other artifacts", (t) => {
+  const { home, checkout } = setup(t);
+  const plan = ".closedloop-ai/vibe-plans/request-1.md";
+  const other = ".closedloop-ai/published-evidence.md";
+  write(checkout, plan, "private implementation plan\n");
+  write(checkout, other, "ordinary deliverable\n");
+  write(checkout, "apps/app/page.tsx", "changed\n");
+  git(checkout, ["add", plan], home);
+  const result = runNode(SCRIPT, ["--worktree", checkout, "--subject", "ISS-7: Finish the feature"], home);
+  assert.equal(result.status, 0, JSON.stringify(result.json));
+  assert.deepEqual(result.json.excluded, [plan]);
+  assert.deepEqual(result.json.files, [other, "apps/app/page.tsx"]);
+  assert.equal(git(checkout, ["ls-tree", "-r", "--name-only", "HEAD", "--", plan], home), "");
+  assert.equal(git(checkout, ["status", "--porcelain", "--", plan], home), `?? ${plan}`);
+});
+
+test("a plan already in HEAD blocks another commit and the publication guard", (t) => {
+  const { home, checkout } = setup(t);
+  const plan = ".closedloop-ai/vibe-plans/request-1.md";
+  write(checkout, plan, "private plan\n");
+  git(checkout, ["add", plan], home);
+  git(checkout, ["commit", "-m", "Fixture: accidentally committed local plan"], home);
+  write(checkout, "apps/app/page.tsx", "changed\n");
+  const before = commitCount(checkout, home);
+  const result = runNode(SCRIPT, ["--worktree", checkout, "--subject", "ISS-7: Finish the feature"], home);
+  assert.equal(result.status, 1);
+  assert.match(result.json.error, /publication is blocked/);
+  assert.equal(commitCount(checkout, home), before);
+  assert.equal(git(checkout, ["diff", "--cached", "--name-only"], home), "");
+  const guard = runNode(PLAN_GUARD, ["--worktree", checkout], home);
+  assert.equal(guard.status, 1);
+  assert.deepEqual(guard.json.committedLocalPlans, [plan]);
 });
 
 test("refuses a missing, multi-line, or over-long subject and commits nothing", (t) => {

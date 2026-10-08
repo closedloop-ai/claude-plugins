@@ -12,12 +12,15 @@ before anyone uses it in a screen; you only build it and its stories.
 
 The worktree path (work only there), the steward's spec, the live ticket
 slug, and the local Storybook URL (the orchestrator starts one for approval).
+Also the reviewed local plan, owned files/module and `deferRecords` when
+implementing in parallel. You are not alone; preserve other workers' changes.
 Never commit, push, or stash; the orchestrator commits. Never write or edit
 a test (`guardrails.md`, "Tests").
 
 ## Read first
 
 `../skills/vibe/references/closedloop-graph.md`,
+`../skills/vibe/references/quality-loop.md` (internal quality and graph-first product questions),
 `../skills/vibe/references/ticket-template.md`, and
 `../skills/vibe/references/guardrails.md` ("Missing primitives" steps 2 to 4
 are yours; the orchestrator does the approval steps). The repo's
@@ -46,6 +49,12 @@ skill (`.claude/skills/storybook/SKILL.md`, `references/gotchas.md`,
    new building block and its story.
 
 ## Return (under 120 words)
+
+Research an unanswered product/copy decision through the shared question gate
+before requesting it. Resolve technical choices internally. Keep the existing
+Storybook product approval; never introduce a technical plan approval.
+When `deferRecords` is true, return the facts for steps 5 and 6 instead of
+writing the shared log or ticket; the serialized record owner applies them.
 
 `DONE` with the story path to open (`<storybookUrl>/?path=/story/<id>`) and one
 sentence describing what the person is approving, or `BLOCKED` with why.

@@ -44,6 +44,47 @@ function write(worktree, file, content) {
   writeFileSync(absolute, content);
 }
 
+test("worktree-local plans are not deliverables and neighboring artifacts stay visible", (t) => {
+  const { home, worktree } = setup(t, "private-plan");
+  write(worktree, ".closedloop-ai/vibe-plans/request-1.md", "private plan\n");
+  write(worktree, ".closedloop-ai/vibe-plans-other.md", "not a local plan\n");
+  write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.status, 0, JSON.stringify(result.json));
+  assert.deepEqual(result.json.localPlans, [{ path: ".closedloop-ai/vibe-plans/request-1.md", status: "A" }]);
+  assert.deepEqual(result.json.trackedLocalPlans, []);
+  assert.deepEqual(result.json.changedFiles.map(file => file.path), [".closedloop-ai/vibe-plans-other.md", "apps/app/page.tsx"]);
+  assert.deepEqual(result.json.outsideAllowed, [{ path: ".closedloop-ai/vibe-plans-other.md", status: "A" }]);
+});
+
+test("staged or committed plans block handoff instead of hiding a planning leak", (t) => {
+  const { home, worktree } = setup(t, "tracked-plan");
+  const plan = ".closedloop-ai/vibe-plans/request-1.md";
+  write(worktree, plan, "private plan\n");
+  write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
+  git(worktree, ["add", plan], home);
+  for (const committed of [false, true]) {
+    if (committed) git(worktree, ["commit", "-m", "Fixture: accidentally tracked plan"], home);
+    const result = runNode(INVENTORY, ["--worktree", worktree], home);
+    assert.equal(result.status, 1);
+    assert.equal(result.json.blocking.localPlansUntracked, false);
+    assert.deepEqual(result.json.trackedLocalPlans, [plan]);
+  }
+});
+
+test("root web and desktop test specs are allowed only at handoff, never arbitrary harness files", (t) => {
+  const { home, worktree } = setup(t, "handoff-tests");
+  write(worktree, "e2e/feature.spec.ts", "export {};\n");
+  write(worktree, "apps/desktop/test/feature.spec.ts", "export {};\n");
+  write(worktree, "e2e/playwright.config.ts", "export {};\n");
+  const build = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(build.json.outsideAllowed.length, 3);
+  const handoff = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.deepEqual(handoff.json.outsideAllowed, [{ path: "e2e/playwright.config.ts", status: "A" }]);
+  const invalid = runNode(INVENTORY, ["--worktree", worktree, "--phase", "unknown"], home);
+  assert.equal(invalid.status, 1);
+});
+
 test("local fixes are listed on their own and kept out of every guardrail check", (t) => {
   const { home, worktree } = setup(t, "local-fixes");
   // The setup worker's workaround: a forbidden repo script and a new helper.

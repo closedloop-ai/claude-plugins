@@ -29,6 +29,11 @@ change worker's summary, `already met` with its evidence, or `wording`).
 `../skills/vibe/references/ticket-template.md` (the body, and the rules every
 editor follows). The session record:
 `node ../skills/vibe/scripts/vibe-sessions.mjs show --worktree "<wt>"`.
+Read `../skills/vibe/references/quality-loop.md`; any product question goes
+through its graph/live-decision research and necessity gate before returning
+`NEEDS_PERSON`. Technical choices never go to the person. A single granted
+owner mutates this ticket or session JSON at a time; never race a parallel
+writer. Never upload or insert a technical plan from `.closedloop-ai/vibe-plans/`.
 Files under the record's `localFixes` are not the person's work; never
 describe them on the ticket.
 
@@ -61,7 +66,8 @@ name, or have none.
 
 1. Assignee: the session's `operator` (its `id` is the `assigneeId`).
    Project: the current week's project from `list-projects` (the date-range
-   name covering today); return `NEEDS_PERSON` if none matches.
+   name covering today); return `BLOCKED` internally if none matches rather
+   than asking the person a technical project-setup question.
 2. Before creating, run closedloop-graph `query_collisions` and
    `search_nodes` with the summary; mention overlapping open tickets under
    What this is.
@@ -88,7 +94,7 @@ name, or have none.
    `operator.email` exactly); if not, return `BLOCKED`: design or engineering
    owns it now.
 2. Regenerate the inventory so it describes the branch as it is now:
-   `node ../skills/handoff/scripts/handoff-inventory.mjs --worktree "<wt>" > "<inventory path>"`
+   `node ../skills/handoff/scripts/handoff-inventory.mjs --worktree "<wt>" --phase handoff > "<inventory path>"`
    (a failing guardrail check exits non-zero and is the orchestrator's
    concern; JSON with an `error` and no `baseCommit` returns `BLOCKED`).
    Paste `ticket-sections` over Environment, Production flag snapshot, and
@@ -113,6 +119,8 @@ name, or have none.
 5. Reconcile Backend built and Backend still missing with the diff
    (`git -C "<wt>" diff --stat <inventory baseCommit>`) and the decision
    tables, and attach each decision table with `upload-attachment`.
+   These are existing behavior evidence, not the local implementation plan;
+   never include the local plan folder or its review drafts in attachments.
 6. Fill Handoff from the summaries you were given, per the template; its
    Next line names the next owner you were given. Fill Grading with the
    template's Grading section copied unchanged, adding the section after

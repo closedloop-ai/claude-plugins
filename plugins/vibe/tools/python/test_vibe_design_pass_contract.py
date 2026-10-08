@@ -1,13 +1,13 @@
 """Contract checks for how vibe places shared behavior, uses closedloop-graph,
 commits, and treats tests.
 
-The build loop stays fast: a prep step picks the owner by rule (behavior the
+The prep step picks the owner by rule (behavior the
 children of a shared parent share goes in that parent as a generic slot, and
 each child keeps only what is specific to it)
-and every inspection waits for handoff. closedloop-graph is required and every
-code worker reports its calls in a Graph block. No worker commits; the
-orchestrator does. No worker writes or edits a test unless the person asks for
-a pull request, and no pull request path exists.
+and the quality loop uses internal local plans and independent reviews before
+handoff. Daniel's ISS-12135 ruling moves test authoring to handoff only and
+keeps technical communication internal. Existing tests may run while building.
+Graph evidence, worker commit ownership and shared-owner rules remain unchanged.
 """
 
 from __future__ import annotations
@@ -15,12 +15,15 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import yaml
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 AGENTS = PLUGIN_ROOT / "agents"
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
 REFERENCES = VIBE / "references"
 DESIGN_PASS = REFERENCES / "design-pass.md"
+QUALITY = REFERENCES / "quality-loop.md"
 GRAPH = REFERENCES / "closedloop-graph.md"
 GUARDRAILS = REFERENCES / "guardrails.md"
 TICKET_TEMPLATE = REFERENCES / "ticket-template.md"
@@ -114,20 +117,21 @@ def test_prep_is_a_bounded_lookup_with_defined_fields() -> None:
     assert "Graph:" in block
 
 
-def test_build_loop_has_no_review_step_and_handoff_carries_the_depth() -> None:
+def test_build_loop_reviews_before_handoff_and_preserves_design_depth() -> None:
     text = DESIGN_PASS.read_text()
     intro = flat(text[: text.index("## Owner rules")])
     red_flags = section(text, "### Red flags")
     restructure = section(text, "### Restructuring")
     design = fenced_block(text, "Design:")
 
-    assert "every inspection (the red-flag screen, restructuring, the sibling sweep, reviews, running tests) waits for handoff" in intro
-    assert "Nothing here waits on a ticket, a PRD, or a written plan" in intro
+    assert "separate plan review and implementation corrections internal and before handoff" in intro
+    assert "Existing tests may run during building" in intro
+    assert "test writing happens only at handoff" in intro
     for flag in RED_FLAGS:
         assert f"- {flag}:" in red_flags, flag
     assert "the strongest alternative rejected" in restructure
     assert "Sibling sweep" in restructure
-    assert "no test is written or edited" in restructure
+    assert "test writing waits for handoff" in restructure
     for field in DESIGN_FIELDS:
         assert field in design, field
     assert "- Tests:" not in design
@@ -154,7 +158,7 @@ def test_change_worker_preps_by_rule_and_names_the_owner_it_built_in() -> None:
     assert "an opt-in slot other children do not pass is not that question" in worker
     assert "only child-specific behavior in the child" in worker
     assert "Implement at the Prep's `Owner`" in worker
-    assert "`PLAN` (plan dispatch): the Prep block (or `Prep: trivial`), the Graph block" in worker
+    assert "`PLAN` (plan dispatch): the local plan path, Prep block (or `Prep: trivial`), Graph block" in worker
     assert "`Owner: <path it built in>`, and the Graph block" in worker
     assert "the Prep's `Owner` and `Rule`" in worker
 
@@ -224,34 +228,34 @@ def test_no_worker_commits_and_the_orchestrators_do() -> None:
     assert "commit-worktree.mjs" in flat(SEED_SKILL.read_text())
 
 
-def test_build_loop_redeploy_runs_no_tests_but_handoff_still_does() -> None:
+def test_build_loop_runs_existing_checks_and_handoff_adds_tests() -> None:
     environment = flat(agent("vibe-environment-worker"))
     handoff = HANDOFF_SKILL.read_text()
 
-    assert "Only when the dispatch comes from handoff, run the tests before pushing" in environment
-    assert "A build-loop redeploy runs no tests; they wait for handoff." in environment
+    assert "Run the existing affected tests before pushing" in environment
+    assert "Never write or edit tests in deployment mode" in environment
     assert "Lighter: dispatch `vibe-verify-worker` in checks mode" in section(handoff, "## 5. Checks")
     assert "Backend: dispatch `vibe-verify-worker` in full-suite mode" in section(handoff, "## 5. Checks")
+    assert "`tests` mode with explicit phase `handoff`" in section(handoff, "## 5. Checks")
 
 
-def test_tests_are_never_written_unless_a_pull_request_is_asked_for() -> None:
+def test_tests_are_authored_only_at_handoff_without_weakening_expectations() -> None:
     rule = section(GUARDRAILS.read_text(), "## Tests")
 
-    assert "No worker in vibe or handoff writes or edits a test, in the build loop or at handoff" in rule
-    assert "Tests are engineering's job" in rule
-    assert "an existing test is never edited, weakened, or skipped" in rule
-    assert "The only exception: when the person explicitly asks for a pull request to be raised" in rule
-    assert "full tests for all of the session's changes are written before the pull request is opened" in rule
-    assert "Neither vibe nor handoff opens a pull request today" in rule
+    assert "No build-loop worker writes or edits a test" in rule
+    assert "Test writing happens only at handoff through `vibe-verify-worker` in `tests` mode" in rule
+    assert "explicit handoff phase" in rule
+    assert "exact human behavior ruling" in rule
+    assert "retain coverage of every still-live contract" in rule
+    assert "Never loosen, skip or remove a valid test" in rule
+    assert "No PR is opened by either vibe or handoff" in rule
 
-    for skill in (VIBE_SKILL, HANDOFF_SKILL):
-        assert "writes or edits a test" in flat(skill.read_text()), skill.name
-    assert "a finding that asks for a new or changed test is not sent to a fixing worker" in flat(
-        HANDOFF_SKILL.read_text()
-    )
+    assert "No build-loop worker writes or edits a test" in flat(VIBE_SKILL.read_text())
+    assert "Build-loop workers never write or edit tests" in flat(HANDOFF_SKILL.read_text())
+    assert "confirmed missing-test finding to `vibe-verify-worker` in `tests` mode" in flat(HANDOFF_SKILL.read_text())
 
 
-def test_no_vibe_or_handoff_worker_has_a_test_writing_step() -> None:
+def test_build_workers_do_not_author_tests_and_handoff_tests_mode_is_explicit() -> None:
     writing_steps = (
         "tests in `packages/design-system/__tests__/`",
         "its tests go in",
@@ -261,16 +265,16 @@ def test_no_vibe_or_handoff_worker_has_a_test_writing_step() -> None:
         "is fixed by writing that test",
     )
     for path in [AGENTS / f"{name}.md" for name in VIBE_AGENTS if not name.startswith("vibe-seed-")] + [
-        GUARDRAILS,
-        DESIGN_PASS,
-        VIBE_SKILL,
-        HANDOFF_SKILL,
     ]:
         text = flat(path.read_text())
         for step in writing_steps:
             assert step not in text, (path.name, step)
-    for name in ("vibe-change-worker", "vibe-backend-worker", "vibe-primitive-worker", "vibe-storybook-decomposer", "vibe-verify-worker"):
+    for name in ("vibe-change-worker", "vibe-backend-worker", "vibe-primitive-worker", "vibe-storybook-decomposer"):
         assert "Never write" in flat(agent(name)) or "never write" in flat(agent(name)), name
+    tests_mode = section(agent("vibe-verify-worker"), "## Tests mode (handoff only)")
+    assert "If phase is not explicitly `handoff`, return `BLOCKED` without editing tests" in tests_mode
+    assert "production wiring" in tests_mode
+    assert "Never weaken tests or checks" in tests_mode
 
 
 def test_reviewers_flag_placement_red_flags_and_test_edits() -> None:
@@ -281,21 +285,126 @@ def test_reviewers_flag_placement_red_flags_and_test_edits() -> None:
         assert flag in guardrails, flag
     assert "two children of one parent that each implement the same behavior is blocking" in guardrails
     assert "keeps only what is specific to it" in guardrails
-    assert "any added or changed test file" in guardrails
+    assert "an added or changed test file" in guardrails
+    assert "only in the handoff phase" in guardrails
+    assert "Early or unrecorded changes are blocking" in guardrails
     assert "the person is not involved" in guardrails
     assert "find an input on which the copies already behave differently" in adversarial
 
 
-def test_ticket_carries_design_decisions_and_no_test_edit_field() -> None:
+def test_ticket_carries_design_decisions_and_truthful_handoff_test_evidence() -> None:
     handoff = section(TICKET_TEMPLATE.read_text(), "## Handoff")
 
     assert "- Design decisions:" in handoff
     assert "old-UI assertions were updated" not in handoff
-    assert "left for engineering to update (vibe never edits tests)" in handoff
+    assert "Tests authored at handoff" in handoff
+    assert "exact human behavior ruling" in handoff
 
 
 def test_new_files_use_no_emdashes_or_double_hyphen_dashes() -> None:
-    for path in (DESIGN_PASS, GRAPH, VIBE / "scripts" / "commit-worktree.mjs"):
+    for path in (DESIGN_PASS, GRAPH, QUALITY, VIBE / "scripts" / "commit-worktree.mjs", VIBE / "scripts" / "local-plans.mjs"):
         text = path.read_text()
         assert "—" not in text, path.name
         assert " -- " not in text, path.name
+
+
+def test_local_plan_uses_core_by_name_and_never_becomes_a_ticket_or_deployment() -> None:
+    planning = section(QUALITY.read_text(), "## Local plan and adversarial plan review")
+    assert "`$plan-structure` in Codex" in planning
+    assert "`/closedloop-core:plan-structure` in Claude Code" in planning
+    assert "from that loaded skill's own folder" in planning
+    assert "Use its exact headings and order" in planning
+    assert "`.closedloop-ai/vibe-plans/<request-id>.md`" in planning
+    assert "Never copy the template into this plugin" in planning
+    assert "put its body in the ticket or upload it" in planning
+    assert "commit script refuses a plan already in HEAD" in planning
+    for name in ("vibe-environment-worker", "vibe-prototype-worker"):
+        worker = flat(agent(name))
+        assert "local-plans.mjs --worktree" in worker
+        assert "publishes nothing" in worker or "publish nothing" in worker
+
+
+def test_plan_review_precedes_parallel_build_and_implementation_review_precedes_completion() -> None:
+    loop = section(VIBE_SKILL.read_text(), "## 5. Build loop")
+    assert loop.index("in plan mode") < loop.index("separate `vibe-adversarial-reviewer` in plan mode")
+    assert loop.index("recheck the revision before implementing") < loop.index("independent planned units in parallel")
+    assert loop.index("implementation reviews, corrections") < loop.index("whole feature passes these gates")
+    review = section(agent("vibe-adversarial-reviewer"), "## Plan mode")
+    assert "separate reviewer rechecks confirmed plan corrections before code is built" in review
+    assert "PLAN_REVIEW: CLEAN" in review
+    assert "PLAN_REVIEW: NEEDS_CHANGE" in review
+
+
+def test_registered_claude_plan_callers_can_invoke_the_named_core_skill() -> None:
+    callers = {
+        "vibe-change-worker": "plan-structure",
+        "vibe-prototype-worker": "plan-structure",
+        "vibe-adversarial-reviewer": "plan-structure",
+        "vibe-backend-worker": "decision-table",
+    }
+    for name, skill in callers.items():
+        frontmatter = yaml.safe_load(agent(name).split("---", 2)[1])
+        allowed = {tool.strip() for tool in frontmatter["tools"].split(",")}
+        assert "Skill" in allowed, name
+        text = flat(agent(name))
+        assert f"closedloop-core:{skill}" in text or f"named core {skill} skill" in text
+
+
+def test_parallel_work_keeps_one_frozen_plan_and_serial_record_owners() -> None:
+    parallel = section(QUALITY.read_text(), "## Parallel implementation and corrections")
+    assert "writer ownership does not overlap" in parallel
+    assert "Wait for prerequisites before dependent units" in parallel
+    assert "reviewed plan is stable during an implementation wave" in parallel
+    assert "Aggregate all wave results before revising it or recording progress" in parallel
+    assert "at most one setup, environment, prototype or ticket worker" in parallel
+    assert "Different source files do not make generator/publication writes independent" in parallel
+    assert "`deferRecords` true" in parallel
+    for name in ("vibe-change-worker", "vibe-backend-worker", "vibe-primitive-worker", "vibe-prototype-worker"):
+        assert "deferRecords" in agent(name), name
+    assert "in record mode" in section(VIBE_SKILL.read_text(), "## 5. Build loop")
+
+
+def test_questions_are_researched_and_technical_updates_never_reach_andy() -> None:
+    communication = section(QUALITY.read_text(), "## Communication and product questions")
+    for route in ("ticket_detail", "fts_search", "search_memory_facts"):
+        assert route in communication
+    assert "live ClosedLoop" in communication
+    assert "A settled decision is applied, never asked again" in communication
+    assert "absolutely necessary unresolved product question, one at a time with full context" in communication
+    assert "Do not show or ask the person to approve a technical plan" in communication
+    assert "Updates say only which requested feature is complete" in communication
+    for name in ("vibe-requirements-worker", "vibe-change-worker", "vibe-backend-worker", "vibe-primitive-worker", "vibe-prototype-worker", "vibe-ticket-worker", "vibe-setup-worker", "vibe-environment-worker"):
+        assert "quality-loop.md" in agent(name), name
+    summary = section(HANDOFF_SKILL.read_text(), "## 2. Summarize internally")
+    assert "Keep the summary internal" in summary
+    assert "ask them to confirm" not in summary
+
+
+def test_initial_prototype_commit_and_share_require_independent_quality_evidence() -> None:
+    start = section(VIBE_SKILL.read_text(), "## 2. Start or resume")
+    assert "On `NEEDS_REVIEW`, dispatch the guardrails and adversarial implementation reviewers" in start
+    assert "initial mockup publication bypass" in start
+    prototype = flat(agent("vibe-prototype-worker"))
+    assert "Stop before a canonical commit or share with `NEEDS_REVIEW`" in prototype
+    assert "separate current-result implementation review and verification evidence" in prototype
+    assert "Override canonical prompts asking the person to confirm a structural plan or shared-surface owner" in prototype
+    assert "Preserve genuine visual/product design approvals" in prototype
+    handoff = section(HANDOFF_SKILL.read_text(), "### Owned prototype sessions")
+    assert "At every prototype recovery share or prepare-handoff call, route `NEEDS_REVIEW`" in handoff
+    assert "Fix and recheck the current diff, then resume the same canonical worker" in handoff
+    assert "keep its single completed design review" in handoff
+    assert "require every gate, including publication freshness" in handoff
+
+
+def test_handoff_cannot_relabel_early_tests_and_displayless_coverage_is_not_silently_skipped() -> None:
+    guardrail_check = section(HANDOFF_SKILL.read_text(), "## 3. Guardrail check")
+    assert "not retrospectively relabeled" in guardrail_check
+    assert "before test authoring" in guardrail_check.lower()
+    verify = flat(agent("vibe-verify-worker"))
+    assert "except Desktop e2e" not in verify
+    assert "supported displayless harness" in verify
+    assert "never fall back to a visible window or manually dispatch CI" in verify
+    assert "checks, full-suite and tests modes, end with the Graph block" in verify
+    adversarial = flat(agent("vibe-adversarial-reviewer"))
+    assert "needed new-test coverage is recorded in the local plan for handoff" in adversarial
+    assert "not an instruction to author tests early" in adversarial

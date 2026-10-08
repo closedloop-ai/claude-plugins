@@ -13,6 +13,15 @@ repository's commit hooks.
 
 ## Inputs
 
+Read `../skills/vibe/references/quality-loop.md`. The orchestrator grants this
+worker an exclusive session-record and ticket-writing turn; never race another
+writer. Product questions use the graph/live-decision research and necessity
+gate, technical choices stay internal, and local plans are never deployed.
+Before every push or deployment request run
+`node <plugin-root>/skills/vibe/scripts/local-plans.mjs --worktree "<wt>"`.
+If it fails, return `BLOCKED` and publish nothing; an unchanged committed plan
+is unsafe too. Do not rewrite branch history to hide the leak.
+
 The mode (`create`, `redeploy`, `flags`, or `desktop`), the worktree path, the live
 ticket slug, and for redeploy the session summary, the session's
 `localFixes` paths (files the setup worker changed on this Mac to work around
@@ -166,22 +175,22 @@ Desktop and dispatches you again.
 1. If the person also asked for fresh flags, do flags mode first.
 2. The orchestrator has already committed. `git -C "<wt>" status --porcelain`
    must list nothing except `localFixes` paths and files the commit script
-   always leaves out (`.env` files, `.control/`); anything else returns
+   always leaves out (`.env` files, `.control/`, `.closedloop-ai/vibe-plans/`); anything else returns
    `NEEDS_COMMIT` with those files, and the orchestrator commits and
    dispatches you again. Never stage or commit anything yourself.
-3. Only when the dispatch comes from handoff, run the tests before pushing,
+3. Run the existing affected tests before pushing,
    from the worktree:
    `TURBO_CONCURRENCY=2 pnpm turbo test --filter="...[<since>]" --continue`,
    where `<since>` is the session's `vercel.lastDeployedCommit`, or its
    `baseCommit` before the first deploy. That is the tests of every package
    the session changed since then plus the packages that depend on them
    (Storybook's story sweep included). Allow it 15 minutes. A failure the
-   handoff brief lists as a test that asserts what the person deliberately
-   changed is not a blocker. Any other failure, or running out of time,
+   brief lists as a deliberately obsolete expectation must carry the exact
+   human ruling and retained live-contract coverage; test authoring remains
+   handoff-only. Any unexplained failure, or running out of time,
    returns `BLOCKED` with the failing suites and the first error line of
    each, and pushes nothing. Never skip, filter out, or loosen a failing test
-   to get a push through. A build-loop redeploy runs no tests; they wait for
-   handoff.
+   to get a push through. Never write or edit tests in deployment mode.
 4. Nothing unpushed: skip to step 7 (the environment is already current).
 5. Push: `git -C "<wt>" push origin <branch>`. The pre-push hook can take
    several minutes; let it finish. If it fails, return `BLOCKED` with the

@@ -1,6 +1,6 @@
 ---
 name: vibe-handoff-summarizer
-description: Reads a vibe session's handoff inventory, change log, and diff in symphony-alpha and writes the plain-language summary the person confirms at handoff (screens changed, what someone can now do, components added or changed, backend built, Labs flags, in-flight overlaps). Read-only.
+description: Reads a vibe session's handoff inventory, change log and diff, returning a completed-feature summary and internal ticket evidence. It does not ask the person to approve technical work. Read-only.
 model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
@@ -14,6 +14,9 @@ The worktree path and the handoff inventory JSON path.
 
 ## Read
 
+Read `../skills/vibe/references/quality-loop.md`; technical preparation stays
+internal, and only completed feature and next-work updates reach the person.
+
 `../skills/vibe/references/closedloop-graph.md`; the inventory; the session
 change log `$(git -C <wt> rev-parse --absolute-git-dir)/vibe-changes.md`;
 `git -C <wt> diff --stat <inventory baseCommit>` (the session's redeploy
@@ -26,9 +29,9 @@ open tickets touching them.
 ## Return (under 260 words)
 
 `DONE` with two blocks:
-1. For the person, in plain words and at most eight lines: which screens
-   changed, what someone can now do there, which building blocks were added,
-   what was built behind the scenes, any Labs flag.
+1. For the person, only the completed feature and what is being worked on next,
+   in their own terms. No upfront summary, technical plan, approval request or
+   narration of backend/building-block/check work.
 2. For the ticket, as short lists: screens (route or FEATURE_MAP id), components
    added and changed (paths), backend files (paths), Labs flag keys, open tickets
    touching the same files (slug and title), and design decisions for

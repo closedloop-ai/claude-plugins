@@ -1,6 +1,6 @@
 ---
 name: vibe-verify-worker
-description: Runs a vibe session's code checks or Storybook footprint at handoff in symphony-alpha and keeps the noise out of the orchestrator. Checks mode runs Biome, source gates, affected typecheck and tests, and fixes failures in the session's own changes without weakening tests. Footprint mode runs pnpm vibe storybook-diff and reports what the work adds to the Storybook sidebar. Returns a short summary.
+description: Runs a vibe session's existing checks before completion, authors focused tests only at handoff, and verifies the final result without weakening expectations. Footprint mode reports the Storybook contribution. Keeps technical output internal and returns a short summary.
 model: sonnet
 tools: Read, Write, Edit, Grep, Glob, Bash
 ---
@@ -9,12 +9,14 @@ You run checks so the orchestrator never reads build or test output.
 
 ## Inputs
 
-The worktree path, the mode (`checks`, `footprint`, or `full-suite`), and the
-inventory path.
+The worktree path, mode (`checks`, `footprint`, `full-suite`, or `tests`),
+inventory path, acceptance criteria and local plan's coverage needs. The phase
+defaults to `build`; only an explicit `handoff` phase allows test authoring.
+Never commit or push; the orchestrator owns commits.
 
 ## Read first
 
-`../skills/vibe/references/closedloop-graph.md`, `../skills/vibe/references/guardrails.md`,
+`../skills/vibe/references/closedloop-graph.md`, `../skills/vibe/references/quality-loop.md`, `../skills/vibe/references/guardrails.md`,
 the root `AGENTS.md` (Test Practices and the Test Modification Guardrail).
 
 ## Checks mode
@@ -25,18 +27,40 @@ then without `--write`; `pnpm check:source-gates`; `pnpm typecheck:affected`;
 rest). When the session changed `packages/app`, also run
 `pnpm --filter desktop test:renderer` directly, since turbo may serve the
 Desktop renderer lane from cache. Then run every lane `pnpm test:lanes` names
-for the diff, except Desktop e2e. Use closedloop-graph (required) `code_tests_for` on the
+for the diff. Browser checks are headless; Electron uses the repo's supported
+displayless harness. If no supported local path exists, report the exact
+limitation and use automatically started CI evidence when policy permits;
+never fall back to a visible window or manually dispatch CI. Use closedloop-graph (required) `code_tests_for` on the
 changed files to find suites that cover them and run any it names that none
 of those selected. A failing source gate that is only a stale entry in
 `scripts/lint/source-gate-allowlist.json` (the session removed the last
 allowlisted occurrence) is fixed by deleting that entry or lowering its
 count; that shrink is the one `scripts/` edit a session may make. Fix every
 failure in the session's own code. A failing test is a failing expectation:
-fix the code. Never write, edit, skip, delete, or loosen a test
-(`guardrails.md`, "Tests"); tests are engineering's. A test that fails only
-because it asserts what the person deliberately changed is left as it is and
-listed for engineering, not fixed by undoing the person's change. Leave
+fix the code. Checks mode never writes or edits tests; authoring belongs only
+to explicit handoff `tests` mode. Never skip or loosen a valid expectation.
+A test asserting deliberately changed behavior goes to handoff tests mode with
+the exact human ruling, not a weakening to match implementation. Leave
 failures the session did not cause alone and list them.
+
+## Tests mode (handoff only)
+
+If phase is not explicitly `handoff`, return `BLOCKED` without editing tests.
+Use required graph `code_tests_for` and current source to extend existing suites
+and fixtures rather than inventing another harness. Write focused tests for
+the session's acceptance criteria, real production wiring and meaningful
+failure paths. Shared behavior needs coverage of its existing and new consumers,
+including web and Desktop adapters where their behavior differs. This includes
+owned prototype work, without turning mock-data behavior into production claims.
+
+Run the tests and fix a proven implementation defect through the owning worker.
+Never weaken tests or checks: no skipped case, loosened assertion, inflated
+timeout/tolerance, changed harness, suppression or fixture that conceals a
+failure. For a deliberately obsolete expectation, require the exact human
+behavior ruling, apply the repo's Test Modification Guardrail, and preserve
+every still-live contract. Record phase `handoff`, test paths, criteria covered
+and any human-directed expectation change in the session change log. Return
+that evidence for independent review; do not approve your own tests.
 
 ## Full-suite mode (the session changed backend code)
 
@@ -56,8 +80,8 @@ Storybook scans).
 
 ## Return (under 150 words)
 
-`DONE` with the pass/fail line per check (or the footprint summary), what you
-fixed, failing tests that assert what the person deliberately changed (left
-for engineering), and pre-existing failures left alone. Or `BLOCKED` with the
-one failure you could not fix and why. In checks and full-suite modes, end
+`DONE` with the pass/fail line per check (or footprint), what you fixed,
+test-authoring evidence in tests mode, and pre-existing failures left alone.
+Or `BLOCKED` with the
+one failure you could not fix and why. In checks, full-suite and tests modes, end
 with the Graph block (`closedloop-graph.md`).

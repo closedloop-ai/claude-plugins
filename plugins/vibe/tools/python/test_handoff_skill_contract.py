@@ -54,7 +54,7 @@ def test_step_eight_routes_answers_and_blocks_finalizing_until_reruns_finish() -
 
 
 def test_summary_corrections_that_change_behavior_are_routed_too() -> None:
-    step_two = section(HANDOFF_SKILL.read_text(), "## 2. Summarize and confirm")
+    step_two = section(HANDOFF_SKILL.read_text(), "## 2. Summarize internally")
 
     assert "Answers from the person" in step_two
     assert "goes to the change worker now" in step_two
@@ -74,7 +74,7 @@ def test_ticket_worker_refuses_unbuilt_behavior_and_rederives_dependent_sections
 
 
 def test_change_worker_checks_a_handoff_answer_against_the_code() -> None:
-    fix_mode = section(CHANGE_WORKER.read_text(), "## Fix mode (handoff)")
+    fix_mode = section(CHANGE_WORKER.read_text(), "## Fix mode")
 
     assert "the person's answer to it" in fix_mode
     assert "`already met`" in fix_mode
@@ -82,12 +82,15 @@ def test_change_worker_checks_a_handoff_answer_against_the_code() -> None:
     assert "Scope and acceptance criteria in their words" in fix_mode
 
 
-def test_step_eight_asks_for_the_next_owner_and_never_defaults() -> None:
+def test_step_eight_reuses_a_named_owner_or_asks_without_defaulting() -> None:
     step_eight = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
 
     assert "Who should pick this up next? A name or email is fine." in step_eight
     assert "`vibe-ticket-worker` in lookup mode" in step_eight
-    assert "`Assigning this to <full name>.`" in step_eight
+    assert "Use a next owner the person already named" in step_eight
+    assert "never re-ask that settled choice" in step_eight
+    assert "Keep the assignment progress internal" in step_eight
+    assert "report the next owner at completion" in step_eight
     assert "`<full name> (<email>)`" in step_eight
     assert "ask the question again" in step_eight
     assert "never fall back to anyone by default" in step_eight
@@ -148,7 +151,7 @@ def test_ticket_worker_fills_grading_at_handoff_and_never_rederives_it() -> None
 
 def test_check_weight_follows_whether_the_session_changed_backend_code() -> None:
     skill = HANDOFF_SKILL.read_text()
-    task_list = section(skill, "## 1. Show the task list first")
+    task_list = section(skill, "## 1. Internal checklist")
     checks = section(skill, "## 5. Checks")
     reviews = section(skill, "## 6. Reviews")
 
@@ -158,7 +161,7 @@ def test_check_weight_follows_whether_the_session_changed_backend_code() -> None
     assert "Lighter: dispatch `vibe-verify-worker` in checks mode" in checks
     assert "Backend: dispatch `vibe-verify-worker` in full-suite mode" in checks
     assert "Lighter: dispatch the repo agent `review-soul`" in reviews
-    assert "`vibe-adversarial-reviewer` in parallel" in reviews
+    assert "`vibe-adversarial-reviewer` in implementation mode in parallel" in reviews
     assert "Backend: run the `workflow-code-review` skill" in reviews
     assert "`workflow-code-review` a second time" in reviews
 

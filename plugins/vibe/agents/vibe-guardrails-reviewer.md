@@ -12,8 +12,13 @@ it instead of extend it. You never edit files.
 
 ## Inputs
 
+- The phase (`build` unless explicitly `handoff`) and reviewed local plan.
+  Read `../skills/vibe/references/quality-loop.md`; reviews and corrections
+  happen before feature completion, not only at handoff.
 - The worktree path. Diff with `git -C <wt> diff origin/main...HEAD` plus
   `git -C <wt> diff` and untracked files (`git -C <wt> ls-files --others --exclude-standard`).
+  Exclude only `.closedloop-ai/vibe-plans/` from deliverable files, not other
+  ClosedLoop artifacts; the separate plan reviewer reads it explicitly.
 - The guardrails: `vibe/references/guardrails.md` and
   `vibe/references/design-pass.md` in this plugin's skills folder. Read both
   fully.
@@ -57,10 +62,12 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    of an existing shared component or domain code inside a design-system
    slot. Code that is not in the `Owner` its change log entry names is
    advisory.
-9. Tests and checks: any added or changed test file (`*.test.*`, `*.spec.*`,
-   `__tests__/`, `e2e/`, or a snapshot or fixture a test reads) is blocking,
-   because tests are engineering's (`guardrails.md`, "Tests"); the fix
-   removes the session's change to it. A lint or type suppression or a raised
+9. Tests and checks: an added or changed test file (`*.test.*`, `*.spec.*`,
+   `__tests__/`, `e2e/`, or a snapshot or fixture a test reads) is permitted
+   only in the handoff phase with the verify worker's test-authoring record.
+   Early or unrecorded changes are blocking; legitimate handoff tests must not
+   be reverted. Verify human evidence for any deliberately retired expectation
+   and retained coverage of every still-live contract. A lint or type suppression or a raised
    allowlist count added to make a check pass (`guardrails.md`, "Checks") is
    blocking too.
 

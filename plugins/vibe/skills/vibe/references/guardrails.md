@@ -53,8 +53,9 @@ Backend, built only by `vibe-backend-worker`, each under its owning
   `.closedloop-ai/decision-tables/` (gitignored in this repo); handoff attaches
   it to the live ticket so the reviewing engineer sees it.
 
-Handoff checks the work harder when the session changed backend code (the
-whole test suite and two code review passes) than when it did not.
+Quality checks and implementation reviews run before handoff through
+`quality-loop.md`. Handoff adds tests and final integrated verification,
+with the whole test suite and two review passes when backend code changed.
 
 One exception under `scripts/`: the source-gate allowlist
 (`scripts/lint/source-gate-allowlist.json`) is shrink-only, so when the
@@ -98,7 +99,7 @@ decision recorded on ISS-12017. Build in Storybook and app code directly.
   child. The domain wiring stays in the owning feature package, and each
   child opts in instead of reimplementing it. Never copy an existing shared
   component. `design-pass.md` has the owner rules, the build loop's
-  prep step, and what handoff flags.
+  prep step, and what the quality reviewers check before handoff.
 
 ## Reuse first
 
@@ -114,8 +115,8 @@ team's design standard.
 
 When nothing in the catalog fits:
 
-1. Stop and tell the person in one sentence: the screen needs a building block
-   that does not exist yet, so you will add it to the component library first.
+1. Keep the missing building block internal and add it to the reviewed local
+   plan. Do not narrate this technical dependency to the person.
 2. Run the repo agent `design-system-steward` (`.claude/agents/design-system-steward.md`)
    with the need. Follow its answer, which is one of three:
    - Reuse: an existing component covers it. Use it and continue.
@@ -142,7 +143,7 @@ When nothing in the catalog fits:
      component.
    - A new `packages/design-system/components/ui/*.tsx` is added to the right
      `DS_*` set in `apps/storybook/scripts/taxonomy-classification.mjs`. Its
-     tests are not written here (Tests, below).
+     tests are written only at handoff (Tests, below).
    - Register it by running `pnpm --filter storybook catalog:sync` and
      `pnpm --filter storybook validate:catalog`. Never hand-edit
      `component-catalog.ts`.
@@ -155,8 +156,8 @@ When nothing in the catalog fits:
 
 No hardcoded colors, arbitrary pixel values, or ad-hoc dark-mode overrides.
 Annotation "Adjust" values arrive as raw CSS (a hex color, a pixel size); map
-each one to the nearest existing token or spacing step and tell the person
-which token you used. If no token is close, raise it as a missing primitive.
+each one to the nearest existing token or spacing step internally. If no token
+is close, raise it as a missing primitive.
 No icon-in-a-colored-box chips, no borders on everything, no badge where a
 plain string works.
 
@@ -171,7 +172,8 @@ them.
 
 The person is the author of user-visible words. Use their words verbatim, or
 reuse an existing string or label map. Never compose a label, button, empty
-state, tooltip, error, or helper text yourself; ask them for the words.
+state, tooltip, error, or helper text yourself. Before asking for missing words,
+apply `quality-loop.md`'s graph-first product research and necessity gate.
 
 ## Accessibility
 
@@ -190,20 +192,25 @@ it.
 
 ## Tests
 
-No worker in vibe or handoff writes or edits a test, in the build loop or at
-handoff: no new or changed `*.test.*` or `*.spec.*` file, nothing under
-`__tests__/` or `e2e/`, no snapshot or fixture a test reads. Tests are
-engineering's job, not the job of the person running the session. Stories
-are not tests and are still built. Lint and typecheck stay allowed. Handoff
-still runs the existing tests; a failure the session caused is fixed in the
-session's own code, and an existing test is never edited, weakened, or
-skipped. A test that fails only because it asserts what the person
-deliberately changed is left as it is and listed for engineering.
+No build-loop worker writes or edits a test: no new or changed `*.test.*` or
+`*.spec.*` file, nothing under `__tests__/` or `e2e/`, no snapshot or fixture
+a test reads. Existing tests may run before handoff, and stories remain part
+of component work. Required coverage is recorded internally in the local plan.
 
-The only exception: when the person explicitly asks for a pull request to be
-raised, full tests for all of the session's changes are written before the
-pull request is opened. Neither vibe nor handoff opens a pull request today,
-so this exception has no path yet.
+Test writing happens only at handoff through `vibe-verify-worker` in `tests`
+mode with an explicit handoff phase, for app and prototype sessions alike.
+Add or extend focused coverage of acceptance criteria, production wiring and
+failure paths, then run and review it. Record phase, criteria and test paths
+in the session change log so reviewers can distinguish handoff authoring from
+forbidden early test changes.
+
+Preserve test integrity. A red test is a failing expectation: fix code when its
+contract still stands. Changing an expectation requires the exact human
+behavior ruling that made it obsolete, as the repo's Test Modification Guardrail
+permits; record that ruling and retain coverage of every still-live contract.
+Never loosen, skip or remove a valid test, edit a fixture or harness to mask a
+failure, or raise timeouts/tolerances to get green. No PR is opened by either
+vibe or handoff.
 
 ## Checks
 
@@ -211,8 +218,9 @@ Never make a failing check pass by changing the check: test assertions and
 expected values, snapshots, tolerances, skips, timeouts, coverage or size
 thresholds, lint and type suppressions (`biome-ignore`, `@ts-expect-error`, a
 cast that only quiets the compiler), a raised allowlist count, or the harness.
-Fix the code. The one exception is the shrink-only allowlist edit above. If an
-expectation looks wrong, keep it and report it.
+Fix the code. The shrink-only allowlist edit above and the repo's explicitly
+human-directed behavior-change rule in Tests are not ways to hide a failure.
+If an expectation looks wrong without that evidence, keep it and report it.
 
 ## Repo rules that bite most often
 
