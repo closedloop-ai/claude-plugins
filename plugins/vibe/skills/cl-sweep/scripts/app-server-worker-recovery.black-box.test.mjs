@@ -14,8 +14,13 @@ import {
 import { createServer } from 'node:net';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
-import test from 'node:test';
-import { decodeWebSocketFrames } from '../../gh-monitor-pr/scripts/native-app-server-client.mjs';
+import test, { before, after } from 'node:test';
+import { decodeWebSocketFrames } from './core-client-process.mjs';
+import { registryFixtureCode, installRegistryFixture } from './core-client-fixture.mjs';
+
+let restoreRegistry;
+before(() => { restoreRegistry = installRegistryFixture(); });
+after(() => restoreRegistry?.());
 
 const execFileAsync = promisify(execFile);
 const workerCli = resolve(import.meta.dirname, 'app-server-worker-session.mjs');
@@ -273,6 +278,7 @@ test('black box: fences an absent stale turn and detached waiter without recreat
   writeFileSync(fakeCodex, `#!/usr/bin/env node
 import { createConnection } from 'node:net';
 const socketPath = ${JSON.stringify(socketPath)};
+${registryFixtureCode()}
 const args = process.argv.slice(2);
 if (args[0] === 'app-server' && args[1] === 'proxy') {
   const socket = createConnection(socketPath);
@@ -282,6 +288,7 @@ if (args[0] === 'app-server' && args[1] === 'proxy') {
 } else {
   process.stderr.write('unexpected fake codex command');
   process.exitCode = 2;
+}
 }
 `);
   chmodSync(fakeCodex, 0o700);

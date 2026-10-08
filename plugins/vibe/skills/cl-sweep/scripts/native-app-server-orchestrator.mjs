@@ -24,7 +24,7 @@ import {
   managedDaemon,
   readThreadState,
   sendInput,
-} from '../../gh-monitor-pr/scripts/native-app-server-client.mjs';
+} from './core-client-process.mjs';
 
 export const SESSION_SCHEMA = 'APP_SERVER_ORCHESTRATOR_SESSION v1';
 export const EVENT_SCHEMA = 'APP_SERVER_ORCHESTRATOR_EVENT v1';

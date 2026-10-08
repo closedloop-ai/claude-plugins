@@ -1,6 +1,6 @@
 # vibe Plugin
 
-Vibe sessions, ClosedLoop ticket workflows, and PR monitoring.
+Vibe sessions, handoff, seed refresh, and ClosedLoop ticket workflows.
 
 ## Installation
 
@@ -9,8 +9,12 @@ Claude Code installs `vibe@closedloop-ai`; its dependency installs core automati
 See the [Mac installation guide](skills/vibe/INSTALL.md).
 Skills use `$<name>` in Codex and `/vibe:<name>` in Claude Code.
 Codex workers read `agents/<name>.md` in this plugin; Claude workers use `vibe:<name>`.
-Shared skills belong to `closedloop-core`: for example, use `$decision-table`
-in Codex or `/closedloop-core:decision-table` in Claude Code.
+Shared utilities belong to `closedloop-core` and are invoked by name, not by
+reading another plugin's files. Use `$gh-monitor-pr`, `$guided-manual-qa`, or
+`$measurement-discipline` in Codex; use `/closedloop-core:gh-monitor-pr`,
+`/closedloop-core:guided-manual-qa`, or `/closedloop-core:measurement-discipline`
+in Claude Code. The same naming pattern applies to other shared skills such
+as `decision-table`.
 
 ## Skills
 
@@ -36,21 +40,6 @@ Checks symphony-alpha's vibe seed against fresh main and the latest Vibe Seed
 Walk. When drift exists, coordinates workers to create a live ticket, fix the
 seed in a fresh worktree, validate it, open and monitor a pull request, merge
 through the queue, and mark the ticket Done.
-
-### `measurement-discipline`
-
-Applies baseline measurements, repeated-run noise floors, one-variable
-experiments, controls, and a mechanism for claimed improvements. Records
-successes and refutations in an append-only measurement log with reproducible
-commands and re-check conditions.
-
-### `guided-manual-qa`
-
-Derives and runs an interactive, evidence-recorded manual QA session for a code change, ticket, branch, or pull request. Resolves the exact worktree and head under test, maps candidate checkpoints against passing exact-head E2E coverage, and presents a checkpoint to the human only when neither that E2E coverage nor the agent's own observation can reliably verify it: visual or perceptual judgments, flows the agent cannot drive or observe reliably, and product-judgment calls. Prepares a trustworthy local environment (worktree-owned services, verified origin, proven persistence chain), writes a durable Markdown QA record outside the tracked tree before the first checkpoint, and proves each checkpoint's oracle before presenting it. The human confirms each checkpoint routed to them with `PASS`, `FAIL`, or `BLOCKED`. An agent observation can close a checkpoint as `AGENT_VERIFIED` and a passing E2E assertion as `E2E_COVERED`, never as a human `PASS`; an inconclusive agent observation goes to the human, and the final summary counts each kind separately. Ships a bundled Playwright launcher (`scripts/dist/launch-interactive-browser.mjs`, Node 18+) that opens the interactive browser with preloaded localStorage fixtures and an optional route-ready selector gate. Scripts are TypeScript under `tools/guided-manual-qa/src/` with the built bundle committed to `skills/guided-manual-qa/scripts/dist/`. Performs no source changes or external writes without separate authorization. The same skill directory also carries `agents/openai.yaml` display metadata so Codex can load it as a skill.
-
-### `gh-monitor-pr`
-
-Detached GitHub pull-request monitor for waking the exact launching Codex Desktop or CLI root when review comments, CI failures, conflicts, merge-queue changes, closure, merge readiness, or successful merges need attention. It uses the native managed Codex App Server daemon and portable proxy/direct Unix-socket transports to steer an active parent turn or start a turn on an idle parent, while persisting monitor-local delivery receipts so ambiguous accepted wakeups are not replayed automatically. Includes CLI setup/probe, start, transfer, recovery, status, stop, and one-shot snapshot commands, plus tests for notification delivery, recovery, and PR event evaluation. The skill has no `app-server-orchestrator` dependency.
 
 ### ClosedLoop Ticket Skills
 
@@ -79,9 +68,10 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 
 ## Runtime Files
 
-Version `1.0.0` contains 13 skills and 16 agents. It has no standalone
+Version `1.0.1` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains two skill-contract test modules.
 Runtime helpers and tests live alongside their owning skills, including vibe
 session and prototype records, handoff checks, sweep ownership and worker
-recovery, PR-monitor notification delivery, and the work-report renderer.
+recovery, and the work-report renderer. Shared PR-monitor notification delivery
+and manual-QA browser helpers live in `closedloop-core`.

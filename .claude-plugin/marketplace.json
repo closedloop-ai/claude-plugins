@@ -7,12 +7,12 @@
     {
       "name": "closedloop-core",
       "source": "./plugins/closedloop-core",
-      "description": "Shared ClosedLoop planning, intelligence, diagrams, and review skills"
+      "description": "Shared ClosedLoop planning, intelligence, review, QA, measurement, and PR monitoring"
     },
     {
       "name": "vibe",
       "source": "./plugins/vibe",
-      "description": "Vibe sessions, ClosedLoop ticket workflows, and PR monitoring"
+      "description": "Vibe sessions, handoff, seed refresh, and ClosedLoop ticket workflows"
     },
     {
       "name": "bootstrap",

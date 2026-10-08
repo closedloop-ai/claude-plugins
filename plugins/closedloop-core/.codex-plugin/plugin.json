@@ -1,18 +1,19 @@
 {
   "name": "closedloop-core",
-  "version": "1.0.0",
-  "description": "Shared ClosedLoop planning, intelligence, diagrams, and review skills",
+  "version": "1.0.1",
+  "description": "Shared ClosedLoop planning, intelligence, review, QA, measurement, and PR monitoring",
   "author": {"name": "ClosedLoop", "email": "support@closedloop.ai"},
   "homepage": "https://github.com/closedloop-ai/claude-plugins",
   "repository": "https://github.com/closedloop-ai/claude-plugins",
   "license": "Apache-2.0",
-  "keywords": ["closedloop", "planning", "review", "agent-plugin"],
+  "keywords": ["closedloop", "planning", "review", "qa", "measurement", "pull-request-monitoring"],
   "skills": "./skills/",
   "interface": {
     "displayName": "ClosedLoop Core",
-    "shortDescription": "Shared planning, intelligence, and review skills.",
+    "shortDescription": "Shared planning, review, QA, and monitoring skills.",
     "developerName": "ClosedLoop",
     "category": "Development",
-    "capabilities": ["Analyze"]
+    "capabilities": ["Analyze", "Write"],
+    "defaultPrompt": ["Monitor this pull request."]
   }
 }

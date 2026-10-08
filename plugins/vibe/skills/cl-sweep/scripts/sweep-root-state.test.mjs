@@ -13,8 +13,14 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { before, after } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { installRegistryFixture } from './core-client-fixture.mjs';
+import { monitorScript } from './core-client-process.mjs';
+
+let restoreRegistry;
+before(() => { restoreRegistry = installRegistryFixture(); });
+after(() => restoreRegistry?.());
 
 import { initializeSession as initializeLegacyWorker } from './app-server-worker-session.mjs';
 import { initializeSession as initializeGenericWorker } from './native-app-server-orchestrator.mjs';
@@ -148,7 +154,7 @@ test('repairs and registers one stopped same-root monitor with a historical gene
   };
   const originalBytes = `${JSON.stringify(original, null, 2)}\n`;
   const command = [
-    join(import.meta.dirname, '../../gh-monitor-pr/scripts/monitor-pr.mjs'),
+    monitorScript(),
     'repair-legacy-binding', original.pr.url,
     '--state-file', monitorStateFile,
     '--expected-thread-id', 'root-1',

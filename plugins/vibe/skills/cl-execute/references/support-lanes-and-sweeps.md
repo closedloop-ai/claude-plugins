@@ -143,8 +143,9 @@ rules and never fall back to visible execution.
 When a managed exec/App Server shell has a direct GitHub DNS failure or cannot
 resolve the SSH uid, but the macOS interactive user context is known to work,
 the ticket worker may use
-the native managed App Server setup documented by the sibling
-`gh-monitor-pr` skill.
+the native managed App Server setup documented by `gh-monitor-pr`, loaded by
+name (`$gh-monitor-pr` in Codex or `/closedloop-core:gh-monitor-pr` in Claude
+Code). Read its setup instructions from that loaded skill's own folder.
 
 First record the direct DNS/UID transport failure and run its read-only `id -u`
 probe in the exact ticket worktree. Do not use the helper unless that probe

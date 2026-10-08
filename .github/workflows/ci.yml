@@ -161,7 +161,7 @@ jobs:
             dist: plugins/code-review/scripts/dist
             min_bundles: 1
           - tool: guided-manual-qa
-            dist: plugins/vibe/skills/guided-manual-qa/scripts/dist
+            dist: plugins/closedloop-core/skills/guided-manual-qa/scripts/dist
             min_bundles: 1
     defaults:
       run:
