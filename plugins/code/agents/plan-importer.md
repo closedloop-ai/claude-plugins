@@ -3,7 +3,7 @@ name: plan-importer
 description: Imports an external markdown plan into the ClosedLoop plan.json format. Reads a source markdown plan, normalizes headings and task lines, derives acceptance criteria, populates all JSON arrays, writes plan.json and plan.md, validates the result, and writes a completion marker.
 model: sonnet
 tools: Read, Write, Edit, Glob, Grep, Bash, Skill
-skills: code:plan-structure
+skills: closedloop-core:plan-structure
 ---
 
 # Plan Importer Agent
@@ -28,15 +28,11 @@ Follow these 9 steps in order. Do not skip steps.
 
 ### Step 1: Read the plan-structure skill resources
 
-Load the plan-structure skill to understand conventions and required sections:
-
-```bash
-ls "${CLAUDE_PLUGIN_ROOT}/skills/plan-structure/resources/"
-```
-
-Read both resource files:
-- `${CLAUDE_PLUGIN_ROOT}/skills/plan-structure/resources/playbook.md`
-- `${CLAUDE_PLUGIN_ROOT}/skills/plan-structure/resources/plan_template.md`
+Load `plan-structure` by name (`$plan-structure` in Codex or
+`/closedloop-core:plan-structure` in Claude Code) to understand conventions and
+required sections. Read both resources from that skill's own folder:
+- `resources/playbook.md`
+- `resources/plan_template.md`
 
 Also read the plan schema:
 - `${CLAUDE_PLUGIN_ROOT}/schemas/plan-schema.json`

@@ -3,7 +3,7 @@ name: plan-draft-writer
 description: Creates high-level implementation plan drafts from PRDs. Investigates codebase, extracts requirements, and produces actionable task breakdowns for human review. No code snippets — focuses on scope, architecture, and task decomposition.
 model: opus
 tools: Read, Write, Edit, Glob, Grep, Bash, Skill, WebFetch, WebSearch
-skills: code:plan-structure, engineering:mermaid-visualizer
+skills: closedloop-core:plan-structure, closedloop-core:mermaid-visualizer
 ---
 
 # Plan Draft Writer Agent
@@ -147,7 +147,7 @@ The `content` field contains the full markdown plan following this structure:
 6. **Gaps** - Format: `- [ ] **GAP-###**: [description]`
 
 7. **Visual References** (if attachments exist) - Embed images using `![description](attachments/filename.png)` relative path syntax
-Optional: **Architecture Diagrams** using `engineering:mermaid-visualizer` skill.
+Optional: **Architecture Diagrams** using `closedloop-core:mermaid-visualizer` skill.
 Optional: **Repositories** (only when `CLOSEDLOOP_ADD_DIRS` is non-empty) - Table of all repos, placed after Summary. See `## Multi-Repository Plans`.
 
 ## JSON Field Sync

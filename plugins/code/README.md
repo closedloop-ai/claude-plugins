@@ -4,6 +4,12 @@ The `code` plugin implements **ClosedLoop**, an autonomous software development 
 
 The plugin provides the orchestrator prompt, all specialized subagents, a hook system for session management and learning capture, skills for deterministic caching and validation, schemas for data contracts, and Python utilities used throughout the workflow.
 
+## Installation And Ownership
+
+Install and enable both `code` and `closedloop-core` from the ClosedLoop marketplace in Claude Code or Codex. The Claude Code manifest declares `closedloop-core` as a dependency; Codex installations must also include it so shared skill invocations resolve.
+
+`code` owns the planning and implementation framework described below. `closedloop-core` owns the shared `plan-structure`, `decision-table`, `closedloop-intel`, `workflow-code-review`, and `mermaid-visualizer` skills, invoked through their `closedloop-core:` names. Vibe sessions, handoff, ticket automation, guided manual QA, measurement discipline, and PR monitoring belong to the separate `vibe` plugin.
+
 ---
 
 ## Key Features
@@ -220,7 +226,7 @@ Discovers and runs project-specific validation commands (test, lint, typecheck, 
 Reviews code changes for security vulnerabilities, correctness bugs, type safety issues, performance problems, and DRY violations. Operates on git diffs, applying a strict evidence standard: Critical/High findings require concrete proof, not speculation. Checks multi-tenant authorization on data-access endpoints. Runs as a loop agent (max 5 iterations) — only exits when no Critical/High findings remain.
 
 **`behavior-verifier`** (model: sonnet)
-Verifies that final code aligns with the intended behavior captured in the decision-table artifact. Activates `code:decision-table` in verification-only mode, appends verification/adversarial findings to the artifact, and returns a structured verdict (`ALIGNED` or `MISALIGNED` with typed `<drift_rows>` JSON: `code_drift`, `test_drift`, `plan_ambiguity`) for orchestrator routing in Phase 5.5. Read-and-report only — never modifies code or tests; drift remediation is owned by the orchestrator. Runs as a loop agent (max 3 iterations).
+Verifies that final code aligns with the intended behavior captured in the decision-table artifact. Activates `closedloop-core:decision-table` in verification-only mode, appends verification/adversarial findings to the artifact, and returns a structured verdict (`ALIGNED` or `MISALIGNED` with typed `<drift_rows>` JSON: `code_drift`, `test_drift`, `plan_ambiguity`) for orchestrator routing in Phase 5.5. Read-and-report only; never modifies code or tests. Drift remediation is owned by the orchestrator. Runs as a loop agent (max 3 iterations).
 
 ### Cross-Repo Agents
 
@@ -241,12 +247,6 @@ Generates `api-requirements.md` from an approved plan. Extracts tasks requiring 
 
 ### Support Agents
 
-**`vibe-prototype-worker`** (model: sonnet)
-Delegates an owned mockup session to symphony-alpha's canonical prototype skill.
-Builds and iterates the shared surface, always shares through the canonical
-Vercel procedure, records the immutable preview URL and full deployed SHA,
-and keeps the live ticket current. Prepares canonical design review and
-metadata for handoff without opening a pull request.
 
 **`visual-qa-subagent`** (model: sonnet)
 Performs visual QA using Playwright browser automation. Reads test steps exclusively from `visual-requirements.md` — never from source code. Returns `SUCCESS`, `FAILURE`, `AUTH_REQUIRED`, `BLOCKED`, or `INCOMPLETE_DOCS`. Maintains `visual-qa-memory.md` throughout the session.
@@ -275,21 +275,7 @@ Per-design-unit state-vs-spec analyst for the `design-inventory` pipeline. Analy
 
 Skills are reusable, invocable units of functionality available to orchestrators and agents via the `Skill` tool.
 
-### `vibe`
 
-Starts or resumes an owned symphony-alpha session with a live ClosedLoop
-ticket. App changes use a seeded or blank per-branch environment. Mockup
-requests automatically invoke the repository's canonical prototype workflow
-on `prototype/<slug>`, share on Vercel, and return the immutable preview URL,
-full deployed SHA, and slug. Workers own changes, annotations, and redeploys.
-
-### `handoff`
-
-Checks and reviews the session's work, verifies its current app environment or
-canonical prototype publication, and completes the same live ticket. Resolves
-the next owner named by the person and assigns the ticket with status In
-Progress. Canonical prototype review and metadata transitions are preserved;
-handoff ends at the branch without opening a pull request.
 
 ### `plan-validate`
 
@@ -307,9 +293,6 @@ Skips the Phase 7 final build check when no code has changed since Phase 5 build
 
 Checks whether cross-repo coordinator results can be reused by comparing peer repository git HEAD hashes to stored hashes. Returns `CROSS_REPO_CACHE_HIT` with the cached status or `CROSS_REPO_CACHE_MISS`. Prevents redundant cross-repo discovery when peers have not changed.
 
-### `plan-structure`
-
-Provides reusable guidance for plan creation and updates. When activated, agents must read the `resources/playbook.md` (conventions and quality bar) and `resources/plan_template.md` (required structure and sections). Used by `plan-draft-writer` and `plan-writer`.
 
 ### `plan-editing-conventions`
 
@@ -343,29 +326,13 @@ Single source of truth for the two reusable orchestration procedures shared by a
 
 Runs Codex to review a plan file and returns structured feedback with a verdict. Called once per debate round by the `plan-with-codex` command via `debate-loop.sh`. Supports session resume across rounds using a Codex thread ID. Returns `VERDICT:APPROVED` or `VERDICT:NEEDS_CHANGES` plus a `CODEX_SESSION` token. Emits `CODEX_FAILED` or `CODEX_EMPTY` tokens on error so the orchestrator can ask the user to retry or abort.
 
-### `decision-table`
-
-Generates a repo-local decision-table artifact that makes control-flow and stateful edge cases reviewable. Used when the user wants a code-grounded table for current behavior, wants to compare current behavior against a plan or work item, or needs a control-flow artifact for recovery, retry, finalization, validation, state-machine, or review-heavy edge cases. Writes one artifact per work item under `.closedloop-ai/decision-tables/` (`<plan-id>.md` for plan-scoped work, `<short-work-name>.md` otherwise) using the format defined in `references/artifact-format.md`. Builds the `Current Code` table from code (not expectations), captures the target behavior in `Intended Change`, and freezes both once implementation begins; post-implementation drift is recorded in append-only `Verification Findings`, `Adversarial Review`, `Fixes Applied`, `Final Alignment Status`, and optional `Plan Clarifications` sections. Includes a behavioral edge-case expansion pass that explicitly models structured-result setup failures, shared host reachability, library-managed lifecycle re-entry, published contract compatibility, CLI flag parsing, filesystem read/write safety, time-bound credentials/signatures, durable finalization and replay eligibility, diagnostic reason taxonomies, and side-effect boundaries for validation failures. The artifact also records `Evidence Artifacts` for high-yield coverage and non-applicability claims, distinguishing named fail-closed test coverage from source-backed `not applicable` evidence, and supports coordinator-run adversarial lanes with a sequential fallback for subagents that cannot delegate.
 
 ### `design-inventory`
 
 Staged pipeline for inventorying a Claude Design export into reviewable findings, a human decision gate, and DRAFT ticket generation. Stage A extracts the zip, runs parallel `design-unit-analyst` agents per unit (screens, regions, standalone components) from per-unit context packs, emits schema-validated findings (each with a recommended action), and publishes a platform "Design Review" Feature document with inline images. Stage B is the human editing that document - delete a section to decline, edit a line to amend, leave to accept - with survival judged from heading-line id anchors. Stage C derives decisions from the edited document and generates DRAFT feature tickets grouped per screen (UI plus optional API, with BLOCKS edges) and workdir-only design packs, only for accepted units. Invoked via the `code:design-inventory` skill when users request a design handoff, design inventory, or ticket generation from a design review. Scripts are TypeScript under `tools/design-inventory/src/` with built `dist/` bundles committed to `skills/design-inventory/scripts/dist/`.
 
-### `guided-manual-qa`
 
-Derives and runs an interactive, evidence-recorded manual QA session for a code change, ticket, branch, or pull request. Resolves the exact worktree and head under test, maps candidate checkpoints against passing exact-head E2E coverage, and presents a checkpoint to the human only when neither that E2E coverage nor the agent's own observation can reliably verify it: visual or perceptual judgments, flows the agent cannot drive or observe reliably, and product-judgment calls. Prepares a trustworthy local environment (worktree-owned services, verified origin, proven persistence chain), writes a durable Markdown QA record outside the tracked tree before the first checkpoint, and proves each checkpoint's oracle before presenting it. The human confirms each checkpoint routed to them with `PASS`, `FAIL`, or `BLOCKED`. An agent observation can close a checkpoint as `AGENT_VERIFIED` and a passing E2E assertion as `E2E_COVERED`, never as a human `PASS`; an inconclusive agent observation goes to the human, and the final summary counts each kind separately. Ships a bundled Playwright launcher (`scripts/dist/launch-interactive-browser.mjs`, Node 18+) that opens the interactive browser with preloaded localStorage fixtures and an optional `--ready-selector` gate. Scripts are TypeScript under `tools/guided-manual-qa/src/` with the built bundle committed to `skills/guided-manual-qa/scripts/dist/`. Performs no source changes or external writes without separate authorization. The same skill directory also carries `agents/openai.yaml` display metadata so Codex can load it as a skill.
 
-### `gh-monitor-pr`
-
-Detached GitHub pull-request monitor for waking the exact launching Codex Desktop or CLI root when review comments, CI failures, conflicts, merge-queue changes, closure, merge readiness, or successful merges need attention. It uses the native managed Codex App Server daemon and portable proxy/direct Unix-socket transports to steer an active parent turn or start a turn on an idle parent, while persisting monitor-local delivery receipts so ambiguous accepted wakeups are not replayed automatically. Includes CLI setup/probe, start, transfer, recovery, status, stop, and one-shot snapshot commands, plus tests for notification delivery, recovery, and PR event evaluation. The skill has no `app-server-orchestrator` dependency.
-
-### ClosedLoop Ticket Skills
-
-The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl-analyze`, `cl-find-related-tickets`, `cl-split`, `cl-work-report`, `cl-sweep`, and `cl-execute`. Together they cover policy-aware ticket analysis, related-ticket discovery, safe one-level split workflows, private project work reports, sweep coordination, and end-to-end ticket execution. The imported sweep scripts use the native managed Codex App Server through bundled helpers rather than depending on a separate `app-server-orchestrator` skill. Runtime access still depends on the operator's normal ClosedLoop, GitHub, `workflow-memory`, and `closedloop-graph` MCP/API configuration.
-
-### Supporting Codex Skills
-
-The code plugin also carries `closedloop-intel`, `workflow-code-review`, `measurement-discipline`, and `mermaid-visualizer` because the ClosedLoop ticket skills reference them directly. These are instruction skills only: `closedloop-intel` requires the connected `closedloop-graph` MCP server, `workflow-code-review` uses available worker/subagent support, and `mermaid-visualizer` supplies local Mermaid syntax guidance for plan and report diagrams.
 
 ---
 

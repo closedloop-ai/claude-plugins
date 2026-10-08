@@ -34,6 +34,8 @@ Determine the execution mode before starting:
 |------|--------|
 | `plugins/bootstrap/` | bootstrap |
 | `plugins/code/` | code |
+| `plugins/closedloop-core/` | closedloop-core |
+| `plugins/vibe/` | vibe |
 | `plugins/code-review/` | code-review |
 | `plugins/judges/` | judges |
 | `plugins/platform/` | platform |

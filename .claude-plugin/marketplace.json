@@ -5,6 +5,16 @@
   },
   "plugins": [
     {
+      "name": "closedloop-core",
+      "source": "./plugins/closedloop-core",
+      "description": "Shared ClosedLoop planning, intelligence, diagrams, and review skills"
+    },
+    {
+      "name": "vibe",
+      "source": "./plugins/vibe",
+      "description": "Vibe sessions, ClosedLoop ticket workflows, and PR monitoring"
+    },
+    {
       "name": "bootstrap",
       "source": "./plugins/bootstrap",
       "description": "Bootstrap plugin for ClosedLoop"

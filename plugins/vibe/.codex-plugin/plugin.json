@@ -1,0 +1,20 @@
+{
+  "name": "vibe",
+  "version": "1.0.0",
+  "description": "Vibe sessions, ClosedLoop ticket workflows, and PR monitoring",
+  "author": {"name": "ClosedLoop", "email": "support@closedloop.ai"},
+  "homepage": "https://github.com/closedloop-ai/claude-plugins",
+  "repository": "https://github.com/closedloop-ai/claude-plugins",
+  "license": "Apache-2.0",
+  "keywords": ["closedloop", "vibe-coding", "handoff", "pull-request-monitoring"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ClosedLoop Vibe",
+    "shortDescription": "ClosedLoop ticket, PR monitor, and vibe workflows.",
+    "longDescription": "Vibe sessions let a non-engineer build product UI in the in-app browser on their own Vercel copy of symphony-alpha, kept on a live ClosedLoop ticket, and hand the work to design and then engineering.",
+    "developerName": "ClosedLoop",
+    "category": "Development",
+    "capabilities": ["Write", "Analyze"],
+    "defaultPrompt": ["Start a vibe session.", "Hand this vibe session off to design and engineering.", "Refresh the vibe seed.", "Analyze this ClosedLoop ticket.", "Monitor this pull request."]
+  }
+}
