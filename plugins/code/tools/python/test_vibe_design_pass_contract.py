@@ -1,8 +1,9 @@
 """Contract checks for how vibe places shared behavior, uses closedloop-graph,
 commits, and treats tests.
 
-The build loop stays fast: a prep step picks the owner by rule (behavior two
-screens share goes in their shared parent as a generic slot, screens opt in)
+The build loop stays fast: a prep step picks the owner by rule (behavior the
+children of a shared parent share goes in that parent as a generic slot, and
+each child keeps only what is specific to it)
 and every inspection waits for handoff. closedloop-graph is required and every
 code worker reports its calls in a Graph block. No worker commits; the
 orchestrator does. No worker writes or edits a test unless the person asks for
@@ -81,10 +82,15 @@ def fenced_block(text: str, first_line: str) -> str:
 
 def test_owner_rules_put_shared_behavior_in_the_parent_as_a_generic_slot() -> None:
     rules = section(DESIGN_PASS.read_text(), "## Owner rules")
+    where = section(GUARDRAILS.read_text(), "## Where code goes")
 
-    assert "two or more screens or surfaces that render a shared parent goes into that parent" in rules
-    assert "generic, domain-free slot or extension point" in rules
-    assert "each screen opts in (one prop or one hook call) instead of reimplementing it" in rules
+    for text in (rules, where):
+        assert "any component that composes or inherits from a shared parent" in text.lower()
+        assert "a child keeps only what is specific to that child" in text
+        assert "generic, domain-free slot or extension point" in text
+    assert "Behavior that the children of a shared parent share goes into that parent" in rules
+    assert "each child opts in (one prop or one hook call) instead of reimplementing it" in rules
+    assert "two or more screens" not in rules
     assert "domain wiring (data hooks, API calls, nouns, labels) stays in the owning feature package" in rules
     assert "never copy it" in rules
     assert "never copied" in rules
@@ -145,7 +151,8 @@ def test_change_worker_preps_by_rule_and_names_the_owner_it_built_in() -> None:
 
     assert "Run the prep step in `design-pass.md`" in worker
     assert "It takes a minute or two; it is not a design session and asks nobody anything." in worker
-    assert "an opt-in slot other screens do not pass is not that question" in worker
+    assert "an opt-in slot other children do not pass is not that question" in worker
+    assert "only child-specific behavior in the child" in worker
     assert "Implement at the Prep's `Owner`" in worker
     assert "`PLAN` (plan dispatch): the Prep block (or `Prep: trivial`), the Graph block" in worker
     assert "`Owner: <path it built in>`, and the Graph block" in worker
@@ -272,7 +279,8 @@ def test_reviewers_flag_placement_red_flags_and_test_edits() -> None:
 
     for flag in ("shallow module", "information leakage", "temporal decomposition", "pass-through", "copy"):
         assert flag in guardrails, flag
-    assert "each implement the same behavior is blocking" in guardrails
+    assert "two children of one parent that each implement the same behavior is blocking" in guardrails
+    assert "keeps only what is specific to it" in guardrails
     assert "any added or changed test file" in guardrails
     assert "the person is not involved" in guardrails
     assert "find an input on which the copies already behave differently" in adversarial

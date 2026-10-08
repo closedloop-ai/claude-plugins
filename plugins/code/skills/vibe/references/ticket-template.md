@@ -140,7 +140,7 @@ Yes / no, plus one line when it's a no:
 1. Followed our codebase rules. AGENTS.md and the nearest owning AGENTS.md, no lint or gate suppressions added to get green.
 2. Reused existing components. No hand-rolled copy of something we already ship, and no duplicated helpers or types.
 3. Storybook is right. Every new or changed component has stories in the right place, and the controls are usable. (Design)
-4. Extended the existing pattern. For example, a capability two screens share built once on their shared parent so both get it, not two copies.
+4. Extended the existing pattern. For example, behavior the children of a shared parent share built once in that parent so each gets it, not one copy per child.
 5. Backend is wired correctly. Route, service, shared types, Zod and migration follow our layering, and nothing is left on a stub. (Eng)
 6. No invented copy. Every user-visible string came from a person or an existing label.
 7. What we had to fix before merge. A count and a short list. (Eng, filled in at merge)

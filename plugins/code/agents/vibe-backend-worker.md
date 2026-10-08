@@ -51,8 +51,8 @@ fixed in the code, never by editing the test.
    `code_callers` for every consumer of anything you will change, and
    `blast_radius_tickets` on files you will edit. Reuse an existing endpoint
    or service when one already fits, and place new code by the owner rules in
-   `design-pass.md`: an action two or more screens need gets one generic
-   endpoint and service they all call, not one per screen.
+   `design-pass.md`: an action the children of a shared parent need gets one generic
+   endpoint and service they all call, not one per child.
 2. Decision table first. Before writing code, produce the decision table for
    the behavior per the `decision-table` skill
    (`.closedloop-ai/decision-tables/<session-slug>.md`): inputs, auth and org

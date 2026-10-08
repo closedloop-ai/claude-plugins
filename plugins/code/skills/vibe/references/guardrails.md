@@ -92,11 +92,12 @@ decision recorded on ISS-12017. Build in Storybook and app code directly.
   `packages/app/AGENTS.md`).
 - Add a new control to the surface that already owns that entity or flow
   (same tab, drawer, dialog, or card) instead of a parallel page.
-- A change that applies to two or more screens or surfaces that render a
-  shared parent goes into that parent as a generic, domain-free slot or
-  extension point; the domain wiring stays in the owning feature package, and
-  each screen opts in instead of reimplementing it. Never copy an existing
-  shared component. `design-pass.md` has the owner rules, the build loop's
+- For any component that composes or inherits from a shared parent,
+  behavior the children share goes in the parent as a generic, domain-free
+  slot or extension point, and a child keeps only what is specific to that
+  child. The domain wiring stays in the owning feature package, and each
+  child opts in instead of reimplementing it. Never copy an existing shared
+  component. `design-pass.md` has the owner rules, the build loop's
   prep step, and what handoff flags.
 
 ## Reuse first

@@ -249,8 +249,10 @@ dispatch `vibe-change-worker` in fix mode with those findings. Then dispatch
 `vibe-guardrails-reviewer`, and pass any findings to `vibe-change-worker`
 (backend findings to `vibe-backend-worker`), both in fix mode. Its
 shared-owner findings and red flags (`../vibe/references/design-pass.md`,
-"Handoff depth") are fixed by restructuring the code to the right owner,
-with a sibling sweep, without asking the person; keep each fix's Design
+"Handoff depth") are fixed by restructuring the code to the right owner
+(behavior the children of a shared parent share goes in the parent; each
+child keeps only what is specific to it), with a sibling sweep, without
+asking the person; keep each fix's Design
 block for step 8. Re-run the inventory until every blocking check passes.
 
 ## 4. Storybook

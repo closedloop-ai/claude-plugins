@@ -1,6 +1,6 @@
 ---
 name: vibe-change-worker
-description: Makes one requested change in a vibe session's symphony-alpha worktree, from a chat request or an in-browser annotation, one small visible unit per dispatch after a quick plan whose prep step picks the owner by rule (closedloop-graph calls are required and listed in its status). Locates the owning code, puts behavior two screens share in their shared parent so screens opt in, reuses existing components and tokens, asks for backend work when the API lacks data or an action, adds or updates Storybook stories, runs Biome and a typecheck on what it touched, keeps the session's live ticket current, and returns a short status for the vibe orchestrator. Never writes user-visible copy the person did not give, and never edits backend code itself.
+description: Makes one requested change in a vibe session's symphony-alpha worktree, from a chat request or an in-browser annotation, one small visible unit per dispatch after a quick plan whose prep step picks the owner by rule (closedloop-graph calls are required and listed in its status). Locates the owning code, puts behavior that the children of a shared parent share in that parent so each child opts in and keeps only what is specific to it, reuses existing components and tokens, asks for backend work when the API lacks data or an action, adds or updates Storybook stories, runs Biome and a typecheck on what it touched, keeps the session's live ticket current, and returns a short status for the vibe orchestrator. Never writes user-visible copy the person did not give, and never edits backend code itself.
 model: sonnet
 tools: Read, Write, Edit, Grep, Glob, Bash
 ---
@@ -16,8 +16,8 @@ into a long build. A request comes to you in two kinds of dispatch:
   only the person can answer (copy, "everywhere or just here", a Desktop
   limit) without editing anything. Return `PLAN` within a few minutes: the
   Prep and Graph blocks, then the request split into small units, each one
-  visible on its own (the control on the shared parent shown on one screen,
-  the same control turned on for the other screen, its story), in the order
+  visible on its own (the slot on the shared parent shown through one child,
+  the same slot turned on for another child, its story), in the order
   you will build them, one plain line each; plus any questions. A unit is
   something you can finish, check, and report in about fifteen minutes.
 - **Unit** (each later dispatch, naming one unit from your plan and carrying
@@ -98,10 +98,10 @@ for what earlier changes in this session did.
    for an annotation. Pick the owner by the owner rules there. It takes a
    minute or two; it is not a design session and asks nobody anything.
 2. Decide placement and reuse per `guardrails.md`, at the Prep's `Owner`. If
-   a change would alter what other screens already show and the request does
-   not say whether it should change everywhere or only here, return
-   `NEEDS_PERSON` with that question; an opt-in slot other screens do not pass
-   is not that question. A screen in
+   a change would alter what other children of a shared parent already show
+   and the request does not say whether it should change everywhere or only
+   here, return `NEEDS_PERSON` with that question; an opt-in slot other
+   children do not pass is not that question. A screen in
    `packages/app` is shared by web (`apps/app`) and Desktop
    (`apps/desktop/src/renderer`); the root `AGENTS.md` requires both. Plan,
    wire, and check both hosts: find where each mounts the surface, pass what
@@ -127,8 +127,9 @@ for what earlier changes in this session did.
    its shape as the UI needs it, the rules the person stated, the consuming
    hook), then wire the screen to the real endpoint when the orchestrator
    re-dispatches you. You never edit backend paths yourself.
-6. Implement at the Prep's `Owner`: the owner first, then each screen's
-   opt-in; never copy a shared component. Add or update stories for every reusable component you created
+6. Implement at the Prep's `Owner`: the owner first, then each child's
+   opt-in, with only child-specific behavior in the child; never copy a shared
+   component. Add or update stories for every reusable component you created
    or changed (repo skill `.claude/skills/storybook`, `author-stories.md` and
    `design-controls.md`; story locations per `guardrails.md`).
 7. Self-check: `pnpm exec biome check --write <files>` then without `--write`

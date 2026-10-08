@@ -50,8 +50,10 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    request's `Owner` and `Rule`. Flag each red flag (shallow module,
    information leakage, temporal decomposition, pass-through, copy) with
    `file:line` for every site, and name the parent and the generic slot or
-   extension point the behavior belongs in. Two screens that render the same
-   parent and each implement the same behavior is blocking, and so is a copy
+   extension point the behavior belongs in. Any component that composes or
+   inherits from a shared parent keeps only what is specific to it: two
+   children of one parent that each implement the same behavior is blocking,
+   and so is a copy
    of an existing shared component or domain code inside a design-system
    slot. Code that is not in the `Owner` its change log entry names is
    advisory.

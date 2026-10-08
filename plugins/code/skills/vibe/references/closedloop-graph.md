@@ -20,7 +20,7 @@ Its tools appear as `closedloop-graph` server tools (in Claude Code,
 | Is someone already building this, or something overlapping? | `query_collisions`, then `search_nodes` with the request text |
 | Why do two things relate; what was decided before? | `search_memory_facts` |
 | Where is component or symbol X defined? | `code_symbols` (turns a bare name into the repo path) |
-| What uses this component (other screens a change would affect, the parent two screens share)? | `code_callers`, `code_importers` |
+| What uses this component (other children a change would affect, the parent the touched components share)? | `code_callers`, `code_importers` |
 | Which tests cover this file? | `code_tests_for` |
 | Which open tickets touch this file (someone else's work in flight)? | `blast_radius_tickets` |
 | Show me the code of one symbol | `code_snippet` |
@@ -35,7 +35,7 @@ one element), at least:
 | Worker | Calls |
 |---|---|
 | `vibe-requirements-worker` | `code_symbols` on the screen's main component, `blast_radius_tickets` on its route and main component files, and for a description `query_collisions` and `search_nodes` |
-| `vibe-change-worker` (prep, units, fix mode) | `code_symbols` on each component or hook it will edit or extend, then `code_callers` and `code_importers` on each (this is how it finds the shared parent and the other screens), and `blast_radius_tickets` on each file it edits |
+| `vibe-change-worker` (prep, units, fix mode) | `code_symbols` on each component or hook it will edit or extend, then `code_callers` and `code_importers` on each (this is how it finds the shared parent and its other children), and `blast_radius_tickets` on each file it edits |
 | `vibe-backend-worker` | `code_symbols` on the closest route, service, and model, `code_callers` on anything it changes, and `blast_radius_tickets` on each file it edits |
 | `vibe-guardrails-reviewer` | `code_symbols` and `search_nodes` for an existing component a hand-rolled one duplicates, and `code_callers` and `code_importers` on each changed shared component |
 | `vibe-adversarial-reviewer` | `code_callers` and `code_importers` on each changed component or hook, `code_tests_for` on changed files, and `blast_radius_tickets` on them |
@@ -53,7 +53,7 @@ saying what the call established:
 ```
 Graph:
 - code_symbols <Component>: <the repo path it resolved to>
-- code_importers <component file>: <each screen or surface that renders it, or none>
+- code_importers <component file>: <each component that composes it, or none>
 - code_callers <hook or function>: <its callers, or none>
 - blast_radius_tickets <file you edit>: <open tickets touching it, or none>
 ```
