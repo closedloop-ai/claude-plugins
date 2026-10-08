@@ -198,8 +198,9 @@ tooling without an exit path is incomplete even if the ticket is otherwise ready
 For latency, throughput, profiling, optimization, query/runtime cost, or
 regression tickets, measurement evidence is part of acceptance.
 
-1. Use the `measurement-discipline` skill before diagnosing, optimizing, or
-   reporting a performance result. Search measurement logs, workflow memory, and
+1. Load `measurement-discipline` by name (`$measurement-discipline` in Codex or
+   `/closedloop-core:measurement-discipline` in Claude Code) before diagnosing,
+   optimizing, or reporting a performance result. Search measurement logs, workflow memory, and
    ticket/code history by symptom and mechanism (closedloop-graph `fts_search`
    and `blast_radius_tickets` first, then `git log`).
 2. Baseline before editing whenever feasible. Use one discarded warmup plus at

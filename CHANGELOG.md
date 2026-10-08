@@ -4,6 +4,20 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.0.1
+
+#### Changed
+- Moved `gh-monitor-pr`, `guided-manual-qa`, and `measurement-discipline` from vibe into core without duplicate resources. Guided QA build output, contract tests, and CI bundle checks follow the core-owned skill.
+
+#### Added
+- A public client process API reuses the existing App Server transport, thread-state, and exactly-once input-delivery implementation through private pipes, preserving request errors, timeouts, notifications, connection events, and caller-owned cleanup.
+
+### vibe v1.0.1
+
+#### Changed
+- ClosedLoop ticket workflows load the shared monitor and guided QA skills by name. Sweep scripts use a thin process adapter to the core-owned App Server client instead of cross-plugin imports; all ClosedLoop ticket skills remain in vibe.
+- Core discovery verifies an enabled installed plugin and resolves the named skill through Codex's actual `skills/list` path or Claude Code's scoped plugin registry. Missing or incompatible core stops the workflow without guessing cache or marketplace paths.
+
 ### closedloop-core v1.0.0
 
 #### Added

@@ -469,9 +469,10 @@ Record the assumption and its evidence in the decision log and under
    any readiness or monitoring handoff. Comment creation does not start the
    interactive guided QA session.
 7. Update included ClosedLoop features to `IN_REVIEW`.
-8. Take one bounded current-head snapshot after opening the PR with the sibling
-   `../../gh-monitor-pr/scripts/monitor-pr.mjs` script, resolved relative to
-   this installed skill pack, and record its verdict. A red coverage check is not waived because it is
+8. Load `gh-monitor-pr` by name (`$gh-monitor-pr` in Codex or
+   `/closedloop-core:gh-monitor-pr` in Claude Code). Take one bounded current-head
+   snapshot using `scripts/monitor-pr.mjs` from that loaded skill's own folder
+   and record its verdict. A red coverage check is not waived because it is
    absent from required checks.
 9. Triage every PR review comment against the ticket and PRDs. Fix current-PR
    issues that prove requirements, correctness, data integrity, security,

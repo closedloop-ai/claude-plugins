@@ -382,3 +382,27 @@ delete App Server sockets, PID files, SQLite state, or rollout files as a cleanu
 shortcut. Never stop or restart the daemon from the turn it is currently
 serving; defer cleanup until that turn has ended or use an explicitly
 user-authorized external owner that can prove the same no-user conditions.
+
+## Public client process interface
+
+Other plugins load this skill by name (`$gh-monitor-pr` in Codex or
+`/closedloop-core:gh-monitor-pr` in Claude Code). They may invoke
+`scripts/monitor-pr.mjs` or `scripts/client-process-api.mjs` from this loaded
+skill's own folder. They never import core files or duplicate the transport.
+
+`client-process-api.mjs` exposes `CLOSEDLOOP_APP_SERVER_CLIENT v1` over private
+stdin/stdout JSONL pipes. The `contract` one-shot operation checks compatibility;
+`daemon` and `decodeFrames` use the same core implementation. In `serve` mode,
+`connect`, `initialize`, `request`, `notify`, `readThreadState`, and `sendInput`
+preserve the native client contract, including notification and connection
+events. `delegate` supports an injected caller-owned client through reverse
+callbacks without copying thread-state or delivery algorithms. Inputs stay on
+private pipes, never command arguments or diagnostic logs. Closing stdin or
+terminating the caller closes the owned connection; it never stops the shared
+daemon.
+
+The vibe adapter resolves this named skill through Codex's enabled plugin
+registry and `skills/list` actual installed path, or Claude Code's enabled
+scoped plugin registry. It does not infer a path from a marketplace source,
+cache version, or another plugin directory. Missing or incompatible core stops
+the workflow with an update requirement rather than falling back to a copy.
