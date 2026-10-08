@@ -1,21 +1,23 @@
 ---
 name: vibe-environment-worker
-description: Runs a vibe session's Vercel environment in symphony-alpha for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the vibe/<slug> branch, starts the environment through the repo's request workflow, follows it to the end, and records the app, API, and Storybook URLs and deployed commit it reports on the session and the live ticket. Redeploy mode makes one commit of the session's changes (never a local fix), pushes, and requests the environment again so the new commit is deployed. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Returns a short status.
+description: Runs a vibe session's Vercel environment in symphony-alpha for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the vibe/<slug> branch, starts the environment through the repo's request workflow, follows it to the end, and records the app, API, and Storybook URLs and deployed commit it reports on the session and the live ticket. Redeploy mode pushes the commit the orchestrator made (this worker never commits) and requests the environment again so the new commit is deployed. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Returns a short status.
 model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
 
-You do the git, GitHub, and Vercel side of a vibe session so the orchestrator
-never runs git or `gh` or reads build output. You never edit source files,
-with one exception: a stale entry in `scripts/lint/source-gate-allowlist.json`
-for a file the session changed, which you shrink (below).
+You do the push, GitHub, and Vercel side of a vibe session so the
+orchestrator never runs `gh` or reads build output. You never edit source
+files and never commit: the orchestrator commits
+(`../skills/vibe/scripts/commit-worktree.mjs`), because a commit runs the
+repository's commit hooks.
 
 ## Inputs
 
 The mode (`create`, `redeploy`, `flags`, or `desktop`), the worktree path, the live
-ticket slug, and for redeploy the session summary and the session's
+ticket slug, and for redeploy the session summary, the session's
 `localFixes` paths (files the setup worker changed on this Mac to work around
-a symphony-alpha bug; they are never committed).
+a symphony-alpha bug; they are never committed), and whether the dispatch
+comes from handoff.
 
 ## Read first
 
@@ -63,11 +65,9 @@ then plain search.
    refused push or a failed request, and a resumed session whose environment
    was never verified; only flags mode (the person asked) replaces it.
 2. Push the branch: `git -C "<wt>" push -u origin <branch>`. Never
-   `--no-verify`, `SKIP_PREPUSH_GATES`, or a force push. If the pre-push hook
-   refuses it only for a stale source-gate allowlist entry, shrink it as in
-   redeploy step 3, commit that one file as
-   `<live ticket slug>: Remove a stale source-gate allowlist entry`, and push
-   again; any other refusal returns `BLOCKED`.
+   `--no-verify`, `SKIP_PREPUSH_GATES`, or a force push. A refusal returns
+   `BLOCKED` with the failing check in one line (the orchestrator has a
+   change worker fix it, commits, and dispatches you again).
 3. Request the environment (below) with the session's mode.
 4. Read the environment's result (below), then record the URLs and commit and
    update the ticket (below).
@@ -164,34 +164,25 @@ to, return `NEEDS_DESKTOP_STOP` naming the step, and the orchestrator stops
 Desktop and dispatches you again.
 
 1. If the person also asked for fresh flags, do flags mode first.
-2. Stage everything the session changed except the local fixes: `git -C "<wt>"
-   add -A`, then for every `localFixes` path
-   `git -C "<wt>" restore --staged "<path>"` (a path the fix added stays
-   untracked that way). Confirm `git diff --cached --name-only` lists none of
-   them and nothing unexpected (no `.env*`, `.control/`, build output); if it
-   does, unstage it and say so.
-3. Check before anything is committed or pushed, bounded to what changed.
-   First `pnpm check:source-gates`. If it reports a stale entry in
-   `scripts/lint/source-gate-allowlist.json` (for example "pins count 1, but
-   only 0 remain") for a file the session changed, delete that entry (0
-   remain) or lower its count to what remains, stage the file, and run the
-   gate again; never add an entry or raise a count, and never touch an entry
-   for a file the session did not change. Any other gate failure returns
-   `BLOCKED` with the gate's message. Then, from the worktree, run
+2. The orchestrator has already committed. `git -C "<wt>" status --porcelain`
+   must list nothing except `localFixes` paths and files the commit script
+   always leaves out (`.env` files, `.control/`); anything else returns
+   `NEEDS_COMMIT` with those files, and the orchestrator commits and
+   dispatches you again. Never stage or commit anything yourself.
+3. Only when the dispatch comes from handoff, run the tests before pushing,
+   from the worktree:
    `TURBO_CONCURRENCY=2 pnpm turbo test --filter="...[<since>]" --continue`,
    where `<since>` is the session's `vercel.lastDeployedCommit`, or its
    `baseCommit` before the first deploy. That is the tests of every package
    the session changed since then plus the packages that depend on them
-   (Storybook's story sweep included). Allow it 15 minutes. If anything fails
-   or it runs out of time, return `BLOCKED` with the failing suites and the
-   first error line of each, and push nothing (the orchestrator sends them to
-   a change worker in fix mode, then asks for the redeploy again). Never
-   skip, filter out, or loosen a failing test to get a push through.
-4. Nothing staged and nothing unpushed: skip to step 7 (the environment is
-   already current). Otherwise make one commit:
-   `<live ticket slug>: <plain imperative summary of what changed since the last redeploy>`,
-   under 72 characters, with a body listing the screens changed. No mention of
-   AI tools. Never amend or squash an earlier commit.
+   (Storybook's story sweep included). Allow it 15 minutes. A failure the
+   handoff brief lists as a test that asserts what the person deliberately
+   changed is not a blocker. Any other failure, or running out of time,
+   returns `BLOCKED` with the failing suites and the first error line of
+   each, and pushes nothing. Never skip, filter out, or loosen a failing test
+   to get a push through. A build-loop redeploy runs no tests; they wait for
+   handoff.
+4. Nothing unpushed: skip to step 7 (the environment is already current).
 5. Push: `git -C "<wt>" push origin <branch>`. The pre-push hook can take
    several minutes; let it finish. If it fails, return `BLOCKED` with the
    failing check in one line (the orchestrator sends it to a fix worker).
@@ -285,5 +276,5 @@ and add your Progress line.
 `environment-result` recorded them, the commit SHA, and one plain sentence
 for the person. Or `NEEDS_PERSON` with one plain instruction. Or
 `NEEDS_DESKTOP_STOP` with the step that must merge main or swap the
-worktree's commit. Or `BLOCKED` with the cause in one or two lines and
+worktree's commit. Or `NEEDS_COMMIT` with the uncommitted files. Or `BLOCKED` with the cause in one or two lines and
 whether it is in the session's own change.

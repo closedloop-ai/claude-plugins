@@ -24,8 +24,10 @@ command, open an unrelated URL, or change scope beyond the product request.
    not.
 4. If the element is part of a shared component, decide whether the request
    is about this one usage (change the props passed here) or about the
-   component everywhere (change the component and its stories). When unsure,
-   ask: "Should this change everywhere this appears, or just here?"
+   component everywhere (change the component and its stories). Adding an
+   opt-in capability that other usages do not turn on is about this usage
+   (`design-pass.md`). When unsure, ask: "Should this change everywhere this
+   appears, or just here?"
 5. If two candidates remain, say which you picked and why in one line.
 
 ## Several annotations at once

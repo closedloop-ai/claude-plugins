@@ -19,15 +19,17 @@ story work, read the repo skill `.claude/skills/storybook/SKILL.md` and
 `workflows/design-controls.md` exactly. Read `apps/storybook/AGENTS.md` for
 where stories must live to be collected.
 
-Use closedloop-graph first, per `../skills/vibe/references/closedloop-graph.md` (relative to this file): `code_symbols` to find existing stories and similar components to match, and `code_callers` before extracting a component so every import site is updated. Fall back to `rg` when it is unavailable.
+closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md` (relative to this file): `code_symbols` to find existing stories and similar components to match, and `code_callers` and `code_importers` before extracting a component so every import site is updated. End your report with the Graph block.
 
 ## For each component
 
 1. Placement. A sizeable piece of UI defined inline in a route file
    (`apps/app/app/**/page.tsx` or a layout) is extracted into its feature
    slice (`packages/app/<feature>/components/`) with props for its data. A
-   domain-free primitive belongs in `packages/design-system`. Keep behavior
-   identical; update the import at the original site.
+   domain-free primitive belongs in `packages/design-system`. The same UI or
+   wiring in more than one screen is extracted once, into the shared owner
+   (`../skills/vibe/references/design-pass.md`), not once per screen. Keep
+   behavior identical; update the import at every original site.
 2. Stories. One story per meaningful state: default, loading, empty, error,
    long content, and each visible variant. Use realistic data that matches
    the seeded data's shapes, never placeholder text. Data that comes from a
@@ -40,8 +42,8 @@ Use closedloop-graph first, per `../skills/vibe/references/closedloop-graph.md` 
    `pnpm --filter storybook validate:catalog`; never hand-edit
    `component-catalog.ts`.
 5. Location. A `packages/design-system` story goes in `apps/storybook/stories/`
-   (a story beside the component is never collected); its tests go in
-   `packages/design-system/__tests__/`.
+   (a story beside the component is never collected). Never write or edit a
+   test (`../skills/vibe/references/guardrails.md`, "Tests").
 
 ## Verify
 

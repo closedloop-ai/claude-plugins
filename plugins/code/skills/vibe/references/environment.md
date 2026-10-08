@@ -84,14 +84,16 @@ rebuild it). Shape (validated by `flag-snapshot`):
 `{ takenAt, distinctId, orgId?, flags }`, each flag `true`, `false`, or a
 variant name.
 
-## Redeploying (`vibe-environment-worker`, redeploy mode)
+## Redeploying (the orchestrator commits, then `vibe-environment-worker`, redeploy mode)
 
 Only when the person asks ("redeploy", "redeploy to Vercel", "push it up",
-"put it on Vercel", "let me see it live"). One commit of everything changed
-since the last redeploy, never a local fix, then a push and the environment
-requested again with the same mode; the worker reads the deployed commit from
-that run and tells the orchestrator when the app and Storybook show it. Each redeploy is its own commit; nothing is squashed or
-amended later.
+"put it on Vercel", "let me see it live"). The orchestrator makes one commit
+of everything changed since the last redeploy, never a local fix, with
+`scripts/commit-worktree.mjs` (the repository's commit hook runs there; no
+worker ever commits). Then the worker pushes, requests the environment again
+with the same mode, reads the deployed commit from that run, and tells the
+orchestrator when the app and Storybook show it. Each redeploy is its own
+commit; nothing is squashed or amended later.
 
 ## What runs on this Mac
 

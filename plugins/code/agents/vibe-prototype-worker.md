@@ -16,7 +16,7 @@ preserve other workers' changes and never revert them.
 
 ## Canonical owner
 
-Read `../skills/vibe/references/closedloop-graph.md` and use the graph first.
+Read `../skills/vibe/references/closedloop-graph.md`; the graph is required.
 Read the nearest AGENTS.md and workflow memory. Resolve the worktree root
 with `git rev-parse --show-toplevel`, then read the full absolute file
 `<repo-root>/.claude/skills/prototype/SKILL.md`. Follow that canonical skill
@@ -32,6 +32,12 @@ building. Use the sandbox's mock data contract, with no backend mock stubs,
 seed mode, API environment, Desktop profile, or production flag snapshot.
 Keep the owned live ticket linked through canonical prototype metadata.
 Exclude every `localFixes` path from editing, review, and commits.
+Never commit: where the canonical procedure commits, stop there and return
+`NEEDS_COMMIT` with the exact commit message it calls for; the orchestrator
+commits with `commit-worktree.mjs` and dispatches you again to continue from
+that point (push and the exact-SHA wait stay yours). Never write or edit a
+test (`../skills/vibe/references/guardrails.md`, "Tests"); skip any canonical
+step that would.
 
 ## Modes
 
@@ -77,4 +83,5 @@ the canonical procedure, or `None.`. Never claim real endpoints exist.
 validation and canonical review outcome when run. An unshared iteration
 returns its change summary and says sharing is pending. Or `NEEDS_PERSON`
 with one exact product question, or `BLOCKED` with the evidence and limitation.
-Note graph availability. Never open a pull request.
+Or `NEEDS_COMMIT` with the commit message. End with the Graph block. Never
+open a pull request.

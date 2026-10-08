@@ -22,14 +22,29 @@ opened here.
 The same rule as the `vibe` skill, without exception: you never read source
 files, search the codebase, edit files, read diffs or tickets in full, or run
 builds, tests, linters, reviews, git, or `gh` yourself. You show and update
-the task list, talk to the person, run this skill's inventory script and the
-vibe session script (short JSON), and dispatch workers. Each worker returns a
+the task list, talk to the person, run this skill's inventory script, the
+vibe session script, and the vibe commit script (short JSON), and dispatch
+workers. You commit, through `../vibe/scripts/commit-worktree.mjs`; no worker
+ever commits, because a commit runs the repository's commit hooks. Each worker returns a
 short status (`DONE`, `NEEDS_PERSON`, `BLOCKED`); relay `NEEDS_PERSON`
 verbatim in plain words and route the answer as "Answers from the person"
 below says. Every
-worker brief says to use closedloop-graph first
-(`../vibe/references/closedloop-graph.md`), and every worker that edits the
-live ticket follows `../vibe/references/ticket-template.md`.
+worker brief says closedloop-graph is required
+(`../vibe/references/closedloop-graph.md`): each worker that locates,
+changes, or reviews code makes its required calls and ends its result with a
+Graph block. A result without one, or with one that lists no calls, is
+incomplete; dispatch the worker again saying so. A Graph block that says
+`unreachable` keeps that step moving; dispatch `vibe-setup-worker` to restore
+the connection before the next step. Every worker that edits the live ticket
+follows `../vibe/references/ticket-template.md`.
+
+No worker writes or edits a test, here or in the build loop
+(`../vibe/references/guardrails.md`, "Tests"); tests are engineering's.
+Handoff still runs the existing tests, and a failure the session caused is
+fixed in the session's own code, never in the test. The only exception is a
+pull request the person explicitly asks for: then full tests for all of the
+session's changes are written before it is opened. Handoff opens no pull
+request today.
 
 Harness notes match the `vibe` skill: in Codex invoke as `$handoff` and spawn
 plugin agents from `../../agents/<name>.md` with the file's body as the
@@ -80,7 +95,8 @@ change worker has not handled; it refuses one with `NEEDS_CHANGE`.
 |---|---|
 | Summary | `vibe-handoff-summarizer` |
 | Guardrail and review fixes, behavior answers | `vibe-change-worker` (fix mode: give it the findings, or the question and the person's answer); backend findings to `vibe-backend-worker` (fix mode) |
-| Judgment guardrails | `vibe-guardrails-reviewer` |
+| Judgment guardrails, shared-owner placement, and red flags | `vibe-guardrails-reviewer` |
+| Commits | you, with `../vibe/scripts/commit-worktree.mjs` |
 | Storybook | `vibe-storybook-decomposer` |
 | Code checks, whole test suite, Storybook footprint | `vibe-verify-worker` |
 | Lighter: tough review | repo `review-soul` and `vibe-adversarial-reviewer`, in parallel |
@@ -130,7 +146,9 @@ canonical contract; do not create app backend stubs or a production flag
 snapshot to satisfy the app-only checks.
 
 In step 7 dispatch `vibe-prototype-worker` in prepare-handoff mode instead of
-the environment worker. It preserves canonical step 7's single design review,
+the environment worker; on its `NEEDS_COMMIT`, commit with
+`../vibe/scripts/commit-worktree.mjs` using the message it gives, then
+dispatch it again. It preserves canonical step 7's single design review,
 ReadyForReview and tags, retains the review outcome on the ticket, and shares
 the resulting commit through canonical step 5.5 without opening a PR.
 PrototypeStatus.HandedOff remains owned by prototype-approve. Re-run inventory
@@ -160,8 +178,17 @@ and any migration), the backend checks when it did. If a later inventory run
 reports `backendChanged` true (a fix or a behavior answer added backend code),
 use the backend checks from then on and show the updated list.
 
-Before anything else, show the list for that weight and keep it updated as
-each item finishes (mark it done, or say plainly what blocked it).
+Before anything else, tell the person plainly what is about to happen and
+that it takes a while:
+
+```
+Now I'll review the code adversarially, fix the bugs it finds, check each
+change is built once in the right shared place, run lint, typecheck, and the
+tests, and the rest. This takes a while.
+```
+
+Then show the list for that weight and keep it updated as each item finishes
+(mark it done, or say plainly what blocked it).
 
 No backend change (lighter checks):
 
@@ -169,6 +196,7 @@ No backend change (lighter checks):
 Here's what I'll do to hand this off:
 [ ] Summarize what changed and confirm it with you
 [ ] Check nothing outside the screens and components changed
+[ ] Check each change is built once, in the right shared place
 [ ] Make sure every new or changed component has Storybook stories, and
     measure what the work adds to the Storybook sidebar
 [ ] Run the code checks (lint, types, tests)
@@ -185,6 +213,7 @@ Backend changed (backend checks):
 Here's what I'll do to hand this off:
 [ ] Summarize what changed and confirm it with you
 [ ] Check the change stays within what we can hand off
+[ ] Check each change is built once, in the right shared place
 [ ] Make sure every new or changed component has Storybook stories, and
     measure what the work adds to the Storybook sidebar
 [ ] Run every test in the repo
@@ -217,8 +246,14 @@ worker in step 8.
 
 If the inventory's `blocking` checks fail, or `outsideAllowed` is non-empty,
 dispatch `vibe-change-worker` in fix mode with those findings. Then dispatch
-`vibe-guardrails-reviewer`, and pass any findings to `vibe-change-worker`.
-Re-run the inventory until every blocking check passes.
+`vibe-guardrails-reviewer`, and pass any findings to `vibe-change-worker`
+(backend findings to `vibe-backend-worker`), both in fix mode. Its
+shared-owner findings and red flags (`../vibe/references/design-pass.md`,
+"Handoff depth") are fixed by restructuring the code to the right owner
+(behavior the children of a shared parent share goes in the parent; each
+child keeps only what is specific to it), with a sibling sweep, without
+asking the person; keep each fix's Design
+block for step 8. Re-run the inventory until every blocking check passes.
 
 ## 4. Storybook
 
@@ -256,18 +291,27 @@ suite again (step 5). Then run `workflow-code-review` a second time on the
 result and repeat the fix and suite steps for anything it confirms. Keep both
 passes' fixed and rejected lists for the ticket.
 
+In both weights, a finding that asks for a new or changed test is not sent to
+a fixing worker: list it as rejected with "tests are engineering's" so the
+ticket carries it for engineering.
+
 ## 7. Upload the last changes
 
 Run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
-again, then dispatch `vibe-environment-worker` in redeploy mode with the
-worktree, the live ticket slug, the confirmed summary, and the inventory's
-`localFixes` paths. It commits everything the checks and reviews changed as
-one more commit (nothing is squashed or amended), pushes through the repo's
-pre-push checks, requests the environment again so that commit is deployed,
-and updates the ticket. If
-nothing changed since the last redeploy, it confirms the branch and the
-environment are current instead. A push refused by the repo's checks goes back
-to step 5's fixing, then this step again. On `NEEDS_DESKTOP_STOP`, dispatch
+again, then commit everything the checks and reviews changed as one more
+commit (nothing is squashed or amended):
+`node ../vibe/scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the handoff fixes>" --body "<what was fixed, one per line>"`
+(under 72 characters, no mention of AI tools). `committed: false` means
+nothing changed. A commit the hook refused goes back to step 5's fixing, then
+this step again. Then dispatch `vibe-environment-worker` in redeploy mode
+from handoff with the worktree, the live ticket slug, the confirmed summary,
+the inventory's `localFixes` paths, and the failing tests the verify worker
+left for engineering. It runs the tests, pushes through the repo's pre-push
+checks, requests the environment again so that commit is deployed, and
+updates the ticket. If nothing changed since the last redeploy, it confirms
+the branch and the environment are current instead. A push refused by the
+repo's checks goes back to step 5's fixing, then the commit and this step
+again. On `NEEDS_DESKTOP_STOP`, dispatch
 `vibe-setup-worker` to stop Desktop, then this step again (Desktop is not
 started again at handoff).
 
@@ -300,7 +344,7 @@ engineering finishing is the usual route, but the person decides.
 Then dispatch `vibe-ticket-worker` in handoff mode with: the worktree, the live
 ticket slug, the next owner (full name and email), the inventory path, the
 confirmed summary and the person's corrections, the footprint, check, and
-review summaries, the decision tables in `.closedloop-ai/decision-tables/` if
+review summaries, the Design blocks from step 3's fixes, the decision tables in `.closedloop-ai/decision-tables/` if
 any, and every answer from the person so far with how it was handled. It
 refreshes the record sections (the Environment base commit from the current
 inventory), re-derives every section an answer touches, fills the Handoff and
