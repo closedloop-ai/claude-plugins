@@ -32,8 +32,8 @@ import { isPortableSurfaceAllowlistEdit, PORTABLE_SURFACE_CHECKER } from "./prot
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 const BRANCH_PREFIX = "vibe/";
 
-// The frontend paths a change worker edits, plus the backend paths that only
-// vibe-backend-worker edits (ISS-12046); an engineer reviews both before merge.
+// The sole implementation writer owns frontend and backend changes (ISS-12135);
+// an engineer reviews both before merge.
 const ALLOWED_PREFIXES = [
   "apps/app/",
   "packages/app/",

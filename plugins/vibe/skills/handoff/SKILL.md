@@ -41,9 +41,9 @@ incomplete; dispatch the worker again saying so. A Graph block that says
 the connection before the next step. Every worker that edits the live ticket
 follows `../vibe/references/ticket-template.md`.
 
-Test writing happens only here at handoff, through `vibe-verify-worker` in
-`tests` mode (`../vibe/references/guardrails.md`, "Tests"). Build-loop workers
-never write or edit tests. Add coverage for the delivered behavior, preserve
+Test writing happens only here at handoff, through the SAME persistent
+`vibe-change-worker` in handoff mode (`../vibe/references/guardrails.md`, "Tests").
+Verification/review helpers are read-only. Add coverage for delivered behavior, preserve
 test integrity and fix implementation defects rather than weakening a check.
 Code quality and implementation reviews already run before handoff; these are
 final integrated checks, not the first attempt to correct preventable issues.
@@ -58,6 +58,9 @@ the repository. Resolve the plugin root (two levels above this file, as the
 `vibe` skill describes) to an absolute path and start every worker brief with
 the same plugin-root line: worker paths starting with `../` are relative to
 `<root>/agents`, never to the worktree the worker runs in.
+Read the existing writer summary/queue and resume its actual recorded ID.
+Claude uses the owned capability-bound launcher; Codex uses the same native
+follow-up/resume ID. Do not start a new handoff/backend/test source writer.
 
 ## Answers from the person
 
@@ -73,11 +76,11 @@ who picks the work up next, which step 8 asks and routes itself.
 - **Wording**: it only changes how the ticket describes what is already
   built (the summary, a name, how the scope reads).
 
-A behavior answer goes to `vibe-change-worker` in fix mode first, with the
+A behavior answer resumes the SAME `vibe-change-worker` in fix mode first, with the
 question and the person's answer verbatim. It checks the code against the
 answer on every screen it touches and either reports the code already meets
 it (with the evidence, no file changed) or builds it under its usual rules
-(a backend need comes back as `NEEDS_BACKEND` for `vibe-backend-worker`). If
+(backend guidance may be read-only; this writer builds the backend too). If
 it changed any file, re-run before the ticket is finished: step 3 (inventory
 and guardrails), step 4 when a component or story changed, step 5 (checks),
 step 6 on the result (lighter: both reviewers; backend: one
@@ -97,11 +100,11 @@ change worker has not handled; it refuses one with `NEEDS_CHANGE`.
 | Step | Worker |
 |---|---|
 | Summary | `vibe-handoff-summarizer` |
-| Guardrail and review fixes, behavior answers | `vibe-change-worker` (fix mode: give it the findings, or the question and the person's answer); backend findings to `vibe-backend-worker` (fix mode) |
+| ALL source fixes, behavior answers and test authoring | the SAME persistent `vibe-change-worker` context |
 | Judgment guardrails, shared-owner placement, and red flags | `vibe-guardrails-reviewer` |
 | Commits | you, with `../vibe/scripts/commit-worktree.mjs` |
-| Storybook | `vibe-storybook-decomposer` |
-| Test authoring only at handoff, code checks, whole test suite, Storybook footprint | `vibe-verify-worker` |
+| Storybook advice only | read-only `vibe-storybook-decomposer`; the SAME writer applies it |
+| Existing code checks, coverage advice, suite and footprint | read-only `vibe-verify-worker` |
 | Lighter: tough review | repo `review-soul` and `vibe-adversarial-reviewer`, in parallel |
 | Backend: two review passes | the `workflow-code-review` skill (itself orchestrator-only) |
 | Last push and Vercel check | `vibe-environment-worker` (redeploy mode) |
@@ -124,65 +127,39 @@ so this conversation is recorded on the session too.
 
 ### Owned prototype sessions
 
-An owned session on `prototype/<slug>` follows the same summary, guardrails,
-lighter checks and reviews, next-owner lookup, complete-ticket check, and
-assignment below. The inventory's `prototype` publication identifies this
-path; an arbitrary prototype branch without the matching private ownership
-record is refused. Give every worker that publication and the canonical
-prototype skill's absolute `<repo-root>/.claude/skills/prototype/SKILL.md` path.
-Keep every `localFixes` path excluded as usual.
+Use the same recorded persistent writer, owned `prototype/<slug>` worktree,
+branch and live ticket. Never create a prototype/handoff/test source writer.
+Give the writer the canonical absolute
+`<repo-root>/.claude/skills/prototype/SKILL.md` guidance, current inventory and
+publication. It performs all source fixes, registry/local metadata and
+handoff-only tests in its same context. Read-only specialists/design reviewers
+return advice; they do not apply it.
 
-The inventory always returns the owned prototype's files and base, including
-when publication is missing or stale. If its
-`blocking.prototypePublicationCurrent` is false, dispatch the prototype worker
-in share mode with `publicationProblem`, then re-run inventory before the
-checks. This recovers an unshared or newly committed iteration through the
-canonical share procedure; a failed share stays blocked with its evidence.
+The inventory still returns files/base when publication is stale or missing.
+Use that provisional evidence for independent checks; only publication freshness
+is deferred while code is reviewed. Enforce every other guard, including early
+test provenance and private-plan checks. Source generation or metadata fixes
+resume this SAME writer, never the operational share helper.
 
-Route behavior answers and all guardrail/review/check fixes to
-`vibe-prototype-worker` in fix mode, using the same person's words and findings.
-Run steps 3 through 6 again after changes. Storybook decomposition and footprint
-cover the canonical shared surface and its stories, not the mock sandbox host;
-the prototype worker also runs the canonical catalog, registry, decision-log,
-lint and type checks. Mock-only sandbox state is intentional under that
-canonical contract; do not create app backend stubs or a production flag
-snapshot to satisfy the app-only checks.
+Have that writer follow canonical step 7's single design review and
+ReadyForReview/tag semantics without a technical-plan approval or another
+source/worktree delegation. Preserve the already completed design-review
+outcome on the ticket so a continuation does not repeat it.
+PrototypeStatus.HandedOff remains owned by prototype-approve; the vibe session
+marker is only ownership bookkeeping.
 
-In step 7 dispatch `vibe-prototype-worker` in prepare-handoff mode instead of
-the environment worker; on its `NEEDS_COMMIT`, commit with
-`../vibe/scripts/commit-worktree.mjs` using the message it gives, then
-dispatch it again. It preserves canonical step 7's single design review,
-ReadyForReview and tags, retains the review outcome on the ticket, and shares
-the resulting commit through canonical step 5.5 without opening a PR.
-PrototypeStatus.HandedOff remains owned by prototype-approve. Re-run inventory
-on the returned publication before ticket completion. A failed or stale share
-blocks handoff until the same work is repaired and published.
+After independent current-result checks/reviews and handoff test coverage, the
+orchestrator commits. Operational `vibe-prototype-worker` share mode publishes
+that exact result through canonical Vercel sharing without editing source.
+`NEEDS_REVIEW`/`NEEDS_COMMIT` returns to the same writer/root sequence; missing
+registry/source work is never repaired by a publishing helper.
 
-At every prototype recovery share or prepare-handoff call, route `NEEDS_REVIEW`
-through independent guardrails/adversarial reviewers and the verify worker,
-with phase `handoff` and the existing test-authoring record (or its absence for
-the early-test check). Fix and recheck the current diff, then resume the same
-canonical worker with that evidence; keep its single completed design review.
-If tests need authoring, run the handoff tests mode after the early-test check.
-While obtaining this review evidence, use the inventory's files and base even
-when only `prototypePublicationCurrent` is false: publication freshness is a
-deferred publication gate, not a reason to skip code checks or repeatedly fix
-an unshared preview. All other blocking checks stay enforced. After sharing,
-rerun inventory and require every gate, including publication freshness, before
-ticket completion or assignment. No stale preview is reported as current.
-
-Steps 8 and 9 remain unchanged: the person names the next owner, lookup resolves
-them, the complete live ticket is checked against this owned publication,
-assignment is verified with status In Progress, and the private vibe session
-is marked handed-off. That session marker does not approve prototype metadata.
-The final links are the ticket and immutable prototype preview, with full
-deployed SHA, slug, branch, and resolved next owner. Do not report app, API,
-or Storybook deployments for a prototype session. No PR is opened here.
-
-Use the lighter task list below for this flow, naming the prototype preview
-in the upload item using the canonical prototype label instead of promising
-an app deployment. Shared component stories and their footprint remain part
-of the handoff.
+Re-run inventory after share and require every gate, including current
+publication, before completing or assigning the ticket. Never give a stale
+preview as current. Shared story/footprint rules, next-owner lookup and ticket
+assignment stay intact. The final links truthfully name the immutable prototype
+preview, full SHA, slug and resolved next owner, not fabricated app/API fields.
+Neither vibe nor handoff opens a PR.
 
 ## 1. Internal checklist
 
@@ -207,8 +184,9 @@ The inventory from step 1 covers the session's redeploy commits and anything
 not committed yet. Dispatch `vibe-handoff-summarizer` with the worktree and
 the inventory path.
 
-The inventory's `localFixes` are files the setup worker changed on this Mac to
-work around a symphony-alpha bug (each with the ticket that reports it). They
+The inventory's `localFixes` are managed local workarounds for symphony-alpha
+bugs, each with its owning ticket. Historical entries may be setup-authored;
+new entries are authored only by the SAME persistent implementation writer. They
 are not the person's work: the inventory already leaves them out of
 `changedFiles` and its guardrail checks, and every worker brief from here on
 (summarizer, guardrails reviewer, change and backend workers, decomposer,
@@ -221,75 +199,50 @@ worker in step 8.
 
 ## 3. Guardrail check
 
-Before test authoring, have the guardrails reviewer check every already changed
-test against an existing explicit handoff test-authoring record. Early or
-unrecorded build edits are rejected now, not retrospectively relabeled as
-handoff coverage by writing a new record. Preserve valid recorded coverage
-when resuming an interrupted handoff; do not revert another worker's work.
+Before test authoring, read-only guardrails review checks already changed tests
+against an existing handoff authoring record from this SAME writer. Reject
+early/unrecorded edits, never retrospectively relabel them. Preserve valid
+evidence when resuming interrupted handoff.
 
-If any non-publication `blocking` check fails, or `outsideAllowed` is non-empty,
-dispatch `vibe-change-worker` in fix mode with those findings. Then dispatch
-`vibe-guardrails-reviewer`, and pass any findings to `vibe-change-worker`
-(backend findings to `vibe-backend-worker`), both in fix mode. Its
-shared-owner findings and red flags (`../vibe/references/design-pass.md`,
-"Quality depth before handoff") are fixed by restructuring the code to the right owner
-(behavior the children of a shared parent share goes in the parent; each
-child keeps only what is specific to it), with a sibling sweep, without
-asking the person; keep each fix's Design
-block for step 8. Re-run the inventory until every blocking check passes.
+Non-publication inventory failures, outside-allowed paths, owner/duplicate
+findings and other confirmed source defects resume the SAME persistent writer
+in fix mode. It verifies and applies corrections; no backend/guardrails/setup
+helper edits source. Re-run inventory and independent read-only guardrails
+checks. Keep the writer's Design blocks for the ticket.
 
 ## 4. Storybook
 
-Dispatch `vibe-storybook-decomposer` with the inventory's
-`componentsWithoutStories` and the changed `packages/design-system`
-components. Then dispatch `vibe-verify-worker` in footprint mode: it runs
-`pnpm vibe storybook-diff`, sends every governance `problem` back through the
-decomposer, and confirms every new component appears in the sidebar. Keep its
-footprint summary for the ticket.
+Read-only `vibe-storybook-decomposer` advises on components/stories/catalog
+gaps. Resume the SAME writer to perform every extraction, story and catalog
+source change. Read-only verify footprint mode measures the sidebar and
+reports remaining problems; they return to the writer, never another author.
 
-## 5. Checks
+## 5. Checks and handoff-only tests
 
-First dispatch `vibe-verify-worker` in `tests` mode with explicit phase `handoff`, acceptance criteria,
-inventory and local plan's coverage needs, for app and prototype sessions.
-It writes or extends focused tests only at this handoff boundary. Route any
-implementation defect it proves to the owning worker, then rerun the tests.
+Resume the SAME writer with an explicit handoff continuation, acceptance
+criteria, inventory and its local coverage plan. It alone writes/extends tests
+and fixes implementation defects, records criteria/paths/human rulings and
+runs them. The verify worker never writes or fixes tests.
 
-Lighter: dispatch `vibe-verify-worker` in checks mode. It runs Biome, source
-gates, affected typecheck and tests, fixes failures in the session's own
-changes, never weakens a test, and returns a short pass/fail summary plus any
-pre-existing failures it left alone.
+Lighter: read-only verify checks mode runs Biome without write flags, gates,
+affected types/tests and relevant existing lanes. Backend: full-suite mode
+runs every required lane. Both report defects back to this same writer.
+Do not weaken tests, skip required coverage or fall back to visible automated
+browser/Electron windows. Record exact unsupported local limitations.
 
-Backend: dispatch `vibe-verify-worker` in full-suite mode instead. It runs every
-lane, fixes failures in the session's own changes, and never weakens a test.
+## 6. Independent integrated review
 
-## 6. Reviews
+Exclude exactly `.closedloop-ai/vibe-plans/` and historical `localFixes` from
+deliverable review, not other artifacts. Separate plan review reads the local
+plan explicitly. Pass phase handoff and the writer's test-authoring record.
 
-Exclude only the exact local-plan folder `.closedloop-ai/vibe-plans/` from
-deliverable review, as well as recorded `localFixes`; do not broadly exclude
-other `.closedloop-ai` files. Plan-mode review reads the local plan explicitly.
-
-Lighter: dispatch the repo agent `review-soul` (`.claude/agents/review-soul.md`)
-and `vibe-adversarial-reviewer` in implementation mode in parallel on the worktree. Pass their
-findings to `vibe-change-worker` in fix mode; it verifies each finding against
-the code before fixing and reports fixed and rejected (with one line why).
-Then run step 5 again.
-
-Give all handoff reviewers phase `handoff` and the verify worker's test-authoring
-record, so they review legitimate coverage rather than applying the build-loop
-test-writing ban to it.
-
-Backend: run the `workflow-code-review` skill (`$workflow-code-review` in Codex,
-`/closedloop-core:workflow-code-review` in Claude Code) on the worktree's changes against
-the session's base. It dispatches its own reviewer workers; you only receive
-its consolidated findings. Send frontend findings to `vibe-change-worker` and
-backend findings to `vibe-backend-worker`, both in fix mode, then run the full
-suite again (step 5). Then run `workflow-code-review` a second time on the
-result and repeat the fix and suite steps for anything it confirms. Keep both
-passes' fixed and rejected lists for the ticket.
-
-In both weights, route a confirmed missing-test finding to `vibe-verify-worker`
-in `tests` mode, then rerun step 5 and review the added coverage. Never weaken
-an existing test or check to clear a finding.
+Lighter: repo `review-soul` and `vibe-adversarial-reviewer` implementation mode
+may review independently in parallel, read-only. Backend: named core
+`workflow-code-review` runs its two existing review passes
+(`$workflow-code-review` in Codex or `/closedloop-core:workflow-code-review` in
+Claude Code). ALL confirmed code/story/test findings resume the SAME writer,
+which verifies and corrects them; recheck its current result and repeat
+validation. Missing handoff coverage is written only by that writer.
 
 ## 7. Upload the last changes
 
@@ -361,7 +314,7 @@ runs
   answer goes through the change worker, the checks, the reviews, and the
   redeploy before the ticket worker sees it again.
 - `NEEDS_CHANGE` with an answer or criterion the code has not been checked
-  against. Send it to `vibe-change-worker` in fix mode and continue the same
+  against. Resume the SAME persistent writer in fix mode and continue the same
   way.
 
 Repeat until it returns `DONE`. Never go on to step 9 while a behavior answer

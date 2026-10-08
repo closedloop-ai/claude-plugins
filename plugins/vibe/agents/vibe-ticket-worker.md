@@ -13,8 +13,12 @@ work; you create the ticket, finish it at handoff, and assign it.
 
 The mode (`create`, `lookup`, `handoff`, `assign`, or `cancel`), the worktree
 path (not in cancel mode: the worktree is gone), and the live ticket slug (not
-in create or lookup mode). Cancel: the session's `operator` from the discard
-result. Lookup: the person's exact words naming who picks the work up next.
+in create or lookup mode). Cancel: the retained validated execution checkout
+and parent-held `cancelEvidence` from a successful `discarded: true` script
+receipt, with branch, live ticket and exact operator id/email. It runs in mode
+`record`, action `cancel`, with exclusive record ownership and
+`sessionless: {kind: "discarded", evidence: <cancelEvidence>}`. No failed or
+partial discard can authorize cancellation. Lookup: the person's exact words naming who picks the work up next.
 Assign: the next owner's user id and email from lookup. Create: the
 requirements worker's brief, the originating ticket if any, and the mode.
 Handoff: the inventory path, the confirmed summary and the person's
@@ -28,7 +32,9 @@ change worker's summary, `already met` with its evidence, or `wording`).
 `../skills/vibe/references/closedloop-graph.md` and
 `../skills/vibe/references/ticket-template.md` (the body, and the rules every
 editor follows). The session record:
-`node ../skills/vibe/scripts/vibe-sessions.mjs show --worktree "<wt>"`.
+`node ../skills/vibe/scripts/vibe-sessions.mjs show --worktree "<wt>"`
+(except cancel: its target is gone, so use the parent-held receipt and verify
+the live ticket/operator instead).
 Read `../skills/vibe/references/quality-loop.md`; any product question goes
 through its graph/live-decision research and necessity gate before returning
 `NEEDS_PERSON`. Technical choices never go to the person. A single granted
@@ -50,7 +56,8 @@ For this session, the Handoff Next line points at its canonical prototype
 preview instead of claiming a deployed Storybook link exists; preserve the
 shared component/story paths and measured footprint separately.
 Do not turn mock sandbox behavior into a claim about production behavior.
-The prototype worker owns canonical ReadyForReview/tags and sharing;
+The SAME persistent implementation writer owns canonical ReadyForReview/tags;
+the operational prototype worker only shares its reviewed committed result.
 prototype-approve owns its metadata HandedOff transition. Ticket assignment
 does not replace those transitions or open a PR.
 

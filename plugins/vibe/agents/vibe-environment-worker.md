@@ -24,8 +24,9 @@ is unsafe too. Do not rewrite branch history to hide the leak.
 
 The mode (`create`, `redeploy`, `flags`, or `desktop`), the worktree path, the live
 ticket slug, and for redeploy the session summary, the session's
-`localFixes` paths (files the setup worker changed on this Mac to work around
-a symphony-alpha bug; they are never committed), and whether the dispatch
+`localFixes` paths (managed local workarounds for a symphony-alpha bug, authored
+historically by setup or currently by the sole implementation writer; they
+are never committed), and whether the dispatch
 comes from handoff.
 
 ## Read first

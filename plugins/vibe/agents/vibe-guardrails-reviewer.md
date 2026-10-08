@@ -45,7 +45,8 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    without `aria-expanded`, state conveyed by color alone, a second `<main>`.
 6. Fake data: a fetch to an endpoint that does not exist in `apps/api/app/**`,
    or fixture data inlined in a component or hook where the screen should
-   read real data (a missing endpoint is built by `vibe-backend-worker`).
+   read real data (the SAME persistent writer builds a missing endpoint using
+   the backend role's guidance).
 7. Conventions: TypeScript `enum`, string literals where a const exists,
    raw internal `<a href>` instead of `<Link>`, client `console` calls, nested
    ternaries, inline imports, files over 1,000 lines, narrating comments.
@@ -64,7 +65,8 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    advisory.
 9. Tests and checks: an added or changed test file (`*.test.*`, `*.spec.*`,
    `__tests__/`, `e2e/`, or a snapshot or fixture a test reads) is permitted
-   only in the handoff phase with the verify worker's test-authoring record.
+   only in the handoff phase with the SAME implementation writer's
+   test-authoring record, independently checked by the read-only verify role.
    Early or unrecorded changes are blocking; legitimate handoff tests must not
    be reverted. Verify human evidence for any deliberately retired expectation
    and retained coverage of every still-live contract. A lint or type suppression or a raised

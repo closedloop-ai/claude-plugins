@@ -34,7 +34,7 @@
 //
 // `--repo` defaults to the checkout vibe-preflight.sh remembered in
 // ~/.codex/vibe/config.json; `repo` prints it. `local-fix` records files the
-// setup worker changed to work around a symphony-alpha bug (filed as the
+// sole implementation writer changed to work around a symphony-alpha bug (filed as the
 // ticket), so no redeploy or handoff commits them.
 //
 // `operator` is the person running the session, from ClosedLoop `get-me`
@@ -73,12 +73,13 @@
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { readWriterSummary } from "./dist/writer-state.mjs";
 import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublication } from "./prototype-session.mjs";
-import { git, readSessionRecord, writeSessionRecord as writeRecord } from "./session-record.mjs";
+import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
 import {
   buildDispatchInputs,
   DISPATCH_WORKFLOW,
@@ -388,7 +389,8 @@ function touchSession() {
 
 function showSession() {
   const worktree = requireOption("worktree");
-  return { worktree, ...requireRecord(worktree) };
+  const implementationWriter = readWriterSummary(worktree);
+  return { worktree, ...requireRecord(worktree), ...(implementationWriter ? { implementationWriter } : {}) };
 }
 
 /**
@@ -403,8 +405,18 @@ function showSession() {
  */
 function discardSession() {
   const worktree = requireOption("worktree");
-  const record = readRecord(worktree);
+  const record = requireRecord(worktree);
   const branch = git(worktree, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  const targetRoot = realpathSync(git(worktree, ["rev-parse", "--show-toplevel"]));
+  const targetDir = git(worktree, ["rev-parse", "--absolute-git-dir"]);
+  if (realpathSync(worktree) !== targetRoot || record.branch !== branch || !existsSync(path.join(targetDir, "commondir"))) {
+    throw new Error("Discard requires the exact owned session worktree and matching private branch record.");
+  }
+  const operator = validateOperator({ id: record.operator?.id, email: record.operator?.email,
+    ...(record.operator?.name ? { name: record.operator.name } : {}) });
+  if (record.liveTicket !== null && !TICKET_PATTERN.test(record.liveTicket)) {
+    throw new Error("Discard requires a valid recorded live ticket or no ticket.");
+  }
   const prototype = isOwnedPrototypeSession(record, branch);
   if (!branch.startsWith(BRANCH_PREFIX) && !prototype) {
     throw new Error(`${worktree} is not a vibe session (branch ${branch}).`);
@@ -418,12 +430,16 @@ function discardSession() {
     branch,
     summary: record?.summary ?? null,
     liveTicket: record?.liveTicket ?? null,
-    operator: record?.operator ?? null,
+    operator,
     uncommittedFiles: changed ? changed.split("\n").map((line) => line.slice(3)) : [],
     pushed: git(worktree, ["ls-remote", "--heads", "origin", branch]) !== "",
   };
   if (!values.confirm) {
     return { discarded: false, wouldLose };
+  }
+  const executionRoot = realpathSync(process.cwd());
+  if (executionRoot === targetRoot || executionRoot.startsWith(`${targetRoot}${path.sep}`)) {
+    throw new Error("Confirmed discard must run from a retained checkout outside its target.");
   }
   const commonDir = git(worktree, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const repo = path.dirname(commonDir);
@@ -444,6 +460,8 @@ function discardSession() {
     remoteBranchDeleted: wouldLose.pushed,
     schemaCleanupRequested: wouldLose.pushed && !prototype,
     wouldLose,
+    ...(wouldLose.liveTicket ? { cancelEvidence: { discarded: true, branch, liveTicket: wouldLose.liveTicket,
+      operatorId: operator.id, operatorEmail: operator.email } } : {}),
   };
 }
 
@@ -502,10 +520,7 @@ function resolveRepo() {
   return repo;
 }
 
-/**
- * Records files changed to work around a symphony-alpha bug, grouped by the
- * ticket that reports it. Repeating a ticket adds to its paths.
- */
+/** Records the sole writer's managed local workaround paths under the owning bug ticket. */
 function recordLocalFix() {
   const worktree = requireOption("worktree");
   const ticket = requireOption("ticket");
@@ -566,7 +581,7 @@ function withDefaults(record) {
     ...rest,
     mode: rest.mode ?? null,
     operator: rest.operator ?? null,
-    liveTicket: rest.liveTicket ?? handoffTicket ?? null,
+    liveTicket: sessionLiveTicket(record),
     vercel: vercelWithDefaults(rest),
     flagSnapshot: rest.flagSnapshot ?? null,
     clerkOrgId: rest.clerkOrgId ?? null,
@@ -668,7 +683,9 @@ function recordCodexSessions() {
 function ticketSections() {
   const worktree = requireOption("worktree");
   const record = requireRecord(worktree);
-  return renderRecordSections({ ...record, baseCommit: currentBaseCommit(worktree, record) }, readSnapshot(worktree, record));
+  const implementationWriter = readWriterSummary(worktree);
+  return renderRecordSections({ ...record, baseCommit: currentBaseCommit(worktree, record),
+    ...(implementationWriter ? { implementationWriter } : {}) }, readSnapshot(worktree, record));
 }
 
 /** Writes the environment request workflow's inputs for this session to `--out`. */

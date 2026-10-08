@@ -16,8 +16,9 @@ production flag snapshot. No app/API/Storybook URLs or seeded/blank data are
 fabricated. Backend built is `None.`; Backend still missing lists evidenced
 promotion work or `None.`. Handoff includes the canonical decision log and
 single design-review result alongside shared-surface stories, check/review
-summaries, and the person's resolved next owner. The prototype worker owns
-these updates; the same ticket worker verifies completeness and assignment.
+summaries, and the person's resolved next owner. The sole implementation writer
+owns source/local metadata; the operational prototype helper records verified
+publication, and the same ticket worker verifies completeness and assignment.
 
 - Read the latest version with `get-document` (`includeContent: true`, a large
   `contentMaxChars`) immediately before you write, change only the sections
@@ -45,10 +46,10 @@ these updates; the same ticket worker verifies completeness and assignment.
 | Section | Written by | When |
 |---|---|---|
 | What this is | `vibe-ticket-worker` | session start |
-| Scope and acceptance criteria | `vibe-ticket-worker`, then `vibe-change-worker` | session start; whenever the person changes what they want |
+| Scope and acceptance criteria | `vibe-ticket-worker`, then the SAME persistent `vibe-change-worker` | session start; whenever the person changes what they want |
 | Environment | `ticket-sections` (via `vibe-environment-worker`) | environment start, every redeploy |
-| Progress | `vibe-change-worker`, `vibe-backend-worker`, `vibe-primitive-worker`, `vibe-environment-worker` | after each change and each redeploy |
-| Backend built, Backend still missing | `vibe-backend-worker`, `vibe-change-worker` | as backend work is built or found missing |
+| Progress | the SAME persistent writer; operational environment/ticket helper in a serial record turn | after each change and each redeploy |
+| Backend built, Backend still missing | the SAME persistent writer | as backend work is built or found missing |
 | Production flag snapshot | `ticket-sections` (via `vibe-environment-worker`) | environment start, a refresh the person asked for |
 | Sessions | `ticket-sections` (via `vibe-environment-worker`, `vibe-ticket-worker`) | every redeploy, handoff |
 | Handoff | `vibe-ticket-worker` | handoff |

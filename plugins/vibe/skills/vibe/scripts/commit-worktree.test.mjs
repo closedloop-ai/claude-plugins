@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -108,6 +108,22 @@ test("a plan already in HEAD blocks another commit and the publication guard", (
   const guard = runNode(PLAN_GUARD, ["--worktree", checkout], home);
   assert.equal(guard.status, 1);
   assert.deepEqual(guard.json.committedLocalPlans, [plan]);
+});
+
+test("the publication guard executes through a symlink instead of silently succeeding", (t) => {
+  const { root, home, checkout } = setup(t);
+  const link = path.join(root, "linked-plan-guard.mjs");
+  symlinkSync(PLAN_GUARD, link);
+  const clean = runNode(link, ["--worktree", checkout], home);
+  assert.equal(clean.status, 0);
+  assert.deepEqual(clean.json, { ok: true, committedLocalPlans: [] });
+  const plan = ".closedloop-ai/vibe-plans/request-1.md";
+  write(checkout, plan, "private plan\n");
+  git(checkout, ["add", plan], home);
+  git(checkout, ["commit", "-m", "Fixture: tracked plan"], home);
+  const unsafe = runNode(link, ["--worktree", checkout], home);
+  assert.equal(unsafe.status, 1);
+  assert.deepEqual(unsafe.json, { ok: false, committedLocalPlans: [plan] });
 });
 
 test("refuses a missing, multi-line, or over-long subject and commits nothing", (t) => {

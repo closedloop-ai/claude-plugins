@@ -4,6 +4,21 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.2
+
+#### Changed
+- Requests use a worktree-local canonical plan loaded through the named core plan-structure skill, a separate adversarial plan review, and independent implementation reviews and corrections before feature completion.
+- One persistent implementation writer handles each session's requests, plans, code, stories, corrections and handoff tests in the same worktree and branch. Incoming requests remain queued through review and commit waits; specialists and reviewers are read-only, and shared records stay serialized.
+- Product questions are researched through graph and live prior decisions before an absolutely necessary unresolved question reaches the person. Technical plans, upfront summaries and intermediate engineering updates stay internal; updates report completed features and next work.
+- Test authoring happens only at handoff for app and prototype sessions. Existing tests may run during building; handoff records coverage and exact human rulings for obsolete expectations without weakening live contracts. Automated browser/Electron validation remains headless/displayless.
+- Initial prototype publication and handoff recovery require separate current-result quality evidence before commit/share, while preserving canonical product/design approvals and metadata ownership.
+
+#### Added
+- A shared local-plan boundary excludes only the exact private planning folder from commits and deliverable inventory, blocks already committed plans before publication, and retains unrelated artifact visibility.
+- Owned worker-state and Claude CLI bundles bind the canonical agent and exact discovered capabilities, preserve the underlying session on resume, and retain unsafe turns until owned process cleanup is proven. Both CLIs execute through symlinked paths; standalone resources remain in their owning plugin.
+- The retained writer binding is phase-neutral, with handoff test authority supplied by the root per turn. Existing pre-session requirements/setup and post-discard ticket cancellation use explicit bounded checkout contexts, without relaxing source or publication ownership.
+- Native Codex helpers acquire the same source/record mutex through an exact role, action and worker lease, and release only with matching stopped-turn evidence. Confirmed discard retains launcher state in a separate checkout, verifies the target's private ownership, and returns cancellation evidence only after successful removal; historical ticket records keep their canonical fallback.
+
 ### closedloop-core v1.0.1
 
 #### Changed

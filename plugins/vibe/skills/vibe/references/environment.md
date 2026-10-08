@@ -198,15 +198,19 @@ the worktree as it is); this rule binds any step that ever does.
 - A request or environment run fails: the worker reads the failed step's log
   and reports it in one or two lines.
 - A Vercel build fails: the worker reads the deployment's build log; a failure
-  in the session's own change goes back to a change worker, then redeploy.
+  in the session's own change resumes the SAME persistent writer, then redeploy.
 - The push is refused by the repo's pre-push checks: the failing check goes to
-  a change worker in fix mode, then redeploy. Never skip the checks.
+  the SAME persistent writer in fix mode, then redeploy. Never skip the checks.
 - A problem with this Mac (a missing or signed-out tool): fix it per
   `preflight.md`.
 - A bug in symphony-alpha itself that stops local Storybook or Desktop
-  starting: the setup worker files a ClosedLoop ticket for Daniel Ochoa,
-  fixes it locally in the session worktree only, and records the files with
-  `vibe-sessions.mjs local-fix`, so no redeploy or handoff commits them.
+  starting: setup diagnoses and files/reuses the existing ticket, without
+  editing code. The SAME persistent writer makes the smallest managed local
+  workaround in this session worktree, records every changed file with
+  `vibe-sessions.mjs local-fix` under that ticket, and returns the fix evidence.
+  Existing exclusion and restore rules still apply: no redeploy or handoff
+  commits these files. Setup retries only after the writer supplies the fix;
+  the permanent correction remains with the bug's ticket owner.
 - Anything else: tell the person the environment did not start, show the error
   in one or two lines, and suggest they message Daniel Ochoa with the session
   slug.

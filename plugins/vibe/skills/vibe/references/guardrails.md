@@ -20,13 +20,13 @@ record admits this path. All copy, reuse, accessibility, and forbidden-file
 rules still apply.
 
 Every session builds the real thing, frontend and backend: a screen that needs
-data or an action the API does not provide gets that backend built, by
-`vibe-backend-worker`, never by the change worker. A session that needs no new
+data or an action the API does not provide gets that backend built by the SAME
+persistent `vibe-change-worker`, using read-only backend guidance. A session that needs no new
 data changes only frontend paths. It still ends on the session's branch:
 design reviews it, then an engineer opens the pull request and reviews it
 before it merges.
 
-| Frontend (`vibe-change-worker`, `vibe-primitive-worker`) | Never |
+| Frontend (the sole persistent `vibe-change-worker`) | Never |
 |---|---|
 | `apps/app/**` (web pages and route shells) | `apps/mcp/**`, `apps/relay/**`, `apps/realtime/**` |
 | `packages/app/**` (shared web and Desktop UI) | `packages/golden-sessions/**`, `.github/**` |
@@ -34,7 +34,7 @@ before it merges.
 | `apps/desktop/src/renderer/**` (Desktop UI) | any `AGENTS.md` or `CLAUDE.md` |
 | `*.stories.tsx` anywhere above, `apps/storybook/**` story wiring | |
 
-Backend, built only by `vibe-backend-worker`, each under its owning
+Backend, built by that same writer using canonical backend guidance, each under its owning
 `AGENTS.md`:
 
 - `apps/api/**`: thin route, fat service, `withAnyAuth`, Zod validation, org
@@ -197,12 +197,19 @@ No build-loop worker writes or edits a test: no new or changed `*.test.*` or
 a test reads. Existing tests may run before handoff, and stories remain part
 of component work. Required coverage is recorded internally in the local plan.
 
-Test writing happens only at handoff through `vibe-verify-worker` in `tests`
-mode with an explicit handoff phase, for app and prototype sessions alike.
+Test writing happens only at handoff through the SAME persistent
+`vibe-change-worker` in handoff mode, for app and prototype sessions alike.
+Verify/backend/primitive/prototype/Storybook helpers are not source or test authors.
 Add or extend focused coverage of acceptance criteria, production wiring and
 failure paths, then run and review it. Record phase, criteria and test paths
 in the session change log so reviewers can distinguish handoff authoring from
 forbidden early test changes.
+
+Do not create source writers per unit, specialty or fix, or additional feature
+worktrees/branches. Setup helpers never patch implementation code or add a new
+local code workaround. The SAME persistent writer owns managed local
+workarounds under their bug tickets, following `quality-loop.md`; existing
+and new `localFixes` retain their exclusion and restore rules.
 
 Preserve test integrity. A red test is a failing expectation: fix code when its
 contract still stands. Changing an expectation requires the exact human

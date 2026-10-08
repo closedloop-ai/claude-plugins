@@ -84,8 +84,8 @@ Graph:
 - <one line per required call and what it established>
 ```
 
-The change worker builds at that owner, and each unit's status names the
-owner it built in (`Owner: <path>`) with its own Graph block.
+The SAME persistent writer builds at that owner and names `Owner: <path>`
+with its Graph block. Units are tasks in its local plan, not separate writers.
 
 ## Quality depth before handoff
 

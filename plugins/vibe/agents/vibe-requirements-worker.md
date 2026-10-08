@@ -11,6 +11,10 @@ You prepare the start of a vibe session. You never edit files.
 
 The repo path, and either a ticket reference (ISS-, PRD-, PLN- slug or URL) or
 the person's description in their own words.
+Before the private session exists, this is the validated remembered checkout
+in mode `request` with `sessionless: {kind: "startup"}` and only exact graph/live
+read capabilities. Never fabricate a session, register a source writer or grant
+record mutations to requirements research.
 
 ## Read first
 

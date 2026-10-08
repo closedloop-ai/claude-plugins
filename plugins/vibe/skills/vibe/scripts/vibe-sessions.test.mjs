@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -694,6 +694,8 @@ test("discard reports what would be lost, then requests the schema drop and dele
     "workflow run cleanup-preview-schemas.yml --repo closedloop-ai/symphony-alpha --ref main -f branch=vibe/throw-away",
   ]);
   assert.equal(done.json.wouldLose.liveTicket, "ISS-30");
+  assert.deepEqual(done.json.cancelEvidence, { discarded: true, branch: "vibe/throw-away", liveTicket: "ISS-30",
+    operatorId: "user-andy", operatorEmail: "andy@example.com" });
   assert.equal(git(checkout, ["ls-remote", "--heads", "origin", "vibe/throw-away"], home), "");
   assert.equal(git(checkout, ["branch", "--list", "vibe/throw-away"], home), "");
   assert.deepEqual(runNode(SCRIPT, ["list"], home).json.sessions, []);
@@ -716,6 +718,27 @@ test("discard keeps the session when the schema drop cannot be requested", (t) =
   assert.equal(gh.calls().length, 1);
   assert.notEqual(git(checkout, ["ls-remote", "--heads", "origin", "vibe/kept"], home), "");
   assert.notEqual(git(checkout, ["branch", "--list", "vibe/kept"], home), "");
+  assert.ok(existsSync(worktree));
+  assert.equal("cancelEvidence" in failed.json, false);
+});
+
+test("discard independently refuses a missing private record, wrong branch or deleting its execution root", (t) => {
+  const { home, worktree } = newSession(t, "discard-owned");
+  const file = recordFile(worktree, home);
+  const record = readFileSync(file, "utf8");
+  rmSync(file);
+  const missing = runNode(SCRIPT, ["discard", "--worktree", worktree, "--confirm"], home);
+  assert.equal(missing.status, 1);
+  assert.match(missing.json.error, /No vibe session record/);
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(record), branch: "vibe/other" }));
+  const wrong = runNode(SCRIPT, ["discard", "--worktree", worktree, "--confirm"], home);
+  assert.equal(wrong.status, 1);
+  assert.match(wrong.json.error, /matching private branch record/);
+  writeFileSync(file, record);
+  const ownRoot = spawnSync(process.execPath, [SCRIPT, "discard", "--worktree", worktree, "--confirm"],
+    { cwd: worktree, env: { ...process.env, HOME: home }, encoding: "utf8" });
+  assert.equal(ownRoot.status, 1);
+  assert.match(JSON.parse(ownRoot.stdout).error, /retained checkout/);
   assert.ok(existsSync(worktree));
 });
 
