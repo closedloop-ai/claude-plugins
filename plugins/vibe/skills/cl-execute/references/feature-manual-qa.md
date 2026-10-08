@@ -16,10 +16,10 @@ and mocks do not prove that the selected page or capability functions.
 
 ## Reuse the guided QA contract
 
-Before drafting the PR comment or running a session, read the sibling
-[`guided-manual-qa` skill](../../guided-manual-qa/SKILL.md), its
-[`plan-methodology.md`](../../guided-manual-qa/references/plan-methodology.md),
-and its [`qa-record-template.md`](../../guided-manual-qa/references/qa-record-template.md).
+Before drafting the PR comment or running a session, load `guided-manual-qa`
+by name (`$guided-manual-qa` in Codex or `/closedloop-core:guided-manual-qa`
+in Claude Code). Read `references/plan-methodology.md` and
+`references/qa-record-template.md` from that loaded skill's own folder.
 Use that skill's evidence map, risk ranking, oracle proof, checkpoint meanings,
 durable-record discipline, and human-confirmation rules. This reference adds
 feature-PR ownership and lifecycle rules; it does not duplicate or weaken the
@@ -139,8 +139,7 @@ git diff --binary $(git merge-base origin/main <head>) <head> | git patch-id --s
 
 After every PR head change, mark the overall manual-QA state stale, fetch
 `origin/main`, and compute the same patch-id at the new head. Apply the
-head-change rule in the guided QA skill's
-[`plan-methodology.md`](../../guided-manual-qa/references/plan-methodology.md)
+head-change rule in the loaded guided QA skill's `references/plan-methodology.md`
 "Rebind results after a head change", with `origin/main` as the base and the
 [Discovery Routes](../SKILL.md#discovery-routes) for the reach check, then
 update the owned comment as below.

@@ -811,19 +811,13 @@ test('head changes compare the stable patch-id before per-scenario carry-forward
   const manualQa = read('cl-execute/references/feature-manual-qa.md');
   const implementation = read('cl-execute/references/implementation-review-pr.md');
   const formats = read('cl-execute/references/result-formats.md');
-  // The rule lives in the sibling guided-manual-qa skill; cl-execute points at it.
-  const methodology = read('guided-manual-qa/references/plan-methodology.md');
-  const rule = methodology.slice(methodology.indexOf('## Rebind results after a head change'));
   assert.match(manualQa, /git diff --binary \$\(git merge-base origin\/main <head>\) <head> \| git patch-id --stable/);
-  assert.match(manualQa, /\[`plan-methodology\.md`\]\(\.\.\/\.\.\/guided-manual-qa\/references\/plan-methodology\.md\)\s+"Rebind results after a head change"/);
+  assert.match(manualQa, /load `guided-manual-qa`\s+by name/);
+  assert.match(manualQa, /\/closedloop-core:guided-manual-qa/);
+  assert.match(manualQa, /loaded guided QA skill's `references\/plan-methodology\.md`\s+"Rebind results after a head change"/);
   assert.doesNotMatch(manualQa, /Patch-id unchanged:|Patch-id changed:/);
   assert.match(manualQa, /never substitutes for the patch-id comparison/);
   assert.match(manualQa, /Update the owned comment in place with the new\s+head, both patch-ids, invalidated scenarios, carry-forward justifications/);
-  assert.match(rule, /git patch-id --stable/);
-  assert.match(rule, /Patch-id unchanged:[\s\S]{0,400}git diff --name-only <old-merge-base> <new-merge-base>/);
-  assert.match(rule, /`code_importers` and `code_callers` on each file/);
-  assert.match(rule, /Patch-id changed: reset each checkpoint the delta reaches/);
-  assert.match(rule, /it was not exercised there/);
   assert.match(implementation, /Bind `Repo verification evidence` and `Safety fact` to a head/);
   assert.match(formats, /^Manual QA head coverage: <current PR head, tested head, merge base and stable patch-id at each/m);
   assert.match(formats, /^Safety fact: <[^\n]*head and patch-id it ran at/m);
@@ -1063,14 +1057,9 @@ test('cleanup runs the read-only worktree audit and removes only sweep-owned ter
   assert.doesNotMatch(audit, /'worktree', 'remove'|'prune'|rmSync|unlinkSync/);
 });
 
-test('gh-monitor-pr wakes on review decisions, review bodies, refused rollups, and stalls, and offers a snapshot', () => {
-  const monitor = read('gh-monitor-pr/SKILL.md');
+test('PR snapshot callers load the core monitor by name', () => {
   const implementation = read('cl-execute/references/implementation-review-pr.md');
-  assert.match(monitor, /review summary body that has no inline comments/);
-  assert.match(monitor, /`changes_requested` when the review decision is\s+`CHANGES_REQUESTED`/);
-  assert.match(monitor, /`ci_rollup_refused`/);
-  assert.match(monitor, /`--stall-after`, wake once with `stalled`/);
-  assert.match(monitor, /monitor-pr\.mjs" snapshot '<pr-url>'/);
-  assert.match(monitor, /`7` query failure\. It never starts, stops, or wakes\s+anything/);
-  assert.match(implementation, /sibling\s+`\.\.\/\.\.\/gh-monitor-pr\/scripts\/monitor-pr\.mjs` script[\s\S]{0,160}record its verdict/);
+  assert.match(implementation, /Load `gh-monitor-pr` by name/);
+  assert.match(implementation, /\/closedloop-core:gh-monitor-pr/);
+  assert.match(implementation, /`scripts\/monitor-pr\.mjs` from that loaded skill's own folder\s+and record its verdict/);
 });

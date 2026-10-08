@@ -44,7 +44,7 @@ import {
   AppServerClient,
   initializeClient as initializeGenericClient,
   readThreadState,
-} from '../../gh-monitor-pr/scripts/native-app-server-client.mjs';
+} from './core-client-process.mjs';
 import {
   featureOwnershipMetadata,
   initializeFeatureOwnership,

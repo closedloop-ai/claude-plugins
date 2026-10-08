@@ -470,7 +470,8 @@ Before querying or routing tickets, run the complete capability probe in
    inspect current schemas. In Codex CLI TUI, consider only initially exposed
    tools callable and probe CLI/App Server capabilities through the documented
    scripts. Do not hardcode an MCP server prefix.
-2. Read `../gh-monitor-pr/SKILL.md`; require its existing monitor script,
+2. Load `gh-monitor-pr` by name (`$gh-monitor-pr` in Codex or
+   `/closedloop-core:gh-monitor-pr` in Claude Code); require its existing monitor script,
    authenticated `gh`, and the exact nonempty `CODEX_THREAD_ID`. Never infer the
    root id from recent tasks.
 3. If Desktop is complete, require `list_projects`, `list_threads`,

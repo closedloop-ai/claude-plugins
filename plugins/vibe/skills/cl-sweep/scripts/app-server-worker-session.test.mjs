@@ -11,11 +11,17 @@ import {
   symlinkSync,
   unlinkSync,
   writeFileSync,
+  watch,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { before, after } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { installRegistryFixture } from './core-client-fixture.mjs';
+
+let restoreRegistry;
+before(() => { restoreRegistry = installRegistryFixture(); });
+after(() => restoreRegistry?.());
 
 import {
   EVENT_PREFIX,
@@ -1606,12 +1612,21 @@ test('supervision adopts the one authoritative live turn after a reconnect id mi
     listedTurnId: 'live-server-turn',
     existingTurn: { id: 'live-server-turn', status: 'inProgress', items: [] },
   });
-
+  const adoption = new Promise((accept, reject) => {
+    const timer = setTimeout(() => { watcher.close(); reject(new Error('Authoritative turn adoption was not persisted')); }, 5000);
+    const watcher = watch(fixture.directory, () => {
+      const observed = JSON.parse(readFileSync(fixture.sessionFile, 'utf8'));
+      if (observed.activeTurnId !== 'live-server-turn') return;
+      watcher.close();
+      clearTimeout(timer);
+      accept();
+    });
+  });
   const supervision = superviseTurn({
     'session-file': fixture.sessionFile,
     'events-file': fixture.eventsFile,
   }, { client });
-  await new Promise((resolvePromise) => setImmediate(resolvePromise));
+  await adoption;
   const adopted = JSON.parse(readFileSync(fixture.sessionFile, 'utf8'));
   assert.equal(adopted.activeTurnId, 'live-server-turn');
   assert.equal(adopted.state, 'RUNNING');

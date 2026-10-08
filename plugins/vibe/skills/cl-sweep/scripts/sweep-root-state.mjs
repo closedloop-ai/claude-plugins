@@ -26,6 +26,7 @@ import {
   statusSession as statusGenericSession,
 } from './native-app-server-orchestrator.mjs';
 import { rebindParent as rebindLegacyAppServerParent } from './app-server-worker-session.mjs';
+import { monitorScript as resolveMonitorScript } from './core-client-process.mjs';
 
 export const REGISTRY_SCHEMA = 'CL_SWEEP_ROOT_REGISTRY v1';
 export const SCOPE_SCHEMA = 'CL_SWEEP_ROOT_SCOPE v1';
@@ -39,7 +40,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const ownershipScript = resolve(scriptDirectory, 'ownership-lease.mjs');
 const fallbackWorkerScript = resolve(scriptDirectory, 'cli-worker-session.mjs');
-const monitorScript = resolve(scriptDirectory, '../../gh-monitor-pr/scripts/monitor-pr.mjs');
 
 function fail(message) {
   throw new Error(message);
@@ -717,6 +717,7 @@ function writeMonitorRegistry(rootPath, monitors) {
 }
 
 function stopMonitorDefault(entry) {
+  const monitorScript = resolveMonitorScript();
   execFileSync(process.execPath, [
     monitorScript, 'stop', '--state-file', entry.stateFile, '--wait-seconds', '15',
   ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -728,6 +729,7 @@ function stopMonitorDefault(entry) {
 }
 
 function startMonitorDefault(entry, transfer, receiptFile) {
+  const monitorScript = resolveMonitorScript();
   return JSON.parse(execFileSync(process.execPath, [
     monitorScript, 'start', entry.prUrl,
     '--thread-id', transfer.to.threadId,
@@ -1160,6 +1162,7 @@ function canonicalFile(pathValue, label) {
 }
 
 function verifyMonitorStoppedDefault(entry) {
+  const monitorScript = resolveMonitorScript();
   const result = JSON.parse(execFileSync(process.execPath, [
     monitorScript, 'verify-stopped', '--state-file', entry.stateFile,
   ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));

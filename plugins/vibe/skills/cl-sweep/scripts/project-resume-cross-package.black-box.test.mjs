@@ -5,13 +5,17 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, 
 import { createServer } from 'node:net';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
-import test from 'node:test';
-import { decodeWebSocketFrames } from '../../gh-monitor-pr/scripts/native-app-server-client.mjs';
+import test, { before, after } from 'node:test';
+import { decodeWebSocketFrames, monitorScript } from './core-client-process.mjs';
+import { registryFixtureCode, installRegistryFixture } from './core-client-fixture.mjs';
+
+let restoreRegistry;
+before(() => { restoreRegistry = installRegistryFixture(); });
+after(() => restoreRegistry?.());
 
 const execFileAsync = promisify(execFile);
 const rootCli = resolve(import.meta.dirname, 'sweep-root-state.mjs');
 const workerCli = resolve(import.meta.dirname, 'app-server-worker-session.mjs');
-const monitorCli = resolve(import.meta.dirname, '../../gh-monitor-pr/scripts/monitor-pr.mjs');
 const projectId = '019d54c6-d099-74a5-87d0-0a0d4cbdc599';
 
 async function waitFor(predicate, label) {
@@ -149,6 +153,7 @@ function startFixtureServer(socketPath, workerCwd, parentCwd) {
 }
 
 test('public processes serialize adoption and fence worker and monitor callback replay across restart', async () => {
+  const monitorCli = monitorScript();
   const root = realpathSync(mkdtempSync(resolve('/tmp', 'project-resume-public-')));
   const repo = resolve(root, 'repo');
   const rootCwd = resolve(root, 'root-cwd');
@@ -168,6 +173,7 @@ test('public processes serialize adoption and fence worker and monitor callback 
   writeFileSync(fakeCodex, `#!/usr/bin/env node
 import { createConnection } from 'node:net';
 const socketPath = ${JSON.stringify(socketPath)};
+${registryFixtureCode()}
 const args = process.argv.slice(2);
 if (args[0] === '--version') process.stdout.write('codex-fixture 1.0.0\\n');
 else if (args[0] === 'app-server' && args[1] === 'daemon') process.stdout.write(JSON.stringify({ status: 'running', socketPath }) + '\\n');
@@ -176,6 +182,7 @@ else if (args[0] === 'app-server' && args[1] === 'proxy') {
   socket.on('connect', () => process.stdin.pipe(socket));
   socket.pipe(process.stdout);
 } else process.exitCode = 2;
+}
 `);
   chmodSync(fakeCodex, 0o700);
   const env = { ...process.env, PATH: `${root}:${process.env.PATH}` };

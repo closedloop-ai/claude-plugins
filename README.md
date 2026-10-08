@@ -34,8 +34,8 @@ Multi-repository, adaptive self-learning, & artifact-bound phased workflow gates
 |--------|-------------|
 | [**bootstrap**](plugins/bootstrap/) | Project bootstrapping and initial setup |
 | [**code**](plugins/code/) | Code generation, implementation planning, and iterative development loop |
-| [**vibe**](plugins/vibe/) | Vibe sessions, ClosedLoop ticket workflows, and PR monitoring |
-| [**closedloop-core**](plugins/closedloop-core/) | Shared planning, intelligence, diagrams, and review skills |
+| [**vibe**](plugins/vibe/) | Vibe sessions and ClosedLoop ticket workflows |
+| [**closedloop-core**](plugins/closedloop-core/) | Shared planning, intelligence, diagrams, review, QA, measurement, and PR monitoring |
 | [**code-review**](plugins/code-review/) | Automated code review with inline GitHub PR comments |
 | [**judges**](plugins/judges/) | LLM-as-judge evaluators for plan and code quality |
 | [**platform**](plugins/platform/) | Claude Code expert guidance, prompt engineering, and artifact management |

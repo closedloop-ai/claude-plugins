@@ -1,6 +1,7 @@
 # closedloop-core Plugin
 
-Shared ClosedLoop planning, intelligence, diagrams, and review skills.
+Shared ClosedLoop planning, intelligence, diagrams, review, QA, measurement,
+and PR monitoring skills.
 
 ## Installation
 
@@ -59,3 +60,37 @@ approach, correctness, guardrail, compatibility, database, security, and existin
 E2E coverage. Uses the review lenses bundled in `references/prompt-pack/` unless
 a valid external prompt pack is configured. Review alone does not authorize
 implementation, commits, pushes, PR lifecycle actions, or merges.
+
+### `guided-manual-qa`
+
+Prepares a repository-supported test environment and records evidence for a
+code change, ticket, branch, or PR. Establishes each checkpoint's requirement
+and runtime before testing, credits exact passing E2E and conclusive agent
+observations separately, and presents only checkpoints that need human judgment
+one at a time. Keeps the QA record and its evidence outside disposable
+worktrees. Findings do not authorize source changes or external writes.
+
+### `measurement-discipline`
+
+Guides performance diagnosis and experiments with repeated baselines, measured
+noise floors, one-variable changes, and controls when the harness can drift.
+Requires a mechanism and product-level evidence for claimed improvements,
+records unsuccessful experiments as refutations, and maintains a dated,
+append-only measurement log with reproducible commands and re-check conditions.
+
+### `gh-monitor-pr`
+
+Runs a detached GitHub PR monitor that notifies the exact launching Codex
+Desktop or CLI thread through the managed App Server. Observes review, CI,
+conflict, queue, closure, and merge events with durable delivery and ownership
+records. Registration verifies the thread and process identity; stopping a
+monitor never stops the shared daemon.
+
+Other plugins load this skill by name and invoke its public entry points from
+the loaded skill's own folder, without importing core implementation files.
+`scripts/client-process-api.mjs` exposes the versioned
+`CLOSEDLOOP_APP_SERVER_CLIENT v1` contract through private stdin/stdout JSONL
+pipes for daemon and native-client operations. Caller inputs stay out of
+process arguments and diagnostic logs. The named-skill adapter resolves the
+actual enabled installation and stops on missing or incompatible core rather
+than substituting a copied transport.
