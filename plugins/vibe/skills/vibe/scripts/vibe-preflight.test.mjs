@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -92,7 +92,7 @@ test("Codex requires an installed enabled core before remembering a checkout", (
     const result = runPreflight(env);
     assert.equal(result.status, 1);
     assert.deepEqual(Object.keys(result.checks), ["closedloop-core"]);
-    assert.equal(result.checks["closedloop-core"].fix, "codex plugin add closedloop-core@closedloop-ai");
+    assert.equal(result.checks["closedloop-core"].fix, `${path.join(env.bin, "codex")} plugin add closedloop-core@closedloop-ai`);
     assert.equal(remembered(env.home), null);
   }
 });
@@ -104,6 +104,31 @@ test("Codex query failure fails closed and Claude does not query Codex", (t) => 
   const claude = runPreflight(env, ["--runtime", "claude", "--prototype"]);
   assert.equal(claude.checks["closedloop-core"], undefined);
   assert.ok(claude.checks.repo);
+});
+
+test("an explicit app-bundled Codex CLI works without codex on PATH", (t) => {
+  const env = setup(t);
+  const bundled = path.join(env.root, "ChatGPT.app", "Contents", "Resources", "codex-cli", "bin", "codex");
+  mkdirSync(path.dirname(bundled), { recursive: true });
+  renameSync(path.join(env.bin, "codex"), bundled);
+  const result = runPreflight(env, ["--codex", bundled]);
+  assert.equal(result.checks["closedloop-core"].ok, true);
+  assert.ok(result.checks.repo);
+});
+
+test("missing Node reports its prerequisite fix rather than missing core", (t) => {
+  const env = setup(t);
+  const withoutNode = path.join(env.root, "without-node");
+  mkdirSync(withoutNode);
+  for (const name of ["dirname", "mktemp", "find", "sort", "grep", "sed", "paste", "rm", "mkdir", "git", "uname", "head", "tail", "curl"]) {
+    const target = execFileSync("/bin/sh", ["-c", `command -v ${name}`], { encoding: "utf8" }).trim();
+    symlinkSync(target, path.join(withoutNode, name));
+  }
+  const result = runPreflight(env, ["--prototype"], { PATH: withoutNode });
+  assert.equal(result.status, 1);
+  assert.equal(result.checks.node.ok, false);
+  assert.equal(result.checks.node.fix, "install-node");
+  assert.equal(result.checks["closedloop-core"], undefined);
 });
 
 test("finds a checkout with spaces in its path by its remote and remembers it", (t) => {

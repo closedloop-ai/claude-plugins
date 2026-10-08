@@ -152,7 +152,7 @@
     },
     "decisionTable": {
       "type": "object",
-      "description": "Reference to a decision-table artifact produced via the code:decision-table skill, used to ground plan acceptance criteria in current code behavior.",
+      "description": "Reference to a decision-table artifact produced via $decision-table in Codex or /closedloop-core:decision-table in Claude Code, used to ground plan acceptance criteria in current code behavior.",
       "required": ["path", "status"],
       "properties": {
         "path": {

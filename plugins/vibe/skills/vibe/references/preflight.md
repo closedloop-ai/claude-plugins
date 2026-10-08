@@ -13,9 +13,12 @@ session's branch and start its environment through GitHub.
 
 `scripts/vibe-preflight.sh` reports each failure with a `fix` key. Apply the
 matching fix below, then re-run the script. Run fixes yourself in the terminal.
-Keep the selected preflight arguments on every rerun: common/prototype checks
-preserve `--runtime codex` or `--runtime claude` for the active harness and
-keep `--prototype`, while app preflight omits it. Repo choice and cloning
+Keep the selected preflight arguments on every rerun: preserve `--runtime codex`
+or `--runtime claude` for the active harness and any explicit `--codex` CLI path.
+Common/prototype checks keep `--prototype`, while app preflight omits it. Codex
+otherwise uses its PATH executable or the ChatGPT app's bundled CLI, as in the
+installation guide. Missing Node uses the ordinary `install-node` fix before
+the core check can run. Repo choice and cloning
 replace the `--repo` path but preserve `--prototype` when selected. A prototype
 does not need the app's public PostHog key.
 Use the Codex Computer Use plugin only where a step says so. Never type,
@@ -25,7 +28,7 @@ installing <thing>; type it in the prompt" and wait.
 
 | fix | What to do |
 |---|---|
-| `codex plugin add closedloop-core@closedloop-ai` | Run that exact install command, then re-run the selected preflight. |
+| `<Codex CLI> plugin add closedloop-core@closedloop-ai` | Run the exact install command printed in `fix`, then re-run the selected preflight. |
 | `unsupported-os` | Stop. This flow supports macOS only. Tell the person and Daniel Ochoa. |
 | `install-xcode-clt` | `xcode-select --install`, then wait for the system installer to finish. Computer Use may click Install and Agree in that dialog. |
 | `install-homebrew` | `NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`. It asks for the Mac password through sudo. Afterwards add brew to the shell: `echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile && eval "$(/opt/homebrew/bin/brew shellenv)"`. |

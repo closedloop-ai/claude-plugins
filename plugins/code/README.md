@@ -8,7 +8,7 @@ The plugin provides the orchestrator prompt, all specialized subagents, a hook s
 
 Install and enable both `code` and `closedloop-core` from the ClosedLoop marketplace in Claude Code or Codex. The Claude Code manifest declares `closedloop-core` as a dependency; Codex installations must also include it so shared skill invocations resolve.
 
-`code` owns the planning and implementation framework described below. `closedloop-core` owns the shared `plan-structure`, `decision-table`, `closedloop-intel`, `workflow-code-review`, and `mermaid-visualizer` skills, invoked through their `closedloop-core:` names. Vibe sessions, handoff, ticket automation, guided manual QA, measurement discipline, and PR monitoring belong to the separate `vibe` plugin.
+`code` owns the planning and implementation framework described below. `closedloop-core` owns the shared `plan-structure`, `decision-table`, `closedloop-intel`, `workflow-code-review`, and `mermaid-visualizer` skills. Invoke them by skill name in Codex (for example, `$decision-table`) or through the `closedloop-core` namespace in Claude Code (for example, `/closedloop-core:decision-table`). Vibe sessions, handoff, ticket automation, guided manual QA, measurement discipline, and PR monitoring belong to the separate `vibe` plugin.
 
 ---
 
@@ -226,7 +226,7 @@ Discovers and runs project-specific validation commands (test, lint, typecheck, 
 Reviews code changes for security vulnerabilities, correctness bugs, type safety issues, performance problems, and DRY violations. Operates on git diffs, applying a strict evidence standard: Critical/High findings require concrete proof, not speculation. Checks multi-tenant authorization on data-access endpoints. Runs as a loop agent (max 5 iterations) — only exits when no Critical/High findings remain.
 
 **`behavior-verifier`** (model: sonnet)
-Verifies that final code aligns with the intended behavior captured in the decision-table artifact. Activates `closedloop-core:decision-table` in verification-only mode, appends verification/adversarial findings to the artifact, and returns a structured verdict (`ALIGNED` or `MISALIGNED` with typed `<drift_rows>` JSON: `code_drift`, `test_drift`, `plan_ambiguity`) for orchestrator routing in Phase 5.5. Read-and-report only; never modifies code or tests. Drift remediation is owned by the orchestrator. Runs as a loop agent (max 3 iterations).
+Verifies that final code aligns with the intended behavior captured in the decision-table artifact. Activates `$decision-table` in Codex or `/closedloop-core:decision-table` in Claude Code in verification-only mode, appends verification/adversarial findings to the artifact, and returns a structured verdict (`ALIGNED` or `MISALIGNED` with typed `<drift_rows>` JSON: `code_drift`, `test_drift`, `plan_ambiguity`) for orchestrator routing in Phase 5.5. Read-and-report only; never modifies code or tests. Drift remediation is owned by the orchestrator. Runs as a loop agent (max 3 iterations).
 
 ### Cross-Repo Agents
 

@@ -10,18 +10,20 @@
 # only one found under the home folder. A checkout is recognized by its git
 # remote (closedloop-ai/symphony-alpha), not by its folder name.
 #
-# Usage: vibe-preflight.sh [--runtime codex|claude] [--repo <checkout>] [--prototype]
+# Usage: vibe-preflight.sh [--runtime codex|claude] [--codex <CLI>] [--repo <checkout>] [--prototype]
 
 set -uo pipefail
 
 REPO_ARG=""
 PROTOTYPE_ONLY=0
 RUNTIME=codex
+CODEX_ARG=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo) REPO_ARG="${2:-}"; shift; if [[ $# -gt 0 ]]; then shift; fi ;;
     --prototype) PROTOTYPE_ONLY=1; shift ;;
     --runtime) RUNTIME="${2:-}"; shift; if [[ $# -gt 0 ]]; then shift; fi ;;
+    --codex) CODEX_ARG="${2:-}"; shift; if [[ $# -gt 0 ]]; then shift; fi ;;
     *) printf 'Unknown option: %s\n' "$1" >&2; exit 1 ;;
   esac
 done
@@ -62,11 +64,20 @@ have() {
 }
 
 # Claude resolves core through the manifest dependency. Codex requires an
-# explicitly installed, enabled core before any session setup side effects.
-if [[ "$RUNTIME" == "codex" ]]; then
+# explicitly installed, enabled core before session setup. If Node is absent,
+# the ordinary prerequisite checks below report its existing install fix.
+if [[ "$RUNTIME" == "codex" ]] && have node; then
+  codex_executable="$CODEX_ARG"
+  if [[ -z "$codex_executable" ]]; then
+    codex_executable="$(command -v codex 2>/dev/null)"
+    if [[ -z "$codex_executable" ]]; then
+      codex_executable="/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"
+    fi
+  fi
+  core_fix="$(printf '%q plugin add closedloop-core@closedloop-ai' "$codex_executable")"
   core_installed=0
-  if have codex && have node; then
-    plugins_json="$(codex plugin list --json 2>/dev/null)" &&
+  if [[ -x "$codex_executable" ]]; then
+    plugins_json="$("$codex_executable" plugin list --json 2>/dev/null)" &&
       printf '%s' "$plugins_json" | node -e '
         let input = "";
         process.stdin.on("data", chunk => { input += chunk; });
@@ -83,7 +94,7 @@ if [[ "$RUNTIME" == "codex" ]]; then
       ' && core_installed=1
   fi
   if [[ "$core_installed" != "1" ]]; then
-    emit closedloop-core false 'closedloop-core is not installed and enabled' 'codex plugin add closedloop-core@closedloop-ai'
+    emit closedloop-core false 'closedloop-core is not installed and enabled' "$core_fix"
     exit 1
   fi
   emit closedloop-core true 'closedloop-core is installed and enabled' ''
