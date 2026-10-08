@@ -88,7 +88,7 @@ export async function serve(input = process.stdin, output = process.stdout) {
       return readThreadState(client, message.threadId, timing);
     }
     if (operation === 'sendInput') return sendInput(client, options, message.input, message.retryDelayMs);
-    if (operation === 'close') { dispose(); return {}; }
+    if (operation === 'close') { setImmediate(dispose); return {}; }
     throw new Error('Unsupported client process operation');
   }
   lines.on('line', line => {
