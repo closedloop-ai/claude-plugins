@@ -21,6 +21,7 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { committedLocalPlans, isLocalPlanPath } from "./local-plans.mjs";
 import { git, readSessionRecord } from "./session-record.mjs";
 
 const MAX_SUBJECT_LENGTH = 72;
@@ -55,6 +56,11 @@ function commitWorktree() {
   const worktree = path.resolve(values.worktree);
   const subject = requireSubject(values.subject);
   const localFixes = (readSessionRecord(worktree)?.localFixes ?? []).flatMap((fix) => fix.paths ?? []);
+
+  const committedPlans = committedLocalPlans(args => git(worktree, args));
+  if (committedPlans.length) {
+    throw new Error(`Local technical plans are already committed; publication is blocked: ${committedPlans.join(", ")}`);
+  }
 
   git(worktree, ["add", "-A"]);
   const excluded = stagedFiles(worktree).filter((file) => isLocalFix(file, localFixes) || neverCommitted(file));
@@ -99,8 +105,8 @@ function requireSubject(subject) {
 }
 
 function stagedFiles(worktree) {
-  const names = git(worktree, ["diff", "--cached", "--name-only"]);
-  return names ? names.split("\n") : [];
+  const names = git(worktree, ["diff", "--cached", "--name-only", "-z"]);
+  return names ? names.split("\0").filter(Boolean) : [];
 }
 
 function hasMergeHead(worktree) {
@@ -117,6 +123,9 @@ function isLocalFix(file, localFixes) {
 }
 
 function neverCommitted(file) {
+  if (isLocalPlanPath(file)) {
+    return true;
+  }
   const segments = file.split("/");
   const name = segments.at(-1);
   if (ENV_FILE.test(name) && !ENV_EXAMPLE.test(name)) {

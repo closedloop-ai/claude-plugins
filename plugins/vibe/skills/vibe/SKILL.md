@@ -1,6 +1,6 @@
 ---
 name: vibe
-description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (built for Andy, the CEO) working in the Codex Desktop in-app browser. Sets up the machine, creates or resumes an isolated worktree off fresh main, asks what part of the app to work on (a ClosedLoop ticket or a plain description) and whether the environment should be seeded with sample data or blank, creates the session's live ClosedLoop ticket, and stands up the session's own Vercel environment (web app, API, Storybook) with the production feature flag values pinned. Opens the web app and the Desktop app (through its local browser bridge) as two in-app browser tabs, and reopens either on request. Then turns chat requests and in-browser annotations into code that follows the repo's existing patterns, with Storybook-first components, and redeploys to Vercel when the person asks, building the backend too whenever a change needs data or an action the API lacks. Every session ends at a branch handed to design, then engineering. For a pure mockup or fake-data exploration, invokes the repository's canonical prototype skill itself in an owned prototype session, always shares on Vercel, and returns the immutable preview URL, full deployed commit SHA, and slug; handoff preserves the same live ticket and next-owner assignment without opening a PR. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
+description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (built for Andy, the CEO) working in the Codex Desktop in-app browser. For a pure mockup or fake-data exploration, invokes the repository's canonical prototype skill itself in an owned prototype session, always shares on Vercel, and returns the immutable preview URL, full deployed commit SHA, and slug; handoff preserves the same live ticket and next-owner assignment without opening a PR. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
 ---
 
 # Vibe
@@ -26,7 +26,8 @@ work itself. Under all circumstances:
   returns short JSON.
 - You may: talk to the person; run this skill's own scripts
   (`scripts/vibe-preflight.sh`, `scripts/vibe-sessions.mjs`,
-  `scripts/commit-worktree.mjs`), whose output is short JSON; call ClosedLoop `get-me` and closedloop-graph `sync_status` to
+  `scripts/commit-worktree.mjs`, `scripts/local-plans.mjs`,
+  `scripts/dist/writer-state.mjs`, `scripts/dist/claude-worker.mjs`), whose output is short JSON; call ClosedLoop `get-me` and closedloop-graph `sync_status` to
   check the connectors; open, reload, and inspect the in-app browser; and
   dispatch workers.
 - Everything else goes to a worker, even a one-line change and even when you
@@ -38,10 +39,13 @@ work itself. Under all circumstances:
   page route. Workers return a short result; do not ask them for file
   contents.
 
-Talk to the person in plain words. Never ask them to run git, pick a branch,
-read a diff, or choose between implementation options they cannot evaluate.
-When a decision is genuinely theirs (what the screen should do, what words it
-shows, whether a new screen goes in Labs), ask it as a product question.
+Follow `references/quality-loop.md` for the one persistent writer, serial
+queue, internal planning/review and communication. The person never sees a technical plan or
+technical question, and needs no upfront summary. Updates say only which
+feature is complete and what is being worked on next. Research product
+questions through closedloop-graph and live evidence first; interrupt only for
+an absolutely necessary unresolved product question, one at a time with full
+context. Never re-ask a settled decision.
 
 This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 
@@ -50,7 +54,18 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 - Codex: invoke as `$vibe`. Workers are this plugin's agents in `agents/`
   (`../../agents/<name>.md` from this file). Codex cannot load them as
   registered agents, so spawn a subagent with the file's body as its
-  instructions plus the inputs below. Repo agents live in `<repo>/.claude/agents/`.
+  instructions plus the inputs below. Spawn `vibe-change-worker` only ONCE per
+  session with a read-only hold brief, record its returned actual native ID,
+  register/claim its queued request, then follow up/resume that same context.
+  Never make a new source writer per request/unit. Repo agents live in `<repo>/.claude/agents/`.
+  A new native helper also starts with a read-only hold brief; obtain its real
+  ID, acquire the grant, then resume that SAME helper for the operation.
+  Before any native helper's session/ticket mutation, acquire its exact canonical
+  role/action through `writer-state.mjs acquire-record` as `quality-loop.md`
+  specifies. Dispatch only after acquisition. Release with `release-record`
+  only after observed completion or confirmed owned termination of that actual
+  native turn, never because the coordinator script exited. Startup and confirmed
+  discard use the same bounded stable contexts below.
 - Plugin root: the folder two levels above this file (in Codex,
   `~/.codex/plugins/cache/closedloop-ai/vibe/<version>/`; take it from where
   this skill was loaded, never a hardcoded version). Resolve it to an absolute
@@ -61,6 +76,17 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   session worktree, where those relative paths do not exist.
 - Claude Code: invoke as `/vibe:vibe`; plugin agents are available as
   `vibe:<name>`.
+  Graph-dependent calls use `scripts/dist/claude-worker.mjs` with the canonical
+  own-plugin scoped definition and exact capabilities discovered/verified in
+  the parent. It uses supported launch-time binding, not an invented per-call
+  Agent override. Briefs/capability metadata are JSON on stdin. The implementation
+  writer's actual Claude session ID is persisted and explicitly resumed.
+  Before a session exists, requirements and setup run in the validated remembered
+  checkout with `sessionless: {kind: "startup"}`; never fabricate a session.
+  Requirements use mode `request` with only graph/live read capabilities. Setup
+  ticket creation or progress uses mode `record`, the corresponding `recordAction`
+  (`create` or `progress`), `exclusiveRecordTurn: true` and only that action's
+  exact parent-discovered writes. All setup operations remain non-implementation.
 
 Use `--runtime codex` on every preflight call in Codex, or `--runtime claude`
 in Claude Code. Preserve it in setup-worker briefs and reruns. Claude resolves
@@ -86,29 +112,34 @@ stops until core is explicitly installed and enabled.
 
 | Worker | Dispatch it to |
 |---|---|
-| `vibe-setup-worker` | fix failed preflight checks, restore the closedloop-graph connection, bootstrap a worktree, start local Storybook or the local Desktop app (and its browser tab), and work around a symphony-alpha bug locally (ticket filed, fix kept out of every commit) |
+| `vibe-setup-worker` | operational preflight/bootstrap/services only; diagnose code defects, never patch them |
 | `vibe-requirements-worker` | read a ClosedLoop ticket (and its PRD, plan, related tickets) or a description and turn it into a brief, plus the route and FEATURE_MAP id where the relevant code lives, for change workers |
 | `vibe-ticket-worker` | create the session's live ticket, and fill its record sections when you ask |
 | `vibe-environment-worker` | stand up the session's Vercel environment, redeploy it, or refresh its flag snapshot |
-| `vibe-change-worker` | make one requested change (chat or annotation): locate and prep (pick the owner by rule), implement at that owner, request backend work, add stories, self-check, update the live ticket |
-| `vibe-backend-worker` | build the backend half of a change (route, service, validation, schema and migration, seed), driven by a decision table |
-| `vibe-primitive-worker` | build a new design-system primitive from an approved spec, with stories and catalog |
-| `vibe-prototype-worker` | build, iterate, share, or prepare an owned mockup for handoff through the repository's canonical prototype skill |
+| `vibe-change-worker` | the SAME persistent writer for all planning, source implementation, backend/primitive/prototype/Storybook work, fixes and handoff-only tests |
+| `vibe-backend-worker` | read-only backend/contract advice for that writer |
+| `vibe-primitive-worker` | read-only component/spec advice for that writer |
+| `vibe-prototype-worker` | read-only canonical guidance or operational sharing of the writer's reviewed committed result, never another source author |
+| `vibe-adversarial-reviewer` | separately review the local technical plan before implementation, then challenge implemented changes before handoff |
+| `vibe-guardrails-reviewer` | review ownership, reuse and repo constraints before declaring a feature complete |
+| `vibe-verify-worker` | read-only checks/coverage advice; the SAME writer authors tests only at handoff |
 
 Every worker result starts with a status: `DONE`, `NEEDS_PERSON` (a question
 or action only the person can answer or take, already phrased for them),
-`NEEDS_PRIMITIVE` (a building block is missing; includes the steward's spec),
-`NEEDS_BACKEND` (the backend work the change needs, as a spec for
-`vibe-backend-worker`), `NEEDS_DESKTOP_STOP` (the worker must merge
+`NEEDS_PRIMITIVE` or `NEEDS_BACKEND` can request read-only guidance only;
+all implementation resumes in the SAME writer. `NEEDS_DESKTOP_STOP` (the worker must merge
 main into the worktree or otherwise swap its commit while Desktop runs),
 `NEEDS_COMMIT` (the worktree has changes you have not committed yet: commit
 them as section 6 step 3 says, then dispatch the worker again), or
 `BLOCKED` (with the reason).
 
-No worker in this skill writes or edits a test (`references/guardrails.md`,
-"Tests"); tests are engineering's. The only exception is a pull request the
-person explicitly asks for, and this skill opens none. Relay `NEEDS_PERSON` verbatim in plain words,
-then dispatch a fresh worker with the answer.
+`NEEDS_REVIEW` from a prototype means its code is built but must receive
+independent implementation review and existing checks before commit or share.
+
+No build-loop worker writes or edits a test (`references/guardrails.md`,
+"Tests"); test authoring happens only at handoff. This skill opens no PR.
+Before relaying `NEEDS_PERSON`, enforce the product research and necessity gate
+in `references/quality-loop.md`; technical choices stay with the workers.
 
 ## 1. Preflight
 
@@ -124,15 +155,32 @@ in the home folder by its git remote, remembers it in
 command will run satisfies the checkout's `engines` range, and prints one JSON
 line per check. The `repo` check's `detail` is the checkout path (`<repo>`
 in this skill). If every check passes, continue. Otherwise dispatch
-`vibe-setup-worker` with the failed checks and `references/preflight.md`. The
+`vibe-setup-worker` with the failed checks and `references/preflight.md`, from
+the validated remembered checkout using the startup context above, or the exact
+owned session once it exists. Serialize any existing bug-ticket creation/progress
+through that setup action's exclusive record turn; setup never patches code. The
 only things the person ever does are type their Mac password into an
 installer prompt, finish a browser sign-in, allow Codex into a folder when
-macOS asks, and say which folder they work in when more than one copy of
-symphony-alpha exists; the worker reports those as `NEEDS_PERSON`. You and the
+macOS asks; the worker reports those actions as `NEEDS_PERSON`. Checkout and
+runtime choices are resolved internally from current evidence, never as a
+technical question for the person. You and the
 workers never type or ask for credentials. Re-run the preflight until it
 passes. Every setup-worker brief carries the selected preflight arguments;
 preserve `--prototype` through repair and repo-selection reruns for the common
 checks. The later app preflight deliberately omits it.
+
+Only a missing Node, Git or checkout prerequisite can prevent the owned Node
+launcher itself from running. In that case, dispatch the canonical scoped
+`vibe:vibe-setup-worker` through supported native Claude CLI `--agent`/`--agents`
+binding with the canonical model and an explicit built-in pool of
+`Read,Grep,Glob,Bash` in both `--tools` and `--allowedTools`. Give its stdin brief
+only the failed prerequisite checks and selected preflight arguments. Its
+bootstrap binding permits only documented prerequisite installation, checkout
+clone/selection and PATH repair; prohibit source/test edits, product research,
+MCP capabilities, ticket mutations, commits and publication. Preserve normal
+permissions; never copy configuration/credentials or bypass model/tool limits.
+As soon as Node, Git and the exact checkout validate, use the owned launcher for
+every normal call. No other launcher failure permits this native bootstrap.
 
 Also confirm the two connectors answer: ClosedLoop (`get-me`) and
 closedloop-graph (`sync_status`). closedloop-graph is required. If it does
@@ -160,7 +208,8 @@ Run `node scripts/vibe-sessions.mjs list` (it uses the remembered checkout).
   no longer assigned to the person who ran it): start new.
 
 Starting new:
-1. Ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
+1. Use the work the person already described. Only when they have not supplied
+   it, ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
    URL) or a plain description. A vibe session builds the real thing, backend
    included when a change needs it, so if they clearly want a mockup or an
    exploration with made-up data (nothing it shows needs to be real), start
@@ -168,12 +217,14 @@ Starting new:
    `$handoff`; do not ask them to invoke `$prototype`. For a
    ticket, dispatch `vibe-requirements-worker`. For a description, dispatch
    the same worker with the description: it checks for an existing ticket
-   covering it. Tell the person only its brief, in two or three sentences.
+   covering it. Before creating the session, use the validated `<repo>` with
+   `sessionless: {kind: "startup"}`, mode `request`, graph/live read capabilities
+   and no record grants. Keep its brief internal; no upfront summary or plan approval.
    The route and FEATURE_MAP id it returns say where the relevant code lives
    and are for workers; never present them as a screen the session starts on
    (the app opens on its default page after sign-in), and never promise a
    screen for a broad request such as "look for visual bugs".
-2. Ask once: "Should your copy of the app start with sample data (a company
+2. Use a mode the person already supplied; never ask again. Otherwise ask once: "Should your copy of the app start with sample data (a company
    called <email> Co with people and work in it), or empty so you set it up
    yourself?" Record `seeded` or `blank` as the mode. If they are unsure, use
    `seeded`.
@@ -190,44 +241,43 @@ Starting new:
    `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` (it reads
    `CODEX_THREAD_ID`; outside Codex, pass `--thread <id>` if you have one, or
    skip it).
-6. Dispatch `vibe-setup-worker` to bootstrap the new worktree and, in
-   parallel, `vibe-ticket-worker` in create mode with the worktree, the
+6. Dispatch `vibe-setup-worker` to bootstrap the new worktree, then
+   `vibe-ticket-worker` in create mode with the worktree, the
    requirements worker's brief, the originating ticket if any, and the mode.
    It records the ticket's slug on the session itself.
-   Tell the person in one line that the ticket exists and give its link.
+   Keep the ticket link in the session record for completion and handoff.
 7. Stand up the environment (section 3).
 
 ### Mockup sessions
 
-For a pure mockup request, derive a non-colliding canonical prototype slug
-(starts with a letter, lowercase words joined by hyphens, at most 40 characters)
-and run `new-prototype` with the same summary, originating ticket if any, and
-`--operator-*` values as step 4, without `--mode`. It reuses the private
-session record and fresh-main worktree creation on `prototype/<slug>`.
-Record this conversation with `codex-sessions`. Dispatch `vibe-ticket-worker`
-in create mode with the person's own brief, then `vibe-prototype-worker` in
-build mode with that ticket, worktree, and brief. Its instructions invoke the
-absolute `<repo-root>/.claude/skills/prototype/SKILL.md` and always select
-canonical sharing on Vercel. The canonical worker owns the deployment wait.
-Do not ask app-data, backend, or flag questions or start the app environment.
+Initial creation of a pure mockup session uses `new-prototype`, the same
+operator and live-ticket rules, and one owned `prototype/<slug>` worktree from
+fresh main, without an app data mode, API environment or flag snapshot.
+Bootstrap/ticket setup remains operational. Then register/resume the SAME
+persistent implementation writer under section 5 and forward the person's
+mockup request. It reads the absolute canonical
+`<repo-root>/.claude/skills/prototype/SKILL.md` guidance, plans locally, receives
+independent plan review and performs all prototype/shared surface/registry
+changes itself. Do not spawn a separate prototype source writer.
 
-On `DONE`, open its immutable `previewUrl` in the in-app browser and return
-that URL, the full `deployedCommit`, and `slug`. Respect the Vercel team login.
-On `BLOCKED`, relay the evidence and continue only after the failure is fixed.
-Listing and handoff accept only branch-matching privately recorded prototype
-sessions, not every `prototype/` branch in the checkout.
+Preserve canonical mock-data, componentization, visual/product review and
+metadata ownership. Ignore canonical steps asking for a second source writer,
+worktree/branch or a technical-plan approval. All corrections and handoff-only
+test writing return to this same context.
 
-For a resumed owned prototype session, use its worktree and run
-`codex-sessions`. Dispatch the prototype worker in share mode to verify the
-current commit before opening the returned preview. Bring back its recorded
-immutable preview tab when asked. Chat and annotations go to its iterate mode,
-including all annotation context; fixes go to its fix mode. A redeploy request
-goes to its share mode and opens the newly returned immutable URL. Where the
-canonical procedure commits, the worker returns `NEEDS_COMMIT` with the
-message the procedure calls for; commit with `scripts/commit-worktree.mjs`
-using that message, then dispatch it again. These routes
-replace the app-only sections 3 through 7 for this session. Handoff uses the
-same ticket and next-owner assignment through the handoff skill.
+After independent current-result review/checks, the orchestrator commits with
+its script. Dispatch `vibe-prototype-worker` only in operational share mode to
+publish that exact reviewed commit through canonical Vercel sharing. If it
+needs source generation/fixes, return those facts to the SAME writer. No
+helper silently edits registry, metadata or implementation to make sharing pass.
+
+Open only a verified immutable preview and return its URL, full deployed SHA
+and slug on completion. Respect Vercel team login. A stale/failed share stays
+blocked, never reported as current. Resume an owned prototype's existing writer
+ID and publication; chat, annotations, fixes and handoff all queue to it.
+Never create a new worktree/branch for these requests or an arbitrary
+unrecorded prototype. Next-owner assignment and canonical metadata transitions
+remain in the handoff flow.
 
 Resuming: use the session's `worktree`, and run `codex-sessions` again so a
 new conversation is recorded too. Starting new or resuming stops any other
@@ -246,8 +296,7 @@ Desktop again and open its new tab (section 3, Desktop step 2 then step 3).
 
 ## 3. Stand up the environment
 
-Tell the person in one line that their copy of the app is being set up on
-Vercel and that it takes several minutes. Dispatch `vibe-environment-worker`
+Dispatch `vibe-environment-worker`
 in create mode with the worktree, the live ticket slug, the mode, and
 `references/environment.md`. It takes the production flag snapshot, pushes the
 branch, starts the environment through GitHub, follows it to the end, records
@@ -303,12 +352,11 @@ When it returns `DONE`:
   available for this session yet, so we'll keep going on the web app." and
   continue web-only.
 
-If the setup worker ever returns `DONE` with a `LOCAL_FIX` line, it found a
-bug in symphony-alpha, fixed it on this Mac, and filed a ticket. Tell the
-person in one plain sentence, for example: "Storybook had a bug that stopped
-it starting; I fixed it on your computer so you can keep going and filed
-ISS-123 so engineering fixes it for everyone." No redeploy or handoff commits
-that fix.
+If setup diagnoses a repo bug that stops local startup, route its ticket and
+evidence to the SAME persistent writer for the managed local workaround in
+`quality-loop.md`. Keep the diagnosis and ticket internal. The sole writer
+records every changed file as a local fix; no redeploy or handoff commits it.
+Setup only retries the launch after that verified correction, never patches code.
 
 ### Bringing a tab back
 
@@ -328,8 +376,8 @@ named:
 
 ## 4. Set expectations
 
-After they sign in, leave the app on the page it lands on. Tell the person,
-once per session, in three short sentences:
+After they sign in, leave the app on the page it lands on. When the person
+asks how to make changes, use the existing guidance:
 
 - In either tab, click Annotate in the browser toolbar (or press Cmd + .),
   click or drag over what you want changed, type the comment, and press
@@ -341,66 +389,74 @@ once per session, in three short sentences:
 If the Annotate control is missing (a known Codex Desktop issue on some macOS
 builds), say so and continue with chat.
 
-For a net-new screen or capability, ask once: "Should this go in Labs, or
-straight into the app?" Default to straight into the app.
+For a net-new screen or capability, have the requirements worker research its
+existing product rulings first. Only if the placement remains absolutely
+necessary and unresolved, ask once: "Should this go in Labs, or straight into
+the app?" Default to straight into the app when no unresolved decision is needed.
 
 ## 5. Build loop
 
-For each request or annotation (a queued batch is one request), work in small
-visible steps so the person never waits in silence. For an owned prototype
-session, dispatch `vibe-prototype-worker` in iterate mode with the request or
-annotation verbatim. A new mockup request starts the prototype session in
-section 2; the orchestrator invokes canonical `$prototype` through that worker.
+Follow `references/quality-loop.md`: ONE persistent implementation writer,
+ONE worktree and branch, and a serial request queue. No unit-specific code
+writers. Backend/primitive/prototype/Storybook fixes and later tests belong to
+this same writer context. Researchers/reviewers may be read-only and parallel.
 
-1. Dispatch `vibe-change-worker` to plan, with the worktree, the session
-   summary, the live ticket slug, the request verbatim
-   (for annotations: the comment, the element context, the route, and any
-   Adjust values), the Labs answer if one applies, the person's own words for
-   any user-visible text, and the local Storybook URL if one is running. It
-   returns `PLAN` in a few minutes: its Prep block (the owner it picked by
-   rule, `references/design-pass.md`), its Graph block, the units, and any
-   questions. The Prep and Graph blocks are for workers: never relay them to
-   the person, and never ask the person to confirm an owner or approach.
-2. Ask its questions first (step 4). Then tell the person in one or two plain
-   sentences what will happen, in the order of the units ("First the new
-   control on the first screen, then the same on the second, then its menu;
-   I'll tell you as each one is done."). If any unit adds or changes a story and local
-   Storybook is not running, dispatch `vibe-setup-worker` to start it now.
-3. Dispatch a change worker for each unit in turn, with the same inputs plus
-   the plan, its Prep block verbatim, and the unit to build. The loop has no
-   review step: placement, duplication, the red-flag screen, reviews, tests,
-   lint, and typecheck beyond the worker's own self-check all happen at
-   handoff. On each `DONE`, relay its one plain
-   sentence right away. If the unit named a story, open it in local
-   Storybook; otherwise remind them changes show in the app after they say
-   "redeploy". Update the session record with the worker's one-line summary:
-   `node scripts/vibe-sessions.mjs touch --worktree "<wt>" --summary "<summary>"`.
-   Continue with the units it lists as left until none are. On
-   `NEEDS_STORYBOOK`, start local Storybook as above and dispatch the unit
-   again.
-4. On `NEEDS_PERSON`: ask the question exactly as the worker phrased it (copy,
-   "everywhere or just here", web only or wait for Desktop, a product
-   decision), then dispatch a fresh worker with the answer.
-5. On `NEEDS_PRIMITIVE`: tell the person in one sentence that the screen needs
-   a building block the component library does not have yet. Dispatch
-   `vibe-primitive-worker` with the steward's spec, the worktree, and the live
-   ticket slug. Approval happens in local Storybook: if none is running,
-   dispatch `vibe-setup-worker` to start it. When the primitive worker returns
-   `DONE`, open the story URL it gives and ask the person to approve it there.
-   On approval, re-dispatch the original change.
-6. On `NEEDS_BACKEND`: tell the person in one sentence that
-   this needs some behind-the-scenes work first. Dispatch
-   `vibe-backend-worker` with its spec, the worktree, the session summary, and
-   the live ticket slug. When it returns `DONE`, re-dispatch the change worker
-   with the original request so it wires the screen to the new backend. The
-   new backend reaches the Vercel environment on the next redeploy.
-7. On `BLOCKED`: tell the person plainly what could not be done and why, and
-   offer the closest compliant version the worker suggested.
+### Register once, then resume
 
-Local Storybook is optional. Offer it once, when a change adds or changes a
-component: "Want to see components on your computer right away, before the
-next redeploy?" On yes, dispatch `vibe-setup-worker` to start it and record
-it; open its URL.
+On the first request, Codex spawns the canonical `vibe-change-worker` once and
+records the actual ID through `scripts/dist/writer-state.mjs register` with
+runtime `codex`. Later calls use that SAME native follow-up/resume ID. Claude
+uses `scripts/dist/claude-worker.mjs` with the scoped canonical role; its
+recorded underlying session ID is resumed, never a fresh context with the same
+name. Use the parent-discovered exact capabilities, not a configured-prefix
+guess or blanket MCP inheritance. All private input is JSON on stdin.
+
+Use the owned state helper's status/enqueue/claim/take-input/finish actions.
+Queue incoming requests while one is active. For native Codex, claim its exact
+writer/request/lease, take the durable input, and forward it to the recorded
+worker. Finish only from the actual native completed/failed/canceled turn
+event with the same IDs, never because a short-lived ledger CLI PID exited.
+Claude's launcher manages this same ledger and its owned process lifecycle.
+Do not dispatch or resume the writer concurrently. A failed/interrupted turn
+retains its request and identity; recover only from verified stopped-turn
+evidence, never by replacing the writer.
+
+### One request through completion
+
+1. Forward the person's request/annotation verbatim, session/branch, live
+   ticket, known rulings and supplied copy to the SAME writer. It performs
+   graph/owner prep and writes the canonical core-template plan locally.
+   No upfront summary, technical question or plan approval reaches the person.
+2. On `PLAN`, dispatch the separate read-only adversarial plan reviewer.
+   Continue the active request in the SAME writer with its findings; it fixes
+   the plan. Recheck confirmed corrections before implementation.
+3. Resume that writer to implement in dependency order. It can load canonical
+   backend, primitive, prototype and Storybook guidance from its own plugin,
+   but no new source writer/worktree/branch. Read-only specialists advise;
+   their findings return to this writer. Preserve real visual/product approvals.
+4. On `NEEDS_REVIEW`, run independent read-only implementation reviews and
+   existing checks. Use core workflow review for backend work. Return confirmed
+   issues to the SAME writer, recheck its fixes, and do not leave preventable
+   issues until handoff. Existing tests may run; none are authored yet.
+5. Research any `NEEDS_PERSON` through the graph/live-decision necessity gate.
+   Ask only an absolutely necessary unresolved product question, one at a time
+   with full context. Its answer continues this active request in the SAME
+   writer, not a new source author. Technical blockers stay internal.
+6. Record scope/progress/backend facts through the writer's explicit serial
+   record continuation or the authorized ticket helper, never simultaneously.
+   Keep technical plans private. Operational bootstrap/build/deploy helpers
+   execute no implementation edits, and sharing waits for the writer and
+   independent gates. The orchestrator alone commits through its owned script.
+7. A `DONE` must mean the whole requested feature passed its required checks
+   and independent reviews. Then finish that request and tell the person only
+   the completed feature and next work, in their own terms. The next queued
+   request goes to the SAME ID/context. Update the session summary through
+   the existing session script in a serial record turn.
+
+Pure mockups still use canonical `$prototype` guidance through this writer;
+the person only types `$vibe` and `$handoff`. Initial session creation chooses
+one app or prototype branch. Never add a second worktree/branch for a sub-unit.
+Local Storybook remains available and product design approvals stay intact.
 
 ## 6. Redeploy
 
@@ -409,20 +465,19 @@ on Vercel", "let me see it live", or anything meaning the same:
 
 1. Run `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` so
    the ticket lists every subagent so far.
-2. Tell them in one line that it is on its way and takes a few minutes.
+2. Keep deployment progress internal; report completion, not technical steps.
 3. Commit everything changed since the last redeploy:
    `node scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the changes since the last redeploy>" --body "<the screens changed, one per line>"`.
    The subject stays under 72 characters and never mentions AI tools. The
    script leaves out the session's `localFixes` and files that never belong
    in a commit, and the repository's commit hook runs. `committed: false`
    means nothing changed; continue. `"ok":false` means the hook refused:
-   dispatch `vibe-change-worker` (or `vibe-backend-worker` for backend code)
-   in fix mode with the error, then commit again.
+   resume the SAME persistent writer in fix mode with the error, then commit again.
 4. Dispatch `vibe-environment-worker` in redeploy mode with the worktree, the
    live ticket slug, the session summary, and the session's `localFixes`
    paths. It pushes, requests the environment again so that commit is
-   deployed, and updates the ticket. A build-loop redeploy runs no tests;
-   they wait for handoff.
+   deployed, and updates the ticket. Existing checks have run through the
+   quality loop; test authoring still waits for handoff.
 5. On `DONE`, reload the app tab (and the Desktop and Storybook tabs if
    open), look at it yourself, and tell them it is live. Whenever you open
    the Vercel `storybookUrl` and the tab lands on `vercel.com` (a Vercel sign-in or
@@ -430,9 +485,9 @@ on Vercel", "let me see it live", or anything meaning the same:
    on Vercel needs you to sign in to Vercel with your team account first."
    Do not try to get around it. On `BLOCKED` because the repo's checks
    refused the push or a build failed in the session's own change, dispatch
-   `vibe-change-worker` (or `vibe-backend-worker` for backend code) in fix
-   mode with the failure, then commit and redeploy again (steps 3 and 4). Tell the person in one plain
-   line that something needed fixing first.
+   the SAME persistent writer in fix mode with the failure, then re-review
+   and verify its fix before committing
+   and redeploying again (steps 3 and 4). Keep the repair details internal.
 
 Never redeploy unless the person asked.
 
@@ -464,18 +519,34 @@ Whenever the person asks to throw a session away (at any point, for any
 2. Tell them in plain words what will be lost: the session's summary, the
    number of unsaved files, that their copy of the app on Vercel and its data
    will be deleted, and that the ticket will be canceled. Ask them to confirm.
-3. On a clear yes, dispatch `vibe-setup-worker` to discard the worktree. It
+3. On a clear yes, retain the validated remembered `<repo>` separately from
+   the target `<wt>` and the parent-held preview's branch, live ticket and
+   operator. Dispatch `vibe-setup-worker` from that stable `<repo>` with
+   `sessionless: {kind: "startup"}`, mode `record`, `recordAction: "discard"`,
+   `exclusiveRecordTurn: true`, graph/live reads only, and `discardTarget`:
+   `{worktree: "<wt>", confirmed: true, branch, operatorId, operatorEmail}`
+   plus `liveTicket` only when present. The launcher independently checks the
+   target's private record and same Git repository and locks both contexts;
+   its definition, trace and stable record lock remain until completion.
+   The worker re-verifies target ownership and the person's confirmation, never
+   deletes its execution checkout, and discards only the target worktree. It
    stops the session's local processes, requests the drop of the session's
    data in symphony-alpha (nothing removes it automatically), deletes the
-   worktree and the local and remote branch, and returns the live ticket
-   slug and operator.
-4. If there was a live ticket, dispatch `vibe-ticket-worker` in cancel mode
-   with that slug and operator.
+   worktree and the local and remote branch, and returns the script's receipt.
+4. Only after that successful result has `discarded: true`, retain its
+   `cancelEvidence` in the parent. If there was a live ticket, dispatch
+   `vibe-ticket-worker` from the retained `<repo>` in mode `record`, action
+   `cancel`, with `exclusiveRecordTurn: true` and
+   `sessionless: {kind: "discarded", evidence: <cancelEvidence>}`. Grant only
+   parent-discovered graph/live reads and the declared cancel writes. It verifies
+   the live ticket and exact operator before canceling. A failed/partial discard,
+   absent receipt, missing ownership or deleted execution root blocks cancellation.
 5. Tell them in one line that it is gone.
 
 ## References
 
 - `references/closedloop-graph.md`: how every worker uses closedloop-graph.
+- `references/quality-loop.md`: one persistent writer/queue, local plans, read-only independent reviews, researched product questions and handoff-only test authoring.
 - `references/preflight.md`: fixes for every preflight check (setup worker).
 - `references/environment.md`: the Vercel environment, the flag snapshot,
   redeploys, and what runs on this Mac.

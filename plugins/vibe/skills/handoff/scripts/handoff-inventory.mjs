@@ -17,12 +17,13 @@
 // (`backendFiles`). Handoff runs its lighter checks when it did not, and the
 // full suite with two workflow-code-review passes when it did.
 //
-// Usage: handoff-inventory.mjs --worktree <path>
+// Usage: handoff-inventory.mjs --worktree <path> [--phase build|handoff]
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { committedLocalPlans, isLocalPlanPath, LOCAL_PLAN_PREFIX } from "../../vibe/scripts/local-plans.mjs";
 import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
 import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
@@ -31,8 +32,8 @@ import { isPortableSurfaceAllowlistEdit, PORTABLE_SURFACE_CHECKER } from "./prot
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 const BRANCH_PREFIX = "vibe/";
 
-// The frontend paths a change worker edits, plus the backend paths that only
-// vibe-backend-worker edits (ISS-12046); an engineer reviews both before merge.
+// The sole implementation writer owns frontend and backend changes (ISS-12135);
+// an engineer reviews both before merge.
 const ALLOWED_PREFIXES = [
   "apps/app/",
   "packages/app/",
@@ -63,10 +64,15 @@ const BACKEND_SEGMENTS = ["/prisma/", "/migrations/"];
 const STORY_PATTERN = /\.stories\.tsx?$/;
 const COMPONENT_PATTERN = /\/components\/.+\.tsx$/;
 const TEST_PATTERN = /(?:\.test\.tsx?$|\/__tests__\/)/;
+const HANDOFF_TEST_PREFIXES = ["e2e/", "apps/desktop/test/"];
+const HANDOFF_TEST_PATTERN = /\.(?:test|spec)\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 
-const { values } = parseArgs({ options: { worktree: { type: "string" } } });
+const { values } = parseArgs({ options: { worktree: { type: "string" }, phase: { type: "string", default: "build" } } });
 if (!values.worktree) {
   fail("--worktree is required.");
+}
+if (!["build", "handoff"].includes(values.phase)) {
+  fail("--phase must be build or handoff.");
 }
 const worktree = path.resolve(values.worktree);
 
@@ -85,7 +91,12 @@ if (prototype) {
 const localFixTickets = localFixTicketsByPath(record);
 const baseCommit = git(["merge-base", "HEAD", `origin/${baseBranch()}`]);
 const allChangedFiles = listChangedFiles(baseCommit);
-const changedFiles = allChangedFiles.filter((file) => !localFixTickets.has(file.path));
+const localPlans = allChangedFiles.filter((file) => isLocalPlanPath(file.path));
+const trackedLocalPlans = [...new Set([
+  ...git(["ls-files", "--", LOCAL_PLAN_PREFIX]).split("\n"),
+  ...committedLocalPlans(git),
+])].filter(Boolean);
+const changedFiles = allChangedFiles.filter((file) => !localFixTickets.has(file.path) && !isLocalPlanPath(file.path));
 const localFixes = allChangedFiles
   .filter((file) => localFixTickets.has(file.path))
   .map((file) => ({ ...file, ticket: localFixTickets.get(file.path) }));
@@ -101,6 +112,7 @@ const componentsWithoutStories = findComponentsWithoutStories(changedFiles);
 const blocking = {
   forbiddenPaths: forbidden.length === 0,
   hasChanges: changedFiles.length > 0,
+  ...(trackedLocalPlans.length ? { localPlansUntracked: false } : {}),
   ...(prototype ? { prototypePublicationCurrent: publicationProblem === undefined } : {}),
 };
 
@@ -117,6 +129,8 @@ const result = {
   blocking,
   changedFiles,
   localFixes,
+  localPlans,
+  trackedLocalPlans,
   forbidden,
   outsideAllowed,
   shrinkOnlyAllowlists,
@@ -181,6 +195,10 @@ function isShrinkOnlyEdit(file) {
 }
 
 function isAllowed(filePath) {
+  if (values.phase === "handoff" && HANDOFF_TEST_PREFIXES.some(prefix => filePath.startsWith(prefix)) &&
+    HANDOFF_TEST_PATTERN.test(filePath)) {
+    return true;
+  }
   if (prototype && (filePath.startsWith(`apps/prototypes/app/p/${record.slug}/`) ||
     filePath === "apps/prototypes/lib/registry.generated.ts")) {
     return true;

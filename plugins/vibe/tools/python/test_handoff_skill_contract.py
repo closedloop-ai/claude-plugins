@@ -34,7 +34,7 @@ def test_behavior_answers_go_to_the_change_worker_before_the_ticket() -> None:
     assert "**Behavior**" in answers
     assert "**Wording**" in answers
     assert "when you are unsure" in answers
-    assert "A behavior answer goes to `vibe-change-worker` in fix mode first" in answers
+    assert "A behavior answer resumes the SAME `vibe-change-worker`" in answers
     for rerun in ("step 3", "step 4", "step 5", "step 6", "step 7"):
         assert rerun in answers, rerun
     assert "Only then does the answer go to `vibe-ticket-worker`." in answers
@@ -54,7 +54,7 @@ def test_step_eight_routes_answers_and_blocks_finalizing_until_reruns_finish() -
 
 
 def test_summary_corrections_that_change_behavior_are_routed_too() -> None:
-    step_two = section(HANDOFF_SKILL.read_text(), "## 2. Summarize and confirm")
+    step_two = section(HANDOFF_SKILL.read_text(), "## 2. Summarize internally")
 
     assert "Answers from the person" in step_two
     assert "goes to the change worker now" in step_two
@@ -74,20 +74,24 @@ def test_ticket_worker_refuses_unbuilt_behavior_and_rederives_dependent_sections
 
 
 def test_change_worker_checks_a_handoff_answer_against_the_code() -> None:
-    fix_mode = section(CHANGE_WORKER.read_text(), "## Fix mode (handoff)")
+    worker = CHANGE_WORKER.read_text()
+    answers = section(HANDOFF_SKILL.read_text(), "## Answers from the person")
+    assert "findings or product answer" in worker
+    assert "same active request and writer ID" in worker
+    assert "`already met`" in answers
+    assert "`built`" in answers
+    assert "It checks the code against the answer on every screen" in answers
 
-    assert "the person's answer to it" in fix_mode
-    assert "`already met`" in fix_mode
-    assert "`built`" in fix_mode
-    assert "Scope and acceptance criteria in their words" in fix_mode
 
-
-def test_step_eight_asks_for_the_next_owner_and_never_defaults() -> None:
+def test_step_eight_reuses_a_named_owner_or_asks_without_defaulting() -> None:
     step_eight = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
 
     assert "Who should pick this up next? A name or email is fine." in step_eight
     assert "`vibe-ticket-worker` in lookup mode" in step_eight
-    assert "`Assigning this to <full name>.`" in step_eight
+    assert "Use a next owner the person already named" in step_eight
+    assert "never re-ask that settled choice" in step_eight
+    assert "Keep the assignment progress internal" in step_eight
+    assert "report the next owner at completion" in step_eight
     assert "`<full name> (<email>)`" in step_eight
     assert "ask the question again" in step_eight
     assert "never fall back to anyone by default" in step_eight
@@ -148,19 +152,20 @@ def test_ticket_worker_fills_grading_at_handoff_and_never_rederives_it() -> None
 
 def test_check_weight_follows_whether_the_session_changed_backend_code() -> None:
     skill = HANDOFF_SKILL.read_text()
-    task_list = section(skill, "## 1. Show the task list first")
-    checks = section(skill, "## 5. Checks")
-    reviews = section(skill, "## 6. Reviews")
+    task_list = section(skill, "## 1. Internal checklist")
+    checks = section(skill, "## 5. Checks and handoff-only tests")
+    reviews = section(skill, "## 6. Independent integrated review")
 
     assert "handoff-inventory.mjs --worktree" in task_list
     assert "`backendChanged`" in task_list
     assert "use the backend checks from then on" in task_list
-    assert "Lighter: dispatch `vibe-verify-worker` in checks mode" in checks
-    assert "Backend: dispatch `vibe-verify-worker` in full-suite mode" in checks
-    assert "Lighter: dispatch the repo agent `review-soul`" in reviews
-    assert "`vibe-adversarial-reviewer` in parallel" in reviews
-    assert "Backend: run the `workflow-code-review` skill" in reviews
-    assert "`workflow-code-review` a second time" in reviews
+    assert "Lighter: read-only verify checks mode" in checks
+    assert "Backend: full-suite mode runs every required lane" in checks
+    assert "Lighter: repo `review-soul`" in reviews
+    assert "`vibe-adversarial-reviewer` implementation mode" in reviews
+    assert "parallel, read-only" in reviews
+    assert "Backend: named core `workflow-code-review`" in reviews
+    assert "two existing review passes" in reviews
 
 
 def test_draft_scope_is_retired() -> None:
@@ -178,23 +183,24 @@ def test_vibe_sends_pure_mockups_to_prototype() -> None:
 
     # Daniel ruled that vibe invokes the canonical workflow itself.
     assert "`new-prototype`" in starting_new
-    assert "without `--mode`" in starting_new
-    assert "absolute `<repo-root>/.claude/skills/prototype/SKILL.md`" in starting_new
-    assert "always select" in starting_new
-    assert "`vibe-prototype-worker` in iterate mode" in build_loop
+    assert "without an app data mode" in starting_new
+    assert "`<repo-root>/.claude/skills/prototype/SKILL.md`" in starting_new
+    assert "canonical Vercel sharing" in starting_new
+    assert "Do not spawn a separate prototype source writer" in starting_new
+    assert "Pure mockups still use canonical `$prototype` guidance through this writer" in build_loop
     assert "`$prototype`" in build_loop
 
 
 def test_owned_prototypes_keep_handoff_assignment_and_canonical_transitions() -> None:
     skill = HANDOFF_SKILL.read_text()
     worker = (PLUGIN_ROOT / "agents" / "vibe-prototype-worker.md").read_text()
-    assert "Steps 8 and 9 remain unchanged" in skill
-    assert "prepare-handoff mode" in skill
+    assert "next-owner lookup and ticket assignment stay intact" in section(skill, "### Owned prototype sessions")
+    assert "handoff-only tests in its same context" in skill
     assert "PrototypeStatus.HandedOff remains owned by prototype-approve" in skill
-    assert "Do not execute its PR creation" in worker
-    assert "Do not reproduce" in worker
+    assert "No PR is opened" in worker
+    assert "canonical share-on-Vercel procedure on this exact branch" in worker
     assert "prototype-result --worktree" in worker
-    assert "immutable preview URL" in worker
+    assert "immutable URL selection" in worker
 
 
 def test_prototype_preflight_mode_survives_setup_worker_repairs() -> None:

@@ -1,12 +1,10 @@
 # Design pass
 
-Vibe requests arrive one chat sentence at a time, with no ticket, plan, or
-acceptance criteria behind them, and every change is committed and deployed
-before the person sees it. So the build loop stays fast: a short prep step
-picks where the code goes by rule, the change worker builds there, and every
-inspection (the red-flag screen, restructuring, the sibling sweep, reviews,
-running tests) waits for handoff. Nothing here waits on a ticket, a PRD, or a
-written plan, and nothing here is shown to or asked of the person.
+Vibe requests arrive in the person's own words. The prep picks ownership by
+rule; `quality-loop.md` then keeps the local technical plan, separate plan
+review and implementation corrections internal and before handoff. Existing
+tests may run during building, but test writing happens only at handoff.
+Nothing here is shown to or asked of the person.
 
 ## Owner rules
 
@@ -15,7 +13,8 @@ The rule covers any component that composes or inherits from a shared parent
 service built on a shared one): behavior the children share goes in the
 parent, and a child keeps only what is specific to that child. Applied in
 order; the first that fits decides. Nobody asks the person where code goes,
-and nobody asks anyone to confirm the approach.
+and nobody asks the person to confirm the approach. Independent technical
+review follows `quality-loop.md` internally.
 
 1. Behavior that the children of a shared parent share goes into that parent
    as a generic, domain-free slot or extension point, and each child opts in
@@ -85,12 +84,12 @@ Graph:
 - <one line per required call and what it established>
 ```
 
-The change worker builds at that owner, and each unit's status names the
-owner it built in (`Owner: <path>`) with its own Graph block.
+The SAME persistent writer builds at that owner and names `Owner: <path>`
+with its Graph block. Units are tasks in its local plan, not separate writers.
 
-## Handoff depth
+## Quality depth before handoff
 
-At handoff `vibe-guardrails-reviewer` screens the whole session diff, and the
+Before completing a feature `vibe-guardrails-reviewer` screens its diff, and the
 change worker (the backend worker for backend code) fixes what it confirms in
 fix mode, without asking the person.
 
@@ -137,7 +136,7 @@ A fix that moves behavior to its owner works through, in its own reasoning:
   the worktree for the session's own code) and consolidate repeats in the
   session's own code. Do not opt in children the person did not name; list
   them.
-- Tests and checks: no test is written or edited (`guardrails.md`, "Tests"),
+- Tests and checks: test writing waits for handoff (`guardrails.md`, "Tests"),
   and a failing check is never made to pass by changing it (`guardrails.md`,
   "Checks").
 
@@ -160,5 +159,5 @@ site: each red flag; two children of one parent that each implement the
 same behavior (blocking, naming the parent and the slot it belongs in); domain
 code in a design-system slot; and code that is not in the `Owner` its change
 log entry names. `vibe-adversarial-reviewer` checks whether repeated copies
-already disagree. Both report to the handoff orchestrator, which sends
+already disagree. Both report to the orchestrator before handoff, which sends
 confirmed findings to a fixing worker; the person is not involved.

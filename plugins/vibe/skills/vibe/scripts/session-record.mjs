@@ -28,3 +28,8 @@ export function writeSessionRecord(worktree, record) {
   writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
   chmodSync(file, 0o600);
 }
+
+/** Reads pre-ISS-12057 ticket records without inventing a ticket when neither field exists. */
+export function sessionLiveTicket(record) {
+  return record.liveTicket ?? record.handoffTicket ?? null;
+}

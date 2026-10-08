@@ -380,7 +380,11 @@ function renderFlagSnapshot(record, snapshot) {
 function renderSessions(record) {
   const sessions = record.codexSessions ?? { orchestrators: [], subagents: [] };
   const lines = ["## Sessions", ""];
-  if (sessions.orchestrators.length === 0) {
+  if (record.implementationWriter) {
+    const writer = record.implementationWriter;
+    lines.push(`- Implementation writer: ${writer.runtime} \`${writer.workerId}\` on \`${writer.branch}\` (same persistent context)`);
+  }
+  if (sessions.orchestrators.length === 0 && !record.implementationWriter) {
     lines.push(PENDING);
     return lines.join("\n");
   }

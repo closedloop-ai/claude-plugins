@@ -35,13 +35,14 @@ one element), at least:
 | Worker | Calls |
 |---|---|
 | `vibe-requirements-worker` | `code_symbols` on the screen's main component, `blast_radius_tickets` on its route and main component files, and for a description `query_collisions` and `search_nodes` |
-| `vibe-change-worker` (prep, units, fix mode) | `code_symbols` on each component or hook it will edit or extend, then `code_callers` and `code_importers` on each (this is how it finds the shared parent and its other children), and `blast_radius_tickets` on each file it edits |
-| `vibe-backend-worker` | `code_symbols` on the closest route, service, and model, `code_callers` on anything it changes, and `blast_radius_tickets` on each file it edits |
+| `vibe-change-worker` (same persistent writer, prep/request/fix/handoff) | `code_symbols` on each component or hook it will edit or extend, then `code_callers` and `code_importers` on each (this is how it finds the shared parent and its other children), and `blast_radius_tickets` on each file it edits |
+| `vibe-backend-worker` (read-only advice) | `code_symbols` on the closest route, service, and model, `code_callers` and `blast_radius_tickets` on the planned files |
 | `vibe-guardrails-reviewer` | `code_symbols` and `search_nodes` for an existing component a hand-rolled one duplicates, and `code_callers` and `code_importers` on each changed shared component |
 | `vibe-adversarial-reviewer` | `code_callers` and `code_importers` on each changed component or hook, `code_tests_for` on changed files, and `blast_radius_tickets` on them |
+| `vibe-adversarial-reviewer` (plan mode) | `code_symbols`, `code_callers` and `code_importers` on planned owners and consumers, `code_tests_for` and `blast_radius_tickets` on planned files |
 | `vibe-storybook-decomposer` | `code_symbols` for existing stories and similar components, and `code_callers` before extracting anything |
 | `vibe-handoff-summarizer` | `code_symbols` and `code_callers` to name the screens each changed component appears on, and `blast_radius_tickets` on the changed files |
-| `vibe-verify-worker` (checks and full-suite modes) | `code_tests_for` on the changed files |
+| `vibe-verify-worker` (read-only checks, full-suite and coverage) | `code_tests_for` on the changed files |
 | `vibe-primitive-worker` | `code_symbols` and `search_nodes` for an existing component under another name |
 | `vibe-prototype-worker` | `code_symbols` and `code_importers` on each shared component it builds on, and `blast_radius_tickets` on each file it edits |
 
@@ -78,6 +79,11 @@ The orchestrator then dispatches `vibe-setup-worker` to restore the
 connection before the next change.
 
 ## Rules
+
+Every product question first follows `quality-loop.md`'s graph and live-decision
+research gate. Check whether it was already answered, verify the material ruling
+with current evidence, and ask only an absolutely necessary unresolved question.
+Never send a technical question or re-ask a settled decision.
 
 - Start with `code_symbols` for any named component, then `code_callers` and
   `code_importers` before changing anything shared: a change to a component
