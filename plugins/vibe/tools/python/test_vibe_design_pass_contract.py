@@ -471,3 +471,23 @@ def test_legacy_resume_keeps_its_actual_binding_and_uses_root_continuation() -> 
         text = flat(path.read_text())
         assert "original recorded binding" in text, path.name
         assert "root continuation" in text, path.name
+
+
+def test_handoff_metadata_callers_keep_detailed_final_evidence() -> None:
+    handoff = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
+    for field in ("Production impact", "Flag changes and gates", "Open Questions"):
+        assert field in handoff, field
+        for name in ("vibe-handoff-summarizer", "vibe-verify-worker", "vibe-ticket-worker"):
+            text = flat(agent(name))
+            assert field in text, (name, field)
+            assert "ticket-template.md" in text, name
+    for required in ("verified final diff", "detailed", "if merged", "not already shipped"):
+        assert required in handoff, required
+    summary = flat(agent("vibe-handoff-summarizer"))
+    assert "do not truncate" in summary
+    assert "existing modified" in summary and "removed" in summary
+    verify = flat(agent("vibe-verify-worker"))
+    assert "source defaults" in verify and "local QA" in verify
+    ticket = section(agent("vibe-ticket-worker"), "## Handoff mode")
+    assert "Read detailed artifact contents" in ticket
+    assert "Refresh stale packet evidence" in ticket

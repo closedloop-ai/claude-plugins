@@ -106,8 +106,28 @@ subagent that worked on this.>
 ## Handoff
 
 <Filled at handoff.>
-- Components added: <path> with story <path>, one line each, or "none"
-- Components changed: <path>: <what changed>, or "none"
+- Production impact: <if merged, production-only added/changed/removed component
+  paths and effects, including the shared parent and its consumers and relevant
+  web/Desktop consequences (affected, unchanged or source-backed N/A). This is
+  not already shipped. Keep story/test/prototype-only artifacts in their separate
+  evidence inventories, not this production list; use "None" when there are no
+  production component changes.>
+- Flag changes and gates: <exact keys classified as new, existing modified or
+  removed, with owning source paths and the changed code's gated entry points,
+  reads, mutations and host gates. Include relevant existing gates, not only
+  Labs flags. Say "No new flags" when the verified diff establishes that, but
+  still list existing modified/removed keys and gates around changed code.
+  Separate source defaults (source evidence), actually verified production
+  values (timestamp and evidence), and local QA settings/toggles. Mark production
+  verification unavailable or stale when it is; never guess a value or present
+  source defaults/local QA as production truth. Record this delta/gate evidence
+  without overwriting the machine-generated snapshot or implicitly refreshing it.>
+- Open Questions: <only genuinely unresolved Product/Design/Scope questions
+  after graph and live ClosedLoop research under quality-loop.md: sources checked,
+  context and the decision needed. Exclude answered or settled questions; an
+  empty graph result is not proof they are unanswered. Keep engineering limitations
+  in known gaps, never a technical approval request. Write "None" if research
+  leaves no genuine open question; do not invent a question or product copy.>
 - Design decisions: <one line per non-trivial request: the owner it was
   built in and the rule that chose it; for each restructure during building or handoff, the
   owner, its shape, and the alternative rejected and why>, or "none: only
@@ -140,7 +160,9 @@ surfaces; never invent a preview or inspection.>
   prototype, use its canonical immutable preview and truthful unavailable/N/A
   app or Storybook surfaces; no credentials or private Desktop bridge URL.>
 - Scope and coverage: <requested scope, screens, hosts and states; identify
-  actual runtime/visual inspection separately from source-only and unverified.>
+  actual runtime/visual inspection separately from source-only and unverified.
+  Reference the Handoff Production impact and Flag changes and gates evidence,
+  keeping conditional production effects separate from this Storybook inventory.>
 - Storybook inventory: <added/changed/removed components and stories with paths,
   IDs and direct links; controls, Docs and plays as declared versus actually
   inspected/executed; intentional ID/category moves and sidebar folds with
