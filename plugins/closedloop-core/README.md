@@ -89,6 +89,20 @@ repository's own instruction files, checks, and test conventions, never loosens
 an existing check, and routes larger prevention work to a follow-up instead of
 dropping it. Examples for each rung are in `references/rung-examples.md`.
 
+### `repo-hardening`
+
+Audits a repository read-only and writes an evidence-backed hardening plan as a
+self-contained HTML page plus a Markdown twin, outside the analyzed repository.
+Asks which repository to analyze and where to write the plan, investigates
+instruction files, checks and gates, types, tests, CI, review habits, and
+recurring mistakes in history, and evaluates them against engineering
+principles and a trust ladder of prevention mechanisms. The plan gives findings
+with evidence and the strongest prevention rung, small ordered units of work
+split into quick wins and structural changes, what not to do, and decisions for
+a human with a recommendation. Its playbooks can also be used directly for one
+rigorous task such as a bug fix with runtime evidence or a blast-radius check.
+Adapted from pstack under the MIT License; see `NOTICE.md` in the skill folder.
+
 ### `gh-monitor-pr`
 
 Runs a detached GitHub PR monitor that notifies the exact launching Codex
