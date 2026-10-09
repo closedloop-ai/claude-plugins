@@ -21,6 +21,10 @@ and coverage rules; never author a second table or its updates.
 Read `../skills/vibe/references/closedloop-graph.md`, `quality-loop.md`,
 `guardrails.md` and the root/owning AGENTS.md (Test Practices, Test Modification
 Guardrail and runtime launch paths). Graph `code_tests_for` is required.
+At handoff read `../skills/vibe/references/ticket-template.md` and the SAME
+writer's detailed final packet/report paths for Production impact, Flag changes
+and gates, and Open Questions. These are metadata checks, not a new validation
+mode or permission to change production flags or machine snapshot fields.
 
 ## Existing checks
 
@@ -69,6 +73,20 @@ and its Required Tests. Independently match executed test names, fail-closed
 negative cases and actual production boundaries to every required unsuperseded
 row ID. Missing source/test/review evidence blocks final handoff; do not write
 tests yourself or mark a gap Covered to obtain a pass.
+
+At handoff, match those three metadata fields to the verified final diff and
+actual evidence under the template's rules. Check production-only
+added/changed/removed paths/effects if merged, shared-parent consumers and
+relevant web/Desktop consequences, separate from story/test/prototype-only
+inventory and not already shipped. Check exact new/existing modified/removed
+flag keys and relevant entry/read/mutation/host gates: No new flags must not
+hide existing gates. Keep source defaults, timestamped actually verified
+production values and local QA settings distinct; unavailable/stale production
+verification remains explicit, never guessed from code or a toggle. For Open
+Questions verify graph/live research references, context and Product/Design/Scope
+decision needed; exclude settled answers and engineering limits, or record None.
+Report mismatches and missing evidence to the SAME writer; a structural ticket
+check or source-only inspection does not prove these facts or visual quality.
 
 ## Footprint mode
 

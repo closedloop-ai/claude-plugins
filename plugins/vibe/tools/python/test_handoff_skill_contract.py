@@ -269,3 +269,55 @@ def test_design_review_callers_preserve_actual_inspection_and_detailed_inventory
         assert "Design Review" in text and "evidence" in text, name
     summary = (PLUGIN_ROOT / "agents" / "vibe-handoff-summarizer.md").read_text()
     assert "detailed" in summary and "do not truncate" in summary
+
+
+def test_handoff_production_impact_is_conditional_and_production_only() -> None:
+    handoff = section(TICKET_TEMPLATE.read_text(), "## Handoff")
+    for required in ("Production impact", "if merged", "production-only",
+                     "added/changed/removed", "paths and effects", "shared parent",
+                     "consumers", "web/Desktop", "not already shipped",
+                     "story/test/prototype-only"):
+        assert required in handoff, required
+    assert "Production impact" in section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
+
+
+def test_handoff_flags_separate_delta_gates_and_evidence_classes() -> None:
+    handoff = section(TICKET_TEMPLATE.read_text(), "## Handoff")
+    for required in ("Flag changes and gates", "exact keys", "new", "existing modified",
+                     "removed", "owning source paths", "entry points", "reads",
+                     "mutations", "host gates", "source defaults", "verified production",
+                     "timestamp", "evidence", "local QA", "No new flags",
+                     "existing gates", "unavailable or stale", "never guess"):
+        assert required in handoff, required
+    assert "Labs flag keys" not in (PLUGIN_ROOT / "agents" / "vibe-handoff-summarizer.md").read_text()
+
+
+def test_handoff_open_questions_require_research_and_exclude_settled_answers() -> None:
+    handoff = section(TICKET_TEMPLATE.read_text(), "## Handoff")
+    for required in ("Open Questions", "graph", "live ClosedLoop", "sources checked",
+                     "context", "decision needed", "Product/Design/Scope",
+                     "answered or settled", "engineering limitations", "None",
+                     "technical approval"):
+        assert required in handoff, required
+    worker = section(TICKET_WORKER.read_text(), "## Handoff mode")
+    assert "Open Questions" in worker
+    assert "quality-loop.md" in worker
+    assert "None" in worker
+
+
+def test_handoff_metadata_preserves_snapshot_headings_and_phase() -> None:
+    template = TICKET_TEMPLATE.read_text()
+    body = template.split("````markdown", 1)[1].split("````", 1)[0]
+    assert re.findall(r"^## (.+)$", body, re.MULTILINE) == [
+        "What this is", "Scope and acceptance criteria", "Environment", "Progress",
+        "Backend built", "Backend still missing", "Production flag snapshot",
+        "Sessions", "Handoff", "Design Review", "Grading", "Engineering checklist",
+    ]
+    rules = section(template, "## Rules for every worker that edits it")
+    assert "sections are never written by hand" in rules
+    assert "ticket-sections" in rules
+    handoff = section(template, "## Handoff")
+    assert "without overwriting the machine-generated snapshot" in handoff
+    assert "Filled at handoff" in handoff
+    create = section(TICKET_WORKER.read_text(), "## Create mode")
+    assert "Handoff, Design Review, and Grading" in create and "Pending." in create

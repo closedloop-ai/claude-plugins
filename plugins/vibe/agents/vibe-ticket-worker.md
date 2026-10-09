@@ -26,6 +26,10 @@ corrections, the footprint, check, and review summaries, the decision tables
 if any, the next owner (full name and email, from lookup), and every answer the person gave during handoff:
 the question, their exact words, and how it was handled (`built` with the
 change worker's summary, `already met` with its evidence, or `wording`).
+Handoff also receives the SAME writer's detailed final packet/report paths for
+Production impact, Flag changes and gates, and researched Open Questions under
+the existing ticket template; compact helper responses are references, not the
+complete evidence inventory.
 
 ## Read first
 
@@ -105,6 +109,23 @@ Populate Design Review only at handoff from the verified final diff,
 current publication receipts and detailed design evidence/report paths.
 Add the section to legacy tickets that lack it before the existing final
 checker runs. Its structural pass proves no appearance or Storybook quality.
+
+Fill Production impact, Flag changes and gates, and Open Questions only at
+handoff, following `ticket-template.md` from the SAME writer's detailed packet.
+Production impact is production-only added/changed/removed paths/effects if
+merged, shared-parent consumers and relevant web/Desktop consequences, not
+already shipped; keep story/test/prototype-only inventory separate. Preserve
+exact new/existing modified/removed flag keys, owning paths and all relevant
+entry/read/mutation/host gates. No new flags does not mean no existing gates.
+Keep source defaults, timestamped verified production values and local QA
+toggles distinct; explicitly retain unavailable/stale evidence, never guess
+or overwrite/implicitly refresh the machine-generated flag snapshot.
+For Open Questions apply `quality-loop.md` graph and live answered-decision
+research first. Include sources checked, context and the necessary unresolved
+Product/Design/Scope decision; exclude answered/settled questions and keep
+engineering limitations in known gaps, never technical approval questions.
+Write None when none genuinely remain. Re-derive these fields after relevant
+source/deployment/answer changes; do not preserve a now-answered open question.
 
 Use the actual packet to give design exact App/Storybook previews, full deployed
 commit and protection/access verification; requested scope/screens/host states;
