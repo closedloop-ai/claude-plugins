@@ -239,3 +239,11 @@ def test_prompt_pack_discovery_defaults_to_bundled_root() -> None:
     assert "Verify the bundled root contains a `sections/` directory" in skill
     assert (BUNDLED_PROMPT_PACK / "sections").is_dir()
     assert not (BUNDLED_PROMPT_PACK / "orchestrator.md").exists()
+
+
+def test_guardrail_assessment_points_fixers_at_prevent_recurrence() -> None:
+    skill = read_skill_file("SKILL.md")
+
+    assert_matches(skill, r"This assessment only recommends\.")
+    assert_matches(skill, r"`/closedloop-core:prevent-recurrence`")
+    assert (PLUGIN_ROOT / "skills" / "prevent-recurrence" / "SKILL.md").is_file()

@@ -78,6 +78,17 @@ Requires a mechanism and product-level evidence for claimed improvements,
 records unsuccessful experiments as refutations, and maintains a dated,
 append-only measurement log with reproducible commands and re-check conditions.
 
+### `prevent-recurrence`
+
+For any agent fixing a bug or an accepted review finding caused by an agent
+mistake or a pattern agents repeat. Fixes the instance with a failing-first test
+where practical, finds and fixes the same mistake elsewhere, then adds the
+highest prevention that can catch it: architecture or types, static analysis, a
+guard test, a rule in the owning AGENTS.md, or an advisory memory hint. Uses the
+repository's own instruction files, checks, and test conventions, never loosens
+an existing check, and routes larger prevention work to a follow-up instead of
+dropping it. Examples for each rung are in `references/rung-examples.md`.
+
 ### `gh-monitor-pr`
 
 Runs a detached GitHub PR monitor that notifies the exact launching Codex
