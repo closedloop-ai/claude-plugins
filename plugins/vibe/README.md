@@ -93,6 +93,14 @@ footprint/catalog and visual reports/screenshots, and known gaps/design decision
 Actual inspected viewports/hosts/states remain separate from source-only or
 unverified coverage. A structural section check is not visual-quality proof;
 the packet gives the next designer evidence to grade, not a technical plan to approve.
+Handoff also records production-only added/changed/removed component paths and
+effects if merged, shared-parent consumers and relevant web/Desktop consequences.
+Flag metadata identifies exact new/existing modified/removed keys and their
+entry/read/mutation/host gates, keeping source defaults, timestamped verified
+production values and local QA settings separate from each other and from the
+unchanged machine-generated snapshot. Researched Product/Design/Scope Open
+Questions carry sources and decision context, exclude settled answers and
+engineering limitations, and state None when none remain.
 
 ### `vibe-seed-refresh`
 
@@ -128,7 +136,7 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 
 ## Runtime Files
 
-Version `1.0.4` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.5` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains two skill-contract test modules.
 Runtime helpers and tests live alongside their owning skills, including vibe

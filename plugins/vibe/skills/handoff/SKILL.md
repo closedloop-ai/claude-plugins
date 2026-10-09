@@ -305,6 +305,25 @@ Storybook and verify helpers contribute facts and existing report paths; no
 new source author or runtime tool is created. A compact helper response points
 to the detailed evidence instead of truncating required component/story rows.
 
+Collect the existing ticket template's **Production impact**, **Flag changes
+and gates**, and **Open Questions** fields in that same detailed final packet.
+Production impact is production-only added/changed/removed paths and effects
+**if merged**, including shared-parent consumers and relevant web/Desktop
+effects; it is not already shipped. Keep story/test/prototype-only inventory
+separate. The flag evidence covers exact new/existing modified/removed keys
+and relevant entry/read/mutation/host gates, including existing gates when
+there are no new flags. Keep source defaults, timestamped actually verified
+production values and local QA toggles distinct; unavailable/stale verification
+is not permission to guess or overwrite/refresh the machine snapshot.
+For Open Questions, reuse quality-loop's graph plus live answered-decision
+research; include sources, context and the necessary Product/Design/Scope
+decision, excluding settled answers and engineering limitations. Record None
+when none remain, not a technical approval request or invented product copy.
+Summary and verify helpers contribute these source/evidence facts; the SAME
+writer assembles them under the template's canonical field rules. After a
+source/deployment/answer change, refresh affected metadata before ticket fill
+and distinguish historical evidence from the final delivered result.
+
 The live ticket's Design Review section gives design everything needed to
 grade the finished code and its appearance/Storybook implementation:
 
@@ -367,6 +386,8 @@ confirmed summary and the person's corrections, the footprint, check, and
 review summaries, the Design blocks from build and handoff fixes, the required session decision table
 at `.closedloop-ai/decision-tables/<session-slug>.md` with whole-table alignment
 and row/test evidence, the detailed Design Review evidence packet/report paths,
+including Production impact, Flag changes and gates, and researched Open
+Questions per `../vibe/references/ticket-template.md`,
 and every answer from the person so far with how it was handled. Keep
 technical plans under `.closedloop-ai/vibe-plans/` local: never upload them or
 include their body in this ticket dispatch. It

@@ -4,11 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.0.4
+### vibe v1.0.5
 
 #### Changed
 - Correction-event producers inspect root and applicable owning `AGENTS.md` instructions, including events without files, and record optional `existingRule` metadata with the actual rule file and bare closest-heading text. Repository-owned schemas and consumer-first rollout preserve older producers.
 - Symphony correction sources lead with the ticket slug; repeated fixes belong to a later ticket, while another review round on the same PR remains a review finding.
+
+### vibe v1.0.4
+
+#### Changed
+- Handoff records production-only added/changed/removed component paths and effects if merged, including shared-parent consumers and relevant web/Desktop consequences, separately from Storybook and prototype evidence.
+- Flag handoff metadata names exact new, existing modified and removed keys and entry/read/mutation/host gates. Source defaults, timestamped verified production values and local QA settings remain distinct; no-new-flag outcomes retain existing gate evidence without changing the generated snapshot.
+- Final Open Questions include researched Product/Design/Scope context, sources and the decision needed, exclude settled answers and engineering limitations, and explicitly state None when no questions remain. Existing summary, verification and ticket briefs preserve detailed final evidence without claiming shipped or visually verified results.
 
 ### vibe v1.0.3
 
