@@ -49,9 +49,12 @@ Backend, built by that same writer using canonical backend guidance, each under 
 - `apps/desktop/src/main/**` and `apps/desktop/prisma/**`, when the change is a
   Desktop feature (`apps/desktop/AGENTS.md`; gateway operations stay in
   `apps/desktop/src/server/operations/`).
-- The backend worker's decision table stays local in
-  `.closedloop-ai/decision-tables/` (gitignored in this repo); handoff attaches
-  it to the live ticket so the reviewing engineer sees it.
+- One living session decision table stays local in
+  `.closedloop-ai/decision-tables/<session-slug>.md` (gitignored in this repo).
+  It is mandatory before code for every request, with stable row IDs, and
+  verified afterward by the SAME writer under quality-loop.md; it is not
+  backend-only. Handoff attaches it to the live ticket so the reviewing
+  engineer sees whole-session behavior and actual coverage evidence.
 
 Quality checks and implementation reviews run before handoff through
 `quality-loop.md`. Handoff adds tests and final integrated verification,

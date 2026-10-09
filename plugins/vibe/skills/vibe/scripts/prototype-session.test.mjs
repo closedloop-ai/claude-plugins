@@ -117,6 +117,13 @@ test("handoff validates owned publication and session ids without weakening app 
   runNode(SESSIONS, ["touch", "--worktree", fixture.worktree, "--live-ticket", "ISS-123"], fixture.home);
   const publication = publish(fixture).json.session;
   const sections = parseSections(runNode(SESSIONS, ["ticket-sections", "--worktree", fixture.worktree], fixture.home).json.markdown);
+  const designReview = [
+    `- Canonical prototype preview: ${publication.prototype.previewUrl} at ${publication.prototype.deployedCommit}.`,
+    "- App/Storybook: not independently published by this synthetic fixture.",
+    "- Scope: mockup only; source/catalog inventory is synthetic.",
+    "- Visual inspection: not performed; protection and appearance remain unverified.",
+  ].join("\n");
+  sections.set("Design Review", designReview);
   const body = TICKET_SECTIONS.map((heading) => `## ${heading}\n\n${sections.get(heading) ?? "None."}\n`).join("\n");
   const file = path.join(fixture.privateDir, "ticket.md");
   writeFileSync(file, body);

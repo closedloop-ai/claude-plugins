@@ -22,6 +22,14 @@ const ENVIRONMENT = [
   "- Last deployed: `abcdef1234` at 2026-10-06T16:00:00.000Z",
 ].join("\n");
 
+const DESIGN_REVIEW = [
+  "- App and Storybook previews: https://app.example.invalid and https://storybook.example.invalid, fixture commit `abcdef1234567890abcdef1234567890abcdef1234`; protection unverified.",
+  "- Scope: fixture UI, web source-only; Desktop unverified.",
+  "- Storybook inventory: fixture component/story, controls/Docs/play declared; no actual browser inspection.",
+  "- Footprint/catalog: synthetic fixture evidence only.",
+  "- Visual evidence: no inspection; known gap is unverified appearance; remaining design decision is review at pickup.",
+].join("\n");
+
 function completeTicket(overrides = {}) {
   const sections = {
     "What this is": "Bulk select with tag editing on Sessions and Branches.",
@@ -33,6 +41,7 @@ function completeTicket(overrides = {}) {
     "Production flag snapshot": "Taken 2026-10-06T15:00:00Z as PostHog user `user_1`. 1 flags.\n\n| Flag | Value |\n|---|---|\n| `a` | true |",
     Sessions: "- Codex session (orchestrator): `01a11209-54a0-72c0-8255-68692884c10f`",
     Handoff: "- Checks: all pass",
+    "Design Review": DESIGN_REVIEW,
     Grading: "Set `Design grade` or `Eng grade`.\n\n```\nGrade: High / Medium / Low\n```",
     "Engineering checklist": "- [ ] Open the pull request",
     ...overrides,
@@ -103,6 +112,30 @@ test("the CLI prints the result and exits non-zero when incomplete", (t) => {
   const noFile = runNode(SCRIPT, [], dir);
   assert.equal(noFile.status, 1);
   assert.match(noFile.json.error, /--file/);
+});
+
+test("the real final-ticket CLI rejects missing, empty or Pending Design Review without claiming visual proof", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "live-ticket-design-review-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "ticket.md");
+  const complete = completeTicket();
+  writeFileSync(file, complete);
+  const pass = runNode(SCRIPT, ["--file", file], dir);
+  assert.equal(pass.status, 0);
+  assert.equal(pass.json.ok, true);
+  const missing = [...parseSections(complete)].filter(([heading]) => heading !== "Design Review")
+    .map(([heading, content]) => `## ${heading}\n\n${content}`).join("\n");
+  const cases = [
+    [missing, "missing"],
+    [completeTicket({ "Design Review": "" }), "empty"],
+    [completeTicket({ "Design Review": "Pending." }), "still has a Pending. marker"],
+  ];
+  for (const [body, problem] of cases) {
+    writeFileSync(file, body);
+    const fail = runNode(SCRIPT, ["--file", file], dir);
+    assert.equal(fail.status, 1, problem);
+    assert.deepEqual(fail.json.problems, [{ section: "Design Review", problem }]);
+  }
 });
 
 test("the sections ticket-sections renders from a finished record pass the check, and a fresh one does not", () => {

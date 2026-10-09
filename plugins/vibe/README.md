@@ -35,6 +35,15 @@ commits, publications, and ticket uploads. A separate adversarial reviewer
 checks the plan before implementation; independent implementation reviews,
 corrections, and existing checks precede feature completion.
 
+Every request also uses `$decision-table` or `/closedloop-core:decision-table`
+before code, including frontend-only, prototype and trivial edits. One living
+artifact at `.closedloop-ai/decision-tables/<session-slug>.md` keeps stable row
+IDs, request provenance, grouped behavior sections and cross-request interactions.
+Later requests append sourced expectations; prior baselines/targets stay frozen
+and superseded human decisions remain explicit. The same writer verifies actual
+implementation against affected and interacting prior rows after each correction.
+Planned handoff tests remain distinct from executed coverage.
+
 The orchestrator queues new requests and resumes that same writer's context
 for each request, correction and handoff. Independent specialists and reviewers
 may run in parallel, read-only. Operational helpers retain bootstrap, deployment
@@ -42,6 +51,10 @@ and ticket duties without authoring implementation code. Shared session records,
 ticket sections and change logs stay serialized. Workers never commit; the
 orchestrator retains the commit boundary. New or changed tests wait for handoff,
 while existing tests and Storybook checks run during building.
+An existing registered writer retains its original definition root, exact
+binding and actual ID. The root supplies the new table policy through its
+existing continuation; it does not reset or re-register under an updated
+release digest. An unavailable original binding blocks new code.
 
 Native Codex helpers acquire a coordinator-owned record lease before their
 mutation turn and release it only after observed completion or owned termination.
@@ -68,6 +81,18 @@ The same implementation writer authors focused tests only at handoff,
 covering acceptance criteria, production wiring, and failure paths. New tests
 receive independent review and final integrated verification; valid
 expectations and checks are never weakened to obtain a pass.
+Coverage is planned, authored and independently verified from the whole session
+decision table, including earlier requests and real-boundary negative cases.
+Required source, coverage or review gaps block final alignment and handoff.
+The existing table attachment remains separate from private technical plans.
+The live ticket also receives Design Review metadata from verified final work:
+exact previews/deployed commit and access protection, scope/host states,
+added/changed/removed Storybook components/stories with IDs and links,
+controls/Docs/plays and intentional identity/sidebar changes, actual
+footprint/catalog and visual reports/screenshots, and known gaps/design decisions.
+Actual inspected viewports/hosts/states remain separate from source-only or
+unverified coverage. A structural section check is not visual-quality proof;
+the packet gives the next designer evidence to grade, not a technical plan to approve.
 
 ### `vibe-seed-refresh`
 
@@ -103,7 +128,7 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 
 ## Runtime Files
 
-Version `1.0.2` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.3` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains two skill-contract test modules.
 Runtime helpers and tests live alongside their owning skills, including vibe

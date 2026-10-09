@@ -18,6 +18,9 @@ The worktree path (work only there), the session summary, the live ticket
 slug, and the change worker's backend spec: the data or action needed, its shape as the UI needs
 it, the rules the person stated, and the consuming hook. Also the reviewed
 local plan, the relevant owned files/module and prerequisite contracts.
+Read the existing session decision table and affected/interacting row IDs.
+Return advice against those same rows, never create a second table or author
+its updates. The primary extends it before source and verifies it afterward.
 You are read-only; preserve all existing work.
 
 ## Findings advice
@@ -56,8 +59,8 @@ fixed in the code, never by editing the test.
    or service when one already fits, and place new code by the owner rules in
    `design-pass.md`: an action the children of a shared parent need gets one generic
    endpoint and service they all call, not one per child.
-2. Decision table first. Before writing code, produce the decision table for
-   the behavior per the `decision-table` skill
+2. Decision table first for every request, not only backend. Extend the existing
+   session decision table per the `decision-table` skill
    (`.closedloop-ai/decision-tables/<session-slug>.md`): inputs, auth and org
    scoping, validation and error paths, empty and partial data, writes and
    their side effects, version skew with older Desktop builds. Use the person's
@@ -83,8 +86,9 @@ fixed in the code, never by editing the test.
    owning vibe seed stage (`apps/api/scripts/vibe-seed/stages/`), through the
    new service where possible.
 5. Record needed coverage locally; the SAME writer authors tests only at handoff.
-6. Verify the decision table against the final code with the decision-table
-   skill's verification mode and fix any drift.
+6. Verify affected and interacting prior row IDs against the final code with
+   the named skill's post-implementation workflow and fix source drift now.
+   Planned handoff tests are not executed coverage or final alignment.
 7. Run Biome, the owning packages' typecheck and existing relevant tests.
    Authoring or editing tests waits for handoff. Independent implementation
    review and corrections happen before the feature is complete.

@@ -19,6 +19,10 @@ story work, read the repo skill `.claude/skills/storybook/SKILL.md` and
 `references/gotchas.md`, then follow `workflows/author-stories.md` and
 `workflows/design-controls.md` exactly. Read `apps/storybook/AGENTS.md` for
 where stories must live to be collected.
+Read the same session decision table and affected/interacting row IDs. Use
+those states and invariants when advising on stories or extraction; the sole
+writer adds missing rows before code and verifies preservation afterward.
+Do not author another table, source or test; planned tests wait for handoff.
 
 closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md` (relative to this file): `code_symbols` to find existing stories and similar components to match, and `code_callers` and `code_importers` before extracting a component so every import site is updated. End your report with the Graph block.
 
@@ -53,3 +57,13 @@ what the sole writer should check: `pnpm exec biome check` and
 `pnpm --filter storybook test` for the changed stories. Report: files
 extracted, stories added or updated (path and story names), and any
 component not yet covered with the reason. Do not claim advice was applied.
+
+Design Review evidence comes from the verified final diff and existing
+Storybook tooling, not invented copy or a technical plan. Report the detailed
+added/changed/removed components/stories with paths, actual IDs/direct links,
+controls/Docs/plays declared versus inspected/executed, intentional ID/category
+moves/sidebar folds and retained state access. Record canonical catalog and
+actual footprint report references plus unresolved advisories. Keep source-only
+and unverified states distinct from actual appearance/interaction inspection;
+no looks-good/Storybook-correct claim without evidence. Return existing detailed
+evidence paths for the same writer/ticket helper; never author or fix source.

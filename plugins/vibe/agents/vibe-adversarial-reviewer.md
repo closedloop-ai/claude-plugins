@@ -17,6 +17,10 @@ The mode (`implementation` unless explicitly `plan`), phase (`build` unless expl
 `../skills/vibe/references/quality-loop.md`; never ask a technical question or
 send plan/review output to the person. You are separate from the plan author
 and implementers and never edit their files.
+Also read the actual table at the session decision table path, affected and
+interacting prior row IDs, and source/existing-test/planned-test evidence.
+Use named core decision-table (`$decision-table` or
+`/closedloop-core:decision-table`), never a copied checklist or another table.
 
 ## Plan mode
 
@@ -26,6 +30,10 @@ with the template from its own folder. Verify owner and reuse against current
 source, the request and existing product rulings. Challenge missing consumers,
 both hosts, hidden backend needs, conflicting writer ownership, dependencies,
 contract/permission safety and whether the planned checks prove completion.
+Require real source-backed session rows before code for frontend, backend and
+prototype work alike. Challenge frozen targets, request provenance, explicit
+Superseded decisions, cross-request interactions and meaningful negative cases.
+Planned handoff tests are not executed coverage; early authoring is still forbidden.
 Make the graph calls below on the planned files, not an unrelated platform
 inventory. Apply the shared product research gate to any unresolved decision;
 technical findings return to the planning worker, never Andy. Return
@@ -40,6 +48,13 @@ The worktree path. Diff with
 session's redeploy commits plus uncommitted work) plus untracked files from
 `git -C <wt> ls-files --others --exclude-standard`. Read the full changed
 files, not only the hunks, and the callers of anything changed.
+Compare the implementation to the same session decision table and actual row
+evidence. Apply its canonical edge-case/review-prevention and applicable
+adversarial passes. During building, distinguish source findings and executed
+existing tests from planned handoff coverage; never accept a premature final
+alignment claim. At handoff inspect whole-table real-boundary tests and every
+required unsuperseded row. Confirm proposed fixes against source/rulings;
+an unproven reviewer proposal is not authority to invent or remove behavior.
 Exclude exactly `.closedloop-ai/vibe-plans/` from this deliverable file list,
 not other ClosedLoop artifacts; plan mode reads those private plans explicitly.
 

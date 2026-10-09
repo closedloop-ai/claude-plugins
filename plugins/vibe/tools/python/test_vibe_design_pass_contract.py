@@ -342,17 +342,20 @@ def test_plan_review_precedes_same_writer_build_and_implementation_review_preced
 
 def test_registered_claude_plan_callers_can_invoke_the_named_core_skill() -> None:
     callers = {
-        "vibe-change-worker": "plan-structure",
-        "vibe-prototype-worker": "plan-structure",
-        "vibe-adversarial-reviewer": "plan-structure",
-        "vibe-backend-worker": "decision-table",
+        "vibe-change-worker": ("plan-structure", "decision-table"),
+        "vibe-prototype-worker": ("plan-structure",),
+        "vibe-adversarial-reviewer": ("plan-structure", "decision-table"),
+        "vibe-backend-worker": ("decision-table",),
+        "vibe-guardrails-reviewer": ("decision-table",),
+        "vibe-verify-worker": ("decision-table",),
     }
-    for name, skill in callers.items():
+    for name, skills in callers.items():
         frontmatter = yaml.safe_load(agent(name).split("---", 2)[1])
         allowed = {tool.strip() for tool in frontmatter["tools"].split(",")}
         assert "Skill" in allowed, name
         text = flat(agent(name))
-        assert f"closedloop-core:{skill}" in text or f"named core {skill}" in text
+        for skill in skills:
+            assert f"closedloop-core:{skill}" in text or f"named core {skill}" in text
 
 
 def test_one_persistent_writer_keeps_a_serial_queue_and_serial_record_owners() -> None:
@@ -417,3 +420,54 @@ def test_handoff_cannot_relabel_early_tests_and_displayless_coverage_is_not_sile
     adversarial = flat(agent("vibe-adversarial-reviewer"))
     assert "needed new-test coverage is recorded in the local plan for handoff" in adversarial
     assert "not an instruction to author tests early" in adversarial
+
+
+def test_every_request_binds_one_real_session_table_before_code() -> None:
+    table = section(QUALITY.read_text(), "## Session decision table before code")
+    for required in ("mandatory for every Vibe request", "before the first line of code",
+                     "one living table for the whole session", "<session-slug>.md",
+                     "real source-backed rows", "stable row IDs", "request provenance",
+                     "grouped behavior sections", "cross-request interactions", "Superseded"):
+        assert required in table, required
+    assert "$decision-table" in table and "/closedloop-core:decision-table" in table
+    loop = section(VIBE_SKILL.read_text(), "## 5. Build loop")
+    assert loop.index("session decision table") < loop.index("Resume that writer to implement")
+    assert "read the actual table" in loop and "placeholder" in loop
+    assert "does not waive the session decision table" in flat(DESIGN_PASS.read_text())
+
+
+def test_source_rows_are_verified_without_claiming_planned_test_coverage() -> None:
+    table = section(QUALITY.read_text(), "## Session decision table before code")
+    for required in ("Current Code", "Intended Change", "frozen", "append",
+                     "planned tests are not coverage", "Final Alignment Status: Aligned",
+                     "required tests remain unexecuted", "source gaps now"):
+        assert required in table, required
+    checks = section(agent("vibe-change-worker"), "## Checks, review and recording")
+    assert "affected and interacting prior row IDs" in checks
+    assert "same session decision table" in checks
+    assert "planned tests are not coverage" in flat(agent("vibe-verify-worker"))
+
+
+def test_real_role_briefs_read_the_same_table_and_return_row_evidence() -> None:
+    for name in CODE_WORKERS:
+        text = flat(agent(name))
+        assert "session decision table" in text, name
+        assert "row IDs" in text, name
+    for name in ("vibe-adversarial-reviewer", "vibe-guardrails-reviewer", "vibe-verify-worker"):
+        text = flat(agent(name))
+        assert "read the actual table" in text.lower(), name
+        assert "handoff" in text and "planned" in text, name
+    assert "existing session decision table" in flat(agent("vibe-backend-worker"))
+    assert "create a second table" in flat(agent("vibe-backend-worker"))
+
+
+def test_legacy_resume_keeps_its_actual_binding_and_uses_root_continuation() -> None:
+    queue = section(QUALITY.read_text(), "## One persistent writer and a serial queue")
+    for required in ("binding.agentRoot", "binding.capabilities", "recorded writer ID",
+                     "root continuation", "original definition", "BLOCKED",
+                     "Never re-register", "copy legacy agent"):
+        assert required in queue, required
+    for path in (VIBE_SKILL, HANDOFF_SKILL):
+        text = flat(path.read_text())
+        assert "original recorded binding" in text, path.name
+        assert "root continuation" in text, path.name
