@@ -144,7 +144,7 @@ def test_ticket_worker_fills_grading_at_handoff_and_never_rederives_it() -> None
     create = section(worker, "## Create mode")
     handoff = section(worker, "## Handoff mode")
 
-    assert "Handoff, and Grading" in create
+    assert "Handoff, Design Review, and Grading" in create
     assert "Grading is never re-derived: it stays the template's text." in handoff
     assert "template's Grading section copied unchanged" in handoff
     assert "adding the section after Handoff when the ticket has none" in handoff
@@ -209,3 +209,63 @@ def test_prototype_preflight_mode_survives_setup_worker_repairs() -> None:
     assert "selected preflight arguments" in VIBE_SKILL.read_text()
     assert "Keep `--prototype` during common/prototype repair" in setup_worker
     assert "replace the `--repo` path but preserve `--prototype`" in preflight
+
+
+def test_handoff_writes_and_verifies_coverage_from_the_whole_session_table() -> None:
+    checks = section(HANDOFF_SKILL.read_text(), "## 5. Checks and handoff-only tests")
+    for required in ("whole session decision table", "all requests", "stable row IDs",
+                     "Required Tests", "negative", "cross-request interactions"):
+        assert required in checks, required
+    review = section(HANDOFF_SKILL.read_text(), "## 6. Independent integrated review")
+    assert "whole session decision table" in review
+    assert "Final Alignment Status: Aligned" in review
+    assert "blocks final handoff" in review
+    ticket = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
+    assert "required session decision table" in ticket
+    assert "decision tables in `.closedloop-ai/decision-tables/` if any" not in ticket
+    worker = section(CHANGE_WORKER.read_text(), "## Handoff tests in this same context")
+    assert "whole session decision table" in worker and "row IDs" in worker
+    assert "planned" in worker and "executed" in worker
+
+
+def test_table_attachments_preserve_private_plan_and_truthful_final_evidence() -> None:
+    ticket = section(TICKET_WORKER.read_text(), "## Handoff mode")
+    assert "required session decision table" in ticket
+    assert "attach each decision table" in ticket
+    assert "never include the local plan folder" in ticket
+    assert "Final Alignment Status: Aligned" in ticket
+    assert "required coverage gaps" in ticket
+
+
+def test_design_review_is_pending_at_creation_and_populated_at_handoff() -> None:
+    create = section(TICKET_WORKER.read_text(), "## Create mode")
+    handoff = section(TICKET_WORKER.read_text(), "## Handoff mode")
+    assert "Design Review" in create and "Pending." in create
+    assert "Design Review" in handoff and "verified final diff" in handoff
+    assert "only at handoff" in handoff
+    assert "technical plan" in handoff and "never" in handoff
+
+
+def test_design_review_template_contains_every_grading_evidence_family() -> None:
+    design = section(TICKET_TEMPLATE.read_text(), "## Design Review")
+    for required in ("App and Storybook previews", "deployed commit", "protection",
+                     "scope, screens, hosts and states", "added/changed/removed",
+                     "IDs and direct links", "controls, Docs and plays",
+                     "ID/category moves and sidebar folds", "footprint", "catalog",
+                     "advisories", "reports and screenshots", "viewports",
+                     "source-only", "unverified", "known gaps", "remaining design decisions"):
+        assert required in design, required
+    assert "source-backed" in design and "no invented" in design.lower()
+
+
+def test_design_review_callers_preserve_actual_inspection_and_detailed_inventory() -> None:
+    handoff = HANDOFF_SKILL.read_text()
+    for required in ("Design Review", "verified final diff", "detailed design evidence",
+                     "looks good", "Storybook correct", "actual inspection",
+                     "source-only", "unverified", "no technical approval"):
+        assert required in handoff, required
+    for name in ("vibe-handoff-summarizer", "vibe-verify-worker", "vibe-storybook-decomposer"):
+        text = (PLUGIN_ROOT / "agents" / f"{name}.md").read_text()
+        assert "Design Review" in text and "evidence" in text, name
+    summary = (PLUGIN_ROOT / "agents" / "vibe-handoff-summarizer.md").read_text()
+    assert "detailed" in summary and "do not truncate" in summary

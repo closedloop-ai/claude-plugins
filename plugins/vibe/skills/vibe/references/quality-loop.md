@@ -52,6 +52,22 @@ supported fresh CLI launch and explicitly resumes the recorded session ID;
 native Agent per-call tool overriding is not assumed. Briefs and requests go
 through stdin, not sensitive argv. Preserve the same model, role and binding.
 
+For an already registered session, retain its actual recorded writer ID and
+original recorded binding: `binding.agentRoot`, role and exact
+`binding.capabilities`. Recover these only from the original registration
+evidence or a read-only helper's bounded private-ledger inspection; return
+binding/identity facts, never private queued inputs or credentials. Verify the
+original definition and recorded digest remain available. A changed plugin
+root/body changes that digest. Never re-register the primary with the new
+release's binding, copy legacy agent files, relax validation or replace it.
+
+Root supplies this release's mandatory-table policy through the existing
+root continuation to that SAME context, while retaining the original canonical
+definition and tool/capability binding. It is additive request guidance, not a
+system-prompt reset or new test-authoring authority. If the original binding
+is unavailable, mismatched or unverified, return `BLOCKED` before new code.
+Do not claim an automatic upgrade. New sessions bind the current release.
+
 The persistent system binding is phase-neutral because Claude retains it on
 resume. Each root-controlled turn envelope supplies `mode` and derived
 `authority.testAuthoringAuthorized`, separately from raw person/request text.
@@ -126,6 +142,76 @@ child group and retains unsafe locks when group cleanup is unproven.
 
 Deployment waits for the writer, reviews and the orchestrator's
 commit. A read-only specialist cannot apply its own findings.
+
+## Session decision table before code
+
+The named core decision-table workflow is mandatory for every Vibe request,
+including frontend-only, backend, primitive, Storybook, owned prototype and
+trivial edits, before the first line of code. Load `$decision-table` in Codex
+or `/closedloop-core:decision-table` in Claude Code and use that skill's actual
+artifact format, edge-case expansion, review-prevention and adversarial rules.
+Never copy its skill, checklist or template into this plugin.
+
+Keep one living table for the whole session at
+`.closedloop-ai/decision-tables/<session-slug>.md`, in the SAME worktree and
+branch, authored only by the SAME persistent writer. New requests extend that
+file before code; they never start or replace a per-request table. Use real
+source-backed rows with stable row IDs, request provenance and grouped behavior
+sections. Inventory actual callers, contracts, gates and host capabilities;
+read visibility does not prove a write path works on every host. Model the
+request's applicable cases and cross-request interactions with prior rows.
+
+Preserve frozen `Current Code` and `Intended Change` blocks once their request's
+implementation starts. Append a later request's sourced baseline/target rows
+or behavior sections without rewriting earlier expectations. A changed human
+decision gets an explicit `Superseded` entry: source, prior row IDs and new row
+IDs. Never retarget history to agree with the implementation. On a legacy
+session without a table, use the original binding/continuation rule above,
+reconstruct current behavior and prior sources honestly, and identify missing
+historical evidence; a table made now is not proof it existed before.
+
+Once the writer has begun a scoped request, every session-scoped worker brief
+includes the same path, current request, affected and interacting prior row IDs,
+and current findings; operational helpers do not author its rows.
+Read the actual table before code, advice or review; a returned path, checkbox
+or placeholder is not evidence that it exists or represents the behavior.
+Only the writer authors/extends it. Before session creation, requirements and
+operational setup collect sources or restore prerequisites, not a fictional
+table; initial bootstrap/ticket creation can precede the first scoped writer
+turn. This gate blocks implementation, not legitimate bootstrap.
+Every post-table worker result names that artifact and read row IDs, with
+role-appropriate source/check evidence or unresolved findings. Advice and
+operational results never claim the writer applied a fix or tests ran.
+
+After implementation and every correction, the SAME writer compares actual
+code and observable behavior with the affected and interacting prior row IDs.
+Apply the named skill's applicable edge-case and review-prevention passes;
+fix source gaps now, append findings/fixes and reverify. Independent reviewers
+read the same table and source evidence before feature completion. A reviewer
+proposal is not a product ruling: verify it, record its disposition, and never
+expand scope or remove a live capability because a hypothetical fix suggests it.
+
+Keep implementation evidence, executed existing-test evidence and planned
+handoff tests separate: planned tests are not coverage. `Required Tests` maps
+stable row IDs to the invariant, positive control, wrong-input/mixed-state
+negative case and real production boundary. Until handoff, plan these tests
+only; never write/edit tests, fixtures or snapshots. Existing tests may run.
+Never claim `Final Alignment Status: Aligned` while required tests remain
+unexecuted or source/review/evidence gaps remain. Per-request `DONE` reports
+reviewed implementation/check completion, not final session coverage or core
+alignment; retain the pending rows and test plans for the same writer.
+
+At handoff use the whole table, all requests and cross-request interactions
+for authoring and final coverage verification. A `Covered` disposition needs
+a named executed test and its fail-closed negative case through the claimed
+boundary; `not applicable` needs source evidence. Run the canonical internal
+consistency, review-prevention and independent adversarial passes. Unresolved
+required rows keep `Final Alignment Status: Not aligned` and block final
+handoff/session completion. No soft final status or "test later" waiver.
+
+Technical plans stay private under `.closedloop-ai/vibe-plans/`. The existing
+behavior-table attachment at handoff remains separate; never upload the local
+technical plan or its review drafts as table evidence.
 
 ## Local plan and separate review
 

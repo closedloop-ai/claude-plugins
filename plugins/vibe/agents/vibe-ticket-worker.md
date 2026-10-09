@@ -83,7 +83,8 @@ name, or have none.
    the person still has to state is `Pending.`), Environment, Production flag
    snapshot, and Sessions from `vibe-sessions.mjs ticket-sections`, the
    Engineering checklist, and `Pending.` for Progress, the backend sections,
-   Handoff, and Grading. "Built in a vibe session by"
+   Handoff, Design Review, and Grading. Design Review stays `Pending.` here;
+   its finished evidence is populated only at handoff. "Built in a vibe session by"
    names the operator's `name`, or their `email` when the record has no name.
 4. `create-document` with `type: ISSUE`, `status: IN_PROGRESS`, the assignee,
    the project, `priority: MEDIUM`, a plain title in the person's terms, and
@@ -94,6 +95,35 @@ name, or have none.
    `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --live-ticket <slug>`.
 
 ## Handoff mode
+
+Read the required session decision table and row IDs with actual whole-table
+source/test/review evidence. Require `Final Alignment Status: Aligned`; required
+coverage gaps return NEEDS_CHANGE to the same writer rather than a completed
+ticket claim. The table covers the whole session, not just backend/latest work.
+Never author its rows or treat planned tests as executed coverage.
+Populate Design Review only at handoff from the verified final diff,
+current publication receipts and detailed design evidence/report paths.
+Add the section to legacy tickets that lack it before the existing final
+checker runs. Its structural pass proves no appearance or Storybook quality.
+
+Use the actual packet to give design exact App/Storybook previews, full deployed
+commit and protection/access verification; requested scope/screens/host states;
+added/changed/removed component/story inventory with IDs/direct links,
+controls/Docs/plays and intentional ID/category moves/sidebar folds; actual
+compiled footprint/canonical catalog evidence and unresolved advisories;
+design/visual-QA reports/screenshots with inspected commits/viewports/hosts/states
+versus source-only/unverified; known gaps and remaining design decisions.
+For owned prototypes preserve canonical publication and source-backed N/A
+surfaces. Never fabricate links, counts, protection or inspection, assert looks
+good/Storybook correct without evidence, include credentials/bridge URLs, or
+seek technical approval from the Vibe coder. This is metadata, not a technical
+plan; never upload private plans or their review drafts.
+
+Read detailed artifact contents rather than omit inventory for a short summary.
+Include accessible evidence links or attach actual QA reports/screenshots with
+the existing granted upload action; a local path alone is not design access.
+Refresh stale packet evidence after final source/deployment changes and label
+historical inspections accurately. Preserve the existing grading block.
 
 1. Read the ticket (`get-document` with `includeContent: true` and a large
    `contentMaxChars`) and confirm it is still assigned to the session's
@@ -120,7 +150,7 @@ name, or have none.
    line it answers: What this is (it no longer calls the question open,
    unruled, or pending), Scope and acceptance criteria (the criterion in the
    person's words), the backend sections when it sets a rule for one of them,
-   and Handoff. Search the whole body for the
+   Handoff, and Design Review. Search the whole body for the
    question's subject and fix every mention that still treats it as
    unanswered. Grading is never re-derived: it stays the template's text.
 5. Reconcile Backend built and Backend still missing with the diff
@@ -128,7 +158,8 @@ name, or have none.
    tables, and attach each decision table with `upload-attachment`.
    These are existing behavior evidence, not the local implementation plan;
    never include the local plan folder or its review drafts in attachments.
-6. Fill Handoff from the summaries you were given, per the template; its
+6. Fill Handoff and Design Review from the verified final packet/evidence you
+   were given, per the template; its
    Next line names the next owner you were given. Fill Grading with the
    template's Grading section copied unchanged, adding the section after
    Handoff when the ticket has none.

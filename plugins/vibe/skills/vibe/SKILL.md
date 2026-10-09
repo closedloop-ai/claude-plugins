@@ -81,6 +81,11 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   the parent. It uses supported launch-time binding, not an invented per-call
   Agent override. Briefs/capability metadata are JSON on stdin. The implementation
   writer's actual Claude session ID is persisted and explicitly resumed.
+  On an existing session preserve its original recorded binding and actual
+  writer ID, as quality-loop.md specifies. Supply the new mandatory-table policy
+  through the existing root continuation; never bind it to a changed release
+  root/digest, replace it or copy old agent files. An unverifiable original
+  binding returns BLOCKED before new code; automatic upgrade is not assumed.
   Before a session exists, requirements and setup run in the validated remembered
   checkout with `sessionless: {kind: "startup"}`; never fabricate a session.
   Requirements use mode `request` with only graph/live read capabilities. Setup
@@ -426,8 +431,16 @@ evidence, never by replacing the writer.
 1. Forward the person's request/annotation verbatim, session/branch, live
    ticket, known rulings and supplied copy to the SAME writer. It performs
    graph/owner prep and writes the canonical core-template plan locally.
+   It always creates or extends the one session decision table at
+   `.closedloop-ai/decision-tables/<session-slug>.md` before any code, using
+   the named core skill in quality-loop.md. Include its path and affected/
+   interacting row IDs in every applicable worker brief. Later requests append
+   to this same artifact with provenance; no per-request table or history reset.
    No upfront summary, technical question or plan approval reaches the person.
 2. On `PLAN`, dispatch the separate read-only adversarial plan reviewer.
+   It must read the actual table and its real source-backed rows/frozen targets,
+   not accept a returned path, checkbox or placeholder. Missing or unsourced
+   rows return to the SAME writer; no code starts before that review clears.
    Continue the active request in the SAME writer with its findings; it fixes
    the plan. Recheck confirmed corrections before implementation.
 3. Resume that writer to implement in dependency order. It can load canonical
@@ -438,6 +451,10 @@ evidence, never by replacing the writer.
    existing checks. Use core workflow review for backend work. Return confirmed
    issues to the SAME writer, recheck its fixes, and do not leave preventable
    issues until handoff. Existing tests may run; none are authored yet.
+   The writer first verifies affected and interacting prior table rows against
+   actual code, fixes source gaps and supplies the same artifact/row evidence
+   to reviewers. Planned handoff tests remain distinct from executed coverage;
+   they never justify premature core Final Aligned or a source-gap waiver.
 5. Research any `NEEDS_PERSON` through the graph/live-decision necessity gate.
    Ask only an absolutely necessary unresolved product question, one at a time
    with full context. Its answer continues this active request in the SAME
@@ -452,6 +469,9 @@ evidence, never by replacing the writer.
    the completed feature and next work, in their own terms. The next queued
    request goes to the SAME ID/context. Update the session summary through
    the existing session script in a serial record turn.
+   This is per-request implementation evidence, not final session coverage.
+   Retain whole-table pending test plans and unresolved final evidence until
+   the same writer's explicit handoff; do not erase earlier request rows.
 
 Pure mockups still use canonical `$prototype` guidance through this writer;
 the person only types `$vibe` and `$handoff`. Initial session creation chooses

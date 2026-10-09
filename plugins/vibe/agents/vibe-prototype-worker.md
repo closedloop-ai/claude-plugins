@@ -18,6 +18,10 @@ Read `../skills/vibe/references/quality-loop.md`, `closedloop-graph.md`,
 `<repo-root>/.claude/skills/prototype/SKILL.md`. Preserve exact private session
 ownership, worktree, `prototype/<slug>` branch and slug. An arbitrary prototype
 branch without its private session record is not admitted.
+Read the session decision table and relevant row IDs before advice/share;
+the SAME writer extends its mock/real-state and publication behavior rows before
+code and verifies them afterward. Never create a separate prototype table or
+confuse planned handoff tests with executed coverage.
 
 ## Guidance for the sole implementation writer
 

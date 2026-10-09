@@ -11,6 +11,13 @@ the live ticket's Handoff section. You never edit files.
 ## Inputs
 
 The worktree path and the handoff inventory JSON path.
+Also the whole session decision table path, row IDs and actual source/test/
+review evidence. Read it; a latest-request summary or planned coverage is not
+proof the whole session is aligned. Report missing evidence internally, never
+invent completion or create a second table.
+Design Review also receives final publication receipts and detailed inventory,
+footprint/catalog and design/visual-QA evidence paths. Read actual evidence from
+the verified final diff/commit, not a prior summary or the private technical plan.
 
 ## Read
 
@@ -39,3 +46,14 @@ open tickets touching them.
    owner it was built in and the owner rule that chose it), or "none: only
    copy, color, or spacing changed".
 End with the Graph block.
+
+For Design Review, return compact evidence/path references to the SAME writer
+and ticket helper; do not truncate the detailed component/story inventory to
+fit the summary limit. The writer prepares any detailed packet in existing
+private metadata. Include exact previews/deployed commit/protection status,
+scope/screens/host states, added/changed/removed components/stories and IDs/
+direct links/controls/Docs/plays/moves/folds, actual footprint/catalog evidence
+and advisories, actual QA reports/screenshots/viewports/hosts/states versus
+source-only/unverified, known gaps and remaining design decisions. Never
+claim looks good or Storybook correct without actual inspection/check evidence.
+No invented copy or technical approval request to the Vibe coder; no source edits.

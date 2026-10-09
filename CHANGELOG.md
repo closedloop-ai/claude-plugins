@@ -4,6 +4,22 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.3
+
+#### Changed
+- Decision tables are required before code for every Vibe request, including frontend-only, prototype and trivial work. One session artifact uses the named core format, stable row IDs, request provenance, grouped behavior sections and cross-request interactions.
+- Later requests append sourced baseline/target rows without rewriting frozen expectations. Superseded human decisions remain explicit, and the same writer verifies affected and interacting prior rows after implementation and every correction.
+- Handoff plans, authors and independently verifies coverage from the whole session table. Planned tests remain distinct from executed coverage; required source, test or review gaps block final table alignment and handoff.
+- Existing sessions retain their original recorded definition binding and writer ID. Root continuation supplies the new table policy without changed-digest registration, replacement writers or copied legacy definitions; an unverifiable original binding blocks new code.
+- Handoff populates a live-ticket Design Review section with verified final previews/deployed commit/protection, scope and host states, detailed Storybook inventory and identity/sidebar changes, actual footprint/catalog and design/visual evidence, known gaps and remaining design decisions. Source-only and unverified inspection remain explicit; private technical plans and approval requests are excluded.
+
+#### Fixed
+- Guardrails and verification roles retain the Skill built-in needed for their named core decision-table review calls. Caller briefs carry the shared table path and row evidence while preserving private technical plans and behavior-table attachments.
+
+#### Added
+- Prompt contract guards cover the mandatory before-code artifact, living history, source-versus-planned-test evidence, actual role/tool binding, legacy continuation and whole-session handoff coverage.
+- The existing final-ticket section inventory and real CLI tests require Design Review to be present and filled at handoff; this structural check does not prove appearance or Storybook quality.
+
 ### closedloop-core v1.1.0
 
 #### Added

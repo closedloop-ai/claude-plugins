@@ -67,7 +67,9 @@ not a design session: no second design, no questions, no approval.
 5. The owner, by the rules above.
 
 A copy, color, or spacing edit on one element reports `Prep: trivial` and
-skips the rest. Otherwise the plan carries these blocks, and every unit
+skips the rest of this bounded lookup, but does not waive the session decision table
+before code. That real artifact still records the sourced change/preservation
+rows and their stable row IDs under quality-loop.md. Otherwise the plan carries these blocks, and every unit
 dispatch gets them verbatim:
 
 ```
@@ -89,8 +91,8 @@ with its Graph block. Units are tasks in its local plan, not separate writers.
 
 ## Quality depth before handoff
 
-Before completing a feature `vibe-guardrails-reviewer` screens its diff, and the
-change worker (the backend worker for backend code) fixes what it confirms in
+Before completing a feature `vibe-guardrails-reviewer` screens its diff and same
+session decision table, and the SAME persistent change worker fixes what it confirms in
 fix mode, without asking the person.
 
 ### Red flags

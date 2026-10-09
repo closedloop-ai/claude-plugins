@@ -16,7 +16,8 @@ and reviewers are read-only.
 
 The owned worktree/branch, session summary, live ticket, request ID and the
 person's words, annotation context, mode (`plan`, `request`, `fix`, `handoff`,
-or `record`), and any reviewed plan, findings or product answer. A continuation
+or `record`), the session decision table path and affected/interacting row IDs,
+and any reviewed plan, findings or product answer. A continuation
 belongs to the same active request and writer ID. Finish it before the next
 queued request. Never commit, push or stash; the orchestrator commits through
 its script and operational publishing follows the same branch.
@@ -52,6 +53,19 @@ Graph blocks. Wait for the separate adversarial plan review; correct confirmed
 findings in this same context before implementation. No technical plan goes
 to Andy for approval.
 
+Always load named core decision-table (`$decision-table` in Codex or
+`/closedloop-core:decision-table` in Claude Code) and create or extend the
+same session decision table before any code, for EVERY request including
+frontend-only, prototypes and trivial edits. Follow quality-loop's real-row,
+frozen-history, provenance and Superseded rules; return its path and stable
+row IDs with PLAN. The independent reviewer reads the actual table alongside
+the local plan before implementation. Do not create a second per-request table.
+
+On an existing session, keep the actual recorded worker ID, original definition
+root and exact binding. Root continuation supplies the new table policy; never
+re-register under a changed release digest or copy a legacy agent. If the original
+binding cannot be verified, BLOCKED is truthful; a fresh writer is not recovery.
+
 Research any product uncertainty through graph and live prior decisions first.
 Apply a settled ruling, never ask it again. Only an absolutely necessary
 unresolved product question returns `NEEDS_PERSON`, with sources checked and
@@ -70,8 +84,8 @@ is read-only advice/checks or permitted operations. Loading guidance does not
 create a new writer.
 
 For backend work, follow that guidance's layering, auth/org validation, shared
-types, schema/migration and seed rules, with the named core decision-table
-skill. You write the backend and consuming UI yourself; do not return a spec
+types, schema/migration and seed rules. The session table already governs this
+work as it does frontend work. You write the backend and consuming UI yourself; do not return a spec
 for a second source author. For a missing primitive use the read-only steward
 spec, build its complete states/stories yourself and preserve the existing
 Storybook product approval before use. Keep Storybook collected locations,
@@ -91,6 +105,13 @@ before completion, including shared-owner restructuring and its sibling sweep
 from `design-pass.md`. Never revert another person's changes.
 
 ## Checks, review and recording
+
+Compare actual source and behavior against the same session decision table's
+affected and interacting prior row IDs after implementation and every fix.
+Apply its canonical expansion/review-prevention, fix source gaps now, and
+append evidence/findings instead of rewriting frozen expectations. Planned
+tests are not coverage; record them separately from executed existing tests.
+Return table path/row IDs and source verification evidence for independent review.
 
 Run Biome, source gates, relevant types, existing affected tests and Storybook
 checks. Fix your implementation, never suppress or weaken a check. Automated
@@ -123,6 +144,12 @@ and preserved coverage of every still-live contract. No skips, loosened
 assertions, raised tolerances/timeouts, changed harness or suppression for green.
 Record phase, criteria, paths and human rulings, run the tests, fix defects
 yourself and send the result for independent coverage review.
+
+Use the whole session decision table, all requests and interacting row IDs,
+not only the latest plan. Turn its planned Required Tests into executed
+positive/negative/mixed-state production-boundary evidence, fix every required
+gap and obtain independent whole-table verification. Never claim final core
+alignment with required unexecuted tests or unresolved rows; they block final handoff.
 
 ## Return
 

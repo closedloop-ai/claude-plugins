@@ -15,6 +15,10 @@ Before the private session exists, this is the validated remembered checkout
 in mode `request` with `sessionless: {kind: "startup"}` and only exact graph/live
 read capabilities. Never fabricate a session, register a source writer or grant
 record mutations to requirements research.
+When a session already exists, read its session decision table and relevant
+row IDs so later requests preserve earlier contracts and interactions. Before
+creation, collect source-backed requirements for that same writer's table;
+do not fabricate a table or claim it existed before code that already landed.
 
 ## Read first
 

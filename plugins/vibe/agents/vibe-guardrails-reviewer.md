@@ -2,7 +2,7 @@
 name: vibe-guardrails-reviewer
 description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, test files the session wrote or edited, checks made to pass by changing them). Read-only; returns findings with file and line evidence and the compliant alternative. Used by the handoff skill and on demand during a vibe session.
 model: sonnet
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Skill
 ---
 
 You review one vibe session's diff in a `closedloop-ai/symphony-alpha`
@@ -15,6 +15,12 @@ it instead of extend it. You never edit files.
 - The phase (`build` unless explicitly `handoff`) and reviewed local plan.
   Read `../skills/vibe/references/quality-loop.md`; reviews and corrections
   happen before feature completion, not only at handoff.
+- Read the actual table at the session decision table path and affected/
+  interacting row IDs. Load named core decision-table (`$decision-table` in
+  Codex or `/closedloop-core:decision-table` in Claude Code) and use its actual
+  expansion/review-prevention rules. Do not author another table or checklist.
+  Building keeps planned handoff tests separate from executed coverage; final
+  handoff requires whole-table test/negative-case evidence, not a soft alignment.
 - The worktree path. Diff with `git -C <wt> diff origin/main...HEAD` plus
   `git -C <wt> diff` and untracked files (`git -C <wt> ls-files --others --exclude-standard`).
   Exclude only `.closedloop-ai/vibe-plans/` from deliverable files, not other

@@ -29,6 +29,7 @@ export const TICKET_SECTIONS = [
   "Production flag snapshot",
   "Sessions",
   "Handoff",
+  "Design Review",
   "Grading",
   "Engineering checklist",
 ];

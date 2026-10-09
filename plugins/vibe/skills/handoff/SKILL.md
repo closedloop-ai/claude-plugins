@@ -61,6 +61,10 @@ the same plugin-root line: worker paths starting with `../` are relative to
 Read the existing writer summary/queue and resume its actual recorded ID.
 Claude uses the owned capability-bound launcher; Codex uses the same native
 follow-up/resume ID. Do not start a new handoff/backend/test source writer.
+Preserve the existing session's original recorded binding and actual ID;
+quality-loop's root continuation supplies this policy without a changed
+definition/root registration. Unavailable original binding blocks new code,
+not permission to copy a legacy agent, reset or replace the writer.
 
 ## Answers from the person
 
@@ -86,6 +90,9 @@ and guardrails), step 4 when a component or story changed, step 5 (checks),
 step 6 on the result (lighter: both reviewers; backend: one
 `workflow-code-review` pass), and step 7 (the redeploy). Only then does the
 answer go to `vibe-ticket-worker`.
+Before code, extend the same session decision table with the answer's source,
+row IDs, cross-request interactions and explicit Superseded decisions. Preserve
+earlier frozen targets. Handoff reruns use the whole table, not just this answer.
 
 A wording answer goes straight to `vibe-ticket-worker`.
 
@@ -216,13 +223,25 @@ Read-only `vibe-storybook-decomposer` advises on components/stories/catalog
 gaps. Resume the SAME writer to perform every extraction, story and catalog
 source change. Read-only verify footprint mode measures the sidebar and
 reports remaining problems; they return to the writer, never another author.
+Collect Design Review evidence from the verified final diff and existing
+Storybook tooling: added/changed/removed components and stories, actual IDs
+and direct links, controls/Docs/plays declared versus inspected/executed,
+intentional ID/category moves/sidebar folds and retained state access. Keep
+actual compiled footprint/canonical catalog reports and unresolved advisories.
+Source inspection alone does not clear a compiled warning or prove appearance.
 
 ## 5. Checks and handoff-only tests
 
 Resume the SAME writer with an explicit handoff continuation, acceptance
-criteria, inventory and its local coverage plan. It alone writes/extends tests
+criteria, inventory, private local coverage plan and the whole session decision table.
+Read all requests, stable row IDs, cross-request interactions and its
+`Required Tests`, including positive, negative and mixed-state production-boundary
+cases. It alone writes/extends tests
 and fixes implementation defects, records criteria/paths/human rulings and
 runs them. The verify worker never writes or fixes tests.
+The same writer checks implementation and actual executed coverage against
+every required unsuperseded row, including earlier requests. Planned coverage
+is not executed coverage; missing cases return to that writer now.
 
 Lighter: read-only verify checks mode runs Biome without write flags, gates,
 affected types/tests and relevant existing lanes. Backend: full-suite mode
@@ -235,6 +254,12 @@ browser/Electron windows. Record exact unsupported local limitations.
 Exclude exactly `.closedloop-ai/vibe-plans/` and historical `localFixes` from
 deliverable review, not other artifacts. Separate plan review reads the local
 plan explicitly. Pass phase handoff and the writer's test-authoring record.
+Pass the whole session decision table and actual row/test evidence to each
+reviewer. They read the actual artifact and use named core decision-table's
+consistency, review-prevention and applicable adversarial rules. Missing source,
+test or independent-review evidence blocks final handoff. Require defensible
+`Final Alignment Status: Aligned` for the whole table before step 7 or final
+ticket completion; Not aligned is a stop, not a success with a test-later note.
 
 Lighter: repo `review-soul` and `vibe-adversarial-reviewer` implementation mode
 may review independently in parallel, read-only. Backend: named core
@@ -263,8 +288,50 @@ repo's checks goes back to step 5's fixing, then the commit and this step
 again. On `NEEDS_DESKTOP_STOP`, dispatch
 `vibe-setup-worker` to stop Desktop, then this step again (Desktop is not
 started again at handoff).
+Every publication helper also receives the same required table path and
+whole-table alignment/row evidence from step 6; it never authors or replaces
+that artifact or claims missing final evidence is a successful handoff.
 
 ## 8. Choose who picks it up, then check the ticket
+
+### Design Review evidence at handoff
+
+After step 7 verifies the final publication, collect the design-facing packet
+from the verified final diff, environment/prototype receipts, existing
+Storybook inventory/footprint/catalog tooling and actual design/visual-QA
+reports. The SAME writer assembles detailed design evidence in existing
+private Git metadata, not the local technical plan. Read-only summary,
+Storybook and verify helpers contribute facts and existing report paths; no
+new source author or runtime tool is created. A compact helper response points
+to the detailed evidence instead of truncating required component/story rows.
+
+The live ticket's Design Review section gives design everything needed to
+grade the finished code and its appearance/Storybook implementation:
+
+- Exact App and Storybook previews, full verified deployed commit and
+  protection/access evidence and timestamp. Never change protection or include
+  credentials/private Desktop bridge URLs. For an owned prototype preserve
+  its immutable canonical preview and source-backed unavailable/N/A surfaces,
+  not an invented app or Storybook environment.
+- Requested scope/screens and relevant hosts/states, with actual inspection
+  separated from source-only and unverified coverage.
+- Added/changed/removed components/stories with IDs/direct links, controls,
+  Docs and plays, intentional ID/category moves/sidebar folds and retained
+  state access; removed/unavailable historical links are identified honestly.
+- Actual footprint/canonical catalog commands, baseline/current commits and
+  reports, including unresolved advisories and their dispositions.
+- Actual design/visual-QA reports and screenshots with inspected commits,
+  viewports/dimensions, hosts and states, and accessible links/attachments.
+  Source-only, unverified, failed and unsupported coverage remains explicit.
+- Known gaps and remaining design decisions/owners, with no invented copy and
+  no technical approval request to the Vibe coder. Existing required visual
+  and product approval gates remain intact; the next owner still grades it.
+
+Never claim looks good or Storybook correct without actual inspection/check
+evidence. If the source or deployment changed after collection, refresh the
+packet and distinguish historical evidence from the actual delivered result.
+Unavailable evidence is a truthful gap, not a fabricated pass. This section is
+finished-work metadata, never a technical plan uploaded for approval.
 
 Use a next owner the person already named for this handoff; never re-ask that
 settled choice or infer an owner from a company default. If nobody was named,
@@ -297,8 +364,10 @@ engineering finishing is the usual route, but the person decides.
 Then dispatch `vibe-ticket-worker` in handoff mode with: the worktree, the live
 ticket slug, the next owner (full name and email), the inventory path, the
 confirmed summary and the person's corrections, the footprint, check, and
-review summaries, the Design blocks from build and handoff fixes, the decision tables in `.closedloop-ai/decision-tables/` if
-any, and every answer from the person so far with how it was handled. Keep
+review summaries, the Design blocks from build and handoff fixes, the required session decision table
+at `.closedloop-ai/decision-tables/<session-slug>.md` with whole-table alignment
+and row/test evidence, the detailed Design Review evidence packet/report paths,
+and every answer from the person so far with how it was handled. Keep
 technical plans under `.closedloop-ai/vibe-plans/` local: never upload them or
 include their body in this ticket dispatch. It
 refreshes the record sections (the Environment base commit from the current

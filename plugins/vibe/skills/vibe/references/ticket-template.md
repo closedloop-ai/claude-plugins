@@ -53,6 +53,7 @@ publication, and the same ticket worker verifies completeness and assignment.
 | Production flag snapshot | `ticket-sections` (via `vibe-environment-worker`) | environment start, a refresh the person asked for |
 | Sessions | `ticket-sections` (via `vibe-environment-worker`, `vibe-ticket-worker`) | every redeploy, handoff |
 | Handoff | `vibe-ticket-worker` | handoff |
+| Design Review | `vibe-ticket-worker` | handoff, from verified final code/publication and actual design evidence |
 | Grading | `vibe-ticket-worker` | handoff, copied unchanged from this template |
 | Engineering checklist | `vibe-ticket-worker` | session start |
 
@@ -116,7 +117,10 @@ subagent that worked on this.>
 - Checks: <lint, source gates, typecheck, tests (every lane when the session
   changed backend code), each pass or fail>
 - Reviews: <n fixed, n rejected; one line each, rejected with why>
-- Tests authored at handoff: <paths and criteria covered; any obsolete
+- Session decision table: <the one session artifact path, whole-table final
+  alignment and actual row/test evidence across all requests; not a technical plan>
+- Tests authored at handoff: <paths, whole-session criteria and stable row IDs
+  covered by executed positive/negative cases, not merely planned tests; any obsolete
   expectation changed with its exact human behavior ruling>, or "none"
 - Pre-existing failures not touched by this work: <list or "none">
 - Next: <the next owner the person chose at handoff, by full name> picks
@@ -124,6 +128,34 @@ subagent that worked on this.>
   opens after signing in to Vercel with a team account) and comments here on
   sign-off, then engineering finishes it through analysis, a pull request,
   and merge.
+
+## Design Review
+
+<Filled only at handoff from verified final diff, publication receipts and
+actual evidence, not the private technical plan. No invented copy or technical
+approval request to the Vibe coder. Record source-backed reasons for unavailable
+surfaces; never invent a preview or inspection.>
+- App and Storybook previews: <exact verified links, full deployed commit,
+  verification evidence/time and protection/access status. For an owned
+  prototype, use its canonical immutable preview and truthful unavailable/N/A
+  app or Storybook surfaces; no credentials or private Desktop bridge URL.>
+- Scope and coverage: <requested scope, screens, hosts and states; identify
+  actual runtime/visual inspection separately from source-only and unverified.>
+- Storybook inventory: <added/changed/removed components and stories with paths,
+  IDs and direct links; controls, Docs and plays as declared versus actually
+  inspected/executed; intentional ID/category moves and sidebar folds with
+  old/new IDs and retained state access. Removed/unavailable links are identified
+  honestly, never fabricated.>
+- Footprint and catalog: <actual footprint baseline/current commits, command
+  and report links, canonical catalog/check evidence and unresolved advisories;
+  source inspection alone does not clear a compiled warning.>
+- Visual evidence: <actual design/visual-QA reports and screenshots, with
+  commits, viewports/dimensions, hosts and states inspected; separately list
+  source-only, unverified, failed or unsupported coverage. Accessible evidence
+  links/attachments, not an inaccessible local path as the only evidence.>
+- Limits and decisions: <known gaps, remaining design decisions and owners;
+  do not say looks good or Storybook correct without actual inspection/check
+  evidence. Preserve existing required visual/product approval gates.>
 
 ## Grading
 
