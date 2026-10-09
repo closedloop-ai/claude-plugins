@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.5
+
+#### Changed
+- Correction-event producers inspect root and applicable owning `AGENTS.md` instructions, including events without files, and record optional `existingRule` metadata with the actual rule file and bare closest-heading text. Repository-owned schemas and consumer-first rollout preserve older producers.
+- Symphony correction sources lead with the ticket slug; repeated fixes belong to a later ticket, while another review round on the same PR remains a review finding.
+
 ### vibe v1.0.4
 
 #### Changed
