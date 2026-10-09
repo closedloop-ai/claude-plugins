@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.2.0
+
+#### Added
+- New `repo-hardening` skill that audits a repository read-only and writes an evidence-backed hardening plan: a self-contained HTML page plus a Markdown twin, written outside the analyzed repository. It asks which repository to analyze and where to write the plan, investigates instruction files, static checks and gates, types and boundaries, tests, CI and merge flow, review habits, and recurring mistakes in history, and evaluates them against a set of engineering principles and a trust ladder of prevention mechanisms. The plan lists findings with evidence and the strongest prevention rung, small ordered units of work with quick wins separated from structural changes, what not to do, and decisions for a human with a recommendation. Its playbooks (investigation, bug fix, perf fix, hillclimb, refactor, feature, adversarial review, blast radius, unattended run, landing) can also be used directly for one rigorous task. The HTML template uses inline CSS and a single print script pinned by a Content-Security-Policy hash, and opens collapsed evidence when printed. `NOTICE.md` carries the MIT attribution for the adapted pstack material.
+- Contract tests check the skill's frontmatter and triggers, its read-only and escaping rules, that its files name no harness, vendor, model, or private path outside `NOTICE.md`, that relative links and anchors resolve inside the skill folder, that its text has no em dashes or double hyphens, and that the HTML template makes no network requests and its policy hash matches its only script.
+
 ### vibe v1.0.5
 
 #### Changed
