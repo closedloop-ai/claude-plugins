@@ -628,6 +628,8 @@ Use one automation status per finding:
 
 Do not recommend a broad new toolchain from code review alone. Prefer extending existing repo-supported automation.
 
+This assessment only recommends. Whoever later fixes the finding carries out the prevention with the `prevent-recurrence` skill (`$prevent-recurrence` in Codex, `/closedloop-core:prevent-recurrence` in Claude Code).
+
 ## Contract / Compatibility Review
 
 Run this lane for API, MCP, GraphQL, webhook, gateway, wire, shared type, generated client, persisted model, response field, cross-repo, cross-process, runtime-materialized file, package, schema, CLI, plugin, or skill behavior changes.

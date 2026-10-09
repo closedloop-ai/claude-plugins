@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.1.0
+
+#### Added
+- New `prevent-recurrence` skill for any agent fixing a bug or an accepted review finding caused by an agent mistake or a pattern agents repeat. It fixes the instance with a failing-first test where practical, searches for and fixes the same mistake elsewhere, and adds the highest prevention the repository supports, in order: architecture or types, static analysis, a guard test, a rule in the owning AGENTS.md, then an advisory memory or notes hint. It discovers each repository's own instruction files, lint and source gates, allowlists and test conventions instead of assuming them, never loosens an existing check, moves an ignored written rule up to a mechanical check, routes large prevention work to a follow-up with evidence, and records a correction event only where the repository or workflow defines a log. `references/rung-examples.md` gives labeled examples for each rung.
+- Contract tests check the skill's triggers, the ladder order, that its files name no workflow-specific skills, private local paths or plugin-root variables, that relative links resolve inside the skill folder, and that its text has no em dashes or double hyphens. A workflow-code-review contract test pins the new pointer.
+
+#### Changed
+- `workflow-code-review` points the Guardrail Automation Gap Assessment at `prevent-recurrence` for carrying out the recommended prevention when a finding is fixed.
+
 ### vibe v1.0.2
 
 #### Changed
