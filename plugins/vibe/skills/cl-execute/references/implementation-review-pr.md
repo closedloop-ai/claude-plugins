@@ -377,6 +377,18 @@ shaped as the repository's schema says (in `symphony-alpha`,
 automation reads that file. Record the appended event ids in the result.
 Emitting events never replaces the workflow-memory lesson above.
 
+When that schema supports optional `existingRule`, inspect the nearest owning
+`AGENTS.md` for the affected files before emitting the event. If an existing
+rule covered the mistake, populate `existingRule.file` with its repository-relative
+instruction path and `existingRule.heading` with the exact non-empty heading.
+Otherwise omit the field; never invent a rule or heading. The repository owns
+the event schema, and its accepting consumer must land before these producer
+instructions. Older producers that omit the optional field remain valid.
+
+For the Symphony contract, lead `source` with the source ticket slug. Use
+`repeated-fix` for the same mistake recurring in a later ticket; another review
+round on the same PR remains a `review-finding`.
+
 ## Per-Branch Push Gate
 
 Before any push/open-PR action that can start GitHub CI:
