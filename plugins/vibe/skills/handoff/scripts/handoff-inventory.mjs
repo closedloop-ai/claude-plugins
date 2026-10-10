@@ -26,6 +26,7 @@ import { parseArgs } from "node:util";
 import { committedLocalPlans, isLocalPlanPath, LOCAL_PLAN_PREFIX } from "../../vibe/scripts/local-plans.mjs";
 import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
 import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
+import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
 import { isPortableSurfaceAllowlistEdit, PORTABLE_SURFACE_CHECKER } from "./prototype-allowlist.mjs";
 
@@ -89,7 +90,8 @@ if (prototype) {
   catch (error) { publicationProblem = error.message; }
 }
 const localFixTickets = localFixTicketsByPath(record);
-const baseCommit = git(["merge-base", "HEAD", `origin/${baseBranch()}`]);
+const mainSync = record?.status === "active" && record?.operator ? readMainSyncProvenance(worktree) : undefined;
+const baseCommit = mainSync?.mainSha ?? git(["merge-base", "HEAD", `origin/${baseBranch()}`]);
 const allChangedFiles = listChangedFiles(baseCommit);
 const localPlans = allChangedFiles.filter((file) => isLocalPlanPath(file.path));
 const trackedLocalPlans = [...new Set([
@@ -114,6 +116,7 @@ const blocking = {
   hasChanges: changedFiles.length > 0,
   ...(trackedLocalPlans.length ? { localPlansUntracked: false } : {}),
   ...(prototype ? { prototypePublicationCurrent: publicationProblem === undefined } : {}),
+  ...(mainSync?.pendingMerge ? { mainSyncMergeCommitted: false } : {}),
 };
 
 const result = {
@@ -126,6 +129,8 @@ const result = {
   ...(prototype ? { prototype: record.prototype } : {}),
   ...(publicationProblem ? { publicationProblem } : {}),
   baseCommit,
+  ...(mainSync ? { mainSync } : {}),
+  ...(mainSync?.featureTestHistory.length ? { featureTestHistory: mainSync.featureTestHistory } : {}),
   blocking,
   changedFiles,
   localFixes,

@@ -15,11 +15,21 @@ export const recordModes: Record<string, Record<string, readonly string[]>> = {
   "vibe-prototype-worker": { share: ["create_document_version"] },
 };
 
+export const recordActionSchema = z.enum(["progress", "create", "handoff", "assign", "cancel", "redeploy", "flags", "desktop", "share", "discard"]);
+export const requestContinuationSchema = z.object({ runtime: z.enum(["codex", "claude"]),
+  requestId: identifierSchema, recordAction: z.enum(["flags", "desktop"]) }).strict();
+export type RequestContinuation = z.infer<typeof requestContinuationSchema>;
+export const ciRunLocatorSchema = z.object({ runId: z.number().int().positive().safe(),
+  attempt: z.number().int().positive().safe() }).strict();
 export const recordContextSchema = z.object({
   worktree: z.string().min(1), agentName: identifierSchema,
   mode: z.enum(["plan", "request", "fix", "handoff", "record"]),
-  recordAction: z.enum(["progress", "create", "handoff", "assign", "cancel", "redeploy", "flags", "desktop", "share", "discard"]).optional(),
+  recordAction: recordActionSchema.optional(),
   exclusiveRecordTurn: z.literal(true).optional(),
+  publicationPurpose: z.enum(["build", "handoff"]).optional(),
+  mainSyncTransactionId: z.string().uuid().optional(),
+  mainSyncRequestContinuations: z.array(requestContinuationSchema).min(1).max(2).optional(),
+  mainSyncCiRun: ciRunLocatorSchema.optional(),
   discardTarget: z.object({ worktree: z.string().min(1), confirmed: z.literal(true),
     branch: z.string().regex(/^(?:vibe|prototype)\/[^\s]+$/), liveTicket: z.string().regex(/^[A-Z]+-\d+$/).optional(),
     operatorId: z.string().min(1), operatorEmail: z.string().email(),
@@ -34,8 +44,32 @@ export const recordContextSchema = z.object({
 }).strict();
 type RecordContext = z.infer<typeof recordContextSchema>;
 
+/** Existing publication rights are exact role/action tuples, never the presence of Write or Bash. */
+export function isPublisherContext(input: Pick<RecordContext, "agentName" | "mode" | "recordAction" | "exclusiveRecordTurn">) {
+  return input.mode === "record" && input.exclusiveRecordTurn === true
+    && ((input.agentName === "vibe-environment-worker" && ["create", "redeploy"].includes(input.recordAction ?? ""))
+      || (input.agentName === "vibe-prototype-worker" && input.recordAction === "share"));
+}
+
+/** Flags/Desktop consume a verified transaction under their own request-only grant. */
+export function isRequestContext(input: Pick<RecordContext, "agentName" | "mode" | "recordAction" | "exclusiveRecordTurn">) {
+  return input.mode === "record" && input.exclusiveRecordTurn === true && input.agentName === "vibe-environment-worker"
+    && ["create", "redeploy", "flags", "desktop"].includes(input.recordAction ?? "");
+}
+
 /** Both runtimes resolve the same bounded role/action and stable sessionless contexts. */
 export function resolveRecordContext(input: RecordContext) {
+  if (input.mainSyncCiRun && (input.agentName !== "vibe-change-worker" || input.mode !== "record"
+    || input.recordAction !== "progress" || !input.exclusiveRecordTurn || input.publicationPurpose !== "handoff")) {
+    throw new Error("External CI locators require the actual source handoff-validation grant");
+  }
+  if (input.mainSyncRequestContinuations && (input.agentName !== "vibe-environment-worker" || !isPublisherContext(input))) {
+    throw new Error("Only an actual environment publisher grant may predeclare request continuations");
+  }
+  if (input.mainSyncRequestContinuations && new Set(input.mainSyncRequestContinuations.map((item) =>
+    `${item.runtime}:${item.requestId}:${item.recordAction}`)).size !== input.mainSyncRequestContinuations.length) {
+    throw new Error("Parent request continuations must identify distinct exact requests");
+  }
   if (input.recordAction === "discard" && !input.discardTarget) throw new Error("Discard requires parent-held target and confirmation evidence");
   if (input.discardTarget && (input.agentName !== "vibe-setup-worker" || input.mode !== "record"
     || input.recordAction !== "discard" || !input.exclusiveRecordTurn || input.sessionless?.kind !== "startup")) {

@@ -28,6 +28,23 @@ mode or permission to change production flags or machine snapshot fields.
 
 ## Existing checks
 
+Read `environment.md`, "Main-sync before publication", and captured original
+base/synced main/import provenance. Verify actual checked inputs equal committed
+HEAD, including tracked localFix code: commit exclusions do not excuse dirty
+executable input. Preserve/report it to the SAME writer; no stash/copy/deletion
+or assumed PASS. Rerun nonwriting checks only, never generators/receipt issuance.
+Flags/Desktop request-only grants are not prepare/push authority. Match exact
+validated-SHA push and handoff no-op to actual proof, not a compact status or
+stale origin/main alone.
+Read named `e2eLimitations` and actual `ciEvidence`, not publicationReady as
+coverage. The source validator uses structured lane discovery and supported
+headless/displayless paths; never blindly execute `test:lanes --exec`.
+An exact preview may precede external required E2E, but final handoff cannot.
+ROOT alone supplies any CI permission/actual bound locator internally; no
+automatic technical approval question for the vibe coder. Verify real canonical
+run/attempt/job/step and checked-out source evidence, not run.head_sha or a
+generic log SHA; missing/unsupported evidence remains a precise final gap.
+
 Run Biome WITHOUT write/fix flags, source gates, `pnpm typecheck:affected`,
 `pnpm test:affected --continue`, and the relevant existing lanes named by
 `pnpm test:lanes`. Shared app changes also run the Desktop renderer lane
@@ -68,6 +85,12 @@ Reject early unrecorded test edits rather than relabeling them. No valid test
 weakening, skipped case, inflated tolerance/timeout, harness change or suppression
 for green. Independently inspect the writer's authored tests after handoff and
 return findings for correction in its same context.
+Match `mainSync.featureTestHistory` to original commit parents and actual
+Root-controlled mode/authority and test-authoring records, even when main later
+absorbs identical bytes or a current diff is empty. Commit dates/presence alone
+do not establish phase. Missing historical authority is unverified, never
+retrospectively authorized; exact upstream adoption is distinct from newly
+authored merge assertions. Preserve/report uncertain historical cases.
 Use the whole session decision table, all requests, cross-request interactions
 and its Required Tests. Independently match executed test names, fail-closed
 negative cases and actual production boundaries to every required unsuperseded

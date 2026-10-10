@@ -32,6 +32,18 @@ export function readWriterSummary(worktree: string) {
   return summary(readLedger(place));
 }
 
+/** Checks the existing active source lease atomically without returning private request text. */
+export function verifySourceTurn(worktree: string, workerId: string, requestId: string, lease: string) {
+  const place = location(worktree);
+  return locked(place, () => {
+    const ledger = readLedger(place);
+    if (ledger.workerId !== workerId || ledger.active?.id !== requestId || ledger.active.lease !== lease) {
+      throw new Error("Main-sync validation requires the exact current source lease");
+    }
+    return ledger.runtime;
+  });
+}
+
 /** The coordinator can recover only its claimed request, not arbitrary private files or traces. */
 export function takeWriterInput(input: unknown) {
   const data = actionSchema.parse(input);

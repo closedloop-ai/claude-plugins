@@ -78,6 +78,8 @@ import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { readWriterSummary } from "./dist/writer-state.mjs";
+import { admitMainSyncRequest, admitMainSyncShare, MainSyncError, mainSyncFailure, pushMainSync,
+  readMainSyncInput, readMainSyncProvenance, validateMainSync } from "./dist/main-sync.mjs";
 import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublication } from "./prototype-session.mjs";
 import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
 import {
@@ -159,16 +161,17 @@ const { positionals, values } = parseArgs({
 });
 
 try {
-  const result = run(positionals[0]);
+  const result = await run(positionals[0]);
   process.stdout.write(`${JSON.stringify({ ok: true, ...result }, null, 2)}\n`);
 } catch (error) {
   process.stdout.write(
-    `${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`
+    `${JSON.stringify({ ok: false, ...(error instanceof MainSyncError || ["main-sync-validate", "main-sync-push", "main-sync-share"].includes(positionals[0])
+      ? mainSyncFailure(error) : { error: error instanceof Error ? error.message : String(error) }) })}\n`
   );
   process.exit(1);
 }
 
-function run(command) {
+async function run(command) {
   switch (command) {
     case "repo":
       return { repo: resolveRepo() };
@@ -193,7 +196,13 @@ function run(command) {
     case "desktop-tab":
       return desktopTab();
     case "dispatch-inputs":
-      return dispatchInputs();
+      return await dispatchInputs();
+    case "main-sync-validate":
+      return { mainSync: validateMainSync(await readMainSyncInput(requireOption("worktree"))) };
+    case "main-sync-push":
+      return { mainSync: pushMainSync(await readMainSyncInput(requireOption("worktree"))) };
+    case "main-sync-share":
+      return { mainSync: admitMainSyncShare(await readMainSyncInput(requireOption("worktree"))) };
     case "codex-sessions":
       return { session: recordCodexSessions() };
     case "ticket-sections":
@@ -206,7 +215,7 @@ function run(command) {
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, dispatch-inputs, codex-sessions, ticket-sections, environment-result, local-fix, discard."
+        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, dispatch-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, discard."
       );
   }
 }
@@ -689,7 +698,7 @@ function ticketSections() {
 }
 
 /** Writes the environment request workflow's inputs for this session to `--out`. */
-function dispatchInputs() {
+async function dispatchInputs() {
   const worktree = requireOption("worktree");
   const out = requireOption("out");
   const record = requireRecord(worktree);
@@ -709,6 +718,14 @@ function dispatchInputs() {
     requestId: randomUUID(),
     keepFlagSnapshot,
   });
+  try {
+    const mainSync = admitMainSyncRequest(await readMainSyncInput(worktree));
+    if (mainSync.alreadyPublished) return { mainSync: { status: "DONE", ...mainSync } };
+  }
+  catch (error) {
+    const failure = mainSyncFailure(error);
+    throw new MainSyncError(failure.error, failure.status);
+  }
   mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   writeFileSync(out, `${JSON.stringify(inputs)}\n`);
   writeRecord(worktree, { ...record, lastRequestId: inputs[DispatchInput.RequestId] });
@@ -813,6 +830,10 @@ function recordEnvironmentResult() {
  * commit the session started from is only the fallback when there is none.
  */
 function currentBaseCommit(worktree, record) {
+  if (record.status === "active" && record.operator) {
+    const provenance = readMainSyncProvenance(worktree);
+    if (provenance) return provenance.mainSha;
+  }
   try {
     return git(worktree, ["merge-base", "HEAD", `origin/${baseBranch(worktree)}`]);
   } catch {

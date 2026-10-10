@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { git, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
+import { git, mainSyncAdmission, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "vibe-sessions.mjs");
 const SPACED_CHECKOUT = ["Documents", "Closedloop.ai - Active Work", "symphony-alpha"];
@@ -18,10 +18,11 @@ function rememberRepo(home, repo) {
 
 function setup(t) {
   const fixture = makeHome("vibe-sessions-");
-  t.after(fixture.cleanup);
+  const cleanups = [];
+  t.after(() => { try { for (const cleanup of cleanups) cleanup(); } finally { fixture.cleanup(); } });
   const checkout = path.join(fixture.home, ...SPACED_CHECKOUT);
   makeCheckout({ root: fixture.root, home: fixture.home, checkout });
-  return { ...fixture, checkout };
+  return { ...fixture, checkout, beforeCleanup: (cleanup) => cleanups.push(cleanup) };
 }
 
 function recordFile(worktree, home) {
@@ -504,7 +505,7 @@ test("ticket-sections names the branch's current base after the session merges m
 });
 
 test("dispatch-inputs writes the request workflow's inputs with a fresh request id", (t) => {
-  const { root, home, worktree } = newSession(t, "dispatch");
+  const { root, home, worktree, beforeCleanup } = newSession(t, "dispatch");
   const out = path.join(root, "out", "inputs.json");
   const noSnapshot = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
   assert.equal(noSnapshot.status, 1);
@@ -513,8 +514,11 @@ test("dispatch-inputs writes the request workflow's inputs with a fresh request 
   const snapshotFile = path.join(root, "snapshot.json");
   writeJson(snapshotFile, { takenAt: "2026-10-06T15:00:00Z", distinctId: "user_abc", flags: { "it's-quoted": true } });
   runNode(SCRIPT, ["flag-snapshot", "--worktree", worktree, "--file", snapshotFile], home);
+  const admission = mainSyncAdmission(worktree, home, root);
+  beforeCleanup(admission.finish);
+  const request = (extra = []) => admission.run(["dispatch-inputs", "--worktree", worktree, "--out", out, ...extra]);
 
-  const blank = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
+  const blank = request();
   assert.equal(blank.status, 0, blank.stderr);
   assert.equal(blank.json.workflow, "vibe-environment-dispatch.yml");
   assert.equal(blank.json.ref, "main");
@@ -527,13 +531,13 @@ test("dispatch-inputs writes the request workflow's inputs with a fresh request 
   assert.equal(blankInputs.request_id, blank.json.requestId);
   assert.deepEqual(JSON.parse(blankInputs.flag_snapshot).flags, { "it's-quoted": true });
 
-  const again = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
+  const again = request();
   assert.notEqual(again.json.requestId, blank.json.requestId);
 
   // ISS-12135 bug 43: keep_flag_snapshot only when asked for, as a string,
   // and "true" only after the previous request published a verified result.
   const keepInput = (keep) => {
-    const result = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out, "--keep-flag-snapshot", keep], home);
+    const result = request(["--keep-flag-snapshot", keep]);
     assert.equal(result.status, 0, result.stderr);
     return { requestId: result.json.requestId, sent: JSON.parse(readFileSync(out, "utf8")).keep_flag_snapshot };
   };
@@ -551,28 +555,20 @@ test("dispatch-inputs writes the request workflow's inputs with a fresh request 
   const afterVerified = keepInput("true");
   assert.equal(afterVerified.sent, "true");
   assert.equal(keepInput("true").sent, "false", "the previous request has not published a result");
-  const badKeep = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out, "--keep-flag-snapshot", "yes"], home);
+  const badKeep = request(["--keep-flag-snapshot", "yes"]);
   assert.equal(badKeep.status, 1);
   assert.match(badKeep.json.error, /--keep-flag-snapshot must be true or false/);
 
-  const blankWithEmail = runNode(
-    SCRIPT,
-    ["dispatch-inputs", "--worktree", worktree, "--out", out, "--person-email", "andy@example.com"],
-    home
-  );
+  const blankWithEmail = request(["--person-email", "andy@example.com"]);
   assert.equal(blankWithEmail.status, 1);
   assert.match(blankWithEmail.json.error, /only with a Desktop auth claim/);
 
   runNode(SCRIPT, ["touch", "--worktree", worktree, "--mode", "seeded", ...OPERATOR_ARGS], home);
-  const noEmail = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
+  const noEmail = request();
   assert.equal(noEmail.status, 1);
   assert.match(noEmail.json.error, /--person-email/);
 
-  const seeded = runNode(
-    SCRIPT,
-    ["dispatch-inputs", "--worktree", worktree, "--out", out, "--person-email", "andy@example.com"],
-    home
-  );
+  const seeded = request(["--person-email", "andy@example.com"]);
   assert.equal(seeded.status, 0, seeded.stderr);
   const seededInputs = JSON.parse(readFileSync(out, "utf8"));
   assert.equal(seededInputs.mode, "seeded");
@@ -583,11 +579,7 @@ test("dispatch-inputs writes the request workflow's inputs with a fresh request 
   assert.equal(badOrgChoice.status, 1);
   assert.match(badOrgChoice.json.error, /org_/);
   runNode(SCRIPT, ["touch", "--worktree", worktree, "--clerk-org-id", "org_2abc"], home);
-  const chosenOrg = runNode(
-    SCRIPT,
-    ["dispatch-inputs", "--worktree", worktree, "--out", out, "--person-email", "andy@example.com"],
-    home
-  );
+  const chosenOrg = request(["--person-email", "andy@example.com"]);
   assert.equal(chosenOrg.status, 0, chosenOrg.stderr);
   const chosenInputs = JSON.parse(readFileSync(out, "utf8"));
   assert.equal(chosenInputs.clerk_org_id, "org_2abc");
@@ -595,12 +587,15 @@ test("dispatch-inputs writes the request workflow's inputs with a fresh request 
 });
 
 test("desktop-auth saves the profile's auth claim and every later request sends it", (t) => {
-  const { root, home, worktree } = newSession(t, "desktop");
+  const { root, home, worktree, beforeCleanup } = newSession(t, "desktop");
   const snapshotFile = path.join(root, "snapshot.json");
   writeJson(snapshotFile, { takenAt: "2026-10-06T15:00:00Z", distinctId: "user_abc", flags: {} });
   runNode(SCRIPT, ["flag-snapshot", "--worktree", worktree, "--file", snapshotFile], home);
   const out = path.join(root, "inputs.json");
-  runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
+  const admission = mainSyncAdmission(worktree, home, root);
+  beforeCleanup(admission.finish);
+  const request = (extra = []) => admission.run(["dispatch-inputs", "--worktree", worktree, "--out", out, ...extra]);
+  request();
   assert.equal("desktop_auth" in JSON.parse(readFileSync(out, "utf8")), false);
 
   const claimFile = path.join(root, "claim.json");
@@ -619,15 +614,11 @@ test("desktop-auth saves the profile's auth claim and every later request sends 
   assert.equal(saved.status, 0, saved.stderr);
   assert.ok(Date.parse(saved.json.session.desktopAuthSavedAt));
 
-  const blankNoEmail = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home);
+  const blankNoEmail = request();
   assert.equal(blankNoEmail.status, 1);
   assert.match(blankNoEmail.json.error, /Desktop auth claim needs --person-email/);
 
-  const blank = runNode(
-    SCRIPT,
-    ["dispatch-inputs", "--worktree", worktree, "--out", out, "--person-email", "andy@example.com"],
-    home
-  );
+  const blank = request(["--person-email", "andy@example.com"]);
   assert.equal(blank.status, 0, blank.stderr);
   const blankInputs = JSON.parse(readFileSync(out, "utf8"));
   assert.deepEqual(Object.keys(blankInputs).sort(), [
@@ -647,20 +638,12 @@ test("desktop-auth saves the profile's auth claim and every later request sends 
   });
 
   runNode(SCRIPT, ["touch", "--worktree", worktree, "--clerk-org-id", "org_2abc"], home);
-  const blankOrg = runNode(
-    SCRIPT,
-    ["dispatch-inputs", "--worktree", worktree, "--out", out, "--person-email", "andy@example.com"],
-    home
-  );
+  const blankOrg = request(["--person-email", "andy@example.com"]);
   assert.equal(blankOrg.status, 1);
   assert.match(blankOrg.json.error, /Clerk org is only sent for a seeded session/);
 
   runNode(SCRIPT, ["touch", "--worktree", worktree, "--mode", "seeded"], home);
-  const seeded = runNode(
-    SCRIPT,
-    ["dispatch-inputs", "--worktree", worktree, "--out", out, "--person-email", "andy@example.com"],
-    home
-  );
+  const seeded = request(["--person-email", "andy@example.com"]);
   assert.equal(seeded.status, 0, seeded.stderr);
   const seededInputs = JSON.parse(readFileSync(out, "utf8"));
   assert.equal(seededInputs.person_email, "andy@example.com");

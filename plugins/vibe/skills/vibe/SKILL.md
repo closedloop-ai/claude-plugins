@@ -294,17 +294,30 @@ only `vibe-environment-worker` pushes, when the person asks to redeploy.
 Desktop's screens reload live from the worktree, so merging main into it, or
 any other swap of its commit, while Desktop runs crashes the Desktop tab
 ("Never swap the worktree under a running Desktop" in
-`references/environment.md`). No step in this skill or handoff does that
-today. When a worker returns `NEEDS_DESKTOP_STOP`, dispatch
+`references/environment.md`). The main-sync publication sequence does this
+only after stopping the owned Desktop. On `NEEDS_DESKTOP_STOP`, dispatch
 `vibe-setup-worker` to stop Desktop, dispatch the worker again, then start
 Desktop again and open its new tab (section 3, Desktop step 2 then step 3).
 
 ## 3. Stand up the environment
 
+Before FIRST publication, register/resume the SAME implementation writer under
+section 5's actual identity/hold/lease rules, not a new bootstrap source actor.
+ROOT commits the reviewed deliverable LOCALLY under normal hooks, still unpushed,
+before `commit-worktree.mjs --prepare-main-sync`; if no deliverable changed,
+no extra commit is needed. Protected dirty localFix source remains preserved/blocking.
+Apply `references/environment.md`, "Main-sync before publication": local
+canonical plan/session table before source, separate plan checks, a completed
+exact create preparation turn, same-writer fixes/behavior checks, ROOT commit
+and that writer's actual committed-input validation. A new exact create grant
+carries captured `mainSyncTransactionId`, build purpose and derived context.
+No stale interim raw push is allowed.
+
 Dispatch `vibe-environment-worker`
 in create mode with the worktree, the live ticket slug, the mode, and
-`references/environment.md`. It takes the production flag snapshot, pushes the
-branch, starts the environment through GitHub, follows it to the end, records
+`references/environment.md` and matching transaction/context. It preserves
+flag snapshot rules, pushes the explicit validated SHA through the gate,
+starts the environment through GitHub, follows it to the end, records
 the URLs on the session, and fills the ticket's Environment, Production flag
 snapshot, and Sessions sections.
 
@@ -486,7 +499,17 @@ on Vercel", "let me see it live", or anything meaning the same:
 1. Run `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` so
    the ticket lists every subagent so far.
 2. Keep deployment progress internal; report completion, not technical steps.
-3. Commit everything changed since the last redeploy:
+   After current-result review, ROOT commits the reviewed deliverable LOCALLY
+   with the existing commit script and normal hooks, still unpushed. Then the
+   publishing helper runs `commit-worktree.mjs --prepare-main-sync`.
+   Before any remote push repeat `references/environment.md`, "Main-sync
+   before publication": extend the SAME writer's local plan/session table,
+   complete plan review, run a separate noncommitting preparation turn after
+   source stops, and route all conflicts/fixes to that writer. Preserve
+   captured main/original base/imports. Do not replace/re-register a native
+   actor because its old cache is absent.
+3. After preparation and SAME-writer conflict/source correction, ROOT commits
+   the staged ordinary merge and any reviewed fixes (nothing is pushed yet):
    `node scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the changes since the last redeploy>" --body "<the screens changed, one per line>"`.
    The subject stays under 72 characters and never mentions AI tools. The
    script leaves out the session's `localFixes` and files that never belong
@@ -495,7 +518,10 @@ on Vercel", "let me see it live", or anything meaning the same:
    resume the SAME persistent writer in fix mode with the error, then commit again.
 4. Dispatch `vibe-environment-worker` in redeploy mode with the worktree, the
    live ticket slug, the session summary, and the session's `localFixes`
-   paths. It pushes, requests the environment again so that commit is
+   paths. First resume that SAME writer's source-owned `progress` continuation
+   to run `main-sync-validate` against committed inputs. The later publisher
+   grant carries captured `mainSyncTransactionId`, build purpose and actual
+   stdin context. It pushes only the admitted SHA, requests the environment again so that commit is
    deployed, and updates the ticket. Existing checks have run through the
    quality loop; test authoring still waits for handoff.
 5. On `DONE`, reload the app tab (and the Desktop and Storybook tabs if

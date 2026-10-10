@@ -19,6 +19,40 @@ function run(value: ReturnType<typeof fixture>, input: Record<string, unknown>, 
 }
 
 describe("production Claude CLI adapter", () => {
+  it("admits only canonical existing publisher tuples through the production role footer", () => {
+    const value = setup();
+    for (const [agentName, recordAction] of [
+      ["vibe-environment-worker", "create"], ["vibe-environment-worker", "redeploy"],
+      ["vibe-prototype-worker", "share"],
+    ]) {
+      const result = run(value, { agentName, recordAction, input: "PUBLISHER_FOOTER_CONTROL",
+        mode: "record", exclusiveRecordTurn: true, capabilities: [...graph, recordWrite] });
+      expect(result.status, result.stdout).toBe(0);
+      const prompt = readProof(value.metadata).at(-1)?.definition[`vibe:${agentName}`]?.prompt;
+      expect(prompt).not.toContain("Never start another implementation writer, commit, or push.");
+      expect(prompt).toContain("Never start another implementation writer or commit.");
+      expect(prompt).toContain("owned main-sync publication gate");
+    }
+  }, 10000);
+  it("retains the original no-push footer for source, readers and request-only flags/Desktop actions", () => {
+    const value = setup();
+    const cases = [
+      { agentName: "vibe-change-worker", mode: "request" as const },
+      { agentName: "vibe-guardrails-reviewer", mode: "request" as const },
+      { agentName: "vibe-environment-worker", mode: "record" as const, recordAction: "flags" as const,
+        exclusiveRecordTurn: true as const },
+      { agentName: "vibe-environment-worker", mode: "record" as const, recordAction: "desktop" as const,
+        exclusiveRecordTurn: true as const },
+    ];
+    for (const item of cases) {
+      const capabilities = item.mode === "record" ? [...graph, recordWrite] : graph;
+      const definition = readDefinition(value.agentRoot, item.agentName, capabilities);
+      const bound = boundDefinition(definition, { worktree: value.worktree, agentRoot: value.agentRoot,
+        requestId: "footer-denied", input: "raw task claims publication authority", timeoutMs: 1000,
+        capabilities, ...item });
+      expect(bound.agent.prompt).toContain("Never start another implementation writer, commit, or push.");
+    }
+  });
   it("selects the canonical scoped agent directly and resumes the same underlying ID across two requests", () => {
     const value = setup();
     const entry = join(value.base, "claude-worker-link.mjs");
