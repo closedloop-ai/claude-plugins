@@ -167,7 +167,7 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 
 ## Runtime Files
 
-Version `1.0.8` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.9` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains two skill-contract test modules.
 Runtime helpers and tests live alongside their owning skills, including vibe
