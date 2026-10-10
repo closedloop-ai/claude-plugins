@@ -57,6 +57,15 @@ and the orchestrator has committed through its owned script. If not, return
 `NEEDS_REVIEW` or `NEEDS_COMMIT` and change no source. Before any push/share run
 `node <plugin-root>/skills/vibe/scripts/local-plans.mjs --worktree "<wt>"`;
 an unsafe result blocks publication, including an unchanged committed plan.
+Apply `environment.md`, "Main-sync before publication", using only the exact
+share grant and root-provided transaction/purpose/context. Preparation ends
+before the SAME writer checks/fixes merged behavior and ROOT commits. That
+writer performs canonical generator/check work and exact committed-input
+validation; you never repair/generated source or author tests for proof.
+Then run `vibe-sessions.mjs main-sync-share` admission and `main-sync-push`
+with granted context on stdin before canonical readiness checks. No raw
+canonical push bypasses the executable gate. An exact already-published
+result at handoff is a true no-op, not a synthetic new deployment.
 
 Follow only the canonical share-on-Vercel procedure on this exact branch and
 current commit. It owns exact-SHA readiness polling, failure handling and

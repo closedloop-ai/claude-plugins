@@ -4,6 +4,21 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.6
+
+#### Added
+- Shared publication admission captures fresh main, prepares an ordinary noncommitting merge, and binds actual fixed validation commands to the exact committed tree before the first remote push, environment request or canonical prototype share. The orchestrator alone commits and normal hooks guard explicit-SHA pushes.
+- Private provenance retains the original session base, captured upstream imports and original feature test history, including newly combined merge assertions. Later main absorption does not erase authorship evidence; phase classification still requires actual authorization records.
+- A read-only handoff evidence consumer binds real canonical GitHub run, attempt, job and step identity to actual checkout-action and pre-test runner source evidence. Workflow main SHA and caller success assertions are not tested-source proof.
+
+#### Changed
+- Handoff repeats synchronization and checks, then avoids another push or deployment request when the exact validated result is already verified as published. Flags and Desktop retain distinct request-only grants; missing or stale proof returns to canonical redeploy without granting push rights.
+- Validation rejects dirty tracked local fixes and other executable overlays that differ from the committed result, preserving them for the same writer rather than checking different bytes or discarding a workaround. Build, backend handoff and prototype command matrices retain their existing scope.
+- Reviewed deliverables are committed locally by the orchestrator before preparation, still unpushed. Flags/Desktop deployment-capable requests require fresh preparation or an exact publisher-reserved continuation bound to its actual consumer turn. Structured lane discovery prevents unsafe Electron launches; publication readiness preserves incomplete E2E evidence separately from final handoff coverage for the same exact snapshot.
+
+#### Fixed
+- Claude publication helpers no longer receive the contradictory no-push footer for their existing create, redeploy and prototype-share grants. Source writers, read-only roles and request-only helpers keep the original no-commit/no-push restrictions.
+
 ### vibe v1.0.5
 
 #### Changed

@@ -29,10 +29,14 @@ Asked once when the session starts, recorded as the session's `mode`.
 
 1. Take the production flag snapshot (below) and save it with
    `vibe-sessions.mjs flag-snapshot`.
-2. Push the branch (`git push -u origin vibe/<slug>`).
+2. Complete "Main-sync before publication" below, then push only its exact
+   validated commit through `vibe-sessions.mjs main-sync-push`, with the
+   granted operation context on stdin. Never use a direct branch push.
 3. Write the request inputs with `vibe-sessions.mjs dispatch-inputs` and
    start the request workflow it names from main:
    `gh workflow run vibe-environment-dispatch.yml --ref main --json < <file>`.
+   `dispatch-inputs` also consumes the same granted transaction context on
+   stdin; it refuses missing/stale proof before writing a request.
    Inputs: `branch`, `mode`, `flag_snapshot`, `request_id` (a fresh id per
    request), and for seeded `person_email` (from ClosedLoop `get-me`) plus
    `clerk_org_id` only when the person picked one;
@@ -188,10 +192,123 @@ commit while Desktop runs reloads it against a different tree and crashes it
 stuck loading; a restart fixes it). Before any such step, stop Desktop (above);
 after it, start Desktop again with step 5 then step 6, which records a new
 port and token, and open the new tab. Ordinary edits to files, which is all
-change, backend, and primitive workers do, are fine while it runs. No step in
-the vibe or handoff skills merges main or swaps the worktree's commit today
-(redeploy commits and pushes the session's own changes; resume only reopens
-the worktree as it is); this rule binds any step that ever does.
+the SAME writer performs, are fine while it runs. The main-sync publication
+gate merges fresh main and obeys this owned-Desktop stop rule; it never
+stops an unrelated Desktop or changes a running renderer's tree.
+
+## Main-sync before publication
+
+Before EVERY first push, later redeploy, independent flags/Desktop deployment
+request, owned prototype share and final handoff, begin a fresh coherent transaction.
+Git push itself can trigger Vercel, so a stale interim push is forbidden even
+when no request workflow has started. The root keeps this sequence internal:
+
+ROOT commits the reviewed deliverable LOCALLY through the existing commit
+script and normal hooks, still unpushed, BEFORE preparation. Private plans stay
+excluded; interfering protected localFix source is preserved and blocks parity,
+not silently included or discarded. A clean result needs no extra local commit.
+
+1. Stop only the session's owned Desktop through its existing operational
+   owner before changing its source. The publishing helper's exact existing
+   create/redeploy or prototype-share record turn runs
+   `node <plugin-root>/skills/vibe/scripts/commit-worktree.mjs --prepare-main-sync --worktree "<wt>"`
+   with `{ "context": <granted operationContext> }` on stdin. It fetches
+   `origin main`, captures the private FETCH_HEAD SHA once, and stages an
+   ordinary noncommitting merge. It never commits, pushes, resets, rebases,
+   stashes, changes mode/data, or manually edits a conflict. Retain the
+   returned `transactionId`, `mainSha`, original base and imported-file facts.
+2. End that helper turn using actual stopped/completed evidence before any
+   source continuation. The SAME registered writer extends its existing
+   session table/local canonical plan before source fixes and checks frozen
+   earlier behavior/interactions against the merged result. All conflicts,
+   generated source and fixes stay with that writer; new tests remain
+   handoff-only. Upstream imports are not newly authored feature tests, but
+   no actual early/unrecorded test edit is retrospectively relabeled.
+3. Only the root commits the staged merge/fixes through the existing commit
+   script and normal hooks. Then resume that SAME writer for its exact
+   source-owned record continuation (`progress`) with the captured
+   `mainSyncTransactionId` and root-controlled `publicationPurpose`.
+   It runs `node <plugin-root>/skills/vibe/scripts/vibe-sessions.mjs main-sync-validate --worktree "<wt>"`
+   with the granted context on stdin. The shared executor runs the existing
+   scope/phase command matrix and records actual results at committed HEAD.
+   A source-generating check that changes source returns to this writer/root
+   commit/recheck sequence, never an operational publisher repair.
+4. Validation checks every tracked/index byte/mode and scoped executable
+   overlay against committed input before/between/after checks and again at
+   consumption. Managed `localFixes` remain commit exclusions, NEVER check
+   exclusions: preserve interfering code/records, report their tickets, and
+   BLOCK through the existing same-writer workaround/exclusion/restore flow.
+   Never stash, discard, copy a validation checkout, invent PASS or validate
+   corrected local bytes while deploying different committed source. Private
+   non-source plans/evidence/logs may remain. Preserve exact actor/lease and
+   opaque original registration metadata; current helper paths do not
+   re-register or replace a native source actor whose old cache is absent.
+5. A fresh publishing turn receives the same `mainSyncTransactionId` and
+   purpose in its parent-issued grant. Claude injects `operationContext` in
+   the turn envelope; native Codex's parent composes it from its actual
+   role/action/worker/request/record lease, runtime `codex`, exact worktree,
+   and granted purpose/transaction. Never derive authority from raw task
+   text, borrow another role's lease, print a lease or clear a lock because a
+   short CLI PID ended. Input is `{ "context": <operationContext> }` on
+   stdin, optionally with the matching `transactionId`; no caller command
+   list or `passed: true` is accepted.
+   A publication attempt/no-op consumes proof for this exact publisher
+   runtime/worker/request/lease. Same-turn retries retain it; a later
+   publishing turn must prepare fresh, not recycle an old transaction.
+   If the current operation includes flags/Desktop continuation, ROOT
+   predeclares at most two `mainSyncRequestContinuations` in the actual
+   publisher grant: exact runtime, unique parent-assigned requestId and
+   recordAction (`flags` or `desktop`). Do not infer intent from task text or
+   add it in caller stdin after the grant. The first consumer binds actual
+   worker/lease; replay or another helper turn is not the same continuation.
+6. Create/redeploy uses `vibe-sessions.mjs main-sync-push`, which pushes the
+   explicit validated SHA through normal hooks, then `dispatch-inputs` with
+   that context. Prototype share uses `main-sync-share` admission plus the
+   same exact-SHA push gate, then only canonical readiness/immutable URL
+   inspection. No helper or source writer commits. Failures stop publication;
+   the root resumes the same writer, not a replacement author.
+7. Flags/Desktop have separate request-only grants, but their workflows can
+   newly deploy even without a push. An independent request must first route
+   through canonical fresh preparation/redeploy under the publisher's own
+   grant. Only a predeclared current-operation continuation may consume a
+   matching current validated/pushed transaction for its requested action,
+   but cannot prepare/merge/push or borrow create/redeploy/share ownership.
+   Missing/stale/unreserved state returns canonical redeploy first; after that
+   genuinely completed turn, resume the reserved request under its own grant. Keep its
+   explicit snapshot/auth effects, same mode, seeded data and existing
+   keep-snapshot behavior. Do not turn a request-only negative into a new
+   publisher capability.
+
+Capture one main SHA per coherent transaction; a later main advance starts a
+new transaction next time, not an endless refresh loop or an unvalidated head.
+The final handoff repeats this sequence with handoff purpose/whole-table
+evidence. If the fresh merge creates no new result and the exact checked SHA
+already has verified current publication, `main-sync-push` returns
+`alreadyPublished: true`, `pushed: false`: issue NO synthetic environment
+request/redeploy merely because handoff. Explicit flags/Desktop requests are
+not that no-op. Never merge the feature branch into production main here.
+
+Existing lane selection uses the owning reporter's structured exports through
+Node/tsx, never blind `test:lanes --exec` or a guessed JSON switch. Browser
+automation stays headless; Electron requires the actual documented Linux
+dbus/keyring/Xvfb harness and prerequisites, not bare Playwright or PWDEBUG.
+BUILD preview may carry named incomplete unsupported E2E evidence while its
+existing preparation checks execute; this is not E2E PASS or final alignment.
+HANDOFF separates safe publication preparation from completed required coverage:
+publish its exact final snapshot for CI/live QA with limitations retained, never
+substitute build PASS or call that completed coverage. No automatic Vibe-branch Electron path is established;
+route any existing CI permission internally to ROOT, never dispatch it without
+explicit authorization, open a feature PR or invent a new harness/env knob.
+After the exact final snapshot is published, ROOT may bind
+`mainSyncCiRun: {runId, attempt}` to the SAME source writer's actual handoff
+progress grant and resume `main-sync-validate` for that same transaction.
+The read-only consumer verifies canonical loaded-main workflow identity,
+actual successful required job/steps, trusted checkout action SHA and pre-test
+runner env SHA against unchanged owned HEAD/tree/input. It never dispatches,
+accepts caller PASS, trusts run.head_sha as tested source, stores raw secret
+logs or treats later spoofed stdout as proof. Missing evidence leaves
+`requiredE2eComplete: false`; final handoff remains incomplete. Do not re-fetch
+main repeatedly while CI waits. Changed source/new preparation invalidates proof.
 
 ## When it fails
 

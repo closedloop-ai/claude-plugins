@@ -13,7 +13,7 @@ const grantSchema = recordContextSchema.extend({ agentRoot: z.string().min(1), w
 const releaseSchema = grantSchema.extend({ lease: z.string().uuid(), stoppedTurn: z.object({ runtime: z.literal("codex"),
   workerId: identifierSchema, requestId: identifierSchema, lease: z.string().uuid(),
   state: z.enum(["completed", "failed", "canceled"]) }).strict() }).strict();
-const ownerSchema = z.object({ grant: grantSchema, lease: z.string().uuid(), branch: z.string(), targetDir: z.string().optional() }).strict();
+export const nativeRecordOwnerSchema = z.object({ grant: grantSchema, lease: z.string().uuid(), branch: z.string(), targetDir: z.string().optional() }).strict();
 const ownerFile = "native-owner.json";
 
 /** Acquires the existing source/record mutex for one exact native helper turn, never its short coordinator process. */
@@ -60,7 +60,7 @@ export function releaseNativeRecord(input: unknown) {
   const place = grant.sessionless ? checkoutLocation(grant.worktree) : location(grant.worktree);
   grant.worktree = place.root;
   releaseRecordTurnAt(place, (lock) => {
-    const owner = ownerSchema.parse(JSON.parse(readFileSync(join(lock, ownerFile), "utf8")));
+    const owner = nativeRecordOwnerSchema.parse(JSON.parse(readFileSync(join(lock, ownerFile), "utf8")));
     if (owner.lease !== lease || owner.branch !== place.branch || JSON.stringify(owner.grant) !== JSON.stringify(grant)
       || stoppedTurn.workerId !== grant.workerId || stoppedTurn.requestId !== grant.requestId || stoppedTurn.lease !== lease) {
       throw new Error("Native record release requires the exact owner's stopped-turn completion evidence");

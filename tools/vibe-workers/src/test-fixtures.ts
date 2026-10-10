@@ -44,6 +44,12 @@ process.stdin.on('end', () => {
   const definition = JSON.parse(fs.readFileSync(option('--agents'), 'utf8'));
   const proof = { args, payload, definition, pid: process.pid };
   fs.appendFileSync(path.join(process.cwd(), '.git', 'fake-proof.jsonl'), JSON.stringify(proof) + '\n');
+  if (payload.input === 'PUBLISHER_FOOTER_CONTROL'
+    && definition[option('--agent')].prompt.includes('Never start another implementation writer, commit, or push.')) {
+    process.stdout.write(JSON.stringify({ type: 'result', session_id: id, is_error: false,
+      result: JSON.stringify({ status: 'BLOCKED', summary: 'Publisher is still forbidden to push' }) }) + '\n');
+    return;
+  }
   let discardReceipt;
   if (payload.input === 'DISCARD_OWNED_FIXTURE') {
     const target = payload.discardTarget.worktree;
@@ -58,9 +64,24 @@ process.stdin.on('end', () => {
   if (payload.input.includes('STARTUP_FAILURE')) process.exit(2);
   if (payload.input.includes('WAIT_FOR_CANCEL')) { setInterval(() => {}, 1000); return; }
   if (payload.input.includes('INVALID_OUTPUT')) { process.stdout.write('invalid\n'); process.exit(0); }
-  const status = payload.input.includes('PLAN_FIRST') ? 'PLAN' : 'DONE';
+  let status = payload.input.includes('PLAN_FIRST') ? 'PLAN' : 'DONE';
+  let mainSyncResult;
+  if (payload.input.startsWith('MAIN_SYNC_')) {
+    const cp = require('node:child_process');
+    const action = payload.input.slice('MAIN_SYNC_'.length).toLowerCase();
+    const script = action === 'prepare' ? ${JSON.stringify(resolve(bundleDirectory, "../commit-worktree.mjs"))}
+      : ${JSON.stringify(resolve(bundleDirectory, "../vibe-sessions.mjs"))};
+    const command = action === 'prepare' ? ['--prepare-main-sync', '--worktree', process.cwd()]
+      : action === 'request' ? ['dispatch-inputs', '--worktree', process.cwd(), '--out', path.join(process.cwd(), '.git', 'sdk-request.json')]
+      : ['main-sync-' + action, '--worktree', process.cwd()];
+    const response = cp.spawnSync(process.execPath, [script, ...command], {
+      cwd: process.cwd(), encoding: 'utf8', input: JSON.stringify({context:payload.operationContext}) });
+    mainSyncResult = JSON.parse(response.stdout);
+    status = response.status === 0 ? (mainSyncResult.mainSync?.status || 'DONE') : 'BLOCKED';
+  }
   const reportedId = payload.input.includes('WRONG_ID') ? '11111111-1111-4111-8111-111111111111' : id;
   const compact = { status, summary: 'fixture result', data: { inputSeen: true } };
+  if (mainSyncResult) compact.data.mainSyncResult = mainSyncResult;
   if (discardReceipt) compact.data.discardReceipt = discardReceipt;
   const result = { type: 'result', session_id: reportedId, is_error: false,
     result: JSON.stringify(compact) };

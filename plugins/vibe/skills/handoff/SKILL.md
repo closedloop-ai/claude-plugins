@@ -271,19 +271,41 @@ validation. Missing handoff coverage is written only by that writer.
 
 ## 7. Upload the last changes
 
+ROOT commits the reviewed deliverable LOCALLY through the existing commit
+script/normal hooks, still unpushed, before `commit-worktree.mjs --prepare-main-sync`.
+This includes the SAME writer's reviewed handoff tests/fixes, not private plans
+or protected localFix source. No change needs no extra local commit.
+
+First repeat `../vibe/references/environment.md`, "Main-sync before publication",
+with handoff purpose. The SAME writer extends/checks its whole session table
+before fixes; a separate exact publisher preparation turn fetches fresh main,
+stages an ordinary NONCOMMITTING merge after the owned Desktop stops, then ends.
+Every source/conflict/generator fix and authorized test stays with the original
+writer/registration; ROOT alone commits. Captured synced main separates imports
+from feature work, retaining original history and real early-test violations.
+
 Run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
-again, then commit everything the checks and reviews changed as one more
+again, then ROOT commits the staged merge and any subsequent reviewed fixes as one more
 commit (nothing is squashed or amended):
 `node ../vibe/scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the handoff fixes>" --body "<what was fixed, one per line>"`
 (under 72 characters, no mention of AI tools). `committed: false` means
 nothing changed. A commit the hook refused goes back to step 5's fixing, then
-this step again. Then dispatch `vibe-environment-worker` in redeploy mode
+this step again. Resume the SAME writer's source-owned `progress` continuation
+with parent-controlled handoff purpose/transaction to execute
+`main-sync-validate` against committed input. Dirty tracked localFix source is
+NOT a check exception: preserve/block through its same-writer workaround flow,
+never stash/copy/delete or accept different checked/deployed bytes.
+Then dispatch `vibe-environment-worker` in redeploy mode
 from handoff with the worktree, the live ticket slug, the confirmed summary,
 the inventory's `localFixes` paths, the test-authoring record and any verified
 pre-existing failures outside this work. It runs the tests, pushes through the repo's pre-push
 checks, requests the environment again so that commit is deployed, and
-updates the ticket. If nothing changed since the last redeploy, it confirms
-the branch and the environment are current instead. A push refused by the
+updates the ticket. Pass matching `mainSyncTransactionId`, handoff purpose and
+actual new grant context on stdin. `main-sync-push` returns
+`alreadyPublished: true`, `pushed: false` only for the exact checked/verified
+current result; issue NO synthetic request/redeploy then. Explicit flags/Desktop
+work remains distinct under its own request-only grant, never publisher rights.
+A push refused by the
 repo's checks goes back to step 5's fixing, then the commit and this step
 again. On `NEEDS_DESKTOP_STOP`, dispatch
 `vibe-setup-worker` to stop Desktop, then this step again (Desktop is not
@@ -291,6 +313,22 @@ started again at handoff).
 Every publication helper also receives the same required table path and
 whole-table alignment/row evidence from step 6; it never authors or replaces
 that artifact or claims missing final evidence is a successful handoff.
+
+Publication readiness may precede external E2E completion for this FINAL
+handoff snapshot: retain exact named limitations, safely publish the committed
+SHA for existing CI/live QA, and keep final coverage/assignment incomplete.
+No feature PR or automatic manual-CI trigger is added. ROOT routes CI permission
+internally; never ask the vibe coder for technical-plan approval.
+For actual authorized/completed evidence, ROOT binds `mainSyncCiRun: {runId, attempt}`
+in the SAME writer's actual source progress/handoff grant, then resumes
+`main-sync-validate` on the same captured-main transaction without another fetch
+loop. The consumer verifies real canonical run/job/step identity and actual
+checkout-action/pre-test env SHA against unchanged HEAD/tree/input, not caller
+PASS or workflow main head_sha. Changed source invalidates proof and returns
+to this same writer's fresh preparation/correction flow. Keep whole-table
+tests/reviews and source-phase authority separate from the CI reader.
+Do not proceed to final assignment/alignment with `requiredE2eComplete: false`
+or any other required coverage gap, even when publicationReady is true.
 
 ## 8. Choose who picks it up, then check the ticket
 

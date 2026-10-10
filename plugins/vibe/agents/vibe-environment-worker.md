@@ -21,6 +21,21 @@ Before every push or deployment request run
 `node <plugin-root>/skills/vibe/scripts/local-plans.mjs --worktree "<wt>"`.
 If it fails, return `BLOCKED` and publish nothing; an unchanged committed plan
 is unsafe too. Do not rewrite branch history to hide the leak.
+Use `environment.md`, "Main-sync before publication", for EVERY create,
+redeploy, flags/Desktop request and handoff. Root supplies the exact granted
+`operationContext`, purpose and current transaction in private stdin data;
+never infer them from raw task text. ROOT first commits the reviewed deliverable
+locally through normal hooks, still unpushed. Preparation is a separate completed
+create/redeploy record turn, followed by the SAME source writer, ROOT-only
+commit and that writer's actual committed-input validation. A later publisher
+turn consumes only its matching validated transaction. Flags/Desktop are
+request-only consumers under their own grants, never publisher substitutes.
+Their workflow can newly deploy. Only explicitly parent-reserved current-operation
+runtime/request/action intent may consume the proof; independent or replayed
+turns return canonical fresh preparation/redeploy before the original action.
+Never self-declare continuation intent or borrow the publisher's lease.
+Publication readiness is not completed handoff E2E coverage: preserve reported
+incomplete scenarios and never assign/claim completion from a preview alone.
 
 The mode (`create`, `redeploy`, `flags`, or `desktop`), the worktree path, the live
 ticket slug, and for redeploy the session summary, the session's
@@ -74,7 +89,9 @@ then plain search.
    empty. A session that has one keeps it, including on a re-run after a
    refused push or a failed request, and a resumed session whose environment
    was never verified; only flags mode (the person asked) replaces it.
-2. Push the branch: `git -C "<wt>" push -u origin <branch>`. Never
+2. Complete canonical main-sync, then push the explicit checked SHA with
+   `node ../skills/vibe/scripts/vibe-sessions.mjs main-sync-push --worktree "<wt>"`
+   and parent context on stdin. Never directly push a branch or use
    `--no-verify`, `SKIP_PREPUSH_GATES`, or a force push. A refusal returns
    `BLOCKED` with the failing check in one line (the orchestrator has a
    change worker fix it, commits, and dispatches you again).
@@ -85,6 +102,9 @@ then plain search.
 ## Requesting the environment (create, flags, and desktop modes)
 
 1. Write the inputs: `node ../skills/vibe/scripts/vibe-sessions.mjs dispatch-inputs --worktree "<wt>" --out "<gitdir>/vibe-dispatch-inputs.json" [--person-email <email>]`.
+   Pass the same actual operation context on stdin. The state check runs
+   before file/request-id mutation. Missing/stale proof returns canonical
+   redeploy first; flags/Desktop retain only their request-only grants.
    A seeded session passes `--person-email` with the email ClosedLoop
    `get-me` returns; the stage API finds the person's Clerk user and their
    org from it. A blank session passes it only once the session has a
@@ -169,17 +189,26 @@ then plain search.
 Never merge main into the worktree, pull, rebase, reset, or check out another
 commit while the session's Desktop runs (`vibe-sessions.mjs desktop-tab`
 reports `running`): it crashes Desktop ("Never swap the worktree under a
-running Desktop" in `environment.md`). No step below does; if one ever has
-to, return `NEEDS_DESKTOP_STOP` naming the step, and the orchestrator stops
-Desktop and dispatches you again.
+running Desktop" in `environment.md`). Main-sync preparation must change that
+tree; return `NEEDS_DESKTOP_STOP` first and the orchestrator stops
+Desktop and dispatches you again. The gate stages only an ordinary
+noncommitting merge after that stop; ROOT commits and the SAME writer resolves
+every conflict/source problem. Do not run a raw merge/commit/push yourself.
 
-1. If the person also asked for fresh flags, do flags mode first.
+1. Complete fresh main-sync, same-writer behavior/table checks, ROOT commit
+   and exact committed-input validation before publishing, per environment.md.
+   Preserve an explicit flags request under its own later request-only turn.
 2. The orchestrator has already committed. `git -C "<wt>" status --porcelain`
    must list nothing except `localFixes` paths and files the commit script
    always leaves out (`.env` files, `.control/`, `.closedloop-ai/vibe-plans/`); anything else returns
    `NEEDS_COMMIT` with those files, and the orchestrator commits and
    dispatches you again. Never stage or commit anything yourself.
-3. Run the existing affected tests before pushing,
+3. The SAME writer runs the fixed matrix through `main-sync-validate` under
+   its source continuation. Protected localFix code is not a validation
+   exemption: preserve dirty code/records and BLOCK through the same-writer
+   workaround/exclusion/restore flow, never stash/copy/delete them.
+   Run the existing affected tests before pushing through that SAME writer's
+   executor,
    from the worktree:
    `TURBO_CONCURRENCY=2 pnpm turbo test --filter="...[<since>]" --continue`,
    where `<since>` is the session's `vercel.lastDeployedCommit`, or its
@@ -192,8 +221,12 @@ Desktop and dispatches you again.
    returns `BLOCKED` with the failing suites and the first error line of
    each, and pushes nothing. Never skip, filter out, or loosen a failing test
    to get a push through. Never write or edit tests in deployment mode.
-4. Nothing unpushed: skip to step 7 (the environment is already current).
-5. Push: `git -C "<wt>" push origin <branch>`. The pre-push hook can take
+4. Consume the exact transaction with `main-sync-push` and parent context
+   on stdin. At handoff, `alreadyPublished: true`, `pushed: false` means the
+   exact result is verified current: return it with NO request/redeploy in
+   step 7. Never drop an explicitly requested flags/Desktop action as no-op.
+5. A needed push uses that script's explicit validated SHA and normal
+   pre-push hook, not `git push <branch>`. The hook can take
    several minutes; let it finish. If it fails, return `BLOCKED` with the
    failing check in one line (the orchestrator sends it to a fix worker).
    Never `--no-verify`, `SKIP_PREPUSH_GATES`, or a force push.
@@ -211,6 +244,11 @@ Desktop and dispatches you again.
 
 ## Flags mode (on request only)
 
+Consume parent-reserved current-operation state under your exact flags grant.
+An independent request needs fresh preparation/redeploy even if the branch is
+already pushed; preview jobs can create missing/cancelled deployments. Needed sync or
+publication returns canonical redeploy first, then this original action
+resumes under its own grant; never prepare/push in flags mode.
 Take a new snapshot (above), then request the environment again with the
 session's same mode. A ready environment of the same mode is kept and only
 the new snapshot is applied. Read and record the run's result (below), then
@@ -219,6 +257,11 @@ mode here: a different mode rebuilds the environment and its data.
 
 ## Desktop mode
 
+This is request-only under its exact desktop grant, not a publisher lease.
+Require its exact parent-reserved runtime/request/action continuation; old
+same-session transaction ID alone is not permission for another deployment.
+Needed sync/publication returns canonical redeploy first, then this original
+auth request resumes normally. Never prepare/push under a desktop grant.
 The setup worker has saved the local Desktop profile's auth claim
 (`vibe-sessions.mjs desktop-auth`). Request the environment again with the
 session's same mode and its current snapshot (no new snapshot); the request

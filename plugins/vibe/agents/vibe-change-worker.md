@@ -106,6 +106,30 @@ from `design-pass.md`. Never revert another person's changes.
 
 ## Checks, review and recording
 
+Before publication/main-sync, read `environment.md`, "Main-sync before
+publication". Keep your actual ID and immutable registration metadata;
+current helper paths do not replace/re-register an existing native actor
+even when its old cache is absent. Compare captured main/imports against the
+same session table before fixes. Only you resolve conflicts/generators/code;
+ROOT alone commits. Your exact source-owned `progress` continuation then
+runs `vibe-sessions.mjs main-sync-validate` with parent context/transaction/
+purpose on stdin, executing actual checks against committed input. Publication
+purpose never grants test authoring. Managed localFix commit exclusions MUST
+NOT exclude validation input: preserve interfering bytes/records and BLOCK
+through the existing same-writer workaround/exclusion/restore flow, never
+stash/copy/discard or claim a pass for different pushed source. A generator
+that changes source returns to your fix/ROOT commit/recheck sequence.
+Use existing structured lane-owner discovery, not blind `test:lanes --exec`.
+Never spawn unsafe browser/Electron automation: unsupported required scenarios
+remain named incomplete evidence. Publication-ready preview is not E2E PASS.
+For final handoff, ROOT may bind `mainSyncCiRun: {runId, attempt}` to your actual
+progress grant; the executor reads real GitHub evidence for the exact published
+HEAD/tree, not caller PASS, workflow main SHA or later test-printed SHA text.
+Resume this SAME actor/transaction after CI; do not repeatedly merge/fetch main,
+reset binding or author more tests in a record turn. Changed source invalidates
+proof. `requiredE2eComplete: false` blocks final coverage/alignment/assignment,
+not safe preview publication with its explicit preparation evidence.
+
 Compare actual source and behavior against the same session decision table's
 affected and interacting prior row IDs after implementation and every fix.
 Apply its canonical expansion/review-prevention, fix source gaps now, and

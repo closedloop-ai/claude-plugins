@@ -8,7 +8,9 @@ import { runFromCanonicalEntry } from "./cli.js";
 import { capabilitiesSchema, identifierSchema, readInput, statusSchema, type WorkerStatus } from "./contracts.js";
 import { readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, attachClaudeProcess, changeWriter, markClaudeStarted, readWriterSummary, registerWriter } from "./ledger.js";
-import { recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
+import { isPublisherContext, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
+import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
+import type { OperationContext } from "./main-sync-contracts.js";
 
 const launchSchema = recordContextSchema.extend({
   agentRoot: z.string().min(1),
@@ -76,7 +78,9 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
     : `This is mode ${input.mode}. Never write or edit tests. `;
   const prompt = `${definition.prompt}\n\nRuntime binding: work only in ${input.worktree}. `
     + `Resolve this canonical definition's relative resource references against ${join(definition.root, "agents")}. `
-    + "Never start another implementation writer, commit, or push. " + phasePolicy
+    + (isPublisherContext(input)
+      ? "Never start another implementation writer or commit. Normal pushes are permitted only through the owned main-sync publication gate. "
+      : "Never start another implementation writer, commit, or push. ") + phasePolicy
     + (reader ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : "")
     + (input.agentName === "vibe-prototype-worker"
       ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "")
@@ -120,11 +124,24 @@ export async function runWorker(rawInput: unknown) {
   let recordLock = false;
   let discardLock = false;
   let cleanupBlocked = false;
+  let operationContext: OperationContext | undefined;
   try {
     if (input.mode === "record") {
       if (discardPlace) { acquireRecordTurnAt(discardPlace); discardLock = true; }
       acquireRecordTurnAt(place, persistent && lease ? { workerId, lease } : undefined);
       recordLock = true;
+      if (!input.sessionless && input.recordAction) {
+        operationContext = { runtime: "claude", worktree: place.root, agentName: input.agentName,
+          mode: "record", recordAction: input.recordAction, workerId, requestId: input.requestId,
+          lease: randomUUID(), ...(input.publicationPurpose ? { publicationPurpose: input.publicationPurpose } : {}),
+          ...(input.mainSyncTransactionId ? { mainSyncTransactionId: input.mainSyncTransactionId } : {}),
+          ...(input.mainSyncRequestContinuations ? { mainSyncRequestContinuations: input.mainSyncRequestContinuations } : {}) };
+        if (input.mainSyncCiRun) operationContext.mainSyncCiRun = input.mainSyncCiRun;
+        writeFileSync(join(place.dir, "vibe-record-turn.lock", CLAUDE_OPERATION_OWNER), JSON.stringify({
+          context: operationContext, branch: place.branch,
+          ...(persistent && lease ? { primaryOwner: { workerId, lease } } : {}),
+        }), { mode: 0o600, flag: "wx" });
+      }
     }
     writeFileSync(definitionFile, JSON.stringify({ [definition.name]: bound.agent }), { mode: 0o600, flag: "wx" });
     trace = openSync(tracePath, "wx", 0o600);
@@ -142,7 +159,8 @@ export async function runWorker(rawInput: unknown) {
       mode: input.mode, authority: { testAuthoringAuthorized: persistent && input.mode === "handoff" },
       ...(input.sessionless ? { sessionless: input.sessionless } : {}),
       ...(input.discardTarget ? { discardTarget: input.discardTarget } : {}),
-      ...(input.recordAction ? { recordAction: input.recordAction } : {}), input: turnInput }), input.timeoutMs, trace, (processGroupId) => {
+      ...(input.recordAction ? { recordAction: input.recordAction } : {}),
+      ...(operationContext ? { operationContext } : {}), input: turnInput }), input.timeoutMs, trace, (processGroupId) => {
         if (persistent && lease) attachClaudeProcess(input.worktree, workerId, lease, processGroupId);
       });
     if (output.sessionId !== workerId) throw new Error("Claude returned a different session identity; no fresh fallback is permitted");

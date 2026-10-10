@@ -11862,12 +11862,26 @@ var recordModes = {
   },
   "vibe-prototype-worker": { share: ["create_document_version"] }
 };
+var recordActionSchema = external_exports.enum(["progress", "create", "handoff", "assign", "cancel", "redeploy", "flags", "desktop", "share", "discard"]);
+var requestContinuationSchema = external_exports.object({
+  runtime: external_exports.enum(["codex", "claude"]),
+  requestId: identifierSchema,
+  recordAction: external_exports.enum(["flags", "desktop"])
+}).strict();
+var ciRunLocatorSchema = external_exports.object({
+  runId: external_exports.number().int().positive().safe(),
+  attempt: external_exports.number().int().positive().safe()
+}).strict();
 var recordContextSchema = external_exports.object({
   worktree: external_exports.string().min(1),
   agentName: identifierSchema,
   mode: external_exports.enum(["plan", "request", "fix", "handoff", "record"]),
-  recordAction: external_exports.enum(["progress", "create", "handoff", "assign", "cancel", "redeploy", "flags", "desktop", "share", "discard"]).optional(),
+  recordAction: recordActionSchema.optional(),
   exclusiveRecordTurn: external_exports.literal(true).optional(),
+  publicationPurpose: external_exports.enum(["build", "handoff"]).optional(),
+  mainSyncTransactionId: external_exports.string().uuid().optional(),
+  mainSyncRequestContinuations: external_exports.array(requestContinuationSchema).min(1).max(2).optional(),
+  mainSyncCiRun: ciRunLocatorSchema.optional(),
   discardTarget: external_exports.object({
     worktree: external_exports.string().min(1),
     confirmed: external_exports.literal(true),
@@ -11887,7 +11901,19 @@ var recordContextSchema = external_exports.object({
     }).strict() }).strict()
   ]).optional()
 }).strict();
+function isPublisherContext(input) {
+  return input.mode === "record" && input.exclusiveRecordTurn === true && (input.agentName === "vibe-environment-worker" && ["create", "redeploy"].includes(input.recordAction ?? "") || input.agentName === "vibe-prototype-worker" && input.recordAction === "share");
+}
 function resolveRecordContext(input) {
+  if (input.mainSyncCiRun && (input.agentName !== "vibe-change-worker" || input.mode !== "record" || input.recordAction !== "progress" || !input.exclusiveRecordTurn || input.publicationPurpose !== "handoff")) {
+    throw new Error("External CI locators require the actual source handoff-validation grant");
+  }
+  if (input.mainSyncRequestContinuations && (input.agentName !== "vibe-environment-worker" || !isPublisherContext(input))) {
+    throw new Error("Only an actual environment publisher grant may predeclare request continuations");
+  }
+  if (input.mainSyncRequestContinuations && new Set(input.mainSyncRequestContinuations.map((item) => `${item.runtime}:${item.requestId}:${item.recordAction}`)).size !== input.mainSyncRequestContinuations.length) {
+    throw new Error("Parent request continuations must identify distinct exact requests");
+  }
   if (input.recordAction === "discard" && !input.discardTarget) throw new Error("Discard requires parent-held target and confirmation evidence");
   if (input.discardTarget && (input.agentName !== "vibe-setup-worker" || input.mode !== "record" || input.recordAction !== "discard" || !input.exclusiveRecordTurn || input.sessionless?.kind !== "startup")) {
     throw new Error("Discard executes only through setup's exclusive stable-checkout operation");
@@ -11939,7 +11965,7 @@ var releaseSchema = grantSchema.extend({ lease: external_exports.string().uuid()
   lease: external_exports.string().uuid(),
   state: external_exports.enum(["completed", "failed", "canceled"])
 }).strict() }).strict();
-var ownerSchema = external_exports.object({ grant: grantSchema, lease: external_exports.string().uuid(), branch: external_exports.string(), targetDir: external_exports.string().optional() }).strict();
+var nativeRecordOwnerSchema = external_exports.object({ grant: grantSchema, lease: external_exports.string().uuid(), branch: external_exports.string(), targetDir: external_exports.string().optional() }).strict();
 var ownerFile = "native-owner.json";
 function acquireNativeRecord(input) {
   const grant = grantSchema.parse(input);
@@ -11984,7 +12010,7 @@ function releaseNativeRecord(input) {
   const place = grant.sessionless ? checkoutLocation(grant.worktree) : location(grant.worktree);
   grant.worktree = place.root;
   releaseRecordTurnAt(place, (lock) => {
-    const owner = ownerSchema.parse(JSON.parse(readFileSync4(join4(lock, ownerFile), "utf8")));
+    const owner = nativeRecordOwnerSchema.parse(JSON.parse(readFileSync4(join4(lock, ownerFile), "utf8")));
     if (owner.lease !== lease || owner.branch !== place.branch || JSON.stringify(owner.grant) !== JSON.stringify(grant) || stoppedTurn.workerId !== grant.workerId || stoppedTurn.requestId !== grant.requestId || stoppedTurn.lease !== lease) {
       throw new Error("Native record release requires the exact owner's stopped-turn completion evidence");
     }

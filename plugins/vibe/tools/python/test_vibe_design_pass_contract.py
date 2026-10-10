@@ -491,3 +491,42 @@ def test_handoff_metadata_callers_keep_detailed_final_evidence() -> None:
     ticket = section(agent("vibe-ticket-worker"), "## Handoff mode")
     assert "Read detailed artifact contents" in ticket
     assert "Refresh stale packet evidence" in ticket
+
+
+def test_main_sync_callers_use_real_shared_execution_before_first_push_and_handoff() -> None:
+    environment = (REFERENCES / "environment.md").read_text()
+    for required in ("Main-sync before publication", "--prepare-main-sync", "main-sync-validate",
+                     "main-sync-push", "dispatch-inputs", "ROOT", "same", "no-op"):
+        assert required.lower() in environment.lower(), required
+    for path in (VIBE_SKILL, HANDOFF_SKILL):
+        assert "Main-sync before publication" in path.read_text(), path.name
+    publisher = flat(agent("vibe-environment-worker"))
+    assert "main-sync-push" in publisher
+    assert "request-only" in publisher and "flags" in publisher and "desktop" in publisher
+    source = flat(agent("vibe-change-worker"))
+    assert "main-sync-validate" in source
+    assert "committed" in source and "localFix" in source
+    prototype = flat(agent("vibe-prototype-worker"))
+    assert "main-sync-share" in prototype
+    assert "SAME" in prototype and "generator" in prototype
+
+
+def test_main_sync_reviews_preserve_original_authorship_without_guessing_phase() -> None:
+    for name in ("vibe-guardrails-reviewer", "vibe-verify-worker"):
+        text = flat(agent(name))
+        assert "mainSync.featureTestHistory" in text, name
+        assert "identical bytes" in text, name
+        assert "phase" in text and "authoring records" in text, name
+    verify = flat(agent("vibe-verify-worker"))
+    for required in ("Commit dates/presence alone", "unverified", "never retrospectively authorized",
+                     "exact upstream adoption", "newly authored merge assertions"):
+        assert required.lower() in verify.lower(), required
+
+
+def test_main_sync_callers_locally_commit_reviewed_source_before_preparation() -> None:
+    for path in (VIBE_SKILL, HANDOFF_SKILL, REFERENCES / "environment.md"):
+        text = flat(path.read_text())
+        local_commit = text.index("ROOT commits the reviewed deliverable LOCALLY")
+        preparation = text.index("--prepare-main-sync", local_commit)
+        assert local_commit < preparation
+        assert "still unpushed" in text[local_commit:preparation], path.name

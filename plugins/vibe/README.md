@@ -51,6 +51,24 @@ and ticket duties without authoring implementation code. Shared session records,
 ticket sections and change logs stay serialized. Workers never commit; the
 orchestrator retains the commit boundary. New or changed tests wait for handoff,
 while existing tests and Storybook checks run during building.
+Before the first remote publication and again at handoff, an owned transaction
+captures fresh main and prepares an ordinary noncommitting merge. The same writer
+handles conflicts and executes the existing scope-specific checks against the
+exact committed inputs; the orchestrator alone commits. Publication helpers push
+that explicit validated SHA through normal hooks. Dirty source workarounds are
+preserved and block mismatched validation. Flags and Desktop remain request-only
+consumers of matching proof, not publishers. Exact already-published handoff
+results avoid redundant pushes or deployment requests. Imported main changes
+stay distinct from feature scope, while original feature test history remains
+available for phase verification even after main absorbs identical bytes.
+Reviewed deliverables are locally committed first, still unpushed. Independent
+flags/Desktop deployment requests prepare fresh; only publisher-reserved exact
+continuations consume earlier proof. Structured lane discovery prevents unsafe
+automated Electron launches. Preview readiness keeps unsupported E2E explicitly
+incomplete, while final handoff can consume real exact-checkout GitHub evidence
+for that same committed snapshot without chasing main during CI. Workflow main
+SHA, generic log matches and caller PASS are not coverage proof; the consumer
+never dispatches CI or adds a feature PR.
 An existing registered writer retains its original definition root, exact
 binding and actual ID. The root supplies the new table policy through its
 existing continuation; it does not reset or re-register under an updated
@@ -136,11 +154,12 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 
 ## Runtime Files
 
-Version `1.0.5` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.6` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains two skill-contract test modules.
 Runtime helpers and tests live alongside their owning skills, including vibe
 session and prototype records, local-plan publication guards, bundled persistent
-writer state and Claude launch/resume helpers, handoff checks, sweep ownership
+writer state, Claude launch/resume and shared main-sync publication helpers,
+handoff checks, sweep ownership
 and worker recovery, and the work-report renderer. Shared PR-monitor notification delivery
 and manual-QA browser helpers live in `closedloop-core`.

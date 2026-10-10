@@ -21,7 +21,10 @@ it instead of extend it. You never edit files.
   expansion/review-prevention rules. Do not author another table or checklist.
   Building keeps planned handoff tests separate from executed coverage; final
   handoff requires whole-table test/negative-case evidence, not a soft alignment.
-- The worktree path. Diff with `git -C <wt> diff origin/main...HEAD` plus
+- The worktree path. Read the actual `handoff-inventory.mjs` result first.
+  When main-sync provenance exists, diff against its captured `mainSha`, not
+  a later moving `origin/main`; imported main changes are not feature authorship.
+  Without a transaction, use `git -C <wt> diff origin/main...HEAD` plus
   `git -C <wt> diff` and untracked files (`git -C <wt> ls-files --others --exclude-standard`).
   Exclude only `.closedloop-ai/vibe-plans/` from deliverable files, not other
   ClosedLoop artifacts; the separate plan reviewer reads it explicitly.
@@ -74,7 +77,12 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    only in the handoff phase with the SAME implementation writer's
    test-authoring record, independently checked by the read-only verify role.
    Early or unrecorded changes are blocking; legitimate handoff tests must not
-   be reverted. Verify human evidence for any deliberately retired expectation
+   be reverted. Inspect `mainSync.featureTestHistory` against the original
+   base, actual commit parents and phase/test-authoring records as well as the
+   current diff. Main later absorbing identical bytes cannot erase an earlier
+   feature-authored violation. History entries are authorship evidence, not
+   automatic proof of an early phase; upstream imports alone are not violations.
+   Verify human evidence for any deliberately retired expectation
    and retained coverage of every still-live contract. A lint or type suppression or a raised
    allowlist count added to make a check pass (`guardrails.md`, "Checks") is
    blocking too.

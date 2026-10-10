@@ -3,10 +3,10 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import path from "node:path";
 
 /** Executes bounded git reads and operations for the session's exact worktree. */
-export function git(cwd, args) {
+export function git(cwd, args, options = {}) {
   return execFileSync("git", args, {
     cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"], timeout: options.timeout,
   }).trim();
 }
 
