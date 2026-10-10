@@ -133,4 +133,3 @@ function assertTracked(root: string, before: SourceIdentity) {
     throw new MainSyncError("Canonical input preparation changed committed source or lock identity", "NEEDS_CHANGE");
   }
 }
-
