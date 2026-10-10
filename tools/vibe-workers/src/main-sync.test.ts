@@ -1,15 +1,198 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
-import { invokeSync, syncFixture, validateFixture } from "./main-sync-test-fixtures.js";
+import { generatedBiomeFixture, invokeSync, syncFixture, validateFixture } from "./main-sync-test-fixtures.js";
 import { bundleDirectory, graph, recordWrite, writeAgent } from "./test-fixtures.js";
+import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES } from "./main-sync-generated-input.js";
 
 const fixtures: ReturnType<typeof syncFixture>[] = [];
 afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
 function setup(source?: string) { const value = syncFixture(source); fixtures.push(value); return value; }
 
 describe("production main-sync publication CLIs", () => {
+  it("admits only the real canonical committed-input Biome derivative without trimming raw trailing bytes or rewriting it", () => {
+    const value = setup();
+    const generated = generatedBiomeFixture(value);
+    expect(generated.output.endsWith("\n\n")).toBe(true);
+    expect(generated.output).toContain('"project": "none"');
+    expect(generated.output).toContain('"types": "none"');
+    const result = validateFixture(value);
+    expect(result.status, result.stdout).toBe(0);
+    const publisher = value.start("redeploy");
+    try {
+      const pushed = invokeSync(value, "push", publisher.context);
+      expect(pushed.status, pushed.stdout).toBe(0);
+      const request = invokeSync(value, "request", publisher.context);
+      expect(request.status, request.stdout).toBe(0);
+      expect(value.git(["ls-remote", "origin", "refs/heads/vibe/test"]).split("\t")[0]).toBe(value.git(["rev-parse", "HEAD"]));
+      expect(readFileSync(generated.artifact, "utf8")).toBe(generated.output);
+      expect(readFileSync(join(value.worktree, "biome.jsonc"), "utf8")).toBe(generated.config);
+      expect(value.calls()).toContain('"check:source-gates"');
+      expect(existsSync(join(value.metadata, "request.json"))).toBe(true);
+    } finally { publisher.finish(); }
+  }, 30000);
+  it.each(["edited", "trimmed", "stale", "dirty-config", "staged-config", "dirty-owner", "committed-owner", "committed-import",
+    "missing-owner", "symlink", "dangling-symlink", "directory", "oversized", "unignored", "nested", "suffix", "temporary", "mixed-source", "pure-throw"] as const)(
+    "rejects %s generated-input counterfactual before capture/check/receipt/publication and preserves files", (failure) => {
+    const value = setup(); const generated = generatedBiomeFixture(value);
+    let inspected = generated.artifact;
+    let expectedError = /generated.*differs|committed validation inputs/i;
+    if (failure === "edited") writeFileSync(generated.artifact, `${generated.output}// altered\n`);
+    if (failure === "trimmed") writeFileSync(generated.artifact, generated.output.trimEnd());
+    if (failure === "stale" || failure === "dirty-config" || failure === "staged-config") {
+      value.write("biome.jsonc", generated.config.replace('"first": "error"', '"first": "warn"'));
+      if (failure !== "dirty-config") value.git(["add", "biome.jsonc"]);
+      if (failure === "stale") value.git(["commit", "-m", "New committed config with stale derivative"]);
+    }
+    if (failure === "dirty-owner" || failure === "committed-owner") {
+      value.write("lint-staged.config.js", `${readFileSync(join(value.worktree, "lint-staged.config.js"), "utf8")}\nwriteFileSync('.git/producer-executed', 'unsafe module');\n`);
+      if (failure === "committed-owner") {
+        value.git(["add", "lint-staged.config.js"]); value.git(["commit", "-m", "Deceptive committed producer"]);
+        expectedError = /producer.*not.*reviewed/i;
+      }
+    }
+    if (failure === "committed-import") {
+      value.write("scripts/exec-git.ts", `${readFileSync(join(value.worktree, "scripts/exec-git.ts"), "utf8")}\nimport {writeFileSync} from 'node:fs'; writeFileSync('.git/producer-executed', 'unsafe import');\n`);
+      value.git(["add", "scripts/exec-git.ts"]); value.git(["commit", "-m", "Deceptive committed import"]);
+      expectedError = /producer.*not.*reviewed/i;
+    }
+    if (failure === "missing-owner") {
+      rmSync(join(value.worktree, "lint-staged.config.js")); value.git(["add", "lint-staged.config.js"]);
+      value.git(["commit", "-m", "Missing committed producer"]);
+      expectedError = /could not verify.*canonical generated/i;
+    }
+    if (failure === "pure-throw") {
+      value.write("biome.jsonc", '{"linter":{"rules":{"first":"error"}}}\n');
+      value.git(["add", "biome.jsonc"]); value.git(["commit", "-m", "Config outside actual pure transform contract"]);
+      expectedError = /read-only canonical generated-input probe failed/i;
+    }
+    if (failure === "symlink") {
+      const target = join(value.metadata, "preserved-derived.jsonc"); writeFileSync(target, generated.output);
+      rmSync(generated.artifact); symlinkSync(target, generated.artifact);
+      expectedError = /bounded canonical regular file/i;
+    }
+    if (failure === "dangling-symlink") {
+      rmSync(generated.artifact); symlinkSync(join(value.metadata, "absent-derived.jsonc"), generated.artifact);
+      expectedError = /bounded canonical regular file/i;
+    }
+    if (failure === "oversized") { truncateSync(generated.artifact, MAX_INPUT_BYTES + 1); expectedError = /bounded canonical regular file/i; }
+    if (failure === "directory") { rmSync(generated.artifact); mkdirSync(generated.artifact); expectedError = /bounded canonical regular file/i; }
+    if (failure === "unignored") {
+      value.write(".gitignore", readFileSync(join(value.worktree, ".gitignore"), "utf8").replace("/.biome-noscan.jsonc*\n", ""));
+      value.git(["add", ".gitignore"]); value.git(["commit", "-m", "No ignored derivative contract"]);
+    }
+    if (failure === "nested" || failure === "suffix" || failure === "temporary") {
+      rmSync(generated.artifact);
+      const path = failure === "nested" ? "apps/app/.biome-noscan.jsonc" : failure === "suffix" ? ".biome-noscan.jsonc.extra.jsonc" : ".biome-noscan.jsonc.12345";
+      value.write(path, generated.output); inspected = join(value.worktree, path);
+      expectedError = /uncommitted executable|unsupported generated.*path/i;
+    }
+    if (failure === "mixed-source") {
+      value.write(".gitignore", `${readFileSync(join(value.worktree, ".gitignore"), "utf8")}\nignored-probe.ts\n`);
+      value.git(["add", ".gitignore"]); value.git(["commit", "-m", "Ignored authored input control"]);
+      value.write("ignored-probe.ts", "export const unrelated = 'must still block';\n");
+      expectedError = /uncommitted executable ignored-probe.ts/i;
+    }
+    const contents = failure === "oversized" || failure === "directory" || failure === "dangling-symlink" ? undefined : readFileSync(inspected);
+    const stat = lstatSync(inspected);
+    const session = readFileSync(join(value.metadata, "vibe-session.json"), "utf8");
+    const head = value.git(["rev-parse", "HEAD"]); const turn = value.start("redeploy");
+    try {
+      const denied = invokeSync(value, "prepare", turn.context);
+      expect(denied.status, denied.stdout).toBe(1);
+      expect(denied.json?.status).toBe("NEEDS_CHANGE");
+      expect(String(denied.json?.error)).toMatch(expectedError);
+      expect(existsSync(join(value.metadata, "FETCH_HEAD"))).toBe(false);
+      expect(existsSync(join(value.metadata, "MERGE_HEAD"))).toBe(false);
+      expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(false);
+      expect(existsSync(join(value.metadata, "request.json"))).toBe(false);
+      expect(existsSync(join(value.metadata, "producer-executed"))).toBe(false);
+      if (existsSync(join(value.metadata, "validation-calls.jsonl"))) {
+        expect(value.calls().split("\n").filter(Boolean).map((line) => JSON.parse(line))).not.toContainEqual(["check:source-gates"]);
+      }
+      expect(value.git(["rev-parse", "HEAD"])).toBe(head);
+      expect(value.git(["ls-remote", "origin", "refs/heads/vibe/test"])).toBe("");
+      expect(readFileSync(join(value.metadata, "vibe-session.json"), "utf8")).toBe(session);
+      expect(lstatSync(inspected).size).toBe(stat.size);
+      expect(lstatSync(inspected).isSymbolicLink()).toBe(stat.isSymbolicLink());
+      if (contents) expect(readFileSync(inspected)).toEqual(contents);
+    } finally { turn.finish(); }
+  }, 30000);
+  it.each(["malformed", "conflicting-exit", "timeout", "changed-source"] as const)(
+    "rejects %s pure-loader evidence before any transaction and does not expose dependency output", (failure) => {
+    const value = setup(); const generated = generatedBiomeFixture(value);
+    const pnpm = join(value.bin, "pnpm"); const original = readFileSync(pnpm, "utf8");
+    if (failure === "changed-source") {
+      writeFileSync(pnpm, original.replace("process.stdout.write(run.stdout || '');",
+        "fs.writeFileSync(path.join(process.cwd(),'apps/app/probe.ts'),'source changed after pure probe'); process.stdout.write(run.stdout || '');"));
+    } else {
+      const exit = failure === "malformed" ? "process.stdout.write('not-json'); process.exit(0);" : failure === "timeout"
+        ? "setInterval(() => {}, 1000); return;"
+        : "process.stdout.write(JSON.stringify({path:path.join(process.cwd(),'.biome-noscan.jsonc'),bytes:fs.statSync(path.join(process.cwd(),'.biome-noscan.jsonc')).size,sha256:require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(process.cwd(),'.biome-noscan.jsonc'))).digest('hex')})); process.exit(1);";
+      writeFileSync(pnpm, original.replace("if (args[0] === 'exec' && args[1] === 'node') {",
+        `if (args[0] === 'exec' && args[1] === 'node') { process.stderr.write('RAW_LOADER_SECRET'); ${exit}`));
+    }
+    const turn = value.start("redeploy");
+    try {
+      const denied = invokeSync(value, "prepare", turn.context);
+      expect(denied.status, denied.stdout).toBe(1);
+      expect(denied.json?.status).toBe("NEEDS_CHANGE");
+      expect(String(denied.json?.error)).toMatch(failure === "changed-source" ? /committed validation inputs differ.*probe.ts/i : /canonical generated/i);
+      expect(`${denied.stdout}${denied.stderr}`).not.toContain("RAW_LOADER_SECRET");
+      expect(existsSync(join(value.metadata, "FETCH_HEAD"))).toBe(false);
+      expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(false);
+      expect(existsSync(join(value.metadata, "request.json"))).toBe(false);
+      expect(value.git(["ls-remote", "origin", "refs/heads/vibe/test"])).toBe("");
+      expect(readFileSync(generated.artifact, "utf8")).toBe(generated.output);
+      if (failure === "changed-source") expect(readFileSync(join(value.worktree, "apps/app/probe.ts"), "utf8")).toBe("source changed after pure probe");
+    } finally { turn.finish(); }
+  }, 30000);
+  it("rejects a changed derivative during a successful source check without issuing a validation receipt", () => {
+    const value = setup(); const generated = generatedBiomeFixture(value);
+    const prepare = value.start("redeploy");
+    try { expect(invokeSync(value, "prepare", prepare.context).status).toBe(0); } finally { prepare.finish(); }
+    const pnpm = join(value.bin, "pnpm");
+    writeFileSync(pnpm, readFileSync(pnpm, "utf8").replace("const command = args[0];",
+      "if (args[0] === 'check:source-gates') fs.appendFileSync(path.join(process.cwd(),'.biome-noscan.jsonc'),'// changed during successful check');\nconst command = args[0];"));
+    const source = value.sourceTurn();
+    try {
+      const denied = invokeSync(value, "validate", source.context);
+      expect(denied.status, denied.stdout).toBe(1);
+      expect(String(denied.json?.error)).toMatch(/generated.*differs.*derivative/i);
+      expect(JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8")).validation).toBeUndefined();
+      const calls = value.calls().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      expect(calls).toContainEqual(["check:source-gates"]);
+      expect(calls).not.toContainEqual(["typecheck:affected"]);
+      expect(readFileSync(generated.artifact, "utf8")).toBe(`${generated.output}// changed during successful check`);
+      expect(value.git(["ls-remote", "origin", "refs/heads/vibe/test"])).toBe("");
+      expect(existsSync(join(value.metadata, "request.json"))).toBe(false);
+    } finally { source.finish(); }
+  }, 30000);
+  it("rechecks edited derivatives at push and request consumption while allowing exact absent/recreated same-source retry", () => {
+    const value = setup(); const generated = generatedBiomeFixture(value); validateFixture(value);
+    const original = readFileSync(join(value.metadata, "vibe-session.json"), "utf8");
+    const publisher = value.start("redeploy");
+    try {
+      writeFileSync(generated.artifact, `${generated.output}// changed before push\n`);
+      const deniedPush = invokeSync(value, "push", publisher.context);
+      expect(deniedPush.status, deniedPush.stdout).toBe(1);
+      expect(String(deniedPush.json?.error)).toMatch(/generated.*differs.*derivative/i);
+      expect(value.git(["ls-remote", "origin", "refs/heads/vibe/test"])).toBe("");
+      expect(readFileSync(join(value.metadata, "vibe-session.json"), "utf8")).toBe(original);
+      rmSync(generated.artifact);
+      expect(invokeSync(value, "push", publisher.context).status).toBe(0);
+      writeFileSync(generated.artifact, `${generated.output}// changed before request\n`);
+      const deniedRequest = invokeSync(value, "request", publisher.context);
+      expect(deniedRequest.status, deniedRequest.stdout).toBe(1);
+      expect(existsSync(join(value.metadata, "request.json"))).toBe(false);
+      expect(readFileSync(join(value.metadata, "vibe-session.json"), "utf8")).toBe(original);
+      writeFileSync(generated.artifact, generated.derive());
+      expect(invokeSync(value, "request", publisher.context).status).toBe(0);
+      expect(readFileSync(generated.artifact, "utf8")).toBe(generated.output);
+      expect(value.git(["ls-remote", "origin", "refs/heads/vibe/test"]).split("\t")[0]).toBe(value.git(["rev-parse", "HEAD"]));
+    } finally { publisher.finish(); }
+  }, 30000);
   it("requires fresh transaction admission before a request-only flags or Desktop caller writes inputs", () => {
     const value = setup();
     for (const action of ["flags", "desktop"] as const) {

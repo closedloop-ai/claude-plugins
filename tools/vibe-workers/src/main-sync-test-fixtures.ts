@@ -1,10 +1,16 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { acquireNativeRecord, releaseNativeRecord } from "./native-record.js";
 import { changeWriter, registerWriter } from "./ledger.js";
 import { bundleDirectory, fixture, graph } from "./test-fixtures.js";
 import type { RequestContinuation } from "./record-context.js";
+import { z } from "zod";
+
+const producerFixtureSchema = z.object({ purpose: z.string(), origin: z.object({ repository: z.literal("closedloop-ai/symphony-alpha"),
+  commit: z.literal("3dd896dfcecd5b14940fbebe3a10f969bcb8c93e"), license: z.literal("Apache-2.0"), copyright: z.string() }).strict(),
+  files: z.array(z.object({ path: z.enum(["lint-staged.config.js", "scripts/exec-git.ts", "LICENSE"]), gitBlob: z.string(), sha256: z.string(), content: z.string() }).strict()).length(3) }).strict();
 
 export function syncFixture(source = "committed-good") {
   const value = fixture();
@@ -52,7 +58,7 @@ const args = process.argv.slice(2);
 fs.appendFileSync(path.join(process.cwd(), '.git', 'validation-calls.jsonl'), JSON.stringify(args) + '\n');
 if (args[0] === 'exec' && args[1] === 'node') {
   const cp = require('node:child_process');
-  const run = cp.spawnSync(process.execPath, args.slice(4), {cwd:process.cwd(), encoding:'utf8'});
+  const run = cp.spawnSync(process.execPath, args.slice(4), {cwd:process.cwd(), encoding:'utf8', input:fs.readFileSync(0,'utf8')});
   process.stdout.write(run.stdout || ''); process.stderr.write(run.stderr || ''); process.exit(run.status ?? 1);
 }
 if (args[0] === 'test:lanes' && args.includes('--exec') && fs.existsSync(path.join(process.cwd(), 'apps/desktop/test/reveal-window.spec.ts'))) {
@@ -154,4 +160,32 @@ export function invokeSync(value: ReturnType<typeof syncFixture>, command: strin
     env: { ...process.env, PATH: `${value.bin}:${process.env.PATH}` } });
   if (result.error) throw result.error;
   return { ...result, json: result.stdout.trim() ? JSON.parse(result.stdout) as Record<string, unknown> : undefined };
+}
+
+/** Seeds only temporary synthetic Git with opaque reviewed Source test data and invokes its real pure export. */
+export function generatedBiomeFixture(value: ReturnType<typeof syncFixture>) {
+  const data = producerFixtureSchema.parse(JSON.parse(readFileSync(new URL("./fixtures/symphony-biome-noscan-producer.json", import.meta.url), "utf8")));
+  for (const file of data.files) {
+    const bytes = Buffer.from(file.content);
+    if (createHash("sha256").update(bytes).digest("hex") !== file.sha256
+      || createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex") !== file.gitBlob) {
+      throw new Error("Opaque Source producer fixture identity changed");
+    }
+    value.write(file.path, file.content);
+  }
+  value.write(".gitignore", `${readFileSync(join(value.worktree, ".gitignore"), "utf8")}\n/.biome-noscan.jsonc*\n`);
+  const config = '{\n  "linter": {\n    "domains": {\n      "project": "all",\n      "types": "all"\n    },\n    "rules": {"first": "error", "second": "warn"}\n  }\n}\n\n';
+  value.write("biome.jsonc", config);
+  value.git(["add", "."]); value.git(["commit", "-m", "Canonical Source producer test data"]);
+  const derive = () => {
+    const result = spawnSync(process.execPath, ["--input-type=module", "--eval",
+      "import {readFileSync} from 'node:fs'; import {noScanBiomeConfig} from './lint-staged.config.js'; process.stdout.write(noScanBiomeConfig(readFileSync('biome.jsonc','utf8')));"],
+      { cwd: value.worktree, encoding: "utf8", timeout: 10000, maxBuffer: 1024 * 1024 });
+    if (result.error || result.status !== 0) throw new Error(result.stderr || "Actual Source fixture pure transform failed");
+    return result.stdout;
+  };
+  const artifact = join(value.worktree, ".biome-noscan.jsonc");
+  const output = derive();
+  writeFileSync(artifact, output);
+  return { artifact, config, output, derive };
 }
