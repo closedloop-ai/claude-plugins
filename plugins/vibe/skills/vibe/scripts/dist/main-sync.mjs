@@ -21922,10 +21922,10 @@ ${lanes.join("\n")}
                   const propertyNameOrValueStart = pos;
                   const propertyNameOrValue = scanWordCharacters();
                   if (charCodeChecked(pos) === 61) {
-                    const propertyName = nonBinaryUnicodeProperties.get(propertyNameOrValue);
+                    const propertyName2 = nonBinaryUnicodeProperties.get(propertyNameOrValue);
                     if (pos === propertyNameOrValueStart) {
                       error2(Diagnostics.Expected_a_Unicode_property_name);
-                    } else if (propertyName === void 0) {
+                    } else if (propertyName2 === void 0) {
                       error2(Diagnostics.Unknown_Unicode_property_name, propertyNameOrValueStart, pos - propertyNameOrValueStart);
                       const suggestion = getSpellingSuggestion(propertyNameOrValue, nonBinaryUnicodeProperties.keys(), identity);
                       if (suggestion) {
@@ -21937,9 +21937,9 @@ ${lanes.join("\n")}
                     const propertyValue = scanWordCharacters();
                     if (pos === propertyValueStart) {
                       error2(Diagnostics.Expected_a_Unicode_property_value);
-                    } else if (propertyName !== void 0 && !valuesOfNonBinaryUnicodeProperties[propertyName].has(propertyValue)) {
+                    } else if (propertyName2 !== void 0 && !valuesOfNonBinaryUnicodeProperties[propertyName2].has(propertyValue)) {
                       error2(Diagnostics.Unknown_Unicode_property_value, propertyValueStart, pos - propertyValueStart);
-                      const suggestion = getSpellingSuggestion(propertyValue, valuesOfNonBinaryUnicodeProperties[propertyName], identity);
+                      const suggestion = getSpellingSuggestion(propertyValue, valuesOfNonBinaryUnicodeProperties[propertyName2], identity);
                       if (suggestion) {
                         error2(Diagnostics.Did_you_mean_0, propertyValueStart, pos - propertyValueStart, suggestion);
                       }
@@ -30858,9 +30858,9 @@ ${lanes.join("\n")}
       function isJsonEqual(a, b) {
         return a === b || typeof a === "object" && a !== null && typeof b === "object" && b !== null && equalOwnProperties(a, b, isJsonEqual);
       }
-      function parsePseudoBigInt(stringValue) {
+      function parsePseudoBigInt(stringValue2) {
         let log2Base;
-        switch (stringValue.charCodeAt(1)) {
+        switch (stringValue2.charCodeAt(1)) {
           // "x" in "0x123"
           case 98:
           case 66:
@@ -30875,19 +30875,19 @@ ${lanes.join("\n")}
             log2Base = 4;
             break;
           default:
-            const nIndex = stringValue.length - 1;
+            const nIndex = stringValue2.length - 1;
             let nonZeroStart = 0;
-            while (stringValue.charCodeAt(nonZeroStart) === 48) {
+            while (stringValue2.charCodeAt(nonZeroStart) === 48) {
               nonZeroStart++;
             }
-            return stringValue.slice(nonZeroStart, nIndex) || "0";
+            return stringValue2.slice(nonZeroStart, nIndex) || "0";
         }
-        const startIndex = 2, endIndex = stringValue.length - 1;
+        const startIndex = 2, endIndex = stringValue2.length - 1;
         const bitsNeeded = (endIndex - startIndex) * log2Base;
         const segments = new Uint16Array((bitsNeeded >>> 4) + (bitsNeeded & 15 ? 1 : 0));
         for (let i = endIndex - 1, bitOffset = 0; i >= startIndex; i--, bitOffset += log2Base) {
           const segment = bitOffset >>> 4;
-          const digitChar = stringValue.charCodeAt(i);
+          const digitChar = stringValue2.charCodeAt(i);
           const digit = digitChar <= 57 ? digitChar - 48 : 10 + digitChar - (digitChar <= 70 ? 65 : 97);
           const shiftedDigit = digit << (bitOffset & 15);
           segments[segment] |= shiftedDigit;
@@ -34959,21 +34959,21 @@ ${lanes.join("\n")}
         function updateArrayBindingPattern(node, elements) {
           return node.elements !== elements ? update(createArrayBindingPattern(elements), node) : node;
         }
-        function createBindingElement(dotDotDotToken, propertyName, name, initializer) {
+        function createBindingElement(dotDotDotToken, propertyName2, name, initializer) {
           const node = createBaseDeclaration(
             209
             /* BindingElement */
           );
           node.dotDotDotToken = dotDotDotToken;
-          node.propertyName = asName(propertyName);
+          node.propertyName = asName(propertyName2);
           node.name = asName(name);
           node.initializer = asInitializer(initializer);
           node.transformFlags |= propagateChildFlags(node.dotDotDotToken) | propagateNameFlags(node.propertyName) | propagateNameFlags(node.name) | propagateChildFlags(node.initializer) | (node.dotDotDotToken ? 32768 : 0) | 1024;
           node.flowNode = void 0;
           return node;
         }
-        function updateBindingElement(node, dotDotDotToken, propertyName, name, initializer) {
-          return node.propertyName !== propertyName || node.dotDotDotToken !== dotDotDotToken || node.name !== name || node.initializer !== initializer ? update(createBindingElement(dotDotDotToken, propertyName, name, initializer), node) : node;
+        function updateBindingElement(node, dotDotDotToken, propertyName2, name, initializer) {
+          return node.propertyName !== propertyName2 || node.dotDotDotToken !== dotDotDotToken || node.name !== name || node.initializer !== initializer ? update(createBindingElement(dotDotDotToken, propertyName2, name, initializer), node) : node;
         }
         function createArrayLiteralExpression(elements, multiLine) {
           const node = createBaseNode(
@@ -36356,20 +36356,20 @@ ${lanes.join("\n")}
         function updateNamedImports(node, elements) {
           return node.elements !== elements ? update(createNamedImports(elements), node) : node;
         }
-        function createImportSpecifier(isTypeOnly, propertyName, name) {
+        function createImportSpecifier(isTypeOnly, propertyName2, name) {
           const node = createBaseDeclaration(
             277
             /* ImportSpecifier */
           );
           node.isTypeOnly = isTypeOnly;
-          node.propertyName = propertyName;
+          node.propertyName = propertyName2;
           node.name = name;
           node.transformFlags |= propagateChildFlags(node.propertyName) | propagateChildFlags(node.name);
           node.transformFlags &= ~67108864;
           return node;
         }
-        function updateImportSpecifier(node, isTypeOnly, propertyName, name) {
-          return node.isTypeOnly !== isTypeOnly || node.propertyName !== propertyName || node.name !== name ? update(createImportSpecifier(isTypeOnly, propertyName, name), node) : node;
+        function updateImportSpecifier(node, isTypeOnly, propertyName2, name) {
+          return node.isTypeOnly !== isTypeOnly || node.propertyName !== propertyName2 || node.name !== name ? update(createImportSpecifier(isTypeOnly, propertyName2, name), node) : node;
         }
         function createExportAssignment2(modifiers, isExportEquals, expression) {
           const node = createBaseDeclaration(
@@ -36431,21 +36431,21 @@ ${lanes.join("\n")}
         function updateNamedExports(node, elements) {
           return node.elements !== elements ? update(createNamedExports(elements), node) : node;
         }
-        function createExportSpecifier(isTypeOnly, propertyName, name) {
+        function createExportSpecifier(isTypeOnly, propertyName2, name) {
           const node = createBaseNode(
             282
             /* ExportSpecifier */
           );
           node.isTypeOnly = isTypeOnly;
-          node.propertyName = asName(propertyName);
+          node.propertyName = asName(propertyName2);
           node.name = asName(name);
           node.transformFlags |= propagateChildFlags(node.propertyName) | propagateChildFlags(node.name);
           node.transformFlags &= ~67108864;
           node.jsDoc = void 0;
           return node;
         }
-        function updateExportSpecifier(node, isTypeOnly, propertyName, name) {
-          return node.isTypeOnly !== isTypeOnly || node.propertyName !== propertyName || node.name !== name ? update(createExportSpecifier(isTypeOnly, propertyName, name), node) : node;
+        function updateExportSpecifier(node, isTypeOnly, propertyName2, name) {
+          return node.isTypeOnly !== isTypeOnly || node.propertyName !== propertyName2 || node.name !== name ? update(createExportSpecifier(isTypeOnly, propertyName2, name), node) : node;
         }
         function createMissingDeclaration() {
           const node = createBaseDeclaration(
@@ -37499,11 +37499,11 @@ ${lanes.join("\n")}
         function createArrayConcatCall(array, argumentsList) {
           return createMethodCall(array, "concat", argumentsList);
         }
-        function createObjectDefinePropertyCall(target, propertyName, attributes) {
-          return createGlobalMethodCall("Object", "defineProperty", [target, asExpression(propertyName), attributes]);
+        function createObjectDefinePropertyCall(target, propertyName2, attributes) {
+          return createGlobalMethodCall("Object", "defineProperty", [target, asExpression(propertyName2), attributes]);
         }
-        function createObjectGetOwnPropertyDescriptorCall(target, propertyName) {
-          return createGlobalMethodCall("Object", "getOwnPropertyDescriptor", [target, asExpression(propertyName)]);
+        function createObjectGetOwnPropertyDescriptorCall(target, propertyName2) {
+          return createGlobalMethodCall("Object", "getOwnPropertyDescriptor", [target, asExpression(propertyName2)]);
         }
         function createReflectGetCall(target, propertyKey, receiver) {
           return createGlobalMethodCall("Reflect", "get", receiver ? [target, propertyKey, receiver] : [target, propertyKey]);
@@ -37511,9 +37511,9 @@ ${lanes.join("\n")}
         function createReflectSetCall(target, propertyKey, value, receiver) {
           return createGlobalMethodCall("Reflect", "set", receiver ? [target, propertyKey, value, receiver] : [target, propertyKey, value]);
         }
-        function tryAddPropertyAssignment(properties, propertyName, expression) {
+        function tryAddPropertyAssignment(properties, propertyName2, expression) {
           if (expression) {
-            properties.push(createPropertyAssignment(propertyName, expression));
+            properties.push(createPropertyAssignment(propertyName2, expression));
             return true;
           }
           return false;
@@ -38619,7 +38619,7 @@ ${lanes.join("\n")}
           );
         }
         function createESDecorateClassElementAccessHasMethod(elementName) {
-          const propertyName = elementName.computed ? elementName.name : isIdentifier(elementName.name) ? factory2.createStringLiteralFromNode(elementName.name) : elementName.name;
+          const propertyName2 = elementName.computed ? elementName.name : isIdentifier(elementName.name) ? factory2.createStringLiteralFromNode(elementName.name) : elementName.name;
           return factory2.createPropertyAssignment(
             "has",
             factory2.createArrowFunction(
@@ -38639,7 +38639,7 @@ ${lanes.join("\n")}
               /*equalsGreaterThanToken*/
               void 0,
               factory2.createBinaryExpression(
-                propertyName,
+                propertyName2,
                 103,
                 factory2.createIdentifier("obj")
               )
@@ -38757,9 +38757,9 @@ ${lanes.join("\n")}
           const propertyNames = [];
           let computedTempVariableOffset = 0;
           for (let i = 0; i < elements.length - 1; i++) {
-            const propertyName = getPropertyNameOfBindingOrAssignmentElement(elements[i]);
-            if (propertyName) {
-              if (isComputedPropertyName(propertyName)) {
+            const propertyName2 = getPropertyNameOfBindingOrAssignmentElement(elements[i]);
+            if (propertyName2) {
+              if (isComputedPropertyName(propertyName2)) {
                 Debug.assertIsDefined(computedTempVariables, "Encountered computed property name but 'computedTempVariables' argument was not provided.");
                 const temp = computedTempVariables[computedTempVariableOffset];
                 computedTempVariableOffset++;
@@ -38775,7 +38775,7 @@ ${lanes.join("\n")}
                   )
                 );
               } else {
-                propertyNames.push(factory2.createStringLiteralFromNode(propertyName));
+                propertyNames.push(factory2.createStringLiteralFromNode(propertyName2));
               }
             }
           }
@@ -40884,28 +40884,28 @@ ${lanes.join("\n")}
         return void 0;
       }
       function getPropertyNameOfBindingOrAssignmentElement(bindingElement) {
-        const propertyName = tryGetPropertyNameOfBindingOrAssignmentElement(bindingElement);
-        Debug.assert(!!propertyName || isSpreadAssignment(bindingElement), "Invalid property name for binding element.");
-        return propertyName;
+        const propertyName2 = tryGetPropertyNameOfBindingOrAssignmentElement(bindingElement);
+        Debug.assert(!!propertyName2 || isSpreadAssignment(bindingElement), "Invalid property name for binding element.");
+        return propertyName2;
       }
       function tryGetPropertyNameOfBindingOrAssignmentElement(bindingElement) {
         switch (bindingElement.kind) {
           case 209:
             if (bindingElement.propertyName) {
-              const propertyName = bindingElement.propertyName;
-              if (isPrivateIdentifier(propertyName)) {
-                return Debug.failBadSyntaxKind(propertyName);
+              const propertyName2 = bindingElement.propertyName;
+              if (isPrivateIdentifier(propertyName2)) {
+                return Debug.failBadSyntaxKind(propertyName2);
               }
-              return isComputedPropertyName(propertyName) && isStringOrNumericLiteral(propertyName.expression) ? propertyName.expression : propertyName;
+              return isComputedPropertyName(propertyName2) && isStringOrNumericLiteral(propertyName2.expression) ? propertyName2.expression : propertyName2;
             }
             break;
           case 304:
             if (bindingElement.name) {
-              const propertyName = bindingElement.name;
-              if (isPrivateIdentifier(propertyName)) {
-                return Debug.failBadSyntaxKind(propertyName);
+              const propertyName2 = bindingElement.name;
+              if (isPrivateIdentifier(propertyName2)) {
+                return Debug.failBadSyntaxKind(propertyName2);
               }
-              return isComputedPropertyName(propertyName) && isStringOrNumericLiteral(propertyName.expression) ? propertyName.expression : propertyName;
+              return isComputedPropertyName(propertyName2) && isStringOrNumericLiteral(propertyName2.expression) ? propertyName2.expression : propertyName2;
             }
             break;
           case 306:
@@ -48071,11 +48071,11 @@ ${lanes.join("\n")}
             /* DotDotDotToken */
           );
           const tokenIsIdentifier = isBindingIdentifier();
-          let propertyName = parsePropertyName();
+          let propertyName2 = parsePropertyName();
           let name;
           if (tokenIsIdentifier && token() !== 59) {
-            name = propertyName;
-            propertyName = void 0;
+            name = propertyName2;
+            propertyName2 = void 0;
           } else {
             parseExpected(
               59
@@ -48084,7 +48084,7 @@ ${lanes.join("\n")}
             name = parseIdentifierOrPattern();
           }
           const initializer = parseInitializer();
-          return finishNode(factory2.createBindingElement(dotDotDotToken, propertyName, name, initializer), pos);
+          return finishNode(factory2.createBindingElement(dotDotDotToken, propertyName2, name, initializer), pos);
         }
         function parseObjectBindingPattern() {
           const pos = getNodePos();
@@ -49105,7 +49105,7 @@ ${lanes.join("\n")}
           let checkIdentifierStart = scanner2.getTokenStart();
           let checkIdentifierEnd = scanner2.getTokenEnd();
           let isTypeOnly = false;
-          let propertyName;
+          let propertyName2;
           let canParseAsKeyword = true;
           let name = parseModuleExportName(parseIdentifierName);
           if (name.kind === 80 && name.escapedText === "type") {
@@ -49115,16 +49115,16 @@ ${lanes.join("\n")}
                 const secondAs = parseIdentifierName();
                 if (canParseModuleExportName()) {
                   isTypeOnly = true;
-                  propertyName = firstAs;
+                  propertyName2 = firstAs;
                   name = parseModuleExportName(parseNameWithKeywordCheck);
                   canParseAsKeyword = false;
                 } else {
-                  propertyName = name;
+                  propertyName2 = name;
                   name = secondAs;
                   canParseAsKeyword = false;
                 }
               } else if (canParseModuleExportName()) {
-                propertyName = name;
+                propertyName2 = name;
                 canParseAsKeyword = false;
                 name = parseModuleExportName(parseNameWithKeywordCheck);
               } else {
@@ -49137,7 +49137,7 @@ ${lanes.join("\n")}
             }
           }
           if (canParseAsKeyword && token() === 130) {
-            propertyName = name;
+            propertyName2 = name;
             parseExpected(
               130
               /* AsKeyword */
@@ -49156,7 +49156,7 @@ ${lanes.join("\n")}
               parseErrorAt(checkIdentifierStart, checkIdentifierEnd, Diagnostics.Identifier_expected);
             }
           }
-          const node = kind === 277 ? factory2.createImportSpecifier(isTypeOnly, propertyName, name) : factory2.createExportSpecifier(isTypeOnly, propertyName, name);
+          const node = kind === 277 ? factory2.createImportSpecifier(isTypeOnly, propertyName2, name) : factory2.createExportSpecifier(isTypeOnly, propertyName2, name);
           return finishNode(node, pos);
           function parseNameWithKeywordCheck() {
             checkIdentifierIsKeyword = isKeyword(token()) && !isIdentifier2();
@@ -53970,10 +53970,10 @@ ${lanes.join("\n")}
           if (extendedConfig && isSuccessfulParsedTsconfig(extendedConfig)) {
             const extendsRaw = extendedConfig.raw;
             let relativeDifference;
-            const setPropertyInResultIfNotUndefined = (propertyName) => {
-              if (ownConfig.raw[propertyName]) return;
-              if (extendsRaw[propertyName]) {
-                result[propertyName] = map(extendsRaw[propertyName], (path2) => startsWithConfigDirTemplate(path2) || isRootedDiskPath(path2) ? path2 : combinePaths(
+            const setPropertyInResultIfNotUndefined = (propertyName2) => {
+              if (ownConfig.raw[propertyName2]) return;
+              if (extendsRaw[propertyName2]) {
+                result[propertyName2] = map(extendsRaw[propertyName2], (path2) => startsWithConfigDirTemplate(path2) || isRootedDiskPath(path2) ? path2 : combinePaths(
                   relativeDifference || (relativeDifference = convertToRelativePath(getDirectoryPath(extendedConfigPath), basePath, createGetCanonicalFileName(host.useCaseSensitiveFileNames))),
                   path2
                 ));
@@ -62364,9 +62364,9 @@ ${lanes.join("\n")}
             const node = getParseTreeNode(nodeIn, canHaveConstantValue);
             return node ? getConstantValue2(node) : void 0;
           },
-          isValidPropertyAccess: (nodeIn, propertyName) => {
+          isValidPropertyAccess: (nodeIn, propertyName2) => {
             const node = getParseTreeNode(nodeIn, isPropertyAccessOrQualifiedNameOrImportTypeNode);
-            return !!node && isValidPropertyAccess(node, escapeLeadingUnderscores(propertyName));
+            return !!node && isValidPropertyAccess(node, escapeLeadingUnderscores(propertyName2));
           },
           isValidPropertyAccessForCompletions: (nodeIn, type, property) => {
             const node = getParseTreeNode(nodeIn, isPropertyAccessExpression);
@@ -68186,7 +68186,7 @@ ${lanes.join("\n")}
               }
             }
             context.enclosingDeclaration = propertySymbol.valueDeclaration || ((_a = propertySymbol.declarations) == null ? void 0 : _a[0]) || saveEnclosingDeclaration;
-            const propertyName = getPropertyNameNodeForSymbol(propertySymbol, context);
+            const propertyName2 = getPropertyNameNodeForSymbol(propertySymbol, context);
             context.enclosingDeclaration = saveEnclosingDeclaration;
             context.approximateLength += symbolName(propertySymbol).length + 1;
             if (propertySymbol.flags & 98304) {
@@ -68209,7 +68209,7 @@ ${lanes.join("\n")}
                     typeElements.push(
                       setCommentRange2(
                         context,
-                        signatureToSignatureDeclarationHelper(symbolMapper ? instantiateSignature(getterSignature, symbolMapper) : getterSignature, 178, context, { name: propertyName }),
+                        signatureToSignatureDeclarationHelper(symbolMapper ? instantiateSignature(getterSignature, symbolMapper) : getterSignature, 178, context, { name: propertyName2 }),
                         getterDeclaration
                       )
                     );
@@ -68224,7 +68224,7 @@ ${lanes.join("\n")}
                     typeElements.push(
                       setCommentRange2(
                         context,
-                        signatureToSignatureDeclarationHelper(symbolMapper ? instantiateSignature(setterSignature, symbolMapper) : setterSignature, 179, context, { name: propertyName }),
+                        signatureToSignatureDeclarationHelper(symbolMapper ? instantiateSignature(setterSignature, symbolMapper) : setterSignature, 179, context, { name: propertyName2 }),
                         setterDeclaration
                       )
                     );
@@ -68250,7 +68250,7 @@ ${lanes.join("\n")}
                   typeElements.push(
                     setCommentRange2(
                       context,
-                      signatureToSignatureDeclarationHelper(fakeGetterSignature, 178, context, { name: propertyName }),
+                      signatureToSignatureDeclarationHelper(fakeGetterSignature, 178, context, { name: propertyName2 }),
                       propDeclaration
                     )
                   );
@@ -68272,7 +68272,7 @@ ${lanes.join("\n")}
                     /* None */
                   );
                   typeElements.push(
-                    signatureToSignatureDeclarationHelper(fakeSetterSignature, 179, context, { name: propertyName })
+                    signatureToSignatureDeclarationHelper(fakeSetterSignature, 179, context, { name: propertyName2 })
                   );
                   return;
                 }
@@ -68289,7 +68289,7 @@ ${lanes.join("\n")}
                 /* Call */
               );
               for (const signature of signatures) {
-                const methodDeclaration = signatureToSignatureDeclarationHelper(signature, 174, context, { name: propertyName, questionToken: optionalToken });
+                const methodDeclaration = signatureToSignatureDeclarationHelper(signature, 174, context, { name: propertyName2, questionToken: optionalToken });
                 typeElements.push(preserveCommentsOn(methodDeclaration, signature.declaration || propertySymbol.valueDeclaration));
               }
               if (signatures.length || !optionalToken) {
@@ -68327,7 +68327,7 @@ ${lanes.join("\n")}
             }
             const propertySignature = factory.createPropertySignature(
               modifiers,
-              propertyName,
+              propertyName2,
               optionalToken,
               propertyTypeNode
             );
@@ -68611,8 +68611,8 @@ ${lanes.join("\n")}
               reportNonSerializableProperty(name) {
                 markError(() => oldTracker.reportNonSerializableProperty(name));
               },
-              reportPrivateInBaseOfClassExpression(propertyName) {
-                markError(() => oldTracker.reportPrivateInBaseOfClassExpression(propertyName));
+              reportPrivateInBaseOfClassExpression(propertyName2) {
+                markError(() => oldTracker.reportPrivateInBaseOfClassExpression(propertyName2));
               },
               trackSymbol(sym, decl, meaning) {
                 (trackedSymbols ?? (trackedSymbols = [])).push([sym, decl, meaning]);
@@ -70901,8 +70901,8 @@ ${lanes.join("\n")}
                 case 209:
                   if (((_b = (_a2 = node.parent) == null ? void 0 : _a2.parent) == null ? void 0 : _b.kind) === 261) {
                     const specifier2 = getSpecifierForModuleSymbol(target.parent || target, context);
-                    const { propertyName } = node;
-                    const propertyNameText = propertyName && isIdentifier(propertyName) ? idText(propertyName) : void 0;
+                    const { propertyName: propertyName2 } = node;
+                    const propertyNameText = propertyName2 && isIdentifier(propertyName2) ? idText(propertyName2) : void 0;
                     context.approximateLength += 24 + localName.length + specifier2.length + ((propertyNameText == null ? void 0 : propertyNameText.length) ?? 0);
                     addResult(
                       factory.createImportDeclaration(
@@ -71103,8 +71103,8 @@ ${lanes.join("\n")}
                 case 282:
                   const specifier = node.parent.parent.moduleSpecifier;
                   if (specifier) {
-                    const propertyName = node.propertyName;
-                    if (propertyName && moduleExportNameIsDefault(propertyName)) {
+                    const propertyName2 = node.propertyName;
+                    if (propertyName2 && moduleExportNameIsDefault(propertyName2)) {
                       verbatimTargetName = "default";
                     }
                   }
@@ -71997,8 +71997,8 @@ ${lanes.join("\n")}
             });
           }
         }
-        function pushTypeResolution(target, propertyName) {
-          const resolutionCycleStartIndex = findResolutionCycleStartIndex(target, propertyName);
+        function pushTypeResolution(target, propertyName2) {
+          const resolutionCycleStartIndex = findResolutionCycleStartIndex(target, propertyName2);
           if (resolutionCycleStartIndex >= 0) {
             const { length: length2 } = resolutionTargets;
             for (let i = resolutionCycleStartIndex; i < length2; i++) {
@@ -72011,22 +72011,22 @@ ${lanes.join("\n")}
             /*items*/
             true
           );
-          resolutionPropertyNames.push(propertyName);
+          resolutionPropertyNames.push(propertyName2);
           return true;
         }
-        function findResolutionCycleStartIndex(target, propertyName) {
+        function findResolutionCycleStartIndex(target, propertyName2) {
           for (let i = resolutionTargets.length - 1; i >= resolutionStart; i--) {
             if (resolutionTargetHasProperty(resolutionTargets[i], resolutionPropertyNames[i])) {
               return -1;
             }
-            if (resolutionTargets[i] === target && resolutionPropertyNames[i] === propertyName) {
+            if (resolutionTargets[i] === target && resolutionPropertyNames[i] === propertyName2) {
               return i;
             }
           }
           return -1;
         }
-        function resolutionTargetHasProperty(target, propertyName) {
-          switch (propertyName) {
+        function resolutionTargetHasProperty(target, propertyName2) {
+          switch (propertyName2) {
             case 0:
               return !!getSymbolLinks(target).type;
             case 2:
@@ -72046,7 +72046,7 @@ ${lanes.join("\n")}
             case 8:
               return getNodeLinks(target).parameterInitializerContainsUndefined !== void 0;
           }
-          return Debug.assertNever(propertyName);
+          return Debug.assertNever(propertyName2);
         }
         function popTypeResolution() {
           resolutionTargets.pop();
@@ -78635,9 +78635,9 @@ ${lanes.join("\n")}
           if (isComputedPropertyName(name)) {
             return getRegularTypeOfLiteralType(checkComputedPropertyName(name));
           }
-          const propertyName = getPropertyNameForPropertyNameNode(name);
-          if (propertyName !== void 0) {
-            return getStringLiteralType(unescapeLeadingUnderscores(propertyName));
+          const propertyName2 = getPropertyNameForPropertyNameNode(name);
+          if (propertyName2 !== void 0) {
+            return getStringLiteralType(unescapeLeadingUnderscores(propertyName2));
           }
           if (isExpression(name)) {
             return getRegularTypeOfLiteralType(checkExpression(name));
@@ -80912,8 +80912,8 @@ ${lanes.join("\n")}
                 }
                 if (resultObj.errors) {
                   const reportedDiag = resultObj.errors[resultObj.errors.length - 1];
-                  const propertyName = isTypeUsableAsPropertyName(nameType) ? getPropertyNameFromType(nameType) : void 0;
-                  const targetProp = propertyName !== void 0 ? getPropertyOfType(target, propertyName) : void 0;
+                  const propertyName2 = isTypeUsableAsPropertyName(nameType) ? getPropertyNameFromType(nameType) : void 0;
+                  const targetProp = propertyName2 !== void 0 ? getPropertyOfType(target, propertyName2) : void 0;
                   let issuedElaboration = false;
                   if (!targetProp) {
                     const indexInfo = getApplicableIndexInfo(target, nameType);
@@ -80930,7 +80930,7 @@ ${lanes.join("\n")}
                         createDiagnosticForNode(
                           targetNode,
                           Diagnostics.The_expected_type_comes_from_property_0_which_is_declared_here_on_type_1,
-                          propertyName && !(nameType.flags & 8192) ? unescapeLeadingUnderscores(propertyName) : typeToString(nameType),
+                          propertyName2 && !(nameType.flags & 8192) ? unescapeLeadingUnderscores(propertyName2) : typeToString(nameType),
                           typeToString(target)
                         )
                       );
@@ -84169,11 +84169,11 @@ ${lanes.join("\n")}
             (t) => t.flags & 402784252 ? 0 : -1
             /* True */
           );
-          for (const [getDiscriminatingType, propertyName] of discriminators) {
+          for (const [getDiscriminatingType, propertyName2] of discriminators) {
             let matched = false;
             for (let i = 0; i < types.length; i++) {
               if (include[i]) {
-                const targetType = getTypeOfPropertyOrIndexSignatureOfType(types[i], propertyName);
+                const targetType = getTypeOfPropertyOrIndexSignatureOfType(types[i], propertyName2);
                 if (targetType) {
                   if (someType(getDiscriminatingType(), (t) => !!related(t, targetType))) {
                     matched = true;
@@ -84884,8 +84884,8 @@ ${lanes.join("\n")}
           type.regularType = regularNew;
           return regularNew;
         }
-        function createWideningContext(parent2, propertyName, siblings) {
-          return { parent: parent2, propertyName, siblings, resolvedProperties: void 0 };
+        function createWideningContext(parent2, propertyName2, siblings) {
+          return { parent: parent2, propertyName: propertyName2, siblings, resolvedProperties: void 0 };
         }
         function getSiblingsOfContext(context) {
           if (!context.siblings) {
@@ -93115,16 +93115,16 @@ ${lanes.join("\n")}
         function isSelfTypeAccess(name, parent2) {
           return name.kind === 110 || !!parent2 && isEntityNameExpression(name) && parent2 === getResolvedSymbol(getFirstIdentifier(name));
         }
-        function isValidPropertyAccess(node, propertyName) {
+        function isValidPropertyAccess(node, propertyName2) {
           switch (node.kind) {
             case 212:
-              return isValidPropertyAccessWithType(node, node.expression.kind === 108, propertyName, getWidenedType(checkExpression(node.expression)));
+              return isValidPropertyAccessWithType(node, node.expression.kind === 108, propertyName2, getWidenedType(checkExpression(node.expression)));
             case 167:
               return isValidPropertyAccessWithType(
                 node,
                 /*isSuper*/
                 false,
-                propertyName,
+                propertyName2,
                 getWidenedType(checkExpression(node.left))
               );
             case 206:
@@ -93132,7 +93132,7 @@ ${lanes.join("\n")}
                 node,
                 /*isSuper*/
                 false,
-                propertyName,
+                propertyName2,
                 getTypeFromTypeNode(node)
               );
           }
@@ -93147,11 +93147,11 @@ ${lanes.join("\n")}
             property
           );
         }
-        function isValidPropertyAccessWithType(node, isSuper, propertyName, type) {
+        function isValidPropertyAccessWithType(node, isSuper, propertyName2, type) {
           if (isTypeAny(type)) {
             return true;
           }
-          const prop = getPropertyOfType(type, propertyName);
+          const prop = getPropertyOfType(type, propertyName2);
           return !!prop && isPropertyAccessible(
             node,
             isSuper,
@@ -99946,11 +99946,11 @@ ${lanes.join("\n")}
             return type;
           }
           if (isGenericObjectType(objectType2)) {
-            const propertyName = getPropertyNameFromIndex(indexType, accessNode);
-            if (propertyName) {
-              const propertySymbol = forEachType(getApparentType(objectType2), (t) => getPropertyOfType(t, propertyName));
+            const propertyName2 = getPropertyNameFromIndex(indexType, accessNode);
+            if (propertyName2) {
+              const propertySymbol = forEachType(getApparentType(objectType2), (t) => getPropertyOfType(t, propertyName2));
               if (propertySymbol && getDeclarationModifierFlagsFromSymbol(propertySymbol) & 6) {
-                error2(accessNode, Diagnostics.Private_or_protected_member_0_cannot_be_accessed_on_a_type_parameter, unescapeLeadingUnderscores(propertyName));
+                error2(accessNode, Diagnostics.Private_or_protected_member_0_cannot_be_accessed_on_a_type_parameter, unescapeLeadingUnderscores(propertyName2));
                 return errorType;
               }
             }
@@ -109161,11 +109161,11 @@ ${lanes.join("\n")}
             this.inner.reportInaccessibleThisError();
           }
         }
-        reportPrivateInBaseOfClassExpression(propertyName) {
+        reportPrivateInBaseOfClassExpression(propertyName2) {
           var _a;
           if ((_a = this.inner) == null ? void 0 : _a.reportPrivateInBaseOfClassExpression) {
             this.onDiagnosticReported();
-            this.inner.reportPrivateInBaseOfClassExpression(propertyName);
+            this.inner.reportPrivateInBaseOfClassExpression(propertyName2);
           }
         }
         reportInaccessibleUniqueSymbolError() {
@@ -109203,11 +109203,11 @@ ${lanes.join("\n")}
             this.inner.reportNonlocalAugmentation(containingFile, parentSymbol, augmentingSymbol);
           }
         }
-        reportNonSerializableProperty(propertyName) {
+        reportNonSerializableProperty(propertyName2) {
           var _a;
           if ((_a = this.inner) == null ? void 0 : _a.reportNonSerializableProperty) {
             this.onDiagnosticReported();
-            this.inner.reportNonSerializableProperty(propertyName);
+            this.inner.reportNonSerializableProperty(propertyName2);
           }
         }
         onDiagnosticReported() {
@@ -112118,8 +112118,8 @@ ${lanes.join("\n")}
         return false;
       }
       function bindingOrAssignmentElementContainsNonLiteralComputedName(element) {
-        const propertyName = tryGetPropertyNameOfBindingOrAssignmentElement(element);
-        if (propertyName && isComputedPropertyName(propertyName) && !isLiteralExpression(propertyName.expression)) {
+        const propertyName2 = tryGetPropertyNameOfBindingOrAssignmentElement(element);
+        if (propertyName2 && isComputedPropertyName(propertyName2) && !isLiteralExpression(propertyName2.expression)) {
           return true;
         }
         const target = getTargetOfBindingOrAssignmentElement(element);
@@ -112268,16 +112268,16 @@ ${lanes.join("\n")}
         for (let i = 0; i < numElements; i++) {
           const element = elements[i];
           if (!getRestIndicatorOfBindingOrAssignmentElement(element)) {
-            const propertyName = getPropertyNameOfBindingOrAssignmentElement(element);
-            if (flattenContext.level >= 1 && !(element.transformFlags & (32768 | 65536)) && !(getTargetOfBindingOrAssignmentElement(element).transformFlags & (32768 | 65536)) && !isComputedPropertyName(propertyName)) {
+            const propertyName2 = getPropertyNameOfBindingOrAssignmentElement(element);
+            if (flattenContext.level >= 1 && !(element.transformFlags & (32768 | 65536)) && !(getTargetOfBindingOrAssignmentElement(element).transformFlags & (32768 | 65536)) && !isComputedPropertyName(propertyName2)) {
               bindingElements = append(bindingElements, visitNode(element, flattenContext.visitor, isBindingOrAssignmentElement));
             } else {
               if (bindingElements) {
                 flattenContext.emitBindingOrAssignment(flattenContext.createObjectBindingOrAssignmentPattern(bindingElements), value, location2, pattern);
                 bindingElements = void 0;
               }
-              const rhsValue = createDestructuringPropertyAccess(flattenContext, value, propertyName);
-              if (isComputedPropertyName(propertyName)) {
+              const rhsValue = createDestructuringPropertyAccess(flattenContext, value, propertyName2);
+              if (isComputedPropertyName(propertyName2)) {
                 computedTempVariables = append(computedTempVariables, rhsValue.argumentExpression);
               }
               flattenBindingOrAssignmentElement(
@@ -112375,8 +112375,8 @@ ${lanes.join("\n")}
       function isSimpleBindingOrAssignmentElement(element) {
         const target = getTargetOfBindingOrAssignmentElement(element);
         if (!target || isOmittedExpression(target)) return true;
-        const propertyName = tryGetPropertyNameOfBindingOrAssignmentElement(element);
-        if (propertyName && !isPropertyNameLiteral(propertyName)) return false;
+        const propertyName2 = tryGetPropertyNameOfBindingOrAssignmentElement(element);
+        if (propertyName2 && !isPropertyNameLiteral(propertyName2)) return false;
         const initializer = getInitializerOfBindingOrAssignmentElement(element);
         if (initializer && !isSimpleInlineableExpression(initializer)) return false;
         if (isBindingOrAssignmentPattern(target)) return every(getElementsOfBindingOrAssignmentPattern(target), isSimpleBindingOrAssignmentElement);
@@ -112400,23 +112400,23 @@ ${lanes.join("\n")}
           value
         );
       }
-      function createDestructuringPropertyAccess(flattenContext, value, propertyName) {
+      function createDestructuringPropertyAccess(flattenContext, value, propertyName2) {
         const { factory: factory2 } = flattenContext.context;
-        if (isComputedPropertyName(propertyName)) {
+        if (isComputedPropertyName(propertyName2)) {
           const argumentExpression = ensureIdentifier(
             flattenContext,
-            Debug.checkDefined(visitNode(propertyName.expression, flattenContext.visitor, isExpression)),
+            Debug.checkDefined(visitNode(propertyName2.expression, flattenContext.visitor, isExpression)),
             /*reuseIdentifierExpressions*/
             false,
             /*location*/
-            propertyName
+            propertyName2
           );
           return flattenContext.context.factory.createElementAccessExpression(value, argumentExpression);
-        } else if (isStringOrNumericLiteralLike(propertyName) || isBigIntLiteral(propertyName)) {
-          const argumentExpression = factory2.cloneNode(propertyName);
+        } else if (isStringOrNumericLiteralLike(propertyName2) || isBigIntLiteral(propertyName2)) {
+          const argumentExpression = factory2.cloneNode(propertyName2);
           return flattenContext.context.factory.createElementAccessExpression(value, argumentExpression);
         } else {
-          const name = flattenContext.context.factory.createIdentifier(idText(propertyName));
+          const name = flattenContext.context.factory.createIdentifier(idText(propertyName2));
           return flattenContext.context.factory.createPropertyAccessExpression(value, name);
         }
       }
@@ -113710,9 +113710,9 @@ ${lanes.join("\n")}
           if (!isIdentifier(name)) {
             return void 0;
           }
-          const propertyName = setParent(setTextRange(factory2.cloneNode(name), name), name.parent);
+          const propertyName2 = setParent(setTextRange(factory2.cloneNode(name), name), name.parent);
           setEmitFlags(
-            propertyName,
+            propertyName2,
             3072 | 96
             /* NoSourceMap */
           );
@@ -113731,7 +113731,7 @@ ${lanes.join("\n")}
                       setTextRange(
                         factory2.createPropertyAccessExpression(
                           factory2.createThis(),
-                          propertyName
+                          propertyName2
                         ),
                         node.name
                       ),
@@ -116450,12 +116450,12 @@ ${lanes.join("\n")}
           if (isNamedEvaluation(property, isAnonymousClassNeedingAssignedName)) {
             property = transformNamedEvaluation(context, property);
           }
-          const propertyName = hasAccessorModifier(property) ? factory2.getGeneratedPrivateNameForNode(property.name) : isComputedPropertyName(property.name) && !isSimpleInlineableExpression(property.name.expression) ? factory2.updateComputedPropertyName(property.name, factory2.getGeneratedNameForNode(property.name)) : property.name;
+          const propertyName2 = hasAccessorModifier(property) ? factory2.getGeneratedPrivateNameForNode(property.name) : isComputedPropertyName(property.name) && !isSimpleInlineableExpression(property.name.expression) ? factory2.updateComputedPropertyName(property.name, factory2.getGeneratedNameForNode(property.name)) : property.name;
           if (hasStaticModifier(property)) {
             currentClassElement = property;
           }
-          if (isPrivateIdentifier(propertyName) && shouldTransformClassElementToWeakMap(property)) {
-            const privateIdentifierInfo = accessPrivateIdentifier2(propertyName);
+          if (isPrivateIdentifier(propertyName2) && shouldTransformClassElementToWeakMap(property)) {
+            const privateIdentifierInfo = accessPrivateIdentifier2(propertyName2);
             if (privateIdentifierInfo) {
               if (privateIdentifierInfo.kind === "f") {
                 if (!privateIdentifierInfo.isStatic) {
@@ -116479,7 +116479,7 @@ ${lanes.join("\n")}
               Debug.fail("Undeclared private name for property declaration.");
             }
           }
-          if ((isPrivateIdentifier(propertyName) || hasStaticModifier(property)) && !property.initializer) {
+          if ((isPrivateIdentifier(propertyName2) || hasStaticModifier(property)) && !property.initializer) {
             return void 0;
           }
           const propertyOriginalNode = getOriginalNode(property);
@@ -116491,8 +116491,8 @@ ${lanes.join("\n")}
             return void 0;
           }
           let initializer = visitNode(property.initializer, visitor, isExpression);
-          if (isParameterPropertyDeclaration(propertyOriginalNode, propertyOriginalNode.parent) && isIdentifier(propertyName)) {
-            const localName = factory2.cloneNode(propertyName);
+          if (isParameterPropertyDeclaration(propertyOriginalNode, propertyOriginalNode.parent) && isIdentifier(propertyName2)) {
+            const localName = factory2.cloneNode(propertyName2);
             if (initializer) {
               if (isParenthesizedExpression(initializer) && isCommaExpression(initializer.expression) && isCallToHelper(initializer.expression.left, "___runInitializers") && isVoidExpression(initializer.expression.right) && isNumericLiteral(initializer.expression.right.expression)) {
                 initializer = initializer.expression.left;
@@ -116502,7 +116502,7 @@ ${lanes.join("\n")}
               initializer = localName;
             }
             setEmitFlags(
-              propertyName,
+              propertyName2,
               3072 | 96
               /* NoSourceMap */
             );
@@ -116515,13 +116515,13 @@ ${lanes.join("\n")}
           } else {
             initializer ?? (initializer = factory2.createVoidZero());
           }
-          if (emitAssignment || isPrivateIdentifier(propertyName)) {
+          if (emitAssignment || isPrivateIdentifier(propertyName2)) {
             const memberAccess = createMemberAccessForPropertyName(
               factory2,
               receiver,
-              propertyName,
+              propertyName2,
               /*location*/
-              propertyName
+              propertyName2
             );
             addEmitFlags(
               memberAccess,
@@ -116531,7 +116531,7 @@ ${lanes.join("\n")}
             const expression = factory2.createAssignment(memberAccess, initializer);
             return expression;
           } else {
-            const name = isComputedPropertyName(propertyName) ? propertyName.expression : isIdentifier(propertyName) ? factory2.createStringLiteral(unescapeLeadingUnderscores(propertyName.escapedText)) : propertyName;
+            const name = isComputedPropertyName(propertyName2) ? propertyName2.expression : isIdentifier(propertyName2) ? factory2.createStringLiteral(unescapeLeadingUnderscores(propertyName2.escapedText)) : propertyName2;
             const descriptor = factory2.createPropertyDescriptor({ value: initializer, configurable: true, writable: true, enumerable: true });
             return factory2.createObjectDefinePropertyCall(receiver, name, descriptor);
           }
@@ -119016,25 +119016,25 @@ ${lanes.join("\n")}
             pendingExpressions.push(memberDecoratorsAssignment);
             const statements = isMethodOrAccessor(member) || isAutoAccessorPropertyDeclaration(member) ? isStatic(member) ? classInfo2.staticNonFieldDecorationStatements ?? (classInfo2.staticNonFieldDecorationStatements = []) : classInfo2.nonStaticNonFieldDecorationStatements ?? (classInfo2.nonStaticNonFieldDecorationStatements = []) : isPropertyDeclaration(member) && !isAutoAccessorPropertyDeclaration(member) ? isStatic(member) ? classInfo2.staticFieldDecorationStatements ?? (classInfo2.staticFieldDecorationStatements = []) : classInfo2.nonStaticFieldDecorationStatements ?? (classInfo2.nonStaticFieldDecorationStatements = []) : Debug.fail();
             const kind = isGetAccessorDeclaration(member) ? "getter" : isSetAccessorDeclaration(member) ? "setter" : isMethodDeclaration(member) ? "method" : isAutoAccessorPropertyDeclaration(member) ? "accessor" : isPropertyDeclaration(member) ? "field" : Debug.fail();
-            let propertyName;
+            let propertyName2;
             if (isIdentifier(member.name) || isPrivateIdentifier(member.name)) {
-              propertyName = { computed: false, name: member.name };
+              propertyName2 = { computed: false, name: member.name };
             } else if (isPropertyNameLiteral(member.name)) {
-              propertyName = { computed: true, name: factory2.createStringLiteralFromNode(member.name) };
+              propertyName2 = { computed: true, name: factory2.createStringLiteralFromNode(member.name) };
             } else {
               const expression = member.name.expression;
               if (isPropertyNameLiteral(expression) && !isIdentifier(expression)) {
-                propertyName = { computed: true, name: factory2.createStringLiteralFromNode(expression) };
+                propertyName2 = { computed: true, name: factory2.createStringLiteralFromNode(expression) };
               } else {
                 enterName();
                 ({ referencedName, name } = visitReferencedPropertyName(member.name));
-                propertyName = { computed: true, name: referencedName };
+                propertyName2 = { computed: true, name: referencedName };
                 exitName();
               }
             }
             const context2 = {
               kind,
-              name: propertyName,
+              name: propertyName2,
               static: isStatic(member),
               private: isPrivateIdentifier(member.name),
               access: {
@@ -119349,8 +119349,8 @@ ${lanes.join("\n")}
         }
         function visitPropertyAccessExpression(node) {
           if (isSuperProperty(node) && isIdentifier(node.name) && classThis && classSuper) {
-            const propertyName = factory2.createStringLiteralFromNode(node.name);
-            const superProperty = factory2.createReflectGetCall(classSuper, propertyName, classThis);
+            const propertyName2 = factory2.createStringLiteralFromNode(node.name);
+            const superProperty = factory2.createReflectGetCall(classSuper, propertyName2, classThis);
             setOriginalNode(superProperty, node.expression);
             setTextRange(superProperty, node.expression);
             return superProperty;
@@ -119359,8 +119359,8 @@ ${lanes.join("\n")}
         }
         function visitElementAccessExpression(node) {
           if (isSuperProperty(node) && classThis && classSuper) {
-            const propertyName = visitNode(node.argumentExpression, visitor, isExpression);
-            const superProperty = factory2.createReflectGetCall(classSuper, propertyName, classThis);
+            const propertyName2 = visitNode(node.argumentExpression, visitor, isExpression);
+            const superProperty = factory2.createReflectGetCall(classSuper, propertyName2, classThis);
             setOriginalNode(superProperty, node.expression);
             setTextRange(superProperty, node.expression);
             return superProperty;
@@ -119568,8 +119568,8 @@ ${lanes.join("\n")}
             return visitAssignmentPattern(node);
           }
           if (isSuperProperty(node) && classThis && classSuper) {
-            const propertyName = isElementAccessExpression(node) ? visitNode(node.argumentExpression, visitor, isExpression) : isIdentifier(node.name) ? factory2.createStringLiteralFromNode(node.name) : void 0;
-            if (propertyName) {
+            const propertyName2 = isElementAccessExpression(node) ? visitNode(node.argumentExpression, visitor, isExpression) : isIdentifier(node.name) ? factory2.createStringLiteralFromNode(node.name) : void 0;
+            if (propertyName2) {
               const paramName = factory2.createTempVariable(
                 /*recordTempVariable*/
                 void 0
@@ -119578,7 +119578,7 @@ ${lanes.join("\n")}
                 paramName,
                 factory2.createReflectSetCall(
                   classSuper,
-                  propertyName,
+                  propertyName2,
                   paramName,
                   classThis
                 )
@@ -125761,17 +125761,17 @@ ${lanes.join("\n")}
             void 0,
             container
           );
-          const propertyName = visitNode(member.name, visitor, isPropertyName);
-          Debug.assert(propertyName);
+          const propertyName2 = visitNode(member.name, visitor, isPropertyName);
+          Debug.assert(propertyName2);
           let e;
-          if (!isPrivateIdentifier(propertyName) && getUseDefineForClassFields(context.getCompilerOptions())) {
-            const name = isComputedPropertyName(propertyName) ? propertyName.expression : isIdentifier(propertyName) ? factory2.createStringLiteral(unescapeLeadingUnderscores(propertyName.escapedText)) : propertyName;
+          if (!isPrivateIdentifier(propertyName2) && getUseDefineForClassFields(context.getCompilerOptions())) {
+            const name = isComputedPropertyName(propertyName2) ? propertyName2.expression : isIdentifier(propertyName2) ? factory2.createStringLiteral(unescapeLeadingUnderscores(propertyName2.escapedText)) : propertyName2;
             e = factory2.createObjectDefinePropertyCall(receiver, name, factory2.createPropertyDescriptor({ value: memberFunction, enumerable: false, writable: true, configurable: true }));
           } else {
             const memberName = createMemberAccessForPropertyName(
               factory2,
               receiver,
-              propertyName,
+              propertyName2,
               /*location*/
               member.name
             );
@@ -125826,13 +125826,13 @@ ${lanes.join("\n")}
           if (isPrivateIdentifier(visitedAccessorName)) {
             return Debug.failBadSyntaxKind(visitedAccessorName, "Encountered unhandled private identifier while transforming ES2015.");
           }
-          const propertyName = createExpressionForPropertyName(factory2, visitedAccessorName);
+          const propertyName2 = createExpressionForPropertyName(factory2, visitedAccessorName);
           setEmitFlags(
-            propertyName,
+            propertyName2,
             3072 | 32
             /* NoLeadingSourceMap */
           );
-          setSourceMapRange(propertyName, firstAccessor.name);
+          setSourceMapRange(propertyName2, firstAccessor.name);
           const properties = [];
           if (getAccessor) {
             const getterFunction = transformFunctionLikeToExpression(
@@ -125882,7 +125882,7 @@ ${lanes.join("\n")}
             void 0,
             [
               target,
-              propertyName,
+              propertyName2,
               factory2.createObjectLiteralExpression(
                 properties,
                 /*multiLine*/
@@ -133412,12 +133412,12 @@ ${lanes.join("\n")}
                   node
                 );
               } else if (isImportSpecifier(importDeclaration)) {
-                const importedName = importDeclaration.propertyName || importDeclaration.name;
+                const importedName2 = importDeclaration.propertyName || importDeclaration.name;
                 const target = factory2.getGeneratedNameForNode(((_b = (_a = importDeclaration.parent) == null ? void 0 : _a.parent) == null ? void 0 : _b.parent) || importDeclaration);
                 return setTextRange(
                   factory2.createPropertyAssignment(
                     factory2.cloneNode(name),
-                    importedName.kind === 11 ? factory2.createElementAccessExpression(target, factory2.cloneNode(importedName)) : factory2.createPropertyAccessExpression(target, factory2.cloneNode(importedName))
+                    importedName2.kind === 11 ? factory2.createElementAccessExpression(target, factory2.cloneNode(importedName2)) : factory2.createPropertyAccessExpression(target, factory2.cloneNode(importedName2))
                   ),
                   /*location*/
                   node
@@ -133460,10 +133460,10 @@ ${lanes.join("\n")}
                   node
                 );
               } else if (isImportSpecifier(importDeclaration)) {
-                const importedName = importDeclaration.propertyName || importDeclaration.name;
+                const importedName2 = importDeclaration.propertyName || importDeclaration.name;
                 const target = factory2.getGeneratedNameForNode(((_b = (_a = importDeclaration.parent) == null ? void 0 : _a.parent) == null ? void 0 : _b.parent) || importDeclaration);
                 return setTextRange(
-                  importedName.kind === 11 ? factory2.createElementAccessExpression(target, factory2.cloneNode(importedName)) : factory2.createPropertyAccessExpression(target, factory2.cloneNode(importedName)),
+                  importedName2.kind === 11 ? factory2.createElementAccessExpression(target, factory2.cloneNode(importedName2)) : factory2.createPropertyAccessExpression(target, factory2.cloneNode(importedName2)),
                   /*location*/
                   node
                 );
@@ -134661,11 +134661,11 @@ ${lanes.join("\n")}
           ));
           return issuedDiagnostic;
         }
-        function reportPrivateInBaseOfClassExpression(propertyName) {
+        function reportPrivateInBaseOfClassExpression(propertyName2) {
           if (errorNameNode || errorFallbackNode) {
             context.addDiagnostic(
               addRelatedInfo(
-                createDiagnosticForNode(errorNameNode || errorFallbackNode, Diagnostics.Property_0_of_exported_anonymous_class_type_may_not_be_private_or_protected, propertyName),
+                createDiagnosticForNode(errorNameNode || errorFallbackNode, Diagnostics.Property_0_of_exported_anonymous_class_type_may_not_be_private_or_protected, propertyName2),
                 ...isVariableDeclaration((errorNameNode || errorFallbackNode).parent) ? [createDiagnosticForNode(errorNameNode || errorFallbackNode, Diagnostics.Add_a_type_annotation_to_the_variable_0, errorDeclarationNameWithFallback())] : []
               )
             );
@@ -134712,9 +134712,9 @@ ${lanes.join("\n")}
             }
           }
         }
-        function reportNonSerializableProperty(propertyName) {
+        function reportNonSerializableProperty(propertyName2) {
           if (errorNameNode || errorFallbackNode) {
-            context.addDiagnostic(createDiagnosticForNode(errorNameNode || errorFallbackNode, Diagnostics.The_type_of_this_node_cannot_be_serialized_because_its_property_0_cannot_be_serialized, propertyName));
+            context.addDiagnostic(createDiagnosticForNode(errorNameNode || errorFallbackNode, Diagnostics.The_type_of_this_node_cannot_be_serialized_because_its_property_0_cannot_be_serialized, propertyName2));
           }
         }
         function transformDeclarationsForJS(sourceFile) {
@@ -159224,9 +159224,9 @@ ${lanes.join("\n")}
             isFromPackageJson
           };
         }
-        function key(importedName, symbol, ambientModuleName, checker) {
+        function key(importedName2, symbol, ambientModuleName, checker) {
           const moduleKey = ambientModuleName || "";
-          return `${importedName.length} ${getSymbolId(skipAlias(symbol, checker))} ${importedName} ${moduleKey}`;
+          return `${importedName2.length} ${getSymbolId(skipAlias(symbol, checker))} ${importedName2} ${moduleKey}`;
         }
         function parseKey(key2) {
           const firstSpace = key2.indexOf(" ");
@@ -161243,13 +161243,13 @@ ${lanes.join("\n")}
         const configDir = getDirectoryPath(configFile.fileName);
         const jsonObjectLiteral = getTsConfigObjectLiteralExpression(configFile);
         if (!jsonObjectLiteral) return;
-        forEachProperty(jsonObjectLiteral, (property, propertyName) => {
-          switch (propertyName) {
+        forEachProperty(jsonObjectLiteral, (property, propertyName2) => {
+          switch (propertyName2) {
             case "files":
             case "include":
             case "exclude": {
               const foundExactMatch = updatePaths(property);
-              if (foundExactMatch || propertyName !== "include" || !isArrayLiteralExpression(property.initializer)) return;
+              if (foundExactMatch || propertyName2 !== "include" || !isArrayLiteralExpression(property.initializer)) return;
               const includes = mapDefined(property.initializer.elements, (e) => isStringLiteral(e) ? e.text : void 0);
               if (includes.length === 0) return;
               const matchers = getFileMatcherPatterns(
@@ -161266,12 +161266,12 @@ ${lanes.join("\n")}
               return;
             }
             case "compilerOptions":
-              forEachProperty(property.initializer, (property2, propertyName2) => {
-                const option = getOptionFromName(propertyName2);
+              forEachProperty(property.initializer, (property2, propertyName22) => {
+                const option = getOptionFromName(propertyName22);
                 Debug.assert((option == null ? void 0 : option.type) !== "listOrElement");
                 if (option && (option.isFilePath || option.type === "list" && option.element.isFilePath)) {
                   updatePaths(property2);
-                } else if (propertyName2 === "paths") {
+                } else if (propertyName22 === "paths") {
                   forEachProperty(property2.initializer, (pathsProperty) => {
                     if (!isArrayLiteralExpression(pathsProperty.initializer)) return;
                     for (const e of pathsProperty.initializer.elements) {
@@ -163297,8 +163297,8 @@ interface Symbol {
         }
         const declName = getNameOfDeclaration(node);
         if (declName && isPropertyName(declName)) {
-          const propertyName = getPropertyNameForPropertyNameNode(declName);
-          return propertyName && unescapeLeadingUnderscores(propertyName);
+          const propertyName2 = getPropertyNameForPropertyNameNode(declName);
+          return propertyName2 && unescapeLeadingUnderscores(propertyName2);
         }
         switch (node.kind) {
           case 219:
@@ -163796,19 +163796,19 @@ interface Symbol {
             Debug.assertNever(parent2, `Unexpected parent kind ${parent2.kind}`);
         }
       }
-      function makeImportSpecifier(propertyName, name) {
+      function makeImportSpecifier(propertyName2, name) {
         return factory.createImportSpecifier(
           /*isTypeOnly*/
           false,
-          propertyName === name ? void 0 : factory.createIdentifier(propertyName),
+          propertyName2 === name ? void 0 : factory.createIdentifier(propertyName2),
           factory.createIdentifier(name)
         );
       }
-      function makeExportSpecifier(propertyName, name) {
+      function makeExportSpecifier(propertyName2, name) {
         return factory.createExportSpecifier(
           /*isTypeOnly*/
           false,
-          propertyName === name ? void 0 : factory.createIdentifier(propertyName),
+          propertyName2 === name ? void 0 : factory.createIdentifier(propertyName2),
           factory.createIdentifier(name)
         );
       }
@@ -163947,11 +163947,11 @@ interface Symbol {
           changes.replaceNode(sourceFile, propertyAccessOrQualifiedName, factory.createIdentifier(importName));
         }
         const importSpecifiers = [];
-        exportNameToImportName.forEach((name, propertyName) => {
+        exportNameToImportName.forEach((name, propertyName2) => {
           importSpecifiers.push(factory.createImportSpecifier(
             /*isTypeOnly*/
             false,
-            name === propertyName ? void 0 : factory.createIdentifier(propertyName),
+            name === propertyName2 ? void 0 : factory.createIdentifier(propertyName2),
             factory.createIdentifier(name)
           ));
         });
@@ -164012,9 +164012,9 @@ interface Symbol {
         const namespaceImportName = namespaceNameConflicts ? getUniqueName(preferredName, sourceFile) : preferredName;
         const neededNamedImports = /* @__PURE__ */ new Set();
         for (const element of toConvert.elements) {
-          const propertyName = element.propertyName || element.name;
+          const propertyName2 = element.propertyName || element.name;
           ts_FindAllReferences_exports.Core.eachSymbolReferenceInFile(element.name, checker, sourceFile, (id) => {
-            const access = propertyName.kind === 11 ? factory.createElementAccessExpression(factory.createIdentifier(namespaceImportName), factory.cloneNode(propertyName)) : factory.createPropertyAccessExpression(factory.createIdentifier(namespaceImportName), factory.cloneNode(propertyName));
+            const access = propertyName2.kind === 11 ? factory.createElementAccessExpression(factory.createIdentifier(namespaceImportName), factory.cloneNode(propertyName2)) : factory.createPropertyAccessExpression(factory.createIdentifier(namespaceImportName), factory.cloneNode(propertyName2));
             if (isShorthandPropertyAssignment(id.parent)) {
               changes.replaceNode(sourceFile, id.parent, factory.createPropertyAssignment(id.text, access));
             } else if (isExportSpecifier(id.parent)) {
@@ -169576,8 +169576,8 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         getProperties() {
           return this.checker.getPropertiesOfType(this);
         }
-        getProperty(propertyName) {
-          return this.checker.getPropertyOfType(this, propertyName);
+        getProperty(propertyName2) {
+          return this.checker.getPropertyOfType(this, propertyName2);
         }
         getApparentProperties() {
           return this.checker.getAugmentedPropertiesOfType(this);
@@ -174850,13 +174850,13 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
           return combinedUseSites;
         }
       }
-      function convertPropertyAccessImport(name, propertyName, moduleSpecifier, identifiers, quotePreference) {
+      function convertPropertyAccessImport(name, propertyName2, moduleSpecifier, identifiers, quotePreference) {
         switch (name.kind) {
           case 207:
           case 208: {
-            const tmp = makeUniqueName(propertyName, identifiers);
+            const tmp = makeUniqueName(propertyName2, identifiers);
             return convertedImports([
-              makeSingleImport(tmp, propertyName, moduleSpecifier, quotePreference),
+              makeSingleImport(tmp, propertyName2, moduleSpecifier, quotePreference),
               makeConst(
                 /*modifiers*/
                 void 0,
@@ -174866,7 +174866,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
             ]);
           }
           case 80:
-            return convertedImports([makeSingleImport(name.text, propertyName, moduleSpecifier, quotePreference)]);
+            return convertedImports([makeSingleImport(name.text, propertyName2, moduleSpecifier, quotePreference)]);
           default:
             return Debug.assertNever(name, `Convert to ES module got invalid syntax form ${name.kind}`);
         }
@@ -175092,17 +175092,17 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
           }
           const { parent: parent2 } = use;
           if (isPropertyAccessExpression(parent2)) {
-            const { name: { text: propertyName } } = parent2;
-            if (propertyName === "default") {
+            const { name: { text: propertyName2 } } = parent2;
+            if (propertyName2 === "default") {
               needDefaultImport = true;
               const importDefaultName = use.getText();
               (useSitesToUnqualify ?? (useSitesToUnqualify = /* @__PURE__ */ new Map())).set(parent2, factory.createIdentifier(importDefaultName));
             } else {
               Debug.assert(parent2.expression === use, "Didn't expect expression === use");
-              let idName = namedBindingsNames.get(propertyName);
+              let idName = namedBindingsNames.get(propertyName2);
               if (idName === void 0) {
-                idName = makeUniqueName(propertyName, identifiers);
-                namedBindingsNames.set(propertyName, idName);
+                idName = makeUniqueName(propertyName2, identifiers);
+                namedBindingsNames.set(propertyName2, idName);
               }
               (useSitesToUnqualify ?? (useSitesToUnqualify = /* @__PURE__ */ new Map())).set(parent2, factory.createIdentifier(idName));
             }
@@ -175110,10 +175110,10 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
             needDefaultImport = true;
           }
         }
-        const namedBindings = namedBindingsNames.size === 0 ? void 0 : arrayFrom(mapIterator(namedBindingsNames.entries(), ([propertyName, idName]) => factory.createImportSpecifier(
+        const namedBindings = namedBindingsNames.size === 0 ? void 0 : arrayFrom(mapIterator(namedBindingsNames.entries(), ([propertyName2, idName]) => factory.createImportSpecifier(
           /*isTypeOnly*/
           false,
-          propertyName === idName ? void 0 : factory.createIdentifier(propertyName),
+          propertyName2 === idName ? void 0 : factory.createIdentifier(propertyName2),
           factory.createIdentifier(idName)
         )));
         if (!namedBindings) {
@@ -175173,8 +175173,8 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
           replaceImportUseSites(cls.members, useSitesToUnqualify)
         );
       }
-      function makeSingleImport(localName, propertyName, moduleSpecifier, quotePreference) {
-        return propertyName === "default" ? makeImport(
+      function makeSingleImport(localName, propertyName2, moduleSpecifier, quotePreference) {
+        return propertyName2 === "default" ? makeImport(
           factory.createIdentifier(localName),
           /*namedImports*/
           void 0,
@@ -175183,16 +175183,16 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         ) : makeImport(
           /*defaultImport*/
           void 0,
-          [makeImportSpecifier2(propertyName, localName)],
+          [makeImportSpecifier2(propertyName2, localName)],
           moduleSpecifier,
           quotePreference
         );
       }
-      function makeImportSpecifier2(propertyName, name) {
+      function makeImportSpecifier2(propertyName2, name) {
         return factory.createImportSpecifier(
           /*isTypeOnly*/
           false,
-          propertyName !== void 0 && propertyName !== name ? factory.createIdentifier(propertyName) : void 0,
+          propertyName2 !== void 0 && propertyName2 !== name ? factory.createIdentifier(propertyName2) : void 0,
           factory.createIdentifier(name)
         );
       }
@@ -175693,12 +175693,12 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         const token = getTokenAtPosition(sourceFile, pos);
         if (isIdentifier(token)) {
           const propertySignature = cast(token.parent.parent, isPropertySignature);
-          const propertyName = token.getText(sourceFile);
+          const propertyName2 = token.getText(sourceFile);
           return {
             container: cast(propertySignature.parent, isTypeLiteralNode),
             typeNode: propertySignature.type,
-            constraint: propertyName,
-            name: propertyName === "K" ? "P" : "K"
+            constraint: propertyName2,
+            name: propertyName2 === "K" ? "P" : "K"
           };
         }
         return void 0;
@@ -175950,17 +175950,17 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
           if (fix) {
             const localName = ((_b = tryCast(referenceImport == null ? void 0 : referenceImport.name, isIdentifier)) == null ? void 0 : _b.text) ?? symbolName2;
             let addAsTypeOnly;
-            let propertyName;
+            let propertyName2;
             if (referenceImport && isTypeOnlyImportDeclaration(referenceImport) && (fix.kind === 3 || fix.kind === 2) && fix.addAsTypeOnly === 1) {
               addAsTypeOnly = 2;
             }
             if (exportedSymbol.name !== localName) {
-              propertyName = exportedSymbol.name;
+              propertyName2 = exportedSymbol.name;
             }
             fix = {
               ...fix,
               ...addAsTypeOnly === void 0 ? {} : { addAsTypeOnly },
-              ...propertyName === void 0 ? {} : { propertyName }
+              ...propertyName2 === void 0 ? {} : { propertyName: propertyName2 }
             };
             addImport({ fix, symbolName: localName ?? symbolName2, errorIdentifierText: void 0 });
           }
@@ -176106,14 +176106,14 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
               importType.push(fix);
               break;
             case 2: {
-              const { importClauseOrBindingPattern, importKind, addAsTypeOnly, propertyName } = fix;
+              const { importClauseOrBindingPattern, importKind, addAsTypeOnly, propertyName: propertyName2 } = fix;
               let entry = addToExisting.get(importClauseOrBindingPattern);
               if (!entry) {
                 addToExisting.set(importClauseOrBindingPattern, entry = { importClauseOrBindingPattern, defaultImport: void 0, namedImports: /* @__PURE__ */ new Map() });
               }
               if (importKind === 0) {
                 const prevTypeOnly = (_a = entry == null ? void 0 : entry.namedImports.get(symbolName2)) == null ? void 0 : _a.addAsTypeOnly;
-                entry.namedImports.set(symbolName2, { addAsTypeOnly: reduceAddAsTypeOnlyValues(prevTypeOnly, addAsTypeOnly), propertyName });
+                entry.namedImports.set(symbolName2, { addAsTypeOnly: reduceAddAsTypeOnlyValues(prevTypeOnly, addAsTypeOnly), propertyName: propertyName2 });
               } else {
                 Debug.assert(entry.defaultImport === void 0 || entry.defaultImport.name === symbolName2, "(Add to Existing) Default import should be missing or match symbolName");
                 entry.defaultImport = {
@@ -176124,7 +176124,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
               break;
             }
             case 3: {
-              const { moduleSpecifier, importKind, useRequire, addAsTypeOnly, propertyName } = fix;
+              const { moduleSpecifier, importKind, useRequire, addAsTypeOnly, propertyName: propertyName2 } = fix;
               const entry = getNewImportEntry(moduleSpecifier, importKind, useRequire, addAsTypeOnly);
               Debug.assert(entry.useRequire === useRequire, "(Add new) Tried to add an `import` and a `require` for the same module");
               switch (importKind) {
@@ -176134,12 +176134,12 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
                   break;
                 case 0:
                   const prevValue = (entry.namedImports || (entry.namedImports = /* @__PURE__ */ new Map())).get(symbolName2);
-                  entry.namedImports.set(symbolName2, [reduceAddAsTypeOnlyValues(prevValue, addAsTypeOnly), propertyName]);
+                  entry.namedImports.set(symbolName2, [reduceAddAsTypeOnlyValues(prevValue, addAsTypeOnly), propertyName2]);
                   break;
                 case 3:
                   if (compilerOptions.verbatimModuleSyntax) {
                     const prevValue2 = (entry.namedImports || (entry.namedImports = /* @__PURE__ */ new Map())).get(symbolName2);
-                    entry.namedImports.set(symbolName2, [reduceAddAsTypeOnlyValues(prevValue2, addAsTypeOnly), propertyName]);
+                    entry.namedImports.set(symbolName2, [reduceAddAsTypeOnlyValues(prevValue2, addAsTypeOnly), propertyName2]);
                   } else {
                     Debug.assert(entry.namespaceLikeImport === void 0 || entry.namespaceLikeImport.name === symbolName2, "Namespacelike import shoudl be missing or match symbolName");
                     entry.namespaceLikeImport = { importKind, name: symbolName2, addAsTypeOnly };
@@ -176293,7 +176293,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
               sourceFile,
               importClauseOrBindingPattern,
               defaultImport,
-              arrayFrom(namedImports.entries(), ([name, { addAsTypeOnly, propertyName }]) => ({ addAsTypeOnly, propertyName, name })),
+              arrayFrom(namedImports.entries(), ([name, { addAsTypeOnly, propertyName: propertyName2 }]) => ({ addAsTypeOnly, propertyName: propertyName2, name })),
               importSpecifiersToRemoveWhileAdding,
               preferences
             );
@@ -176306,7 +176306,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
               moduleSpecifier,
               quotePreference,
               defaultImport,
-              namedImports && arrayFrom(namedImports.entries(), ([name, [addAsTypeOnly, propertyName]]) => ({ addAsTypeOnly, propertyName, name })),
+              namedImports && arrayFrom(namedImports.entries(), ([name, [addAsTypeOnly, propertyName2]]) => ({ addAsTypeOnly, propertyName: propertyName2, name })),
               namespaceLikeImport,
               compilerOptions,
               preferences
@@ -177307,11 +177307,11 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
             }
           }
         }
-        function addElementToBindingPattern(bindingPattern, name, propertyName) {
+        function addElementToBindingPattern(bindingPattern, name, propertyName2) {
           const element = factory.createBindingElement(
             /*dotDotDotToken*/
             void 0,
-            propertyName,
+            propertyName2,
             name
           );
           if (bindingPattern.elements.length) {
@@ -177391,10 +177391,10 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         const quotedModuleSpecifier = makeStringLiteral(moduleSpecifier, quotePreference);
         let statements;
         if (defaultImport || (namedImports == null ? void 0 : namedImports.length)) {
-          const bindingElements = (namedImports == null ? void 0 : namedImports.map(({ name, propertyName }) => factory.createBindingElement(
+          const bindingElements = (namedImports == null ? void 0 : namedImports.map(({ name, propertyName: propertyName2 }) => factory.createBindingElement(
             /*dotDotDotToken*/
             void 0,
-            propertyName,
+            propertyName2,
             name
           ))) || [];
           if (defaultImport) {
@@ -178629,8 +178629,8 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
           changeTracker.insertNodeAtConstructorEnd(sourceFile, classConstructor, propertyInitialization);
         }
       }
-      function initializePropertyToUndefined(obj, propertyName) {
-        return factory.createExpressionStatement(factory.createAssignment(factory.createPropertyAccessExpression(obj, propertyName), createUndefined()));
+      function initializePropertyToUndefined(obj, propertyName2) {
+        return factory.createExpressionStatement(factory.createAssignment(factory.createPropertyAccessExpression(obj, propertyName2), createUndefined()));
       }
       function createActionsForAddMissingMemberInTypeScriptFile(context, { parentDeclaration, declSourceFile, modifierFlags, token }) {
         const memberName = token.text;
@@ -180437,14 +180437,14 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         fixIds: [fixId36],
         getCodeActions(context) {
           const { sourceFile, span } = context;
-          const callName = getCallName(sourceFile, span.start);
-          if (!callName) return;
-          const changes = ts_textChanges_exports.ChangeTracker.with(context, (t) => doChange30(t, context.sourceFile, callName));
+          const callName2 = getCallName(sourceFile, span.start);
+          if (!callName2) return;
+          const changes = ts_textChanges_exports.ChangeTracker.with(context, (t) => doChange30(t, context.sourceFile, callName2));
           return [createCodeFixAction(fixId36, changes, Diagnostics.Add_missing_call_parentheses, fixId36, Diagnostics.Add_all_missing_call_parentheses)];
         },
         getAllCodeActions: (context) => codeFixAll(context, errorCodes47, (changes, diag2) => {
-          const callName = getCallName(diag2.file, diag2.start);
-          if (callName) doChange30(changes, diag2.file, callName);
+          const callName2 = getCallName(diag2.file, diag2.start);
+          if (callName2) doChange30(changes, diag2.file, callName2);
         })
       });
       function doChange30(changes, sourceFile, name) {
@@ -180999,9 +180999,9 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
               const { typeNode } = inferType(name);
               let variableInitializer = createChainedExpression(bindingElement, expressionToVar);
               if (bindingElement.element.initializer) {
-                const propertyName = (_a = bindingElement.element) == null ? void 0 : _a.propertyName;
+                const propertyName2 = (_a = bindingElement.element) == null ? void 0 : _a.propertyName;
                 const tempName = factory.createUniqueName(
-                  propertyName && isIdentifier(propertyName) ? propertyName.text : "temp",
+                  propertyName2 && isIdentifier(propertyName2) ? propertyName2.text : "temp",
                   16
                   /* Optimistic */
                 );
@@ -185042,11 +185042,11 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         }
         function elementWorker(path22, element, counter) {
           if (!element.propertyName && isIdentifier(element.name) || isIdentifier(element.name)) {
-            const propertyName = element.propertyName ? tryGetTextOfPropertyName(element.propertyName) : element.name.text;
-            if (!propertyName) {
+            const propertyName2 = element.propertyName ? tryGetTextOfPropertyName(element.propertyName) : element.name.text;
+            if (!propertyName2) {
               return void 0;
             }
-            const paramName = `${path22}.${propertyName}`;
+            const paramName = `${path22}.${propertyName2}`;
             return [
               getJSDocParamAnnotation(
                 paramName,
@@ -185063,8 +185063,8 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
               )
             ];
           } else if (element.propertyName) {
-            const propertyName = tryGetTextOfPropertyName(element.propertyName);
-            return propertyName && patternWorker(`${path22}.${propertyName}`, element.name, element.initializer, element.dotDotDotToken, counter);
+            const propertyName2 = tryGetTextOfPropertyName(element.propertyName);
+            return propertyName2 && patternWorker(`${path22}.${propertyName2}`, element.name, element.initializer, element.dotDotDotToken, counter);
           }
           return void 0;
         }
@@ -190144,12 +190144,12 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
             return;
           }
           for (const element of namedBindings.elements) {
-            const { name, propertyName } = element;
-            if (!isNameMatch(moduleExportNameTextEscaped(propertyName || name))) {
+            const { name, propertyName: propertyName2 } = element;
+            if (!isNameMatch(moduleExportNameTextEscaped(propertyName2 || name))) {
               continue;
             }
-            if (propertyName) {
-              singleReferences.push(propertyName);
+            if (propertyName2) {
+              singleReferences.push(propertyName2);
               if (!isForRename || moduleExportNameTextEscaped(name) === exportSymbol.escapedName) {
                 addSearch(name, checker.getSymbolAtLocation(name));
               }
@@ -190343,8 +190343,8 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
             importedSymbol = getExportEqualsLocalSymbol(importedSymbol, checker);
             if (importedSymbol === void 0) return void 0;
           }
-          const importedName = symbolEscapedNameNoDefault(importedSymbol);
-          if (importedName === void 0 || importedName === "default" || importedName === symbol.escapedName) {
+          const importedName2 = symbolEscapedNameNoDefault(importedSymbol);
+          if (importedName2 === void 0 || importedName2 === "default" || importedName2 === symbol.escapedName) {
             return { kind: 0, symbol: importedSymbol };
           }
         }
@@ -190493,8 +190493,8 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
               return isDeclaration(declOrStatement) ? getContextNode(declOrStatement) : declOrStatement;
             }
           }
-          const propertyName = findAncestor(node, isComputedPropertyName);
-          return propertyName ? getContextNode(propertyName.parent) : void 0;
+          const propertyName2 = findAncestor(node, isComputedPropertyName);
+          return propertyName2 ? getContextNode(propertyName2.parent) : void 0;
         }
         if (node.parent.name === node || // node is name of declaration, use parent
         isConstructorDeclaration(node.parent) || isExportAssignment(node.parent) || // Property name of the import export specifier or binding pattern, use parent
@@ -191773,17 +191773,17 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         }
         function getReferencesAtExportSpecifier(referenceLocation, referenceSymbol, exportSpecifier, search, state, addReferencesHere, alwaysGetReferences) {
           Debug.assert(!alwaysGetReferences || !!state.options.providePrefixAndSuffixTextForRename, "If alwaysGetReferences is true, then prefix/suffix text must be enabled");
-          const { parent: parent2, propertyName, name } = exportSpecifier;
+          const { parent: parent2, propertyName: propertyName2, name } = exportSpecifier;
           const exportDeclaration = parent2.parent;
           const localSymbol = getLocalSymbolForExportSpecifier(referenceLocation, referenceSymbol, exportSpecifier, state.checker);
           if (!alwaysGetReferences && !search.includes(localSymbol)) {
             return;
           }
-          if (!propertyName) {
+          if (!propertyName2) {
             if (!(state.options.use === 2 && moduleExportNameIsDefault(name))) {
               addRef();
             }
-          } else if (referenceLocation === propertyName) {
+          } else if (referenceLocation === propertyName2) {
             if (!exportDeclaration.moduleSpecifier) {
               addRef();
             }
@@ -191804,7 +191804,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
               searchForImportsOfExport(referenceLocation, exportSymbol, exportInfo, state);
             }
           }
-          if (search.comingFrom !== 1 && exportDeclaration.moduleSpecifier && !propertyName && !isForRenameWithPrefixAndSuffixText(state.options)) {
+          if (search.comingFrom !== 1 && exportDeclaration.moduleSpecifier && !propertyName2 && !isForRenameWithPrefixAndSuffixText(state.options)) {
             const imported = state.checker.getExportSpecifierLocalTargetSymbol(exportSpecifier);
             if (imported) searchForImportedSymbol(imported, state);
           }
@@ -191816,10 +191816,10 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
           return isExportSpecifierAlias(referenceLocation, exportSpecifier) && checker.getExportSpecifierLocalTargetSymbol(exportSpecifier) || referenceSymbol;
         }
         function isExportSpecifierAlias(referenceLocation, exportSpecifier) {
-          const { parent: parent2, propertyName, name } = exportSpecifier;
-          Debug.assert(propertyName === referenceLocation || name === referenceLocation);
-          if (propertyName) {
-            return propertyName === referenceLocation;
+          const { parent: parent2, propertyName: propertyName2, name } = exportSpecifier;
+          Debug.assert(propertyName2 === referenceLocation || name === referenceLocation);
+          if (propertyName2) {
+            return propertyName2 === referenceLocation;
           } else {
             return !parent2.parent.moduleSpecifier;
           }
@@ -192347,14 +192347,14 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
             }
           }
         }
-        function getPropertySymbolsFromBaseTypes(symbol, propertyName, checker, cb) {
+        function getPropertySymbolsFromBaseTypes(symbol, propertyName2, checker, cb) {
           const seen = /* @__PURE__ */ new Set();
           return recur(symbol);
           function recur(symbol2) {
             if (!(symbol2.flags & (32 | 64)) || !addToSeen(seen, symbol2)) return;
             return firstDefined(symbol2.declarations, (declaration) => firstDefined(getAllSuperTypeNodes(declaration), (typeReference) => {
               const type = checker.getTypeAtLocation(typeReference);
-              const propertySymbol = type.symbol && checker.getPropertyOfType(type, propertyName);
+              const propertySymbol = type.symbol && checker.getPropertyOfType(type, propertyName2);
               return propertySymbol && firstDefined(checker.getRootSymbols(propertySymbol), cb) || type.symbol && recur(type.symbol);
             }));
           }
@@ -197168,10 +197168,10 @@ ${content}
           const parent2 = declaration.parent;
           const name = declaration.propertyName || declaration.name;
           if (isIdentifier(name) && isObjectBindingPattern(parent2)) {
-            const propertyName = getTextOfIdentifierOrLiteral(name);
+            const propertyName2 = getTextOfIdentifierOrLiteral(name);
             const objectType2 = typeChecker.getTypeAtLocation(parent2);
             documentation = firstDefined(objectType2.isUnion() ? objectType2.types : [objectType2], (t) => {
-              const prop = t.getProperty(propertyName);
+              const prop = t.getProperty(propertyName2);
               return prop ? prop.getDocumentationComment(typeChecker) : void 0;
             }) || emptyArray;
           }
@@ -219890,9 +219890,9 @@ var require_picomatch2 = __commonJS({
 // src/main-sync.ts
 import { spawnSync as spawnSync8 } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { existsSync as existsSync7, lstatSync as lstatSync8, readFileSync as readFileSync14, realpathSync as realpathSync9 } from "node:fs";
-import { join as join13 } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { existsSync as existsSync8, lstatSync as lstatSync8, readFileSync as readFileSync14, realpathSync as realpathSync9 } from "node:fs";
+import { join as join14 } from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // node_modules/zod/v3/external.js
 var external_exports = {};
@@ -224795,8 +224795,8 @@ function apiText(root, path2, logs = false) {
 // src/main-sync-checks.ts
 import { spawnSync as spawnSync7 } from "node:child_process";
 import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync6, lstatSync as lstatSync7, readFileSync as readFileSync13, readlinkSync, writeFileSync as writeFileSync5 } from "node:fs";
-import { join as join12 } from "node:path";
+import { existsSync as existsSync7, lstatSync as lstatSync7, readFileSync as readFileSync13, readlinkSync, writeFileSync as writeFileSync5 } from "node:fs";
+import { join as join13 } from "node:path";
 
 // src/main-sync-lanes.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
@@ -225005,15 +225005,410 @@ if (process.argv[1] && realpathSync4(fileURLToPath(import.meta.url)) === realpat
 }
 
 // src/main-sync-private-inputs.ts
+import { existsSync as existsSync5, lstatSync as lstatSync3, realpathSync as realpathSync5 } from "node:fs";
+import { dirname as dirname2, join as join5, relative as relative2, resolve as resolve3, sep } from "node:path";
+
+// src/main-sync-input-references.ts
 var import_typescript = __toESM(require_typescript(), 1);
 var import_picomatch = __toESM(require_picomatch2(), 1);
-import { existsSync as existsSync4, lstatSync as lstatSync3, readFileSync as readFileSync5, realpathSync as realpathSync5 } from "node:fs";
-import { dirname, join as join4, relative, resolve as resolve2, sep } from "node:path";
+import { existsSync as existsSync4, readFileSync as readFileSync5 } from "node:fs";
+import { dirname, isAbsolute, join as join4, normalize, relative, resolve as resolve2 } from "node:path";
+import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 var MODULE_PATH = /\.(?:[cm]?[jt]sx?|json)$/;
 var CONFIG_PATH = /(?:^|\/)(?:tsconfig[^/]*\.json|(?:vitest|playwright|storybook|next|source)\.config\.[cm]?[jt]s|\.storybook\/main\.[cm]?[jt]s)$/;
 var COLLECTOR_KEYS = /* @__PURE__ */ new Set(["include", "files", "testDir", "testMatch", "stories"]);
 var READERS = /* @__PURE__ */ new Set(["readFile", "readFileSync", "createReadStream", "glob", "globSync", "fastGlob"]);
-var GLOB = /[*?]/;
+var UNKNOWN = "__VIBE_UNKNOWN_PATH__";
+var UNKNOWN_HOST = UNKNOWN.toLowerCase();
+var LEADING_PARENTS = /^(?:\.{1,2}\/)+/;
+var REGEX_META = /[.*+?^${}()|[\]\\]/g;
+var URI_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+var NO_FILE_TARGET = /* @__PURE__ */ Symbol("no-file-target");
+function committedInputReferences(root, matches) {
+  const files = git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0").filter(Boolean);
+  return files.some((file) => {
+    if (!MODULE_PATH.test(file) || isLocalPlanPath(file)) return false;
+    const source = import_typescript.default.createSourceFile(file, readFileSync5(join4(root, file), "utf8"), import_typescript.default.ScriptTarget.Latest, true);
+    let found = false;
+    const inspect = (node) => {
+      if ((import_typescript.default.isImportDeclaration(node) || import_typescript.default.isExportDeclaration(node)) && node.moduleSpecifier) {
+        found ||= matchPath(node.moduleSpecifier, "module");
+      } else if (import_typescript.default.isCallExpression(node)) {
+        if (isViteGlob(node.expression)) found ||= matches(file, viteReference(root, file, node));
+        else {
+          const name = callName(node.expression);
+          if (node.expression.kind === import_typescript.default.SyntaxKind.ImportKeyword || name === "require" || isReader(node.expression)) {
+            const argument = node.arguments[0];
+            if (argument) {
+              if (["glob", "globSync", "fastGlob"].includes(name)) {
+                found ||= matches(file, {
+                  kind: "collector",
+                  values: literalGroup(argument),
+                  excludes: [],
+                  base: packageBase(root, file),
+                  dot: true,
+                  unresolved: false
+                });
+              } else found ||= matchPath(argument, node.expression.kind === import_typescript.default.SyntaxKind.ImportKeyword || name === "require" ? "module" : "runtime");
+            }
+          }
+        }
+      } else if (CONFIG_PATH.test(file) && import_typescript.default.isPropertyAssignment(node) && COLLECTOR_KEYS.has(propertyName(node.name))) {
+        found ||= matches(file, {
+          kind: "collector",
+          values: literalGroup(node.initializer),
+          excludes: collectorExcludes(node.parent),
+          base: packageBase(root, file),
+          dot: true,
+          unresolved: false
+        });
+      }
+      if (!found) import_typescript.default.forEachChild(node, inspect);
+    };
+    const matchPath = (expression, base) => {
+      const value = pathValue(expression, root, file, /* @__PURE__ */ new Set());
+      const target = fsTarget(value);
+      if (!target) return false;
+      return matches(file, {
+        kind: "path",
+        value: target.path,
+        base,
+        possibleOnly: target.possible,
+        unknownPrefix: target.unknownPrefix,
+        uncertainTerms: target.path.includes(UNKNOWN) ? expressionTerms(expression, root, file, /* @__PURE__ */ new Set()) : []
+      });
+    };
+    inspect(source);
+    return found;
+  });
+}
+function referenceMatches(root, file, reference, candidates) {
+  if (reference.kind === "path") {
+    if (pathPossibility(root, file, reference.value, reference.base, candidates, reference.unknownPrefix)) return true;
+    return reference.value === UNKNOWN && reference.uncertainTerms.some((term) => pathPossibility(root, file, term, reference.base, candidates));
+  }
+  const positives = [];
+  const negatives = [...reference.excludes];
+  for (const value of reference.values) {
+    if (reference.kind === "vite" && value.startsWith("!")) negatives.push(value.slice(1));
+    else positives.push(value);
+  }
+  if (reference.unresolved) return true;
+  if (!positives.length) return false;
+  const absolute = (pattern) => {
+    if (reference.kind !== "vite") return pattern;
+    if (pattern.startsWith("**")) return pattern;
+    if (pattern.startsWith("/")) return join4(packageBase(root, file), pattern.slice(1));
+    return join4(reference.base, pattern);
+  };
+  const match = (0, import_picomatch.default)(positives.map(absolute), {
+    dot: reference.dot,
+    ignore: negatives.map(absolute),
+    ...reference.kind === "vite" ? { noext: true } : {}
+  });
+  return candidates.some((candidate) => match(reference.kind === "vite" ? join4(root, candidate) : relative(reference.base, join4(root, candidate))));
+}
+function explicitPlanningReference(root, file, reference) {
+  if (reference.kind !== "path") return false;
+  if (reference.value.includes(UNKNOWN)) {
+    const suffix = reference.value.slice(reference.value.lastIndexOf(UNKNOWN) + UNKNOWN.length).replace(/^\/+/, "");
+    return suffix === ".closedloop-ai/vibe-plans" || suffix.startsWith(".closedloop-ai/vibe-plans/") || reference.uncertainTerms.some((term) => term.includes(".closedloop-ai/vibe-plans")) || reference.uncertainTerms.includes(".closedloop-ai") && reference.uncertainTerms.includes("vibe-plans");
+  }
+  const target = reference.base === "runtime" && !isAbsolute(reference.value) ? normalize(reference.value).replace(LEADING_PARENTS, "") : relative(root, resolve2(dirname(join4(root, file)), reference.value));
+  return isLocalPlanPath(target) || target === ".closedloop-ai/vibe-plans";
+}
+function callName(expression) {
+  if (import_typescript.default.isIdentifier(expression)) return importedName(expression) ?? expression.text;
+  return import_typescript.default.isPropertyAccessExpression(expression) ? expression.name.text : "";
+}
+function isViteGlob(expression) {
+  return import_typescript.default.isPropertyAccessExpression(expression) && expression.name.text === "glob" && import_typescript.default.isMetaProperty(expression.expression) && expression.expression.keywordToken === import_typescript.default.SyntaxKind.ImportKeyword && expression.expression.name.text === "meta";
+}
+function isReader(expression) {
+  const name = callName(expression);
+  if (!READERS.has(name)) return false;
+  if (import_typescript.default.isIdentifier(expression)) return true;
+  if (!import_typescript.default.isPropertyAccessExpression(expression)) return false;
+  return !isViteGlob(expression);
+}
+function viteReference(root, file, node) {
+  const values = node.arguments[0] ? literalGroup(node.arguments[0]) : [];
+  let base = dirname(join4(root, file));
+  let dot = false;
+  let unresolved = !node.arguments[0] || !literalGroupComplete(node.arguments[0]) || values.some((value) => !["/", "./", "../", "**"].some((prefix) => value.replace(/^!/, "").startsWith(prefix)));
+  const options = node.arguments[1];
+  if (options && !import_typescript.default.isObjectLiteralExpression(options)) unresolved = true;
+  if (options && import_typescript.default.isObjectLiteralExpression(options)) {
+    for (const property of options.properties) {
+      if (!import_typescript.default.isPropertyAssignment(property)) {
+        unresolved = true;
+        continue;
+      }
+      const name = propertyName(property.name);
+      if (name === "exhaustive") {
+        if (property.initializer.kind === import_typescript.default.SyntaxKind.TrueKeyword) dot = true;
+        else if (property.initializer.kind !== import_typescript.default.SyntaxKind.FalseKeyword) unresolved = true;
+      } else if (name === "base") {
+        if (!import_typescript.default.isStringLiteralLike(property.initializer)) unresolved = true;
+        else base = property.initializer.text.startsWith("/") ? join4(packageBase(root, file), property.initializer.text) : resolve2(base, property.initializer.text);
+      } else if (!["eager", "import", "query", "as"].includes(name)) unresolved = true;
+    }
+  }
+  return { kind: "vite", values, excludes: [], base, dot, unresolved };
+}
+function literalGroup(expression) {
+  if (import_typescript.default.isStringLiteralLike(expression)) return [expression.text];
+  if (import_typescript.default.isArrayLiteralExpression(expression)) return expression.elements.flatMap((item) => literalGroup(item));
+  return [];
+}
+function literalGroupComplete(expression) {
+  return import_typescript.default.isStringLiteralLike(expression) || import_typescript.default.isArrayLiteralExpression(expression) && expression.elements.every(literalGroupComplete);
+}
+function propertyName(name) {
+  return import_typescript.default.isIdentifier(name) || import_typescript.default.isStringLiteral(name) ? name.text : "";
+}
+function collectorExcludes(node) {
+  if (!import_typescript.default.isObjectLiteralExpression(node)) return [];
+  return node.properties.flatMap((property) => import_typescript.default.isPropertyAssignment(property) && propertyName(property.name) === "exclude" ? literalGroup(property.initializer) : []);
+}
+function packageBase(root, file) {
+  let base = dirname(join4(root, file));
+  while (base !== root && !existsSync4(join4(base, "package.json"))) base = dirname(base);
+  return base;
+}
+function importedName(identifier) {
+  const declaration = localDeclaration(identifier);
+  if (declaration && import_typescript.default.isImportSpecifier(declaration)) return (declaration.propertyName ?? declaration.name).text;
+  return void 0;
+}
+function localDeclaration(identifier) {
+  for (let scope = identifier.parent; scope; scope = scope.parent) {
+    if (import_typescript.default.isFunctionLike(scope)) {
+      const parameter = scope.parameters.find((item) => import_typescript.default.isIdentifier(item.name) && item.name.text === identifier.text);
+      if (parameter) return parameter;
+    }
+    if (!import_typescript.default.isBlock(scope) && !import_typescript.default.isSourceFile(scope)) continue;
+    let found;
+    const inspect = (node) => {
+      if ((import_typescript.default.isVariableDeclaration(node) || import_typescript.default.isImportSpecifier(node) || import_typescript.default.isNamespaceImport(node) || import_typescript.default.isImportClause(node) || import_typescript.default.isFunctionDeclaration(node)) && node.name && import_typescript.default.isIdentifier(node.name) && node.name.text === identifier.text) found = node;
+      if (node !== scope && (import_typescript.default.isBlock(node) || import_typescript.default.isFunctionLike(node))) return;
+      if (!found) import_typescript.default.forEachChild(node, inspect);
+    };
+    inspect(scope);
+    if (found) return found;
+  }
+  return void 0;
+}
+function builtin(expression, names) {
+  if (import_typescript.default.isIdentifier(expression)) {
+    const declaration2 = localDeclaration(expression);
+    if (!declaration2 || !import_typescript.default.isImportSpecifier(declaration2)) return false;
+    const module = declaration2.parent.parent.parent;
+    return import_typescript.default.isImportDeclaration(module) && import_typescript.default.isStringLiteral(module.moduleSpecifier) && names.includes(module.moduleSpecifier.text);
+  }
+  if (!import_typescript.default.isPropertyAccessExpression(expression) || !import_typescript.default.isIdentifier(expression.expression)) return false;
+  const declaration = localDeclaration(expression.expression);
+  if (!declaration) return false;
+  let node = declaration;
+  while (node && !import_typescript.default.isImportDeclaration(node)) node = node.parent;
+  return Boolean(node && import_typescript.default.isImportDeclaration(node) && import_typescript.default.isStringLiteral(node.moduleSpecifier) && names.includes(node.moduleSpecifier.text));
+}
+function pathValue(expression, root, file, seen) {
+  if (seen.size > 32 || seen.has(expression)) return UNKNOWN;
+  seen = new Set(seen).add(expression);
+  if (import_typescript.default.isStringLiteralLike(expression)) return expression.text;
+  if (import_typescript.default.isParenthesizedExpression(expression)) return pathValue(expression.expression, root, file, seen);
+  if (import_typescript.default.isIdentifier(expression)) {
+    const declaration = localDeclaration(expression);
+    if (expression.text === "__dirname" && !declaration) return dirname(join4(root, file));
+    if (declaration && import_typescript.default.isVariableDeclaration(declaration) && declaration.initializer && import_typescript.default.isVariableDeclarationList(declaration.parent) && declaration.parent.flags & import_typescript.default.NodeFlags.Const) {
+      return pathValue(declaration.initializer, root, file, seen);
+    }
+    return UNKNOWN;
+  }
+  if (import_typescript.default.isTemplateExpression(expression)) {
+    const values = expression.templateSpans.map((part) => pathValue(part.expression, root, file, seen));
+    if (values.includes(NO_FILE_TARGET)) return NO_FILE_TARGET;
+    return expression.head.text + expression.templateSpans.map((part, index) => stringValue(values[index]) + part.literal.text).join("");
+  }
+  if (import_typescript.default.isPropertyAccessExpression(expression) && expression.name.text === "url" && import_typescript.default.isMetaProperty(expression.expression) && expression.expression.keywordToken === import_typescript.default.SyntaxKind.ImportKeyword) return pathToFileURL(join4(root, file)).href;
+  if (import_typescript.default.isBinaryExpression(expression) && expression.operatorToken.kind === import_typescript.default.SyntaxKind.PlusToken) {
+    const left = pathValue(expression.left, root, file, seen);
+    const right = pathValue(expression.right, root, file, seen);
+    if (left === NO_FILE_TARGET || right === NO_FILE_TARGET) return NO_FILE_TARGET;
+    return stringValue(left) + stringValue(right);
+  }
+  if (import_typescript.default.isNewExpression(expression) && isUrlConstructor(expression.expression)) {
+    const argument = expression.arguments?.[0];
+    const value = argument ? pathValue(argument, root, file, seen) : void 0;
+    const baseArgument = expression.arguments?.[1];
+    const base = baseArgument ? pathValue(baseArgument, root, file, seen) : void 0;
+    if (!value) return UNKNOWN;
+    return constructUrl(value, base);
+  }
+  if (!import_typescript.default.isCallExpression(expression)) return UNKNOWN;
+  const name = callName(expression.expression);
+  if (import_typescript.default.isPropertyAccessExpression(expression.expression) && name === "cwd" && import_typescript.default.isIdentifier(expression.expression.expression) && expression.expression.expression.text === "process" && !localDeclaration(expression.expression.expression)) return `/${UNKNOWN}`;
+  if (name === "fileURLToPath" && builtin(expression.expression, ["node:url", "url"])) {
+    const argument = expression.arguments[0];
+    const value = argument ? pathValue(argument, root, file, seen) : void 0;
+    if (!value) return UNKNOWN;
+    if (typeof value === "object" && !(value instanceof URL) && "possiblePath" in value) return NO_FILE_TARGET;
+    const target = fsTarget(typeof value === "string" ? constructUrl(value, void 0) : value);
+    if (!target) return NO_FILE_TARGET;
+    return target.unknownPrefix ? { possiblePath: target.path, unknownPrefix: true } : target.path;
+  }
+  if (["join", "resolve"].includes(name) && builtin(expression.expression, ["node:path", "path"])) {
+    const inputs = expression.arguments.map((argument) => pathValue(argument, root, file, seen));
+    if (inputs.includes(NO_FILE_TARGET)) return NO_FILE_TARGET;
+    const values = inputs.map((value) => {
+      return typeof value === "string" || value && typeof value === "object" && "possiblePath" in value ? stringValue(value) : UNKNOWN;
+    });
+    if (name === "join") return join4(...values);
+    let absolute = -1;
+    for (let index = 0; index < values.length; index++) if (isAbsolute(values[index])) absolute = index;
+    if (absolute >= 0) return resolve2(...values.slice(absolute));
+    return `${UNKNOWN}/${join4(...values)}`;
+  }
+  if (name === "tmpdir" && builtin(expression.expression, ["node:os", "os"])) return UNKNOWN;
+  if (import_typescript.default.isIdentifier(expression.expression)) {
+    const declaration = localDeclaration(expression.expression);
+    if (declaration && import_typescript.default.isFunctionDeclaration(declaration) && declaration.body && !declaration.parameters.length) {
+      const returns = helperReturns(declaration.body);
+      if (returns.length === 1 && returns[0]?.expression && declaration.body.statements.at(-1) === returns[0]) {
+        return pathValue(returns[0].expression, root, file, seen);
+      }
+    }
+  }
+  return UNKNOWN;
+}
+function expressionTerms(expression, root, file, seen) {
+  if (seen.size > 32 || seen.has(expression)) return [];
+  seen = new Set(seen).add(expression);
+  if (import_typescript.default.isStringLiteralLike(expression)) return [expression.text];
+  if (import_typescript.default.isTemplateExpression(expression)) return [expression.head.text, ...expression.templateSpans.flatMap((span) => [...expressionTerms(span.expression, root, file, seen), span.literal.text])];
+  if (import_typescript.default.isIdentifier(expression)) {
+    const declaration = localDeclaration(expression);
+    if (declaration && import_typescript.default.isVariableDeclaration(declaration) && declaration.initializer) {
+      const value = pathValue(declaration.initializer, root, file, new Set(seen));
+      const target = fsTarget(value);
+      const constraints = target && value && typeof value === "object" ? [target.unknownPrefix ? `${UNKNOWN}${target.path}` : target.path] : [];
+      return [...constraints, ...expressionTerms(declaration.initializer, root, file, seen)];
+    }
+  }
+  if (import_typescript.default.isCallExpression(expression) && import_typescript.default.isIdentifier(expression.expression)) {
+    const declaration = localDeclaration(expression.expression);
+    if (declaration && import_typescript.default.isFunctionDeclaration(declaration) && declaration.body && !declaration.parameters.length) {
+      return helperReturns(declaration.body).flatMap((statement) => {
+        if (!statement.expression) return [];
+        const value = pathValue(statement.expression, root, file, new Set(seen));
+        const target = fsTarget(value);
+        if (!target) return [];
+        return [target.unknownPrefix ? `${UNKNOWN}${target.path}` : target.path, ...expressionTerms(statement.expression, root, file, seen)];
+      });
+    }
+  }
+  const terms = [];
+  import_typescript.default.forEachChild(expression, (node) => {
+    if (import_typescript.default.isExpression(node)) terms.push(...expressionTerms(node, root, file, seen));
+  });
+  return terms;
+}
+function pathPossibility(root, file, value, base, candidates, unknownPrefix = false) {
+  const meaningful = value.split(UNKNOWN).join("").replace(LEADING_PARENTS, "").replaceAll("/", "");
+  if (!meaningful || meaningful === "." || meaningful === "..") return false;
+  if ((value.includes(UNKNOWN) || unknownPrefix) && !hasUncertainIdentity(root, value)) return false;
+  let pattern = value;
+  if (unknownPrefix) pattern = `${UNKNOWN}${pattern}`;
+  else if (base === "runtime" && !isAbsolute(pattern)) {
+    if (!pattern.startsWith(UNKNOWN)) pattern = `${UNKNOWN}/${normalize(pattern).replace(LEADING_PARENTS, "")}`;
+  } else if (!isAbsolute(pattern)) pattern = resolve2(dirname(join4(root, file)), pattern);
+  const match = new RegExp(`^${pattern.replace(REGEX_META, "\\$&").split(UNKNOWN).join(".*")}$`);
+  return candidates.some((candidate) => match.test(join4(root, candidate)));
+}
+function isUrlConstructor(expression) {
+  if (callName(expression) !== "URL") return false;
+  if (builtin(expression, ["node:url", "url"])) return true;
+  return import_typescript.default.isIdentifier(expression) && expression.text === "URL" && !localDeclaration(expression);
+}
+function helperReturns(body) {
+  const statements = [];
+  const inspect = (node) => {
+    if (node !== body && import_typescript.default.isFunctionLike(node)) return;
+    if (import_typescript.default.isReturnStatement(node)) statements.push(node);
+    else import_typescript.default.forEachChild(node, inspect);
+  };
+  inspect(body);
+  return statements;
+}
+function fsTarget(value) {
+  if (value === NO_FILE_TARGET) return void 0;
+  if (typeof value === "string" || value === void 0) return { path: value ?? UNKNOWN, possible: Boolean(value?.includes(UNKNOWN)), unknownPrefix: false };
+  if (!(value instanceof URL) && "possiblePath" in value) return { path: value.possiblePath, possible: true, unknownPrefix: value.unknownPrefix };
+  const url = value instanceof URL ? value : value.possibleUrl;
+  if (url.protocol !== "file:") return void 0;
+  const projected = new URL(url.href);
+  let possible = !(value instanceof URL) || url.href.includes(UNKNOWN);
+  let unknownPrefix = !(value instanceof URL) && Boolean(value.unknownPrefix);
+  if (projected.hostname && projected.hostname !== "localhost") {
+    if (!projected.hostname.includes(UNKNOWN_HOST) || value instanceof URL) return void 0;
+    projected.hostname = "";
+    possible = true;
+    unknownPrefix = true;
+  }
+  try {
+    return { path: fileURLToPath2(projected), possible, unknownPrefix };
+  } catch {
+    return possible ? { path: UNKNOWN, possible: true, unknownPrefix } : void 0;
+  }
+}
+function constructUrl(input, base) {
+  if (input === NO_FILE_TARGET || base === NO_FILE_TARGET) return NO_FILE_TARGET;
+  const path2 = typeof input === "object" && !(input instanceof URL) && "possiblePath" in input ? input : void 0;
+  if (base && typeof base === "object" && !(base instanceof URL) && "possiblePath" in base) return NO_FILE_TARGET;
+  const value = input instanceof URL || typeof input === "string" ? input : "possiblePath" in input ? input.possiblePath : input.possibleUrl;
+  const baseValue = base instanceof URL || typeof base === "string" || base === void 0 ? base : base.possibleUrl;
+  const baseUncertain = base !== void 0 && (typeof base !== "string" && !(base instanceof URL) || stringValue(base).includes(UNKNOWN));
+  let url;
+  try {
+    url = new URL(value, baseValue);
+  } catch {
+    if (!baseUncertain) return path2 ? NO_FILE_TARGET : UNKNOWN;
+    try {
+      url = new URL(value, `file:///${UNKNOWN}/`);
+    } catch {
+      return UNKNOWN;
+    }
+  }
+  if (baseUncertain && typeof value === "string" && !URI_SCHEME.test(value) && !value.startsWith("/") && !url.href.includes(UNKNOWN)) {
+    url.pathname = `/${UNKNOWN}${url.pathname}`;
+  }
+  const unknownPrefix = path2?.unknownPrefix || typeof input === "object" && !(input instanceof URL) && "possibleUrl" in input && input.unknownPrefix;
+  return baseUncertain || stringValue(input).includes(UNKNOWN) || url.href.includes(UNKNOWN) || typeof input !== "string" && !(input instanceof URL) ? { possibleUrl: url, ...unknownPrefix ? { unknownPrefix: true } : {} } : url;
+}
+function stringValue(value) {
+  if (value === NO_FILE_TARGET) return UNKNOWN;
+  if (value && typeof value === "object" && !(value instanceof URL) && "possiblePath" in value) return value.unknownPrefix ? `${UNKNOWN}${value.possiblePath}` : value.possiblePath;
+  if (value && typeof value === "object" && !(value instanceof URL)) return value.possibleUrl.href;
+  return String(value ?? UNKNOWN);
+}
+function hasUncertainIdentity(root, value) {
+  let residual = value;
+  if (value === root) residual = "";
+  else if (value.startsWith(`${root}/`)) residual = value.slice(root.length + 1);
+  const parts = residual.split("/");
+  return parts.some((part, index) => {
+    const known = part.split(UNKNOWN).join("");
+    if (!known || known === "." || known === "..") return false;
+    if (index < parts.length - 1 || !part.includes(UNKNOWN)) return true;
+    if (!part.startsWith(UNKNOWN)) return true;
+    let suffix = part;
+    while (suffix.startsWith(UNKNOWN)) suffix = suffix.slice(UNKNOWN.length);
+    return !suffix.startsWith(".") || suffix.includes(UNKNOWN);
+  });
+}
+
+// src/main-sync-private-inputs.ts
 var analyzed;
 function verifyPrivateInput(root, file, head) {
   verifyEvidencePath(root, file);
@@ -225028,96 +225423,47 @@ function verifyPrivateInput(root, file, head) {
 }
 function verifyPrivateRoot(root) {
   for (const path2 of [".closedloop-ai", ".closedloop-ai/vibe-plans"]) {
-    const stat = lstatSync3(join4(root, path2), { throwIfNoEntry: false });
-    if (stat && (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync5(join4(root, path2)) !== join4(root, path2))) {
+    const stat = lstatSync3(join5(root, path2), { throwIfNoEntry: false });
+    if (stat && (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync5(join5(root, path2)) !== join5(root, path2))) {
       throw new MainSyncError("Private planning evidence requires its canonical owned directory; no symlink or alias is accepted", "NEEDS_CHANGE");
     }
   }
 }
 function verifyEvidencePath(root, file, label = "Private planning evidence") {
-  const target = join4(root, file);
+  const target = join5(root, file);
   const stat = lstatSync3(target);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_INPUT_BYTES || realpathSync5(target) !== target) {
     throw new MainSyncError(`${label} requires a bounded canonical regular file`, "NEEDS_CHANGE");
   }
-  for (let parent = dirname(target); parent !== root; parent = dirname(parent)) {
+  for (let parent = dirname2(target); parent !== root; parent = dirname2(parent)) {
     if (!parent.startsWith(`${root}${sep}`) || lstatSync3(parent).isSymbolicLink() || realpathSync5(parent) !== parent) {
       throw new MainSyncError(`${label} cannot use a symlinked or escaping parent`, "NEEDS_CHANGE");
     }
   }
 }
 function referencesPrivateInputs(root, privatePaths) {
-  return committedInputReferences(root, (file, value, collector, excludes) => {
-    const target = relative(root, resolve2(dirname(join4(root, file)), value));
-    const path2 = resolve2(root, target);
-    return isLocalPlanPath(target) || existsSync4(path2) && isLocalPlanPath(relative(root, realpathSync5(path2))) || value.includes(".closedloop-ai/vibe-plans") || value === ".closedloop-ai" || value.startsWith(".closedloop-ai/") || Boolean(collector && GLOB.test(value) && collectsPrivate(root, file, value, privatePaths, excludes));
+  return committedInputReferences(root, (file, reference) => {
+    if (explicitPlanningReference(root, file, reference) || referenceMatches(root, file, reference, privatePaths)) return true;
+    if (reference.kind !== "path") return false;
+    const path2 = resolve3(reference.base === "module" ? dirname2(join5(root, file)) : root, reference.value);
+    return existsSync5(path2) && isLocalPlanPath(relative2(root, realpathSync5(path2)));
   });
-}
-function committedInputReferences(root, matches) {
-  const files = git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0").filter(Boolean);
-  return files.some((file) => {
-    if (!MODULE_PATH.test(file) || isLocalPlanPath(file)) return false;
-    const source = import_typescript.default.createSourceFile(file, readFileSync5(join4(root, file), "utf8"), import_typescript.default.ScriptTarget.Latest, true);
-    let found = false;
-    const inspect = (node) => {
-      if ((import_typescript.default.isImportDeclaration(node) || import_typescript.default.isExportDeclaration(node)) && node.moduleSpecifier) {
-        found ||= inputReference(file, node.moduleSpecifier, matches);
-      } else if (import_typescript.default.isCallExpression(node)) {
-        const name = import_typescript.default.isIdentifier(node.expression) ? node.expression.text : import_typescript.default.isPropertyAccessExpression(node.expression) ? node.expression.name.text : "";
-        if (node.expression.kind === import_typescript.default.SyntaxKind.ImportKeyword || name === "require" || READERS.has(name)) {
-          for (const argument of node.arguments) found ||= inputReference(file, argument, matches, name === "glob" || name === "globSync" || name === "fastGlob");
-        }
-      } else if (CONFIG_PATH.test(file) && import_typescript.default.isPropertyAssignment(node)) {
-        const name = import_typescript.default.isIdentifier(node.name) || import_typescript.default.isStringLiteral(node.name) ? node.name.text : "";
-        if (COLLECTOR_KEYS.has(name)) found ||= inputReference(file, node.initializer, matches, true, collectorExcludes(node.parent));
-      }
-      if (!found) import_typescript.default.forEachChild(node, inspect);
-    };
-    inspect(source);
-    return found;
-  });
-}
-function inputReference(file, expression, matches, collector = false, excludes = []) {
-  let found = false;
-  const inspect = (node) => {
-    if (import_typescript.default.isStringLiteralLike(node)) {
-      found ||= matches(file, node.text, collector, excludes);
-    }
-    if (!found) import_typescript.default.forEachChild(node, inspect);
-  };
-  inspect(expression);
-  return found;
-}
-function collectsPrivate(root, file, pattern, privatePaths, excludes = []) {
-  let base = dirname(join4(root, file));
-  while (base !== root && !existsSync4(join4(base, "package.json"))) base = dirname(base);
-  const match = (0, import_picomatch.default)(pattern, { dot: true, ignore: excludes });
-  return privatePaths.some((path2) => match(relative(base, join4(root, path2))));
-}
-function collectorExcludes(node) {
-  if (!import_typescript.default.isObjectLiteralExpression(node)) return [];
-  const values = [];
-  for (const property of node.properties) {
-    if (!import_typescript.default.isPropertyAssignment(property) || !import_typescript.default.isIdentifier(property.name) && !import_typescript.default.isStringLiteral(property.name) || property.name.text !== "exclude" || !import_typescript.default.isArrayLiteralExpression(property.initializer)) continue;
-    for (const value of property.initializer.elements) if (import_typescript.default.isStringLiteralLike(value)) values.push(value.text);
-  }
-  return values;
 }
 
 // src/main-sync-input-catalog.ts
 import { lstatSync as lstatSync5, readFileSync as readFileSync7, readdirSync as readdirSync2 } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname as dirname3, join as join6, relative as relative2, sep as sep3 } from "node:path";
+import { dirname as dirname4, join as join7, relative as relative3, sep as sep3 } from "node:path";
 import { realpathSync as realpathSync7 } from "node:fs";
 
 // src/main-sync-input-files.ts
 import { lstatSync as lstatSync4, readFileSync as readFileSync6, readdirSync, realpathSync as realpathSync6 } from "node:fs";
-import { dirname as dirname2, join as join5, sep as sep2 } from "node:path";
+import { dirname as dirname3, join as join6, sep as sep2 } from "node:path";
 function originFile(root, file) {
-  const target = join5(root, file);
+  const target = join6(root, file);
   const stat = lstatSync4(target);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.mode & 73 || stat.size > MAX_INPUT_BYTES || realpathSync6(target) !== target) throw new MainSyncError(`Generated input must be a bounded canonical non-executable regular file: ${file}`, "NEEDS_CHANGE");
-  for (let parent = dirname2(target); parent !== root; parent = dirname2(parent)) {
+  for (let parent = dirname3(target); parent !== root; parent = dirname3(parent)) {
     if (!parent.startsWith(`${root}${sep2}`) || lstatSync4(parent).isSymbolicLink() || realpathSync6(parent) !== parent) {
       throw new MainSyncError(`Generated input parent is not canonical: ${file}`, "NEEDS_CHANGE");
     }
@@ -225125,7 +225471,7 @@ function originFile(root, file) {
   return originFileSchema.parse({ path: file, bytes: stat.size, sha256: digest(readFileSync6(target)), mode: "100644" });
 }
 function originTree(root, path2, allowed) {
-  const target = join5(root, path2);
+  const target = join6(root, path2);
   const stat = lstatSync4(target, { throwIfNoEntry: false });
   if (!stat) return [];
   if (stat.isSymbolicLink() || realpathSync6(target) !== target) throw new MainSyncError(`Generated output root cannot be a symlink or alias: ${path2}`, "NEEDS_CHANGE");
@@ -225225,7 +225571,7 @@ function producerFor(path2) {
   return inputProducers.find((producer) => producer.roots.some((root) => path2 === root || path2.startsWith(`${root}/`)));
 }
 function presentProducers(root) {
-  return inputProducers.filter((producer) => producer.roots.some((path2) => lstatSync5(join6(root, path2), { throwIfNoEntry: false })));
+  return inputProducers.filter((producer) => producer.roots.some((path2) => lstatSync5(join7(root, path2), { throwIfNoEntry: false })));
 }
 function producerFiles(root, producer, allowed) {
   return producer.roots.flatMap((path2) => originTree(root, path2, allowed));
@@ -225233,14 +225579,14 @@ function producerFiles(root, producer, allowed) {
 function producerPackage(root, producer) {
   if (!producer.package) return void 0;
   const owner = producer.package;
-  const file = createRequire(join6(root, owner.dir, "package.json")).resolve(`${owner.name}/package.json`);
+  const file = createRequire(join7(root, owner.dir, "package.json")).resolve(`${owner.name}/package.json`);
   const canonical = realpathSync7(file);
   if (!canonical.startsWith(`${root}${sep3}`) || !lstatSync5(canonical).isFile()) {
     throw new MainSyncError(`Canonical installed producer resolves outside the owned validation checkout: ${producer.id}`, "NEEDS_CHANGE");
   }
   const data = packageSchema.parse(JSON.parse(readFileSync7(canonical, "utf8")));
   if (data.name !== owner.name || data.version !== owner.version) throw new MainSyncError(`Installed producer contract changed: ${producer.id}`, "NEEDS_CHANGE");
-  return { path: relative2(root, canonical), directory: dirname3(canonical), version: data.version };
+  return { path: relative3(root, canonical), directory: dirname4(canonical), version: data.version };
 }
 function producerOwnerInputs(root, producer, allowed) {
   const owner = producerPackage(root, producer);
@@ -225248,8 +225594,8 @@ function producerOwnerInputs(root, producer, allowed) {
   const result = [];
   const walk = (directory) => {
     for (const name of readdirSync2(directory).sort()) {
-      const path2 = join6(directory, name);
-      const file = relative2(root, path2);
+      const path2 = join7(directory, name);
+      const file = relative3(root, path2);
       const stat = lstatSync5(path2);
       if (stat.isSymbolicLink() || realpathSync7(path2) !== path2) throw new MainSyncError(`Selected producer package contains a noncanonical node: ${producer.id}`, "NEEDS_CHANGE");
       if (stat.isDirectory()) {
@@ -225282,8 +225628,8 @@ function verifyProducerInputs(root, head, producers, untracked) {
       }
     }
     for (const input of producer.inputs) {
-      if (!lstatSync5(join6(root, input), { throwIfNoEntry: false })) continue;
-      if (realpathSync7(join6(root, input)) !== join6(root, input)) throw new MainSyncError(`Producer input is not canonical: ${input}`, "NEEDS_CHANGE");
+      if (!lstatSync5(join7(root, input), { throwIfNoEntry: false })) continue;
+      if (realpathSync7(join7(root, input)) !== join7(root, input)) throw new MainSyncError(`Producer input is not canonical: ${input}`, "NEEDS_CHANGE");
     }
   }
   if (git(root, ["rev-parse", "HEAD"]) !== head) throw new MainSyncError("Producer input HEAD changed during inspection", "NEEDS_CHANGE");
@@ -225293,7 +225639,7 @@ function verifyProducerInputs(root, head, producers, untracked) {
 var import_yaml3 = __toESM(require_dist(), 1);
 import { spawnSync as spawnSync4 } from "node:child_process";
 import { readFileSync as readFileSync8 } from "node:fs";
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 import { createHash as createHash3 } from "node:crypto";
 var GENERAL_CHECK_MS = 15 * 60 * 1e3;
 var FULL_LOCAL_LINT_MS = 30 * 60 * 1e3;
@@ -225314,8 +225660,8 @@ function commandSelection(root, command, timeoutMs = GENERAL_CHECK_MS) {
   let argv;
   if (command.argv[0] === "pnpm" && command.argv[1] === "turbo") argv = [...command.argv.slice(1), "--dry=json"];
   else if (command.argv.join(" ") === "pnpm typecheck:affected") {
-    const pkg = wrapperSchema.parse(JSON.parse(readFileSync8(join7(root, "package.json"), "utf8")));
-    if (pkg.scripts["typecheck:affected"] !== "sh scripts/typecheck-affected.sh" || createHash3("sha256").update(readFileSync8(join7(root, "scripts/typecheck-affected.sh"))).digest("hex") !== AFFECTED_TYPECHECK_SHA) {
+    const pkg = wrapperSchema.parse(JSON.parse(readFileSync8(join8(root, "package.json"), "utf8")));
+    if (pkg.scripts["typecheck:affected"] !== "sh scripts/typecheck-affected.sh" || createHash3("sha256").update(readFileSync8(join8(root, "scripts/typecheck-affected.sh"))).digest("hex") !== AFFECTED_TYPECHECK_SHA) {
       throw new MainSyncError("Affected typecheck wrapper owner changed; no selected producer authority", "NEEDS_CHANGE");
     }
     argv = ["turbo", "typecheck", `--filter=${affectedFilter(root)}`, "--concurrency=1", "--dry=json"];
@@ -225348,7 +225694,7 @@ function bindCheckBudgets(root, receipt, commands) {
   });
 }
 function selectedTestBudget(root, receipt, affected) {
-  const workflow = workflowSchema2.parse((0, import_yaml3.parse)(readFileSync8(join7(root, ".github/workflows/pr-test.yml"), "utf8")));
+  const workflow = workflowSchema2.parse((0, import_yaml3.parse)(readFileSync8(join8(root, ".github/workflows/pr-test.yml"), "utf8")));
   let filter = `...[${receipt.validationSince}]`;
   if (affected) {
     filter = affectedFilter(root);
@@ -225374,7 +225720,7 @@ function selectedTestBudget(root, receipt, affected) {
 
 // src/main-sync-report-inputs.ts
 import { readFileSync as readFileSync9 } from "node:fs";
-import { dirname as dirname4, join as join8, relative as relative3, resolve as resolve3 } from "node:path";
+import { join as join9 } from "node:path";
 var REPLAY = /(?:^|[\s=])--(?:merge-reports|last-failed)(?:\b|=)|(?:^|[\s/])assert-e2e-results(?:\.mjs)?\b/;
 var SELECTED_SCRIPTS = /* @__PURE__ */ new Set([
   "test",
@@ -225393,13 +225739,12 @@ var packageScripts = external_exports.object({ scripts: external_exports.record(
 var verified;
 function verifyRetainedReportInputs(root, head) {
   if (verified?.root === root && verified.head === head) return;
-  if (committedInputReferences(root, (file, value) => {
-    const target = relative3(root, resolve3(dirname4(join8(root, file)), value));
-    return reportOutputs.has(target) || reportOutputs.has(value);
-  })) throw new MainSyncError("A committed reader consumes retained report evidence; no output-only admission", "NEEDS_CHANGE");
+  if (committedInputReferences(root, (file, reference) => referenceMatches(root, file, reference, [...reportOutputs]))) {
+    throw new MainSyncError("A committed reader consumes retained report evidence; no output-only admission", "NEEDS_CHANGE");
+  }
   for (const file of git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0").filter(Boolean)) {
     if (file !== "package.json" && !file.endsWith("/package.json")) continue;
-    const scripts = packageScripts.parse(JSON.parse(readFileSync9(join8(root, file), "utf8"))).scripts ?? {};
+    const scripts = packageScripts.parse(JSON.parse(readFileSync9(join9(root, file), "utf8"))).scripts ?? {};
     for (const [name, command] of Object.entries(scripts)) {
       if (SELECTED_SCRIPTS.has(name) && REPLAY.test(command)) {
         throw new MainSyncError(`Selected validation script reads retained replay/report inputs: ${file}:${name}`, "NEEDS_CHANGE");
@@ -225416,20 +225761,20 @@ function verifyReportRecipe(commands) {
 
 // src/main-sync-check-production.ts
 import { readFileSync as readFileSync12 } from "node:fs";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 
 // src/main-sync-input-origin.ts
 import { spawnSync as spawnSync6 } from "node:child_process";
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { lstatSync as lstatSync6, mkdtempSync, readFileSync as readFileSync11, realpathSync as realpathSync8, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 
 // src/main-sync-input-pure.ts
 var import_typescript2 = __toESM(require_typescript(), 1);
 import { spawnSync as spawnSync5 } from "node:child_process";
 import { readFileSync as readFileSync10 } from "node:fs";
-import { join as join9, relative as relative4 } from "node:path";
+import { join as join10, relative as relative4 } from "node:path";
 var PURE_OWNER_PROBE = String.raw`
 import {readFileSync,lstatSync,realpathSync} from 'node:fs';
 import {join} from 'node:path';
@@ -225479,7 +225824,7 @@ function pureOriginFiles(root, producer, head) {
 function huskyBody(root, producer) {
   const owner = producerPackage(root, producer);
   if (!owner) throw new MainSyncError("Locked Husky owner is unavailable", "NEEDS_CHANGE");
-  const file = join9(owner.directory, "index.js");
+  const file = join10(owner.directory, "index.js");
   const source = import_typescript2.default.createSourceFile(relative4(root, file), readFileSync10(file, "utf8"), import_typescript2.default.ScriptTarget.Latest, true);
   const candidates = [];
   const inspect = (node) => {
@@ -225551,10 +225896,10 @@ function prepareInputOrigins(value, before, producers) {
   const packages = [];
   if (!producers.length) return proof();
   const needsCold = producers.some((producer) => producer.argv || producer.package);
-  const cold = needsCold ? realpathSync8(mkdtempSync(join10(tmpdir(), "vibe-input-origin-"))) : void 0;
+  const cold = needsCold ? realpathSync8(mkdtempSync(join11(tmpdir(), "vibe-input-origin-"))) : void 0;
   let registered = false;
   const commands = [];
-  const log = join10(value.place.dir, `vibe-input-origin-${attempt}.json`);
+  const log = join11(value.place.dir, `vibe-input-origin-${attempt}.json`);
   try {
     verifyProducerInputs(root, before.headSha, producers);
     if (cold) {
@@ -225562,11 +225907,11 @@ function prepareInputOrigins(value, before, producers) {
       registered = true;
       assertTracked(cold, before);
       for (const producer of producers) {
-        for (const path2 of producer.roots) if (lstatSync6(join10(cold, path2), { throwIfNoEntry: false })) {
+        for (const path2 of producer.roots) if (lstatSync6(join11(cold, path2), { throwIfNoEntry: false })) {
           throw new MainSyncError(`Pristine output origin was not empty: ${path2}`, "NEEDS_CHANGE");
         }
       }
-      if (lstatSync6(join10(cold, "node_modules"), { throwIfNoEntry: false }) || lstatSync6(join10(cold, "apps/desktop/src/main/database/migrations-manifest.ts"), { throwIfNoEntry: false })) {
+      if (lstatSync6(join11(cold, "node_modules"), { throwIfNoEntry: false }) || lstatSync6(join11(cold, "apps/desktop/src/main/database/migrations-manifest.ts"), { throwIfNoEntry: false })) {
         throw new MainSyncError("Pristine bootstrap prerequisites are not empty or contain a legacy migration artifact", "NEEDS_CHANGE");
       }
       run(cold, ["bash", ".closedloop-ai/loops-setup.sh"]);
@@ -225739,7 +226084,7 @@ function selectedProducer(root, id, command, selection) {
   if (!direct && command.argv.join(" ") !== "pnpm typecheck:affected" || !selection) return false;
   const owner = id === "fumadocs" ? "web" : id === "next-api" ? "api" : id === "next-app" ? "app" : id.startsWith("desktop-") ? "desktop" : void 0;
   if (!owner || !selection.tasks.some((task) => task.package === owner && task.taskId.endsWith("#typecheck"))) return false;
-  const script = packageSchema2.parse(JSON.parse(readFileSync12(join11(root, "apps", owner, "package.json"), "utf8"))).scripts?.typecheck;
+  const script = packageSchema2.parse(JSON.parse(readFileSync12(join12(root, "apps", owner, "package.json"), "utf8"))).scripts?.typecheck;
   const first = script?.split("&&")[0]?.trim();
   if (owner === "web") return first === "fumadocs-mdx";
   if (owner === "app" || owner === "api") return first === "next typegen";
@@ -225781,8 +226126,8 @@ function committedInputs(root) {
   const before = inspectInputInventory(root);
   if (!before.producers.length) return { headSha: before.headSha, treeSha: before.treeSha, inputSha256: before.inputSha256 };
   const metadata = git(root, ["rev-parse", "--absolute-git-dir"]);
-  const file = join12(metadata, MAIN_SYNC_FILE);
-  if (!existsSync6(file)) throw new MainSyncError("Canonical source input readiness is required before generated dependencies can be consumed", "NEEDS_CHANGE");
+  const file = join13(metadata, MAIN_SYNC_FILE);
+  if (!existsSync7(file)) throw new MainSyncError("Canonical source input readiness is required before generated dependencies can be consumed", "NEEDS_CHANGE");
   const state = mainSyncStateSchema.parse(readPrivateJson(file));
   if (state.worktree !== root) throw new MainSyncError("Generated input origin belongs to another worktree", "NEEDS_CHANGE");
   const proof = state.inputs;
@@ -225794,9 +226139,9 @@ function inspectInputInventory(root) {
   const before = trackedInputs(root);
   verifyPrivateRoot(root);
   for (const path2 of reportOutputs) {
-    if (lstatSync7(join12(root, path2), { throwIfNoEntry: false })) verifyEvidencePath(root, path2, "Retained report");
+    if (lstatSync7(join13(root, path2), { throwIfNoEntry: false })) verifyEvidencePath(root, path2, "Retained report");
   }
-  const generated = lstatSync7(join12(root, GENERATED_BIOME_PATH), { throwIfNoEntry: false });
+  const generated = lstatSync7(join13(root, GENERATED_BIOME_PATH), { throwIfNoEntry: false });
   if (generated && !generated.isFile()) {
     throw new MainSyncError(`Generated-input verification requires a bounded canonical regular file: ${GENERATED_BIOME_PATH}`, "NEEDS_CHANGE");
   }
@@ -225818,7 +226163,7 @@ function inspectInputInventory(root) {
         continue;
       }
       if (ignored && reportOutputs.has(file)) {
-        const stat = lstatSync7(join12(root, file));
+        const stat = lstatSync7(join13(root, file));
         if (!stat.isFile() || stat.isSymbolicLink()) throw new MainSyncError(`Retained report must be a regular owned output: ${file}`, "NEEDS_CHANGE");
         verifyRetainedReportInputs(root, before.headSha);
         continue;
@@ -225886,8 +226231,8 @@ function trackedInputs(root) {
     const tab = entry.indexOf("	");
     const [mode, kind, object] = entry.slice(0, tab).split(" ");
     const file = entry.slice(tab + 1);
-    const target = join12(root, file);
-    if (kind !== "blob" || !existsSync6(target)) throw new MainSyncError(`Committed validation inputs differ from HEAD: ${file}`, "NEEDS_CHANGE");
+    const target = join13(root, file);
+    if (kind !== "blob" || !existsSync7(target)) throw new MainSyncError(`Committed validation inputs differ from HEAD: ${file}`, "NEEDS_CHANGE");
     const stat = lstatSync7(target);
     if (stat.size > MAX_INPUT_BYTES) throw new MainSyncError(`Validation input exceeds the bounded file limit: ${file}`);
     const content = mode === "120000" && stat.isSymbolicLink() ? Buffer.from(readlinkSync(target)) : stat.isFile() ? readFileSync13(target) : void 0;
@@ -225905,7 +226250,7 @@ function checkRecipe(value, receipt) {
   const files = git(root, ["diff", "--name-only", "--no-renames", receipt.mainSha, "HEAD"]).split("\n").filter(Boolean);
   const prototype = value.place.branch.startsWith("prototype/");
   const backend = files.some((file) => BACKEND_PREFIXES.some((prefix) => file.startsWith(prefix)) || /\/(?:prisma|migrations)\//.test(`/${file}`));
-  const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync6(join12(root, file)));
+  const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync7(join13(root, file)));
   const commands = [];
   const e2eLimitations = [];
   if (prototype) {
@@ -225974,7 +226319,7 @@ function executeChecks(value, receipt, preparedRecipe) {
       Object.assign(env, command.bindings);
       const start = performance2.now();
       const result = spawnSync7(command.argv[0], command.argv.slice(1), {
-        cwd: command.cwd ? join12(value.place.root, command.cwd) : value.place.root,
+        cwd: command.cwd ? join13(value.place.root, command.cwd) : value.place.root,
         encoding: "utf8",
         timeout: remainingBudget(command.timeoutMs ?? MAX_CHECK_MS, spent[index]),
         maxBuffer: 16 * 1024 * 1024,
@@ -225982,7 +226327,7 @@ function executeChecks(value, receipt, preparedRecipe) {
       });
       spent[index] += performance2.now() - start;
       const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-      const log = join12(value.place.dir, `vibe-main-sync-${receipt.transactionId}-${attempt}-${index}.log`);
+      const log = join13(value.place.dir, `vibe-main-sync-${receipt.transactionId}-${attempt}-${index}.log`);
       writeFileSync5(log, output, { mode: 384 });
       if (result.error || result.status !== 0) throw new MainSyncError(`Required validation command failed: ${command.argv.join(" ")}; private log ${log}`);
       if (selection) {
@@ -226037,8 +226382,8 @@ async function readMainSyncInput(worktree) {
 function prepareMainSyncInputs(raw) {
   const value = syncContext(raw, "inputs");
   const identity = inspectInputInventory(value.place.root);
-  const file = join13(value.place.dir, MAIN_SYNC_FILE);
-  const prior = existsSync7(file) ? mainSyncStateSchema.parse(readPrivateJson(file)) : void 0;
+  const file = join14(value.place.dir, MAIN_SYNC_FILE);
+  const prior = existsSync8(file) ? mainSyncStateSchema.parse(readPrivateJson(file)) : void 0;
   if (prior && (prior.worktree !== value.place.root || prior.branch !== value.place.branch || prior.operator.id !== value.place.session.operator.id || prior.operator.email !== value.place.session.operator.email || prior.originalBase !== value.place.session.baseCommit)) throw new MainSyncError("Input readiness belongs to another owned session");
   const previous = prior?.phase === "input-readiness" ? prior.previous : prior;
   if (previous && (!value.context.mainSyncTransactionId || previous.transactionId !== value.context.mainSyncTransactionId)) {
@@ -226083,13 +226428,13 @@ function prepareMainSync(raw) {
   const value = syncContext(raw, "prepare");
   const root = value.place.root;
   committedInputs(root);
-  const previousFile = join13(value.place.dir, MAIN_SYNC_FILE);
-  const state = existsSync7(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : void 0;
+  const previousFile = join14(value.place.dir, MAIN_SYNC_FILE);
+  const state = existsSync8(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : void 0;
   const previous = state?.phase === "input-readiness" ? state.previous : state;
   if (previous && (previous.worktree !== root || previous.branch !== value.place.branch || previous.originalBase !== value.place.session.baseCommit || previous.operator.id !== value.place.session.operator.id || previous.operator.email !== value.place.session.operator.email)) {
     throw new MainSyncError("Previous main-sync provenance belongs to another session; preserve it and inspect the owned evidence");
   }
-  const desktopScript = fileURLToPath2(new URL("../vibe-sessions.mjs", import.meta.url));
+  const desktopScript = fileURLToPath3(new URL("../vibe-sessions.mjs", import.meta.url));
   const desktop = spawnSync8(process.execPath, [desktopScript, "desktop-tab", "--worktree", root], {
     encoding: "utf8",
     timeout: 3e4,
@@ -226141,7 +226486,7 @@ function prepareMainSync(raw) {
       throw new MainSyncError(`Ordinary main merge needs the SAME writer's conflict/source correction${conflicts ? `: ${conflicts}` : ""}; ROOT alone commits`, "NEEDS_CHANGE");
     }
   }
-  const requiresCommit = existsSync7(join13(value.place.dir, "MERGE_HEAD"));
+  const requiresCommit = existsSync8(join14(value.place.dir, "MERGE_HEAD"));
   return {
     status: requiresCommit ? "NEEDS_COMMIT" : "DONE",
     transactionId: receipt.transactionId,
@@ -226269,14 +226614,14 @@ function admitMainSyncShare(raw) {
 }
 function readMainSyncProvenance(worktree) {
   const place = syncLocation(worktree);
-  const file = join13(place.dir, MAIN_SYNC_FILE);
-  if (!existsSync7(file)) return void 0;
+  const file = join14(place.dir, MAIN_SYNC_FILE);
+  if (!existsSync8(file)) return void 0;
   const state = mainSyncStateSchema.parse(readPrivateJson(file));
   const value = state.phase === "input-readiness" ? state.previous : state;
   if (!value) return void 0;
   if (value.worktree !== place.root || value.branch !== place.branch || value.originalBase !== place.session.baseCommit || value.operator.id !== place.session.operator.id || value.operator.email !== place.session.operator.email) return void 0;
-  const merge = join13(place.dir, "MERGE_HEAD");
-  const pendingMerge = existsSync7(merge) && git(place.root, ["rev-parse", "MERGE_HEAD"]) === value.mainSha;
+  const merge = join14(place.dir, "MERGE_HEAD");
+  const pendingMerge = existsSync8(merge) && git(place.root, ["rev-parse", "MERGE_HEAD"]) === value.mainSha;
   if (!pendingMerge && !isAncestor(place.root, value.mainSha)) return void 0;
   return {
     mainSha: value.mainSha,
@@ -226319,7 +226664,7 @@ function validationMatches(value, receipt, identity) {
   }
   for (const [index, command] of proof.commands.entries()) {
     const prefix = `vibe-main-sync-${receipt.transactionId}-`;
-    const permitted = [`${prefix}${index}.log`, `${prefix}0-${index}.log`, `${prefix}1-${index}.log`].map((name) => join13(value.place.dir, name));
+    const permitted = [`${prefix}${index}.log`, `${prefix}0-${index}.log`, `${prefix}1-${index}.log`].map((name) => join14(value.place.dir, name));
     if (!permitted.includes(command.log)) throw new MainSyncError("Actual command evidence path changed", "NEEDS_CHANGE");
     const file = command.log;
     const stat = lstatSync8(file, { throwIfNoEntry: false });

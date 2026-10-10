@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.9
+
+#### Fixed
+- Private-input checks preserve recognized Vite glob groups, importer-relative paths, positive unions, exclusions and collection options instead of treating negative members as independent readers.
+- Private and retained-report checks share complete Node reader targets, path operations and bounded bindings. Settings siblings and encoding options no longer become planning references, while relevant unresolved paths and genuinely consumed private evidence remain blocked.
+
 ### vibe v1.0.8
 
 #### Fixed

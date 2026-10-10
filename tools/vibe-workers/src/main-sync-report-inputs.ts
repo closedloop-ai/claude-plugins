@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { join } from "node:path";
 import { z } from "zod";
 import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
 import { MainSyncError } from "./main-sync-contracts.js";
 import { reportOutputs } from "./main-sync-input-catalog.js";
-import { committedInputReferences } from "./main-sync-private-inputs.js";
+import { committedInputReferences, referenceMatches } from "./main-sync-input-references.js";
 import type { CheckCommand } from "./main-sync-lanes.js";
 
 const REPLAY = /(?:^|[\s=])--(?:merge-reports|last-failed)(?:\b|=)|(?:^|[\s/])assert-e2e-results(?:\.mjs)?\b/;
@@ -16,10 +16,9 @@ let verified: { root: string; head: string } | undefined;
 /** Retained artifacts are output-only only for the fixed non-replay readers; their bodies never prove coverage. */
 export function verifyRetainedReportInputs(root: string, head: string) {
   if (verified?.root === root && verified.head === head) return;
-  if (committedInputReferences(root, (file, value) => {
-    const target = relative(root, resolve(dirname(join(root, file)), value));
-    return reportOutputs.has(target) || reportOutputs.has(value);
-  })) throw new MainSyncError("A committed reader consumes retained report evidence; no output-only admission", "NEEDS_CHANGE");
+  if (committedInputReferences(root, (file, reference) => referenceMatches(root, file, reference, [...reportOutputs]))) {
+    throw new MainSyncError("A committed reader consumes retained report evidence; no output-only admission", "NEEDS_CHANGE");
+  }
   for (const file of git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0").filter(Boolean)) {
     if (file !== "package.json" && !file.endsWith("/package.json")) continue;
     const scripts = packageScripts.parse(JSON.parse(readFileSync(join(root, file), "utf8"))).scripts ?? {};
