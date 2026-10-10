@@ -9,8 +9,10 @@ import { requirePrototypePublication } from "../../../plugins/vibe/skills/vibe/s
 import { readInput } from "./contracts.js";
 import { verifyExternalCi } from "./main-sync-ci.js";
 import { isPublisherContext } from "./record-context.js";
-import { committedInputs, executeChecks, checkRecipe } from "./main-sync-checks.js";
-import { MainSyncError, mainSyncInputSchema, mainSyncReceiptSchema, type MainSyncReceipt } from "./main-sync-contracts.js";
+import { committedInputs, executeChecks, checkRecipe, inspectInputInventory } from "./main-sync-checks.js";
+import { prepareInputOrigins } from "./main-sync-input-origin.js";
+import { storedRecipe, verifyRecipeWitness, recipeIdentity } from "./main-sync-validation-recipe.js";
+import { MainSyncError, mainSyncInputSchema, mainSyncReceiptSchema, mainSyncStateSchema, type MainSyncReceipt } from "./main-sync-contracts.js";
 import { digest, requireSyncReceipt, saveSyncReceipt, syncContext, syncLocation, readPrivateJson, MAIN_SYNC_FILE } from "./main-sync-state.js";
 
 const GIT_NETWORK_MS = 15 * 60 * 1000;
@@ -25,13 +27,48 @@ export async function readMainSyncInput(worktree: string) {
   return input;
 }
 
+/** The same source turn prepares input evidence without inventing a main capture or validation result. */
+export function prepareMainSyncInputs(raw: unknown) {
+  const value = syncContext(raw, "inputs");
+  const identity = inspectInputInventory(value.place.root);
+  const file = join(value.place.dir, MAIN_SYNC_FILE);
+  const prior = existsSync(file) ? mainSyncStateSchema.parse(readPrivateJson(file)) : undefined;
+  if (prior && (prior.worktree !== value.place.root || prior.branch !== value.place.branch
+    || prior.operator.id !== value.place.session.operator.id || prior.operator.email !== value.place.session.operator.email
+    || prior.originalBase !== value.place.session.baseCommit)) throw new MainSyncError("Input readiness belongs to another owned session");
+  const previous = prior?.phase === "input-readiness" ? prior.previous : prior;
+  if (previous && (!value.context.mainSyncTransactionId || previous.transactionId !== value.context.mainSyncTransactionId)) {
+    throw new MainSyncError("Input readiness requires the current captured transaction", "NEEDS_CHANGE");
+  }
+  const inputs = prepareInputOrigins(value, identity, identity.producers);
+  const state = { version: 1 as const, phase: "input-readiness" as const,
+    transactionId: previous?.transactionId ?? prior?.transactionId ?? randomUUID(), worktree: value.place.root,
+    branch: value.place.branch, operator: { id: value.place.session.operator.id, email: value.place.session.operator.email },
+    originalBase: value.place.session.baseCommit, purpose: value.purpose, inputs, ...(previous ? { previous } : {}) };
+  syncContext(raw, "inputs");
+  saveSyncReceipt(value.place.dir, state);
+  let witness;
+  if (previous && previous.purpose === value.purpose && isAncestor(value.place.root, previous.mainSha)) {
+    const identity = committedInputs(value.place.root);
+    const selection = checkRecipe(value, previous);
+    const recipe = storedRecipe(identity, selection);
+    state.previous = { ...previous, inputs, recipe };
+    saveSyncReceipt(value.place.dir, state);
+    witness = { operation: "main-sync-validate", transactionId: previous.transactionId, ...identity, recipeSha256: recipe.recipeSha256 };
+  }
+  return { status: "DONE", phase: state.phase, transactionId: state.transactionId,
+    headSha: identity.headSha, treeSha: identity.treeSha, inputSha256: inputs.inputSha256, generatedFiles: inputs.files.length,
+    ...(witness ? { validationWitness: witness } : {}) };
+}
+
 /** Captures fresh main once, then stages an ordinary merge; this operation never commits or pushes. */
 export function prepareMainSync(raw: unknown) {
   const value = syncContext(raw, "prepare");
   const root = value.place.root;
   committedInputs(root);
   const previousFile = join(value.place.dir, MAIN_SYNC_FILE);
-  const previous = existsSync(previousFile) ? mainSyncReceiptSchema.parse(readPrivateJson(previousFile)) : undefined;
+  const state = existsSync(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : undefined;
+  const previous = state?.phase === "input-readiness" ? state.previous : state;
   if (previous && (previous.worktree !== root || previous.branch !== value.place.branch
     || previous.originalBase !== value.place.session.baseCommit || previous.operator.id !== value.place.session.operator.id
     || previous.operator.email !== value.place.session.operator.email)) {
@@ -59,7 +96,8 @@ export function prepareMainSync(raw: unknown) {
     validationSince, fetchedAt: new Date().toISOString(), importedFiles,
     importedCommits: [...new Set([...(previous?.importedCommits ?? []),
       ...git(root, ["rev-list", `${common}..${mainSha}`]).split("\n").filter(Boolean)])],
-    featureTestHistory: featureTestHistory(root, value.place.session.baseCommit, startingHead, previous), requestContinuations: [] };
+    featureTestHistory: featureTestHistory(root, value.place.session.baseCommit, startingHead, previous), requestContinuations: [],
+    ...(state?.inputs ? { inputs: state.inputs } : {}) };
   saveSyncReceipt(value.place.dir, receipt);
   if (!isAncestor(root, mainSha)) {
     try { git(root, ["merge", "--no-commit", "--no-ff", mainSha], { timeout: GIT_NETWORK_MS }); }
@@ -78,10 +116,24 @@ export function validateMainSync(raw: unknown) {
   const value = syncContext(raw, "validate");
   const receipt = requireSyncReceipt(value);
   if (!isAncestor(value.place.root, receipt.mainSha)) throw new MainSyncError("Captured main is not merged into the result", "NEEDS_CHANGE");
-  const identity = committedInputs(value.place.root);
+  let identity = committedInputs(value.place.root);
+  if (value.context.runtime === "claude") {
+    if (!value.context.mainSyncValidation || !receipt.recipe) throw new MainSyncError("Canonical Claude validation requires the Root readiness witness", "NEEDS_CHANGE");
+    verifyRecipeWitness(receipt.recipe, value.context.mainSyncValidation, receipt.transactionId);
+  }
+  const recipe = checkRecipe(value, receipt);
+  const selectedIdentity = committedInputs(value.place.root);
+  if (selectedIdentity.headSha !== identity.headSha || selectedIdentity.treeSha !== identity.treeSha
+    || selectedIdentity.inputSha256 !== identity.inputSha256) throw new MainSyncError("Validation inputs changed during canonical recipe discovery", "NEEDS_CHANGE");
+  if (value.context.runtime === "claude") {
+    if (!receipt.recipe) throw new MainSyncError("Canonical validation recipe is missing", "NEEDS_CHANGE");
+    if (receipt.recipe.headSha !== identity.headSha || receipt.recipe.treeSha !== identity.treeSha || receipt.recipe.inputSha256 !== identity.inputSha256
+      || recipeIdentity(recipe) !== receipt.recipe.recipeSha256) throw new MainSyncError("Actual validation inputs or selected recipe changed after launch", "NEEDS_CHANGE");
+  }
   let validation = receipt.validation;
   if (!value.context.mainSyncCiRun || !validation || !validationMatches(value, receipt, identity)) {
-    validation = executeChecks(value, receipt);
+    validation = executeChecks(value, receipt, recipe);
+    identity = { headSha: validation.headSha, treeSha: validation.treeSha, inputSha256: validation.inputSha256 };
   }
   let ciEvidence = receipt.ciEvidence;
   if (ciEvidence && (ciEvidence.checkoutSha !== identity.headSha || ciEvidence.treeSha !== identity.treeSha
@@ -102,7 +154,7 @@ export function validateMainSync(raw: unknown) {
   }
   // Recheck the current source owner too: a stopped turn cannot issue a late success receipt.
   syncContext(raw, "validate");
-  const next = { ...receipt, validation, ...(ciEvidence ? { ciEvidence } : {}) };
+  const next = { ...requireSyncReceipt(value), validation, ...(ciEvidence ? { ciEvidence } : {}) };
   if (!ciEvidence) delete next.ciEvidence;
   if (receipt.pushedHead !== identity.headSha) delete next.pushedHead;
   saveSyncReceipt(value.place.dir, next);
@@ -162,7 +214,9 @@ export function readMainSyncProvenance(worktree: string) {
   const place = syncLocation(worktree);
   const file = join(place.dir, MAIN_SYNC_FILE);
   if (!existsSync(file)) return undefined;
-  const value = mainSyncReceiptSchema.parse(readPrivateJson(file));
+  const state = mainSyncStateSchema.parse(readPrivateJson(file));
+  const value = state.phase === "input-readiness" ? state.previous : state;
+  if (!value) return undefined;
   if (value.worktree !== place.root || value.branch !== place.branch || value.originalBase !== place.session.baseCommit
     || value.operator.id !== place.session.operator.id || value.operator.email !== place.session.operator.email) return undefined;
   const merge = join(place.dir, "MERGE_HEAD");
@@ -207,9 +261,13 @@ function validationMatches(value: ReturnType<typeof syncContext>, receipt: MainS
     return false;
   }
   for (const [index, command] of proof.commands.entries()) {
-    const file = join(value.place.dir, `vibe-main-sync-${receipt.transactionId}-${index}.log`);
-    const stat = lstatSync(file);
-    if (command.log !== file || !stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024
+    const prefix = `vibe-main-sync-${receipt.transactionId}-`;
+    const permitted = [`${prefix}${index}.log`, `${prefix}0-${index}.log`, `${prefix}1-${index}.log`]
+      .map((name) => join(value.place.dir, name));
+    if (!permitted.includes(command.log)) throw new MainSyncError("Actual command evidence path changed", "NEEDS_CHANGE");
+    const file = command.log;
+    const stat = lstatSync(file, { throwIfNoEntry: false });
+    if (!stat || !stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024
       || digest(readFileSync(file)) !== command.sha256) throw new MainSyncError("Actual command evidence changed; validation is required", "NEEDS_CHANGE");
   }
   return true;

@@ -3,6 +3,7 @@
 // origin, so the scripts run end to end without the network.
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -64,6 +65,23 @@ export function makeCheckout({ root, home, checkout, files = {}, remoteUrl = SYM
   git(checkout, ["remote", "set-url", "origin", remoteUrl], home);
   git(checkout, ["config", `url.${origin}.insteadOf`, remoteUrl], home);
   return { origin, checkout };
+}
+
+/** Canonical check-owner inputs belong in the synthetic committed base, never forged validation state. */
+export function mainSyncRecipeFiles() {
+  const scripts = path.dirname(fileURLToPath(import.meta.url));
+  const data = JSON.parse(readFileSync(path.resolve(scripts, "../../../../../tools/vibe-workers/src/fixtures/symphony-affected-typecheck.json"), "utf8"));
+  if (createHash("sha256").update(data.content).digest("hex") !== data.sha256) throw new Error("Opaque affected-wrapper fixture changed");
+  return {
+    "package.json": JSON.stringify({ scripts: { "typecheck:affected": "sh scripts/typecheck-affected.sh", "test:affected": "fixture" } }),
+    "scripts/typecheck-affected.sh": data.content,
+    "scripts/affected-filter.sh": "#!/bin/sh\nset -eu\nbase=$(git merge-base origin/main HEAD)\nprintf '...[%s]\\n' \"$base\"\n",
+    ".github/workflows/pr-test.yml": JSON.stringify({ jobs: {
+      "test-shard": { "timeout-minutes": 22, strategy: { matrix: { shard: [1, 2, 3] } } },
+      "desktop-node": { "timeout-minutes": 30, strategy: { matrix: { shard: [1, 2, 3] } } },
+      "desktop-renderer": { "timeout-minutes": 30 },
+    } }),
+  };
 }
 
 export function runNode(script, args, home, extraEnv = {}, input) {

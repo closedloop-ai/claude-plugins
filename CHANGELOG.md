@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.8
+
+#### Fixed
+- Main-sync preserves canonical ignored private diagnostics independently of file extension only when committed imports, readers and finite collectors exclude them. Retained reports remain evidence outputs, never replay inputs or current coverage assertions.
+- Source-owned readiness verifies known generated dependencies through existing pure owners or a pristine committed validation checkout before consuming retained bytes. Complete set, content, semantic mode, producer input and canonical package checks reject stale, edited, aliased or extra inputs without deleting feature artifacts.
+- Selected installed package identities use bounded deduplicated relative names and complete byte/mode/set digests inside the existing receipt. Oversized state is refused before atomic replacement, preserving prior evidence and the private size cap.
+
+#### Changed
+- The same source actor prepares input readiness before capture and after the committed merge. A Root-bound opaque recipe witness derives only its authenticated Claude validation envelope, with no prelaunch discovery child or caller timeout override; actual inputs and selection are rechecked after launch.
+- Fixed affected and deployment-pinned aggregate budgets follow their distinct owning selections. FULL local lint-scripts gets a bounded 30-minute outer process budget; test assertions, individual cases, hooks, CI and general-worker limits remain unchanged.
+- Canonically verified changed selected owners invalidate prior check evidence and permit one whole-matrix restart within the original command budgets, preserving untouched origin proof. The recipe binds its finite recovery lifecycle reserve. An empty affected-wrapper selection is a no-op, not coverage; later deployment-pinned checks still execute. Unsafe retained-report isolation remains explicit incomplete E2E coverage rather than a local spawn or PASS.
+
 ### vibe v1.0.7
 
 #### Fixed

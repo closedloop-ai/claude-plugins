@@ -306,6 +306,10 @@ section 5's actual identity/hold/lease rules, not a new bootstrap source actor.
 ROOT commits the reviewed deliverable LOCALLY under normal hooks, still unpushed,
 before `commit-worktree.mjs --prepare-main-sync`; if no deliverable changed,
 no extra commit is needed. Protected dirty localFix source remains preserved/blocking.
+Resume the SAME source actor's exclusive progress turn for `main-sync-inputs`
+before publisher preparation and again after the Root-owned merge/fix commit.
+Use the canonical sequence in environment.md, including its opaque validation
+witness/new exact grant; readiness is not coverage or test authority.
 Apply `references/environment.md`, "Main-sync before publication": local
 canonical plan/session table before source, separate plan checks, a completed
 exact create preparation turn, same-writer fixes/behavior checks, ROOT commit
@@ -502,6 +506,8 @@ on Vercel", "let me see it live", or anything meaning the same:
    After current-result review, ROOT commits the reviewed deliverable LOCALLY
    with the existing commit script and normal hooks, still unpushed. Then the
    publishing helper runs `commit-worktree.mjs --prepare-main-sync`.
+   First finish the SAME source actor's `main-sync-inputs` record turn as
+   environment.md requires; no operational helper regenerates dependencies.
    Before any remote push repeat `references/environment.md`, "Main-sync
    before publication": extend the SAME writer's local plan/session table,
    complete plan review, run a separate noncommitting preparation turn after

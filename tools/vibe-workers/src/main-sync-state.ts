@@ -7,8 +7,8 @@ import { isOwnedPrototypeSession } from "../../../plugins/vibe/skills/vibe/scrip
 import { checkoutLocation, readWriterSummary, verifySourceTurn } from "./ledger.js";
 import { nativeRecordOwnerSchema } from "./native-record.js";
 import { isPublisherContext, isRequestContext } from "./record-context.js";
-import { MainSyncError, mainSyncInputSchema, mainSyncReceiptSchema, operationContextSchema, sessionSchema,
-  type MainSyncReceipt, type OperationContext } from "./main-sync-contracts.js";
+import { MainSyncError, mainSyncInputSchema, mainSyncReceiptSchema, mainSyncStateSchema, operationContextSchema, sessionSchema,
+  type MainSyncState, type OperationContext } from "./main-sync-contracts.js";
 
 export const MAIN_SYNC_FILE = "vibe-main-sync.json";
 export const CLAUDE_OPERATION_OWNER = "claude-operation-owner.json";
@@ -29,7 +29,7 @@ export function syncLocation(worktree: string) {
 }
 
 /** Borrows only the caller's current exact record turn; the parent remains its cleanup owner. */
-export function syncContext(raw: unknown, operation: "prepare" | "validate" | "push" | "request" | "share") {
+export function syncContext(raw: unknown, operation: "prepare" | "inputs" | "validate" | "push" | "request" | "share") {
   const input = mainSyncInputSchema.parse(raw);
   const place = syncLocation(input.context.worktree);
   const context = { ...input.context, worktree: realpathSync(input.context.worktree) };
@@ -47,6 +47,7 @@ export function syncContext(raw: unknown, operation: "prepare" | "validate" | "p
       ...(grant.mainSyncTransactionId ? { mainSyncTransactionId: grant.mainSyncTransactionId } : {}),
       ...(grant.mainSyncRequestContinuations ? { mainSyncRequestContinuations: grant.mainSyncRequestContinuations } : {}) };
     if (grant.mainSyncCiRun) actual.mainSyncCiRun = grant.mainSyncCiRun;
+    if (grant.mainSyncValidation) actual.mainSyncValidation = grant.mainSyncValidation;
     primaryOwner = grant.primaryOwner;
   } else {
     const owner = claudeOwnerSchema.parse(readPrivateJson(join(lock, CLAUDE_OPERATION_OWNER)));
@@ -64,9 +65,12 @@ export function syncContext(raw: unknown, operation: "prepare" | "validate" | "p
   if (JSON.stringify(actual.mainSyncCiRun) !== JSON.stringify(context.mainSyncCiRun)) {
     throw new MainSyncError("CI locator must match the actual parent-issued source grant");
   }
+  if (JSON.stringify(actual.mainSyncValidation) !== JSON.stringify(context.mainSyncValidation)) {
+    throw new MainSyncError("Canonical validation witness must match the actual Root-issued grant");
+  }
   const role = { ...actual, exclusiveRecordTurn: true as const };
   const writer = readWriterSummary(place.root);
-  if (operation === "validate") {
+  if (operation === "validate" || operation === "inputs") {
     if (actual.agentName !== "vibe-change-worker" || actual.recordAction !== "progress" || !primaryOwner
       || writer?.runtime !== actual.runtime || writer.workerId !== actual.workerId
       || writer.activeRequestId !== actual.requestId || !writer.running || primaryOwner.workerId !== actual.workerId) {
@@ -91,11 +95,15 @@ export function readPrivateJson(file: string): unknown {
 }
 
 /** Writes one private receipt atomically without following an existing proof symlink. */
-export function saveSyncReceipt(dir: string, receipt: MainSyncReceipt) {
+export function saveSyncReceipt(dir: string, receipt: MainSyncState) {
   const file = join(dir, MAIN_SYNC_FILE);
   if (existsSync(file) && lstatSync(file).isSymbolicLink()) throw new MainSyncError("Main-sync receipt cannot be a symlink");
+  const serialized = JSON.stringify(mainSyncStateSchema.parse(receipt));
+  if (Buffer.byteLength(serialized, "utf8") > MAX_PRIVATE_BYTES) {
+    throw new MainSyncError("Complete main-sync receipt exceeds the unchanged private byte bound; prior evidence is preserved", "NEEDS_CHANGE");
+  }
   const temp = `${file}.${randomUUID()}.tmp`;
-  try { writeFileSync(temp, JSON.stringify(mainSyncReceiptSchema.parse(receipt)), { mode: 0o600, flag: "wx" }); renameSync(temp, file); }
+  try { writeFileSync(temp, serialized, { mode: 0o600, flag: "wx" }); renameSync(temp, file); }
   finally { rmSync(temp, { force: true }); }
 }
 
@@ -103,7 +111,9 @@ export function saveSyncReceipt(dir: string, receipt: MainSyncReceipt) {
 export function requireSyncReceipt(value: ReturnType<typeof syncContext>) {
   const file = join(value.place.dir, MAIN_SYNC_FILE);
   if (!existsSync(file)) throw new MainSyncError("Canonical redeploy required: no fresh main-sync transaction", "NEEDS_CHANGE");
-  const receipt = mainSyncReceiptSchema.parse(readPrivateJson(file));
+  const state = mainSyncStateSchema.parse(readPrivateJson(file));
+  const receipt = state.phase === "input-readiness" ? state.previous : state;
+  if (!receipt) throw new MainSyncError("Canonical redeploy required: inputs are ready but main has not been captured", "NEEDS_CHANGE");
   if (receipt.worktree !== value.place.root || receipt.branch !== value.place.branch
     || receipt.operator.id !== value.place.session.operator.id || receipt.operator.email !== value.place.session.operator.email
     || receipt.originalBase !== value.place.session.baseCommit || receipt.purpose !== value.purpose

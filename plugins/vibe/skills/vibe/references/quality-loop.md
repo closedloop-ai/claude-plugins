@@ -100,6 +100,14 @@ without live ticket/operator verification. This does not perform a discard or
 authorize one. Neither path fabricates a session or registers a source writer.
 Writers, prototypes and environment publication have no sessionless fallback.
 
+Main-sync's source-owned input readiness uses the SAME registered actor's
+exclusive progress turn, never an ops helper or another implementation worker.
+Follow environment.md: `main-sync-inputs` before capture and after the Root-owned
+merge/fix commit; finish the turn, then pass its opaque `validationWitness` in
+the parent grant as `mainSyncValidation`. Only identity/digest-bound validation
+derives a finite owned Claude envelope; general worker limits remain unchanged.
+Generated origin and retained-report exclusion are not test authority or PASS.
+
 Researchers and independent reviewers may run in parallel, read-only. Backend,
 primitive, prototype, Storybook and verify roles provide read-only guidance or
 checks; the sole writer reads their canonical own-plugin instructions and

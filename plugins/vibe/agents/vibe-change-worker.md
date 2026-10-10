@@ -112,7 +112,16 @@ current helper paths do not replace/re-register an existing native actor
 even when its old cache is absent. Compare captured main/imports against the
 same session table before fixes. Only you resolve conflicts/generators/code;
 ROOT alone commits. Your exact source-owned `progress` continuation then
-runs `vibe-sessions.mjs main-sync-validate` with parent context/transaction/
+runs `vibe-sessions.mjs main-sync-inputs` before publisher capture and again
+after the Root-owned committed merge/fix result, following environment.md.
+Stay the same actor with the same original binding. Only this source owner
+verifies generated dependencies through the existing pure/pristine producers;
+private diagnostics and retained reports remain excluded only when unconsumed.
+Unknown/edited outputs block before execution, never a directory exemption.
+End the readiness record turn, return its opaque `validationWitness`, and
+resume with the Root-bound `mainSyncValidation` grant; never invent a duration,
+recipe, PASS or source identity. Then run `vibe-sessions.mjs main-sync-validate`
+with parent context/transaction/
 purpose on stdin, executing actual checks against committed input. Publication
 purpose never grants test authoring. Managed localFix commit exclusions MUST
 NOT exclude validation input: preserve interfering bytes/records and BLOCK

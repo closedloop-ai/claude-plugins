@@ -530,3 +530,21 @@ def test_main_sync_callers_locally_commit_reviewed_source_before_preparation() -
         preparation = text.index("--prepare-main-sync", local_commit)
         assert local_commit < preparation
         assert "still unpushed" in text[local_commit:preparation], path.name
+
+
+def test_main_sync_callers_route_readiness_and_bound_validation_to_the_same_actor() -> None:
+    environment = flat((REFERENCES / "environment.md").read_text())
+    for required in ("main-sync-inputs", "validationWitness", "mainSyncValidation", "recipeSha256",
+                     "retained reports", "pristine", "30-minute", "general worker", "15-minute"):
+        assert required in environment, required
+    for path in (VIBE_SKILL, HANDOFF_SKILL):
+        assert "main-sync-inputs" in path.read_text(), path.name
+    for name in ("vibe-change-worker", "vibe-environment-worker", "vibe-verify-worker"):
+        text = flat(agent(name))
+        assert "main-sync-inputs" in text, name
+        assert "retained" in text.lower() and "generated" in text.lower(), name
+    source = flat(agent("vibe-change-worker"))
+    assert "mainSyncValidation" in source
+    assert "same actor" in source.lower()
+    publisher = flat(agent("vibe-environment-worker"))
+    assert "Allow it 15 minutes" not in publisher

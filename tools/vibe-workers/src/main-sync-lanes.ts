@@ -54,7 +54,8 @@ export function discoverCheckLanes(root: string, receipt: MainSyncReceipt) {
           reason: `Required Desktop Electron lane has no supported displayless prerequisites on ${process.platform}; no lane spawned or PASS. No automatic Vibe-branch E2E path is established; CI dispatch requires explicit operator permission` });
         continue;
       }
-      commands.push({ argv: ["bash", "-c", harness.run], cwd: "apps/desktop", bindings });
+      limitations.push({ argv: ["pnpm", "--dir", "apps/desktop", lane.script], bindings,
+        reason: "Selected Desktop verdict reads results.json then adjacent dd-quarantine.json from fixed retained locations; no verified current-run report isolation is available here. No lane spawned or PASS; use exact-SHA authorized external coverage" });
     } else {
       if (BROWSER_SCRIPT.test(lane.script)) {
         limitations.push({ argv: ["pnpm", ...(lane.dir ? ["--dir", lane.dir] : []), lane.script], bindings,

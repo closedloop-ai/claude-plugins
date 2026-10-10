@@ -208,6 +208,19 @@ script and normal hooks, still unpushed, BEFORE preparation. Private plans stay
 excluded; interfering protected localFix source is preserved and blocks parity,
 not silently included or discarded. A clean result needs no extra local commit.
 
+Before publisher preparation, resume the SAME registered source actor for
+`node <plugin-root>/skills/vibe/scripts/vibe-sessions.mjs main-sync-inputs --worktree "<wt>"`
+with its actual exclusive `progress` context on stdin. This source-owned
+readiness operation verifies canonical private-plan exclusion, tracked/index
+parity, the existing read-only Biome derivative and finite generated dependencies.
+It uses existing pure owners or a pristine owned detached validation checkout
+and normal canonical bootstrap, never another feature branch/source writer.
+Unknown extra/edited/consumed outputs and protected localFix code remain blocked
+and preserved. It never deletes retained reports or reads their bodies as PASS.
+Inputs needed by a selected replay/verdict reader are not output-only evidence.
+Finish that actual record turn before the publisher below; readiness is not a
+main capture, test authority, validation PASS or permission to publish.
+
 1. Stop only the session's owned Desktop through its existing operational
    owner before changing its source. The publishing helper's exact existing
    create/redeploy or prototype-share record turn runs
@@ -228,11 +241,32 @@ not silently included or discarded. A clean result needs no extra local commit.
    script and normal hooks. Then resume that SAME writer for its exact
    source-owned record continuation (`progress`) with the captured
    `mainSyncTransactionId` and root-controlled `publicationPurpose`.
+   Run `main-sync-inputs` again after this exact committed merge/fix result.
+   It preserves captured imports/original test history and returns
+   `validationWitness`, whose `recipeSha256` binds the actual fixed recipe and
+   budgets to transaction, committed HEAD/tree and input identity. Finish that
+   record turn; ROOT grants the same actor's next validation continuation with
+   this opaque value as `mainSyncValidation`. Never manufacture commands,
+   duration, PASS, retrospective authoring phase or a replacement registration.
    It runs `node <plugin-root>/skills/vibe/scripts/vibe-sessions.mjs main-sync-validate --worktree "<wt>"`
    with the granted context on stdin. The shared executor runs the existing
    scope/phase command matrix and records actual results at committed HEAD.
    A source-generating check that changes source returns to this writer/root
    commit/recheck sequence, never an operational publisher repair.
+   Known selected generated-output changes require canonical re-verification
+   and ONE bounded whole-matrix restart within the original command budgets;
+   only authenticated changed owners regenerate, with untouched proof retained.
+   unrelated writes, unknown outputs or continued churn yield no receipt.
+   FULL local lint-scripts has a fixed 30-minute outer process budget; aggregate
+   test budgets derive from actual selected owning allocations. These are not
+   CI, assertion, individual-test or hook deadline changes. The general worker
+   keeps its 15-minute default and 30-minute maximum. Only the actual Root-owned
+   validation witness permits a derived finite Claude whole-turn envelope.
+   Its canonical recipe also binds the finite selected recovery lifecycle reserve;
+   this never doubles check budgets or grants per-owner restarts.
+   Prelaunch reads bounded recipe data without child execution; after owned
+   process handlers exist, actual inputs and recipe are recomputed. Missing,
+   tampered, stale or canceled proof blocks, never an enlarged caller timeout.
 4. Validation checks every tracked/index byte/mode and scoped executable
    overlay against committed input before/between/after checks and again at
    consumption. Managed `localFixes` remain commit exclusions, NEVER check

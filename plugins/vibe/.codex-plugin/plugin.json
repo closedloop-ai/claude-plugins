@@ -1,6 +1,6 @@
 {
   "name": "vibe",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Vibe sessions, handoff, seed refresh, and ClosedLoop ticket workflows",
   "author": {"name": "ClosedLoop", "email": "support@closedloop.ai"},
   "homepage": "https://github.com/closedloop-ai/claude-plugins",

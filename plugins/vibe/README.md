@@ -73,6 +73,15 @@ The existing ignored root `.biome-noscan.jsonc` is recognized only when its
 bytes match the reviewed canonical pure producer applied to the complete
 committed config. Modified, stale or deceptive derivatives and unrelated
 executable overlays still block; the gate never invokes the writing hook.
+Source-owned input readiness preserves canonical unconsumed private diagnostics
+and retained reports without accepting their contents as coverage. Known generated
+dependencies need complete pure or pristine owner verification before execution;
+unknown extras, edited bodies, producer drift and aliases remain blocked. Selected
+package proofs use bounded deduplicated names and full byte/mode/set digests in
+the existing private receipt. The same actor repeats readiness after the committed
+merge and supplies the opaque recipe witness for actual validation. Fixed local
+process budgets and the authenticated Claude envelope remain distinct from
+unchanged test, hook and general-worker deadlines.
 An existing registered writer retains its original definition root, exact
 binding and actual ID. The root supplies the new table policy through its
 existing continuation; it does not reset or re-register under an updated
@@ -158,7 +167,7 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 
 ## Runtime Files
 
-Version `1.0.7` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.8` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains two skill-contract test modules.
 Runtime helpers and tests live alongside their owning skills, including vibe

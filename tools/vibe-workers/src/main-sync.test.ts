@@ -2,7 +2,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, syml
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
-import { generatedBiomeFixture, invokeSync, syncFixture, validateFixture } from "./main-sync-test-fixtures.js";
+import { generatedBiomeFixture, invokeSync, syncFixture, validateFixture, currentSyncDefinitions } from "./main-sync-test-fixtures.js";
 import { bundleDirectory, graph, recordWrite, writeAgent } from "./test-fixtures.js";
 import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES } from "./main-sync-generated-input.js";
 
@@ -412,11 +412,7 @@ describe("production main-sync publication CLIs", () => {
     const initialSource = value.sourceTurn(); initialSource.finish();
     const ledgerFile = join(value.metadata, "vibe-writer.json");
     const original = JSON.parse(readFileSync(ledgerFile, "utf8"));
-    const currentRoot = join(value.base, "current-vibe");
-    mkdirSync(join(currentRoot, "agents"), { recursive: true }); mkdirSync(join(currentRoot, ".claude-plugin"));
-    writeFileSync(join(currentRoot, ".claude-plugin/plugin.json"), JSON.stringify({ name: "vibe" }));
-    writeAgent(currentRoot, "vibe-change-worker", "Read, Write, Edit, Grep, Glob, Bash, Skill");
-    writeAgent(currentRoot, "vibe-environment-worker", "Read, Write, Grep, Glob, Bash");
+    const currentRoot = currentSyncDefinitions(value);
     rmSync(value.agentRoot, { recursive: true });
     const source = value.sourceTurn(undefined, currentRoot);
     try { expect(invokeSync(value, "validate", source.context).status).toBe(0); } finally { source.finish(); }
@@ -774,23 +770,31 @@ describe("production main-sync publication CLIs", () => {
   it("executes preparation, source validation, exact push and request-only consumption through the production Claude launcher", () => {
     const value = setup();
     const run = (agentName: string, recordAction: string, input: string, requestId: string, transactionId?: string,
-      continuations?: { runtime: "claude"; requestId: string; recordAction: "flags" }[]) => {
+      continuations?: { runtime: "claude"; requestId: string; recordAction: "flags" }[], mainSyncValidation?: unknown) => {
       const result = spawnSync(process.execPath, [join(bundleDirectory, "claude-worker.mjs")], { cwd: value.worktree,
         input: JSON.stringify({ worktree: value.worktree, agentRoot: value.agentRoot, agentName, recordAction, input,
           requestId, mode: "record", exclusiveRecordTurn: true, capabilities: [...graph, recordWrite],
+          publicationPurpose: "build",
           ...(transactionId ? { mainSyncTransactionId: transactionId } : {}),
+          ...(mainSyncValidation ? { mainSyncValidation } : {}),
           ...(continuations ? { mainSyncRequestContinuations: continuations } : {}) }),
         encoding: "utf8", timeout: 30000, env: { ...process.env, PATH: `${value.bin}:${process.env.PATH}` } });
       expect(result.error).toBeUndefined(); return { code: result.status, output: JSON.parse(result.stdout) };
     };
+    const initial = run("vibe-change-worker", "progress", "MAIN_SYNC_INPUTS", "sdk-inputs");
+    expect(initial.code, JSON.stringify(initial.output)).toBe(0);
     const prepare = run("vibe-environment-worker", "create", "MAIN_SYNC_PREPARE", "sdk-prepare");
     expect(prepare.code, JSON.stringify(prepare.output)).toBe(0);
     const transactionId = prepare.output.data.mainSyncResult.mainSync.transactionId;
-    const checked = run("vibe-change-worker", "progress", "MAIN_SYNC_VALIDATE", "sdk-validate", transactionId);
+    const ready = run("vibe-change-worker", "progress", "MAIN_SYNC_INPUTS", "sdk-ready", transactionId);
+    expect(ready.code, JSON.stringify(ready.output)).toBe(0);
+    const checked = run("vibe-change-worker", "progress", "MAIN_SYNC_VALIDATE", "sdk-validate", transactionId, undefined,
+      ready.output.data.mainSyncResult.mainSync.validationWitness);
     expect(checked.code, JSON.stringify(checked.output)).toBe(0);
     const registered = JSON.parse(readFileSync(join(value.metadata, "vibe-writer.json"), "utf8"));
     expect(registered.runtime).toBe("claude");
     expect(registered.workerId).toBe(checked.output.workerId);
+    expect(checked.output.workerId).toBe(initial.output.workerId);
     const pushed = run("vibe-environment-worker", "redeploy", "MAIN_SYNC_PUSH", "sdk-push", transactionId,
       [{ runtime: "claude", requestId: "sdk-flags", recordAction: "flags" }]);
     expect(pushed.code, JSON.stringify(pushed.output)).toBe(0);
