@@ -276,6 +276,15 @@ script/normal hooks, still unpushed, before `commit-worktree.mjs --prepare-main-
 This includes the SAME writer's reviewed handoff tests/fixes, not private plans
 or protected localFix source. No change needs no extra local commit.
 
+Resume the same actor for source-owned `main-sync-inputs` before preparation
+and again after the Root-owned committed merge/fix result, using environment.md.
+End readiness's record turn, then ROOT grants its returned opaque witness as
+`mainSyncValidation` for that same actor's validation continuation. Preserve
+private diagnostics/retained reports; unknown generated inputs or consumed
+retained evidence block, never a directory exemption or old report PASS.
+Readiness is not test authority or completed coverage. `requiredE2eComplete`
+must still be actually true before final coverage/assignment.
+
 First repeat `../vibe/references/environment.md`, "Main-sync before publication",
 with handoff purpose. The SAME writer extends/checks its whole session table
 before fixes; a separate exact publisher preparation turn fetches fresh main,

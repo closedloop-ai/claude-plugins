@@ -4,6 +4,7 @@ import { z } from "zod";
 import { sessionLiveTicket } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
 import { identifierSchema } from "./contracts.js";
 import { checkoutLocation, location } from "./ledger.js";
+import { validationWitnessSchema } from "./main-sync-validation-contracts.js";
 
 export const recordModes: Record<string, Record<string, readonly string[]>> = {
   "vibe-setup-worker": { create: ["create_document"], progress: ["create_document_version"], discard: [] },
@@ -30,6 +31,7 @@ export const recordContextSchema = z.object({
   mainSyncTransactionId: z.string().uuid().optional(),
   mainSyncRequestContinuations: z.array(requestContinuationSchema).min(1).max(2).optional(),
   mainSyncCiRun: ciRunLocatorSchema.optional(),
+  mainSyncValidation: validationWitnessSchema.optional(),
   discardTarget: z.object({ worktree: z.string().min(1), confirmed: z.literal(true),
     branch: z.string().regex(/^(?:vibe|prototype)\/[^\s]+$/), liveTicket: z.string().regex(/^[A-Z]+-\d+$/).optional(),
     operatorId: z.string().min(1), operatorEmail: z.string().email(),
@@ -59,6 +61,11 @@ export function isRequestContext(input: Pick<RecordContext, "agentName" | "mode"
 
 /** Both runtimes resolve the same bounded role/action and stable sessionless contexts. */
 export function resolveRecordContext(input: RecordContext) {
+  if (input.mainSyncValidation && (input.agentName !== "vibe-change-worker" || input.mode !== "record"
+    || input.recordAction !== "progress" || !input.exclusiveRecordTurn
+    || input.mainSyncValidation.transactionId !== input.mainSyncTransactionId || !input.publicationPurpose || input.sessionless)) {
+    throw new Error("Canonical validation witness belongs only to the Root source validation continuation");
+  }
   if (input.mainSyncCiRun && (input.agentName !== "vibe-change-worker" || input.mode !== "record"
     || input.recordAction !== "progress" || !input.exclusiveRecordTurn || input.publicationPurpose !== "handoff")) {
     throw new Error("External CI locators require the actual source handoff-validation grant");

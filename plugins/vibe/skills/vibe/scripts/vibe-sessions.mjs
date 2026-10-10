@@ -79,7 +79,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { readWriterSummary } from "./dist/writer-state.mjs";
 import { admitMainSyncRequest, admitMainSyncShare, MainSyncError, mainSyncFailure, pushMainSync,
-  readMainSyncInput, readMainSyncProvenance, validateMainSync } from "./dist/main-sync.mjs";
+  readMainSyncInput, readMainSyncProvenance, prepareMainSyncInputs, validateMainSync } from "./dist/main-sync.mjs";
 import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublication } from "./prototype-session.mjs";
 import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
 import {
@@ -165,7 +165,7 @@ try {
   process.stdout.write(`${JSON.stringify({ ok: true, ...result }, null, 2)}\n`);
 } catch (error) {
   process.stdout.write(
-    `${JSON.stringify({ ok: false, ...(error instanceof MainSyncError || ["main-sync-validate", "main-sync-push", "main-sync-share"].includes(positionals[0])
+    `${JSON.stringify({ ok: false, ...(error instanceof MainSyncError || ["main-sync-inputs", "main-sync-validate", "main-sync-push", "main-sync-share"].includes(positionals[0])
       ? mainSyncFailure(error) : { error: error instanceof Error ? error.message : String(error) }) })}\n`
   );
   process.exit(1);
@@ -199,6 +199,8 @@ async function run(command) {
       return await dispatchInputs();
     case "main-sync-validate":
       return { mainSync: validateMainSync(await readMainSyncInput(requireOption("worktree"))) };
+    case "main-sync-inputs":
+      return { mainSync: prepareMainSyncInputs(await readMainSyncInput(requireOption("worktree"))) };
     case "main-sync-push":
       return { mainSync: pushMainSync(await readMainSyncInput(requireOption("worktree"))) };
     case "main-sync-share":
@@ -215,7 +217,7 @@ async function run(command) {
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, dispatch-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, discard."
+        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, discard."
       );
   }
 }

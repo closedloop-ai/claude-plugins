@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { acquireNativeRecord, releaseNativeRecord } from "./native-record.js";
 import { changeWriter, registerWriter } from "./ledger.js";
-import { bundleDirectory, fixture, graph } from "./test-fixtures.js";
+import { bundleDirectory, fixture, graph, writeAgent } from "./test-fixtures.js";
 import type { RequestContinuation } from "./record-context.js";
 import { z } from "zod";
 
@@ -24,7 +24,7 @@ export function syncFixture(source = "committed-good") {
   git(["config", "user.name", "Fixture"]); git(["config", "user.email", "fixture@example.invalid"]);
   write(".gitignore", ".closedloop-ai/\n.control/\nnode_modules/\n");
   write("apps/app/probe.ts", `export const answer = '${source}';\n`);
-  write("package.json", JSON.stringify({ scripts: { "test:affected": "fixture", "typecheck:affected": "fixture",
+  write("package.json", JSON.stringify({ scripts: { "test:affected": "fixture", "typecheck:affected": "sh scripts/typecheck-affected.sh",
     "check:source-gates": "fixture", "test:lanes": "fixture", verify: "fixture", test: "fixture" } }));
   write("scripts/lint/affected-test-lanes.ts", String.raw`
 export async function loadOutOfGraphLanes() {return [{script:'test:skills', roots:['scripts/']}];}
@@ -34,6 +34,16 @@ export function referencedLanes() {return [];}
   write("scripts/lint/report-test-lanes.ts", "export function laneCiCommand(script) {return {script};}\nexport function execPlan(_, commands) {return commands;}\n");
   write("scripts/lint/desktop-e2e-lane.ts", "export function desktopE2eLane(paths) {return paths.includes('apps/desktop/test/reveal-window.spec.ts') ? {ci:{script:'test:e2e',dir:'apps/desktop'},paths} : undefined;}\n");
   write("scripts/lint/workflow-shell-harness.ts", "export function loadWorkflowOrThrow() {return {jobs:{'desktop-e2e':{steps:[{name:'Run Electron e2e','working-directory':'apps/desktop',run:'unsupported bare Electron fixture'}]}}};}\n");
+  write("scripts/affected-filter.sh", "#!/bin/sh\nset -eu\nbase=$(git merge-base origin/main HEAD)\nprintf '...[%s]\\n' \"$base\"\n");
+  const wrapper = z.object({ content: z.string(), sha256: z.string() }).passthrough().parse(
+    JSON.parse(readFileSync(new URL("./fixtures/symphony-affected-typecheck.json", import.meta.url), "utf8")));
+  if (createHash("sha256").update(wrapper.content).digest("hex") !== wrapper.sha256) throw new Error("Opaque affected wrapper fixture changed");
+  write("scripts/typecheck-affected.sh", wrapper.content);
+  write(".github/workflows/pr-test.yml", JSON.stringify({ jobs: {
+    "test-shard": { "timeout-minutes": 22, strategy: { matrix: { shard: [1, 2, 3] } } },
+    "desktop-node": { "timeout-minutes": 30, strategy: { matrix: { shard: [1, 2, 3] } } },
+    "desktop-renderer": { "timeout-minutes": 30 },
+  } }));
   git(["add", "."]);
   git(["commit", "-m", "Committed validation fixture"]);
   git(["branch", "main"]);
@@ -160,6 +170,17 @@ export function invokeSync(value: ReturnType<typeof syncFixture>, command: strin
     env: { ...process.env, PATH: `${value.bin}:${process.env.PATH}` } });
   if (result.error) throw result.error;
   return { ...result, json: result.stdout.trim() ? JSON.parse(result.stdout) as Record<string, unknown> : undefined };
+}
+
+/** Synthetic current helper definitions deliberately differ from retained native registration metadata. */
+export function currentSyncDefinitions(value: ReturnType<typeof syncFixture>) {
+  const currentRoot = join(value.base, "current-vibe");
+  mkdirSync(join(currentRoot, "agents"), { recursive: true });
+  mkdirSync(join(currentRoot, ".claude-plugin"));
+  writeFileSync(join(currentRoot, ".claude-plugin/plugin.json"), JSON.stringify({ name: "vibe" }));
+  writeAgent(currentRoot, "vibe-change-worker", "Read, Write, Edit, Grep, Glob, Bash, Skill");
+  writeAgent(currentRoot, "vibe-environment-worker", "Read, Write, Grep, Glob, Bash");
+  return currentRoot;
 }
 
 /** Seeds only temporary synthetic Git with opaque reviewed Source test data and invokes its real pure export. */

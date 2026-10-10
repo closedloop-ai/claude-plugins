@@ -87,6 +87,13 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    allowlist count added to make a check pass (`guardrails.md`, "Checks") is
    blocking too.
 
+For publication, verify the SAME source actor's `main-sync-inputs` evidence
+before capture and after the committed merge. Canonical private diagnostics
+and retained reports are excluded only when actual selected readers/collectors
+do not consume them. Generated dependencies need complete byte/type/mode/set
+and current producer proof, not a cache marker or ignored directory. Readiness
+and the Root validation witness confer no test-authoring or E2E authority.
+
 ## Output
 
 Return a list. Each item: `severity` (blocking or advisory), `file:line`,

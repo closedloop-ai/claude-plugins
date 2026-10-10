@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { git, mainSyncAdmission, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
+import { git, mainSyncAdmission, mainSyncRecipeFiles, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "vibe-sessions.mjs");
 const SPACED_CHECKOUT = ["Documents", "Closedloop.ai - Active Work", "symphony-alpha"];
@@ -21,7 +21,7 @@ function setup(t) {
   const cleanups = [];
   t.after(() => { try { for (const cleanup of cleanups) cleanup(); } finally { fixture.cleanup(); } });
   const checkout = path.join(fixture.home, ...SPACED_CHECKOUT);
-  makeCheckout({ root: fixture.root, home: fixture.home, checkout });
+  makeCheckout({ root: fixture.root, home: fixture.home, checkout, files: mainSyncRecipeFiles() });
   return { ...fixture, checkout, beforeCleanup: (cleanup) => cleanups.push(cleanup) };
 }
 

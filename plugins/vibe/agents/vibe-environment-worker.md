@@ -197,6 +197,10 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
 
 1. Complete fresh main-sync, same-writer behavior/table checks, ROOT commit
    and exact committed-input validation before publishing, per environment.md.
+   Only the SAME source actor runs `main-sync-inputs` before capture and after
+   the committed merge/fixes; this helper never regenerates dependencies.
+   Require its canonical generated-input/readiness evidence. Preserve retained
+   reports/private diagnostics; they are not PASS or consumed replay inputs.
    Preserve an explicit flags request under its own later request-only turn.
 2. The orchestrator has already committed. `git -C "<wt>" status --porcelain`
    must list nothing except `localFixes` paths and files the commit script
@@ -214,7 +218,9 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
    where `<since>` is the session's `vercel.lastDeployedCommit`, or its
    `baseCommit` before the first deploy. That is the tests of every package
    the session changed since then plus the packages that depend on them
-   (Storybook's story sweep included). Allow it 15 minutes. A failure the
+   (Storybook's story sweep included). The shared executor owns fixed selected
+   process budgets and the Root-bound validation envelope; never supply a
+   timeout override or change any test/assertion/hook deadline. A failure the
    brief lists as a deliberately obsolete expectation must carry the exact
    human ruling and retained live-contract coverage; test authoring remains
    handoff-only. Any unexplained failure, or running out of time,
