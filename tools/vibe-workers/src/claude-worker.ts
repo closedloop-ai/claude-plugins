@@ -8,7 +8,10 @@ import { runFromCanonicalEntry } from "./cli.js";
 import { capabilitiesSchema, identifierSchema, readInput, statusSchema, type WorkerStatus } from "./contracts.js";
 import { readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, attachClaudeProcess, changeWriter, markClaudeStarted, readWriterSummary, registerWriter } from "./ledger.js";
-import { recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
+import { isPublisherContext, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
+import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
+import type { OperationContext } from "./main-sync-contracts.js";
+import { deriveValidationEnvelope } from "./main-sync-validation-envelope.js";
 
 const launchSchema = recordContextSchema.extend({
   agentRoot: z.string().min(1),
@@ -76,7 +79,9 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
     : `This is mode ${input.mode}. Never write or edit tests. `;
   const prompt = `${definition.prompt}\n\nRuntime binding: work only in ${input.worktree}. `
     + `Resolve this canonical definition's relative resource references against ${join(definition.root, "agents")}. `
-    + "Never start another implementation writer, commit, or push. " + phasePolicy
+    + (isPublisherContext(input)
+      ? "Never start another implementation writer or commit. Normal pushes are permitted only through the owned main-sync publication gate. "
+      : "Never start another implementation writer, commit, or push. ") + phasePolicy
     + (reader ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : "")
     + (input.agentName === "vibe-prototype-worker"
       ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "")
@@ -93,6 +98,9 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
 /** Launches the canonical scoped agent directly; the registered writer resumes its original context. */
 export async function runWorker(rawInput: unknown) {
   const input = launchSchema.parse(rawInput);
+  if (input.mainSyncValidation && input.timeoutMs !== 15 * 60 * 1000) {
+    throw new Error("Canonical validation derives its own envelope; caller timeout overrides are not allowed");
+  }
   if (process.platform === "win32") throw new Error("Owned descendant cleanup requires a supported POSIX process-group harness");
   const definition = readDefinition(input.agentRoot, input.agentName, input.capabilities);
   const bound = boundDefinition(definition, input);
@@ -120,14 +128,35 @@ export async function runWorker(rawInput: unknown) {
   let recordLock = false;
   let discardLock = false;
   let cleanupBlocked = false;
+  let operationContext: OperationContext | undefined;
+  let prelaunchCanceled = false;
+  const cancelBeforeLaunch = () => { prelaunchCanceled = true; };
+  process.once("SIGTERM", cancelBeforeLaunch);
+  process.once("SIGINT", cancelBeforeLaunch);
   try {
     if (input.mode === "record") {
       if (discardPlace) { acquireRecordTurnAt(discardPlace); discardLock = true; }
       acquireRecordTurnAt(place, persistent && lease ? { workerId, lease } : undefined);
       recordLock = true;
+      if (!input.sessionless && input.recordAction) {
+        operationContext = { runtime: "claude", worktree: place.root, agentName: input.agentName,
+          mode: "record", recordAction: input.recordAction, workerId, requestId: input.requestId,
+          lease: randomUUID(), ...(input.publicationPurpose ? { publicationPurpose: input.publicationPurpose } : {}),
+          ...(input.mainSyncTransactionId ? { mainSyncTransactionId: input.mainSyncTransactionId } : {}),
+          ...(input.mainSyncRequestContinuations ? { mainSyncRequestContinuations: input.mainSyncRequestContinuations } : {}) };
+        if (input.mainSyncCiRun) operationContext.mainSyncCiRun = input.mainSyncCiRun;
+        if (input.mainSyncValidation) operationContext.mainSyncValidation = input.mainSyncValidation;
+        writeFileSync(join(place.dir, "vibe-record-turn.lock", CLAUDE_OPERATION_OWNER), JSON.stringify({
+          context: operationContext, branch: place.branch,
+          ...(persistent && lease ? { primaryOwner: { workerId, lease } } : {}),
+        }), { mode: 0o600, flag: "wx" });
+      }
     }
     writeFileSync(definitionFile, JSON.stringify({ [definition.name]: bound.agent }), { mode: 0o600, flag: "wx" });
     trace = openSync(tracePath, "wx", 0o600);
+    const timeoutMs = input.mainSyncValidation
+      ? await deriveValidationEnvelope(operationContext!, place.dir, place.branch, () => prelaunchCanceled) : input.timeoutMs;
+    if (prelaunchCanceled) throw new Error("Owned worker turn canceled before Claude spawn");
     if (persistent && lease) resume = markClaudeStarted(input.worktree, workerId, lease).resume;
     const args = ["--print", "--verbose", "--output-format", "stream-json", "--agent", definition.name,
       "--json-schema", JSON.stringify(workerResultJsonSchema),
@@ -138,13 +167,17 @@ export async function runWorker(rawInput: unknown) {
       "--permission-mode", "default",
       "--allowedTools", bound.tools.join(","),
       resume ? "--resume" : "--session-id", workerId];
-    const output = await launchProcess(args, place.root, JSON.stringify({ requestId: input.requestId,
+    const launch = launchProcess(args, place.root, JSON.stringify({ requestId: input.requestId,
       mode: input.mode, authority: { testAuthoringAuthorized: persistent && input.mode === "handoff" },
       ...(input.sessionless ? { sessionless: input.sessionless } : {}),
       ...(input.discardTarget ? { discardTarget: input.discardTarget } : {}),
-      ...(input.recordAction ? { recordAction: input.recordAction } : {}), input: turnInput }), input.timeoutMs, trace, (processGroupId) => {
+      ...(input.recordAction ? { recordAction: input.recordAction } : {}),
+      ...(operationContext ? { operationContext } : {}), input: turnInput }), timeoutMs, trace, (processGroupId) => {
         if (persistent && lease) attachClaudeProcess(input.worktree, workerId, lease, processGroupId);
       });
+    process.removeListener("SIGTERM", cancelBeforeLaunch);
+    process.removeListener("SIGINT", cancelBeforeLaunch);
+    const output = await launch;
     if (output.sessionId !== workerId) throw new Error("Claude returned a different session identity; no fresh fallback is permitted");
     if (persistent && lease) changeWriter("finish", { worktree: input.worktree, workerId, requestId: input.requestId,
       lease, status: output.status, resultSummary: output.summary });
@@ -164,6 +197,8 @@ export async function runWorker(rawInput: unknown) {
     throw new WorkerLaunchError({ status: "BLOCKED", ...failure, workerId, sessionId: workerId,
       requestId: input.requestId, tracePath, leaseRetained, recordLeaseRetained: recordLock && cleanupBlocked });
   } finally {
+    process.removeListener("SIGTERM", cancelBeforeLaunch);
+    process.removeListener("SIGINT", cancelBeforeLaunch);
     if (trace !== undefined) closeSync(trace);
     rmSync(definitionFile, { force: true });
     if (recordLock && !cleanupBlocked) rmSync(join(place.dir, "vibe-record-turn.lock"), { recursive: true });

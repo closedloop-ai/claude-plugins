@@ -20,6 +20,13 @@ CHANGE_WORKER = PLUGIN_ROOT / "agents" / "vibe-change-worker.md"
 VIBE_SKILL = PLUGIN_ROOT / "skills" / "vibe" / "SKILL.md"
 
 
+def test_final_publication_keeps_input_readiness_distinct_from_coverage() -> None:
+    upload = section(HANDOFF_SKILL.read_text(), "## 7. Upload the last changes")
+    for required in ("main-sync-inputs", "mainSyncValidation", "same actor", "retained reports",
+                     "requiredE2eComplete", "not test authority"):
+        assert required in upload, required
+
+
 def section(text: str, heading: str) -> str:
     """The section under `heading`, with line wrapping collapsed to single spaces."""
     start = text.index(heading)

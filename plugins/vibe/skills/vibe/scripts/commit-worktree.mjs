@@ -23,6 +23,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { committedLocalPlans, isLocalPlanPath } from "./local-plans.mjs";
 import { git, readSessionRecord } from "./session-record.mjs";
+import { mainSyncFailure, prepareMainSync, readMainSyncInput } from "./dist/main-sync.mjs";
 
 const MAX_SUBJECT_LENGTH = 72;
 const HOOK_OUTPUT_LINES = 40;
@@ -37,14 +38,19 @@ const { values } = parseArgs({
     worktree: { type: "string" },
     subject: { type: "string" },
     body: { type: "string" },
+    "prepare-main-sync": { type: "boolean", default: false },
   },
 });
 
 try {
-  process.stdout.write(`${JSON.stringify({ ok: true, ...commitWorktree() }, null, 2)}\n`);
+  const result = values["prepare-main-sync"]
+    ? { mainSync: prepareMainSync(await readMainSyncInput(values.worktree ?? "")) }
+    : commitWorktree();
+  process.stdout.write(`${JSON.stringify({ ok: true, ...result }, null, 2)}\n`);
 } catch (error) {
   process.stdout.write(
-    `${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`
+    `${JSON.stringify({ ok: false, ...(values["prepare-main-sync"] ? mainSyncFailure(error)
+      : { error: error instanceof Error ? error.message : String(error) }) })}\n`
   );
   process.exit(1);
 }

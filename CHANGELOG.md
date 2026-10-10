@@ -10,6 +10,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - New `repo-hardening` skill that audits a repository read-only and writes an evidence-backed hardening plan: a self-contained HTML page plus a Markdown twin, written outside the analyzed repository. It asks which repository to analyze and where to write the plan, investigates instruction files, static checks and gates, types and boundaries, tests, CI and merge flow, review habits, and recurring mistakes in history, and evaluates them against a set of engineering principles and a trust ladder of prevention mechanisms. The plan lists findings with evidence and the strongest prevention rung, small ordered units of work with quick wins separated from structural changes, what not to do, and decisions for a human with a recommendation. Its playbooks (investigation, bug fix, perf fix, hillclimb, refactor, feature, adversarial review, blast radius, unattended run, landing) can also be used directly for one rigorous task. The HTML template uses inline CSS and a single print script pinned by a Content-Security-Policy hash, and opens collapsed evidence when printed. `NOTICE.md` carries the MIT attribution for the adapted pstack material.
 - Contract tests check the skill's frontmatter and triggers, its read-only and escaping rules, that its files name no harness, vendor, model, or private path outside `NOTICE.md`, that relative links and anchors resolve inside the skill folder, that its text has no em dashes or double hyphens, and that the HTML template makes no network requests and its policy hash matches its only script.
 
+### vibe v1.0.9
+
+#### Fixed
+- Private-input checks preserve recognized Vite glob groups, importer-relative paths, positive unions, exclusions and collection options instead of treating negative members as independent readers.
+- Private and retained-report checks share complete Node reader targets, path operations and bounded bindings. Settings siblings and encoding options no longer become planning references, while relevant unresolved paths and genuinely consumed private evidence remain blocked.
+
+### vibe v1.0.8
+
+#### Fixed
+- Main-sync preserves canonical ignored private diagnostics independently of file extension only when committed imports, readers and finite collectors exclude them. Retained reports remain evidence outputs, never replay inputs or current coverage assertions.
+- Source-owned readiness verifies known generated dependencies through existing pure owners or a pristine committed validation checkout before consuming retained bytes. Complete set, content, semantic mode, producer input and canonical package checks reject stale, edited, aliased or extra inputs without deleting feature artifacts.
+- Selected installed package identities use bounded deduplicated relative names and complete byte/mode/set digests inside the existing receipt. Oversized state is refused before atomic replacement, preserving prior evidence and the private size cap.
+
+#### Changed
+- The same source actor prepares input readiness before capture and after the committed merge. A Root-bound opaque recipe witness derives only its authenticated Claude validation envelope, with no prelaunch discovery child or caller timeout override; actual inputs and selection are rechecked after launch.
+- Fixed affected and deployment-pinned aggregate budgets follow their distinct owning selections. FULL local lint-scripts gets a bounded 30-minute outer process budget; test assertions, individual cases, hooks, CI and general-worker limits remain unchanged.
+- Canonically verified changed selected owners invalidate prior check evidence and permit one whole-matrix restart within the original command budgets, preserving untouched origin proof. The recipe binds its finite recovery lifecycle reserve. An empty affected-wrapper selection is a no-op, not coverage; later deployment-pinned checks still execute. Unsafe retained-report isolation remains explicit incomplete E2E coverage rather than a local spawn or PASS.
+
+### vibe v1.0.7
+
+#### Fixed
+- Main-sync recognizes the existing ignored root `.biome-noscan.jsonc` only when its bytes match the reviewed canonical pure producer applied to the complete committed `biome.jsonc`, including trailing newlines. The writing hook is never invoked, and the artifact remains untouched.
+- Canonical producer/import identity, tracked input parity and post-probe rechecks reject modified, stale, deceptive, nested, temporary, symlinked or oversized generated inputs. Unrelated executable overlays remain blocked before validation or publication.
+
+### vibe v1.0.6
+
+#### Added
+- Shared publication admission captures fresh main, prepares an ordinary noncommitting merge, and binds actual fixed validation commands to the exact committed tree before the first remote push, environment request or canonical prototype share. The orchestrator alone commits and normal hooks guard explicit-SHA pushes.
+- Private provenance retains the original session base, captured upstream imports and original feature test history, including newly combined merge assertions. Later main absorption does not erase authorship evidence; phase classification still requires actual authorization records.
+- A read-only handoff evidence consumer binds real canonical GitHub run, attempt, job and step identity to actual checkout-action and pre-test runner source evidence. Workflow main SHA and caller success assertions are not tested-source proof.
+
+#### Changed
+- Handoff repeats synchronization and checks, then avoids another push or deployment request when the exact validated result is already verified as published. Flags and Desktop retain distinct request-only grants; missing or stale proof returns to canonical redeploy without granting push rights.
+- Validation rejects dirty tracked local fixes and other executable overlays that differ from the committed result, preserving them for the same writer rather than checking different bytes or discarding a workaround. Build, backend handoff and prototype command matrices retain their existing scope.
+- Reviewed deliverables are committed locally by the orchestrator before preparation, still unpushed. Flags/Desktop deployment-capable requests require fresh preparation or an exact publisher-reserved continuation bound to its actual consumer turn. Structured lane discovery prevents unsafe Electron launches; publication readiness preserves incomplete E2E evidence separately from final handoff coverage for the same exact snapshot.
+
+#### Fixed
+- Claude publication helpers no longer receive the contradictory no-push footer for their existing create, redeploy and prototype-share grants. Source writers, read-only roles and request-only helpers keep the original no-commit/no-push restrictions.
+
 ### vibe v1.0.5
 
 #### Changed
