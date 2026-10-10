@@ -69,6 +69,10 @@ incomplete, while final handoff can consume real exact-checkout GitHub evidence
 for that same committed snapshot without chasing main during CI. Workflow main
 SHA, generic log matches and caller PASS are not coverage proof; the consumer
 never dispatches CI or adds a feature PR.
+The existing ignored root `.biome-noscan.jsonc` is recognized only when its
+bytes match the reviewed canonical pure producer applied to the complete
+committed config. Modified, stale or deceptive derivatives and unrelated
+executable overlays still block; the gate never invokes the writing hook.
 An existing registered writer retains its original definition root, exact
 binding and actual ID. The root supplies the new table policy through its
 existing continuation; it does not reset or re-register under an updated
@@ -154,7 +158,7 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 
 ## Runtime Files
 
-Version `1.0.6` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.7` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains two skill-contract test modules.
 Runtime helpers and tests live alongside their owning skills, including vibe

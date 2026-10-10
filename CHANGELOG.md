@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.7
+
+#### Fixed
+- Main-sync recognizes the existing ignored root `.biome-noscan.jsonc` only when its bytes match the reviewed canonical pure producer applied to the complete committed `biome.jsonc`, including trailing newlines. The writing hook is never invoked, and the artifact remains untouched.
+- Canonical producer/import identity, tracked input parity and post-probe rechecks reject modified, stale, deceptive, nested, temporary, symlinked or oversized generated inputs. Unrelated executable overlays remain blocked before validation or publication.
+
 ### vibe v1.0.6
 
 #### Added

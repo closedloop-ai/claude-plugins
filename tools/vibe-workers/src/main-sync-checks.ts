@@ -7,8 +7,8 @@ import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mj
 import { MainSyncError, type MainSyncReceipt, type e2eLimitationSchema } from "./main-sync-contracts.js";
 import { committedIdentity, digest, syncContext } from "./main-sync-state.js";
 import { discoverCheckLanes, type CheckCommand } from "./main-sync-lanes.js";
+import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES, verifyGeneratedBiomeInput } from "./main-sync-generated-input.js";
 
-const MAX_FILE_BYTES = 128 * 1024 * 1024;
 const MAX_CHECK_MS = 15 * 60 * 1000;
 const EXECUTABLE_INPUT = /(?:\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss|html|sql|prisma)$|(?:^|\/)\.(?:npmrc|nvmrc)|(?:^|\/)(?:package-lock|pnpm-lock))/;
 const SOURCE_PATH = /\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss)$/;
@@ -20,6 +20,41 @@ const turboTasksSchema = z.object({ tasks: z.array(z.object({ taskId: z.string()
 
 /** Every tracked byte/mode and nonprivate executable overlay must match the committed publication tree. */
 export function committedInputs(root: string) {
+  const before = trackedInputs(root);
+  const generated = lstatSync(join(root, GENERATED_BIOME_PATH), { throwIfNoEntry: false });
+  if (generated && !generated.isFile()) {
+    throw new MainSyncError(`Generated-input verification requires a bounded canonical regular file: ${GENERATED_BIOME_PATH}`, "NEEDS_CHANGE");
+  }
+  let recognizedDerivative = false;
+  for (const ignored of [false, true]) {
+    const args = ["ls-files", "--others", "--exclude-standard", "-z", ...(ignored ? ["--ignored"] : [])];
+    for (const file of git(root, args).split("\0").filter(Boolean)) {
+      if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) continue;
+      if (PRIVATE_ARTIFACT.test(file) && (file.startsWith(".closedloop-ai/vibe-plans/")
+        || file.startsWith(".closedloop-ai/decision-tables/") || file.startsWith(".control/"))) continue;
+      if (ignored && file === GENERATED_BIOME_PATH) {
+        verifyGeneratedBiomeInput(root, before.headSha);
+        recognizedDerivative = true;
+        continue;
+      }
+      if (file.split("/").at(-1)?.startsWith(GENERATED_BIOME_PATH)) {
+        throw new MainSyncError(`Committed validation inputs differ from HEAD: unsupported generated-input path ${file}`, "NEEDS_CHANGE");
+      }
+      if (EXECUTABLE_INPUT.test(file)) throw new MainSyncError(`Committed validation inputs differ from HEAD: uncommitted executable ${file}`, "NEEDS_CHANGE");
+    }
+  }
+  const plans = git(root, ["ls-tree", "-r", "--name-only", "HEAD", "--", ".closedloop-ai/vibe-plans/"]);
+  if (plans) throw new MainSyncError("Local technical plans are committed; publication is blocked");
+  if (recognizedDerivative) {
+    const after = trackedInputs(root);
+    if (after.headSha !== before.headSha || after.treeSha !== before.treeSha || after.inputSha256 !== before.inputSha256) {
+      throw new MainSyncError("Committed validation inputs changed during the read-only derivative probe", "NEEDS_CHANGE");
+    }
+  }
+  return before;
+}
+
+function trackedInputs(root: string) {
   const identity = committedIdentity(root);
   if (git(root, ["write-tree"]) !== identity.treeSha) throw new MainSyncError("Committed validation inputs differ from HEAD: staged source", "NEEDS_CHANGE");
   const hash = createHash("sha256");
@@ -31,7 +66,7 @@ export function committedInputs(root: string) {
     const target = join(root, file);
     if (kind !== "blob" || !existsSync(target)) throw new MainSyncError(`Committed validation inputs differ from HEAD: ${file}`, "NEEDS_CHANGE");
     const stat = lstatSync(target);
-    if (stat.size > MAX_FILE_BYTES) throw new MainSyncError(`Validation input exceeds the bounded file limit: ${file}`);
+    if (stat.size > MAX_INPUT_BYTES) throw new MainSyncError(`Validation input exceeds the bounded file limit: ${file}`);
     const content = mode === "120000" && stat.isSymbolicLink() ? Buffer.from(readlinkSync(target)) : stat.isFile() ? readFileSync(target) : undefined;
     const actual = content && createHash("sha1").update(`blob ${content.length}\0`).update(content).digest("hex");
     const executable = Boolean(stat.mode & 0o111);
@@ -40,17 +75,6 @@ export function committedInputs(root: string) {
     }
     hash.update(`${mode}\0${object}\0${file}\0`);
   }
-  for (const ignored of [false, true]) {
-    const args = ["ls-files", "--others", "--exclude-standard", "-z", ...(ignored ? ["--ignored"] : [])];
-    for (const file of git(root, args).split("\0").filter(Boolean)) {
-      if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) continue;
-      if (PRIVATE_ARTIFACT.test(file) && (file.startsWith(".closedloop-ai/vibe-plans/")
-        || file.startsWith(".closedloop-ai/decision-tables/") || file.startsWith(".control/"))) continue;
-      if (EXECUTABLE_INPUT.test(file)) throw new MainSyncError(`Committed validation inputs differ from HEAD: uncommitted executable ${file}`, "NEEDS_CHANGE");
-    }
-  }
-  const plans = git(root, ["ls-tree", "-r", "--name-only", "HEAD", "--", ".closedloop-ai/vibe-plans/"]);
-  if (plans) throw new MainSyncError("Local technical plans are committed; publication is blocked");
   return { ...identity, inputSha256: hash.digest("hex") };
 }
 

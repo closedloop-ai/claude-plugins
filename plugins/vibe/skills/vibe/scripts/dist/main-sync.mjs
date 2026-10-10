@@ -7371,10 +7371,10 @@ var require_dist = __commonJS({
 });
 
 // src/main-sync.ts
-import { spawnSync as spawnSync4 } from "node:child_process";
+import { spawnSync as spawnSync5 } from "node:child_process";
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { existsSync as existsSync5, lstatSync as lstatSync3, readFileSync as readFileSync5, realpathSync as realpathSync3 } from "node:fs";
-import { join as join4 } from "node:path";
+import { existsSync as existsSync5, lstatSync as lstatSync4, readFileSync as readFileSync6, realpathSync as realpathSync4 } from "node:fs";
+import { join as join5 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/zod/v3/external.js
@@ -12174,10 +12174,10 @@ function apiText(root, path2, logs = false) {
 }
 
 // src/main-sync-checks.ts
-import { spawnSync as spawnSync3 } from "node:child_process";
-import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync4, lstatSync as lstatSync2, readFileSync as readFileSync4, readlinkSync, writeFileSync as writeFileSync4 } from "node:fs";
-import { join as join3 } from "node:path";
+import { spawnSync as spawnSync4 } from "node:child_process";
+import { createHash as createHash3 } from "node:crypto";
+import { existsSync as existsSync4, lstatSync as lstatSync3, readFileSync as readFileSync5, readlinkSync, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join4 } from "node:path";
 
 // src/main-sync-lanes.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
@@ -12265,8 +12265,97 @@ function displaylessPrerequisites(root) {
   return !result.error && result.status === 0;
 }
 
+// src/main-sync-generated-input.ts
+import { execFileSync as execFileSync3, spawnSync as spawnSync3 } from "node:child_process";
+import { createHash as createHash2 } from "node:crypto";
+import { lstatSync as lstatSync2, readFileSync as readFileSync4, realpathSync as realpathSync3 } from "node:fs";
+import { join as join3 } from "node:path";
+var GENERATED_BIOME_PATH = ".biome-noscan.jsonc";
+var MAX_INPUT_BYTES = 128 * 1024 * 1024;
+var PRODUCER_FILES = [
+  { path: "lint-staged.config.js", sha256: "cab246172e6fb362d97a1dc634a5741dbd5027a8ec18f891aebe145c15c990fd" },
+  { path: "scripts/exec-git.ts", sha256: "a884fc8d0dc9735933eed6a6d5eaca4b935ddb9957ba873495a38adc973ac17e" }
+];
+var HASH = /^[a-f0-9]{64}$/;
+var probeSchema = external_exports.object({
+  path: external_exports.string(),
+  bytes: external_exports.number().int().nonnegative().max(MAX_INPUT_BYTES),
+  sha256: external_exports.string().regex(HASH)
+}).strict();
+var PURE_PROBE = String.raw`
+import {readFileSync,lstatSync,realpathSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
+const input = JSON.parse(readFileSync(0, 'utf8'));
+const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+const check = () => {
+  for (const file of input.files) {
+    const path = join(process.cwd(), file.path);
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.size > input.maxBytes || (stat.mode & 0o111) || realpathSync(path) !== path
+      || hash(readFileSync(path)) !== file.sha256) throw new Error('Canonical committed probe input changed');
+  }
+};
+check();
+const owner = await import(pathToFileURL(join(process.cwd(), 'lint-staged.config.js')).href);
+const path = join(process.cwd(), '.biome-noscan.jsonc');
+if (owner.NO_SCAN_BIOME_CONFIG !== path || typeof owner.noScanBiomeConfig !== 'function') throw new Error('Canonical pure export unavailable');
+const output = owner.noScanBiomeConfig(input.config);
+if (typeof output !== 'string' || Buffer.byteLength(output) > input.maxBytes) throw new Error('Canonical pure output invalid');
+check();
+process.stdout.write(JSON.stringify({path,bytes:Buffer.byteLength(output),sha256:hash(Buffer.from(output))}));
+`;
+function verifyGeneratedBiomeInput(root, headSha) {
+  try {
+    const artifact = readRegular(root, GENERATED_BIOME_PATH);
+    const files = PRODUCER_FILES.map((file) => {
+      const committed = rawBlob(root, headSha, file.path);
+      if (sha256(committed) !== file.sha256 || !readRegular(root, file.path).equals(committed)) {
+        throw new MainSyncError(`Canonical generated-input producer is not the reviewed committed source: ${file.path}`, "NEEDS_CHANGE");
+      }
+      return file;
+    });
+    const config = rawBlob(root, headSha, "biome.jsonc");
+    if (!readRegular(root, "biome.jsonc").equals(config)) throw new MainSyncError("Canonical committed Biome config changed", "NEEDS_CHANGE");
+    const inputs = [...files, { path: "biome.jsonc", sha256: sha256(config) }];
+    const result = spawnSync3("pnpm", ["exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", PURE_PROBE], {
+      cwd: root,
+      encoding: "utf8",
+      input: JSON.stringify({ files: inputs, config: config.toString("utf8"), maxBytes: MAX_INPUT_BYTES }),
+      timeout: 1e4,
+      maxBuffer: 1024 * 1024
+    });
+    if (result.error || result.status !== 0) throw new MainSyncError("Read-only canonical generated-input probe failed; no source check or publication permitted", "NEEDS_CHANGE");
+    const proof = probeSchema.parse(JSON.parse(result.stdout));
+    if (proof.path !== join3(root, GENERATED_BIOME_PATH) || proof.bytes !== artifact.length || proof.sha256 !== sha256(artifact)) {
+      throw new MainSyncError("Generated Biome input differs from the exact committed-config derivative; preserve the artifact", "NEEDS_CHANGE");
+    }
+    for (const file of inputs) {
+      if (sha256(readRegular(root, file.path)) !== file.sha256) throw new MainSyncError("Canonical generated-input source changed during the probe", "NEEDS_CHANGE");
+    }
+    if (!readRegular(root, GENERATED_BIOME_PATH).equals(artifact)) throw new MainSyncError("Generated Biome input changed during the probe", "NEEDS_CHANGE");
+  } catch (error) {
+    if (error instanceof MainSyncError) throw error;
+    throw new MainSyncError("Could not verify the exact bounded canonical generated Biome input; preserve files and block publication", "NEEDS_CHANGE");
+  }
+}
+function readRegular(root, file) {
+  const path2 = join3(root, file);
+  const stat = lstatSync2(path2);
+  if (!stat.isFile() || stat.size > MAX_INPUT_BYTES || stat.mode & 73 || realpathSync3(path2) !== path2) {
+    throw new MainSyncError(`Generated-input verification requires a bounded canonical regular file: ${file}`, "NEEDS_CHANGE");
+  }
+  return readFileSync4(path2);
+}
+function rawBlob(root, headSha, file) {
+  return execFileSync3("git", ["show", `${headSha}:${file}`], { cwd: root, timeout: 1e4, maxBuffer: MAX_INPUT_BYTES });
+}
+function sha256(bytes) {
+  return createHash2("sha256").update(bytes).digest("hex");
+}
+
 // src/main-sync-checks.ts
-var MAX_FILE_BYTES = 128 * 1024 * 1024;
 var MAX_CHECK_MS = 15 * 60 * 1e3;
 var EXECUTABLE_INPUT = /(?:\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss|html|sql|prisma)$|(?:^|\/)\.(?:npmrc|nvmrc)|(?:^|\/)(?:package-lock|pnpm-lock))/;
 var SOURCE_PATH = /\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss)$/;
@@ -12285,36 +12374,59 @@ var BACKEND_PREFIXES = [
 var CACHE_SEGMENTS = /* @__PURE__ */ new Set(["node_modules", ".next", ".turbo", "dist", "storybook-static", ".cache"]);
 var turboTasksSchema = external_exports.object({ tasks: external_exports.array(external_exports.object({ taskId: external_exports.string(), package: external_exports.string().optional() }).passthrough()) }).passthrough();
 function committedInputs(root) {
+  const before = trackedInputs(root);
+  const generated = lstatSync3(join4(root, GENERATED_BIOME_PATH), { throwIfNoEntry: false });
+  if (generated && !generated.isFile()) {
+    throw new MainSyncError(`Generated-input verification requires a bounded canonical regular file: ${GENERATED_BIOME_PATH}`, "NEEDS_CHANGE");
+  }
+  let recognizedDerivative = false;
+  for (const ignored of [false, true]) {
+    const args = ["ls-files", "--others", "--exclude-standard", "-z", ...ignored ? ["--ignored"] : []];
+    for (const file of git(root, args).split("\0").filter(Boolean)) {
+      if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) continue;
+      if (PRIVATE_ARTIFACT.test(file) && (file.startsWith(".closedloop-ai/vibe-plans/") || file.startsWith(".closedloop-ai/decision-tables/") || file.startsWith(".control/"))) continue;
+      if (ignored && file === GENERATED_BIOME_PATH) {
+        verifyGeneratedBiomeInput(root, before.headSha);
+        recognizedDerivative = true;
+        continue;
+      }
+      if (file.split("/").at(-1)?.startsWith(GENERATED_BIOME_PATH)) {
+        throw new MainSyncError(`Committed validation inputs differ from HEAD: unsupported generated-input path ${file}`, "NEEDS_CHANGE");
+      }
+      if (EXECUTABLE_INPUT.test(file)) throw new MainSyncError(`Committed validation inputs differ from HEAD: uncommitted executable ${file}`, "NEEDS_CHANGE");
+    }
+  }
+  const plans = git(root, ["ls-tree", "-r", "--name-only", "HEAD", "--", ".closedloop-ai/vibe-plans/"]);
+  if (plans) throw new MainSyncError("Local technical plans are committed; publication is blocked");
+  if (recognizedDerivative) {
+    const after = trackedInputs(root);
+    if (after.headSha !== before.headSha || after.treeSha !== before.treeSha || after.inputSha256 !== before.inputSha256) {
+      throw new MainSyncError("Committed validation inputs changed during the read-only derivative probe", "NEEDS_CHANGE");
+    }
+  }
+  return before;
+}
+function trackedInputs(root) {
   const identity = committedIdentity(root);
   if (git(root, ["write-tree"]) !== identity.treeSha) throw new MainSyncError("Committed validation inputs differ from HEAD: staged source", "NEEDS_CHANGE");
-  const hash = createHash2("sha256");
+  const hash = createHash3("sha256");
   const entries = git(root, ["ls-tree", "-r", "-z", "HEAD"]);
   for (const entry of entries.split("\0").filter(Boolean)) {
     const tab = entry.indexOf("	");
     const [mode, kind, object] = entry.slice(0, tab).split(" ");
     const file = entry.slice(tab + 1);
-    const target = join3(root, file);
+    const target = join4(root, file);
     if (kind !== "blob" || !existsSync4(target)) throw new MainSyncError(`Committed validation inputs differ from HEAD: ${file}`, "NEEDS_CHANGE");
-    const stat = lstatSync2(target);
-    if (stat.size > MAX_FILE_BYTES) throw new MainSyncError(`Validation input exceeds the bounded file limit: ${file}`);
-    const content = mode === "120000" && stat.isSymbolicLink() ? Buffer.from(readlinkSync(target)) : stat.isFile() ? readFileSync4(target) : void 0;
-    const actual = content && createHash2("sha1").update(`blob ${content.length}\0`).update(content).digest("hex");
+    const stat = lstatSync3(target);
+    if (stat.size > MAX_INPUT_BYTES) throw new MainSyncError(`Validation input exceeds the bounded file limit: ${file}`);
+    const content = mode === "120000" && stat.isSymbolicLink() ? Buffer.from(readlinkSync(target)) : stat.isFile() ? readFileSync5(target) : void 0;
+    const actual = content && createHash3("sha1").update(`blob ${content.length}\0`).update(content).digest("hex");
     const executable = Boolean(stat.mode & 73);
     if (!content || actual !== object || mode !== "120000" && executable !== (mode === "100755")) {
       throw new MainSyncError(`Committed validation inputs differ from HEAD: ${file}; preserve localFix source and use the same-writer workaround flow`, "NEEDS_CHANGE");
     }
     hash.update(`${mode}\0${object}\0${file}\0`);
   }
-  for (const ignored of [false, true]) {
-    const args = ["ls-files", "--others", "--exclude-standard", "-z", ...ignored ? ["--ignored"] : []];
-    for (const file of git(root, args).split("\0").filter(Boolean)) {
-      if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) continue;
-      if (PRIVATE_ARTIFACT.test(file) && (file.startsWith(".closedloop-ai/vibe-plans/") || file.startsWith(".closedloop-ai/decision-tables/") || file.startsWith(".control/"))) continue;
-      if (EXECUTABLE_INPUT.test(file)) throw new MainSyncError(`Committed validation inputs differ from HEAD: uncommitted executable ${file}`, "NEEDS_CHANGE");
-    }
-  }
-  const plans = git(root, ["ls-tree", "-r", "--name-only", "HEAD", "--", ".closedloop-ai/vibe-plans/"]);
-  if (plans) throw new MainSyncError("Local technical plans are committed; publication is blocked");
   return { ...identity, inputSha256: hash.digest("hex") };
 }
 function checkRecipe(value, receipt) {
@@ -12322,7 +12434,7 @@ function checkRecipe(value, receipt) {
   const files = git(root, ["diff", "--name-only", "--no-renames", receipt.mainSha, "HEAD"]).split("\n").filter(Boolean);
   const prototype = value.place.branch.startsWith("prototype/");
   const backend = files.some((file) => BACKEND_PREFIXES.some((prefix) => file.startsWith(prefix)) || /\/(?:prisma|migrations)\//.test(`/${file}`));
-  const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync4(join3(root, file)));
+  const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync4(join4(root, file)));
   const commands = [];
   const e2eLimitations = [];
   if (prototype) {
@@ -12373,20 +12485,20 @@ function executeChecks(value, receipt) {
     const env = { ...process.env, TURBO_CONCURRENCY: "2" };
     Reflect.deleteProperty(env, "AFFECTED_SCRIPT_SUITES");
     Object.assign(env, command.bindings);
-    const result = spawnSync3(command.argv[0], command.argv.slice(1), {
-      cwd: command.cwd ? join3(value.place.root, command.cwd) : value.place.root,
+    const result = spawnSync4(command.argv[0], command.argv.slice(1), {
+      cwd: command.cwd ? join4(value.place.root, command.cwd) : value.place.root,
       encoding: "utf8",
       timeout: command.timeoutMs ?? MAX_CHECK_MS,
       maxBuffer: 16 * 1024 * 1024,
       env
     });
     const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-    const log = join3(value.place.dir, `vibe-main-sync-${receipt.transactionId}-${index}.log`);
+    const log = join4(value.place.dir, `vibe-main-sync-${receipt.transactionId}-${index}.log`);
     writeFileSync4(log, output, { mode: 384 });
     if (result.error || result.status !== 0) throw new MainSyncError(`Required validation command failed: ${command.argv.join(" ")}; private log ${log}`);
     assertIdentity(value.place.root, before);
     if (command.argv[1] === "turbo") {
-      const dry = spawnSync3("pnpm", [...command.argv.slice(1), "--dry=json"], {
+      const dry = spawnSync4("pnpm", [...command.argv.slice(1), "--dry=json"], {
         cwd: value.place.root,
         encoding: "utf8",
         timeout: MAX_CHECK_MS,
@@ -12424,20 +12536,20 @@ var desktopSchema = external_exports.object({ ok: external_exports.boolean(), ru
 var TEST_HISTORY_PATH = /(?:\.(?:test|spec)\.[cm]?[jt]sx?$|\.snap$|(?:^|\/)(?:__tests__|__fixtures__|__snapshots__|e2e)\/|^apps\/desktop\/test\/)/;
 async function readMainSyncInput(worktree) {
   const input = mainSyncInputSchema.parse(await readInput());
-  if (realpathSync3(input.context.worktree) !== realpathSync3(worktree)) throw new MainSyncError("CLI worktree and owned operation context differ");
+  if (realpathSync4(input.context.worktree) !== realpathSync4(worktree)) throw new MainSyncError("CLI worktree and owned operation context differ");
   return input;
 }
 function prepareMainSync(raw) {
   const value = syncContext(raw, "prepare");
   const root = value.place.root;
   committedInputs(root);
-  const previousFile = join4(value.place.dir, MAIN_SYNC_FILE);
+  const previousFile = join5(value.place.dir, MAIN_SYNC_FILE);
   const previous = existsSync5(previousFile) ? mainSyncReceiptSchema.parse(readPrivateJson(previousFile)) : void 0;
   if (previous && (previous.worktree !== root || previous.branch !== value.place.branch || previous.originalBase !== value.place.session.baseCommit || previous.operator.id !== value.place.session.operator.id || previous.operator.email !== value.place.session.operator.email)) {
     throw new MainSyncError("Previous main-sync provenance belongs to another session; preserve it and inspect the owned evidence");
   }
   const desktopScript = fileURLToPath(new URL("../vibe-sessions.mjs", import.meta.url));
-  const desktop = spawnSync4(process.execPath, [desktopScript, "desktop-tab", "--worktree", root], {
+  const desktop = spawnSync5(process.execPath, [desktopScript, "desktop-tab", "--worktree", root], {
     encoding: "utf8",
     timeout: 3e4,
     maxBuffer: 1024 * 1024
@@ -12487,7 +12599,7 @@ function prepareMainSync(raw) {
       throw new MainSyncError(`Ordinary main merge needs the SAME writer's conflict/source correction${conflicts ? `: ${conflicts}` : ""}; ROOT alone commits`, "NEEDS_CHANGE");
     }
   }
-  const requiresCommit = existsSync5(join4(value.place.dir, "MERGE_HEAD"));
+  const requiresCommit = existsSync5(join5(value.place.dir, "MERGE_HEAD"));
   return {
     status: requiresCommit ? "NEEDS_COMMIT" : "DONE",
     transactionId: receipt.transactionId,
@@ -12603,11 +12715,11 @@ function admitMainSyncShare(raw) {
 }
 function readMainSyncProvenance(worktree) {
   const place = syncLocation(worktree);
-  const file = join4(place.dir, MAIN_SYNC_FILE);
+  const file = join5(place.dir, MAIN_SYNC_FILE);
   if (!existsSync5(file)) return void 0;
   const value = mainSyncReceiptSchema.parse(readPrivateJson(file));
   if (value.worktree !== place.root || value.branch !== place.branch || value.originalBase !== place.session.baseCommit || value.operator.id !== place.session.operator.id || value.operator.email !== place.session.operator.email) return void 0;
-  const merge = join4(place.dir, "MERGE_HEAD");
+  const merge = join5(place.dir, "MERGE_HEAD");
   const pendingMerge = existsSync5(merge) && git(place.root, ["rev-parse", "MERGE_HEAD"]) === value.mainSha;
   if (!pendingMerge && !isAncestor(place.root, value.mainSha)) return void 0;
   return {
@@ -12650,9 +12762,9 @@ function validationMatches(value, receipt, identity) {
     return false;
   }
   for (const [index, command] of proof.commands.entries()) {
-    const file = join4(value.place.dir, `vibe-main-sync-${receipt.transactionId}-${index}.log`);
-    const stat = lstatSync3(file);
-    if (command.log !== file || !stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024 || digest(readFileSync5(file)) !== command.sha256) throw new MainSyncError("Actual command evidence changed; validation is required", "NEEDS_CHANGE");
+    const file = join5(value.place.dir, `vibe-main-sync-${receipt.transactionId}-${index}.log`);
+    const stat = lstatSync4(file);
+    if (command.log !== file || !stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024 || digest(readFileSync6(file)) !== command.sha256) throw new MainSyncError("Actual command evidence changed; validation is required", "NEEDS_CHANGE");
   }
   return true;
 }
