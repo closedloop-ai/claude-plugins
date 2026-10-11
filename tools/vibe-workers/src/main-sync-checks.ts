@@ -10,11 +10,12 @@ import { discoverCheckLanes, type CheckCommand } from "./main-sync-lanes.js";
 import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES, verifyGeneratedBiomeInput } from "./main-sync-generated-input.js";
 import { committedLocalPlans, isLocalPlanPath } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
 import { verifyPrivateInput, verifyPrivateRoot, verifyEvidencePath } from "./main-sync-private-inputs.js";
-import { presentProducers, producerFor, producerFiles, producerPackage, producerOwnerInputs, reportOutputs, verifyProducerInputs } from "./main-sync-input-catalog.js";
+import { presentProducers, producerFor, producerFiles, producerPackage, producerOwnerInputs, reportOutputs, verifyProducerInputs, verifyProducerInputsForOrigin } from "./main-sync-input-catalog.js";
 import { originIdentity, sameOriginFiles } from "./main-sync-input-files.js";
 import { readWriterSummary } from "./ledger.js";
-import { bindCheckBudgets, commandSelection } from "./main-sync-budget.js";
-import { verifyRetainedReportInputs, verifyReportRecipe } from "./main-sync-report-inputs.js";
+import { affectedTestReportSelection, bindCheckBudgets, commandSelection } from "./main-sync-budget.js";
+import { verifyReportRecipe, verifyReportExecution } from "./main-sync-report-inputs.js";
+import { ReportExecutionOwner } from "./main-sync-report-execution.js";
 import { recheckSelectedProduction, selectedRecoveryReserve } from "./main-sync-check-production.js";
 import { performance } from "node:perf_hooks";
 import { relative } from "node:path";
@@ -31,9 +32,10 @@ const turboTasksSchema = z.object({ tasks: z.array(z.object({ taskId: z.string()
 
 /** Every tracked byte/mode and nonprivate executable overlay must match the committed publication tree. */
 export function committedInputs(root: string) {
-  const before = inspectInputInventory(root);
+  const inspected = inspectInventory(root, "origin");
+  const before = inspected.inventory;
   if (!before.producers.length) return { headSha: before.headSha, treeSha: before.treeSha, inputSha256: before.inputSha256 };
-  const metadata = git(root, ["rev-parse", "--absolute-git-dir"]);
+  const metadata = inspected.metadata!;
   const file = join(metadata, MAIN_SYNC_FILE);
   if (!existsSync(file)) throw new MainSyncError("Canonical source input readiness is required before generated dependencies can be consumed", "NEEDS_CHANGE");
   const state = mainSyncStateSchema.parse(readPrivateJson(file));
@@ -46,6 +48,10 @@ export function committedInputs(root: string) {
 
 /** Inventory is not admission: only source preparation or a verified canonical origin can consume its generated set. */
 export function inspectInputInventory(root: string) {
+  return inspectInventory(root, "standalone").inventory;
+}
+
+function inspectInventory(root: string, completion: "standalone" | "origin") {
   const before = trackedInputs(root);
   verifyPrivateRoot(root);
   for (const path of reportOutputs) {
@@ -75,7 +81,6 @@ export function inspectInputInventory(root: string) {
       if (ignored && reportOutputs.has(file)) {
         const stat = lstatSync(join(root, file));
         if (!stat.isFile() || stat.isSymbolicLink()) throw new MainSyncError(`Retained report must be a regular owned output: ${file}`, "NEEDS_CHANGE");
-        verifyRetainedReportInputs(root, before.headSha);
         continue;
       }
       if (ignored && file === GENERATED_BIOME_PATH) {
@@ -98,8 +103,10 @@ export function inspectInputInventory(root: string) {
     }
   }
   const producers = presentProducers(root);
-  verifyProducerInputs(root, before.headSha, producers, untracked);
-  return { ...before, producers };
+  let metadata: string | undefined;
+  if (completion === "origin" && producers.length) metadata = verifyProducerInputsForOrigin(root, before.headSha, producers, untracked);
+  else verifyProducerInputs(root, before.headSha, producers, untracked);
+  return { inventory: { ...before, producers }, metadata };
 }
 
 /** Recovery may replace authenticated changed output bodies, never untouched bytes, package refs or evidence. */
@@ -220,7 +227,7 @@ export function executeChecks(value: ReturnType<typeof syncContext>, receipt: Ma
    let restart = false;
    for (const [index, command] of recipe.commands.entries()) {
     assertIdentity(value.place.root, before);
-    let selection: z.infer<typeof turboTasksSchema> | undefined;
+    let selection: z.infer<typeof turboTasksSchema> | undefined = affectedTestReportSelection(value.place.root, command);
     if (command.argv[1] === "turbo" || command.argv.join(" ") === "pnpm typecheck:affected") {
       const start = performance.now();
       selection = commandSelection(value.place.root, command, remainingBudget(MAX_CHECK_MS, drySpent[index]!));
@@ -236,6 +243,8 @@ export function executeChecks(value: ReturnType<typeof syncContext>, receipt: Ma
     Reflect.deleteProperty(env, "AFFECTED_SCRIPT_SUITES");
     Object.assign(env, command.bindings);
     const start = performance.now();
+    verifyReportExecution(value.place.root, value.place.root, ReportExecutionOwner.Check, command.argv,
+      command.cwd ? join(value.place.root, command.cwd) : value.place.root, selection);
     const result = spawnSync(command.argv[0]!, command.argv.slice(1), { cwd: command.cwd ? join(value.place.root, command.cwd) : value.place.root, encoding: "utf8",
       timeout: remainingBudget(command.timeoutMs ?? MAX_CHECK_MS, spent[index]!), maxBuffer: 16 * 1024 * 1024,
       env });

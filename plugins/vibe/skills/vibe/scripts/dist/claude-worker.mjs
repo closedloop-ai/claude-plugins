@@ -11632,12 +11632,14 @@ function asList(value) {
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync as readFileSync2, realpathSync as realpathSync3, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join as join2 } from "node:path";
+import { isAbsolute, join as join2 } from "node:path";
 function checkoutLocation(worktree) {
   const root = realpathSync3(git(worktree, ["rev-parse", "--show-toplevel"]));
   if (realpathSync3(worktree) !== root) throw new Error("Use the session's exact worktree root");
-  const dir = git(root, ["rev-parse", "--absolute-git-dir"]);
-  const branch = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  const metadata = git(root, ["rev-parse", "--absolute-git-dir", "--abbrev-ref", "HEAD"]);
+  const separator = metadata.lastIndexOf("\n");
+  if (separator < 0) throw new Error("Missing native checkout metadata boundary");
+  const [dir, branch] = external_exports.tuple([external_exports.string().min(1).refine(isAbsolute), external_exports.string().min(1)]).parse([metadata.slice(0, separator).trim(), metadata.slice(separator + 1).trim()]);
   return { root, dir, branch, file: join2(dir, "vibe-writer.json"), lock: join2(dir, "vibe-writer.lock") };
 }
 function location(worktree) {

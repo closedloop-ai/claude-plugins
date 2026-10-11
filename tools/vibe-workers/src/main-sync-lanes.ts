@@ -2,17 +2,21 @@ import { spawnSync } from "node:child_process";
 import { z } from "zod";
 import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
 import { MainSyncError, type MainSyncReceipt, type e2eLimitationSchema } from "./main-sync-contracts.js";
+import { verifyReportExecution, verifyReportProducerInputs } from "./main-sync-report-inputs.js";
+import { ReportExecutionOwner } from "./main-sync-report-execution.js";
 
 export type CheckCommand = { argv: string[]; bindings?: Record<string, string>; cwd?: string; timeoutMs?: number };
 const laneSchema = z.object({ script: z.string().min(1), dir: z.string().optional(),
   suites: z.string().optional(), env: z.record(z.string()).optional() }).strict();
 const discoverySchema = z.object({ commands: z.array(laneSchema).max(128),
   desktopHarness: z.object({ run: z.string().min(1), dir: z.literal("apps/desktop") }).strict().optional() }).strict();
+const DISCOVERY_MODULES = ["scripts/lint/affected-test-lanes.ts", "scripts/lint/report-test-lanes.ts",
+  "scripts/lint/desktop-e2e-lane.ts", "scripts/lint/workflow-shell-harness.ts"] as const;
 const DISCOVERY_SOURCE = String.raw`
-import {loadOutOfGraphLanes, lanesCoveringPaths, referencedLanes} from './scripts/lint/affected-test-lanes.ts';
-import {laneCiCommand, execPlan} from './scripts/lint/report-test-lanes.ts';
-import {desktopE2eLane} from './scripts/lint/desktop-e2e-lane.ts';
-import {loadWorkflowOrThrow} from './scripts/lint/workflow-shell-harness.ts';
+import {loadOutOfGraphLanes, lanesCoveringPaths, referencedLanes} from './${DISCOVERY_MODULES[0]}';
+import {laneCiCommand, execPlan} from './${DISCOVERY_MODULES[1]}';
+import {desktopE2eLane} from './${DISCOVERY_MODULES[2]}';
+import {loadWorkflowOrThrow} from './${DISCOVERY_MODULES[3]}';
 const paths = JSON.parse(process.argv[1]);
 const lanes = await loadOutOfGraphLanes();
 const direct = lanesCoveringPaths(paths, lanes);
@@ -37,6 +41,8 @@ export function discoverCheckLanes(root: string, receipt: MainSyncReceipt) {
   if (process.env.PWDEBUG) throw new MainSyncError("Headless/displayless validation cannot run with ambient PWDEBUG; no test lane was spawned");
   const paths = git(root, ["diff", "--name-only", receipt.validationSince, "HEAD"]).split("\n").filter(Boolean);
   const discovery = { argv: ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", DISCOVERY_SOURCE, JSON.stringify(paths)] };
+  verifyReportProducerInputs(root, root, ReportExecutionOwner.Discovery, DISCOVERY_MODULES);
+  verifyReportExecution(root, root, ReportExecutionOwner.Discovery, discovery.argv);
   const run = spawnSync(discovery.argv[0]!, discovery.argv.slice(1), { cwd: root, encoding: "utf8",
     timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
   if (run.error || run.status !== 0) throw new MainSyncError("Structured owning test-lane discovery failed; no test lane was spawned");

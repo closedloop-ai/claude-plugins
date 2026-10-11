@@ -13,24 +13,42 @@ const READERS = new Set(["readFile", "readFileSync", "createReadStream", "glob",
 const UNKNOWN = "__VIBE_UNKNOWN_PATH__";
 const UNKNOWN_HOST = UNKNOWN.toLowerCase();
 const LEADING_PARENTS = /^(?:\.{1,2}\/)+/;
+const LEADING_SEPARATORS = /^\/+/;
 const REGEX_META = /[.*+?^${}()|[\]\\]/g;
 const URI_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 const NO_FILE_TARGET = Symbol("no-file-target");
 type PossibleUrl = { possibleUrl: URL; unknownPrefix?: boolean };
 type PossiblePath = { possiblePath: string; unknownPrefix: boolean };
-type PathValue = string | URL | PossibleUrl | PossiblePath | typeof NO_FILE_TARGET | undefined;
+type IsolatedPath = { isolatedPath: string; identity: string };
+type PathValue = string | URL | PossibleUrl | PossiblePath | IsolatedPath | typeof NO_FILE_TARGET | undefined;
+type NativeLeafCollector = (node: ts.Node, index?: number) => void;
+export type IsolatedTestArgument = { isolatedTest: true; identity: string; child: string };
+export type SymbolicNativeArgument = { constraint: Extract<InputReference, { kind: "path" }> };
+export type NativeReferenceEnvironment = { cwd?: string; argv: readonly (string | IsolatedTestArgument | SymbolicNativeArgument)[] };
+const nativeEnvironments = new WeakMap<ts.SourceFile, NativeReferenceEnvironment>();
 
 /** Receiver-specific references preserve complete targets; unknown pieces never become separate paths. */
-export type InputReference = { kind: "path"; value: string; base: "module" | "runtime"; possibleOnly: boolean; unknownPrefix: boolean; uncertainTerms: string[] } | {
+export type InputReference = { kind: "path"; value: string; base: "module" | "runtime"; possibleOnly: boolean; unknownPrefix: boolean; uncertainTerms: string[]; isolatedTest?: true } | {
   kind: "collector" | "vite"; values: string[]; excludes: string[]; base: string; dot: boolean; unresolved: boolean;
 };
 
 /** One finite syntax owner serves both private evidence and retained-report admission. */
 export function committedInputReferences(root: string, matches: (file: string, reference: InputReference) => boolean) {
   const files = git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0").filter(Boolean);
-  return files.some((file) => {
-    if (!MODULE_PATH.test(file) || isLocalPlanPath(file)) return false;
-    const source = ts.createSourceFile(file, readFileSync(join(root, file), "utf8"), ts.ScriptTarget.Latest, true);
+  return files.some((file) => MODULE_PATH.test(file) && !isLocalPlanPath(file)
+    && inputModuleReferences(root, file, matches, parseInputModule(root, file)));
+}
+
+/** The global private walk and selected report walk share the same syntax/binding owner. */
+export function readInputModule(root: string, file: string, environment?: NativeReferenceEnvironment) {
+  if (!MODULE_PATH.test(file) || isLocalPlanPath(file)) throw new Error("Input module is not a public committed source path");
+  if (!git(root, ["ls-tree", "HEAD", "--", file])) throw new Error("Selected input module is not committed");
+  return parseInputModule(root, file, environment);
+}
+
+/** Traverses a committed AST with caller-selected target semantics, without executing its body. */
+export function inputModuleReferences(root: string, file: string, matches: (file: string, reference: InputReference) => boolean,
+  source: ts.SourceFile) {
     let found = false;
     const inspect = (node: ts.Node) => {
       if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
@@ -56,22 +74,19 @@ export function committedInputReferences(root: string, matches: (file: string, r
       if (!found) ts.forEachChild(node, inspect);
     };
     const matchPath = (expression: ts.Expression, base: "module" | "runtime") => {
-      const value = pathValue(expression, root, file, new Set());
-      const target = fsTarget(value);
-      if (!target) return false;
-      return matches(file, { kind: "path", value: target.path, base, possibleOnly: target.possible, unknownPrefix: target.unknownPrefix,
-        uncertainTerms: target.path.includes(UNKNOWN) ? expressionTerms(expression, root, file, new Set()) : [] });
+      const reference = inputExpressionReference(root, file, expression, base);
+      return reference ? matches(file, reference) : false;
     };
     inspect(source);
     return found;
-  });
 }
 
 /** Matches complete expressions against finite canonical candidates without reading their bodies. */
 export function referenceMatches(root: string, file: string, reference: InputReference, candidates: readonly string[]) {
   if (reference.kind === "path") {
     if (pathPossibility(root, file, reference.value, reference.base, candidates, reference.unknownPrefix)) return true;
-    return reference.value === UNKNOWN && reference.uncertainTerms.some((term) => pathPossibility(root, file, term, reference.base, candidates));
+    return (reference.value === UNKNOWN || reference.possibleOnly || reference.unknownPrefix)
+      && reference.uncertainTerms.some((term) => pathPossibility(root, file, term, reference.base, candidates));
   }
   const positives: string[] = [];
   const negatives = [...reference.excludes];
@@ -81,21 +96,30 @@ export function referenceMatches(root: string, file: string, reference: InputRef
   }
   if (reference.unresolved) return true;
   if (!positives.length) return false;
+  if (reference.kind === "collector") {
+    const positiveMatchers = positives.map(pattern => collectorPattern(pattern, reference.dot));
+    const ignoreMatchers = negatives.map(pattern => collectorPattern(pattern, reference.dot));
+    return candidates.some(candidate => {
+      const absoluteCandidate = join(root, candidate);
+      const relativeCandidate = relative(reference.base, absoluteCandidate);
+      const matches = (pattern: ReturnType<typeof collectorPattern>) => pattern.match(pattern.absolute ? absoluteCandidate : relativeCandidate);
+      return positiveMatchers.some(matches) && !ignoreMatchers.some(matches);
+    });
+  }
   const absolute = (pattern: string) => {
-    if (reference.kind !== "vite") return pattern;
     if (pattern.startsWith("**")) return pattern;
     if (pattern.startsWith("/")) return join(packageBase(root, file), pattern.slice(1));
     return join(reference.base, pattern);
   };
   const match = picomatch(positives.map(absolute), { dot: reference.dot, ignore: negatives.map(absolute),
     ...(reference.kind === "vite" ? { noext: true } : {}) });
-  return candidates.some((candidate) => match(reference.kind === "vite" ? join(root, candidate) : relative(reference.base, join(root, candidate))));
+  return candidates.some((candidate) => match(join(root, candidate)));
 }
 
 /** Explicit namespace references remain forbidden even when no candidate file exists yet. */
 export function explicitPlanningReference(root: string, file: string, reference: InputReference) {
   if (reference.kind !== "path") return false;
-  if (reference.value.includes(UNKNOWN)) {
+  if (reference.value.includes(UNKNOWN) || reference.possibleOnly || reference.unknownPrefix) {
     const suffix = reference.value.slice(reference.value.lastIndexOf(UNKNOWN) + UNKNOWN.length).replace(/^\/+/, "");
     return suffix === ".closedloop-ai/vibe-plans" || suffix.startsWith(".closedloop-ai/vibe-plans/")
       || reference.uncertainTerms.some((term) => term.includes(".closedloop-ai/vibe-plans"))
@@ -221,66 +245,103 @@ function builtin(expression: ts.Expression, names: readonly string[]) {
   return Boolean(node && ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && names.includes(node.moduleSpecifier.text));
 }
 
-function pathValue(expression: ts.Expression, root: string, file: string, seen: Set<ts.Node>): PathValue {
-  if (seen.size > 32 || seen.has(expression)) return UNKNOWN;
+function pathValue(expression: ts.Expression, root: string, file: string, seen: Set<ts.Node>, collect?: NativeLeafCollector): PathValue {
+  collect?.(expression);
+  if (seen.size > 32 || seen.has(expression)) {
+    if (collect) throw new RangeError("Native expression discovery is unproved");
+    return UNKNOWN;
+  }
   seen = new Set(seen).add(expression);
   if (ts.isStringLiteralLike(expression)) return expression.text;
-  if (ts.isParenthesizedExpression(expression)) return pathValue(expression.expression, root, file, seen);
+  const environment = nativeEnvironments.get(expression.getSourceFile());
+  if (ts.isElementAccessExpression(expression) && ts.isNumericLiteral(expression.argumentExpression)
+    && isProcessMember(expression.expression, "argv") && environment) {
+    const argument = environment.argv[Number(expression.argumentExpression.text)];
+    if (argument && typeof argument === "object") {
+      if ("isolatedTest" in argument) return { isolatedPath: argument.child, identity: argument.identity };
+      collect?.(expression, Number(expression.argumentExpression.text));
+      const constraint = argument.constraint;
+      return { possiblePath: constraint.value, unknownPrefix: constraint.unknownPrefix };
+    }
+    return argument;
+  }
+  if (ts.isConditionalExpression(expression) && environment) {
+    const condition = pathValue(expression.condition, root, file, seen, collect);
+    if (isIsolatedPath(condition)) return pathValue(expression.whenTrue, root, file, seen, collect);
+    if (condition === undefined || typeof condition === "string" && !condition.includes(UNKNOWN)) {
+      return pathValue(condition ? expression.whenTrue : expression.whenFalse, root, file, seen, collect);
+    }
+    return UNKNOWN;
+  }
+  if (ts.isParenthesizedExpression(expression)) return pathValue(expression.expression, root, file, seen, collect);
   if (ts.isIdentifier(expression)) {
     const declaration = localDeclaration(expression);
     if (expression.text === "__dirname" && !declaration) return dirname(join(root, file));
     if (declaration && ts.isVariableDeclaration(declaration) && declaration.initializer
       && ts.isVariableDeclarationList(declaration.parent) && (declaration.parent.flags & ts.NodeFlags.Const)) {
-      return pathValue(declaration.initializer, root, file, seen);
+      return pathValue(declaration.initializer, root, file, seen, collect);
+    }
+    if (environment && declaration && ts.isImportSpecifier(declaration)) {
+      const imported = importedConstant(root, expression.getSourceFile(), declaration, environment);
+      if (imported) return pathValue(imported.expression, root, imported.file, seen, collect);
     }
     return UNKNOWN;
   }
   if (ts.isTemplateExpression(expression)) {
-    const values = expression.templateSpans.map((part) => pathValue(part.expression, root, file, seen));
+    const values = expression.templateSpans.map((part) => pathValue(part.expression, root, file, seen, collect));
     if (values.includes(NO_FILE_TARGET)) return NO_FILE_TARGET;
     return expression.head.text + expression.templateSpans.map((part, index) => stringValue(values[index]) + part.literal.text).join("");
   }
   if (ts.isPropertyAccessExpression(expression) && expression.name.text === "url" && ts.isMetaProperty(expression.expression)
     && expression.expression.keywordToken === ts.SyntaxKind.ImportKeyword) return pathToFileURL(join(root, file)).href;
+  if (ts.isPropertyAccessExpression(expression) && expression.name.text === "dirname" && ts.isMetaProperty(expression.expression)
+    && expression.expression.keywordToken === ts.SyntaxKind.ImportKeyword) return dirname(join(root, file));
   if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = pathValue(expression.left, root, file, seen);
-    const right = pathValue(expression.right, root, file, seen);
+    const left = pathValue(expression.left, root, file, seen, collect);
+    const right = pathValue(expression.right, root, file, seen, collect);
     if (left === NO_FILE_TARGET || right === NO_FILE_TARGET) return NO_FILE_TARGET;
     return stringValue(left) + stringValue(right);
   }
   if (ts.isNewExpression(expression) && isUrlConstructor(expression.expression)) {
     const argument = expression.arguments?.[0];
-    const value = argument ? pathValue(argument, root, file, seen) : undefined;
+    const value = argument ? pathValue(argument, root, file, seen, collect) : undefined;
     const baseArgument = expression.arguments?.[1];
-    const base = baseArgument ? pathValue(baseArgument, root, file, seen) : undefined;
+    const base = baseArgument ? pathValue(baseArgument, root, file, seen, collect) : undefined;
     if (!value) return UNKNOWN;
     return constructUrl(value, base);
   }
   if (!ts.isCallExpression(expression)) return UNKNOWN;
   const name = callName(expression.expression);
-  if (ts.isPropertyAccessExpression(expression.expression) && name === "cwd"
-    && ts.isIdentifier(expression.expression.expression) && expression.expression.expression.text === "process"
-    && !localDeclaration(expression.expression.expression)) return `/${UNKNOWN}`;
+  if (name === "dirname" && builtin(expression.expression, ["node:path", "path"])) {
+    const value = expression.arguments[0] && pathValue(expression.arguments[0], root, file, seen, collect);
+    if (isIsolatedPath(value)) return { isolatedPath: dirname(value.isolatedPath), identity: value.identity };
+    return typeof value === "string" && !value.includes(UNKNOWN) ? dirname(value) : UNKNOWN;
+  }
+  if (name === "cwd" && isProcessMember(expression.expression, "cwd")) {
+    return environment?.cwd ?? { possiblePath: "/", unknownPrefix: true };
+  }
   if (name === "fileURLToPath" && builtin(expression.expression, ["node:url", "url"])) {
     const argument = expression.arguments[0];
-    const value = argument ? pathValue(argument, root, file, seen) : undefined;
+    const value = argument ? pathValue(argument, root, file, seen, collect) : undefined;
     if (!value) return UNKNOWN;
     if (typeof value === "object" && !(value instanceof URL) && "possiblePath" in value) return NO_FILE_TARGET;
     const target = fsTarget(typeof value === "string" ? constructUrl(value, undefined) : value);
     if (!target) return NO_FILE_TARGET;
     return target.unknownPrefix ? { possiblePath: target.path, unknownPrefix: true } : target.path;
   }
-  if (["join", "resolve"].includes(name) && builtin(expression.expression, ["node:path", "path"])) {
-    const inputs = expression.arguments.map((argument) => pathValue(argument, root, file, seen));
+  if ((name === "join" || name === "resolve") && builtin(expression.expression, ["node:path", "path"])) {
+    const inputs = expression.arguments.map((argument) => pathValue(argument, root, file, seen, collect));
     if (inputs.includes(NO_FILE_TARGET)) return NO_FILE_TARGET;
-    const values = inputs.map((value) => {
-      return typeof value === "string" || value && typeof value === "object" && "possiblePath" in value ? stringValue(value) : UNKNOWN;
-    });
-    if (name === "join") return join(...values);
-    let absolute = -1;
-    for (let index = 0; index < values.length; index++) if (isAbsolute(values[index]!)) absolute = index;
-    if (absolute >= 0) return resolve(...values.slice(absolute));
-    return `${UNKNOWN}/${join(...values)}`;
+    const isolated = inputs.find(isIsolatedPath);
+    if (isolated) {
+      if (name === "resolve" && inputs.length === 1) return isolated;
+      if (name === "join" && isIsolatedPath(inputs[0]) && inputs.slice(1).every(value => typeof value === "string" && !value.includes(UNKNOWN))) {
+        const path = normalize(join(isolated.isolatedPath, ...inputs.slice(1) as string[]));
+        if (!isAbsolute(path) && path !== ".." && !path.startsWith("../")) return { isolatedPath: path, identity: isolated.identity };
+      }
+      return UNKNOWN;
+    }
+    return nativePathOperation(name, inputs, environment?.cwd);
   }
   if (name === "tmpdir" && builtin(expression.expression, ["node:os", "os"])) return UNKNOWN;
   if (ts.isIdentifier(expression.expression)) {
@@ -288,7 +349,7 @@ function pathValue(expression: ts.Expression, root: string, file: string, seen: 
     if (declaration && ts.isFunctionDeclaration(declaration) && declaration.body && !declaration.parameters.length) {
       const returns = helperReturns(declaration.body);
       if (returns.length === 1 && returns[0]?.expression && declaration.body.statements.at(-1) === returns[0]) {
-        return pathValue(returns[0].expression, root, file, seen);
+        return pathValue(returns[0].expression, root, file, seen, collect);
       }
     }
   }
@@ -296,20 +357,26 @@ function pathValue(expression: ts.Expression, root: string, file: string, seen: 
 }
 
 /** Relevant terms in an unresolved target signal possibility, not an invented joined path or actual consumption. */
-function expressionTerms(expression: ts.Expression, root: string, file: string, seen: Set<ts.Node>): string[] {
-  if (seen.size > 32 || seen.has(expression)) return [];
+function expressionTerms(expression: ts.Expression, root: string, file: string, seen: Set<ts.Node>, complete = false, collect?: NativeLeafCollector): string[] {
+  collect?.(expression);
+  if (seen.size > 32 || seen.has(expression)) {
+    if (collect) throw new RangeError("Native term discovery is unproved");
+    return [];
+  }
+  const value = complete ? pathValue(expression, root, file, seen, collect) : undefined;
   seen = new Set(seen).add(expression);
+  if (complete) return completeExpressionTerms(expression, root, file, seen, value, collect);
   if (ts.isStringLiteralLike(expression)) return [expression.text];
   if (ts.isTemplateExpression(expression)) return [expression.head.text, ...expression.templateSpans.flatMap((span) =>
-    [...expressionTerms(span.expression, root, file, seen), span.literal.text])];
+    [...expressionTerms(span.expression, root, file, seen, false, collect), span.literal.text])];
   if (ts.isIdentifier(expression)) {
     const declaration = localDeclaration(expression);
     if (declaration && ts.isVariableDeclaration(declaration) && declaration.initializer) {
-      const value = pathValue(declaration.initializer, root, file, new Set(seen));
+      const value = pathValue(declaration.initializer, root, file, new Set(seen), collect);
       const target = fsTarget(value);
       const constraints = target && value && typeof value === "object"
         ? [target.unknownPrefix ? `${UNKNOWN}${target.path}` : target.path] : [];
-      return [...constraints, ...expressionTerms(declaration.initializer, root, file, seen)];
+      return [...constraints, ...expressionTerms(declaration.initializer, root, file, seen, false, collect)];
     }
   }
   if (ts.isCallExpression(expression) && ts.isIdentifier(expression.expression)) {
@@ -317,16 +384,16 @@ function expressionTerms(expression: ts.Expression, root: string, file: string, 
     if (declaration && ts.isFunctionDeclaration(declaration) && declaration.body && !declaration.parameters.length) {
       return helperReturns(declaration.body).flatMap((statement) => {
         if (!statement.expression) return [];
-        const value = pathValue(statement.expression, root, file, new Set(seen));
+        const value = pathValue(statement.expression, root, file, new Set(seen), collect);
         const target = fsTarget(value);
         if (!target) return [];
-        return [target.unknownPrefix ? `${UNKNOWN}${target.path}` : target.path, ...expressionTerms(statement.expression, root, file, seen)];
+        return [target.unknownPrefix ? `${UNKNOWN}${target.path}` : target.path, ...expressionTerms(statement.expression, root, file, seen, false, collect)];
       });
     }
   }
   const terms: string[] = [];
   ts.forEachChild(expression, (node) => {
-    if (ts.isExpression(node)) terms.push(...expressionTerms(node, root, file, seen));
+    if (ts.isExpression(node)) terms.push(...expressionTerms(node, root, file, seen, false, collect));
   });
   return terms;
 }
@@ -364,8 +431,9 @@ function helperReturns(body: ts.Block) {
 }
 
 /** Only constructed builtin URL objects are decoded at the actual or possible fs-target boundary. */
-function fsTarget(value: PathValue): { path: string; possible: boolean; unknownPrefix: boolean } | undefined {
+function fsTarget(value: PathValue): { path: string; possible: boolean; unknownPrefix: boolean; isolatedTest?: true } | undefined {
   if (value === NO_FILE_TARGET) return undefined;
+  if (isIsolatedPath(value)) return { path: UNKNOWN, possible: true, unknownPrefix: false, isolatedTest: true };
   if (typeof value === "string" || value === undefined) return { path: value ?? UNKNOWN, possible: Boolean(value?.includes(UNKNOWN)), unknownPrefix: false };
   if (!(value instanceof URL) && "possiblePath" in value) return { path: value.possiblePath, possible: true, unknownPrefix: value.unknownPrefix };
   const url = value instanceof URL ? value : value.possibleUrl;
@@ -385,6 +453,7 @@ function fsTarget(value: PathValue): { path: string; possible: boolean; unknownP
 /** Native parsing is shared; a symbolic projection carries possibility, never actual host/base evidence. */
 function constructUrl(input: Exclude<PathValue, undefined>, base: PathValue): PathValue {
   if (input === NO_FILE_TARGET || base === NO_FILE_TARGET) return NO_FILE_TARGET;
+  if (isIsolatedPath(input) || isIsolatedPath(base)) return UNKNOWN;
   const path = typeof input === "object" && !(input instanceof URL) && "possiblePath" in input ? input : undefined;
   if (base && typeof base === "object" && !(base instanceof URL) && "possiblePath" in base) return NO_FILE_TARGET;
   const value = input instanceof URL || typeof input === "string" ? input : "possiblePath" in input ? input.possiblePath : input.possibleUrl;
@@ -404,8 +473,11 @@ function constructUrl(input: Exclude<PathValue, undefined>, base: PathValue): Pa
 }
 
 function stringValue(value: PathValue) {
-  if (value === NO_FILE_TARGET) return UNKNOWN;
-  if (value && typeof value === "object" && !(value instanceof URL) && "possiblePath" in value) return value.unknownPrefix ? `${UNKNOWN}${value.possiblePath}` : value.possiblePath;
+  if (value === NO_FILE_TARGET || isIsolatedPath(value)) return UNKNOWN;
+  if (value && typeof value === "object" && !(value instanceof URL) && "possiblePath" in value) {
+    if (!value.unknownPrefix) return value.possiblePath;
+    return value.possiblePath === "/" ? UNKNOWN : `${UNKNOWN}${value.possiblePath}`;
+  }
   if (value && typeof value === "object" && !(value instanceof URL)) return value.possibleUrl.href;
   return String(value ?? UNKNOWN);
 }
@@ -425,4 +497,230 @@ function hasUncertainIdentity(root: string, value: string) {
     while (suffix.startsWith(UNKNOWN)) suffix = suffix.slice(UNKNOWN.length);
     return !suffix.startsWith(".") || suffix.includes(UNKNOWN);
   });
+}
+
+/** Native process operands are bound only for a selected invocation; shadowed objects remain unresolved. */
+function isProcessMember(expression: ts.Expression, member: string) {
+  if (!ts.isPropertyAccessExpression(expression) || expression.name.text !== member || !ts.isIdentifier(expression.expression)) return false;
+  const identifier = expression.expression;
+  const declaration = localDeclaration(identifier);
+  if (!declaration) return identifier.text === "process";
+  let node: ts.Node | undefined = declaration;
+  while (node && !ts.isImportDeclaration(node)) node = node.parent;
+  return Boolean(node && ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)
+    && ["node:process", "process"].includes(node.moduleSpecifier.text));
+}
+
+function parseInputModule(root: string, file: string, environment?: NativeReferenceEnvironment) {
+  const source = ts.createSourceFile(file, readFileSync(join(root, file), "utf8"), ts.ScriptTarget.Latest, true);
+  if (environment) nativeEnvironments.set(source, environment);
+  return source;
+}
+
+/** Selected invocation operands use exactly the same complete-expression semantics as both reference gates. */
+export function inputExpressionReference(root: string, file: string, expression: ts.Expression,
+  base: "module" | "runtime" = "runtime"): InputReference | undefined {
+  const primary = evaluateInputReference(root, file, expression, base);
+  const environment = nativeEnvironments.get(expression.getSourceFile());
+  if (!primary || primary.isolatedTest || !environment || !primary.possibleOnly && !primary.unknownPrefix) return primary;
+  const indexes = new Set<number>();
+  const nodes = new Set<ts.Node>();
+  evaluateInputReference(root, file, expression, base, (node, index) => {
+    nodes.add(node);
+    if (nodes.size > 256) throw new RangeError("Native expression discovery bound exceeded");
+    if (index !== undefined) indexes.add(index);
+  });
+  const terms = new Set(primary.uncertainTerms);
+  const source = expression.getSourceFile();
+  try {
+    for (const choice of nativeArgumentChoices(environment, indexes)) {
+      nativeEnvironments.set(source, choice);
+      const result = evaluateInputReference(root, file, expression, base);
+      if (!result || result.isolatedTest) continue;
+      terms.add(result.unknownPrefix ? `${UNKNOWN}${result.value}` : result.value);
+      for (const term of result.uncertainTerms) terms.add(term);
+      if (terms.size > 32) throw new RangeError("Native target alternative bound exceeded");
+    }
+  } finally { nativeEnvironments.set(source, environment); }
+  return { ...primary, uncertainTerms: [...terms] };
+}
+
+/** Binding metadata is shared rather than rediscovered by the execution adapter. */
+export function inputDeclaration(identifier: ts.Identifier) { return localDeclaration(identifier); }
+export function inputBuiltin(expression: ts.Expression, modules: readonly string[]) { return builtin(expression, modules); }
+export function inputCallName(expression: ts.Expression) { return callName(expression); }
+
+/** Literal native operands never turn symbolic constraints into command arguments. */
+export function inputKnownString(reference: InputReference | undefined) {
+  return reference?.kind === "path" && !reference.possibleOnly && !reference.unknownPrefix
+    && !reference.value.includes(UNKNOWN) && !reference.uncertainTerms.length ? reference.value : undefined;
+}
+
+function isIsolatedPath(value: PathValue): value is IsolatedPath {
+  return Boolean(value && typeof value === "object" && "isolatedPath" in value);
+}
+
+/** Relative exported constants reuse native path parsing without evaluating imported modules. */
+function importedConstant(root: string, source: ts.SourceFile, declaration: ts.ImportSpecifier, environment: NativeReferenceEnvironment) {
+  const imported = declaration.parent.parent.parent;
+  if (!ts.isImportDeclaration(imported) || !ts.isStringLiteral(imported.moduleSpecifier) || !imported.moduleSpecifier.text.startsWith(".")) return undefined;
+  const base = resolve(dirname(join(root, source.fileName)), imported.moduleSpecifier.text);
+  if (!base.startsWith(`${root}/`)) return undefined;
+  const stem = relative(root, base);
+  const files = [stem, stem.replace(/\.js$/, ".ts"), `${stem}.ts`, `${stem}.mjs`, `${stem}/index.ts`];
+  const name = (declaration.propertyName ?? declaration.name).text;
+  for (const file of files) {
+    if (!existsSync(join(root, file)) || !MODULE_PATH.test(file) || isLocalPlanPath(file)) continue;
+    const module = readInputModule(root, file, environment);
+    for (const statement of module.statements) {
+      if (!ts.isVariableStatement(statement) || !statement.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)
+        || !(statement.declarationList.flags & ts.NodeFlags.Const)) continue;
+      const item = statement.declarationList.declarations.find(item => ts.isIdentifier(item.name) && item.name.text === name);
+      if (item?.initializer) return { expression: item.initializer, file };
+    }
+  }
+  return undefined;
+}
+
+/** Absolute glob language stays intact; only literal pathnames use filesystem normalization. */
+function collectorPattern(pattern: string, dot: boolean) {
+  const scan = picomatch.scan(pattern);
+  const prefix = scan.prefix && [...scan.prefix].every(character => character === "!") ? scan.prefix : "";
+  const pathname = pattern.slice(prefix.length);
+  const absolute = isAbsolute(pathname);
+  const value = absolute && !scan.isGlob ? prefix + normalize(pathname) : pattern;
+  return { absolute, match: picomatch(value, { dot }) };
+}
+
+/** Symbolic depth cannot certify an earlier anchor after native parent normalization. */
+function nativePathOperation(operation: "join" | "resolve", inputs: readonly PathValue[], cwd: string | undefined): PathValue {
+  const known = (value: PathValue): value is string => typeof value === "string" && !value.includes(UNKNOWN);
+  if (operation === "join" && inputs.every(known)) return join(...inputs);
+  let result: string | PossiblePath = "";
+  if (operation === "resolve") result = cwd ?? { possiblePath: "/", unknownPrefix: true };
+  for (const input of inputs) {
+    if (!known(input)) {
+      let value = UNKNOWN;
+      if (input && typeof input === "object" && "possiblePath" in input) value = input.possiblePath;
+      else if (typeof input === "string") value = input;
+      const suffix = value.includes(UNKNOWN) ? value.slice(value.lastIndexOf(UNKNOWN) + UNKNOWN.length) : value;
+      result = { possiblePath: join("/", suffix), unknownPrefix: true };
+    } else if (operation === "resolve" && isAbsolute(input)) result = normalize(input);
+    else if (typeof result === "string") result = join(result, input);
+    else result = { possiblePath: join("/", result.possiblePath, input), unknownPrefix: true };
+  }
+  if (operation === "resolve" && typeof result === "string" && isAbsolute(result)) return resolve(result);
+  return result;
+}
+
+/** Keep complete native constraints separately from the depth-independent primary residual. */
+function completeExpressionTerms(expression: ts.Expression, root: string, file: string, seen: Set<ts.Node>, value: PathValue, collect?: NativeLeafCollector): string[] {
+  const target = fsTarget(value);
+  if (!target || target.isolatedTest) return [];
+  if (ts.isParenthesizedExpression(expression)) return expressionTerms(expression.expression, root, file, seen, true, collect);
+  if (ts.isIdentifier(expression)) {
+    const declaration = localDeclaration(expression);
+    if (declaration && ts.isVariableDeclaration(declaration) && declaration.initializer) {
+      return expressionTerms(declaration.initializer, root, file, seen, true, collect);
+    }
+  }
+  if (ts.isCallExpression(expression)) {
+    const name = callName(expression.expression);
+    if ((name === "join" || name === "resolve") && builtin(expression.expression, ["node:path", "path"])) {
+      const inputs = expression.arguments.map(argument => pathValue(argument, root, file, seen, collect));
+      return [nativePathConstraint(name, inputs, nativeEnvironments.get(expression.getSourceFile())?.cwd)];
+    }
+    if (name === "fileURLToPath" && builtin(expression.expression, ["node:url", "url"]) && expression.arguments[0]) {
+      const argument = expression.arguments[0];
+      const input = pathValue(argument, root, file, seen, collect);
+      const terms = expressionTerms(argument, root, file, seen, true, collect);
+      if (input && typeof input === "object") return terms;
+      return urlConstraintTerms(terms, undefined);
+    }
+    if (ts.isIdentifier(expression.expression)) {
+      const declaration = localDeclaration(expression.expression);
+      if (declaration && ts.isFunctionDeclaration(declaration) && declaration.body && !declaration.parameters.length) {
+        return helperReturns(declaration.body).flatMap(statement => statement.expression
+          ? expressionTerms(statement.expression, root, file, seen, true, collect) : []);
+      }
+    }
+  }
+  if (ts.isNewExpression(expression) && isUrlConstructor(expression.expression) && expression.arguments?.[0]) {
+    const base = expression.arguments[1] && pathValue(expression.arguments[1], root, file, seen, collect);
+    return urlConstraintTerms(expressionTerms(expression.arguments[0], root, file, seen, true, collect), base);
+  }
+  return [target.unknownPrefix ? `${UNKNOWN}${target.path}` : target.path];
+}
+
+/** Known runs normalize natively; unknown spans never supply a parent depth or exact anchor. */
+function nativePathConstraint(operation: "join" | "resolve", inputs: readonly PathValue[], cwd: string | undefined): string {
+  let values = [...inputs];
+  if (operation === "resolve") {
+    values.unshift(cwd ?? UNKNOWN);
+    let reset = 0;
+    values.forEach((value, index) => {
+      if (typeof value === "string" && !value.includes(UNKNOWN) && isAbsolute(value)) reset = index;
+    });
+    values = values.slice(reset);
+  }
+  const parts: string[] = [];
+  let known: string[] = [];
+  const flush = () => {
+    if (known.length) { parts.push(join(...known)); known = []; }
+  };
+  for (const value of values) {
+    if (typeof value === "string" && !value.includes(UNKNOWN)) known.push(value);
+    else { flush(); parts.push(stringValue(value)); }
+  }
+  flush();
+  return parts.map((part, index) => {
+    let value = index ? part.replace(LEADING_SEPARATORS, "") : part;
+    if (index < parts.length - 1 && value.endsWith("/")) value = value.slice(0, -1);
+    return value;
+  }).join("/");
+}
+
+/** Only proven native URL operations project complete constraints to filesystem targets. */
+function urlConstraintTerms(terms: readonly string[], base: PathValue): string[] {
+  return terms.flatMap(term => {
+    const target = fsTarget(constructUrl(term, base));
+    return target ? [target.unknownPrefix ? `${UNKNOWN}${target.path}` : target.path] : [];
+  });
+}
+
+/** Each alternative is evaluated at its native leaf before the complete target reaches a matcher. */
+function evaluateInputReference(root: string, file: string, expression: ts.Expression, base: "module" | "runtime", collect?: NativeLeafCollector) {
+  const value = pathValue(expression, root, file, new Set(), collect);
+  const target = fsTarget(value);
+  if (!target) return undefined;
+  return { kind: "path" as const, value: target.path, base, possibleOnly: target.possible, unknownPrefix: target.unknownPrefix,
+    ...(target.isolatedTest ? { isolatedTest: true as const } : {}),
+    uncertainTerms: (target.possible || target.unknownPrefix || target.path.includes(UNKNOWN)) && !target.isolatedTest
+      ? expressionTerms(expression, root, file, new Set(), target.path !== UNKNOWN, collect) : [] };
+}
+
+/** A repeated index shares one choice; distinct indices form a finite correlated environment set. */
+function nativeArgumentChoices(environment: NativeReferenceEnvironment, indexes: ReadonlySet<number>): NativeReferenceEnvironment[] {
+  let choices = [environment];
+  for (const index of indexes) {
+    const argument = environment.argv[index];
+    if (!argument || typeof argument !== "object" || !("constraint" in argument)) continue;
+    const constraint = argument.constraint;
+    const values = [...new Set([constraint.value, ...constraint.uncertainTerms])];
+    const next: NativeReferenceEnvironment[] = [];
+    for (const choice of choices) {
+      for (const value of values) {
+        const argv = [...choice.argv];
+        let projected = value;
+        if (constraint.unknownPrefix && !isAbsolute(value) && !URI_SCHEME.test(value)) {
+          projected = `/${value.startsWith(UNKNOWN) ? value : `${UNKNOWN}/${value}`}`;
+        }
+        argv[index] = { constraint: { ...constraint, value: projected, possibleOnly: true, uncertainTerms: [] } };
+        next.push({ ...environment, argv });
+        if (next.length > 32) throw new RangeError("Native argument alternative bound exceeded");
+      }
+    }
+    choices = next;
+  }
+  return choices;
 }

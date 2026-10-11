@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.10
+
+#### Fixed
+- Retained-report admission follows selected command, task, config, collector and producer input boundaries instead of unrelated committed reader capability. Private planning guards remain independent, and meaningful report inputs, default verdicts and replay remain blocked before their consumer.
+- Ordinary prerequisite setup cannot create validation proof from its output. Same-call native test allocations bind explicit report and adjacent quarantine operands without treating missing-file failure tests as coverage or admitting retained verdicts.
+- Affected-test checks reuse their existing guarded budget selection under current command, wrapper and Git identity; no extra selector, caller proof field or validation deadline is introduced.
+
 ### closedloop-core v1.2.0
 
 #### Added

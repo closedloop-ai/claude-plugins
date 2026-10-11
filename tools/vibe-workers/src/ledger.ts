@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { actionSchema, ledgerSchema, registerSchema, type Ledger } from "./contracts.js";
 import { readDefinition } from "./definition.js";
@@ -10,8 +10,12 @@ import { readDefinition } from "./definition.js";
 export function checkoutLocation(worktree: string) {
   const root = realpathSync(git(worktree, ["rev-parse", "--show-toplevel"]));
   if (realpathSync(worktree) !== root) throw new Error("Use the session's exact worktree root");
-  const dir = git(root, ["rev-parse", "--absolute-git-dir"]);
-  const branch = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  const metadata = git(root, ["rev-parse", "--absolute-git-dir", "--abbrev-ref", "HEAD"]);
+  // Directory names may contain newlines; native branch names cannot.
+  const separator = metadata.lastIndexOf("\n");
+  if (separator < 0) throw new Error("Missing native checkout metadata boundary");
+  const [dir, branch] = z.tuple([z.string().min(1).refine(isAbsolute), z.string().min(1)])
+    .parse([metadata.slice(0, separator).trim(), metadata.slice(separator + 1).trim()]);
   return { root, dir, branch, file: join(dir, "vibe-writer.json"), lock: join(dir, "vibe-writer.lock") };
 }
 

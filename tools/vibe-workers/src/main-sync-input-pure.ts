@@ -7,6 +7,8 @@ import { MainSyncError, originFileSchema } from "./main-sync-contracts.js";
 import { digest } from "./main-sync-state.js";
 import { producerPackage, type InputProducer } from "./main-sync-input-catalog.js";
 import { type OriginFile } from "./main-sync-input-files.js";
+import { verifyReportExecution, verifyReportProducerInputs } from "./main-sync-report-inputs.js";
+import { ReportExecutionOwner } from "./main-sync-report-execution.js";
 
 const PURE_OWNER_PROBE = String.raw`
 import {readFileSync,lstatSync,realpathSync} from 'node:fs';
@@ -46,6 +48,9 @@ const pureResultSchema = z.array(originFileSchema).length(1);
 /** Invokes existing import-safe renderers without writing wrappers, legacy healing or output normalization. */
 export function pureOriginFiles(root: string, producer: InputProducer, head: string): OriginFile[] {
   if (producer.id === "husky") return huskyBody(root, producer);
+  verifyReportProducerInputs(root, root, ReportExecutionOwner.Pure, producer.inputs);
+  verifyReportExecution(root, root, ReportExecutionOwner.Pure,
+    ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", PURE_OWNER_PROBE]);
   const result = spawnSync("pnpm", ["exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", PURE_OWNER_PROBE], {
     cwd: root, encoding: "utf8", input: JSON.stringify({ id: producer.id, head, output: producer.roots[0] }),
     timeout: 10000, maxBuffer: 1024 * 1024,

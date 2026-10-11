@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, normalize, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { invokeSync, syncFixture } from "./main-sync-test-fixtures.js";
+import ts from "typescript";
+import { invokeSync, syncFixture, selectedReportFixture } from "./main-sync-test-fixtures.js";
+import { inputExpressionReference, readInputModule, referenceMatches } from "./main-sync-input-references.js";
 
 const fixtures: ReturnType<typeof syncFixture>[] = [];
 afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
@@ -38,6 +40,226 @@ function readiness(value: ReturnType<typeof syncFixture>) {
 }
 
 describe("receiver-bound production private references", () => {
+  it.each(["relative", "absolute", "file URI", "HTTPS", "nonlocal host", "symbolic settings"] as const)(
+    "preserves RQ012 URI serialization %s", row => {
+    const { value, file } = alternativeFixture("new NodeURL(process.argv[2],import.meta.url)");
+    let target = "public/sibling.txt";
+    let candidate = "apps/app/public/sibling.txt";
+    let expected = true;
+    let unknownPrefix = false;
+    if (row === "absolute") { target = join(value.worktree, "public/sibling.txt"); candidate = "public/sibling.txt"; }
+    if (row === "file URI") { target = `file://${value.worktree}/public/sibling.txt`; candidate = "public/sibling.txt"; }
+    if (row === "HTTPS" || row === "nonlocal host") {
+      target = `${row === "HTTPS" ? "https" : "file"}://example.invalid/.closedloop-ai/vibe-plans/retained.json`;
+      candidate = ".closedloop-ai/vibe-plans/retained.json";
+      expected = false;
+    }
+    if (row === "symbolic settings") {
+      target = "__VIBE_UNKNOWN_PATH__/.closedloop-ai/settings/__VIBE_UNKNOWN_PATH__";
+      candidate = ".closedloop-ai/vibe-plans/retained.json";
+      unknownPrefix = true;
+      expected = false;
+    }
+    const constraint = { kind: "path" as const, value: target, base: "runtime" as const,
+      possibleOnly: true, unknownPrefix, uncertainTerms: [target] };
+    const source = readInputModule(value.worktree, file, { cwd: value.worktree, argv: ["node", file, { constraint }] });
+    const result = inputExpressionReference(value.worktree, file, targetInitializer(source));
+    expect(result ? referenceMatches(value.worktree, file, result, [candidate]) : false).toBe(expected);
+    if (row === "HTTPS" || row === "nonlocal host") expect(result).toBeUndefined();
+  });
+
+  it.each([[false, true], [false, false], [true, true], [true, false]] as const)(
+    "composes RQ012 private URI converter=%s with retained target=%s", (converter, retainedTarget) => {
+    const operand = retainedTarget ? "process.argv[2]" : "path.join(process.argv[2],'public/sibling.txt')";
+    const uri = `new NodeURL(${operand},import.meta.url)`;
+    const { value, file, constraint } = alternativeFixture(converter ? `convert(${uri})` : uri, ".closedloop-ai/vibe-plans");
+    const source = readInputModule(value.worktree, file, { cwd: value.worktree, argv: ["node", file, { constraint }] });
+    const result = inputExpressionReference(value.worktree, file, targetInitializer(source));
+    expect(result ? referenceMatches(value.worktree, file, result, [".closedloop-ai/vibe-plans/retained.json"]) : false).toBe(retainedTarget);
+  });
+
+  it.each([
+    ["direct", "process.argv[2]", true],
+    ["sibling", "path.join(process.argv[2],'public/sibling.txt')", false],
+    ["report basename", "path.join(process.argv[2],'results.json')", true],
+    ["const", "alias", true],
+    ["helper sibling", "path.join(aliasHelper(),'public/sibling.txt')", false],
+    ["imported", "operand", true],
+    ["imported sibling", "path.join(operand,'public/sibling.txt')", false],
+    ["repeated sibling", "path.join(process.argv[2],process.argv[2],'public/sibling.txt')", false],
+    ["two-index sibling", "path.join(process.argv[2],process.argv[3],'public/sibling.txt')", false],
+    ["known reset", "path.resolve(process.argv[2],'/public/sibling.txt')", false],
+    ["URL", "new NodeURL(process.argv[2],import.meta.url)", true],
+    ["URL sibling", "new NodeURL(path.join(process.argv[2],'public/sibling.txt'),import.meta.url)", false],
+    ["converter", "convert(new NodeURL(process.argv[2],import.meta.url))", true],
+    ["no target", "new NodeURL(process.argv[2],'https://example.invalid/base/')", false],
+  ] as const)("composes RQ012 %s evaluated native alternatives", (_row, expression, expected) => {
+    const { value, file, constraint } = alternativeFixture(expression);
+    const environment = { cwd: value.worktree, argv: ["node", file, { constraint }, { constraint }] };
+    const source = readInputModule(value.worktree, file, environment);
+    const target = targetInitializer(source);
+    const result = inputExpressionReference(value.worktree, file, target);
+    expect(result ? referenceMatches(value.worktree, file, result, ["apps/desktop/playwright-report-e2e/results.json"]) : false).toBe(expected);
+    const before = JSON.stringify(environment);
+    inputExpressionReference(value.worktree, file, target);
+    expect(JSON.stringify(environment)).toBe(before);
+  });
+
+  it("rejects RQ012 argument overflow before installing a cloned binding", () => {
+    const { value, file, constraint } = alternativeFixture("process.argv[2]");
+    const overflowing = { ...constraint, uncertainTerms: Array.from({ length: 33 }, (_, index) => `/work/repo/choice-${index}`) };
+    const source = readInputModule(value.worktree, file, { cwd: "/work/repo", argv: ["node", file, { constraint: overflowing }] });
+    const target = targetInitializer(source);
+    expect(() => inputExpressionReference("/work/repo", file, target)).toThrow(RangeError);
+    expect(() => inputExpressionReference("/work/repo", file, target)).toThrow(RangeError);
+    const precise = readInputModule(value.worktree, file, { cwd: "/work/repo", argv: ["node", file, "/public/sibling.txt"] });
+    expect(inputExpressionReference("/work/repo", file, targetInitializer(precise)))
+      .toMatchObject({ value: "/public/sibling.txt", possibleOnly: false, unknownPrefix: false, uncertainTerms: [] });
+  });
+
+  it.each(["report", "private"] as const)("restores RQ012 same-source %s binding after successful composition", domain => {
+    const { value, file, source, environment, candidate } = restorationFixture(domain, false);
+    const target = targetInitializer(source);
+    const after = targetInitializer(source, "after");
+    expect(target.getSourceFile()).toBe(source);
+    expect(after.getSourceFile()).toBe(source);
+    const originalCallerObject = JSON.stringify(environment);
+    const transformed = inputExpressionReference(value.worktree, file, target);
+    expect(transformed ? referenceMatches(value.worktree, file, transformed, [candidate]) : false).toBe(false);
+    for (let index = 0; index < 2; index++) {
+      const restored = inputExpressionReference(value.worktree, file, after);
+      expect(restored ? referenceMatches(value.worktree, file, restored, [candidate]) : false).toBe(true);
+    }
+    expect(JSON.stringify(environment)).toBe(originalCallerObject);
+  }, 30000);
+
+  it.each(["report", "private"] as const)("restores RQ012 same-source %s binding after installed-target overflow", domain => {
+    const { value, file, source, environment, candidate } = restorationFixture(domain, true);
+    const target = targetInitializer(source);
+    const after = targetInitializer(source, "after");
+    expect(target.getSourceFile()).toBe(source);
+    expect(after.getSourceFile()).toBe(source);
+    const originalCallerObject = JSON.stringify(environment);
+    let failure: unknown;
+    try { inputExpressionReference(value.worktree, file, target); }
+    catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(RangeError);
+    expect(failure).toMatchObject({ message: "Native target alternative bound exceeded" });
+    for (let index = 0; index < 2; index++) {
+      const restored = inputExpressionReference(value.worktree, file, after);
+      expect(restored ? referenceMatches(value.worktree, file, restored, [candidate]) : false).toBe(true);
+    }
+    expect(JSON.stringify(environment)).toBe(originalCallerObject);
+  }, 30000);
+
+  it("retains RQ011 exact known native resolve versus join parity", () => {
+    const input = "/work/repo/";
+    const file = "apps/app/known-native.test.ts";
+    const value = setup(file, `import path from 'node:path';const joining=path.join(${JSON.stringify(input)});const resolving=path.resolve(${JSON.stringify(input)});\n`);
+    const source = readInputModule(value.worktree, file, { argv: [] });
+    const statements = source.statements.filter(ts.isVariableStatement);
+    const references = statements.map(statement => {
+      const initializer = statement.declarationList.declarations[0]?.initializer;
+      if (!initializer) throw new Error("Missing exact native initializer");
+      return inputExpressionReference(value.worktree, file, initializer);
+    });
+    expect(join(input)).toBe(normalize(input));
+    expect(references[0]).toMatchObject({ kind: "path", value: join(input), possibleOnly: false, unknownPrefix: false, uncertainTerms: [] });
+    expect(references[1]).toMatchObject({ kind: "path", value: resolve(input), possibleOnly: false, unknownPrefix: false, uncertainTerms: [] });
+  });
+
+  it.each([
+    ["namespace", "path.join(root,'.closedloop-ai','vibe-plans',name)", true, false, false],
+    ["report directory", "path.join(root,'.vitest','blob',name)", false, true, false],
+    ["specific stem", "path.join(root,dir,`acceptance-test-${name}.json`)", true, false, false],
+    ["trailing rooted stem", "path.join(root+'/',dir,`acceptance-test-${name}.json`)", true, false, false],
+    ["generic root", "path.join(root,dir,name)", false, false, false],
+    ["generic type", "path.join(root,dir,`${name}.json`)", false, false, false],
+    ["settings", "path.join(root,'.closedloop-ai','settings',name)", false, false, false],
+    ["concrete reset", "path.resolve(root,'.closedloop-ai','vibe-plans',name,'/public/sibling.json')", false, false, false],
+    ["private URI", "new NodeURL('file://'+process.cwd()+'/.closedloop-ai/%76ibe-plans/acceptance-test-checkpoint.json')", true, false, false],
+    ["report converter", "convert('file://'+process.cwd()+'/.vitest/%62lob/blob.json')", false, true, false],
+    ["URI sibling", "new NodeURL('file://'+process.cwd()+'/.closedloop-ai/%73ettings/current.json')", false, false, false],
+    ["ordinary encoded string", "'file://'+process.cwd()+'/.closedloop-ai/%76ibe-plans/acceptance-test-checkpoint.json'", false, false, false],
+    ["unsupported converter", "convert('https://example.invalid/.closedloop-ai/vibe-plans/acceptance-test-checkpoint.json')", false, false, true],
+  ] as const)("preserves RQ011 complete %s constraints", (_row, expression, privateMatch, reportMatch, noTarget) => {
+    const file = "apps/app/native-constraint.test.ts";
+    const value = setup(file, `import path from 'node:path';import {URL as NodeURL,fileURLToPath as convert} from 'node:url';const root='/work/repo';function reader(dir,name){const target=${expression};}\n`);
+    const source = readInputModule(value.worktree, file, { argv: [] });
+    let initializer: ts.Expression | undefined;
+    const inspect = (node: ts.Node) => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "target") initializer = node.initializer;
+      ts.forEachChild(node, inspect);
+    };
+    inspect(source);
+    if (!initializer) throw new Error("Missing complete native initializer");
+    const reference = inputExpressionReference("/work/repo", file, initializer);
+    if (noTarget) { expect(reference).toBeUndefined(); return; }
+    if (!reference) throw new Error("Missing complete native reference");
+    expect(referenceMatches("/work/repo", file, reference, [".closedloop-ai/vibe-plans/acceptance-test-checkpoint.json"])).toBe(privateMatch);
+    expect(referenceMatches("/work/repo", file, reference, [".vitest/blob/blob.json"])).toBe(reportMatch);
+  });
+
+  it.each([
+    ["first join parents", "path.join(process.cwd(),'..','apps/desktop/playwright-report-e2e/results.json')", true],
+    ["nonfirst join parents", "path.join('/work/repo/apps/desktop',process.cwd(),'..','..','..','playwright-report-e2e/results.json')", true],
+    ["nonfirst resolve", "path.resolve('/work/repo/apps/desktop',process.cwd(),'..','apps/desktop/playwright-report-e2e/results.json')", true],
+    ["relative-only resolve", "path.resolve('apps/desktop/playwright-report-e2e/results.json')", true],
+    ["outer join erasure", "path.join(path.resolve('.'),'..','apps/desktop/playwright-report-e2e/results.json')", true],
+    ["multiple possible slots", "path.join('/work/repo',process.cwd(),process.cwd(),'..','..','apps/desktop/playwright-report-e2e/results.json')", true],
+    ["relative resolve parent overrun", "path.join(path.resolve('pkg'),'..','..','apps/desktop/playwright-report-e2e/results.json')", true],
+    ["resolve last concrete reset", "path.resolve('/work/repo',process.cwd(),'pkg','/public/sibling.json')", false],
+    ["resolve later possible", "path.resolve(process.cwd(),'/public',process.cwd(),'package.json')", true],
+    ["join later absolute", "path.join(process.cwd(),'/public/sibling.json')", true],
+    ["resolve absolute reset", "path.resolve(process.cwd(),'..','/public/sibling.json')", false],
+    ["known native join", "path.join('/work/repo','apps/desktop/playwright-report-e2e/results.json')", false],
+  ] as const)("retains RQ011 %s native value possibility", (_row, expression, possible) => {
+    const file = "apps/app/native-value.test.ts";
+    const value = setup(file, `import path from 'node:path';const target=${expression};\n`);
+    const source = readInputModule(value.worktree, file, { argv: [] });
+    const statement = source.statements.find(ts.isVariableStatement);
+    const initializer = statement?.declarationList.declarations[0]?.initializer;
+    if (!initializer) throw new Error("Missing synthetic native initializer");
+    const reference = inputExpressionReference(value.worktree, file, initializer);
+    expect(reference?.kind).toBe("path");
+    if (reference?.kind !== "path") throw new Error("Missing native path reference");
+    expect(reference.possibleOnly).toBe(possible);
+    expect(reference.unknownPrefix).toBe(possible);
+    if (_row === "nonfirst join parents") expect(referenceMatches("/work/repo", file, reference,
+      ["apps/desktop/playwright-report-e2e/results.json"])).toBe(true);
+  });
+
+  it.each([
+    ["absolute literal", ["/work/repo/report.json"], [], true],
+    ["relative literal", ["../report.json"], [], true],
+    ["absolute ancestor glob", ["/work/**/report.json"], [], true],
+    ["relative glob", ["../*.json"], [], true],
+    ["absolute ignore", ["../*.json"], ["/work/**/report.json"], false],
+    ["relative ignore", ["/work/**/report.json"], ["../report.json"], false],
+    ["mixed positives", ["/work/repo/sibling.json", "../report.json"], [], true],
+    ["mixed ignores", ["/work/**/report.json", "../*.json"], ["/outside/*.json", "../report.json"], false],
+    ["absolute sibling", ["/work/repo/sibling.json"], [], false],
+    ["absolute external", ["/outside/**/report.json"], [], false],
+    ["absolute lookalike", ["/work/repo-other/**/report.json"], [], false],
+    ["absolute odd bang", ["!/work/**/report.json"], [], false],
+    ["absolute even bang", ["!!/work/**/report.json"], [], true],
+    ["relative odd bang", ["!../report.json"], [], false],
+    ["relative even bang", ["!!../report.json"], [], true],
+    ["relative extglob", ["../@(report|sibling).json"], [], true],
+    ["empty positives", [], [], false],
+  ] as const)("keeps RQ009 native collector %s domain", (_row, values, excludes, expected) => {
+    expect(referenceMatches("/work/repo", "pkg/config.ts", { kind: "collector", values: [...values],
+      excludes: [...excludes], base: "/work/repo/pkg", dot: true, unresolved: false }, ["report.json"]))
+      .toBe(expected);
+  });
+
+  it.each([false, true])("keeps RQ009 private/report dot and unresolved decisions with dot=%s", dot => {
+    const reference = { kind: "collector" as const, values: ["/work/**/*.json"], excludes: [], base: "/work/repo/pkg", dot, unresolved: false };
+    expect(referenceMatches("/work/repo", "pkg/config.ts", reference, [".closedloop-ai/vibe-plans/retained.json"])).toBe(dot);
+    expect(referenceMatches("/work/repo", "pkg/config.ts", reference, [".vitest/blob/report.json"])).toBe(dot);
+    expect(referenceMatches("/work/repo", "pkg/config.ts", { ...reference, values: [], unresolved: true }, ["report.json"])).toBe(true);
+  });
+
   it.each([
     ["RQ008 opaque aggregate", undefined, false],
     ["RQ008 rooted unknown fields", "function reader(dir,name){readFileSync(join(root,dir,name));}", false],
@@ -63,13 +285,14 @@ describe("receiver-bound production private references", () => {
     value.write(".gitignore", `${readFileSync(join(value.worktree, ".gitignore"), "utf8")}\n.vitest/\n`);
     value.git(["add", ".gitignore"]); value.git(["commit", "-m", "Synthetic comparison-root boundary"]);
     value.write(".vitest/blob/blob.json", "{\"retainedFailure\":true}\n");
-    const result = readiness(value);
+    const result = row === "RQ008 rooted report directory" ? selectedReportFixture(value, "apps/app/reference.test.ts") : readiness(value);
     expect(result.status, `${row}: ${result.stdout}`).toBe(blocked ? 1 : 0);
     if (blocked) {
       expect(String(result.json?.error)).toMatch(/(?:private|retained report)/i);
-      expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(false);
+      if (row === "RQ008 rooted report directory") expectNoReportCheck(value);
+      else expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(false);
     } else expect(result.json?.mainSync).toMatchObject({ phase: "input-readiness", status: "DONE" });
-    expect(existsSync(join(value.metadata, "FETCH_HEAD"))).toBe(false);
+    if (row !== "RQ008 rooted report directory") expect(existsSync(join(value.metadata, "FETCH_HEAD"))).toBe(false);
     expect(readFileSync(join(value.worktree, ".closedloop-ai/vibe-plans/acceptance-test-checkpoint.json"), "utf8"))
       .toBe("{\"retainedDiagnostic\":true}\n");
     expect(readFileSync(join(value.worktree, ".vitest/blob/blob.json"), "utf8"))
@@ -96,13 +319,14 @@ describe("receiver-bound production private references", () => {
     value.git(["add", ".gitignore"]); value.git(["commit", "-m", "Synthetic generic reference boundary"]);
     value.write(".vitest/blob/blob.json", "{\"retainedFailure\":true}\n");
     value.write(".closedloop-ai/vibe-plans/.acceptance-test.json", "{\"retainedDiagnostic\":true}\n");
-    const result = readiness(value);
+    const result = row === "RQ007 report directory" ? selectedReportFixture(value, "apps/app/reference.test.ts") : readiness(value);
     expect(result.status, `${row}: ${result.stdout}`).toBe(blocked ? 1 : 0);
     if (blocked) {
       expect(String(result.json?.error)).toMatch(/(?:private|retained report)/i);
-      expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(false);
+      if (row === "RQ007 report directory") expectNoReportCheck(value);
+      else expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(false);
     } else expect(result.json?.mainSync).toMatchObject({ phase: "input-readiness", status: "DONE" });
-    expect(existsSync(join(value.metadata, "FETCH_HEAD"))).toBe(false);
+    if (row !== "RQ007 report directory") expect(existsSync(join(value.metadata, "FETCH_HEAD"))).toBe(false);
     expect(readFileSync(join(value.worktree, ".closedloop-ai/vibe-plans/acceptance-test-checkpoint.json"), "utf8"))
       .toBe("{\"retainedDiagnostic\":true}\n");
     expect(readFileSync(join(value.worktree, ".vitest/blob/blob.json"), "utf8"))
@@ -205,15 +429,18 @@ describe("receiver-bound production private references", () => {
     value.write(".gitignore", `${readFileSync(join(value.worktree, ".gitignore"), "utf8")}\n.vitest/\n`);
     value.git(["add", ".gitignore"]); value.git(["commit", "-m", "Synthetic retained report"]);
     value.write(".vitest/blob/blob.json", "{\"retainedFailure\":true}\n");
-    const result = readiness(value);
+    const result = selectedReportFixture(value, "apps/app/reference.test.ts");
     expect(result.status, result.stdout).toBe(1);
     expect(String(result.json?.error)).toMatch(/retained report/i);
-    expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(false);
+    expectNoReportCheck(value);
     expect(readFileSync(join(value.worktree, ".vitest/blob/blob.json"), "utf8")).toBe("{\"retainedFailure\":true}\n");
   }, 30000);
 
   it.each([
     ["RQ002 report template", "import {readFileSync} from 'node:fs';readFileSync(`${base}/.vitest/blob/${name}`);", true],
+    ["RQ011 complete report directory", "import path from 'node:path';import {readFileSync} from 'node:fs';const root=path.resolve(process.cwd());function reader(name){readFileSync(path.join(root,'.vitest','blob',name));}", true],
+    ["RQ011 complete report stem", "import path from 'node:path';import {readFileSync} from 'node:fs';const root=path.resolve(process.cwd());function reader(dir,name){readFileSync(path.join(root,dir,`blob${name}.json`));}", true],
+    ["RQ011 complete report sibling", "import path from 'node:path';import {readFileSync} from 'node:fs';const root=path.resolve(process.cwd());function reader(name){readFileSync(path.join(root,'.vitest','unrelated',name));}", false],
     ["RQ002 report sibling", "import {readFileSync} from 'node:fs';readFileSync(`${base}/.vitest/unrelated/${name}`);", false],
     ["RQ002 report conditional helper", "import {readFileSync} from 'node:fs';function getPath(){if(flag)return '.vitest/blob/blob.json';return '/public/sibling';}readFileSync(getPath());", true],
     ["RQ002 report conditional URL helper", "import {URL as NodeURL} from 'node:url';import {readFileSync} from 'node:fs';function getPath(){if(flag)return new NodeURL('../../.vitest/%62lob/blob.json',import.meta.url);return '/public/sibling';}readFileSync(getPath());", true],
@@ -228,13 +455,59 @@ describe("receiver-bound production private references", () => {
     value.write(".gitignore", `${readFileSync(join(value.worktree, ".gitignore"), "utf8")}\n.vitest/\n`);
     value.git(["add", ".gitignore"]); value.git(["commit", "-m", "Synthetic retained report boundary"]);
     value.write(".vitest/blob/blob.json", "{\"retainedFailure\":true}\n");
-    const result = readiness(value);
+    const result = selectedReportFixture(value, "apps/app/reference.test.ts");
     expect(result.status, result.stdout).toBe(blocked ? 1 : 0);
     if (blocked) {
       expect(String(result.json?.error)).toMatch(/retained report/i);
-      expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(false);
+      expectNoReportCheck(value);
     }
-    expect(existsSync(join(value.metadata, "FETCH_HEAD"))).toBe(false);
     expect(readFileSync(join(value.worktree, ".vitest/blob/blob.json"), "utf8")).toBe("{\"retainedFailure\":true}\n");
   }, 30000);
 });
+
+function expectNoReportCheck(value: ReturnType<typeof syncFixture>) {
+  const calls = value.calls().trim().split("\n").map(line => JSON.parse(line) as string[]);
+  expect(calls.some(argv => argv[0] === "check:source-gates")).toBe(false);
+  expect(JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8")).validation).toBeUndefined();
+}
+
+/** Metadata comes from the same public native-expression producer as actual child argv. */
+function alternativeFixture(expression: string, directory = "apps/desktop/playwright-report-e2e") {
+  const file = "apps/app/native-alternatives.test.ts";
+  const value = setup(file, `import path from 'node:path';import{URL as NodeURL,fileURLToPath as convert}from'node:url';import{operand}from'./operand.mjs';let base='/work/repo';let name='folder';const incoming=path.join(base,${JSON.stringify(directory)},name);const alias=process.argv[2];function aliasHelper(){return alias;}const target=${expression};\n`);
+  value.write("apps/app/operand.mjs", "export const operand=process.argv[2];\n");
+  value.git(["add", "apps/app/operand.mjs"]); value.git(["commit", "-m", "Synthetic native argument export"]);
+  const source = readInputModule(value.worktree, file, { argv: [] });
+  let initializer: ts.Expression | undefined;
+  for (const statement of source.statements.filter(ts.isVariableStatement)) {
+    const declaration = statement.declarationList.declarations[0];
+    if (declaration && ts.isIdentifier(declaration.name) && declaration.name.text === "incoming") initializer = declaration.initializer;
+  }
+  if (!initializer) throw new Error("Missing native constraint source");
+  const constraint = inputExpressionReference("/work/repo", file, initializer);
+  if (constraint?.kind !== "path") throw new Error("Missing native argument constraint");
+  return { value, file, constraint };
+}
+
+function targetInitializer(source: ts.SourceFile, name = "target") {
+  for (const statement of source.statements.filter(ts.isVariableStatement)) {
+    const declaration = statement.declarationList.declarations[0];
+    if (declaration && ts.isIdentifier(declaration.name) && declaration.name.text === name && declaration.initializer) return declaration.initializer;
+  }
+  throw new Error("Missing native target");
+}
+
+/** Both decisions share one parsed source; the last clone alone cannot reach the retained candidate. */
+function restorationFixture(domain: "report" | "private", targetOverflow: boolean) {
+  const file = "apps/app/native-restoration.test.ts";
+  const value = setup(file, "import path from 'node:path';const target=path.join(process.argv[2],'public/sibling.txt');const after=process.argv[2];\n");
+  const candidate = domain === "report" ? "apps/desktop/playwright-report-e2e/results.json"
+    : ".closedloop-ai/vibe-plans/acceptance-test-checkpoint.json";
+  const alternatives = [join(value.worktree, candidate), ...Array.from({ length: targetOverflow ? 30 : 1 },
+    (_, index) => join(value.worktree, "public", `choice-${index}.json`))];
+  const constraint = { kind: "path" as const, value: "__VIBE_UNKNOWN_PATH__", base: "runtime" as const,
+    possibleOnly: true, unknownPrefix: true, uncertainTerms: alternatives };
+  const environment = { cwd: value.worktree, argv: ["node", file, { constraint }] };
+  const source = readInputModule(value.worktree, file, environment);
+  return { value, file, source, environment, candidate };
+}

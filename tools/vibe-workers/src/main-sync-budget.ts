@@ -4,8 +4,12 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { createHash } from "node:crypto";
+import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { verifyReportExecution } from "./main-sync-report-inputs.js";
+import { ReportExecutionOwner } from "./main-sync-report-execution.js";
 import { MainSyncError, type MainSyncReceipt } from "./main-sync-contracts.js";
 import type { CheckCommand } from "./main-sync-lanes.js";
+import { readBudgetRefs } from "./main-sync-budget-ref-read.js";
 
 export const GENERAL_CHECK_MS = 15 * 60 * 1000;
 export const FULL_LOCAL_LINT_MS = 30 * 60 * 1000;
@@ -18,6 +22,8 @@ const tasksSchema = z.object({ tasks: z.array(z.object({ taskId: z.string().min(
 const affectedFilterSchema = z.string().regex(/^\.\.\.\[[a-f0-9]{40}\]$/);
 const wrapperSchema = z.object({ scripts: z.record(z.string()) }).passthrough();
 const AFFECTED_TYPECHECK_SHA = "01c2c50b267a071fa3ed193612c6d2c94f18fde6d01c78c6c47bfd81b56aad69";
+const AFFECTED_TEST_SHA = "b1d8c482cb012520f93729cb6f760b3e6d4344d191f94d569e7300265e2955b5";
+const testSelections = new WeakMap<CheckCommand, { root: string; head: string; main: string; command: string; wrapperSha: string; selection: z.infer<typeof tasksSchema> }>();
 
 /** The fixed affected owner and pinned direct Turbo have distinct real selectors. */
 export function commandSelection(root: string, command: CheckCommand, timeoutMs = GENERAL_CHECK_MS) {
@@ -31,12 +37,14 @@ export function commandSelection(root: string, command: CheckCommand, timeoutMs 
     }
     argv = ["turbo", "typecheck", `--filter=${affectedFilter(root)}`, "--concurrency=1", "--dry=json"];
   } else return undefined;
+  verifyReportExecution(root, root, ReportExecutionOwner.TurboSelection, ["pnpm", ...argv]);
   const run = spawnSync("pnpm", argv, { cwd: root, encoding: "utf8", timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 });
   if (run.error || run.status !== 0) throw new MainSyncError("Could not bind the actual canonical Turbo task selection");
   return tasksSchema.parse(JSON.parse(run.stdout));
 }
 
 function affectedFilter(root: string) {
+  verifyReportExecution(root, root, ReportExecutionOwner.AffectedFilter, ["sh", "scripts/affected-filter.sh"]);
   const selected = spawnSync("sh", ["scripts/affected-filter.sh"], { cwd: root, encoding: "utf8", timeout: 10000, maxBuffer: 1024 * 1024 });
   if (selected.error || selected.status !== 0) throw new MainSyncError("Existing affected-filter owner failed; no selection was derived");
   return affectedFilterSchema.parse(selected.stdout.trim());
@@ -44,7 +52,7 @@ function affectedFilter(root: string) {
 
 /** Fixed command budgets come from the real selected matrix, never task text, env or caller duration. */
 export function bindCheckBudgets(root: string, receipt: MainSyncReceipt, commands: CheckCommand[]) {
-  const aggregates = new Map<string, number>();
+  const aggregates = new Map<string, ReturnType<typeof selectedTestBudget>>();
   return commands.map((command) => {
     if (command.argv.join(" ") === "pnpm test:lint" && !command.bindings?.AFFECTED_SCRIPT_SUITES) {
       return { ...command, timeoutMs: FULL_LOCAL_LINT_MS };
@@ -57,23 +65,33 @@ export function bindCheckBudgets(root: string, receipt: MainSyncReceipt, command
         budget = selectedTestBudget(root, receipt, key === "affected");
         aggregates.set(key, budget);
       }
-      return { ...command, timeoutMs: budget };
+      const bound = { ...command, timeoutMs: budget.timeoutMs };
+      if (key === "affected" && canonicalTestWrapper(root)) {
+        testSelections.set(bound, { root, head: budget.head, main: budget.main, command: JSON.stringify(bound), wrapperSha: testWrapperIdentity(root), selection: budget.selection });
+      }
+      return bound;
     }
     return { ...command, timeoutMs: command.timeoutMs ?? GENERAL_CHECK_MS };
   });
 }
 
 function selectedTestBudget(root: string, receipt: MainSyncReceipt, affected: boolean) {
+  const { head, main } = readBudgetRefs(root);
   const workflow = workflowSchema.parse(parse(readFileSync(join(root, ".github/workflows/pr-test.yml"), "utf8")));
   let filter = `...[${receipt.validationSince}]`;
   if (affected) {
     filter = affectedFilter(root);
   }
+  verifyReportExecution(root, root, ReportExecutionOwner.TurboSelection, ["pnpm", "turbo", "test", `--filter=${filter}`, "--dry=json"]);
   const run = spawnSync("pnpm", ["turbo", "test", `--filter=${filter}`, "--dry=json"], {
     cwd: root, encoding: "utf8", timeout: 120000, maxBuffer: 16 * 1024 * 1024,
   });
   if (run.error || run.status !== 0) throw new MainSyncError("Could not derive fixed test budget from actual selected Turbo tasks");
-  const tasks = tasksSchema.parse(JSON.parse(run.stdout)).tasks;
+  const selection = tasksSchema.parse(JSON.parse(run.stdout));
+  if (head !== git(root, ["rev-parse", "HEAD"]) || main !== git(root, ["rev-parse", "origin/main"])) {
+    throw new MainSyncError("Test selection refs changed during the owning budget child", "NEEDS_CHANGE");
+  }
+  const tasks = selection.tasks;
   const packages = new Set(tasks.map((task) => task.package));
   let minutes = 0;
   if ([...packages].some((name) => name !== "desktop")) {
@@ -83,5 +101,25 @@ function selectedTestBudget(root: string, receipt: MainSyncReceipt, affected: bo
     minutes += workflow.jobs["desktop-node"]["timeout-minutes"] * workflow.jobs["desktop-node"].strategy.matrix.shard.length
       + workflow.jobs["desktop-renderer"]["timeout-minutes"];
   }
-  return minutes ? minutes * 60 * 1000 : GENERAL_CHECK_MS;
+  return { timeoutMs: minutes ? minutes * 60 * 1000 : GENERAL_CHECK_MS, selection, head, main };
+}
+
+/** Reuses the budget owner's actual task record without accepting caller metadata or another selector child. */
+export function affectedTestReportSelection(root: string, command: CheckCommand) {
+  const record = testSelections.get(command);
+  if (!record) return undefined;
+  if (record.root !== root || record.head !== git(root, ["rev-parse", "HEAD"]) || record.main !== git(root, ["rev-parse", "origin/main"])
+    || record.command !== JSON.stringify(command) || record.wrapperSha !== testWrapperIdentity(root)
+    || !canonicalTestWrapper(root)) throw new MainSyncError("Affected test selection owner changed before its report assessment", "NEEDS_CHANGE");
+  return record.selection;
+}
+
+function testWrapperIdentity(root: string) {
+  return createHash("sha256").update(readFileSync(join(root, "scripts/test-affected.sh"))).digest("hex");
+}
+
+function canonicalTestWrapper(root: string) {
+  const pkg = wrapperSchema.parse(JSON.parse(readFileSync(join(root, "package.json"), "utf8")));
+  if (pkg.scripts["test:affected"] !== "sh scripts/test-affected.sh") return false;
+  return testWrapperIdentity(root) === AFFECTED_TEST_SHA;
 }

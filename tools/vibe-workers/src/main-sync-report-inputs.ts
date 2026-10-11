@@ -1,39 +1,43 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { z } from "zod";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
 import { MainSyncError } from "./main-sync-contracts.js";
-import { reportOutputs } from "./main-sync-input-catalog.js";
-import { committedInputReferences, referenceMatches } from "./main-sync-input-references.js";
 import type { CheckCommand } from "./main-sync-lanes.js";
-
-const REPLAY = /(?:^|[\s=])--(?:merge-reports|last-failed)(?:\b|=)|(?:^|[\s/])assert-e2e-results(?:\.mjs)?\b/;
-const SELECTED_SCRIPTS = new Set(["test", "test:affected", "typecheck:affected", "test:lint", "test:skills", "test:renderer",
-  "typecheck", "check:source-gates", "verify", "test:lanes", "validate:catalog"]);
-const packageScripts = z.object({ scripts: z.record(z.string()).optional() }).passthrough();
-let verified: { root: string; head: string } | undefined;
-
-/** Retained artifacts are output-only only for the fixed non-replay readers; their bodies never prove coverage. */
-export function verifyRetainedReportInputs(root: string, head: string) {
-  if (verified?.root === root && verified.head === head) return;
-  if (committedInputReferences(root, (file, reference) => referenceMatches(root, file, reference, [...reportOutputs]))) {
-    throw new MainSyncError("A committed reader consumes retained report evidence; no output-only admission", "NEEDS_CHANGE");
-  }
-  for (const file of git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0").filter(Boolean)) {
-    if (file !== "package.json" && !file.endsWith("/package.json")) continue;
-    const scripts = packageScripts.parse(JSON.parse(readFileSync(join(root, file), "utf8"))).scripts ?? {};
-    for (const [name, command] of Object.entries(scripts)) {
-      if (SELECTED_SCRIPTS.has(name) && REPLAY.test(command)) {
-        throw new MainSyncError(`Selected validation script reads retained replay/report inputs: ${file}:${name}`, "NEEDS_CHANGE");
-      }
-    }
-  }
-  verified = { root, head };
-}
+import { rejectReportReplay, reportExecutionSchema, type ReportExecutionOwner as ExecutionOwner } from "./main-sync-report-execution.js";
+import { reportCommandEntries } from "./main-sync-report-command.js";
+import { verifyReportClosure } from "./main-sync-report-closure.js";
+import { committedIdentity } from "./main-sync-state.js";
+import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
 
 /** Actual structured recipe argv is checked again; caller text cannot authorize replay or retained-result verdicts. */
 export function verifyReportRecipe(commands: readonly CheckCommand[]) {
   for (const command of commands) {
-    if (REPLAY.test(command.argv.join(" "))) throw new MainSyncError("Selected recipe consumes retained report/replay inputs without current owned output isolation", "NEEDS_CHANGE");
+    rejectReportReplay(command.argv.join(" "));
+  }
+}
+
+/** Existing owners derive this scope before their actual child; no stdin/task field can supply it. */
+export function verifyReportExecution(retainedRoot: string, root: string, owner: ExecutionOwner, argv: readonly string[], cwd = root,
+  selection?: { tasks: { taskId: string; package?: string }[] }) {
+  const identity = committedIdentity(root);
+  const execution = reportExecutionSchema.parse({ root, retainedRoot, owner, argv: [...argv], cwd,
+    headSha: identity.headSha, treeSha: identity.treeSha, ...(selection ? { tasks: selection.tasks } : {}) });
+  rejectReportReplay(execution.argv.join(" "));
+  const entries = reportCommandEntries(execution);
+  verifyReportClosure(execution, entries);
+  const after = committedIdentity(root);
+  if (after.headSha !== execution.headSha || after.treeSha !== execution.treeSha) {
+    throw new MainSyncError("Selected report execution source changed during assessment", "NEEDS_CHANGE");
+  }
+}
+
+/** Declared producer source inputs remain independent of a bootstrap/health purpose. */
+export function verifyReportProducerInputs(retainedRoot: string, root: string, owner: ExecutionOwner, inputs: readonly string[]) {
+  const identity = committedIdentity(root);
+  const files = git(root, ["ls-tree", "-r", "--name-only", "HEAD", "--", ...inputs]).split("\n")
+    .filter(file => /\.[cm]?[jt]sx?$/.test(file));
+  const execution = reportExecutionSchema.parse({ root, retainedRoot, owner, argv: ["declared-producer-inputs"], cwd: root,
+    headSha: identity.headSha, treeSha: identity.treeSha });
+  verifyReportClosure(execution, files.map(file => ({ file, context: { kind: "known" as const, path: root }, argv: [] })));
+  const after = committedIdentity(root);
+  if (after.headSha !== identity.headSha || after.treeSha !== identity.treeSha) {
+    throw new MainSyncError("Declared producer inputs changed during report assessment", "NEEDS_CHANGE");
   }
 }

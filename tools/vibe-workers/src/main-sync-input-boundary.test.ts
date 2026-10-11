@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { invokeSync, syncFixture, validateFixture, currentSyncDefinitions } from "./main-sync-test-fixtures.js";
+import { invokeSync, syncFixture, validateFixture, currentSyncDefinitions, selectedReportFixture } from "./main-sync-test-fixtures.js";
 import { prismaInputFixture, fumadocsInputFixture, buildInfoInputFixture, largeProducerInputFixture, nextInputFixture, pureInputFixture,
   docsInputFixture, huskyInputFixture, desktopPrismaInputFixture } from "./main-sync-input-test-fixtures.js";
 import { gzipSync, gunzipSync } from "node:zlib";
@@ -25,14 +25,13 @@ describe("production committed-input privacy and origin boundaries", () => {
     value.git(["add", "."]); value.git(["commit", "-m", "Synthetic selected retained-report reader"]);
     const body = "retained failed evidence is not current PASS\n";
     value.write(output, body);
-    const turn = value.start("redeploy");
-    try {
-      const result = invokeSync(value, "prepare", turn.context);
+      const result = selectedReportFixture(value, kind === "reader" ? "apps/app/probe.ts" : undefined);
       expect(result.status, result.stdout).toBe(1);
       expect(String(result.json?.error)).toMatch(/retained report|replay/i);
-      expect(existsSync(join(value.metadata, "FETCH_HEAD"))).toBe(false);
+      const calls = value.calls().trim().split("\n").map(line => JSON.parse(line) as string[]);
+      expect(calls.some(argv => argv[0] === (kind === "reader" ? "check:source-gates" : "test:affected"))).toBe(false);
+      expect(JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8")).validation).toBeUndefined();
       expect(readFileSync(join(value.worktree, output), "utf8")).toBe(body);
-    } finally { turn.finish(); }
   }, 30000);
 
   it("preserves retained failed reports when the fixed default checks do not consume them", () => {

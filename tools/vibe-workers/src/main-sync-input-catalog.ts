@@ -7,6 +7,7 @@ import { MainSyncError, producerInputSchema } from "./main-sync-contracts.js";
 import { originTree } from "./main-sync-input-files.js";
 import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
 import { digest } from "./main-sync-state.js";
+import { readProducerMetadata, verifyProducerHead } from "./main-sync-producer-read.js";
 
 export type InputProducer = { id: string; roots: string[]; inputs: string[]; argv?: string[];
   package?: { dir: string; name: string; version: string }; strategy: "pristine" | "full-write" | "pure" };
@@ -89,6 +90,17 @@ export function producerOwnerInputs(root: string, producer: InputProducer, allow
 
 /** Existing committed producer collection roots cannot silently consume an ignored or untracked input. */
 export function verifyProducerInputs(root: string, head: string, producers: InputProducer[], untracked?: string[]) {
+  verifyProducerInputPaths(root, producers, untracked);
+  verifyProducerHead(root, head);
+}
+
+/** Internal generated-origin completion; never used by standalone inventory callers. */
+export function verifyProducerInputsForOrigin(root: string, head: string, producers: InputProducer[], untracked: string[]) {
+  verifyProducerInputPaths(root, producers, untracked);
+  return readProducerMetadata(root, head);
+}
+
+function verifyProducerInputPaths(root: string, producers: InputProducer[], untracked?: string[]) {
   const all = untracked ?? [...git(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0"),
     ...git(root, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]).split("\0")].filter(Boolean);
   for (const producer of producers) {
@@ -102,6 +114,4 @@ export function verifyProducerInputs(root: string, head: string, producers: Inpu
       if (realpathSync(join(root, input)) !== join(root, input)) throw new MainSyncError(`Producer input is not canonical: ${input}`, "NEEDS_CHANGE");
     }
   }
-  // The caller also verifies absolute HEAD/index parity; this probe never grants source exceptions.
-  if (git(root, ["rev-parse", "HEAD"]) !== head) throw new MainSyncError("Producer input HEAD changed during inspection", "NEEDS_CHANGE");
 }

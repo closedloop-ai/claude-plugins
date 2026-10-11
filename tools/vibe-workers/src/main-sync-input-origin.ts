@@ -11,6 +11,8 @@ import { producerFiles, producerPackage, producerOwnerInputs, verifyProducerInpu
 import { originIdentity, sameOriginFiles, type OriginFile } from "./main-sync-input-files.js";
 import { pureOriginFiles } from "./main-sync-input-pure.js";
 import { packPackageOwner } from "./main-sync-package-owner.js";
+import { verifyReportExecution, verifyReportProducerInputs } from "./main-sync-report-inputs.js";
+import { ReportExecutionOwner } from "./main-sync-report-execution.js";
 
 const OWNER_MS = 15 * 60 * 1000;
 type SourceIdentity = ReturnType<typeof trackedInputs>;
@@ -31,6 +33,7 @@ export function prepareInputOrigins(value: ReturnType<typeof syncContext>, befor
   const log = join(value.place.dir, `vibe-input-origin-${attempt}.json`);
   try {
     verifyProducerInputs(root, before.headSha, producers);
+    verifyReportProducerInputs(root, root, ReportExecutionOwner.Producer, producers.flatMap(producer => producer.inputs));
    if (cold) {
     git(root, ["worktree", "add", "--detach", cold, before.headSha], { timeout: OWNER_MS });
     registered = true;
@@ -120,6 +123,8 @@ export function prepareInputOrigins(value: ReturnType<typeof syncContext>, befor
     writeFileSync(log, JSON.stringify({ headSha: before.headSha, treeSha: before.treeSha, ...(cold ? { scratch: cold } : {}), commands }), { mode: 0o600 });
   }
   function run(cwd: string, argv: string[]) {
+    const owner = argv[0] === "bash" ? ReportExecutionOwner.Bootstrap : ReportExecutionOwner.Producer;
+    verifyReportExecution(root, cwd, owner, argv, cwd);
     const executable = argv[0] === "node" ? process.execPath : argv[0]!;
     const result = spawnSync(executable, argv.slice(1), { cwd, encoding: "utf8", timeout: OWNER_MS, maxBuffer: 16 * 1024 * 1024 });
     commands.push({ argv, exitCode: result.status, stdoutSha256: digest(result.stdout ?? ""), stderrSha256: digest(result.stderr ?? "") });

@@ -7,7 +7,7 @@ import { isOwnedPrototypeSession } from "../../../plugins/vibe/skills/vibe/scrip
 import { checkoutLocation, readWriterSummary, verifySourceTurn } from "./ledger.js";
 import { nativeRecordOwnerSchema } from "./native-record.js";
 import { isPublisherContext, isRequestContext } from "./record-context.js";
-import { MainSyncError, mainSyncInputSchema, mainSyncReceiptSchema, mainSyncStateSchema, operationContextSchema, sessionSchema,
+import { MainSyncError, commitSchema, mainSyncInputSchema, mainSyncReceiptSchema, mainSyncStateSchema, operationContextSchema, sessionSchema,
   type MainSyncState, type OperationContext } from "./main-sync-contracts.js";
 
 export const MAIN_SYNC_FILE = "vibe-main-sync.json";
@@ -125,9 +125,11 @@ export function requireSyncReceipt(value: ReturnType<typeof syncContext>) {
 }
 
 /** A commit's exact tree is the publication identity, not the mutable tracking ref or task text. */
+/** Merge refusal precedes revision resolution; paired reads do not replace callers' freshness checks. */
 export function committedIdentity(root: string) {
   if (existsSync(resolve(root, git(root, ["rev-parse", "--git-path", "MERGE_HEAD"])))) throw new MainSyncError("ROOT must finish the ordinary merge before validation", "NEEDS_COMMIT");
-  return { headSha: git(root, ["rev-parse", "HEAD"]), treeSha: git(root, ["rev-parse", "HEAD^{tree}"]) };
+  const [headSha, treeSha] = z.tuple([commitSchema, commitSchema]).parse(git(root, ["rev-parse", "HEAD", "HEAD^{tree}"]).split("\n"));
+  return { headSha, treeSha };
 }
 
 export function digest(text: string | Buffer) { return createHash("sha256").update(text).digest("hex"); }

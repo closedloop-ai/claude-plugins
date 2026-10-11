@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { acquireNativeRecord, releaseNativeRecord } from "./native-record.js";
 import { changeWriter, registerWriter } from "./ledger.js";
@@ -11,6 +11,23 @@ import { z } from "zod";
 const producerFixtureSchema = z.object({ purpose: z.string(), origin: z.object({ repository: z.literal("closedloop-ai/symphony-alpha"),
   commit: z.literal("3dd896dfcecd5b14940fbebe3a10f969bcb8c93e"), license: z.literal("Apache-2.0"), copyright: z.string() }).strict(),
   files: z.array(z.object({ path: z.enum(["lint-staged.config.js", "scripts/exec-git.ts", "LICENSE"]), gitBlob: z.string(), sha256: z.string(), content: z.string() }).strict()).length(3) }).strict();
+
+/** Delegates real native Git in disposable fixtures; never part of timing or runtime entrypoints. */
+export function probeNativeGit(value: Pick<ReturnType<typeof fixture>, "bin" | "metadata">,
+  intercept?: { argv: string[]; output: string; status?: number }) {
+  const previousPath = process.env.PATH;
+  const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8", maxBuffer: 1024 * 1024 }).trim();
+  const log = join(value.metadata, "native-git-calls.jsonl");
+  const wrapper = join(value.bin, "git");
+  writeFileSync(wrapper, `#!${process.execPath}\nconst fs=require('node:fs');const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(args)+'\\n');if(${intercept !== undefined}&&JSON.stringify(args)===${JSON.stringify(JSON.stringify(intercept?.argv ?? []))}){process.stdout.write(${JSON.stringify(intercept?.output ?? "")});process.exit(${intercept?.status ?? 0});}const result=require('node:child_process').spawnSync(${JSON.stringify(realGit)},args,{stdio:'inherit'});if(result.error)throw result.error;process.exit(result.status??1);\n`);
+  chmodSync(wrapper, 0o700);
+  process.env.PATH = `${value.bin}:${previousPath ?? ""}`;
+  return { calls: () => readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line)),
+    restore: () => {
+      if (previousPath === undefined) Reflect.deleteProperty(process.env, "PATH");
+      else process.env.PATH = previousPath;
+    } };
+}
 
 export function syncFixture(source = "committed-good") {
   const value = fixture();
@@ -156,6 +173,25 @@ export function validateFixture(value: ReturnType<typeof syncFixture>, purpose?:
     if (result.status !== 0) throw new Error(result.stdout || result.stderr);
     return result;
   } finally { source.finish(); }
+}
+
+/** Selects a fixture entry at the real fixed-check boundary; fake pnpm never executes the example body. */
+export function selectedReportFixture(value: ReturnType<typeof syncFixture>, entry?: string) {
+  if (entry) {
+    const pkg = z.object({ scripts: z.record(z.string()) }).passthrough().parse(JSON.parse(readFileSync(join(value.worktree, "package.json"), "utf8")));
+    pkg.scripts["check:source-gates"] = `node ${JSON.stringify(entry)}`;
+    value.write("package.json", JSON.stringify(pkg));
+    value.git(["add", "package.json"]);
+    value.git(["commit", "-m", "Synthetic selected report check"]);
+  }
+  const prepare = value.start("redeploy", "build");
+  try {
+    const result = invokeSync(value, "prepare", prepare.context);
+    if (result.status !== 0) return result;
+  } finally { prepare.finish(); }
+  const source = value.sourceTurn("build");
+  try { return invokeSync(value, "validate", source.context); }
+  finally { source.finish(); }
 }
 
 export function invokeSync(value: ReturnType<typeof syncFixture>, command: string, context: unknown,

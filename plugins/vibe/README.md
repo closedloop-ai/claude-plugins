@@ -82,6 +82,11 @@ the existing private receipt. The same actor repeats readiness after the committ
 merge and supplies the opaque recipe witness for actual validation. Fixed local
 process budgets and the authenticated Claude envelope remain distinct from
 unchanged test, hook and general-worker deadlines.
+Report admission follows actual selected entries, tasks, configs and producer
+inputs; an unrelated capable reader is not selected consumption. Ordinary
+bootstrap health cannot mint validation proof. Meaningful retained report data,
+default verdicts and replay still block, while proven same-call test fixtures
+remain nonretained inputs and never stand in for required coverage.
 An existing registered writer retains its original definition root, exact
 binding and actual ID. The root supplies the new table policy through its
 existing continuation; it does not reset or re-register under an updated
@@ -167,7 +172,7 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 
 ## Runtime Files
 
-Version `1.0.9` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.10` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains two skill-contract test modules.
 Runtime helpers and tests live alongside their owning skills, including vibe
