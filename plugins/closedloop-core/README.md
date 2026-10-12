@@ -57,8 +57,8 @@ Worker-backed review of a requested PR, branch, diff, file list, or uncommitted
 changes. Grounds reviewers in requirements, source evidence, repository
 guardrails, and graph intelligence, then consolidates actionable findings across
 approach, correctness, guardrail, compatibility, database, security, and existing
-E2E coverage. Uses the review lenses bundled in `references/prompt-pack/` unless
-a valid external prompt pack is configured. Review alone does not authorize
+E2E coverage. Uses only the review lenses bundled in `references/lenses/` and
+never reads prompt files from outside the skill. Review alone does not authorize
 implementation, commits, pushes, PR lifecycle actions, or merges.
 
 ### `guided-manual-qa`

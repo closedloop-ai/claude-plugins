@@ -51,3 +51,36 @@ test('plan-structure gives detail-level plan-review suggestions an Implementatio
   const playbook = readFileSync(join(resources, 'playbook.md'), 'utf8');
   assert.match(playbook, /Task Table → Implementation Notes → API\/Data Impacts/);
 });
+
+// workflow-code-review is self-contained: it reads instructions only from its own folder.
+const OUTSIDE_SKILL_READS = [
+  /\bWORKFLOW_PROMPT_PACK_ROOT\b/,
+  /\b[A-Z][A-Z0-9]*_[A-Z0-9_]*(?:PROMPT|PACK|LENS|SOUL|TEMPLATE)[A-Z0-9_]*\b/,
+  /\bprompt[- ]pack\b/i,
+  /\bSOUL\.md\b/,
+  /\borchestrator\.md\b/,
+  /(?:^|[\s`'"(])~\//m,
+  /\/(?:Users|home)\/[A-Za-z]/,
+  /\bCODEX_HOME\b|\.codex\/|\.claude\//,
+  /\.\.\//,
+];
+
+test('workflow-code-review never reads prompt files from an env var or outside its folder', () => {
+  const files = filesUnder(skillDir);
+  assert.ok(files.some((file) => file.endsWith('review-lens-map.md')));
+  const found = files.flatMap((file) => OUTSIDE_SKILL_READS
+    .filter((pattern) => pattern.test(readFileSync(file, 'utf8')))
+    .map((pattern) => `${relative(skillsRoot, file)}: ${pattern}`));
+  assert.deepEqual(found, []);
+});
+
+test('workflow-code-review bundles every lens the lens map names and nothing else', () => {
+  const references = join(skillDir, 'references');
+  const mapped = new Set(
+    [...readFileSync(join(references, 'review-lens-map.md'), 'utf8').matchAll(/`(lenses\/[A-Za-z0-9_./-]+\.md)`/g)]
+      .map((match) => match[1]),
+  );
+  const bundled = filesUnder(join(references, 'lenses')).map((file) => relative(references, file));
+  assert.ok(bundled.length > 0);
+  assert.deepEqual(bundled.sort(), [...mapped].sort());
+});

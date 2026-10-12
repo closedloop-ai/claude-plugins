@@ -1,6 +1,6 @@
 # Security-Abuse Lane
 
-Read `sections/plan-review-lanes/common.md` first; it defines the shared lane contract, evidence JSONL shape, and verdict semantics.
+Read `lenses/plan-review-lanes/common.md` first; it defines the shared lane contract, evidence JSONL shape, and verdict semantics.
 
 This lane performs a focused AppSec-style plan review of attacker capability, authorization, tenant/user/org isolation, untrusted input, data exposure, injection/path/URL abuse, secret leakage, telemetry/log privacy, denial of service, supply-chain/update risk, and negative/abuse-case tests. This is separate from the adversarial contract review. It must not implement fixes.
 

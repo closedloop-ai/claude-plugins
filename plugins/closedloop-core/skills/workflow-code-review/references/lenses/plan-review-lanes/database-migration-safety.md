@@ -1,6 +1,6 @@
 # Database/Migration Safety Lane
 
-Read `sections/plan-review-lanes/common.md` first; it defines the shared lane contract, evidence JSONL shape, and verdict semantics.
+Read `lenses/plan-review-lanes/common.md` first; it defines the shared lane contract, evidence JSONL shape, and verdict semantics.
 
 This lane reviews whether ORM schema, migrations, raw SQL, constraints, indexes, foreign keys, generated clients/types, backfills, and drift validation are planned safely and in sync. This is separate from executor-readiness, API/Data-Model Ownership, adversarial contract, and security-abuse review. It must not implement fixes. Do not rely on the API/Data-Model Ownership lane as a substitute for database migration safety.
 
@@ -38,12 +38,12 @@ The reviewer must check:
 
 The reviewer must also check whether:
 
-- database/migration-sensitive work includes a Database/Migration Safety decision under `sections/planning-phase.md`, including migration provenance, hand-authored SQL rationale, ORM expected constraint/index/FK names, drift validation, apply/deploy validation, rollback/backfill/idempotency, and downstream validation
+- database/migration-sensitive work includes a Database/Migration Safety decision under `lenses/planning-phase.md`, including migration provenance, hand-authored SQL rationale, ORM expected constraint/index/FK names, drift validation, apply/deploy validation, rollback/backfill/idempotency, and downstream validation
 - ORM-managed schema changes do not use deploy/apply-only validation as the sole proof. The plan must require the repo-supported equivalent of a shadow-database drift check when available, or surface an Open Question/GAP blocker.
-- storage source-of-truth changes are not incorrectly modeled as user/org feature rollouts when user-facing behavior is unchanged (Storage Source-Of-Truth Changes definition in `sections/planning-phase.md`)
+- storage source-of-truth changes are not incorrectly modeled as user/org feature rollouts when user-facing behavior is unchanged (Storage Source-Of-Truth Changes definition in `lenses/planning-phase.md`)
 - feature flags, org toggles, dual writes, shadow writes, and dual reads do not create split-brain ownership without idempotency, reconciliation, rollback, observability, and cleanup criteria
 - backend-only storage migrations prefer explicit cutover/backfill/compatibility plans over customer-visible toggles unless per-org rollout is explicitly required
-- migrations, projection cutovers, compatibility backfills, source-of-truth moves, old/new path coexistence, or batch repairs include a Cutover, Backfill, And Compatibility Matrix (definition in `sections/planning-phase.md`), covering phase ownership, scoped backfill eligibility, complete iteration, retry/idempotency, tombstones, ambiguous matches, mixed-version compatibility, guardrail coverage, and executable cutover tests; fail the plan otherwise
+- migrations, projection cutovers, compatibility backfills, source-of-truth moves, old/new path coexistence, or batch repairs include a Cutover, Backfill, And Compatibility Matrix (definition in `lenses/planning-phase.md`), covering phase ownership, scoped backfill eligibility, complete iteration, retry/idempotency, tombstones, ambiguous matches, mixed-version compatibility, guardrail coverage, and executable cutover tests; fail the plan otherwise
 - migrations that change persisted shapes consumed by routes, projections, tools, clients, or renderers require post-migration smoke or route/projection validation against realistic legacy or migrated data using existing repo infrastructure, or explain why no such infrastructure exists and specify the next-best validation
 - source-of-truth moves, producer transitions, sync/replay cutovers, and compatibility backfills include setup-aware validation commands that can exercise legacy-produced data, newly produced data, duplicate/replayed input, and mixed existing rows against the actual package or database setup required by the repo
 

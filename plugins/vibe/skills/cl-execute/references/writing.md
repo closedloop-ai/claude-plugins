@@ -49,7 +49,7 @@ company-visible.
 - Colons introduce a list or an example, not a mid-sentence turn.
 - No bold-label lists that restate the line, no decorative bold or emoji, and
   sentence-case headings. Straight quotes only.
-- When the repository or `$workflow-code-review` provides a SOUL.md voice card,
-  apply it to first-person text.
+- When the repository provides a SOUL.md voice card, apply it to first-person
+  text.
 
 Reread the text once against this list before posting or returning it.

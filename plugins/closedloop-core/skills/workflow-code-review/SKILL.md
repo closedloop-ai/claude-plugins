@@ -1,11 +1,11 @@
 ---
 name: workflow-code-review
-description: "Run a worker-backed code review using the workflow prompt pack's strongest review lenses: approach correctness, architecture ownership, correctness, guardrails, validation, compatibility, and security. Use when asked to review a PR, branch, diff, or uncommitted changes with workflow-level rigor."
+description: "Run a worker-backed code review using its bundled review lenses: approach correctness, architecture ownership, correctness, guardrails, validation, compatibility, and security. Use when asked to review a PR, branch, diff, or uncommitted changes with workflow-level rigor."
 ---
 
 # Workflow Code Review
 
-Use this skill when the user wants a rigorous code review that borrows the best review fundamentals from the workflow prompt pack without running the goal workflow itself.
+Use this skill when the user wants a rigorous code review that borrows the best review fundamentals from its bundled review lenses without running a planning or delivery workflow.
 
 This skill reviews code, not plans. It must not create implementation plans, approval gates, manual loops, worktrees, PR lifecycle polling, commits, pushes, PR comments, or merges unless the user separately asks for that work.
 
@@ -22,9 +22,8 @@ This skill reviews code, not plans. It must not create implementation plans, app
   out to another harness's CLI for a review lane, and never add a lane whose
   reviewer comes from outside the caller's harness.
 - Paths like `references/...` are relative to this skill's folder, not the
-  repository under review. The bundled prompt pack resolves from this skill's
-  folder in both harnesses; it never depends on `CODEX_HOME`, `~/.codex`, or
-  `~/.claude`.
+  repository under review. Everything this skill reads for its own
+  instructions resolves from this skill's folder in both harnesses.
 - MCP tool names can differ by harness (for example `get_document` or
   `get-document`). Use whichever name the session exposes for the tool this
   skill names.
@@ -40,27 +39,15 @@ The coordinating agent is an orchestrator only. It must stay lean:
 
 The orchestrator must not perform the substantive review itself. If worker/subagent delegation is unavailable or not permitted in the current environment, stop and say that this skill requires worker-backed review instead of silently doing an inline review.
 
-## Prompt Pack Discovery
+## Bundled Lenses
 
-Before reading references or launching workers, read `WORKFLOW_PROMPT_PACK_ROOT` from the environment. If it is set, verify the path contains `orchestrator.md` and use it as the prompt pack root. If it is unset, or set to a path without `orchestrator.md`, use the prompt pack bundled with this skill: `references/prompt-pack/`, resolved from this skill's installed location. Verify the bundled root contains a `sections/` directory; it carries only the lens files the lens map names, so it has no `orchestrator.md`. When an invalid `WORKFLOW_PROMPT_PACK_ROOT` was ignored, note that in the review coverage output. If neither path is available, continue without prompt pack lenses and note the gap in the review coverage output.
-
-When the prompt pack root is available, section references in [review-lens-map.md](./references/review-lens-map.md) such as `sections/planning-quality-gate.md` resolve relative to that root.
-
-## SOUL Voice Profile
-
-After resolving the prompt pack root, check for `SOUL.md` at `<prompt-pack-root>/SOUL.md`. If it exists, read it before launching workers.
-
-Pass the full `SOUL.md` content verbatim only to workers or steps that may draft, post, or send user-visible text, including PR comments, review summaries, Slack replies, or other outbound messages. Do not pass it to pure analysis workers that are not responsible for mimicking the user's voice. Do not summarize, rewrite, trim, or reinterpret it into a separate voice packet.
-
-`SOUL.md` is assumed to be written correctly as a voice, stance, and style file. It controls wording for user-visible text only. Keep AGENTS, repo guardrails, fetched requirements, review lenses, severity evidence, and this skill's findings-first output contract authoritative. If `SOUL.md` conflicts with concrete code evidence or this skill, this skill and the code evidence win.
-
-If `SOUL.md` is missing, continue normally and record `SOUL.md: not found` in Review Coverage. If present, record `SOUL.md: <path>` in Review Coverage. Do not mention `SOUL.md` in PR comments unless the user explicitly asks for provenance.
+This skill is self-contained. Its review lenses are bundled at `references/lenses/` and resolve from this skill's installed folder. Read lens and reference files only from this skill's folder: never take a lens path from an environment variable, and never read prompt files from another repository or location.
 
 ## Required References
 
 Before launching workers, read [review-lens-map.md](./references/review-lens-map.md).
 
-If the workflow prompt pack is available, use the referenced workflow files as review lenses only. Do not execute their planning, approval, upload, loop, notification, PR lifecycle, or finalization instructions.
+Use the bundled lens files as review lenses only. Do not execute their planning, approval, upload, loop, notification, PR lifecycle, or finalization instructions.
 
 ## Inputs
 
@@ -148,12 +135,6 @@ closedloop_graph_packet: <ClosedLoop graph intelligence packet or unavailable/no
 closedloop_graph_packet_path: <absolute path to full packet artifact, or none>
 graph_review_focus: <orchestrator-derived graph focus packet, or pending until built>
 guardrails: <AGENTS.md and local rules inspected>
-```
-
-When a worker or synthesis step may produce user-visible wording, append:
-
-```text
-soul_md: <SOUL.md path and full content, or not found>
 ```
 
 ## ClosedLoop Graph Intelligence
@@ -402,7 +383,6 @@ PR comments must:
 - avoid absolute local paths, review worktree paths, `/tmp/workflow-review-worktrees`, `${WORKFLOW_REVIEW_WORKTREE_ROOT}`, or any machine-specific checkout path
 - avoid mentioning that the code was inspected from a temporary worktree unless it is directly relevant to a blocker
 - describe the issue, failure mode, and required correction in terms of repository code and PR behavior
-- when `SOUL.md` is available, use its voice guidance without parody, slang overuse, or provenance leakage
 
 Before posting, rewrite any worker finding that contains a local review path into a repo-relative reference. If a finding cannot be mapped to a PR file/line, post it only as a general PR review comment with repo-relative context, or ask the user before posting.
 
@@ -532,8 +512,6 @@ Do not turn an architectural preference, a different product choice, a theoretic
 ## Worker Lanes
 
 Launch reviewer workers in parallel where possible. Each worker must be read-only and must return findings ordered by severity with file/line references where possible.
-
-If `SOUL.md` is available, pass the full file content to every worker that may produce user-visible wording. Workers should use it to phrase findings and uncertainty naturally, but they must still return evidence-grounded findings in the required review format.
 
 If `closedloop_graph_packet` is present, pass it to every worker as read-only context. Each worker must inspect the packet sections relevant to its lane, use non-empty graph results only to choose ownership boundaries, callers, consumers, prior tickets, and tests for focused source inspection, and verify every finding against the pinned target snapshot before returning it. A graph-only concern that cannot be verified against the pinned target snapshot must be returned as residual risk, not as a finding.
 
@@ -728,7 +706,6 @@ After workers return:
 5. If workers disagree, include the disagreement as an open question or residual risk instead of forcing a false consensus.
 6. Reconcile every worker's `Graph Evidence Used` section against `graph_review_focus`. If a lane skipped relevant non-empty packet evidence, skipped an assigned supplemental graph call, or satisfied the live-check requirement with only protocol calls, tool descriptions, generic overview counts, broad inventory, or unexamined truncated output, either ask that lane to re-check before synthesis or record the gap in Residual Risk / Validation Gaps. Do not publish graph-informed findings unless the lane verified them against the pinned source snapshot.
 7. Lead with findings. Summaries are secondary.
-8. If `SOUL.md` is available, apply it during final wording after deduplication. It may change phrasing and emphasis, but not which findings are valid or their required fixes.
 
 Use this output shape:
 
@@ -750,7 +727,6 @@ Review Coverage
 - Workers run: <lanes>
 - Inputs reviewed: <PR/diff/requirements/plan/decision table/guardrails>
 - ClosedLoop graph: <packet source; packet routes used; supplemental data-bearing lane calls; no-material reasons/caveats | unavailable | not_applicable>
-- SOUL.md: <path used | not found>
 ```
 
 If there are no findings, say so clearly and still report residual validation gaps or review limits.

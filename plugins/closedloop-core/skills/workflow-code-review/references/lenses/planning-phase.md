@@ -33,12 +33,7 @@ Each planning subagent must:
     - any true product/security/architecture decision that cannot be resolved from repo context
 17. Include the Principal Design Synthesis in the plan's `Architecture Fit` section. If the template does not have a dedicated subsection, add it inside `Architecture Fit`; do not put it only in freeform notes outside the template.
 18. If the Principal Design Synthesis cannot choose an approach from the work item and repo context, put the ambiguity in Open Questions or Gaps and treat it as a blocker. Do not let the execution agent choose the approach.
-19. Create an implementation plan using exactly:
-
-    ```text
-    ${WORKFLOW_PLAN_TEMPLATE_PATH}
-    ```
-
+19. Create an implementation plan using exactly the configured plan template.
     Do not use freeform planning prose instead of that template.
 
 20. The plan must be clear on which repository each phase targets and must organize the work in logical execution order.
@@ -63,7 +58,6 @@ Each planning subagent must:
 33. Include a User-Visible State Matrix decision when the work changes user-visible state, status, lifecycle, readiness, progress, badge/label text, enabled/disabled capability, notification, error, stale/refresh behavior, or rendered output derived from multiple sources. Use the definition below.
 34. Include a Manual Testing Debt Classification decision when the plan expects or preserves manual validation, live-provider checks, staging-only checks, reviewer-permission checks, webhook replay, real OAuth/user identity checks, unavailable upstream behavior, or any validation the worker might otherwise describe as manual testing. Use the definition below.
 35. Include a Database/Migration Safety decision when the work changes persisted models, ORM schema, migration files, raw SQL, indexes, constraints, foreign keys, unique constraints, backfills, generated database clients/types, or data consumed by persisted projections. Use the definition below.
-36. Before returning, evaluate whether planning or plan revision revealed stable, source-backed architecture patterns, repo relationships, contract ownership rules, runtime handoff paths, or validation conventions that are likely to help future goals. If yes, write short candidate notes under `${WORKFLOW_MEMORY_ROOT}/candidates/` using the format in `sections/lightweight-knowledge-capture.md`. If no, return `candidate_knowledge_notes: none` with a short reason. Do not write candidate notes for ordinary planning status, PRD-specific decisions, transient issues, unverified assumptions, or facts that should become repo-local `AGENTS.md` rules instead.
 
 ## Feature Flag Applicability
 
@@ -534,6 +528,5 @@ Return to the orchestrator:
 - the Grounding Manifest itself, inside the returned draft plan content or local draft path, so the orchestrator can run `plan-grounding verify` against the returned draft before review lanes launch
 - PR Size Budget summary and a machine-readable `pr_size_estimate` object with `status`, `threshold_changed_lines`, `estimated_changed_lines` or `line_items`, `max_estimated_pr_changed_lines`, `requires_decomposition`, and `summary`
 - if oversized, a decomposition recommendation with child scopes, estimated changed lines, and dependency ordering; do not ask for normal plan approval until the orchestrator records the user's split/execute-as-is decision
-- candidate_knowledge_notes with paths and summaries, or `candidate_knowledge_notes: none` with a short reason
 
 The Principal Design Synthesis, cross-repo impact, contract ownership, E2E/user-flow applicability, and real-boundary coverage analyses belong in the plan document sections, where review lanes read them; do not duplicate them as narrative summaries in the return packet.
