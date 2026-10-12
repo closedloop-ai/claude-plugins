@@ -67,7 +67,6 @@ Owner: <task/session id, generation, lease id, and lease token hash | standalone
 Callback: <Desktop callback result | CL_SWEEP_EVENT v1 event id/status>
 Support lanes: <planning/review/visual request ids and artifact hashes | not_applicable>
 Review generations: <review_generation_1 id, review_generation_2 id | not_started>
-Cross-family review: <per generation: reviewer CLI/version/model, result path and SHA-256, finding counts per triage category, cross-family consensus findings | unavailable: exact command, exit code, and error, plus same-family fallback lane id | not_started>
 Per-ticket result: <slug -> status, plan, requirements/acceptance evidence>
 Status: <MERGED | PR_MONITORING_HANDOFF | BLOCKED_BEFORE_START | BLOCKED_AFTER_START | WAITING_UI_PLAN_APPROVAL | WAITING_MANUAL_QA | WAITING_CI | WAITING_REVIEW | WAITING_HUMAN_MERGE | CI_FAILED_NEEDS_HUMAN | REVIEW_BLOCKED | MANUAL_INTERVENTION_REQUIRED>
 Feature status: <per-ticket ClosedLoop statuses>
@@ -94,7 +93,7 @@ Repo verification evidence: <before/after artifact paths captured with the repo-
 Correction events: <artifact ref for emitted correction events | none | no repo intake declared>
 Plan lint: <check-plan.mjs command and exit status at the last plan upload or revision | not_applicable before planning>
 Decision log: <private log path, SHA-256, and row count | not_applicable - reason>
-Attention: <none | up to five items Daniel should check first, each with its evidence pointer: decision-log flags from `review_generation_2`'s cross-family lane (reviewed by <reviewer model>, or unavailable), lone security or correctness findings rejected, same-family fallbacks, manual-QA carry-forwards, scope exclusions, and translated or inconclusive evidence>
+Attention: <none | up to five items Daniel should check first, each with its evidence pointer: decision-log flags from `review_generation_2`'s Guardrail / Validation lane, lone security or correctness findings rejected, manual-QA carry-forwards, scope exclusions, and translated or inconclusive evidence>
 Process feedback: <none | one line per item: cl-* skill file and section; the observed failure with an evidence pointer; the proposed one-line change>
 External docs: <not_applicable | official docs URLs/date/version and facts used | blocked/unknown reason>
 UI work: <YES | NO | UNKNOWN>

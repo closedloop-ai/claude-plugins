@@ -56,7 +56,7 @@ Prioritize by frequency times cost. Combine small items into one unit; split onl
 
 ### 5. Review your own plan
 
-Before presenting, hand the plan and the notes to a fresh reviewer with no authoring context (a subagent, a separate session, or a second model family if the harness offers one), with read access to the analyzed repo so it checks each claim against the code, and ask it to attack the plan: unproven findings, weaker rungs than necessary, missing deletions, units too large to review, anything repo-specific that is wrong. Apply the valid findings. Report what changed in the hand-back message, not in the plan.
+Before presenting, hand the plan and the notes to a fresh reviewer with no authoring context (a same-family subagent or a separate session in the same harness, never another harness's CLI), with read access to the analyzed repo so it checks each claim against the code, and ask it to attack the plan: unproven findings, weaker rungs than necessary, missing deletions, units too large to review, anything repo-specific that is wrong. Apply the valid findings. Report what changed in the hand-back message, not in the plan.
 
 ### 6. Hand back
 

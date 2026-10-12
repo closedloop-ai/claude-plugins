@@ -4,6 +4,28 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.2.2
+
+#### Fixed
+- `workflow-code-review` states that reviewer workers are always the same model family as the caller (Codex reviewers under Codex, Claude Code reviewers under Claude Code) and never run through another harness's CLI.
+- `repo-hardening` no longer recommends a reviewer from a second model family. Its delegation guide and plan self-review use fresh same-family subagents.
+
+#### Added
+- Contract test that fails when any `closedloop-core` skill asks for a reviewer from another model family, or when `workflow-code-review` launches a reviewer through `codex exec` or `claude -p`.
+
+### vibe v1.0.11
+
+#### Fixed
+- `cl-execute` reviews with the worker's own model family only. Each of the two coordinated review generations is the default `workflow-code-review` lane set with no extra lane, and the cross-family lane, its `Cross-family review` result field, and its same-family fallback are gone. Plan review runs at most two same-family rounds, and the one-way-door "design it twice" step gets its second approach from a fresh same-family sub-agent.
+- The reviewer questions (root cause or symptom, reverted-test failure, rerun or crash halfway, structural serialization, real artifact or proxy) now ride on every lane's packet, and the second generation's decision-log audit moves to the Guardrail / Validation lane.
+- Support-lane model names are documented as Codex models for a Codex worker; a Claude Code worker uses its own sub-agents instead of routing through Codex.
+
+#### Removed
+- `cl-execute/references/cross-family-review.md`.
+
+#### Added
+- Contract tests that fail when any `vibe` skill asks for a reviewer from another model family or when `cl-execute` runs `codex exec` or `claude -p`, and that pin the same-family rule, the two review generations, and the two-round plan-review cap.
+
 ### closedloop-core v1.2.1
 
 #### Fixed

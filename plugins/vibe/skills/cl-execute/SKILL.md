@@ -55,9 +55,6 @@ Read only the references relevant to the current phase:
 - Source implementation, validation, review, review-learning persistence,
   per-branch push gates, PR creation, or PR comment handling:
   [references/implementation-review-pr.md](references/implementation-review-pr.md).
-- The cross-family lane in each coordinated review generation (verified CLI
-  commands, sandbox limits, fallback, reviewer prompt):
-  [references/cross-family-review.md](references/cross-family-review.md).
 - Post-PR author manual-QA plan comments, guided session evidence, head-change
   invalidation, or functional-readiness gating:
   [references/feature-manual-qa.md](references/feature-manual-qa.md).
@@ -156,12 +153,12 @@ hardcode a personal name for the engineering attention contact.
   `$workflow-code-review` lane set concurrently in one fan-out. The generic
   two-support-lane cap does not apply to these read-only review cohorts; do not
   serialize, batch, or throttle their lanes when concurrency slots are
-  available. The same fan-out includes one read-only cross-family lane from
-  [references/cross-family-review.md](references/cross-family-review.md): a
-  Codex worker gets a Claude Code reviewer and a Claude Code worker gets a
-  Codex reviewer. When that CLI cannot run, use its documented same-family
-  fallback and record `Cross-family review: unavailable`; never skip it
-  silently.
+  available. Those lanes are the whole review; there is no extra lane.
+- Reviewers are always the same model family as the worker: a Codex worker
+  uses Codex reviewers and a Claude Code worker uses Claude Code reviewers, for
+  code review generations and plan review alike. Never shell out to another
+  harness's CLI for a review, and never require or wait on a reviewer from
+  outside the worker's own harness.
 - Between the two review generations, run only the fast compile/static/focused-
   unit checks needed to keep the remediated snapshot reviewable. Defer broad,
   containerized, browser, Electron, and full-suite validation until all valid

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import test from 'node:test';
 
 const skills = resolve(import.meta.dirname, '../..');
@@ -10,7 +10,6 @@ const readExecuteContract = () => [
   'cl-execute/references/planning-and-gates.md',
   'cl-execute/references/support-lanes-and-sweeps.md',
   'cl-execute/references/implementation-review-pr.md',
-  'cl-execute/references/cross-family-review.md',
   'cl-execute/references/monitoring-merge-completion.md',
   'cl-execute/references/result-formats.md',
 ].map(read).join('\n');
@@ -544,57 +543,63 @@ test('UI and behavior tickets must carry real control verification evidence', ()
   assert.match(packets, /`not_applicable` is\s+accepted only when it names docs-only, tests-only, CI\/config-only/);
 });
 
-test('cl-execute adds one read-only cross-family lane inside each review generation', () => {
+// Every non-test file under a directory, so new references are covered without editing a list.
+const filesUnder = (dir) => readdirSync(resolve(skills, dir), { recursive: true, withFileTypes: true })
+  .filter((entry) => entry.isFile() && !/\.test\.[cm]?js$/.test(entry.name))
+  .map((entry) => relative(skills, join(entry.parentPath, entry.name)));
+// Reviewers are the same model family as the worker. These phrases only appear when text asks
+// for a reviewer from the other family.
+const OTHER_FAMILY_REVIEWER = /\b(?:cross|other|opposite)[- ]family\b|\b(?:second|different|other|another) model famil(?:y|ies)\b/i;
+// A Claude Code reviewer launched from Codex, or a Codex reviewer launched from Claude Code.
+const OTHER_HARNESS_CLI = /\bcodex\s+(?:exec|e)\b|\bclaude\s+(?:-p|--print)\b/;
+
+test('no vibe skill asks for a reviewer from the other model family', () => {
+  const markdown = filesUnder('.').filter((path) => path.endsWith('.md'));
+  assert.ok(markdown.length > 20, 'skill markdown discovery found too few files');
+  assert.deepEqual(markdown.filter((path) => OTHER_FAMILY_REVIEWER.test(read(path))), []);
+});
+
+test('cl-execute review and planning paths never run the other harness CLI', () => {
+  const files = filesUnder('cl-execute');
+  assert.ok(files.includes('cl-execute/SKILL.md'));
+  assert.deepEqual(files.filter((path) => OTHER_HARNESS_CLI.test(read(path))), []);
+});
+
+test('cl-execute reviews with same-family lanes inside exactly two generations', () => {
   const execute = readExecuteContract();
   const skill = read('cl-execute/SKILL.md');
   const review = read('cl-execute/references/implementation-review-pr.md');
   const lanes = read('cl-execute/references/support-lanes-and-sweeps.md');
+  const gates = read('cl-execute/references/planning-and-gates.md');
   const formats = read('cl-execute/references/result-formats.md');
-  const crossFamily = read('cl-execute/references/cross-family-review.md');
 
-  // One lane inside the existing two generations, never an extra generation.
+  // The rule, stated where workers read it.
+  for (const source of [skill, review]) {
+    assert.match(source, /Reviewers are always the same model family as the\s+worker/);
+    assert.match(source, /Never shell out to another\s+harness's CLI for a review/);
+  }
+  assert.match(lanes, /Every review lane is a same-family sub-agent/);
+  assert.match(gates, /same-family\s+reviewer with a fresh context/);
+  assert.match(gates, /Design it twice[\s\S]{0,200}read-only same-family sub-agent with a fresh context/);
+
+  // Two generations of the default lane set, never a third; at most two plan-review rounds.
   assert.match(execute, /Run exactly two coordinated `\$workflow-code-review` generations/);
-  assert.match(review, /In the same fan-out, launch one\s+read-only cross-family lane/);
-  assert.match(review, /The lane is part of\s+that generation, not an extra one/);
-  assert.match(crossFamily, /It is not a generation of its own/);
-  assert.match(crossFamily, /never let the fallback add a generation/);
-  assert.match(skill, /Codex worker gets a Claude Code reviewer and a Claude Code worker gets a\s+Codex reviewer/);
-  assert.match(review, /a Codex worker gets a Claude Code\s+reviewer and a Claude Code worker gets a Codex reviewer/);
-  assert.match(lanes, /cross-family lane is the one review lane that runs as an other-family\s+CLI process/);
+  assert.match(review, /launch the skill's full default\s+seven-lane reviewer cohort concurrently in one fan-out/);
+  assert.match(review, /Never rerun, replace, restart, or add a third coordinated review pass/);
+  assert.match(gates, /at most two independent plan-review rounds/);
+  assert.match(gates, /Never start a third\s+plan-review round/);
 
-  // Same packet as the other lanes, fresh session, read-only reviewer.
-  assert.match(review, /same packet as the\s+other lanes \(ticket intent, diff, rubric\)/);
-  assert.match(crossFamily, /same inputs as the other lanes of its generation/);
-  assert.match(crossFamily, /never the ticket worktree/);
-  assert.match(crossFamily, /The\s+reviewer never edits code/);
+  // The gen-2 decision-log audit rides on an existing lane (M10 pins the shared packet questions).
+  assert.match(review, /In `review_generation_2` only, also give\s+the Guardrail \/ Validation lane the ticket's private decision log/);
+  assert.match(review, /flag rows whose decision\s+rests on weak or absent evidence/);
+  assert.match(review, /This adds a question to an\s+existing lane; it adds no lane and no generation/);
 
-  // Verified read-only commands for both directions.
-  assert.match(crossFamily, /claude -p --safe-mode --restricted/);
-  assert.match(crossFamily, /--tools "Read,Grep,Glob"/);
-  assert.match(crossFamily, /--disallowedTools "Bash,Edit,Write,NotebookEdit"/);
-  assert.match(crossFamily, /--permission-mode dontAsk --strict-mcp-config/);
-  assert.match(crossFamily, /--output-format json/);
-  assert.match(crossFamily, /codex exec --ignore-user-config --ignore-rules --ephemeral/);
-  assert.match(crossFamily, /--sandbox read-only/);
-  assert.match(crossFamily, /--disable apps/);
-  assert.match(crossFamily, /-C "\$REVIEW_WORKTREE" -o "\$PACKET_DIR\/codex-review\.md"/);
-  assert.match(crossFamily, /- < "\$PACKET_DIR\/prompt\.md"/);
-  assert.doesNotMatch(crossFamily, /--dangerously|--allow-dangerously|bypassPermissions|acceptEdits/);
-
-  // Sandbox caveat and an explicit, never-silent fallback.
-  assert.match(crossFamily, /`"is_error": true` and the result\s+text `Not logged in`/);
-  assert.match(crossFamily, /Do not loosen any read-only\s+flag/);
-  assert.match(crossFamily, /Record `Cross-family review: unavailable` with the exact command/);
-  assert.match(crossFamily, /Never skip the lane silently, never report a same-family fallback as\s+cross-family/);
-  assert.match(skill, /never skip it\s+silently/);
-
-  // Triage reuses cl-execute's categories and weights cross-family consensus.
+  // Triage keeps cl-execute's four categories and no family weighting.
   assert.match(review, /actionable:[\s\S]{0,300}valid non-blocking improvement:[\s\S]{0,300}non-actionable:[\s\S]{0,300}rejected:/);
   assert.match(review, /Reject\s+incompatible findings with concrete requirement evidence/);
-  assert.match(crossFamily, /use the cl-execute names, not a second label set/);
-  assert.match(review, /cross-family lane and at least one\s+same-family lane carries the most weight/);
-  assert.match(formats, /Cross-family review: <per generation/);
-  assert.match(formats, /unavailable: exact command, exit code, and error, plus same-family fallback lane id/);
+  assert.match(review, /A finding raised independently by two or more lanes carries the most weight/);
+  assert.doesNotMatch(formats, /^Cross-family review:/m);
+  assert.match(formats, /decision-log flags from `review_generation_2`'s Guardrail \/ Validation lane/);
 });
 
 test('cl-sweep stays out of how cl-execute works and reviews', () => {
@@ -789,7 +794,6 @@ test('the sweep packet points at the performance contract instead of restating i
 
 test('a private append-only decision log replaces milestone narration', () => {
   const implementation = read('cl-execute/references/implementation-review-pr.md');
-  const crossFamily = read('cl-execute/references/cross-family-review.md');
   const formats = read('cl-execute/references/result-formats.md');
   const gates = read('cl-execute/references/planning-and-gates.md');
   assert.doesNotMatch(implementation, /Record milestones or approach changes in the plan, PR, feature status/);
@@ -800,9 +804,7 @@ test('a private append-only decision log replaces milestone narration', () => {
   assert.match(implementation, /mode-0600 evidence artifacts[\s\S]{0,200}never in\s+the repository/);
   assert.match(implementation, /reads\s+the log's last rows first, then appends a `start` row/);
   assert.match(gates, /Start the ticket's private decision log/);
-  assert.match(crossFamily, /In `review_generation_2` only, also copy the ticket's private decision log/);
-  assert.match(crossFamily, /flags decisions logged with weak or absent evidence/);
-  assert.match(crossFamily, /it adds no lane and no generation/);
+  assert.match(implementation, /In `review_generation_2` only, also give\s+the Guardrail \/ Validation lane the ticket's private decision log/);
   assert.match(formats, /^Decision log: <private log path, SHA-256, and row count \| not_applicable - reason>/m);
   assert.match(formats, /^Attention: <none \| up to five items Daniel should check first/m);
 });
@@ -857,7 +859,7 @@ test('the PR body is a briefing and links run records instead of pasting them', 
   const implementation = read('cl-execute/references/implementation-review-pr.md');
   const gates = read('cl-execute/references/planning-and-gates.md');
   assert.match(implementation, /Keep the template's structure and fill it\s+as a briefing/);
-  assert.match(implementation, /Keep review-generation details, lane\s+and cross-family recitals, full SHAs, sample tables, and step-by-step logs\s+in the plan or `CL Execute Result`/);
+  assert.match(implementation, /Keep review-generation details, lane\s+recitals, full SHAs, sample tables, and step-by-step logs\s+in the plan or `CL Execute Result`/);
   assert.match(implementation, /The PR body gets at\s+most one first-person line linking them/);
   assert.match(gates, /The PR body carries a summary line/);
 });
@@ -991,7 +993,6 @@ test('medium additions: safety fact, one-way doors, codemods, refactors, lanes, 
   const gates = read('cl-execute/references/planning-and-gates.md');
   const implementation = read('cl-execute/references/implementation-review-pr.md');
   const lanes = read('cl-execute/references/support-lanes-and-sweeps.md');
-  const crossFamily = read('cl-execute/references/cross-family-review.md');
   const formats = read('cl-execute/references/result-formats.md');
   // M5
   assert.match(gates, /prove it against the version the lockfile pins,\s+including any local patch/);
@@ -1003,7 +1004,7 @@ test('medium additions: safety fact, one-way doors, codemods, refactors, lanes, 
   assert.match(gates, /13\. Name the shape before the tasks/);
   assert.match(gates, /never turn the alternative into a\s+question for the operator/);
   assert.match(gates, /14\. One-way-door plans/);
-  assert.match(gates, /Design it twice[\s\S]{0,200}read-only command in\s+\[cross-family-review\.md\]/);
+  assert.match(gates, /Design it twice[\s\S]{0,200}read-only same-family sub-agent/);
   assert.match(gates, /This is\s+planning, not a review generation/);
   assert.match(gates, /shallow module[\s\S]{0,300}information leakage[\s\S]{0,300}temporal decomposition[\s\S]{0,300}pass-through methods/);
   assert.match(gates, /Order the phases riskiest unknown first/);
@@ -1020,9 +1021,9 @@ test('medium additions: safety fact, one-way doors, codemods, refactors, lanes, 
   assert.match(lanes, /Consolidation is verification, not relay/);
   assert.match(lanes, /never paste lane\s+prose as evidence/);
   // M10
-  assert.match(crossFamily, /what happens if this runs twice or crashes halfway/);
-  assert.match(crossFamily, /serialized by structure \(locks, ownership, ordering\) or by a\s+convention/);
-  assert.match(crossFamily, /real artifact or a proxy/);
+  assert.match(implementation, /what happens if\s+this runs twice or crashes halfway/);
+  assert.match(implementation, /serialized by structure\s+\(locks, ownership, ordering\) or by a convention/);
+  assert.match(implementation, /real artifact or a proxy/);
   // M11
   assert.match(gates, /Generate hypotheses from what the baseline shows, not from habit/);
   assert.match(gates, /name what\s+invalidates the cache before claiming the win/);

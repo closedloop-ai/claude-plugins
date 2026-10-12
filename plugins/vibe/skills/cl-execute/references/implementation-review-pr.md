@@ -136,8 +136,7 @@ on leaving implementation using the [display reporter](../../cl-sweep/references
     `"<cl-execute-skill-dir>/scripts/decision-log.sh" <log> <phase> <decision> <why> <evidence> <result>`,
     resolving `<cl-execute-skill-dir>` from this installed skill pack.
     Log decisions, not actions: a fork chosen, a pivot or revert and what
-    triggered it, a rejected lone review finding, a same-family fallback, a
-    scope exclusion, a blocker, and each verification verdict (VERIFIED, NOT
+    triggered it, a rejected lone review finding, a scope exclusion, a blocker, and each verification verdict (VERIFIED, NOT
     VERIFIED, or INCONCLUSIVE). Evidence is a pointer (commit SHA, `file:line`,
     artifact path and SHA-256, command), never prose. A wrong row is superseded
     by a new row; never edit or delete one. Keep the log with the ticket's other
@@ -279,12 +278,20 @@ After implementation is complete and before opening or finalizing a PR:
    the two immutable review attempts as `review_generation_1` and
    `review_generation_2`. For each generation, launch the skill's full default
    seven-lane reviewer cohort concurrently in one fan-out; the ordinary
-   two-support-lane cap does not apply. In the same fan-out, launch one
-   read-only cross-family lane from
-   [cross-family-review.md](cross-family-review.md) with the same packet as the
-   other lanes (ticket intent, diff, rubric): a Codex worker gets a Claude Code
-   reviewer and a Claude Code worker gets a Codex reviewer. The lane is part of
-   that generation, not an extra one.
+   two-support-lane cap does not apply. Those lanes are the whole generation;
+   add no other lane. Reviewers are always the same model family as the
+   worker: a Codex worker launches Codex sub-agents and a Claude Code worker
+   launches Claude Code sub-agents, each read-only with a fresh context and no
+   author transcript. Never shell out to another harness's CLI for a review.
+   Every lane's packet carries the ticket intent (ticket, acceptance criteria,
+   applicable PRD requirement IDs), the pinned target with base and head SHAs
+   and the diff artifact, the guardrails the worker found, and these questions
+   on top of the lane's own lens: does the change fix the root cause or hide a
+   symptom, would the tests fail if the change were reverted, what happens if
+   this runs twice or crashes halfway, is shared state serialized by structure
+   (locks, ownership, ordering) or by a convention someone must remember, and
+   do the code and tests check the real artifact or a proxy such as a cached
+   value, a file mtime, or a self-report.
 2. First pass: check every finding against the ticket and applicable approved
    PRDs, triage it under step 6, then fix every actionable, contract-compatible
    finding. For each actionable correctness or behavior finding, fix the same
@@ -305,16 +312,22 @@ After implementation is complete and before opening or finalizing a PR:
 4. Second pass: review the remediated tree, not the original diff. Give
    `review_generation_2` the same packet plus a one-line list of the defect
    classes accepted in generation 1, so its lanes check for recurrences and
-   for sites the first fixes missed. Check every second-pass finding against
-   the ticket and approved PRDs, triage it under step 6, then fix every
-   actionable, contract-compatible finding, at every site as in step 2.
+   for sites the first fixes missed. In `review_generation_2` only, also give
+   the Guardrail / Validation lane the ticket's private decision log
+   (Execution step 12) with its SHA-256, and ask it to flag rows whose decision
+   rests on weak or absent evidence, verification claimed without proof, and
+   forks that look risky in hindsight, citing each row's timestamp. Report
+   those flags in the `Attention` result field. This adds a question to an
+   existing lane; it adds no lane and no generation. Check every second-pass
+   finding against the ticket and approved PRDs, triage it under step 6, then
+   fix every actionable, contract-compatible finding, at every site as in
+   step 2.
 5. Revalidate second-pass fixes with focused tests/static checks, then run the
    comprehensive ticket validation once on the final remediated tree, including
    required headless browser and displayless Electron E2E. Broaden or repeat a
    completed check only when a later fix expands its touched surface or
    invalidates that evidence.
-6. Triage every finding of a generation, the cross-family lane's included,
-   into exactly one category below. Triage on substance, not on the lane's
+6. Triage every finding of a generation into exactly one category below. Triage on substance, not on the lane's
    label; a defect a lane reported as a note, nit, or low severity is still a
    finding.
    - actionable: contract-compatible and proves an in-scope defect; fix it in
@@ -326,19 +339,17 @@ After implementation is complete and before opening or finalizing a PR:
    - rejected: invalid or incompatible with the ticket or PRDs. Reject
      incompatible findings with concrete requirement evidence; route true
      product ambiguity through the normal product decision path.
-   A finding raised independently by the cross-family lane and at least one
-   same-family lane carries the most weight: treat it as actionable unless
-   concrete code or requirement evidence disproves it. Trace a lone finding
-   from either family before rejecting it, especially a security or
-   correctness finding.
+   A finding raised independently by two or more lanes carries the most weight:
+   treat it as actionable unless concrete code or requirement evidence
+   disproves it. Trace a lone finding before rejecting it, especially a
+   security or correctness finding.
 7. Never rerun, replace, restart, or add a third coordinated review pass or
    review lane for the same PR after the second pass completes, including after
    later fixes, rebases, or head changes. Prove later fixes with focused tests
    and normal validation.
 8. Never manually trigger or retrigger GitHub CI or automated review. The
    two-pass sequence is author-side review work, not a GitHub review trigger.
-9. Record both review outcomes and fixes in the plan or result, including the
-   `Cross-family review` result field for each generation. The PR body gets at
+9. Record both review outcomes and fixes in the plan or result. The PR body gets at
    most one first-person line linking them.
 
 ## Review Learning Persistence
@@ -459,7 +470,7 @@ Record the assumption and its evidence in the decision log and under
    as a briefing for a reviewer who has the diff: why the change exists, the
    scope boundary where it matters, the blast radius, and each real
    verification path with its outcome. Keep review-generation details, lane
-   and cross-family recitals, full SHAs, sample tables, and step-by-step logs
+   recitals, full SHAs, sample tables, and step-by-step logs
    in the plan or `CL Execute Result`, and link them instead of pasting them
    into the PR body. When the repository keeps a feature map that feature PRs
    must not edit (in `symphony-alpha`, `.claude/skills/control/FEATURE_MAP.md`),

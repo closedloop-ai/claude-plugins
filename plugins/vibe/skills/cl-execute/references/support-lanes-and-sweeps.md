@@ -50,16 +50,13 @@ inspection, and status/check lanes.
 - Use at most two concurrent lanes per ticket and gate for ordinary support
   work. This cap explicitly excludes a coordinated `$workflow-code-review`
   generation: launch its full default seven-lane cohort concurrently in one
-  fan-out, including lanes that may return `NOT_APPLICABLE`, plus the one
-  cross-family lane. Do not serialize, batch, or throttle review lanes to two
-  when concurrency slots are available.
-- Never duplicate a lens. The cross-family lane is not a duplicate lens: it
-  adds a second model family, not a second copy of one lens.
-- The cross-family lane is the one review lane that runs as an other-family
-  CLI process instead of `spawn_agent`. It follows the same no-delegation,
-  no-secrets, no-mutation, artifact, and hashing rules below, and its fresh CLI
-  session stands in for `fork_turns: "none"`. Commands and fallback live in
-  [cross-family-review.md](cross-family-review.md).
+  fan-out, including lanes that may return `NOT_APPLICABLE`. Do not
+  serialize, batch, or throttle review lanes to two when concurrency slots are
+  available.
+- Never duplicate a lens, and add no lane beyond that cohort.
+- Every review lane is a same-family sub-agent: a Codex worker uses
+  `spawn_agent` and a Claude Code worker uses its own Agent (Task) tool. Never
+  shell out to another harness's CLI for a review lane.
 - Resume only from validated `SUPPORT_RESULT` evidence with matching request id,
   generation, artifact hash, and requirements contract.
 - Multiple internal code-review lenses within a pass remain one coordinated
@@ -93,7 +90,10 @@ bounded, deterministic lower-risk support role may it use
 `model: "gpt-6-luna"` with `low` for deterministic inventory, artifact
 parsing, hashing, or status mechanics. Luna returns evidence only; it never
 owns orchestration, ticket work, coding/planning, final judgment, or mutation.
-These are explicit role/model choices, not fallback models.
+These are explicit role/model choices, not fallback models. The model names
+here are Codex models for a Codex worker. A Claude Code worker launches the
+same lanes as its own sub-agents on Claude models and never routes a lane
+through Codex to reach one of these models.
 Model or effort selection alone is not a token-savings claim.
 
 ## Cost-Bounded Evidence

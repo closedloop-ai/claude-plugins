@@ -339,12 +339,12 @@ through the [Discovery Routes](../SKILL.md#discovery-routes).
 14. One-way-door plans (Proposal Contract Audit `REQUIRED`, a new shared module
     or ownership boundary, or `High-complexity execution override: APPROVED`)
     get more design before drafting:
-    - Design it twice. Get a second, structurally different approach from the
-      other model family with the read-only command in
-      [cross-family-review.md](cross-family-review.md), run from a detached
-      scratch worktree at the base commit, with a design prompt that carries
-      the ticket intent and your grounding but not your approach. This is
-      planning, not a review generation.
+    - Design it twice. Get a second, structurally different approach from a
+      read-only same-family sub-agent with a fresh context (on Codex,
+      `spawn_agent` with `fork_turns: "none"`; on Claude Code, its own Agent
+      tool), working in a detached scratch worktree at the base commit, with a
+      design prompt that carries the ticket intent and your grounding but not
+      your approach. This is planning, not a review generation.
     - Screen both approaches for four red flags: a shallow module (callers
       coordinate several calls for one operation), information leakage (one
       internal decision repeated across modules), temporal decomposition
@@ -405,8 +405,13 @@ through the [Discovery Routes](../SKILL.md#discovery-routes).
     reviewer no longer checks these mechanically and judges substance: whether
     the diagrams explain the scope, the approach is sound, and the evidence
     holds.
-20. Run independent plan review, fix actionable findings, and re-upload/revise
-    as needed. Never edit skill files from a ticket worker. When a cl-* skill
+20. Run at most two independent plan-review rounds. Each round uses a
+    read-only same-family reviewer with a fresh context: a Codex worker uses a
+    Codex sub-agent and a Claude Code worker uses a Claude Code sub-agent;
+    never call another harness's CLI for plan review. Fix actionable findings
+    after each round and re-upload/revise as needed. Never start a third
+    plan-review round; prove fixes after the second round with
+    `check-plan.mjs` and your own re-read. Never edit skill files from a ticket worker. When a cl-* skill
     instruction was missing, wrong, contradictory, or did not fire when it
     should have, record it in the result's `Process feedback` field: the skill
     file and section, the observed failure with an evidence pointer, and the

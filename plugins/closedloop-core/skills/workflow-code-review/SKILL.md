@@ -17,6 +17,10 @@ This skill reviews code, not plans. It must not create implementation plans, app
 - Claude Code: invoke as `/closedloop-core:workflow-code-review`. Launch each reviewer
   worker with the Agent (Task) tool, using a general-purpose subagent briefed
   the same way.
+- Reviewer workers are always the same model family as the caller: Codex
+  reviewers under Codex, Claude Code reviewers under Claude Code. Never shell
+  out to another harness's CLI for a review lane, and never add a lane whose
+  reviewer comes from outside the caller's harness.
 - Paths like `references/...` are relative to this skill's folder, not the
   repository under review. The bundled prompt pack resolves from this skill's
   folder in both harnesses; it never depends on `CODEX_HOME`, `~/.codex`, or
