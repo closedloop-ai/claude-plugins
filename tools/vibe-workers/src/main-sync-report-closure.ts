@@ -6,7 +6,7 @@ import { z } from "zod";
 import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
 import { isLocalPlanPath } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
 import { MainSyncError } from "./main-sync-contracts.js";
-import { readInputModule, inputModuleReferences, referenceMatches, inputCallName, inputBuiltin,
+import { readInputModule, isInputModulePath, inputModuleReferences, referenceMatches, inputCallName, inputBuiltin,
   inputExpressionReference, inputKnownString, type NativeReferenceEnvironment } from "./main-sync-input-references.js";
 import { reportOutputs } from "./main-sync-input-catalog.js";
 import { reportChildEntries, reportLoaderEntries, reportRelativeCwd, reportShellEntries, reportLiteralWords,
@@ -27,11 +27,16 @@ export function verifyReportClosure(execution: ReportExecution, entries: readonl
   const tracked = new Set(git(execution.root, ["ls-tree", "-r", "--name-only", "HEAD"]).split("\n").filter(Boolean));
   const pending = [...entries];
   const seen = new Set<string>();
+  const contexts = new Set<string>();
   while (pending.length) {
     const entry = pending.shift()!;
     const identity = JSON.stringify(entry);
     if (seen.has(identity)) continue;
-    if (seen.size >= 4096) throw unproved("selected closure bound");
+    // Committed membership bounds file coverage. Bound distinct native environments separately,
+    // so one legitimate large source graph fits without collapsing different cwd/argv bindings.
+    const contextIdentity = JSON.stringify([entry.context, entry.argv]);
+    if (!contexts.has(contextIdentity) && contexts.size >= 4096) throw unproved("selected closure context bound");
+    contexts.add(contextIdentity);
     seen.add(identity);
     if (!tracked.has(entry.file) || isLocalPlanPath(entry.file)) throw unproved("selected entry is not public committed source");
     if (entry.file.endsWith(".sh")) {
@@ -121,7 +126,7 @@ function resolveImport(root: string, importer: string, specifier: string, tracke
     const path = resolve(dirname(join(root, importer)), specifier);
     if (!path.startsWith(`${root}/`)) throw unproved("selected import escapes owned root");
     const stem = relative(root, path);
-    for (const candidate of moduleCandidates(stem)) if (tracked.has(candidate)) return [candidate];
+    for (const candidate of moduleCandidates(stem)) if (tracked.has(candidate) && isInputModulePath(candidate)) return [candidate];
     return [];
   }
   if (specifier.startsWith("@repo/") || specifier.startsWith("@closedloop-ai/")) {
@@ -148,7 +153,7 @@ function workspaceImport(root: string, specifier: string, tracked: ReadonlySet<s
     const absolute = resolve(root, base, target);
     if (!absolute.startsWith(`${join(root, base)}/`)) throw unproved("workspace export escapes committed owner");
     for (const candidate of moduleCandidates(relative(root, absolute))) {
-      if (tracked.has(candidate)) { selected.push(candidate); break; }
+      if (tracked.has(candidate) && isInputModulePath(candidate)) { selected.push(candidate); break; }
     }
   }
   return [...new Set(selected)];

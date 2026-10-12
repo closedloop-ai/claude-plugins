@@ -224899,12 +224899,15 @@ var REGEX_META = /[.*+?^${}()|[\]\\]/g;
 var URI_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 var NO_FILE_TARGET = /* @__PURE__ */ Symbol("no-file-target");
 var nativeEnvironments = /* @__PURE__ */ new WeakMap();
+function isInputModulePath(file) {
+  return MODULE_PATH.test(file) && !isLocalPlanPath(file);
+}
 function committedInputReferences(root, matches) {
   const files = git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0").filter(Boolean);
-  return files.some((file) => MODULE_PATH.test(file) && !isLocalPlanPath(file) && inputModuleReferences(root, file, matches, parseInputModule(root, file)));
+  return files.some((file) => isInputModulePath(file) && inputModuleReferences(root, file, matches, parseInputModule(root, file)));
 }
 function readInputModule(root, file, environment) {
-  if (!MODULE_PATH.test(file) || isLocalPlanPath(file)) throw new Error("Input module is not a public committed source path");
+  if (!isInputModulePath(file)) throw new Error("Input module is not a public committed source path");
   if (!git(root, ["ls-tree", "HEAD", "--", file])) throw new Error("Selected input module is not committed");
   return parseInputModule(root, file, environment);
 }
@@ -226474,11 +226477,14 @@ function verifyReportClosure(execution, entries) {
   const tracked = new Set(git(execution.root, ["ls-tree", "-r", "--name-only", "HEAD"]).split("\n").filter(Boolean));
   const pending = [...entries];
   const seen = /* @__PURE__ */ new Set();
+  const contexts = /* @__PURE__ */ new Set();
   while (pending.length) {
     const entry = pending.shift();
     const identity = JSON.stringify(entry);
     if (seen.has(identity)) continue;
-    if (seen.size >= 4096) throw unproved("selected closure bound");
+    const contextIdentity = JSON.stringify([entry.context, entry.argv]);
+    if (!contexts.has(contextIdentity) && contexts.size >= 4096) throw unproved("selected closure context bound");
+    contexts.add(contextIdentity);
     seen.add(identity);
     if (!tracked.has(entry.file) || isLocalPlanPath(entry.file)) throw unproved("selected entry is not public committed source");
     if (entry.file.endsWith(".sh")) {
@@ -226566,7 +226572,7 @@ function resolveImport(root, importer, specifier, tracked, mode) {
     const path2 = resolve4(dirname6(join8(root, importer)), specifier);
     if (!path2.startsWith(`${root}/`)) throw unproved("selected import escapes owned root");
     const stem = relative4(root, path2);
-    for (const candidate of moduleCandidates(stem)) if (tracked.has(candidate)) return [candidate];
+    for (const candidate of moduleCandidates(stem)) if (tracked.has(candidate) && isInputModulePath(candidate)) return [candidate];
     return [];
   }
   if (specifier.startsWith("@repo/") || specifier.startsWith("@closedloop-ai/")) {
@@ -226591,7 +226597,7 @@ function workspaceImport(root, specifier, tracked, mode) {
     const absolute = resolve4(root, base, target);
     if (!absolute.startsWith(`${join8(root, base)}/`)) throw unproved("workspace export escapes committed owner");
     for (const candidate of moduleCandidates(relative4(root, absolute))) {
-      if (tracked.has(candidate)) {
+      if (tracked.has(candidate) && isInputModulePath(candidate)) {
         selected.push(candidate);
         break;
       }

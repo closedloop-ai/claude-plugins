@@ -83,8 +83,11 @@ merge and supplies the opaque recipe witness for actual validation. Fixed local
 process budgets and the authenticated Claude envelope remain distinct from
 unchanged test, hook and general-worker deadlines.
 Report admission follows actual selected entries, tasks, configs and producer
-inputs; an unrelated capable reader is not selected consumption. Ordinary
-bootstrap health cannot mint validation proof. Meaningful retained report data,
+inputs. Selected module coverage follows the finite committed tree; the existing
+4,096 ceiling bounds distinct cwd/argv contexts rather than source file count.
+Data imports use the same path predicate as the shared code/config parser;
+retained-report references and global private planning protection remain enforced.
+An unrelated capable reader is not selected consumption. Ordinary bootstrap health cannot mint validation proof. Meaningful retained report data,
 default verdicts and replay still block, while proven same-call test fixtures
 remain nonretained inputs and never stand in for required coverage.
 An existing registered writer retains its definition root, exact binding and
@@ -176,7 +179,7 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 
 ## Runtime Files
 
-Version `1.0.12` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.13` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains two skill-contract test modules.
 Runtime helpers and tests live alongside their owning skills, including vibe

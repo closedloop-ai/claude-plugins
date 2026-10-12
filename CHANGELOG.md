@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.13
+
+#### Fixed
+- Readiness no longer rejects a legitimate large selected source graph at 4,096 files. File coverage remains bounded by the committed tree, while the existing 4,096 ceiling applies to distinct cwd/argv contexts. Retained-report readers, replay and private planning inputs retain their existing rejection rules.
+- Relative and workspace data imports, such as stylesheets, use the shared code/config path predicate instead of entering the executable-module parser.
+
+#### Added
+- Closure tests reproduce 3,339 initial producer inputs expanding to 4,239 committed modules, reject a retained-report reader beyond the former cutoff, preserve distinct native contexts and their finite bound, and verify imported stylesheets and global private-input protection.
+
 ### vibe v1.0.12
 
 #### Fixed

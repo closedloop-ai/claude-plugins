@@ -27,6 +27,11 @@ export type SymbolicNativeArgument = { constraint: Extract<InputReference, { kin
 export type NativeReferenceEnvironment = { cwd?: string; argv: readonly (string | IsolatedTestArgument | SymbolicNativeArgument)[] };
 const nativeEnvironments = new WeakMap<ts.SourceFile, NativeReferenceEnvironment>();
 
+/** Public code/config paths supported by the shared parser; other imported files remain data. */
+export function isInputModulePath(file: string) {
+  return MODULE_PATH.test(file) && !isLocalPlanPath(file);
+}
+
 /** Receiver-specific references preserve complete targets; unknown pieces never become separate paths. */
 export type InputReference = { kind: "path"; value: string; base: "module" | "runtime"; possibleOnly: boolean; unknownPrefix: boolean; uncertainTerms: string[]; isolatedTest?: true } | {
   kind: "collector" | "vite"; values: string[]; excludes: string[]; base: string; dot: boolean; unresolved: boolean;
@@ -35,13 +40,13 @@ export type InputReference = { kind: "path"; value: string; base: "module" | "ru
 /** One finite syntax owner serves both private evidence and retained-report admission. */
 export function committedInputReferences(root: string, matches: (file: string, reference: InputReference) => boolean) {
   const files = git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0").filter(Boolean);
-  return files.some((file) => MODULE_PATH.test(file) && !isLocalPlanPath(file)
+  return files.some((file) => isInputModulePath(file)
     && inputModuleReferences(root, file, matches, parseInputModule(root, file)));
 }
 
 /** The global private walk and selected report walk share the same syntax/binding owner. */
 export function readInputModule(root: string, file: string, environment?: NativeReferenceEnvironment) {
-  if (!MODULE_PATH.test(file) || isLocalPlanPath(file)) throw new Error("Input module is not a public committed source path");
+  if (!isInputModulePath(file)) throw new Error("Input module is not a public committed source path");
   if (!git(root, ["ls-tree", "HEAD", "--", file])) throw new Error("Selected input module is not committed");
   return parseInputModule(root, file, environment);
 }
