@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.2.1
+
+#### Fixed
+- The `repo-hardening` skill's frontmatter now loads with a strict YAML parser; the description no longer contains an unquoted `: ` sequence, and its triggers are unchanged.
+- `repo-hardening` gives the analyzed or changed repository's own instruction files precedence over its playbook and principle defaults. In an audit, a finding whose fix a repo rule forbids goes to the decisions for a human instead of a unit of work, and the plan template's decisions section allows that case.
+- `repo-hardening` step 1 no longer waits on a question in non-interactive runs: when the harness cannot ask or nobody answers, it takes the default repository and plan path and records in the plan that they were defaults, and it stops when there is no repository to default to.
+- `repo-hardening` read-only rules now apply to the analyzed repository: each investigating worker may write only its own scratch notes file outside it, or return the notes in its final reply when its tools cannot write. The audit brief skeleton adds the CONTEXT, ACCEPTANCE and VERIFY fields the delegation guide requires.
+
+#### Added
+- Contract test that strict-parses the frontmatter of every `closedloop-core` skill with PyYAML and checks each has a name matching its folder and a description of at most 1024 characters, failing with the skill file's path.
+
 ### vibe v1.0.10
 
 #### Fixed

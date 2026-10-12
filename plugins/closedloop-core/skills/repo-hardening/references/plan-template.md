@@ -52,7 +52,7 @@ Tempting changes the evidence does not support, with the reason: a new toolchain
 
 ## Decisions for a human
 
-Each with options and a recommendation. Product or preference calls only; anything observable by running something was observed and is reported as a finding.
+Each with options and a recommendation. Product or preference calls, and findings whose fix a repo rule forbids; anything observable by running something was observed and is reported as a finding.
 
 ## Not assessed
 

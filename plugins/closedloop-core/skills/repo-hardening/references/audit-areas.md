@@ -1,18 +1,21 @@
 # Audit areas
 
-One read-only subagent (parallel worker) per area. Each brief carries the same skeleton; only the questions change. Without delegation, work the areas one at a time with the same brief and the same notes file per area.
+One subagent (parallel worker) per area, read-only for the repository. Each brief carries the same skeleton; only the questions change. Without delegation, work the areas one at a time with the same brief and the same notes file per area.
 
 ## Brief skeleton
 
 ```text
-GOAL: audit <area> of the repository at <path> for the repo-hardening plan. Read-only.
+GOAL: audit <area> of the repository at <path> for the repo-hardening plan. Read-only for the repository.
 SCOPE: <directories or file globs to cover; what to leave alone>
+CONTEXT: <pointers, not content: the repository path, its root instruction files, anything already known about this area>
 QUESTIONS: <the area's questions below>
 EVIDENCE: every claim carries path:line, a commit SHA, a PR number, or a command and its output. Label inference as inference. Never guess from file names; open the file.
-OUTPUT: write notes to <notes-file>. Sections: Findings (one bullet each, evidence first), Mechanisms that exist (what the repo already enforces and how), Gaps (what nothing enforces), Open questions. Under 150 lines. No file dumps; pointers only.
+OUTPUT: write notes to <notes-file>, outside the repository; it is the only file you may write. If your tools cannot write files, put the notes in your final reply instead. Sections: Findings (one bullet each, evidence first), Mechanisms that exist (what the repo already enforces and how), Gaps (what nothing enforces), Open questions. Under 150 lines. No file dumps; pointers only.
+ACCEPTANCE: every question is answered with evidence or marked not assessed with what was searched.
+VERIFY: before replying, reopen each cited path:line and commit and confirm it says what the note claims; drop or downgrade any claim that does not hold.
 TIMEBOX: <turns or minutes>
-FORBIDDEN: editing any file in the repository, running anything other than git and read commands in it (no installs, builds, or test runs).
-REPORT: reply with five lines: top three findings, the strongest existing mechanism, the biggest gap.
+FORBIDDEN: editing any file in the repository, writing any file other than the notes file, running anything other than git and read commands in the repository (no installs, builds, or test runs).
+REPORT: reply with five lines: top three findings, the strongest existing mechanism, the biggest gap. If the notes could not be written to a file, append them after those lines.
 ```
 
 Give each subagent a different notes file so they never write to the same path.
