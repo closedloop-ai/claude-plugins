@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.12
+
+#### Fixed
+- Plugin upgrades no longer strand a session writer whose recorded definition is missing or provably upgraded. Both Codex and Claude Code use the current release's `writer-state.mjs migrate` command to record old/new writer IDs, bindings and digests, reason and time in append-only ledger history, preserving the session worktree, plan, decision table, checkpoint, change log and request queue. Matching definitions, running turns, unproven upgrades and writer refusals still block replacement; recovery stays internal without asking Andy.
+
+#### Added
+- Migration tests cover missing and upgraded definitions, matching-definition rejection, retained history and checkpoints, ownership/refusal protections, and fresh Claude launch followed by resume through the shipped command.
+
 ### closedloop-core v1.2.2
 
 #### Fixed

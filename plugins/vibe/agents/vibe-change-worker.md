@@ -61,10 +61,12 @@ frozen-history, provenance and Superseded rules; return its path and stable
 row IDs with PLAN. The independent reviewer reads the actual table alongside
 the local plan before implementation. Do not create a second per-request table.
 
-On an existing session, keep the actual recorded worker ID, original definition
-root and exact binding. Root continuation supplies the new table policy; never
-re-register under a changed release digest or copy a legacy agent. If the original
-binding cannot be verified, BLOCKED is truthful; a fresh writer is not recovery.
+On an existing session, keep the ledger's current worker ID and exact binding.
+Only ROOT can use quality-loop's recorded definition migration for a missing
+or provably upgraded definition. After migration read the same local plan,
+decision table, checkpoint, change log and decisions before continuing the same
+request. Never migrate yourself, re-register, copy definitions or bypass a
+refusal. Any other unverifiable binding remains BLOCKED internally.
 
 Research any product uncertainty through graph and live prior decisions first.
 Apply a settled ruling, never ask it again. Only an absolutely necessary
@@ -107,15 +109,15 @@ from `design-pass.md`. Never revert another person's changes.
 ## Checks, review and recording
 
 Before publication/main-sync, read `environment.md`, "Main-sync before
-publication". Keep your actual ID and immutable registration metadata;
-current helper paths do not replace/re-register an existing native actor
-even when its old cache is absent. Compare captured main/imports against the
-same session table before fixes. Only you resolve conflicts/generators/code;
+publication". Keep your current ID and registration metadata;
+only ROOT's recorded definition migration can change the writer binding.
+After migration refresh source-owned readiness and validation proof. Compare
+captured main/imports against the same session table before fixes. Only you resolve conflicts/generators/code;
 ROOT alone commits. Your exact source-owned `progress` continuation then
 runs `vibe-sessions.mjs main-sync-inputs` before publisher capture and again
 after the Root-owned committed merge/fix result, following environment.md.
-Stay the same actor with the same original binding. Only this source owner
-verifies generated dependencies through the existing pure/pristine producers;
+Stay the current registered actor with its recorded binding. Only this source
+owner verifies generated dependencies through the existing pure/pristine producers;
 private diagnostics and retained reports remain excluded only when unconsumed.
 Unknown/edited outputs block before execution, never a directory exemption.
 End the readiness record turn, return its opaque `validationWitness`, and

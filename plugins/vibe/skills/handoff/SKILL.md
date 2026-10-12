@@ -61,10 +61,13 @@ the same plugin-root line: worker paths starting with `../` are relative to
 Read the existing writer summary/queue and resume its actual recorded ID.
 Claude uses the owned capability-bound launcher; Codex uses the same native
 follow-up/resume ID. Do not start a new handoff/backend/test source writer.
-Preserve the existing session's original recorded binding and actual ID;
-quality-loop's root continuation supplies this policy without a changed
-definition/root registration. Unavailable original binding blocks new code,
-not permission to copy a legacy agent, reset or replace the writer.
+Preserve the existing session's original recorded binding and actual ID while
+its definition matches. If missing or provably upgraded, use quality-loop's
+recorded definition migration through the current `writer-state.mjs migrate`
+command in either harness. Resume the returned current writer with the same
+plan, decision table, checkpoint and change log; refresh old-actor validation
+proof. Never copy definitions, replace via registration or bypass a refusal.
+This recovery is internal; never ask Andy about it.
 
 ## Answers from the person
 

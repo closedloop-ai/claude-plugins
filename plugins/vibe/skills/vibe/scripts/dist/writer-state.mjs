@@ -7372,6 +7372,8 @@ var require_dist = __commonJS({
 
 // src/writer-state.ts
 import { parseArgs } from "node:util";
+import { dirname as dirname2, resolve } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // node_modules/zod/v3/external.js
 var external_exports = {};
@@ -11546,8 +11548,12 @@ var bindingSchema = external_exports.object({
   digest: external_exports.string().length(64),
   capabilities: capabilitiesSchema
 }).strict();
+var migrateSchema = registerSchema.extend({
+  previousWorkerId: identifierSchema,
+  previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/)
+}).strict();
 var requestSchema = external_exports.object({ id: identifierSchema, input: external_exports.string().min(1).max(64 * 1024) }).strict();
-var ledgerSchema = external_exports.object({
+var ledgerStateSchema = external_exports.object({
   version: external_exports.literal(1),
   worktree: external_exports.string(),
   branch: external_exports.string(),
@@ -11566,6 +11572,16 @@ var ledgerSchema = external_exports.object({
   }).strict().optional(),
   completed: external_exports.array(identifierSchema).max(64)
 }).strict();
+var migrationSchema = external_exports.object({
+  id: external_exports.string().uuid(),
+  at: external_exports.string().datetime(),
+  reason: external_exports.enum(["definition-missing", "definition-upgraded"]),
+  observedDigest: external_exports.string().length(64).nullable(),
+  previous: ledgerStateSchema,
+  workerId: identifierSchema,
+  binding: bindingSchema
+}).strict();
+var ledgerSchema = ledgerStateSchema.extend({ migrations: external_exports.array(migrationSchema).default([]) }).strict();
 async function readInput(stream = process.stdin) {
   const buffers = [];
   let size = 0;
@@ -11582,7 +11598,7 @@ async function readInput(stream = process.stdin) {
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync as readFileSync2, realpathSync as realpathSync3, renameSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join as join2 } from "node:path";
+import { basename, dirname, isAbsolute, join as join2 } from "node:path";
 
 // src/definition.ts
 var import_yaml = __toESM(require_dist(), 1);
@@ -11603,7 +11619,7 @@ function readDefinition(agentRoot, agentName, capabilityInput) {
   const root = realpathSync2(agentRoot);
   const file = realpathSync2(join(root, "agents", `${agentName}.md`));
   if (file !== join(root, "agents", `${agentName}.md`)) throw new Error("Agent escapes its owning plugin");
-  const manifest = external_exports.object({ name: external_exports.literal("vibe") }).passthrough().parse(
+  const manifest = external_exports.object({ name: external_exports.literal("vibe"), version: external_exports.string().regex(/^\d+\.\d+\.\d+$/).optional() }).passthrough().parse(
     JSON.parse(readFileSync(join(root, ".claude-plugin", "plugin.json"), "utf8"))
   );
   const source = readFileSync(file, "utf8");
@@ -11617,6 +11633,7 @@ function readDefinition(agentRoot, agentName, capabilityInput) {
   const digest = createHash("sha256").update(source).update(JSON.stringify(capabilities)).digest("hex");
   return {
     root,
+    version: manifest.version,
     name: `${manifest.name}:${agentName}`,
     metadata,
     prompt: match[2] ?? "",
@@ -11690,11 +11707,74 @@ function registerWriter(input) {
       binding: definition.binding,
       started: false,
       pending: [],
-      completed: []
+      completed: [],
+      migrations: []
     };
     save(place, ledger);
     return summary(ledger);
   });
+}
+function migrateWriter(input, currentPluginRoot) {
+  const data = migrateSchema.parse(input);
+  const definition = readDefinition(currentPluginRoot, "vibe-change-worker", data.capabilities);
+  if (realpathSync3(data.agentRoot) !== definition.root || data.agentName !== "vibe-change-worker") {
+    throw new Error("Migration must use this command's current canonical plugin definition");
+  }
+  const currentVersion = definition.version;
+  if (!currentVersion) throw new Error("Current plugin release has no version");
+  const place = location(data.worktree);
+  return locked(place, () => {
+    const ledger = readLedger(place);
+    if (ledger.runtime !== data.runtime || ledger.workerId !== data.previousWorkerId || ledger.binding.digest !== data.previousDigest) throw new Error("Migration requires the exact recorded writer and digest");
+    if (ledger.active?.lease || existsSync(join2(place.dir, "vibe-record-turn.lock"))) {
+      throw new Error("Wait for owned source and record turns to stop before migration");
+    }
+    if (ledger.active?.status === "BLOCKED") throw new Error("Migration cannot bypass a writer refusal; resolve the blocked request first");
+    let observedDigest = null;
+    let reason;
+    try {
+      observedDigest = readDefinition(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities).binding.digest;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+    if (observedDigest === ledger.binding.digest) throw new Error("Recorded definition is present and matching; resume the existing writer");
+    if (observedDigest === null) reason = "definition-missing";
+    else {
+      const oldVersion = basename(dirname(ledger.binding.agentRoot)) === "vibe" ? basename(ledger.binding.agentRoot) : void 0;
+      if (!oldVersion || !isNewerRelease(currentVersion, oldVersion)) {
+        throw new Error("Digest mismatch has no proven plugin version upgrade; retain the original writer");
+      }
+      reason = "definition-upgraded";
+    }
+    const workerId = data.runtime === "claude" ? randomUUID() : data.workerId;
+    if (!workerId) throw new Error("Native migration requires the new read-only held worker's actual ID");
+    const oldIds = [ledger.workerId, ...ledger.migrations.map((item) => item.previous.workerId)];
+    if (oldIds.includes(workerId)) throw new Error("Migration requires a new writer identity");
+    const { migrations, ...previous } = ledger;
+    ledger.migrations = [...migrations, {
+      id: randomUUID(),
+      at: (/* @__PURE__ */ new Date()).toISOString(),
+      reason,
+      observedDigest,
+      previous,
+      workerId,
+      binding: definition.binding
+    }];
+    ledger.workerId = workerId;
+    ledger.binding = definition.binding;
+    ledger.started = false;
+    save(place, ledger);
+    return summary(ledger);
+  });
+}
+function isNewerRelease(current, previous) {
+  if (!/^\d+\.\d+\.\d+$/.test(previous)) return false;
+  const left = current.split(".").map(Number);
+  const right = previous.split(".").map(Number);
+  for (let index = 0; index < 3; index++) {
+    if (left[index] !== right[index]) return left[index] > right[index];
+  }
+  return false;
 }
 function changeWriter(action, input) {
   const data = actionSchema.parse(input);
@@ -11807,6 +11887,7 @@ function locked(place, operation) {
   }
 }
 function summary(ledger) {
+  const lastMigration = ledger.migrations.at(-1);
   return {
     runtime: ledger.runtime,
     workerId: ledger.workerId,
@@ -11818,7 +11899,9 @@ function summary(ledger) {
     activeRequestId: ledger.active?.id,
     status: ledger.active?.status,
     running: Boolean(ledger.active?.lease),
-    processGroupId: ledger.active?.processGroupId
+    processGroupId: ledger.active?.processGroupId,
+    migrationCount: ledger.migrations.length,
+    lastMigration: lastMigration ? { id: lastMigration.id, reason: lastMigration.reason, at: lastMigration.at } : void 0
   };
 }
 function proveGroupStopped(processGroupId) {
@@ -12064,11 +12147,12 @@ function releaseNativeRecord(input) {
 // src/writer-state.ts
 async function main(argv) {
   const { positionals } = parseArgs({ args: argv, allowPositionals: true, options: {} });
-  const action = external_exports.enum(["register", "status", "enqueue", "claim", "take-input", "finish", "acquire-record", "release-record"]).parse(positionals[0]);
+  const action = external_exports.enum(["register", "migrate", "status", "enqueue", "claim", "take-input", "finish", "acquire-record", "release-record"]).parse(positionals[0]);
   if (positionals.length !== 1) throw new Error("Only the action belongs in argv; send private input on stdin");
   const input = await readInput();
   let result;
   if (action === "register") result = registerWriter(input);
+  else if (action === "migrate") result = migrateWriter(input, resolve(dirname2(fileURLToPath2(import.meta.url)), "../../../.."));
   else if (action === "acquire-record") result = acquireNativeRecord(input);
   else if (action === "release-record") result = releaseNativeRecord(input);
   else if (action === "take-input") result = takeWriterInput(input);

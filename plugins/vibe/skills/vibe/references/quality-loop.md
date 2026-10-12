@@ -4,7 +4,8 @@ This is the shared workflow for app and owned prototype sessions. Each session
 has one worktree, one branch and one persistent implementation writer:
 `vibe-change-worker`. Keep that underlying worker/session ID and resume its
 context for every request, correction and handoff. Never create feature-unit
-branches, worktrees or replacement source writers.
+branches, worktrees or replacement source writers outside the recorded definition
+migration below. After migration, SAME writer means the ledger's current writer.
 
 ## Communication and product questions
 
@@ -57,16 +58,57 @@ original recorded binding: `binding.agentRoot`, role and exact
 `binding.capabilities`. Recover these only from the original registration
 evidence or a read-only helper's bounded private-ledger inspection; return
 binding/identity facts, never private queued inputs or credentials. Verify the
-original definition and recorded digest remain available. A changed plugin
-root/body changes that digest. Never re-register the primary with the new
-release's binding, copy legacy agent files, relax validation or replace it.
+original definition and recorded digest before new code. If it is present and
+matching, resume that writer with its original binding. Root supplies current
+policy through its continuation without changing test-authoring authority.
 
-Root supplies this release's mandatory-table policy through the existing
-root continuation to that SAME context, while retaining the original canonical
-definition and tool/capability binding. It is additive request guidance, not a
-system-prompt reset or new test-authoring authority. If the original binding
-is unavailable, mismatched or unverified, return `BLOCKED` before new code.
-Do not claim an automatic upgrade. New sessions bind the current release.
+### Recorded definition migration
+
+When the recorded definition is missing (`ENOENT`), or its digest differs and
+the current release is provably newer than the recorded `vibe/<version>` cache
+root, ROOT uses the current installed plugin's command in BOTH harnesses:
+`node <current-plugin-root>/skills/vibe/scripts/dist/writer-state.mjs migrate`.
+This is supported recovery, handled internally without asking Andy.
+Never use `register` to replace a writer or copy old agent definitions.
+
+1. Read `status` and the bounded binding facts from the private ledger. Wait
+   for source and record turns to finish with actual stopped-turn evidence;
+   a short-lived CLI PID exiting does not release an owned turn. Resolve any
+   writer refusal in the original request first. Migration rejects `BLOCKED`,
+   running leases, matching definitions, unproven upgrades and stale identity.
+2. Codex: spawn one current canonical `vibe-change-worker` with a read-only
+   hold brief and obtain its actual native ID. No source/test/record writes
+   until migration succeeds. Claude: the command allocates the new session ID;
+   do not spawn or resume the old Claude session under the new definition.
+3. Send this JSON on stdin, using the existing runtime and recorded facts:
+   `{ "worktree": "<wt>", "runtime": "<codex|claude>",
+      "previousWorkerId": "<recorded ID>", "previousDigest": "<recorded digest>",
+      "agentRoot": "<current-plugin-root>", "agentName": "vibe-change-worker",
+      "capabilities": <exact parent-discovered capabilities> }`.
+   For Codex add `"workerId": "<new held native ID>"`; omit it for Claude.
+   The command independently reads the current definition from its own plugin
+   root and verifies the old definition with its recorded capabilities.
+4. The atomic ledger update appends `migrations`: old writer ID, full old
+   binding/digest and writer state, new ID and binding/digest, observed old
+   digest (null when absent), reason, UUID and time. Earlier migration history,
+   pending/completed requests and the active checkpoint/status remain intact.
+   The worktree, branch, local plan, decision table and change log carry over;
+   private traces remain where they were. Never discard or rewrite this history.
+5. Use only the returned current ID with the current binding supplied above.
+   Claim the existing active
+   request with a checkpoint continuation, or the oldest queued request if
+   none is active. Recover its input with the owned `take-input` lease. Brief
+   the new writer with the same plan/table paths, checkpoint, change log and
+   decisions before new code; migration grants no implementation or handoff
+   authority by itself. Codex resumes its held context. Claude's normal owned
+   launcher starts the recorded fresh session once, then resumes that ID.
+   Validation witnesses tied to the old writer are stale: collect fresh
+   source-owned readiness/validation before publication, keeping captured facts.
+
+Any other binding/read/identity error remains `BLOCKED` internally. Never
+migrate around a refusal or to create parallel authors. If migration fails,
+retain the ledger and stop the unused held Codex worker without source writes.
+New sessions bind the current release.
 
 The persistent system binding is phase-neutral because Claude retains it on
 resume. Each root-controlled turn envelope supplies `mode` and derived
@@ -174,7 +216,7 @@ implementation starts. Append a later request's sourced baseline/target rows
 or behavior sections without rewriting earlier expectations. A changed human
 decision gets an explicit `Superseded` entry: source, prior row IDs and new row
 IDs. Never retarget history to agree with the implementation. On a legacy
-session without a table, use the original binding/continuation rule above,
+session without a table, use the current registered writer/continuation rule above,
 reconstruct current behavior and prior sources honestly, and identify missing
 historical evidence; a table made now is not proof it existed before.
 

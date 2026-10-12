@@ -275,8 +275,10 @@ main capture, test authority, validation PASS or permission to publish.
    Never stash, discard, copy a validation checkout, invent PASS or validate
    corrected local bytes while deploying different committed source. Private
    non-source plans/evidence/logs may remain. Preserve exact actor/lease and
-   opaque original registration metadata; current helper paths do not
-   re-register or replace a native source actor whose old cache is absent.
+   current registration metadata. If its definition is missing or provably
+   upgraded, ROOT follows quality-loop's recorded migration before new code.
+   Helpers never re-register a writer; refresh readiness/validation under the
+   returned current actor and retain captured imports/base/transaction facts.
 5. A fresh publishing turn receives the same `mainSyncTransactionId` and
    purpose in its parent-issued grant. Claude injects `operationContext` in
    the turn envelope; native Codex's parent composes it from its actual
