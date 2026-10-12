@@ -33,6 +33,10 @@
 
 - [ ] **T-2.1**: {{task_description}}
 
+## Implementation Notes
+
+{{detail_level_plan_review_suggestions_or_none}}
+
 ## API & Data Impacts
 
 {{api_changes_or_none}}

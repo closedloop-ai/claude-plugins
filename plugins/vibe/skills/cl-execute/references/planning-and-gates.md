@@ -414,8 +414,8 @@ through the [Discovery Routes](../SKILL.md#discovery-routes).
     outline-level findings in the plan: a wrong premise or root cause, a
     missing outcome or acceptance criterion, an unjustified scope exclusion, a
     guardrail violation, or a stated detail that is wrong. Put detail-level
-    suggestions into the plan's implementation notes. Then upload or revise
-    the plan under step 19. Never run a second plan-review round, including
+    suggestions into the plan's `## Implementation Notes` section. Then
+    upload or revise the plan under step 19. Never run a second plan-review round, including
     after fixing findings. Bring any finding that needs a product or scope
     call to the human as a numbered decision with the plan: return
     `MANUAL_INTERVENTION_REQUIRED` with the plan URL and the numbered

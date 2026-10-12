@@ -621,7 +621,7 @@ test('cl-execute gives a plan exactly one independent review', () => {
   assert.match(gates, /Two review generations\s+are for finished code before the PR, not for plans/);
   assert.match(gates, /verify each finding against the code before acting on it/);
   assert.match(gates, /Fix\s+outline-level findings in the plan: a wrong premise or root cause, a\s+missing outcome or acceptance criterion, an unjustified scope exclusion, a\s+guardrail violation, or a stated detail that is wrong/);
-  assert.match(gates, /Put detail-level\s+suggestions into the plan's implementation notes/);
+  assert.match(gates, /Put detail-level\s+suggestions into the plan's `## Implementation Notes` section/);
   assert.match(gates, /Never run a second plan-review round, including\s+after fixing findings/);
   assert.match(gates, /Bring any finding that needs a product or scope\s+call to the human as a numbered decision with the plan/);
   assert.match(skill, /A plan gets exactly one review; never run a second plan-review\s+round/);

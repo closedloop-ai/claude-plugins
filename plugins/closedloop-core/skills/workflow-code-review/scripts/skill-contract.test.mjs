@@ -36,3 +36,18 @@ test('workflow-code-review states the same-family reviewer rule', () => {
   assert.match(skill, /Reviewer workers are always the same model family as the caller/);
   assert.match(skill, /Never shell\s+out to another harness's CLI for a review lane/);
 });
+
+test('plan-structure gives detail-level plan-review suggestions an Implementation Notes section', () => {
+  const resources = join(skillsRoot, 'plan-structure', 'resources');
+  const h2 = readFileSync(join(resources, 'plan_template.md'), 'utf8')
+    .split('\n')
+    .filter((line) => line.startsWith('## '));
+  const at = (heading) => h2.indexOf(heading);
+  assert.ok(at('## Implementation Notes') > at('## Tasks'), 'Implementation Notes follows Tasks');
+  assert.ok(at('## Tasks') > at('## Acceptance Criteria'));
+  assert.ok(at('## Implementation Notes') < at('## API & Data Impacts'), 'Implementation Notes precedes API & Data Impacts');
+  const template = readFileSync(join(resources, 'plan_template.md'), 'utf8');
+  assert.match(template, /## Implementation Notes\n\n\{\{detail_level_plan_review_suggestions_or_none\}\}/);
+  const playbook = readFileSync(join(resources, 'playbook.md'), 'utf8');
+  assert.match(playbook, /Task Table → Implementation Notes → API\/Data Impacts/);
+});
