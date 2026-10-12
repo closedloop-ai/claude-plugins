@@ -9,12 +9,15 @@ export const graph: Capability[] = [{ name: "mcp__custom_graph__sync_status", se
 export const recordWrite: Capability = { name: "mcp__live_workspace__create_document_version", service: "closedloop", operation: "create_document_version", access: "write" };
 export const bundleDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "../../../plugins/vibe/skills/vibe/scripts/dist");
 
+/** Owns a session repository's Git identity so later commits never depend on the host's configuration. */
 export function fixture() {
   const base = realpathSync(mkdtempSync(join(tmpdir(), "vibe-workers-test-")));
   const worktree = join(base, "session");
   mkdirSync(worktree);
   execFileSync("git", ["init", "-b", "vibe/test"], { cwd: worktree, stdio: "ignore" });
-  execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "Fixture initial state"], { cwd: worktree, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Fixture"], { cwd: worktree, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "fixture@example.invalid"], { cwd: worktree, stdio: "ignore" });
+  execFileSync("git", ["commit", "--allow-empty", "-m", "Fixture initial state"], { cwd: worktree, stdio: "ignore" });
   const metadata = join(worktree, ".git");
   writeFileSync(join(metadata, "vibe-session.json"), JSON.stringify({ worktree, branch: "vibe/test" }));
   const agentRoot = join(base, "vibe");

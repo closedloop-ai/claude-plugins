@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Added
 - Closure tests reproduce 3,339 initial producer inputs expanding to 4,239 committed modules, reject a retained-report reader beyond the former cutoff, preserve distinct native contexts and their finite bound, and verify imported stylesheets and global private-input protection.
+- Shared Git fixtures configure their own repository-local author identity, with a regression that makes a real commit while ambient Git configuration and author environment fields are unavailable.
 
 ### closedloop-core v1.2.3
 

@@ -48,6 +48,16 @@ function largeSelection(retainedReader: boolean) {
 }
 
 describe("selected closure scale and evidence boundaries", () => {
+  it("commits a shared fixture without ambient Git author configuration", () => {
+    const value = setup();
+    const env: NodeJS.ProcessEnv = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" };
+    for (const name of ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"]) delete env[name];
+    execFileSync("git", ["-c", "user.useConfigOnly=true", "commit", "--allow-empty", "-m", "Commit without ambient identity"],
+      { cwd: value.worktree, env, stdio: "ignore" });
+    expect(execFileSync("git", ["log", "-1", "--format=%an <%ae>"], { cwd: value.worktree, env, encoding: "utf8" }).trim())
+      .toBe("Fixture <fixture@example.invalid>");
+  });
+
   it("keeps an imported stylesheet as data rather than parsing it as an executable module", () => {
     const value = setup();
     value.write("selected.ts", "import './style.css'; export const value = 1;\n");
