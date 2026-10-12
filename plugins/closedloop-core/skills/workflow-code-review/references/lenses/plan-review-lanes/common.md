@@ -1,6 +1,6 @@
 # Plan Review Lane Contract (All Lanes)
 
-This file is the lane-agnostic core contract for every plan-review lane subagent. Read it together with your assigned lane file under `sections/plan-review-lanes/<laneId>.md`. The orchestrator-facing gate process lives in `sections/planning-quality-gate.md`; lane workers do not need that file unless the handoff packet names it.
+This file is the lane-agnostic core contract for every plan-review lane subagent. Read it together with your assigned lane file under `lenses/plan-review-lanes/<laneId>.md`.
 
 Plan reviewers must be read-only. Do not edit the plan, code, ledger, or any status file other than your assigned JSONL status file. Do not implement fixes. Do not decide whether the full planning quality gate passes and do not aggregate other lane findings.
 
@@ -87,12 +87,7 @@ Return findings ordered by severity with:
 - required correction
 - whether it blocks execution
 - affected adversarial pass, if applicable
-- candidate_knowledge_notes with paths and summaries, or `candidate_knowledge_notes: none` with a short reason
 
 ## Loop Events
 
 If the orchestrator provides a `planning_loop_id`, plan-review, revision, and targeted re-check subagents must use ClosedLoop MCP `add_loop_event` for major review starts, review outcomes, blockers, revisions, and re-check results. They must not create, complete, fail, or cancel manual loops.
-
-## Candidate Knowledge Notes
-
-Each plan-review, plan-revision, and targeted re-check subagent must evaluate whether the pass revealed stable, source-backed architecture patterns, repo relationships, contract ownership rules, runtime handoff paths, validation conventions, or recurring planning failure modes that are likely to help future goals. If yes, write short candidate notes under `${WORKFLOW_MEMORY_ROOT}/candidates/` using `sections/lightweight-knowledge-capture.md`. If no, return `candidate_knowledge_notes: none` with a short reason. Keep this separate from ordinary review status and do not write candidate notes for ticket-specific corrections, transient defects, unverified assumptions, or issues better captured as repo-local `AGENTS.md` rules.

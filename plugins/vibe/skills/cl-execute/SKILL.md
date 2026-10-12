@@ -103,8 +103,10 @@ hardcode a personal name for the engineering attention contact.
   ClosedLoop loops or manual loops. ClosedLoop MCP loop guidance is superseded
   by this boundary. Use ticket status, linked plan, pull request, validation
   evidence, structured result, and workflow repo memory as the execution record.
-- Do not skip independent plan review, the required two-pass coordinated
-  code-review sequence, PR comment handling, or current-head CI evidence.
+- Do not skip the single independent plan review, the required two-pass
+  coordinated code-review sequence, PR comment handling, or current-head CI
+  evidence. A plan gets exactly one review; never run a second plan-review
+  round.
 - One feature has exactly one integrated PR, including when backend, Storybook,
   and production UI work originate in different member tickets. Do not split
   the functional delivery into per-surface PRs or infer whole-feature
@@ -334,8 +336,8 @@ the evidence.
   `resources/plan_template.md` from that skill's own folder,
   and read that file immediately before drafting or revising. Use
   `mermaid-visualizer` and include scope-explaining Mermaid flowcharts in every
-  plan. Run independent plan review, resolve findings, then upload/link/approve
-  or wait as gated.
+  plan. Run one independent plan review, verify and resolve its findings
+  without a second round, then upload/link/approve or wait as gated.
 - Support lanes and sweeps: use
   [references/support-lanes-and-sweeps.md](references/support-lanes-and-sweeps.md).
   CLI ticket workers may manage bounded read-only lanes; support agents never

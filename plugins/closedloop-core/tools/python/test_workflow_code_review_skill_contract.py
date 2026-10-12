@@ -11,8 +11,8 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SKILL_ROOT = PLUGIN_ROOT / "skills" / "workflow-code-review"
-BUNDLED_PROMPT_PACK = SKILL_ROOT / "references" / "prompt-pack"
-LENS_PATH_RE = re.compile(r"`(sections/[A-Za-z0-9_./-]+\.md)`")
+REFERENCES = SKILL_ROOT / "references"
+LENS_PATH_RE = re.compile(r"`(lenses/[A-Za-z0-9_./-]+\.md)`")
 GRAPH_ROUTES = (
     "ticket_detail",
     "query_collisions",
@@ -222,23 +222,30 @@ def test_scopes_closedloop_graph_queries_to_the_pinned_target_snapshot() -> None
     assert_matches(skill, r"PR file-list patch fetch, inline-comment refresh, and current-head identity check are the only permitted post-snapshot fetches")
 
 
-def test_bundled_prompt_pack_resolves_every_lens_path() -> None:
+def test_bundled_lenses_resolve_every_lens_path() -> None:
     lens_map = read_skill_file("references/review-lens-map.md")
     lens_paths = sorted(set(LENS_PATH_RE.findall(lens_map)))
 
     assert lens_paths
     for lens_path in lens_paths:
-        assert (BUNDLED_PROMPT_PACK / lens_path).is_file(), lens_path
+        assert (REFERENCES / lens_path).is_file(), lens_path
 
 
-def test_prompt_pack_discovery_defaults_to_bundled_root() -> None:
+def test_bundled_lens_files_are_all_used_by_the_lens_map() -> None:
+    lens_map = read_skill_file("references/review-lens-map.md")
+    mapped = set(LENS_PATH_RE.findall(lens_map))
+    bundled = {path.relative_to(REFERENCES).as_posix() for path in (REFERENCES / "lenses").rglob("*.md")}
+
+    assert bundled == mapped
+
+
+def test_skill_reads_only_its_bundled_lenses() -> None:
     skill = read_skill_file("SKILL.md")
 
-    assert "WORKFLOW_PROMPT_PACK_ROOT" in skill
-    assert "`references/prompt-pack/`" in skill
-    assert "Verify the bundled root contains a `sections/` directory" in skill
-    assert (BUNDLED_PROMPT_PACK / "sections").is_dir()
-    assert not (BUNDLED_PROMPT_PACK / "orchestrator.md").exists()
+    assert "This skill is self-contained" in skill
+    assert "`references/lenses/`" in skill
+    assert "never take a lens path from an environment variable" in skill
+    assert not (SKILL_ROOT / "references" / "prompt-pack").exists()
 
 
 def test_guardrail_assessment_points_fixers_at_prevent_recurrence() -> None:

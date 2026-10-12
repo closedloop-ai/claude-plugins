@@ -125,8 +125,11 @@ on leaving implementation using the [display reporter](../../cl-sweep/references
 9. If implementation needs the same kind of workaround twice, needs
    escape-hatch types (`as`, `any`, optional fields that are always set), or
    makes callers learn the new code's internal rules, the plan is wrong. Stop,
-   log it in the decision log, and revise the plan through plan review instead
-   of absorbing the deviation; a UI plan returns for approval.
+   log it in the decision log, and fix the plan at outline level under step
+   20 of [planning-and-gates.md](planning-and-gates.md) instead of absorbing
+   the deviation. The plan already had its single review, so do not run a
+   second plan-review round; a fix that needs a product or scope call goes to
+   the human as a numbered decision, and a UI plan returns for approval.
 10. Update concise documentation, comments, JSDoc, labels, and plan artifacts
     when behavior changes.
 11. Re-check official docs before coding third-party API/SDK/platform behavior

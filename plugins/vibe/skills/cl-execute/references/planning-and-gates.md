@@ -405,19 +405,21 @@ through the [Discovery Routes](../SKILL.md#discovery-routes).
     reviewer no longer checks these mechanically and judges substance: whether
     the diagrams explain the scope, the approach is sound, and the evidence
     holds.
-20. Run at most two independent plan-review rounds per approval cycle. Each
-    round uses a read-only same-family reviewer with a fresh context: a Codex
-    worker uses a Codex sub-agent and a Claude Code worker uses a Claude Code
-    sub-agent; never call another harness's CLI for plan review. Fix
-    actionable findings after each round and re-upload/revise as needed. Run
-    a second round only when the first found an outline-level problem: a
-    wrong premise or root cause, a missing outcome or acceptance criterion, an
-    unjustified scope exclusion, a guardrail violation, or a stated detail
-    that is wrong. Carry detail-level suggestions into implementation as
-    notes, not another plan revision. Never start a third plan-review round.
-    If blocking findings remain after the second round, stop and return
-    `MANUAL_INTERVENTION_REQUIRED` with those findings for the human instead
-    of approving the plan. Never edit skill files from a ticket worker. When a cl-* skill
+20. A plan gets exactly one independent plan review. The reviewer is a
+    read-only same-family reviewer with a fresh context: a Codex worker uses a
+    Codex sub-agent and a Claude Code worker uses a Claude Code sub-agent;
+    never call another harness's CLI for plan review. Two review generations
+    are for finished code before the PR, not for plans. After the single plan
+    review, verify each finding against the code before acting on it. Fix
+    outline-level findings in the plan: a wrong premise or root cause, a
+    missing outcome or acceptance criterion, an unjustified scope exclusion, a
+    guardrail violation, or a stated detail that is wrong. Put detail-level
+    suggestions into the plan's `## Implementation Notes` section. Then
+    upload or revise the plan under step 19. Never run a second plan-review round, including
+    after fixing findings. Bring any finding that needs a product or scope
+    call to the human as a numbered decision with the plan: return
+    `MANUAL_INTERVENTION_REQUIRED` with the plan URL and the numbered
+    decisions instead of approving the plan. Never edit skill files from a ticket worker. When a cl-* skill
     instruction was missing, wrong, contradictory, or did not fire when it
     should have, record it in the result's `Process feedback` field: the skill
     file and section, the observed failure with an evidence pointer, and the

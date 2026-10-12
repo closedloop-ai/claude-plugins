@@ -8,7 +8,7 @@
 
 ## Required Sections
 
-Summary → Acceptance Criteria → Architecture Fit → Task Table → API/Data Impacts → Risks/Constraints → Test Plan → Rollback → Open Questions → Gaps → Visual References (if any)
+Summary → Acceptance Criteria → Architecture Fit → Task Table → Implementation Notes → API/Data Impacts → Risks/Constraints → Test Plan → Rollback → Open Questions → Gaps → Visual References (if any)
 
 ## Task & Acceptance Criteria Format
 

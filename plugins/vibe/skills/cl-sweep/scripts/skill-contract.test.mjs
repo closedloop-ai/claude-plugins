@@ -582,15 +582,10 @@ test('cl-execute reviews with same-family lanes inside exactly two generations',
   assert.match(gates, /same-family\s+reviewer with a fresh context/);
   assert.match(gates, /Design it twice[\s\S]{0,200}read-only same-family sub-agent with a fresh context/);
 
-  // Two generations of the default lane set, never a third; at most two plan-review rounds.
+  // Two generations of the default lane set for code, never a third.
   assert.match(execute, /Run exactly two coordinated `\$workflow-code-review` generations/);
   assert.match(review, /launch the skill's full default\s+seven-lane reviewer cohort concurrently in one fan-out/);
   assert.match(review, /Never rerun, replace, restart, or add a third coordinated review pass/);
-  assert.match(gates, /at most two independent plan-review rounds per approval cycle/);
-  assert.match(gates, /Run\s+a second round only when the first found an outline-level problem/);
-  assert.match(gates, /Carry detail-level suggestions into implementation as\s+notes, not another plan revision/);
-  assert.match(gates, /Never start a third plan-review round/);
-  assert.match(gates, /If blocking findings remain after the second round, stop and return\s+`MANUAL_INTERVENTION_REQUIRED`/);
 
   // The gen-2 decision-log audit rides on an existing lane (M10 pins the shared packet questions).
   assert.match(review, /In `review_generation_2` only, also give\s+the Guardrail \/ Validation lane the ticket's private decision log/);
@@ -603,6 +598,69 @@ test('cl-execute reviews with same-family lanes inside exactly two generations',
   assert.match(review, /A finding raised independently by two or more lanes carries the most weight/);
   assert.doesNotMatch(formats, /^Cross-family review:/m);
   assert.match(formats, /decision-log flags from `review_generation_2`'s Guardrail \/ Validation lane/);
+});
+
+// A plan gets one independent review. Each pattern is wording that lets a plan be reviewed again.
+const SECOND_PLAN_REVIEW_ALLOWED = [
+  /\bplan[- ]review\s+rounds\b/i,
+  /\b(?:second|another|new|follow-up)\s+(?:independent\s+)?(?:plan[- ]review\s+)?round\s+(?:only\s+)?(?:when|if)\b/i,
+  /\bthird\s+(?:independent\s+)?plan[- ]review\s+round\b/i,
+  /\bafter\s+the\s+(?:second|first)\s+(?:plan[- ]review\s+)?round\b/i,
+  /(?<!\b(?:never|not)\s)\b(?:run|start|launch|allow)\s+a\s+second\s+(?:independent\s+)?plan[- ]review\b/i,
+  /\b(?:re-?review|re-?run|repeat)\s+(?:the\s+)?(?:revised\s+)?plan(?:[- ]review)?\b/i,
+  /\brevise\s+the\s+plan\s+through\s+plan\s+review\b/i,
+  /\bplan\s+review\s+again\b/i,
+  /(?<!\bnever\s)\brecheck(?:s|ing)?\s+(?:the\s+|its\s+)?(?:confirmed\s+)?(?:plan\s+)?corrections\b/i,
+  /\breviewer\s+rechecks\b/i,
+  /\bsame\s+bounded\s+review\b/i,
+  /\bbefore\s+(?:that|the)\s+(?:plan\s+)?review\s+clears\b/i,
+];
+const plainReviewScanHits = (paths) => paths.filter((path) => path.endsWith('.md')).flatMap((path) => SECOND_PLAN_REVIEW_ALLOWED
+  .filter((pattern) => pattern.test(read(path)))
+  .map((pattern) => `${path}: ${pattern}`));
+
+test('cl-execute gives a plan exactly one independent review', () => {
+  const skill = read('cl-execute/SKILL.md');
+  const gates = read('cl-execute/references/planning-and-gates.md');
+  const review = read('cl-execute/references/implementation-review-pr.md');
+
+  assert.match(gates, /A plan gets exactly one independent plan review/);
+  assert.match(gates, /Two review generations\s+are for finished code before the PR, not for plans/);
+  assert.match(gates, /verify each finding against the code before acting on it/);
+  assert.match(gates, /Fix\s+outline-level findings in the plan: a wrong premise or root cause, a\s+missing outcome or acceptance criterion, an unjustified scope exclusion, a\s+guardrail violation, or a stated detail that is wrong/);
+  assert.match(gates, /Put detail-level\s+suggestions into the plan's `## Implementation Notes` section/);
+  assert.match(gates, /Never run a second plan-review round, including\s+after fixing findings/);
+  assert.match(gates, /Bring any finding that needs a product or scope\s+call to the human as a numbered decision with the plan/);
+  assert.match(skill, /A plan gets exactly one review; never run a second plan-review\s+round/);
+  assert.match(review, /do not run a\s+second plan-review round/);
+
+  const sources = [...filesUnder('cl-execute'), ...filesUnder('cl-sweep')];
+  assert.ok(sources.includes('cl-execute/references/planning-and-gates.md'));
+  assert.deepEqual(plainReviewScanHits(sources), []);
+});
+
+test('vibe sessions give a plan exactly one review with no recheck', () => {
+  const skill = read('vibe/SKILL.md');
+  const loop = read('vibe/references/quality-loop.md');
+  const reviewer = read('../agents/vibe-adversarial-reviewer.md');
+  const writer = read('../agents/vibe-change-worker.md');
+
+  assert.match(skill, /A plan gets exactly one review/);
+  assert.match(skill, /moves on\s+to implementation without a recheck\. Never run a second plan review/);
+  assert.match(loop, /A plan gets exactly one review/);
+  assert.match(loop, /moves on to\s+code without a recheck\. Never run a second plan review/);
+  assert.match(reviewer, /This is the plan's only review/);
+  assert.match(reviewer, /Never\s+recheck plan corrections, and never run a second plan review/);
+  assert.match(writer, /then implement without a recheck;\s+never run a second plan review/);
+  for (const source of [skill, loop, writer]) {
+    assert.match(source, /verif(?:y|ies) each finding against the code/);
+    assert.match(source, /detail-level\s+suggestions\s+into\s+the\s+plan's\s+`## Implementation Notes` section/);
+  }
+
+  const sources = [...filesUnder('vibe'), ...filesUnder('../agents')];
+  assert.ok(sources.includes('../agents/vibe-adversarial-reviewer.md'));
+  assert.ok(sources.includes('vibe/references/quality-loop.md'));
+  assert.deepEqual(plainReviewScanHits(sources), []);
 });
 
 test('cl-sweep stays out of how cl-execute works and reviews', () => {

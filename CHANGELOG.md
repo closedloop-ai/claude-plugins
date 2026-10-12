@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.0.13
+### vibe v1.0.14
 
 #### Fixed
 - Readiness no longer rejects a legitimate large selected source graph at 4,096 files. File coverage remains bounded by the committed tree, while the existing 4,096 ceiling applies to distinct cwd/argv contexts. Retained-report readers, replay and private planning inputs retain their existing rejection rules.
@@ -12,6 +12,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Added
 - Closure tests reproduce 3,339 initial producer inputs expanding to 4,239 committed modules, reject a retained-report reader beyond the former cutoff, preserve distinct native contexts and their finite bound, and verify imported stylesheets and global private-input protection.
+
+### closedloop-core v1.2.3
+
+#### Added
+- `plan-structure` plan template gains an `## Implementation Notes` section after `## Tasks`, where detail-level plan-review suggestions go; the playbook's section order lists it. Plans linted against the template must now include it (write none when there are no suggestions).
+- Contract test that pins the section's place in the template and playbook.
+- Contract tests that fail when `workflow-code-review` names a prompt-file environment variable, an external prompt pack, `SOUL.md`, `orchestrator.md`, a home or absolute user path, or a `../` path, or when its bundled lens files differ from the ones the lens map names.
+
+#### Changed
+- `workflow-code-review` is self-contained. It reads its review lenses only from its own `references/lenses/` folder (renamed from `references/prompt-pack/sections/`); the `WORKFLOW_PROMPT_PACK_ROOT` lookup and the external `SOUL.md` voice-profile lookup are gone, along with the `soul_md` packet field and the `SOUL.md` Review Coverage line. Lens cross-references point at bundled files, and knowledge-capture steps that wrote to the workflow memory root are dropped from the lens files.
+
+#### Removed
+- `workflow-code-review` lens files the lens map never used as lenses: `planning-quality-gate.md`, `post-pr-lifecycle-gate.md`, and `lightweight-knowledge-capture.md`.
+
+### vibe v1.0.13
+
+#### Changed
+- `cl-execute` gives a plan exactly one independent same-family review, replacing the two-round plan-review cap. After that review the worker verifies each finding against the code, fixes outline-level findings in the plan (a wrong premise or root cause, a missing outcome or acceptance criterion, an unjustified scope exclusion, a guardrail violation, or a stated detail that is wrong), puts detail-level suggestions into the plan's `## Implementation Notes` section, and never runs a second plan-review round. A finding that needs a product or scope call goes to the human as a numbered decision with the plan, returned as `MANUAL_INTERVENTION_REQUIRED`. Code review stays at two generations.
+- A plan found wrong during implementation is fixed at outline level under the same rule instead of going back through plan review.
+- `cl-execute` writing rules no longer expect a `SOUL.md` voice card from `workflow-code-review`; a repository's own card still applies.
+- Vibe sessions also give a plan exactly one review. The `vibe` skill, `quality-loop.md`, `vibe-adversarial-reviewer` and `vibe-change-worker` drop the recheck of plan corrections: the writer verifies each finding against the code, applies outline-level corrections, puts detail-level suggestions into the plan's `## Implementation Notes` section, and moves on to code. A material approach change found later is corrected in the plan by the same writer without another plan review. The implementation review before handoff is unchanged.
+
+#### Added
+- Contract tests that pin the single plan-review rule and fail when any `cl-execute`, `cl-sweep` or `vibe` skill reference, or any `vibe` agent, allows a second, third, or repeated plan-review round or a recheck of plan corrections.
 
 ### vibe v1.0.12
 

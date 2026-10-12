@@ -1,6 +1,6 @@
 # Executor-Readiness Lane
 
-Read `sections/plan-review-lanes/common.md` first; it defines the shared lane contract, evidence JSONL shape, and verdict semantics.
+Read `lenses/plan-review-lanes/common.md` first; it defines the shared lane contract, evidence JSONL shape, and verdict semantics.
 
 This core lane always runs. It verifies template completeness, AC coverage, task order, file ownership, validation, and whether another agent can execute the plan without making product, architecture, contract, storage, validation, or testing decisions. For cross-repo, security, auth/signing, API/wire-contract, persistence, replay/recovery, or compatibility-sensitive work, review must be substantive.
 
@@ -57,7 +57,7 @@ For manual testing debt, fail the plan if manual verification remains unclassifi
 
 For runtime investigation, fail the plan if an observed-behavior bug or discrepancy is marked `not_applicable` without a repo-grounded reason, if required read-only probes were skipped despite available local/dev/test tooling or relevant repo memory, or if the plan claims a runtime-confirmed diagnosis without naming the probe and evidence. Do not require runtime investigation for straightforward additive work, such as adding a new button or field, when there is no reported current-behavior discrepancy and the plan says why code/requirements are sufficient.
 
-For feature flags, apply `sections/planning-phase.md`; do not flag every API, type, test, telemetry, refactor, or compatibility change. Fail missing required flag coverage, silent non-applicability for ambiguous rollout-sensitive changes, or non-applicability without repo evidence. If the plan chooses the flag name, require concise kebab-case plus evaluation point, fallback, compatibility, rollout notes, and enabled/disabled tests.
+For feature flags, apply `lenses/planning-phase.md`; do not flag every API, type, test, telemetry, refactor, or compatibility change. Fail missing required flag coverage, silent non-applicability for ambiguous rollout-sensitive changes, or non-applicability without repo evidence. If the plan chooses the flag name, require concise kebab-case plus evaluation point, fallback, compatibility, rollout notes, and enabled/disabled tests.
 
 Search for conditional handoff language such as "if needed", "where appropriate", "executor should decide", "implementation may choose", or equivalent wording. Fail the plan when that language applies to package strategy, runtime paths, schema shape, file ownership, compatibility, validation setup, or test coverage and the repo context can resolve it. If repo context cannot resolve the issue, verify it is listed as an Open Question or Gap blocker and directly reported to the user.
 
@@ -67,7 +67,7 @@ For `linked_plan_intake`, this lane is a freshness and executor-readiness gate f
 
 The reviewer must:
 
-1. Verify the selected plan status is executable under `sections/work-item-intake.md`.
+1. Verify the selected plan status is executable.
 2. Verify the orchestrator refreshed every implementation repo to the latest base branch/SHA before review.
 3. Compare the plan against the latest source work-item content and acceptance criteria.
 4. Compare the plan against current repo guardrails, current code paths, current contracts, current validation commands, and current cross-repo compatibility requirements from the refreshed worktree.
@@ -85,4 +85,4 @@ In addition to the generic rows in `common.md`, include:
 - source scope resolution checked, including primary requirement inventory, linked document roles, scope decisions, and AC/task traceability
 - literal execution consistency checked, including task placement, referenced symbols, field semantics, DB/query snippets, validation commands, and AC coverage
 - runtime investigation applicability, including required probes/evidence or the concrete non-applicability reason
-- feature flag name and enabled/disabled behavior for rollout-sensitive work in `WORKFLOW_FEATURE_FLAG_REPO`, if configured, or explicit non-applicability reason under `sections/planning-phase.md`
+- feature flag name and enabled/disabled behavior for rollout-sensitive work in `WORKFLOW_FEATURE_FLAG_REPO`, if configured, or explicit non-applicability reason under `lenses/planning-phase.md`

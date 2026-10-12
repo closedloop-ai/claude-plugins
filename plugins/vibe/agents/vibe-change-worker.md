@@ -49,9 +49,11 @@ Load core `plan-structure` by name (`$plan-structure` in Codex or
 write the exact-template local plan under `.closedloop-ai/vibe-plans/`.
 Never upload it, paste it into the ticket, commit it or deploy it. Name scope,
 owners, dependencies and checks. Return `PLAN` with its local path, Prep and
-Graph blocks. Wait for the separate adversarial plan review; correct confirmed
-findings in this same context before implementation. No technical plan goes
-to Andy for approval.
+Graph blocks. Wait for the separate adversarial plan review, the plan's only
+review. In this same context, verify each finding against the code, apply
+outline-level corrections to the plan, put detail-level suggestions into the
+plan's `## Implementation Notes` section, then implement without a recheck;
+never run a second plan review. No technical plan goes to Andy for approval.
 
 Always load named core decision-table (`$decision-table` in Codex or
 `/closedloop-core:decision-table` in Claude Code) and create or extend the

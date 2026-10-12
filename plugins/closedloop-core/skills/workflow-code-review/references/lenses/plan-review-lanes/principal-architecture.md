@@ -1,6 +1,6 @@
 # Principal Architecture Lane
 
-Read `sections/plan-review-lanes/common.md` first; it defines the shared lane contract, evidence JSONL shape, and verdict semantics.
+Read `lenses/plan-review-lanes/common.md` first; it defines the shared lane contract, evidence JSONL shape, and verdict semantics.
 
 This lane must invoke `$principal-engineer` and perform a focused design-quality review of module boundaries, ownership fit, maintainability, testability, duplication, abstraction quality, route/component/service responsibility split, future extension pressure, and whether the plan creates code that will be hard to reason about or change. It is a core lane and always runs. This is separate from executor-readiness, adversarial contract, API/Data-Model Ownership, and security-abuse review. It must be read-only and must not implement fixes.
 

@@ -1,6 +1,6 @@
 # Adversarial Contract Lane
 
-Read `sections/plan-review-lanes/common.md` first; it defines the shared lane contract, evidence JSONL shape, and verdict semantics.
+Read `lenses/plan-review-lanes/common.md` first; it defines the shared lane contract, evidence JSONL shape, and verdict semantics.
 
 This lane reviews call-site inventory, canonicalization/signing, trust boundaries, compatibility/version skew, propagation paths, failure/replay/recovery, and exact reason/status taxonomy. For cross-repo, security-sensitive, auth/signing, API/wire-contract, persistence, replay/recovery, or compatibility-sensitive work, this lane must be substantive; it is a core lane and always runs.
 
@@ -14,7 +14,7 @@ The reviewer must check whether:
 - prompt, skill, markdown-agent, script, schema, fixture, and docs-as-runtime-instruction consumers are included in the call-site inventory when affected
 - descriptor IDs, envelope fields, ordering, collision behavior, source-of-truth ordering, reason strings, status codes, and telemetry keys use an exact taxonomy instead of executor-defined names
 - contract changes include executable tests, fixtures, source checks, or validation scripts rather than documentation-only examples
-- mutation actions, commands, write endpoints, workflow operations, or state-changing tools include a Mutation Contract Matrix (definition in `sections/planning-phase.md`), covering caller compatibility, response and failure envelopes, target validation, read-after-write surfaces, idempotency, partial-apply behavior, structured input boundaries, and executable contract tests
+- mutation actions, commands, write endpoints, workflow operations, or state-changing tools include a Mutation Contract Matrix (definition in `lenses/planning-phase.md`), covering caller compatibility, response and failure envelopes, target validation, read-after-write surfaces, idempotency, partial-apply behavior, structured input boundaries, and executable contract tests
 
 ## Lane Focus
 
@@ -60,7 +60,7 @@ For any plan touching auth, signing, canonicalization, payload verification, com
    - For changes in a configured repo that communicates with another configured repo, prove existing producer/consumer expectations remain compatible.
    - Apply repo-specific compatibility guidance discovered from workflow memory, repo-profile cache entries, current code, and guardrails. New fields should be optional/defaulted, new enforcement should have a compatibility path, and response-shape changes should preserve older client expectations unless a migration boundary is explicit.
 10. Feature-flag rollout pass:
-   - Apply the Feature Flag Applicability definition from `sections/planning-phase.md`. Do not treat every API, MCP, type, test, telemetry, refactor, or compatibility change as a feature-flag candidate.
+   - Apply the Feature Flag Applicability definition from `lenses/planning-phase.md`. Do not treat every API, MCP, type, test, telemetry, refactor, or compatibility change as a feature-flag candidate.
    - If `WORKFLOW_FEATURE_FLAG_REPO` is configured, for changes in that repo that introduce or materially change a user-visible capability/default, actively triggered endpoint/command/automation/integration, enforcement/auth/security/quota/validation policy, staged client/server protocol behavior, or rollout-sensitive data/background-processing path, verify the plan includes a `${WORKFLOW_FEATURE_FLAG_PROVIDER}` feature flag.
    - The plan may choose the flag name when the work item does not specify one, but it must use a concise kebab-case name and state the exact evaluation point, default-off/fallback behavior, compatibility behavior when the flag is off or missing, rollout notes, and enabled/disabled tests.
    - Fail the plan if required feature-flag coverage is missing, if an ambiguous rollout-sensitive change is silently treated as non-applicable, or if non-applicability is asserted without repo-grounded evidence.

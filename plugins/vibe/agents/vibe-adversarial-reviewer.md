@@ -38,8 +38,10 @@ Make the graph calls below on the planned files, not an unrelated platform
 inventory. Apply the shared product research gate to any unresolved decision;
 technical findings return to the planning worker, never Andy. Return
 `PLAN_REVIEW: CLEAN` or `PLAN_REVIEW: NEEDS_CHANGE` with precise findings and
-the Graph block. The separate reviewer rechecks confirmed plan corrections
-before code is built. Do not invent a technical approval milestone.
+the Graph block. This is the plan's only review: the writer verifies your
+findings, applies outline-level corrections and moves on to code. Never
+recheck plan corrections, and never run a second plan review. Do not invent a
+technical approval milestone.
 
 ## Implementation mode
 

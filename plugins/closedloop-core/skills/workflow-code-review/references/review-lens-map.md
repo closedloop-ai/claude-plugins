@@ -1,21 +1,21 @@
 # Review Lens Map
 
-Use these workflow prompt-pack files as reusable review lenses only. Do not execute their orchestration, planning, approval, upload, notification, manual-loop, finalization, PR lifecycle polling, test, validation, visual-check, commit, push, or merge instructions.
+Use these lens files, bundled with this skill under `references/lenses/`, as reusable review lenses only. Do not execute their orchestration, planning, approval, upload, notification, manual-loop, finalization, PR lifecycle polling, test, validation, visual-check, commit, push, or merge instructions.
 
-Locate the prompt pack as the skill's "Prompt Pack Discovery" section says: a valid `WORKFLOW_PROMPT_PACK_ROOT` when set, otherwise the copy bundled with this skill at `references/prompt-pack/`.
+Paths below such as `lenses/planning-phase.md` resolve relative to this skill's `references/` folder. Read only these bundled files; never read a lens from another location.
 
 ## Plan Review Lanes
 
-Reference: `sections/plan-review-lanes/common.md` plus the lane files named below. `sections/planning-quality-gate.md` is the orchestrator-facing process doc and is not a review lens; the lane content lives in the per-lane files.
+Reference: `lenses/plan-review-lanes/common.md` plus the lane files named below.
 
 Borrow:
 
-- API/Data-Model Ownership review: `sections/plan-review-lanes/api-data-model-ownership.md`
-- Database/Migration Safety review: `sections/plan-review-lanes/database-migration-safety.md`
-- Security-abuse review: `sections/plan-review-lanes/security-abuse.md`
-- Principal Architecture review: `sections/plan-review-lanes/principal-architecture.md`
-- adversarial contract passes, executable validation expectations as review criteria only, and feature-flag applicability reasoning when the repo uses a configured feature flag provider: `sections/plan-review-lanes/adversarial-contract.md`
-- literal consistency checks and execution dry-run expectations: `sections/plan-review-lanes/executor-readiness.md`
+- API/Data-Model Ownership review: `lenses/plan-review-lanes/api-data-model-ownership.md`
+- Database/Migration Safety review: `lenses/plan-review-lanes/database-migration-safety.md`
+- Security-abuse review: `lenses/plan-review-lanes/security-abuse.md`
+- Principal Architecture review: `lenses/plan-review-lanes/principal-architecture.md`
+- adversarial contract passes, executable validation expectations as review criteria only, and feature-flag applicability reasoning when the repo uses a configured feature flag provider: `lenses/plan-review-lanes/adversarial-contract.md`
+- literal consistency checks and execution dry-run expectations: `lenses/plan-review-lanes/executor-readiness.md`
 
 Do not borrow:
 
@@ -33,7 +33,7 @@ For database/migration-sensitive diffs, inspect whether generated or hand-author
 
 ## Implementation Quality Gate
 
-Reference: no file read by default. The borrowable lens content here (changed-file to guardrail-rule compliance, the Guardrail Automation Gap Assessment, the Correctness Escape Pattern Pass, and decision-table alignment) is already restated inline in this skill's lane specs in `SKILL.md`; rely on those. The rest of `sections/implementation-quality-gate.md` is orchestrator machinery the do-not-borrow list excludes. Only when the diff changes user-visible flows or producer-to-consumer boundaries, read the E2E/user-flow and real-boundary validation passages in `sections/implementation-quality-gate.md`: search for "E2E/User-Flow Validation Pass" and "Real Boundary Scenario Coverage" by name, since the file has no headings.
+Reference: no file read by default. The borrowable lens content here (changed-file to guardrail-rule compliance, the Guardrail Automation Gap Assessment, the Correctness Escape Pattern Pass, and decision-table alignment) is already restated inline in this skill's lane specs in `SKILL.md`; rely on those. The rest of `lenses/implementation-quality-gate.md` is orchestrator machinery the do-not-borrow list excludes. Only when the diff changes user-visible flows or producer-to-consumer boundaries, read the E2E/user-flow and real-boundary validation passages in `lenses/implementation-quality-gate.md`: search for "E2E/User-Flow Validation Pass" and "Real Boundary Scenario Coverage" by name, since the file has no headings.
 
 Borrow:
 
@@ -55,7 +55,7 @@ For migration work, note what deploy/apply success does not prove, but report a 
 
 ## Planning Phase
 
-Reference: `sections/planning-phase.md`, but do not read the whole file; read only these sections: "Required Repo Impact Matrix", "Required Contract Resolution" with its subsections named below, and "Database/Migration Safety".
+Reference: `lenses/planning-phase.md`, but do not read the whole file; read only these sections: "Required Repo Impact Matrix", "Required Contract Resolution" with its subsections named below, and "Database/Migration Safety".
 
 Borrow:
 
@@ -81,7 +81,7 @@ For database work, check whether generated migrations, hand-authored SQL, or sch
 
 ## Post PR Lifecycle Gate
 
-Reference: none. The bullets below are the complete lens for this gate; `sections/post-pr-lifecycle-gate.md` is orchestrator machinery and must not be read.
+Reference: none. The bullets below are the complete lens for this gate.
 
 Borrow only when the review target includes existing PR review comments:
 
@@ -97,9 +97,3 @@ Do not borrow:
 - PR readiness state transitions
 
 Translate to code review by checking human architecture concerns against production behavior without treating the comment's authority as proof of a defect.
-
-## Lightweight Knowledge Capture
-
-Reference: `sections/lightweight-knowledge-capture.md`
-
-Borrow only if the user asks to update durable workflow knowledge. Ordinary code review should not write candidate knowledge notes.
