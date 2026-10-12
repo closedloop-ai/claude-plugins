@@ -87,10 +87,14 @@ inputs; an unrelated capable reader is not selected consumption. Ordinary
 bootstrap health cannot mint validation proof. Meaningful retained report data,
 default verdicts and replay still block, while proven same-call test fixtures
 remain nonretained inputs and never stand in for required coverage.
-An existing registered writer retains its original definition root, exact
-binding and actual ID. The root supplies the new table policy through its
-existing continuation; it does not reset or re-register under an updated
-release digest. An unavailable original binding blocks new code.
+An existing registered writer retains its definition root, exact binding and
+actual ID while the definition matches. A missing definition or proven upgrade
+uses the same `writer-state.mjs migrate` command in Codex and Claude Code.
+ROOT records the old/new IDs, bindings, digests, reason and time, preserves all
+migration history and queued requests, and continues from the same worktree,
+plan, decision table, checkpoint and change log. Running turns, matching
+definitions, unproven upgrades and writer refusals block migration. Recovery
+stays internal and never asks Andy; ordinary registration cannot replace writers.
 
 Native Codex helpers acquire a coordinator-owned record lease before their
 mutation turn and release it only after observed completion or owned termination.
@@ -172,7 +176,7 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 
 ## Runtime Files
 
-Version `1.0.10` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.12` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains two skill-contract test modules.
 Runtime helpers and tests live alongside their owning skills, including vibe

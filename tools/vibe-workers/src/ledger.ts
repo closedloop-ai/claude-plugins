@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { actionSchema, ledgerSchema, registerSchema, type Ledger } from "./contracts.js";
+import { actionSchema, ledgerSchema, migrateSchema, registerSchema, type Ledger } from "./contracts.js";
 import { readDefinition } from "./definition.js";
 
 /** Resolves an exact existing checkout for pre-session operations or a parent-authorized cancellation. */
@@ -79,10 +79,72 @@ export function registerWriter(input: unknown) {
     }
     const ledger: Ledger = { version: 1, worktree: place.root, branch: place.branch, runtime: data.runtime,
       workerId: data.workerId ?? randomUUID(), binding: definition.binding, started: false,
-      pending: [], completed: [] };
+      pending: [], completed: [], migrations: [] };
     save(place, ledger);
     return summary(ledger);
   });
+}
+
+/** Rebinds only a stopped writer with proven definition loss or upgrade, retaining every prior state. */
+export function migrateWriter(input: unknown, currentPluginRoot: string) {
+  const data = migrateSchema.parse(input);
+  const definition = readDefinition(currentPluginRoot, "vibe-change-worker", data.capabilities);
+  if (realpathSync(data.agentRoot) !== definition.root || data.agentName !== "vibe-change-worker") {
+    throw new Error("Migration must use this command's current canonical plugin definition");
+  }
+  const currentVersion = definition.version;
+  if (!currentVersion) throw new Error("Current plugin release has no version");
+  const place = location(data.worktree);
+  return locked(place, () => {
+    const ledger = readLedger(place);
+    if (ledger.runtime !== data.runtime || ledger.workerId !== data.previousWorkerId
+      || ledger.binding.digest !== data.previousDigest) throw new Error("Migration requires the exact recorded writer and digest");
+    if (ledger.active?.lease || existsSync(join(place.dir, "vibe-record-turn.lock"))) {
+      throw new Error("Wait for owned source and record turns to stop before migration");
+    }
+    if (ledger.active?.status === "BLOCKED") throw new Error("Migration cannot bypass a writer refusal; resolve the blocked request first");
+    let observedDigest: string | null = null;
+    let reason: "definition-missing" | "definition-upgraded";
+    try {
+      observedDigest = readDefinition(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities).binding.digest;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+    if (observedDigest === ledger.binding.digest) throw new Error("Recorded definition is present and matching; resume the existing writer");
+    if (observedDigest === null) reason = "definition-missing";
+    else {
+      // A recorded vibe/<semver> cache root supplies the original release, even after an in-place upgrade.
+      const oldVersion = basename(dirname(ledger.binding.agentRoot)) === "vibe"
+        ? basename(ledger.binding.agentRoot) : undefined;
+      if (!oldVersion || !isNewerRelease(currentVersion, oldVersion)) {
+        throw new Error("Digest mismatch has no proven plugin version upgrade; retain the original writer");
+      }
+      reason = "definition-upgraded";
+    }
+    const workerId = data.runtime === "claude" ? randomUUID() : data.workerId;
+    if (!workerId) throw new Error("Native migration requires the new read-only held worker's actual ID");
+    const oldIds = [ledger.workerId, ...ledger.migrations.map((item) => item.previous.workerId)];
+    if (oldIds.includes(workerId)) throw new Error("Migration requires a new writer identity");
+    const { migrations, ...previous } = ledger;
+    ledger.migrations = [...migrations, { id: randomUUID(), at: new Date().toISOString(), reason,
+      observedDigest, previous, workerId, binding: definition.binding }];
+    ledger.workerId = workerId;
+    ledger.binding = definition.binding;
+    ledger.started = false;
+    save(place, ledger);
+    return summary(ledger);
+  });
+}
+
+/** Compare numeric release tuples; unknown release provenance fails closed. */
+function isNewerRelease(current: string, previous: string) {
+  if (!/^\d+\.\d+\.\d+$/.test(previous)) return false;
+  const left = current.split(".").map(Number);
+  const right = previous.split(".").map(Number);
+  for (let index = 0; index < 3; index++) {
+    if (left[index] !== right[index]) return left[index]! > right[index]!;
+  }
+  return false;
 }
 
 /** Serialized mutations preserve active requests across review, person and commit continuations. */
@@ -220,10 +282,13 @@ function locked<T>(place: ReturnType<typeof location>, operation: () => T): T {
   try { return operation(); } finally { rmSync(place.lock, { recursive: true }); }
 }
 function summary(ledger: Ledger) {
+  const lastMigration = ledger.migrations.at(-1);
   return { runtime: ledger.runtime, workerId: ledger.workerId, agentName: ledger.binding.agentName,
     definitionDigest: ledger.binding.digest, branch: ledger.branch, worktree: ledger.worktree,
     queuedRequestIds: ledger.pending.map((item) => item.id), activeRequestId: ledger.active?.id,
-    status: ledger.active?.status, running: Boolean(ledger.active?.lease), processGroupId: ledger.active?.processGroupId };
+    status: ledger.active?.status, running: Boolean(ledger.active?.lease), processGroupId: ledger.active?.processGroupId,
+    migrationCount: ledger.migrations.length,
+    lastMigration: lastMigration ? { id: lastMigration.id, reason: lastMigration.reason, at: lastMigration.at } : undefined };
 }
 
 function proveGroupStopped(processGroupId: number) {

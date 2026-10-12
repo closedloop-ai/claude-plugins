@@ -145696,9 +145696,9 @@ ${lanes.join("\n")}
             /*ignoreCase*/
             false
           )) {
-            const basename = getBaseFileName(a.fileName);
-            if (basename === "lib.d.ts" || basename === "lib.es6.d.ts") return 0;
-            const name = removeSuffix(removePrefix(basename, "lib."), ".d.ts");
+            const basename2 = getBaseFileName(a.fileName);
+            if (basename2 === "lib.d.ts" || basename2 === "lib.es6.d.ts") return 0;
+            const name = removeSuffix(removePrefix(basename2, "lib."), ".d.ts");
             const index = libs.indexOf(name);
             if (index !== -1) return index + 1;
           }
@@ -209444,8 +209444,8 @@ ${options.prefix}` : "\n" : options.prefix
             }
           };
           for (const file of files) {
-            const basename = getBaseFileName(file);
-            if (basename === "package.json" || basename === "bower.json") {
+            const basename2 = getBaseFileName(file);
+            if (basename2 === "package.json" || basename2 === "bower.json") {
               createProjectWatcher(
                 file,
                 "FileWatcher"
@@ -213117,8 +213117,8 @@ All files are: ${JSON.stringify(names)}`,
               var _a;
               const fileOrDirectoryPath = removeIgnoredPath(this.toPath(fileOrDirectory));
               if (!fileOrDirectoryPath) return;
-              const basename = getBaseFileName(fileOrDirectoryPath);
-              if (((_a = result.affectedModuleSpecifierCacheProjects) == null ? void 0 : _a.size) && (basename === "package.json" || basename === "node_modules")) {
+              const basename2 = getBaseFileName(fileOrDirectoryPath);
+              if (((_a = result.affectedModuleSpecifierCacheProjects) == null ? void 0 : _a.size) && (basename2 === "package.json" || basename2 === "node_modules")) {
                 result.affectedModuleSpecifierCacheProjects.forEach((project) => {
                   var _a2;
                   (_a2 = project.getModuleSpecifierCache()) == null ? void 0 : _a2.clear();
@@ -224107,8 +224107,12 @@ var bindingSchema = external_exports.object({
   digest: external_exports.string().length(64),
   capabilities: capabilitiesSchema
 }).strict();
+var migrateSchema = registerSchema.extend({
+  previousWorkerId: identifierSchema,
+  previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/)
+}).strict();
 var requestSchema = external_exports.object({ id: identifierSchema, input: external_exports.string().min(1).max(64 * 1024) }).strict();
-var ledgerSchema = external_exports.object({
+var ledgerStateSchema = external_exports.object({
   version: external_exports.literal(1),
   worktree: external_exports.string(),
   branch: external_exports.string(),
@@ -224127,6 +224131,16 @@ var ledgerSchema = external_exports.object({
   }).strict().optional(),
   completed: external_exports.array(identifierSchema).max(64)
 }).strict();
+var migrationSchema = external_exports.object({
+  id: external_exports.string().uuid(),
+  at: external_exports.string().datetime(),
+  reason: external_exports.enum(["definition-missing", "definition-upgraded"]),
+  observedDigest: external_exports.string().length(64).nullable(),
+  previous: ledgerStateSchema,
+  workerId: identifierSchema,
+  binding: bindingSchema
+}).strict();
+var ledgerSchema = ledgerStateSchema.extend({ migrations: external_exports.array(migrationSchema).default([]) }).strict();
 async function readInput(stream = process.stdin) {
   const buffers = [];
   let size = 0;
@@ -224146,7 +224160,7 @@ import { spawnSync } from "node:child_process";
 // src/ledger.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, realpathSync, renameSync, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 
 // src/definition.ts
 var import_yaml = __toESM(require_dist(), 1);
@@ -224217,6 +224231,7 @@ function locked(place, operation) {
   }
 }
 function summary(ledger) {
+  const lastMigration = ledger.migrations.at(-1);
   return {
     runtime: ledger.runtime,
     workerId: ledger.workerId,
@@ -224228,7 +224243,9 @@ function summary(ledger) {
     activeRequestId: ledger.active?.id,
     status: ledger.active?.status,
     running: Boolean(ledger.active?.lease),
-    processGroupId: ledger.active?.processGroupId
+    processGroupId: ledger.active?.processGroupId,
+    migrationCount: ledger.migrations.length,
+    lastMigration: lastMigration ? { id: lastMigration.id, reason: lastMigration.reason, at: lastMigration.at } : void 0
   };
 }
 
@@ -224832,7 +224849,7 @@ function rejectReportReplay(command) {
 
 // src/main-sync-report-command.ts
 import { existsSync as existsSync5, readFileSync as readFileSync5 } from "node:fs";
-import { dirname as dirname2, isAbsolute as isAbsolute3, join as join4, relative as relative2, resolve as resolve3 } from "node:path";
+import { dirname as dirname3, isAbsolute as isAbsolute3, join as join4, relative as relative2, resolve as resolve3 } from "node:path";
 var import_yaml3 = __toESM(require_dist(), 1);
 var import_picomatch2 = __toESM(require_picomatch2(), 1);
 
@@ -224840,7 +224857,7 @@ var import_picomatch2 = __toESM(require_picomatch2(), 1);
 var import_typescript = __toESM(require_typescript(), 1);
 var import_picomatch = __toESM(require_picomatch2(), 1);
 import { existsSync as existsSync4, readFileSync as readFileSync4 } from "node:fs";
-import { dirname, isAbsolute as isAbsolute2, join as join3, normalize, relative, resolve as resolve2 } from "node:path";
+import { dirname as dirname2, isAbsolute as isAbsolute2, join as join3, normalize, relative, resolve as resolve2 } from "node:path";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 
 // ../../plugins/vibe/skills/vibe/scripts/local-plans.mjs
@@ -224976,7 +224993,7 @@ function explicitPlanningReference(root, file, reference) {
     const suffix = reference.value.slice(reference.value.lastIndexOf(UNKNOWN) + UNKNOWN.length).replace(/^\/+/, "");
     return suffix === ".closedloop-ai/vibe-plans" || suffix.startsWith(".closedloop-ai/vibe-plans/") || reference.uncertainTerms.some((term) => term.includes(".closedloop-ai/vibe-plans")) || reference.uncertainTerms.includes(".closedloop-ai") && reference.uncertainTerms.includes("vibe-plans");
   }
-  const target = reference.base === "runtime" && !isAbsolute2(reference.value) ? normalize(reference.value).replace(LEADING_PARENTS, "") : relative(root, resolve2(dirname(join3(root, file)), reference.value));
+  const target = reference.base === "runtime" && !isAbsolute2(reference.value) ? normalize(reference.value).replace(LEADING_PARENTS, "") : relative(root, resolve2(dirname2(join3(root, file)), reference.value));
   return isLocalPlanPath(target) || target === ".closedloop-ai/vibe-plans";
 }
 function callName(expression) {
@@ -224995,7 +225012,7 @@ function isReader(expression) {
 }
 function viteReference(root, file, node) {
   const values = node.arguments[0] ? literalGroup(node.arguments[0]) : [];
-  let base = dirname(join3(root, file));
+  let base = dirname2(join3(root, file));
   let dot = false;
   let unresolved2 = !node.arguments[0] || !literalGroupComplete(node.arguments[0]) || values.some((value) => !["/", "./", "../", "**"].some((prefix) => value.replace(/^!/, "").startsWith(prefix)));
   const options = node.arguments[1];
@@ -225034,8 +225051,8 @@ function collectorExcludes(node) {
   return node.properties.flatMap((property) => import_typescript.default.isPropertyAssignment(property) && propertyName(property.name) === "exclude" ? literalGroup(property.initializer) : []);
 }
 function packageBase(root, file) {
-  let base = dirname(join3(root, file));
-  while (base !== root && !existsSync4(join3(base, "package.json"))) base = dirname(base);
+  let base = dirname2(join3(root, file));
+  while (base !== root && !existsSync4(join3(base, "package.json"))) base = dirname2(base);
   return base;
 }
 function importedName(identifier) {
@@ -225105,7 +225122,7 @@ function pathValue(expression, root, file, seen, collect) {
   if (import_typescript.default.isParenthesizedExpression(expression)) return pathValue(expression.expression, root, file, seen, collect);
   if (import_typescript.default.isIdentifier(expression)) {
     const declaration = localDeclaration(expression);
-    if (expression.text === "__dirname" && !declaration) return dirname(join3(root, file));
+    if (expression.text === "__dirname" && !declaration) return dirname2(join3(root, file));
     if (declaration && import_typescript.default.isVariableDeclaration(declaration) && declaration.initializer && import_typescript.default.isVariableDeclarationList(declaration.parent) && declaration.parent.flags & import_typescript.default.NodeFlags.Const) {
       return pathValue(declaration.initializer, root, file, seen, collect);
     }
@@ -225121,7 +225138,7 @@ function pathValue(expression, root, file, seen, collect) {
     return expression.head.text + expression.templateSpans.map((part, index) => stringValue(values[index]) + part.literal.text).join("");
   }
   if (import_typescript.default.isPropertyAccessExpression(expression) && expression.name.text === "url" && import_typescript.default.isMetaProperty(expression.expression) && expression.expression.keywordToken === import_typescript.default.SyntaxKind.ImportKeyword) return pathToFileURL(join3(root, file)).href;
-  if (import_typescript.default.isPropertyAccessExpression(expression) && expression.name.text === "dirname" && import_typescript.default.isMetaProperty(expression.expression) && expression.expression.keywordToken === import_typescript.default.SyntaxKind.ImportKeyword) return dirname(join3(root, file));
+  if (import_typescript.default.isPropertyAccessExpression(expression) && expression.name.text === "dirname" && import_typescript.default.isMetaProperty(expression.expression) && expression.expression.keywordToken === import_typescript.default.SyntaxKind.ImportKeyword) return dirname2(join3(root, file));
   if (import_typescript.default.isBinaryExpression(expression) && expression.operatorToken.kind === import_typescript.default.SyntaxKind.PlusToken) {
     const left = pathValue(expression.left, root, file, seen, collect);
     const right = pathValue(expression.right, root, file, seen, collect);
@@ -225140,8 +225157,8 @@ function pathValue(expression, root, file, seen, collect) {
   const name = callName(expression.expression);
   if (name === "dirname" && builtin(expression.expression, ["node:path", "path"])) {
     const value = expression.arguments[0] && pathValue(expression.arguments[0], root, file, seen, collect);
-    if (isIsolatedPath(value)) return { isolatedPath: dirname(value.isolatedPath), identity: value.identity };
-    return typeof value === "string" && !value.includes(UNKNOWN) ? dirname(value) : UNKNOWN;
+    if (isIsolatedPath(value)) return { isolatedPath: dirname2(value.isolatedPath), identity: value.identity };
+    return typeof value === "string" && !value.includes(UNKNOWN) ? dirname2(value) : UNKNOWN;
   }
   if (name === "cwd" && isProcessMember(expression.expression, "cwd")) {
     return environment?.cwd ?? { possiblePath: "/", unknownPrefix: true };
@@ -225227,7 +225244,7 @@ function pathPossibility(root, file, value, base, candidates, unknownPrefix = fa
   if (unknownPrefix) pattern = `${UNKNOWN}${pattern}`;
   else if (base === "runtime" && !isAbsolute2(pattern)) {
     if (!pattern.startsWith(UNKNOWN)) pattern = `${UNKNOWN}/${normalize(pattern).replace(LEADING_PARENTS, "")}`;
-  } else if (!isAbsolute2(pattern)) pattern = resolve2(dirname(join3(root, file)), pattern);
+  } else if (!isAbsolute2(pattern)) pattern = resolve2(dirname2(join3(root, file)), pattern);
   const match = new RegExp(`^${pattern.replace(REGEX_META, "\\$&").split(UNKNOWN).join(".*")}$`);
   return candidates.some((candidate) => match.test(join3(root, candidate)));
 }
@@ -225376,7 +225393,7 @@ function isIsolatedPath(value) {
 function importedConstant(root, source, declaration, environment) {
   const imported = declaration.parent.parent.parent;
   if (!import_typescript.default.isImportDeclaration(imported) || !import_typescript.default.isStringLiteral(imported.moduleSpecifier) || !imported.moduleSpecifier.text.startsWith(".")) return void 0;
-  const base = resolve2(dirname(join3(root, source.fileName)), imported.moduleSpecifier.text);
+  const base = resolve2(dirname2(join3(root, source.fileName)), imported.moduleSpecifier.text);
   if (!base.startsWith(`${root}/`)) return void 0;
   const stem = relative(root, base);
   const files = [stem, stem.replace(/\.js$/, ".ts"), `${stem}.ts`, `${stem}.mjs`, `${stem}/index.ts`];
@@ -225854,7 +225871,7 @@ function workspaceDirectory(root, name) {
     const data = external_exports.object({ name: external_exports.string().optional() }).passthrough().parse(JSON.parse(readFileSync5(join4(root, file), "utf8")));
     return data.name === name;
   });
-  return matches.length === 1 ? dirname2(matches[0]) : void 0;
+  return matches.length === 1 ? dirname3(matches[0]) : void 0;
 }
 function pnpmOption(args, index, options) {
   const argument = args[index] ?? "";
@@ -225900,7 +225917,7 @@ function workspaceDirectories(root, workspace) {
   const patterns = config.packages ?? [];
   const finite = config.packages !== void 0 && patterns.every((pattern) => WORKSPACE_PATTERN.test(pattern));
   const matches = finite ? (0, import_picomatch2.default)(patterns, { dot: true }) : void 0;
-  return files.filter((file) => file === "package.json" || !matches || matches(dirname2(file))).map((file) => join4(root, dirname2(file)));
+  return files.filter((file) => file === "package.json" || !matches || matches(dirname3(file))).map((file) => join4(root, dirname3(file)));
 }
 function supportedScript(root, value, args, cwd, seen) {
   try {
@@ -225911,7 +225928,7 @@ function supportedScript(root, value, args, cwd, seen) {
   }
 }
 function possibleManifestDirectories(root, context) {
-  return possibleFiles(root, "package.json", context, (path2) => path2 === "package.json" || path2.endsWith("/package.json")).map((file) => join4(root, dirname2(file)));
+  return possibleFiles(root, "package.json", context, (path2) => path2 === "package.json" || path2.endsWith("/package.json")).map((file) => join4(root, dirname3(file)));
 }
 function possibleInstallEntries(root, context, options, seen) {
   const directories = context.kind === "possible" ? possibleManifestDirectories(root, context) : [context.path];
@@ -225970,17 +225987,17 @@ function reportLoaderEntries(execution, importer, target, context) {
 var import_typescript3 = __toESM(require_typescript(), 1);
 import { readFileSync as readFileSync9 } from "node:fs";
 import { builtinModules } from "node:module";
-import { dirname as dirname5, join as join8, relative as relative4, resolve as resolve4 } from "node:path";
+import { dirname as dirname6, join as join8, relative as relative4, resolve as resolve4 } from "node:path";
 
 // src/main-sync-input-catalog.ts
 import { lstatSync as lstatSync4, readFileSync as readFileSync8, readdirSync as readdirSync2 } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname as dirname4, join as join7, relative as relative3, sep as sep2 } from "node:path";
+import { dirname as dirname5, join as join7, relative as relative3, sep as sep2 } from "node:path";
 import { realpathSync as realpathSync6 } from "node:fs";
 
 // src/main-sync-input-files.ts
 import { lstatSync as lstatSync3, readFileSync as readFileSync7, readdirSync, realpathSync as realpathSync5 } from "node:fs";
-import { dirname as dirname3, join as join6, sep } from "node:path";
+import { dirname as dirname4, join as join6, sep } from "node:path";
 
 // src/main-sync-generated-input.ts
 import { execFileSync as execFileSync3, spawnSync as spawnSync2 } from "node:child_process";
@@ -226077,7 +226094,7 @@ function originFile(root, file) {
   const target = join6(root, file);
   const stat = lstatSync3(target);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.mode & 73 || stat.size > MAX_INPUT_BYTES || realpathSync5(target) !== target) throw new MainSyncError(`Generated input must be a bounded canonical non-executable regular file: ${file}`, "NEEDS_CHANGE");
-  for (let parent = dirname3(target); parent !== root; parent = dirname3(parent)) {
+  for (let parent = dirname4(target); parent !== root; parent = dirname4(parent)) {
     if (!parent.startsWith(`${root}${sep}`) || lstatSync3(parent).isSymbolicLink() || realpathSync5(parent) !== parent) {
       throw new MainSyncError(`Generated input parent is not canonical: ${file}`, "NEEDS_CHANGE");
     }
@@ -226322,7 +226339,7 @@ function producerPackage(root, producer) {
   }
   const data = packageSchema2.parse(JSON.parse(readFileSync8(canonical, "utf8")));
   if (data.name !== owner.name || data.version !== owner.version) throw new MainSyncError(`Installed producer contract changed: ${producer.id}`, "NEEDS_CHANGE");
-  return { path: relative3(root, canonical), directory: dirname4(canonical), version: data.version };
+  return { path: relative3(root, canonical), directory: dirname5(canonical), version: data.version };
 }
 function producerOwnerInputs(root, producer, allowed) {
   const owner = producerPackage(root, producer);
@@ -226546,7 +226563,7 @@ function verifyReportClosure(execution, entries) {
 function resolveImport(root, importer, specifier, tracked, mode) {
   if (BUILTINS.has(specifier)) return [];
   if (specifier.startsWith(".")) {
-    const path2 = resolve4(dirname5(join8(root, importer)), specifier);
+    const path2 = resolve4(dirname6(join8(root, importer)), specifier);
     if (!path2.startsWith(`${root}/`)) throw unproved("selected import escapes owned root");
     const stem = relative4(root, path2);
     for (const candidate of moduleCandidates(stem)) if (tracked.has(candidate)) return [candidate];
@@ -226814,7 +226831,7 @@ function displaylessPrerequisites(root) {
 
 // src/main-sync-private-inputs.ts
 import { existsSync as existsSync6, lstatSync as lstatSync5, realpathSync as realpathSync7 } from "node:fs";
-import { dirname as dirname6, join as join9, relative as relative5, resolve as resolve5, sep as sep3 } from "node:path";
+import { dirname as dirname7, join as join9, relative as relative5, resolve as resolve5, sep as sep3 } from "node:path";
 var analyzed;
 function verifyPrivateInput(root, file, head) {
   verifyEvidencePath(root, file);
@@ -226841,7 +226858,7 @@ function verifyEvidencePath(root, file, label = "Private planning evidence") {
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_INPUT_BYTES || realpathSync7(target) !== target) {
     throw new MainSyncError(`${label} requires a bounded canonical regular file`, "NEEDS_CHANGE");
   }
-  for (let parent = dirname6(target); parent !== root; parent = dirname6(parent)) {
+  for (let parent = dirname7(target); parent !== root; parent = dirname7(parent)) {
     if (!parent.startsWith(`${root}${sep3}`) || lstatSync5(parent).isSymbolicLink() || realpathSync7(parent) !== parent) {
       throw new MainSyncError(`${label} cannot use a symlinked or escaping parent`, "NEEDS_CHANGE");
     }
@@ -226851,7 +226868,7 @@ function referencesPrivateInputs(root, privatePaths) {
   return committedInputReferences(root, (file, reference) => {
     if (explicitPlanningReference(root, file, reference) || referenceMatches(root, file, reference, privatePaths)) return true;
     if (reference.kind !== "path") return false;
-    const path2 = resolve5(reference.base === "module" ? dirname6(join9(root, file)) : root, reference.value);
+    const path2 = resolve5(reference.base === "module" ? dirname7(join9(root, file)) : root, reference.value);
     return existsSync6(path2) && isLocalPlanPath(relative5(root, realpathSync7(path2)));
   });
 }

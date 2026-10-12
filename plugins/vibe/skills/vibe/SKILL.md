@@ -82,10 +82,12 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   Agent override. Briefs/capability metadata are JSON on stdin. The implementation
   writer's actual Claude session ID is persisted and explicitly resumed.
   On an existing session preserve its original recorded binding and actual
-  writer ID, as quality-loop.md specifies. Supply the new mandatory-table policy
-  through the existing root continuation; never bind it to a changed release
-  root/digest, replace it or copy old agent files. An unverifiable original
-  binding returns BLOCKED before new code; automatic upgrade is not assumed.
+  writer ID while that definition matches. For a missing definition or proven
+  upgraded digest, follow quality-loop.md's recorded definition migration
+  through the current installed `writer-state.mjs migrate` command. Never
+  replace via ordinary registration, copy definitions or bypass a refusal.
+  The returned writer carries the same session artifacts and request queue;
+  no technical question goes to Andy.
   Before a session exists, requirements and setup run in the validated remembered
   checkout with `sessionless: {kind: "startup"}`; never fabricate a session.
   Requirements use mode `request` with only graph/live read capabilities. Setup
@@ -512,8 +514,8 @@ on Vercel", "let me see it live", or anything meaning the same:
    before publication": extend the SAME writer's local plan/session table,
    complete plan review, run a separate noncommitting preparation turn after
    source stops, and route all conflicts/fixes to that writer. Preserve
-   captured main/original base/imports. Do not replace/re-register a native
-   actor because its old cache is absent.
+   captured main/original base/imports. A missing or upgraded definition uses
+   only quality-loop's recorded migration; refresh old-actor validation proof.
 3. After preparation and SAME-writer conflict/source correction, ROOT commits
    the staged ordinary merge and any reviewed fixes (nothing is pushed yet):
    `node scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the changes since the last redeploy>" --body "<the screens changed, one per line>"`.

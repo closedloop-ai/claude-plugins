@@ -52,8 +52,12 @@ export const bindingSchema = z.object({
   agentRoot: z.string(), agentName: identifierSchema, digest: z.string().length(64),
   capabilities: capabilitiesSchema,
 }).strict();
+/** Migration is a parent-owned operation, separate from ordinary registration. */
+export const migrateSchema = registerSchema.extend({
+  previousWorkerId: identifierSchema, previousDigest: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
 const requestSchema = z.object({ id: identifierSchema, input: z.string().min(1).max(64 * 1024) }).strict();
-export const ledgerSchema = z.object({
+const ledgerStateSchema = z.object({
   version: z.literal(1), worktree: z.string(), branch: z.string(), runtime: z.enum(["codex", "claude"]),
   workerId: identifierSchema, binding: bindingSchema, started: z.boolean(),
   pending: z.array(requestSchema).max(32),
@@ -63,6 +67,14 @@ export const ledgerSchema = z.object({
     resultSummary: z.string().max(4096).optional() }).strict().optional(),
   completed: z.array(identifierSchema).max(64),
 }).strict();
+/** Retains the full prior writer state without recursively copying migration history. */
+export const migrationSchema = z.object({
+  id: z.string().uuid(), at: z.string().datetime(),
+  reason: z.enum(["definition-missing", "definition-upgraded"]),
+  observedDigest: z.string().length(64).nullable(),
+  previous: ledgerStateSchema, workerId: identifierSchema, binding: bindingSchema,
+}).strict();
+export const ledgerSchema = ledgerStateSchema.extend({ migrations: z.array(migrationSchema).default([]) }).strict();
 export type Ledger = z.infer<typeof ledgerSchema>;
 
 /** Limits parent input before JSON parsing; briefs never belong in process arguments. */

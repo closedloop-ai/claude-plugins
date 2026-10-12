@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `plan-structure` plan template gains an `## Implementation Notes` section after `## Tasks`, where detail-level plan-review suggestions go; the playbook's section order lists it. Plans linted against the template must now include it (write none when there are no suggestions).
 - Contract test that pins the section's place in the template and playbook.
 
-### vibe v1.0.12
+### vibe v1.0.13
 
 #### Changed
 - `cl-execute` gives a plan exactly one independent same-family review, replacing the two-round plan-review cap. After that review the worker verifies each finding against the code, fixes outline-level findings in the plan (a wrong premise or root cause, a missing outcome or acceptance criterion, an unjustified scope exclusion, a guardrail violation, or a stated detail that is wrong), puts detail-level suggestions into the plan's `## Implementation Notes` section, and never runs a second plan-review round. A finding that needs a product or scope call goes to the human as a numbered decision with the plan, returned as `MANUAL_INTERVENTION_REQUIRED`. Code review stays at two generations.
@@ -18,6 +18,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Added
 - Contract test that pins the single plan-review rule and fails when any `cl-execute` or `cl-sweep` reference allows a second, third, or repeated plan-review round.
+
+### vibe v1.0.12
+
+#### Fixed
+- Plugin upgrades no longer strand a session writer whose recorded definition is missing or provably upgraded. Both Codex and Claude Code use the current release's `writer-state.mjs migrate` command to record old/new writer IDs, bindings and digests, reason and time in append-only ledger history, preserving the session worktree, plan, decision table, checkpoint, change log and request queue. Matching definitions, running turns, unproven upgrades and writer refusals still block replacement; recovery stays internal without asking Andy.
+
+#### Added
+- Migration tests cover missing and upgraded definitions, matching-definition rejection, retained history and checkpoints, ownership/refusal protections, and fresh Claude launch followed by resume through the shipped command.
 
 ### closedloop-core v1.2.2
 

@@ -11550,8 +11550,12 @@ var bindingSchema = external_exports.object({
   digest: external_exports.string().length(64),
   capabilities: capabilitiesSchema
 }).strict();
+var migrateSchema = registerSchema.extend({
+  previousWorkerId: identifierSchema,
+  previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/)
+}).strict();
 var requestSchema = external_exports.object({ id: identifierSchema, input: external_exports.string().min(1).max(64 * 1024) }).strict();
-var ledgerSchema = external_exports.object({
+var ledgerStateSchema = external_exports.object({
   version: external_exports.literal(1),
   worktree: external_exports.string(),
   branch: external_exports.string(),
@@ -11570,6 +11574,16 @@ var ledgerSchema = external_exports.object({
   }).strict().optional(),
   completed: external_exports.array(identifierSchema).max(64)
 }).strict();
+var migrationSchema = external_exports.object({
+  id: external_exports.string().uuid(),
+  at: external_exports.string().datetime(),
+  reason: external_exports.enum(["definition-missing", "definition-upgraded"]),
+  observedDigest: external_exports.string().length(64).nullable(),
+  previous: ledgerStateSchema,
+  workerId: identifierSchema,
+  binding: bindingSchema
+}).strict();
+var ledgerSchema = ledgerStateSchema.extend({ migrations: external_exports.array(migrationSchema).default([]) }).strict();
 async function readInput(stream = process.stdin) {
   const buffers = [];
   let size = 0;
@@ -11601,7 +11615,7 @@ function readDefinition(agentRoot, agentName, capabilityInput) {
   const root = realpathSync2(agentRoot);
   const file = realpathSync2(join(root, "agents", `${agentName}.md`));
   if (file !== join(root, "agents", `${agentName}.md`)) throw new Error("Agent escapes its owning plugin");
-  const manifest = external_exports.object({ name: external_exports.literal("vibe") }).passthrough().parse(
+  const manifest = external_exports.object({ name: external_exports.literal("vibe"), version: external_exports.string().regex(/^\d+\.\d+\.\d+$/).optional() }).passthrough().parse(
     JSON.parse(readFileSync(join(root, ".claude-plugin", "plugin.json"), "utf8"))
   );
   const source = readFileSync(file, "utf8");
@@ -11615,6 +11629,7 @@ function readDefinition(agentRoot, agentName, capabilityInput) {
   const digest2 = createHash("sha256").update(source).update(JSON.stringify(capabilities)).digest("hex");
   return {
     root,
+    version: manifest.version,
     name: `${manifest.name}:${agentName}`,
     metadata,
     prompt: match[2] ?? "",
@@ -11632,7 +11647,7 @@ function asList(value) {
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync as readFileSync2, realpathSync as realpathSync3, renameSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join as join2 } from "node:path";
+import { basename, dirname, isAbsolute, join as join2 } from "node:path";
 function checkoutLocation(worktree) {
   const root = realpathSync3(git(worktree, ["rev-parse", "--show-toplevel"]));
   if (realpathSync3(worktree) !== root) throw new Error("Use the session's exact worktree root");
@@ -11678,7 +11693,8 @@ function registerWriter(input) {
       binding: definition.binding,
       started: false,
       pending: [],
-      completed: []
+      completed: [],
+      migrations: []
     };
     save(place, ledger);
     return summary(ledger);
@@ -11812,6 +11828,7 @@ function locked(place, operation) {
   }
 }
 function summary(ledger) {
+  const lastMigration = ledger.migrations.at(-1);
   return {
     runtime: ledger.runtime,
     workerId: ledger.workerId,
@@ -11823,7 +11840,9 @@ function summary(ledger) {
     activeRequestId: ledger.active?.id,
     status: ledger.active?.status,
     running: Boolean(ledger.active?.lease),
-    processGroupId: ledger.active?.processGroupId
+    processGroupId: ledger.active?.processGroupId,
+    migrationCount: ledger.migrations.length,
+    lastMigration: lastMigration ? { id: lastMigration.id, reason: lastMigration.reason, at: lastMigration.at } : void 0
   };
 }
 function proveGroupStopped(processGroupId) {

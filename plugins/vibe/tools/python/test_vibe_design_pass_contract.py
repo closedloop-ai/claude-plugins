@@ -461,16 +461,20 @@ def test_real_role_briefs_read_the_same_table_and_return_row_evidence() -> None:
     assert "create a second table" in flat(agent("vibe-backend-worker"))
 
 
-def test_legacy_resume_keeps_its_actual_binding_and_uses_root_continuation() -> None:
+def test_resume_uses_recorded_migration_only_for_definition_loss_or_upgrade() -> None:
     queue = section(QUALITY.read_text(), "## One persistent writer and a serial queue")
     for required in ("binding.agentRoot", "binding.capabilities", "recorded writer ID",
-                     "root continuation", "original definition", "BLOCKED",
-                     "Never re-register", "copy legacy agent"):
+                     "original definition", "BLOCKED", "present and", "matching",
+                     "writer-state.mjs migrate", "previousWorkerId", "previousDigest",
+                     "migrations", "observed old", "stopped-turn evidence", "without asking Andy",
+                     "Never use `register` to replace", "Never migrate around a refusal"):
         assert required in queue, required
     for path in (VIBE_SKILL, HANDOFF_SKILL):
         text = flat(path.read_text())
         assert "original recorded binding" in text, path.name
-        assert "root continuation" in text, path.name
+        assert "writer-state.mjs migrate" in text, path.name
+        assert "refusal" in text, path.name
+    assert "recorded migration" in flat((REFERENCES / "environment.md").read_text())
 
 
 def test_handoff_metadata_callers_keep_detailed_final_evidence() -> None:
