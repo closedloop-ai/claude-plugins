@@ -405,13 +405,19 @@ through the [Discovery Routes](../SKILL.md#discovery-routes).
     reviewer no longer checks these mechanically and judges substance: whether
     the diagrams explain the scope, the approach is sound, and the evidence
     holds.
-20. Run at most two independent plan-review rounds. Each round uses a
-    read-only same-family reviewer with a fresh context: a Codex worker uses a
-    Codex sub-agent and a Claude Code worker uses a Claude Code sub-agent;
-    never call another harness's CLI for plan review. Fix actionable findings
-    after each round and re-upload/revise as needed. Never start a third
-    plan-review round; prove fixes after the second round with
-    `check-plan.mjs` and your own re-read. Never edit skill files from a ticket worker. When a cl-* skill
+20. Run at most two independent plan-review rounds per approval cycle. Each
+    round uses a read-only same-family reviewer with a fresh context: a Codex
+    worker uses a Codex sub-agent and a Claude Code worker uses a Claude Code
+    sub-agent; never call another harness's CLI for plan review. Fix
+    actionable findings after each round and re-upload/revise as needed. Run
+    a second round only when the first found an outline-level problem: a
+    wrong premise or root cause, a missing outcome or acceptance criterion, an
+    unjustified scope exclusion, a guardrail violation, or a stated detail
+    that is wrong. Carry detail-level suggestions into implementation as
+    notes, not another plan revision. Never start a third plan-review round.
+    If blocking findings remain after the second round, stop and return
+    `MANUAL_INTERVENTION_REQUIRED` with those findings for the human instead
+    of approving the plan. Never edit skill files from a ticket worker. When a cl-* skill
     instruction was missing, wrong, contradictory, or did not fire when it
     should have, record it in the result's `Process feedback` field: the skill
     file and section, the observed failure with an evidence pointer, and the

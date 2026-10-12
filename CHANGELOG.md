@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### vibe v1.0.11
 
 #### Fixed
-- `cl-execute` reviews with the worker's own model family only. Each of the two coordinated review generations is the default `workflow-code-review` lane set with no extra lane, and the cross-family lane, its `Cross-family review` result field, and its same-family fallback are gone. Plan review runs at most two same-family rounds, and the one-way-door "design it twice" step gets its second approach from a fresh same-family sub-agent.
+- `cl-execute` reviews with the worker's own model family only. Each of the two coordinated review generations is the default `workflow-code-review` lane set with no extra lane, and the cross-family lane, its `Cross-family review` result field, and its same-family fallback are gone. Plan review runs at most two same-family rounds per approval cycle: a second round only for outline-level problems, detail-level suggestions carried into implementation, and a stop for the human when blocking findings remain after round two. The one-way-door "design it twice" step gets its second approach from a fresh same-family sub-agent.
 - The reviewer questions (root cause or symptom, reverted-test failure, rerun or crash halfway, structural serialization, real artifact or proxy) now ride on every lane's packet, and the second generation's decision-log audit moves to the Guardrail / Validation lane.
 - Support-lane model names are documented as Codex models for a Codex worker; a Claude Code worker uses its own sub-agents instead of routing through Codex.
 

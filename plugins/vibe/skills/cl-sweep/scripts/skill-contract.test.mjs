@@ -586,8 +586,11 @@ test('cl-execute reviews with same-family lanes inside exactly two generations',
   assert.match(execute, /Run exactly two coordinated `\$workflow-code-review` generations/);
   assert.match(review, /launch the skill's full default\s+seven-lane reviewer cohort concurrently in one fan-out/);
   assert.match(review, /Never rerun, replace, restart, or add a third coordinated review pass/);
-  assert.match(gates, /at most two independent plan-review rounds/);
-  assert.match(gates, /Never start a third\s+plan-review round/);
+  assert.match(gates, /at most two independent plan-review rounds per approval cycle/);
+  assert.match(gates, /Run\s+a second round only when the first found an outline-level problem/);
+  assert.match(gates, /Carry detail-level suggestions into implementation as\s+notes, not another plan revision/);
+  assert.match(gates, /Never start a third plan-review round/);
+  assert.match(gates, /If blocking findings remain after the second round, stop and return\s+`MANUAL_INTERVENTION_REQUIRED`/);
 
   // The gen-2 decision-log audit rides on an existing lane (M10 pins the shared packet questions).
   assert.match(review, /In `review_generation_2` only, also give\s+the Guardrail \/ Validation lane the ticket's private decision log/);
