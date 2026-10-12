@@ -610,7 +610,14 @@ const SECOND_PLAN_REVIEW_ALLOWED = [
   /\b(?:re-?review|re-?run|repeat)\s+(?:the\s+)?(?:revised\s+)?plan(?:[- ]review)?\b/i,
   /\brevise\s+the\s+plan\s+through\s+plan\s+review\b/i,
   /\bplan\s+review\s+again\b/i,
+  /(?<!\bnever\s)\brecheck(?:s|ing)?\s+(?:the\s+|its\s+)?(?:confirmed\s+)?(?:plan\s+)?corrections\b/i,
+  /\breviewer\s+rechecks\b/i,
+  /\bsame\s+bounded\s+review\b/i,
+  /\bbefore\s+(?:that|the)\s+(?:plan\s+)?review\s+clears\b/i,
 ];
+const plainReviewScanHits = (paths) => paths.filter((path) => path.endsWith('.md')).flatMap((path) => SECOND_PLAN_REVIEW_ALLOWED
+  .filter((pattern) => pattern.test(read(path)))
+  .map((pattern) => `${path}: ${pattern}`));
 
 test('cl-execute gives a plan exactly one independent review', () => {
   const skill = read('cl-execute/SKILL.md');
@@ -627,12 +634,33 @@ test('cl-execute gives a plan exactly one independent review', () => {
   assert.match(skill, /A plan gets exactly one review; never run a second plan-review\s+round/);
   assert.match(review, /do not run a\s+second plan-review round/);
 
-  const sources = [...filesUnder('cl-execute'), ...filesUnder('cl-sweep')].filter((path) => path.endsWith('.md'));
+  const sources = [...filesUnder('cl-execute'), ...filesUnder('cl-sweep')];
   assert.ok(sources.includes('cl-execute/references/planning-and-gates.md'));
-  const allowsSecondRound = sources.flatMap((path) => SECOND_PLAN_REVIEW_ALLOWED
-    .filter((pattern) => pattern.test(read(path)))
-    .map((pattern) => `${path}: ${pattern}`));
-  assert.deepEqual(allowsSecondRound, []);
+  assert.deepEqual(plainReviewScanHits(sources), []);
+});
+
+test('vibe sessions give a plan exactly one review with no recheck', () => {
+  const skill = read('vibe/SKILL.md');
+  const loop = read('vibe/references/quality-loop.md');
+  const reviewer = read('../agents/vibe-adversarial-reviewer.md');
+  const writer = read('../agents/vibe-change-worker.md');
+
+  assert.match(skill, /A plan gets exactly one review/);
+  assert.match(skill, /moves on\s+to implementation without a recheck\. Never run a second plan review/);
+  assert.match(loop, /A plan gets exactly one review/);
+  assert.match(loop, /moves on to\s+code without a recheck\. Never run a second plan review/);
+  assert.match(reviewer, /This is the plan's only review/);
+  assert.match(reviewer, /Never\s+recheck plan corrections, and never run a second plan review/);
+  assert.match(writer, /then implement without a recheck;\s+never run a second plan review/);
+  for (const source of [skill, loop, writer]) {
+    assert.match(source, /verif(?:y|ies) each finding against the code/);
+    assert.match(source, /detail-level\s+suggestions\s+into\s+the\s+plan's\s+`## Implementation Notes` section/);
+  }
+
+  const sources = [...filesUnder('vibe'), ...filesUnder('../agents')];
+  assert.ok(sources.includes('../agents/vibe-adversarial-reviewer.md'));
+  assert.ok(sources.includes('vibe/references/quality-loop.md'));
+  assert.deepEqual(plainReviewScanHits(sources), []);
 });
 
 test('cl-sweep stays out of how cl-execute works and reviews', () => {

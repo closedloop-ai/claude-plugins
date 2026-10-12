@@ -332,10 +332,10 @@ def test_local_plan_uses_core_by_name_and_never_becomes_a_ticket_or_deployment()
 def test_plan_review_precedes_same_writer_build_and_implementation_review_precedes_completion() -> None:
     loop = section(VIBE_SKILL.read_text(), "## 5. Build loop")
     assert loop.index("writes the canonical core-template plan locally") < loop.index("separate read-only adversarial plan reviewer")
-    assert loop.index("Recheck confirmed corrections before implementation") < loop.index("Resume that writer to implement")
+    assert loop.index("moves on to implementation without a recheck") < loop.index("Resume that writer to implement")
     assert loop.index("independent read-only implementation reviews") < loop.index("whole requested feature passed")
     review = section(agent("vibe-adversarial-reviewer"), "## Plan mode")
-    assert "separate reviewer rechecks confirmed plan corrections before code is built" in review
+    assert "This is the plan's only review" in review
     assert "PLAN_REVIEW: CLEAN" in review
     assert "PLAN_REVIEW: NEEDS_CHANGE" in review
 

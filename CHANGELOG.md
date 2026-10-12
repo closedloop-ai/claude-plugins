@@ -15,9 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - `cl-execute` gives a plan exactly one independent same-family review, replacing the two-round plan-review cap. After that review the worker verifies each finding against the code, fixes outline-level findings in the plan (a wrong premise or root cause, a missing outcome or acceptance criterion, an unjustified scope exclusion, a guardrail violation, or a stated detail that is wrong), puts detail-level suggestions into the plan's `## Implementation Notes` section, and never runs a second plan-review round. A finding that needs a product or scope call goes to the human as a numbered decision with the plan, returned as `MANUAL_INTERVENTION_REQUIRED`. Code review stays at two generations.
 - A plan found wrong during implementation is fixed at outline level under the same rule instead of going back through plan review.
+- Vibe sessions also give a plan exactly one review. The `vibe` skill, `quality-loop.md`, `vibe-adversarial-reviewer` and `vibe-change-worker` drop the recheck of plan corrections: the writer verifies each finding against the code, applies outline-level corrections, puts detail-level suggestions into the plan's `## Implementation Notes` section, and moves on to code. A material approach change found later is corrected in the plan by the same writer without another plan review. The implementation review before handoff is unchanged.
 
 #### Added
-- Contract test that pins the single plan-review rule and fails when any `cl-execute` or `cl-sweep` reference allows a second, third, or repeated plan-review round.
+- Contract tests that pin the single plan-review rule and fail when any `cl-execute`, `cl-sweep` or `vibe` skill reference, or any `vibe` agent, allows a second, third, or repeated plan-review round or a recheck of plan corrections.
 
 ### vibe v1.0.12
 

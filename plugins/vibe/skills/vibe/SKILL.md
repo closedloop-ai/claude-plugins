@@ -459,9 +459,12 @@ evidence, never by replacing the writer.
 2. On `PLAN`, dispatch the separate read-only adversarial plan reviewer.
    It must read the actual table and its real source-backed rows/frozen targets,
    not accept a returned path, checkbox or placeholder. Missing or unsourced
-   rows return to the SAME writer; no code starts before that review clears.
-   Continue the active request in the SAME writer with its findings; it fixes
-   the plan. Recheck confirmed corrections before implementation.
+   rows return to the SAME writer; no code starts before that review returns.
+   A plan gets exactly one review. Continue the active request in the SAME
+   writer with its findings; it verifies each finding against the code,
+   applies outline-level corrections to the plan, puts detail-level
+   suggestions into the plan's `## Implementation Notes` section, and moves on
+   to implementation without a recheck. Never run a second plan review.
 3. Resume that writer to implement in dependency order. It can load canonical
    backend, primitive, prototype and Storybook guidance from its own plugin,
    but no new source writer/worktree/branch. Read-only specialists advise;

@@ -286,10 +286,14 @@ only this exact folder; the plan reviewer reads it explicitly.
 
 Dispatch a separate `vibe-adversarial-reviewer` in plan mode. It challenges the
 request's completeness, owner/reuse boundary, both hosts, dependencies, contract
-safety and planned checks. Return confirmed findings to the same writer; it
-corrects its local plan and the independent reviewer rechecks it before code.
-Material approach changes use this same bounded review. Andy never reviews or
-approves the technical plan.
+safety and planned checks. A plan gets exactly one review. Return its
+findings to the same writer; it verifies each finding against the code,
+applies outline-level corrections to its local plan, puts detail-level
+suggestions into the plan's `## Implementation Notes` section, and moves on to
+code without a recheck. Never run a second plan review. A material approach
+change found later is corrected in the plan at outline level by the same
+writer, without another plan review. Andy never reviews or approves the
+technical plan.
 
 ## Implementation and corrections
 
