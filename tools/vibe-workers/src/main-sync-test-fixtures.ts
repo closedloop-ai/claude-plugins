@@ -184,12 +184,13 @@ export function selectedReportFixture(value: ReturnType<typeof syncFixture>, ent
     value.git(["add", "package.json"]);
     value.git(["commit", "-m", "Synthetic selected report check"]);
   }
-  const prepare = value.start("redeploy", "build");
+  // Selected report entries run only in the handoff matrix; build deploys run the commit-hook checks alone.
+  const prepare = value.start("redeploy", "handoff");
   try {
     const result = invokeSync(value, "prepare", prepare.context);
     if (result.status !== 0) return result;
   } finally { prepare.finish(); }
-  const source = value.sourceTurn("build");
+  const source = value.sourceTurn("handoff");
   try { return invokeSync(value, "validate", source.context); }
   finally { source.finish(); }
 }

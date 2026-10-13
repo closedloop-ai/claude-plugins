@@ -145696,9 +145696,9 @@ ${lanes.join("\n")}
             /*ignoreCase*/
             false
           )) {
-            const basename2 = getBaseFileName(a.fileName);
-            if (basename2 === "lib.d.ts" || basename2 === "lib.es6.d.ts") return 0;
-            const name = removeSuffix(removePrefix(basename2, "lib."), ".d.ts");
+            const basename3 = getBaseFileName(a.fileName);
+            if (basename3 === "lib.d.ts" || basename3 === "lib.es6.d.ts") return 0;
+            const name = removeSuffix(removePrefix(basename3, "lib."), ".d.ts");
             const index = libs.indexOf(name);
             if (index !== -1) return index + 1;
           }
@@ -209444,8 +209444,8 @@ ${options.prefix}` : "\n" : options.prefix
             }
           };
           for (const file of files) {
-            const basename2 = getBaseFileName(file);
-            if (basename2 === "package.json" || basename2 === "bower.json") {
+            const basename3 = getBaseFileName(file);
+            if (basename3 === "package.json" || basename3 === "bower.json") {
               createProjectWatcher(
                 file,
                 "FileWatcher"
@@ -213117,8 +213117,8 @@ All files are: ${JSON.stringify(names)}`,
               var _a;
               const fileOrDirectoryPath = removeIgnoredPath(this.toPath(fileOrDirectory));
               if (!fileOrDirectoryPath) return;
-              const basename2 = getBaseFileName(fileOrDirectoryPath);
-              if (((_a = result.affectedModuleSpecifierCacheProjects) == null ? void 0 : _a.size) && (basename2 === "package.json" || basename2 === "node_modules")) {
+              const basename3 = getBaseFileName(fileOrDirectoryPath);
+              if (((_a = result.affectedModuleSpecifierCacheProjects) == null ? void 0 : _a.size) && (basename3 === "package.json" || basename3 === "node_modules")) {
                 result.affectedModuleSpecifierCacheProjects.forEach((project) => {
                   var _a2;
                   (_a2 = project.getModuleSpecifierCache()) == null ? void 0 : _a2.clear();
@@ -219890,7 +219890,7 @@ Additional information: BADCLIENT: Bad error code, ${badCode} not found in range
 // src/main-sync.ts
 import { spawnSync as spawnSync8 } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { existsSync as existsSync9, lstatSync as lstatSync8, readFileSync as readFileSync15, realpathSync as realpathSync9 } from "node:fs";
+import { existsSync as existsSync10, lstatSync as lstatSync8, readFileSync as readFileSync15, realpathSync as realpathSync9 } from "node:fs";
 import { join as join15 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
@@ -224491,6 +224491,7 @@ var sessionSchema = external_exports.object({
   lastRequestId: external_exports.string().nullable().optional(),
   prototype: external_exports.object({ deployedCommit: commitSchema, verifiedAt: external_exports.string(), previewUrl: external_exports.string() }).passthrough().optional()
 }).passthrough();
+var MAX_CHECK_MS = 15 * 60 * 1e3;
 var MainSyncError = class extends Error {
   constructor(message, status = "BLOCKED") {
     super(message);
@@ -224816,7 +224817,7 @@ function apiText(root, path2, logs = false) {
 // src/main-sync-checks.ts
 import { spawnSync as spawnSync7 } from "node:child_process";
 import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync8, lstatSync as lstatSync7, readFileSync as readFileSync14, readlinkSync, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync9, lstatSync as lstatSync7, readFileSync as readFileSync14, readlinkSync, writeFileSync as writeFileSync5 } from "node:fs";
 import { join as join14 } from "node:path";
 
 // src/main-sync-lanes.ts
@@ -225065,6 +225066,7 @@ function importedName(identifier) {
   return void 0;
 }
 function localDeclaration(identifier) {
+  if (import_typescript.default.isPropertyAccessExpression(identifier.parent) && identifier.parent.name === identifier) return void 0;
   for (let scope = identifier.parent; scope; scope = scope.parent) {
     if (import_typescript.default.isFunctionLike(scope)) {
       const parameter = scope.parameters.find((item) => import_typescript.default.isIdentifier(item.name) && item.name.text === identifier.text);
@@ -225994,7 +225996,7 @@ import { builtinModules } from "node:module";
 import { dirname as dirname6, join as join8, relative as relative4, resolve as resolve4 } from "node:path";
 
 // src/main-sync-input-catalog.ts
-import { lstatSync as lstatSync4, readFileSync as readFileSync8, readdirSync as readdirSync2 } from "node:fs";
+import { existsSync as existsSync6, lstatSync as lstatSync4, readFileSync as readFileSync8, readdirSync as readdirSync2 } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname as dirname5, join as join7, relative as relative3, sep as sep2 } from "node:path";
 import { realpathSync as realpathSync6 } from "node:fs";
@@ -226008,6 +226010,63 @@ import { execFileSync as execFileSync3, spawnSync as spawnSync2 } from "node:chi
 import { createHash as createHash2 } from "node:crypto";
 import { lstatSync as lstatSync2, readFileSync as readFileSync6, realpathSync as realpathSync4 } from "node:fs";
 import { join as join5 } from "node:path";
+
+// src/main-sync-failure.ts
+import { basename as basename2 } from "node:path";
+var PRESERVE = "preserve the operation and inspect its owned evidence";
+var INVALID2 = "Main-sync context or private evidence is invalid";
+var ERROR_CODE = /^[A-Z][A-Z0-9_]{1,63}$/;
+var SYSCALL = /^[a-z][A-Za-z]{1,31}(?: [A-Za-z0-9._-]{1,64})?$/;
+var FILE_NAME = /^[A-Za-z0-9._@+-]{1,128}$/;
+var COMMAND_WORD = /^[a-z][a-z0-9-]{0,39}$/;
+var FAILED_COMMAND = /^Command failed: (\S+)(?: (\S+))?/;
+var STACK_FRAME = /\(?(?:file:\/\/)?(\/[^():]+\.[cm]?[jt]s):(\d+):\d+\)?$/;
+var MAX_MESSAGE = 240;
+var PATH_SEGMENT = /^[A-Za-z0-9_.@+-]{1,64}$/;
+var MAX_ISSUES = 3;
+function mainSyncFailure(error) {
+  if (error instanceof MainSyncError) return { status: error.status, error: error.message };
+  if (error instanceof external_exports.ZodError || error instanceof SyntaxError) return { status: "BLOCKED", error: `${INVALID2} (${failureCause(error)}); ${PRESERVE}` };
+  return { status: "BLOCKED", error: `Main-sync stopped on an operational error (${failureCause(error)}); ${PRESERVE}` };
+}
+function failureCause(error) {
+  if (error instanceof external_exports.ZodError) return `schema: ${schemaIssues(error)}`;
+  if (error instanceof SyntaxError) return `malformed JSON${sourceFrame(error.stack)}`;
+  return operationalCause(error);
+}
+function operationalCause(error) {
+  if (!(error instanceof Error)) return "non-Error exception";
+  const fields = error;
+  const where = sourceFrame(error.stack);
+  if (Array.isArray(fields.output) || error.message.startsWith("Command failed:")) {
+    const words = (FAILED_COMMAND.exec(error.message)?.slice(1) ?? []).filter((word) => Boolean(word)).map((word, index) => index === 0 ? basename2(word) : word).filter((word) => COMMAND_WORD.test(word));
+    const ended = typeof fields.status === "number" ? `exited ${fields.status}` : typeof fields.signal === "string" && ERROR_CODE.test(fields.signal) ? `stopped by ${fields.signal}` : "failed";
+    return `subprocess ${words.length ? `${words.join(" ")} ` : ""}${ended}${where}`;
+  }
+  if (typeof fields.code === "string" && ERROR_CODE.test(fields.code)) {
+    const syscall = typeof fields.syscall === "string" && SYSCALL.test(fields.syscall) ? ` during ${fields.syscall}` : "";
+    const file = typeof fields.path === "string" && FILE_NAME.test(basename2(fields.path)) ? ` on ${basename2(fields.path)}` : "";
+    return `${error.name} ${fields.code}${syscall}${file}${where}`;
+  }
+  const message = error.message.split("\n", 1)[0].slice(0, MAX_MESSAGE);
+  return `${error.name}: ${message}${where}`;
+}
+function schemaIssues(error) {
+  const issues = error.issues.slice(0, MAX_ISSUES).map((issue) => {
+    const path2 = issue.path.map((segment) => typeof segment === "number" || PATH_SEGMENT.test(segment) ? String(segment) : "*").join(".");
+    return `${path2 || "(root)"} ${issue.code}`;
+  });
+  return `${issues.join(", ")}${error.issues.length > MAX_ISSUES ? ` and ${error.issues.length - MAX_ISSUES} more` : ""}`;
+}
+function sourceFrame(stack) {
+  for (const line of (stack ?? "").split("\n").slice(1)) {
+    const frame = STACK_FRAME.exec(line.trim());
+    if (frame && !frame[1].includes("/node_modules/")) return ` at ${basename2(frame[1])}:${frame[2]}`;
+  }
+  return "";
+}
+
+// src/main-sync-generated-input.ts
 var GENERATED_BIOME_PATH = ".biome-noscan.jsonc";
 var MAX_INPUT_BYTES = 128 * 1024 * 1024;
 var PRODUCER_FILES = [
@@ -226075,7 +226134,7 @@ function verifyGeneratedBiomeInput(root, headSha) {
     if (!readRegular(root, GENERATED_BIOME_PATH).equals(artifact)) throw new MainSyncError("Generated Biome input changed during the probe", "NEEDS_CHANGE");
   } catch (error) {
     if (error instanceof MainSyncError) throw error;
-    throw new MainSyncError("Could not verify the exact bounded canonical generated Biome input; preserve files and block publication", "NEEDS_CHANGE");
+    throw new MainSyncError(`Could not verify the exact bounded canonical generated Biome input (${failureCause(error)}); preserve files and block publication`, "NEEDS_CHANGE");
   }
 }
 function readRegular(root, file) {
@@ -226336,7 +226395,9 @@ function producerFiles(root, producer, allowed) {
 function producerPackage(root, producer) {
   if (!producer.package) return void 0;
   const owner = producer.package;
-  const file = createRequire(join7(root, owner.dir, "package.json")).resolve(`${owner.name}/package.json`);
+  const lookup = createRequire(join7(root, owner.dir, "package.json")).resolve.paths(owner.name) ?? [];
+  const file = lookup.map((directory) => join7(directory, owner.name, "package.json")).find((candidate) => existsSync6(candidate));
+  if (!file) throw new MainSyncError(`Canonical installed producer is not installed: ${producer.id}`, "NEEDS_CHANGE");
   const canonical = realpathSync6(file);
   if (!canonical.startsWith(`${root}${sep2}`) || !lstatSync4(canonical).isFile()) {
     throw new MainSyncError(`Canonical installed producer resolves outside the owned validation checkout: ${producer.id}`, "NEEDS_CHANGE");
@@ -226744,6 +226805,7 @@ var laneSchema = external_exports.object({
   script: external_exports.string().min(1),
   dir: external_exports.string().optional(),
   suites: external_exports.string().optional(),
+  widenReason: external_exports.string().optional(),
   env: external_exports.record(external_exports.string()).optional()
 }).strict();
 var discoverySchema = external_exports.object({
@@ -226788,7 +226850,7 @@ function discoverCheckLanes(root, receipt) {
   const run = spawnSync3(discovery.argv[0], discovery.argv.slice(1), {
     cwd: root,
     encoding: "utf8",
-    timeout: 12e4,
+    timeout: MAX_CHECK_MS,
     maxBuffer: 16 * 1024 * 1024
   });
   if (run.error || run.status !== 0) throw new MainSyncError("Structured owning test-lane discovery failed; no test lane was spawned");
@@ -226837,7 +226899,7 @@ function displaylessPrerequisites(root) {
 }
 
 // src/main-sync-private-inputs.ts
-import { existsSync as existsSync6, lstatSync as lstatSync5, realpathSync as realpathSync7 } from "node:fs";
+import { existsSync as existsSync7, lstatSync as lstatSync5, realpathSync as realpathSync7 } from "node:fs";
 import { dirname as dirname7, join as join9, relative as relative5, resolve as resolve5, sep as sep3 } from "node:path";
 var analyzed;
 function verifyPrivateInput(root, file, head) {
@@ -226876,7 +226938,7 @@ function referencesPrivateInputs(root, privatePaths) {
     if (explicitPlanningReference(root, file, reference) || referenceMatches(root, file, reference, privatePaths)) return true;
     if (reference.kind !== "path") return false;
     const path2 = resolve5(reference.base === "module" ? dirname7(join9(root, file)) : root, reference.value);
-    return existsSync6(path2) && isLocalPlanPath(relative5(root, realpathSync7(path2)));
+    return existsSync7(path2) && isLocalPlanPath(relative5(root, realpathSync7(path2)));
   });
 }
 
@@ -227380,7 +227442,6 @@ function selectedRecoveryReserve(root, commands) {
 // src/main-sync-checks.ts
 import { performance as performance2 } from "node:perf_hooks";
 import { relative as relative8 } from "node:path";
-var MAX_CHECK_MS = 15 * 60 * 1e3;
 var EXECUTABLE_INPUT = /(?:\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss|html|sql|prisma)$|(?:^|\/)\.(?:npmrc|nvmrc)|(?:^|\/)(?:package-lock|pnpm-lock))/;
 var SOURCE_PATH = /\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss)$/;
 var PRIVATE_ARTIFACT = /\.(?:md|json|log|txt|png|webp)$/;
@@ -227403,7 +227464,7 @@ function committedInputs(root) {
   if (!before.producers.length) return { headSha: before.headSha, treeSha: before.treeSha, inputSha256: before.inputSha256 };
   const metadata = inspected.metadata;
   const file = join14(metadata, MAIN_SYNC_FILE);
-  if (!existsSync8(file)) throw new MainSyncError("Canonical source input readiness is required before generated dependencies can be consumed", "NEEDS_CHANGE");
+  if (!existsSync9(file)) throw new MainSyncError("Canonical source input readiness is required before generated dependencies can be consumed", "NEEDS_CHANGE");
   const state = mainSyncStateSchema.parse(readPrivateJson(file));
   if (state.worktree !== root) throw new MainSyncError("Generated input origin belongs to another worktree", "NEEDS_CHANGE");
   const proof = state.inputs;
@@ -227512,7 +227573,7 @@ function trackedInputs(root) {
     const [mode, kind, object] = entry.slice(0, tab).split(" ");
     const file = entry.slice(tab + 1);
     const target = join14(root, file);
-    if (kind !== "blob" || !existsSync8(target)) throw new MainSyncError(`Committed validation inputs differ from HEAD: ${file}`, "NEEDS_CHANGE");
+    if (kind !== "blob" || !existsSync9(target)) throw new MainSyncError(`Committed validation inputs differ from HEAD: ${file}`, "NEEDS_CHANGE");
     const stat = lstatSync7(target);
     if (stat.size > MAX_INPUT_BYTES) throw new MainSyncError(`Validation input exceeds the bounded file limit: ${file}`);
     const content = mode === "120000" && stat.isSymbolicLink() ? Buffer.from(readlinkSync(target)) : stat.isFile() ? readFileSync14(target) : void 0;
@@ -227530,9 +227591,16 @@ function checkRecipe(value, receipt) {
   const files = git(root, ["diff", "--name-only", "--no-renames", receipt.mainSha, "HEAD"]).split("\n").filter(Boolean);
   const prototype = value.place.branch.startsWith("prototype/");
   const backend = files.some((file) => BACKEND_PREFIXES.some((prefix) => file.startsWith(prefix)) || /\/(?:prisma|migrations)\//.test(`/${file}`));
-  const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync8(join14(root, file)));
+  const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync9(join14(root, file)));
   const commands = [];
   const e2eLimitations = [];
+  if (value.purpose === "build") {
+    if (paths.length) commands.push({ argv: ["pnpm", "exec", "biome", "check", ...paths] });
+    commands.push({ argv: ["pnpm", "typecheck:affected"] });
+    verifyReportRecipe(commands);
+    const bound2 = bindCheckBudgets(root, receipt, commands);
+    return { commands: bound2, e2eLimitations, recovery: selectedRecoveryReserve(root, bound2) };
+  }
   if (prototype) {
     commands.push(
       { argv: ["pnpm", "--filter", "prototypes", "generate:registry"] },
@@ -227551,7 +227619,7 @@ function checkRecipe(value, receipt) {
       { argv: ["pnpm", "test:affected", "--continue"] },
       ...lanes.commands
     );
-    if (backend && value.purpose === "handoff") commands.push(
+    if (backend) commands.push(
       { argv: ["pnpm", "verify"] },
       { argv: ["pnpm", "test"] },
       { argv: ["pnpm", "test:lint"] },
@@ -227569,7 +227637,7 @@ function checkRecipe(value, receipt) {
   if (files.some((file) => file.includes(".stories.") || file.startsWith("apps/storybook/") || file.startsWith("packages/design-system/"))) {
     commands.push({ argv: ["pnpm", "--filter", "storybook", "test"] }, { argv: ["pnpm", "--filter", "storybook", "validate:catalog"] });
   }
-  if (value.purpose === "handoff") commands.push({ argv: ["pnpm", "vibe", "storybook-diff"] });
+  commands.push({ argv: ["pnpm", "vibe", "storybook-diff"] });
   verifyReportRecipe(commands);
   const bound = bindCheckBudgets(root, receipt, commands);
   return { commands: bound, e2eLimitations, recovery: selectedRecoveryReserve(root, bound) };
@@ -227671,7 +227739,7 @@ function prepareMainSyncInputs(raw) {
   const value = syncContext(raw, "inputs");
   const identity = inspectInputInventory(value.place.root);
   const file = join15(value.place.dir, MAIN_SYNC_FILE);
-  const prior = existsSync9(file) ? mainSyncStateSchema.parse(readPrivateJson(file)) : void 0;
+  const prior = existsSync10(file) ? mainSyncStateSchema.parse(readPrivateJson(file)) : void 0;
   if (prior && (prior.worktree !== value.place.root || prior.branch !== value.place.branch || prior.operator.id !== value.place.session.operator.id || prior.operator.email !== value.place.session.operator.email || prior.originalBase !== value.place.session.baseCommit)) throw new MainSyncError("Input readiness belongs to another owned session");
   const previous = prior?.phase === "input-readiness" ? prior.previous : prior;
   if (previous && (!value.context.mainSyncTransactionId || previous.transactionId !== value.context.mainSyncTransactionId)) {
@@ -227717,7 +227785,7 @@ function prepareMainSync(raw) {
   const root = value.place.root;
   committedInputs(root);
   const previousFile = join15(value.place.dir, MAIN_SYNC_FILE);
-  const state = existsSync9(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : void 0;
+  const state = existsSync10(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : void 0;
   const previous = state?.phase === "input-readiness" ? state.previous : state;
   if (previous && (previous.worktree !== root || previous.branch !== value.place.branch || previous.originalBase !== value.place.session.baseCommit || previous.operator.id !== value.place.session.operator.id || previous.operator.email !== value.place.session.operator.email)) {
     throw new MainSyncError("Previous main-sync provenance belongs to another session; preserve it and inspect the owned evidence");
@@ -227774,7 +227842,7 @@ function prepareMainSync(raw) {
       throw new MainSyncError(`Ordinary main merge needs the SAME writer's conflict/source correction${conflicts ? `: ${conflicts}` : ""}; ROOT alone commits`, "NEEDS_CHANGE");
     }
   }
-  const requiresCommit = existsSync9(join15(value.place.dir, "MERGE_HEAD"));
+  const requiresCommit = existsSync10(join15(value.place.dir, "MERGE_HEAD"));
   return {
     status: requiresCommit ? "NEEDS_COMMIT" : "DONE",
     transactionId: receipt.transactionId,
@@ -227903,13 +227971,13 @@ function admitMainSyncShare(raw) {
 function readMainSyncProvenance(worktree) {
   const place = syncLocation(worktree);
   const file = join15(place.dir, MAIN_SYNC_FILE);
-  if (!existsSync9(file)) return void 0;
+  if (!existsSync10(file)) return void 0;
   const state = mainSyncStateSchema.parse(readPrivateJson(file));
   const value = state.phase === "input-readiness" ? state.previous : state;
   if (!value) return void 0;
   if (value.worktree !== place.root || value.branch !== place.branch || value.originalBase !== place.session.baseCommit || value.operator.id !== place.session.operator.id || value.operator.email !== place.session.operator.email) return void 0;
   const merge = join15(place.dir, "MERGE_HEAD");
-  const pendingMerge = existsSync9(merge) && git(place.root, ["rev-parse", "MERGE_HEAD"]) === value.mainSha;
+  const pendingMerge = existsSync10(merge) && git(place.root, ["rev-parse", "MERGE_HEAD"]) === value.mainSha;
   if (!pendingMerge && !isAncestor(place.root, value.mainSha)) return void 0;
   return {
     mainSha: value.mainSha,
@@ -227919,10 +227987,6 @@ function readMainSyncProvenance(worktree) {
     transactionId: value.transactionId,
     pendingMerge
   };
-}
-function mainSyncFailure(error) {
-  if (error instanceof MainSyncError) return { status: error.status, error: error.message };
-  return { status: "BLOCKED", error: "Main-sync context or private evidence is invalid; preserve the operation and inspect its owned evidence" };
 }
 function admitted(raw, operation) {
   const value = syncContext(raw, operation);

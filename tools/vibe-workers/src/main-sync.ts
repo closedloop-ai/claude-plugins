@@ -19,6 +19,7 @@ const GIT_NETWORK_MS = 15 * 60 * 1000;
 const desktopSchema = z.object({ ok: z.boolean(), running: z.boolean() }).passthrough();
 const TEST_HISTORY_PATH = /(?:\.(?:test|spec)\.[cm]?[jt]sx?$|\.snap$|(?:^|\/)(?:__tests__|__fixtures__|__snapshots__|e2e)\/|^apps\/desktop\/test\/)/;
 export { MainSyncError };
+export { mainSyncFailure } from "./main-sync-failure.js";
 
 /** Reuses bounded stdin input rather than source authority or success claims supplied in argv/task text. */
 export async function readMainSyncInput(worktree: string) {
@@ -224,12 +225,6 @@ export function readMainSyncProvenance(worktree: string) {
   if (!pendingMerge && !isAncestor(place.root, value.mainSha)) return undefined;
   return { mainSha: value.mainSha, originalBase: value.originalBase, importedFiles: value.importedFiles,
     featureTestHistory: value.featureTestHistory, transactionId: value.transactionId, pendingMerge };
-}
-
-/** Existing worker outcomes remain compact and never echo a command log, task text or secret. */
-export function mainSyncFailure(error: unknown) {
-  if (error instanceof MainSyncError) return { status: error.status, error: error.message };
-  return { status: "BLOCKED", error: "Main-sync context or private evidence is invalid; preserve the operation and inspect its owned evidence" };
 }
 
 function admitted(raw: unknown, operation: "push" | "request" | "share") {

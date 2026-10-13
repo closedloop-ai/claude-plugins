@@ -4,7 +4,7 @@ import { existsSync, lstatSync, readFileSync, readlinkSync, writeFileSync } from
 import { join } from "node:path";
 import { z } from "zod";
 import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
-import { MainSyncError, mainSyncStateSchema, type MainSyncReceipt, type OriginProof, type e2eLimitationSchema } from "./main-sync-contracts.js";
+import { MAX_CHECK_MS, MainSyncError, mainSyncStateSchema, type MainSyncReceipt, type OriginProof, type e2eLimitationSchema } from "./main-sync-contracts.js";
 import { committedIdentity, digest, syncContext, readPrivateJson, MAIN_SYNC_FILE } from "./main-sync-state.js";
 import { discoverCheckLanes, type CheckCommand } from "./main-sync-lanes.js";
 import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES, verifyGeneratedBiomeInput } from "./main-sync-generated-input.js";
@@ -21,7 +21,6 @@ import { performance } from "node:perf_hooks";
 import { relative } from "node:path";
 import { packageOwnerPaths, packageTupleIdentity } from "./main-sync-package-owner.js";
 
-const MAX_CHECK_MS = 15 * 60 * 1000;
 const EXECUTABLE_INPUT = /(?:\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss|html|sql|prisma)$|(?:^|\/)\.(?:npmrc|nvmrc)|(?:^|\/)(?:package-lock|pnpm-lock))/;
 const SOURCE_PATH = /\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss)$/;
 const PRIVATE_ARTIFACT = /\.(?:md|json|log|txt|png|webp)$/;
@@ -185,6 +184,15 @@ export function checkRecipe(value: ReturnType<typeof syncContext>, receipt: Main
   const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync(join(root, file)));
   const commands: CheckCommand[] = [];
   const e2eLimitations: z.infer<typeof e2eLimitationSchema>[] = [];
+  // Daniel Ochoa's ruling, 2026-10-13: a build-loop deploy runs only what the commit hooks run
+  // (affected typecheck and Biome on the changed source); the test suites run at handoff.
+  if (value.purpose === "build") {
+    if (paths.length) commands.push({ argv: ["pnpm", "exec", "biome", "check", ...paths] });
+    commands.push({ argv: ["pnpm", "typecheck:affected"] });
+    verifyReportRecipe(commands);
+    const bound = bindCheckBudgets(root, receipt, commands);
+    return { commands: bound, e2eLimitations, recovery: selectedRecoveryReserve(root, bound) };
+  }
   if (prototype) {
     commands.push({ argv: ["pnpm", "--filter", "prototypes", "generate:registry"] },
       { argv: ["pnpm", "--filter", "prototypes", "typecheck"] },
@@ -197,7 +205,7 @@ export function checkRecipe(value: ReturnType<typeof syncContext>, receipt: Main
     e2eLimitations.push(...lanes.limitations);
     commands.push({ argv: ["pnpm", "check:source-gates"] }, { argv: ["pnpm", "typecheck:affected"] },
       { argv: ["pnpm", "test:affected", "--continue"] }, ...lanes.commands);
-    if (backend && value.purpose === "handoff") commands.push({ argv: ["pnpm", "verify"] },
+    if (backend) commands.push({ argv: ["pnpm", "verify"] },
       { argv: ["pnpm", "test"] }, { argv: ["pnpm", "test:lint"] }, { argv: ["pnpm", "test:skills"] });
   }
   const filter = `...[${receipt.validationSince}]`;
@@ -209,7 +217,7 @@ export function checkRecipe(value: ReturnType<typeof syncContext>, receipt: Main
   if (files.some((file) => file.includes(".stories.") || file.startsWith("apps/storybook/") || file.startsWith("packages/design-system/"))) {
     commands.push({ argv: ["pnpm", "--filter", "storybook", "test"] }, { argv: ["pnpm", "--filter", "storybook", "validate:catalog"] });
   }
-  if (value.purpose === "handoff") commands.push({ argv: ["pnpm", "vibe", "storybook-diff"] });
+  commands.push({ argv: ["pnpm", "vibe", "storybook-diff"] });
   verifyReportRecipe(commands);
   const bound = bindCheckBudgets(root, receipt, commands);
   return { commands: bound, e2eLimitations, recovery: selectedRecoveryReserve(root, bound) };

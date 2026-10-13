@@ -51,7 +51,7 @@ describe("production committed-input privacy and origin boundaries", () => {
     const result = validateFixture(value);
     expect(result.status, result.stdout).toBe(0);
     expect(readFileSync(join(value.worktree, path), "utf8")).toBe(content);
-    expect(value.calls()).toContain('"check:source-gates"');
+    expect(value.calls()).toContain('"typecheck:affected"');
     expect(value.git(["ls-files", path])).toBe("");
   }, 30000);
 
@@ -519,7 +519,8 @@ if(${kind === "direct" ? "args[0]==='turbo'&&args[1]==='typecheck'" : "args[0]==
 const command = args[0];`));
     const source = value.sourceTurn();
     try { expect(invokeSync(value, "inputs", source.context).status).toBe(0); } finally { source.finish(); }
-    const result = validateFixture(value);
+    // The pinned Turbo matrix and source gates run only at handoff since build deploys run the commit-hook checks alone.
+    const result = validateFixture(value, "handoff");
     expect(result.status, result.stdout).toBe(0);
     for (const path of generated.paths) expect(readFileSync(join(value.worktree, path), "utf8")).toBe(generated.body);
     const calls = value.calls().split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]);

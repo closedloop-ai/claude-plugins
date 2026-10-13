@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { syncFixture } from "./main-sync-test-fixtures.js";
 import { bundleDirectory, graph, recordWrite } from "./test-fixtures.js";
 import { storedRecipe, validationEnvelopeMs } from "./main-sync-validation-recipe.js";
+import { MAX_CHECK_MS } from "./main-sync-contracts.js";
 
 const fixtures: ReturnType<typeof syncFixture>[] = [];
 afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
@@ -78,14 +79,17 @@ describe("production derived Claude validation envelope", () => {
     const recipe = storedRecipe({ headSha: "1".repeat(40), treeSha: "2".repeat(40), inputSha256: "3".repeat(64) },
       { commands: [{ argv: ["pnpm", "check:source-gates"], timeoutMs: 1000 }], e2eLimitations: [],
         recovery: { owners: ["fumadocs"], timeoutMs: 4500000 } });
-    expect(validationEnvelopeMs(recipe)).toBe(15 * 60 * 1000 + 120000 + 2000 + 1000 + 4500000);
+    // The prelaunch recipe recomputation includes owning lane discovery, bounded like any selected check.
+    expect(validationEnvelopeMs(recipe)).toBe(15 * 60 * 1000 + MAX_CHECK_MS + 2000 + 1000 + 4500000);
     expect(() => validationEnvelopeMs({ ...recipe, recovery: { ...recipe.recovery!, timeoutMs: 4501000 } })).toThrow(/reserve/);
   });
 
   it.each(["source", "recipe"] as const)("rejects %s drift after the owned Claude child starts but before any required check", (failure) => {
     const value = setup();
     const { transactionId, witness } = prepared(value);
-    const before = value.calls();
+    // A build recipe spawns no pnpm child before validation, so the call log may not exist yet.
+    const calls = () => existsSync(join(value.metadata, "validation-calls.jsonl")) ? value.calls() : "";
+    const before = calls();
     const claude = join(value.bin, "claude");
     const mutation = failure === "source"
       ? "fs.writeFileSync(path.join(process.cwd(),'apps/app/probe.ts'),'changed after owned launch\\n');"
@@ -96,7 +100,7 @@ describe("production derived Claude validation envelope", () => {
     expect(result.status, result.stdout).toBe(1);
     expect(result.json.data.mainSyncResult.status).toBe("NEEDS_CHANGE");
     expect(result.json.data.mainSyncResult.error).toMatch(failure === "source" ? /committed validation inputs/i : /recipe\/witness identity/);
-    expect(value.calls()).toBe(before);
+    expect(calls()).toBe(before);
     const state = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8"));
     expect(state.previous.validation).toBeUndefined();
     expect(existsSync(join(value.metadata, "vibe-record-turn.lock"))).toBe(false);

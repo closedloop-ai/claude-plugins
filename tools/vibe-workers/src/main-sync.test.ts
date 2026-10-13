@@ -28,7 +28,7 @@ describe("production main-sync publication CLIs", () => {
       expect(value.git(["ls-remote", "origin", "refs/heads/vibe/test"]).split("\t")[0]).toBe(value.git(["rev-parse", "HEAD"]));
       expect(readFileSync(generated.artifact, "utf8")).toBe(generated.output);
       expect(readFileSync(join(value.worktree, "biome.jsonc"), "utf8")).toBe(generated.config);
-      expect(value.calls()).toContain('"check:source-gates"');
+      expect(value.calls()).toContain('"typecheck:affected"');
       expect(existsSync(join(value.metadata, "request.json"))).toBe(true);
     } finally { publisher.finish(); }
   }, 30000);
@@ -60,7 +60,7 @@ describe("production main-sync publication CLIs", () => {
     if (failure === "missing-owner") {
       rmSync(join(value.worktree, "lint-staged.config.js")); value.git(["add", "lint-staged.config.js"]);
       value.git(["commit", "-m", "Missing committed producer"]);
-      expectedError = /could not verify.*canonical generated/i;
+      expectedError = /could not verify.*canonical generated biome input \(subprocess git show exited 128 at main-sync\.mjs:\d+\)/i;
     }
     if (failure === "pure-throw") {
       value.write("biome.jsonc", '{"linter":{"rules":{"first":"error"}}}\n');
@@ -138,7 +138,8 @@ describe("production main-sync publication CLIs", () => {
       const denied = invokeSync(value, "prepare", turn.context);
       expect(denied.status, denied.stdout).toBe(1);
       expect(denied.json?.status).toBe("NEEDS_CHANGE");
-      expect(String(denied.json?.error)).toMatch(failure === "changed-source" ? /committed validation inputs differ.*probe.ts/i : /canonical generated/i);
+      expect(String(denied.json?.error)).toMatch(failure === "changed-source" ? /committed validation inputs differ.*probe.ts/i
+        : failure === "malformed" ? /could not verify.*canonical generated biome input \(malformed JSON at main-sync\.mjs:\d+\)/i : /canonical generated/i);
       expect(`${denied.stdout}${denied.stderr}`).not.toContain("RAW_LOADER_SECRET");
       expect(existsSync(join(value.metadata, "FETCH_HEAD"))).toBe(false);
       expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(false);
@@ -150,12 +151,13 @@ describe("production main-sync publication CLIs", () => {
   }, 30000);
   it("rejects a changed derivative during a successful source check without issuing a validation receipt", () => {
     const value = setup(); const generated = generatedBiomeFixture(value);
-    const prepare = value.start("redeploy");
+    // Source gates run only in the handoff matrix since build deploys run the commit-hook checks alone.
+    const prepare = value.start("redeploy", "handoff");
     try { expect(invokeSync(value, "prepare", prepare.context).status).toBe(0); } finally { prepare.finish(); }
     const pnpm = join(value.bin, "pnpm");
     writeFileSync(pnpm, readFileSync(pnpm, "utf8").replace("const command = args[0];",
       "if (args[0] === 'check:source-gates') fs.appendFileSync(path.join(process.cwd(),'.biome-noscan.jsonc'),'// changed during successful check');\nconst command = args[0];"));
-    const source = value.sourceTurn();
+    const source = value.sourceTurn("handoff");
     try {
       const denied = invokeSync(value, "validate", source.context);
       expect(denied.status, denied.stdout).toBe(1);
@@ -306,10 +308,8 @@ describe("production main-sync publication CLIs", () => {
     const result = validateFixture(value);
     expect(result.status).toBe(0);
     const calls = value.calls().trim().split("\n").map((line) => JSON.parse(line));
-    expect(calls).toContainEqual(["check:source-gates"]);
-    expect(calls).toContainEqual(["test:lanes"]);
-    expect(calls.some((argv: string[]) => argv[0] === "exec" && argv[1] === "node")).toBe(true);
-    expect(calls).toContainEqual(["turbo", "test", `--filter=...[${value.baseCommit}]`, "--continue"]);
+    expect(calls).toContainEqual(["typecheck:affected"]);
+    expect(calls).not.toContainEqual(["check:source-gates"]);
     const head = value.git(["rev-parse", "HEAD"]);
     // ISS-12135: independent requests can deploy; only actual publisher-reserved continuations consume this proof.
     const publish = value.start("redeploy", undefined, undefined, { continuations: [
@@ -362,7 +362,7 @@ describe("production main-sync publication CLIs", () => {
       const failed = invokeSync(value, "validate", source.context);
       expect(failed.status).toBe(1);
       expect(String(failed.json?.error)).toMatch(/Required validation command failed/);
-      expect(value.calls()).toContain('"check:source-gates"');
+      expect(value.calls()).toContain('"typecheck:affected"');
       expect(JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8")).validation).toBeUndefined();
     } finally { source.finish(); }
   }, 30000);
@@ -483,15 +483,16 @@ describe("production main-sync publication CLIs", () => {
     value.write(".claude/skills/prototype-approve/scripts/read-decision-log.mjs",
       "import {readFileSync} from 'node:fs'; if (!readFileSync(process.argv[2], 'utf8').startsWith('# Decisions')) process.exit(1);\n");
     value.git(["add", "."]); value.git(["commit", "-m", "Owned prototype fixture"]);
-    const prepare = value.start("share");
+    // The prototype matrix runs at handoff; a build share runs the commit-hook checks alone.
+    const prepare = value.start("share", "handoff");
     try { expect(invokeSync(value, "prepare", prepare.context).status).toBe(0); } finally { prepare.finish(); }
-    const source = value.sourceTurn();
+    const source = value.sourceTurn("handoff");
     try { expect(invokeSync(value, "validate", source.context).status).toBe(0); } finally { source.finish(); }
     const calls = value.calls().trim().split("\n").map((line) => JSON.parse(line));
     expect(calls).toContainEqual(["--filter", "prototypes", "generate:registry"]);
     expect(calls).toContainEqual(["--filter", "prototypes", "typecheck"]);
     expect(calls).toContainEqual(["--filter", "prototypes", "test"]);
-    const share = value.start("share");
+    const share = value.start("share", "handoff");
     try {
       expect(invokeSync(value, "share", share.context).status).toBe(0);
       expect(invokeSync(value, "request", share.context).status).toBe(1);
@@ -500,13 +501,13 @@ describe("production main-sync publication CLIs", () => {
   }, 30000);
   it("rejects source generation that changes committed bytes instead of minting a pass receipt", () => {
     const value = setup();
-    const prepare = value.start("create");
+    const prepare = value.start("create", "handoff");
     try { expect(invokeSync(value, "prepare", prepare.context).status).toBe(0); } finally { prepare.finish(); }
     const executable = join(value.bin, "pnpm");
     const fixtureProgram = readFileSync(executable, "utf8");
     writeFileSync(executable, fixtureProgram.replace("const command = args[0];",
       "if (args[0] === 'check:source-gates') fs.writeFileSync(path.join(process.cwd(), 'apps/app/probe.ts'), 'generated source change');\nconst command = args[0];"));
-    const source = value.sourceTurn();
+    const source = value.sourceTurn("handoff");
     try {
       expect(invokeSync(value, "validate", source.context).status).toBe(1);
       expect(JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8")).validation).toBeUndefined();
@@ -621,6 +622,33 @@ describe("production main-sync publication CLIs", () => {
     try { expect(invokeSync(value, "push", publication.context).status).toBe(1); } finally { publication.finish(); }
     expect(value.git(["ls-remote", "origin", "refs/heads/vibe/test"])).toBe("");
   }, 60000);
+  it("runs only the commit-hook checks for a build-loop deploy and the full matrix at handoff", () => {
+    const value = setup();
+    value.write("apps/app/feature.ts", "export const feature = 1;\n");
+    value.write("scripts/lint/owned-change.ts", "export {};\n");
+    value.git(["add", "."]); value.git(["commit", "-m", "Feature and scripts change"]);
+    const calls = () => value.calls().trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]);
+    const executed = (list: string[][]) => list.filter((call) => !call.includes("--dry=json") && call[1] !== "node");
+    const build = validateFixture(value, "build");
+    expect(build.json?.mainSync).toMatchObject({ status: "DONE", requiredE2eComplete: true, commandCount: 2 });
+    expect(executed(calls())).toEqual([["exec", "biome", "check", "apps/app/feature.ts", "scripts/lint/owned-change.ts"], ["typecheck:affected"]]);
+    writeFileSync(join(value.metadata, "validation-calls.jsonl"), "");
+    validateFixture(value, "handoff");
+    const handoff = executed(calls());
+    for (const command of [["check:source-gates"], ["typecheck:affected"], ["test:affected", "--continue"], ["test:lanes"], ["test:skills"],
+      ["vibe", "storybook-diff"]]) expect(handoff).toContainEqual(command);
+    expect(handoff.some((call) => call[0] === "turbo" && call[1] === "test")).toBe(true);
+  }, 60000);
+  it("runs a lane the owning reporter widened to its whole suite and explains why", () => {
+    // symphony-alpha LaneCiCommand carries widenReason when a changed package.json makes the selector run a lane whole.
+    const value = setup();
+    value.write("scripts/lint/report-test-lanes.ts", "export function laneCiCommand(script) {return {script, widenReason: 'package.json can change how any suite in this lane resolves or runs'};}\nexport function execPlan(_, commands) {return commands;}\n");
+    value.git(["add", "."]); value.git(["commit", "-m", "Reporter widens the selected lane"]);
+    const result = validateFixture(value, "handoff");
+    expect(result.status, result.stdout).toBe(0);
+    const calls = value.calls().trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    expect(calls).toContainEqual(["test:skills"]);
+  }, 60000);
   it("preserves symlink evidence and rejects stale operator provenance before preparing or requesting", () => {
     const value = setup();
     validateFixture(value);
@@ -697,20 +725,20 @@ describe("production main-sync publication CLIs", () => {
       expect(denied.status, denied.stdout).toBe(1);
     } finally { turn.finish(); }
   }, 30000);
-  it("records incomplete build E2E without invoking a bare unsupported Electron lane", () => {
+  it("records incomplete handoff E2E without invoking a bare unsupported Electron lane", () => {
     const value = setup();
     value.write("apps/desktop/test/reveal-window.spec.ts", "revealWindow: true synthetic scenario\n");
     value.git(["add", "."]); value.git(["commit", "-m", "Desktop reveal scenario fixture"]);
-    const preparation = value.start("redeploy");
+    const preparation = value.start("redeploy", "handoff");
     try { expect(invokeSync(value, "prepare", preparation.context).status).toBe(0); } finally { preparation.finish(); }
-    const source = value.sourceTurn();
+    const source = value.sourceTurn("handoff");
     try {
       const failed = invokeSync(value, "validate", source.context);
       expect(existsSync(join(value.metadata, "unsafe-lane-spawned"))).toBe(false);
       expect(failed.status, failed.stdout).toBe(0);
       const validation = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8")).validation;
       expect(validation.e2eLimitations[0].reason).toMatch(/displayless/i);
-      expect(failed.json?.mainSync).toMatchObject({ publicationReady: true, requiredE2eComplete: false });
+      expect(failed.json?.mainSync).toMatchObject({ status: "NEEDS_REVIEW", publicationReady: true, requiredE2eComplete: false });
     } finally { source.finish(); }
   }, 30000);
   it("locally ROOT commits reviewed dirty source before preparation, then commits the merge and publishes checked inputs", () => {
@@ -803,6 +831,6 @@ describe("production main-sync publication CLIs", () => {
     const wrongRole = run("vibe-environment-worker", "flags", "MAIN_SYNC_PUSH", "sdk-denied", transactionId);
     expect(wrongRole.code).toBe(1);
     expect(existsSync(join(value.metadata, "vibe-record-turn.lock"))).toBe(false);
-    expect(value.calls()).toContain('"check:source-gates"');
+    expect(value.calls()).toContain('"typecheck:affected"');
   }, 60000);
 });
