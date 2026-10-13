@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Auto-deploy. After each change in the build loop the orchestrator commits and deploys to the session's Vercel preview without being asked, then tells the person it is ready to look at. Saying "redeploy" still runs the same steps. One deploy runs at a time; requests that arrive while one runs wait in the writer's queue and go out together in the next deploy. The vibe skill's section 6 is now "Deploy each change", and the quality loop, environment reference and README follow it.
 - Contract tests for both rules, recorder tests, and an inventory test for recorded and unrecorded test deletions.
 
+### closedloop-core v1.2.4
+
+#### Changed
+- `measurement-discipline` prioritizes the largest measured contributors and ranks mechanisms by credible whole-target impact, evidence, and experiment cost. Bounded diagnostics screen mechanisms before expensive repeated comparisons; explicitly requested small scopes and evidence of compounding gains remain valid. Encourages creative architecture and lifecycle experiments within scope while preserving functionality, data, responsiveness, repeated controls, and product-level proof. Measurement entries record the impact ceiling and experiment cost, and remaining opportunities are ranked again after each adopted improvement.
+
 ### vibe v1.0.19
 
 #### Changed
