@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Finish a vibe session in symphony-alpha and hand it to whoever picks it up next, usually design and then engineering. Through workers, completes internal scope and Storybook checks, writes focused tests at handoff, drafts marked edits to existing feature docs, runs lint, typecheck and tests, reviews the integrated result and fixes confirmed findings. Asks who should pick the work up next, checks the live ticket is complete, publishes the final app environment or canonical prototype preview, and assigns the ticket with status left In Progress. It ends at the branch; no pull request is opened. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
+description: Finish a vibe session in symphony-alpha and hand it to whoever picks it up next, usually design and then engineering. Through workers, completes internal scope and Storybook checks, runs lint, typecheck and the existing tests without writing any (it lists the missing tests for engineering), drafts marked edits to existing product docs pages, reviews the integrated result and fixes confirmed findings, and verifies each touched screen in the running web app and Desktop with the repo's control skill. Asks who should pick the work up next, checks the live ticket is complete, publishes the final app environment or canonical prototype preview, and assigns the ticket with status left In Progress. It ends at the branch; no pull request is opened. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
 ---
 
 # Handoff
@@ -41,13 +41,16 @@ incomplete; dispatch the worker again saying so. A Graph block that says
 the connection before the next step. Every worker that edits the live ticket
 follows `../vibe/references/ticket-template.md`.
 
-Test writing happens only here at handoff, through the SAME persistent
-`vibe-change-worker` in handoff mode (`../vibe/references/guardrails.md`, "Tests").
-Verification/review helpers are read-only. Add coverage for delivered behavior, preserve
-test integrity and fix implementation defects rather than weakening a check.
-Code quality and implementation reviews already run before handoff; these are
-final integrated checks, not the first attempt to correct preventable issues.
-Handoff opens no pull request.
+Handoff writes no tests (`../vibe/references/guardrails.md`, "Tests"; Daniel
+Ochoa's ruling, 2026-10-13). It runs the existing affected tests, and when one
+fails the SAME persistent `vibe-change-worker` fixes the session's own code,
+never the test. The tests the session still needs go on the live ticket under
+Missing tests as engineering's scope of work. Verification/review helpers are
+read-only. Preserve test integrity and fix implementation defects rather than
+weakening a check. Code quality and implementation reviews already run before
+handoff; these are final integrated checks, not the first attempt to correct
+preventable issues. Handoff opens no pull request; "A requested pull request"
+below is the one exception to the no-tests rule.
 
 Harness notes match the `vibe` skill: in Codex invoke as `$handoff` and spawn
 plugin agents from `../../agents/<name>.md` with the file's body as the
@@ -91,8 +94,8 @@ it (with the evidence, no file changed) or builds it under its usual rules
 it changed any file, re-run before the ticket is finished: step 3 (inventory
 and guardrails), step 4 when a component or story changed, step 5 (checks),
 step 6 on the result (lighter: both reviewers; backend: one
-`workflow-code-review` pass), and step 7 (the redeploy). Only then does the
-answer go to `vibe-ticket-worker`.
+`workflow-code-review` pass), step 7 (the redeploy) and step 8's running app
+verification. Only then does the answer go to `vibe-ticket-worker`.
 Before code, extend the same session decision table with the answer's source,
 row IDs, cross-request interactions and explicit Superseded decisions. Preserve
 earlier frozen targets. Handoff reruns use the whole table, not just this answer.
@@ -110,15 +113,31 @@ change worker has not handled; it refuses one with `NEEDS_CHANGE`.
 | Step | Worker |
 |---|---|
 | Summary | `vibe-handoff-summarizer` |
-| ALL source fixes, behavior answers, test authoring, feature docs drafts and the frozen behavior rows | the SAME persistent `vibe-change-worker` context |
+| ALL source fixes, behavior answers, the missing tests list, product docs drafts and the frozen behavior rows (tests only for a requested pull request) | the SAME persistent `vibe-change-worker` context |
 | Judgment guardrails, shared-owner placement, and red flags | `vibe-guardrails-reviewer` |
 | Commits | you, with `../vibe/scripts/commit-worktree.mjs` |
 | Storybook advice only | read-only `vibe-storybook-decomposer`; the SAME writer applies it |
 | Existing code checks, coverage advice, suite and footprint | read-only `vibe-verify-worker` |
+| Running app checks with `pnpm control` | read-only `vibe-verify-worker` (control mode) |
 | Lighter: tough review | repo `review-soul` and `vibe-adversarial-reviewer`, in parallel |
 | Backend: two review passes | the `workflow-code-review` skill (itself orchestrator-only) |
 | Last push and Vercel check | `vibe-environment-worker` (redeploy mode) |
 | Next owner, ticket check, and assignment | `vibe-ticket-worker` (lookup mode, then handoff mode, then assign mode) |
+
+## A requested pull request
+
+Without the person's explicit request for a pull request, nothing in vibe or
+handoff writes a test. When the person explicitly asks for a pull request to
+be raised, full tests for every change in the session are required before it
+opens. Resume the SAME writer in `pull-request` mode, the only turn whose
+envelope authorizes tests, to write them: every acceptance criterion and
+unsuperseded row, production wiring and failure paths, on web and Desktop
+where their adapters differ, and every entry on the missing tests list. Run
+`node scripts/handoff-inventory.mjs --worktree "<wt>" --phase pull-request`,
+then step 3's guardrail check, step 5's checks with the new tests included and
+step 6's review on the result, then step 7's commit. The pull request does not
+open until those tests pass and their independent review is clean. Handoff
+itself still opens none.
 
 ## 0. Pick the session
 
@@ -141,14 +160,14 @@ Use the same recorded persistent writer, owned `prototype/<slug>` worktree,
 branch and live ticket. Never create a prototype/handoff/test source writer.
 Give the writer the canonical absolute
 `<repo-root>/.claude/skills/prototype/SKILL.md` guidance, current inventory and
-publication. It performs all source fixes, registry/local metadata and
-handoff-only tests in its same context. Read-only specialists/design reviewers
-return advice; they do not apply it.
+publication. It performs all source fixes, registry/local metadata and the
+missing tests list in its same context, writing no tests. Read-only
+specialists/design reviewers return advice; they do not apply it.
 
 The inventory still returns files/base when publication is stale or missing.
 Use that provisional evidence for independent checks; only publication freshness
-is deferred while code is reviewed. Enforce every other guard, including early
-test provenance and private-plan checks. Source generation or metadata fixes
+is deferred while code is reviewed. Enforce every other guard, including test
+provenance and private-plan checks. Source generation or metadata fixes
 resume this SAME writer, never the operational share helper.
 
 Have that writer follow canonical step 7's single design review and
@@ -158,7 +177,7 @@ outcome on the ticket so a continuation does not repeat it.
 PrototypeStatus.HandedOff remains owned by prototype-approve; the vibe session
 marker is only ownership bookkeeping.
 
-After independent current-result checks/reviews and handoff test coverage, the
+After independent current-result checks/reviews and the missing tests list, the
 orchestrator commits. Operational `vibe-prototype-worker` share mode publishes
 that exact result through canonical Vercel sharing without editing source.
 `NEEDS_REVIEW`/`NEEDS_COMMIT` returns to the same writer/root sequence; missing
@@ -182,11 +201,11 @@ reports `backendChanged` true (a fix or a behavior answer added backend code),
 use the backend checks from then on and update the internal checklist.
 
 Keep the remaining checklist internal: inventory and shared-owner checks,
-Storybook coverage and footprint, handoff-only test authoring, validation,
-integrated review and corrections, publication, next-owner lookup, ticket
-completion and assignment. Do not show the person a technical task list,
-upfront summary or plan to approve. Preserve the lighter versus backend
-validation and review weights below.
+Storybook coverage and footprint, existing tests and the missing tests list,
+validation, integrated review and corrections, publication, running app checks
+with control, next-owner lookup, ticket completion and assignment. Do not show
+the person a technical task list, upfront summary or plan to approve. Preserve
+the lighter versus backend validation and review weights below.
 
 ## 2. Summarize internally
 
@@ -209,10 +228,10 @@ worker in step 8.
 
 ## 3. Guardrail check
 
-Before test authoring, read-only guardrails review checks already changed tests
-against an existing handoff authoring record from this SAME writer. Reject
-early/unrecorded edits, never retrospectively relabel them. Preserve valid
-evidence when resuming interrupted handoff.
+Read-only guardrails review treats every test the session added or changed as
+a finding; only a requested pull request's recorded tests are allowed. Reject
+those edits and never retrospectively relabel them. Preserve valid evidence
+when resuming interrupted handoff.
 
 Non-publication inventory failures, outside-allowed paths, owner/duplicate
 findings and other confirmed source defects resume the SAME persistent writer
@@ -233,18 +252,21 @@ intentional ID/category moves/sidebar folds and retained state access. Keep
 actual compiled footprint/canonical catalog reports and unresolved advisories.
 Source inspection alone does not clear a compiled warning or prove appearance.
 
-## 5. Checks and handoff-only tests
+## 5. Checks and the missing tests list
 
 Resume the SAME writer with an explicit handoff continuation, acceptance
 criteria, inventory, private local coverage plan and the whole session decision table.
 Read all requests, stable row IDs, cross-request interactions and its
 `Required Tests`, including positive, negative and mixed-state production-boundary
-cases. It alone writes/extends tests
-and fixes implementation defects, records criteria/paths/human rulings and
-runs them. The verify worker never writes or fixes tests.
-The same writer checks implementation and actual executed coverage against
+cases. It writes no tests. It runs the existing affected tests, fixes the
+session's own code when one fails, never the test, and lists every missing
+test as engineering's scope of work: the behavior and row ID that needs it,
+the files to cover, and any existing test a recorded human behavior ruling
+made obsolete, with that ruling. The verify worker never writes or fixes tests.
+The same writer checks implementation and executed existing coverage against
 every required unsuperseded row, including earlier requests. Planned coverage
-is not executed coverage; missing cases return to that writer now.
+is not executed coverage; a row without an existing test goes on the missing
+tests list, never counted as covered.
 
 Lighter: read-only verify checks mode runs Biome without write flags, gates,
 affected types/tests and relevant existing lanes. Backend: full-suite mode
@@ -254,10 +276,12 @@ browser/Electron windows. Record exact unsupported local limitations.
 
 ### Existing feature docs
 
-In the same handoff continuation, the SAME writer updates the documentation
-pages that already exist for the features this session changed, on this
-branch, under `../vibe/references/guardrails.md`, "Feature docs at handoff".
-It edits existing pages only and never creates one; every edit is marked as
+In the same handoff continuation, the SAME writer updates the product docs
+pages under `apps/web/content/docs/` that already exist for the features this
+session changed, on this branch, under `../vibe/references/guardrails.md`,
+"Feature docs at handoff". It never edits the internal engineering `docs/`
+folder; those docs belong to engineering's pull request. It edits existing
+pages only and never creates one; every edit is marked as
 an agent draft that design or engineering approves before merge. This is
 Daniel Ochoa's explicit, scoped exception to the rule that agents do not
 author user-visible words. It covers only those marked drafts and gives no
@@ -270,11 +294,12 @@ edits with the rest of the diff.
 
 Exclude exactly `.closedloop-ai/vibe-plans/` and historical `localFixes` from
 deliverable review, not other artifacts. Separate plan review reads the local
-plan explicitly. Pass phase handoff and the writer's test-authoring record.
+plan explicitly. Pass phase handoff and the writer's missing tests list.
 Pass the whole session decision table and actual row/test evidence to each
 reviewer. They read the actual artifact and use named core decision-table's
 consistency, review-prevention and applicable adversarial rules. Missing source,
-test or independent-review evidence blocks final handoff. Require defensible
+existing-test run or independent-review evidence blocks final handoff; a test
+that does not exist yet is listed under Missing tests instead. Require defensible
 `Final Alignment Status: Aligned` for the whole table before step 7 or final
 ticket completion; Not aligned is a stop, not a success with a test-later note.
 
@@ -282,16 +307,17 @@ Lighter: repo `review-soul` and `vibe-adversarial-reviewer` implementation mode
 may review independently in parallel, read-only. Backend: named core
 `workflow-code-review` runs its two existing review passes
 (`$workflow-code-review` in Codex or `/closedloop-core:workflow-code-review` in
-Claude Code). ALL confirmed code/story/test findings resume the SAME writer,
+Claude Code). ALL confirmed code/story findings resume the SAME writer,
 which verifies and corrects them; recheck its current result and repeat
-validation. Missing handoff coverage is written only by that writer.
+validation. A coverage gap goes on the missing tests list; nobody writes a
+test here.
 
 ## 7. Upload the last changes
 
 ROOT commits the reviewed deliverable LOCALLY through the existing commit
 script/normal hooks, still unpushed, before `commit-worktree.mjs --prepare-main-sync`.
-This includes the SAME writer's reviewed handoff tests/fixes, not private plans
-or protected localFix source. No change needs no extra local commit.
+This includes the SAME writer's reviewed handoff fixes and docs drafts, not
+private plans or protected localFix source. No change needs no extra local commit.
 
 Resume the same actor for source-owned `main-sync-inputs` before preparation
 and again after the Root-owned committed merge/fix result, using environment.md.
@@ -306,9 +332,9 @@ First repeat `../vibe/references/environment.md`, "Main-sync before publication"
 with handoff purpose. The SAME writer extends/checks its whole session table
 before fixes; a separate exact publisher preparation turn fetches fresh main,
 stages an ordinary NONCOMMITTING merge after the owned Desktop stops, then ends.
-Every source/conflict/generator fix and authorized test stays with the original
+Every source/conflict/generator fix stays with the original
 writer/registration; ROOT alone commits. Captured synced main separates imports
-from feature work, retaining original history and real early-test violations.
+from feature work, retaining original history and real test-edit violations.
 
 Run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
 again, then ROOT commits the staged merge and any subsequent reviewed fixes as one more
@@ -323,8 +349,9 @@ NOT a check exception: preserve/block through its same-writer workaround flow,
 never stash/copy/delete or accept different checked/deployed bytes.
 Then dispatch `vibe-environment-worker` in redeploy mode
 from handoff with the worktree, the live ticket slug, the confirmed summary,
-the inventory's `localFixes` paths, the test-authoring record and any verified
-pre-existing failures outside this work. It runs the tests, pushes through the repo's pre-push
+the inventory's `localFixes` paths, the missing tests list (including any
+obsolete expectation with its human ruling) and any verified pre-existing
+failures outside this work. It runs the tests, pushes through the repo's pre-push
 checks, requests the environment again so that commit is deployed, and
 updates the ticket. Pass matching `mainSyncTransactionId`, handoff purpose and
 actual new grant context on stdin. `main-sync-push` returns
@@ -357,6 +384,31 @@ Do not proceed to final assignment/alignment with `requiredE2eComplete: false`
 or any other required coverage gap, even when publicationReady is true.
 
 ## 8. Choose who picks it up, then check the ticket
+
+### Running app verification
+
+After step 7 verifies the final publication, dispatch read-only
+`vibe-verify-worker` in control mode with the worktree, the inventory and the
+screens the session touched. It drives the running web app and Desktop with
+the repository's control skill (`<repo-root>/.claude/skills/control/SKILL.md`,
+the `pnpm control` CLI) on that final commit, for each touched screen, and
+follows that skill's own rules: hidden browser and app only (never
+`--headed`, and never a visible window on the person's Mac; on Linux, Desktop
+runs displayless), read-only sessions (never `--allow-write`), and
+`pnpm control down` for every session it started. Control's own throwaway Desktop
+profile is separate from the session's Desktop, which stays stopped. It
+captures each screen's evidence (capture, console errors and page errors,
+network, API reads and Desktop IPC reads where relevant), before and after
+when a baseline exists, and returns each artifact path with what it proves.
+
+A surface it cannot drive comes back with the exact control command and the
+reason, never as verified. A console error, page error, failed request or
+broken screen this session caused resumes the SAME writer in fix mode, then
+steps 3 to 7 and this check again. Owned prototype sessions skip this check
+and record why: a mockup changes no web app or Desktop screen. The build loop
+has no control step; this check runs only here. Its evidence goes into the
+Design Review's Visual evidence and the Handoff Running app checks line,
+separated from source-only claims.
 
 ### Design Review evidence at handoff
 
@@ -404,8 +456,11 @@ grade the finished code and its appearance/Storybook implementation:
 - Actual footprint/canonical catalog commands, baseline/current commits and
   reports, including unresolved advisories and their dispositions.
 - Actual design/visual-QA reports and screenshots with inspected commits,
-  viewports/dimensions, hosts and states, and accessible links/attachments.
-  Source-only, unverified, failed and unsupported coverage remains explicit.
+  viewports/dimensions, hosts and states, and accessible links/attachments,
+  including the running app verification's control captures with their
+  artifact paths and what each proves. Source-only, unverified, failed and
+  unsupported coverage remains explicit, with the exact control command and
+  reason for a surface control could not drive.
 - Known gaps and remaining design decisions/owners, with no invented copy and
   no technical approval request to the Vibe coder. Existing required visual
   and product approval gates remain intact; the next owner still grades it.
@@ -456,7 +511,9 @@ confirmed summary and the person's corrections, the footprint, check, and
 review summaries, the Design blocks from build and handoff fixes, the required session decision table
 at `.closedloop-ai/decision-tables/<session-slug>.md` with whole-table alignment,
 row/test evidence and its Frozen Behavior row IDs, the writer's feature docs
-record, the detailed Design Review evidence packet/report paths,
+record, the missing tests list, the running app verification's artifact paths
+with what each proves and any surface it could not drive with its command and
+reason, the detailed Design Review evidence packet/report paths,
 including Production impact, Flag changes and gates, and researched Open
 Questions per `../vibe/references/ticket-template.md`,
 and every answer from the person so far with how it was handled. Keep

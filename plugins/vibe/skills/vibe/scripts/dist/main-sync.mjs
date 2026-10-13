@@ -224300,7 +224300,7 @@ var ciRunLocatorSchema = external_exports.object({
 var recordContextSchema = external_exports.object({
   worktree: external_exports.string().min(1),
   agentName: identifierSchema,
-  mode: external_exports.enum(["plan", "request", "fix", "handoff", "record"]),
+  mode: external_exports.enum(["plan", "request", "fix", "handoff", "pull-request", "record"]),
   recordAction: recordActionSchema.optional(),
   exclusiveRecordTurn: external_exports.literal(true).optional(),
   publicationPurpose: external_exports.enum(["build", "handoff"]).optional(),

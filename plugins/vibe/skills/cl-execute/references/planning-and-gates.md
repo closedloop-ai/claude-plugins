@@ -163,8 +163,12 @@ attachment is the only copy that travels.
    the row and the proposed change, routed to that person under cl-policy.
    Only their recorded OK lets the row change; cite it in the plan and the
    decision log.
-5. The pre-merge conformance check in Requirements Contract confirms every
-   frozen row's test passes at the PR head.
+5. Vibe and handoff write no tests, so the ticket's Handoff section lists
+   the session's Missing tests as engineering's scope of work. Map each entry
+   into the plan's Test Plan and write it in this PR, including an update to
+   any existing test whose recorded human behavior ruling made it obsolete.
+6. The pre-merge conformance check in Requirements Contract confirms every
+   frozen row's test and every Missing tests entry passes at the PR head.
 
 ## Proposal Contract Audit
 

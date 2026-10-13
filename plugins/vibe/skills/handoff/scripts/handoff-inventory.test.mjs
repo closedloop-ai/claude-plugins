@@ -76,20 +76,27 @@ test("staged or committed plans block handoff instead of hiding a planning leak"
   }
 });
 
-test("root web and desktop test specs are allowed only at handoff, never arbitrary harness files", (t) => {
-  const { home, worktree } = setup(t, "handoff-tests");
+test("root web and desktop test specs are allowed only for a requested pull request, never at handoff", (t) => {
+  const { home, worktree } = setup(t, "pull-request-tests");
   write(worktree, "e2e/feature.spec.ts", "export {};\n");
   write(worktree, "apps/desktop/test/feature.spec.ts", "export {};\n");
   write(worktree, "e2e/playwright.config.ts", "export {};\n");
+  const specs = [
+    { path: "apps/desktop/test/feature.spec.ts", status: "A" },
+    { path: "e2e/feature.spec.ts", status: "A" },
+    { path: "e2e/playwright.config.ts", status: "A" },
+  ];
   const build = runNode(INVENTORY, ["--worktree", worktree], home);
-  assert.equal(build.json.outsideAllowed.length, 3);
+  assert.deepEqual(build.json.outsideAllowed, specs);
   const handoff = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
-  assert.deepEqual(handoff.json.outsideAllowed, [{ path: "e2e/playwright.config.ts", status: "A" }]);
+  assert.deepEqual(handoff.json.outsideAllowed, specs);
+  const pullRequest = runNode(INVENTORY, ["--worktree", worktree, "--phase", "pull-request"], home);
+  assert.deepEqual(pullRequest.json.outsideAllowed, [{ path: "e2e/playwright.config.ts", status: "A" }]);
   const invalid = runNode(INVENTORY, ["--worktree", worktree, "--phase", "unknown"], home);
   assert.equal(invalid.status, 1);
 });
 
-test("existing feature docs pages may be edited only at handoff, never created or generated", (t) => {
+test("existing product docs pages may be edited only at handoff, never created, generated or internal", (t) => {
   const { home, worktree } = setup(t, "feature-docs");
   write(worktree, "apps/web/content/docs/concepts/bulk-actions.mdx", "Bulk actions, updated draft.\n");
   write(worktree, "docs/runbooks/bulk-actions.md", "Runbook, updated draft.\n");
@@ -104,12 +111,16 @@ test("existing feature docs pages may be edited only at handoff, never created o
     "apps/web/content/docs/meta.json",
     "docs/runbooks/bulk-actions.md",
   ]);
-  const handoff = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
-  assert.deepEqual(handoff.json.outsideAllowed, [
+  const outsideAtHandoff = [
     { path: "apps/web/content/docs/api-reference/projects/listProjects.mdx", status: "M" },
     { path: "apps/web/content/docs/concepts/new-page.mdx", status: "A" },
     { path: "apps/web/content/docs/meta.json", status: "M" },
-  ]);
+    { path: "docs/runbooks/bulk-actions.md", status: "M" },
+  ];
+  const handoff = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.deepEqual(handoff.json.outsideAllowed, outsideAtHandoff);
+  const pullRequest = runNode(INVENTORY, ["--worktree", worktree, "--phase", "pull-request"], home);
+  assert.deepEqual(pullRequest.json.outsideAllowed, outsideAtHandoff);
 });
 
 test("local fixes are listed on their own and kept out of every guardrail check", (t) => {

@@ -5,8 +5,10 @@ The prep step picks the owner by rule (behavior the
 children of a shared parent share goes in that parent as a generic slot, and
 each child keeps only what is specific to it)
 and the quality loop uses internal local plans and independent reviews before
-handoff. Daniel's ISS-12135 ruling moves test authoring to handoff only and
-keeps technical communication internal. Existing tests may run while building.
+handoff. Daniel's ISS-12135 ruling keeps technical communication internal, and
+his 2026-10-13 ruling removes test writing from vibe and handoff: existing tests
+run, handoff lists the missing tests for engineering, and only a requested pull
+request authorizes tests.
 Graph evidence, worker commit ownership and shared-owner rules remain unchanged.
 """
 
@@ -125,13 +127,13 @@ def test_build_loop_reviews_before_handoff_and_preserves_design_depth() -> None:
     design = fenced_block(text, "Design:")
 
     assert "separate plan review and implementation corrections internal and before handoff" in intro
-    assert "Existing tests may run during building" in intro
-    assert "test writing happens only at handoff" in intro
+    assert "Existing tests may run" in intro
+    assert "no tests are written in vibe or handoff unless the person asks for a pull request" in intro
     for flag in RED_FLAGS:
         assert f"- {flag}:" in red_flags, flag
     assert "the strongest alternative rejected" in restructure
     assert "Sibling sweep" in restructure
-    assert "test writing waits for handoff" in restructure
+    assert "no tests are written; handoff lists the missing ones for engineering" in restructure
     for field in DESIGN_FIELDS:
         assert field in design, field
     assert "- Tests:" not in design
@@ -229,33 +231,38 @@ def test_no_worker_commits_and_the_orchestrators_do() -> None:
     assert "commit-worktree.mjs" in flat(SEED_SKILL.read_text())
 
 
-def test_build_loop_runs_existing_checks_and_handoff_adds_tests() -> None:
+def test_build_loop_runs_existing_checks_and_handoff_lists_missing_tests() -> None:
     environment = flat(agent("vibe-environment-worker"))
     handoff = HANDOFF_SKILL.read_text()
 
     assert "Run the existing affected tests before pushing" in environment
     assert "Never write or edit tests in deployment mode" in environment
-    checks = section(handoff, "## 5. Checks and handoff-only tests")
+    checks = section(handoff, "## 5. Checks and the missing tests list")
+    assert "It writes no tests" in checks
+    assert "fixes the session's own code when one fails, never the test" in checks
+    assert "lists every missing test as engineering's scope of work" in checks
     assert "Lighter: read-only verify checks mode" in checks
     assert "Backend: full-suite mode" in checks
     assert "Resume the SAME writer with an explicit handoff continuation" in checks
     assert "The verify worker never writes or fixes tests" in checks
 
 
-def test_tests_are_authored_only_at_handoff_without_weakening_expectations() -> None:
+def test_no_tests_are_authored_in_vibe_or_handoff_without_weakening_expectations() -> None:
     rule = section(GUARDRAILS.read_text(), "## Tests")
 
-    assert "No build-loop worker writes or edits a test" in rule
-    assert "Test writing happens only at handoff through the SAME persistent `vibe-change-worker` in handoff mode" in rule
+    assert "No worker writes or edits a test in vibe or handoff" in rule
+    assert "in the build loop and at handoff alike" in rule
+    assert "fixes the session's own code, never the test" in rule
+    assert "only the SAME persistent writer writes them, in an explicit `pull-request` turn" in rule
     assert "Record phase, criteria and test paths" in rule
     assert "exact human behavior ruling" in rule
-    assert "retain coverage of every still-live contract" in rule
+    assert "retaining coverage of every still-live contract" in rule
     assert "Never loosen, skip or remove a valid test" in rule
-    assert "No PR is opened by either vibe or handoff" in rule
+    assert "Neither vibe nor handoff opens a pull request on its own" in rule
 
-    assert "Existing tests may run; none are authored yet" in flat(VIBE_SKILL.read_text())
-    assert "Reject early/unrecorded edits" in flat(HANDOFF_SKILL.read_text())
-    assert "Missing handoff coverage is written only by that writer" in flat(HANDOFF_SKILL.read_text())
+    assert "Existing tests may run; none are authored." in flat(VIBE_SKILL.read_text())
+    assert "Reject those edits and never retrospectively relabel them" in flat(HANDOFF_SKILL.read_text())
+    assert "A coverage gap goes on the missing tests list; nobody writes a test here" in flat(HANDOFF_SKILL.read_text())
 
 
 def test_build_workers_do_not_author_tests_and_handoff_tests_mode_is_explicit() -> None:
@@ -275,8 +282,10 @@ def test_build_workers_do_not_author_tests_and_handoff_tests_mode_is_explicit() 
     for name in ("vibe-primitive-worker", "vibe-storybook-decomposer"):
         assert "Never write" in flat(agent(name)) or "never write" in flat(agent(name)), name
     assert "never create/edit code, migrations, seeds, tests" in flat(agent("vibe-backend-worker"))
-    tests_mode = section(agent("vibe-change-worker"), "## Handoff tests in this same context")
-    assert "Only an explicit handoff continuation authorizes you" in tests_mode
+    tests_mode = section(agent("vibe-change-worker"), "## No tests in this context unless a pull request is requested")
+    assert "Never write or edit tests, fixtures or snapshots while building or at handoff" in tests_mode
+    assert "Only a `pull-request` continuation" in tests_mode
+    assert "authorizes you to write tests" in tests_mode
     assert "production wiring" in tests_mode
     assert "No skips, loosened assertions, raised tolerances/timeouts" in tests_mode
     assert "never create/edit implementation code, tests" in flat(agent("vibe-verify-worker"))
@@ -291,19 +300,21 @@ def test_reviewers_flag_placement_red_flags_and_test_edits() -> None:
     assert "two children of one parent that each implement the same behavior is blocking" in guardrails
     assert "keeps only what is specific to it" in guardrails
     assert "an added or changed test file" in guardrails
-    assert "only in the handoff phase" in guardrails
-    assert "Early or unrecorded changes are blocking" in guardrails
+    assert "is blocking in the build loop and at handoff alike" in guardrails
+    assert "permitted only in a `pull-request` turn" in guardrails
+    assert "those tests must not be reverted" in guardrails
     assert "the person is not involved" in guardrails
     assert "find an input on which the copies already behave differently" in adversarial
 
 
-def test_ticket_carries_design_decisions_and_truthful_handoff_test_evidence() -> None:
+def test_ticket_carries_design_decisions_and_the_missing_tests_for_engineering() -> None:
     handoff = section(TICKET_TEMPLATE.read_text(), "## Handoff")
 
     assert "- Design decisions:" in handoff
     assert "old-UI assertions were updated" not in handoff
-    assert "Tests authored at handoff" in handoff
-    assert "exact human behavior ruling" in handoff
+    assert "Tests authored at handoff" not in handoff
+    assert "- Missing tests (engineering scope):" in handoff
+    assert "human behavior ruling made obsolete, with that exact ruling" in handoff
 
 
 def test_new_files_use_no_emdashes_or_double_hyphen_dashes() -> None:
@@ -410,7 +421,7 @@ def test_initial_prototype_commit_and_share_require_independent_quality_evidence
 def test_handoff_cannot_relabel_early_tests_and_displayless_coverage_is_not_silently_skipped() -> None:
     guardrail_check = section(HANDOFF_SKILL.read_text(), "## 3. Guardrail check")
     assert "never retrospectively relabel" in guardrail_check
-    assert "before test authoring" in guardrail_check.lower()
+    assert "treats every test the session added or changed as a finding" in guardrail_check
     verify = flat(agent("vibe-verify-worker"))
     assert "except Desktop e2e" not in verify
     assert "documented supported displayless harness" in verify
@@ -440,7 +451,8 @@ def test_source_rows_are_verified_without_claiming_planned_test_coverage() -> No
     table = section(QUALITY.read_text(), "## Session decision table before code")
     for required in ("Current Code", "Intended Change", "frozen", "append",
                      "planned tests are not coverage", "Final Alignment Status: Aligned",
-                     "required tests remain unexecuted", "source gaps now"):
+                     "`Missing test (engineering)` disposition", "never counted as coverage",
+                     "only gap is a listed missing test", "source gaps now"):
         assert required in table, required
     checks = section(agent("vibe-change-worker"), "## Checks, review and recording")
     assert "affected and interacting prior row IDs" in checks

@@ -21,7 +21,7 @@ branch without its private session record is not admitted.
 Read the session decision table and relevant row IDs before advice/share;
 the SAME writer extends its mock/real-state and publication behavior rows before
 code and verifies them afterward. Never create a separate prototype table or
-confuse planned handoff tests with executed coverage.
+confuse planned tests with executed coverage.
 
 ## Guidance for the sole implementation writer
 
@@ -39,8 +39,8 @@ Technical planning uses the named core plan-structure template locally and a
 separate adversarial plan review before implementation. Apply researched prior
 product decisions before any necessary unresolved question. Source fixes go
 through this same writer's context and required independent implementation
-review before commit/share. No build-loop test writing; the same writer authors
-tests only in its handoff continuation. No backend stub, app environment,
+review before commit/share. No test writing in the build loop or at handoff;
+the same writer lists the missing tests for engineering. No backend stub, app environment,
 seed/blank or production flag snapshot is invented for a mockup.
 
 ## Advice mode

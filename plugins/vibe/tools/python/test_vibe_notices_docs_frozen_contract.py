@@ -4,8 +4,9 @@
    stories without waiting; reuse-only changes skip the notice.
 2. A named reference product is researched into a bulleted behavior list that
    the person sees while the build keeps going.
-3. Handoff drafts edits to existing feature docs only, marked for design or
-   engineering approval, under a scoped exception to the copy rule.
+3. Handoff drafts edits to existing product docs pages only (never the
+   internal docs/ folder), marked for design or engineering approval, under a
+   scoped exception to the copy rule.
 4. Handoff marks the rows the person accepted as frozen in the attached session
    decision table, and cl-execute keeps them passing with tests.
 """
@@ -120,13 +121,15 @@ def test_a_reference_product_is_researched_into_a_behavior_list_the_build_keeps_
 
 def test_feature_docs_edit_only_existing_pages_as_marked_drafts_at_handoff() -> None:
     docs = section(GUARDRAILS.read_text(), "## Feature docs at handoff")
-    for required in ("only existing pages", "`apps/web/content/docs/`", "`docs/`",
+    for required in ("only existing product docs pages", "`apps/web/content/docs/`",
+                     "Never edit the repo's internal engineering `docs/` folder",
                      "Never create a page", "`meta.json`", "`apps/web/content/docs/api-reference/`",
                      "create nothing", "behavior this session changed",
                      "agent draft for design or engineering to approve before merge",
                      "{/* Agent draft (<live ticket slug>): approve before merge */}",
                      "{/* End agent draft */}", "Owned prototype sessions skip this"):
         assert required in docs, required
+    assert "`<!-- -->`" not in docs
     step = section(HANDOFF_SKILL.read_text(), "### Existing feature docs")
     for required in ("SAME writer", "already exist", "never creates one", "agent draft",
                      "approves before merge", "Feature docs line"):
@@ -141,7 +144,7 @@ def test_feature_docs_edit_only_existing_pages_as_marked_drafts_at_handoff() -> 
 def test_the_docs_exception_is_scoped_wherever_the_copy_rule_is_referenced() -> None:
     copy = section(GUARDRAILS.read_text(), "## Copy")
     for required in ("One explicit, scoped exception", "Daniel Ochoa", "2026-10-13",
-                     "existing documentation pages", "approves before merge",
+                     "existing product docs pages", "approves before merge",
                      "not a general license", "no product UI copy", "no new page"):
         assert required in copy, required
     assert "scoped exception" in section(HANDOFF_SKILL.read_text(), "### Existing feature docs")
@@ -149,16 +152,18 @@ def test_the_docs_exception_is_scoped_wherever_the_copy_rule_is_referenced() -> 
     assert "never covers product copy" in flat(agent("vibe-change-worker"))
     reviewer = flat(agent("vibe-guardrails-reviewer"))
     assert "feature docs drafts are the one scoped exception" in reviewer
-    assert "A new docs page, a navigation change, an unmarked docs edit, or a docs edit before handoff is blocking" in reviewer
+    assert ("A new docs page, a navigation change, an unmarked docs edit, a docs edit before handoff, "
+            "or any edit under the internal engineering `docs/` folder is blocking") in reviewer
     grading = section(TICKET_TEMPLATE.read_text(), "## Grading")
-    assert "The only exception is the marked agent drafts in existing feature docs" in grading
+    assert "The only exception is the marked agent drafts in existing product docs pages" in grading
 
 
 def test_the_inventory_admits_existing_docs_edits_only_in_the_handoff_phase() -> None:
     inventory = INVENTORY.read_text()
     assert 'file.status === "M"' in inventory
     assert '"apps/web/content/docs/api-reference/"' in inventory
-    assert 'values.phase === "handoff" && !prototype && isExistingDocsEdit(file)' in inventory
+    assert 'const handoffPhase = values.phase !== "build";' in inventory
+    assert "handoffPhase && !prototype && isExistingDocsEdit(file)" in inventory
 
 
 def test_handoff_freezes_the_accepted_rows_in_the_attached_session_table() -> None:
@@ -189,7 +194,8 @@ def test_cl_execute_reads_the_attachment_and_keeps_frozen_rows_passing() -> None
                      "Keep every frozen row passing", "includes a test for each frozen row",
                      "engineering writes these tests in this PR",
                      "Never change a frozen row's behavior without that person's explicit OK",
-                     "`PRODUCT_BLOCKED`", "recorded OK", "frozen row's test passes at the PR head"):
+                     "`PRODUCT_BLOCKED`", "recorded OK",
+                     "frozen row's test and every Missing tests entry passes at the PR head"):
         assert required in gates, required
     skill = flat(CL_EXECUTE.read_text())
     assert "references/planning-and-gates.md#vibe-frozen-behavior" in skill

@@ -134,21 +134,32 @@ subagent that worked on this.>
   copy, color, or spacing changed"
 - Storybook footprint: <components added and changed with story counts, net
   sidebar rows, governance problems left>
-- Checks: <lint, source gates, typecheck, tests (every lane when the session
-  changed backend code), each pass or fail>
+- Checks: <lint, source gates, typecheck, existing tests (every lane when the
+  session changed backend code), each pass or fail>
+- Running app checks: <for each screen the session touched, on web and
+  Desktop, the `pnpm control` commands run at handoff on the final commit and
+  each artifact path with what it proves (capture, console errors and page
+  errors, network, API or Desktop IPC reads), before and after when a
+  baseline exists. Keep these apart from source-only claims. A surface that
+  control could not drive names the exact control command and the reason;
+  never claim it verified>, or "None: owned prototype session"
 - Reviews: <n fixed, n rejected; one line each, rejected with why>
 - Session decision table: <the one session artifact path, whole-table final
   alignment and actual row/test evidence across all requests; not a technical plan.
   Name the attachment and its Frozen Behavior row IDs: the behavior the person
   accepted, which engineering keeps passing with tests in its pull request and
   changes only with that person's explicit OK>
-- Feature docs: <each existing documentation page edited on this branch for
-  the changed features, with what changed; every edit is marked as an agent
-  draft that design or engineering approves before merge, and no page is
-  created>, or "None: no existing page documents the changed features"
-- Tests authored at handoff: <paths, whole-session criteria and stable row IDs
-  covered by executed positive/negative cases, not merely planned tests; any obsolete
-  expectation changed with its exact human behavior ruling>, or "none"
+- Feature docs: <each existing product docs page under
+  `apps/web/content/docs/` edited on this branch for the changed features,
+  with what changed; every edit is marked as an agent draft that design or
+  engineering approves before merge, and no page is created. Internal
+  engineering docs under `docs/` are left to engineering's pull request>, or
+  "None: no existing product docs page describes the changed features"
+- Missing tests (engineering scope): <every test the session still needs,
+  which engineering writes in its pull request: the behavior and stable row
+  ID each covers, the files that need coverage, and any existing test a human
+  behavior ruling made obsolete, with that exact ruling. Vibe and handoff
+  write no tests>, or "None: existing tests cover every row"
 - Pre-existing failures not touched by this work: <list or "none">
 - Next: <the next owner the person chose at handoff, by full name> picks
   this up. Usually design reviews the components in the Storybook above (it
@@ -179,9 +190,15 @@ surfaces; never invent a preview or inspection.>
   and report links, canonical catalog/check evidence and unresolved advisories;
   source inspection alone does not clear a compiled warning.>
 - Visual evidence: <actual design/visual-QA reports and screenshots, with
-  commits, viewports/dimensions, hosts and states inspected; separately list
-  source-only, unverified, failed or unsupported coverage. Accessible evidence
-  links/attachments, not an inaccessible local path as the only evidence.>
+  commits, viewports/dimensions, hosts and states inspected, including the
+  `pnpm control` captures from the Handoff Running app checks: each touched
+  screen and host with its artifact path and what it proves, before and after
+  when a baseline exists, and the cited screenshots uploaded as ticket
+  attachments because `.control/` paths are local. Separately list
+  source-only, unverified, failed or unsupported coverage, with the exact
+  control command and reason for a surface control could not drive.
+  Accessible evidence links/attachments, not an inaccessible local path as
+  the only evidence.>
 - Limits and decisions: <known gaps, remaining design decisions and owners;
   do not say looks good or Storybook correct without actual inspection/check
   evidence. Preserve existing required visual/product approval gates.>
@@ -207,7 +224,7 @@ Yes / no, plus one line when it's a no:
 3. Storybook is right. Every new or changed component has stories in the right place, and the controls are usable. (Design)
 4. Extended the existing pattern. For example, behavior the children of a shared parent share built once in that parent so each gets it, not one copy per child.
 5. Backend is wired correctly. Route, service, shared types, Zod and migration follow our layering, and nothing is left on a stub. (Eng)
-6. No invented copy. Every user-visible string came from a person or an existing label. The only exception is the marked agent drafts in existing feature docs, which need approval before merge.
+6. No invented copy. Every user-visible string came from a person or an existing label. The only exception is the marked agent drafts in existing product docs pages, which need approval before merge.
 7. What we had to fix before merge. A count and a short list. (Eng, filled in at merge)
 ```
 
@@ -215,8 +232,8 @@ Yes / no, plus one line when it's a no:
 
 - [ ] Review the backend listed under Backend built and finish anything under
       Backend still missing
-- [ ] Review the handoff's route, service, hook, and component coverage for
-      the real data path and extend it where engineering finds a gap
+- [ ] Write the tests listed under Missing tests in the Handoff section,
+      and a test for every frozen row, in the pull request
 - [ ] Decide whether a net-new surface needs a default-off PostHog flag before
       merge (closed-by-default UI policy)
 - [ ] Verify shared `packages/app` changes on both web and Desktop

@@ -222,9 +222,9 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
    process budgets and the Root-bound validation envelope; never supply a
    timeout override or change any test/assertion/hook deadline. A failure the
    brief lists as a deliberately obsolete expectation must carry the exact
-   human ruling and retained live-contract coverage; test authoring remains
-   handoff-only. Any unexplained failure, or running out of time,
-   returns `BLOCKED` with the failing suites and the first error line of
+   human ruling; the test stays unedited and is on the missing tests list
+   for engineering, because nobody writes tests in vibe or handoff. Any
+   unexplained failure, or running out of time, returns `BLOCKED` with the failing suites and the first error line of
    each, and pushes nothing. Never skip, filter out, or loosen a failing test
    to get a push through. Never write or edit tests in deployment mode.
 4. Consume the exact transaction with `main-sync-push` and parent context

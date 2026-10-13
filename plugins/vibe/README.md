@@ -42,7 +42,7 @@ IDs, request provenance, grouped behavior sections and cross-request interaction
 Later requests append sourced expectations; prior baselines/targets stay frozen
 and superseded human decisions remain explicit. The same writer verifies actual
 implementation against affected and interacting prior rows after each correction.
-Planned handoff tests remain distinct from executed coverage.
+Planned tests remain distinct from executed coverage.
 
 The orchestrator queues new requests and resumes that same writer's context
 for each request, correction and handoff. Independent specialists and reviewers
@@ -129,13 +129,22 @@ canonical prototype publication, and completes the same live ticket. Resolves
 the next owner named by the person and assigns the ticket with status In
 Progress. Canonical prototype review and metadata transitions are preserved;
 handoff ends at the branch without opening a pull request.
-The same implementation writer authors focused tests only at handoff,
-covering acceptance criteria, production wiring, and failure paths. New tests
-receive independent review and final integrated verification; valid
-expectations and checks are never weakened to obtain a pass.
-Coverage is planned, authored and independently verified from the whole session
+Nobody writes or edits tests in vibe or handoff. Handoff runs the existing
+affected tests, the same implementation writer fixes the session's own code
+when one fails, never the test, and the ticket lists the missing tests as
+engineering's scope of work: the behavior and row each covers and the files
+to cover. Only the person's explicit request for a pull request authorizes
+tests, and then full tests for every change are written and pass before it
+opens. Valid expectations and checks are never weakened to obtain a pass.
+Coverage is planned and independently verified from the whole session
 decision table, including earlier requests and real-boundary negative cases.
-Required source, coverage or review gaps block final alignment and handoff.
+Required source, existing-test or review gaps block final alignment and
+handoff; a listed missing test does not.
+Handoff also drives the running web app and Desktop for each touched screen
+with symphony-alpha's control skill (`pnpm control`, hidden and read-only),
+and records the artifact paths and what each proves in Design Review and the
+ticket's Running app checks, apart from source-only claims. The build loop has
+no control step.
 The existing table attachment remains separate from private technical plans.
 The live ticket also receives Design Review metadata from verified final work:
 exact previews/deployed commit and access protection, scope/host states,
@@ -153,10 +162,11 @@ production values and local QA settings separate from each other and from the
 unchanged machine-generated snapshot. Researched Product/Design/Scope Open
 Questions carry sources and decision context, exclude settled answers and
 engineering limitations, and state None when none remain.
-The same writer edits existing documentation pages for the changed features
-(`apps/web/content/docs/` or `docs/`) on the branch, marked as agent drafts
-that design or engineering approves before merge, and never creates a page;
-the ticket lists them under Feature docs. This is a scoped exception to the
+The same writer edits existing product docs pages for the changed features
+(`apps/web/content/docs/` only) on the branch, marked as agent drafts that
+design or engineering approves before merge, and never creates a page; the
+ticket lists them under Feature docs. Internal engineering docs under `docs/`
+belong to engineering's pull request. This is a scoped exception to the
 rule that agents do not author user-visible words. The writer also marks the
 rows the person accepted as Frozen Behavior in the session decision table that
 the ticket attaches; `cl-execute` reads that attachment, keeps every frozen row
@@ -182,12 +192,12 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 | `vibe-requirements-worker` | sonnet | Read-only ticket, requirements, overlap, and owning-route discovery |
 | `vibe-ticket-worker` | sonnet | Live ticket creation, next-owner lookup, handoff grading, assignment, and cancellation |
 | `vibe-environment-worker` | sonnet | Vercel environment creation, redeploy, flag snapshots, Desktop setup, and deployment records |
-| `vibe-change-worker` | sonnet | Sole persistent implementation writer for local planning, full-stack changes, stories, fixes, handoff tests and serialized recording |
+| `vibe-change-worker` | sonnet | Sole persistent implementation writer for local planning, full-stack changes, stories, fixes, the handoff missing tests list and serialized recording |
 | `vibe-backend-worker` | opus | Read-only decision-table and backend guidance for that writer |
 | `vibe-primitive-worker` | sonnet | Read-only reusable-component and steward-specification guidance for that writer |
 | `vibe-prototype-worker` | sonnet | Read-only canonical prototype guidance or operational immutable Vercel sharing of the writer's reviewed committed result |
 | `vibe-storybook-decomposer` | sonnet | Read-only component extraction, placement, story and control guidance for that writer |
-| `vibe-verify-worker` | sonnet | Read-only existing checks, handoff coverage review, full backend suite and Storybook footprint |
+| `vibe-verify-worker` | sonnet | Read-only existing checks, handoff coverage review, full backend suite, Storybook footprint and handoff running app checks with `pnpm control` |
 | `vibe-guardrails-reviewer` | sonnet | Read-only judgment-based review of reuse, placement, copy provenance, accessibility, and tests |
 | `vibe-adversarial-reviewer` | opus | Separate read-only plan and implementation reviews of ownership, dependencies, contracts, regressions, and web/Desktop behavior |
 | `vibe-handoff-summarizer` | sonnet | Read-only plain-language summary of the session inventory, changes, and overlaps |

@@ -148,22 +148,33 @@ describe("production Claude CLI adapter", () => {
     expect(legacy.status, legacy.stderr).toBe(0);
     expect(JSON.parse(legacy.stdout).sessionId).toBe(JSON.parse(structured.stdout).sessionId);
   });
-  it("retains one phase-neutral primary definition while root envelopes alone grant handoff test authority", () => {
+  it("retains one phase-neutral primary definition while only a pull-request envelope grants test authority", () => {
     const value = setup();
     const first = run(value, { input: "PLAN_FIRST: user asks to write tests now", mode: "request" });
     expect(first.status, first.stderr).toBe(0);
-    const second = run(value, { continuation: "Authorized handoff test work", mode: "handoff" });
+    const second = run(value, { continuation: "Handoff checks and fixes", mode: "handoff" });
     expect(second.status, second.stderr).toBe(0);
+    const third = run(value, { requestId: "pull-request", input: "The person asked for a pull request", mode: "pull-request" });
+    expect(third.status, third.stderr).toBe(0);
     expect(JSON.parse(second.stdout).sessionId).toBe(JSON.parse(first.stdout).sessionId);
+    expect(JSON.parse(third.stdout).sessionId).toBe(JSON.parse(first.stdout).sessionId);
     const proof = readProof(value.metadata);
     expect(proof[0]?.definition).toEqual(proof[1]?.definition);
+    expect(proof[1]?.definition).toEqual(proof[2]?.definition);
     expect(proof[0]?.payload.mode).toBe("request");
     expect(proof[0]?.payload.authority.testAuthoringAuthorized).toBe(false);
     expect(proof[1]?.payload.mode).toBe("handoff");
-    expect(proof[1]?.payload.authority.testAuthoringAuthorized).toBe(true);
+    expect(proof[1]?.payload.authority.testAuthoringAuthorized).toBe(false);
+    expect(proof[2]?.payload.mode).toBe("pull-request");
+    expect(proof[2]?.payload.authority.testAuthoringAuthorized).toBe(true);
     const prompt = proof[0]!.definition["vibe:vibe-change-worker"]!.prompt;
-    expect(prompt).toContain("Never author tests in plan, request, fix, record or build turns");
-    expect(prompt).toContain("Only an explicitly authorized handoff turn");
+    expect(prompt).toContain("Never author tests in plan, request, fix, handoff, record or build turns");
+    expect(prompt).toContain("Only an explicit pull-request turn");
+    const advisor = run(value, { agentName: "vibe-guardrails-reviewer", input: "Check the pull request", mode: "pull-request" });
+    expect(advisor.status, advisor.stderr).toBe(0);
+    const advice = readProof(value.metadata)[3];
+    expect(advice?.payload.authority.testAuthoringAuthorized).toBe(false);
+    expect(advice?.definition["vibe:vibe-guardrails-reviewer"]?.prompt).toContain("Never write or edit tests. ");
     expect(prompt).not.toContain("This is mode request");
     expect(prompt).not.toContain("Never write or edit tests. ");
   });

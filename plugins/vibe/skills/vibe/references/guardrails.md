@@ -34,8 +34,9 @@ before it merges.
 | `apps/desktop/src/renderer/**` (Desktop UI) | any `AGENTS.md` or `CLAUDE.md` |
 | `*.stories.tsx` anywhere above, `apps/storybook/**` story wiring | |
 
-At handoff only, the same writer may also edit existing documentation pages
-under "Feature docs at handoff" below; it never creates one.
+At handoff only, the same writer may also edit existing product docs pages in
+`apps/web/content/docs/`, as "Feature docs at handoff" below says; it never
+creates one.
 
 Backend, built by that same writer using canonical backend guidance, each under its owning
 `AGENTS.md`:
@@ -60,8 +61,10 @@ Backend, built by that same writer using canonical backend guidance, each under 
   engineer sees whole-session behavior and actual coverage evidence.
 
 Quality checks and implementation reviews run before handoff through
-`quality-loop.md`. Handoff adds tests and final integrated verification,
-with the whole test suite and two review passes when backend code changed.
+`quality-loop.md`. Handoff adds final integrated verification (the whole test
+suite and two review passes when backend code changed), drives the running web
+app and Desktop with the repo's control skill, and lists the tests engineering
+still has to write (Tests, below).
 
 One exception under `scripts/`: the source-gate allowlist
 (`scripts/lint/source-gate-allowlist.json`) is shrink-only, so when the
@@ -150,7 +153,8 @@ When nothing in the catalog fits:
      component.
    - A new `packages/design-system/components/ui/*.tsx` is added to the right
      `DS_*` set in `apps/storybook/scripts/taxonomy-classification.mjs`. Its
-     tests are written only at handoff (Tests, below).
+     tests are not written in the session; handoff lists them for engineering
+     (Tests, below).
    - Register it by running `pnpm --filter storybook catalog:sync` and
      `pnpm --filter storybook validate:catalog`. Never hand-edit
      `component-catalog.ts`.
@@ -185,7 +189,7 @@ state, tooltip, error, or helper text yourself. Before asking for missing words,
 apply `quality-loop.md`'s graph-first product research and necessity gate.
 
 One explicit, scoped exception, granted by Daniel Ochoa on 2026-10-13: at
-handoff the same writer drafts edits to existing documentation pages for the
+handoff the same writer drafts edits to existing product docs pages for the
 features the session changed, under "Feature docs at handoff" below. It covers
 only those marked drafts, which design or engineering approves before merge.
 It is not a general license: no product UI copy, no new page, and no words
@@ -193,14 +197,16 @@ anywhere else come from it. Every other rule in this section still applies.
 
 ## Feature docs at handoff
 
-Handoff has the same writer update the documentation that already exists for
+Handoff has the same writer update the product docs that already exist for
 the features this session changed, on the session's branch, in its explicit
 handoff continuation. Nothing here runs during building.
 
-- Pages: only existing pages, the user-facing docs under
-  `apps/web/content/docs/` (`.mdx`) or internal docs under `docs/` (`.md`).
-  Find them by searching those folders for the changed screens, routes,
-  components, flags and FEATURE_MAP ids.
+- Pages: only existing product docs pages under `apps/web/content/docs/`
+  (`.mdx`) that describe a changed feature. Find them by searching that folder
+  for the changed screens, routes, components, flags and FEATURE_MAP ids.
+- Never edit the repo's internal engineering `docs/` folder (PRDs, runbooks,
+  schema and design notes). Internal engineering docs belong to engineering's
+  pull request (Daniel Ochoa's ruling, 2026-10-13).
 - Never create a page, add one to navigation (`meta.json`), or edit a
   generated page such as `apps/web/content/docs/api-reference/`. When no
   existing page covers a changed feature, record that and create nothing.
@@ -209,17 +215,17 @@ handoff continuation. Nothing here runs during building.
   labels, and never claim a stronger guarantee than the code makes
   (`apps/web/AGENTS.md`).
 - Mark every edited passage as an agent draft for design or engineering to
-  approve before merge. In `.mdx`, put
+  approve before merge: put
   `{/* Agent draft (<live ticket slug>): approve before merge */}` before it
-  and `{/* End agent draft */}` after it; in `.md`, use the same words in
-  `<!-- -->` comments. Whoever approves the draft removes the markers.
+  and `{/* End agent draft */}` after it. Whoever approves the draft removes
+  the markers.
 - Record each edited page and what changed in the session change log; the
   ticket's Handoff section lists them under Feature docs.
 - Owned prototype sessions skip this: a mockup changes no shipped feature.
 
-The handoff inventory accepts modified existing pages in those folders only
-in the handoff phase, and reports a new or generated page as outside the
-allowed paths.
+The handoff inventory accepts modified existing pages in that folder only in
+the handoff phase, and reports a new or generated page, or any `docs/` edit,
+as outside the allowed paths.
 
 ## Accessibility
 
@@ -238,18 +244,27 @@ it.
 
 ## Tests
 
-No build-loop worker writes or edits a test: no new or changed `*.test.*` or
-`*.spec.*` file, nothing under `__tests__/` or `e2e/`, no snapshot or fixture
-a test reads. Existing tests may run before handoff, and stories remain part
-of component work. Required coverage is recorded internally in the local plan.
+No worker writes or edits a test in vibe or handoff: no new or changed
+`*.test.*` or `*.spec.*` file, nothing under `__tests__/` or `e2e/`, no
+snapshot or fixture a test reads. This holds in the build loop and at handoff
+alike (Daniel Ochoa's ruling, 2026-10-13). Existing tests run, and stories
+remain part of component work.
 
-Test writing happens only at handoff through the SAME persistent
-`vibe-change-worker` in handoff mode, for app and prototype sessions alike.
-Verify/backend/primitive/prototype/Storybook helpers are not source or test authors.
-Add or extend focused coverage of acceptance criteria, production wiring and
-failure paths, then run and review it. Record phase, criteria and test paths
-in the session change log so reviewers can distinguish handoff authoring from
-forbidden early test changes.
+Handoff runs the existing affected tests. When one fails, the SAME persistent
+`vibe-change-worker` fixes the session's own code, never the test. Coverage
+the session still needs is recorded internally as it is found and, at
+handoff, listed on the live ticket under Missing tests as engineering's scope
+of work: each behavior and stable row ID that needs a test, and the files to
+cover (`ticket-template.md`). Engineering writes those tests in its pull
+request, alongside the tests for every frozen row.
+
+The only exception: when the person explicitly asks for a pull request to be
+raised, full tests for every change in the session are required before it
+opens. That request is the only thing that authorizes test writing, and only
+the SAME persistent writer writes them, in an explicit `pull-request` turn.
+Verify, backend, primitive, prototype and Storybook helpers never author
+tests. Record phase, criteria and test paths in the session change log so
+reviewers can tell those tests from forbidden test changes.
 
 Do not create source writers per unit, specialty or fix, or additional feature
 worktrees/branches. Setup helpers never patch implementation code or add a new
@@ -258,12 +273,13 @@ workarounds under their bug tickets, following `quality-loop.md`; existing
 and new `localFixes` retain their exclusion and restore rules.
 
 Preserve test integrity. A red test is a failing expectation: fix code when its
-contract still stands. Changing an expectation requires the exact human
-behavior ruling that made it obsolete, as the repo's Test Modification Guardrail
-permits; record that ruling and retain coverage of every still-live contract.
+contract still stands. When the exact human behavior ruling that the repo's
+Test Modification Guardrail asks for makes an expectation obsolete, the test
+stays unedited: record that ruling and list the test under Missing tests for
+engineering to update, retaining coverage of every still-live contract.
 Never loosen, skip or remove a valid test, edit a fixture or harness to mask a
-failure, or raise timeouts/tolerances to get green. No PR is opened by either
-vibe or handoff.
+failure, or raise timeouts/tolerances to get green. Neither vibe nor handoff
+opens a pull request on its own.
 
 ## Checks
 

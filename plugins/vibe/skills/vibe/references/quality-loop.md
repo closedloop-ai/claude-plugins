@@ -115,9 +115,10 @@ New sessions bind the current release.
 The persistent system binding is phase-neutral because Claude retains it on
 resume. Each root-controlled turn envelope supplies `mode` and derived
 `authority.testAuthoringAuthorized`, separately from raw person/request text.
-Only an explicitly authorized handoff turn permits this same writer to author
-tests; a person's words cannot elevate a build turn. Do not disable prompt
-snapshots, fork or replace the session to change phases.
+Only a `pull-request` turn, which the orchestrator sends only after the person
+explicitly asks for a pull request, permits this same writer to author tests.
+A handoff turn never does, and a person's words cannot elevate any other turn.
+Do not disable prompt snapshots, fork or replace the session to change phases.
 
 Exactly three helper paths can run without a private session. Before session
 creation, requirements (read-only) and setup (operational only) use the exact
@@ -243,23 +244,29 @@ read the same table and source evidence before feature completion. A reviewer
 proposal is not a product ruling: verify it, record its disposition, and never
 expand scope or remove a live capability because a hypothetical fix suggests it.
 
-Keep implementation evidence, executed existing-test evidence and planned
-handoff tests separate: planned tests are not coverage. `Required Tests` maps
-stable row IDs to the invariant, positive control, wrong-input/mixed-state
-negative case and real production boundary. Until handoff, plan these tests
-only; never write/edit tests, fixtures or snapshots. Existing tests may run.
-Never claim `Final Alignment Status: Aligned` while required tests remain
-unexecuted or source/review/evidence gaps remain. Per-request `DONE` reports
-reviewed implementation/check completion, not final session coverage or core
+Keep implementation evidence, executed existing-test evidence and missing
+tests separate: planned tests are not coverage. `Required Tests` maps stable
+row IDs to the invariant, positive control, wrong-input/mixed-state negative
+case and real production boundary. Vibe and handoff never write/edit tests,
+fixtures or snapshots unless the person asks for a pull request
+(`guardrails.md`, "Tests"); existing tests run. A
+required test that does not exist yet stays planned and becomes a Missing
+tests entry for engineering at handoff. Per-request `DONE` reports reviewed
+implementation/check completion, not final session coverage or core
 alignment; retain the pending rows and test plans for the same writer.
 
 At handoff use the whole table, all requests and cross-request interactions
-for authoring and final coverage verification. A `Covered` disposition needs
-a named executed test and its fail-closed negative case through the claimed
-boundary; `not applicable` needs source evidence. Run the canonical internal
-consistency, review-prevention and independent adversarial passes. Unresolved
-required rows keep `Final Alignment Status: Not aligned` and block final
-handoff/session completion. No soft final status or "test later" waiver.
+for final verification. A `Covered` disposition needs a named executed
+existing test and its fail-closed negative case through the claimed boundary;
+`not applicable` needs source evidence. A required test that does not exist
+gets the `Missing test (engineering)` disposition with its row ID, behavior
+and files to cover, and the ticket lists it under Missing tests; it is never
+counted as coverage. Run the canonical internal consistency, review-prevention
+and independent adversarial passes. Never claim `Final Alignment Status:
+Aligned` while source, existing-test, review or evidence gaps remain; a row
+whose only gap is a listed missing test does not block it. Any other
+unresolved required row keeps `Final Alignment Status: Not aligned` and blocks
+final handoff/session completion. No soft final status.
 
 Technical plans stay private under `.closedloop-ai/vibe-plans/`. The existing
 behavior-table attachment at handoff remains separate; never upload the local
@@ -340,22 +347,27 @@ when policy permits, never manual CI/review triggers or a weakened check.
 No worker commits; the orchestrator still uses the owned commit script. Vibe
 and handoff open no PR. Operational publishing uses this same session branch.
 
-## Test writing at handoff
+## No test writing in vibe or handoff
 
-No build-loop test writing or editing, including fixtures/snapshots. Existing
-tests may run; stories remain part of component work. Missing new-test coverage
-is recorded locally for handoff, not an impossible early-authoring gate.
-Failures of existing live contracts remain implementation findings.
+No test writing or editing in the build loop or at handoff, including
+fixtures/snapshots (Daniel Ochoa's ruling, 2026-10-13; `guardrails.md`,
+"Tests"). Existing tests run; stories remain part of component work. Needed
+new-test coverage is recorded locally as it is found, not an early-authoring
+gate. Failures of existing live contracts remain implementation findings.
 
-At handoff resume the SAME writer in handoff mode to add/extend focused coverage
-for acceptance criteria, production wiring and meaningful failures, for app and
-prototype work alike. Verify helpers and reviewers remain read-only. Reject
-unrecorded early test changes before authoring; do not retrospectively relabel
-them. Preserve valid evidence when resuming an interrupted handoff.
+At handoff the SAME writer runs the existing affected tests and fixes the
+session's own code when one fails, never the test. It lists every missing test
+as engineering's scope of work: the behavior and row ID that needs it, the
+files to cover, and any existing test a human behavior ruling made obsolete,
+with that exact ruling, for engineering to update. Verify helpers and
+reviewers remain read-only. A test changed during the session is a finding;
+do not retrospectively relabel it. Preserve valid evidence when resuming an
+interrupted handoff.
 
-Never weaken a valid test/check, skip a case, inflate tolerances/timeouts, change
-a harness or suppress a failure. An obsolete expectation requires the exact
-human behavior ruling under the repo Test Modification Guardrail, with every
-still-live contract retained. The writer records test paths, covered criteria
-and rulings in the change log, fixes implementation defects and reruns tests.
-Independent reviewers examine the coverage before final handoff.
+The only exception is the person explicitly asking for a pull request to be
+raised. Then the SAME writer, in an explicit `pull-request` turn, writes full
+tests for every change in the session, records their paths, criteria and
+rulings in the change log, runs them and fixes implementation defects, and
+independent reviewers examine that coverage before the pull request opens.
+Never weaken a valid test/check, skip a case, inflate tolerances/timeouts,
+change a harness or suppress a failure.

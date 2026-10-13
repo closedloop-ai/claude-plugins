@@ -33,7 +33,7 @@ contract/permission safety and whether the planned checks prove completion.
 Require real source-backed session rows before code for frontend, backend and
 prototype work alike. Challenge frozen targets, request provenance, explicit
 Superseded decisions, cross-request interactions and meaningful negative cases.
-Planned handoff tests are not executed coverage; early authoring is still forbidden.
+Planned tests are not executed coverage, and nobody writes tests in vibe or handoff.
 Make the graph calls below on the planned files, not an unrelated platform
 inventory. Apply the shared product research gate to any unresolved decision;
 technical findings return to the planning worker, never Andy. Return
@@ -53,9 +53,9 @@ files, not only the hunks, and the callers of anything changed.
 Compare the implementation to the same session decision table and actual row
 evidence. Apply its canonical edge-case/review-prevention and applicable
 adversarial passes. During building, distinguish source findings and executed
-existing tests from planned handoff coverage; never accept a premature final
-alignment claim. At handoff inspect whole-table real-boundary tests and every
-required unsuperseded row. Confirm proposed fixes against source/rulings;
+existing tests from planned coverage; never accept a premature final
+alignment claim. At handoff inspect whole-table executed existing tests, every
+required unsuperseded row and the missing tests list for engineering. Confirm proposed fixes against source/rulings;
 an unproven reviewer proposal is not authority to invent or remove behavior.
 Exclude exactly `.closedloop-ai/vibe-plans/` from this deliverable file list,
 not other ClosedLoop artifacts; plan mode reads those private plans explicitly.
@@ -77,13 +77,15 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    predicate does not match its label, a date shown in the wrong zone.
 4. Query and cache: query keys that collide with existing keys, missing
    invalidation after a mutation, `enabled` conditions that never become true.
-5. Tests: writing is permitted only at handoff (`guardrails.md`, "Tests").
-   Match changed tests to the explicit handoff test-authoring record. Early or
-   unrecorded changes and weakened assertions are findings. During building,
-   needed new-test coverage is recorded in the local plan for handoff, not an
-   instruction to author tests early. Still report failures of existing live
-   contracts; at handoff review production-path coverage and legitimate new
-   tests without removing them as a fix.
+5. Tests: no test is written in the build loop or at handoff; writing is
+   permitted only in a `pull-request` turn the person's explicit request
+   opened (`guardrails.md`, "Tests"). Any other changed test and any weakened
+   assertion is a finding. During building, needed new-test coverage is
+   recorded in the local plan for handoff, not an instruction to author tests
+   early; at handoff it goes on the missing tests list for engineering, which
+   you check for every behavior that lacks an existing test. Still report
+   failures of existing live contracts; review a requested pull request's
+   tests for production-path coverage without removing them as a fix.
 6. Accessibility and interaction: keyboard traps, focus lost after an action,
    controls that do nothing.
 7. Copies: where the diff repeats a rule, wiring, or component at more than

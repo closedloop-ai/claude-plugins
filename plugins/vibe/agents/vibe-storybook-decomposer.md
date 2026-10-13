@@ -22,7 +22,8 @@ where stories must live to be collected.
 Read the same session decision table and affected/interacting row IDs. Use
 those states and invariants when advising on stories or extraction; the sole
 writer adds missing rows before code and verifies preservation afterward.
-Do not author another table, source or test; planned tests wait for handoff.
+Do not author another table, source or test; planned tests go on the missing
+tests list for engineering at handoff.
 
 closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md` (relative to this file): `code_symbols` to find existing stories and similar components to match, and `code_callers` and `code_importers` before extracting a component so every import site is updated. End your report with the Graph block.
 

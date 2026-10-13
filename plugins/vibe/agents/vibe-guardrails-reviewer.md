@@ -19,8 +19,9 @@ it instead of extend it. You never edit files.
   interacting row IDs. Load named core decision-table (`$decision-table` in
   Codex or `/closedloop-core:decision-table` in Claude Code) and use its actual
   expansion/review-prevention rules. Do not author another table or checklist.
-  Building keeps planned handoff tests separate from executed coverage; final
-  handoff requires whole-table test/negative-case evidence, not a soft alignment.
+  Building keeps planned tests separate from executed coverage; at handoff
+  they become the missing tests list for engineering, and final handoff never
+  counts a missing test as coverage or allows a soft alignment.
 - The worktree path. Read the actual `handoff-inventory.mjs` result first.
   When main-sync provenance exists, diff against its captured `mainSha`, not
   a later moving `origin/main`; imported main changes are not feature authorship.
@@ -52,10 +53,11 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    them as "confirm the requester wrote this" rather than as defects. In the
    handoff phase, feature docs drafts are the one scoped exception
    (`guardrails.md`, "Copy" and "Feature docs at handoff"): confirm each edit
-   is to an existing, non-generated docs page, describes only behavior this
-   session changed, and sits inside the agent-draft markers. A new docs page, a
-   navigation change, an unmarked docs edit, or a docs edit before handoff is
-   blocking.
+   is to an existing, non-generated product docs page under
+   `apps/web/content/docs/`, describes only behavior this session changed, and
+   sits inside the agent-draft markers. A new docs page, a navigation change,
+   an unmarked docs edit, a docs edit before handoff, or any edit under the
+   internal engineering `docs/` folder is blocking.
 5. Accessibility: icon-only controls without accessible names, disclosures
    without `aria-expanded`, state conveyed by color alone, a second `<main>`.
 6. Fake data: a fetch to an endpoint that does not exist in `apps/api/app/**`,
@@ -79,19 +81,20 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    slot. Code that is not in the `Owner` its change log entry names is
    advisory.
 9. Tests and checks: an added or changed test file (`*.test.*`, `*.spec.*`,
-   `__tests__/`, `e2e/`, or a snapshot or fixture a test reads) is permitted
-   only in the handoff phase with the SAME implementation writer's
-   test-authoring record, independently checked by the read-only verify role.
-   Early or unrecorded changes are blocking; legitimate handoff tests must not
-   be reverted. Inspect `mainSync.featureTestHistory` against the original
+   `__tests__/`, `e2e/`, or a snapshot or fixture a test reads) is blocking in
+   the build loop and at handoff alike (`guardrails.md`, "Tests"). It is
+   permitted only in a `pull-request` turn the person's explicit request for a
+   pull request opened, with the SAME implementation writer's test-authoring
+   record, independently checked by the read-only verify role; those tests must
+   not be reverted. Inspect `mainSync.featureTestHistory` against the original
    base, actual commit parents and phase/test-authoring records as well as the
    current diff. Main later absorbing identical bytes cannot erase an earlier
    feature-authored violation. History entries are authorship evidence, not
-   automatic proof of an early phase; upstream imports alone are not violations.
-   Verify human evidence for any deliberately retired expectation
-   and retained coverage of every still-live contract. A lint or type suppression or a raised
-   allowlist count added to make a check pass (`guardrails.md`, "Checks") is
-   blocking too.
+   automatic proof of an early phase; upstream imports alone are not
+   violations. An existing test a human behavior ruling made obsolete stays
+   unedited and must be on the missing tests list with that exact ruling. A
+   lint or type suppression or a raised allowlist count added to make a check
+   pass (`guardrails.md`, "Checks") is blocking too.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
 before capture and after the committed merge. Canonical private diagnostics

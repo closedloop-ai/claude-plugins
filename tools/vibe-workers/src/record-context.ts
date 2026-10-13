@@ -24,7 +24,7 @@ export const ciRunLocatorSchema = z.object({ runId: z.number().int().positive().
   attempt: z.number().int().positive().safe() }).strict();
 export const recordContextSchema = z.object({
   worktree: z.string().min(1), agentName: identifierSchema,
-  mode: z.enum(["plan", "request", "fix", "handoff", "record"]),
+  mode: z.enum(["plan", "request", "fix", "handoff", "pull-request", "record"]),
   recordAction: recordActionSchema.optional(),
   exclusiveRecordTurn: z.literal(true).optional(),
   publicationPurpose: z.enum(["build", "handoff"]).optional(),
@@ -85,7 +85,8 @@ export function resolveRecordContext(input: RecordContext) {
   let place;
   if (input.sessionless) {
     const startupRole = input.agentName === "vibe-requirements-worker" || input.agentName === "vibe-setup-worker";
-    const startup = input.sessionless.kind === "startup" && startupRole && input.mode !== "handoff";
+    const startup = input.sessionless.kind === "startup" && startupRole && input.mode !== "handoff"
+      && input.mode !== "pull-request";
     const cancel = input.sessionless.kind === "discarded" && input.agentName === "vibe-ticket-worker"
       && input.mode === "record" && input.recordAction === "cancel" && input.exclusiveRecordTurn;
     if (!startup && !cancel) throw new Error("This role/action has no sessionless operation");

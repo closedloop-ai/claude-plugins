@@ -234,9 +234,10 @@ main capture, test authority, validation PASS or permission to publish.
    source continuation. The SAME registered writer extends its existing
    session table/local canonical plan before source fixes and checks frozen
    earlier behavior/interactions against the merged result. All conflicts,
-   generated source and fixes stay with that writer; new tests remain
-   handoff-only. Upstream imports are not newly authored feature tests, but
-   no actual early/unrecorded test edit is retrospectively relabeled.
+   generated source and fixes stay with that writer; no new tests are written
+   unless the person asked for a pull request (`guardrails.md`, "Tests").
+   Upstream imports are not newly authored feature tests, but no actual
+   unrecorded test edit is retrospectively relabeled.
 3. Only the root commits the staged merge/fixes through the existing commit
    script and normal hooks. Then resume that SAME writer for its exact
    source-owned record continuation (`progress`) with the captured
