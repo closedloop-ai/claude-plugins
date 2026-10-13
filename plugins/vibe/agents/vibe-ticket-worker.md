@@ -30,8 +30,10 @@ Handoff also receives the SAME writer's detailed final packet/report paths for
 Production impact, Flag changes and gates, and researched Open Questions under
 the existing ticket template; compact helper responses are references, not the
 complete evidence inventory. It also receives the table's Frozen Behavior row
-IDs and the writer's feature docs record (each existing page edited as a marked
-agent draft, or that none covers the changed features).
+IDs, the writer's feature docs record (each existing product docs page edited
+as a marked agent draft, or that none covers the changed features), the
+writer's missing tests list, and the running app verification's control
+artifact paths with what each proves and any surface it could not drive.
 
 ## Read first
 
@@ -105,8 +107,10 @@ name, or have none.
 Read the required session decision table and row IDs with actual whole-table
 source/test/review evidence. Require `Final Alignment Status: Aligned`; required
 coverage gaps return NEEDS_CHANGE to the same writer rather than a completed
-ticket claim. The table covers the whole session, not just backend/latest work.
-Never author its rows or treat planned tests as executed coverage.
+ticket claim, except a missing test that is on the writer's missing tests list,
+which goes under Missing tests as engineering's scope of work. The table covers
+the whole session, not just backend/latest work. Never author its rows or treat
+planned or missing tests as executed coverage.
 Populate Design Review only at handoff from the verified final diff,
 current publication receipts and detailed design evidence/report paths.
 Add the section to legacy tickets that lack it before the existing final
@@ -190,7 +194,13 @@ historical inspections accurately. Preserve the existing grading block.
    Next line names the next owner you were given. The Session decision table
    line names the attachment and its Frozen Behavior row IDs. The Feature docs
    line lists the edited pages from the writer's record and never claims a
-   page that is not in the diff (`git -C "<wt>" diff --stat <inventory baseCommit>`). Fill Grading with the
+   page that is not in the diff (`git -C "<wt>" diff --stat <inventory baseCommit>`).
+   Missing tests lists every entry of the writer's missing tests list, each
+   with its behavior, row ID and files to cover. Running app checks and
+   Design Review's Visual evidence carry the control artifact paths with what
+   each proves, kept apart from source-only claims, and name the exact command
+   and reason for any surface control could not drive; upload the cited
+   screenshots with the granted upload action. Fill Grading with the
    template's Grading section copied unchanged, adding the section after
    Handoff when the ticket has none.
 7. Write the body back with `create-document-version`, then save it to

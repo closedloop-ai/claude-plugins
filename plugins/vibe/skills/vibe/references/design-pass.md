@@ -3,7 +3,8 @@
 Vibe requests arrive in the person's own words. The prep picks ownership by
 rule; `quality-loop.md` then keeps the local technical plan, separate plan
 review and implementation corrections internal and before handoff. Existing
-tests may run during building, but test writing happens only at handoff.
+tests may run, but no tests are written in vibe or handoff unless the person
+asks for a pull request.
 Nothing here is shown to or asked of the person.
 
 ## Owner rules
@@ -138,9 +139,9 @@ A fix that moves behavior to its owner works through, in its own reasoning:
   the worktree for the session's own code) and consolidate repeats in the
   session's own code. Do not opt in children the person did not name; list
   them.
-- Tests and checks: test writing waits for handoff (`guardrails.md`, "Tests"),
-  and a failing check is never made to pass by changing it (`guardrails.md`,
-  "Checks").
+- Tests and checks: no tests are written; handoff lists the missing ones for
+  engineering (`guardrails.md`, "Tests"), and a failing check is never made to
+  pass by changing it (`guardrails.md`, "Checks").
 
 The fix status carries this block for each restructure, and handoff passes
 it to the live ticket's Design decisions line:

@@ -111,8 +111,9 @@ hardcode a personal name for the engineering attention contact.
 - A ticket built in a vibe session carries its session decision table as an
   attachment, and that table's frozen rows are behavior the person who ran the
   session accepted. Read the attachment at intake, keep every frozen row
-  passing with tests in the PR, and change a frozen row only with that
-  person's explicit OK, as
+  passing with tests in the PR, write every test the ticket lists under
+  Missing tests, and change a frozen row only with that person's explicit OK,
+  as
   [Vibe Frozen Behavior](references/planning-and-gates.md#vibe-frozen-behavior)
   requires.
 - One feature has exactly one integrated PR, including when backend, Storybook,

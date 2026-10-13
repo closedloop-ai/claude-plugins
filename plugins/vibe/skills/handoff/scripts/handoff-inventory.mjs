@@ -13,15 +13,19 @@
 // edit that only removes entries or lowers counts (allowlist-shrink.mjs);
 // those are listed under `shrinkOnlyAllowlists`.
 //
-// In the handoff phase only, an app session may modify (never add) existing
-// feature docs pages; a new, generated or build-phase docs edit stays in
-// `outsideAllowed`.
+// In the handoff and pull-request phases only, an app session may modify
+// (never add) existing product docs pages under apps/web/content/docs/; a new,
+// generated or build-phase docs edit, and any edit under the internal docs/
+// folder, stays in `outsideAllowed`.
+//
+// Root web and Desktop test specs are admitted only in the pull-request phase,
+// which only the person's explicit request for a pull request opens.
 //
 // `backendChanged` says whether the work touched backend code
 // (`backendFiles`). Handoff runs its lighter checks when it did not, and the
 // full suite with two workflow-code-review passes when it did.
 //
-// Usage: handoff-inventory.mjs --worktree <path> [--phase build|handoff]
+// Usage: handoff-inventory.mjs --worktree <path> [--phase build|handoff|pull-request]
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -69,23 +73,26 @@ const BACKEND_SEGMENTS = ["/prisma/", "/migrations/"];
 const STORY_PATTERN = /\.stories\.tsx?$/;
 const COMPONENT_PATTERN = /\/components\/.+\.tsx$/;
 const TEST_PATTERN = /(?:\.test\.tsx?$|\/__tests__\/)/;
-const HANDOFF_TEST_PREFIXES = ["e2e/", "apps/desktop/test/"];
-const HANDOFF_TEST_PATTERN = /\.(?:test|spec)\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
-// Handoff may edit, never create, existing feature docs pages as marked agent
-// drafts (Daniel Ochoa's scoped exception, 2026-10-13); generated pages stay out.
-const HANDOFF_DOCS = [
-  { prefix: "apps/web/content/docs/", extension: ".mdx" },
-  { prefix: "docs/", extension: ".md" },
-];
+// Tests are written only when the person explicitly asks for a pull request
+// (Daniel Ochoa's ruling, 2026-10-13).
+const PULL_REQUEST_TEST_PREFIXES = ["e2e/", "apps/desktop/test/"];
+const PULL_REQUEST_TEST_PATTERN = /\.(?:test|spec)\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
+// Handoff may edit, never create, existing product docs pages as marked agent
+// drafts (Daniel Ochoa's scoped exception, 2026-10-13); generated pages and
+// the internal docs/ folder stay out.
+const PRODUCT_DOCS_PREFIX = "apps/web/content/docs/";
+const PRODUCT_DOCS_EXTENSION = ".mdx";
+const PHASES = ["build", "handoff", "pull-request"];
 const GENERATED_DOCS_PREFIX = "apps/web/content/docs/api-reference/";
 
 const { values } = parseArgs({ options: { worktree: { type: "string" }, phase: { type: "string", default: "build" } } });
 if (!values.worktree) {
   fail("--worktree is required.");
 }
-if (!["build", "handoff"].includes(values.phase)) {
-  fail("--phase must be build or handoff.");
+if (!PHASES.includes(values.phase)) {
+  fail("--phase must be build, handoff or pull-request.");
 }
+const handoffPhase = values.phase !== "build";
 const worktree = path.resolve(values.worktree);
 
 const branch = git(["rev-parse", "--abbrev-ref", "HEAD"]);
@@ -212,11 +219,11 @@ function isShrinkOnlyEdit(file) {
 
 function isAllowed(file) {
   const filePath = file.path;
-  if (values.phase === "handoff" && HANDOFF_TEST_PREFIXES.some(prefix => filePath.startsWith(prefix)) &&
-    HANDOFF_TEST_PATTERN.test(filePath)) {
+  if (values.phase === "pull-request" && PULL_REQUEST_TEST_PREFIXES.some(prefix => filePath.startsWith(prefix)) &&
+    PULL_REQUEST_TEST_PATTERN.test(filePath)) {
     return true;
   }
-  if (values.phase === "handoff" && !prototype && isExistingDocsEdit(file)) {
+  if (handoffPhase && !prototype && isExistingDocsEdit(file)) {
     return true;
   }
   if (prototype && (filePath.startsWith(`apps/prototypes/app/p/${record.slug}/`) ||
@@ -238,7 +245,7 @@ function isAllowed(file) {
 
 function isExistingDocsEdit(file) {
   return file.status === "M" && !file.path.startsWith(GENERATED_DOCS_PREFIX) &&
-    HANDOFF_DOCS.some(({ prefix, extension }) => file.path.startsWith(prefix) && file.path.endsWith(extension));
+    file.path.startsWith(PRODUCT_DOCS_PREFIX) && file.path.endsWith(PRODUCT_DOCS_EXTENSION);
 }
 
 function findComponentsWithoutStories(files) {

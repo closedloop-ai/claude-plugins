@@ -125,13 +125,13 @@ stops until core is explicitly installed and enabled.
 | `vibe-requirements-worker` | read a ClosedLoop ticket (and its PRD, plan, related tickets) or a description and turn it into a brief, plus the route and FEATURE_MAP id where the relevant code lives, for change workers; in reference mode, research an outside product the person named and list the behaviors to build |
 | `vibe-ticket-worker` | create the session's live ticket, and fill its record sections when you ask |
 | `vibe-environment-worker` | stand up the session's Vercel environment, redeploy it, or refresh its flag snapshot |
-| `vibe-change-worker` | the SAME persistent writer for all planning, source implementation, backend/primitive/prototype/Storybook work, fixes and handoff-only tests |
+| `vibe-change-worker` | the SAME persistent writer for all planning, source implementation, backend/primitive/prototype/Storybook work, fixes and the handoff missing tests list (tests only for a requested pull request) |
 | `vibe-backend-worker` | read-only backend/contract advice for that writer |
 | `vibe-primitive-worker` | read-only component/spec advice for that writer |
 | `vibe-prototype-worker` | read-only canonical guidance or operational sharing of the writer's reviewed committed result, never another source author |
 | `vibe-adversarial-reviewer` | separately review the local technical plan before implementation, then challenge implemented changes before handoff |
 | `vibe-guardrails-reviewer` | review ownership, reuse and repo constraints before declaring a feature complete |
-| `vibe-verify-worker` | read-only checks/coverage advice; the SAME writer authors tests only at handoff |
+| `vibe-verify-worker` | read-only checks/coverage advice; nobody writes tests in vibe or handoff |
 
 Every worker result starts with a status: `DONE`, `NEEDS_PERSON` (a question
 or action only the person can answer or take, already phrased for them),
@@ -147,8 +147,9 @@ them as section 6 step 3 says, then dispatch the worker again), or
 `NEEDS_REVIEW` from a prototype means its code is built but must receive
 independent implementation review and existing checks before commit or share.
 
-No build-loop worker writes or edits a test (`references/guardrails.md`,
-"Tests"); test authoring happens only at handoff. This skill opens no PR.
+No worker writes or edits a test in vibe or handoff (`references/guardrails.md`,
+"Tests"); handoff lists the missing tests for engineering, and tests are written
+only when the person explicitly asks for a pull request. This skill opens no PR.
 Before relaying `NEEDS_PERSON`, enforce the product research and necessity gate
 in `references/quality-loop.md`; technical choices stay with the workers.
 
@@ -273,8 +274,8 @@ changes itself. Do not spawn a separate prototype source writer.
 
 Preserve canonical mock-data, componentization, visual/product review and
 metadata ownership. Ignore canonical steps asking for a second source writer,
-worktree/branch or a technical-plan approval. All corrections and handoff-only
-test writing return to this same context.
+worktree/branch or a technical-plan approval. All corrections return to this
+same context, and no tests are written (`references/guardrails.md`, "Tests").
 
 After independent current-result review/checks, the orchestrator commits with
 its script. Dispatch `vibe-prototype-worker` only in operational share mode to
@@ -482,11 +483,11 @@ evidence, never by replacing the writer.
 4. On `NEEDS_REVIEW`, run independent read-only implementation reviews and
    existing checks. Use core workflow review for backend work. Return confirmed
    issues to the SAME writer, recheck its fixes, and do not leave preventable
-   issues until handoff. Existing tests may run; none are authored yet.
+   issues until handoff. Existing tests may run; none are authored.
    The writer first verifies affected and interacting prior table rows against
    actual code, fixes source gaps and supplies the same artifact/row evidence
-   to reviewers. Planned handoff tests remain distinct from executed coverage;
-   they never justify premature core Final Aligned or a source-gap waiver.
+   to reviewers. Planned tests remain distinct from executed coverage; they
+   never justify premature core Final Aligned or a source-gap waiver.
 5. Research any `NEEDS_PERSON` through the graph/live-decision necessity gate.
    Ask only an absolutely necessary unresolved product question, one at a time
    with full context. Its answer continues this active request in the SAME
@@ -571,7 +572,7 @@ on Vercel", "let me see it live", or anything meaning the same:
    grant carries captured `mainSyncTransactionId`, build purpose and actual
    stdin context. It pushes only the admitted SHA, requests the environment again so that commit is
    deployed, and updates the ticket. Existing checks have run through the
-   quality loop; test authoring still waits for handoff.
+   quality loop; no tests are written.
 5. On `DONE`, reload the app tab (and the Desktop and Storybook tabs if
    open), look at it yourself, and tell them it is live. Whenever you open
    the Vercel `storybookUrl` and the tab lands on `vercel.com` (a Vercel sign-in or
@@ -640,7 +641,7 @@ Whenever the person asks to throw a session away (at any point, for any
 ## References
 
 - `references/closedloop-graph.md`: how every worker uses closedloop-graph.
-- `references/quality-loop.md`: one persistent writer/queue, local plans, read-only independent reviews, researched product questions and handoff-only test authoring.
+- `references/quality-loop.md`: one persistent writer/queue, local plans, read-only independent reviews, researched product questions and the no-test-writing rule.
 - `references/preflight.md`: fixes for every preflight check (setup worker).
 - `references/environment.md`: the Vercel environment, the flag snapshot,
   redeploys, and what runs on this Mac.

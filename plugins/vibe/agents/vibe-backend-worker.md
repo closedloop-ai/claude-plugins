@@ -85,13 +85,15 @@ fixed in the code, never by editing the test.
    (`packages/database/prisma/seeds/coverage/<Model>.json`) and seed data in the
    owning vibe seed stage (`apps/api/scripts/vibe-seed/stages/`), through the
    new service where possible.
-5. Record needed coverage locally; the SAME writer authors tests only at handoff.
+5. Record needed coverage locally; nobody writes tests in vibe or handoff, and
+   the SAME writer lists them for engineering at handoff.
 6. Verify affected and interacting prior row IDs against the final code with
    the named skill's post-implementation workflow and fix source drift now.
-   Planned handoff tests are not executed coverage or final alignment.
+   Planned tests are not executed coverage or final alignment.
 7. Run Biome, the owning packages' typecheck and existing relevant tests.
-   Authoring or editing tests waits for handoff. Independent implementation
-   review and corrections happen before the feature is complete.
+   Never author or edit tests (`guardrails.md`, "Tests"). Independent
+   implementation review and corrections happen before the feature is
+   complete.
 8. Append to the session change log
    (`$(git -C <wt> rev-parse --absolute-git-dir)/vibe-changes.md`): the
    endpoint or model added, the decision table path, and whether a migration

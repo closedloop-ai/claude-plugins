@@ -160,7 +160,7 @@ def test_ticket_worker_fills_grading_at_handoff_and_never_rederives_it() -> None
 def test_check_weight_follows_whether_the_session_changed_backend_code() -> None:
     skill = HANDOFF_SKILL.read_text()
     task_list = section(skill, "## 1. Internal checklist")
-    checks = section(skill, "## 5. Checks and handoff-only tests")
+    checks = section(skill, "## 5. Checks and the missing tests list")
     reviews = section(skill, "## 6. Independent integrated review")
 
     assert "handoff-inventory.mjs --worktree" in task_list
@@ -202,7 +202,7 @@ def test_owned_prototypes_keep_handoff_assignment_and_canonical_transitions() ->
     skill = HANDOFF_SKILL.read_text()
     worker = (PLUGIN_ROOT / "agents" / "vibe-prototype-worker.md").read_text()
     assert "next-owner lookup and ticket assignment stay intact" in section(skill, "### Owned prototype sessions")
-    assert "handoff-only tests in its same context" in skill
+    assert "the missing tests list in its same context, writing no tests" in section(skill, "### Owned prototype sessions")
     assert "PrototypeStatus.HandedOff remains owned by prototype-approve" in skill
     assert "No PR is opened" in worker
     assert "canonical share-on-Vercel procedure on this exact branch" in worker
@@ -218,8 +218,8 @@ def test_prototype_preflight_mode_survives_setup_worker_repairs() -> None:
     assert "replace the `--repo` path but preserve `--prototype`" in preflight
 
 
-def test_handoff_writes_and_verifies_coverage_from_the_whole_session_table() -> None:
-    checks = section(HANDOFF_SKILL.read_text(), "## 5. Checks and handoff-only tests")
+def test_handoff_verifies_coverage_from_the_whole_session_table() -> None:
+    checks = section(HANDOFF_SKILL.read_text(), "## 5. Checks and the missing tests list")
     for required in ("whole session decision table", "all requests", "stable row IDs",
                      "Required Tests", "negative", "cross-request interactions"):
         assert required in checks, required
@@ -230,7 +230,7 @@ def test_handoff_writes_and_verifies_coverage_from_the_whole_session_table() -> 
     ticket = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
     assert "required session decision table" in ticket
     assert "decision tables in `.closedloop-ai/decision-tables/` if any" not in ticket
-    worker = section(CHANGE_WORKER.read_text(), "## Handoff tests in this same context")
+    worker = section(CHANGE_WORKER.read_text(), "## No tests in this context unless a pull request is requested")
     assert "whole session decision table" in worker and "row IDs" in worker
     assert "planned" in worker and "executed" in worker
 
