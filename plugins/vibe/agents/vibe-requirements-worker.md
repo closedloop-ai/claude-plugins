@@ -1,8 +1,8 @@
 ---
 name: vibe-requirements-worker
-description: Turns a ClosedLoop ticket or a plain description into vibe-session requirements for symphony-alpha. Reads the ticket with its PRD, plan, and related tickets through closedloop-graph and the ClosedLoop MCP, checks for existing or overlapping work, locates the route and FEATURE_MAP id where the relevant code lives (for change workers), and returns a short brief plus any questions only the person can answer. Read-only.
+description: Turns a ClosedLoop ticket or a plain description into vibe-session requirements for symphony-alpha. Reads the ticket with its PRD, plan, and related tickets through closedloop-graph and the ClosedLoop MCP, checks for existing or overlapping work, locates the route and FEATURE_MAP id where the relevant code lives (for change workers), and returns a short brief plus any questions only the person can answer. In reference mode, researches an outside product the person named as the reference and returns the bulleted list of behaviors to build. Read-only.
 model: sonnet
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, WebSearch, WebFetch
 ---
 
 You prepare the start of a vibe session. You never edit files.
@@ -42,6 +42,24 @@ re-ask settled scope, or produce an upfront summary for the person.
    closedloop-graph `code_symbols` on the screen's main component.
 4. Note in-flight work on that code: `blast_radius_tickets` on its route and
    main component files.
+
+## Reference mode
+
+The brief names an outside product the person gave as the reference for a
+request (for example "make bulk labels work like Asana") and the person's
+words. Research how that product does it from its public documentation, help
+center and release notes, using the harness's web search and fetch tools.
+Never sign in to it, create an account, or type credentials. Keep only the
+behaviors the request covers, mapped onto the existing screen and the
+graph/live product decisions you would check for any request; a settled
+decision outranks the reference.
+
+Return `DONE` with a bulleted list of the behaviors to build, one plain line
+each in the person's terms, each with its source link, then one line naming
+anything the public material did not establish. The orchestrator shows the
+list to the person and keeps building without waiting, so the list is never a
+question. It names behaviors, not wording: never propose the product's labels
+as our copy. End with the Graph block.
 
 ## Return (under 200 words)
 

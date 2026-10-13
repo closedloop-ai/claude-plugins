@@ -29,7 +29,9 @@ change worker's summary, `already met` with its evidence, or `wording`).
 Handoff also receives the SAME writer's detailed final packet/report paths for
 Production impact, Flag changes and gates, and researched Open Questions under
 the existing ticket template; compact helper responses are references, not the
-complete evidence inventory.
+complete evidence inventory. It also receives the table's Frozen Behavior row
+IDs and the writer's feature docs record (each existing page edited as a marked
+agent draft, or that none covers the changed features).
 
 ## Read first
 
@@ -179,9 +181,16 @@ historical inspections accurately. Preserve the existing grading block.
    tables, and attach each decision table with `upload-attachment`.
    These are existing behavior evidence, not the local implementation plan;
    never include the local plan folder or its review drafts in attachments.
+   The session table must carry its `## Frozen Behavior` section before you
+   attach it; without it return `NEEDS_CHANGE` so the same writer adds it.
+   The attachment is how engineering receives the frozen rows, because the
+   table file stays in this worktree.
 6. Fill Handoff and Design Review from the verified final packet/evidence you
    were given, per the template; its
-   Next line names the next owner you were given. Fill Grading with the
+   Next line names the next owner you were given. The Session decision table
+   line names the attachment and its Frozen Behavior row IDs. The Feature docs
+   line lists the edited pages from the writer's record and never claims a
+   page that is not in the diff (`git -C "<wt>" diff --stat <inventory baseCommit>`). Fill Grading with the
    template's Grading section copied unchanged, adding the section after
    Handoff when the ticket has none.
 7. Write the body back with `create-document-version`, then save it to

@@ -1,8 +1,8 @@
 # Planning And Gates
 
-Use this reference for readiness classification, requirements contracts, plan
-drafting/review, proposal contract audits, performance work, UI plan approval,
-and cleanup-tooling churn control.
+Use this reference for readiness classification, requirements contracts, a
+vibe ticket's frozen behavior, plan drafting/review, proposal contract audits,
+performance work, UI plan approval, and cleanup-tooling churn control.
 
 ## Readiness Gate
 
@@ -135,6 +135,36 @@ as the product contract throughout execution.
    prior decision already answers it.
 4. Before merge or merge queue action, perform one bounded conformance check
    from changed behavior/tests to applicable requirement IDs and record it.
+
+## Vibe Frozen Behavior
+
+A ticket built in a vibe session (its body says `Built in a vibe session by`
+and names the person who ran it) carries that session's decision table as an
+attachment. The table's `## Frozen Behavior` section lists the rows that
+person accepted. They do not test the work again after design and
+engineering, so every frozen row is part of the requirements contract. The
+table file in the vibe worktree stays on that person's machine; the ticket
+attachment is the only copy that travels.
+
+1. At intake, list the ticket's attachments and download the session decision
+   table into this worktree's `.closedloop-ai/decision-tables/`. A vibe ticket
+   with no such attachment, or whose table has no `## Frozen Behavior`
+   section, is not ready: return `HUMAN_REVIEW_REQUIRED` naming what is
+   missing.
+2. Record every frozen row ID in the plan and map each one to the plan's
+   changes and Test Plan.
+3. Keep every frozen row passing. The PR includes a test for each frozen row
+   that drives it through its real boundary and fails when that behavior
+   breaks; engineering writes these tests in this PR. A test already on the
+   branch counts when the PR includes it and it runs.
+4. Never change a frozen row's behavior without that person's explicit OK.
+   When a plan finding, review comment, merge conflict or requirement would
+   change one, keep the frozen behavior and return `PRODUCT_BLOCKED` naming
+   the row and the proposed change, routed to that person under cl-policy.
+   Only their recorded OK lets the row change; cite it in the plan and the
+   decision log.
+5. The pre-merge conformance check in Requirements Contract confirms every
+   frozen row's test passes at the PR head.
 
 ## Proposal Contract Audit
 

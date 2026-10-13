@@ -24,9 +24,11 @@ why an unresolved answer is absolutely necessary.
 The orchestrator sends an unresearched question back. Interrupt the person
 only for an absolutely necessary unresolved product question, one at a time
 with full context. Technical choices are resolved internally. Preserve existing
-visual/product approvals, such as primitive Storybook approval and canonical
-prototype design approval, not a new technical-plan milestone. Human sign-in,
-credential entry and OS permission actions remain with the person.
+visual/product approvals, such as canonical prototype design approval, not a
+new technical-plan milestone. A reference product's behavior list and a
+request's new Storybook components are notices the person may interrupt,
+never approval gates (`SKILL.md`, section 5, "Notices that never wait"). Human
+sign-in, credential entry and OS permission actions remain with the person.
 
 ## One persistent writer and a serial queue
 
@@ -262,6 +264,24 @@ handoff/session completion. No soft final status or "test later" waiver.
 Technical plans stay private under `.closedloop-ai/vibe-plans/`. The existing
 behavior-table attachment at handoff remains separate; never upload the local
 technical plan or its review drafts as table evidence.
+
+### Frozen behavior at handoff
+
+Andy does not re-test after design and engineering, so the behavior he
+accepted travels with the ticket. At handoff, once the whole table is
+`Aligned`, the SAME writer adds a `## Frozen Behavior` section to the table
+listing the stable row ID of every row the person accepted, each with its
+request provenance. A row is accepted when it describes behavior the person
+saw delivered in this session and is handing off, or behavior a handoff
+behavior answer settled (`built` or `already met`). Superseded rows and rows
+behind a remaining Open Question are not frozen. The writer rewrites this one
+section whenever a later handoff answer changes the table, so it always names
+the final accepted set; every other section keeps the rules above.
+
+The table file stays local to the session worktree; its attachment on the
+live ticket is what travels. `cl-execute` reads that attachment, keeps every
+frozen row passing with tests in its pull request, and changes a frozen row
+only with the explicit OK of the person who ran the session.
 
 ## Local plan and separate review
 

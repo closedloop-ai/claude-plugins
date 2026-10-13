@@ -49,7 +49,13 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    an app alias); a parallel page for something an existing surface owns.
 4. Copy: user-visible strings that look invented rather than given (generic
    empty states, helper text, tooltips). You cannot see the chat, so report
-   them as "confirm the requester wrote this" rather than as defects.
+   them as "confirm the requester wrote this" rather than as defects. In the
+   handoff phase, feature docs drafts are the one scoped exception
+   (`guardrails.md`, "Copy" and "Feature docs at handoff"): confirm each edit
+   is to an existing, non-generated docs page, describes only behavior this
+   session changed, and sits inside the agent-draft markers. A new docs page, a
+   navigation change, an unmarked docs edit, or a docs edit before handoff is
+   blocking.
 5. Accessibility: icon-only controls without accessible names, disclosures
    without `aria-expanded`, state conveyed by color alone, a second `<main>`.
 6. Fake data: a fetch to an endpoint that does not exist in `apps/api/app/**`,

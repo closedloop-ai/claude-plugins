@@ -11506,6 +11506,7 @@ var capabilitiesSchema = external_exports.array(capabilitySchema).max(48).refine
 var identifierSchema = external_exports.string().min(1).max(160).regex(/^[A-Za-z0-9_.:-]+$/);
 var statusSchema = external_exports.enum([
   "PLAN",
+  "STORIES_READY",
   "NEEDS_REVIEW",
   "NEEDS_PERSON",
   "NEEDS_COMMIT",
@@ -11613,7 +11614,7 @@ var metadataSchema = external_exports.object({
   tools: external_exports.union([external_exports.string(), external_exports.array(external_exports.string())]),
   skills: external_exports.union([external_exports.string(), external_exports.array(external_exports.string())]).optional()
 }).passthrough();
-var builtins = /* @__PURE__ */ new Set(["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Skill", "ToolSearch"]);
+var builtins = /* @__PURE__ */ new Set(["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Skill", "ToolSearch", "WebSearch", "WebFetch"]);
 function readDefinition(agentRoot, agentName, capabilityInput) {
   if (!/^vibe-[a-z0-9-]+$/.test(agentName)) throw new Error("Only own-plugin vibe agents are supported");
   const root = realpathSync2(agentRoot);

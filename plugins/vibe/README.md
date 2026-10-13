@@ -113,6 +113,15 @@ decision evidence first, then raised one at a time with full context only
 when an unresolved answer is absolutely necessary. Existing product and design
 approvals remain intact.
 
+Two notices reach the person without waiting for a reply. When a request names
+an outside product as its reference, the requirements worker researches that
+product's public documentation and the person sees a bulleted list of the
+behaviors to build while the writer builds them. When a request needs new
+Storybook components, the writer builds them and their stories first, the
+person gets one message with their local Storybook links, and the writer goes
+straight on to the feature. The person may interrupt either to change it;
+neither is an approval gate, and reuse-only changes send no Storybook notice.
+
 ### `handoff`
 
 Checks and reviews the session's work, verifies its current app environment or
@@ -144,6 +153,15 @@ production values and local QA settings separate from each other and from the
 unchanged machine-generated snapshot. Researched Product/Design/Scope Open
 Questions carry sources and decision context, exclude settled answers and
 engineering limitations, and state None when none remain.
+The same writer edits existing documentation pages for the changed features
+(`apps/web/content/docs/` or `docs/`) on the branch, marked as agent drafts
+that design or engineering approves before merge, and never creates a page;
+the ticket lists them under Feature docs. This is a scoped exception to the
+rule that agents do not author user-visible words. The writer also marks the
+rows the person accepted as Frozen Behavior in the session decision table that
+the ticket attaches; `cl-execute` reads that attachment, keeps every frozen row
+passing with tests in its pull request, and changes one only with that
+person's explicit OK.
 
 ### `vibe-seed-refresh`
 

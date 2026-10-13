@@ -17,8 +17,10 @@ and reviewers are read-only.
 The owned worktree/branch, session summary, live ticket, request ID and the
 person's words, annotation context, mode (`plan`, `request`, `fix`, `handoff`,
 or `record`), the session decision table path and affected/interacting row IDs,
-and any reviewed plan, findings or product answer. A continuation
-belongs to the same active request and writer ID. Finish it before the next
+and any reviewed plan, findings or product answer. A request that named an
+outside product as its reference arrives with the researched list of
+behaviors to build; build those, as cut or changed by the person. A
+continuation belongs to the same active request and writer ID. Finish it before the next
 queued request. Never commit, push or stash; the orchestrator commits through
 its script and operational publishing follows the same branch.
 
@@ -48,7 +50,8 @@ Load core `plan-structure` by name (`$plan-structure` in Codex or
 `/closedloop-core:plan-structure` in Claude Code), read its own template, and
 write the exact-template local plan under `.closedloop-ai/vibe-plans/`.
 Never upload it, paste it into the ticket, commit it or deploy it. Name scope,
-owners, dependencies and checks. Return `PLAN` with its local path, Prep and
+owners, dependencies and checks, including every NEW Storybook component the
+request needs (or none). Return `PLAN` with its local path, Prep and
 Graph blocks. Wait for the separate adversarial plan review, the plan's only
 review. In this same context, verify each finding against the code, apply
 outline-level corrections to the plan, put detail-level suggestions into the
@@ -91,9 +94,16 @@ For backend work, follow that guidance's layering, auth/org validation, shared
 types, schema/migration and seed rules. The session table already governs this
 work as it does frontend work. You write the backend and consuming UI yourself; do not return a spec
 for a second source author. For a missing primitive use the read-only steward
-spec, build its complete states/stories yourself and preserve the existing
-Storybook product approval before use. Keep Storybook collected locations,
-catalog and taxonomy correct; all resulting source edits are yours.
+spec and build its complete states/stories yourself. Keep Storybook collected
+locations, catalog and taxonomy correct; all resulting source edits are yours.
+
+When the reviewed plan needs NEW Storybook components, build those components
+and their stories first, run the Storybook checks on them, then return
+`STORIES_READY` with each new story's ID. The orchestrator points the person to
+them and resumes you at once; build the feature with them in that same
+request. The person may interrupt to change a component; that message
+continues the same request. A request that only reuses existing components
+never returns `STORIES_READY`.
 
 Owned prototypes follow the canonical repository procedure in this same
 worktree/branch. Read its actual instructions, but override creation of another
@@ -103,7 +113,9 @@ and publication contracts remain. Operational sharing may publish only the
 reviewed committed result, never silently generate or fix source.
 
 Use supplied copy verbatim or the existing matching string/label map. Do not
-invent product text. Read-only specialists may advise on uncertainties; their
+invent product text. The one scoped exception is the marked feature docs drafts
+at handoff (`guardrails.md`, "Copy" and "Feature docs at handoff"); it never
+covers product copy. Read-only specialists may advise on uncertainties; their
 findings return here for you to verify and correct. Fix all confirmed issues
 before completion, including shared-owner restructuring and its sibling sweep
 from `design-pass.md`. Never revert another person's changes.
@@ -188,12 +200,21 @@ positive/negative/mixed-state production-boundary evidence, fix every required
 gap and obtain independent whole-table verification. Never claim final core
 alignment with required unexecuted tests or unresolved rows; they block final handoff.
 
+The same handoff continuation also drafts edits to existing feature docs under
+`guardrails.md`, "Feature docs at handoff": existing pages only, every edit
+marked as an agent draft, each page recorded in the change log. Never create a
+page. Once the table is aligned, add its `## Frozen Behavior` section with the
+row IDs the person accepted (`quality-loop.md`, "Frozen behavior at handoff"),
+and refresh it whenever a handoff answer changes the table.
+
 ## Return
 
-Return a short status plus Prep/Graph or Design evidence as applicable:
-`PLAN` waits for independent plan review; `NEEDS_REVIEW` waits for current
-implementation/coverage review; `NEEDS_PERSON` is only a researched necessary
-product question or legitimate human-only action; `NEEDS_COMMIT` waits for the
-orchestrator; `DONE` means the whole requested feature passed its required
-review/checks. `BLOCKED` gives evidence without a technical question or silent
-downscope. Every non-trivial result ends with the required Graph block.
+Return a short status plus Prep/Graph or Design evidence as applicable: `PLAN`
+waits for independent plan review; `STORIES_READY` names the new Storybook
+components' story IDs and continues the same request; `NEEDS_REVIEW` waits for
+current implementation/coverage review; `NEEDS_PERSON` is only a researched
+necessary product question or legitimate human-only action; `NEEDS_COMMIT`
+waits for the orchestrator; `DONE` means the whole requested feature passed its
+required review/checks. `BLOCKED` gives evidence without a technical question
+or silent downscope. Every non-trivial result ends with the required Graph
+block.

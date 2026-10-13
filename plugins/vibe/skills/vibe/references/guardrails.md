@@ -34,6 +34,9 @@ before it merges.
 | `apps/desktop/src/renderer/**` (Desktop UI) | any `AGENTS.md` or `CLAUDE.md` |
 | `*.stories.tsx` anywhere above, `apps/storybook/**` story wiring | |
 
+At handoff only, the same writer may also edit existing documentation pages
+under "Feature docs at handoff" below; it never creates one.
+
 Backend, built by that same writer using canonical backend guidance, each under its owning
 `AGENTS.md`:
 
@@ -119,7 +122,8 @@ team's design standard.
 When nothing in the catalog fits:
 
 1. Keep the missing building block internal and add it to the reviewed local
-   plan. Do not narrate this technical dependency to the person.
+   plan. Do not narrate this technical dependency to the person; the only
+   message about it is the new-components notice in step 5.
 2. Run the repo agent `design-system-steward` (`.claude/agents/design-system-steward.md`)
    with the need. Follow its answer, which is one of three:
    - Reuse: an existing component covers it. Use it and continue.
@@ -151,9 +155,11 @@ When nothing in the catalog fits:
      `pnpm --filter storybook validate:catalog`. Never hand-edit
      `component-catalog.ts`.
 4. Run `pnpm --filter storybook test` and confirm the new stories pass.
-5. Open its story in the in-app browser (local Storybook, which the
-   orchestrator starts for this) and ask the person to approve it there.
-6. Only after approval, use it in the screen.
+5. A new component is built with its stories before the feature that uses it.
+   The orchestrator points the person to its stories on local Storybook in one
+   plain message and does not wait (`SKILL.md`, section 5, "Notices that never
+   wait"); the person may interrupt to change it.
+6. Use it in the screen without waiting for a reply.
 
 ## Tokens and styling
 
@@ -177,6 +183,43 @@ The person is the author of user-visible words. Use their words verbatim, or
 reuse an existing string or label map. Never compose a label, button, empty
 state, tooltip, error, or helper text yourself. Before asking for missing words,
 apply `quality-loop.md`'s graph-first product research and necessity gate.
+
+One explicit, scoped exception, granted by Daniel Ochoa on 2026-10-13: at
+handoff the same writer drafts edits to existing documentation pages for the
+features the session changed, under "Feature docs at handoff" below. It covers
+only those marked drafts, which design or engineering approves before merge.
+It is not a general license: no product UI copy, no new page, and no words
+anywhere else come from it. Every other rule in this section still applies.
+
+## Feature docs at handoff
+
+Handoff has the same writer update the documentation that already exists for
+the features this session changed, on the session's branch, in its explicit
+handoff continuation. Nothing here runs during building.
+
+- Pages: only existing pages, the user-facing docs under
+  `apps/web/content/docs/` (`.mdx`) or internal docs under `docs/` (`.md`).
+  Find them by searching those folders for the changed screens, routes,
+  components, flags and FEATURE_MAP ids.
+- Never create a page, add one to navigation (`meta.json`), or edit a
+  generated page such as `apps/web/content/docs/api-reference/`. When no
+  existing page covers a changed feature, record that and create nothing.
+- Edit only passages that describe behavior this session changed, so they
+  match what was built and accepted. Prefer the person's words and existing
+  labels, and never claim a stronger guarantee than the code makes
+  (`apps/web/AGENTS.md`).
+- Mark every edited passage as an agent draft for design or engineering to
+  approve before merge. In `.mdx`, put
+  `{/* Agent draft (<live ticket slug>): approve before merge */}` before it
+  and `{/* End agent draft */}` after it; in `.md`, use the same words in
+  `<!-- -->` comments. Whoever approves the draft removes the markers.
+- Record each edited page and what changed in the session change log; the
+  ticket's Handoff section lists them under Feature docs.
+- Owned prototype sessions skip this: a mockup changes no shipped feature.
+
+The handoff inventory accepts modified existing pages in those folders only
+in the handoff phase, and reports a new or generated page as outside the
+allowed paths.
 
 ## Accessibility
 

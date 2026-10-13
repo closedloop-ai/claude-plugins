@@ -138,7 +138,14 @@ subagent that worked on this.>
   changed backend code), each pass or fail>
 - Reviews: <n fixed, n rejected; one line each, rejected with why>
 - Session decision table: <the one session artifact path, whole-table final
-  alignment and actual row/test evidence across all requests; not a technical plan>
+  alignment and actual row/test evidence across all requests; not a technical plan.
+  Name the attachment and its Frozen Behavior row IDs: the behavior the person
+  accepted, which engineering keeps passing with tests in its pull request and
+  changes only with that person's explicit OK>
+- Feature docs: <each existing documentation page edited on this branch for
+  the changed features, with what changed; every edit is marked as an agent
+  draft that design or engineering approves before merge, and no page is
+  created>, or "None: no existing page documents the changed features"
 - Tests authored at handoff: <paths, whole-session criteria and stable row IDs
   covered by executed positive/negative cases, not merely planned tests; any obsolete
   expectation changed with its exact human behavior ruling>, or "none"
@@ -200,7 +207,7 @@ Yes / no, plus one line when it's a no:
 3. Storybook is right. Every new or changed component has stories in the right place, and the controls are usable. (Design)
 4. Extended the existing pattern. For example, behavior the children of a shared parent share built once in that parent so each gets it, not one copy per child.
 5. Backend is wired correctly. Route, service, shared types, Zod and migration follow our layering, and nothing is left on a stub. (Eng)
-6. No invented copy. Every user-visible string came from a person or an existing label.
+6. No invented copy. Every user-visible string came from a person or an existing label. The only exception is the marked agent drafts in existing feature docs, which need approval before merge.
 7. What we had to fix before merge. A count and a short list. (Eng, filled in at merge)
 ```
 

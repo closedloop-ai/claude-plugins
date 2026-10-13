@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Finish a vibe session in symphony-alpha and hand it to whoever picks it up next, usually design and then engineering. Through workers, completes internal scope and Storybook checks, writes focused tests at handoff, runs lint, typecheck and tests, reviews the integrated result and fixes confirmed findings. Asks who should pick the work up next, checks the live ticket is complete, publishes the final app environment or canonical prototype preview, and assigns the ticket with status left In Progress. It ends at the branch; no pull request is opened. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
+description: Finish a vibe session in symphony-alpha and hand it to whoever picks it up next, usually design and then engineering. Through workers, completes internal scope and Storybook checks, writes focused tests at handoff, drafts marked edits to existing feature docs, runs lint, typecheck and tests, reviews the integrated result and fixes confirmed findings. Asks who should pick the work up next, checks the live ticket is complete, publishes the final app environment or canonical prototype preview, and assigns the ticket with status left In Progress. It ends at the branch; no pull request is opened. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
 ---
 
 # Handoff
@@ -110,7 +110,7 @@ change worker has not handled; it refuses one with `NEEDS_CHANGE`.
 | Step | Worker |
 |---|---|
 | Summary | `vibe-handoff-summarizer` |
-| ALL source fixes, behavior answers and test authoring | the SAME persistent `vibe-change-worker` context |
+| ALL source fixes, behavior answers, test authoring, feature docs drafts and the frozen behavior rows | the SAME persistent `vibe-change-worker` context |
 | Judgment guardrails, shared-owner placement, and red flags | `vibe-guardrails-reviewer` |
 | Commits | you, with `../vibe/scripts/commit-worktree.mjs` |
 | Storybook advice only | read-only `vibe-storybook-decomposer`; the SAME writer applies it |
@@ -251,6 +251,20 @@ affected types/tests and relevant existing lanes. Backend: full-suite mode
 runs every required lane. Both report defects back to this same writer.
 Do not weaken tests, skip required coverage or fall back to visible automated
 browser/Electron windows. Record exact unsupported local limitations.
+
+### Existing feature docs
+
+In the same handoff continuation, the SAME writer updates the documentation
+pages that already exist for the features this session changed, on this
+branch, under `../vibe/references/guardrails.md`, "Feature docs at handoff".
+It edits existing pages only and never creates one; every edit is marked as
+an agent draft that design or engineering approves before merge. This is
+Daniel Ochoa's explicit, scoped exception to the rule that agents do not
+author user-visible words. It covers only those marked drafts and gives no
+license for product copy or any other words. The writer records each edited page, or
+that no existing page covers the changed features, for the ticket's Feature
+docs line. Owned prototype sessions skip this step. Step 6 reviews these
+edits with the rest of the diff.
 
 ## 6. Independent integrated review
 
@@ -430,12 +444,19 @@ Never pick the person yourself and never fall back to anyone by default: the
 ticket goes only to the user the person named. Design reviewing first and
 engineering finishing is the usual route, but the person decides.
 
+Before the handoff-mode dispatch below, resume the SAME writer to add the
+session decision table's `## Frozen Behavior` section, listing the rows the
+person accepted (`../vibe/references/quality-loop.md`, "Frozen behavior at
+handoff"). Have it refresh that section after any behavior answer that changes
+the table, before the ticket worker sees the table again.
+
 Then dispatch `vibe-ticket-worker` in handoff mode with: the worktree, the live
 ticket slug, the next owner (full name and email), the inventory path, the
 confirmed summary and the person's corrections, the footprint, check, and
 review summaries, the Design blocks from build and handoff fixes, the required session decision table
-at `.closedloop-ai/decision-tables/<session-slug>.md` with whole-table alignment
-and row/test evidence, the detailed Design Review evidence packet/report paths,
+at `.closedloop-ai/decision-tables/<session-slug>.md` with whole-table alignment,
+row/test evidence and its Frozen Behavior row IDs, the writer's feature docs
+record, the detailed Design Review evidence packet/report paths,
 including Production impact, Flag changes and gates, and researched Open
 Questions per `../vibe/references/ticket-template.md`,
 and every answer from the person so far with how it was handled. Keep

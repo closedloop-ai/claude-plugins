@@ -26,6 +26,10 @@ function setup(t, slug) {
       "scripts/loops-setup.sh": "echo old\n",
       ".github/workflows/ci.yml": "on: push\n",
       "apps/app/page.tsx": "export const page = 1;\n",
+      "apps/web/content/docs/concepts/bulk-actions.mdx": "Bulk actions.\n",
+      "apps/web/content/docs/api-reference/projects/listProjects.mdx": "generated\n",
+      "apps/web/content/docs/meta.json": "{\"pages\":[]}\n",
+      "docs/runbooks/bulk-actions.md": "Runbook.\n",
       [ALLOWLIST]: allowlist([FOCUS_RING, HEX]),
     },
   });
@@ -83,6 +87,29 @@ test("root web and desktop test specs are allowed only at handoff, never arbitra
   assert.deepEqual(handoff.json.outsideAllowed, [{ path: "e2e/playwright.config.ts", status: "A" }]);
   const invalid = runNode(INVENTORY, ["--worktree", worktree, "--phase", "unknown"], home);
   assert.equal(invalid.status, 1);
+});
+
+test("existing feature docs pages may be edited only at handoff, never created or generated", (t) => {
+  const { home, worktree } = setup(t, "feature-docs");
+  write(worktree, "apps/web/content/docs/concepts/bulk-actions.mdx", "Bulk actions, updated draft.\n");
+  write(worktree, "docs/runbooks/bulk-actions.md", "Runbook, updated draft.\n");
+  write(worktree, "apps/web/content/docs/api-reference/projects/listProjects.mdx", "generated, hand edited\n");
+  write(worktree, "apps/web/content/docs/meta.json", "{\"pages\":[\"new\"]}\n");
+  write(worktree, "apps/web/content/docs/concepts/new-page.mdx", "A page nobody asked for.\n");
+  const build = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.deepEqual(build.json.outsideAllowed.map(file => file.path), [
+    "apps/web/content/docs/api-reference/projects/listProjects.mdx",
+    "apps/web/content/docs/concepts/bulk-actions.mdx",
+    "apps/web/content/docs/concepts/new-page.mdx",
+    "apps/web/content/docs/meta.json",
+    "docs/runbooks/bulk-actions.md",
+  ]);
+  const handoff = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.deepEqual(handoff.json.outsideAllowed, [
+    { path: "apps/web/content/docs/api-reference/projects/listProjects.mdx", status: "M" },
+    { path: "apps/web/content/docs/concepts/new-page.mdx", status: "A" },
+    { path: "apps/web/content/docs/meta.json", status: "M" },
+  ]);
 });
 
 test("local fixes are listed on their own and kept out of every guardrail check", (t) => {

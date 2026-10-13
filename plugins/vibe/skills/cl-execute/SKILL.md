@@ -46,8 +46,9 @@ When invoked within a sweep, follow [display events](../cl-sweep/references/disp
 
 Read only the references relevant to the current phase:
 
-- Intake, readiness, requirements, plan drafting, contract audits, performance
-  work, UI plan approval, or the one-off cleanup-tooling churn guard:
+- Intake, readiness, requirements, a vibe ticket's frozen behavior, plan
+  drafting, contract audits, performance work, UI plan approval, or the
+  one-off cleanup-tooling churn guard:
   [references/planning-and-gates.md](references/planning-and-gates.md).
 - CLI sweep context, support lanes, App Server worker continuity, callback
   protocol, or macOS GitHub transport fallback:
@@ -107,6 +108,13 @@ hardcode a personal name for the engineering attention contact.
   coordinated code-review sequence, PR comment handling, or current-head CI
   evidence. A plan gets exactly one review; never run a second plan-review
   round.
+- A ticket built in a vibe session carries its session decision table as an
+  attachment, and that table's frozen rows are behavior the person who ran the
+  session accepted. Read the attachment at intake, keep every frozen row
+  passing with tests in the PR, and change a frozen row only with that
+  person's explicit OK, as
+  [Vibe Frozen Behavior](references/planning-and-gates.md#vibe-frozen-behavior)
+  requires.
 - One feature has exactly one integrated PR, including when backend, Storybook,
   and production UI work originate in different member tickets. Do not split
   the functional delivery into per-surface PRs or infer whole-feature

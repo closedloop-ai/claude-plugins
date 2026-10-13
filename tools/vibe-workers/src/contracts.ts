@@ -33,7 +33,7 @@ export const capabilitiesSchema = z.array(capabilitySchema).max(48).refine(
   "Duplicate capability binding",
 );
 export const identifierSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:-]+$/);
-export const statusSchema = z.enum(["PLAN", "NEEDS_REVIEW", "NEEDS_PERSON", "NEEDS_COMMIT", "NEEDS_CHANGE",
+export const statusSchema = z.enum(["PLAN", "STORIES_READY", "NEEDS_REVIEW", "NEEDS_PERSON", "NEEDS_COMMIT", "NEEDS_CHANGE",
   "NEEDS_PRIMITIVE", "NEEDS_BACKEND", "NEEDS_DESKTOP_STOP", "DONE", "BLOCKED", "FAILED"]);
 export type WorkerStatus = z.infer<typeof statusSchema>;
 export const registerSchema = z.object({

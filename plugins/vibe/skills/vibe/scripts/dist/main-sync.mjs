@@ -224065,6 +224065,7 @@ var capabilitiesSchema = external_exports.array(capabilitySchema).max(48).refine
 var identifierSchema = external_exports.string().min(1).max(160).regex(/^[A-Za-z0-9_.:-]+$/);
 var statusSchema = external_exports.enum([
   "PLAN",
+  "STORIES_READY",
   "NEEDS_REVIEW",
   "NEEDS_PERSON",
   "NEEDS_COMMIT",

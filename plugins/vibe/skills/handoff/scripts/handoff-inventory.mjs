@@ -13,6 +13,10 @@
 // edit that only removes entries or lowers counts (allowlist-shrink.mjs);
 // those are listed under `shrinkOnlyAllowlists`.
 //
+// In the handoff phase only, an app session may modify (never add) existing
+// feature docs pages; a new, generated or build-phase docs edit stays in
+// `outsideAllowed`.
+//
 // `backendChanged` says whether the work touched backend code
 // (`backendFiles`). Handoff runs its lighter checks when it did not, and the
 // full suite with two workflow-code-review passes when it did.
@@ -67,6 +71,13 @@ const COMPONENT_PATTERN = /\/components\/.+\.tsx$/;
 const TEST_PATTERN = /(?:\.test\.tsx?$|\/__tests__\/)/;
 const HANDOFF_TEST_PREFIXES = ["e2e/", "apps/desktop/test/"];
 const HANDOFF_TEST_PATTERN = /\.(?:test|spec)\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
+// Handoff may edit, never create, existing feature docs pages as marked agent
+// drafts (Daniel Ochoa's scoped exception, 2026-10-13); generated pages stay out.
+const HANDOFF_DOCS = [
+  { prefix: "apps/web/content/docs/", extension: ".mdx" },
+  { prefix: "docs/", extension: ".md" },
+];
+const GENERATED_DOCS_PREFIX = "apps/web/content/docs/api-reference/";
 
 const { values } = parseArgs({ options: { worktree: { type: "string" }, phase: { type: "string", default: "build" } } });
 if (!values.worktree) {
@@ -106,7 +117,7 @@ const shrinkOnlyAllowlists = changedFiles.filter((file) => isShrinkOnlyEdit(file
 const shrinkOnlyPaths = new Set(shrinkOnlyAllowlists.map((file) => file.path));
 const forbidden = changedFiles.filter((file) => isForbidden(file.path) && !shrinkOnlyPaths.has(file.path));
 const outsideAllowed = changedFiles.filter(
-  (file) => !isForbidden(file.path) && !isAllowed(file.path) && !shrinkOnlyPaths.has(file.path)
+  (file) => !isForbidden(file.path) && !isAllowed(file) && !shrinkOnlyPaths.has(file.path)
 );
 const backendFiles = changedFiles.filter((file) => isBackend(file.path));
 const componentsWithoutStories = findComponentsWithoutStories(changedFiles);
@@ -199,9 +210,13 @@ function isShrinkOnlyEdit(file) {
   return isShrinkOnlyAllowlistEdit(baseText, readFileSync(absolute, "utf8"));
 }
 
-function isAllowed(filePath) {
+function isAllowed(file) {
+  const filePath = file.path;
   if (values.phase === "handoff" && HANDOFF_TEST_PREFIXES.some(prefix => filePath.startsWith(prefix)) &&
     HANDOFF_TEST_PATTERN.test(filePath)) {
+    return true;
+  }
+  if (values.phase === "handoff" && !prototype && isExistingDocsEdit(file)) {
     return true;
   }
   if (prototype && (filePath.startsWith(`apps/prototypes/app/p/${record.slug}/`) ||
@@ -219,6 +234,11 @@ function isAllowed(filePath) {
     } catch { return false; }
   }
   return ALLOWED_PREFIXES.some((prefix) => filePath.startsWith(prefix));
+}
+
+function isExistingDocsEdit(file) {
+  return file.status === "M" && !file.path.startsWith(GENERATED_DOCS_PREFIX) &&
+    HANDOFF_DOCS.some(({ prefix, extension }) => file.path.startsWith(prefix) && file.path.endsWith(extension));
 }
 
 function findComponentsWithoutStories(files) {

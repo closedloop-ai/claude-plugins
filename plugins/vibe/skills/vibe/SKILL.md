@@ -42,10 +42,12 @@ work itself. Under all circumstances:
 Follow `references/quality-loop.md` for the one persistent writer, serial
 queue, internal planning/review and communication. The person never sees a technical plan or
 technical question, and needs no upfront summary. Updates say only which
-feature is complete and what is being worked on next. Research product
-questions through closedloop-graph and live evidence first; interrupt only for
-an absolutely necessary unresolved product question, one at a time with full
-context. Never re-ask a settled decision.
+feature is complete and what is being worked on next. The two notices in
+section 5, "Notices that never wait" (a reference product's behavior list and
+new Storybook components), are the only other messages, and neither waits.
+Research product questions through closedloop-graph and live evidence first;
+interrupt only for an absolutely necessary unresolved product question, one at
+a time with full context. Never re-ask a settled decision.
 
 This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 
@@ -120,7 +122,7 @@ stops until core is explicitly installed and enabled.
 | Worker | Dispatch it to |
 |---|---|
 | `vibe-setup-worker` | operational preflight/bootstrap/services only; diagnose code defects, never patch them |
-| `vibe-requirements-worker` | read a ClosedLoop ticket (and its PRD, plan, related tickets) or a description and turn it into a brief, plus the route and FEATURE_MAP id where the relevant code lives, for change workers |
+| `vibe-requirements-worker` | read a ClosedLoop ticket (and its PRD, plan, related tickets) or a description and turn it into a brief, plus the route and FEATURE_MAP id where the relevant code lives, for change workers; in reference mode, research an outside product the person named and list the behaviors to build |
 | `vibe-ticket-worker` | create the session's live ticket, and fill its record sections when you ask |
 | `vibe-environment-worker` | stand up the session's Vercel environment, redeploy it, or refresh its flag snapshot |
 | `vibe-change-worker` | the SAME persistent writer for all planning, source implementation, backend/primitive/prototype/Storybook work, fixes and handoff-only tests |
@@ -134,7 +136,9 @@ stops until core is explicitly installed and enabled.
 Every worker result starts with a status: `DONE`, `NEEDS_PERSON` (a question
 or action only the person can answer or take, already phrased for them),
 `NEEDS_PRIMITIVE` or `NEEDS_BACKEND` can request read-only guidance only;
-all implementation resumes in the SAME writer. `NEEDS_DESKTOP_STOP` (the worker must merge
+all implementation resumes in the SAME writer. `STORIES_READY` (the writer
+built the request's new Storybook components first; section 5, "Notices that
+never wait"). `NEEDS_DESKTOP_STOP` (the worker must merge
 main into the worktree or otherwise swap its commit while Desktop runs),
 `NEEDS_COMMIT` (the worktree has changes you have not committed yet: commit
 them as section 6 step 3 says, then dispatch the worker again), or
@@ -456,6 +460,9 @@ evidence, never by replacing the writer.
    interacting row IDs in every applicable worker brief. Later requests append
    to this same artifact with provenance; no per-request table or history reset.
    No upfront summary, technical question or plan approval reaches the person.
+   When the request names an outside product as its reference, the
+   reference-product notice below runs first and its list goes to the writer
+   with the request.
 2. On `PLAN`, dispatch the separate read-only adversarial plan reviewer.
    It must read the actual table and its real source-backed rows/frozen targets,
    not accept a returned path, checkbox or placeholder. Missing or unsourced
@@ -469,6 +476,9 @@ evidence, never by replacing the writer.
    backend, primitive, prototype and Storybook guidance from its own plugin,
    but no new source writer/worktree/branch. Read-only specialists advise;
    their findings return to this writer. Preserve real visual/product approvals.
+   When its plan needs NEW Storybook components, it builds them first and
+   returns `STORIES_READY`; send the new-components notice below and resume
+   it at once to build the feature.
 4. On `NEEDS_REVIEW`, run independent read-only implementation reviews and
    existing checks. Use core workflow review for backend work. Return confirmed
    issues to the SAME writer, recheck its fixes, and do not leave preventable
@@ -494,6 +504,33 @@ evidence, never by replacing the writer.
    This is per-request implementation evidence, not final session coverage.
    Retain whole-table pending test plans and unresolved final evidence until
    the same writer's explicit handoff; do not erase earlier request rows.
+
+### Notices that never wait
+
+These two messages are notifications, not approval gates. Send each as one
+plain message, then keep going without waiting for a reply. The person is
+never asked to approve them, and they never become an engineering or architecture
+question. If the person answers or interrupts to cut or change something,
+that message continues the active request in the SAME writer, which changes
+what it already built, like any other request about it.
+
+- Reference product. When the person names an outside product as the
+  reference for how something should work (for example "make bulk labels work
+  like Asana"), dispatch `vibe-requirements-worker` in reference mode with the
+  product and the person's words, before forwarding the request. Show the
+  person the bulleted list of behaviors it returns, saying in one line that
+  this is what will be built, based on that product. Then forward the request
+  with that list to the SAME writer as the behaviors to build, and keep going.
+  The list names behaviors, not wording: user-visible copy still follows
+  `references/guardrails.md`, "Copy".
+- New Storybook components. When the reviewed plan needs NEW Storybook
+  components, the writer builds those components and their stories before the
+  feature and returns `STORIES_READY` with each new story's ID. Take the local
+  `storybookUrl` from the session's stack (`vibe-sessions.mjs show`); if none
+  is running, dispatch `vibe-setup-worker` to start it. Send one plain message
+  pointing the person to `<storybookUrl>/?path=/story/<id>` for each new
+  story, then resume the SAME writer to build the feature with them. A change
+  that only reuses existing components skips this step.
 
 Pure mockups still use canonical `$prototype` guidance through this writer;
 the person only types `$vibe` and `$handoff`. Initial session creation chooses

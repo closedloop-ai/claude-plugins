@@ -67,7 +67,9 @@ process.stdin.on('end', () => {
   if (payload.input.includes('STARTUP_FAILURE')) process.exit(2);
   if (payload.input.includes('WAIT_FOR_CANCEL')) { setInterval(() => {}, 1000); return; }
   if (payload.input.includes('INVALID_OUTPUT')) { process.stdout.write('invalid\n'); process.exit(0); }
-  let status = payload.input.includes('PLAN_FIRST') ? 'PLAN' : 'DONE';
+  let status = 'DONE';
+  if (payload.input.includes('PLAN_FIRST')) status = 'PLAN';
+  if (payload.input.includes('STORIES_FIRST')) status = 'STORIES_READY';
   let mainSyncResult;
   if (payload.input.startsWith('MAIN_SYNC_')) {
     const cp = require('node:child_process');

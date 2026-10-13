@@ -10,7 +10,7 @@ const metadataSchema = z.object({ name: z.string(), description: z.string().min(
   model: z.string().min(1), tools: z.union([z.string(), z.array(z.string())]),
   skills: z.union([z.string(), z.array(z.string())]).optional(),
 }).passthrough();
-const builtins = new Set(["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Skill", "ToolSearch"]);
+const builtins = new Set(["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Skill", "ToolSearch", "WebSearch", "WebFetch"]);
 
 /** Reads the canonical own-plugin agent once, preserving its prompt, model and declared built-ins. */
 export function readDefinition(agentRoot: string, agentName: string, capabilityInput: Capability[]) {

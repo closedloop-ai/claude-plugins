@@ -99,6 +99,37 @@ describe("production Claude CLI adapter", () => {
     expect(readProof(value.metadata).map((item) => item.payload.input)).toEqual(["PLAN_FIRST", "Finish current request", "SECRET_SECOND"]);
     expect(readProof(value.metadata).slice(1).every((item) => item.args.includes("--resume"))).toBe(true);
   });
+  it("keeps a request active after STORIES_READY so the same writer builds the feature next", () => {
+    const value = setup();
+    const stories = run(value, { input: "STORIES_FIRST" });
+    expect(stories.status, stories.stderr).toBe(0);
+    expect(JSON.parse(stories.stdout).status).toBe("STORIES_READY");
+    expect(readWriterSummary(value.worktree)?.status).toBe("STORIES_READY");
+    expect(run(value, { requestId: "second", input: "SECRET_SECOND" }).status).toBe(1);
+    const feature = run(value, { continuation: "Build the feature with the new components" });
+    expect(feature.status, feature.stderr).toBe(0);
+    expect(JSON.parse(feature.stdout).status).toBe("DONE");
+    expect(JSON.parse(feature.stdout).sessionId).toBe(JSON.parse(stories.stdout).sessionId);
+    const proof = readProof(value.metadata);
+    expect(proof.map((item) => item.payload.input)).toEqual(["STORIES_FIRST", "Build the feature with the new components"]);
+    expect(proof[1]?.args).toContain("--resume");
+    const schema = JSON.parse(proof[0]!.args[proof[0]!.args.indexOf("--json-schema") + 1]!);
+    expect(schema.properties.status.enum).toContain("STORIES_READY");
+  });
+  it("binds web research only for a role that declares it and still rejects undeclared built-ins", () => {
+    const value = setup();
+    writeAgent(value.agentRoot, "vibe-requirements-worker", "Read, Grep, Glob, Bash, WebSearch, WebFetch");
+    const research = run(value, { agentName: "vibe-requirements-worker", input: "reference product" });
+    expect(research.status, research.stderr).toBe(0);
+    const tools = readProof(value.metadata)[0]?.definition["vibe:vibe-requirements-worker"]?.tools;
+    expect(tools).toEqual(expect.arrayContaining(["WebSearch", "WebFetch"]));
+    expect(tools).not.toContain("Write");
+    const reviewer = readProof(value.metadata).length;
+    expect(run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect" }).status).toBe(0);
+    expect(readProof(value.metadata)[reviewer]?.definition["vibe:vibe-guardrails-reviewer"]?.tools).not.toContain("WebSearch");
+    writeAgent(value.agentRoot, "vibe-requirements-worker", "Read, Grep, Glob, Bash, Task");
+    expect(() => readDefinition(value.agentRoot, "vibe-requirements-worker", graph)).toThrow(/Unrecognized canonical built-in tool/);
+  });
   it("uses native structured output over fenced text and never falls back from a present invalid field", () => {
     const value = setup();
     const structured = run(value, { input: "FENCED_RESULT" });

@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.16
+
+#### Added
+- New Storybook components first. When a request's reviewed plan needs new Storybook components, the writer builds them and their stories before the feature and returns the new `STORIES_READY` status with their story IDs. The orchestrator sends the person one plain message with the local Storybook links and resumes the same writer to build the feature without waiting; the person can interrupt to change a component. A change that only reuses existing components skips the notice. The Claude launcher accepts `STORIES_READY` and keeps the request active, like the other non-final statuses.
+- Reference product research. When the person names an outside product as the reference ("make bulk labels work like Asana"), `vibe-requirements-worker` reference mode researches its public documentation (it now declares `WebSearch` and `WebFetch`, which the launcher accepts as built-ins) and returns a bulleted behavior list with sources. The person sees the list while the writer builds it, and can interrupt to cut or change items. The list carries behaviors only, never the product's wording.
+- Feature docs at handoff. The same writer edits existing documentation pages for the features the session changed (`apps/web/content/docs/` `.mdx` or `docs/` `.md`) on the vibe branch, wraps each edit in agent-draft markers for design or engineering to approve before merge, and never creates a page, edits navigation or touches generated API reference pages. The ticket's new Feature docs line records the pages. `guardrails.md`, the guardrails reviewer, the change worker, the handoff skill and Grading item 6 state this as a scoped exception to the rule that agents do not author user-visible words, not a general license. The handoff inventory accepts modified existing docs pages only in the handoff phase of an app session; new, generated, navigation and build-phase docs edits stay outside the allowed paths.
+- Frozen behavior. At handoff the same writer adds a `## Frozen Behavior` section to the session decision table listing the rows the person accepted. The ticket worker refuses to attach a table without it and names the attachment and frozen row IDs on the ticket. `cl-execute` reads that attachment for a vibe-built ticket, keeps every frozen row passing with tests in its pull request, changes one only with the explicit OK of the person who ran the session, and treats a missing attachment or section as not ready.
+- Contract tests for each rule above, a launcher test that `STORIES_READY` keeps the same writer's request active and a test that only a role declaring web research gets those tools, and inventory tests for docs edits.
+
+#### Changed
+- New primitive components no longer wait for the person's Storybook approval before use; the new-components notice replaces that wait.
+
 ### vibe v1.0.15
 
 #### Fixed
