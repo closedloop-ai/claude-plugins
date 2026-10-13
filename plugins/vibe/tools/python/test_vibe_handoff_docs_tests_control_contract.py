@@ -101,19 +101,20 @@ def test_the_inventory_has_no_internal_docs_allowance() -> None:
 
 def test_no_worker_writes_tests_in_vibe_or_handoff() -> None:
     rule = section(GUARDRAILS.read_text(), "## Tests")
-    for required in ("No worker writes or edits a test in vibe or handoff",
+    for required in ("No worker authors a test in vibe or handoff",
                      "in the build loop and at handoff alike", "Daniel Ochoa's ruling, 2026-10-13",
-                     "Handoff runs the existing affected tests", "fixes the session's own code, never the test",
+                     "Handoff runs the existing affected tests",
+                     "fixes the session's own code, never what the test asserts",
                      "listed on the live ticket under Missing tests as engineering's scope of work",
                      "the files to cover", "Engineering writes those tests in its pull request",
                      "alongside the tests for every frozen row", "the test stays unedited"):
         assert required in rule, required
     handoff = flat(HANDOFF_SKILL.read_text())
-    assert "Handoff writes no tests" in handoff
-    assert "never the test" in section(HANDOFF_SKILL.read_text(), "## 5. Checks and the missing tests list")
-    loop = section(QUALITY.read_text(), "## No test writing in vibe or handoff")
-    for required in ("No test writing or editing in the build loop or at handoff",
-                     "runs the existing affected tests", "never the test",
+    assert "Handoff authors no tests" in handoff
+    assert "never what a test asserts" in section(HANDOFF_SKILL.read_text(), "## 5. Checks and the missing tests list")
+    loop = section(QUALITY.read_text(), "## Tests: repair, don't author")
+    for required in ("No test authoring in the build loop or at handoff",
+                     "runs the existing affected tests", "never what a test asserts",
                      "lists every missing test as engineering's scope of work"):
         assert required in loop, required
     assert "A handoff turn never does" in section(QUALITY.read_text(), "## One persistent writer and a serial queue")
@@ -166,7 +167,7 @@ def test_only_an_explicit_pull_request_request_authorizes_full_tests() -> None:
                      "--phase pull-request", "does not open until those tests pass",
                      "Handoff itself still opens none"):
         assert required in requested, required
-    writer = section(agent("vibe-change-worker"), "## No tests in this context unless a pull request is requested")
+    writer = section(agent("vibe-change-worker"), "## Tests: repair, don't author")
     assert "Only a `pull-request` continuation" in writer
     assert "full tests for every change in the session" in writer
 

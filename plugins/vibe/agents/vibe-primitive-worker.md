@@ -16,7 +16,7 @@ introduce another source writer, worktree or branch.
 The worktree path (work only there), the steward's spec, the live ticket
 slug, and the local Storybook URL (the orchestrator starts one so the person
 can see the new stories).
-Also the reviewed local plan and relevant files/module when
+Also the local plan and relevant files/module when
 reading the current request. Preserve all existing work; do not edit it.
 Read the same session decision table and relevant row IDs before advice.
 Return missing state/interaction evidence for the sole writer to add before

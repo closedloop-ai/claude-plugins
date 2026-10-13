@@ -1,6 +1,6 @@
 ---
 name: vibe-guardrails-reviewer
-description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, test files the session wrote or edited, checks made to pass by changing them). Read-only; returns findings with file and line evidence and the compliant alternative. Used by the handoff skill and on demand during a vibe session.
+description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
 model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
@@ -12,9 +12,10 @@ it instead of extend it. You never edit files.
 
 ## Inputs
 
-- The phase (`build` unless explicitly `handoff`) and reviewed local plan.
-  Read `../skills/vibe/references/quality-loop.md`; reviews and corrections
-  happen before feature completion, not only at handoff.
+- The phase (`handoff`, or `pull-request` for a requested pull request) and
+  the local plan. Read `../skills/vibe/references/quality-loop.md`; this
+  review runs only at handoff, never during the build loop ("Lean build
+  loop").
 - Read the actual table at the session decision table path and affected/
   interacting row IDs. Load named core decision-table (`$decision-table` in
   Codex or `/closedloop-core:decision-table` in Claude Code) and use its actual
@@ -28,7 +29,7 @@ it instead of extend it. You never edit files.
   Without a transaction, use `git -C <wt> diff origin/main...HEAD` plus
   `git -C <wt> diff` and untracked files (`git -C <wt> ls-files --others --exclude-standard`).
   Exclude only `.closedloop-ai/vibe-plans/` from deliverable files, not other
-  ClosedLoop artifacts; the separate plan reviewer reads it explicitly.
+  ClosedLoop artifacts.
 - The guardrails: `vibe/references/guardrails.md` and
   `vibe/references/design-pass.md` in this plugin's skills folder. Read both
   fully.
@@ -80,13 +81,19 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    of an existing shared component or domain code inside a design-system
    slot. Code that is not in the `Owner` its change log entry names is
    advisory.
-9. Tests and checks: an added or changed test file (`*.test.*`, `*.spec.*`,
-   `__tests__/`, `e2e/`, or a snapshot or fixture a test reads) is blocking in
-   the build loop and at handoff alike (`guardrails.md`, "Tests"). It is
+9. Tests and checks: an added or deleted test file (`*.test.*`, `*.spec.*`,
+   `__tests__/`, `e2e/`, or a snapshot or fixture a test reads), a changed
+   snapshot, or a changed test that is not a pure repair is blocking in the
+   build loop and at handoff alike (`guardrails.md`, "Tests"). It is
    permitted only in a `pull-request` turn the person's explicit request for a
    pull request opened, with the SAME implementation writer's test-authoring
    record, independently checked by the read-only verify role; those tests must
-   not be reverted. Inspect `mainSync.featureTestHistory` against the original
+   not be reverted. A test repair (the inventory's `testRepairs`: an existing
+   test or fixture modified so the tree compiles after the session's own
+   change) is allowed. Read each repair's diff against its base: it may only
+   follow an import, a renamed or retired symbol, setup or a type; any changed
+   assertion, expected value, matcher, case, skip, tolerance or timeout is
+   blocking, and so is a repair the change log does not record as one. Inspect `mainSync.featureTestHistory` against the original
    base, actual commit parents and phase/test-authoring records as well as the
    current diff. Main later absorbing identical bytes cannot erase an earlier
    feature-authored violation. History entries are authorship evidence, not

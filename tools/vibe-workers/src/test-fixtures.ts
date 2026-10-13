@@ -112,6 +112,6 @@ export function writeAgent(root: string, name: string, tools: string) {
 export function readProof(metadata: string) {
   return readFileSync(join(metadata, "fake-proof.jsonl"), "utf8").trim().split("\n")
     .map((line) => JSON.parse(line) as { args: string[]; payload: { input: string; mode: string;
-      authority: { testAuthoringAuthorized: boolean } }; pid: number;
+      authority: { testAuthoringAuthorized: boolean; testRepairAuthorized: boolean } }; pid: number;
       definition: Record<string, { model: string; tools: string[]; prompt: string }> });
 }

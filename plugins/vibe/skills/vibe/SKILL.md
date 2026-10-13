@@ -125,13 +125,13 @@ stops until core is explicitly installed and enabled.
 | `vibe-requirements-worker` | read a ClosedLoop ticket (and its PRD, plan, related tickets) or a description and turn it into a brief, plus the route and FEATURE_MAP id where the relevant code lives, for change workers; in reference mode, research an outside product the person named and list the behaviors to build |
 | `vibe-ticket-worker` | create the session's live ticket, and fill its record sections when you ask |
 | `vibe-environment-worker` | stand up the session's Vercel environment, redeploy it, or refresh its flag snapshot |
-| `vibe-change-worker` | the SAME persistent writer for all planning, source implementation, backend/primitive/prototype/Storybook work, fixes and the handoff missing tests list (tests only for a requested pull request) |
+| `vibe-change-worker` | the SAME persistent writer for all planning, source implementation, backend/primitive/prototype/Storybook work, fixes, repairs of existing tests its change broke and the handoff missing tests list (tests only for a requested pull request) |
 | `vibe-backend-worker` | read-only backend/contract advice for that writer |
 | `vibe-primitive-worker` | read-only component/spec advice for that writer |
-| `vibe-prototype-worker` | read-only canonical guidance or operational sharing of the writer's reviewed committed result, never another source author |
-| `vibe-adversarial-reviewer` | separately review the local technical plan before implementation, then challenge implemented changes before handoff |
-| `vibe-guardrails-reviewer` | review ownership, reuse and repo constraints before declaring a feature complete |
-| `vibe-verify-worker` | read-only checks/coverage advice; nobody writes tests in vibe or handoff |
+| `vibe-prototype-worker` | read-only canonical guidance or operational sharing of the writer's checked committed result, never another source author |
+| `vibe-adversarial-reviewer` | challenge the implemented session at handoff, never during the build loop |
+| `vibe-guardrails-reviewer` | review ownership, reuse, repo constraints and test repairs at handoff, never during the build loop |
+| `vibe-verify-worker` | read-only checks/coverage advice at handoff; nobody authors tests in vibe or handoff |
 
 Every worker result starts with a status: `DONE`, `NEEDS_PERSON` (a question
 or action only the person can answer or take, already phrased for them),
@@ -144,14 +144,18 @@ main into the worktree or otherwise swap its commit while Desktop runs),
 them as section 6 step 3 says, then dispatch the worker again), or
 `BLOCKED` (with the reason).
 
-`NEEDS_REVIEW` from a prototype means its code is built but must receive
-independent implementation review and existing checks before commit or share.
+`NEEDS_REVIEW` from a prototype means its code is built but its quick checks
+must pass before commit or share; independent review waits for handoff.
 
-No worker writes or edits a test in vibe or handoff (`references/guardrails.md`,
-"Tests"); handoff lists the missing tests for engineering, and tests are written
-only when the person explicitly asks for a pull request. This skill opens no PR.
-Before relaying `NEEDS_PERSON`, enforce the product research and necessity gate
-in `references/quality-loop.md`; technical choices stay with the workers.
+No worker authors a test in vibe or handoff (`references/guardrails.md`,
+"Tests"). The SAME writer only repairs an existing test or fixture its own
+change broke, without changing what any test asserts; handoff lists the
+missing tests for engineering, and tests are written only when the person
+explicitly asks for a pull request. This skill opens no PR. Never ask the
+person about tests or any other engineering choice: those rules decide it, or
+it goes to engineering. Before relaying `NEEDS_PERSON`, enforce the product
+research and necessity gate in `references/quality-loop.md`; technical choices
+stay with the workers.
 
 ## 1. Preflight
 
@@ -268,18 +272,17 @@ fresh main, without an app data mode, API environment or flag snapshot.
 Bootstrap/ticket setup remains operational. Then register/resume the SAME
 persistent implementation writer under section 5 and forward the person's
 mockup request. It reads the absolute canonical
-`<repo-root>/.claude/skills/prototype/SKILL.md` guidance, plans locally, receives
-independent plan review and performs all prototype/shared surface/registry
-changes itself. Do not spawn a separate prototype source writer.
+`<repo-root>/.claude/skills/prototype/SKILL.md` guidance, plans locally and
+performs all prototype/shared surface/registry changes itself. Do not spawn a separate prototype source writer.
 
 Preserve canonical mock-data, componentization, visual/product review and
 metadata ownership. Ignore canonical steps asking for a second source writer,
 worktree/branch or a technical-plan approval. All corrections return to this
-same context, and no tests are written (`references/guardrails.md`, "Tests").
+same context, and no tests are authored (`references/guardrails.md`, "Tests").
 
-After independent current-result review/checks, the orchestrator commits with
-its script. Dispatch `vibe-prototype-worker` only in operational share mode to
-publish that exact reviewed commit through canonical Vercel sharing. If it
+After the writer's quick checks pass, the orchestrator commits with its
+script. Dispatch `vibe-prototype-worker` only in operational share mode to
+publish that exact checked commit through canonical Vercel sharing. If it
 needs source generation/fixes, return those facts to the SAME writer. No
 helper silently edits registry, metadata or implementation to make sharing pass.
 
@@ -310,7 +313,7 @@ Desktop again and open its new tab (section 3, Desktop step 2 then step 3).
 
 Before FIRST publication, register/resume the SAME implementation writer under
 section 5's actual identity/hold/lease rules, not a new bootstrap source actor.
-ROOT commits the reviewed deliverable LOCALLY under normal hooks, still unpushed,
+ROOT commits the checked deliverable LOCALLY under normal hooks, still unpushed,
 before `commit-worktree.mjs --prepare-main-sync`; if no deliverable changed,
 no extra commit is needed. Protected dirty localFix source remains preserved/blocking.
 Resume the SAME source actor's exclusive progress turn for `main-sync-inputs`
@@ -428,7 +431,13 @@ the app?" Default to straight into the app when no unresolved decision is needed
 Follow `references/quality-loop.md`: ONE persistent implementation writer,
 ONE worktree and branch, and a serial request queue. No unit-specific code
 writers. Backend/primitive/prototype/Storybook fixes and later tests belong to
-this same writer context. Researchers/reviewers may be read-only and parallel.
+this same writer context. Researchers may be read-only and parallel.
+
+The loop is lean (`references/quality-loop.md`, "Lean build loop"): quick
+prep, build, the quick checks the commit hooks need, the orchestrator's
+commit, deploy, and showing the person. Browser E2E, visual QA, logical QA,
+Metal Andrew, the guardrails and adversarial reviews and other heavy
+validation run only at handoff, never here.
 
 ### Register once, then resume
 
@@ -464,42 +473,38 @@ evidence, never by replacing the writer.
    When the request names an outside product as its reference, the
    reference-product notice below runs first and its list goes to the writer
    with the request.
-2. On `PLAN`, dispatch the separate read-only adversarial plan reviewer.
-   It must read the actual table and its real source-backed rows/frozen targets,
-   not accept a returned path, checkbox or placeholder. Missing or unsourced
-   rows return to the SAME writer; no code starts before that review returns.
-   A plan gets exactly one review. Continue the active request in the SAME
-   writer with its findings; it verifies each finding against the code,
-   applies outline-level corrections to the plan, puts detail-level
-   suggestions into the plan's `## Implementation Notes` section, and moves on
-   to implementation without a recheck. Never run a second plan review.
-3. Resume that writer to implement in dependency order. It can load canonical
+2. There is no plan review. The writer builds right after its plan and table
+   rows, in the same request.
+3. The writer implements in dependency order. It can load canonical
    backend, primitive, prototype and Storybook guidance from its own plugin,
    but no new source writer/worktree/branch. Read-only specialists advise;
    their findings return to this writer. Preserve real visual/product approvals.
    When its plan needs NEW Storybook components, it builds them first and
    returns `STORIES_READY`; send the new-components notice below and resume
    it at once to build the feature.
-4. On `NEEDS_REVIEW`, run independent read-only implementation reviews and
-   existing checks. Use core workflow review for backend work. Return confirmed
-   issues to the SAME writer, recheck its fixes, and do not leave preventable
-   issues until handoff. Existing tests may run; none are authored.
-   The writer first verifies affected and interacting prior table rows against
-   actual code, fixes source gaps and supplies the same artifact/row evidence
-   to reviewers. Planned tests remain distinct from executed coverage; they
-   never justify premature core Final Aligned or a source-gap waiver.
+4. The writer runs only the quick checks the commit hooks need (Biome on the
+   changed files, the affected typecheck, the source gates) and repairs any
+   existing test or fixture its change broke without changing what it
+   asserts; none are authored. No reviewer, browser E2E, visual QA, logical
+   QA, Metal Andrew, `workflow-code-review` or existing test suite runs here;
+   handoff runs them. The writer still verifies affected and interacting prior
+   table rows against actual code and fixes source gaps. Planned tests remain
+   distinct from executed coverage; they never justify premature core Final
+   Aligned or a source-gap waiver.
 5. Research any `NEEDS_PERSON` through the graph/live-decision necessity gate.
    Ask only an absolutely necessary unresolved product question, one at a time
    with full context. Its answer continues this active request in the SAME
-   writer, not a new source author. Technical blockers stay internal.
+   writer, not a new source author. Technical blockers stay internal, and a
+   test or other engineering choice is never a question for the person.
 6. Record scope/progress/backend facts through the writer's explicit serial
    record continuation or the authorized ticket helper, never simultaneously.
    Keep technical plans private. Operational bootstrap/build/deploy helpers
-   execute no implementation edits, and sharing waits for the writer and
-   independent gates. The orchestrator alone commits through its owned script.
-7. A `DONE` must mean the whole requested feature passed its required checks
-   and independent reviews. Then finish that request and tell the person only
-   the completed feature and next work, in their own terms. The next queued
+   execute no implementation edits, and sharing waits for the writer's quick
+   checks. The orchestrator alone commits through its owned script.
+7. A `DONE` must mean the whole requested feature is built and passes the
+   quick checks; independent reviews come at handoff. Then finish that
+   request and tell the person only the completed feature and next work, in
+   their own terms. The next queued
    request goes to the SAME ID/context. Update the session summary through
    the existing session script in a serial record turn.
    This is per-request implementation evidence, not final session coverage.
@@ -524,7 +529,7 @@ what it already built, like any other request about it.
   with that list to the SAME writer as the behaviors to build, and keep going.
   The list names behaviors, not wording: user-visible copy still follows
   `references/guardrails.md`, "Copy".
-- New Storybook components. When the reviewed plan needs NEW Storybook
+- New Storybook components. When the plan needs NEW Storybook
   components, the writer builds those components and their stories before the
   feature and returns `STORIES_READY` with each new story's ID. Take the local
   `storybookUrl` from the session's stack (`vibe-sessions.mjs show`); if none
@@ -546,33 +551,39 @@ on Vercel", "let me see it live", or anything meaning the same:
 1. Run `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` so
    the ticket lists every subagent so far.
 2. Keep deployment progress internal; report completion, not technical steps.
-   After current-result review, ROOT commits the reviewed deliverable LOCALLY
-   with the existing commit script and normal hooks, still unpushed. Then the
+   After the writer's quick checks, ROOT commits the checked deliverable
+   LOCALLY with the existing commit script and normal hooks, still unpushed. Then the
    publishing helper runs `commit-worktree.mjs --prepare-main-sync`.
    First finish the SAME source actor's `main-sync-inputs` record turn as
    environment.md requires; no operational helper regenerates dependencies.
    Before any remote push repeat `references/environment.md`, "Main-sync
    before publication": extend the SAME writer's local plan/session table,
-   complete plan review, run a separate noncommitting preparation turn after
+   run a separate noncommitting preparation turn after
    source stops, and route all conflicts/fixes to that writer. Preserve
    captured main/original base/imports. A missing or upgraded definition uses
    only quality-loop's recorded migration; refresh old-actor validation proof.
 3. After preparation and SAME-writer conflict/source correction, ROOT commits
-   the staged ordinary merge and any reviewed fixes (nothing is pushed yet):
+   the staged ordinary merge and any checked fixes (nothing is pushed yet):
    `node scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the changes since the last redeploy>" --body "<the screens changed, one per line>"`.
    The subject stays under 72 characters and never mentions AI tools. The
    script leaves out the session's `localFixes` and files that never belong
    in a commit, and the repository's commit hook runs. `committed: false`
    means nothing changed; continue. `"ok":false` means the hook refused:
-   resume the SAME persistent writer in fix mode with the error, then commit again.
+   resume the SAME persistent writer in fix mode with the error, then commit
+   again. An existing test or fixture the change broke is repaired there
+   (`references/guardrails.md`, "Repair, don't author"). When the writer
+   returns `BLOCKED` because only engineering can settle it (a test of
+   behavior the session retired), tell the person in one plain line that this
+   part needs engineering and suggest they message Daniel Ochoa with the
+   session slug, as section 3 does; never ask them to decide it.
 4. Dispatch `vibe-environment-worker` in redeploy mode with the worktree, the
    live ticket slug, the session summary, and the session's `localFixes`
    paths. First resume that SAME writer's source-owned `progress` continuation
    to run `main-sync-validate` against committed inputs. The later publisher
    grant carries captured `mainSyncTransactionId`, build purpose and actual
    stdin context. It pushes only the admitted SHA, requests the environment again so that commit is
-   deployed, and updates the ticket. Existing checks have run through the
-   quality loop; no tests are written.
+   deployed, and updates the ticket. The quick checks have run in the
+   loop; no tests are authored.
 5. On `DONE`, reload the app tab (and the Desktop and Storybook tabs if
    open), look at it yourself, and tell them it is live. Whenever you open
    the Vercel `storybookUrl` and the tab lands on `vercel.com` (a Vercel sign-in or
@@ -580,9 +591,8 @@ on Vercel", "let me see it live", or anything meaning the same:
    on Vercel needs you to sign in to Vercel with your team account first."
    Do not try to get around it. On `BLOCKED` because the repo's checks
    refused the push or a build failed in the session's own change, dispatch
-   the SAME persistent writer in fix mode with the failure, then re-review
-   and verify its fix before committing
-   and redeploying again (steps 3 and 4). Keep the repair details internal.
+   the SAME persistent writer in fix mode with the failure, then rerun its
+   quick checks before committing and redeploying again (steps 3 and 4). Keep the repair details internal.
 
 Never redeploy unless the person asked.
 
@@ -641,7 +651,7 @@ Whenever the person asks to throw a session away (at any point, for any
 ## References
 
 - `references/closedloop-graph.md`: how every worker uses closedloop-graph.
-- `references/quality-loop.md`: one persistent writer/queue, local plans, read-only independent reviews, researched product questions and the no-test-writing rule.
+- `references/quality-loop.md`: one persistent writer/queue, local plans, the lean build loop, researched product questions and the repair-only test rule.
 - `references/preflight.md`: fixes for every preflight check (setup worker).
 - `references/environment.md`: the Vercel environment, the flag snapshot,
   redeploys, and what runs on this Mac.
